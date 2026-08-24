@@ -115,7 +115,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// The rename screen: edit a relying party's device-local nickname with a T9
     /// phone-style keypad. Each key 1-9 cycles through its letter group on repeated
@@ -282,7 +282,7 @@ where
     ///
     /// `yield_to_host`: on a *local* gate (delete / factory-reset / unlock) no host is
     /// waiting on this PIN, so a queued host command must not be starved while the user
-    /// types — set it `true` to abandon entry ([`rsk_fido::PinEntry::Cancelled`], no retry burned)
+    /// types — set it `true` to abandon entry ([`rsk_sdk::PinEntry::Cancelled`], no retry burned)
     /// the instant a command arrives, mirroring the browse modals. The host built-in-UV
     /// path sets it `false`: there the host *is* waiting on this exact PIN (its `REQ` is
     /// already consumed), so it blocks to the presence timeout as before.
@@ -299,7 +299,7 @@ where
         expected: u8,
         out: &mut [u8],
         yield_to_host: bool,
-    ) -> rsk_fido::PinEntry {
+    ) -> rsk_sdk::PinEntry {
         let saved = self.hooks.led_status();
         self.hooks.set_led_status(rsk_led::STATUS_TOUCH);
         self.hooks.set_cancel_requested(false);
@@ -313,12 +313,30 @@ where
         let mut reveal = false;
         let mut last_input = Instant::now();
 
+        // One layout for this entry, drawn AND hit-tested through the same value: a pad
+        // painted from one order and tapped through another types digits nobody pressed,
+        // and nothing on screen would look wrong. Off unless the owner asked for it in
+        // Settings -> Security; each entry (and so each of "New" / "Confirm") gets its own.
+        let layout = if self.scramble_pin {
+            let mut entropy = [0u8; rsk_ui::PIN_SHUFFLE_ENTROPY];
+            self.rng.borrow_mut().fill(&mut entropy);
+            let laid = rsk_ui::PinLayout::shuffled(&entropy);
+            entropy.zeroize();
+            laid
+        } else {
+            rsk_ui::PinLayout::identity()
+        };
+
         // A built-in-UV PIN entry can arrive while the panel slept — restore it first.
         self.wake();
         note_activity();
         let _ = rsk_ui::render(
             &mut self.panel,
-            &Screen::Pin(PinPad::with_caption(entered, title, caption).expecting(expected)),
+            &Screen::Pin(
+                PinPad::with_caption(entered, title, caption)
+                    .expecting(expected)
+                    .laid_out(layout),
+            ),
         );
         self.shown = None; // force the status loop to repaint once we release it
         // The CST328 reports a level, not an edge, so a finger still down from whatever
@@ -337,7 +355,7 @@ where
             // entry with `Cancelled`, the same outcome a host CTAPHID_CANCEL yields, so a host
             // waiting on this PIN is released. Checked first, before any repaint.
             if self.sleep_button_pressed() {
-                break rsk_fido::PinEntry::Cancelled;
+                break rsk_sdk::PinEntry::Cancelled;
             }
             if scroll_title {
                 let ms = start.elapsed().as_millis();
@@ -352,7 +370,7 @@ where
             if let Some(p) = self.touch.read() {
                 last_input = Instant::now();
                 let mut repaint = true;
-                let done = match rsk_ui::hit_pin(p) {
+                let done = match rsk_ui::hit_pin(p, &layout) {
                     Some(PinKey::Digit(d)) => {
                         if entered < out.len() {
                             out[entered] = b'0' + d;
@@ -369,9 +387,9 @@ where
                         None
                     }
                     Some(PinKey::Ok) if entered >= min_len => {
-                        Some(rsk_fido::PinEntry::Entered(entered))
+                        Some(rsk_sdk::PinEntry::Entered(entered))
                     }
-                    Some(PinKey::Cancel) => Some(rsk_fido::PinEntry::Declined),
+                    Some(PinKey::Cancel) => Some(rsk_sdk::PinEntry::Declined),
                     _ => {
                         repaint = false;
                         None
@@ -393,7 +411,7 @@ where
                 let _ = rsk_ui::render_pin_dots(&mut self.panel, entered, expected, None);
             }
             if self.hooks.cancel_requested() {
-                break rsk_fido::PinEntry::Cancelled;
+                break rsk_sdk::PinEntry::Cancelled;
             }
             // A local gate must not starve the parked worker: abandon once a host command
             // queues (no host awaits this PIN). The host built-in-UV path keeps
@@ -411,10 +429,10 @@ where
                 && start.elapsed() >= Duration::from_millis(UI_YIELD_FLOOR_MS)
                 && self.hooks.host_request_pending()
             {
-                break rsk_fido::PinEntry::Cancelled;
+                break rsk_sdk::PinEntry::Cancelled;
             }
             if start.elapsed() >= timeout {
-                break rsk_fido::PinEntry::Timeout;
+                break rsk_sdk::PinEntry::Timeout;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
         };
@@ -736,7 +754,7 @@ where
             confirm.zeroize();
             let expected = min.min(u8::MAX as usize) as u8;
             let n1 = match self.collect_pin(title, new_caption, min, expected, &mut new, true) {
-                rsk_fido::PinEntry::Entered(n) => n.min(new.len()),
+                rsk_sdk::PinEntry::Entered(n) => n.min(new.len()),
                 _ => break, // declined / timeout / host yield — nothing set
             };
             // Refuse a guessable PIN before the confirm step, matching the host set path.
@@ -753,7 +771,7 @@ where
                 &mut confirm,
                 true,
             ) {
-                rsk_fido::PinEntry::Entered(n) => n.min(confirm.len()),
+                rsk_sdk::PinEntry::Entered(n) => n.min(confirm.len()),
                 _ => break, // confirm declined / timeout / host yield
             };
             if n1 == n2 && rsk_crypto::ct_eq(&new[..n1], &confirm[..n2]) {
@@ -882,7 +900,7 @@ where
         loop {
             let n =
                 match self.collect_pin(title, caption, PIV_PIN_MIN, PIV_PIN_MIN as u8, buf, true) {
-                    rsk_fido::PinEntry::Entered(n) => n.min(buf.len()),
+                    rsk_sdk::PinEntry::Entered(n) => n.min(buf.len()),
                     _ => return None,
                 };
             // `n <= buf.len() == 8`, so `pad_pin` only returns `None` defensively. The padded
@@ -931,7 +949,7 @@ where
                 &mut new,
                 true,
             ) {
-                rsk_fido::PinEntry::Entered(n) => n.min(new.len()),
+                rsk_sdk::PinEntry::Entered(n) => n.min(new.len()),
                 _ => break None,
             };
             let n2 = match self.collect_pin(
@@ -942,7 +960,7 @@ where
                 &mut confirm,
                 true,
             ) {
-                rsk_fido::PinEntry::Entered(n) => n.min(confirm.len()),
+                rsk_sdk::PinEntry::Entered(n) => n.min(confirm.len()),
                 _ => break None,
             };
             if n1 == n2 && rsk_crypto::ct_eq(&new[..n1], &confirm[..n2]) {

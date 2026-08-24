@@ -114,6 +114,8 @@ pub struct Config {
     pub kv_total: u32,
     pub flash_size: u32,
     pub trace: bool,
+    /// Raw JSONL security snapshots for the phase-4 refinement gate.
+    pub security_trace: Option<PathBuf>,
     /// Present the Yubico identity: the USB VID/PID and descriptor strings over
     /// `--usbip`, the ATR, and the OpenPGP AID's manufacturer — as the
     /// `VIDPID=Yubikey5` build does. One identity or none: `ykman` finds a device
@@ -447,7 +449,7 @@ pub fn serve_display<P, T>(
 /// display's ambient loop can share this thread the way `status_task` shares the
 /// firmware's thread executor — two futures, one executor, interleaving at each
 /// other's await points.
-async fn serve<PR: rsk_device::UserPresence + 'static>(
+async fn serve<PR: rsk_sdk::UserPresence + 'static>(
     cfg: Config,
     jobs: JobSource,
     signals: Arc<Signals>,
@@ -456,6 +458,25 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     rng: &'static RefCell<EmuRng>,
     presence: &RefCell<PR>,
 ) {
+    #[cfg(not(feature = "security-trace"))]
+    if cfg.security_trace.is_some() {
+        eprintln!("emu: --security-trace requires --features security-trace");
+        return;
+    }
+    #[cfg(feature = "security-trace")]
+    let mut security_trace = match cfg.security_trace.as_ref() {
+        Some(path) => match crate::security_trace::Writer::open(path) {
+            Ok(writer) => Some(writer),
+            Err(error) => {
+                eprintln!(
+                    "emu: cannot open security trace {}: {error}",
+                    path.display()
+                );
+                return;
+            }
+        },
+        None => None,
+    };
     let platform = RefCell::new(EmuPlatform::new());
 
     let serial_id = cfg.serial;
@@ -514,11 +535,15 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
     });
     let vendor_platform = EmuVendorPlatform::default();
     let reboot_requested = vendor_platform.reboot.clone();
+    // One FIDO session state for the whole device, as the firmware worker holds it:
+    // the CTAPHID handler and the CCID FIDO applet borrow the same cell.
+    let fido_state = RefCell::new(rsk_fido::FidoState::new());
     let mut ctap = AppletHandler::new(
         fs,
         rng,
         &hooks,
         presence,
+        &fido_state,
         vendor_platform.clone(),
         serial_id,
         serial_hash,
@@ -530,6 +555,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
         rng,
         &hooks,
         presence,
+        &fido_state,
         &platform,
         vendor_platform,
         serial_id,
@@ -577,9 +603,40 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
         });
         let out = match req.job {
             Job::Cbor { cid, data } => {
+                #[cfg(feature = "security-trace")]
+                let trace_pre = if security_trace.is_some() {
+                    Some((
+                        ctap.security_trace_snapshot(),
+                        ctap.security_trace_abstract_token(),
+                    ))
+                } else {
+                    None
+                };
                 signals.begin(cid);
                 let body = ctap.handle_cbor(cid, &data, now_ms).to_vec();
                 signals.end();
+                #[cfg(feature = "security-trace")]
+                if let (Some(writer), Some((pre, abstract_pre))) =
+                    (security_trace.as_mut(), trace_pre)
+                {
+                    let post = ctap.security_trace_snapshot();
+                    let abstract_post = ctap.security_trace_abstract_token();
+                    if let Err(error) = writer.record(
+                        now_ms,
+                        cid,
+                        data.first().copied().unwrap_or(0),
+                        body.first().copied().unwrap_or(0),
+                        ctap.security_trace_builtin_uv(),
+                        request_record(&data),
+                        pre,
+                        post,
+                        abstract_pre,
+                        abstract_post,
+                    ) {
+                        eprintln!("emu: cannot write security trace: {error}");
+                        return;
+                    }
+                }
                 // The response buffer can hold a PIN token; the device scrubs it
                 // once the worker has handed the bytes off, so do it here.
                 ctap.scrub();
@@ -617,7 +674,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 body
             }
             Job::Apdu(data) => {
-                let body = ccid.handle_apdu(&data).to_vec();
+                let body = ccid.handle_apdu(&data, now_ms).to_vec();
                 ccid.scrub();
                 if cfg.trace {
                     eprintln!(
@@ -656,6 +713,16 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
             // does not, and the attach clock restarts — which is what reopens the
             // §6.6 reset window that a warm reboot deliberately does not.
             Job::Replug(_) => {
+                // A power cycle moves security state outside any CBOR boundary, so
+                // the trace has to carry it or the replay sees a discontinuity it
+                // cannot explain — and `PowerCut` is a model action either way.
+                #[cfg(feature = "security-trace")]
+                let trace_pre = security_trace.as_ref().map(|_| {
+                    (
+                        ctap.security_trace_snapshot(),
+                        ctap.security_trace_abstract_token(),
+                    )
+                });
                 ccid.reset_card();
                 power_up_bump();
                 hooks.borrow_mut().warm = false;
@@ -664,6 +731,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                     rng,
                     &hooks,
                     presence,
+                    &fido_state,
                     EmuVendorPlatform {
                         reboot: reboot_requested.clone(),
                     },
@@ -675,6 +743,25 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 ccid.refresh_enabled();
                 last_msg_cid = None;
                 links.attach.set(Instant::now());
+                #[cfg(feature = "security-trace")]
+                if let (Some(writer), Some((pre, abstract_pre))) =
+                    (security_trace.as_mut(), trace_pre)
+                    && let Err(error) = writer.record(
+                        now_ms,
+                        0,
+                        crate::security_trace::POWER_CYCLE,
+                        0,
+                        ctap.security_trace_builtin_uv(),
+                        crate::security_trace::RequestRecord::Silent,
+                        pre,
+                        ctap.security_trace_snapshot(),
+                        abstract_pre,
+                        ctap.security_trace_abstract_token(),
+                    )
+                {
+                    eprintln!("emu: cannot write security trace: {error}");
+                    return;
+                }
                 eprintln!("emu: replugged — fresh session, reset window open");
                 Some(Vec::new())
             }
@@ -688,7 +775,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
 
         // The worker's own sequencing, mirrored: a config write flips the dirty
         // latch and every gate has to see the new set before the next request.
-        if rsk_mgmt::take_dev_conf_dirty() {
+        if rsk_devconf::take_dev_conf_dirty() {
             ccid.refresh_enabled();
         }
         // Both reboot paths — the vendor applet's INS_REBOOT and the rescue
@@ -708,6 +795,7 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
                 rng,
                 &hooks,
                 presence,
+                &fido_state,
                 EmuVendorPlatform {
                     reboot: reboot_requested.clone(),
                 },
@@ -720,6 +808,35 @@ async fn serve<PR: rsk_device::UserPresence + 'static>(
             last_msg_cid = None;
             eprintln!("emu: warm reboot — RAM state dropped, the reset window stays shut");
         }
+    }
+}
+
+/// What the phase-4 replay reads out of a request, taken from the applet's own
+/// parser in every case. `Silent` for a command it reads nothing from, and for a
+/// body the device itself would refuse to decode — a request that never parsed
+/// has no answer to predict.
+#[cfg(feature = "security-trace")]
+fn request_record(data: &[u8]) -> crate::security_trace::RequestRecord {
+    use crate::security_trace::{RequestFlags, RequestRecord};
+    let Some((&cmd, params)) = data.split_first() else {
+        return RequestRecord::Silent;
+    };
+    match cmd {
+        rsk_fido::consts::CTAP_MAKE_CREDENTIAL => {
+            match rsk_fido::makecredential::assurance::trace_request_flags(params) {
+                Some((rk, pin_uv_auth)) => {
+                    RequestRecord::MakeCredential(RequestFlags { rk, pin_uv_auth })
+                }
+                None => RequestRecord::Silent,
+            }
+        }
+        rsk_fido::consts::CTAP_CLIENT_PIN => {
+            match rsk_fido::clientpin::assurance::trace_subcommand(params) {
+                Some(sub) => RequestRecord::ClientPin(sub),
+                None => RequestRecord::Silent,
+            }
+        }
+        _ => RequestRecord::Silent,
     }
 }
 

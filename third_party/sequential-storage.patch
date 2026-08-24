@@ -1,6 +1,7 @@
 # Local changes to sequential-storage 8.0.0, applied to the vendored copy under
-# third_party/sequential-storage/ and wired in via [patch.crates-io] in the root
-# and fuzz Cargo.toml. All confined to src/map.rs (MapItemIter::next and
+# third_party/sequential-storage/ and wired in via [patch.crates-io] in the root,
+# fuzz/ and tools/emu/ Cargo.toml — all three, or the emulator runs a different
+# KV store from the firmware. All confined to src/map.rs (MapItemIter::next and
 # remove_item_inner); the rest of the tree is byte-identical to the published 8.0.0
 # (verified: diff -rq against the crates.io source reports only src/map.rs differs).
 #

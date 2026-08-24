@@ -3,6 +3,10 @@
 
 use super::*;
 
+/// The printed digit order. Every case here is about geometry or dispatch, not about
+/// the scrambled layout, so they all read the pad the way a default device draws it.
+const ID: PinLayout = PinLayout::identity();
+
 #[test]
 fn clamp_passes_printable_ascii() {
     let l = Label::clamp(b"github.com");
@@ -156,33 +160,33 @@ fn pin_key_centers_hit_their_keys() {
         for col in 0..PIN_COLS {
             let r = pin_key_rect(col, row);
             let c = Point::new(r.x + PIN_KEY_W / 2, r.y + PIN_KEY_H / 2);
-            assert_eq!(hit_pin(c), Some(pin_grid_key(col, row)));
+            assert_eq!(hit_pin(c, &ID), Some(pin_grid_key(col, row, &ID)));
         }
     }
     // Layout: rows 0–2 are digits 1–9 in reading order; the bottom row is Del/0/OK.
-    assert_eq!(pin_grid_key(0, 0), PinKey::Digit(1));
-    assert_eq!(pin_grid_key(2, 2), PinKey::Digit(9));
-    assert_eq!(pin_grid_key(0, 3), PinKey::Del);
-    assert_eq!(pin_grid_key(1, 3), PinKey::Digit(0));
-    assert_eq!(pin_grid_key(2, 3), PinKey::Ok);
+    assert_eq!(pin_grid_key(0, 0, &ID), PinKey::Digit(1));
+    assert_eq!(pin_grid_key(2, 2, &ID), PinKey::Digit(9));
+    assert_eq!(pin_grid_key(0, 3, &ID), PinKey::Del);
+    assert_eq!(pin_grid_key(1, 3, &ID), PinKey::Digit(0));
+    assert_eq!(pin_grid_key(2, 3, &ID), PinKey::Ok);
 }
 
 #[test]
 fn pin_cancel_hits_and_gaps_select_nothing() {
     let c = PIN_CANCEL_RECT;
     assert_eq!(
-        hit_pin(Point::new(c.x + c.w / 2, c.y + c.h / 2)),
+        hit_pin(Point::new(c.x + c.w / 2, c.y + c.h / 2), &ID),
         Some(PinKey::Cancel)
     );
     // The gap between column 0 and column 1 selects nothing.
     let k = pin_key_rect(0, 0);
-    assert_eq!(hit_pin(Point::new(k.x + PIN_KEY_W + 1, k.y + 2)), None);
+    assert_eq!(hit_pin(Point::new(k.x + PIN_KEY_W + 1, k.y + 2), &ID), None);
     // Below the grid (bottom-left margin) selects nothing.
-    assert_eq!(hit_pin(Point::new(0, PANEL_H - 1)), None);
+    assert_eq!(hit_pin(Point::new(0, PANEL_H - 1), &ID), None);
     // The eye toggle, between the header and the grid, maps to Reveal.
     let e = PIN_EYE_RECT;
     assert_eq!(
-        hit_pin(Point::new(e.x + e.w / 2, e.y + e.h / 2)),
+        hit_pin(Point::new(e.x + e.w / 2, e.y + e.h / 2), &ID),
         Some(PinKey::Reveal)
     );
 }
@@ -245,6 +249,7 @@ fn security_rows_map_in_order() {
         SecurityEntry::DevicePin,
         SecurityEntry::FidoPin,
         SecurityEntry::PivPin,
+        SecurityEntry::ScramblePin,
         SecurityEntry::AuditLog,
         SecurityEntry::Backup,
         SecurityEntry::FactoryReset,
@@ -531,10 +536,220 @@ fn t9_groups_are_printable_and_have_distinct_chars() {
             seen[a as usize] = true;
         }
     }
+    // That every label has a glyph is asserted in `font_tests.rs`, where the atlas
+    // index is reachable: "is ASCII" was the right question with the wrong rule.
+}
+
+/// Every key grid on the panel is `origin + index * (size + gap)`, and thirteen
+/// of those operators were held by nothing (the reverse mutation pass, D2): the
+/// loop bounds in `hit_pin` and `hit_rename`, both `+` in `t9_key_rect`, the
+/// centring arithmetic in `T9_LEFT`, and `hit_del_hold` replaced outright.
+///
+/// Asserting that a key's own centre hits that key is NOT enough — a rect
+/// formula that is wrong consistently stays self-consistent, and the test moves
+/// with it. So the properties here are the ones a wrong formula breaks from the
+/// outside: every key lies inside the panel, columns advance left to right by
+/// exactly one gap, rows likewise, and a tap past the last row hits nothing.
+#[test]
+fn the_key_grids_stay_inside_the_panel_and_hit_only_their_own_key() {
+    let centre = |r: Rect| Point {
+        x: r.x + r.w / 2,
+        y: r.y + r.h / 2,
+    };
+
+    // --- the PIN pad -------------------------------------------------------
+    for row in 0..PIN_ROWS {
+        for col in 0..PIN_COLS {
+            let r = pin_key_rect(col, row);
+            assert!(
+                r.x + r.w <= PANEL_W,
+                "pin key ({row},{col}) runs off the panel"
+            );
+            assert_eq!(
+                hit_pin(centre(r), &ID),
+                Some(pin_grid_key(col, row, &ID)),
+                "the centre of pin key ({row},{col}) must select it"
+            );
+            if col > 0 {
+                let prev = pin_key_rect(col - 1, row);
+                assert_eq!(
+                    r.x,
+                    prev.x + prev.w + PIN_GAP_X,
+                    "pin columns must advance by exactly one gap"
+                );
+            }
+            if row > 0 {
+                let prev = pin_key_rect(col, row - 1);
+                assert_eq!(
+                    r.y,
+                    prev.y + prev.h + PIN_GAP_Y,
+                    "pin rows must advance by exactly one gap"
+                );
+            }
+        }
+    }
+    let last = pin_key_rect(PIN_COLS - 1, PIN_ROWS - 1);
+    assert_eq!(
+        hit_pin(
+            Point {
+                x: centre(last).x,
+                y: last.y + last.h + PIN_GAP_Y + 1,
+            },
+            &ID
+        ),
+        None,
+        "a tap below the last pin row must select nothing"
+    );
+    assert_eq!(
+        hit_pin(
+            Point {
+                x: last.x + last.w + PIN_GAP_X + 1,
+                y: centre(last).y,
+            },
+            &ID
+        ),
+        None,
+        "nor one to the right of the last pin column"
+    );
+
+    // --- the T9 rename keyboard -------------------------------------------
+    assert_eq!(
+        T9_LEFT,
+        (PANEL_W - (T9_COLS * T9_KEY_W + (T9_COLS - 1) * T9_GAP_X)) / 2,
+        "the T9 grid must be centred on the panel"
+    );
+    for row in 0..T9_ROWS {
+        for col in 0..T9_COLS {
+            let r = t9_key_rect(row, col);
+            assert!(
+                r.x + r.w <= PANEL_W,
+                "t9 key ({row},{col}) runs off the panel"
+            );
+            assert!(
+                hit_rename(centre(r)).is_some(),
+                "the centre of t9 key ({row},{col}) must select a key"
+            );
+            if col > 0 {
+                let prev = t9_key_rect(row, col - 1);
+                assert_eq!(r.x, prev.x + prev.w + T9_GAP_X, "t9 columns");
+            }
+            if row > 0 {
+                let prev = t9_key_rect(row - 1, col);
+                assert_eq!(r.y, prev.y + prev.h + T9_GAP_Y, "t9 rows");
+            }
+        }
+    }
+    let last = t9_key_rect(T9_ROWS - 1, T9_COLS - 1);
+    assert_eq!(
+        hit_rename(Point {
+            x: centre(last).x,
+            y: last.y + last.h + T9_GAP_Y + 1,
+        }),
+        None,
+        "a tap below the last t9 row must select nothing"
+    );
+    assert_eq!(
+        hit_rename(Point {
+            x: last.x + last.w + T9_GAP_X + 1,
+            y: centre(last).y,
+        }),
+        None,
+        "nor one to the right of the last t9 column"
+    );
+
+    // --- the hold-to-delete band ------------------------------------------
+    assert!(hit_del_hold(centre(DEL_HOLD_RECT)), "its own centre");
     assert!(
-        T9_KEY_LABELS
-            .iter()
-            .all(|(digit, letters)| digit.is_ascii() && letters.is_ascii()),
-        "T9 key labels must use glyphs from the ASCII font atlas"
+        !hit_del_hold(Point {
+            x: DEL_HOLD_RECT.x,
+            y: DEL_HOLD_RECT.y + DEL_HOLD_RECT.h + 1,
+        }),
+        "a point below the band is not the band"
+    );
+}
+
+/// The invariant the scrambled pad rests on: the digit PAINTED in a cell is the digit
+/// the hit-test returns for that cell. Paint and dispatch read `pin_grid_key` through
+/// the same `PinLayout` value, so this holds for any layout — but only while they keep
+/// reading the same one, which is what a second table would quietly stop doing.
+#[test]
+fn a_tap_types_the_digit_the_cell_shows() {
+    for seed in 0u8..24 {
+        let entropy = [seed.wrapping_mul(37).wrapping_add(11); PIN_SHUFFLE_ENTROPY];
+        for layout in [PinLayout::identity(), PinLayout::shuffled(&entropy)] {
+            for row in 0..PIN_ROWS {
+                for col in 0..PIN_COLS {
+                    let r = pin_key_rect(col, row);
+                    let centre = Point::new(r.x + PIN_KEY_W / 2, r.y + PIN_KEY_H / 2);
+                    assert_eq!(
+                        hit_pin(centre, &layout),
+                        Some(pin_grid_key(col, row, &layout)),
+                        "cell ({col},{row}) paints one key and taps another"
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// A layout is a permutation, not a resampling: every digit appears exactly once, or a
+/// pad would be missing a digit the owner needs and showing another twice.
+#[test]
+fn a_shuffled_layout_still_carries_every_digit() {
+    for seed in 0u8..64 {
+        let mut entropy = [0u8; PIN_SHUFFLE_ENTROPY];
+        for (i, b) in entropy.iter_mut().enumerate() {
+            *b = seed.wrapping_mul(31).wrapping_add(i as u8);
+        }
+        let layout = PinLayout::shuffled(&entropy);
+        let mut seen = [false; 10];
+        for row in 0..PIN_ROWS {
+            for col in 0..PIN_COLS {
+                if let PinKey::Digit(d) = pin_grid_key(col, row, &layout) {
+                    assert!(!seen[d as usize], "digit {d} appears twice (seed {seed})");
+                    seen[d as usize] = true;
+                }
+            }
+        }
+        assert!(seen.iter().all(|&s| s), "a digit is missing (seed {seed})");
+    }
+}
+
+/// The setting is off by default, so the shipped pad must be exactly the pad that
+/// shipped before it: `identity` is the printed order and nothing else.
+#[test]
+fn the_default_layout_is_the_printed_order() {
+    let id = PinLayout::identity();
+    assert_eq!(PinLayout::default(), id);
+    assert_eq!(PinPad::new(0).layout, id);
+    for row in 0..3 {
+        for col in 0..PIN_COLS {
+            assert_eq!(
+                pin_grid_key(col, row, &id),
+                PinKey::Digit((row * PIN_COLS + col + 1) as u8)
+            );
+        }
+    }
+    assert_eq!(pin_grid_key(1, 3, &id), PinKey::Digit(0));
+}
+
+/// Scrambling has to actually scramble: over a spread of entropy the pad must not keep
+/// coming back in the printed order, or the setting is a no-op nobody would notice.
+#[test]
+fn shuffling_moves_the_digits() {
+    let moved = (0u8..64)
+        .filter(|seed| {
+            let mut entropy = [0u8; PIN_SHUFFLE_ENTROPY];
+            for (i, b) in entropy.iter_mut().enumerate() {
+                *b = seed
+                    .wrapping_mul(97)
+                    .wrapping_add((i as u8).wrapping_mul(13));
+            }
+            PinLayout::shuffled(&entropy) != PinLayout::identity()
+        })
+        .count();
+    assert!(
+        moved >= 60,
+        "only {moved} of 64 layouts differed from the printed order"
     );
 }

@@ -79,6 +79,12 @@ pub const CONFIG_PHY_LED_BRIGHTNESS: u64 = 0x76a85945985d02fd; // param = bright
 pub const CONFIG_PHY_LED_GPIO: u64 = 0x7b392a394de9f948; // param = gpio u8
 pub const CONFIG_PHY_OPTIONS: u64 = 0x269f3b09eceb805f; // param = opts u16 bitmask
 
+/// The vendor-facilitated (type 1) enterprise-attestation RP list — rp ids as text
+/// at `subCommandParams` key 4, hashed on the device, empty clearing the record.
+/// A *vendor* arm because that list is vendor-facilitated by definition (CTAP 2.1
+/// §6.1.2); the standard subcommand numbers are the spec's to assign, not ours.
+pub const CONFIG_EA_RPIDS: u64 = 0x0e6841934e719be7;
+
 // authenticatorClientPIN subcommands compared at more than one site (the rest
 // are dispatched once as literals).
 pub const CP_GET_PIN_TOKEN: u64 = 0x05;
@@ -115,9 +121,9 @@ pub const ALG_ED25519: i64 = -19; // EdDSA Ed25519
 pub const ALG_ESP384: i64 = -51; // ECDSA-SHA384 P-384
 pub const ALG_ESP512: i64 = -52; // ECDSA-SHA512 P-521
 
-// ML-DSA (FIPS 204) COSE identifiers, from draft-ietf-cose-dilithium. ML-DSA-44
-// (-48) and ML-DSA-65 (-49) have enabled in-tree backends; ML-DSA-87 (-50)
-// overflows the RP2350 stack and is recognized but unsupported.
+// ML-DSA (FIPS 204) COSE identifiers, registered by RFC 9964 (the
+// draft-ietf-cose-dilithium values, now permanent and Recommended). All three
+// parameter sets have enabled in-tree backends.
 pub const ALG_MLDSA44: i64 = -48;
 pub const ALG_MLDSA65: i64 = -49;
 pub const ALG_MLDSA87: i64 = -50;
@@ -138,6 +144,9 @@ pub const CURVE_MLDSA44: u8 = 0x2C;
 /// Internal key-slot id for ML-DSA-65 credentials (0x2D = 45), the sibling of
 /// [`CURVE_MLDSA44`] for the higher-security parameter set.
 pub const CURVE_MLDSA65: u8 = 0x2D;
+/// Internal key-slot id for ML-DSA-87 credentials (0x2E = 46), completing the
+/// [`CURVE_MLDSA44`] family.
+pub const CURVE_MLDSA87: u8 = 0x2E;
 
 // authenticatorData flag bits.
 pub const FLAG_UP: u8 = 0x01; // user present
@@ -199,6 +208,34 @@ pub const MAX_CREDENTIAL_COUNT_IN_LIST: u64 = 16;
 /// and excludeList parsers drop it rather than match on its id.
 pub const PUBLIC_KEY_TYPE: &str = "public-key";
 
+/// The `AuthenticatorTransport` values the FIDO applet answers on: getInfo's
+/// `transports` (0x09) and `transportsForReset` (0x1A) are the same list, because a
+/// reset is reachable exactly where the applet is. No FIDO AID is routed onto CCID.
+pub const TRANSPORTS: [&str; 1] = ["usb"];
+
+/// The version string U2F 1.2 §3.1.1 fixes: the answer to the CTAP1 VERSION command
+/// and to a SELECT of [`FIDO_AID`]. A host reads it as "CTAP1 is served here" —
+/// `python-fido2`'s `CtapPcscDevice` sets its NMSG capability on exactly these bytes.
+pub const U2F_VERSION: &[u8] = b"U2F_V2";
+
+/// Length of getInfo's two encrypted members — `encIdentifier` (0x19) and
+/// `encCredStoreState` (0x1E): a 16-byte IV followed by one AES-128-CBC block.
+/// Both plaintexts are 128 bits, so the ciphertext is exactly one block —
+/// `aes_encrypt` pads nothing.
+pub const ENC_GETINFO_MEMBER_LEN: usize = 16 + 16;
+
+/// The `encCredStoreState` plaintext: a 128-bit tag over the discoverable-credential
+/// set, advanced once per create / delete / updateUserInformation. Read as its own
+/// record so it survives a power cycle — `Fs::write_gen` restarts at 0 on every boot
+/// and would let a changed store read as unchanged.
+pub const CRED_STATE_LEN: usize = 16;
+
+/// The attestation statement format identifiers this device names on the wire:
+/// `packed` for every credential it attests (getInfo 0x16 and makeCredential `fmt`),
+/// `none` for the empty statement `attestationFormatsPreference` can ask for.
+pub const ATT_FMT_PACKED: &str = "packed";
+pub const ATT_FMT_NONE: &str = "none";
+
 // pinUvAuthParam MAC covers subCommand ‖ subCommandParams; cap on the raw bytes
 // (vendor.rs deliberately overrides with its own larger cap). A maximal legal
 // updateUserInformation — 42-byte resident credId + 64-byte user.id + 64-byte
@@ -236,6 +273,10 @@ pub const MAX_RESIDENT_CREDENTIALS: u16 = 256;
 /// Max RP-id hashes the setMinPINLength `minPinLengthRPIDs` list keeps (getInfo
 /// `maxRPIDsForSetMinPINLength`, 0x10).
 pub const MAX_MIN_PIN_RPIDS: usize = 8;
+/// Max RP-id hashes the vendor-facilitated enterprise-attestation list keeps.
+/// Yubico's 5.8 holds 16; eight is what [`MAX_RAW_SUBPARA`] leaves room for once
+/// the ids are text on the wire, and the list is refused — never truncated — past it.
+pub const MAX_EA_RPIDS: usize = 8;
 
 // FIDO flash file ids (device-local; fids never cross the wire).
 // Audit journal (journal.rs) — deliberately outside every reset range: FIDO's
@@ -261,6 +302,15 @@ pub const EF_ATT_KEY: KeyFid = KeyFid::new(0xCE10); // org attestation P-256 sca
 pub const EF_ATT_CHAIN: u16 = 0xCE11; // packed DER chain: count ‖ (len LE ‖ der)*
 /// `enableEnterpriseAttestation` — persists until reset (CTAP 2.1), hence flash.
 pub const EF_EA_ENABLED: u16 = 0xCE12;
+/// The vendor-facilitated (type 1) enterprise-attestation RP list: packed
+/// `sha256(rpId)`, `n * 32` bytes, `n <= MAX_EA_RPIDS`. **Absent = empty**, which is
+/// what every already-provisioned device reads and is exactly today's behaviour.
+/// 0xCE14 is `rsk_fs::EF_HARDENED`, hence the gap.
+pub const EF_EA_RPIDS: u16 = 0xCE15;
+/// Where the [`CRED_STATE_LEN`] credential-store tag lives. **Absent reads as
+/// all-zero**, which is the state of a store nothing has ever written to — a fresh
+/// device, and one just reset.
+pub const EF_CRED_STATE: u16 = 0xCE16;
 /// `alwaysUv` state, read via `crate::config::always_uv_enabled` — tri-state:
 /// absent = the compile default (`DEFAULT_ALWAYS_UV`), `[1]` = on, `[0]` = explicit
 /// off. Do NOT probe with `has_data` (a present `[0]` would read as on). Persists
@@ -322,6 +372,11 @@ pub const MIN_PIN_LENGTH: u8 = 4;
 /// The `fips-profile` and `strong-pin` builds raise the PIN floor to six code points.
 #[cfg(any(feature = "fips-profile", feature = "strong-pin"))]
 pub const MIN_PIN_LENGTH: u8 = 6;
+
+/// Whether this build enforces a PIN rule BEYOND the length floor — getInfo's
+/// `pinComplexityPolicy` (0x1B). True where `clientpin::pin_is_trivial` refuses a
+/// repeated code point or a ±1 run; a raised `MIN_PIN_LENGTH` alone is not one.
+pub const PIN_COMPLEXITY_POLICY: bool = cfg!(any(feature = "fips-profile", feature = "strong-pin"));
 
 /// pinUvAuthToken rolling inactivity window (CTAP 2.1 §6.5.5.7 initial usage
 /// time limit): each use of the token pushes its deadline out by this much; if

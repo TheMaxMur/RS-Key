@@ -15,7 +15,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// Apply a brightness level (`1..=BRIGHTNESS_LEVELS`) to the backlight PWM and
     /// remember it for the menu's gauge.

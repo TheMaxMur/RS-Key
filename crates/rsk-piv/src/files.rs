@@ -7,9 +7,9 @@
 //! byte of the `5FC1xx` object id) — the wire slot is the fid low byte everywhere.
 
 use rsk_crypto::Device;
+use rsk_ec::{Curve, PrivKey};
 use rsk_fs::{Fs, KeyFid, Storage};
-use rsk_openpgp::Rng;
-use rsk_openpgp::keys::{Curve, PrivKey};
+use rsk_sdk::Rng;
 use rsk_sdk::Sw;
 use zeroize::Zeroize;
 
@@ -345,10 +345,10 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
         }
     }
     if !fs.has_key(key_fid(SLOT_ATTESTATION)) {
-        let key = PrivKey::generate(Curve::P384, rng).ok_or(Sw::EXEC_ERROR)?;
+        let key = PrivKey::generate(Curve::P384, &mut crate::EcRng(rng)).ok_or(Sw::EXEC_ERROR)?;
         seal::store_ec_key(dev, fs, rng, key_fid(SLOT_ATTESTATION), &key)?;
         let mut point = [0u8; MAX_EC_POINT];
-        let plen = key.public_point(&mut point)?;
+        let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
         let _ = fs.put(pubkey_fid(SLOT_ATTESTATION), &point[..plen]);
         let mut cert = [0u8; x509::MAX_CERT];
         let n = x509::build_cert(

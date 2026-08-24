@@ -28,7 +28,7 @@ flowchart TB
       e["per-core prime sieves (×2)"]
       e2["core1 stack limit (MSPLIM)"]
     end
-    subgraph asm["rsk-rsa-asm"]
+    subgraph asm["rsk-rsa"]
       f["modexp / sign_crt / modexp_pub FFI (×3)"]
     end
     subgraph wipe["rsk-wipe"]
@@ -78,8 +78,8 @@ executor and embassy keeps the trait object `!Send`.
 unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
 ```
 
-A 128 KiB heap exists solely for the `rsa` crate's big integers (the only
-allocating dependency). `init`'s contract (call once, with exclusive access
+A 128 KiB heap exists solely for `rsk-rsa`'s big integers (`num-bigint-dig`,
+the only allocating dependency). `init`'s contract (call once, with exclusive access
 to the region) is met: it runs once at the top of `main`, on a dedicated
 static buffer used by nothing else.
 *Safe alternative:* none; every embedded allocator initializes this way.
@@ -189,7 +189,7 @@ the device until it is replugged. That is the trade being made — a wedge a rep
 clears, rather than a silent write into whatever `.bss` the linker put below,
 issued by the routine that is at that moment generating and storing a key.
 
-## RSA assembly FFI (`crates/rsk-rsa-asm/src/lib.rs`)
+## RSA assembly FFI (`crates/rsk-rsa/src/lib.rs`)
 
 ### 16–18. The modexp / CRT-sign calls
 
@@ -223,7 +223,7 @@ never ships inside the firmware.
 
 ## Build-time (not runtime)
 
-- `crates/rsk-rsa-asm/build.rs`: `unsafe { env::set_var(...) }` forces the
+- `crates/rsk-rsa/build.rs`: `unsafe { env::set_var(...) }` forces the
   ARM cross-compiler for the vendored C. Build scripts are single-threaded at
   that point (the call is host-side, never in the image).
 - `firmware/build.rs`: `unsafe { env::set_var(k, v) }` copies the selected

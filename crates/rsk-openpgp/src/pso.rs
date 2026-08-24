@@ -15,8 +15,8 @@ use zeroize::Zeroize;
 use crate::consts::*;
 use crate::importdata::tag_len;
 use crate::keys::{
-    inc_sig_count, load_aes_key, load_ec_key, load_rsa_crt, load_rsa_key, rsa_decipher,
-    rsa_sign_crt,
+    ec_sw, inc_sig_count, load_aes_key, load_ec_key, load_rsa_crt, load_rsa_key, rsa_decipher,
+    rsa_decipher_legacy, rsa_sw,
 };
 use crate::pin::Session;
 use crate::{Rng, UserPresence, check_uif};
@@ -107,26 +107,37 @@ fn try_pso<S: Storage>(
     if algo0 == ALGO_RSA {
         if (p1, p2) == (0x9E, 0x9A) {
             let crt = load_rsa_crt(dev, fs, sess, pk_fid)?;
-            let n = rsa_sign_crt(&crt, data, rng, out)?;
+            let n = rsk_rsa::pkcs1v15::rsa_sign_crt(&crt, data, &mut crate::keys::RsaRng(rng), out)
+                .map_err(rsa_sw)?;
             inc_sig_count(fs, sess)?;
             return Ok(n);
         }
         // DECIPHER: PKCS#1 v1.5 decrypt the ciphertext that follows the leading
-        // OpenPGP padding-indicator byte.
-        let key = load_rsa_key(dev, fs, sess, pk_fid)?;
-        return rsa_decipher(&key, rng, data, out);
+        // OpenPGP padding-indicator byte, on the same asm CRT core as PSO:CDS.
+        // `WRONG_LENGTH` is `rsk_rsa::crt::crt_from_plain`'s one refusal — a
+        // legacy `P‖Q` blob whose prime width is not a 32-multiple — and only
+        // such a key, which cannot sign either, falls back to the software
+        // private op rather than lose the ability to read its own messages.
+        return match load_rsa_crt(dev, fs, sess, pk_fid) {
+            Ok(crt) => rsa_decipher(&crt, rng, data, out),
+            Err(e) if e == Sw::WRONG_LENGTH => {
+                let key = load_rsa_key(dev, fs, sess, pk_fid)?;
+                rsa_decipher_legacy(&key, rng, data, out)
+            }
+            Err(e) => Err(e),
+        };
     }
 
     let key = load_ec_key(dev, fs, sess, pk_fid)?;
     if (p1, p2) == (0x9E, 0x9A) {
         // COMPUTE SIGNATURE over the supplied digest / message.
-        let n = key.sign(data, rng, out)?;
+        let n = key.sign(data, out).map_err(ec_sw)?;
         inc_sig_count(fs, sess)?;
         Ok(n)
     } else {
         // DECIPHER (ECDH): extract the peer public point and agree.
         let point = parse_ecdh_point(data).ok_or(Sw::WRONG_DATA)?;
-        key.ecdh(point, out)
+        key.ecdh(point, out).map_err(ec_sw)
     }
 }
 

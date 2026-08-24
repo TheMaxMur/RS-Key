@@ -10,10 +10,11 @@ the mdBook site.
 - Prefer **SVG** for diagrams (crisp, tiny, no theme baked in), **PNG** for
   screenshots, **GIF/APNG** for motion. Keep binaries small: the versioned site
   duplicates `docs/` per build.
-- Diagrams are hand-authored and self-contained (their own light card, so they
-  read on both the light `rust` and dark `ayu` themes; mdBook embeds SVG as an
-  `<img>`, which does not inherit page CSS). Palette: two ramps only. Rust for
-  the firmware/code, teal for the KV store.
+- Diagrams are hand-authored unless the Source column says **generated**, and
+  self-contained (their own light card, so they read on both the light `rust`
+  and dark `ayu` themes; mdBook embeds SVG as an `<img>`, which does not inherit
+  page CSS). Palette: two ramps only. Rust for the firmware/code, teal for the
+  KV store.
 - Third-party screenshots (browser dialogs, `ykman`, GnuPG, ...) keep their
   origin noted here.
 
@@ -24,10 +25,10 @@ the mdBook site.
 | `flash-map-sizes.svg` | 4 MB vs 16 MB layout (how `FLASH_SIZE` scales it) | original — from `firmware/build.rs` |
 | `ctaphid-frame.svg` | CTAPHID 64-byte init + continuation frame layout | original — from `protocol.md` §1.2 / `tools/rsk/ctaphid.py` |
 | `apdu-cases.svg` | ISO-7816 short-APDU cases 1–4 (header, Lc, data, Le) | original — from `protocol.md` §1.1 / `tools/rsk/ccid.py` |
-| `phy-record.svg` | EF_PHY TLV record + a worked three-record example | original — from `crates/rsk-rescue/src/phy.rs` |
+| `phy-record.svg` | EF_PHY TLV record + a worked three-record example | original — from `crates/rsk-phy/src/lib.rs` |
 | `cred-box.svg` | FIDO credential box + 42-byte resident id byte layout | original — from `crates/rsk-fido/src/credential.rs` |
 | `boot-flow.svg` | Boot sequence: bootrom → provision (pre-attach) → serve | original — from `firmware/src/main.rs` |
-| `crate-graph.svg` | Crate dependency layers (binary → applets → platform libs) | original — from the workspace `Cargo.toml` manifests |
+| `crate-graph.svg` | Crate dependency layers (binaries → composition roots → applets → shared records → platform → crypto facade → algorithms) | **generated** — `python scripts/crate_graph.py`, from the workspace `Cargo.toml` manifests; the gate fails when it is stale |
 | `otp-fuse-map.svg` | OTP rows RS-Key provisions, by page + write path | original — from `tools/rsk/otp.py` / `secureboot.py` |
 | `secure-boot-chain.svg` | Host sign → BOOTSEL flash → bootrom verify chain | original — from `production.md` / `picotool seal` |
 | `rollback-timeline.svg` | 48-bit rollback thermometer + boot decision | original — from `anti-rollback.md` |

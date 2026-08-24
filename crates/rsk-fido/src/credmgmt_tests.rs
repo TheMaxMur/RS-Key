@@ -229,7 +229,12 @@ fn cm_next(subcmd: u8) -> std::vec::Vec<u8> {
     std::vec![0xA1, 0x01, subcmd]
 }
 
-fn run(fs: &mut Fs<RamStorage>, state: &mut FidoState, req: &[u8], out: &mut [u8]) -> CtapResult {
+fn run<S: rsk_fs::Storage>(
+    fs: &mut Fs<S>,
+    state: &mut FidoState,
+    req: &[u8],
+    out: &mut [u8],
+) -> CtapResult {
     let mut rng = SeqRng(7);
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
@@ -773,6 +778,124 @@ fn delete_credential_drops_count_and_rp() {
     )
     .unwrap();
     assert!(!rp_present(&mut fs, &mut state, &other));
+}
+
+/// getInfo's `encCredStoreState` (0x1E) is only worth anything if the tag under it
+/// moves on **every** change to the discoverable set — a platform that trusts a
+/// stale tag keeps a cache the device has already invalidated. This drives the real
+/// commands rather than the bump helper: the helper being correct says nothing about
+/// whether the three host paths call it. The on-device delete is the fourth path and
+/// has its own test, in `passkeys_tests.rs`.
+#[test]
+fn every_credential_mutation_moves_the_store_tag() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, mut rng) = setup();
+    let empty = cred_store_state(&mut fs);
+    assert_eq!(empty, [0u8; 16], "a store nothing has written to is zero");
+
+    let (id_a, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let after_create = cred_store_state(&mut fs);
+    assert_ne!(after_create, empty, "makeCredential must move the tag");
+
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 512];
+
+    // A read is not a change: enumerating must leave the tag exactly where it was.
+    let rp_hash = sha256(b"example.com");
+    run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x04, Some(&subpara_rpidhash(&rp_hash)), &TOKEN),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(
+        cred_store_state(&mut fs),
+        after_create,
+        "enumerateCredentials changed nothing and must say so"
+    );
+
+    run(
+        &mut fs,
+        &mut state,
+        &cm_request(
+            0x07,
+            Some(&subpara_update(&id_a, &[1, 1], "alice2", "Alice Two")),
+            &TOKEN,
+        ),
+        &mut out,
+    )
+    .unwrap();
+    let after_update = cred_store_state(&mut fs);
+    assert_ne!(
+        after_update, after_create,
+        "updateUserInformation leaves the slot count alone, so nothing but the tag reports it"
+    );
+
+    run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x06, Some(&subpara_cred(&id_a)), &TOKEN),
+        &mut out,
+    )
+    .unwrap();
+    assert_ne!(
+        cred_store_state(&mut fs),
+        after_update,
+        "deleteCredential must move the tag"
+    );
+}
+
+/// The tag must be *stored*, not counted in RAM. `Fs::write_gen` — the candidate the
+/// plan named — restarts at zero on every boot, so a store that changed across a
+/// replug would read as unchanged and a platform would keep a cache the device had
+/// already invalidated. A remount is that boot: the tag is read back by a filesystem
+/// that has never seen the write.
+#[test]
+fn the_store_tag_survives_a_remount() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let live = cred_store_state(&mut fs);
+    assert_ne!(live, [0u8; 16]);
+
+    let mut fs = Fs::new(fs.into_storage());
+    assert_eq!(
+        cred_store_state(&mut fs),
+        live,
+        "power is what a platform's cache has to survive"
+    );
+}
+
+/// A refused mutation must not leave the tag where a successful one would have — but
+/// it may move it, and that is the direction to be wrong in: the bump is written
+/// ahead of the change it describes, so what a failure (or a power cut) leaves is a
+/// tag that over-reports. The platform re-enumerates once; the alternative is a
+/// cache nothing corrects.
+#[test]
+fn a_refused_delete_never_under_reports() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let before = cred_store_state(&mut fs);
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 256];
+    let bogus = [0u8; CRED_RESIDENT_LEN];
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut state,
+            &cm_request(0x06, Some(&subpara_cred(&bogus)), &TOKEN),
+            &mut out
+        ),
+        Err(CtapError::NoCredentials)
+    );
+    // It never reached the bump — the lookup refused first — so the tag stands. What
+    // matters is the direction: it must not have moved *backwards*.
+    assert_eq!(cred_store_state(&mut fs), before);
 }
 
 #[test]
@@ -1914,4 +2037,198 @@ fn the_protocol_is_judged_before_the_token_and_absent_is_not_zero() {
         run(&mut fs, &mut state, &[0xA1, 0x01, 0x01], &mut out),
         Err(CtapError::PuatRequired)
     );
+}
+
+/// `Storage` whose MUTATING ops — `write` and `remove` both — start failing after
+/// `budget` successes and never recover: a power cut inside `deleteCredential`,
+/// which is two records' worth of them. The registration twin
+/// (`credential_tests::FailWriteAfter`) fails writes only; a delete's tear points
+/// are removes, and `Fs::delete` interleaves a *swallowed* `EF_META` write with
+/// the backend remove, so a write-only budget never lands between the two deletes.
+struct TearMutatingAfter {
+    inner: RamStorage,
+    budget: usize,
+}
+
+impl TearMutatingAfter {
+    fn spend(&mut self) -> rsk_sdk::error::Result<()> {
+        if self.budget == 0 {
+            return Err(rsk_sdk::error::Error::NoMemory);
+        }
+        self.budget -= 1;
+        Ok(())
+    }
+}
+
+impl rsk_fs::Storage for TearMutatingAfter {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.spend()?;
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.spend()?;
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+/// A torn `deleteCredential` must never strand a live credential whose `EF_RP`
+/// entry is already gone: the shipped order deletes `EF_CRED` first, so every
+/// tear leaves at worst an orphan RP record — invisible and reclaimed — never an
+/// unmanageable credential. Asserted for EVERY mutating-op budget, over a
+/// sole-credential RP so `decrement_rp` takes its delete path.
+///
+/// Co-refutation measured this as the pass's one GAP: the model's
+/// `BugDeleteRpBeforeCred` (`NoUnmanageableCredential`, RED at 111 503 states)
+/// flipped the order and every host test stayed green — the registration twin
+/// tears writes, and no harness tore a delete. This is that harness.
+/// The other half of the same slot: an RP with TWO credentials takes
+/// `decrement_rp`'s write-back path rather than its delete path, and that `put`
+/// is a fourth `EF_RP + j` nothing exercised — the sole-credential tests never
+/// reach it, and at one slot the sign would not matter anyway.
+#[test]
+fn deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "first.example", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "second.example", &[2, 2], "bob");
+    let (cred_id, ..) = register(&mut fs, &mut rng, "second.example", &[3, 3], "carol");
+    let count_before = {
+        let mut buf = [0u8; 256];
+        let n = fs.read(EF_RP + 1, &mut buf).unwrap();
+        assert!(n >= 1);
+        buf[0]
+    };
+    assert!(
+        count_before >= 2,
+        "the second relying party holds two credentials"
+    );
+
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x06, Some(&subpara_cred(&cred_id)), &TOKEN),
+        &mut out,
+    )
+    .unwrap();
+
+    let mut buf = [0u8; 256];
+    let n = fs
+        .read(EF_RP + 1, &mut buf)
+        .expect("one credential of two went, so the slot must survive");
+    assert_eq!(
+        buf[0],
+        count_before - 1,
+        "the write-back must land on slot 1, decremented by exactly one"
+    );
+    assert!(n >= 1);
+    assert!(fs.has_data(EF_RP), "the first relying party is untouched");
+}
+
+/// Every index in `decrement_rp` is `EF_RP + j`, and every one of them survived
+/// the suite (the reverse mutation pass, D2): read, delete, nickname-delete and
+/// write-back alike could be `EF_RP - j` and nothing noticed. The reason is the
+/// same one `formal/scopes.txt` records one layer up — the tests ran at
+/// cardinality ONE, where `EF_RP + 0` and `EF_RP - 0` are the same file. So does
+/// the match: `m >= RP_PREFIX && hash == wanted` relaxed to `||` matches on
+/// LENGTH alone, which at one slot is still the right slot.
+///
+/// Two relying parties, and the delete must land on the second.
+#[test]
+fn deleting_a_credential_decrements_its_own_rp_slot_and_no_other() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "first.example", &[1, 1], "alice");
+    let (cred_id, ..) = register(&mut fs, &mut rng, "second.example", &[2, 2], "bob");
+    assert!(fs.has_data(EF_RP), "slot 0 holds the first relying party");
+    assert!(fs.has_data(EF_RP + 1), "slot 1 holds the second");
+    let first_before = {
+        let mut buf = [0u8; 256];
+        let n = fs.read(EF_RP, &mut buf).unwrap();
+        buf[..n].to_vec()
+    };
+    // A device-local nickname on each slot: its delete rides the RP delete and
+    // carries the same index, so it needs a second slot to be wrong in.
+    fs.put(crate::consts::EF_RPNICK, &[0xAA; 16]).unwrap();
+    fs.put(crate::consts::EF_RPNICK + 1, &[0xBB; 16]).unwrap();
+
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x06, Some(&subpara_cred(&cred_id)), &TOKEN),
+        &mut out,
+    )
+    .unwrap();
+
+    assert!(
+        !fs.has_data(EF_RP + 1),
+        "the sole credential of the second relying party went, so its slot must"
+    );
+    let mut buf = [0u8; 256];
+    let n = fs
+        .read(EF_RP, &mut buf)
+        .expect("slot 0 must still be there");
+    assert_eq!(
+        &buf[..n],
+        &first_before[..],
+        "the first relying party's record must be untouched, byte for byte"
+    );
+    assert!(
+        !fs.has_data(crate::consts::EF_RPNICK + 1),
+        "the gone relying party's nickname must go with it"
+    );
+    assert!(
+        fs.has_data(crate::consts::EF_RPNICK),
+        "and the surviving one must keep its own"
+    );
+}
+
+#[test]
+fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
+    let (mut fs, mut rng) = setup();
+    let (cred_id, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let base = fs.into_storage();
+
+    let mut saw_torn = false;
+    for budget in 0..8 {
+        let mut fs = Fs::new(TearMutatingAfter {
+            inner: base.clone(),
+            budget,
+        });
+        fs.scan();
+        let mut state = armed(PERM_CM);
+        let mut out = [0u8; 256];
+        let r = run(
+            &mut fs,
+            &mut state,
+            &cm_request(0x06, Some(&subpara_cred(&cred_id)), &TOKEN),
+            &mut out,
+        );
+        if r.is_err() {
+            saw_torn = true;
+        }
+        // Power back on: same medium, fresh caches, no more failures.
+        let mut medium = fs.into_storage();
+        medium.budget = usize::MAX;
+        let mut fs = Fs::new(medium);
+        fs.scan();
+        if fs.has_data(EF_CRED) {
+            assert!(
+                fs.has_data(EF_RP),
+                "budget {budget} left a live credential with no EF_RP record — \
+                 unmanageable by every enumeration and revocation surface"
+            );
+        }
+    }
+    assert!(saw_torn, "vacuous: no budget tore the delete");
 }

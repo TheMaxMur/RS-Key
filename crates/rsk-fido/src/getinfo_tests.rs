@@ -12,7 +12,10 @@ use minicbor::Decoder;
 /// Decode the advertised `algorithms` (0x0A) COSE ids from a getInfo response.
 fn advertised_algs() -> std::vec::Vec<i64> {
     let mut out = [0u8; 1024];
-    let n = get_info(false, 6, false, false, false, false, 256, &mut out).unwrap();
+    let n = get_info(
+        false, 6, false, false, false, false, 256, None, None, &mut out,
+    )
+    .unwrap();
     let mut d = Decoder::new(&out[..n]);
     let entries = d.map().unwrap().unwrap();
     let mut algs = std::vec::Vec::new();
@@ -77,16 +80,19 @@ fn algorithms_advertisement_policy() {
 #[cfg(not(feature = "largeblob-ext"))]
 fn get_info_fields() {
     use crate::consts::{
-        CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO,
-        CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
+        CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_EA_RPIDS, CONFIG_PHY_LED_BRIGHTNESS,
+        CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
     };
 
     let mut buf = [0u8; 1024];
-    let n = get_info(true, 4, false, false, false, false, 200, &mut buf).unwrap();
+    let n = get_info(
+        true, 4, false, false, false, false, 200, None, None, &mut buf,
+    )
+    .unwrap();
     let mut d = Decoder::new(&buf[..n]);
 
     let entries = d.map().unwrap().unwrap();
-    assert_eq!(entries, 21);
+    assert_eq!(entries, 24);
 
     // 0x01 versions
     assert_eq!(d.u8().unwrap(), 0x01);
@@ -170,17 +176,19 @@ fn get_info_fields() {
 
     // 0x0A algorithms: [{alg, type:"public-key"} …] — the NIST ECDSA curves,
     // then EdDSA (-8) unless `fido-conformance` suppresses it; `advertise-pqc`
-    // prepends ML-DSA-65 (-49) then ML-DSA-44 (-48) (default stays without them:
-    // Firefox authenticator-rs strict parse).
+    // prepends all three ML-DSA sets in descending security order, -87 (-50),
+    // -65 (-49), -44 (-48) (default stays without them: Firefox
+    // authenticator-rs strict parse).
     assert_eq!(d.u8().unwrap(), 0x0A);
     let pqc = cfg!(feature = "advertise-pqc");
     let eddsa = cfg!(not(feature = "fido-conformance"));
     assert_eq!(
         d.array().unwrap().unwrap(),
-        3 + 2 * u64::from(pqc) + u64::from(eddsa)
+        3 + 3 * u64::from(pqc) + u64::from(eddsa)
     );
     let mut algs = vec![];
     if pqc {
+        algs.push(ALG_MLDSA87);
         algs.push(ALG_MLDSA65);
         algs.push(ALG_MLDSA44);
     }
@@ -225,9 +233,9 @@ fn get_info_fields() {
     // 0x15 vendorPrototypeConfigCommands — the ids `config.rs` dispatches. §6.11.3
     // ties this member to the 0xFF entry in 0x1F below: neither may appear alone.
     assert_eq!(d.u8().unwrap(), 0x15);
-    assert_eq!(d.array().unwrap().unwrap(), 6);
+    assert_eq!(d.array().unwrap().unwrap(), 7);
     assert_eq!(
-        (0..6)
+        (0..7)
             .map(|_| d.u64().unwrap())
             .collect::<std::vec::Vec<_>>(),
         std::vec![
@@ -237,6 +245,7 @@ fn get_info_fields() {
             CONFIG_PHY_LED_BRIGHTNESS,
             CONFIG_PHY_LED_GPIO,
             CONFIG_PHY_OPTIONS,
+            CONFIG_EA_RPIDS,
         ]
     );
 
@@ -245,6 +254,25 @@ fn get_info_fields() {
     assert_eq!(d.u8().unwrap(), 0x16);
     assert_eq!(d.array().unwrap().unwrap(), 1);
     assert_eq!(d.str().unwrap(), "packed");
+
+    // 0x18 longTouchForReset — false, and the first of the 2-byte keys.
+    assert_eq!(d.u8().unwrap(), 0x18);
+    assert!(!d.bool().unwrap());
+
+    // 0x1A transportsForReset — a 2-byte key (26 > 23), so it sorts after every
+    // 1-byte key and before 0x1D.
+    assert_eq!(d.u8().unwrap(), 0x1A);
+    assert_eq!(d.array().unwrap().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "usb");
+
+    // 0x1B pinComplexityPolicy — false unless a build refuses a trivial PIN. Read
+    // from the features rather than from the const the encoder uses, so the two
+    // have to agree; what it must MEAN is pinned in `clientpin_tests.rs`.
+    assert_eq!(d.u8().unwrap(), 0x1B);
+    assert_eq!(
+        d.bool().unwrap(),
+        cfg!(any(feature = "fips-profile", feature = "strong-pin"))
+    );
 
     // 0x1D maxPINLength
     assert_eq!(d.u8().unwrap(), 0x1D);
@@ -263,10 +291,51 @@ fn get_info_fields() {
     assert!(d.datatype().is_err());
 }
 
+/// Read a string-array member out of a getInfo response; empty if absent.
+fn str_member(key: u32) -> std::vec::Vec<std::string::String> {
+    let mut out = [0u8; 1024];
+    let n = get_info(
+        false, 4, false, false, false, false, 256, None, None, &mut out,
+    )
+    .unwrap();
+    let mut d = Decoder::new(&out[..n]);
+    let entries = d.map().unwrap().unwrap();
+    for _ in 0..entries {
+        if d.u32().unwrap() == key {
+            let m = d.array().unwrap().unwrap();
+            return (0..m).map(|_| d.str().unwrap().to_string()).collect();
+        }
+        d.skip().unwrap();
+    }
+    std::vec::Vec::new()
+}
+
+/// `transportsForReset` (0x1A) tells a platform where a reset can be driven. One
+/// const feeds it and `transports` (0x09): the literal below pins the value, the
+/// equality catches the two drifting apart. The spec's "no duplicates, not empty"
+/// needs no assertion of its own — either would change the list the literal pins.
+#[test]
+fn transports_for_reset_matches_transports() {
+    let reset = str_member(0x1A);
+    assert_eq!(
+        reset,
+        std::vec!["usb"],
+        "USB-HID is the only FIDO transport"
+    );
+    assert_eq!(
+        reset,
+        str_member(0x09),
+        "a reset is reachable exactly where the applet is"
+    );
+}
+
 /// Read the `options` (0x04) map as `(key, value)` pairs.
 fn option_pairs(builtin_uv: bool, pin_set: bool) -> std::vec::Vec<(std::string::String, bool)> {
     let mut buf = [0u8; 1024];
-    let n = get_info(pin_set, 4, false, false, false, builtin_uv, 256, &mut buf).unwrap();
+    let n = get_info(
+        pin_set, 4, false, false, false, builtin_uv, 256, None, None, &mut buf,
+    )
+    .unwrap();
     let mut d = Decoder::new(&buf[..n]);
     d.map().unwrap();
     for k in [0x01u8, 0x02, 0x03] {
@@ -307,7 +376,10 @@ fn client_pin_reflects_pin_state() {
     // options.clientPin is false before a PIN is set, true after.
     let mut buf = [0u8; 1024];
     for pin_set in [false, true] {
-        let n = get_info(pin_set, 4, false, false, false, false, 256, &mut buf).unwrap();
+        let n = get_info(
+            pin_set, 4, false, false, false, false, 256, None, None, &mut buf,
+        )
+        .unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
         // skip to 0x04 options.
@@ -340,7 +412,10 @@ fn client_pin_reflects_pin_state() {
 fn min_pin_policy_reflected() {
     // 0x0D mirrors minPINLength, 0x0C the forceChangePin flag.
     let mut buf = [0u8; 1024];
-    let n = get_info(true, 8, true, false, false, false, 256, &mut buf).unwrap();
+    let n = get_info(
+        true, 8, true, false, false, false, 256, None, None, &mut buf,
+    )
+    .unwrap();
     let mut d = Decoder::new(&buf[..n]);
     d.map().unwrap();
     let (mut force, mut min) = (None, None);
@@ -361,7 +436,7 @@ fn ep_reflects_ea_enabled() {
     // state: false at reset, true once EA has been enabled.
     for ea in [false, true] {
         let mut buf = [0u8; 1024];
-        let n = get_info(true, 4, false, ea, false, false, 256, &mut buf).unwrap();
+        let n = get_info(true, 4, false, ea, false, false, 256, None, None, &mut buf).unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
         for _ in 0..3 {
@@ -382,7 +457,10 @@ fn always_uv_reflects_state() {
     // false at reset, true once alwaysUv has been enabled.
     for always_uv in [false, true] {
         let mut buf = [0u8; 1024];
-        let n = get_info(true, 4, false, false, always_uv, false, 256, &mut buf).unwrap();
+        let n = get_info(
+            true, 4, false, false, always_uv, false, 256, None, None, &mut buf,
+        )
+        .unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
         for _ in 0..3 {
@@ -412,7 +490,10 @@ fn u2f_v2_dropped_when_always_uv() {
     ];
     for (always_uv, want) in cases {
         let mut buf = [0u8; 1024];
-        let n = get_info(true, 4, false, false, always_uv, false, 256, &mut buf).unwrap();
+        let n = get_info(
+            true, 4, false, false, always_uv, false, 256, None, None, &mut buf,
+        )
+        .unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
         assert_eq!(d.u8().unwrap(), 0x01);
@@ -439,7 +520,10 @@ fn u2f_v2_survives_always_uv_behind_a_configured_pad() {
     ];
     for (builtin_uv, pin_set, want_u2f) in cases {
         let mut buf = [0u8; 1024];
-        let n = get_info(pin_set, 4, false, false, true, builtin_uv, 256, &mut buf).unwrap();
+        let n = get_info(
+            pin_set, 4, false, false, true, builtin_uv, 256, None, None, &mut buf,
+        )
+        .unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
         assert_eq!(d.u8().unwrap(), 0x01);
@@ -456,7 +540,9 @@ fn u2f_v2_survives_always_uv_behind_a_configured_pad() {
 fn get_info_buffer_too_small() {
     let mut tiny = [0u8; 8];
     assert_eq!(
-        get_info(false, 4, false, false, false, false, 256, &mut tiny),
+        get_info(
+            false, 4, false, false, false, false, 256, None, None, &mut tiny
+        ),
         Err(CtapError::Other)
     );
 }
@@ -470,7 +556,10 @@ fn make_cred_uv_not_rqd_is_cleared_by_always_uv() {
     // the advertisement catching up, so a platform stops sending the request.
     for always_uv in [false, true] {
         let mut buf = [0u8; 1024];
-        let n = get_info(true, 4, false, false, always_uv, false, 256, &mut buf).unwrap();
+        let n = get_info(
+            true, 4, false, false, always_uv, false, 256, None, None, &mut buf,
+        )
+        .unwrap();
         let mut d = Decoder::new(&buf[..n]);
         d.map().unwrap();
         for _ in 0..3 {
@@ -489,4 +578,132 @@ fn make_cred_uv_not_rqd_is_cleared_by_always_uv() {
         assert_eq!(d.str().unwrap(), "makeCredUvNotRqd");
         assert_eq!(d.bool().unwrap(), !always_uv);
     }
+}
+
+/// `encIdentifier` (0x19) is emitted only when a persistent token exists, so its
+/// presence moves the map count — the second conditional member after 0x0B. It is a
+/// 2-byte key (25 > 23) and must land between 0x18 and 0x1A; getting that wrong
+/// breaks canonical CBOR without changing a single byte of the payload.
+#[test]
+fn enc_identifier_is_conditional_and_sorts_between_its_neighbours() {
+    let blob = [0x5Au8; ENC_GETINFO_MEMBER_LEN];
+    let mut with = [0u8; 1024];
+    let n = get_info(
+        true,
+        4,
+        false,
+        false,
+        false,
+        false,
+        200,
+        Some(&blob),
+        None,
+        &mut with,
+    )
+    .unwrap();
+    let mut without = [0u8; 1024];
+    let m = get_info(
+        true,
+        4,
+        false,
+        false,
+        false,
+        false,
+        200,
+        None,
+        None,
+        &mut without,
+    )
+    .unwrap();
+
+    let mut d = Decoder::new(&with[..n]);
+    let present = d.map().unwrap().unwrap();
+    let mut e = Decoder::new(&without[..m]);
+    assert_eq!(
+        present,
+        e.map().unwrap().unwrap() + 1,
+        "the member must be counted, not just written"
+    );
+
+    // Walk to 0x19 and check both neighbours came in the right order.
+    let mut keys = std::vec::Vec::new();
+    for _ in 0..present {
+        let k = d.u32().unwrap();
+        keys.push(k);
+        if k == 0x19 {
+            assert_eq!(d.bytes().unwrap(), &blob, "0x19 carries iv ‖ ct verbatim");
+        } else {
+            d.skip().unwrap();
+        }
+    }
+    let at = keys.iter().position(|k| *k == 0x19).expect("0x19 present");
+    assert_eq!(keys[at - 1], 0x18, "0x19 sorts after longTouchForReset");
+    assert_eq!(keys[at + 1], 0x1A, "0x19 sorts before transportsForReset");
+}
+
+/// The 0x1E twin of the test above. It shares 0x19's gate (a persistent token) but
+/// not its neighbours: 30 sorts between `maxPINLength` (0x1D) and
+/// `authenticatorConfigCommands` (0x1F), the two members it was inserted between.
+#[test]
+fn enc_cred_store_state_is_conditional_and_sorts_between_its_neighbours() {
+    let blob = [0xC3u8; ENC_GETINFO_MEMBER_LEN];
+    let mut with = [0u8; 1024];
+    let n = get_info(
+        true,
+        4,
+        false,
+        false,
+        false,
+        false,
+        200,
+        None,
+        Some(&blob),
+        &mut with,
+    )
+    .unwrap();
+    let mut without = [0u8; 1024];
+    let m = get_info(
+        true,
+        4,
+        false,
+        false,
+        false,
+        false,
+        200,
+        None,
+        None,
+        &mut without,
+    )
+    .unwrap();
+
+    let mut d = Decoder::new(&with[..n]);
+    let present = d.map().unwrap().unwrap();
+    let mut e = Decoder::new(&without[..m]);
+    assert_eq!(
+        present,
+        e.map().unwrap().unwrap() + 1,
+        "the member must be counted, not just written"
+    );
+
+    let mut keys = std::vec::Vec::new();
+    for _ in 0..present {
+        let k = d.u32().unwrap();
+        keys.push(k);
+        if k == 0x1E {
+            assert_eq!(d.bytes().unwrap(), &blob, "0x1E carries iv ‖ ct verbatim");
+        } else {
+            d.skip().unwrap();
+        }
+    }
+    assert!(
+        d.datatype().is_err(),
+        "the declared count must consume the map"
+    );
+    let at = keys.iter().position(|k| *k == 0x1E).expect("0x1E present");
+    assert_eq!(keys[at - 1], 0x1D, "0x1E sorts after maxPINLength");
+    assert_eq!(
+        keys[at + 1],
+        0x1F,
+        "0x1E sorts before authenticatorConfigCommands"
+    );
 }

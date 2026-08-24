@@ -10,9 +10,9 @@ use rsk_fs::Storage;
 
 use crate::consts::{
     EF_ALWAYS_UV, EF_ATT_CHAIN, EF_ATT_KEY, EF_BACKUP_SEALED, EF_COUNTER, EF_CRED, EF_CRED_BLOB,
-    EF_CRED_CTR, EF_DEVICE_PIN, EF_EA_ENABLED, EF_EE_DEV, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_LARGEBLOB,
-    EF_MINPINLEN, EF_PAUTHTOKEN, EF_PIN, EF_RP, EF_RPNICK, MAX_RESIDENT_CREDENTIALS,
-    RESET_WINDOW_MS,
+    EF_CRED_CTR, EF_CRED_STATE, EF_DEVICE_PIN, EF_EA_ENABLED, EF_EA_RPIDS, EF_EE_DEV, EF_KEY_DEV,
+    EF_KEY_DEV_ENC, EF_LARGEBLOB, EF_MINPINLEN, EF_PAUTHTOKEN, EF_PIN, EF_RP, EF_RPNICK,
+    MAX_RESIDENT_CREDENTIALS, RESET_WINDOW_MS,
 };
 use crate::error::{CtapError, CtapResult};
 use crate::journal;
@@ -20,13 +20,14 @@ use crate::seed::ensure_seed;
 use crate::{Ctx, Rng};
 
 /// Progress backstop for one [`sweep`] phase: the FIDO predicate spans four
-/// 256-slot ranges and 13 fixed records, so a converging sweep cannot exceed this.
-const RESET_MAX_DELETES: u32 = 4 * MAX_RESIDENT_CREDENTIALS as u32 + 13;
+/// 256-slot ranges and 15 fixed records, so a converging sweep cannot exceed this.
+const RESET_MAX_DELETES: u32 = 4 * MAX_RESIDENT_CREDENTIALS as u32 + 15;
 
 /// `authenticatorReset`: factory-reset the FIDO applet. Replies with only the
 /// status byte. Also the documented recovery from a soft lock with a lost lock
 /// key: `EF_KEY_DEV_ENC` leads the wipe with the seed it wraps and a fresh seed is
 /// generated (the old identity is gone — that is the design).
+/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
 pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {
         return Err(CtapError::NotAllowed);
@@ -36,7 +37,7 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     // repeat"), a silent timeout is USER_ACTION_TIMEOUT ("the platform MAY repeat").
     match ctx
         .presence
-        .request(crate::Confirm::titled("Erase everything?"))
+        .request_ceremony(crate::Confirm::titled("Erase everything?"))
     {
         crate::Presence::Confirmed => {}
         crate::Presence::Declined => return Err(CtapError::OperationDenied),
@@ -78,6 +79,7 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
 /// reporting success only when the enumeration provably completed over an empty
 /// range. Batched because `for_each_key` cannot delete mid-iteration, and de-duped
 /// because the flash walk can yield multiple stored versions of one fid.
+/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
 fn sweep<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pred: fn(u16) -> bool) -> Result<(), CtapError> {
     let mut deleted = 0u32;
     loop {
@@ -124,6 +126,30 @@ pub fn is_fido_seed_fid(fid: u16) -> bool {
     FIDO_SEED_FIDS.contains(&fid)
 }
 
+/// The persistent phases of [`reset`]. Verification code uses the same
+/// classifier as the real sweep, so its ordering proof cannot silently drift to
+/// a second hand-written gate list.
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ResetPhase {
+    Seed,
+    Secret,
+    Gate,
+}
+
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub(crate) fn reset_phase(fid: u16) -> Option<ResetPhase> {
+    if is_fido_seed_fid(fid) {
+        Some(ResetPhase::Seed)
+    } else if !is_fido_fid(fid) {
+        None
+    } else if is_fido_gate_record(fid) {
+        Some(ResetPhase::Gate)
+    } else {
+        Some(ResetPhase::Secret)
+    }
+}
+
 /// The FIDO records that *gate* the applet rather than being the secret itself.
 /// Deleted last by [`reset`], so no prefix of the wipe can leave live passkeys
 /// with their PIN and `alwaysUv` requirement already removed. Public because the
@@ -141,7 +167,12 @@ pub fn is_fido_seed_fid(fid: u16) -> bool {
 /// its absence is the RESTRICTIVE state, and deferring it alongside `EF_PIN` meant a
 /// cut between the two left a live grant with no PIN behind it. It goes with the
 /// secrets, where a prefix can only ever revoke it early.
+/// Refines `RSKeySecurityState!NoAccessibleSecretWithoutGate` — SEC-FIDO-004.
 pub fn is_fido_gate_fid(fid: u16) -> bool {
+    is_fido_gate_record(fid)
+}
+
+fn is_fido_gate_record(fid: u16) -> bool {
     matches!(
         fid,
         EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
@@ -175,10 +206,17 @@ fn is_fido_fid(fid: u16) -> bool {
                 | EF_EE_DEV
                 | EF_COUNTER
                 | EF_CRED_CTR
+                // Goes with the credentials it summarises: absent reads as the
+                // zero tag, which is exactly the state of the store a reset leaves.
+                | EF_CRED_STATE
                 | EF_PIN
                 | EF_MINPINLEN
                 | EF_LARGEBLOB
                 | EF_EA_ENABLED
+                // With the secrets, not the gates: the list is PERMISSIVE, so a
+                // torn prefix can only ever revoke type-1 EA early — the rule
+                // `EF_PAUTHTOKEN` is here for, stated below.
+                | EF_EA_RPIDS
                 | EF_ALWAYS_UV
                 // The trusted-display device PIN: a host reset clears it too, so a
                 // forgotten device PIN is recoverable (the lock gates on-device Settings,
@@ -199,6 +237,7 @@ fn is_fido_fid(fid: u16) -> bool {
 /// is device identity, not user data, and `authenticatorReset` preserves it too.
 /// The fused OTP / secure-boot state is untouched by a flash wipe regardless. The
 /// display passes this predicate to [`rsk_fs::Fs::factory_wipe`].
+/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
 pub fn survives_factory_reset(fid: u16) -> bool {
     fid == EF_ATT_KEY.get() || fid == EF_ATT_CHAIN
 }

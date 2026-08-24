@@ -213,5 +213,5 @@ pub fn full_aid(serial: &[u8; 4], manufacturer: u16) -> [u8; 16] {
 /// The device's full OpenPGP AID: the chip id masked to the 8-digit serial,
 /// BCD-encoded (YubiKey convention), spliced under `manufacturer`.
 pub fn aid_for(serial_id: &[u8; 8], manufacturer: u16) -> [u8; 16] {
-    full_aid(&serial_bcd(&rsk_mgmt::serial4(*serial_id)), manufacturer)
+    full_aid(&serial_bcd(&rsk_sdk::serial4(*serial_id)), manufacturer)
 }

@@ -65,16 +65,22 @@ impl Hooks<RamStorage> for Board {
     // `None` — no accelerator — is what a host build is, and the fall-through it
     // causes is itself under test in `ccid_tests`; `accelerator` opts into the
     // other answer so a test can tell a fast path that fired from one that did not.
-    fn rsa_search(&mut self, _nbits: usize, _rng: &mut dyn rsk_openpgp::Rng) -> SearchResult {
+    fn rsa_search(&mut self, _nbits: usize, _rng: &mut dyn rsk_sdk::Rng) -> SearchResult {
         if self.accelerator { Some(None) } else { None }
     }
 }
 
-/// Physical presence, behind all seven applet traits at once — one button, as on
-/// the device. Confirms by default; a test that needs a refusal flips `answer`.
+/// Physical presence — one button, as on the device. Confirms by default; a
+/// test that needs a refusal flips `answer`, and one that needs the trusted
+/// display's on-screen PIN pad flips `pad`.
 pub struct Finger {
     pub answer: bool,
     pub requests: usize,
+    /// What `uv_available()` answers. FALSE is the button-only device; only the
+    /// display backend overrides it in the firmware (`rsk-display`'s presence),
+    /// and it is an INPUT to §6.1.2's token-less gate that the phase-4 recording
+    /// carries per boundary.
+    pub pad: bool,
 }
 
 impl Default for Finger {
@@ -82,34 +88,25 @@ impl Default for Finger {
         Self {
             answer: true,
             requests: 0,
+            pad: false,
         }
     }
 }
 
-macro_rules! impl_presence {
-    ($($m:ident),+ $(,)?) => {$(
-        impl $m::UserPresence for Finger {
-            fn request(&mut self, _confirm: $m::Confirm<'_>) -> $m::Presence {
-                self.requests += 1;
-                if self.answer {
-                    $m::Presence::Confirmed
-                } else {
-                    $m::Presence::Declined
-                }
-            }
-        }
-    )+};
-}
+impl rsk_sdk::UserPresence for Finger {
+    fn uv_available(&self) -> bool {
+        self.pad
+    }
 
-impl_presence!(
-    rsk_fido,
-    rsk_openpgp,
-    rsk_oath,
-    rsk_otp,
-    rsk_mgmt,
-    rsk_rescue,
-    rsk_vendor,
-);
+    fn request(&mut self, _confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
+        self.requests += 1;
+        if self.answer {
+            rsk_sdk::Presence::Confirmed
+        } else {
+            rsk_sdk::Presence::Declined
+        }
+    }
+}
 
 /// A deterministic stand-in for the device TRNG (xorshift64*).
 pub struct TestRng(u64);
@@ -123,27 +120,15 @@ impl TestRng {
     }
 }
 
-macro_rules! impl_rng {
-    ($($t:path),+ $(,)?) => {$(
-        impl $t for TestRng {
-            fn fill(&mut self, buf: &mut [u8]) {
-                for chunk in buf.chunks_mut(8) {
-                    let n = self.next().to_le_bytes();
-                    let len = chunk.len();
-                    chunk.copy_from_slice(&n[..len]);
-                }
-            }
+impl rsk_sdk::Rng for TestRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        for chunk in buf.chunks_mut(8) {
+            let n = self.next().to_le_bytes();
+            let len = chunk.len();
+            chunk.copy_from_slice(&n[..len]);
         }
-    )+};
+    }
 }
-
-impl_rng!(
-    rsk_fido::Rng,
-    rsk_openpgp::Rng,
-    rsk_oath::Rng,
-    rsk_otp::Rng,
-    rsk_rescue::Rng,
-);
 
 /// The rescue applet's board: no secure boot, no OTP, a session clock.
 #[derive(Default)]
@@ -200,6 +185,9 @@ pub struct Env {
     pub board: RefCell<Board>,
     pub finger: RefCell<Finger>,
     pub rescue: RefCell<RescueBoard>,
+    /// The device's one FIDO session state, as the worker holds it: both
+    /// transports that reach the applet borrow this same cell.
+    pub fido_state: RefCell<rsk_fido::FidoState>,
 }
 
 impl Default for Env {
@@ -215,17 +203,19 @@ impl Env {
             rng: RefCell::new(TestRng(0x0DDB_A11C_0FFE_E1E5)),
             board: RefCell::new(Board::default()),
             finger: RefCell::new(Finger::default()),
+            fido_state: RefCell::new(rsk_fido::FidoState::new()),
             rescue: RefCell::new(RescueBoard::default()),
         }
     }
 
-    /// The CCID side: the full seven-applet set behind the dispatcher.
+    /// The CCID side: the full eight-applet set behind the dispatcher.
     pub fn ccid(&self) -> CcidApplets<'_, RamStorage, TestRng, VendorBoard> {
         CcidApplets::new(
             &self.fs,
             &self.rng,
             &self.board,
             &self.finger,
+            &self.fido_state,
             &self.rescue,
             VendorBoard,
             SERIAL_ID,
@@ -245,6 +235,7 @@ impl Env {
             &self.rng,
             &self.board,
             &self.finger,
+            &self.fido_state,
             VendorBoard,
             SERIAL_ID,
             SERIAL_HASH,
@@ -281,7 +272,7 @@ pub fn sw(res: &[u8]) -> rsk_sdk::Sw {
 /// wire form: a leading length byte, then TLV `0x03 len usb_enabled_be`.
 pub fn dev_conf(caps: u16) -> Vec<u8> {
     let be = caps.to_be_bytes();
-    let tlv = std::vec![0x03u8, 2, be[0], be[1]];
+    let tlv = std::vec![rsk_devconf::raw::TAG_USB_ENABLED, 2, be[0], be[1]];
     let mut blob = std::vec![tlv.len() as u8];
     blob.extend_from_slice(&tlv);
     blob

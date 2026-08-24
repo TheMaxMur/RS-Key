@@ -95,7 +95,31 @@ fn a_warm_boot_is_inherited_from_the_board() {
         1,
         "read once, at build"
     );
-    assert!(ctap.fido_state.warm_boot);
+    assert!(ctap.fido_state.borrow().warm_boot);
+}
+
+#[test]
+fn a_warm_boot_carries_the_soft_lock_in() {
+    // The other half of the hand-over the first test pins: a lock the board
+    // persisted must be RESTORED at build, or a host-requestable warm reset
+    // frees the retry budget CTAP 2.1 §6.5.5.6 spends across it. Co-refutation
+    // measured this as a gap — nothing drove boot_state() with a live lock and
+    // asked whether it carried.
+    let env = Env::new();
+    env.board.borrow_mut().boot = crate::BootState {
+        warm: true,
+        lock: rsk_fido::state::PinLock {
+            engaged: true,
+            mismatches: 3,
+        },
+    };
+    let ctap = env.ctap();
+    let carried = ctap.fido_state.borrow().pin_lock();
+    assert!(
+        carried.engaged,
+        "the soft lock did not survive the warm reset"
+    );
+    assert_eq!(carried.mismatches, 3, "the mismatch count was dropped");
 }
 
 #[test]
@@ -104,7 +128,7 @@ fn a_cold_boot_is_the_default() {
     // one, which is the safe reading of both clauses.
     let env = Env::new();
     let ctap = env.ctap();
-    assert!(!ctap.fido_state.warm_boot);
+    assert!(!ctap.fido_state.borrow().warm_boot);
 }
 
 #[test]
@@ -114,9 +138,9 @@ fn the_channel_asking_is_recorded_on_every_command() {
     let env = Env::new();
     let mut ctap = env.ctap();
     ctap.handle_cbor(0xDEAD_BEEF, &GET_INFO, 0);
-    assert_eq!(ctap.fido_state.channel, 0xDEAD_BEEF);
+    assert_eq!(ctap.fido_state.borrow().channel, 0xDEAD_BEEF);
     ctap.handle_cbor(0x0000_0001, &GET_INFO, 0);
-    assert_eq!(ctap.fido_state.channel, 0x0000_0001);
+    assert_eq!(ctap.fido_state.borrow().channel, 0x0000_0001);
 }
 
 // --- the trusted display's hand-off ----------------------------------------
@@ -195,7 +219,7 @@ fn a_secure_reboot_drops_the_auth_state_but_not_the_boot_verdict() {
     ctap.handle_cbor(0xABCD, &GET_INFO, 0);
     ctap.scrub_secrets();
     assert!(ctap.resp.iter().all(|&b| b == 0));
-    assert!(ctap.fido_state.warm_boot);
+    assert!(ctap.fido_state.borrow().warm_boot);
 }
 
 /// The number getInfo puts ON THE WIRE has to be the number the transport
@@ -230,4 +254,26 @@ fn getinfo_advertises_the_transport_maximum() {
     // The response buffer has to hold what that promises (an ML-DSA-44
     // makeCredential runs ~4 KB).
     assert!(RESP_CAP >= advertised.unwrap() as usize);
+}
+
+#[test]
+fn the_security_trace_reports_the_pad_and_not_a_constant() {
+    // §6.1.2 step 6.3's arm of the token-less gate is stated in
+    // `formal/TraceSecurity.tla` ONLY because the recording carries the pad's
+    // availability per boundary — with a pad, `alwaysUv` upgrades a token-less
+    // request instead of refusing it, and the mapper refuses such a boundary
+    // rather than guess. But `builtin_uv` is `false` in every event of the
+    // committed trace, so neither the replay nor its mutants can tell this
+    // accessor from a hard-wired `false`. This is where that is decided.
+    let env = Env::new();
+    let ctap = env.ctap();
+    assert!(
+        !ctap.security_trace_builtin_uv(),
+        "a button-only build has no way to collect a PIN and must record no pad"
+    );
+    env.finger.borrow_mut().pad = true;
+    assert!(
+        ctap.security_trace_builtin_uv(),
+        "the recorded field is the backend's answer, not a constant"
+    );
 }

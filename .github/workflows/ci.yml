@@ -7,10 +7,13 @@
 #             `if:` on the jobs rather than `paths:` on the trigger: a skipped
 #             JOB still reports, a skipped WORKFLOW reports nothing, and the
 #             second kind is the one that quietly hides a missing check.
-#   docs    — the mdBook build + link check, and gitleaks. Always. It is the only
-#             job a documentation-only change runs, so the secret scan lives here
-#             too — `check.sh` runs it as well, and one that can be skipped is
-#             not a secret scan.
+#   docs    — the mdBook build + link check, gitleaks, and the workflow lint.
+#             Always. It is the only job a documentation-only change runs, so the
+#             secret scan lives here too — `check.sh` runs it as well, and one
+#             that can be skipped is not a secret scan. Same argument for
+#             actionlint, and it has a case: `pages.yml` is inside ci-scope.sh's
+#             DOCS_ONLY set, so a change to that workflow alone skips `check`
+#             entirely and would never be parsed by anything.
 #   check   — the merge gate, the same single source of truth as local work:
 #             `nix develop -c ./scripts/check.sh` (docs/testing.md, "CI parity").
 #             Green locally means green here; no CI-only logic to drift.
@@ -106,6 +109,11 @@ jobs:
 
       - name: gitleaks
         run: nix develop -c gitleaks detect --no-banner --redact
+
+      # The same command check.sh's first row runs, for the one change shape that
+      # skips check.sh: a `pages.yml`-only edit reads as docs_only.
+      - name: workflow lint
+        run: nix develop -c actionlint -no-color -oneline
 
   check:
     needs: changes

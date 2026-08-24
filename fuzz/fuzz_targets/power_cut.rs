@@ -24,6 +24,12 @@
 //! it too. It lived in this file for as long as it did only because nobody moved
 //! it, and that made every property it asserts reachable by fuzzing and by
 //! nothing else.
+//!
+//! One input class drives the complete FIDO reset over the same cuttable store.
+//! After a real reboot it checks `ResetNeverWeakensSurvivingState` and its three
+//! clauses: `ResetKeepsThePinGate`, `ResetKeepsTheAlwaysUvGate`, and
+//! `ResetKeepsTheBackupSeal`. This is the byte-granular half of the phase-6
+//! cross-reset pilot; the ordinary operation decoder remains the common path.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -168,6 +174,106 @@ impl Device for MockDevice {
     }
 }
 
+struct ResetRng(u8);
+
+impl rsk_fido::Rng for ResetRng {
+    fn fill(&mut self, out: &mut [u8]) {
+        self.0 = self.0.wrapping_add(1);
+        out.fill(self.0);
+    }
+}
+
+fn record<S: rsk_fs::Storage>(fs: &mut Fs<S>, fid: u16) -> Vec<u8> {
+    let mut out = [0u8; 128];
+    let Some(n) = fs.read(fid, &mut out) else {
+        return Vec::new();
+    };
+    out[..n.min(out.len())].to_vec()
+}
+
+fn reset_property_holds<S: rsk_fs::Storage>(fs: &mut Fs<S>, owner_seed: &[u8]) -> bool {
+    use rsk_fido::consts::{
+        EF_ALWAYS_UV, EF_BACKUP_SEALED, EF_CRED, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_PIN,
+    };
+
+    let owner_reachable = record(fs, EF_KEY_DEV.get()) == owner_seed
+        || record(fs, EF_KEY_DEV_ENC.get()) == owner_seed;
+    let credential_usable = owner_reachable && fs.has_data(EF_CRED);
+    (!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
+        && (!owner_reachable || fs.has_data(EF_BACKUP_SEALED))
+}
+
+/// Drive the real `authenticatorReset`, cut at a byte inside its store writes,
+/// then mount a fresh `Fs` and run boot-time seed provisioning. A second boot
+/// checks that the verdict is stable across more than the recovery mount.
+fn reset_probe(data: &[u8]) {
+    use rsk_fido::consts::{EF_ALWAYS_UV, EF_BACKUP_SEALED, EF_CRED, EF_KEY_DEV, EF_PIN};
+
+    let flash = Rc::new(RefCell::new(Mock::new(WriteCountCheck::Twice, None, true)));
+    let mut dev = MockDevice {
+        shared: SharedMock {
+            flash: flash.clone(),
+            dead: Rc::new(Cell::new(false)),
+        },
+        boots: 0,
+    };
+    let mut fs = Fs::new(new_storage(dev.shared.clone()));
+    fs.scan();
+    let mut rng = ResetRng(1);
+    let identity = rsk_crypto::Device {
+        serial_hash: &[0xa5; 32],
+        serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
+        otp_key: None,
+    };
+    rsk_fido::seed::ensure_seed(&identity, &mut fs, &mut rng).unwrap();
+    fs.put(EF_CRED, &[0x5a; 96]).unwrap();
+    fs.put(EF_PIN, &[8, 4, 1, 0, 0]).unwrap();
+    fs.put(EF_ALWAYS_UV, &[1]).unwrap();
+    fs.put(EF_BACKUP_SEALED, &[1]).unwrap();
+    let owner_seed = record(&mut fs, EF_KEY_DEV.get());
+    assert!(!owner_seed.is_empty());
+
+    let budget = u32::from_be_bytes([
+        0,
+        data.get(1).copied().unwrap_or(0) & 0x0f,
+        data.get(2).copied().unwrap_or(0),
+        data.get(3).copied().unwrap_or(0),
+    ]);
+    flash.borrow_mut().bytes_until_shutoff = Some(budget);
+
+    let mut state = rsk_fido::FidoState::new();
+    if data.get(4).is_some_and(|b| b & 1 != 0) {
+        state.keydev_dec = rsk_fido::seed::load_keydev(&identity, &mut fs);
+    }
+    let mut presence = rsk_fido::AlwaysConfirm;
+    let mut ctx = rsk_fido::Ctx {
+        dev: identity,
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+        presence: &mut presence,
+    };
+    let _ = rsk_fido::reset::reset(&mut ctx);
+    assert!(state.keydev_dec.is_none());
+    assert!(!state.paut.in_use);
+
+    if dev.shared.dead.get() {
+        flash.borrow_mut().bytes_until_shutoff = None;
+        dev.revive();
+        fs = dev.boot();
+        fs.scan();
+        rsk_fido::seed::ensure_seed(&identity, &mut fs, &mut rng).unwrap();
+        state = rsk_fido::FidoState::new();
+    }
+    assert!(reset_property_holds(&mut fs, &owner_seed));
+
+    fs = dev.boot();
+    fs.scan();
+    assert!(reset_property_holds(&mut fs, &owner_seed));
+    assert!(state.keydev_dec.is_none());
+}
+
 /// One line per exec on stderr when `RSK_POWER_CUT_STATS` is set, for
 /// `scripts/fuzz-dimensions.py` to bucket over a whole corpus.
 ///
@@ -228,6 +334,10 @@ fn scribble(flash: &mut Mock, len: usize, seed: &[u8]) {
 }
 
 fuzz_target!(|data: &[u8]| {
+    if data.first().is_some_and(|b| b & 0xf0 == 0xf0) {
+        reset_probe(data);
+        return;
+    }
     let flash = Rc::new(RefCell::new(Mock::new(
         // Twice, not OnceOnly: remove_item rewrites the header once (erase_data,
         // crc=None), which OnceOnly would false-flag; this catches a 3rd write.

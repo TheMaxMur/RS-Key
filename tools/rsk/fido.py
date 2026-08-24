@@ -5,18 +5,28 @@
 
 set-pin:       set or change the FIDO2 clientPIN (no touch).
 list-passkeys: list discoverable credentials via credentialManagement (needs PIN).
+attestation:   org attestation key/chain, and who gets vendor-facilitated EA.
 """
 import sys
 from getpass import getpass
 
 from .common import add_pin_arg, device_has_pin, die, die_ctap_pin_error, resolve_pin, sanitize
 
-#: Largest attestation chain the device stores — `rsk_fido::cert::ATT_CHAIN_MAX`,
-#: i.e. `rsk_fs::MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS` = 4078 − 1 − 8. It
-#: used to be a flat 2048; when the ceiling moved to what a flash record actually
-#: holds, this pre-flight check kept the old number, so a chain in the 11-byte gap
-#: passed here and was refused by the device as a bare CTAP error.
-ATT_CHAIN_MAX = 4069
+#: Largest attestation chain the device accepts — `rsk_fido::cert::ATT_CHAIN_MAX`,
+#: the tightest of three ceilings: the store's per-value cap, the pinUvAuth MAC
+#: scratch (`MAX_RAW_SUBPARA - ATT_SUBPARA_OVERHEAD`), and what leaves room for the
+#: worst-case makeCredential inside `maxMsgSize`. The MAC scratch binds today. Kept
+#: here so `attestation import` refuses an over-long chain before it touches the
+#: device; `test_att_chain_max_still_matches_the_firmware` re-derives it from the
+#: Rust sources so this number cannot drift.
+ATT_CHAIN_MAX = 2132
+
+#: authenticatorConfig vendorPrototype id for the vendor-facilitated (type 1)
+#: enterprise-attestation RP list — `rsk_fido::consts::CONFIG_EA_RPIDS`.
+CONFIG_EA_RPIDS = 0x0E6841934E719BE7
+#: `rsk_fido::consts::MAX_EA_RPIDS`. Checked here so an over-long list is named
+#: as such instead of coming back as a bare CTAP2_ERR_KEY_STORE_FULL.
+MAX_EA_RPIDS = 8
 
 try:
     from fido2.ctap import CtapError
@@ -51,6 +61,12 @@ def register(sub):
     c.set_defaults(func=att_clear)
     ga.add_parser("status", help="show whether an org attestation is installed").set_defaults(
         func=att_status)
+    r = ga.add_parser("set-rpids",
+                      help="set the RPs that get vendor-facilitated (type 1) EA")
+    r.add_argument("rp_id", nargs="*", help=f"relying-party ids (max {MAX_EA_RPIDS})")
+    r.add_argument("--clear", action="store_true", help="remove every listed RP")
+    add_pin_arg(r, help="FIDO2 PIN (authenticatorConfig requires one; prompted if omitted)")
+    r.set_defaults(func=att_set_rpids)
 
 
 def _ctap(exclusive=False):
@@ -216,6 +232,30 @@ def att_clear(args):
     if st != 0:
         die(f"clear failed: {st:#x}")
     print("org attestation removed ✓ (back to the self-signed device cert)")
+
+
+def att_set_rpids(args):
+    from .common import connect_fido
+    from .lock import _config_vendor
+
+    # The device has no read path for this list, so an accidental empty argv would
+    # clear it with nothing to compare against afterwards: make the clear explicit.
+    if bool(args.rp_id) == args.clear:
+        die("give the rp ids to allow, or --clear to remove them all")
+    if len(args.rp_id) > MAX_EA_RPIDS:
+        die(f"{len(args.rp_id)} rp ids, max {MAX_EA_RPIDS} (the device refuses the whole list)")
+    dev, cid = connect_fido(exclusive=True)
+    pin = resolve_pin(args, has_pin=device_has_pin(dev, cid), required=True)
+    st = _config_vendor(dev, cid, pin, CONFIG_EA_RPIDS, rp_ids=list(args.rp_id))
+    if st == 0x28:
+        die("device refused the list as too long (CTAP2_ERR_KEY_STORE_FULL)")
+    if st != 0:
+        die(f"set-rpids failed: {st:#x}")
+    if args.clear:
+        print("enterprise rp list cleared ✓ — type-1 EA now qualifies no RP")
+    else:
+        print(f"enterprise rp list set ✓ — {len(args.rp_id)} RP(s) get type-1 EA")
+        print("(enterpriseAttestation must also be enabled by the managed platform)")
 
 
 def att_status(args):

@@ -16,9 +16,12 @@ use crate::consts::{
 /// `docs/protocol.md` — this test is the tripwire.
 /// 0x0B (maxSerializedLargeBlobArray) belongs to the `authenticatorLargeBlobs`
 /// command, which a `largeblob-ext` build does not serve (CTAP 2.3 §12.4).
-const GETINFO_KEYS: [u32; 21] = [
+/// 0x19 (encIdentifier) is listed but never expected here: it needs a persistent
+/// pinUvAuthToken to key it, and `Authr::fresh()` has none. Its presence is proved
+/// where a token exists — `tests::dispatch_get_info_carries_enc_identifier_once_a_token_exists`.
+const GETINFO_KEYS: [u32; 26] = [
     0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10,
-    0x14, 0x15, 0x16, 0x1D, 0x1F,
+    0x14, 0x15, 0x16, 0x18, 0x19, 0x1A, 0x1B, 0x1D, 0x1E, 0x1F,
 ];
 
 #[test]
@@ -32,6 +35,9 @@ fn getinfo_envelope_and_canonical() {
         .iter()
         .copied()
         .filter(|k| *k != 0x0B || !crate::consts::LARGE_BLOB_EXT)
+        // 0x19 and 0x1E are both keyed by the persistent pinUvAuthToken, which an
+        // `Authr::fresh()` has never issued.
+        .filter(|k| *k != 0x19 && *k != 0x1E)
         .collect();
     assert_eq!(keys, expected, "getInfo top-level members changed");
 }
@@ -156,6 +162,24 @@ fn getinfo_limits_and_formats() {
         str_array(&r.body, 0x09).iter().any(|s| s == "usb"),
         "transports must include usb"
     );
+    // transportsForReset is what a platform reads to decide whether a reset it can
+    // reach exists at all; claiming a transport the applet does not answer on would
+    // send it looking for one that is not there.
+    assert_eq!(
+        str_array(&r.body, 0x1A),
+        str_array(&r.body, 0x09),
+        "transportsForReset must match the transports the applet answers on"
+    );
+    // A URL for a policy the authenticator does not enforce points a reader at
+    // nothing. The roster above already fires when 0x1C appears at all; this is
+    // what still holds after someone adds it there deliberately.
+    let mut d = field_at(&r.body, 0x1B).expect("pinComplexityPolicy (0x1B) present");
+    if !d.bool().unwrap() {
+        assert!(
+            field_at(&r.body, 0x1C).is_none(),
+            "pinComplexityPolicyURL must not describe a policy that is not enforced"
+        );
+    }
     assert!(
         str_array(&r.body, 0x16).iter().any(|s| s == "packed"),
         "attestationFormats must include packed"

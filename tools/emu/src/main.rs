@@ -23,6 +23,8 @@ mod park;
 mod platform;
 mod presence;
 mod rng;
+#[cfg(feature = "security-trace")]
+mod security_trace;
 mod shots;
 mod signals;
 mod store;
@@ -69,10 +71,16 @@ usage: rsk-emu [options]
                       on-screen hold, exactly as on a screen board
   --taps <file>       drive that panel from a script instead of the mouse: one
                       contact per line, `x,y[,hold_ms[,gap_ms]]`, # comments
+  --taps-port <n>     drive it from a socket instead, same grammar one line at a
+                      time plus `settle`; each line is answered `ok` once the pad
+                      has room, so a test suite can keep the finger in step with
+                      the commands it sends
   --screenshots <dir> write the docs' display screens as PNGs and exit
   --usbip [addr]      serve USB/IP (default 127.0.0.1:3240) so a Linux host can
                       attach the emulator as a REAL USB device
   --trace             log every command and its status
+  --security-trace <file>
+                      write raw security snapshots as JSONL for formal replay
   --yubico            present the Yubico identity: USB VID/PID and descriptor
                       strings, the ATR, and the OpenPGP AID vendor, as the
                       VIDPID=Yubikey5 build does. ykman looks for that VID.
@@ -98,12 +106,14 @@ fn main() {
         kv_total: KV_TOTAL,
         flash_size: FLASH_SIZE,
         trace: false,
+        security_trace: None,
         yubico: false,
         power_cut: None,
     };
     let mut touch = false;
     let mut auto_touch = None;
     let mut tap_script = None;
+    let mut tap_port = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -124,6 +134,7 @@ fn main() {
             "--auto-touch-ms" => auto_touch = Some(parse_millis(&value("--auto-touch-ms"))),
             "--display" => cfg.display = true,
             "--taps" => tap_script = Some(read_taps(&value("--taps"))),
+            "--taps-port" => tap_port = Some(parse_port(&value("--taps-port"))),
             // Renders and exits: no store, no sockets, nothing to serve.
             "--screenshots" => shots::run(&value("--screenshots")),
             "--usbip" => {
@@ -133,6 +144,7 @@ fn main() {
                 })
             }
             "--trace" => cfg.trace = true,
+            "--security-trace" => cfg.security_trace = Some(value("--security-trace").into()),
             "--yubico" => cfg.yubico = true,
             "--power-cut" => cfg.power_cut = Some(parse_u32(&value("--power-cut"))),
             "--seed" => cfg.seed = Some(parse_hex(&value("--seed"), None)),
@@ -152,6 +164,14 @@ fn main() {
     }
     if tap_script.is_some() && !cfg.display {
         die("--taps drives the trusted display's pad — add --display");
+    }
+    if tap_port.is_some() && !cfg.display {
+        die("--taps-port drives the trusted display's pad — add --display");
+    }
+    // One finger. A queued script is fire-and-forget and the socket is a
+    // rendezvous, so together the file's contacts would race the suite's.
+    if tap_script.is_some() && tap_port.is_some() {
+        die("--taps and --taps-port are two fingers on one pad — pick one");
     }
     cfg.presence = if touch {
         PresenceMode::Terminal
@@ -227,6 +247,19 @@ fn main() {
         std::thread::spawn(move || usbip_stack::serve(addr, jobs, signals, yubico));
     }
 
+    // The socket's pad: a bound of ONE, so `send` returns once the panel has
+    // taken the contact before it and the `ok` a suite reads means the finger has
+    // landed. `--taps`' queue below is the other trade — no writer thread, no
+    // feedback either.
+    let socket_taps = tap_port.map(|port| {
+        let listener = TcpListener::bind((host.as_str(), port))
+            .unwrap_or_else(|e| die(&format!("cannot bind the tap port {host}:{port}: {e}")));
+        eprintln!("emu: the pad takes contacts on {host}:{port}; the mouse is disabled");
+        let (tx, rx) = mpsc::sync_channel(1);
+        std::thread::spawn(move || taps::serve(listener, tx));
+        taps::TapPad::new(rx)
+    });
+
     // The script is queued whole and played back at the flow's own poll cadence,
     // so a `--taps` run needs no writer thread behind it.
     let taps = tap_script.map(|script| {
@@ -244,7 +277,7 @@ fn main() {
         taps::TapPad::new(rx)
     });
 
-    device::run(cfg, jobs_rx, signals, lines, taps);
+    device::run(cfg, jobs_rx, signals, lines, taps.or(socket_taps));
 }
 
 /// Read and parse a `--taps` script, refusing a malformed or empty one up front

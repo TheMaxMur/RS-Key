@@ -286,6 +286,32 @@ fn a_cut_never_leaves_metadata_behind_a_file_that_is_gone() {
     }
 }
 
+/// A file that has metadata and NO value, whose delete is cut.
+///
+/// Every other cut sweep here puts a value first, so this shape — the one
+/// `Fs::delete`'s unconditional `let _ = self.meta_delete(fid)` exists for
+/// (0x077C) — was crossed by nothing. It is the shape `RSKeyStore`'s
+/// `BugDeleteMetaOnlyUnderPresent` models: gate that call on the present bit and
+/// a meta-only file keeps its record for ever.
+#[test]
+fn a_cut_inside_the_delete_of_a_meta_only_file_loses_neither_half() {
+    for tear in [Tear::Before, Tear::After] {
+        for budget in 0..6 {
+            let mut dev = RamDevice::new(tear);
+            let mut fs = dev.mount();
+            let mut model = PowerCutModel::new(&FIDS, META_MAX);
+            model.step(&mut dev, &mut fs, Op::MetaAdd(A, vec![0xAA; 8]));
+            dev.arm(budget);
+            model.step(&mut dev, &mut fs, Op::Delete(A));
+            model.reboot(&mut dev, &mut fs);
+            // The record is gone once the delete settled, and the file it never
+            // had did not appear.
+            model.step(&mut dev, &mut fs, Op::MetaFind(A));
+            model.step(&mut dev, &mut fs, Op::Read(A, 8));
+        }
+    }
+}
+
 // --- controls: the oracle has to be able to fail ------------------------------
 
 #[test]

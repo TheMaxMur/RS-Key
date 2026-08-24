@@ -91,31 +91,9 @@ impl FidoRng {
     }
 }
 
-impl rsk_fido::Rng for FidoRng {
-    fn fill(&mut self, buf: &mut [u8]) {
-        self.draw(buf);
-    }
-}
-
-impl rsk_openpgp::Rng for FidoRng {
-    fn fill(&mut self, buf: &mut [u8]) {
-        self.draw(buf);
-    }
-}
-
-impl rsk_oath::Rng for FidoRng {
-    fn fill(&mut self, buf: &mut [u8]) {
-        self.draw(buf);
-    }
-}
-
-impl rsk_otp::Rng for FidoRng {
-    fn fill(&mut self, buf: &mut [u8]) {
-        self.draw(buf);
-    }
-}
-
-impl rsk_rescue::Rng for FidoRng {
+// One impl for every applet: the randomness seam is `rsk-sdk`'s, not one
+// declaration per applet.
+impl rsk_sdk::Rng for FidoRng {
     fn fill(&mut self, buf: &mut [u8]) {
         self.draw(buf);
     }
@@ -167,11 +145,7 @@ impl rsk_device::Hooks<FlashStorage> for DeviceHooks {
     /// Both cores race the prime search while the transports keep the host alive.
     /// `Some` either way: this board *has* an accelerator, so a failed search is a
     /// failed command, not a fall-through to the single-core path.
-    fn rsa_search(
-        &mut self,
-        nbits: usize,
-        rng: &mut dyn rsk_openpgp::Rng,
-    ) -> rsk_device::SearchResult {
+    fn rsa_search(&mut self, nbits: usize, rng: &mut dyn rsk_sdk::Rng) -> rsk_device::SearchResult {
         Some(crate::core1::run_rsa_search(nbits, rng))
     }
 }

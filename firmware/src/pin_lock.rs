@@ -49,6 +49,7 @@ pub struct Boot {
 }
 
 /// Record the soft lock, so it survives a warm reboot.
+/// Refines `RSKeyBootHardening!TheWholeLockRides` — SEC-BOOT-002.
 pub fn set(lock: PinLock) {
     rp_pac::WATCHDOG.scratch2().write_value(encode(lock));
 }

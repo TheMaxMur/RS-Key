@@ -38,7 +38,973 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+## [0.4.11] - 2026-08-24
+
+The catch-up release, and the one where the instruments were audited harder than
+the firmware. Everything CTAP 2.2 and 2.3 added that RS-Key was missing is here —
+including FIDO over the card interface, so `ykman` and `python-fido2` can drive
+the same device the browser does — along with ML-DSA-87, a trusted display that
+antialiases, and a PIN policy that finally refuses the shapes it always claimed
+to. The other half is the verification layer: the formal model now replays
+against a real device's recorded state, and the gates that hold *it* honest found
+that several earlier instruments had been proving nothing at all.
+
+### TL;DR
+
+If you read nothing else:
+
+- **The CTAP 2.2/2.3 gap against a YubiKey 5.8 is closed.** `encIdentifier`,
+  `transportsForReset`, `longTouchForReset`, `pinComplexityPolicy`,
+  `attestationFormatsPreference`, `encCredStoreState` with conditional mediation,
+  and an enterprise-attestation RP-ID list you can actually aim. Two members are
+  deliberately absent and say why at the skip.
+- **FIDO now answers on the card interface too.** CTAP 2.x as ISO 7816 APDUs over
+  CCID, so tools that never learned CTAPHID reach the same authenticator.
+- **ML-DSA-87 (COSE `-50`)** joins -65 and -44, byte-exact against the ACVP
+  vectors. Still not advertised by default: shipping Firefoxes reject a getInfo
+  carrying an unknown COSE id, and that is measured, not assumed.
+- **The trusted display antialiases, and its PIN pad can scramble.** Scrambling is
+  off by default — it costs muscle memory, and that trade is the owner's.
+- **The `rsa` crate is out of the trust base**, and RUSTSEC-2023-0071 with it.
+- **Two fixes you may have felt.** An OpenPGP password charged its retry *after*
+  the comparison, so a decrement lost to a power cut made the guess free; and an
+  RSA-3072/4096 PIV key is usable again under Windows' own minidriver.
+- **`bcdDevice` is `0x0986`.** A firmware-behaviour change bumps it; the counter
+  counts builds, not features.
+
+Everything else is grouped below in the usual sections, security last — and the
+`Internal` one is longer than usual on purpose: it is where the instruments that
+could not fail are written down, each with what it missed.
+
+> ### ⚠️ Upgrading a 16 MB key provisioned before 0.4.8 still wipes it
+>
+> **Export your seed first** ([seed backup](docs/guides/seed-backup.md)). 0.4.8
+> moved the store 4 KB down on 16 MB parts to clear the RP2350-E10 block, so a
+> key provisioned by an older 16 MB build comes up factory-empty. The `display`
+> and `16mb` flavors and the `abrobot-16m` / `waveshare-touch-lcd` presets are
+> the affected ones; **4 MB and 2 MB keys upgrade in place.**
+
+### Added
+
+- **Settings → Security → "Scramble PIN pad", off by default**
+  ([#90](https://github.com/TheMaxMur/RS-Key/issues/90)). On, the ten digit keys are
+  laid out afresh at random for every PIN entry — and again between the "New PIN" and
+  "Confirm PIN" steps — so a fingerprint trail, a worn patch of glass, or an onlooker
+  who sees the hand but not the panel learns nothing from *where* the taps landed.
+  The order comes from the hardware RNG through Fisher–Yates with rejection sampling,
+  not `% 10`, which would have favoured the low digits by up to 6/256 and made the pad
+  leak a little of what it exists to hide. **It buys nothing against a screen
+  recording** — anyone who can see the panel reads the digits off it — which is why the
+  guide says so rather than implying broader cover. Off by default because it costs
+  muscle memory, and a mistype is expensive against a limit of three wrong PINs per
+  power cycle: that trade is the owner's. One `PinLayout` value both paints the labels
+  and answers the hit-test, so a pad drawn in one order and tapped in another (which
+  would type digits nobody pressed, with nothing on screen looking wrong) is not a state
+  the types can reach. The setting rides a spare bit of `EF_DISPLAY`'s existing flags
+  byte, so the record does not grow and a provisioned device keeps every field —
+  including a record written before this bit existed, which loads with scrambling off.
+  The shared settings rows shrink from 36 px to 32 px (gap 6 → 4) to fit a seventh
+  Security row; the compile-time layout assert is what refused the taller pitch.
+  **bcdDevice → 0x0983.**
+
+- **The store sweep's middle recorder had no teeth, and the reason it could not
+  be a Kani proof was the wrong reason.** Both found by review. The faulting
+  medium failed writes as well as reads, and `NoRecordLostToMetaWrite`'s loss
+  needs the EF_META read to fail while the rewrite LANDS — so
+  `BugMetaAddDropsOnFault`, its own co-mutant, **survived**. Read-only faults now,
+  which is what the docstring always claimed, and all three recorders have a kill
+  from their own co-mutant. The sweeps also passed while driving nothing: `drive`
+  ignores every `Result`, so making `put` and `meta_add` inert left ~26 000 dead
+  steps green. Four live-read counters per sweep are the host's `kani::cover!`,
+  and they are what would have caught the write-fault blinding without a mutant.
+  And the claim "no metadata path can run under `cfg(kani)` at all" is **false**:
+  the blocker is `EF_META`'s value, not the map's width, and a one-line
+  `#[cfg(kani)]` alias makes the probe pass in 0.244 s with two fault-site
+  obligations at 0.107 s each — what genuinely times out (>420 s) is the clauses
+  over a MEDIUM. Recorded as a cheap win not taken here, because it redefines a
+  public constant and moves two registry rows.
+- **And the faulted-`Delete` carve-out was hiding a broader defect than it
+  described.** Not a meta-only-file curiosity: over a medium whose EF_META read
+  fails once and then works, `Fs::delete` of a file that HAS data returns `Ok(())`
+  with the value gone and the record standing — the 0x077C end state, no power
+  cut. Reachable on hardware, and `rsk-piv`'s `files.rs:302-310` already reaches
+  for `force_delete` because of it. Two ways to close it are named in
+  [store-refinement.md](docs/store-refinement.md); both change what `delete`
+  returns to every applet, so both are the maintainer's.
+
+- **The `changePIN` length pair is driven at last, and the mutation that stood
+  open turns out to reach an unauthenticated panic.** `clientpin.rs:241-243`
+  refuses `newPinEnc` and `pinHashEnc` together; a cargo-mutants MISSED row
+  widened the `||` to `&&` and survived every test with "the consequence is not
+  yet determined". It is determined now: `pinHashEnc` comes straight from the
+  CBOR decoder with no bound, `macd` is `[0u8; 112]`, and `clientpin.rs:256`
+  copies `newPinEnc ‖ pinHashEnc` into it **before** the MAC is verified — so the
+  widened guard admits a request that panics with `range end index 128 out of
+  range for slice of length 112`. Driven at both PIN protocols, because 112 is
+  `80 + 32` on two and `64 + 48` on one.
+
+- **`RSKeyStore`'s persistent half has a bridge to the code at last, and the two
+  reasons it could not have the obvious one are both measured.** The per-FID
+  state projection was refuted last round — every predicate came out as the same
+  boolean function as its `powercut.rs` twin. The second reason is new and is
+  this pilot's own doing: **no metadata path can run under `cfg(kani)` at all.**
+  Every one opens with `known_absent(EF_META)`, `EF_META` is `0xE010`, and the
+  `cfg(kani)` present map is three bytes, so the index is 7170 of 3 — measured on
+  a harness that does nothing but `meta_add`: `1 of 164 failed … index out of
+  bounds … fs.rs:118`, in 0.11 s. So `store_steps_tests.rs` is an exhaustive HOST
+  sweep instead: three step recorders (`NoOrphanedMetadata` at a `Delete`,
+  `NoRecordLostToMetaWrite` across FIDs at a `MetaAdd`, `NoFalseMetaAbsent` at a
+  `MetaDelete`), read after every step of every three-step sequence over twelve
+  operations at three FIDs, again after a reboot with no `scan`, and again over a
+  medium that fails for the duration of each step. The projection reads `meta`
+  and `val` from the MEDIUM and `metaAbsent` from the CACHE, which is the model's
+  own split and the only one under which `NoFalseMetaAbsent` is statable: read
+  through the caches, a false-absent erases its own evidence. Co-refuted:
+  `BugDeleteMetaOnlyUnderPresent` gives `NoOrphanedMetadata: [MetaAdd(0)] then
+  Delete(0) left a record over a gone value`; `BugDeleteValueBeforeMeta` survives,
+  correctly — the completed state is identical and only a power cut sees the
+  order. The three properties stay `MODELLED-ONLY`, because the registry reads
+  `BOUNDED` off a Kani harness name and there cannot be one.
+
+- **A RED row may now name the invariant it must break, and the runner compares
+  it.** A mutant can go red for a defect it does not model — 2 of 24
+  co-refutation patches in this tree once scored a kill that way — and the review
+  measured it happening here: flipping `MutateAlwaysUvArm` to the INVERSE defect
+  kept `TraceSecurityBadAlwaysUvArm.cfg` red, at a different boundary and in the
+  other direction, with `run-tlc.sh` satisfied. `floors.txt` gained a fifth
+  column for it. Repairing that turned up why nobody had noticed: the runner's
+  `Invariant [A-Za-z]+ is violated` matched **no name with a digit in it**, so
+  every `R4*` trace row had been printing the raw error line in its verdict
+  column since the day it was written, reading RED coarsely and naming nothing.
+  A GREEN trace row's floor is `TraceSteps + 1` now and `security_trace.py`
+  asserts it — `run-tlc.sh` compares a floor with `-lt`, and only one of the two
+  GREEN rows gets the mapper's exact distinct-count check, so the other could
+  have stopped short of its evidence and read GREEN.
+
+- **The phase-4 replay's gate rule was refuted by the first session that
+  recorded `alwaysUv`, and now states both arms of §6.1.2's token-less gate.**
+  The rule was `pin.set /\ rk` — CTAP §6.1.2 step 10 — and step 6's arm was left
+  out on the argument that stating it from `gate.alwaysUv` alone would be false
+  on a display build. It was: with a pad, step 6.3 UPGRADES a token-less request
+  to built-in UV instead of refusing it. The answer is to record the pad's
+  availability and REFUSE such a boundary, not to leave the arm out, so
+  `SecurityTraceSnapshot`'s sibling `security_trace_builtin_uv` joins the
+  recording (trace schema 4 → 5) and `scripts/security_trace.py` dies on a
+  token-less makeCredential recorded with a pad rather than guessing. Measured on
+  the new recording: with `alwaysUv` on and no pad the device answers
+  PUAT_REQUIRED for **both** `rk` values, where the old rule predicts served —
+  `TraceSecurityBadAlwaysUvArm.cfg` is that rule kept, and it is RED at the
+  boundary that refutes it (`tracePc = 36`, `alwaysUv` TRUE, `rk` FALSE).
+  `tests/16_always_uv_gate.py` is the session; the mapper learned `ConfigOp` and
+  a `GetPinToken` that reads its own permission set, and the issuance branch now
+  requires the token to have MOVED — without that a clientPIN answering
+  PIN_AUTH_INVALID over an already-live token matched it and B reported
+  Authorized against a refusal. Coverage: commands 21 → 32, steps 49 → 60,
+  distinct actions 21 → 22, **gate boundaries 3 → 5**, AMBIGUOUS still 0.
+  `bcdDevice` 0x097C → 0x097D: `crates/rsk-device/src/ctap.rs` gained the
+  accessor, and `scripts/bcd_gate.py` asks whether a line can reach the image
+  rather than whether this feature is on — the same call `250be31` made.
+
+- **The citation gate reads the citations written in code now, and derives which
+  files those are.** It held the `formal/` pages and nothing else, so the 42
+  `file.rs:line` citations in Kani proof headers, two test files and one fuzz
+  target were unchecked — and 19 of them named code the prose was never about
+  (repaired in the commit before this one). Any tracked `.rs` under `crates/`,
+  `firmware/` or `fuzz/` that cites by line is a page now, derived rather than
+  transcribed, so the next proof header is covered without anyone remembering a
+  tuple. A bare basename on a page that is itself code resolves against its own
+  directory first — without that every `lib.rs:207` in a proof header is
+  ambiguous across four search roots and the one it means is the sibling; the
+  `formal/` pages hold no `.rs` siblings, so nothing that predates the rule moved
+  (measured: the relock added 35 entries and removed none). `CHANGELOG.md` stays
+  outside on purpose — its entries cite the tree as it stood and must be allowed
+  to rot — as do the guard's own fixtures and one docs page that writes an
+  unresolvable path fragment, since repaired to a real path. 572 citations across
+  13 model pages and 7 code pages when it landed.
+
+- **The 187 generated TLC configurations are now held against their generator.**
+  Every one of them opens with "Generated by formal/gen-configs.sh -- do not edit
+  by hand" and nothing made that true: **delete all three `BootCarryMut_*.cfg`
+  and every gate row stays green**, because `assurance_gate.check_tiers` compares
+  the tier union against what `formal/` holds and `run-tlc.sh` names whole
+  families with `ls`, so both sides shrink together. Editing a constant inside a
+  generated file was silent for the same reason — nothing compared the file to
+  its source. `scripts/config_gen_gate.py` regenerates into a temp directory and
+  diffs; `gen-configs.sh` takes an output directory for it, and defaults to its
+  own so `./gen-configs.sh` is unchanged. A deleted file, a hand-edited file and
+  a generator changed without regenerating are one finding, because all three
+  mean the committed matrix is not the one the generator describes.
+  `TokenExport.cfg` is the single hand-written configuration and is registered as
+  such, checked in both directions — including that it may not carry the
+  generated header, and — found by the review, not by the first table — that the
+  187 generated ones DO carry it, which the row is named after and checked
+  nowhere. Nineteen mutations across 22 cases in
+  `scripts/test_config_gen_gate.py`, each driving the real generator over a copy
+  of `formal/`, and the generator itself is a `NAMED` entry in the meta-guard so
+  the table cannot be deleted with the suite green.
+
+- **Two induction probes, and the store's named a conjunct the model relies on
+  and never stated.** Running an invariant as TLC's INIT predicate with `Next` as
+  the next-state relation asks whether one step from ANY state the invariant
+  admits lands inside it — a proof that needs no reachability argument, and no
+  second tool. `RSKeyBootHardening` is inductive as it stands (48 admitted
+  states, GREEN). `RSKeyStore` is not: from a type-correct state where the cache
+  says `EF_META` is absent while a record stands, `MetaAdd` trusts it and rebuilds
+  the blob from empty — SEC-STORE-004's damage arriving from a state rather than
+  from the step that made the cache lie. `CacheHonest == metaAbsent => \A f :
+  ~meta[f]` is the conjunct the counterexample named; it is `SEC-STORE-005` now
+  and `Store.cfg` checks it on the reachable states too, because an induction
+  step without `Init => IndInv` proves nothing (and it costs nothing: 364
+  distinct, unchanged). Two things fell out beside it: `"NoFalseAbsent"` was an
+  `InvNames` member no step ever wrote, and the runner's rule for these rows
+  is `depth = 1` — every successor already being initial IS the claim, where
+  the first version's `states > distinct` could never fail. One mutant probe per
+  module rather than nine: `Init` satisfies `IndInv`, so the induction rows fire
+  on a superset of their `*Solo_` twins' conditions and cannot see a mutant that
+  stopped firing. **TLAPS stays "not now"**, and the reason is the measurement:
+  the result it would be bought for arrived in a second, and the useful half was
+  the counterexample. Formal artefacts and host tooling only.
+
+- **The store model's persistent half cannot be bridged the obvious way, and the
+  measurement says so.** Writing `RSKeyStore`'s per-FID steps as Rust predicates
+  and holding them against `powercut.rs`'s four `*_landed` rules produces the
+  SAME boolean function each time — 0 disagreements over a five-valued domain —
+  because `delete_landed`'s `untouched` disjunct expands to the model's stutter
+  plus `k = 1`, and its other disjunct is `k = 2`. It is a copy compared to
+  itself. The module's own comments say why: two of the three unbridged
+  properties are step recorders (a meta-only file legally has metadata and no
+  value, so a state predicate over one record is a stronger, wrong claim that
+  panics on correct behaviour) and the third is cross-FID. A real bridge needs a
+  multi-FID projection with step recorders. Recorded in `formal/README.md` and
+  `docs/store-refinement.md` so the next attempt does not repeat it — and one
+  power-cut shape nothing had driven is closed on the way: the delete of a
+  metadata-only file, from both sides of the cut.
+
+- **The assumption's other arm is exercised by the mutants, and the rule that
+  says so now checks what its message claims.** `358755f` measured that all three
+  boot mutants redden on the `FALSE` arm of `PowerOnClearsScratch2` too, and on
+  the same invariant each — then kept no configuration that would say so again.
+  `BootCarryMut_*.cfg` runs each of the three there, one invariant apiece, so a
+  RED names the same defect its `BootSolo_*` twin does rather than a sibling
+  reporting a mutant gone unreachable: `MarkerNeverLies` in 2 and 20 distinct,
+  `TheWholeLockRides` in 20, against 2/26/26 on the arm that clears. Separately,
+  `assumption_gate.py`'s third rule asked whether the module mentions the
+  constant *anywhere*, while its message promised an action reads it. It walks
+  the definition graph from the names the configurations run or check now, over a
+  body with block comments and everything past the module terminator stripped
+  out — six shapes that satisfied the weaker rule while being exactly as inert,
+  each refused by its own case: a bare `ASSUME`, an orphan definition, a
+  `(* … *)` comment, a line below `====`, a one-hop walk, and a root the keyword
+  list had forgotten. Formal artefacts and host tooling only.
+
+- **The trace replay had stopped following the recording fifteen steps from the
+  end, and every observer said GREEN.** `TraceSecurity.cfg` reached 44 of 59
+  states: the reset expansion emitted one step per live record, while the model's
+  seed arm empties `cred` and `rpent` with the seed in the same step. Three things
+  had to line up — `scripts/security_trace.py` ran TLC with `-deadlock`, so the
+  divergence the whole pipeline rests on was not checked; `TraceComplete` is
+  `tracePc <= TraceSteps`, a tautology that can only catch a replay running PAST
+  its evidence; and the floor was 30. `-deadlock` is gone, the two GREEN rows are
+  pinned at `TraceSteps + 1`, and the runner asserts the reported distinct count.
+  Host tooling and formal artefacts only.
+
+- **The replay answers the gates the model expresses by disabling an action
+  (R4c), and `AMBIGUOUS` is 0.** Two recorded boundaries could only be shrugged
+  at, both a `makeCredential` carrying no `pinUvAuthParam`: a refusal and a
+  successful non-discoverable registration write nothing either way, so their raw
+  footprints are identical and only `rk` separates them (CTAP 2.1 §6.1.2 steps
+  7/10). Trace schema 4 records that flag and whether a `pinUvAuthParam` was
+  offered — inputs, decoded by the applet's own parser — B states the gate rule
+  over its own variables, and `R4cGateAnswers` holds the recorded outcome to it.
+  The reset window is the second gate: a refused reset over an emptied store has
+  the exact footprint of a second successful wipe, and that refusal had been
+  replayed as one. Two configurations take one half each of the rule out and are
+  required RED. Host tooling and formal artefacts only.
+
+- **`MODELLED-ONLY` was reading as "no evidence below the model", and for 27 of
+  42 rows that was wrong.** The status ladder's only code-facing rung is
+  `BOUNDED`, which a Kani harness sets — so a property whose concrete face is
+  carried by an exhaustive unit suite looked identical to one carried by nothing.
+  Measured from the other side: 27 of the 42 modelled-only properties have a model
+  mutant whose **code twin** was patched into the real tree and caught by the real
+  suite. The whole retry lattice is one — and driving five further mutations of
+  PIV's `check_ref` counter arithmetic by hand killed five of five, one by a test
+  module written for precisely the glitch its read-back guards. A derived
+  `Co-refuted` column now states this, reusing `comutate.py`'s own invariant
+  lookup rather than a second copy; whether it deserves a rung of its own is left
+  as a maintainer decision. Host tooling and formal artefacts only.
+
+- **The CTAPHID reassembler's three properties are proved against the real
+  `feed`, and the proof found a test the suite was missing.** `RSKeyTransport` was
+  modelled but unbridged; five Kani harnesses now drive the real `Reassembler`
+  from a symbolic live transaction. Six mutations of `feed`'s guards, and the
+  survivor is the interesting one: the copy bound `CONT_DATA.min(bcnt - cur)`
+  relaxed to `CONT_DATA` was killed by nothing, because
+  `CTAP_MAX_MESSAGE - INIT_DATA` divides by `CONT_DATA` **exactly** — every
+  continuation of a maximum-length message is full, so the `min` never bites and
+  the edge test is blind by construction. Kani caught it; the fix was the test it
+  pointed at, a message whose last frame is part-full, and the table is 6 of 6 at
+  the PR gate. First measured case here of the weekly proof catching what the
+  pull-request suite could not. `CTAP_MAX_MESSAGE` is two continuations under
+  `cfg(kani)` — at the shipped width CBMC ran out of memory, not merely slowed —
+  and the definition stays an expression, so the documented 7609 is untouched.
+  `SEC-TRANS-001/002/003` rise to BOUNDED. The verification code is `cfg`-excluded
+  from every firmware image; what the production build gained is one compile-time
+  assertion and one `cfg` attribute, so `bcdDevice` 0x096B → 0x096C is a refactor
+  with no behaviour change.
+
+- **ML-DSA-87 (COSE `-50`), the NIST category-5 parameter set.** All three FIPS 204
+  sets now have in-tree backends: `rsk-mldsa` gained `MlDsa87`/`mldsa87_verify` over
+  `ExpandedKey<8, 7>`, checked byte-for-byte against NIST ACVP keyGen/sigGen/sigVer
+  vectors like its siblings. Under `advertise-pqc` getInfo lists `-50` ahead of `-49`
+  and `-48`. Measured on the RP2350: `mldsa87_from_raw` reserves 123,160 B and
+  `mldsa87_sign` 66,628 B, so a makeCredential peaks near 144 KiB against the
+  210,152-byte main-stack ceiling — the earlier "-87 overflows the stack" note was
+  measured before the worker moved off `main`'s init frame and did not survive
+  re-measurement.
+
+- **FIDO answered on one transport, and `ykman`/`python-fido2` could reach the
+  other one.** CTAP2 and U2F are now served over CCID as well as CTAPHID, as ISO
+  7816 APDUs — the CTAP 2.1 §11.2.1 encoding `python-fido2`'s `CtapPcscDevice`
+  speaks, and PC/SC does not distinguish an NFC reader from the device's own CCID
+  interface, so it works over plain USB. SELECT `A0000006472F0001` answers
+  `U2F_V2`; `80 10` carries a CTAP2 command; interindustry-class APDUs take the
+  CTAP1 path. Chaining runs both ways and a client needs both — a bare getInfo is
+  ~520 bytes, so it arrives over `61xx` + GET RESPONSE.
+
+  **The two transports share one `FidoState`, and that is the load-bearing part.**
+  Giving the new one its own would have been the obvious shape and a security
+  regression: the per-boot PIN-mismatch batch lives in that state, so a second copy
+  hands a host six guesses per power cycle instead of three — the restart-by-reboot
+  attack `restore_pin_lock` exists to close. It is now borrowed rather than owned,
+  from the worker, by both handlers; forking it is what
+  `both_transports_answer_from_one_session_state` fails on. One PIN/UV token, one
+  credential-management walk, one soft lock.
+
+  Both applications stay separately gated: `ykman config usb --disable fido2` and
+  `--disable u2f` name them apart, so the *commands* are gated rather than the
+  SELECT — the AID stays selectable for whichever half is still on, and the
+  disabled half answers `6986`. With neither enabled the AID is gone. No `91 00`
+  keep-alive is emitted: a touch blocks inside the exchange under T=1 time
+  extensions, as OATH's touch-flagged CALCULATE and OpenPGP's UIF already do.
+  The transport ceiling is one CCID frame (2038 bytes) against CTAPHID's 4078, so
+  an ML-DSA credential's attestation stays CTAPHID-only.
+  **Reachability changed, so [threat-model.md](docs/threat-model.md) says so.**
+  ⚠️ On the default `0x1209:0x0001` identity most hosts never bind the CCID
+  interface, so none of this appears there — a `VIDPID=Yubikey5` build or the
+  `ccid-rs-key` overlay is what makes it visible. `bcdDevice` 0x096A → 0x096B.
+
+- **A platform had no way to know its credential cache was stale.**
+  CTAP 2.3's `encCredStoreState` (getInfo `0x1E`) was absent, so a platform that had
+  enumerated a key's discoverable credentials could only find out whether anything
+  had changed by enumerating them all again. It now carries the same
+  `iv ‖ AES-128-CBC(HKDF-SHA-256(persistent pinUvAuthToken, "encCredStoreState"))`
+  construction `encIdentifier` uses, over a 128-bit tag that moves on **every** change
+  to the discoverable set: a create, a `deleteCredential`, an `updateUserInformation`,
+  and the delete driven from the trusted display — that fourth path is a real one and
+  was not in the plan. Reads never move it. Two properties earn the member its keep
+  and both are tested: the tag lives in flash rather than in `Fs::write_gen`, which
+  restarts at zero on every boot and would let a changed store read as unchanged
+  across a replug; and it is written *ahead of* the change it describes, so a torn
+  write leaves a tag that over-reports (one wasted re-enumeration) instead of one
+  that under-reports (a cache nothing corrects). Absent until a persistent
+  pinUvAuthToken exists, like `encIdentifier` — only its holder can read it, which is
+  the whole privacy story — and cleared by `authenticatorReset` with the credentials
+  it summarises. `bcdDevice` 0x0969 → 0x096A.
+
+- **Enterprise attestation could be switched on, but never aimed at anyone.**
+  Vendor-facilitated (type 1) enterprise attestation matched a list that was
+  hardcoded and empty outside the conformance build, so `enterpriseAttestation: 1`
+  never produced an `ep` flag on a shipping key no matter how it was configured —
+  only type 2, which grants any RP at once. The list is now a stored record
+  (`EF_EA_RPIDS`, up to **8** `sha256(rpId)` entries), written by a new
+  `authenticatorConfig` vendorPrototype command `0x0e6841934e719be7` taking the
+  rpIds as text at subCommandParams key 4 and hashing them on the device, so the
+  stored form and the makeCredential lookup cannot drift apart. `rsk fido
+  attestation rpids` drives it. **An absent record is an empty list**, which is
+  what every already-provisioned device reads: type-1 keeps qualifying nobody
+  until an administrator writes the list, and nothing else changes across the
+  upgrade. A list past 8 entries is refused with `CTAP2_ERR_KEY_STORE_FULL` rather
+  than stored truncated, and `authenticatorReset` clears the list along with the
+  enterprise-attestation flag itself. `bcdDevice` 0x0966 → 0x0967.
+
+- **A platform that asked for no attestation got one anyway, and paid for it.**
+  CTAP 2.2's `attestationFormatsPreference` (makeCredential request `0x0B`) was
+  ignored. It is now honoured in the one way a single-format authenticator can: a
+  list of exactly `["none"]` yields `fmt:"none"` with an empty attStmt, and the
+  ES256 attestation signature and the device-certificate read are **skipped**, not
+  computed and discarded. Measured on the host, a registration drops from 450.6 µs
+  to 293.4 µs — 34.9% — though the split on the RP2350 will differ, where the
+  signature costs relatively more.
+  Every other shape is unchanged: absent, empty, `["packed"]`, and any list of two
+  or more — including `["none","packed"]` — still return the full packed statement,
+  because choosing by lowest supported index needs more than one supported format.
+  `attestationFormats` (getInfo `0x16`) therefore stays `["packed"]`: "none" is the
+  absence of a statement, and listing it would make this a multi-format
+  authenticator subject to that rule. An enterprise attestation that was actually
+  performed outranks the preference — it is explicitly enabled in flash, strictly
+  stronger, and answering it with an empty statement would discard what an
+  administrator turned on.
+  **Why this is safe when `fmt:"none"` was withdrawn before:** an empty statement
+  broke OpenSSH < 10.0, which verifies any x5c-less credential unconditionally. It
+  was withdrawn because this device emitted it *unasked*. It is now reachable only
+  when the platform names it, and a client that does not send `0x0B` cannot observe
+  any change. The empty attStmt is written rather than omitted: field 3 is
+  required, and a reader that finds none sees an incomplete attestation object.
+  `bcdDevice` 0x0965 → 0x0966.
+
+- **A paired platform had no way to tell one RS-Key from another.** CTAP 2.2's
+  `encIdentifier` (`0x19`) is how an authenticator lets a platform that already
+  holds its persistent pinUvAuthToken recognise it again, without handing every
+  caller a stable serial to track. RS-Key now emits it: 32 bytes of
+  `iv ‖ AES-128-CBC(k, id)`, where `id` is a 128-bit device identifier and `k` is
+  `HKDF-SHA-256(salt = 32 zero bytes, IKM = the persistent token,
+  info = "encIdentifier", L = 16)`.
+  **The IV is regenerated on every getInfo.** A fixed one would have turned the
+  member into precisely the cross-origin fingerprint it exists to avoid — served
+  to anyone who asks, since getInfo needs no authentication. The test that guards
+  this asserts both halves at once: consecutive responses must differ, *and* must
+  decrypt to the same identifier. Either half alone passes for the wrong thing —
+  random noise identifies nobody, a constant identifies everybody.
+  The identifier is HKDF-derived from the device master seed under its own label,
+  which decides one user-visible behaviour: `authenticatorReset` mints a fresh
+  seed, so a reset device stops being linkable to its pre-reset self. Deriving it
+  from the silicon root instead would have survived the reset and quietly defeated
+  it. The member is **absent** until a persistent token exists, and while a soft
+  lock keeps the seed unreadable — it is optional, and a placeholder built from
+  some other value would be a claim no platform could detect as false.
+  `bcdDevice` 0x0964 → 0x0965.
+
+- **getInfo did not say whether a reset needs a long touch, and the answer was
+  believed to be contested.** CTAP 2.2's `longTouchForReset` (`0x18`) is a boolean
+  a platform reads to know whether the reset ceremony wants a held touch rather
+  than a tap. RS-Key requires no such gesture, so it now answers `false` —
+  explicit, and one line away from `true` if the gesture is ever built.
+  The reason this sat unanswered was a supposed standard-versus-implementation
+  conflict: CTAP 2.2 specifies a 10-second hold while a shipping YubiKey holds 5.
+  There is no conflict. **CTAP 2.3 itself reduced the hold from 10 seconds to 5**,
+  so the 5-second device is conformant to the version it implements and the
+  10-second figure is superseded text. RS-Key advertises `FIDO_2_3`, so 5 s is the
+  number that would apply here too — recorded now so the question does not have to
+  be re-opened if the gesture is ever wanted.
+  `bcdDevice` 0x0963 → 0x0964.
+
+- **A `strong-pin` build enforced a PIN policy it never told anyone about.**
+  CTAP 2.2's `pinComplexityPolicy` (`0x1B`) reports whether the authenticator
+  applies a PIN rule *beyond* `minPINLength` — which `0x0D` already carries, so a
+  raised floor is not one. The `strong-pin` and `fips-profile` images do apply
+  one: on top of the six-code-point floor they refuse a repeated code point and a
+  ±1 run (`123456`, `654321`), on the host `setPIN` path and on the trusted-display
+  PIN pad alike. Nothing in getInfo said so, so a platform could not distinguish
+  those builds from a default one with a longer minimum. `0x1B` now answers
+  `true` there and `false` on the default build. Its optional companion
+  `pinComplexityPolicyURL` (`0x1C`) is deliberately not emitted — a documentation
+  link that rots is worse than none, and the member is optional.
+  The advertisement is tied to the behaviour by a test that drives `setPIN` with
+  the exact ±1 run the rule is about and requires the two to agree, so a build
+  cannot claim a policy it does not enforce, nor enforce one it does not claim.
+  `bcdDevice` 0x0962 → 0x0963.
+
+- **getInfo never said where a reset can be driven.** CTAP 2.2's
+  `transportsForReset` (`0x1A`) tells a platform which transports will accept an
+  `authenticatorReset`, so a platform that can only reach the key over a transport
+  the authenticator refuses resets on learns that before it prompts. The member was
+  absent entirely, leaving the platform to assume. RS-Key is USB-HID only, so the
+  answer is `["usb"]` — the same list `transports` (`0x09`) already carried, and
+  both now come from one `TRANSPORTS` const through one writer, so the two cannot
+  drift into saying different things. Note the wire type: an **array of
+  AuthenticatorTransport strings**, not the bit field Yubico's capability page
+  describes (that is their pre-personalization storage). The metadata statements
+  and their drift guard (`tests/62_metadata_statement.py`) carry it too.
+  `bcdDevice` 0x0961 → 0x0962.
+
+- **The store model's in-RAM half had no evidence at all, and its clauses are
+  the ones that read as obvious.** `RSKeyStore`'s persistent variables were
+  already covered — `powercut.rs`'s four `*_landed` predicates, their Kani
+  proofs and the `power_cut` fuzz target are what the module was lifted from —
+  but `present` and `decided` are private to `fs.rs`, invisible to a power-cut
+  oracle, and one of their obvious clauses (a faulted read cached as a decided
+  absence) is audit run-36 and shipped. Six harnesses now carry them, one per
+  model action, against a projection that reads the real bitmaps and calls the
+  real primitives. Each carries a **second symbolic FID**: the model says one
+  element moves and every other stands, while the code reaches its bit through
+  `fid >> 3` and `1 << (fid & 7)`, so a mismatched shift would alias two files
+  onto one bit and a delete on one would read as a decided absence for the other.
+  `FID_PRESENT_BYTES` is 3 under `cfg(kani)` — measured: at full width two of the
+  six ran past the 5-minute FAST cap (520 s and 794 s), at three bytes all six
+  run in 0.04–0.08 s — and what the shrink stops proving is a compile-time
+  assertion instead, which is the stronger form because it is about the shipped
+  width. `SEC-STORE-002` rises to BOUNDED; the other three store properties stay
+  MODELLED-ONLY and say why. The verification code is `cfg`-excluded from every
+  firmware image; what the production build gained is one compile-time assertion
+  and one `cfg` attribute, so `bcdDevice` 0x095F → 0x0960 is a refactor with no
+  behaviour change — the emitted image does the same thing with the same 8 KiB
+  map.
+
+- **The model's one hardware assumption was an axiom nothing could vary, and
+  running it the other way says what it actually buys.**
+  `PowerOnClearsScratch2` — whether a real RP2350 power-on clears
+  `WATCHDOG.scratch2` — was an `ASSUME` that all seven Boot configurations
+  pinned `TRUE` and that no action read: deleting the line left `Boot.cfg`
+  bit-identical at 77 states, 24 distinct, depth 5. `ColdReset` reads it now and
+  `BootCarry.cfg` runs the `FALSE` arm in the safety tier. Both arms are GREEN on
+  both invariants, and all three boot mutants redden on both and on the same
+  invariant — so the assumption buys **reachability, not safety**: six distinct
+  states, and no verdict. Its risk direction is usability rather than security,
+  because a scratch word that rides a power cycle carries the PIN mismatch batch
+  with it and locks harder, not softer. `assurance/assumptions.toml` records what
+  would discharge it, and `scripts/assumption_gate.py` is a new gate row refusing
+  an assumption every configuration pins the same way or that no action reads —
+  driven against the pre-change model, it reports both. Formal artefacts and host
+  tooling only.
+
+- **The formal trace went from one demo suite to a session, and its coverage is a
+  ratchet.** The phase-4 replay ran `21_pin_webauthn` alone and reached 13 of the
+  model's 50 actions, because a second suite could not be added: the replug
+  between suites moves security state outside every CBOR boundary, and the
+  replayer — correctly — refused the discontinuity. `tools/emu` now records the
+  power cycle as its own boundary (`command_raw` `0xFF`), which is also the only
+  way `PowerCut` is ever reached. With the reset path mapped, the committed trace
+  is three suites through one emulator lifetime: **21 boundaries** — the step and
+  action counts it landed with were re-measured by the R4c entry below, which
+  found the reset expansion emitting steps the model was refusing. The replayer
+  keeps a small ledger of what B holds, updated only from actions it has itself
+  emitted, because a relying party's real credentials fold onto one model element
+  and the raw slot counters cannot say how many. The three coverage floors moved
+  out of the script
+  into `floors.txt` beside every other ratchet, where the file's own header says
+  how to move one deliberately; each was driven red on its own, and deleting a
+  ratchet line is fatal rather than permissive. Host tooling and formal
+  artefacts only.
+
+- **`FidoState`'s zeroize-on-drop roster is exhaustive at compile time.** The
+  `Drop` impl scrubs four secret fields, and no host test can observe it: reading
+  a value whose destructor has run is the very thing Miri reports as a defect, so
+  replacing the whole body with `()` survives every suite. The risk that mutant
+  stands for is a *new* secret field added without a scrub line, which is a
+  compile-time question — `drop` now destructures `self` naming all eighteen
+  fields with no `..`, each non-secret one bound to `_` beside the reason it is
+  not one. A nineteenth field stops the crate compiling. Same four scrubs, and
+  `fs_usage`'s 512-file window is a named constant beside it: refactor, no
+  behaviour change — `bcdDevice` 0x095E → 0x095F because both lines reach the
+  image.
+
+- **A 512-file window, a dispatch arm and a ceremony entry, none of them ever
+  crossed.** `fs_usage` sums the first 512 files and counts them all; no test had
+  ever held more than two, so relaxing its bound to `<=` — an out-of-bounds write
+  on the 513th file — survived. `process_cbor`'s dispatch is a second roster over
+  the same commands as its canonical-form gate, and every vendor test calls
+  `vendor()` directly while the gate's own row for `0x41` sends a malformed body
+  that never reaches the match: deleting the arm left the suite green with the
+  command answering INVALID_COMMAND. And a touch ceremony opens by dropping a
+  cancel an earlier wait left behind — the fake board's own comment says so, which
+  is why `cancel_in` exists — but nothing read it back, so the whole entry could
+  be skipped. The model does hold that last rule
+  (`NoCrossTransportTouchConsumption`), and its co-mutant patches the BOOTSEL
+  wait in `rsk-device`; the display half is a second implementation of the same
+  rule and had no cover at either level. No firmware behaviour change.
+
+- **The device-config cap's arithmetic is 18 bytes of slack, and the test that
+  looked like it pinned it measured the cap against itself.**
+  `EF_DEV_CONF_MAX = MIN_CONFIG_RES_CAP - CONFIG_TLV_FIXED` is documented as
+  making the writer's cap and the smallest transport's response meet exactly, and
+  nineteen mutations of that arithmetic all survived. Five are equivalent — the
+  capability bits are disjoint, so `|` and `^` agree. The other fourteen move the
+  cap only within 28..46, and every one of them is above the widest record the
+  writer's *own* validator accepts: since `well_formed_writable` gained per-tag
+  widths (run-34 #25) that is 24 bytes against a 42-byte cap. The existing edge
+  test sizes its blob **by the cap**, so it can only observe that the cap equals
+  itself, and its over-wide entry fails the read gate and routes to the
+  synthesised fallback rather than the echo path it means to exercise. The new
+  test scans the writable tag set instead, so the record widens with it, and
+  asserts both halves against it. No firmware behaviour change.
+
+- **The panel's key grids and the certificate date helper were both untested.**
+  Thirteen `rsk-ui` rows are the touch hit-test — loop bounds in `hit_pin` and
+  `hit_rename`, both `+` in `t9_key_rect`, the centring in `T9_LEFT`, and
+  `hit_del_hold` replaced outright; nine fall to one grid-walking test and four
+  do not compile. The obvious test cannot fail: a key's own centre hits that key
+  even under a wrong rect formula, because the centre moves with it. What bites
+  is checked from outside — keys inside the panel, columns and rows advancing by
+  exactly one gap, the block centred — plus taps past the last row AND the last
+  column, without which both column bounds survive. And `days_from_civil` had
+  four free operators including the `- yoe / 100` Gregorian century rule, which
+  only differs once the year-of-era reaches 100, so the table carries 1900 and
+  2100 as well as two February 29ths. No firmware behaviour change.
+
+- **`SLOT_UPDATE` repeated every CONFIGURE validation rule and had none of
+  them.** The slot bound, the length floor, both RFU bytes, the CRC and the
+  `base + p2` that decides which slot is addressed — eight mutations, all
+  surviving, every rule already pinned on the CONFIGURE path by
+  `configure_validates_crc_and_rfu`. One test closes all eight. That completes
+  `rsk-otp`: all 25 of its rows on cited lines are triaged — 20 killed by four
+  tests, 3 equivalent (`(stored & !MASK) | (data & MASK)` folds complementary
+  bit sets, so `|` and `^` cannot disagree), 2 unviable. No firmware behaviour
+  change.
+
+- **The OTP slot's third flag merge was observable nowhere.** `SLOT_UPDATE`
+  merges `ext`, `tkt` and `cfg` each under its own update mask, and the existing
+  test pins two of them through `status-ext` — which carries no ext byte, so
+  both mutations of that merge survived. `EXTFLAG_UPDATE_MASK` is `0xFF`, so the
+  shipped semantics is replacement rather than merging; reading the stored
+  record directly and asserting the byte stands alone closes it. A second row in
+  the same crate is the conjunction that keeps a challenge-response slot silent
+  on a press: relaxed to `||` it silences a slot carrying only one of the two
+  bits, and no slot in the suite carried one alone. No firmware behaviour change.
+
+- **The CCID wipe wrapper's answer was asserted by nothing.**
+  `CcidApplets::factory_wipe` returns whether the wipe completed and its caller
+  turns that into a reboot; replacing the whole function with `true` or with
+  `false` left the suite green, and the `true` direction is audit run-32 — a
+  wipe reporting a range clear it never enumerated, with the trusted display
+  painting "RS-Key erased" over live credentials. The honest direction is pinned
+  now; the laundering direction needs a backend that can fail, and the shared
+  `Env` fixture is wired to `RamStorage`, so it stays open. The same pass closed
+  two rows as non-gaps rather than defects: the five `|` → `^` mutations on
+  `SUPPORTED_CAPS` are equivalent because the capability bits are disjoint
+  powers of two, and `persist_dev_conf`'s merged-size check is unreachable — the
+  cap is 42 bytes and the APDU layer refuses an unknown-tag blob outright, so no
+  merge the current tag vocabulary can build reaches it. No firmware behaviour
+  change.
+
+- **Every slot index in `decrement_rp` could have had the wrong sign.** Read,
+  delete, nickname-delete and write-back all address `EF_RP + j`, and the suite
+  killed none of them — nor the match beside them relaxed to `||`, which would
+  decrement whichever slot matched on length alone. The cause is the same one
+  the model's scope record names one layer up: the credential-management tests
+  ran at cardinality one, where `EF_RP + 0` and `EF_RP - 0` are the same file.
+  Two relying parties in distinct slots, one holding two credentials so the
+  write-back path is reached, and a nickname planted on each, close four; a
+  malformed-slot case closes two more in `for_each_rp`'s skip. One row stays
+  open as a decision rather than a test: a record of exactly `RP_PREFIX` bytes
+  is enumerated today as a relying party with an empty `rp_id`, because
+  `unseal_rp_id` falls through to its legacy cleartext domain. No firmware
+  behaviour change.
+
+- **Two paths the tree already tested one applet over.** `rsk-fido`'s
+  `reset::sweep` deletes in 64-key batches exactly as PIV's reset does, and PIV
+  has `reset_sweeps_more_files_than_one_batch` while FIDO's had nothing — the
+  bound that keeps the batch index in range was untested, and the mutation that
+  breaks it indexes past the array. Likewise `rsk-openpgp`'s `check_pin` accepts
+  a PIN record only at `n >= 3 && rec[0] != 0`, the same poisoned-record shape
+  PIV pins with `a_poisoned_reference_keeps_every_exit_it_had`, and neither half
+  of the guard was tested: a record too short to hold `[len, fmt, verifier]`, or
+  with a zeroed length byte, was read as a verifier. Both closed with tests
+  proved by driving their real mutations. Neither gap needed a new idea, only the
+  question "who else does this". No firmware behaviour change.
+
+- **The PIV PIN gate's last `&&` was held by no test, and the path behind it
+  accepts a wrong PIN *and stores it*.** `check_ref` ends in `!matched &&
+  otp_key.is_some() && ct_eq(without_otp_verifier, stored)`; because `&&` binds
+  tighter than `||`, relaxing the **second** one leaves `(!matched &&
+  otp_key.is_some()) || ct_eq(..)` — on an OTP-provisioned device any wrong PIN
+  satisfies the left side, skips the comparison, and lands in the migration body,
+  which calls `put_pin_verifier` with the PIN just offered. Nothing caught it
+  because the fallback needs `otp_key.is_some()` and every PIV test that offers a
+  wrong PIN runs without one; the single test that does provision an OTP key only
+  ever offers the correct PIN. `a_wrong_pin_is_refused_on_the_kbase_fallback_path`
+  closes it. The FIDO twin at `clientpin.rs:761` reads identically and is not the
+  same shape — its `ct_eq` is inside the block, so a widened guard still cannot
+  write. The tree as shipped is correct; this is the test that was missing. No
+  firmware behaviour change.
+
+- **The clientPIN suite spoke one protocol, and two PIN-path defects hid behind
+  that.** `PinProto::One` appeared once in `clientpin_tests.rs` against
+  twenty-five uses of `Two`, so every length rule in `changePIN` was measured at
+  `PADDED_PIN_LEN + 16` and never at `+ 0` — where the same expression written
+  `*` instead of `+` refuses **every** protocol-1 changePIN. The second: the
+  legacy `getPinToken` (subCommand 5) takes neither permissions nor an rpId, and
+  `issue_token` is handed `req.rp_id` whatever the subcommand, so relaxing that
+  one guard mints a legacy token bound to an rp the caller named — CTAP 2.1
+  §6.5.5.7 does not allow it and nothing tested the refusal. Both now have tests.
+  A third, in `rsk-sdk`: every fake applet took `_reselect` and ignored it, so
+  the dispatcher's `current == Some(i)` — the flag PIV and OpenPGP branch on to
+  keep or drop a session — was handed to nobody who looked; inverting it is what
+  the model calls `BugReselectResetsStatus`. Each proved by driving its real
+  mutation, one failure each, always the intended test. The tree as shipped is
+  correct throughout. No firmware behaviour change.
+
+- **Three defects the test suite could not tell from correct code, on lines the
+  model already covers.** The reverse pass reached the other 23 property-tagged
+  files (4 357 mutants, 3 124 measured, 572 MISSED, 78 of them on a cited line).
+  Three were triaged, chosen because each maps onto an invariant the model
+  claims: `request_rescrub` emptied — the at-rest scrub is never re-armed, which
+  `BugRekeyKeepsTheMarker` reddens; and OATH's and PIV's `deselect` emptied — a
+  VALIDATE unlock and a verified PIN outliving their selection, which
+  `BugSelectKeepsOtherApplet` reddens. All three now have tests
+  (`requesting_a_rescrub_clears_the_hardened_marker`,
+  `a_deselect_drops_the_validate_unlock`, `a_deselect_drops_the_pin_status`),
+  each proved by driving its real mutation with the whole suite watched — one
+  failure each, always the intended test. The first also narrows a recorded
+  exclusion: co-refutation skips the boot module because `firmware/` has no host
+  tests, but `request_rescrub` is in `crates/rsk-fs`, host-testable, and was
+  covered by nothing. The tree as shipped is correct throughout. No firmware
+  behaviour change.
+
+- **Five more `rsk-fs` paths the suite could not tell from broken.** The same
+  reverse pass that found the `meta_delete` guard flagged the boot scan's
+  dynamic-file registry (three separate mutations), `has_data`'s zero-length
+  test, `factory_wipe`'s 64-key batch bound and `delete`'s registry retain — all
+  on lines the model cites, none killed by any test. These are closed as test
+  gaps rather than model gaps on purpose: the capacity budget's bookkeeping and a
+  loop bound are not what `RSKeyStore` carries. Four tests own them, each proved
+  by driving its real mutation with the whole suite watched — six for six,
+  exactly one failure each, always the intended test. One of the six SURVIVED the
+  first attempt because the new test asserted a *count*: the inverted retain
+  keeps one entry too, just the wrong one, so the registry listed a deleted key
+  and had dropped a live one while the number held. Re-writing the survivor is
+  what separates them. No firmware behaviour change.
+
+- **A faulted `meta_delete` could cache EF_META as absent, and nothing at either
+  level held it.** `Fs::meta_add_reserve` refuses a FAILED EF_META read; its
+  sibling `Fs::meta_delete` has the identical guard and no test killed its
+  removal, while the model's `MetaDelete` was an unconditional write with no read
+  to fail. The damage lands on the *next* write, not the delete: a cached false
+  absence makes `meta_add` trust `known_absent` and rebuild the blob from empty,
+  dropping every other applet's record. Closed at both levels — the model gains
+  `metaAbsent`, the fault disjunct and `NoFalseMetaAbsent` (SEC-STORE-004, a step
+  recorder, because once the cache has lied the losing write is correct code),
+  and `a_faulted_ef_meta_read_never_caches_the_blob_as_absent` closes the Rust
+  half with the co-refutation patch measured `killed`. Found by running
+  co-refutation **backwards** for the first time: `cargo-mutants`' MISSED set
+  intersected with the lines the model itself cites — 394 mutants, 88 missed, 12
+  on a modelled line, of which this was the sharpest. The tree as shipped is
+  correct; this closes the hole that let a regression through unseen. No firmware
+  behaviour change.
+
+- **The FIDO security model runs at the firmware's own PIN constants now.**
+  `MaxRetries` : `MismatchLimit` was 3 : 2 against a shipped `MAX_PIN_RETRIES`
+  8 : `PIN_MISMATCH_LIMIT` 3, and the gap was the largest recorded caveat on the
+  model — "an argument, not a proof". `SYMMETRY` closed it: relying parties and
+  channels are interchangeable, so TLC may quotient by `Permutations`, which
+  takes the reduced-constant run from 61 215 504 distinct states to 25 829 584.
+  The real constants then cost **48 679 968 — fewer than the reduced scope
+  explored before** — GREEN and exhaustive at depth 55 in 539 s, with all 28
+  mutants and both historical configurations still RED on their own invariant.
+  Applied to the safety configurations only, because TLC's liveness check is not
+  sound under symmetry; `Liveness*` and `Fairness*` keep their smaller constants.
+  `Shipped.cfg`'s floor is unchanged at 20 000 000 — still under the measurement,
+  and stricter than the "near a third" rule. Model and tooling only, no firmware
+  behaviour change.
+
+- **The model's CONSTANTS are under a gate now — two mutants were GREEN one
+  element below the shipped scope.** `floors.txt` watches whether a run got
+  smaller; nothing watched whether the scope it ran over was big enough to hold
+  the defect. `BugCmWalkIgnoresChannel` explores 43 M+ distinct states at one
+  CTAPHID channel without a counterexample and falls at two, and
+  `BugContIgnoresChannel` is the same shape at the reassembler. The transport's
+  `Channels` and the admin `Caps` were literals inside their modules until now,
+  so no configuration could say what scope it ran at; both are CONSTANTS now,
+  emitted by
+  `gen-configs.sh`, and every count is unchanged. `formal/scopes.txt` records
+  two hand-written columns per constant — the measured minimum and the invariant
+  it was measured against — and `scripts/scope_gate.py` derives everything else,
+  including which module owns a configuration. The profile also shows every one
+  of the thirty security configurations firing with a *single* relying party,
+  against a module comment asking for two. Tests and tooling only, no firmware
+  behaviour change.
+
+- **Co-refutation now covers the applet models, and found four rules the host
+  tests could not hold.** The roster gains the 24 seam, retry-lattice and policy
+  mutants — the three families excluded until now — taking it to 67 entries with
+  63 executable patches killed and four unreachable. The gaps were the one-shot
+  PW1 rule at PSO:CDS, the OATH access-code removal gate (SEC-SEAM-006's Rust
+  half, whose model half was closed two revisions earlier) and both directions of
+  a refused OATH VALIDATE; five regression tests close them and assert the PW
+  status byte's outer gate at the wire. An adversarial review of the batch found
+  two further verdicts were kills for the wrong reason — the patches modelled the
+  inverse or a wider defect than their switch — and their faithful versions are
+  recorded `unreachable` with evidence. The lint gains two closed-world guards:
+  a name collision across the eight mutant families (which would overwrite a
+  roster entry instead of colliding) and a Solo configuration with no mutant of
+  its own family (which steals the invariant that mutant is judged by). Tests and
+  tooling only, no firmware behaviour change.
+
+- **Formal-verification phase 6 adds a cross-reset refinement pilot over the
+  real `rsk-fs` power-cut stack.** `ResetNeverWeakensSurvivingState` and its
+  PIN, alwaysUv and backup-seal clauses now have bounded one-step Kani proofs,
+  byte-granular reset/reboot fuzz coverage, and a destructive real-power HIL
+  harness. A measured full-`FidoState` Kani expansion established the tool
+  boundary; the security-visible projection solves in under a second, so
+  Verus/Creusot is deferred. Verification-only refactor, no firmware behaviour
+  change. **bcdDevice → 0x095E.**
+
+- **Formal-verification phase 5 adds a bounded token-lifecycle refinement
+  chain.** A canonical outcome-labelled TLA+ relation now drives native B→A
+  state/outcome refinement and the generated exhaustive Rust edge table used by
+  Kani for R0/R2/R3. Emulator traces record the raw wire outcome and reject
+  ambiguous B classifications; tree-derived completeness gates cover volatile
+  writers, persistent writers and outcome producers. The host-only projection
+  is excluded from firmware and a poison-control gate proves its source cannot
+  affect loadable bytes: refactor, no behaviour change. **bcdDevice → 0x095D.**
+
+- **Formal-verification phase 4 now checks real emulator state against the full
+  security model.** A host-only `--security-trace` mode exports non-secret raw
+  FIDO state; an independent β mapper replays real `21_pin_webauthn` traffic
+  through `RSKeySecurityState`, while the implementation's untrusted α is
+  compared with a single canonical TLA+ γ. CI floors commands, model steps and
+  distinct actions and reports every model action not reached. Two artificial
+  divergences are pinned: shifting one raw retry field is caught by R4a, and
+  shifting α is caught only by R4b. The first replay found and corrected a real
+  model-fidelity gap: B had failed to retain Rust's first-use rpId binding after
+  makeCredential consumed the token permissions. The production path gains only
+  the abstraction surface consumed by host instrumentation: refactor, no
+  behaviour change. **bcdDevice → 0x095C.**
+
+- **Formal-verification phase 3 is closed across the stateful workspace.** Six
+  roadmap modules now cover the flash layer, PIV/OpenPGP retry lattice,
+  management/rescue surface, trusted display, cross-boot hardening and CTAPHID
+  reassembly; `RSKeyAppletPolicies.tla` adds the remaining four-app operation
+  policies without inventing retry counters for OATH/OTP codes. Its single
+  exhaustive graph is 2,268 distinct states at depth 14, and all seven mutants
+  hit their named invariant. The three pre-existing shape holes are structural
+  now (`pin_fresh`, one-shot PW1 and OATH code removal), with recorded firing
+  counts. `PowerOnClearsScratch2` is an explicit open hardware assumption.
+
+  The assurance gate now requires production `Refines` tags for every shipped
+  model (including `firmware/`), validates cross-model `Supports` edges from
+  `RSKeyStore` to the two FIDO persistent-state properties, and generates the
+  full 26-crate coverage ledger beside the property table. A workspace member,
+  model property or owner can no longer disappear silently.
+
+- **Co-refutation: the model's mutants, re-made as code defects, measured
+  against the unit tests.** The TLC matrix proves the *model* catches all 28
+  `Bug*` defects; nothing measured whether the *code level* catches the same
+  ones. `formal/comutants.toml` records one entry per mutant — an exact-snippet
+  patch that re-injects the defect, `unreachable` (with the evidence a shipped
+  fix made it so), or floored `pending`; `scripts/comutate.py run` applies each
+  in a throwaway worktree (carrying the working-tree diff, so a just-closed gap
+  reads killed before a commit) and demands the recorded verdict, while
+  `--lint` (a `check.sh` row) holds the file against the `Mut_*.cfg` roster and
+  resolves every patch anchor against today's code. **The whole roster is
+  measured and closed: 28 mutants — 26 killed, 2 unreachable, zero open gaps,
+  every kill carrying real test output.** A complete measured run can publish
+  the generated 28-row model↔code table in `formal/README.md`; ordinary lint
+  rejects a stale table and refuses to publish one from a partial run. The
+  weekly `deep-checks` workflow now measures the expanded 43-entry roster next
+  to `cargo-mutants`: all 41 executable patches are killed and two are
+  unreachable. A patch that fails to *compile*
+  scores `build-broke`, never killed — the trap the first `BugPpuatIsAGate`
+  patch fell into (`EF_PAUTHTOKEN` is a `KeyFid`, not a `u16`) and the reason
+  the verdict logic tells the two apart.
+
+  Six gaps were surfaced by the measurement and every one was closed with a
+  harness in the same pass. Beyond batch 1's two: the warm-boot `PinLock`
+  carry had no boot-path test (`a_warm_boot_carries_the_soft_lock_in`); the
+  torn-reset harness tore the flash but never asked when the SESSION died
+  (`a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed`, asserted
+  at every tear budget including 0 — the E76 regression's exact shape); the
+  changePIN grant revocation
+  (`change_pin_deletes_the_persistent_grant_record`) and the revoke-before-
+  write order (`a_torn_change_pin_never_leaves_the_grant_under_the_new_pin`,
+  a mutating-op tear over the PIN flow).
+
+  The last two carried a finding of their own: the revoke is enforced
+  **twice** — authoritatively inside `write_pin_verifier` (the run-37 fix
+  moved it into the storage core) and redundantly in each caller — so the
+  first single-layer patches measured the depth of that defence rather than
+  a gap: everything stayed green because the inner revoke held. The faithful
+  mutants remove both layers, and the torn-changePIN harness is the one
+  instrument that distinguishes the write orders (exactly one test fails
+  under the reorder). Batch 1's two, for the record:
+
+  - `BugTokenSurvivesPinChange` — changePIN leaving the in-RAM session token
+    alive — was caught by the model and by *nothing* at the code level: the
+    existing test covers the persistent `pcmr` grant through a different door.
+    Closed with `change_pin_revokes_the_session_token`.
+  - `BugDeleteRpBeforeCred` — a torn deleteCredential stranding a credential
+    whose `EF_RP` entry is gone — same shape: the registration twin's harness
+    tears writes, and nothing tore a delete. Closed with
+    `a_torn_delete_never_leaves_a_credential_without_its_rp`, a
+    mutating-op-budget tear (`write` and `remove` both count; `Fs::delete`
+    interleaves a swallowed `EF_META` write with the backend remove) over a
+    sole-credential RP, asserting at every tear point that a live credential
+    implies a live `EF_RP` record.
+
+  Both re-measured killed. These are the first fidelity numbers the
+  model→code direction has ever carried.
+
+- **A security-property registry, held against the tree by a gate.**
+  `assurance/properties.toml` names every property TLC checks — 47 entries:
+  45 invariants and temporal properties across nine modules, plus the two
+  maintainer-ruled accepted risks, so a ruled-away risk reads as a decision
+  rather than a hole. Hand-written fields are only id, statement, source and
+  status; everything else — defining module, checking configurations, targeting
+  mutants, Kani harnesses, fuzz targets, Rust files and device tests carrying
+  the name — `scripts/assurance_gate.py` derives and prints. The registry's own
+  worked example is why: a hand-written evidence record for the tree's
+  best-documented property was wrong in three of six fields before any code
+  existed.
+
+  The gate closes the graph in both directions: nothing TLC checks may be
+  unregistered, nothing registered may be unchecked, a status must equal the
+  evidence ceiling (a Kani harness forces BOUNDED; PROVEN is refused until that
+  evidence class exists), every `formal/*.cfg` must sit in a `run-tlc.sh` tier
+  or carry a named exemption, and `assurance/crates.toml` classifies all 26
+  workspace members — the ledger exists because two roadmap drafts enumerated
+  crates from memory and missed four, including the second-largest in the tree.
+  New `check.sh` row `assurance registry`; mutation table in
+  `scripts/test_assurance_gate.py`, now 31 cases. Its measured evidence table
+  and crate ledger are generated into `formal/README.md`; the ordinary gate
+  rejects a stale block instead of trusting a hand-maintained baseline.
+
+- **A "Formal model" page in the book** (`docs/formal.md`, Security section):
+  the map of `formal/` — the nine modules, the checks-of-the-checks (mutants,
+  floors, vacuity, lint), the property registry and tags, how to run each tier
+  and where CI runs them. The deep prose stays in `formal/README.md`; the page
+  says what is and is not claimed and points at the measured paragraph in
+  Testing.
+
+- **Property tags in production Rust.** The owner functions the phase-1 models'
+  ownership tables document now carry a doc line —
+  `` Refines `RSKeySecurityState!<Invariant>` — SEC-FIDO-NNN. `` — so a
+  property greps from the model to the code that owns it in both directions,
+  which was the one all-zero column of the traceability table. The gate
+  validates every tag (module exists, defines the invariant, id is registered,
+  and id↔invariant pairing matches) and ratchets the other way: every invariant
+  in all shipped baselines must be named in production Rust somewhere. The
+  shared rule runs from both the assurance and citation gates.
+
+- **The TLA+ model is checked by CI.** `deep-checks` gained a weekly `formal`
+  row running `formal/run-tlc.sh safety` — nine models, 71 mutation switches, their
+  `floors.txt` verdicts and the vacuity check. Until now none of that ran in any
+  workflow: the matrix was a ratchet whose only puller was whoever remembered
+  the command, on the one machine holding a jar at a hardcoded `/nix/store`
+  path. The row also fires on any push touching `formal/`, so an edit to the
+  model is checked at once rather than up to a week later.
+
+  `tlaplus` therefore joins the pinned dev shell, which exports
+  `TLA2TOOLS_JAR`. Advisory measurement tools are still pulled ad-hoc and stay
+  out of it; a **gating** tool belongs in the shell beside `cargo-audit`,
+  `cargo-deny` and `gitleaks`. The 208 MB is the closure — the tool is 2.2 MB
+  and the rest is the JDK it wraps, which is the gain: `run-tlc.sh` took `java`
+  from the host PATH before, so the prover's runtime differed per contributor.
+  The pinned jar is byte-identical to the hand-realized one, so `floors.txt`
+  still describes the TLC that measured it.
+
+  `run-tlc.sh` grew tiers (`safety` / `liveness` / `all`), drawn by heap rather
+  than taste. `liveness` is deliberately not in CI: `Liveness.cfg` needs the 12g
+  `floors.txt` gives it, and 11.1 GB is where the same workflow's `kani` `heavy`
+  runner has already died twice. `scripts/test_run_tlc.py` keeps the row's
+  verdict boundary reproducible in the merge gate: the roadmap's four
+  artificial corruptions, plus direct RED and FLOOR cases, are persistent.
+
 ### Changed
+
+- **The `strong-pin` / `fips-profile` PIN policy refuses three more families, and counts
+  code points like the floor beside it** ([#89](https://github.com/TheMaxMur/RS-Key/issues/89)).
+  It caught a repeated code point and a ±1 run; `121212`, `123123` and `112211` walked
+  through. It now refuses any PIN that is a repeated period (which subsumes the old
+  repeated-code-point rule at period 1), a ±1 run in either direction, one with **two or
+  fewer distinct code points**, or one of ten denylisted keypad shapes — the 3×3 lines and
+  diagonals (`159753`, `147258`, `258369`) plus the mirror/stutter runs people reach for
+  when told "not 123456" (`123321`, `112233`, `112358`). The two-symbol rule is not a
+  length argument: two symbols leave two smudges on the glass, and the space an onlooker
+  or a fingerprint leaves is then the orderings of two marks, however long the PIN.
+  Every rule reads **code points**, so a repeated multi-byte character (`АААААА`) is
+  refused where the old byte-wise check passed it, and a PIN that is not UTF-8 is refused
+  rather than measured. The default build is untouched — it keeps the CTAP-standard
+  four-code-point floor with no complexity rule. **bcdDevice → 0x0982.**
 
 - **The trusted display now antialiases the full GUI.** Text uses generated
   four-bit IBM Plex Sans and Mono coverage data. Icons, circles, status arcs,
@@ -46,7 +1012,35 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   surface colour. This is always active in display builds and needs no setting,
   framebuffer, heap, or new firmware dependency. Text, icons, and AA shapes are
   streamed as contiguous RGB565 blocks so page changes do not issue a long series
-  of small SPI writes. **bcdDevice → 0x095B.**
+  of small SPI writes. **bcdDevice → 0x097E.**
+
+- **The release signature is `SHA256SUMS.sigstore.json`, and the build
+  provenance now ships as a file too.** Five signed releases read as *unsigned*
+  to anyone matching on the name: the asset was called
+  `SHA256SUMS.cosign.bundle`, and `.bundle` is in nobody's list of signature
+  extensions — OpenSSF Scorecard's, for one, which knows `.asc`, `.minisig`,
+  `.sig`, `.sign`, `.sigstore` and `.sigstore.json`. The file was never the
+  problem: it is byte-for-byte a
+  `application/vnd.dev.sigstore.bundle.v0.3+json` (read off the published
+  v0.4.10 asset), so `.sigstore.json` is simply its canonical extension.
+  Alongside it, `rs-key-<tag>.intoto.jsonl` now carries the attestation as a
+  release file — the copy in GitHub's attestation API and in Rekor stays
+  authoritative, but a consumer holding only a download could not reach either.
+  **The five releases already out cannot be corrected**: this repository has
+  immutable releases, and adding an asset to a published one is
+  `HTTP 422: Cannot upload assets to an immutable release` — measured on all
+  five. So both names exist in the wild permanently, and
+  [releases.md](docs/releases.md) and [supply-chain.md](docs/supply-chain.md)
+  document both rather than pretending the old one is gone. Attaching at CREATE
+  time is what immutability allows, which is why this works for the next release
+  and not for the last one.
+
+- **Changing an OpenPGP C1/C2/C3 algorithm attribute now invalidates that
+  slot's old private/public key pair before publishing the new attribute.**
+  Keeping the old key made the slot advertise one algorithm while operations
+  could still reach material created under another. Same-value writes preserve
+  the key; a changed value deletes both records, with a regression that fails
+  on the old behavior. **bcdDevice → 0x095B.**
 
 - **`deep-checks` runs on two cadences and across matrices.** Miri (3 shards) and
   the libFuzzer pass (4 shards) stay daily; Kani moves to Sunday as four jobs —
@@ -67,7 +1061,191 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   red every week. `scripts/mutants-all.sh` fails on its own apparatus instead: a
   shard that tested nothing, or a run that produced no summary.
 
+- **The weekly `cargo-mutants` sweep runs in 12 shards, not 8, and the shard
+  denominator is derived.** `--shard` takes a **contiguous** slice rather than
+  every n-th mutant — measured, by reproducing the tool's own list at the commit
+  CI ran — so where the boundaries fall decides a shard's crate mix, and with it
+  how much build output piles up on the runner's ~14 GB. At 8, the 6th slice was
+  1802 mutants over six crates ending in `rsk-rsa-asm`, and it took the hosted
+  runner down twice: SIGTERM at 85 % of the shard, the same 358 survivors both
+  times, the tool healthy to its last line (`Auto-set test timeout to 44s`, 14
+  timeouts reported and survived). Both of the shard's suspect crates were then
+  re-run locally at that commit and completed clean — 255 `rsk-rsa-asm` mutants
+  with the same 12 timeouts CI saw, 264 in `rsk-sha512` + `rsk-slip39` in three
+  minutes — so nothing in the shard is poisoned and what died was the host. At 12
+  the slices are ~1201 over five crates. **A reduction in pressure, not a proven
+  fix:** the runner's own resource state was never in the log, and this entry
+  does not claim to have found the cause. The denominator is
+  `${{ strategy.job-total }}` so it cannot drift from the matrix — two numbers
+  that must agree by hand is how a shard space silently loses a slice.
+
+- **The phase-4 replay's two blind spots are recorded now, and each was measured
+  rather than argued.** `pin.set` was TRUE at every gate boundary the recording
+  held, so `McTokenlessRefused`'s conjunct was true rather than falsifiable;
+  `tests/09_tokenless_gate_no_pin.py` records the two PIN-less cells (a
+  repeated discoverable registration, which reuses the slot and therefore writes
+  nothing, and a non-discoverable one), and the grid is six cells with all six
+  filled. **The proof that they carry weight is a new co-mutant:**
+  `TraceSecurityBadPinSet.cfg` — a rule that forgets `makeCredUvNotRqd` — is RED
+  at `tracePc = 11` against this recording and **GREEN against the recording
+  without them**, replaying all 61 states. The suite holds itself to getInfo
+  `0x14 remainingDiscoverableCredentials` rather than to the status word, because
+  `0x00` only says the gate served the request.
+
+  The second was the `NO-OPINION` arm: a clientPIN that re-issues a token with
+  the permissions it already holds moves no raw field, so it was
+  indistinguishable from a `getKeyAgreement`. Trace **schema 6** carries the
+  clientPIN subcommand, read by the command's own parser
+  (`clientpin::assurance`, cfg-gated out of the image like its makeCredential
+  sibling), and the one such boundary in the recording is an issuance again.
+  Outcome-committed boundaries: **13 with the rule, 12 without** — a floor now,
+  since a mapping that retreats to `NO-OPINION` otherwise costs nothing.
+
+  A third gap closed on the recorder's side rather than the replay's:
+  `AppletHandler::security_trace_builtin_uv` is the one line §6.1.2 step 6.3's
+  arm rests on, `builtin_uv` is `false` in every recorded byte, and the accessor
+  had no test — a hard-wired `false` would have read identically. It has a
+  two-arm one now, in the ordinary test row rather than behind the feature, and
+  it is driven red by hard-wiring the accessor either way. What stays unwritten
+  is the *session* with a pad, not the plumbing: the recording is produced by the
+  emulator-suites row, where no display window opens.
+
+  Coverage: commands 32 → 40, steps 60 → 74, gate boundaries 5 → 7, AMBIGUOUS
+  still 0. The mapper's own tests stopped reading the recording positionally
+  while doing this — six selectors by shape, the way `resets()` already did it,
+  because the eight new events broke eleven cases that indexed by number.
+
 ### Fixed
+
+- **OpenPGP charged a wrong password's retry *after* comparing it, so a decrement
+  that never reached flash made the guess free.** The counter is this applet's only
+  rate limit — unlike clientPIN there is no per-boot soft lock — and it was written
+  after the card had already answered, with no read-back: a program that silently
+  did not land answered `63Cx` to a wrong password with the counter frozen, i.e.
+  unlimited guesses at one power cycle apiece. `check_pin` now charges the attempt
+  before the comparison and reads the counter back, and the success path gives the
+  charge back — the shape `rsk-piv`'s `check_ref`, `rsk-fido`'s
+  `spend_and_verify_pin_hash` and `rsk-oath`'s `spend_and_match_otp_pin` have
+  carried for four audits; OpenPGP was the applet the sweep never reached.
+  **Ordering is what closes it, not the read-back:** on a full counter the success
+  path rewrites the value it already holds, so a read-back placed after the
+  comparison is satisfied by a store that stored nothing — which is why the
+  regression test asserts that the *right* password also fails when the charge
+  cannot be proved. A store that silently drops the write is the reproduction
+  (`DeafStorage`, one fid and the `write` verb only, so the interleaving stays
+  reachable). Two costs, both deliberate: an interrupted `VERIFY` now spends a try
+  the holder did not use (the direction to fail in, and the guide says so), and a
+  storage failure here answers `6581` instead of the `6983` the old code
+  conflated it with. **bcdDevice → 0x0984.**
+
+- **The rename keypad's space key read "SPACE" instead of `␣`.** The antialiasing
+  change swapped the symbol for the word because U+2423 OPEN BOX is not in the
+  generated atlas and would have rendered as `?` — a word on a key sized for a glyph.
+  The atlas gains the character instead (98 entries now, +493 B: 409 B of coverage plus seven glyph records), and
+  the key is a symbol again. The rule the old assertion stated, "T9 labels must be
+  ASCII", was the right question with the wrong answer: the atlas is ASCII plus three,
+  so the check now asks the atlas whether a label's characters resolve to their own
+  glyph rather than to the `?` fallback. **bcdDevice → 0x0981.**
+
+- **One colour the marquee could not place on its ramp blanked the whole PIN title.**
+  The scrolling title composites into an off-screen four-bit band, and the band
+  recovered each pixel's coverage by inverting the blend — so a colour that was
+  neither the text nor the panel background had no coverage to return, the frame
+  errored, and the error was answered by zeroing the buffer. The one-bit mask this
+  replaced took the tolerant rule instead ("not the background means ink"), and that
+  rule is back: an off-ramp colour is full coverage. The band target's error type is
+  `Infallible` again, which deletes the branch rather than fixing it, and a
+  compile-time assertion keeps it that way. **bcdDevice → 0x0980.**
+
+- **Two overlapping glyphs took the later coverage instead of the greater, so the
+  second one punched a near-background pixel into the first one's stroke.** The
+  trusted display's text draws each pixel by walking the string, and a pixel both
+  glyphs cover kept whichever it read last. Glyph boxes do overlap — 8 of the 97 in
+  the atlas have a negative left bearing and 28 carry ink past their advance — and a
+  sweep of all 97×97 pairs in every role found **53 that composite wrong**, worst
+  `\j` and `(j` in the 19 px heading at 13 of 15 coverage steps: an all-but-solid
+  stroke pixel replaced by an all-but-background one. Headings and the service name
+  on the approve prompt render attacker-chosen text, so the pair is choosable.
+  The regression asserts the property rather than a golden pixel — adding a glyph
+  may never lighten what the prefix already drew. **bcdDevice → 0x097F.**
+
+- **29 of the 42 `file.rs:line` citations in Rust source were repaired; 19 of
+  them named code the claim was never about.** `scripts/citation_gate.py` reads
+  the `formal/` pages and nothing else, so the same three token-gate call sites
+  are cited twice in the tree — once on a gated page and once in a Kani proof
+  header — and only the gated copy had followed the code:
+  `formal/README.md` already said `getassertion.rs:384-387`, `config.rs:243-245`
+  and `credmgmt.rs:278`, while `state_kani.rs` and `credmgmt_kani.rs` still said
+  `376-379`, `222-224` and `277` — 8, 21 and 7 lines out, the last of them a
+  doc-comment line reading `/// has been located.`. The worst was 79 lines:
+  "the dispatch prologue every CBOR command runs first (`lib.rs:207`)" pointed at
+  `out[0] = CTAP2_OK;`, the response *epilogue*. Nine more had drifted endpoints
+  while still touching their subject, and one (`` `:392` `` in
+  `clientpin_tests.rs`) was a bare line number with no filename, which no rule
+  can resolve. Every one was re-pointed by reading the code, not by a guard —
+  the guard that would have caught them lands in the next commit.
+
+- **The pinpad's "Allow host PIN entry?" gate lost its Approved card when the
+  presence seam moved.** `handle_secure_req` — the CCID `PC_to_RDR_Secure` path
+  behind an OpenPGP/PIV pinpad VERIFY on a trusted-display build — asked for
+  presence through `rsk_fido::UserPresence`, the only presence trait its scope
+  imported. Splitting the merged trait into `request` (a per-signature smartcard
+  touch policy) and `request_ceremony` (a host-raised ceremony) re-pointed that
+  one call at the leaner ask, silently: it still compiled, because the FIDO name
+  is now a re-export of the shared trait. The hold still approved the same thing
+  and every CCID status byte was unchanged, but the ~0.43 s "Approved" card that
+  told the holder their tap had landed stopped playing before the pad appeared.
+  It asks `request_ceremony` now — the same ask its twin, clientPIN built-in UV,
+  has always used — and names the seam `rsk_sdk::` so the resolution is a choice
+  rather than whichever trait happened to be in scope.
+
+  Nothing could have caught it: the path is `display`-gated firmware, which no
+  host test executes and which the emulator has no counterpart for (its CCID
+  answers `PC_to_RDR_Secure` with the no-pad default). So the thing that is
+  checkable is checked instead — `ASK_CENSUS` lists every production presence
+  ask in `crates/` and `firmware/src` with which of the two it is, and
+  `every_presence_ask_is_the_one_its_caller_means` fails when a call changes
+  column. Falsified four ways, one at a time: putting the defect back reports
+  `worker.rs` as `(0 ceremony, 1 touch)` against a census of `(1, 0)`; the
+  inverse — PIV's slot policy taking the ceremony ask — reports `auth.rs` the
+  other way round; and blinding either half of the walk fails on the anchor
+  (`the scan missed …`) rather than passing over an empty scan.
+
+- **The accepted attestation-chain length depended on whether a PIN was set.**
+  `MAX_RAW_SUBPARA` is scratch for the pinUvAuth MAC, so its length check sits on
+  the PIN branch — a PIN-less `ATT_IMPORT` accepted chains a PIN-protected one
+  refused `CTAP2_ERR_REQUEST_TOO_LARGE`. `ATT_CHAIN_MAX` had been tied to the
+  store's per-value ceiling alone (audit run-32's fix), so when `MAX_VALUE_BYTES`
+  later doubled for reasons internal to the store, the accepted chain doubled with
+  it — past that MAC buffer and, once ML-DSA-87 widened the COSE key by 640 bytes,
+  past the CTAPHID response ceiling too. It is now the tightest of its three real
+  ceilings (store, MAC scratch, worst-case makeCredential response), applied in
+  `att_chain_pack` where both paths pass, and held by a build-time assert. The cap
+  falls 4069 → 2132 bytes. A device already holding a longer chain keeps
+  registering: the chain now has to parse intact to be used, so a truncated read
+  falls back to device attestation instead of failing the registration —
+  re-import within the new cap, or `ATT_CLEAR`, to restore org attestation.
+
+- **A getInfo test stopped being able to fail when the member count reached 24.**
+  `dispatch_get_info_ok` pinned the response's map size by comparing one raw byte
+  against `0xA0 + count`. That formula holds only to 23: from 24 upward CBOR writes
+  `0xB8` followed by a separate length byte, so the first byte reads `0xB8` for
+  every count from 24 to 255. The roster crossed 24 one commit earlier, and the
+  assertion went green on the new number while no longer distinguishing it from any
+  larger one. It now decodes the header instead of comparing a byte — verified by
+  declaring 25 members while writing 24, which the byte comparison accepted and the
+  decode rejects.
+
+- **A doc comment in `rsk-fs` described the function below the one it sat on.**
+  `mark_absent`'s one-line doc and its `#[inline]` had both landed on
+  `record_unless_faulted` during an earlier edit, leaving `mark_absent`
+  undocumented and its neighbour carrying someone else's description ahead of its
+  own. Only what was displaced moved back: `record_unless_faulted` gains no
+  `#[inline]`, because the evidence says the attribute belongs to `mark_absent` —
+  the doc above it names `mark_absent` — while nothing says the other ever had
+  one, and inventing it would be an optimizer hint smuggled into a comment fix.
+  Found while reading the cache primitives for the store refinement pilot.
+  `bcdDevice` 0x0960 → 0x0961: refactor, no behaviour change.
 
 - **An RSA-3072 or RSA-4096 PIV key is usable again under Windows' own smart-card
   minidriver.** 0.4.10 began requiring GENERAL AUTHENTICATE's algorithm byte to
@@ -94,6 +1272,660 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   firmware builds against `certutil -scinfo` on real hardware.
   **bcdDevice → 0x095A.**
 
+### Security
+
+- **The `rsa` crate is out of the tree, and with it RUSTSEC-2023-0071.** The
+  Marvin timing side channel has **no fixed release** — OSV gives
+  `introduced: 0.0.0-0` with no `fixed` event, so every version is affected —
+  and the crate sat inside an authenticator's trust base behind a documented
+  carve-out. The two paths that still reached it are `rsk-rsa`'s own now: PIV
+  certificate signing at key generation, and PSO:DECIPHER for a legacy `P‖Q` key
+  whose prime width is not a multiple of 32 (which the asm CRT core cannot take).
+  Both run the same base-blinded, Bellcore-fault-checked private operation the
+  rest of the tree already used, and both end in the same constant-time unpad.
+
+  **The carve-out is deleted, not relocated.** `cargo audit` runs with no
+  `--ignore` on either lockfile, `deny.toml`'s `[advisories].ignore` carries no
+  vulnerability at all (only three "unmaintained" entries), and the `rsa`
+  exemption is gone from `supply-chain/config.toml`.
+
+  No wire byte moves: every status word is what it was, including PSO:DECIPHER's
+  deliberate `EXEC_ERROR` on a malformed block and `pso.rs`'s `WRONG_LENGTH`
+  fallback onto the legacy arm. The sealed `P‖Q‖dP‖dQ‖qInv` blob is byte-identical
+  — `dP`, `dQ` and `qInv` do not depend on which totient `d` was derived from —
+  so an already-provisioned key keeps signing and deciphering across the upgrade.
+
+  **What this does not close is the padding oracle.** PSO:DECIPHER still tells a
+  malformed block from a well-formed one by response code, because the command's
+  specification requires it to either return a session key or report failure.
+  Removing the dependency changes nothing about that; see
+  [limitations](docs/limitations.md).
+
+  The tests lost their oracle with the crate, so they gained a better one:
+  `crates/rsk-rsa/src/vectors.rs` holds OpenSSL 3.6.2 known-answer vectors
+  (regenerate with `scripts/rsa_vectors.py`), and every signature the card
+  produces is now compared to OpenSSL's byte for byte rather than merely
+  round-tripped against our own verifier.
+
+- **PSO:DECIPHER no longer runs its private operation on the `rsa` crate.** It
+  takes the same blinded, Bellcore-fault-checked asm CRT core as PSO:CDS
+  (`rsk_rsa::sign_crt`) and unpads PKCS#1 v1.5 with the applet's own
+  constant-time `pkcs1v15`, so RUSTSEC-2023-0071 — which has no fixed release —
+  no longer sits under the one command that decrypts a ciphertext the host chose.
+  The wire surface does not move with the implementation: a malformed block still
+  answers `EXEC_ERROR`, and a test pins the new path's status word to the old
+  one's. One arm still reaches the crate on purpose — a legacy `P‖Q` key whose
+  prime width is not a 32-multiple, which no current firmware can store and which
+  cannot sign either, would otherwise lose the ability to decrypt its own
+  archived messages — and the entry above has since taken that arm too, so the
+  crate is gone from the tree entirely.
+
+  This does not close the padding oracle, and nothing can: DECIPHER must either
+  return a session key or report failure, so the status word itself separates
+  well-formed from malformed. What the constant-time unpad buys is that the
+  *reason* for a refusal does not leak on top of the refusal.
+
+- **The `rsa` crate's RUSTSEC-2023-0071 carve-out now describes the code that
+  actually exists.** Its justification still claimed the crate was "the OpenPGP
+  RSA backend" and that the `hazmat` feature was there because PIV GENERAL
+  AUTHENTICATE needed the raw private op. Both stopped being true when signing
+  moved onto `rsk_rsa`: three of the five private-RSA paths never enter the
+  crate at all, and `rsa::hazmat` is referenced nowhere in the tree. The feature
+  is dropped — a smaller API surface for a dependency inside an authenticator's
+  trust base — and the two paths that do reach the crate (both since taken over
+  by `rsk-rsa`, see above) are named in `deny.toml` and in
+  [limitations](docs/limitations.md), together with the
+  residual risk on PSO:DECIPHER. No behaviour change, measured: no loadable
+  section moves or changes size and every symbol keeps its size — the only image
+  delta is mangled-name hashes and a reordering of three anonymous constants,
+  which is what feeding a different feature set to `-C metadata` looks like.
+
+### Internal
+
+- **The recording apparatus had no finger.** `tests/*.py` reach the device over
+  CTAPHID and nothing else, so no suite could answer a prompt the trusted display
+  puts up — which is why the formal replay's recording carries `builtin_uv` false
+  in every event, and §6.1.2 step 6.3's built-in-UV upgrade is a boundary
+  `scripts/security_trace.py` refuses rather than checks. `--taps-port` gives the
+  pad a socket: the `--taps` contact grammar one line at a time, plus a control's
+  NAME (`key 7`, `onboard skip`, `allow,800`) resolved through the panel's own hit
+  test, so a control that moves takes its name with it where a coordinate in a
+  Python file would not. The channel is what synchronises — a bound of one, the
+  same the crate's display tests use — so the `ok` answering a line means the pad
+  has taken the contact before it, and a suite can keep the finger in step with
+  the commands it sends. `--taps` stays fire-and-forget, and the two are refused
+  together: one is a queue and the other a rendezvous, so a file's contacts would
+  race the socket's. The consumer is the next change; this one is the mechanism,
+  its vocabulary and their test.
+
+- **The store model could not judge a delete the medium had refused.**
+  `RSKeyStore!Delete` carried one disjunct — the power cut — so the faulted
+  metadata drop was a transition nothing stated, and the sweep that walks it
+  armed its injector for `MetaAdd` and `MetaDelete` alone. It has the second
+  disjunct now, and a second enumeration clause to go with it: `NoSilentOrphan`
+  (SEC-STORE-006). The split is the point. An orphaned record IS a state the
+  shipped tree can be in — `Fs::delete` removes the value even when EF_META
+  cannot be read — so `NoOrphanedMetadata` keeps every arm whose drop landed, and
+  the new one forbids only answering `Ok` from the arm that could not.
+  `BugDeleteHidesFaultedDrop` is its mutant, and its code co-mutant is the
+  previous entry's fix inverted: RED at 61 distinct states in the model, killed in
+  the tree by two tests rather than one, because the host sweep arms the fault for
+  `Step::Delete` now and counts the times it met a record standing over a value it
+  had removed. The clean arm stays the RAM sweeps' — an injector armed for every
+  delete would leave it untested, which is the shape a review already paid for
+  once. Safety tier: 186 rows, no mismatches.
+
+- **`Fs::delete` answered `Ok(())` for a delete whose metadata drop had failed**,
+  and the value went anyway — over a medium whose EF_META read faults once, that
+  is a value gone with its record still standing, which is the 0x077C databug's
+  end state reached with no power cut in it. Reachable on hardware:
+  `rsk-store`'s `read`/`size` set `last_err` straight from `sequential-storage`'s
+  `fetch_item`. The obvious repair — propagate before removing the value — is the
+  wrong one and is not what shipped: EF_META is **one blob shared by every
+  applet**, a failed read of it means "cannot tell" rather than "no record", and
+  most callers spell this `let _ = fs.delete(…)`, so a single flash fault would
+  have stopped every delete on the device, wipes included, while the callers that
+  discard the result went on reporting success — an orphaned record traded for a
+  secret outliving its erase. The removal stays unconditional and the error is
+  **returned**: `Err` now names a state (value gone, record may stand) instead of
+  hiding it, and the five callers that check a delete report failure where they
+  used to claim success. The heads are minted by `rsk-piv` alone, so the one
+  caller that deletes a fid carrying one is PIV's MOVE with `to = 0xFF` — the
+  slot delete — and it reads the answer now: the head gets a retry, because one
+  EF_META read can fault where the next lands, and the key is read back, because
+  a `remove` that failed leaves the source holding a live key. Both directions
+  answer `6581` instead of `9000`. bcdDevice 0x0985 → 0x0986. The model's half is
+  **not** in this change and is recorded in `docs/store-refinement.md`:
+  `RSKeyStore!Delete` still carries no faulted disjunct, so the sweep cannot yet
+  judge the shape.
+
+- **Two build flavours were gated by rows that ran four tests between them.**
+  `check.sh`'s `test (fips: rsk-fido)`, `test (fips: rsk-piv)` and
+  `test (strong-pin)` each passed a bare name to `cargo test`, so the only
+  behavioural coverage the shipped `firmware-fips` and `firmware-strong-pin`
+  images get was 4, 1 and 4 cases — measured, with 605, 134 and 611 reported as
+  "filtered out" on the same line. They run the whole suite now, as
+  `test (fido-conformance)` already did: the build for the permutation happens
+  either way, so the filter bought seconds and cost each flavour its coverage.
+  rsk-fido's fixtures had been swept already; rsk-piv was still red in the same
+  shape — six cases provision an RSA-1024 key or a 3DES management key, both of
+  which `fips-profile` refuses (SP 800-131A), so each asserted in its *setup* an
+  error the build cannot produce. Where the size is a case's fixture the two RSA
+  ids swap under that profile (`ALGO_RSA_FIXTURE` / `ALGO_RSA_OTHER` and their
+  lengths), so the freshness ladder and the two family-relaxation cases run at
+  2048 there and at 1024 everywhere else — a 2048 keygen costs 0.1–0.4 s here,
+  where 4096 would put a minute into every run. Where the refused algorithm is
+  the case's subject, the case is `cfg`'d out and
+  `fips_refuses_3des_mgm_and_rsa1024` carries the profile's half; it gained the
+  import arm, which is the second guard on the same rule and had nothing
+  asserting it. The default profile does not move (136 rsk-piv cases before and
+  after), and the three widened rows were each driven red through a mutation the
+  filtered row stayed green on.
+
+- **bcdDevice 0x0984 → 0x0985, no behaviour change.** The security-trace
+  recorder's edit in `crates/rsk-device/src/ctap.rs` landed without one. It sits
+  under `#[cfg(feature = "security-trace")]`, a feature no firmware flavour
+  declares — only `tools/emu` turns it on — so no image differs. The counter
+  counts builds rather than behaviour, and `bcd_gate.py` deliberately cannot tell
+  a feature nothing ships from one that does, so the tax is paid here rather than
+  the guard taught an exemption.
+
+- **The GUI font tables record the stack that rasterised them, and pin the layout
+  engine.** The generated header hashed the IBM Plex files, which is half the input:
+  FreeType rasterises and Raqm lays out, and either moving rewrites the tables with
+  nothing in the diff to say why the gate row went red. Both versions are in the
+  header now. The layout engine is pinned rather than defaulted, because Pillow picks
+  Raqm when libraqm is present and FreeType's own layout when it is not — measured,
+  the two disagree about two advances in the 30 px face (`f` and the middle dot, 10 px
+  against 11), so a Pillow built without libraqm would have silently produced
+  different tables. It now refuses the run instead. The tables themselves are
+  byte-identical: Raqm was already what the committed data was built with.
+
+- **Three lockfiles pinned crate versions their own authors had withdrawn.**
+  `cargo audit` reports a yanked version as a warning and exits 0 — the same
+  shape that let two unsound advisories sit in `tools/tui` for weeks — so the
+  gate was green over `bitcoin_hashes` 0.14.100 and `time` 0.3.48 (tui) and
+  `spin` 0.9.8 (root **and** `fuzz/`). Swept as a class rather than by the three
+  names that were reported: all **564** distinct (crate, version) pairs across
+  the four lockfiles were checked against the crates.io index, and those three
+  are the only yanked ones. Now 0.14.101, 0.3.55 and 0.9.9 — four lines per
+  lockfile, nothing else moved. Refactor-grade: no behaviour change, and the
+  counter moves only because `spin` genuinely reaches the image
+  (`spin` → `lazy_static` → `num-bigint-dig` → `rsk-rsa` → `firmware`, confirmed
+  with `cargo tree -i --target thumbv8m.main-none-eabihf`) and `bcdDevice`
+  counts builds. Worth recording that nothing asked for that bump:
+  `scripts/bcd_gate.py`'s `VISIBLE` is `("firmware/", "crates/")`, so a root
+  `Cargo.lock` edit that re-pins a dependency compiled into the firmware is
+  invisible to it — measured, the row stayed green with the lockfile already
+  changed and the counter untouched. `cargo-vet` **did** notice, correctly:
+  `spin:0.9.9 missing ["safe-to-deploy"]` stopped the gate at rc 255, because
+  0.9.8 was covered by a local exemption rather than an audit, so there was no
+  baseline to delta from. The exemption moves to 0.9.9 — the same "unreviewed,
+  risk accepted" posture it already recorded, now on a version its author has
+  not withdrawn. No new review is claimed.
+
+- **CodeQL's first run would have reported 289 alerts, 229 of them test
+  vectors.** `rust/hard-coded-cryptographic-value` cannot tell a KAT from a
+  secret, and this tree is built out of KATs — `crates/rsk-oath/src/tests.rs`
+  alone accounted for 37. An alert list that is 79% noise is one nobody reads.
+  `.github/codeql/codeql-config.yml` keeps the test suites, the Kani siblings,
+  `fuzz/`, `tests/` and `third_party/` out of extraction; measured against the
+  pinned bundle, 289 alerts become 60, with nothing left in a test-shaped file.
+  Two things decided the shape of it. `**/*_tests.rs` alone is not enough —
+  AGENTS.md puts a crate root's tests in plain `tests.rs`, which is where the
+  largest single source of alerts was, so both spellings are listed. And
+  `paths-ignore` is applied at EXTRACTION, not at analysis: handed to
+  `database analyze` it changed nothing at all (279 results before and after),
+  and it works only because `codeql-action/init` passes it to `database create`.
+  A config written on the other assumption would have sat in the tree doing
+  nothing, with the check still green. This is not the workflow-level
+  `paths-ignore` that `codeql.yml`'s header refuses — that one skips the run,
+  which Scorecard counts against the SAST score; this one still runs and still
+  counts, and Scorecard still reports `SAST tool detected: CodeQL`. The cost,
+  stated in the config and in docs/testing.md: a defect in a test helper is now
+  not found, rather than found and filtered.
+
+- **Nothing in the tree parsed `.github/workflows`, and a workflow that does not
+  parse breaks a check that is not about workflows at all.** OpenSSF Scorecard's
+  SAST row runs actionlint over *every* file in that directory, so one malformed
+  sibling returns score **-1** for the whole check rather than merely failing
+  detection — a single tab in `codeql.yml` was enough. Eight workflow files
+  rested on a tool nobody ran: no actionlint, yamllint, zizmor or
+  action-validator anywhere in the tree, and no `check.sh` row that read the
+  directory at all. `actionlint` joins the dev shell (`nix/devshells.nix` — a
+  toolchain addition, so it is maintainer-visible), and `workflow lint` is now
+  the **first** row of `check.sh`, ahead of `fmt`: it costs ~0.2 s, and a class
+  that makes another check lie should fail in the first second rather than the
+  fourteenth minute. It takes no file arguments on purpose — actionlint
+  discovers the workflows from the git root, which covers `.yaml` as well as
+  `.yml` (a `*.yml` glob does not) and which turns an empty or missing directory
+  into an error (`no YAML file was found`, exit 3) rather than the silent pass
+  over nothing this repo keeps rediscovering. `ci.yml`'s always-on `docs` job
+  runs the same command for the reason it already runs gitleaks: `pages.yml`
+  sits inside `ci-scope.sh`'s DOCS_ONLY set, so a change to that workflow alone
+  skips `check` entirely. Falsified through the row rather than the binary, exit
+  codes taken with no pipe: an unknown runner label, a bad `matrix.<prop>`, a tab
+  in the indentation and an unquoted `$var` in a `run:` block each stop the gate
+  at row 1 of 1 with rc 1 and its own message — and with the row deleted that
+  same tab left all 98 rows green, which is what makes it load-bearing rather
+  than decorative. Host tooling and CI only, so no `bcdDevice` bump.
+
+- **Two hand-written curve rosters bounded a buffer size, and nothing said so.**
+  `rsk-piv`'s `MAX_EC_POINT` is 97 — a P-384 point — while
+  `rsk_ec::PrivKey::public_point` writes up to 133 for P-521 and writes with
+  `copy_from_slice`, so a curve one byte too wide is a panic on the first key
+  operation, not an error. 97 was safe only because `curve_for_algo` and
+  `curve_from_id` each accept four curves and no wider one; no test tied either
+  roster to the number. One now walks both over their whole `u8` domain and
+  asserts the point fits. Falsified three ways: `5 => Curve::P521` fails on the
+  width assertion naming P-521 at 133 against 97; dropping a curve and blinding
+  the walk each fail on the roster count, so a loop that reads nothing cannot
+  pass. `curve_from_id` is `pub(crate)` to be reachable, matching its sibling —
+  refactor, no behaviour change, and the counter moves because bcdDevice counts
+  builds.
+
+- **The crate tiers were true and nothing could tell.** Applet-to-applet edges
+  reached zero over the tier refactor — six manifest edges (`fido→mgmt`,
+  `fido→rescue`, `openpgp→mgmt`, `piv→mgmt`, `piv→openpgp`, `otp→mgmt`) down to
+  none — and the only thing holding them there was that everyone remembered.
+  `deny.toml` now states the rule as a graph assertion on the existing
+  `cargo-deny` row: each of the eight applet crates is reachable only from
+  `firmware`, `rsk-device` and `rsk-display`; `sha2`, `sha1`, `rsk-sha512` and
+  `rsk-mldsa` only from `rsk-crypto`; `rsk-ec` and `rsk-rsa` from a named
+  allowlist rather than through the facade, because routing them behind it would
+  put 11 and 12 third-party crates into the closure of the five that do neither.
+  A sideways edge exits 2 there instead of waiting for a reviewer to notice it,
+  and `-D unused-wrapper` fails the row the other way too — when an allowlisted
+  edge is gone and its entry has quietly become decoration. Host-side only: no
+  firmware file moved, so no `bcdDevice` bump.
+
+- **The crate-layer drawing named 17 of 28 crates, under a footer reading
+  "Source: workspace Cargo.toml manifests".** So 57 of the 100 manifest edges
+  had an endpoint it could not draw at all. It also showed seven applets against
+  a registered eight, still carried the already-deleted `rsk-piv → rsk-openpgp`,
+  put `rsk-rsa` in the platform tier beside `rsk-sdk`, and claimed every applet
+  builds on `rsk-crypto` when `rsk-mgmt` and `rsk-vendor` do not.
+  `scripts/crate_graph.py` emits it now — every name, count and note off the
+  manifests — and a new `crate graph` gate row fails when the committed SVG has
+  drifted. The tier table is the one thing still written down, and the script
+  holds the manifests to it: a workspace member it does not place is a hard
+  failure, and so is any dependency that does not point into a later band.
+  `docs/architecture.md`'s alt text has to be the drawing's own `<desc>`, which
+  is how it came to say "seven applet crates" for a month.
+
+- **The FIDO applet declared the hash backend the crypto facade exists to hide,
+  and compiled not one line against it.** `crates/rsk-fido/Cargo.toml` carried
+  `sha2` in `[dependencies]`, while every digest the applet takes goes through
+  `rsk_crypto::{sha256, hmac_sha256, hkdf_sha256, hkdf_sha512}`: no `sha2::`
+  path, no `use sha2`, no `Sha256`/`Sha384`/`Sha512`/`Digest`/`FixedOutput`
+  anywhere under its `src/` — and the same grep, pointed at `rsk-crypto/src`,
+  returns 17 lines, so it can see one when there is one to see. That edge is
+  what the facade's own receipt is against:
+  `5fbeeb3` swapped SHA-512 from `sha2` to `rsk-sha512` by editing
+  `rsk-crypto/src/hash.rs` and `mac.rs` and no applet file at all. The
+  `kani-soft` feature's `sha2/force-soft` came down with the dependency and was
+  redundant next to `rsk-crypto/kani-soft`, which already sets it — which is
+  what `rsk-openpgp`, `rsk-oath` and `rsk-otp` forward and nothing else, along
+  with `rsk-bip39` and `rsk-slip39`. (`rsk-piv` still names its own beside that
+  one. Different shape, and left alone: its `sha2` is a dev-dependency its
+  `src/tests.rs` hashes with seven times.) Both are gone, and the dependency's
+  five-line explanation with them — the three-line pointer at `rsk-crypto` that
+  every other forwarder carries says it now. `cargo tree -p rsk-fido --features
+  kani-soft` still resolves `sha2 v0.10.9|force-soft`, and the SLOW and LIGHT1
+  tier selections still `cargo check` one package at a time, which is how
+  `cargo kani` re-invokes them — worth doing by hand, because **no row in
+  `check.sh` ever builds with `--features kani-soft`**; only the weekly Kani
+  tiers do. Refactor, no behaviour change — but the image moves, so the counter
+  does. Nothing grew: all 28 workspace members' normal-dependency closures
+  (`cargo tree --edges normal`) are identical before and after, and the
+  comparator was falsified first — pointed at an injected `rsk-oath → rsk-ec`
+  it names the 12 crates that edge would add. `sha2 0.10.9` still reaches
+  `rsk-fido` through `rsk-crypto` and `ed25519-dalek`. And the default shipping
+  image — `cargo build --release -p firmware`, no features, taken before the
+  16M/display/no-touch rebuilds overwrite the ELF — is the same program:
+  `.text` 810 500 and `.bss` 337 556 bytes on both sides, 1343 function labels
+  on both sides, 264 254 instructions on both sides, and **81 of those
+  instructions differ**, every one of them a relocated immediate — 79 `movw`
+  low halves of `movw`/`movt` address pairs, and 2 `d4d4` inter-function
+  padding half-words objdump renders as `bmi.n`, each sitting after a diverging
+  instruction and before the next function's symbol. Byte-identity is not
+  reachable for a manifest edit at all — dropping a dependency changes the
+  crate's `-C metadata` hash and with it the symbol and `.rodata` numbering — so
+  the bar is instead: same instruction count, same mnemonic profile, and every
+  difference enumerated and accounted for.
+
+- **The shared EC public-key DO chose both of its length forms from the point
+  width, and one of them measures something else.** `make_ec_pubkey_do` builds
+  `7F49 { 86 <point> }`: the inner length counts the point, the outer one counts
+  the whole `86` object around it, which is 2 or 3 bytes longer. Both took the
+  long form on `point.len() >= 128`, so a 126- or 127-byte point left the outer
+  length short-form while the value it had to carry was 128 or 129 — written out
+  as `80`, the indefinite length DER forbids, or as `81`, a long form with no
+  byte behind it. Either one mis-frames the key for every host that reads it.
+  Not reachable today and no shipped byte changes: `PrivKey::public_point`
+  returns 32, 65, 97 or 133 and nothing else, on all three call sites in both
+  applets, and an attacker-chosen IMPORT picks the scalar, not the point width.
+  But the encoder is `pub` in a tier-0 crate that exists to be called from more
+  than one place, and its own signature accepts the two widths it cannot encode.
+  Each length now takes the long form when the value *it* encodes reaches 128 —
+  the rule `rsk_sdk::tlv::format_len` already states two tiers up, where an
+  algorithm crate cannot reach it. The walk over reachable widths could not see
+  this (all four sit clear of the boundary), so a second one covers every width
+  the encoder is documented for, and its reader rejects a non-canonical length
+  instead of accepting it: without that, moving the threshold anywhere in
+  98..=133 re-parsed cleanly and was pinned by nothing. Falsified against the
+  previous encoder (`plen 126: outer DO unreadable`) and against a threshold
+  moved to 100 (`plen 100: inner DO unreadable`).
+
+- **The PIV applet borrowed the OpenPGP applet's elliptic-curve key type, and
+  that was the last applet reaching sideways.** `Curve`, `PrivKey` and
+  `make_ec_pubkey_do` lived in `rsk-openpgp/src/keys.rs`, so `rsk-piv` — which
+  shares none of OpenPGP's DO model, PW1/PW3 sessions or DEK seal — depended on
+  the whole applet for a key type, an eight-value curve tag and a TLV wrapper.
+  Six `use rsk_openpgp::keys::…` sites and one manifest dependency; both are
+  now zero, and with them the last applet→applet edge in the tree. Measured
+  over all 56 ordered applet pairs: **0 manifest edges, 0 `rsk_x::` uses in
+  code**. Six `rsk_<applet>::` references survive, every one inside a comment
+  where one applet explains its ordering by pointing at a sibling that does the
+  same thing — prose, not a dependency. Both halves are a `git grep` anyone can
+  re-run — `^rsk-<b> = ` in `crates/rsk-<a>/Cargo.toml`, and `rsk_<b>::` under
+  `crates/rsk-<a>/src` — and the counter was falsified before it was believed:
+  pointed at `rsk-sdk` the same two greps find the edge from all eight applets,
+  2 to 48 uses each.
+
+  The key type went to `rsk-ec`, beside the fixed-base comb it already signs
+  through, and the crate's charter grew to match: it is the EC layer now, not
+  just the comb. `Curve::id` — the persisted `[curve_id]` byte both applets tag
+  a sealed key with — became public, which deleted PIV's byte-identical hand
+  copy of the same eight-arm table. `MAX_EC_SIG` / `MAX_EC_POINT` followed the
+  operations whose output they bound. What did **not** follow: `curve_from_attr`
+  maps an OpenPGP *algorithm attribute* to a curve and stays with the DO model
+  that defines those attributes, and `store_ec_key` / `load_ec_key` stay with
+  the DEK seal they are I/O for. All 17 tests of the moved code went with it or
+  stayed with what they test — 14 to `rsk-ec` (4 raw-signature, 3 X25519, 7
+  brainpool KAT), 3 kept in `rsk-openpgp` (the attribute mapping, and the two
+  DEK-seal tests, in a file that no longer calls itself `keys_x25519_tests`) —
+  none rewritten, none lost, and 8 new ones on top.
+
+  `make_ec_pubkey_do` is not curve vocabulary — it is the `7F49 { 86 <point> }`
+  data object both applets answer GENERATE and IMPORT with. It went to
+  `rsk-ec/src/pubdo.rs`, which is where `rsk_rsa::pubdo` already holds
+  `7F49 { 81 <N> · 82 <E> }` for exactly the same reason; splitting the two
+  halves of one DO family across two crates would have been the worse answer.
+  `rsk-sdk::tlv` was the other candidate and is the wrong one: it holds generic
+  BER primitives, not named objects. Its new `MAX_EC_PUBDO` replaces PIV's
+  `[0u8; 110]` and OpenPGP's twice-written `8 + MAX_EC_POINT`.
+
+  `rsk-ec` is tier 0 and gained **no** `rsk-*` dependency (`cargo tree -p rsk-ec
+  -e normal --depth 1`: twelve third-party crates, not one of them `rsk-*`).
+  Two things had to be cut for that, both along seams `rsk-rsa` had already
+  cut. `Sw` became `EcError` — three variants, each naming the status word its
+  callers answer with, reproduced at each applet's APDU edge by `ec_sw` and
+  pinned arm by arm (`ec_sw_reproduces_every_status_word`, in both crates). The
+  split between `Failed` and `BadPoint` is load-bearing: it is what keeps a
+  refused signature at `6400` while a malformed ECDH peer point stays `6984`.
+  And `PrivKey::generate` takes `rsk_ec::Rng`, bridged by an `EcRng` beside each
+  applet's existing `RsaRng`. `PrivKey::sign` needed no bridge at all — its
+  `_rng` parameter had been dead since every curve here became deterministic,
+  and carrying it would have meant building an adapter for an argument nobody
+  reads.
+
+  **Nothing an already-provisioned key depends on moved**, and that is measured
+  rather than intended. Undo the one mechanical substitution the tier boundary
+  forced — `Sw::EXEC_ERROR`/`DATA_INVALID`/`FUNC_NOT_SUPPORTED` → the matching
+  `EcError` variant, and `rsk_ec::` → `crate::` — and the three moved spans
+  differ from their parent (`868653b`) **only** in the crate header, the module
+  docs, the test hooks, two `pub`s and `sign`'s signature. No arithmetic, no
+  control flow, no buffer width and no error direction moved. The
+  sealed blob is still `[curve_id] ‖ scalar`, the eight tags are written out
+  one by one in a test rather than round-tripped (a renumbering would move both
+  sides of a round-trip together), and four real records sealed by the
+  `868653b` build — P-256, P-384, Ed25519, X25519 — are checked into
+  `rsk-piv`'s tests and must still load. Falsified: remapping PIV's
+  `curve_from_id` fails that test with "P256 decoded as the wrong curve",
+  flipping one fixture byte with "record from the old build refused". Remapping
+  `rsk_ec::Curve::from_id` leaves it GREEN — PIV reads through its own,
+  deliberately narrower table — and `curve_id_round_trips_and_rejects_unknown_tags`
+  in `rsk-ec` catches it instead (its sibling `curve_id_tags_are_frozen` reads
+  only `id()` and stays green, so it is one test, not two).
+  `docs/protocol.md` describes neither of these: the curve tag is
+  at-rest only, and the `7F49` DO is the public spec's, byte-unchanged.
+
+  The image is **not** byte-identical this time, and should not be: a clean
+  `cargo build --release -p firmware` goes from 811 500 to **810 580 bytes, 920
+  smaller** (`arm-none-eabi-size`, `text + data`, the sum `check.sh`'s budget row
+  takes; `bcdDevice` pinned, so the counter is not the difference). **None of the
+  deletions is why**, which is measured and not guessed: put the dead `_rng`
+  back at all six `sign` call sites and PIV's duplicate tag table back beside it,
+  and the image rebuilds at 810 580 — the same byte count, so the two of them
+  together are worth **zero**. PIV's `curve_id` never had a symbol of its own to
+  delete; it was already inlined into `store_ec_key`, and `Curve::id` inlines
+  into the same jump table. What actually moved is codegen: `PrivKey`'s four
+  large methods crossing a crate boundary re-cut the cross-crate inlining, 1047
+  symbols changed size, 80 512 bytes of gross movement, and −920 is the 1.2 %
+  that did not cancel. Nothing left the image. Every symbol that disappears is
+  one of the six that reappear under `rsk_ec::key::`, or a wrapper now inlined
+  into a caller that grew to match (`p521`'s `FieldElement::mul` into
+  `primeorder`, `sha2`'s `Sha512::finalize_into` into `hmac`), or two identical
+  one-instruction `Rng::fill` shims the linker folded (`RsaRng`, `EcRng`) — and
+  `.bss` is unchanged to the byte at 337 556.
+
+- **Four applets reached into the management applet for a config record and a
+  serial.** `EF_DEV_CONF` — the Yubico DeviceInfo record `ykman config usb`
+  writes, and the READ CONFIG response built around it — lived inside
+  `rsk-mgmt`, so `rsk-fido` and `rsk-otp` depended on the management applet to
+  write it, while `rsk-openpgp` and `rsk-piv` depended on it for five lines that
+  derive the 8-digit serial from the chip id. Those are two different things and
+  they went to two different places. The record is its own crate now,
+  `rsk-devconf`, in the shape `rsk-led` and `rsk-phy` already had — below the
+  applets, depending only on `rsk-fs` and `rsk-sdk`. `serial4` is
+  `rsk_sdk::serial4`, beside `FIRMWARE_VERSION`: the same device identity four
+  applets report for four unrelated reasons, declared once where every applet
+  already looks. `git grep -c rsk_mgmt` over `rsk-fido`, `rsk-otp`,
+  `rsk-openpgp` and `rsk-piv` goes 3/7/5/3 → **0**, and all four drop the
+  dependency.
+
+  Crossing a crate boundary did **not** publish the record's vocabulary. Inside
+  `rsk-mgmt` the FID was crate-private, which is what let the FIDO vendor
+  `CONFIG_WRITE` say "ask the codec, you cannot reach the record"; a `pub const`
+  would have demoted that to a convention on a record which survives
+  `authenticatorReset` and which one unparseable byte hides the device behind
+  for good (audit run-33). So the FID, the stored-size cap and the thirteen
+  DeviceInfo tags stay private — as `rsk-phy` keeps its own twelve tags — and
+  are re-exported as `rsk_devconf::raw` only under `test-util`, which just the
+  applet tests and two fuzz targets turn on. Naming `rsk_devconf::EF_DEV_CONF`
+  from an applet is `error[E0603]`, and `raw` does not exist in an image build.
+  One constant is genuinely shared and genuinely public: `DEV_CONF_WRITE_MAX`,
+  the request bound the CCID WRITE CONFIG applies before the codec strips.
+  Visibility is compile-time only and `raw` is `cfg`-gated out, so the image
+  does not move — measured, not assumed: `objcopy -O binary` over the release
+  build before and after is the same `bc04bca3…`, and only the debug sections
+  differ, because a new `[features]` table changes the crate's `-Cmetadata`
+  fingerprint. The second `bcdDevice` step is a build counter, not a behaviour
+  change.
+
+  **No byte of the record moved**, and that is checked rather than intended:
+  every moved span of the codec is byte-identical to its old self bar eight
+  lines — that one `pub`, the import and the version tag naming
+  `rsk_sdk::FIRMWARE_VERSION` directly, and two doc clauses that named the
+  applet the codec no longer lives in. All 37 tests moved byte-identical, 21
+  to the record and 16 to the applet, none rewritten and none lost.
+  `EF_DEV_CONF = 0x1122` and every size constant keep their values, so a key
+  provisioned by an older build reads the same record through the same parser
+  and there is nothing to migrate. `docs/protocol.md` §6 describes the same
+  TLV; only the "Source:" pointers follow the file.
+
+- **FIDO reached across the applet tier for a config record, and only the crate
+  graph said so.** `EF_PHY` — the PicoForge-compatible device-config TLV that
+  carries USB identity, LED wiring and the interface mask — lived inside the
+  rescue applet, so everything that reads it depended on `rsk-rescue`: 19
+  references from `rsk-fido` alone, plus `rsk-device`, `rsk-display`,
+  `firmware`, `tools/emu`, a fuzz target and the Miri harness. It is its own
+  crate now, `rsk-phy`, in the shape `rsk-led` already had for `EF_LED_CONF` —
+  below the applets, depending only on `rsk-fs` and `rsk-sdk`. `rsk-fido` and
+  `rsk-display` no longer name `rsk-rescue` at all.
+
+  **No byte of the record moved**, and that is checked rather than intended:
+  the codec is line-for-line its old self — `diff` against the parent moves the
+  crate header and the trailing `#[path]` module hooks and not one line between
+  them — and its tests and Kani harnesses are byte-identical files, wire
+  vectors included. A key provisioned by an older build reads the same
+  `EF_PHY = 0xE020` through the same parser, so there is nothing to migrate.
+  `docs/protocol.md` §7.1 and `rsk hw` describe the same tags; only the
+  "Source:" pointers follow the file.
+
+  The Kani `heavy` tier moves with the proofs — it was `rsk-rescue` because of
+  this record's 11.1 GB round-trip, and is `rsk-phy` now; the harness and cover
+  floors are unchanged because nothing was added or dropped.
+
+- **Seven applets each declared the same presence seam, and the board answered
+  all seven.** `Rng`, `UserPresence`, `Presence`, `PinEntry` and `AlwaysConfirm`
+  were 29 declarations across the applet tier, byte-identical apart from FIDO's
+  fourth `Presence::Cancelled`; `rsk-device` carried two supertrait blocks and
+  their blanket impls purely to reconcile them, and `firmware`, `tools/emu` and
+  `rsk-display` wrote the same impl five and seven times over. They are declared
+  once now, in `rsk-sdk` — the crate every applet already depended on, so the
+  move added no dependency edge — and the glue is gone: `firmware` and the
+  emulator implement one `Rng` and one `UserPresence` each.
+
+  The seven presence impls were **not** actually identical, which is the part a
+  straight merge would have broken. The trusted display closes an approved
+  WebAuthn ceremony with a ~0.4 s "Approved" card and runs a registration screen
+  for `makeCredential`, and its own comment says paying that on OpenPGP/PIV —
+  which ask for presence once *per signature* — would be a latency regression.
+  A cancel differs too: only CTAP2 can be cancelled mid-wait, so only FIDO could
+  answer `Presence::Cancelled`; the six card applets got `Timeout`. The shared
+  trait keeps both apart by asking two questions rather than one — `request` for
+  a smartcard touch policy, `request_ceremony` for a CTAP2 ceremony, the latter
+  defaulting to the former — so every status word, every CTAP error and the pop's
+  scope are what they were.
+
+  The randomness seam stays split in two on purpose. `rsk-rsa` is an algorithm
+  crate below `rsk-sdk` and may not reach up for it, so it keeps its own `Rng`
+  and the two are bridged where they meet (`rsk_openpgp::keys::RsaRng`,
+  `rsk_piv::RsaRng`, `firmware`'s `core1::SdkRng`, the emulator's `EmuRsaRng`).
+  The alternative — `rsk-sdk` re-exporting `rsk_rsa::Rng` — was measured rather
+  than argued: `rsk-sdk` has 14 direct dependents and `rsk-rsa` has 4, so that
+  edge would pull `rsk-rsa` and `num-bigint-dig` into the closure of ten crates
+  that do no RSA. Same reasoning that kept the `RsaError → Sw` table duplicated.
+
+- **Two rows of that mutation table asserted the right outcome for the wrong
+  reason.** Measured one mutant at a time: deleting the `s ≥ n` refusal
+  (RFC 8017 §8.2.2 step 1) left the whole suite green, because the `s = n` case
+  reduces to zero and fails the EM comparison anyway — and without that refusal
+  the oracle accepts `sig + n`, a second representative of a signature it has
+  already seen. The over-wide-data case had the same shape: it sat ten bytes
+  short of the width where the check is what stops the EM construction indexing
+  past its own buffer. Both mutants now die, each on the assertion that names it
+  and in the direction that describes the defect.
+
+  Three comments outlived the crate they described. `firmware/Cargo.toml` still
+  blamed the 128 KiB heap on the `rsa` crate; two RSA tests still said they
+  verified through it. And one citation did not follow the shift its neighbours
+  did — `formal/comutants.toml` pointed `Session::set_pin` at the function after
+  it. `docs/testing.md` now records how the differential against `rsa` 0.9.10 is
+  rebuilt, since the crate cannot come back into the tree to hold it: including
+  that a comparison gated behind `is_ok() || is_err()` compares nothing, and that
+  upstream cannot be asked about an unbalanced key because its CRT recombination
+  does not terminate for `q ≫ p`.
+
+- **The new RSA test oracle could not be made to say "no".** `verify_pkcs1v15`
+  arrived with five call sites and not one negative case, so a version hard-wired
+  to `true` left the suite green — and the generated-key half of both applets'
+  RSA tests had nothing else checking them. It now has its own mutation table
+  (`crates/rsk-rsa/src/verify_tests.rs`): a flipped signature bit, a flipped
+  digest bit, another message's signature, the wrong modulus, the wrong exponent,
+  three wrong lengths, `s = n`, and over-wide data. Falsified by stubbing the
+  function to `true` and reading which assertions fell.
+
+  Three more from the same review. The EMSA-PKCS1-v1_5 block builder had been
+  copied into both signers rather than shared, so the PKCS#1 padding rule lived
+  in two places; it is one `emsa_block` now. `rsa_sign`'s DigestInfo arm maps
+  every failure back to `Failed`, which is the single status word the `rsa`
+  crate's `sign_with_rng` could answer there — the new width errors were
+  unreachable through `rsk-piv`'s certificate path, but "unreachable" is not
+  "identical". And three `mod_inverse` results — the private exponent, `qInv`,
+  and each blinding factor's inverse — were signed intermediates dropped without
+  scrubbing, where the crate they replaced wiped its own; they ride in
+  `Zeroizing` now.
+
+  Two comments were narrower than the truth they defend. The Garner
+  recombination is underflow-safe for *any* `p` and `q` — `m1 < p` is a `modpow`
+  postcondition — not only for the unbalanced pair the comment named; and
+  PSO:DECIPHER's legacy arm collapses every failure to `EXEC_ERROR` where the asm
+  arm answers the four-variant table first, which the comment read as identical.
+  A safety argument stated narrower than it is invites the next reader to weaken
+  it.
+
+- **`rsk-rsa` owns the RSA key type, so nothing above tier 0 names a foreign
+  one.** `rsa::RsaPrivateKey` used to cross from an algorithm crate into both
+  card applets, `rsk-device` and `firmware` — five manifests and eleven source
+  files spelling a dependency's type in their own signatures. `rsk_rsa::RsaKey`
+  replaces it, and its public surface is bytes: `size()`, `n_be()`, `e_be()`, and
+  a `from_p_q` reached through the byte-taking `rsa_from_pqe`. `rsk-piv` and
+  `rsk-openpgp` no longer name a bignum at all; `rsk-rsa` still has no `rsk-*`
+  dependency. Three PKCS#1 v1.5 helpers moved with it — the software private
+  operation, `rsa_sign` and a new `rsa_decrypt` — each a port of what the `rsa`
+  crate ran, arm for arm, including which of `check_public` and `validate`
+  refuses an imported key, because an applet's status word follows that.
+
+- **The citation gate said `ok` over 75 rotted citations, and one whole page was
+  outside it.** `formal/citations.lock` now records what each of the 423
+  `file.rs:line` citations pointed at, and a locked line found ELSEWHERE in its
+  file is reported with the line it moved to. A line edited *in place* still
+  passes: that false alarm is what the row was deliberately built without, and
+  both halves are pinned. `formal/comutants.toml` joins the guarded pages — 13
+  of its 16 citations named a file nothing could resolve, and two landed on
+  unrelated code, one of them wrong the day it was written. Pages that reason
+  about several applets at once must now write a repo path, because `lib.rs:1020`
+  decides nothing for this gate or for a reader. Four more citations were wrong
+  and are re-pointed, including `Ctx::load_keydev`, which named `require_presence`.
+  Host-side only: no firmware behaviour, so no bcdDevice bump.
+
+- **Why the RSA status-word table is allowed to exist twice.** `rsa_sw` maps
+  `RsaError` to a status word in both card applets, and the comment defending
+  that named the orphan rule — which in fact permits the shared
+  `impl From<RsaError> for Sw`, because `Sw` is `rsk-sdk`'s own type and the
+  `rsk-sdk` → `rsk-rsa` edge it needs points downward. What rules it out is the
+  cost: `rsk-sdk` is the seam every applet depends on, so that impl puts
+  `rsk-rsa` in FIDO's, OATH's, OTP's, mgmt's, rescue's, fs's and usb's
+  dependency closures, none of which do RSA. Both halves measured; both copies
+  stay, each pinned arm by arm. Comments only — refactor, no behaviour change,
+  and the counter moves because a bump counts builds.
+
+- **The RSA layer moved out of the OpenPGP applet and into `rsk-rsa`.** The CRT
+  parameter layout and its blinded, Bellcore-fault-checked private operation,
+  PKCS#1 v1.5 (the DigestInfo encoding, both signers, the constant-time decrypt
+  unpad), the key type, keygen, and the `7F49` public-key DO now live in the
+  crate that already held the assembly under them. PIV was reaching across a
+  tier for all of it — `rsk_openpgp::rsa_crt`, `keys::rsa_sign`,
+  `keys::RsaKeygen`, `keys::MAX_RSA_BYTES` and four more — and reaches down for
+  it now instead; the applets keep only what is theirs, the APDU framing and the
+  seal I/O. Behaviour-preserving: the `rsa` crate rode along with the code that
+  used it (the entry above has since dropped it), and no wire byte moves.
+
+  The status words could not ride along, because a tier-0 crate must not name
+  `rsk_sdk::Sw`. `rsk-rsa` returns its own four-variant `RsaError` and each
+  applet maps it at its APDU edge, reproducing every status word the old code
+  answered — including PSO:DECIPHER's deliberate `EXEC_ERROR` on a malformed
+  block. Both mappings are pinned arm by arm, and both pins were checked by
+  breaking an arm and reading which assertion fell.
+
+  Two constants that were written out twice collapsed on the way:
+  `MAX_RSA_BYTES` (`512` in `keys.rs`, `2 * MAX_MOD` in `rsa_crt.rs`) and the
+  maximum sealed plaintext (`5 * MAX_MOD` in `rsa_crt.rs` and again in
+  `rsk-piv/src/seal.rs`). Both survivors derive from `rsk_rsa::MAX_MOD`, so
+  neither can drift from the width the assembly actually accepts, and every
+  remaining user of both was read. `num-bigint-dig` left the OpenPGP and PIV
+  manifests, where nothing referenced it any more.
+
+- **`rsk-rsa-asm` is now `rsk-rsa`.** The crate held the vendored UMAAL assembly
+  and nothing else, while the RSA layer above it — CRT parameters, PKCS#1 v1.5,
+  the key type, keygen — lived inside the OpenPGP *applet*, which is why PIV
+  reaches across a tier to sign. RSA was the only algorithm family in the tree
+  without a crate of its own. The rename comes first and alone: a crate called
+  `-asm` cannot honestly hold pure Rust, and the moves land on top of it. Pure
+  rename, no code moved yet.
 
 ## [0.4.10] - 2026-08-14
 
@@ -6694,7 +8526,8 @@ family that keeps the "enterprise" features in the open tree.
   signature of it, and a CycloneDX SBOM. See
   [docs/releases.md](docs/releases.md) to verify a download.
 
-[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.10...HEAD
+[Unreleased]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.11...HEAD
+[0.4.11]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.10...v0.4.11
 [0.4.10]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.9...v0.4.10
 [0.4.9]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/TheMaxMur/RS-Key/compare/v0.4.7...v0.4.8

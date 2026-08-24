@@ -22,7 +22,7 @@
       pkgs.picotool # ELF -> UF2 + BOOTSEL flashing, no probe needed
       pkgs.pkg-config
       pkgs.gcc-arm-embedded
-      # arm-none-eabi-gcc — builds rsk-rsa-asm's C+ARM-asm
+      # arm-none-eabi-gcc — builds rsk-rsa's C+ARM-asm
       # fast RSA modexp. `cc` auto-detects it.
 
       pkgs.yubikey-manager # ykman CLI (device management, guides)
@@ -39,6 +39,28 @@
       # Coverage says a line ran; this says a test would notice if it changed —
       # which is the property the `require_pin_inputs` gap was invisible to.
       pkgs.cargo-mutants
+
+      # Workflow linting (the `workflow lint` row in scripts/check.sh).
+      # Nothing in the tree parsed `.github/workflows` at all, and a workflow
+      # that does not parse is not merely a job that will not start: OpenSSF
+      # Scorecard's SAST check runs actionlint over EVERY file in that directory,
+      # so one bad sibling errors the whole check. The package wraps shellcheck
+      # and pyflakes, which is what lints the `run:` blocks.
+      pkgs.actionlint
+
+      # TLA+ model checking (formal/, scripts run by the weekly `formal` row).
+      # The model, its 44 mutants and `floors.txt` were ratchets nobody pulled
+      # automatically: no workflow ran TLC, and `run-tlc.sh` reached a jar by a
+      # hardcoded /nix/store path that only this machine had. Pinning the tool
+      # here is what lets CI run it at all.
+      #
+      # The whole package rather than just its 2.2 MB jar, because the jar alone
+      # still needs a JVM and the script was taking `java` from the host PATH —
+      # a prover whose runtime differs per contributor. `jre8` below is the JDK
+      # tlaplus already wraps (same store path), so it costs nothing extra; the
+      # 208 MB closure is that JDK, not the tool.
+      pkgs.tlaplus
+      pkgs.jre8
 
       # Documentation site (see scripts/docs.sh): the GitHub Pages source is the
       # docs/ tree rendered by mdBook; mdbook-mermaid renders the diagrams; lychee
@@ -114,6 +136,12 @@
           ]
         )
       }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+      # formal/run-tlc.sh needs the jar path AND its own -Xmx per configuration
+      # (floors.txt carries 12g/24g rows), so it invokes `java -cp` directly —
+      # the package's own `tlc` wrapper passes its arguments to TLC, not to the
+      # JVM, and cannot carry a heap setting.
+      export TLA2TOOLS_JAR="${pkgs.tlaplus}/share/java/tla2tools.jar"
 
       # Install repo git hooks (idempotent; symlinked so edits take effect).
       if [ -d .git ] && [ -f scripts/hooks/pre-commit ]; then

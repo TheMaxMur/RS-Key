@@ -27,7 +27,7 @@ strict-config = []
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
-rsk-mgmt = { workspace = true }
+rsk-devconf = { workspace = true }
 # At-rest sealing of slot secrets: zeroize scrubs the plaintext scratch buffers.
 zeroize = { workspace = true }
 

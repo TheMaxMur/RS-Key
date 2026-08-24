@@ -31,8 +31,8 @@ compiled into the image.
 
 | Area | Default build | `fips-profile` build | Gate |
 |---|---|---|---|
-| FIDO algorithms | ES256, EdDSA, ES384, ES512, ES256K, (ML-DSA-44/-65) | drops **ES256K** (secp256k1 — never NIST-approved) from both the advertised list and credential negotiation | `getinfo.rs`, `makecredential.rs` |
-| FIDO minimum PIN | 4 | **6** (and `setMinPINLength` can only raise it, never lower it), plus trivially guessable PINs refused — a single repeated digit or a ±1 run like `123456` (the `strong-pin` policy) | `consts.rs`, `clientpin.rs`, `config.rs` |
+| FIDO algorithms | ES256, EdDSA, ES384, ES512, ES256K, (ML-DSA-44/-65/-87) | drops **ES256K** (secp256k1 — never NIST-approved) from both the advertised list and credential negotiation | `getinfo.rs`, `makecredential.rs` |
+| FIDO minimum PIN | 4 | **6** (and `setMinPINLength` can only raise it, never lower it), plus trivially guessable PINs refused — a repeated period, a ±1 run, two or fewer distinct code points, or a denylisted keypad shape (the `strong-pin` policy) | `consts.rs`, `clientpin.rs`, `config.rs` |
 | Seed backup | one-time export window | **export refused** — non-exportable key material; restore (`BACKUP_LOAD`) still works, so keys may migrate *into* a profile device, never out | `vendor.rs` |
 | PIV management key | 3DES or AES | **no new 3DES keys** (SP 800-131A); an existing 3DES key still authenticates so a reflashed device can migrate itself to AES | `piv/lib.rs` |
 | PIV RSA | 1024 / 2048 | **no RSA-1024** generation *or* import | `piv/keygen.rs` |
@@ -44,8 +44,8 @@ Two things worth reading carefully:
   asks for `-47` anyway, `makeCredential` maps it to "unsupported" and
   declines. There is no path to a *new* secp256k1 FIDO credential.
 - **RSA-1024 is blocked on two independent gates**: the generation template
-  parser (`piv/keygen.rs:48`) and the separate import path
-  (`piv/keygen.rs:242`), which does not go through that parser. So neither
+  parser (`crates/rsk-piv/src/keygen.rs:47-50`) and the separate import path
+  (`crates/rsk-piv/src/keygen.rs:596-598`), which does not go through that parser. So neither
   `ykman piv keys generate ... RSA1024` nor importing an external 1024-bit
   key onto a slot succeeds. Both return `6A 80` (incorrect data).
 

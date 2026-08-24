@@ -103,7 +103,7 @@ pub(super) fn pin<D: DrawTarget<Color = Rgb565>>(t: &mut D, pad: &PinPad) -> Res
         let mut col = 0;
         while col < PIN_COLS {
             let r = pin_key_rect(col, row);
-            match pin_grid_key(col, row) {
+            match pin_grid_key(col, row, &pad.layout) {
                 // OK is a solid green key with a white check; Del a backspace glyph on a
                 // dark card; the digits are dark cards with a white numeral.
                 PinKey::Ok => {

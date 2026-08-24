@@ -36,21 +36,21 @@ the gap between "no suffix" and "not classified".
 
 A checked type may still be excused file by file — [`UNHEADERED`] — and only file
 by file. The three `.github/ISSUE_TEMPLATE/*.yml` forms carry no header while the
-eight workflow files and `dependabot.yml` all do, so excusing the *extension*
-would have left every future workflow unchecked in order to excuse three forms.
+workflow files and `dependabot.yml` all do, so excusing the *extension* would
+have left every future workflow unchecked in order to excuse three forms.
 
 ## The exemptions, and their debt
 
 Vendored code keeps its own notice; stamping AGPL on someone else's file would be
 a false statement about it. So `third_party/` and the BSD-licensed bignum sources
-under `crates/rsk-rsa-asm/csrc/` are exempt — and the exemption is checked, the
+under `crates/rsk-rsa/csrc/` are exempt — and the exemption is checked, the
 way `kani_gate.py` checks its own: an exempt file must carry a `Copyright` line of
 its own **or** sit under a directory holding a `LICENCE`/`LICENSE` file. An
 exemption that covers a file with no notice at all is not an exemption, it is an
 unlicensed file. A prefix that matches nothing is stale and fails too.
 
 The directory half is a statement about the directory, so anything beside a
-`LICENSE` inherits it — `crates/rsk-rsa-asm/csrc/LICENSE.txt` covers the four
+`LICENSE` inherits it — `crates/rsk-rsa/csrc/LICENSE.txt` covers the four
 files there. That is the right reading for a vendored tree, and the reason the
 repo's own top-level `LICENSE` is excluded from the walk: it would otherwise
 cover the whole checkout.
@@ -99,6 +99,7 @@ UNCHECKED = {
     ".md": "the tree is split — 21 of 57 carry it, the docs/ pages do not",
     ".toml": "12 of 44; a cargo manifest carries no header by convention",
     ".json": "data",
+    ".jsonl": "data (recorded traces; strict JSON carries no comment to hold a header)",
     ".txt": "data",
     ".cfg": "data (kani/proptest knobs and board fragments)",
     ".lock": "generated",
@@ -112,12 +113,12 @@ UNCHECKED = {
 #: a prefix matching nothing is stale, and a file it covers still owes a notice.
 EXEMPT = {
     "third_party/": "vendored upstream trees, each under its own licence",
-    "crates/rsk-rsa-asm/csrc/": "Emil Lenngren's BSD-2-Clause bignum C and asm",
+    "crates/rsk-rsa/csrc/": "Emil Lenngren's BSD-2-Clause bignum C and asm",
 }
 
 #: Files of a checked type that carry no header for a stated reason. Listed one
-#: by one, never by directory: `.yml` is checked because the eight workflow files
-#: and `dependabot.yml` all carry the header, and blanket-excusing the extension
+#: by one, never by directory: `.yml` is checked because the workflow files and
+#: `dependabot.yml` all carry the header, and blanket-excusing the extension
 #: would have left every FUTURE workflow unchecked to excuse these three. Also
 #: checked for staleness — one naming a file that is gone, or that has since
 #: grown a header, fails.

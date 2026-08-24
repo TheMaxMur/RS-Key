@@ -27,6 +27,7 @@
 
 use core::cell::RefCell;
 use libfuzzer_sys::fuzz_target;
+use rsk_devconf::raw::EF_DEV_CONF;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_mgmt::{AlwaysConfirm, ManagementApplet};
@@ -38,9 +39,6 @@ const INS_READ_CONFIG: u8 = 0x1D;
 
 /// The CCID short-APDU response budget — what the dispatch path gets.
 const CCID_RES_CAP: usize = 256;
-
-/// `EF_DEV_CONF`'s file id (mirrors rsk-mgmt's crate-private constant).
-const EF_DEV_CONF: u16 = 0x1122;
 
 /// Longest record the harness seeds. Past `EF_DEV_CONF_READ_MAX` (64) on purpose:
 /// `config_tlv`'s `full <= conf.len()` guard has no other way to be exercised,

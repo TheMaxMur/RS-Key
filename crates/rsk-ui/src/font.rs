@@ -45,7 +45,7 @@ struct Glyph {
 struct Font {
     ascent: u8,
     descent: u8,
-    glyphs: &'static [Glyph; 97],
+    glyphs: &'static [Glyph; 98],
     data: &'static [u8],
 }
 
@@ -69,6 +69,8 @@ const fn glyph_index(char: char) -> usize {
         95
     } else if char == '\u{00B7}' {
         96
+    } else if char == '\u{2423}' {
+        97
     } else if char >= ' ' && char <= '~' {
         char as usize - ' ' as usize
     } else {
@@ -180,11 +182,11 @@ fn draw<D: DrawTarget<Color = Rgb565>>(
                     {
                         let column = (px - x) as usize;
                         let row = (py - y) as usize;
-                        let glyph_alpha =
-                            coverage(font, glyph, row * usize::from(glyph.width) + column);
-                        if glyph_alpha > 0 {
-                            alpha = glyph_alpha;
-                        }
+                        // Glyph boxes overlap -- 8 of the 97 have a negative left
+                        // bearing, 28 carry ink past their advance -- so the pair
+                        // composites, and the greater coverage wins, not the later.
+                        let index = row * usize::from(glyph.width) + column;
+                        alpha = alpha.max(coverage(font, glyph, index));
                     }
                     pen_x += i32::from(glyph.advance);
                 }

@@ -176,3 +176,93 @@ fn the_script_parser_refuses_what_it_cannot_place() {
     // The last pixel of the panel is still on it.
     assert!(parse_script("239,319").is_ok());
 }
+
+/// The socket pad, driven the way a suite drives it — and the property that makes
+/// it worth having: `ok` is not "queued", it is "the panel has room".
+///
+/// The bound is one, so the first line is buffered and answered at once and the
+/// second cannot be answered until the pad takes the first. The negative half is
+/// asserted with a read timeout rather than a sleep-and-hope: a slow machine only
+/// makes "no answer yet" more true, so it cannot go flaky in the direction that
+/// would matter.
+#[test]
+fn the_socket_pad_answers_a_line_only_once_the_panel_has_room() {
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("an ephemeral port");
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || serve(listener, tx));
+
+    let mut sock = TcpStream::connect(addr).expect("the pad's socket");
+    let mut answers = BufReader::new(sock.try_clone().unwrap());
+    let mut answer = || {
+        let mut line = String::new();
+        answers.read_line(&mut line).map(|_| line)
+    };
+
+    sock.write_all(b"10,20\n").unwrap();
+    assert_eq!(answer().unwrap(), "ok\n", "the first contact has room");
+
+    sock.write_all(b"30,40\n").unwrap();
+    sock.set_read_timeout(Some(Duration::from_millis(300)))
+        .unwrap();
+    assert!(
+        answer().is_err(),
+        "the second was answered with the first still on the pad"
+    );
+
+    assert_eq!(rx.recv().unwrap().at, rsk_ui::Point::new(10, 20));
+    sock.set_read_timeout(None).unwrap();
+    assert_eq!(
+        answer().unwrap(),
+        "ok\n",
+        "taking one makes room for the next"
+    );
+    assert_eq!(rx.recv().unwrap().at, rsk_ui::Point::new(30, 40));
+
+    // `settle` is two lifted samples, because one is what a nested release wait
+    // swallows; and a malformed line is answered on the connection that sent it
+    // rather than taking the pad down.
+    sock.write_all(b"settle\n").unwrap();
+    let expect = nowhere();
+    assert_eq!(rx.recv().unwrap().at, expect);
+    assert_eq!(answer().unwrap(), "ok\n");
+    assert_eq!(rx.recv().unwrap().at, expect);
+
+    sock.write_all(b"nine,nine\n").unwrap();
+    assert!(
+        answer().unwrap().starts_with("err "),
+        "a bad line is answered"
+    );
+
+    // A name resolves through the panel's OWN hit test, which is the whole reason
+    // a suite says `key 7` rather than a pixel: a control that moves takes its
+    // name with it, and a coordinate in a Python file would not follow.
+    sock.write_all(b"key 7\n").unwrap();
+    let at = rx.recv().unwrap().at;
+    assert_eq!(answer().unwrap(), "ok\n");
+    assert_eq!(
+        rsk_ui::hit_pin(at, &rsk_ui::PinLayout::identity()),
+        Some(rsk_ui::PinKey::Digit(7)),
+        "`key 7` must land where the pad dispatches a 7"
+    );
+
+    // The tail is the file grammar's, so a consent hold and its lead-in are one
+    // line: `allow,800,400` is the 800 ms fill behind 400 ms of lifted samples.
+    sock.write_all(b"onboard skip,0,250\n").unwrap();
+    let tap = rx.recv().unwrap();
+    assert_eq!(answer().unwrap(), "ok\n");
+    assert_eq!(
+        rsk_ui::hit_onboard(tap.at),
+        Some(rsk_ui::OnboardChoice::Skip)
+    );
+    assert_eq!(tap.gap, Duration::from_millis(250), "the tail still parses");
+
+    sock.write_all(b"key 11\n").unwrap();
+    assert!(
+        answer().unwrap().starts_with("err "),
+        "a key the pad does not have is refused, not silently resolved"
+    );
+}

@@ -59,7 +59,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// The Passkeys tab — list resident relying parties (read-only), with a drill-in to
     /// each RP's accounts. Enumerates from the shared flash store on entry (the worker is
@@ -904,7 +904,7 @@ where
     fn piv_search_rsa(
         &mut self,
         nbits: usize,
-    ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaPrivateKey>> {
+    ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaKey>> {
         let _ = rsk_ui::render_piv_keygen_working(&mut self.panel);
         self.shown = None;
         let mut rng = self.rng.borrow_mut();

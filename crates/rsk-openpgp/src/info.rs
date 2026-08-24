@@ -12,7 +12,8 @@
 use rsk_fs::{Fs, KeyFid, Storage};
 
 use crate::consts::*;
-use crate::keys::{Curve, curve_from_attr};
+use crate::keys::curve_from_attr;
+use rsk_ec::Curve;
 
 /// The three OpenPGP key slots (SIG, DEC, AUT), in card order.
 pub const SLOTS: usize = 3;

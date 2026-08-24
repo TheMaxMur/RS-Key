@@ -16,7 +16,12 @@ strict-config = []
 [dependencies]
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
+# The `EF_DEV_CONF` record this applet's READ/WRITE CONFIG is a transport for.
+rsk-devconf = { workspace = true }
 
 [dev-dependencies]
 # RamStorage for the host tests (the same backend rsk-fido/rsk-openpgp use).
 rsk-fs = { workspace = true, features = ["test-util"] }
+# `rsk_devconf::raw` — the FID and tag numbers these applet tests assert the
+# DeviceInfo response and the persisted record against.
+rsk-devconf = { workspace = true, features = ["test-util"] }

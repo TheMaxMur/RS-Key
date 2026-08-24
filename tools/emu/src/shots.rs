@@ -77,6 +77,7 @@ fn shoot(dir: &Path) -> std::io::Result<Vec<String>> {
                 title: "Enter PIN",
                 expected: 4,
                 caption: Some(PinCaption::TriesRemaining { left: 8 }),
+                layout: rsk_ui::PinLayout::identity(),
             }),
         );
     });
@@ -109,6 +110,7 @@ fn shoot(dir: &Path) -> std::io::Result<Vec<String>> {
                 device_pin_set: true,
                 fido_pin_set: false,
                 backup_sealed: false,
+                scramble_pin: false,
             }),
         );
     });

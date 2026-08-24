@@ -570,3 +570,165 @@ fn wink_is_refused_where_the_capability_bit_is_clear() {
     assert_eq!(perform_wink(&mut lit), (CTAPHID_WINK, &[] as &[u8]));
     assert!(lit.winked, "a build with an indicator still flashes it");
 }
+
+/// The transport pilot's three properties at concrete frames, so the PR gate
+/// carries what `cargo kani` proves symbolically once a week.
+///
+/// `cont_wrong_cid_busy` and `init_other_channel_busy` above already check the
+/// STATUS a stranger's frame gets back. What they do not check is the owner's
+/// transaction, and that is the property: BUSY is only half of
+/// `NoCrossChannelSplice` — the other half is that nothing moved. A walk rather
+/// than a case, for the same reason the panel's key grids needed one: an
+/// interfering frame has several shapes, and a test naming one catches the
+/// mutation that shape happens to meet.
+#[test]
+fn an_interfering_frame_never_moves_the_owners_transaction() {
+    use crate::ctaphid::transport_assurance::TxView;
+
+    const OWNER: u32 = 0x1122_3344;
+    let payload = [0xABu8; INIT_DATA + CONT_DATA];
+    // Two frames' worth declared, one delivered: the transaction is open and
+    // exactly one continuation short.
+    let mut r = Reassembler::new();
+    r.feed(&init_frame(
+        OWNER,
+        CTAPHID_CBOR,
+        payload.len() as u16,
+        &payload,
+    ));
+    let open = r.tx_view();
+    assert_eq!(
+        open.owner,
+        Some(OWNER),
+        "the pre-state is not a live transaction"
+    );
+
+    for other in [1u32, 0x1122_3345, 0xFFFF_FFFE, OWNER ^ 0x8000_0000] {
+        for frame in [
+            cont_frame(other, 0, &payload),
+            cont_frame(other, 7, &payload),
+            init_frame(other, CTAPHID_CBOR, 64, &payload),
+            init_frame(other, CTAPHID_PING, 1, &payload),
+        ] {
+            let mut r2 = r.clone_for_probe();
+            let out = r2.feed(&frame);
+            assert!(
+                matches!(out, Outcome::Error(..)),
+                "a frame from {other:#010x} was accepted mid-transaction"
+            );
+            assert_eq!(
+                r2.tx_view(),
+                open,
+                "a frame from {other:#010x} moved the owner"
+            );
+        }
+    }
+
+    // …and the owner's own out-of-order continuation aborts rather than filling
+    // the gap: `got` must not advance, whichever wrong sequence byte arrives.
+    for seq in [1u8, 2, 0x7F] {
+        let mut r2 = r.clone_for_probe();
+        let out = r2.feed(&cont_frame(OWNER, seq, &payload));
+        assert!(matches!(out, Outcome::Error(..)), "seq {seq} was accepted");
+        let after = r2.tx_view();
+        assert_eq!(after.got, open.got, "seq {seq} was appended");
+        assert_eq!(after.owner, None, "seq {seq} left the transaction open");
+    }
+
+    // The in-order one completes it, so the walk above was not asserting over a
+    // transaction nothing could have finished either.
+    let mut r2 = r.clone_for_probe();
+    assert!(matches!(
+        r2.feed(&cont_frame(OWNER, 0, &payload)),
+        Outcome::Message(..)
+    ));
+    assert_eq!(
+        r2.tx_view(),
+        TxView {
+            owner: None,
+            seq: 1,
+            got: payload.len(),
+            need: payload.len()
+        }
+    );
+}
+
+/// `NoBufferOverrun`'s two halves at the edge: a declared length one past the
+/// buffer is refused outright, and one exactly at it assembles whole.
+#[test]
+fn the_declared_length_is_refused_one_byte_past_the_buffer() {
+    const CID: u32 = 0x0A0B_0C0D;
+    let big = [0x5Au8; INIT_DATA];
+    let mut r = Reassembler::new();
+    let out = r.feed(&init_frame(
+        CID,
+        CTAPHID_CBOR,
+        (CTAP_MAX_MESSAGE + 1) as u16,
+        &big,
+    ));
+    assert!(matches!(out, Outcome::Error(_, ERR_INVALID_LEN)));
+    assert_eq!(r.tx_view().need, 0, "a refused INIT was still stored");
+
+    let mut r = Reassembler::new();
+    assert!(matches!(
+        r.feed(&init_frame(
+            CID,
+            CTAPHID_CBOR,
+            CTAP_MAX_MESSAGE as u16,
+            &big
+        )),
+        Outcome::None
+    ));
+    assert_eq!(r.tx_view().need, CTAP_MAX_MESSAGE);
+    let mut seq = 0u8;
+    while r.tx_view().owner.is_some() {
+        r.feed(&cont_frame(CID, seq, &[0x5A; CONT_DATA]));
+        seq = seq.wrapping_add(1);
+    }
+    assert_eq!(
+        r.tx_view().got,
+        CTAP_MAX_MESSAGE,
+        "a maximum message did not assemble whole"
+    );
+}
+
+/// A message whose LAST frame is partial. The maximum-length case above cannot
+/// see this: `CTAP_MAX_MESSAGE - INIT_DATA` divides by `CONT_DATA` exactly, so
+/// every continuation of a full-size message is full and the `min` that bounds
+/// the copy never bites. Dropping that bound survives every other test here and
+/// walks `cur` past `bcnt` — the state `NoBufferOverrun` is about, and at the
+/// buffer's end an out-of-bounds write in a `no_std` image.
+#[test]
+fn a_partial_last_frame_advances_by_its_remainder_and_no_further() {
+    const CID: u32 = 0x0203_0405;
+    const TAIL: usize = 10; // < CONT_DATA, so the last frame is part-full
+    let payload = [0x77u8; INIT_DATA + TAIL];
+    let mut r = Reassembler::new();
+    assert!(matches!(
+        r.feed(&init_frame(
+            CID,
+            CTAPHID_CBOR,
+            payload.len() as u16,
+            &payload
+        )),
+        Outcome::None
+    ));
+    assert_eq!(r.tx_view().got, INIT_DATA);
+
+    assert!(matches!(
+        r.feed(&cont_frame(CID, 0, &payload[INIT_DATA..])),
+        Outcome::Message(..)
+    ));
+    let done = r.tx_view();
+    assert_eq!(
+        done.got,
+        payload.len(),
+        "the tail advanced by more than it carried"
+    );
+    assert_eq!(done.got, done.need);
+    assert_eq!(
+        r.message(),
+        &payload[..],
+        "the assembled message is not what was sent"
+    );
+}

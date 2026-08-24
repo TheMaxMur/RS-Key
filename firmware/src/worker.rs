@@ -310,8 +310,8 @@ impl<'a> Worker<'a> {
     /// `presence` is the one BOOTSEL button, shared (through its `RefCell`) by the
     /// FIDO handler (CTAP user presence), the OpenPGP applet (the UIF DOs), the
     /// OTP applet (CHAL_BTN_TRIG) and the OATH applet (PROP_TOUCH credentials) —
-    /// the `&RefCell<ButtonPresence>` coerces to each applet's `UserPresence`
-    /// trait.
+    /// they all ask through the one `rsk_sdk::UserPresence` that the
+    /// `&RefCell<ButtonPresence>` coerces to.
     #[allow(clippy::too_many_arguments)] // one-time wiring from main
     pub fn new(
         fs: &'a RefCell<Store>,
@@ -319,6 +319,9 @@ impl<'a> Worker<'a> {
         presence: &'a RefCell<Presence>,
         platform: &'a RefCell<crate::rescue_platform::RescuePlatform>,
         hooks: &'a RefCell<DeviceHooks>,
+        // The device's one FIDO session state. Both handlers below borrow it: two
+        // copies would give a host two per-boot PIN-mismatch budgets.
+        fido_state: &'a RefCell<rsk_fido::FidoState>,
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         mkek_source: Option<FusedKey>,
@@ -332,6 +335,7 @@ impl<'a> Worker<'a> {
                 rng,
                 hooks,
                 presence,
+                fido_state,
                 crate::vendor::VendorPlatform,
                 serial_id,
                 serial_hash,
@@ -343,6 +347,7 @@ impl<'a> Worker<'a> {
                 rng,
                 hooks,
                 presence,
+                fido_state,
                 platform,
                 crate::vendor::VendorPlatform,
                 serial_id,
@@ -441,8 +446,8 @@ impl<'a> Worker<'a> {
                 // does nothing until re-enabled. The re-enable path — CCID management
                 // and the FIDO Management vendor command (`Kind::Vendor`) — is never
                 // gated, so a disable is always reversible.
-                let fido2_on = self.ccid.caps_enabled(rsk_mgmt::CAP_FIDO2);
-                let u2f_on = self.ccid.caps_enabled(rsk_mgmt::CAP_U2F);
+                let fido2_on = self.ccid.caps_enabled(rsk_devconf::CAP_FIDO2);
+                let u2f_on = self.ccid.caps_enabled(rsk_devconf::CAP_U2F);
                 let cbor_denied = [rsk_fido::CtapError::OperationDenied as u8];
                 let u2f_denied = rsk_sdk::Sw::CONDITIONS_NOT_SATISFIED.to_bytes();
                 let Exchange {
@@ -486,7 +491,9 @@ impl<'a> Worker<'a> {
                         self.ctap
                             .handle_msg(&req[..*req_len], crate::usb_attach::elapsed_ms())
                     }
-                    Kind::Apdu => self.ccid.handle_apdu(&req[..*req_len]),
+                    Kind::Apdu => self
+                        .ccid
+                        .handle_apdu(&req[..*req_len], crate::usb_attach::elapsed_ms()),
                     Kind::ResetCard => {
                         self.ccid.reset_card();
                         &[]
@@ -549,7 +556,7 @@ impl<'a> Worker<'a> {
     /// so it is borrow-disjoint from `self.ccid`/`fs`.
     #[cfg(feature = "display")]
     fn handle_secure_req(&mut self, ex: &mut Exchange) {
-        use rsk_fido::UserPresence as _;
+        use rsk_sdk::UserPresence as _;
         use rsk_usb::ccid::{SECURE_ERR_CANCELLED, SECURE_ERR_TIMEOUT, SECURE_STATUS_FAILED};
         let failed = |ex: &mut Exchange, err: u8| {
             ex.resp_len = 0;
@@ -564,14 +571,14 @@ impl<'a> Worker<'a> {
         if req.operation != 0x00 {
             return failed(ex, 0);
         }
-        // The pad is a trusted-display ceremony, so it gets the contract the rest of
-        // them have. Its direct twin — clientPIN built-in UV, the other way a host
-        // makes this panel paint a PIN pad — runs a readiness check that refuses
-        // WITHOUT painting and then an explicit "Allow host access?" hold, and audit
-        // run-28 already ruled a bare host-raised prompt a defect. This path had
-        // neither: any local PC/SC client could raise "OpenPGP Admin PIN" at a moment
-        // of its choosing, and OpenPGP's UIF default is touch-off, so a typed PW3 was
-        // spendable from the attacker's own session with no further prompt.
+        // The pad is a host-raised ceremony — so `request_ceremony`, one ask per pinpad
+        // VERIFY, and not `request`, which OpenPGP/PIV spend once per signature. Its
+        // direct twin, clientPIN built-in UV (the other way a host makes this panel
+        // paint a PIN pad), runs a readiness check that refuses WITHOUT painting and
+        // then an explicit "Allow host access?" hold, and audit run-28 already ruled a
+        // bare host-raised prompt a defect. This path had neither: any local PC/SC
+        // client could raise "OpenPGP Admin PIN" when it chose, and OpenPGP's UIF
+        // default is touch-off, so a typed PW3 was spendable from that same session.
         let p2 = req.apdu_template.get(3).copied().unwrap_or(0);
         if !self.ccid.pin_ref_ready(p2) {
             return failed(ex, 0);
@@ -582,8 +589,8 @@ impl<'a> Worker<'a> {
         if !matches!(
             self.presence
                 .borrow_mut()
-                .request(rsk_fido::Confirm::titled("Allow host PIN entry?")),
-            rsk_fido::Presence::Confirmed
+                .request_ceremony(rsk_sdk::Confirm::titled("Allow host PIN entry?")),
+            rsk_sdk::Presence::Confirmed
         ) {
             return failed(ex, SECURE_ERR_CANCELLED);
         }
@@ -593,7 +600,7 @@ impl<'a> Worker<'a> {
             .borrow_mut()
             .collect_pin_titled(title, min_len, &mut pin);
         match entry {
-            rsk_fido::PinEntry::Entered(n) => {
+            rsk_sdk::PinEntry::Entered(n) => {
                 let mut apdu = [0u8; 5 + rsk_usb::secure_pin::MAX_PIN];
                 if let Some(len) =
                     rsk_usb::secure_pin::assemble_verify(req.apdu_template, &pin[..n], &mut apdu)
@@ -601,7 +608,9 @@ impl<'a> Worker<'a> {
                     // Ensure the pad VERIFY dispatches as a standalone command — a prior
                     // host chaining segment must not concatenate the PIN onto itself.
                     self.ccid.reset_chaining();
-                    let body = self.ccid.handle_apdu(&apdu[..len]);
+                    let body = self
+                        .ccid
+                        .handle_apdu(&apdu[..len], crate::usb_attach::elapsed_ms());
                     let m = body.len().min(ex.resp.len());
                     ex.resp[..m].copy_from_slice(&body[..m]);
                     ex.resp_len = m;
@@ -612,11 +621,11 @@ impl<'a> Worker<'a> {
                 }
                 apdu.zeroize();
             }
-            rsk_fido::PinEntry::Cancelled | rsk_fido::PinEntry::Declined => {
+            rsk_sdk::PinEntry::Cancelled | rsk_sdk::PinEntry::Declined => {
                 failed(ex, SECURE_ERR_CANCELLED)
             }
-            rsk_fido::PinEntry::Timeout => failed(ex, SECURE_ERR_TIMEOUT),
-            rsk_fido::PinEntry::Unsupported => failed(ex, 0),
+            rsk_sdk::PinEntry::Timeout => failed(ex, SECURE_ERR_TIMEOUT),
+            rsk_sdk::PinEntry::Unsupported => failed(ex, 0),
         }
         pin.zeroize();
     }
@@ -638,7 +647,7 @@ impl<'a> Worker<'a> {
     /// before the next request. Cheap (one relaxed atomic) on the common no-change
     /// path; a flash re-read only right after `ykman config usb` changed it.
     fn refresh_caps_if_dirty(&mut self) {
-        if rsk_mgmt::take_dev_conf_dirty() {
+        if rsk_devconf::take_dev_conf_dirty() {
             self.ccid.refresh_enabled();
         }
     }

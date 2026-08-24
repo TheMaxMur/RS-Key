@@ -170,6 +170,40 @@ fn true_total_even_when_visitor_keeps_fewer() {
     assert_eq!(kept, 1, "visitor may keep a subset");
 }
 
+/// `for_each_rp` skips a slot at `n < RP_PREFIX || buf[0] == 0`, and neither half
+/// was tested (the reverse mutation pass, D2). Both shapes are reachable from a
+/// torn write, and neither may be read as a relying party: a record too short
+/// for its own header would have its rpIdHash copied out of the buffer's stale
+/// tail, and a zero count is the emptied slot every enumeration must pass over.
+///
+/// The boundary itself is deliberately NOT pinned here. A record of exactly
+/// `RP_PREFIX` bytes — header, no payload — is enumerated today, because
+/// `unseal_rp_id` falls through to its legacy cleartext domain and an empty tail
+/// decodes as the empty string. Measured, not assumed: it arrives as a relying
+/// party whose `rp_id` is `""`. Whether that should be skipped is a decision,
+/// and a test that pinned either side would cement an accident.
+#[test]
+fn a_malformed_rp_slot_is_skipped_by_the_enumeration() {
+    for (label, rec) in [
+        ("empty", std::vec![]),
+        ("one byte", std::vec![1u8]),
+        ("one short of the header", std::vec![1u8; RP_PREFIX - 1]),
+        ("zero count", {
+            let mut v = std::vec![0u8; RP_PREFIX + 8];
+            v[0] = 0;
+            v
+        }),
+    ] {
+        let (mut fs, seed) = provisioned();
+        add(&mut fs, &seed, 1, "good.example", b"u", "n", "N", 0);
+        fs.put(EF_RP + 1, &rec).unwrap();
+        let mut calls = 0;
+        let total = for_each_rp(&dev(), &mut fs, |_| calls += 1);
+        assert_eq!(total, 1, "{label}: the malformed slot must not be counted");
+        assert_eq!(calls, 1, "{label}: nor visited");
+    }
+}
+
 #[test]
 fn empty_when_unprovisioned() {
     let mut fs = Fs::new(RamStorage::new());
@@ -239,6 +273,40 @@ fn delete_last_cred_removes_rp() {
     let total = for_each_rp(&dev(), &mut fs, |rp| seen.push(rp.rp_id.to_string()));
     assert_eq!(total, 1);
     assert_eq!(seen, std::vec!["keep.example".to_string()]);
+}
+
+/// The fourth path that changes the discoverable set, and the one the roadmap for
+/// `encCredStoreState` did not list: a delete driven from the trusted display, not
+/// from a host. A platform holding the persistent token must see the same tag move
+/// it would have seen for `deleteCredential`, or its cache outlives a credential the
+/// owner removed on the device itself.
+#[test]
+fn an_on_device_delete_moves_the_store_tag() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, seed) = provisioned();
+    add(&mut fs, &seed, 1, "github.com", b"u", "n", "N", 0);
+    let before = cred_store_state(&mut fs);
+
+    let gh = fids_under(&mut fs, "github.com");
+    assert_eq!(gh.len(), 1);
+    assert!(delete_cred(&mut fs, gh[0]));
+    assert_ne!(cred_store_state(&mut fs), before);
+}
+
+/// A refused on-device delete must not move the tag either way it can be refused —
+/// out of range, or an empty slot. Both return before the bump, so nothing is
+/// written and nothing is claimed.
+#[test]
+fn a_refused_on_device_delete_leaves_the_tag_alone() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, seed) = provisioned();
+    add(&mut fs, &seed, 1, "github.com", b"u", "n", "N", 0);
+    let before = cred_store_state(&mut fs);
+    assert!(!delete_cred(&mut fs, EF_CRED - 1));
+    assert!(!delete_cred(&mut fs, EF_CRED + 200));
+    assert_eq!(cred_store_state(&mut fs), before);
 }
 
 #[test]

@@ -19,16 +19,19 @@ rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
 rsk-fido = { workspace = true }
 rsk-openpgp = { workspace = true }
+rsk-devconf = { workspace = true }
 rsk-mgmt = { workspace = true }
 rsk-oath = { workspace = true }
 rsk-otp = { workspace = true }
+rsk-phy = { workspace = true }
 rsk-piv = { workspace = true }
 rsk-rescue = { workspace = true }
 rsk-vendor = { workspace = true }
-# `RsaPrivateKey` names the result of the keygen hook — the dual-core prime search
-# the firmware runs in place of the applet's own. Already in the tree via
-# rsk-openpgp and rsk-piv, which is where the key goes next.
-rsa = { workspace = true }
+# `RsaKey` names the result of the keygen hook — the dual-core prime search the
+# firmware runs in place of the applet's own. A composition root may reach an
+# algorithm crate directly, and this one did before (via `rsa`); going through
+# `rsk-openpgp`'s re-export instead would only hide the same edge.
+rsk-rsa = { workspace = true }
 # The CTAPHID message ceiling sizes the response buffer, and the transport that
 # enforces it is the one that defines it.
 rsk-usb = { workspace = true }
@@ -43,6 +46,9 @@ minicbor = { workspace = true }
 # The RAM `Storage` every applet crate's tests already run against — the routing
 # rules here are only meaningful over a real `Fs`.
 rsk-fs = { workspace = true, features = ["test-util"] }
+# `rsk_devconf::raw::TAG_USB_ENABLED` — the wire tag the `dev_conf` test helper
+# builds its enabled-applications blob from.
+rsk-devconf = { workspace = true, features = ["test-util"] }
 
 [features]
 # `scripts/kani.sh` only: forwards to the dependency that carries the switch.
@@ -54,3 +60,6 @@ kani-soft = ["rsk-crypto/kani-soft", "rsk-fido/kani-soft"]
 strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config"]
 # The trusted-display build: adds the on-pad PIN paths the screen drives.
 display = []
+# Host-emulator-only raw state snapshots for the refinement gate. The dependency
+# feature exposes α and its generated domains but no production behavior.
+security-trace = ["rsk-fido/assurance-trace"]

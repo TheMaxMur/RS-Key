@@ -2,8 +2,8 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+use rsk_ec::{Curve, PrivKey};
 use rsk_fs::storage::ram::RamStorage;
-use rsk_openpgp::keys::{Curve, PrivKey};
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -110,6 +110,33 @@ fn gen_template(algo: u8) -> Vec<u8> {
     vec![0xAC, 0x03, 0x80, 0x01, algo]
 }
 
+/// The RSA pair a case uses when the key size is its FIXTURE and not its
+/// subject: `fips-profile` refuses to *provision* RSA-1024 (SP 800-131A) but
+/// takes it as an algorithm id, so the two sizes swap under that profile rather
+/// than the case asserting an error the build cannot produce.
+const ALGO_RSA_FIXTURE: u8 = if cfg!(feature = "fips-profile") {
+    ALGO_RSA2048
+} else {
+    ALGO_RSA1024
+};
+/// The other id of that pair — the one the provisioned slot does NOT hold.
+const ALGO_RSA_OTHER: u8 = if cfg!(feature = "fips-profile") {
+    ALGO_RSA1024
+} else {
+    ALGO_RSA2048
+};
+/// Modulus bytes of each: the cryptogram length a slot holding that key takes.
+const RSA_FIXTURE_BYTES: usize = if cfg!(feature = "fips-profile") {
+    256
+} else {
+    128
+};
+const RSA_OTHER_BYTES: usize = if cfg!(feature = "fips-profile") {
+    128
+} else {
+    256
+};
+
 /// P-256 GENERAL AUTHENTICATE over a fixed digest at `slot`.
 fn sign_p256<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, slot: u8) -> Sw {
     let mut msg = vec![0x7C, 0x24, 0x82, 0x00, 0x81, 0x20];
@@ -146,6 +173,108 @@ fn ec_point_of(resp: &[u8]) -> Vec<u8> {
     assert_eq!(body[0], 0x86);
     let plen = body[1] as usize;
     body[2..2 + plen].to_vec()
+}
+
+#[test]
+fn rsa_sw_reproduces_every_status_word() {
+    // The applet's whole share of the RSA wire surface is this table, and it must
+    // stay identical to the OpenPGP applet's copy — `rsk-rsa` names the target in
+    // each variant's doc. Assert the four arms one by one, so a swapped pair
+    // cannot pass by covering for each other.
+    assert_eq!(
+        rsa_sw(RsaError::BadWidth),
+        Sw::WRONG_LENGTH,
+        "a bad width must stay 6700"
+    );
+    assert_eq!(
+        rsa_sw(RsaError::BadBlock),
+        Sw::WRONG_DATA,
+        "a bad input block must stay 6A80"
+    );
+    assert_eq!(
+        rsa_sw(RsaError::BadBlob),
+        Sw::MEMORY_FAILURE,
+        "an unreadable stored blob must stay 6581"
+    );
+    assert_eq!(
+        rsa_sw(RsaError::Failed),
+        Sw::EXEC_ERROR,
+        "a failed computation must stay 6400"
+    );
+}
+
+#[test]
+fn ec_sw_reproduces_every_status_word() {
+    // The EC twin of the table above, and it must stay identical to the other
+    // applet's copy — `rsk-ec` names the target in each variant's doc. Assert
+    // the three arms one by one, so a swapped pair cannot pass by covering for
+    // each other.
+    assert_eq!(
+        ec_sw(EcError::Failed),
+        Sw::EXEC_ERROR,
+        "a failed computation must stay 6400"
+    );
+    assert_eq!(
+        ec_sw(EcError::BadPoint),
+        Sw::DATA_INVALID,
+        "an unusable point or scalar must stay 6984"
+    );
+    assert_eq!(
+        ec_sw(EcError::Unsupported),
+        Sw::FUNC_NOT_SUPPORTED,
+        "an operation the curve does not offer must stay 6A81"
+    );
+}
+
+#[test]
+fn keys_sealed_by_the_previous_build_still_load() {
+    // Real records, produced by the build at 868653b — the commit before the EC
+    // key type left `rsk-openpgp` for `rsk-ec` — with this Device, this scalar
+    // and TestRng(0xC0FFEE). They are the whole cross-version surface of the
+    // move: `[curve_id] ‖ scalar` under the kbase seal, read back through
+    // `Curve::from_id` and `PrivKey::from_scalar`. A renumbered tag or a changed
+    // scalar width would leave a provisioned key unloadable, and neither a
+    // round-trip within one build nor a differential against RustCrypto can see
+    // that, because both sides would move together. (All four were sealed by one
+    // fixed test RNG and so share a nonce — a fixture artifact over four public
+    // plaintexts, never a device property.)
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    let cases: [(&str, Curve, &[u8]); 4] = [
+        (
+            "82ffe4b5fee89f055612b6d84ae7f6864dfb7a69929400c0fc086a11f66bbb852febb70601032f2b25fa1cbdba01d5126056f1790abb1d1e955584d720",
+            Curve::P256,
+            &[0x11u8; 32],
+        ),
+        (
+            "82ffe4b5fee89f055612b6d84dd4c5b57ec8495aa1a733f3cf3b5922c55888b61cd8843532301c1816c92f8e899fbf96a62813a9d3dbed14d231fd87e22c7bfe7ff949a95a1ed5e1fd946a1f18",
+            Curve::P384,
+            &[0x22u8; 48],
+        ),
+        (
+            "82ffe4b5fee89f055612b6d857c5d4a46fd9584bb0b622e2de2a4833d44999a70dc9952423210d0907d83e9f98164012f379dae4d7a307be0e76c35848",
+            Curve::Ed25519,
+            &[0x33u8; 32],
+        ),
+        (
+            "82ffe4b5fee89f055612b6d856b2a3d318ae2f3cc7c15595a95d3f44a33eeed07abee25354567a7e70af49e8ef736acf46f9ed19aab1c57b4abe656413",
+            Curve::X25519,
+            &[0x44u8; 32],
+        ),
+    ];
+    for (blob_hex, curve, scalar) in cases {
+        let blob = rsk_rsa::vectors::hex(blob_hex);
+        let mut fs = new_fs();
+        fs.put_key(fid, Sealed::wrap(&blob)).unwrap();
+        let key = seal::load_ec_key(&dev, &mut fs, fid)
+            .unwrap_or_else(|e| panic!("{curve:?} record from the old build refused: {e:?}"));
+        assert_eq!(key.curve(), curve, "{curve:?} decoded as the wrong curve");
+        assert_eq!(key.scalar(), scalar, "{curve:?} scalar came back changed");
+    }
 }
 
 #[test]
@@ -285,6 +414,80 @@ fn management_auth_preserves_pin_verification() {
 }
 
 #[test]
+fn a_wrong_pin_is_refused_on_the_kbase_fallback_path() {
+    // The whole PIN gate hangs on `!matched && otp_key.is_some() && ct_eq(..)`.
+    // Written `!matched && otp_key.is_some() || ct_eq(..)` it short-circuits on
+    // ANY wrong PIN straight into the migration body, which calls
+    // `put_pin_verifier` with the PIN just offered and sets `matched = true` —
+    // wrong PIN accepted AND stored as the new one. Killed by no test, because
+    // the fallback is only reachable on an OTP-provisioned device and every PIV
+    // test that offers a wrong PIN runs without one (found by the reverse
+    // mutation pass, D2). Its FIDO twin at `clientpin.rs:761` is not the same
+    // shape: there the `ct_eq` sits inside the block, so a widened guard still
+    // cannot write.
+    const OTP: [u8; 32] = [0x44; 32];
+    fn otp_source() -> Option<[u8; 32]> {
+        Some(OTP)
+    }
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let dev_new = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: Some(&OTP),
+    };
+    migrate_kbase(&dev_new, &mut fs, &mut TestRng(9));
+
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    select(&mut app2, &mut fs);
+    let wrong: [u8; 8] = [b'9', b'9', b'9', b'9', b'9', b'9', 0xFF, 0xFF];
+    // Twice, because the retry counter moves between them — what must NOT move
+    // is which PIN the record holds.
+    for attempt in 0..2 {
+        assert_ne!(
+            run(&mut app2, &mut fs, INS_VERIFY, 0, 0x80, &wrong).0,
+            Sw::OK,
+            "a wrong PIN must never verify on the fallback path (attempt {attempt})"
+        );
+    }
+    assert_eq!(
+        run(&mut app2, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+        Sw::OK,
+        "the real PIN must still verify — the wrong one must not have been stored"
+    );
+}
+
+#[test]
+fn a_deselect_drops_the_pin_status() {
+    // `RSKeyAppletSeams!NoStatusOutsideItsSelection` — SEC-SEAM-001 at the code
+    // level. The model catches an applet keeping its status across a deselect
+    // (`BugSelectKeepsOtherApplet`); emptying this applet's `deselect` was killed
+    // by no test, so selecting another application and coming back would have
+    // inherited a verified PIN. VERIFY with an empty body is the status query:
+    // `9000` while verified, `63Cx` once it is not.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::OK,
+        "the status query must report the PIN verified inside its own selection"
+    );
+    Applet::deselect(&mut app, &mut fs);
+    assert_ne!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::OK,
+        "the PIN status must not outlive the selection that earned it"
+    );
+}
+
+#[test]
 fn select_returns_apt() {
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -352,7 +555,7 @@ fn version_and_serial() {
     assert_eq!(v, vec![5, 7, 4]);
     let (sw, s) = run(&mut app, &mut fs, INS_YK_SERIAL, 0, 0, &[]);
     assert_eq!(sw, Sw::OK);
-    assert_eq!(s, rsk_mgmt::serial4(SERIAL).to_vec());
+    assert_eq!(s, rsk_sdk::serial4(SERIAL).to_vec());
 }
 
 /// SP 800-73-4 lists `6A80` for an undefined key reference and no `6A88` anywhere
@@ -2229,6 +2432,17 @@ fn fips_refuses_3des_mgm_and_rsa1024() {
     let tmpl = [0xAC, 0x03, 0x80, 0x01, ALGO_RSA1024];
     let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0x00, 0x9A, &tmpl);
     assert_eq!(sw, Sw::WRONG_DATA);
+    // The import is a second guard on the same rule, and the only other way a
+    // 1024-bit key could reach a slot.
+    use rsk_rsa::vectors::{P1024_HEX, Q1024_HEX, hex};
+    let (p, q) = (hex(P1024_HEX), hex(Q1024_HEX));
+    let mut imp = vec![0x01, p.len() as u8];
+    imp.extend_from_slice(&p);
+    imp.push(0x02);
+    imp.push(q.len() as u8);
+    imp.extend_from_slice(&q);
+    let (sw, _) = run(&mut app, &mut fs, INS_IMPORT_ASYM, ALGO_RSA1024, 0x9E, &imp);
+    assert_eq!(sw, Sw::WRONG_DATA);
     // AES management keys are unaffected.
     let mut msg = vec![ALGO_AES256, 0x9B, 32];
     msg.extend_from_slice(&[0x11; 32]);
@@ -2236,6 +2450,9 @@ fn fips_refuses_3des_mgm_and_rsa1024() {
     assert_eq!(sw, Sw::OK);
 }
 
+// 3DES is the subject here, not a fixture, and `fips-profile` refuses to install
+// one — that refusal is `fips_refuses_3des_mgm_and_rsa1024` above.
+#[cfg(not(feature = "fips-profile"))]
 #[test]
 fn mgm_3des_roundtrip() {
     let rng = RefCell::new(TestRng(7));
@@ -2940,7 +3157,7 @@ fn a_key_operation_that_fails_still_spends_the_freshness() {
         (SLOT_SIGNATURE, ALGO_ECCP256),
         (SLOT_AUTHENTICATION, ALGO_ECCP256),
         (SLOT_KEYMGM, ALGO_ECCP256),
-        (0x82, ALGO_RSA1024),
+        (0x82, ALGO_RSA_FIXTURE),
     ] {
         assert_eq!(
             run(
@@ -2973,7 +3190,7 @@ fn a_key_operation_that_fails_still_spends_the_freshness() {
             &mut app,
             &mut fs,
             INS_AUTHENTICATE,
-            ALGO_RSA1024,
+            ALGO_RSA_FIXTURE,
             0x82,
             &short
         )
@@ -3779,7 +3996,7 @@ fn on_device_rsa_stores_into_empty_retired_slot() {
         serial_id: &SERIAL,
         otp_key: None,
     };
-    let key = rsk_openpgp::keys::generate_rsa(&mut TestRng(99), 1024).unwrap();
+    let key = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 1024).unwrap();
     let slot = info::next_free_retired(&mut fs).unwrap();
     assert!(info::store_retired_rsa(&dev, &mut fs, &mut TestRng(5), slot, &key).is_ok());
     // Reads back like a host-generated RSA slot: key + cert present, RSA meta, generated.
@@ -3813,7 +4030,7 @@ fn on_device_rsa4096_buffers_round_trip() {
         serial_id: &SERIAL,
         otp_key: None,
     };
-    let key = rsk_openpgp::keys::generate_rsa(&mut TestRng(99), 4096).unwrap();
+    let key = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 4096).unwrap();
     let slot = info::next_free_retired(&mut fs).unwrap();
     assert!(info::store_retired_rsa(&dev, &mut fs, &mut TestRng(5), slot, &key).is_ok());
     let mut meta = [0u8; 8];
@@ -3899,6 +4116,9 @@ fn ecdh_on_key_management_slot() {
     assert_eq!(shared, host_shared.raw_secret_bytes().as_slice());
 }
 
+// The 1024-bit round trip itself; the profile that will not generate one asserts
+// the refusal instead.
+#[cfg(not(feature = "fips-profile"))]
 #[test]
 fn rsa1024_keygen_sign_verify_and_metadata() {
     let rng = RefCell::new(TestRng(7));
@@ -3951,11 +4171,15 @@ fn rsa1024_keygen_sign_verify_and_metadata() {
     let dyn_auth = find_tag(&out, 0x7C).unwrap();
     let sig = find_tag(dyn_auth, 0x82).unwrap().to_vec();
     assert_eq!(sig.len(), 128);
-    // Verify the raw op: sig^e mod n must reproduce the EM (the leading
-    // 0x00 is dropped by to_bytes_be).
-    let n = rsa::BigUint::from_bytes_be(n_bytes);
-    let m = rsa::BigUint::from_bytes_be(&sig).modpow(&rsa::BigUint::from(65537u32), &n);
-    assert_eq!(m.to_bytes_be(), em[1..]);
+    // Verify the raw op: sig^e mod n must reproduce the EM the host built.
+    let mut signed = di.to_vec();
+    signed.extend_from_slice(&digest);
+    assert!(rsk_rsa::verify::verify_pkcs1v15(
+        n_bytes,
+        rsk_rsa::RSA_PUB_EXP_BE,
+        &signed,
+        &sig
+    ));
     // Metadata exposes the same modulus.
     let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
     assert_eq!(sw, Sw::OK);
@@ -3994,6 +4218,8 @@ fn rsa1024_keygen_sign_verify_and_metadata() {
     );
 }
 
+// Same: the vector this checks the import path against is a 1024-bit key.
+#[cfg(not(feature = "fips-profile"))]
 #[test]
 fn rsa_import_and_sign() {
     let rng = RefCell::new(TestRng(7));
@@ -4003,14 +4229,10 @@ fn rsa_import_and_sign() {
     select(&mut app, &mut fs);
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
-    let key = {
-        let mut krng = TestRng(99);
-        rsk_openpgp::keys::generate_rsa(&mut krng, 1024).unwrap()
-    };
-    use rsa::traits::PrivateKeyParts as _;
-    let primes = key.primes();
-    let p = primes[0].to_bytes_be();
-    let q = primes[1].to_bytes_be();
+    // A fixed RSA-1024 key, so the import path is checked against a modulus
+    // OpenSSL computed rather than against whatever our own keygen just made.
+    use rsk_rsa::vectors::{N1024_HEX, P1024_HEX, Q1024_HEX, hex};
+    let (p, q) = (hex(P1024_HEX), hex(Q1024_HEX));
     let mut imp = vec![0x01, p.len() as u8];
     imp.extend_from_slice(&p);
     imp.push(0x02);
@@ -4021,10 +4243,9 @@ fn rsa_import_and_sign() {
     let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9E, &[]);
     assert_eq!(sw, Sw::OK);
     assert_eq!(find_tag(&md, 0x03).unwrap(), &[ORIGIN_IMPORTED]);
-    use rsa::traits::PublicKeyParts as _;
     assert_eq!(
         find_tag(find_tag(&md, 0x04).unwrap(), 0x81).unwrap(),
-        key.n().to_bytes_be()
+        hex(N1024_HEX)
     );
 }
 
@@ -5533,10 +5754,18 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
     // authenticates, the default PIN verifies via the fallback (and once
     // more directly against the re-stored verifier), and slot 9A signs with
     // the SAME key it had before the migration.
+    // The at-rest lap has already run on this device: the fallback verify
+    // below re-keys the PIN verifier, superseding a chip-serial-sealed copy,
+    // so it must re-arm the lap (request_rescrub) — audit run-35's rule.
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
     select(&mut app2, &mut fs);
     auth_mgm(&mut app2, &mut fs);
     verify_pin(&mut app2, &mut fs);
+    assert!(
+        !fs.has_data(rsk_fs::EF_HARDENED),
+        "the fallback verify re-keyed the verifier and must re-arm the at-rest lap"
+    );
     verify_pin(&mut app2, &mut fs);
     let digest: [u8; 32] = sha2::Sha256::digest(b"kbase migration").into();
     let mut msg = vec![0x7C, 0x24, 0x82, 0x00, 0x81, 0x20];
@@ -7390,9 +7619,9 @@ fn rsa_ga_body(cryptogram: &[u8]) -> Vec<u8> {
 /// table cannot name such a key at all — Windows' own PIV minidriver could not,
 /// and answered SCARD_E_INVALID_PARAMETER (issue #79). A YubiKey 5.7.4 insists on
 /// the exact byte and is unusable there for the same reason; this is the
-/// deliberate divergence. The pairing is exercised at RSA-1024 rather than 4096
-/// because the rule is about the family, and a 4096 keygen would put a minute
-/// into every run of this suite.
+/// deliberate divergence. The pairing is exercised at [`ALGO_RSA_FIXTURE`] and
+/// [`ALGO_RSA_OTHER`] rather than at 4096 because the rule is about the family,
+/// and a 4096 keygen would put a minute into every run of this suite.
 #[test]
 fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
     let rng = RefCell::new(TestRng(11));
@@ -7403,7 +7632,7 @@ fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
     for (slot, algo) in [
-        (SLOT_AUTHENTICATION, ALGO_RSA1024),
+        (SLOT_AUTHENTICATION, ALGO_RSA_FIXTURE),
         // 9C is PIN-policy ALWAYS, so whether it still signs is how the
         // freshness is read back below.
         (SLOT_SIGNATURE, ALGO_ECCP256),
@@ -7428,9 +7657,9 @@ fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
         &mut app,
         &mut fs,
         INS_AUTHENTICATE,
-        ALGO_RSA1024,
+        ALGO_RSA_FIXTURE,
         SLOT_AUTHENTICATION,
-        &rsa_ga_body(&[0x42u8; 128]),
+        &rsa_ga_body(&[0x42u8; RSA_FIXTURE_BYTES]),
     );
     assert_eq!(sw, Sw::OK, "the slot's own algorithm id still works");
 
@@ -7440,9 +7669,9 @@ fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
         &mut app,
         &mut fs,
         INS_AUTHENTICATE,
-        ALGO_RSA2048,
+        ALGO_RSA_OTHER,
         SLOT_AUTHENTICATION,
-        &rsa_ga_body(&[0x42u8; 128]),
+        &rsa_ga_body(&[0x42u8; RSA_FIXTURE_BYTES]),
     );
     assert_eq!(
         sw,
@@ -7458,9 +7687,9 @@ fn an_rsa_key_answers_to_another_rsa_algorithm_id() {
         &mut app,
         &mut fs,
         INS_AUTHENTICATE,
-        ALGO_RSA2048,
+        ALGO_RSA_OTHER,
         SLOT_AUTHENTICATION,
-        &rsa_ga_body(&[0x42u8; 256]),
+        &rsa_ga_body(&[0x42u8; RSA_OTHER_BYTES]),
     );
     assert_eq!(
         sw,
@@ -7494,7 +7723,7 @@ fn the_rsa_relaxation_does_not_cross_a_family_or_a_curve() {
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
     for (slot, algo) in [
-        (SLOT_AUTHENTICATION, ALGO_RSA1024),
+        (SLOT_AUTHENTICATION, ALGO_RSA_FIXTURE),
         (SLOT_SIGNATURE, ALGO_ECCP256),
         (SLOT_KEYMGM, ALGO_ECCP384),
     ] {
@@ -7539,7 +7768,7 @@ fn the_rsa_relaxation_does_not_cross_a_family_or_a_curve() {
             INS_AUTHENTICATE,
             ALGO_ECCP256,
             SLOT_AUTHENTICATION,
-            &rsa_ga_body(&[0x42u8; 128])
+            &rsa_ga_body(&[0x42u8; RSA_FIXTURE_BYTES])
         )
         .0,
         Sw::WRONG_DATA,
@@ -7568,5 +7797,201 @@ fn the_rsa_relaxation_does_not_cross_a_family_or_a_curve() {
         sign_p256(&mut app, &mut fs, SLOT_SIGNATURE),
         Sw::OK,
         "a refused algorithm must not spend the freshness"
+    );
+}
+
+/// `MAX_EC_POINT` is 97 — a P-384 point — and `PrivKey::public_point` writes with
+/// `copy_from_slice`, so a wider curve is a panic, not an error. Nothing tied the
+/// two hand-written curve rosters to that number; this does, from both ends.
+#[test]
+fn every_curve_piv_accepts_fits_its_point_buffer() {
+    let mut rng = TestRng(0x5EA1_C0DE);
+    let mut seen = 0;
+
+    // Both rosters over their whole input domain, so widening either one without
+    // raising `MAX_EC_POINT` fails here rather than on a device.
+    type Roster = (&'static str, fn(u8) -> Option<Curve>);
+    let rosters: [Roster; 2] = [
+        ("curve_from_id", crate::seal::curve_from_id),
+        ("curve_for_algo", crate::keygen::curve_for_algo),
+    ];
+
+    for (roster, decode) in rosters {
+        for byte in 0..=u8::MAX {
+            let Some(curve) = decode(byte) else { continue };
+            seen += 1;
+            let key = PrivKey::generate(curve, &mut crate::EcRng(&mut rng))
+                .unwrap_or_else(|| panic!("{roster}({byte:#04x}) -> {curve:?}: no key"));
+
+            // Measured in a buffer that cannot overflow, so the failure is this
+            // assertion and not a slice panic three frames down.
+            let mut wide = [0u8; rsk_ec::MAX_EC_POINT];
+            let n = key
+                .public_point(&mut wide)
+                .unwrap_or_else(|_| panic!("{roster}({byte:#04x}) -> {curve:?}: no point"));
+            assert!(
+                n <= MAX_EC_POINT,
+                "{roster}({byte:#04x}) accepts {curve:?}, whose point is {n} bytes, \
+                 but PIV sizes its buffers MAX_EC_POINT = {MAX_EC_POINT}: raise it \
+                 or drop the curve"
+            );
+
+            // …and then the real one, because the assertion above is about a
+            // length while the ten call sites are about this array.
+            let mut real = [0u8; MAX_EC_POINT];
+            assert_eq!(key.public_point(&mut real).unwrap(), n);
+            assert_eq!(&real[..n], &wide[..n]);
+        }
+    }
+
+    // A roster this loop failed to read would pass every assertion above.
+    assert_eq!(seen, 8, "expected 4 curves from each roster, walked {seen}");
+}
+
+/// A medium whose EF_META reads fail while the budget lasts, and whose `remove`
+/// can be made to fail for one fid — the two ways `Fs::delete` reports trouble.
+/// EF_META alone, because the observation must not be what fails: a blanket read
+/// fault would take the source key's own read with it and answer `FILE_NOT_FOUND`,
+/// which is a pass for the wrong reason.
+struct MetaFaults {
+    inner: RamStorage,
+    budget: std::rc::Rc<std::cell::Cell<usize>>,
+    unremovable: std::rc::Rc<std::cell::Cell<u16>>,
+    err: bool,
+}
+
+impl MetaFaults {
+    fn faulting(&mut self, fid: u16) -> bool {
+        if fid == rsk_fs::EF_META && self.budget.get() > 0 {
+            self.budget.set(self.budget.get().saturating_sub(1));
+            self.err = true;
+            return true;
+        }
+        self.err = false;
+        false
+    }
+}
+
+impl Storage for MetaFaults {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        if self.faulting(fid) {
+            return None;
+        }
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> Result<(), rsk_sdk::error::Error> {
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> Result<(), rsk_sdk::error::Error> {
+        if fid == self.unremovable.get() {
+            return Err(rsk_sdk::error::Error::MemoryFatal);
+        }
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        if self.faulting(fid) {
+            return None;
+        }
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+    fn last_error(&self) -> bool {
+        self.err
+    }
+}
+
+/// MOVE with `to = 0xFF` is the slot DELETE, and it is the one path in the tree
+/// that deletes a fid carrying an EF_META head — the heads are minted by this
+/// crate alone. `Fs::delete` removes the value whatever the head does, so a
+/// faulted drop leaves a record over a key that is gone and GET METADATA would
+/// answer for a slot that cannot sign; a failed `remove` leaves the other
+/// direction, a live key with no head, which is the state `files.rs`'s mint-arm
+/// repair exists for.
+///
+/// The budget counts EF_META reads, and this path takes more than the two the
+/// head is about — the pubkey and certificate deletes each try one, for fids that
+/// carry no head at all. So the "nothing lands" case arms the medium for the whole
+/// command rather than counting: a flash that cannot be read is not a budget.
+fn move_delete_under_faults(meta_faults: usize, break_remove: bool) -> (Sw, bool, bool) {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let faults = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let unremovable = std::rc::Rc::new(std::cell::Cell::new(0u16));
+    let mut fs = Fs::new(MetaFaults {
+        inner: RamStorage::new(),
+        budget: faults.clone(),
+        unremovable: unremovable.clone(),
+        err: false,
+    });
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            SLOT_AUTHENTICATION,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
+    );
+    let mut head = [0u8; 8];
+    assert!(
+        fs.meta_find(key_fid(SLOT_AUTHENTICATION).get(), &mut head)
+            .is_some(),
+        "the slot must carry a head, or this case tests nothing"
+    );
+
+    faults.set(meta_faults);
+    if break_remove {
+        unremovable.set(key_fid(SLOT_AUTHENTICATION).get());
+    }
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_MOVE_KEY,
+        0xFF,
+        SLOT_AUTHENTICATION,
+        &[],
+    );
+    faults.set(0);
+    unremovable.set(0);
+
+    let orphan = fs
+        .meta_find(key_fid(SLOT_AUTHENTICATION).get(), &mut head)
+        .is_some();
+    let key_alive = fs.has_key(key_fid(SLOT_AUTHENTICATION));
+    (sw, orphan, key_alive)
+}
+
+#[test]
+fn a_slot_delete_answers_for_what_it_could_not_drop() {
+    assert_eq!(
+        move_delete_under_faults(0, false),
+        (Sw::OK, false, false),
+        "the clean control: the key and its head both go"
+    );
+    assert_eq!(
+        move_delete_under_faults(1, false),
+        (Sw::OK, false, false),
+        "one faulted read is not a failed delete — the retry drops the head"
+    );
+    assert_eq!(
+        move_delete_under_faults(usize::MAX, false),
+        (Sw::MEMORY_FAILURE, true, false),
+        "no read landed, so the record stands over a key that is gone"
+    );
+    assert_eq!(
+        move_delete_under_faults(0, true),
+        (Sw::MEMORY_FAILURE, false, true),
+        "the other direction: the head went and the key did not, so the move is \
+         not done and the answer must not say it is"
     );
 }

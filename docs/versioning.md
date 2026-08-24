@@ -62,19 +62,18 @@ mechanics in [Build options](build.md)):
 
 | | Default | `--features advertise-pqc` | `--features fips-profile` |
 |---|---|---|---|
-| FIDO signature algorithms (COSE) | ES256 (−7), ES384 (−35), ES512 (−36), ES256K (−47), EdDSA / Ed25519 (−8) | ML-DSA-65 (−49) and ML-DSA-44 (−48) prepended to the getInfo `algorithms` list | ES256K (−47) removed from the menu |
-| Post-quantum | ML-DSA-44 and ML-DSA-65 negotiable from `pubKeyCredParams` (capability always on); not advertised | advertised in getInfo | same as default |
+| FIDO signature algorithms (COSE) | ES256 (−7), ES384 (−35), ES512 (−36), ES256K (−47), EdDSA / Ed25519 (−8) | ML-DSA-87 (−50), ML-DSA-65 (−49) and ML-DSA-44 (−48) prepended to the getInfo `algorithms` list | ES256K (−47) removed from the menu |
+| Post-quantum | all three ML-DSA sets negotiable from `pubKeyCredParams` (capability always on); not advertised | advertised in getInfo | same as default |
 | Minimum PIN length | 4 | 4 | 6 |
 | Vendor seed export | allowed | allowed | refused |
 | PIV | 3DES management keys + RSA-1024 import allowed | same | new 3DES management keys + RSA-1024 refused |
 
 - **PQC capability is on in every build.** `advertise-pqc` only controls whether
-  ML-DSA-65 (−49) and ML-DSA-44 (−48) appear in the getInfo `algorithms` list. It
-  is off by default because released Firefox aborts the entire getInfo parse on an
-  unknown COSE id. makeCredential negotiates −49 / −48 from the request's
-  `pubKeyCredParams` regardless — the RP lists the one it wants first, since the
-  first supported entry is selected (CTAP 2.1 §6.1.2).
-  −49 / −50 (ML-DSA-65 / 87) are recognised but have no enabled backend.
+  the three ML-DSA sets appear in the getInfo `algorithms` list, in descending
+  security order. It is off by default because released Firefox aborts the entire
+  getInfo parse on an unknown COSE id. makeCredential negotiates −50 / −49 / −48
+  from the request's `pubKeyCredParams` regardless — the RP lists the one it wants
+  first, since the first supported entry is selected (CTAP 2.1 §6.1.2).
 - `fips-profile` is a locked policy, **not** a FIPS validation. See the
   [FIPS-style profile](guides/fips.md) guide.
 

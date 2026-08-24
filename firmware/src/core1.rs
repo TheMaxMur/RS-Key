@@ -36,9 +36,7 @@ use embassy_rp::peripherals::CORE1;
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use rsk_crypto::HmacDrbg;
-use rsk_openpgp::Rng;
-use rsk_openpgp::keys::{RsaKeygen, RsaPrivateKey, RsaStep};
-use rsk_rsa_asm::IncrementalSieve;
+use rsk_rsa::{IncrementalSieve, Rng, RsaKey, RsaKeygen, RsaStep};
 use static_cell::StaticCell;
 use zeroize::Zeroize;
 
@@ -298,6 +296,15 @@ fn core1_main(stack_floor: u32) -> ! {
     }
 }
 
+/// Core0's RNG: the board TRNG the applets were handed, behind `rsk-rsa`'s own
+/// randomness seam (see [`run_rsa_search_progress`]).
+struct SdkRng<'a>(&'a mut dyn rsk_sdk::Rng);
+impl Rng for SdkRng<'_> {
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.0.fill(buf);
+    }
+}
+
 /// Core1's RNG: the per-job HMAC-DRBG (state zeroizes on drop).
 struct DrbgRng(HmacDrbg);
 impl Rng for DrbgRng {
@@ -350,7 +357,7 @@ fn search(job: &Job) {
 /// keeps USB + keepalives flowing); core1 is parked again by the time this
 /// returns. `None` is the old `RsaStep::Failed`: an unusable size / failed
 /// modexp self-test, or key assembly failure.
-pub fn run_rsa_search(nbits: usize, rng: &mut dyn Rng) -> Option<Box<RsaPrivateKey>> {
+pub fn run_rsa_search(nbits: usize, rng: &mut dyn rsk_sdk::Rng) -> Option<Box<RsaKey>> {
     run_rsa_search_progress(nbits, rng, &mut || {})
 }
 
@@ -363,9 +370,13 @@ pub fn run_rsa_search(nbits: usize, rng: &mut dyn Rng) -> Option<Box<RsaPrivateK
 /// search if not throttled.
 pub fn run_rsa_search_progress(
     nbits: usize,
-    rng: &mut dyn Rng,
+    rng: &mut dyn rsk_sdk::Rng,
     on_tick: &mut dyn FnMut(),
-) -> Option<Box<RsaPrivateKey>> {
+) -> Option<Box<RsaKey>> {
+    // `rsk-rsa` declares its own `Rng` — it is an algorithm crate two tiers below
+    // the applet seam and may not reach up for `rsk_sdk::Rng`. Bridge once here,
+    // for the whole search, rather than at every candidate.
+    let rng = &mut SdkRng(rng);
     let mut kg = RsaKeygen::new(nbits);
     if !kg.usable() {
         return None;
@@ -424,7 +435,7 @@ pub fn run_rsa_search_progress(
     sieve.scrub();
 
     // `Some(Some(key))` = assembled, `Some(None)` = the old `Failed`.
-    let mut outcome: Option<Option<Box<RsaPrivateKey>>> = None;
+    let mut outcome: Option<Option<Box<RsaKey>>> = None;
     while outcome.is_none() {
         // Observation hook (display spinner); time-gated by the caller, off the keygen state.
         on_tick();

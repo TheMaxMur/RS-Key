@@ -84,12 +84,14 @@ def _wrap_for_channel(key, aad, secret):
     return nonce + ChaCha20Poly1305(key).encrypt(nonce, secret, aad)
 
 
-def _config_vendor(dev, cid, pin, vendor_id, param=None):
-    """authenticatorConfig {1: 0xFF, 2: {1: id, 2: param?}, 3, 4} with the acfg MAC.
+def _config_vendor(dev, cid, pin, vendor_id, param=None, rp_ids=None):
+    """authenticatorConfig {1: 0xFF, 2: {1: id, 2: param?, 4: rpIds?}, 3, 4} with the acfg MAC.
     `pin` is resolved by the caller (resolve_pin, required=True), so it is set."""
     subpara = {1: vendor_id}
     if param is not None:
         subpara[2] = param
+    if rp_ids is not None:
+        subpara[4] = rp_ids
     token = _acfg_token(dev, cid, pin)
     vp = PINUV_PREFIX + bytes([CTAP_CONFIG, CONFIG_VENDOR]) + ctaphid.enc(subpara)
     h = chmac.HMAC(token, hashes.SHA256())

@@ -7,8 +7,11 @@ edition = "2024"
 publish = false
 build = "build.rs"
 
-# Fixed-base Lim–Lee comb scalar multiplication for the NIST/secp Weierstrass
-# curves, shared by every applet that signs on the generator: FIDO credentials,
+# The elliptic-curve layer: the private key both card applets seal (`PrivKey`
+# over `Curve`, the persisted `[curve_id] ‖ scalar` blob) with its signing /
+# public-point / ECDH operations and the `7F49 { 86 }` public-key DO, over
+# fixed-base Lim–Lee comb scalar multiplication for the NIST/secp Weierstrass
+# curves — shared by every applet that signs on the generator: FIDO credentials,
 # PIV GENERAL AUTHENTICATE, OpenPGP PSO:CDS. `k·G` (ECDSA nonce commitment) and
 # `d·G` (public-key derivation) both run through a width-4 comb — several× faster
 # than the crate's generic `mul_by_generator` on the in-order Cortex-M33, and
@@ -21,8 +24,18 @@ p256 = { workspace = true }
 p384 = { workspace = true }
 p521 = { workspace = true }
 k256 = { workspace = true }
+# The curves `PrivKey` covers that the comb does not: brainpool P-256/P-384 (no
+# precomputed table) and the 25519 pair (Edwards signing / Montgomery ECDH).
+# All four came down with the key type from `rsk-openpgp`, which no longer names
+# them — the device's trust base is unchanged, only which crate declares them.
+bp256 = { workspace = true }
+bp384 = { workspace = true }
+ed25519-dalek = { workspace = true }
+x25519-dalek = { workspace = true }
 # `algorithm` provides each curve's `DigestAlgorithm::Digest` (the RFC 6979 hash).
 ecdsa = { workspace = true, features = ["algorithm"] }
+# `elliptic-curve` for brainpool ECDH, which bp256/bp384 leave generic there.
+elliptic-curve = { workspace = true }
 rfc6979 = { workspace = true }
 zeroize = { workspace = true }
 

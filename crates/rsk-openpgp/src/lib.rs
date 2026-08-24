@@ -7,8 +7,8 @@
 //! Generic over `S: Storage`; the device seed / serial / RNG and the flash file
 //! system are threaded in by the caller, so the applet is pure and host-testable.
 
-// The `rsa` crate returns `alloc::vec::Vec` from its sign/decrypt API; the
-// firmware provides a heap. Only the RSA path allocates — the rest stays no-alloc.
+// `rsk-rsa` returns the modulus and exponent as `Vec`s and its bignum allocates;
+// the firmware provides a heap. Only the RSA path allocates, the rest does not.
 extern crate alloc;
 
 pub mod consts;
@@ -26,57 +26,21 @@ pub mod origin;
 pub mod pin;
 pub mod pso;
 pub mod putdata;
-pub mod rsa_crt;
 pub mod select;
 pub mod terminate;
-
-#[cfg(test)]
-#[path = "bp_kat.rs"]
-mod bp_kat;
 
 use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, read_fused};
 use rsk_fs::{Fs, KeyFid, Storage};
-pub use rsk_sdk::Confirm;
+// The randomness and the UIF (touch-policy) check are `rsk-sdk`'s seams, shared
+// with every sibling applet; `rsk-rsa` declares its own identical `Rng` two tiers
+// down, so the private-key calls bridge the two through [`keys::RsaRng`].
+pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 
 pub use init::{Error, scan_files};
 pub use pin::Session;
-
-/// Random-byte source. `firmware` backs this with the RP2350 TRNG; tests use a
-/// deterministic counter.
-pub trait Rng {
-    fn fill(&mut self, buf: &mut [u8]);
-}
-
-/// Outcome of asking for a physical touch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
-    Confirmed,
-    Timeout,
-    Declined,
-}
-
-/// Physical user presence for the UIF (touch-policy) DOs. `firmware` polls the
-/// BOOTSEL button; with no button configured it confirms instantly, like
-/// [`AlwaysConfirm`] (which tests use). Shared with the FIDO applet — the firmware
-/// type implements both `rsk_fido::UserPresence` and this.
-pub trait UserPresence {
-    /// Ask for presence. `confirm` names the pending operation for a trusted
-    /// on-screen Approve/Deny prompt; the BOOTSEL-button backend ignores it.
-    fn request(&mut self, confirm: Confirm<'_>) -> Presence;
-}
-
-/// A [`UserPresence`] that confirms instantly — the no-button default and the
-/// host-test stand-in.
-pub struct AlwaysConfirm;
-
-impl UserPresence for AlwaysConfirm {
-    fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
-        Presence::Confirmed
-    }
-}
 
 /// If the UIF DO `fid` (`0xD6/D7/D8`) is present with a non-zero first byte,
 /// require a touch; a non-confirmation maps to `SECURE_MESSAGE_EXEC_ERROR`
@@ -180,7 +144,7 @@ impl<'a> OpenpgpApplet<'a> {
 
     /// CCID keepalive path: if this GENERATE (0x47) command targets an RSA slot,
     /// return `(fid, nbits)` so the caller can run the slow keygen asynchronously
-    /// (stepping [`keys::RsaKeygen`] + sending time-extensions). `Ok(None)` =
+    /// (stepping [`rsk_rsa::RsaKeygen`] + sending time-extensions). `Ok(None)` =
     /// non-RSA generate / read-public → use the synchronous [`Applet::process`].
     pub fn rsa_generate_params<S: Storage>(
         &self,
@@ -199,7 +163,7 @@ impl<'a> OpenpgpApplet<'a> {
         fs: &mut Fs<S>,
         rng: &mut dyn Rng,
         fid: KeyFid,
-        key: &rsa::RsaPrivateKey,
+        key: &rsk_rsa::RsaKey,
         out: &mut [u8],
     ) -> (usize, Sw) {
         let mkek = read_fused(self.mkek_source);

@@ -22,11 +22,14 @@ use crate::reduce::{center_mod, full_reduce32, mont_reduce, partial_reduce32, to
 use crate::round::{high_bits, low_bits, make_hint, power2round, use_hint};
 use crate::sample::{expand_mask, expand_s, matrix_mul_streaming, sample_in_ball, shake256};
 
-/// The largest `pk_len` across the supported parameter sets (ML-DSA-65 = 1952),
+/// The largest `pk_len` across the supported parameter sets (ML-DSA-87 = 2592),
 /// used for the transient pk buffer that feeds `tr = H(pk)` during keygen.
-const MAX_PK_LEN: usize = 1952;
-/// The largest `w1_len` (both sets are 768) and `lambda_div4` (65 = 48).
-const MAX_W1_LEN: usize = 768;
+const MAX_PK_LEN: usize = 2592;
+/// The largest `w1_len` (ML-DSA-87 = 32·8·4) and `lambda_div4` (ML-DSA-87 = 64).
+/// These are fixed-size buffers, so widening them for -87 costs every set the
+/// same ~900 B — the alternative is const-generic buffers, which the callers
+/// cannot size without threading `Params` into the type system.
+const MAX_W1_LEN: usize = 1024;
 const MAX_LAMBDA_DIV4: usize = 64;
 
 /// An expanded ML-DSA key: the NTT/Montgomery precomputes needed to sign, plus

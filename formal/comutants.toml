@@ -1,0 +1,1370 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# Co-refutation: every model mutant, re-made as the code defect it models.
+# The model's 28 Bug* switches each rebuild a real RS-Key defect and MUST go
+# RED in TLC — that is measured weekly. This file asks the other half of the
+# question: does the SAME defect, injected into the production Rust, go red
+# at the code level too? A mutant the model catches and the code level does
+# not is a measured abstraction gap — the exact place where "TLA+ green AND
+# tests green" stops meaning "the same system was checked twice".
+#
+# scripts/comutate.py owns the mechanics: `--lint` (a check.sh row) holds this
+# file against the Mut_*.cfg roster in both directions, resolves every patch
+# anchor against the current tree, and floors the pending count; `run` applies
+# a patch in a throwaway worktree, runs the slice, and compares the verdict to
+# `expect`. Anchors are exact source snippets, not diff line numbers — code
+# drift makes the lint fail loudly instead of the patch applying somewhere else.
+#
+# Statuses:
+#   patch        find/replace below; `expect` records the measured verdict
+#                (killed | gap). A killed that becomes gap is a regression.
+#   unreachable  the defect became unreachable by construction after a shipped
+#                fix; the model measured it (evidence names where). No patch.
+#   pending      batch not yet derived. The count is FLOORED by --lint: it can
+#                only go down, so "later" stays a plan rather than a hole.
+#
+# The invariant each mutant targets is NOT recorded here — the lint derives it
+# from the mutant's own Solo_*.cfg, so this file cannot disagree with the
+# matrix about who catches what.
+
+pending_floor = 0
+phase2_count = 28
+
+# ---- batch 1: the token/PIN family and the two write orders -----------------
+
+[comutant.BugTokenSurvivesPinChange]
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    clear_force_change(ctx.fs)?;
+    ctx.state.reset_pin_uv_auth_token(ctx.rng);
+"""
+replace = """
+    clear_force_change(ctx.fs)?;
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "changePIN keeps the session token: §6.5.5.6 step 15 skipped."
+
+[comutant.BugStopUsingKeepsPerms]
+status = "patch"
+file = "crates/rsk-fido/src/state.rs"
+find = """
+        self.paut.in_use = false;
+        self.paut.permissions = 0;
+"""
+replace = """
+        self.paut.in_use = false;
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "stopUsingPinUvAuthToken keeps the permission bits."
+
+[comutant.BugWrongPinKeepsToken]
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+        // platform can always mint another.
+        ctx.state.reset_pin_uv_auth_token(ctx.rng);
+"""
+replace = """
+        // platform can always mint another.
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "the pre-E38 tree: a PIN mismatch leaves the outstanding token alive."
+
+[comutant.BugSetPinOverExisting]
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    if ctx.fs.has_data(EF_PIN) {
+        return Err(CtapError::PinAuthInvalid);
+    }
+"""
+replace = ""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "setPIN overwrites a live PIN instead of refusing (§6.5.5.5)."
+
+[comutant.BugCredBeforeRp]
+status = "patch"
+file = "crates/rsk-fido/src/credential.rs"
+find = """
+    if new_record {
+        bump_rp(fs, seed, rp_id_hash, rp_id)?;
+    }
+"""
+replace = """
+    let _defer_bump = new_record;
+"""
+find2 = """
+    if let Err(e) = fs.put(EF_CRED + slot, &rec[..total]) {
+        if new_record {
+            let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
+        }
+        return Err(e);
+    }
+"""
+replace2 = """
+    fs.put(EF_CRED + slot, &rec[..total])?;
+    if _defer_bump {
+        bump_rp(fs, seed, rp_id_hash, rp_id)?;
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "registration writes EF_CRED before EF_RP: a torn write strands a live credential no enumeration surface can reach."
+
+[comutant.BugDeleteRpBeforeCred]
+status = "patch"
+file = "crates/rsk-fido/src/credmgmt.rs"
+find = """
+    ctx.fs
+        .delete(EF_CRED + slot)
+        .map_err(|_| CtapError::NotAllowed)?;
+"""
+replace = """
+    decrement_rp(ctx.fs, rp_id_hash)?;
+    ctx.fs
+        .delete(EF_CRED + slot)
+        .map_err(|_| CtapError::NotAllowed)?;
+"""
+find2 = """
+    largeblobext::discard(ctx.fs, slot);
+    decrement_rp(ctx.fs, rp_id_hash)?;
+    Ok(0)
+"""
+replace2 = """
+    largeblobext::discard(ctx.fs, slot);
+    Ok(0)
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = """deleteCredential drops the RP entry first: a torn delete strands the
+credential. Was batch 1's one measured GAP — the registration twin's harness
+tears writes, and no harness tore a delete — closed by
+a_torn_delete_never_leaves_a_credential_without_its_rp (a mutating-op-budget
+tear over a sole-credential RP), re-measured killed."""
+
+[comutant.BugUnscopedCancel]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+        if self.wait_scope.load(Ordering::Acquire) == SCOPE_FIDO {
+            self.cancel_requested.store(true, Ordering::Release);
+        }
+"""
+replace = """
+        self.cancel_requested.store(true, Ordering::Release);
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "a CTAPHID cancel lands whatever transport owns the touch."
+
+[comutant.BugUnscopedOtpCancel]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+        if self.wait_scope.load(Ordering::Acquire) == SCOPE_OTP {
+            self.cancel_requested.store(true, Ordering::Relaxed);
+"""
+replace = """
+        {
+            self.cancel_requested.store(true, Ordering::Relaxed);
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "the second writer of the same cancel flag, unscoped."
+
+# ---- unreachable by construction — measured, not assumed --------------------
+
+[comutant.BugBackupSealedNotAGate]
+status = "unreachable"
+evidence = "formal/README.md — once the seed leads the wipe unconditionally (0x08BF), the window this re-opens is over a seed that is already gone; not falsifiable on its own, and NoAccessibleSecretWithoutGate's structural clause asserts the same fact."
+
+[comutant.BugSetPinKeepsPpuat]
+status = "unreachable"
+evidence = "formal/README.md — under eab4b5c the grant is swept in phase 1 and EF_PIN in phase 2, so ~pin.set /\\ gate.ppuat is unreachable; the mutant explored 40M+ states without a counterexample (E171), which floors.txt records as its verdict."
+
+# ---- batch 2: the rest, floor now 0 ----------------------------------------
+
+[comutant.BugChangePinKeepsPpuat]
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
+    let res = store_new_pin(ctx, &padded);
+    padded.zeroize();
+    res?;
+    // The new PIN met minPINLength (store_new_pin), so the change satisfies a
+"""
+replace = """
+    let res = store_new_pin(ctx, &padded);
+    padded.zeroize();
+    res?;
+    // The new PIN met minPINLength (store_new_pin), so the change satisfies a
+"""
+find2 = """
+    if fid == EF_PIN {
+        clear_ppuat(fs).map_err(|_| CtapError::Other)?;
+    }
+"""
+replace2 = ""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = """changePIN keeps the persistent pcmr grant. TWO layers must go: the
+authoritative revoke lives in write_pin_verifier (the run-37 fix moved it into
+the storage core), and change_pin's own clear_ppuat is a redundant second line.
+The first patch removed only the outer layer and measured exactly that
+redundancy — every test stayed green because the inner revoke held. That
+finding is worth the note: the property is enforced twice, and a single-layer
+mutant cannot re-create the model's defect."""
+
+[comutant.BugPinWriteBeforeRevoke]
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
+    let res = store_new_pin(ctx, &padded);
+    padded.zeroize();
+    res?;
+    // The new PIN met minPINLength (store_new_pin), so the change satisfies a
+"""
+replace = """
+    let res = store_new_pin(ctx, &padded);
+    padded.zeroize();
+    res?;
+    // The new PIN met minPINLength (store_new_pin), so the change satisfies a
+"""
+find2 = """
+    // Before the new verifier lands, never after: a power cut the other way round
+    // leaves the old holder's grant live against a PIN they no longer know.
+    if fid == EF_PIN {
+        clear_ppuat(fs).map_err(|_| CtapError::Other)?;
+    }
+"""
+replace2 = ""
+find3 = """
+    fs.put(fid, &pin_data).map_err(|_| CtapError::Other)
+}
+"""
+replace3 = """
+    fs.put(fid, &pin_data).map_err(|_| CtapError::Other)?;
+    if fid == EF_PIN {
+        clear_ppuat(fs).map_err(|_| CtapError::Other)?;
+    }
+    Ok(())
+}
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = """the revoke moved AFTER the verifier write at the authoritative site
+(write_pin_verifier), with change_pin's redundant outer layer removed so the
+reorder is real: a cut between the two writes leaves the old holder's grant
+live under a PIN they no longer know. The completed end state is identical
+either way — only the torn-changePIN harness distinguishes the orders."""
+
+[comutant.BugCmWalkIgnoresChannel]
+status = "patch"
+file = "crates/rsk-fido/src/state.rs"
+find = "self.channel == channel && self.rp_counter <= self.rp_total"
+replace = "self.rp_counter <= self.rp_total"
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "the RP walk ignores which channel opened it — any channel continues it."
+
+[comutant.BugNoConsumeAfterUp]
+status = "patch"
+file = "crates/rsk-fido/src/state.rs"
+find = """
+        if self.paut.in_use {
+            self.paut.permissions &= PERM_LBW;
+            self.paut.user_present = false;
+"""
+replace = """
+        if self.paut.in_use {
+            self.paut.user_present = false;
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "mc/ga survive one user presence (GHSA-wqjm-653g-hgw3): the narrowing to largeBlobWrite is gone."
+
+[comutant.BugConsumeKeepsMcGa]
+status = "patch"
+file = "crates/rsk-fido/src/state.rs"
+find = "self.paut.permissions &= PERM_LBW;"
+replace = "self.paut.permissions &= PERM_LBW | PERM_MC | PERM_GA;"
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "the §6.5.5.7 triad kept instead of narrowed — mc/ga persist past the presence they were spent on."
+
+[comutant.BugResetGatesFirst]
+status = "patch"
+file = "crates/rsk-fido/src/reset.rs"
+find = """
+    sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
+    sweep(ctx, is_fido_gate_fid)?;
+"""
+replace = """
+    sweep(ctx, is_fido_gate_fid)?;
+    sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "gates swept before secrets: a torn reset can strand a passkey with its PIN gate already gone."
+
+[comutant.BugSeedDoesNotLead]
+status = "patch"
+file = "crates/rsk-fido/src/reset.rs"
+find = """
+    for fid in FIDO_SEED_FIDS {
+        ctx.fs.force_delete(fid).map_err(|_| CtapError::Other)?;
+    }
+    sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
+"""
+replace = """
+    sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "the pre-0x08BF wipe: the seed is swept in ring order instead of leading, so a cut can leave a decryptable credential behind a live seed."
+
+[comutant.BugStateResetAfterWipe]
+status = "patch"
+file = "crates/rsk-fido/src/reset.rs"
+find = """
+    ctx.state.reset();
+    // And the seed leads the flash, in its own write ahead of the batch: ring order
+"""
+replace = """
+    // And the seed leads the flash, in its own write ahead of the batch: ring order
+"""
+find2 = """
+    ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
+"""
+replace2 = """
+    ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
+    ctx.state.reset();
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = """E76 regression: the live session reset moved behind the flash work.
+Was a measured gap — the torn-reset harness tore the flash but never asked when
+the SESSION died — closed by
+a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed, which plants the
+RAM seed copy and asserts it is gone at EVERY tear budget, including 0."""
+
+[comutant.BugWarmResetReopensWindow]
+status = "patch"
+file = "crates/rsk-fido/src/reset.rs"
+find = "!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS"
+replace = "ctx.now_ms <= RESET_WINDOW_MS"
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "a warm reset re-opens the reset window a host-requestable sys_reset can restart at will."
+
+[comutant.BugPpuatIsAGate]
+status = "patch"
+file = "crates/rsk-fido/src/reset.rs"
+find = """
+    matches!(
+        fid,
+        EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
+    )
+}
+"""
+replace = """
+    matches!(
+        fid,
+        EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
+    ) || fid == EF_PAUTHTOKEN.get()
+}
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "eab4b5c reverted: EF_PAUTHTOKEN back in the deferred gate phase (it is a KeyFid, so `.get()`, not a match arm), where a torn wipe strands a grant with no PIN behind it."
+
+# ---- rsk-device: presence arbitration + the PinLock carry -------------------
+
+[comutant.BugNoDropStaleCancelAtEntry]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+        arb.set_cancel_requested(false);
+        arb.set_up_pending(true);
+"""
+replace = """
+        arb.set_up_pending(true);
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "the wait-entry cancel drop removed: a cancel latched by a dispatch that never entered wait is consumed by the next one."
+
+[comutant.BugTouchNotSpent]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+                if !self.spent {
+                    break Outcome::Confirmed;
+                }
+"""
+replace = """
+                break Outcome::Confirmed;
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "the spent latch gone: a press the previous ceremony consumed satisfies the next one."
+
+[comutant.BugPanelCancelable]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+        if self.wait_scope.load(Ordering::Acquire) == SCOPE_FIDO {
+            self.cancel_requested.store(true, Ordering::Release);
+        }
+"""
+replace = """
+        if self.wait_scope.load(Ordering::Acquire) != SCOPE_OTP {
+            self.cancel_requested.store(true, Ordering::Release);
+        }
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "E45: request_cancel lands during a panel (SCOPE_NONE) ceremony, not just a FIDO wait. The model splits the scope test three ways; the code fuses it into one guard, so this and BugUnscopedCancel share a site."
+
+[comutant.BugNoTouchRequired]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+            if board.pressed() {
+                // A press the previous ceremony already consumed is not consent
+                // for this one; it stays spent until the finger actually lifts.
+                if !self.spent {
+                    break Outcome::Confirmed;
+                }
+            } else {
+"""
+replace = """
+            if true {
+                break Outcome::Confirmed;
+            } else if board.pressed() {
+            } else {
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "the wait confirms without a press at all."
+
+[comutant.BugHostPreemptsLocalWait]
+status = "patch"
+file = "crates/rsk-device/src/presence.rs"
+find = """
+    pub fn set_wait_scope(&self, scope: u8) {
+        self.wait_scope.store(scope, Ordering::Release);
+    }
+"""
+replace = """
+    pub fn set_wait_scope(&self, scope: u8) {
+        let scope = if scope == SCOPE_NONE { SCOPE_FIDO } else { scope };
+        self.wait_scope.store(scope, Ordering::Release);
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "a host command claims the button over a live on-panel ceremony: SCOPE_NONE (the panel's) is overwritten with a host scope."
+
+[comutant.BugSoftLockLostOnWarmReset]
+status = "patch"
+file = "crates/rsk-device/src/ctap.rs"
+find = """
+        st.restore_pin_lock(boot.lock);
+        st.warm_boot = boot.warm;
+"""
+replace = """
+        st.warm_boot = boot.warm;
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = """the clientPIN soft lock dropped across a warm reset a host can
+request ungated, freeing the retry budget. Was a measured gap — nothing drove
+boot_state() with a live lock — closed by a_warm_boot_carries_the_soft_lock_in."""
+
+# ---- RSKeyStore: the flash layer (rsk-fs) -----------------------------------
+
+[comutant.BugDeleteValueBeforeMeta]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+        let meta = self.meta_delete(fid);
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+            self.mark_absent(fid);
+            self.write_gen = self.write_gen.wrapping_add(1);
+        }
+        self.dynamic.retain(|&f| f != fid);
+"""
+replace = """
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+            self.mark_absent(fid);
+            self.write_gen = self.write_gen.wrapping_add(1);
+        }
+        let meta = self.meta_delete(fid);
+        self.dynamic.retain(|&f| f != fid);
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = """Fs::delete's two backend writes reversed: the value goes first, so a
+cut between them leaves metadata naming a file that is gone — the state
+delete_landed forbids. The completed end state is identical either way; only
+the power-cut oracle's torn sweeps see the order."""
+
+[comutant.BugDeleteMetaOnlyUnderPresent]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+        let meta = self.meta_delete(fid);
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+"""
+replace = """
+        let meta = if self.present_bit(fid) { self.meta_delete(fid) } else { Ok(()) };
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = "the 0x077C databug verbatim: the metadata drop gated on the file's own present bit, so a meta-only file (meta_add with no put) keeps its record through its deletion and it reads back alive."
+
+[comutant.BugDeleteHidesFaultedDrop]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+        let meta = self.meta_delete(fid);
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+            self.mark_absent(fid);
+            self.write_gen = self.write_gen.wrapping_add(1);
+        }
+        self.dynamic.retain(|&f| f != fid);
+        meta
+"""
+replace = """
+        let _ = self.meta_delete(fid);
+        if self.present_bit(fid) {
+            self.storage.remove(fid)?;
+            self.mark_absent(fid);
+            self.write_gen = self.write_gen.wrapping_add(1);
+        }
+        self.dynamic.retain(|&f| f != fid);
+        Ok(())
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = """the shipped tree before the delete contract was fixed: the failed metadata
+drop is swallowed and the value goes anyway, so the caller is told Ok(()) about a
+file whose value is gone and whose record still stands. The orphan is not what
+this mutant adds -- both arms leave one over a faulted read -- it is that nobody
+is told, which is why its target is NoSilentOrphan and not NoOrphanedMetadata."""
+
+[comutant.BugCacheFaultAsAbsent]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+        if !self.storage.last_error() {
+            self.record(fid, present);
+        }
+"""
+replace = """
+        self.record(fid, present);
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = "audit run-36: record_unless_faulted caches unconditionally, so one transient backend fault becomes a decided absence for the rest of the boot and every gate that reads has_data opens."
+
+[comutant.BugMetaDeleteDropsOnFault]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+            None if self.storage.last_error() => return Err(Error::MemoryFatal),
+            None => {
+                self.mark_absent(EF_META);
+"""
+replace = """
+            None if false => return Err(Error::MemoryFatal),
+            None => {
+                self.mark_absent(EF_META);
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = "found by the reverse direction (D2): cargo-mutants reported this guard MISSED on a line the model itself cites, and the model had no MetaDelete fault branch to catch it either. A faulted EF_META read cached as absence loses every record on the NEXT meta_add, which trusts known_absent and rebuilds from empty."
+
+[comutant.BugTruncatedScanDecidesAll]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+        if complete {
+            decided.fill(0xFF);
+        }
+"""
+replace = """
+        let _ = complete;
+        decided.fill(0xFF);
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = "scan decides the whole FID space after a TRUNCATED walk: a committed key the read-fault hid is confirmed absent without ever probing the reliable backend."
+
+[comutant.BugMetaAddDropsOnFault]
+status = "patch"
+file = "crates/rsk-fs/src/fs.rs"
+find = """
+            if r.is_none() && self.storage.last_error() {
+                return Err(Error::MemoryFatal);
+            }
+            r.unwrap_or(0).min(scratch.len())
+"""
+replace = """
+            r.unwrap_or(0).min(scratch.len())
+"""
+slice = ["cargo", "test", "-p", "rsk-fs"]
+expect = "killed"
+note = """the 0x077C databug's meta half: a FAILED EF_META read treated as an
+empty blob, so the rewrite drops every other FID's record. Was a measured GAP —
+meta_add_keeps_records_when_ef_meta_unknown drives the UNKNOWN-cache path, and
+nothing drove meta_add over a read that FAULTS — closed by
+a_faulted_ef_meta_read_never_rebuilds_the_blob_from_empty, re-measured killed."""
+
+# ---- RSKeyAdminSurface: the mask, its carve-out, the rescue gate ------------
+
+[comutant.BugMaskIsCosmetic]
+status = "patch"
+file = "crates/rsk-sdk/src/applet.rs"
+find = """
+    fn selectable(&self, i: usize) -> bool {
+        i >= 32 || self.enabled & (1 << i) != 0
+    }
+"""
+replace = """
+    fn selectable(&self, i: usize) -> bool {
+        let _ = i;
+        true
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-sdk", "-p", "rsk-device"]
+expect = "killed"
+note = "the pre-0x084A tree: USB_ENABLED reported in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing."
+
+[comutant.BugAdminGateable]
+status = "patch"
+file = "crates/rsk-device/src/ccid.rs"
+find = """
+const APPLET_CAPS: [u16; 8] = [
+    0,
+    rsk_devconf::CAP_OPENPGP,
+    0,
+    rsk_devconf::CAP_OATH,
+    rsk_devconf::CAP_OTP,
+    rsk_devconf::CAP_PIV,
+    0,
+    rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_U2F,
+];
+"""
+replace = """
+const APPLET_CAPS: [u16; 8] = [
+    rsk_devconf::CAP_PIV,
+    rsk_devconf::CAP_OPENPGP,
+    rsk_devconf::CAP_PIV,
+    rsk_devconf::CAP_OATH,
+    rsk_devconf::CAP_OTP,
+    rsk_devconf::CAP_PIV,
+    rsk_devconf::CAP_PIV,
+    rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_U2F,
+];
+"""
+slice = ["cargo", "test", "-p", "rsk-device"]
+expect = "killed"
+note = "the always-on carve-out removed: management/vendor/rescue gated behind CAP_PIV, so one `--disable PIV` closes the re-enable path and the disable is irreversible."
+
+[comutant.BugPrivilegedOpUngated]
+status = "patch"
+file = "crates/rsk-rescue/src/lib.rs"
+find = """
+    fn require_presence(&self, confirm: Confirm<'_>) -> bool {
+        self.presence.borrow_mut().request(confirm) == Presence::Confirmed
+    }
+"""
+replace = """
+    fn require_presence(&self, confirm: Confirm<'_>) -> bool {
+        let _ = confirm;
+        true
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-rescue"]
+expect = "killed"
+note = "the operator gate removed from every privileged rescue command — keydev signing, cert/config writes, BOOTSEL reboot, fuse burns — so a USB host alone drives them."
+
+[comutant.BugLockWriteResetsCaps]
+status = "patch"
+file = "crates/rsk-devconf/src/lib.rs"
+find = """
+    let mut merged = [0u8; DEV_CONF_MERGE_MAX];
+    let m = merged_dev_conf(fs, &stripped[..n], &mut merged)?;
+    if m > EF_DEV_CONF_MAX {
+        return Err(DevConfError::TooLong);
+    }
+"""
+replace = """
+    let merged = stripped;
+    let m = n;
+    if m > EF_DEV_CONF_MAX {
+        return Err(DevConfError::TooLong);
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-devconf"]
+expect = "killed"
+note = """audit run-35 verbatim: the merge replaced with a verbatim store, so a
+`config set-lock-code` write (strips to zero bytes) leaves an EMPTY record that
+`read_enabled_caps` reads as SUPPORTED_CAPS — every disabled application
+silently re-enabled. Killed outright by the fix's own regression pair,
+a_partial_write_config_keeps_the_fields_it_does_not_mention and
+trimming_an_over_cap_record_never_evicts_the_enabled_applications_policy — the
+first admin batch to measure 4/4 with no gap."""
+
+# ---- RSKeyTrustedDisplay: the confirm ceremony -------------------------------
+
+[comutant.BugPadSubstitutesForCard]
+status = "patch"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    pub fn needs_confirm(self, shows_confirm: bool) -> bool {
+        !self.up_collected || shows_confirm
+    }
+"""
+replace = """
+    pub fn needs_confirm(self, shows_confirm: bool) -> bool {
+        let _ = shows_confirm;
+        !self.up_collected
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-fido"]
+expect = "killed"
+note = "audit run-28 F1 verbatim: built-in UV deletes the RP card — the pad's collected presence completes the operation and the display build never shows who is being authenticated to."
+
+[comutant.BugPreScreenTouchApproves]
+status = "patch"
+file = "crates/rsk-display/src/power.rs"
+find = """
+        match self.touch.read() {
+            None => {
+                self.touch_armed = true;
+                None
+            }
+            Some(p) if self.touch_armed => Some(p),
+            // Still the contact that predates this screen: ignore, stay disarmed.
+            Some(_) => None,
+        }
+"""
+replace = """
+        match self.touch.read() {
+            None => {
+                self.touch_armed = true;
+                None
+            }
+            Some(p) => Some(p),
+        }
+"""
+slice = ["cargo", "test", "-p", "rsk-display"]
+expect = "killed"
+note = """audit run-33's class: the level-not-edges controller reads a finger
+already down as a tap on whatever just painted. This patch removes the ambient
+chokepoint (armed_touch); the ceremonies carry a SECOND edge of their own
+(wait_release_ceremony at card entry), so the layers are two and this measures
+the chokepoint's — the ceremony layer's own kill is
+a_finger_still_down_when_the_prompt_appears_cannot_approve_it."""
+
+[comutant.BugAnyTapApproves]
+status = "patch"
+file = "crates/rsk-ui/src/lib.rs"
+find = """
+    if ALLOW_RECT.contains(p) {
+        Some(Button::Allow)
+    } else if DENY_RECT.contains(p) {
+        Some(Button::Deny)
+    } else {
+        None
+    }
+"""
+replace = """
+    let _ = p;
+    Some(Button::Allow)
+"""
+slice = ["cargo", "test", "-p", "rsk-display", "-p", "rsk-ui"]
+expect = "killed"
+note = "the Allow/Deny separation collapsed: every tap anywhere on the confirm screen reads as the approval — a deny is an approve and a stray brush above the band signs."
+
+# ---- RSKeyTransport: the CTAPHID frame reassembler --------------------------
+
+[comutant.BugContIgnoresChannel]
+status = "patch"
+file = "crates/rsk-usb/src/ctaphid.rs"
+find = """
+            if cid != self.cid {
+                return Outcome::Error(cid, ERR_CHANNEL_BUSY);
+            }
+            let seq = type_byte & !TYPE_INIT;
+"""
+replace = """
+            let seq = type_byte & !TYPE_INIT;
+"""
+slice = ["cargo", "test", "-p", "rsk-usb"]
+expect = "killed"
+note = "a continuation on a channel other than the in-progress transaction's is appended instead of refused — one host application's bytes spliced into another's message."
+
+[comutant.BugContIgnoresSeq]
+status = "patch"
+file = "crates/rsk-usb/src/ctaphid.rs"
+find = """
+            let seq = type_byte & !TYPE_INIT;
+            if seq != self.seq {
+                self.in_tx = false;
+                return Outcome::Error(cid, ERR_INVALID_SEQ);
+            }
+"""
+replace = """
+            let seq = type_byte & !TYPE_INIT;
+            let _ = seq;
+"""
+slice = ["cargo", "test", "-p", "rsk-usb"]
+expect = "killed"
+note = "an out-of-order continuation is appended instead of aborting the transaction — the reassembler completes a message the host never sent in that order."
+
+[comutant.BugInitLenUnchecked]
+status = "patch"
+file = "crates/rsk-usb/src/ctaphid.rs"
+find = """
+            let bcnt = ((f[5] as usize) << 8) | f[6] as usize;
+            if bcnt > CTAP_MAX_MESSAGE {
+                return Outcome::Error(cid, ERR_INVALID_LEN);
+            }
+"""
+replace = """
+            let bcnt = (((f[5] as usize) << 8) | f[6] as usize).min(CTAP_MAX_MESSAGE);
+"""
+slice = ["cargo", "test", "-p", "rsk-usb"]
+expect = "killed"
+note = "the INIT length ceiling clamped-away instead of refused: a header declaring more than CTAP_MAX_MESSAGE is silently truncated rather than answered ERR_INVALID_LEN, so bcnt_too_large's error verdict is gone. (A bare removal would index past `msg`; the clamp keeps the patch compiling while still dropping the checked behaviour.)"
+
+# ---- rsk-display: the on-panel PIN gate ------------------------------------
+
+[comutant.BugLocalPinIgnoresBudget]
+status = "patch"
+file = "crates/rsk-display/src/gates.rs"
+find = "                PinScope::Fido => rsk_fido::passkeys::pin_retries_left(&mut fs),"
+replace = "                PinScope::Fido => Some(255),"
+slice = ["cargo", "test", "-p", "rsk-display"]
+expect = "killed"
+note = "the on-pad PIN pad ignores the exhausted EF_PIN counter, offering unlimited attempts past the lockout."
+
+[comutant.BugLocalPinKeepsToken]
+status = "patch"
+file = "crates/rsk-display/src/gates.rs"
+find = "        let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);"
+replace = "        let ends_host_token = false;"
+slice = ["cargo", "test", "-p", "rsk-display"]
+expect = "killed"
+note = "E66: the panel's PIN pad no longer ends the host token — a fourth door that leaves a host session live."
+
+# =============================================================================
+# The applet batch. Four crates — rsk-piv, rsk-openpgp, rsk-oath, rsk-otp — hold
+# 33 773 lines and are the subject of four of the nine modules, and until this
+# batch they held ZERO co-refutation patches: the roster's first 43 entries put
+# 31 of them in rsk-fido, rsk-device and rsk-fs. So "the applet models are green"
+# was fidelity NOBODY HAD MEASURED. These 24 measure it.
+#
+# The seam/lattice switches often guard the same rule in two applets (`check_ref`
+# and `check_pin` are the same floor twice over). An entry may patch SEVERAL
+# files — the `[[comutant.X.site]]` array — and BugAdminOpensKeyOps does, over
+# four gates in two. Where an entry still leaves a twin unpatched it names that
+# twin and why, so the half that is NOT measured is stated rather than implied.
+# The rule this file keeps: an entry that reads as covering its switch either
+# covers it or says which part it does not.
+# =============================================================================
+
+# ---- RSKeyRetryLattice: the retry/recovery ladder ---------------------------
+# The module docstring's warning was right and this is its answer: dropping the
+# `left == 0` floor alone lets `left - 1` underflow a u8, and the slice then dies
+# on the arithmetic rather than on a blocked reference authenticating — a kill for
+# the wrong reason, which measures nothing. Rebinding `left` to `max(1)` removes
+# the floor AND keeps every `left - 1` below it in range, so what fails is the
+# property. Same both-layers shape as the store's revoke-before-write.
+
+[comutant.BugUseWhenBlocked]
+status = "patch"
+file = "crates/rsk-piv/src/lib.rs"
+find = """
+    if left == 0 {
+        return Sw::PIN_BLOCKED;
+    }
+"""
+replace = """
+    let left = left.max(1);
+"""
+slice = ["cargo", "test", "-p", "rsk-piv"]
+expect = "killed"
+note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:220-224) is the same switch's other half and is not in this entry — one entry, one file."
+
+[comutant.BugWrongDoesNotSpend]
+status = "patch"
+file = "crates/rsk-openpgp/src/pin.rs"
+find = """
+    pw[idx] -= 1;
+    let remaining = pw[idx];
+"""
+replace = """
+    let remaining = pw[idx];
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1261."
+
+[comutant.BugRecoveryWithoutSecret]
+status = "patch"
+file = "crates/rsk-piv/src/lib.rs"
+find = """
+    match check_ref(dev, fs, EF_PUK, RETRY_PUK, puk) {
+        Sw::OK => {}
+        sw => return sw,
+    }
+"""
+replace = """
+    let _ = puk;
+"""
+slice = ["cargo", "test", "-p", "rsk-piv"]
+expect = "killed"
+note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:796."
+
+# ---- RSKeyAppletPolicies: slot policy, attributes, gates, counter ----------
+
+[comutant.BugPivPolicyIgnored]
+status = "patch"
+file = "crates/rsk-piv/src/auth.rs"
+find = """
+        PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,
+        _ => sess.has_pin,
+"""
+replace = """
+        PINPOLICY_ALWAYS => true,
+        _ => true,
+"""
+slice = ["cargo", "test", "-p", "rsk-piv"]
+expect = "killed"
+note = "pin_satisfied answers TRUE for every policy, so a private-key operation runs with no PIN status at all."
+
+[comutant.BugPivAlwaysDoesNotSpend]
+status = "patch"
+file = "crates/rsk-piv/src/auth.rs"
+find = """
+        if self.pin_policy != PINPOLICY_NEVER && is_key(self.key_ref) {
+            self.sess.pin_fresh = false;
+        }
+"""
+replace = """
+        let _ = (self.pin_policy, is_key(self.key_ref));
+"""
+slice = ["cargo", "test", "-p", "rsk-piv"]
+expect = "killed"
+note = "spend_pin stops clearing freshness: one VERIFY authorises every later operation at an ALWAYS slot, which is the policy's whole content."
+
+[comutant.BugPgpAttributeKeepsKey]
+status = "patch"
+file = "crates/rsk-openpgp/src/putdata.rs"
+find = "        if current != replacement {"
+replace = "        if false && current != replacement {"
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "a changed algorithm attribute keeps the stored key pair, so the slot's metadata and its key material disagree — the state AttributeChangeInvalidatesTheKey forbids."
+
+[comutant.BugOathCodeIgnored]
+status = "patch"
+file = "crates/rsk-oath/src/lib.rs"
+find = """
+    fn cmd_calculate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        if !self.validated {
+            return Sw::SECURITY_STATUS_NOT_SATISFIED;
+        }
+"""
+replace = """
+    fn cmd_calculate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+"""
+slice = ["cargo", "test", "-p", "rsk-oath"]
+expect = "killed"
+note = "CALCULATE runs without the access-code session: every credential's code is readable off an unvalidated applet."
+
+[comutant.BugOathTouchIgnored]
+status = "patch"
+file = "crates/rsk-oath/src/lib.rs"
+find = """
+        if prop & PROP_TOUCH != 0
+            && self
+                .presence
+                .borrow_mut()
+                .request(Confirm::titled("Show OATH code?"))
+                != Presence::Confirmed
+        {
+            return Sw::SECURITY_STATUS_NOT_SATISFIED;
+        }
+"""
+replace = """
+        let _ = prop;
+"""
+slice = ["cargo", "test", "-p", "rsk-oath"]
+expect = "killed"
+note = "a PROP_TOUCH credential computes with no press, and the HOTP counter burns on a request the holder never approved."
+
+[comutant.BugOtpCodeIgnored]
+status = "patch"
+file = "crates/rsk-otp/src/lib.rs"
+find = """
+            // Existing config: the host must present its access code.
+            if data.len() < CONFIG_SIZE + ACC_CODE_SIZE {
+                return Sw::WRONG_LENGTH;
+            }
+            if !ct_eq(
+                &data[CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE],
+                &stored[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE],
+            ) {
+                return Sw::SECURITY_STATUS_NOT_SATISFIED;
+            }
+"""
+replace = """
+            // Existing config: the host must present its access code.
+"""
+find2 = """
+        if self.read_slot_m(fs, fid, &mut stored).is_some() {
+            if data.len() < CONFIG_SIZE + ACC_CODE_SIZE {
+                return Sw::WRONG_LENGTH;
+            }
+            if !ct_eq(
+                &data[CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE],
+                &stored[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE],
+            ) {
+                return Sw::SECURITY_STATUS_NOT_SATISFIED;
+            }
+"""
+replace2 = """
+        if self.read_slot_m(fs, fid, &mut stored).is_some() {
+"""
+slice = ["cargo", "test", "-p", "rsk-otp"]
+expect = "killed"
+note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states the same rule a THIRD time, at crates/rsk-otp/src/lib.rs:541-545, and is left unpatched: its gate is a swap's own move/delete rule rather than the configure/update pair OtpMutate models."
+
+[comutant.BugOtpCounterRepeats]
+status = "patch"
+file = "crates/rsk-otp/src/counter.rs"
+find = "    let new_session = session.wrapping_add(1);"
+replace = "    let new_session = session;"
+slice = ["cargo", "test", "-p", "rsk-otp"]
+expect = "killed"
+note = "E36's shape: the (use, session) position stops advancing on a press, so two tokens carry the same position and a validation server cannot tell a replay from a use."
+
+# ---- RSKeyAppletSeams: what a status costs, and who may hold it ------------
+# The old exclusion said these are "exercised at the wire, not by a cargo test on
+# one function". Half true and it hid the useful half: the wire is where the
+# STATUS LIFETIME shows, but every one of these switches has a named function
+# that decides it, and that function has host tests. What the batch measures is
+# exactly whether those tests fail when the decision is taken back out.
+
+[comutant.BugSelectKeepsOtherApplet]
+status = "patch"
+file = "crates/rsk-sdk/src/applet.rs"
+find = """
+                    if let Some(c) = self.current
+                        && c != i
+                    {
+                        applets[c].deselect(ctx);
+                    }
+"""
+replace = ""
+slice = ["cargo", "test", "-p", "rsk-sdk"]
+expect = "killed"
+note = "selecting a different AID no longer deselects the applet that was current, so its verified PIN survives into another applet's session."
+
+[comutant.BugReselectResetsStatus]
+status = "patch"
+file = "crates/rsk-piv/src/lib.rs"
+find = """
+        if !reselect {
+            self.sess.reset();
+        }
+"""
+replace = """
+        let _ = reselect;
+        self.sess.reset();
+"""
+slice = ["cargo", "test", "-p", "rsk-piv"]
+expect = "killed"
+note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:336-339."
+
+[comutant.BugCardResetKeepsStatus]
+status = "unreachable"
+evidence = """the applets' deselect is redundant with their own fresh SELECT, so
+removing it from the ICC power transition changes nothing observable. Three
+applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:390-392
+(sess.reset), crates/rsk-openpgp/src/lib.rs:318-320 (reset_session), crates/rsk-oath/src/lib.rs:1169-1176
+(validated + otp_pin_verified) — and all three ALSO re-lock in select: piv and
+openpgp on `if !reselect`, oath by recomputing `validated = !code_set` and clearing
+otp_pin_verified unconditionally (crates/rsk-oath/src/lib.rs:1205-1206). After Dispatcher::reset_card
+takes `self.current` (crates/rsk-sdk/src/applet.rs:227) every route back to an applet is a
+`select(reselect = false)`, so no reachable command sees an inherited status.
+The first patch here neutered the WHOLE reset_card call and scored a false kill:
+the only test that fell was `a_card_reset_drops_the_selection`, which asserts the
+selection and never verifies a PIN. The faithful mutant — an empty applet slice,
+selection still dropped — is GREEN over 68 tests. What keeps this argument true is
+the selection half, and that IS asserted, here and by rsk-sdk's
+`reset_card_clears_selection_and_security_status`."""
+
+[comutant.BugAdminOpensKeyOps]
+status = "patch"
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "e5da38b taken back out at every gate the switch covers: the admin PIN signs, deciphers, authenticates and runs the AES PSO. PgpKeyOpGuard is quantified over r in {pw1, pw2} and its comment names PSO:CDS (§7.2.10, PW1 no. 81), PSO:DECIPHER and INTERNAL AUTHENTICATE (§7.2.11 and §7.2.13, PW1 no. 82); the AES arm follows its siblings by the tree's own decision. A YubiKey 5.7.4 answers 6982 to PW3 alone on all of them. Four sites in two files — the first version of this entry patched PSO:CDS alone and named the other three in prose, which measured a quarter of the switch while reading as covering it. Each gate was then measured ALONE and each is killed on its own (2/1/1/1 failing tests), so no site rides on a sibling's coverage; the combined run shows two failures rather than five only because the same matrix tests span several gates."
+
+[[comutant.BugAdminOpensKeyOps.site]]
+file = "crates/rsk-openpgp/src/pso.rs"
+find = """
+            if !sess.has_pw1 {
+                return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+            }
+            (EF_ALGO_PRIV1, EF_PK_SIG)
+"""
+replace = """
+            if !sess.has_pw1 && !sess.has_pw3 {
+                return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+            }
+            (EF_ALGO_PRIV1, EF_PK_SIG)
+"""
+
+[[comutant.BugAdminOpensKeyOps.site]]
+file = "crates/rsk-openpgp/src/pso.rs"
+find = """
+            if !sess.has_pw2 {
+                return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+            }
+            (sess.algo_dec, sess.pk_dec)
+"""
+replace = """
+            if !sess.has_pw2 && !sess.has_pw3 {
+                return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+            }
+            (sess.algo_dec, sess.pk_dec)
+"""
+
+[[comutant.BugAdminOpensKeyOps.site]]
+file = "crates/rsk-openpgp/src/pso.rs"
+find = """
+        if !sess.has_pw2 {
+            return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+        }
+        check_uif(fs, EF_UIF_DEC, presence)?;
+"""
+replace = """
+        if !sess.has_pw2 && !sess.has_pw3 {
+            return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+        }
+        check_uif(fs, EF_UIF_DEC, presence)?;
+"""
+
+[[comutant.BugAdminOpensKeyOps.site]]
+file = "crates/rsk-openpgp/src/internalaut.rs"
+find = """
+    if !sess.has_pw2 {
+        return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+    }
+"""
+replace = """
+    if !sess.has_pw2 && !sess.has_pw3 {
+        return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+    }
+"""
+
+[comutant.BugFailedChangeKeepsStatus]
+status = "patch"
+file = "crates/rsk-oath/src/lib.rs"
+find = """
+        self.validated = false;
+        self.otp_pin_verified = false;
+        // Same anti-bruteforce gate as VERIFY: refuse at the counter floor. After a
+"""
+replace = """
+        // Same anti-bruteforce gate as VERIFY: refuse at the counter floor. After a
+"""
+slice = ["cargo", "test", "-p", "rsk-oath"]
+expect = "killed"
+note = "aa47867 taken back out: a failed OTP-PIN CHANGE leaves the standing authentication up, so the budget can be burned through a door that never closes."
+
+[comutant.BugPinFreshNotSpent]
+status = "patch"
+file = "crates/rsk-piv/src/auth.rs"
+find = "        PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,"
+replace = "        PINPOLICY_ALWAYS => sess.has_pin,"
+find2 = """
+        if self.pin_policy != PINPOLICY_NEVER && is_key(self.key_ref) {
+            self.sess.pin_fresh = false;
+        }
+"""
+replace2 = """
+        let _ = (self.pin_policy, is_key(self.key_ref));
+"""
+slice = ["cargo", "test", "-p", "rsk-piv"]
+expect = "killed"
+note = "both layers, as the model's switch has them: the ALWAYS arm stops reading freshness AND the operation stops spending it. Its policy sibling BugPivAlwaysDoesNotSpend takes only the spend, so the two are not the same patch twice."
+
+[comutant.BugPinFreshOutlivesPin]
+status = "unreachable"
+evidence = "the clamp is unobservable in today's Rust. `pin_fresh` has exactly one reader — crates/rsk-piv/src/auth.rs:63, `PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh` — and it is CONJOINED with the status it refines, so a freshness that outlives `has_pin` authorises nothing: the guard is already false on the other half. `Session::set_pin` (crates/rsk-piv/src/lib.rs:183-186) is the only writer that sets it TRUE, and `GenAuth::spend_pin` (crates/rsk-piv/src/auth.rs:115-119) only ever sets it false. The first patch here scored a false kill by taking `self.pin_fresh = verified` out of `set_pin`, which is the INVERSE defect — it makes freshness unreachable rather than immortal, fail-closed rather than fail-open, and all 11 failures were 9000-expected-got-6982. The faithful mutant (`if verified { self.pin_fresh = true; }` — grant kept, clamp dropped) measures GREEN over 130 tests. The model keeps `pfresh` as a second requirement-side copy precisely to expose a split the Rust does not have."
+
+[comutant.BugSigPinNotSpent]
+status = "patch"
+file = "crates/rsk-openpgp/src/keys.rs"
+find = """
+    if fs.read(EF_PW_PRIV, &mut pw).is_some() && pw[0] == 0 {
+        sess.has_pw1 = false;
+    }
+"""
+replace = """
+    if fs.read(EF_PW_PRIV, &mut pw).is_some() && pw[0] == 0 {
+        let _ = &sess;
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "inc_sig_count stops clearing PW1 under the one-shot PW status, so one VERIFY signs for ever — the one-signature rule with nothing enforcing it."
+
+[comutant.BugUserStatusOpensAdmin]
+status = "patch"
+file = "crates/rsk-openpgp/src/putdata.rs"
+find = """
+    if fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3 {
+        sess.has_pw2
+    } else {
+        sess.has_pw3
+    }
+"""
+replace = """
+    if fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3 {
+        sess.has_pw2
+    } else {
+        sess.has_pw3 || sess.has_pw1 || sess.has_pw2
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:288, 594, 665, 793, 1030, 1090 and crates/rsk-piv/src/keygen.rs:585), none of them patched here."
+
+[comutant.BugRefusedValidateGrants]
+status = "patch"
+file = "crates/rsk-oath/src/lib.rs"
+find = """
+        if !ct_eq(resp, &mac[..size]) {
+            return Sw::WRONG_DATA;
+        }
+"""
+replace = """
+        if !ct_eq(resp, &mac[..size]) {
+            self.validated = true;
+            return Sw::WRONG_DATA;
+        }
+"""
+slice = ["cargo", "test", "-p", "rsk-oath"]
+expect = "killed"
+note = "a refused VALIDATE grants the unlock while still answering 6A80 — the status word says no and the applet opens. The refusal rule exempts VALIDATE entirely, so nothing but a direct test can tell the two apart."
+
+[comutant.BugPwStatusIgnoresAdmin]
+status = "patch"
+file = "crates/rsk-openpgp/src/putdata.rs"
+find = """
+    if fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3 {
+        sess.has_pw2
+    } else {
+        sess.has_pw3
+    }
+"""
+replace = """
+    if fid == EF_PRIV_DO_1 || fid == EF_PRIV_DO_3 {
+        sess.has_pw2
+    } else if fid == EF_PW_STATUS {
+        sess.has_pw3 || sess.has_pw1 || sess.has_pw2
+    } else {
+        sess.has_pw3
+    }
+"""
+find2 = """
+pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {
+    if !sess.has_pw3 {
+"""
+replace2 = """
+pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {
+    if !sess.has_pw3 && !sess.has_pw1 && !sess.has_pw2 {
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "PUT DATA C4 taken off PW3: a user status clears the one-shot flag and then signs for ever on a single PW1 VERIFY — BugSigPinNotSpent's requirement removed from underneath rather than through the door it watches. BOTH layers, because C4 is double-gated: the model's own comment names `write_authorized` (called at crates/rsk-openpgp/src/lib.rs:250-252) as the guard, and widening only put_pw_status's inner restatement left the wire command still answering 6982 — a kill that measured a defence in depth rather than the modelled defect. Its sibling BugUserStatusOpensAdmin widens the same function's whole else-arm; this one widens the C4 case alone, which is the door PgpSetPwStatus watches."
+
+[comutant.BugPivChangeResetsStatus]
+status = "patch"
+file = "crates/rsk-piv/src/lib.rs"
+find = """
+        change_reference(dev, fs, which, old, new)
+    }
+"""
+replace = """
+        let sw = change_reference(dev, fs, which, old, new);
+        self.sess.set_pin(false);
+        sw
+    }
+"""
+slice = ["cargo", "test", "-p", "rsk-piv"]
+expect = "killed"
+note = "an EXEMPT refusal taken back out: CHANGE REFERENCE DATA clears the standing status. SP 800-73-4 pt2 3.2.2/3.2.3 say it does not and a YubiKey 5.7.4 was measured keeping it, so this is a deliberate divergence the tree defends — the mutant asks whether anything would notice it going."
+
+[comutant.BugRefusedValidateDropsUnlock]
+status = "patch"
+file = "crates/rsk-oath/src/lib.rs"
+find = """
+        if !ct_eq(resp, &mac[..size]) {
+            return Sw::WRONG_DATA;
+        }
+"""
+replace = """
+        if !ct_eq(resp, &mac[..size]) {
+            self.validated = false;
+            return Sw::WRONG_DATA;
+        }
+"""
+slice = ["cargo", "test", "-p", "rsk-oath"]
+expect = "killed"
+note = "the second exempt refusal: a refused VALIDATE drops the standing unlock. A MAC challenge-response has no retry counter for a refusal to protect, so dropping it costs availability and buys nothing."
+
+[comutant.BugRemoveCodeUnvalidated]
+status = "patch"
+file = "crates/rsk-oath/src/lib.rs"
+find = """
+    fn cmd_set_code<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        if !self.validated {
+            return Sw::SECURITY_STATUS_NOT_SATISFIED;
+        }
+        let data = &apdu.data[..apdu.nc];
+"""
+replace = """
+    fn cmd_set_code<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        let data = &apdu.data[..apdu.nc];
+        let removing = matches!(parse_exact(data, [TAG_KEY]), Some([key]) if key.is_empty());
+        if !self.validated && !removing {
+            return Sw::SECURITY_STATUS_NOT_SATISFIED;
+        }
+"""
+slice = ["cargo", "test", "-p", "rsk-oath"]
+expect = "killed"
+note = "SEC-SEAM-006's own defect: the `73 00` removal reaches past the validated gate, so anyone who can select the applet unlocks it for good. The model could not see this for two revisions — the exemption fired exactly on the state the removal creates — and closing it needed a recorder at the STEP."

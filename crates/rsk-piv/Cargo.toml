@@ -7,8 +7,8 @@ publish = false
 
 # The PIV applet (NIST SP 800-73-4 subset + the Yubico extensions ykman
 # speaks), reached over CCID. Pure and host-testable like the other applet
-# crates; reuses rsk-openpgp's key machinery (PrivKey, RsaKeygen) with its
-# own kbase-rooted sealing.
+# crates; RSA comes from rsk-rsa and the EC key type from rsk-ec, both under
+# this applet's own kbase-rooted sealing.
 # `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
@@ -17,17 +17,19 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
-rsk-openpgp = { workspace = true }
-rsk-mgmt = { workspace = true }
-# Fast constant-time RSA CRT private op (UMAAL asm on device) for slot signing.
-rsk-rsa-asm = { workspace = true }
-rsa = { workspace = true }
-# rsa's bignum, used directly for the sign path's blinding (mod_inverse/modpow).
-num-bigint-dig = { workspace = true }
+# The EC family: the `[curve_id] ‖ scalar` key type this applet seals, its
+# sign / d·G / ECDH operations, and the `7F49 { 86 }` public-key DO.
+rsk-ec = { workspace = true }
+# The RSA family: keygen, the sealed CRT layout and its blinded, fault-checked
+# private op (UMAAL asm on device), PKCS#1 v1.5, the public-key DO.
+rsk-rsa = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
 rsk-fs = { workspace = true, features = ["test-util"] }
+# The KAT vectors and the PKCS#1 v1.5 verifier the RSA tests check a
+# card-produced signature against — the oracle the `rsa` crate used to be.
+rsk-rsa = { workspace = true, features = ["test-util"] }
 p256 = { workspace = true }
 p384 = { workspace = true }
 sha2 = { workspace = true }

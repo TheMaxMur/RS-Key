@@ -38,6 +38,8 @@ pub fn put_landed(old: Option<&[u8]>, new: &[u8], got: Option<&[u8]>) -> bool {
 /// value-gone-but-meta-alive is the one state the order forbids: a reader would
 /// find metadata describing a file that is not there. The other way round —
 /// metadata gone while the value survives — is the intended intermediate.
+///
+/// Refines `RSKeyStore!NoOrphanedMetadata` — SEC-STORE-001.
 pub fn delete_landed(
     old_value: Option<&[u8]>,
     old_meta: Option<&[u8]>,

@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::params::{ML_DSA_44, ML_DSA_65};
+use crate::params::{ML_DSA_44, ML_DSA_65, ML_DSA_87};
 use crate::testutil::{Rng, unhex};
 use crate::testvectors::{KEYGEN, SIGGEN, SIGVER};
 
@@ -54,6 +54,12 @@ fn acvp_keygen_pk_exact() {
                 key.write_public_key(&ML_DSA_65, &mut pk);
                 assert_eq!(pk, expected, "ACVP keyGen pk (ML-DSA-65)");
             }
+            87 => {
+                let key = ExpandedKey::<8, 7>::from_seed(&ML_DSA_87, &xi);
+                let mut pk = vec![0u8; 2592];
+                key.write_public_key(&ML_DSA_87, &mut pk);
+                assert_eq!(pk, expected, "ACVP keyGen pk (ML-DSA-87)");
+            }
             s => panic!("unexpected param set {s}"),
         }
     }
@@ -80,6 +86,12 @@ fn acvp_siggen_signature_exact() {
                 let mut sig = vec![0u8; 3309];
                 key.sign(&ML_DSA_65, &msg, &ctx, &rnd, &mut sig);
                 assert_eq!(sig, expected, "ACVP sigGen (ML-DSA-65)");
+            }
+            87 => {
+                let key = ExpandedKey::<8, 7>::from_sk_bytes(&ML_DSA_87, &sk);
+                let mut sig = vec![0u8; 4627];
+                key.sign(&ML_DSA_87, &msg, &ctx, &rnd, &mut sig);
+                assert_eq!(sig, expected, "ACVP sigGen (ML-DSA-87)");
             }
             s => panic!("unexpected param set {s}"),
         }
@@ -159,6 +171,7 @@ fn acvp_sigver_accept_reject() {
         let got = match kat.set {
             44 => verify::<4, 4>(&ML_DSA_44, &pk, &msg, &ctx, &sig),
             65 => verify::<6, 5>(&ML_DSA_65, &pk, &msg, &ctx, &sig),
+            87 => verify::<8, 7>(&ML_DSA_87, &pk, &msg, &ctx, &sig),
             s => panic!("unexpected param set {s}"),
         };
         assert_eq!(

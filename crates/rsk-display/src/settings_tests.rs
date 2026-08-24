@@ -144,17 +144,17 @@ fn persisting_the_touch_timeout_keeps_the_rest_of_the_phy_record() {
     let mut ui = env.ui(Pad::idle());
     {
         let mut fs = env.fs.borrow_mut();
-        let phy = rsk_rescue::phy::PhyData {
+        let phy = rsk_phy::PhyData {
             vid_pid: Some((0x1234, 0x5678)),
             led_gpio: Some(21),
             ..Default::default()
         };
-        rsk_rescue::phy::save(&mut fs, &phy).expect("EF_PHY");
+        rsk_phy::save(&mut fs, &phy).expect("EF_PHY");
     }
     ui.hooks.presence_ms = 20_000;
     ui.persist_settings(false, true);
 
-    let stored = rsk_rescue::phy::load(&mut env.fs.borrow_mut()).expect("EF_PHY");
+    let stored = rsk_phy::load(&mut env.fs.borrow_mut()).expect("EF_PHY");
     assert_eq!(stored.presence_timeout, Some(20));
     assert_eq!(stored.vid_pid, Some((0x1234, 0x5678)));
     assert_eq!(stored.led_gpio, Some(21));
@@ -169,4 +169,45 @@ fn a_clean_settings_session_writes_no_flash() {
         !env.fs.borrow_mut().has_data(EF_DISPLAY),
         "opening the menu and leaving it must not cost a write"
     );
+}
+
+/// The Security row is a toggle, not a drill-in: a tap flips it, marks the record
+/// dirty so the debounce writes it, and leaves the page where it was.
+#[test]
+fn the_scramble_row_toggles_in_place_and_persists() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::idle());
+    let mut last = Instant::now();
+    let mut dirty = false;
+    assert!(!ui.scramble_pin, "off is the shipped default");
+
+    let row = rsk_ui::settings_row_rect(3);
+    let tap = rsk_ui::Point::new(row.x + row.w / 2, row.y + row.h / 2);
+    assert!(matches!(
+        ui.settings_security(tap, &mut last, &mut dirty),
+        Nav::Stay
+    ));
+    assert!(ui.scramble_pin, "the tap did not flip it");
+    assert!(
+        dirty,
+        "a flip that is never written is a setting that forgets itself"
+    );
+
+    ui.save_display_config();
+    let mut buf = [0u8; rsk_ui::DISPLAY_CONF_LEN];
+    let n = env
+        .fs
+        .borrow_mut()
+        .read(EF_DISPLAY, &mut buf)
+        .expect("the record was written");
+    let mut cfg = rsk_ui::DisplayConfig::default();
+    cfg.apply_block(&buf[..n]);
+    assert!(cfg.scramble_pin);
+
+    // And back off again — a toggle that only travels one way is a trap.
+    assert!(matches!(
+        ui.settings_security(tap, &mut last, &mut dirty),
+        Nav::Stay
+    ));
+    assert!(!ui.scramble_pin);
 }

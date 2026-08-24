@@ -12,12 +12,11 @@
 use rsk_crypto::{
     Device, aes_ecb_decrypt_block, aes_ecb_encrypt_block, des3_decrypt_block, des3_encrypt_block,
 };
+use rsk_ec::PrivKey;
 use rsk_fs::{Fs, Storage};
-use rsk_openpgp::keys::PrivKey;
-use rsk_openpgp::rsa_crt;
-use rsk_openpgp::{Presence, Rng, UserPresence};
+use rsk_rsa::crt;
 use rsk_sdk::tlv::{Tlv, find_tag};
-use rsk_sdk::{ResBuf, Sw};
+use rsk_sdk::{Presence, ResBuf, Rng, Sw, UserPresence};
 use zeroize::Zeroize;
 
 use crate::files::*;
@@ -52,9 +51,10 @@ fn check_touch(policy: u8, presence: &mut dyn UserPresence) -> Result<(), Sw> {
     }
 }
 
-/// Whether the session satisfies a key slot's resolved pin policy. `NEVER` is the
-/// only value that skips the PIN — naming the two that *require* one let an
-/// unrecognised byte mean "no PIN" (audit run-34 #18).
+/// Refines `RSKeyAppletPolicies!PivOperationNeedsSlotPolicy` — SEC-POL-001.
+/// Refines `RSKeyAppletSeams!NoKeyOpOnTheAdminStatus` — SEC-SEAM-003.
+/// Whether the session satisfies a slot's resolved PIN policy. Only `NEVER`
+/// skips the PIN; listing known gated values made unknown bytes ungated.
 fn pin_satisfied(sess: &Session, pinpol: u8) -> bool {
     match pinpol {
         PINPOLICY_NEVER => true,
@@ -111,6 +111,7 @@ impl<S: Storage> GenAuth<'_, S> {
     /// Spend the PIN freshness an ALWAYS slot reads. Measured on a YubiKey 5.7.4: a
     /// private-key operation at any PIN-gated slot closes every ALWAYS slot, and
     /// nothing clears the PIN's own status — 9B included, hence `is_key`.
+    /// Refines `RSKeyAppletPolicies!PivAlwaysSpendsFreshness` — SEC-POL-002.
     fn spend_pin(&mut self) {
         if self.pin_policy != PINPOLICY_NEVER && is_key(self.key_ref) {
             self.sess.pin_fresh = false;
@@ -265,8 +266,9 @@ impl<S: Storage> GenAuth<'_, S> {
                 if c.len() != crt.modulus_len() {
                     return Err(Sw::WRONG_DATA);
                 }
-                let mut out = [0u8; rsa_crt::MAX_RSA_BYTES];
-                let n = rsa_crt::sign_crt(&crt, c, self.rng, &mut out)?;
+                let mut out = [0u8; rsk_rsa::MAX_RSA_BYTES];
+                let n = crt::private_op(&crt, c, &mut crate::RsaRng(&mut *self.rng), &mut out)
+                    .map_err(crate::rsa_sw)?;
                 dyn_auth_resp(res, TAG_AUTH_RESPONSE, &out[..n])?;
                 out.zeroize();
             }
@@ -274,7 +276,7 @@ impl<S: Storage> GenAuth<'_, S> {
                 check_touch(self.touch_policy, self.presence)?;
                 let key = self.load_ec()?;
                 let mut raw = [0u8; 96];
-                let rn = key.sign(c, self.rng, &mut raw)?;
+                let rn = key.sign(c, &mut raw).map_err(crate::ec_sw)?;
                 let mut der = [0u8; 112];
                 let dn = x509::ecdsa_sig_der(&raw[..rn], &mut der)?;
                 dyn_auth_resp(res, TAG_AUTH_RESPONSE, &der[..dn])?;
@@ -285,7 +287,7 @@ impl<S: Storage> GenAuth<'_, S> {
                 // PureEdDSA signs the raw message `c`; the 64-byte signature is
                 // returned bare (no ASN.1 wrapping).
                 let mut sig = [0u8; 64];
-                let n = key.sign(c, self.rng, &mut sig)?;
+                let n = key.sign(c, &mut sig).map_err(crate::ec_sw)?;
                 dyn_auth_resp(res, TAG_AUTH_RESPONSE, &sig[..n])?;
             }
             ALGO_3DES | ALGO_AES128 | ALGO_AES192 | ALGO_AES256 => {

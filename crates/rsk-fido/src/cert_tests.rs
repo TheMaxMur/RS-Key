@@ -136,3 +136,28 @@ fn att_chain_pack_and_iterate() {
     assert!(att_chain_pack(&chain[..6], &mut out).is_none());
     assert!(att_chain_pack(&[0x31, 0x01, 0], &mut out).is_none());
 }
+
+/// A record written under an older, larger cap reads back truncated into today's
+/// buffer with its count byte intact — so the count alone cannot tell a whole
+/// chain from a cut one, and the caller needs [`att_chain_intact`] to know whether
+/// falling back to device attestation is required.
+#[test]
+fn a_truncated_chain_is_not_intact_though_its_count_survives() {
+    let mut packed = [0u8; 64];
+    let der = [0x30, 0x03, 1, 2, 3, 0x30, 0x02, 7, 7];
+    let n = att_chain_pack(&der, &mut packed).unwrap();
+    assert!(att_chain_intact(&packed[..n]));
+    assert_eq!(att_chain_count(&packed[..n]), 2);
+
+    // Cut mid-record, exactly as a short read would.
+    let cut = &packed[..n - 3];
+    assert_eq!(
+        att_chain_count(cut),
+        2,
+        "the count byte survives truncation"
+    );
+    assert!(
+        !att_chain_intact(cut),
+        "but the certificates no longer resolve"
+    );
+}

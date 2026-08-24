@@ -166,6 +166,41 @@ fn verify_default_pw1_and_load_dek() {
 }
 
 #[test]
+fn a_malformed_pw_record_is_reference_not_found_not_a_verifier() {
+    // `check_pin` accepts a record only at `n >= 3 && rec[0] != 0`. Neither half
+    // was tested: a short record and a zeroed-length record both survived the
+    // suite (the reverse mutation pass, D2). Both must exit
+    // REFERENCE_NOT_FOUND — a record too short to hold `[len, fmt, verifier]`
+    // reaches `size - 2` below, and a zero first byte is the poisoned shape PIV
+    // already pins with `a_poisoned_reference_keeps_every_exit_it_had`. Sweep by
+    // class, not by site.
+    for (label, rec) in [
+        ("empty", &[][..]),
+        ("one byte", &[0x20][..]),
+        ("two bytes", &[0x20, 0x01][..]),
+        ("zeroed length", &[0x00, 0x01, 0xAB][..]),
+    ] {
+        let mut fs = setup();
+        let mut sess = Session::new();
+        fs.put(EF_PW1, rec).unwrap();
+        assert_eq!(
+            verify(
+                &dev(),
+                &mut fs,
+                &mut sess,
+                &mut CountRng(0),
+                0x00,
+                PW1_MODE81,
+                PW1_DEFAULT,
+            ),
+            Sw::REFERENCE_NOT_FOUND,
+            "a {label} PW1 record must not be read as a verifier"
+        );
+        assert!(!sess.has_pw1, "{label}: nothing may be authorised");
+    }
+}
+
+#[test]
 fn verify_wrong_pin_decrements_then_blocks() {
     let mut fs = setup();
     let mut sess = Session::new();
@@ -707,7 +742,7 @@ fn an_overlong_pw_status_record_cannot_panic_the_retry_writers() {
     overlong.resize(16, 0xAA);
     fs.put(EF_PW_PRIV, &overlong).unwrap();
 
-    assert_eq!(pin_wrong_retry(&mut fs, EF_PW1), Ok(PW_RETRIES_DEFAULT - 1));
+    assert_eq!(spend_pin_retry(&mut fs, EF_PW1), Ok(PW_RETRIES_DEFAULT - 1));
     assert_eq!(pin_reset_retries(&mut fs, EF_PW1, false), Ok(()));
     assert_eq!(set_pin_retry_counter(&mut fs, EF_RC, 0), Ok(()));
 
@@ -1385,4 +1420,120 @@ fn provisioning_is_recoverable_at_every_write_it_makes() {
             "budget {budget}: the two PINs unwrap different keys"
         );
     }
+}
+
+/// A store whose write to ONE fid reports success and keeps the old bytes — the
+/// flash program that answered `Ok` and did not land. `DyingStorage` models the
+/// loud half of that (an `Err` the caller can see); this is the silent half,
+/// which is the one a limiter cannot notice on its own.
+///
+/// Deliberately narrow: one fid, `write` only. An injector that faults more than
+/// the property is about makes the interleaving unreachable and then passes over
+/// its own blind spot.
+struct DeafStorage {
+    inner: RamStorage,
+    fid: u16,
+    deaf: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl rsk_fs::Storage for DeafStorage {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        if self.deaf.get() && fid == self.fid {
+            return Ok(());
+        }
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+/// A provisioned card whose EF_PW_PRIV writes can be made deaf after boot — the
+/// counter must be real while the applet provisions itself.
+fn deaf_setup() -> (Fs<DeafStorage>, std::rc::Rc<std::cell::Cell<bool>>) {
+    let deaf = std::rc::Rc::new(std::cell::Cell::new(false));
+    let mut fs = Fs::new(DeafStorage {
+        inner: RamStorage::new(),
+        fid: EF_PW_PRIV,
+        deaf: deaf.clone(),
+    });
+    fs.scan();
+    scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+    (fs, deaf)
+}
+
+fn pw3_retries_left<S: rsk_fs::Storage>(fs: &mut Fs<S>) -> u8 {
+    let mut pw = [0u8; 8];
+    let n = fs.read(EF_PW_PRIV, &mut pw).expect("EF_PW_PRIV");
+    assert!(n > PW3_RETRY_IDX);
+    pw[PW3_RETRY_IDX]
+}
+
+/// The retry counter is this applet's ONLY rate limit — there is no per-boot soft
+/// lock like clientPIN's — so an attempt whose decrement never reaches flash is a
+/// free guess, repeatable at one power cycle apiece. A wrong password must
+/// therefore be refused outright when the charge cannot be proved.
+#[test]
+fn a_wrong_password_is_refused_when_the_attempt_cannot_be_charged() {
+    let (mut fs, deaf) = deaf_setup();
+    let mut sess = Session::new();
+    deaf.set(true);
+    let sw = verify(
+        &dev(),
+        &mut fs,
+        &mut sess,
+        &mut CountRng(0),
+        0x00,
+        PW3_MODE83,
+        b"99999999",
+    );
+    deaf.set(false);
+    assert_eq!(
+        sw,
+        Sw::MEMORY_FAILURE,
+        "a wrong password answered from a limiter that did not move is a free guess"
+    );
+    assert_eq!(
+        pw3_retries_left(&mut fs),
+        PW_RETRIES_DEFAULT,
+        "the counter really did not move — the refusal is the whole protection here"
+    );
+}
+
+/// Order is what closes it, not the read-back: on a full counter the success path
+/// rewrites the value it already holds, so a read-back placed after the comparison
+/// is satisfied by a store that stored nothing. The consequence, and the only
+/// assertion that can tell the two orders apart — the RIGHT password fails too
+/// when the attempt cannot be charged. Measured, not assumed: with the charge
+/// moved back after the comparison and the read-back kept, the wrong-password
+/// case above still passes and only this one falls.
+#[test]
+fn even_the_right_password_is_charged_before_it_is_compared() {
+    let (mut fs, deaf) = deaf_setup();
+    let mut sess = Session::new();
+    deaf.set(true);
+    let sw = verify(
+        &dev(),
+        &mut fs,
+        &mut sess,
+        &mut CountRng(0),
+        0x00,
+        PW3_MODE83,
+        PW3_DEFAULT,
+    );
+    deaf.set(false);
+    assert_eq!(sw, Sw::MEMORY_FAILURE);
+    assert!(
+        !sess.has_pw3,
+        "an uncharged attempt may not raise an access status"
+    );
 }

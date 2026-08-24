@@ -52,8 +52,12 @@ A fresh card has **no** Reset Code. It stays deactivated until an admin sets one
 (`passwd` option 4, below), so `RESET RETRY COUNTER` in its RC form cannot run
 against a known default.
 
-Each PIN has its **own retry counter**, default **3**. A correct entry resets
-that PIN's counter. A wrong one decrements it. `gpg --card-status` prints them
+Each PIN has its **own retry counter**, default **3**. Every attempt is charged
+against it *before* the card compares anything, and a correct entry gives the
+charge back; a wrong one keeps it. The one visible consequence: pulling the key
+out mid-`VERIFY` can cost a try the holder never used. That is the safe
+direction — charging afterwards would mean an interrupted write leaves a wrong
+guess free, and this counter is the only limit the card has. `gpg --card-status` prints them
 as `PIN retry counter : 3 3 3` (PW1, RC, PW3: all three default to 3).
 
 Change them first:
@@ -97,6 +101,10 @@ gpg read back):
 | ECC (sign/auth) | **Ed25519**, NIST **P-256 / P-384 / P-521**, **secp256k1**, **brainpoolP256r1 / P384r1** | EdDSA on Ed25519; ECDSA on the Weierstrass curves |
 | ECC (encrypt) | **Cv25519** (X25519), NIST **P-256 / P-384 / P-521**, **secp256k1**, **brainpoolP256r1 / P384r1** | ECDH; the DEC slot only |
 | RSA | **2048 / 3072 / 4096**, plus **1024** | exponent fixed at 65537 (what gpg imports) |
+
+Changing a slot's algorithm after a key exists invalidates that slot's old
+private/public key pair. Re-select the intended attribute before generating or
+importing the replacement; writing the same attribute leaves the key intact.
 
 **RSA-1024 is advertised and it works** — a YubiKey does not offer it at all.
 It is below every current guidance (NIST SP 800-131A retired it in 2013) and it

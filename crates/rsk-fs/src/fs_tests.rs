@@ -348,6 +348,149 @@ fn meta_add_keeps_records_when_ef_meta_unknown() {
 }
 
 #[test]
+fn a_faulted_ef_meta_read_never_rebuilds_the_blob_from_empty() {
+    // The same databug's OTHER door: not an unknown cache but a read that
+    // FAILS. `meta_add` must refuse (the blob's true contents are unknowable),
+    // never treat the fault as an empty blob — that rewrite drops every other
+    // FID's committed record in one write.
+    let mut fs = fs();
+    fs.meta_add(0xB000, b"keep-me").unwrap();
+    let ram = fs.into_storage();
+    // Rebuild without scan(), over a backend whose first read faults: the
+    // meta_add cannot answer from the cache and meets the fault head-on.
+    let mut fs2 = Fs::new(FailFirstRead {
+        inner: ram,
+        remaining: 1,
+        err: false,
+    });
+    assert!(
+        fs2.meta_add(0xB004, b"new").is_err(),
+        "a meta_add over a faulted EF_META read must refuse, not rebuild from empty"
+    );
+    // The committed record survived the refusal; the next, clean read sees it.
+    assert_eq!(fs2.meta_find(0xB000, &mut [0u8; 16]), Some(7));
+}
+
+#[test]
+fn requesting_a_rescrub_clears_the_hardened_marker() {
+    // `MarkerNeverLies` — SEC-BOOT-001 at the code level. Every lazy re-key must
+    // re-arm the at-rest lap, and run-35 found four of five sites skipping it.
+    // The model catches the removal (`BugRekeyKeepsTheMarker`); nothing here did,
+    // so the one place the re-arm actually happens was asserted by no test.
+    let mut fs = fs();
+    fs.put(crate::EF_HARDENED, b"\x01").unwrap();
+    assert!(fs.has_data(crate::EF_HARDENED));
+    crate::request_rescrub(&mut fs);
+    assert!(
+        !fs.has_data(crate::EF_HARDENED),
+        "a rescrub request must clear the marker, or the lap never runs again"
+    );
+}
+
+#[test]
+fn a_boot_scan_registers_every_dynamic_key_and_neither_shared_record() {
+    // The registry `scan` rebuilds is the capacity budget every later `put`
+    // spends. Three mutations of this loop survived the suite (D2): an inverted
+    // EF_META test, and two ways of never reaching the `push`. All three leave
+    // the budget claiming the store is empty, so the cap stops binding.
+    let mut st = RamStorage::new();
+    st.write(0xCC10, b"one").unwrap();
+    st.write(0xCC11, b"two").unwrap();
+    st.write(EF_META, b"\x00").unwrap();
+    st.write(EF_SCRUB_FILLER, b"filler").unwrap();
+    let mut fs = Fs::new(st);
+    fs.scan();
+    assert_eq!(
+        fs.free_dynamic(),
+        MAX_DYNAMIC_FILES - 2,
+        "scan must register both dynamic keys and neither shared record"
+    );
+}
+
+#[test]
+fn a_delete_frees_its_own_registration_and_no_other() {
+    // `retain(|f| f != fid)` inverted keeps ONLY the deleted key and drops every
+    // other registration — the budget then reads as free while the keys are live.
+    let mut fs = fs();
+    fs.put(0xCC10, b"one").unwrap();
+    fs.put(0xCC11, b"two").unwrap();
+    assert_eq!(fs.free_dynamic(), MAX_DYNAMIC_FILES - 2);
+    fs.delete(0xCC10).unwrap();
+    // Counting is not enough: the inverted retain keeps exactly one entry too,
+    // just the WRONG one. Re-writing the survivor is what tells them apart —
+    // it must already be registered, so the budget does not move.
+    fs.put(0xCC11, b"again").unwrap();
+    assert_eq!(
+        fs.free_dynamic(),
+        MAX_DYNAMIC_FILES - 1,
+        "the surviving key must keep its registration, not be re-registered"
+    );
+}
+
+#[test]
+fn an_empty_record_is_not_data() {
+    // `has_data` is the gate several applets read as "provisioned". A zero-length
+    // record is a record, not data — audit run-35 is what an empty record read as
+    // content costs one layer up.
+    let mut fs = fs();
+    fs.put(0xCC10, b"").unwrap();
+    assert!(
+        !fs.has_data(0xCC10),
+        "a zero-length record must not read as data"
+    );
+    fs.put(0xCC10, b"x").unwrap();
+    assert!(fs.has_data(0xCC10), "a one-byte record must");
+}
+
+#[test]
+fn a_factory_wipe_clears_more_keys_than_one_batch_holds() {
+    // `factory_wipe` deletes in 64-key batches. Nothing drove it past the first
+    // one, so the bound that keeps `batch[n]` in range was untested — and the
+    // mutation that breaks it is an out-of-bounds index, not a wrong answer.
+    let mut fs = fs();
+    for i in 0..150u16 {
+        fs.put(0xCC00 + i, b"x").unwrap();
+    }
+    fs.factory_wipe(|_| false, |_| false, |_| false).unwrap();
+    for i in 0..150u16 {
+        assert!(
+            !fs.has_data(0xCC00 + i),
+            "0x{:04X} survived the wipe",
+            0xCC00 + i
+        );
+    }
+    assert_eq!(fs.free_dynamic(), MAX_DYNAMIC_FILES);
+}
+
+#[test]
+fn a_faulted_ef_meta_read_never_caches_the_blob_as_absent() {
+    // `meta_delete`'s half of the same rule, and the one nothing held: a FAILED
+    // EF_META read must refuse, never `mark_absent(EF_META)`. Caching that
+    // false-absent is worse than losing the delete — the NEXT `meta_add` trusts
+    // `known_absent` and rebuilds the blob from empty, dropping every record.
+    let mut fs = fs();
+    fs.meta_add(0xB000, b"keep-me").unwrap();
+    let ram = fs.into_storage();
+    let mut fs2 = Fs::new(FailFirstRead {
+        inner: ram,
+        remaining: 1,
+        err: false,
+    });
+    assert!(
+        fs2.meta_delete(0xB004).is_err(),
+        "a meta_delete over a faulted EF_META read must refuse, not cache absence"
+    );
+    // The false-absent would show here: a clean meta_add after the fault must
+    // still find the committed record, not rebuild over it.
+    fs2.meta_add(0xB008, b"new").unwrap();
+    assert_eq!(
+        fs2.meta_find(0xB000, &mut [0u8; 16]),
+        Some(7),
+        "the record must survive a faulted meta_delete and the write after it"
+    );
+}
+
+#[test]
 fn absent_delete_never_touches_the_backend() {
     // A backend `remove` of an absent FID scans the whole flash partition
     // (and writes a tombstone) on sequential-storage. The present-cache MUST
@@ -736,4 +879,198 @@ fn the_scrub_filler_never_costs_a_dynamic_slot() {
         fs.put(0x2000 + i, &[0xBB])
             .unwrap_or_else(|_| panic!("{:#06x} lost its registration to the filler", 0x2000 + i));
     }
+}
+
+/// The store-refinement pilot's clauses at concrete FIDs, so the PR gate carries
+/// them too: `cargo kani` proves them over a symbolic pair once a week, and a
+/// rename or a deleted hook there would otherwise take them away silently.
+///
+/// A window is walked rather than a pair checked, for the reason the panel's key
+/// grids needed the same: a pair only collides under SOME wrong shift. `>> 3`
+/// mistyped as `>> 2` and `& 7` as `& 3` alias different pairs, and a test that
+/// names two FIDs catches whichever of them its two happen to meet. Twenty-four
+/// consecutive FIDs span three bytes, so every within-byte and cross-byte
+/// neighbour is present and any aliasing shows up as a second FID moving.
+#[test]
+fn a_cache_write_moves_one_fid_and_no_other_across_three_bytes() {
+    use crate::fs::store_assurance::{CacheView, fresh};
+
+    const BASE: u16 = 0x0100;
+    const N: u16 = 24;
+    for victim in BASE..BASE + N {
+        let mut fs = fresh(false);
+        for f in BASE..BASE + N {
+            fs.step_put(f);
+        }
+        fs.step_delete(victim);
+        for f in BASE..BASE + N {
+            let want = if f == victim {
+                CacheView::ABSENT
+            } else {
+                CacheView::LIVE
+            };
+            assert_eq!(
+                fs.cache_view(f),
+                want,
+                "deleting {victim:#06x} moved {f:#06x}"
+            );
+        }
+        assert!(fs.reads_absent(victim));
+        assert!(!fs.reads_absent(BASE + (victim + 1 - BASE) % N));
+    }
+}
+
+/// The rest of the pilot's clauses, which are about one FID rather than the map:
+/// what `Init` decides (nothing), what a clean confirm caches (the answer), and
+/// what a faulted one caches (nothing at all — audit run-36, one transient error
+/// made permanent for the boot).
+#[test]
+fn a_faulted_confirm_caches_nothing_and_a_clean_one_caches_the_answer() {
+    use crate::fs::store_assurance::{CacheView, fresh};
+
+    const F: u16 = 0x0107;
+    const G: u16 = 0x0108;
+    let mut fs = fresh(false);
+    assert_eq!(fs.cache_view(F), CacheView::CLEAR, "Init decided something");
+    assert!(
+        !fs.reads_absent(F),
+        "an unprobed FID read as a decided absence"
+    );
+
+    fs.step_confirm(F, true);
+    assert_eq!(fs.cache_view(F), CacheView::LIVE);
+    fs.step_confirm(F, false);
+    assert_eq!(fs.cache_view(F), CacheView::ABSENT);
+
+    let mut fs = fresh(true);
+    fs.step_put(G);
+    fs.step_confirm(F, false);
+    assert_eq!(
+        fs.cache_view(F),
+        CacheView::CLEAR,
+        "a fault was cached as a decision"
+    );
+    assert!(!fs.reads_absent(F));
+    assert_eq!(fs.cache_view(G), CacheView::LIVE);
+}
+
+/// A medium whose reads fail while the budget is ARMED, holding its map behind an
+/// `Rc` so a case can read the medium back once the arm is off.
+///
+/// The arm is what keeps the observation honest: a projection taken over a dead
+/// medium answers "gone" for a record that is still on it, and every refused write
+/// then reads as a lost one (the G4 lesson). So the fault covers the step and
+/// nothing else — and it covers `read`/`size` only, which is the shape a
+/// log-structured backend actually fails in: a CRC failure on one item, a fresh
+/// page for the next.
+struct ArmedRead {
+    inner: std::rc::Rc<std::cell::RefCell<RamStorage>>,
+    armed: std::rc::Rc<std::cell::Cell<bool>>,
+    err: bool,
+}
+
+impl Storage for ArmedRead {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        if self.armed.get() {
+            self.err = true;
+            return None;
+        }
+        self.err = false;
+        self.inner.borrow_mut().read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+        self.inner.borrow_mut().write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> Result<()> {
+        self.inner.borrow_mut().remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        if self.armed.get() {
+            self.err = true;
+            return None;
+        }
+        self.err = false;
+        self.inner.borrow_mut().size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.borrow_mut().for_each_key(f)
+    }
+    fn last_error(&self) -> bool {
+        self.err
+    }
+}
+
+/// A stand-in PIV key slot: the only FIDs that carry an EF_META head are
+/// `rsk-piv`'s, so the case is built at the shape it is about.
+const SLOT: u16 = 0x9A00;
+
+fn armed_fs() -> (
+    Fs<ArmedRead>,
+    std::rc::Rc<std::cell::RefCell<RamStorage>>,
+    std::rc::Rc<std::cell::Cell<bool>>,
+) {
+    let inner = std::rc::Rc::new(std::cell::RefCell::new(RamStorage::new()));
+    let armed = std::rc::Rc::new(std::cell::Cell::new(false));
+    let fs = Fs::new(ArmedRead {
+        inner: inner.clone(),
+        armed: armed.clone(),
+        err: false,
+    });
+    (fs, inner, armed)
+}
+
+/// `delete` used to swallow `meta_delete`'s error (`let _ =`) and remove the value
+/// anyway, so over a medium whose EF_META read fails ONCE the caller was told
+/// `Ok(())` about a file whose value was gone and whose record still stood — the
+/// 0x077C databug's end state, with no power cut in it.
+///
+/// The removal is still unconditional, because EF_META is one blob shared by every
+/// applet and refusing on a read fault would stop every delete on the device,
+/// wipes included. What changed is that the caller is told: `Err` names the state
+/// (value gone, record may stand) instead of hiding it.
+#[test]
+fn a_faulted_metadata_drop_is_reported_and_the_value_still_goes() {
+    let (mut fs, ram, armed) = armed_fs();
+    fs.put(SLOT, b"sealed key material").unwrap();
+    fs.meta_add(SLOT, &[0xAA, 0x01, 0x02, 0x03]).unwrap();
+
+    armed.set(true);
+    let answered = fs.delete(SLOT);
+    armed.set(false);
+
+    assert!(
+        matches!(answered, Err(Error::MemoryFatal)),
+        "a delete that could not drop the record answered {answered:?}"
+    );
+    // Read the MEDIUM, not the cache: the present bit is marked absent by the
+    // delete either way, so a cache-level assertion would pass with the backend
+    // `remove` never called.
+    let mut buf = [0u8; 32];
+    assert!(
+        ram.borrow_mut().read(SLOT, &mut buf).is_none(),
+        "the value must go even when the record could not be dropped"
+    );
+    assert!(
+        ram.borrow_mut().read(EF_META, &mut buf).is_some(),
+        "the record is what the error is about — it stands"
+    );
+}
+
+/// The control, and the half that says the case above is not simply asserting that
+/// deletes fail: with nothing armed the same sequence answers `Ok(())` and takes
+/// both halves with it.
+#[test]
+fn an_unfaulted_delete_takes_the_value_and_the_record() {
+    let (mut fs, ram, _armed) = armed_fs();
+    fs.put(SLOT, b"sealed key material").unwrap();
+    fs.meta_add(SLOT, &[0xAA, 0x01, 0x02, 0x03]).unwrap();
+
+    assert_eq!(fs.delete(SLOT), Ok(()));
+
+    let mut buf = [0u8; 32];
+    assert!(ram.borrow_mut().read(SLOT, &mut buf).is_none());
+    assert!(
+        ram.borrow_mut().read(EF_META, &mut buf).is_none(),
+        "the last record was dropped, so EF_META goes with it"
+    );
 }

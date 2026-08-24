@@ -6,9 +6,9 @@
 //! `rsk-piv` — the PIV card applet: the NIST SP 800-73-4 command subset plus the
 //! Yubico extensions `ykman piv` / `yubico-piv-tool` exercise (metadata, serial,
 //! attestation, move/delete, set-mgm-key, set-retries, reset), reached over CCID.
-//! Pure and host-testable; key machinery comes from `rsk-openpgp`, private keys
-//! at rest are GCM-sealed (`seal`), and management operations (IMPORT KEY, PUT
-//! DATA, SET MGM KEY, MOVE KEY, SET RETRIES) require management-key auth.
+//! Pure and host-testable; the key types come from `rsk-ec` / `rsk-rsa`, private
+//! keys at rest are GCM-sealed (`seal`), and management operations (IMPORT KEY,
+//! PUT DATA, SET MGM KEY, MOVE KEY, SET RETRIES) require management-key auth.
 
 extern crate alloc;
 
@@ -23,15 +23,14 @@ mod x509;
 use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
+use rsk_ec::EcError;
 use rsk_fs::{Fs, Sealed, Storage};
-pub use rsk_openpgp::Rng;
-use rsk_openpgp::keys::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, make_rsa_pub_body};
-// PIV reuses the OpenPGP user-presence trait, so the firmware's existing
-// `impl rsk_openpgp::UserPresence for ButtonPresence` already drives PIV touch.
-use rsa::RsaPrivateKey;
-use rsa::traits::PublicKeyParts;
-pub use rsk_openpgp::{AlwaysConfirm, Presence, UserPresence};
+use rsk_rsa::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, RsaError, RsaKey, make_rsa_pub_body};
+// The randomness and the slot touch-policy check are `rsk-sdk`'s seams, shared
+// with every sibling applet; `rsk-rsa` declares its own identical `Rng` two tiers
+// down, so the private-key calls bridge the two through [`RsaRng`].
 use rsk_sdk::tlv::{find_tag, format_len};
+pub use rsk_sdk::{AlwaysConfirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 use zeroize::Zeroize;
 
@@ -53,6 +52,53 @@ pub const PIV_AID: &[u8] = &[
 /// Reported PIV application version — the shared [`rsk_sdk::FIRMWARE_VERSION`]
 /// (default 5.7.4, `FW_VERSION`-overridable).
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
+
+/// The status word each [`RsaError`] answers with. This table **is** wire
+/// surface — `rsa_sw_reproduces_every_status_word` pins all four arms — and
+/// `rsk-openpgp` carries its own copy: the one crate that could host a shared
+/// mapping is `rsk-sdk`, and paying for it there would put the RSA crate in
+/// every applet's dependency closure. Whole argument: `rsk-rsa/src/error.rs`.
+pub(crate) fn rsa_sw(e: RsaError) -> Sw {
+    match e {
+        RsaError::BadWidth => Sw::WRONG_LENGTH,
+        RsaError::BadBlock => Sw::WRONG_DATA,
+        RsaError::BadBlob => Sw::MEMORY_FAILURE,
+        RsaError::Failed => Sw::EXEC_ERROR,
+    }
+}
+
+/// Hands the applet-tier randomness seam ([`rsk_sdk::Rng`]) to `rsk-rsa`, which
+/// declares its own identical one: it is an algorithm crate two tiers down and
+/// naming `rsk-sdk` would invert the dependency. Same bytes, one more vtable hop
+/// on the paths that draw a blinding factor or PKCS#1 padding, not per limb.
+pub(crate) struct RsaRng<'a>(pub(crate) &'a mut dyn Rng);
+
+impl rsk_rsa::Rng for RsaRng<'_> {
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.0.fill(buf);
+    }
+}
+
+/// The status word each [`EcError`] answers with — the EC twin of [`rsa_sw`],
+/// and `rsk-openpgp` (`keys::ec_sw`) carries the same three arms for the same
+/// reason. `ec_sw_reproduces_every_status_word` pins them.
+pub(crate) fn ec_sw(e: EcError) -> Sw {
+    match e {
+        EcError::Failed => Sw::EXEC_ERROR,
+        EcError::BadPoint => Sw::DATA_INVALID,
+        EcError::Unsupported => Sw::FUNC_NOT_SUPPORTED,
+    }
+}
+
+/// The same bridge as [`RsaRng`] for `rsk-ec`, which declares its own `Rng` for
+/// the same reason. Only [`rsk_ec::PrivKey::generate`] draws from it.
+pub(crate) struct EcRng<'a>(pub(crate) &'a mut dyn Rng);
+
+impl rsk_ec::Rng for EcRng<'_> {
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.0.fill(buf);
+    }
+}
 
 const INS_VERIFY: u8 = 0x20;
 const INS_CHANGE_PIN: u8 = 0x24;
@@ -219,7 +265,7 @@ impl<'a> PivApplet<'a> {
 
     /// If `apdu` is a PIV RSA GENERATE, validate it fully and return the slot,
     /// modulus size and resolved policy bytes so the firmware can run the slow
-    /// prime search itself (stepping [`rsk_openpgp::keys::RsaKeygen`] between
+    /// prime search itself (stepping [`rsk_rsa::RsaKeygen`] between
     /// CCID keepalives). `None` falls through to normal dispatch — EC generate,
     /// or any error (re-validated there so the right SW is reported).
     pub fn rsa_generate_params<S: Storage>(
@@ -256,7 +302,7 @@ impl<'a> PivApplet<'a> {
         rng: &mut dyn Rng,
         slot: u8,
         pol: [u8; 2],
-        key: &RsaPrivateKey,
+        key: &RsaKey,
         resp: &mut [u8],
     ) -> (usize, Sw) {
         let Some(algo) = keygen::rsa_algo_from_size(key.size()) else {
@@ -311,10 +357,10 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
     /// the PIV AID "or the right-truncated version thereof" and PIV is already
     /// current, "the setting of all security status indicators in the PIV Card
     /// Application shall be unchanged" — §2.4.2 counting the PIN and the card
-    /// application administration key among them. A different valid AID and a
-    /// power cycle still clear it, through the dispatcher's `deselect`, and an
-    /// AID the ICC does not support never reaches an applet. Measured on a
-    /// YubiKey 5.7.4, 3/3, every paragraph of §3.1.1 reproduced.
+    /// application administration key among them. Another AID or a power cycle
+    /// clears it through dispatcher deselect; unsupported AID never reaches it.
+    /// A YubiKey 5.7.4 kept every status on re-SELECT.
+    /// Refines `RSKeyAppletSeams!ReselectPreservesAccessStatus` — SEC-SEAM-004.
     fn select(&mut self, reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         if !reselect {
             self.sess.reset();
@@ -369,7 +415,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                 Sw::OK
             }
             INS_YK_SERIAL => {
-                res.extend(&rsk_mgmt::serial4(self.serial_id));
+                res.extend(&rsk_sdk::serial4(self.serial_id));
                 Sw::OK
             }
             INS_SELECT => {
@@ -418,7 +464,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                     fs,
                     &mut *rng,
                     apdu.p1,
-                    rsk_mgmt::serial4(self.serial_id),
+                    rsk_sdk::serial4(self.serial_id),
                     res,
                 )
             }
@@ -954,7 +1000,7 @@ impl PivApplet<'_> {
                     };
                     let plen = match key.public_point(&mut point) {
                         Ok(p) => p,
-                        Err(e) => return e,
+                        Err(e) => return ec_sw(e),
                     };
                     &point[..plen]
                 };
@@ -1111,12 +1157,21 @@ impl PivApplet<'_> {
             }
         }
         blob.zeroize();
-        let _ = fs.delete_key(key_fid(from));
+        let dropped = fs.delete_key(key_fid(from));
         let _ = fs.delete(pubkey_fid(from));
         if let Some(f) = cert_from {
             let _ = fs.delete(f);
         }
-        let _ = fs.meta_delete(key_fid(from).get());
+        // A head left over a key that is GONE is what GET METADATA, and the
+        // PIN/touch gate reading the same record, would answer for. One EF_META
+        // read can fault where the next lands, so the head earns a retry; the key
+        // is read back too, because a `remove` that failed leaves the source
+        // holding a live key and that is not an OK move either.
+        if dropped.is_err()
+            && (fs.has_key(key_fid(from)) || fs.meta_delete(key_fid(from).get()).is_err())
+        {
+            return Sw::MEMORY_FAILURE;
+        }
         Sw::OK
     }
 }
@@ -1178,6 +1233,8 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
 
 /// Verify a PIN/PUK against its stored verifier, with the retry dance —
 /// decrement on mismatch (`63Cx`, `6983` at zero), reset on success.
+/// Refines `RSKeyRetryLattice!NoAuthWhenBlocked` — SEC-LAT-001.
+/// Refines `RSKeyRetryLattice!WrongAttemptIsCharged` — SEC-LAT-002.
 fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, pin: &[u8]) -> Sw {
     let (total, left) = match retries(fs, retry) {
         Ok(t) => t,
@@ -1328,6 +1385,7 @@ pub fn change_reference<S: Storage>(
 
 /// Unblock the PIN with the PUK (RESET RETRY COUNTER): verify `puk`, set the PIN to
 /// `new`, and reset the PIN retry counter. Shared by the APDU handler and the panel.
+/// Refines `RSKeyRetryLattice!BudgetRisesOnlyWithItsSecret` — SEC-LAT-003.
 pub fn unblock_pin_with_puk<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,

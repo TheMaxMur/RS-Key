@@ -37,7 +37,7 @@ class Tree:
         self.write("third_party/upstream/LICENSE", "MIT\n")
         self.write("third_party/upstream/test_it.py", "def test(): pass\n")
         self.write(
-            "crates/rsk-rsa-asm/csrc/bignum.c",
+            "crates/rsk-rsa/csrc/bignum.c",
             "/*\n* Copyright (c) 2025 Someone Else\n*/\nint f(void) { return 0; }\n",
         )
         subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)

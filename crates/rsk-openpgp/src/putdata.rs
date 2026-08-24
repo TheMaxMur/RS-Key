@@ -8,7 +8,7 @@
 //! store).
 
 use rsk_crypto::Device;
-use rsk_fs::{Fs, Storage};
+use rsk_fs::{Fs, KeyFid, Storage};
 use rsk_sdk::Sw;
 
 use crate::consts::*;
@@ -83,6 +83,15 @@ pub fn writable(fid: u16) -> bool {
         || matches!(source(fid), DoSource::Flash)
 }
 
+fn algorithm_slot(fid: u16) -> Option<KeyFid> {
+    match fid {
+        EF_ALGO_SIG => Some(EF_PK_SIG),
+        EF_ALGO_DEC => Some(EF_PK_DEC),
+        EF_ALGO_AUT => Some(EF_PK_AUT),
+        _ => None,
+    }
+}
+
 /// Write `data` to the DO addressed by `fid` (empty `data` deletes it, unless
 /// the DO has a fixed length).
 pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8]) -> Sw {
@@ -128,6 +137,25 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         && !crate::dobj::advertised_algo(fid, data)
     {
         return Sw::WRONG_DATA;
+    }
+
+    // Refines `RSKeyAppletPolicies!AttributeChangeInvalidatesTheKey` — SEC-POL-003.
+    if let Some(slot) = algorithm_slot(fid) {
+        let mut current = [0u8; 16];
+        let current = match fs.read(target, &mut current) {
+            Some(n) if n > 0 => &current[..n.min(current.len())],
+            _ => DEFAULT_ALGO,
+        };
+        let replacement = if data.is_empty() { DEFAULT_ALGO } else { data };
+        if current != replacement {
+            if fs.has_key(slot) && fs.force_delete(slot.get()).is_err() {
+                return Sw::MEMORY_FAILURE;
+            }
+            let public = slot_pub_fid(slot);
+            if fs.has_data(public) && fs.force_delete(public).is_err() {
+                return Sw::MEMORY_FAILURE;
+            }
+        }
     }
 
     // Including the empty write, which would otherwise delete the DO: a YubiKey

@@ -92,10 +92,13 @@ rsk fido attestation clear [--pin …]
 
 ## What changes once a chain is installed
 
-- **makeCredential with `enterpriseAttestation` 1 or 2** (sent by managed
-  platforms) returns a full attestation: signature by the org key, `x5c` = your
-  chain (leaf first), and the `ep` response flag (`true`). With an org key
-  installed, **both** EA levels emit the org attestation.
+- **makeCredential with `enterpriseAttestation` 2** (platform-managed, sent by
+  managed platforms) returns a full attestation: signature by the org key, `x5c` =
+  your chain (leaf first), and the `ep` response flag (`true`). **Level 1**
+  (vendor-facilitated) does the same, but only for a relying party on the device's
+  [enterprise RP list](#who-gets-vendor-facilitated-type-1-ea) — which is empty
+  until you write it, so a level-1 request from an unlisted RP gets the ordinary
+  per-device attestation and no `ep`.
 - **U2F / CTAP1 registration** attests with the chain's **leaf** instead of the
   self-signed device cert (classic batch attestation: a U2F response carries
   exactly one certificate, so only the leaf travels).
@@ -112,8 +115,9 @@ spec:
 | EA level | Without org key | With org key |
 |---|---|---|
 | (absent / 0) | basic, device cert | basic, device cert |
-| 1 — vendor-facilitated | basic, device cert | full org attestation |
-| 2 — platform-managed | basic, device cert, no `ep` flag | full org attestation |
+| 1 — vendor-facilitated, RP **listed** | basic, device cert, `ep` flag | full org attestation |
+| 1 — vendor-facilitated, RP **not listed** | basic, device cert, no `ep` flag | basic, device cert, no `ep` flag |
+| 2 — platform-managed | basic, device cert, `ep` flag | full org attestation |
 
 Without an org key every level answers with the same per-device basic
 attestation; what an EA request adds is the org chain and the `ep` response
@@ -143,6 +147,39 @@ PY
 `enableEnterpriseAttestation` **persists across power cycles**. It is
 written to flash (`EF_EA_ENABLED`), as CTAP 2.1 specifies. It is cleared only by
 `authenticatorReset` (see below).
+
+## Who gets vendor-facilitated (type 1) EA
+
+Level 2 applies to **every** relying party the moment EA is enabled. Level 1 is
+narrower by design: the spec leaves it to the vendor to say which RPs qualify, so
+RS-Key keeps a **list of relying parties on the device** and honors a level-1
+request only for one of them. The list holds up to **8** entries, is stored as
+`sha256(rpId)` (`EF_EA_RPIDS`), and is **empty on a device that has never been
+told otherwise** — including one upgraded from an older firmware. Until you write
+it, level 1 qualifies nobody, which is exactly how RS-Key behaved before the list
+existed.
+
+```sh
+rsk fido attestation set-rpids sso.corp.example vpn.corp.example
+rsk fido attestation set-rpids --clear
+```
+
+Each write **replaces** the whole list — there is no add or remove, and no read
+path: the device never hands the list back, so keep your own copy of what you
+sent. More than 8 ids is refused outright (`CTAP2_ERR_KEY_STORE_FULL`) and the
+previous list stays in place; nothing is ever silently truncated. The ids travel
+as text and are hashed on the device, so the stored form cannot disagree with
+what makeCredential compares against.
+
+Authorization is the same as `enableEnterpriseAttestation`: an `acfg`
+pinUvAuthToken, i.e. a FIDO PIN, and no touch. The list alone grants nothing —
+with EA disabled, every level-1 request is still rejected outright — so the touch
+that guards the seed would buy nothing here. Each write lands in the
+[audit journal](audit.md) as `CFG_EA_RPIDS`, with the new entry count as its aux.
+
+Under the hood it is `authenticatorConfig` (`0x0D`) subCommand `vendorPrototype`
+(`0xFF`), vendorCommandId `0x0e6841934e719be7`, rpIds at subCommandParams key 4 —
+specified in [protocol.md](../protocol.md) for third-party tools.
 
 ## Transport and gating
 
@@ -184,10 +221,12 @@ across that line:
 | `EF_ATT_KEY` (org key) | **yes**: org-provisioned device identity, not user data |
 | `EF_ATT_CHAIN` (chain) | **yes** |
 | `EF_EA_ENABLED` (the enable flag) | **no**: wiped with PIN, credentials, counter |
+| `EF_EA_RPIDS` (the type-1 RP list) | **no**: wiped with the flag it serves |
 
-So a factory reset leaves the org attestation installed but **switches EA off**:
-the managed platform must re-issue `enableEnterpriseAttestation` before EA
-fires again. The reset itself is recorded in the audit journal. Removing the key
+So a factory reset leaves the org attestation installed but **switches EA off**
+and forgets who qualified for level 1: the managed platform must re-issue
+`enableEnterpriseAttestation`, and an administrator must re-send the RP list,
+before level-1 EA fires again. The reset itself is recorded in the audit journal. Removing the key
 and chain is the explicit, gated `attestation clear`. Nothing else clears them.
 
 ## Privacy note

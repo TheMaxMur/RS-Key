@@ -14,11 +14,11 @@
 //! version), .3.7 (serial, raw little-endian), .3.8 (pin/touch policy) and
 //! .3.9 (form factor).
 
-use rsa::RsaPrivateKey;
-use rsa::traits::PublicKeyParts;
 use rsk_crypto::{sha1, sha256, sha384};
-use rsk_openpgp::Rng;
-use rsk_openpgp::keys::{Curve, PrivKey, rsa_sign};
+use rsk_ec::{Curve, PrivKey};
+use rsk_rsa::RsaKey;
+use rsk_rsa::pkcs1v15::rsa_sign;
+use rsk_sdk::Rng;
 use rsk_sdk::Sw;
 
 use crate::files::{ALGO_ECCP384, MAX_EC_POINT, SLOT_ATTESTATION};
@@ -145,7 +145,7 @@ pub enum Spki<'a> {
 /// Who signs: the slot's own key (self-signed) or the F9 attestation key.
 pub enum Signer<'a> {
     Ec(&'a PrivKey),
-    Rsa(&'a RsaPrivateKey),
+    Rsa(&'a RsaKey),
     /// A pure-Ed25519 signer (PureEdDSA over the whole TBS, never a digest).
     Ed25519(&'a PrivKey),
 }
@@ -409,12 +409,12 @@ pub fn build_cert(
     let issuer_hash = match signer {
         Signer::Ec(k) | Signer::Ed25519(k) => {
             let mut pt = [0u8; MAX_EC_POINT];
-            let n = k.public_point(&mut pt)?;
+            let n = k.public_point(&mut pt).map_err(crate::ec_sw)?;
             sha1(&pt[..n])
         }
         Signer::Rsa(k) => {
-            let n = k.n().to_bytes_be();
-            let e = k.e().to_bytes_be();
+            let n = k.n_be();
+            let e = k.e_be();
             pub_hash(&Spki::Rsa { n: &n, e: &e })?
         }
     };
@@ -470,13 +470,15 @@ pub fn build_cert(
     let sig_len = match signer {
         Signer::Ec(k) => {
             let mut raw = [0u8; 96];
-            let rn = k.sign(digest, rng, &mut raw)?;
+            let rn = k.sign(digest, &mut raw).map_err(crate::ec_sw)?;
             ecdsa_der(&raw[..rn], &mut sig)?
         }
-        Signer::Rsa(k) => rsa_sign(k, digest, rng, &mut sig)?,
+        Signer::Rsa(k) => {
+            rsa_sign(k, digest, &mut crate::RsaRng(&mut *rng), &mut sig).map_err(crate::rsa_sw)?
+        }
         // PureEdDSA signs the whole TBS, not a digest; the 64-byte signature
         // goes straight into the BIT STRING (no ASN.1 wrapping).
-        Signer::Ed25519(k) => k.sign(tbs_bytes, rng, &mut sig)?,
+        Signer::Ed25519(k) => k.sign(tbs_bytes, &mut sig).map_err(crate::ec_sw)?,
     };
 
     // --- Certificate = SEQ { tbs, sigalg, BIT STRING sig }.

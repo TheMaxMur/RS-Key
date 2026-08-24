@@ -1,18 +1,28 @@
-# third_party — vendored upstream material
+# third_party — code from elsewhere
 
-`ibm-plex/` contains generated four-bit coverage data for the GUI fonts and the
-IBM Plex license. `scripts/generate_ui_fonts.py` generates the data from IBM Plex
-Sans and Mono files supplied by Nix. The font software uses the SIL Open Font
-License 1.1.
+Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Three
+unrelated kinds live here:
 
-## Upstream test suites
+- **Two external conformance suites** — `pico-fido-tests/`,
+  `openpgp-card-tests/` — vendored so the firmware can be validated without
+  checking out the upstream repos. They are **not** part of RS-Key's own test
+  suite (`tests/`, `cargo test`) — they are the upstream ecosystems' own tests,
+  kept runnable against this implementation. Everything below is about them.
+- **A vendored crate carrying a local fork** — `sequential-storage/` plus
+  `sequential-storage.patch`, wired into `[patch.crates-io]` by the root,
+  `fuzz/` and `tools/emu/` manifests. All three, or the emulator runs a
+  different KV store from the firmware. The patch file's own header is the
+  record of what each change is and why the fork stays inside `src/map.rs`.
+- **Generated font data** — `ibm-plex/`, the four-bit coverage tables the
+  trusted display draws its text from, emitted by
+  `scripts/generate_ui_fonts.py` from the Nix-pinned IBM Plex Sans/Mono files
+  (`scripts/check.sh` re-runs the generator and fails when the committed copy
+  drifted). Unlike the two above, this one **is compiled into the firmware** —
+  the display flavor links it — under **OFL-1.1**, which `ibm-plex/LICENSE.txt`
+  carries. OFL governs the font data, AGPL-3.0-only the rest of the image; the
+  two coexist because neither is a derivative of the other.
 
-Two external conformance suites, vendored so the firmware can be validated
-without checking out the upstream repos. They are **not** part of RS-Key's
-own test suite (`tests/`, `cargo test`) — they are the upstream ecosystems'
-own tests, kept runnable against this implementation.
-
-Both directories carry their own licenses, distinct from the repository's own
+Both suite directories carry their own licenses, distinct from the repository's own
 AGPL-3.0-only. Note the split between each file's **per-file header** (the
 operative license for that file) and the **bundled `LICENSE`** (the upstream
 repo's top-level license file):

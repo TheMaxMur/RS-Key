@@ -40,7 +40,8 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   USB *identity* (serial, strings) is cosmetic — never proof a device is genuine,
   attestation is (§3). The **enabled-applications mask is enforced**, though: a
   disabled application's applet stops answering (PIV/OpenPGP/OATH/OTP over CCID,
-  FIDO2/U2F over CTAPHID, the OTP keyboard), so a hostile host can turn one off.
+  FIDO2/U2F over **both** CTAPHID and CCID, the OTP keyboard), so a hostile host
+  can turn one off.
   That is a **reversible denial-of-service**, not a confidentiality or integrity
   break — the Management applet, the FIDO vendor command, and the OTP-HID
   identify/config slots are never gated, so any single transport can re-enable it,
@@ -56,6 +57,27 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   build/flash **`firmware-strict-config`**, which restores the presence/PIN gates
   and refuses the ungated transport writes ([build.md](build.md)). It is not the
   runtime flash flag `EF_HARDENED`.
+- **The FIDO applet answers on two transports, and the second one is easier to
+  reach.** CTAP2 and U2F are served over CCID as well as CTAPHID
+  ([protocol.md §5.2](protocol.md#52-ctap-over-ccid)), so any process that can talk
+  to `pcscd` can drive the whole CTAP surface — no exclusive HID handle, and none
+  of the platform gatekeeping a browser or the Windows WebAuthn stack applies to
+  its own FIDO path. **What that does and does not buy an attacker:** nothing a
+  credential gate would have stopped. Every operation still spends the same PIN,
+  the same pinUvAuthToken and the same physical touch, because the two transports
+  run the *same* applet over the **same `FidoState`** — one PIN/UV token, one
+  credential-management walk, and crucially **one** per-boot PIN-mismatch budget.
+  A second session state would have handed a host `PIN_MISMATCH_LIMIT` guesses per
+  transport instead of per power cycle, which is the restart-by-reboot attack
+  §6.5.5.6 exists to stop; that it is shared is enforced by construction (one
+  `&RefCell<FidoState>` reaches both) and pinned by
+  `both_transports_answer_from_one_session_state`. What it *does* buy is
+  **reachability**: a process that could not open the HID device can now open the
+  card. Treat FIDO as available to anything with card access, and use
+  `ykman config usb --disable fido2` (or `--disable u2f`) if that is not wanted —
+  the mask gates the two applications apart, over both transports. On the default
+  `0x1209:0x0001` identity most hosts never bind the CCID interface at all, so the
+  surface is absent there for an unrelated reason, not by design.
 - **The residual gap is *intent*. The trusted-display flavor closes it.** Because
   a standard key attests presence and possession, a malicious page can silently
   drive an authorized key over WebUSB to phish a real sign-in ([demonstrated
@@ -305,8 +327,10 @@ when it returns. That is what puts them out of reach of a parser bug — parsing
 runs before any store access, so at that moment neither key is anywhere in
 memory. It buys nothing against code execution, which can drive the same reads.
 Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
-internals, and heap temporaries inside the `rsa` crate. Short-lived,
-library-internal, not wipeable without forking the crates.
+internals, and heap limbs inside `num-bigint-dig` (which has no zeroizing `Drop`
+of its own — every value `rsk-rsa` owns rides in a `Zeroizing`, but a temporary
+the library allocates internally does not). Short-lived, library-internal, not
+wipeable without forking the crates.
 
 A WebAuthn **large-blob key is obtainable without user interaction**. CTAP 2.1
 §12.3 puts no UP/UV precondition on the `largeBlobKey` extension output — unlike
@@ -346,25 +370,26 @@ depth in case a future one keeps SRAM.
   policy) and `gitleaks` run in `scripts/check.sh` and the pre-commit hook.
 - Dependencies are pinned (`Cargo.lock`). The git dependencies are restricted
   to the embassy organization.
-- One known-unfixed advisory is accepted deliberately: RUSTSEC-2023-0071
-  (Marvin timing side channel in `rsa`), the OpenPGP RSA backend. It is
-  mitigated by per-operation base blinding on **every** private-key path
-  (PKCS#1 v1.5 sign, decipher, and the raw fallback `rsa_raw`). Rationale in
-  `deny.toml`. The [constant-time audit](ct-audit.md) verified that this
-  blinding leaves no unblinded private-exponent path.
+- **No vulnerability advisory is ignored.** The one that used to be —
+  RUSTSEC-2023-0071, the Marvin timing side channel in the `rsa` crate, which
+  has no fixed release — went away with the crate itself in 0.4.12; `rsk-rsa`
+  owns the key type and both private paths now. The mitigation that carve-out
+  rested on is still in force and is now the whole defence: per-operation base
+  blinding on **every** private-key path (PKCS#1 v1.5 sign, decipher, and the
+  raw fallback `rsa_raw`). The [constant-time audit](ct-audit.md) verified that
+  this blinding leaves no unblinded private-exponent path.
 
 ## Post-quantum notes
 
-ML-DSA-44 (COSE −48) and ML-DSA-65 (COSE −49) FIDO2 credentials (both the
-in-tree `rsk-mldsa` crate) with hedged signing (32 fresh DRBG bytes
-per signature; the hedge and expanded keys are zeroized). `rsk-mldsa` streams
-the FIPS 204 matrix A on the fly so ML-DSA-65's keygen+sign fit the RP2350
-stack. It is hand-written, so its constant-time posture is a source-level
+ML-DSA-44 (COSE −48), ML-DSA-65 (−49) and ML-DSA-87 (−50) FIDO2 credentials
+(all three the in-tree `rsk-mldsa` crate) with hedged signing (32 fresh DRBG
+bytes per signature; the hedge and expanded keys are zeroized). `rsk-mldsa`
+streams the FIPS 204 matrix A on the fly so even ML-DSA-87's keygen+sign fit
+the RP2350 stack — measured, its keygen frame is the largest in the image at
+123 KiB against a 205 KiB ceiling. It is hand-written, so its constant-time posture is a source-level
 claim (branch-free reductions, masked norm checks, no secret division), not
 proven at machine code. It is checked byte-for-byte against NIST ACVP KATs,
-with Kani proofs over the reductions and rounding. ML-DSA-87 (−50) is out of
-reach on this chip (keygen overflows the stack; its makeCredential response
-also overruns the CTAPHID message ceiling). ML-KEM-768 is compiled in as
+with Kani proofs over the reductions and rounding. ML-KEM-768 is compiled in as
 scaffolding but nothing calls it until a CTAP PQC PIN/UV protocol exists.
 None of these has a third-party audit yet, the same standing as the rest of
 the RustCrypto stack, tracked via cargo-audit/deny.

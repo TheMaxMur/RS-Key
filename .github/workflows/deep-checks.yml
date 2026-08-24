@@ -5,9 +5,8 @@
 # not part of the merge gate (docs/testing.md).
 #
 # Two cadences, because the suites no longer fit one. Every row that answers
-# "did today's tree break something" runs daily; the two that answer "how well is
-# this tree tested at all" are weeks-scale questions and run on Sunday, where
-# their runners do not compete with the daily rows.
+# "did today's tree break something" runs daily; the slower assurance sweeps run
+# on Sunday, where their runners do not compete with the daily rows.
 #
 # DAILY
 #   miri — fuzz/tests/miri.rs: every fuzz target's logic under Miri's UB
@@ -33,7 +32,7 @@
 #          shards and `heavy`, which together are the `all` roster of
 #          `scripts/kani.sh` (docs/testing.md). The fast tier of that same script runs
 #          per-PR in ci.yml; these four owe the whole roster between them. They
-#          are separate jobs for two measured reasons — `rsk-rescue`'s phy
+#          are separate jobs for two measured reasons — `rsk-phy`'s
 #          round-trip peaks at 11.1 GB and takes the runner down with it, so its
 #          death costs its own crate only; and the rest, run in one job, cost the
 #          sum of every crate's solving rather than the slowest shard's. Kani is
@@ -44,6 +43,15 @@
 #          would notice if it changed. **Advisory**, for the reason that script
 #          states at length: most survivors are not defects, so a gating row
 #          would be red every week.
+#   comutants — the semantic model mutants re-injected into production Rust
+#          (`scripts/comutate.py run`). Gating: every recorded code-level kill
+#          must still go red, and a new GAP is an abstraction-fidelity finding.
+#   formal — TLC over formal/: the model, its 44 mutants, their floors and the
+#          vacuity check (formal/run-tlc.sh `safety`). Gating. It also runs on
+#          any push touching formal/, so an edit to the model is checked at once
+#          rather than up to a week later. The `liveness` tier is deliberately
+#          not here — it needs a 12g heap, and 11.1 GB is where the kani `heavy`
+#          runner already died twice.
 #
 # `complexity` used to be here and is gone: scripts/check.sh already runs
 # scripts/complexity_gate.sh on every pull request, so the row re-proved a merge
@@ -58,7 +66,8 @@
 #   nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
 #   ./scripts/kani.sh all   (needs `cargo install kani-verifier` first — not nix)
 #   ./scripts/kani.sh light1   ./scripts/kani.sh heavy   # what the weekly rows run
-#   nix develop -c ./scripts/mutants-all.sh   (MUTANTS_SHARD=2/8 for one shard)
+#   nix develop -c ./scripts/mutants-all.sh   (MUTANTS_SHARD=2/12 for one shard)
+#   nix develop -c python scripts/comutate.py run
 #   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
 
 name: deep-checks
@@ -83,7 +92,9 @@ on:
         "scripts/fuzz-all.sh",
         "scripts/miri-all.sh",
         "scripts/mutants-all.sh",
+        "scripts/comutate.py",
         "scripts/kani.sh",
+        "formal/**",
       ]
 
 permissions:
@@ -322,7 +333,7 @@ jobs:
       # workspace members that are not under crates/ and the two that are
       # thumbv8m-only, so the exclusion is the whole of it; scripts/roster_gate.py
       # holds this row and the header's copy of it to that pair. The 80% floor is
-      # a regression alarm, not a target: 85.0% line over the 24 crates
+      # a regression alarm, not a target: 85.0% line over the host crates
       # (aarch64-apple-darwin), so a real drop fails and noise does not.
       - name: llvm-cov — host-crate line coverage, floored at 80%
         run: |
@@ -379,7 +390,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -399,13 +410,117 @@ jobs:
           key: mutants-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: mutants-${{ runner.os }}-
 
-      # 8 shards and 3 jobs each is a first estimate, not a measurement: the sweep
-      # that produced these numbers took 3 h over 13 232 mutants on 18 cores, and
-      # a hosted runner has a small fraction of that. Re-tune both from the first
-      # run's wall time rather than trusting the arithmetic.
+      # 12 shards, measured rather than estimated. `--shard` takes a CONTIGUOUS
+      # slice, not every n-th mutant, so a shard's crate mix — and with it the
+      # build output that accumulates on the runner's ~14 GB — is decided by where
+      # its boundaries fall. At 8 the 6th slice was `rsk-piv` … `rsk-rsa-asm` …
+      # `rsk-slip39`, 1802 mutants over 6 crates, and it took the runner down with
+      # it twice (SIGTERM at 85 % of the shard, the same 358 survivors both times,
+      # the tool healthy to the last line). At 12 it is ~1201 over 5, a third less
+      # accumulated build per job. A reduction in pressure, NOT a proven fix: what
+      # killed the host was never measurable from the log.
+      # The denominator is `strategy.job-total` and not a second hand-kept 12 —
+      # two numbers that must agree is how the shard space silently loses a slice.
       - name: mutants — would a test notice if this line changed?
         run: nix develop -c ./scripts/mutants-all.sh
         env:
-          MUTANTS_SHARD: ${{ matrix.shard }}/8
+          MUTANTS_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
           MUTANTS_JOBS: "3"
           HOST_TARGET: x86_64-unknown-linux-gnu
+
+  comutants:
+    if: github.event.schedule != '17 5 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: comutants-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'formal/comutants.toml') }}
+          restore-keys: comutants-${{ runner.os }}-
+
+      - name: co-refutation — inject every semantic defect into production Rust
+        run: |
+          set -o pipefail
+          nix develop -c python scripts/comutate.py run | tee "$RUNNER_TEMP/comutants.log"
+
+      - name: publish the fidelity matrix
+        if: always()
+        run: |
+          {
+            echo "### Co-refutation — model defects at code level"
+            echo '```'
+            cat "$RUNNER_TEMP/comutants.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The TLA+ model checker. It ran in no workflow at all until now: `floors.txt`,
+  # the vacuity check and the 44-mutant matrix were ratchets whose only puller was
+  # whoever remembered `./formal/run-tlc.sh`, on the one machine that had a jar at
+  # a hardcoded store path. The tool is pinned in the dev shell now, which is what
+  # makes this row possible.
+  #
+  # `safety`, not `all`: the liveness family needs the 12g heap `floors.txt` gives
+  # it, and 11.1 GB is where the kani `heavy` runner already died twice. The tier
+  # membership lives in formal/run-tlc.sh and nowhere else, so this row cannot
+  # drift from it — see that file for what `liveness` costs and where to run it.
+  #
+  # The row fails on RED (a mutant that should fire and did not, or an invariant
+  # that broke), on FLOOR (a GREEN that got smaller than its recorded floor) and
+  # on VACUOUS (a spec nothing enabled). `scripts/test_run_tlc.py`, collected by
+  # the merge gate, keeps the roadmap's four corruptions: broken jar, a Solo
+  # invariant that misses its mutant, one-state VACUOUS, and a muted Mut switch.
+  # Direct RED and FLOOR cases make all three job verdict boundaries explicit.
+  formal:
+    if: github.event.schedule != '17 5 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@ef8a148080ab6020fd15196c2084a2eea5ff2d25 # v22
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      # Shipped.cfg alone is 61 M distinct states at 1137 s on the author's
+      # machine; the rest of the matrix is seconds apiece. Two workers is what
+      # run-tlc.sh caps at, and the runner has four cores.
+      # `set -o pipefail` is load-bearing: a `run:` block is `bash -e` WITHOUT it,
+      # so the pipe below would report tee's exit code and a RED matrix would pass
+      # as green — the exact hole this row exists to close, in the row itself.
+      - name: formal — TLC over the model, its mutants and their floors
+        run: |
+          set -o pipefail
+          nix develop -c ./formal/run-tlc.sh safety | tee "$RUNNER_TEMP/formal.log"
+
+      - name: publish the matrix
+        if: always()
+        run: |
+          {
+            echo "### TLA+ — safety tier"
+            echo '```'
+            cat "$RUNNER_TEMP/formal.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: formal-logs-${{ github.run_id }}
+          path: formal/out/
+          if-no-files-found: ignore

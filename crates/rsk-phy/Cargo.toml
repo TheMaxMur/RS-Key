@@ -1,0 +1,28 @@
+[package]
+name = "rsk-phy"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+
+[features]
+# `scripts/kani.sh` only, and empty here — this crate pulls no hashing
+# backend. It exists because `cargo kani` re-invokes cargo once per selected
+# package, so the feature must name something on every crate a tier selects.
+kani-soft = []
+
+[dependencies]
+# `load`/`save`/`merge_save` come with the codec rather than being re-typed in
+# each of its five callers: the clamped read that keeps an over-long record
+# inside `PHY_MAX_SIZE` is a guard, not glue. Both are the platform tier, so the
+# edge points down — the same pair `rsk-store` takes.
+rsk-fs = { workspace = true }
+rsk-sdk = { workspace = true }
+
+[dev-dependencies]
+# RamStorage for the host tests (the same backend the applet crates use).
+rsk-fs = { workspace = true, features = ["test-util"] }

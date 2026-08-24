@@ -39,6 +39,12 @@ fn reset_wipes_state_and_regenerates() {
     fs.put(EF_LARGEBLOB, &[0xAB; 50]).unwrap();
     // The trusted-display device PIN: a host reset must clear it too (recovery path).
     fs.put(EF_DEVICE_PIN, &[8, 4, 1, 0, 0]).unwrap();
+    // The enterprise-attestation RP list is enterprise policy, and a reset is what
+    // hands the key to someone else — it goes with the rest of the FIDO state.
+    fs.put(crate::consts::EF_EA_RPIDS, &[0x11u8; 32]).unwrap();
+    // The credential-store tag summarises what the reset is erasing, so it goes too:
+    // a surviving tag would tell a platform its cache of the old store is still good.
+    fs.put(crate::consts::EF_CRED_STATE, &[0x22u8; 16]).unwrap();
     // An OpenPGP file (EF_PW3 = 0x1083) shares the Fs and must survive a FIDO
     // reset — it sits in the 0x10xx range right next to FIDO's own files.
     fs.put(0x1083, &[0xAB; 34]).unwrap();
@@ -70,6 +76,8 @@ fn reset_wipes_state_and_regenerates() {
     assert!(!fs.has_data(EF_CRED));
     // The device PIN is cleared by the reset (so a forgotten one is recoverable).
     assert!(!fs.has_data(EF_DEVICE_PIN));
+    assert!(!fs.has_data(crate::consts::EF_EA_RPIDS));
+    assert!(!fs.has_data(crate::consts::EF_CRED_STATE));
     // The OpenPGP file is untouched by the FIDO reset.
     assert!(
         fs.has_data(0x1083),
@@ -397,8 +405,8 @@ fn reset_sweep_fails_when_storage_does_not_converge() {
     assert_eq!(sweep(&mut ctx, is_fido_fid), Err(CtapError::Other));
 }
 
-/// `RESET_MAX_DELETES` is written as `4 * MAX_RESIDENT_CREDENTIALS + 13`, and the
-/// 13 is a hand-count of `is_fido_fid`'s fixed arm. Count the predicate instead of
+/// `RESET_MAX_DELETES` is written as `4 * MAX_RESIDENT_CREDENTIALS + 15`, and the
+/// 15 is a hand-count of `is_fido_fid`'s fixed arm. Count the predicate instead of
 /// trusting it: add a record there and the bound silently stops covering the
 /// applet, whose failure mode is a reset that gives up on a FULL device — the one
 /// place a stale constant costs the most.
@@ -429,7 +437,8 @@ fn reset_bound_is_exactly_the_fid_space() {
 #[test]
 fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
     use crate::consts::{
-        EF_ALWAYS_UV, EF_BACKUP_SEALED, EF_DEVICE_PIN, EF_KEY_DEV, EF_MINPINLEN, EF_PAUTHTOKEN,
+        EF_ALWAYS_UV, EF_BACKUP_SEALED, EF_DEVICE_PIN, EF_EA_RPIDS, EF_KEY_DEV, EF_MINPINLEN,
+        EF_PAUTHTOKEN,
     };
     for fid in [
         EF_PIN,
@@ -447,7 +456,14 @@ fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
     // The secrets themselves must stay in phase 1 — deferring the seed would invert
     // the rule and delete the gate first — and so must a grant, whose absence denies
     // rather than permits.
-    for fid in [EF_KEY_DEV.get(), EF_CRED, EF_LARGEBLOB, EF_PAUTHTOKEN.get()] {
+    for fid in [
+        EF_KEY_DEV.get(),
+        EF_CRED,
+        EF_LARGEBLOB,
+        EF_PAUTHTOKEN.get(),
+        EF_EA_RPIDS,
+        crate::consts::EF_CRED_STATE,
+    ] {
         assert!(
             !is_fido_gate_fid(fid),
             "{fid:#06x} is a secret or a grant, not a gate"
@@ -968,4 +984,92 @@ fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {
         },
         "factory_wipe",
     );
+}
+
+/// The live session dies BEFORE the first flash write of the wipe: `reset` calls
+/// `ctx.state.reset()` ahead of the seed deletion, so a cut at ANY point of the
+/// flash work leaves no RAM copy of a seed nothing stores. Asserted for every
+/// tear budget including 0 — the E76 regression moved the state reset behind the
+/// flash work, where the earliest tear returns with the session still live, and
+/// co-refutation measured that nothing at the code level noticed: the torn-reset
+/// harness tears the flash but never asked when the SESSION died.
+#[test]
+fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
+    let base = {
+        let mut fs = Fs::new(TearAfter {
+            items: Vec::new(),
+            budget: usize::MAX,
+        });
+        fs.scan();
+        let mut rng = SeqRng(11);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        fs.put(EF_CRED, &[0u8; 100]).unwrap();
+        fs.into_storage()
+    };
+    let live = base.items.len();
+
+    for budget in 0..=live {
+        let mut fs = Fs::new(TearAfter {
+            budget,
+            ..base.clone()
+        });
+        fs.scan();
+        let mut rng = SeqRng(3);
+        let mut state = FidoState::new();
+        // The RAM copy the wipe must not leave behind, planted the way
+        // `Ctx::load_keydev` caches it.
+        state.keydev_dec = Some([0x5A; 32]);
+        {
+            let mut presence = crate::AlwaysConfirm;
+            let mut ctx = Ctx {
+                presence: &mut presence,
+                dev: dev(),
+                fs: &mut fs,
+                rng: &mut rng,
+                state: &mut state,
+                now_ms: 0,
+            };
+            let _ = reset(&mut ctx);
+        }
+        assert!(
+            state.keydev_dec.is_none(),
+            "tear at {budget} returned with the session still holding the seed \
+             the wipe was destroying"
+        );
+    }
+}
+
+#[test]
+fn a_reset_sweeps_more_secrets_than_one_batch_holds() {
+    // `sweep` deletes in 64-key batches, and nothing drove it past the first
+    // one: the bound that keeps `keys[n]` in range was untested, and the
+    // mutation that breaks it is an out-of-bounds index, not a wrong answer.
+    // PIV has this test for its own reset (`reset_sweeps_more_files_than_one_batch`);
+    // FIDO's sweep is the same shape and had none — sweep by class, not by site.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(3);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    for i in 0..80u16 {
+        fs.put(EF_CRED + i, &[0xC0; 8]).unwrap();
+    }
+    let mut state = FidoState::new();
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        reset(&mut ctx).unwrap();
+    }
+    for i in 0..80u16 {
+        assert!(
+            !fs.has_data(EF_CRED + i),
+            "0x{:04X} survived a reset that spans two batches",
+            EF_CRED + i
+        );
+    }
 }

@@ -14,7 +14,7 @@ It builds every artifact reproducibly, hashes it, and signs the manifest.
   | flavor | flags | use |
   |---|---|---|
   | `default` | touch | the normal build; start here |
-  | `pqc` | + advertise-pqc | advertises ML-DSA-65 and ML-DSA-44 in getInfo (breaks old Firefox) |
+  | `pqc` | + advertise-pqc | advertises all three ML-DSA sets in getInfo (breaks old Firefox) |
   | `fips` | + fips-profile | the locked FIPS-style policy ([guides/fips.md](guides/fips.md)) |
   | `fips-pqc` | + both | |
   | `strong-pin` | + strong-pin | 6-code-point PIN floor + trivial-PIN block ([build.md](build.md), [threat-model.md](threat-model.md)) |
@@ -31,10 +31,17 @@ It builds every artifact reproducibly, hashes it, and signs the manifest.
   All fourteen present the default **RS-Key** USB identity (`0x1209:0x0001`). For the
   YubiKey-interop identity, build `VIDPID=Yubikey5` yourself ([build.md](build.md)).
 - **`SHA256SUMS`**: a checksum for every image and the SBOM.
-- **`SHA256SUMS.cosign.bundle`**: a keyless [cosign](https://docs.sigstore.dev/)
+- **`SHA256SUMS.sigstore.json`**: a keyless [cosign](https://docs.sigstore.dev/)
   signature of `SHA256SUMS` (sigstore/Fulcio; the signer is the reusable build
   workflow's GitHub OIDC identity, `release-build.yml`, see the verify step
-  below; logged in Rekor).
+  below; logged in Rekor). Releases up to and including v0.4.10 carry the same
+  file under the older name `SHA256SUMS.cosign.bundle` — identical bytes, and
+  `.sigstore.json` is simply the canonical extension for what it always was
+  (`application/vnd.dev.sigstore.bundle.v0.3+json`). Those releases are immutable
+  and cannot be renamed in place, so both names exist in the wild.
+- **`rs-key-<tag>.intoto.jsonl`**: the build-provenance attestation, as a file.
+  The authoritative copy stays in GitHub's attestation API and in Rekor; this one
+  is for checking a download offline.
 - **`rs-key-<tag>-sbom.cdx.json`**: a CycloneDX software bill of materials for the
   firmware's dependency tree.
 
@@ -46,7 +53,9 @@ It builds every artifact reproducibly, hashes it, and signs the manifest.
 
 ## Verify a download
 
-Grab the images you want plus `SHA256SUMS` and `SHA256SUMS.cosign.bundle`.
+Grab the images you want plus `SHA256SUMS` and the signature —
+`SHA256SUMS.sigstore.json`, or `SHA256SUMS.cosign.bundle` on releases up to
+v0.4.10. Same bytes either way; substitute the name you actually downloaded.
 
 ```sh
 # 1. the checksums file is authentic (keyless cosign — needs cosign >= 2.0)
@@ -54,7 +63,7 @@ Grab the images you want plus `SHA256SUMS` and `SHA256SUMS.cosign.bundle`.
 #    thin release.yml caller: a workflow_call job's OIDC identity is its own
 #    job_workflow_ref, so that is what the Fulcio cert's SAN carries.
 cosign verify-blob \
-  --bundle SHA256SUMS.cosign.bundle \
+  --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github\.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   SHA256SUMS

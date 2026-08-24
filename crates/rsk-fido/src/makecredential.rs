@@ -21,7 +21,7 @@ use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
 use zeroize::Zeroize;
 
-use rsk_crypto::MLDSA65_PK_LEN;
+use rsk_crypto::MLDSA87_PK_LEN;
 use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_fs::{Fs, Storage};
@@ -31,11 +31,12 @@ use crate::cert;
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     AAGUID, ALG_ED25519, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_ESP256,
-    ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED,
-    CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521,
-    EF_ATT_CHAIN, EF_EA_ENABLED, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP,
-    FLAG_UV, LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_MIN_PIN_RPIDS,
-    MAX_RESIDENT_CREDENTIALS,
+    ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87, ATT_FMT_NONE, ATT_FMT_PACKED,
+    CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED, CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65,
+    CURVE_MLDSA87, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN, EF_EA_ENABLED,
+    EF_EA_RPIDS, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV,
+    LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_EA_RPIDS,
+    MAX_MIN_PIN_RPIDS, MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
@@ -60,18 +61,34 @@ const MAX_EXCLUDE: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
 const AUTH_DATA_HEADER: usize = 32 + 1 + 4 + 16 + 2;
 /// Ceiling of `encode_mc_extensions`' output (its scratch buffer, below).
 const MC_EXT_MAX: usize = 192;
-/// Largest AKP COSE public key `cose_public` emits — the ML-DSA-65 case: a
-/// 3-entry map (1) with kty (1+1), alg −49 (1+2) and the 1952-byte pk wrapped as
-/// key −1 (1) + a >255-byte CBOR byte-string header (3) → 10 + pk = 1962.
-const COSE_AKP_MLDSA65_MAX: usize = 1 + (1 + 1) + (1 + 2) + (1 + 3) + MLDSA65_PK_LEN;
-/// authData scratch, sized for the ML-DSA-65 worst case (a non-resident box at
+/// Largest AKP COSE public key `cose_public` emits — the ML-DSA-87 case: a
+/// 3-entry map (1) with kty (1+1), alg −50 (1+2) and the 2592-byte pk wrapped as
+/// key −1 (1) + a >255-byte CBOR byte-string header (3) → 10 + pk = 2602.
+const COSE_AKP_MLDSA87_MAX: usize = 1 + (1 + 1) + (1 + 2) + (1 + 3) + MLDSA87_PK_LEN;
+/// authData scratch, sized for the ML-DSA-87 worst case (a non-resident box at
 /// `CRED_BOX_MAX` + the AKP COSE key + full extensions) plus the 32-byte
 /// clientDataHash appended in place for the attestation signature.
-const AD_BUF: usize = 3072;
+const AD_BUF: usize = 3840;
 const _: () = assert!(
-    AUTH_DATA_HEADER + CRED_BOX_MAX + COSE_AKP_MLDSA65_MAX + MC_EXT_MAX + 32 <= AD_BUF,
-    "authData buffer too small for the ML-DSA-65 worst case",
+    AUTH_DATA_HEADER + CRED_BOX_MAX + COSE_AKP_MLDSA87_MAX + MC_EXT_MAX + 32 <= AD_BUF,
+    "authData buffer too small for the ML-DSA-87 worst case",
 );
+
+/// The worst-case makeCredential response **minus** the attestation chain: every
+/// byte the chain must share `maxMsgSize` with. [`cert::ATT_CHAIN_MAX`] subtracts
+/// this from the transport ceiling, so growing any term here shrinks the chain the
+/// device accepts rather than letting it mint a response CTAPHID cannot carry.
+/// ML-DSA-87's 2592-byte key is what made this tight: at ML-DSA-65 there were 640
+/// bytes of slack and the arithmetic never had to be written down.
+pub(crate) const MC_RESPONSE_SANS_CHAIN: usize = 1 // response map header
+    + 8 // 1: fmt "packed"
+    + 4 // 2: key + authData byte-string header
+    + AUTH_DATA_HEADER + CRED_BOX_MAX + COSE_AKP_MLDSA87_MAX + MC_EXT_MAX
+    + 1 + 1 // 3: key + attStmt map header
+    + 7 // "alg" + value
+    + 4 + 2 + crate::ec::MAX_DER_SIG // "sig" + header + signature
+    + 4 + 1 // "x5c" + array header
+    + 3 * cert::ATT_CHAIN_MAX_CERTS; // one byte-string header per certificate
 
 /// Map a requested COSE alg to the `(alg, curve)` the credential is created with,
 /// or `None` if unsupported. The alg returned is the one the platform **asked
@@ -95,6 +112,7 @@ fn alg_to_curve(alg: i64) -> Option<(i64, u8)> {
         // response overruns the CTAPHID message ceiling.
         ALG_MLDSA44 => Some((ALG_MLDSA44, CURVE_MLDSA44)),
         ALG_MLDSA65 => Some((ALG_MLDSA65, CURVE_MLDSA65)),
+        ALG_MLDSA87 => Some((ALG_MLDSA87, CURVE_MLDSA87)),
         _ => None,
     }
 }
@@ -134,6 +152,19 @@ struct Request<'a> {
     /// platform-managed (full attestation by the device key). §6.1.2 step 9 keys
     /// on the field being **present**, so `None` and `Some(0)` differ.
     enterprise_attestation: Option<u64>,
+    /// attestationFormatsPreference (request field 0x0B), already reduced to the
+    /// only decision it can drive here.
+    att_fmt_pref: AttFmtPref,
+}
+
+/// What `attestationFormatsPreference` asks of an authenticator that emits exactly
+/// one format. CTAP 2.2: a list of exactly `["none"]` means omit attestation, while
+/// the lowest-index-supported rule needs two formats to choose between — so every
+/// other list, and an absent field, leave `packed`.
+#[derive(PartialEq, Eq)]
+enum AttFmtPref {
+    Packed,
+    NoneOnly,
 }
 
 fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
@@ -163,6 +194,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         ext_large_blob: McInput::Absent,
         hmac_secret_mc: HmacSecretReq::default(),
         enterprise_attestation: None,
+        att_fmt_pref: AttFmtPref::Packed,
     };
 
     let n = def_map(&mut d)?;
@@ -188,10 +220,30 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
             8 => req.pin_uv_auth_param = Some(cbor(d.bytes())?),
             9 => req.pin_uv_auth_protocol = Some(cbor(d.u32())? as u64),
             10 => req.enterprise_attestation = Some(cbor(d.u32())? as u64),
+            11 => req.att_fmt_pref = parse_att_fmt_pref(&mut d)?,
             _ => skip_value(&mut d)?,
         }
     }
     Ok(req)
+}
+
+/// Reduce `attestationFormatsPreference` (request key 0x0B) to the decision this
+/// authenticator can act on. The array is walked whole either way — the caller's key
+/// walk resumes immediately after it, so a partly-read value would desynchronise it.
+fn parse_att_fmt_pref(d: &mut Decoder<'_>) -> Result<AttFmtPref, CtapError> {
+    let n = def_arr(d)?;
+    let mut first = "";
+    for i in 0..n {
+        let fmt = cbor(d.str())?;
+        if i == 0 {
+            first = fmt;
+        }
+    }
+    Ok(if n == 1 && first == ATT_FMT_NONE {
+        AttFmtPref::NoneOnly
+    } else {
+        AttFmtPref::Packed
+    })
 }
 
 /// Parse the `rp` PublicKeyCredentialRpEntity (request key 2) into `req`.
@@ -412,19 +464,26 @@ pub fn make_credential<S: Storage, R: Rng>(
     result
 }
 
-/// Whether `rp_id` is on the built-in vendor-facilitated (type 1) enterprise
-/// attestation list. Shipping firmware carries an EMPTY list — no RP qualifies,
-/// so type-1 EA never fires by default. The `ea-conformance-rpid` feature adds the
-/// FIDO Conformance Tool's fixed test RPID so its Enterprise-Attestation type-1
-/// case can be exercised; it is never enabled in a shipped image.
-fn rp_eligible_for_vendor_ea(rp_id: &str) -> bool {
-    let _ = rp_id;
+/// Whether the RP is on the vendor-facilitated (type 1) enterprise attestation
+/// list — `EF_EA_RPIDS`, written by `config::set_ea_rpids`. An absent record is an
+/// empty list, so a device that has never been provisioned (or upgraded from a
+/// firmware without the record) qualifies no RP and type-1 EA never fires.
+/// The `ea-conformance-rpid` feature adds the FIDO Conformance Tool's fixed test
+/// RPID so its Enterprise-Attestation type-1 case can be exercised with no
+/// provisioning step; it is never enabled in a shipped image.
+fn rp_eligible_for_vendor_ea<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> bool {
     #[cfg(feature = "ea-conformance-rpid")]
-    if rp_id == "enterprisetest.certinfra.fidoalliance.org" {
+    if *rp_id_hash == sha256(EA_CONFORMANCE_RPID.as_bytes()) {
         return true;
     }
-    false
+    let mut buf = [0u8; 32 * MAX_EA_RPIDS];
+    let n = fs.read(EF_EA_RPIDS, &mut buf).unwrap_or(0);
+    buf[..n].chunks_exact(32).any(|h| h == rp_id_hash)
 }
+
+/// The FIDO Conformance Tool's fixed Enterprise-Attestation RPID.
+#[cfg(feature = "ea-conformance-rpid")]
+const EA_CONFORMANCE_RPID: &str = "enterprisetest.certinfra.fidoalliance.org";
 
 /// CTAP2.1 PIN/UV enforcement (§6.1.2 steps 6–11): verifies a `pinUvAuthParam`
 /// against the token, or runs built-in UV, and reports what the response carries.
@@ -655,21 +714,30 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // Attestation over authData ‖ clientDataHash.
     ad[ad_len..ad_len + 32].copy_from_slice(req.client_data_hash);
     // `ea_performed` — platform-managed (type 2), or vendor-facilitated (type 1)
-    // for an RP on the built-in enterprise list (empty in shipping firmware) —
+    // for an RP on the stored enterprise list (`EF_EA_RPIDS`, empty until written) —
     // presents the org/EP cert and sets the `ep` flag. A type-1 request for a
     // non-listed RP is NOT enterprise: full attestation with the device's own
     // cert and no `ep` (CTAP2.1 §6.1.3, conformance Enterprise-Attestation F-6).
     let ea_performed = req.enterprise_attestation == Some(2)
-        || (req.enterprise_attestation == Some(1) && rp_eligible_for_vendor_ea(req.rp_id));
+        || (req.enterprise_attestation == Some(1) && rp_eligible_for_vendor_ea(ctx.fs, rp_id_hash));
     // Every credential ships packed **basic** attestation: the device key signs and
     // the x5c leaf is its cert. Both alternatives break clients — an empty
     // `fmt:"none"` statement is rejected by OpenSSH < 10.0, which verifies any
     // x5c-less credential unconditionally, and a packed EdDSA self-attestation fails
     // on Windows/WinHello (issue #26). Basic attestation signs with ES256 whatever
     // the credential algorithm is, so neither path is reached.
+    // CTAP 2.2 `attestationFormatsPreference` of exactly ["none"]: the platform
+    // asked for no attestation, so none is *computed* — the ES256 signature and the
+    // cert read are skipped, not produced and dropped. Enterprise attestation still
+    // wins when it was actually performed: it is explicitly configured and strictly
+    // stronger, and answering it with an empty statement would discard it.
+    let omit_att = req.att_fmt_pref == AttFmtPref::NoneOnly && !ea_performed;
     let mut att = AttBufs::new();
-    let (sig_len, chain_len, certs) =
-        make_attestation(ctx, seed, &ad[..ad_len + 32], ea_performed, &mut att)?;
+    let (sig_len, chain_len, certs) = if omit_att {
+        (0, 0, 0)
+    } else {
+        make_attestation(ctx, seed, &ad[..ad_len + 32], ea_performed, &mut att)?
+    };
 
     // largeBlobKey response field (0x05) — resident credentials only.
     let large_blob_key = if req.ext_large_blob_key == Some(true) && req.rk {
@@ -700,6 +768,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
             chain_len,
             certs,
             ea_performed,
+            omitted: omit_att,
         },
         large_blob_key,
         large_blob_supported,
@@ -733,15 +802,20 @@ struct AttShape {
     certs: u8,
     /// Enterprise attestation was actually performed, so `ep` (field 4) is set.
     ea_performed: bool,
+    /// The platform asked for `none`, so `fmt` is "none" and attStmt is empty.
+    omitted: bool,
 }
 
 /// Encode the makeCredential response: `{1: fmt, 2: authData, 3: attStmt
 /// [, 4: ep] [, 5: largeBlobKey] [, 6: unsignedExtensionOutputs]}`.
 ///
-/// `fmt` is always `"packed"` and attStmt is always `{alg, sig, x5c}` — basic
-/// attestation with the device cert, or the org chain when EA was performed. The
-/// three keys are already in CTAP2 canonical order. `ep` appears only when EA was
-/// actually performed. Fields 5 and 6 are the two mutually exclusive large-blob
+/// `fmt` is `"packed"` with attStmt `{alg, sig, x5c}` — basic attestation with the
+/// device cert, or the org chain when EA was performed — unless the request asked
+/// for `none`, which is `fmt:"none"` and an EMPTY attStmt. The empty map is written,
+/// not omitted: field 3 is required, and a reader that finds no attStmt at all sees
+/// an incomplete attestation object rather than a none-format one. The three keys
+/// are already in CTAP2 canonical order. `ep` appears only when EA was actually
+/// performed. Fields 5 and 6 are the two mutually exclusive large-blob
 /// designs, so at most one of them is ever present.
 fn encode_mc_response(
     out: &mut [u8],
@@ -757,15 +831,25 @@ fn encode_mc_response(
             + u64::from(large_blob_key.is_some())
             + u64::from(large_blob_supported),
     )
-    .and_then(|e| e.u8(1)?.str("packed"))
+    .and_then(|e| {
+        e.u8(1)?.str(if shape.omitted {
+            ATT_FMT_NONE
+        } else {
+            ATT_FMT_PACKED
+        })
+    })
     .and_then(|e| e.u8(2)?.bytes(ad))
     .and_then(|e| e.u8(3))
     .map_err(|_| CtapError::Other)?;
-    enc.map(3)
-        .and_then(|e| e.str("alg")?.i64(ALG_ES256))
-        .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
-        .map_err(|_| CtapError::Other)?;
-    encode_x5c(&mut enc, &att.chain[..shape.chain_len], shape.certs)?;
+    if shape.omitted {
+        enc.map(0).map_err(|_| CtapError::Other)?;
+    } else {
+        enc.map(3)
+            .and_then(|e| e.str("alg")?.i64(ALG_ES256))
+            .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
+            .map_err(|_| CtapError::Other)?;
+        encode_x5c(&mut enc, &att.chain[..shape.chain_len], shape.certs)?;
+    }
     if shape.ea_performed {
         enc.u8(4)
             .and_then(|e| e.bool(true)) // ep: enterprise attestation used
@@ -839,7 +923,11 @@ fn make_attestation<S: Storage, R: Rng>(
             .fs
             .read(EF_ATT_CHAIN, &mut att.chain[..])
             .map(|n| n.min(att.chain.len()))
-            .filter(|&n| cert::att_chain_count(&att.chain[..n]) > 0)
+            // Intact, not merely non-empty: a chain stored under an older, larger
+            // cap reads back truncated with its count intact, and emitting it would
+            // fail the whole registration. Falling through here attests with the
+            // device key instead, so an upgraded device still registers.
+            .filter(|&n| cert::att_chain_intact(&att.chain[..n]))
             .ok_or(CtapError::Other)?;
         let count = cert::att_chain_count(&att.chain[..cl]);
         Ok((sl, cl, count))
@@ -974,6 +1062,11 @@ fn rp_min_pin_len<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> u8 {
     }
     0
 }
+
+/// The phase-4 trace reader (`formal/TraceSecurity.tla`).
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+#[path = "makecredential_assurance.rs"]
+pub mod assurance;
 
 #[cfg(test)]
 #[path = "makecredential_tests.rs"]

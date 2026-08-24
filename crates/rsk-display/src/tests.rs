@@ -301,27 +301,15 @@ impl TestRng {
     }
 }
 
-macro_rules! impl_rng {
-    ($($t:path),+ $(,)?) => {$(
-        impl $t for TestRng {
-            fn fill(&mut self, buf: &mut [u8]) {
-                for chunk in buf.chunks_mut(8) {
-                    let n = self.next().to_le_bytes();
-                    let len = chunk.len();
-                    chunk.copy_from_slice(&n[..len]);
-                }
-            }
+impl rsk_sdk::Rng for TestRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        for chunk in buf.chunks_mut(8) {
+            let n = self.next().to_le_bytes();
+            let len = chunk.len();
+            chunk.copy_from_slice(&n[..len]);
         }
-    )+};
+    }
 }
-
-impl_rng!(
-    rsk_fido::Rng,
-    rsk_openpgp::Rng,
-    rsk_oath::Rng,
-    rsk_otp::Rng,
-    rsk_rescue::Rng,
-);
 
 /// The device identity every test seals against. Fixed, so a record written by one
 /// helper unseals for another.
@@ -440,7 +428,7 @@ pub fn nowhere() -> rsk_ui::Point {
 pub fn pin_key(key: rsk_ui::PinKey) -> rsk_ui::Point {
     for row in 0..rsk_ui::PIN_ROWS {
         for col in 0..rsk_ui::PIN_COLS {
-            if rsk_ui::pin_grid_key(col, row) == key {
+            if rsk_ui::pin_grid_key(col, row, &rsk_ui::PinLayout::identity()) == key {
                 return center(rsk_ui::pin_key_rect(col, row));
             }
         }
@@ -537,6 +525,37 @@ fn the_marquee_buffer_keeps_antialiased_title_edges() {
     );
 }
 
+/// The band buffer used to refuse any colour it could not place on the TEXT/PANEL_BG
+/// ramp, and `render_marquee_frame` answered that refusal by zeroing the buffer -- so
+/// one off-ramp pixel blanked the whole title. The 1-bit mask this replaced took the
+/// tolerant rule instead: not the background means ink. Keep that rule.
+#[test]
+fn an_off_ramp_colour_lands_as_ink_rather_than_refusing_the_frame() {
+    let band = rsk_ui::PIN_TITLE_BAND;
+    let mut coverage = [0u8; MARQUEE_COVERAGE_BYTES];
+    {
+        let mut target = BandCoverage::new(&mut coverage, band);
+        let at = |x: u16, y: u16| EgPoint::new(x as i32, y as i32);
+        target
+            .draw_iter([
+                Pixel(at(band.x, band.y), rsk_ui::theme::ACCENT),
+                Pixel(at(band.x + 1, band.y), rsk_ui::theme::PANEL_BG),
+            ])
+            .unwrap();
+    }
+    assert_eq!(packed_coverage(&coverage, 0), rsk_ui::aa::COVERAGE_MAX);
+    assert_eq!(packed_coverage(&coverage, 1), 0);
+}
+
+/// The band target cannot fail, and that is the point: an error type here is a way for
+/// a future frame to come back empty. `Infallible` is what removes the branch. Checked
+/// at compile time -- the body type-checks whether or not the test is run.
+#[test]
+fn the_band_target_has_no_way_to_fail() {
+    fn infallible<D: DrawTarget<Error = core::convert::Infallible>>() {}
+    infallible::<BandCoverage<'static>>();
+}
+
 #[test]
 fn the_marquee_buffer_drops_a_pixel_outside_the_band() {
     let band = rsk_ui::PIN_TITLE_BAND;
@@ -582,6 +601,7 @@ fn a_declined_pin_offer_is_not_made_twice() {
     let env = Env::new();
     let cfg = rsk_ui::DisplayConfig {
         pin_declined: true,
+        scramble_pin: false,
         ..Default::default()
     };
     env.fs
@@ -600,6 +620,7 @@ fn boot_restores_the_saved_display_settings() {
         brightness: 2,
         sleep_secs: 15,
         pin_declined: false,
+        scramble_pin: false,
     };
     env.fs
         .borrow_mut()

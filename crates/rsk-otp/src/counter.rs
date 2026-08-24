@@ -13,6 +13,7 @@ use crate::USE_COUNTER_MAX;
 /// that `(use, session)` pair is the ordering a Yubico validation server uses to
 /// reject a replay. Returns `(counter, session, persist)`; `persist` is `true`
 /// exactly when `counter` moved and therefore has to reach flash.
+/// Refines `RSKeyAppletPolicies!OtpCounterNeverRepeats` — SEC-POL-006.
 pub(crate) fn next_use_counter(counter: u16, session: u8) -> (u16, u8, bool) {
     let new_session = session.wrapping_add(1);
     // Guard the value about to be stored, not the one already stored: at the

@@ -310,6 +310,17 @@ impl EmuDisplayHooks {
     }
 }
 
+/// Hands the applet-tier randomness seam ([`rsk_sdk::Rng`]) to `rsk-rsa`, which
+/// declares its own identical one two tiers down — the same bridge `firmware`'s
+/// `core1::SdkRng` is.
+struct EmuRsaRng<'a>(&'a mut dyn rsk_sdk::Rng);
+
+impl rsk_rsa::Rng for EmuRsaRng<'_> {
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.0.fill(buf);
+    }
+}
+
 impl rsk_display::Hooks for EmuDisplayHooks {
     fn set_backlight(&mut self, duty: u16) {
         self.duty.set(duty);
@@ -398,11 +409,14 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     fn rsa_search_progress(
         &mut self,
         nbits: usize,
-        rng: &mut dyn rsk_openpgp::Rng,
+        rng: &mut dyn rsk_sdk::Rng,
         on_tick: &mut dyn FnMut(),
-    ) -> Option<Box<rsk_openpgp::keys::RsaPrivateKey>> {
-        let mut keygen = rsk_openpgp::keys::RsaKeygen::new(nbits);
-        let mut sieve = rsk_rsa_asm::IncrementalSieve::new();
+    ) -> Option<Box<rsk_rsa::RsaKey>> {
+        // `rsk-rsa` declares its own `Rng`: it is an algorithm crate two tiers
+        // below the applet seam and may not reach up for `rsk_sdk::Rng`.
+        let rng = &mut EmuRsaRng(rng);
+        let mut keygen = rsk_rsa::RsaKeygen::new(nbits);
+        let mut sieve = rsk_rsa::IncrementalSieve::new();
         (self.repaint)();
         let mut shown = std::time::Instant::now();
         let found = loop {
@@ -412,9 +426,9 @@ impl rsk_display::Hooks for EmuDisplayHooks {
                 shown = std::time::Instant::now();
             }
             match keygen.step(&mut sieve, rng) {
-                rsk_openpgp::keys::RsaStep::Done(key) => break Some(key),
-                rsk_openpgp::keys::RsaStep::Failed => break None,
-                rsk_openpgp::keys::RsaStep::More => {}
+                rsk_rsa::RsaStep::Done(key) => break Some(key),
+                rsk_rsa::RsaStep::Failed => break None,
+                rsk_rsa::RsaStep::More => {}
             }
         };
         // The window still holds the last accepted candidate — a prime of the key

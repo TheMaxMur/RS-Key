@@ -158,6 +158,134 @@ pub fn parse_script(text: &str) -> Result<Vec<Tap>, String> {
     Ok(out)
 }
 
+/// A panel point that hits NOTHING: the lifted sample a settle is made of.
+///
+/// Searched rather than written down, because a literal would go stale the first
+/// time a control grows. The pad layout it checks is the identity one — with
+/// scrambling on, a scrambled key could sit here, which is why a settle is a
+/// synchronisation device and not a promise that nothing was pressed.
+pub fn nowhere() -> rsk_ui::Point {
+    let miss = |p| {
+        rsk_ui::hit_nav(p).is_none()
+            && rsk_ui::hit_pin(p, &rsk_ui::PinLayout::identity()).is_none()
+            && rsk_ui::hit_settings_root(p).is_none()
+            && rsk_ui::hit_security(p).is_none()
+            && rsk_ui::hit_onboard(p).is_none()
+            && !rsk_ui::hit_title_back(p)
+            && !rsk_ui::ALLOW_RECT.contains(p)
+            && !rsk_ui::DENY_RECT.contains(p)
+    };
+    (0..rsk_ui::PANEL_H)
+        .flat_map(|y| (0..rsk_ui::PANEL_W).map(move |x| rsk_ui::Point::new(x, y)))
+        .find(|&p| miss(p))
+        .expect("every pixel of the panel is a control")
+}
+
+/// Resolve a control's NAME to the point that hits it, so a suite speaks the
+/// vocabulary the UI owns rather than pixel coordinates that go stale the first
+/// time a control moves. Searched with the panel's own hit test, which is what
+/// makes the two agree by construction.
+///
+/// The pad resolves against the IDENTITY layout. With `Scramble PIN pad` on
+/// (Settings → Security, off by default) the digits are laid out afresh for every
+/// entry and nothing outside the panel can know where they went — that is the
+/// setting doing its job, not a gap here, and a suite that turns it on must drive
+/// the pad by coordinate or not at all.
+pub fn resolve(name: &str) -> Option<rsk_ui::Point> {
+    let find = |hit: &dyn Fn(rsk_ui::Point) -> bool| {
+        (0..rsk_ui::PANEL_H)
+            .flat_map(|y| (0..rsk_ui::PANEL_W).map(move |x| rsk_ui::Point::new(x, y)))
+            .find(|&p| hit(p))
+    };
+    let key = |want: rsk_ui::PinKey| {
+        find(&move |p| rsk_ui::hit_pin(p, &rsk_ui::PinLayout::identity()) == Some(want))
+    };
+    match name {
+        "onboard skip" => find(&|p| rsk_ui::hit_onboard(p) == Some(rsk_ui::OnboardChoice::Skip)),
+        "allow" => find(&|p| rsk_ui::ALLOW_RECT.contains(p)),
+        "deny" => find(&|p| rsk_ui::DENY_RECT.contains(p)),
+        "back" => find(&|p| rsk_ui::hit_title_back(p)),
+        "nav home" => find(&|p| rsk_ui::hit_nav(p) == Some(rsk_ui::NavTab::Home)),
+        "key ok" => key(rsk_ui::PinKey::Ok),
+        "key cancel" => key(rsk_ui::PinKey::Cancel),
+        "nowhere" => Some(nowhere()),
+        _ => match name.strip_prefix("key ")?.parse::<u8>() {
+            Ok(d) if d < 10 => key(rsk_ui::PinKey::Digit(d)),
+            _ => None,
+        },
+    }
+}
+
+/// One socket line: `x,y[,hold_ms[,gap_ms]]` as a file carries it, or a name from
+/// [`resolve`] with the same optional tail (`allow,800` is the consent hold).
+pub fn parse_line(line: &str) -> Result<Vec<Tap>, String> {
+    let (head, tail) = match line.find(',') {
+        Some(i) => (&line[..i], &line[i..]),
+        None => (line, ""),
+    };
+    let head = head.trim();
+    if head.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        return parse_script(line);
+    }
+    let at = resolve(head).ok_or_else(|| format!("{head:?} is not a control this panel has"))?;
+    parse_script(&format!("{},{}{tail}", at.x, at.y))
+}
+
+/// Drive the pad from a socket: one contact per line, the `--taps` grammar or a
+/// control's name, plus `settle` for the two lifted samples a boundary needs.
+///
+/// This exists because the recording apparatus had no finger. `tests/*.py` reach
+/// the device over CTAPHID and nothing else, so a flow that asks the panel for a
+/// PIN could not be driven from a suite — and the one recording the formal replay
+/// is held to therefore had `builtin_uv` false in every event. `--taps` cannot
+/// close that: a script is queued blind and consumed whenever the flow next
+/// polls, so it races the host commands it is supposed to answer.
+///
+/// **The channel is what synchronises, exactly as it does in the crate's own
+/// display tests: a bound of one.** `send` returns when the pad has room, which
+/// after the first contact means it has TAKEN the previous one, and the `ok`
+/// answering a line is written only then. A suite that reads `ok` before sending
+/// its next command knows where the finger is.
+pub fn serve(listener: std::net::TcpListener, tx: std::sync::mpsc::SyncSender<Tap>) {
+    for stream in listener.incoming().flatten() {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let Ok(reading) = stream.try_clone() else {
+                return;
+            };
+            let mut out = stream;
+            for line in std::io::BufRead::lines(std::io::BufReader::new(reading)) {
+                let Ok(line) = line else { return };
+                let queued = match line.trim() {
+                    // Two, not one: a gesture boundary can be two nested release
+                    // waits deep, and each returns on the FIRST lifted sample.
+                    "settle" => {
+                        let p = nowhere();
+                        Ok(vec![Tap::at(p.x, p.y), Tap::at(p.x, p.y)])
+                    }
+                    rest => parse_line(rest),
+                };
+                let answer = match queued {
+                    Ok(taps) => {
+                        for tap in taps {
+                            if tx.send(tap).is_err() {
+                                return;
+                            }
+                        }
+                        "ok\n".to_string()
+                    }
+                    // Answered rather than fatal: a suite that mistypes a line
+                    // should see which one, on the connection that sent it.
+                    Err(why) => format!("err {why}\n"),
+                };
+                if std::io::Write::write_all(&mut out, answer.as_bytes()).is_err() {
+                    return;
+                }
+            }
+        });
+    }
+}
+
 #[cfg(test)]
 #[path = "taps_tests.rs"]
 mod tests;

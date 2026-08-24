@@ -64,6 +64,7 @@ SITES = {
         ("list_passkeys", "_ctap", None),
         ("att_import", "connect_fido", "True"),
         ("att_clear", "connect_fido", "True"),
+        ("att_set_rpids", "connect_fido", "True"),
         ("att_status", "connect_fido", None),
     ],
     "hw": [

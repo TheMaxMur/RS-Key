@@ -1,0 +1,155 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# The coverage ledger: every [workspace] member, classified. The rule this file
+# exists for: NO CRATE FALLS OUT SILENTLY. The first two drafts of the formal-
+# verification roadmap enumerated subsystems from memory of findings and missed
+# four crates — including the second-largest in the tree. A ledger written from
+# memory is how that happens; scripts/assurance_gate.py holds this one against
+# Cargo.toml in both directions instead.
+#
+# Classes and what each obliges:
+#   state-modelled    holds security state, a formal/ module models it (model=)
+#   state-partial     modelled in part; the gap and its roadmap module are named
+#   state-unmodelled  holds security state no module covers yet; planned= names
+#                     the roadmap module so the hole is a plan, not an oversight
+#   pure              pure functions; evidence= names the differential/KAT/proof
+#                     files, and the gate checks they exist
+#   out-of-scope      not part of the security argument; reason= says why
+#   embedded-binary   thumbv8m-only, not host-checkable; reason= names coverage
+#
+# "Modelled" here means state-machine modelling. Kani totality proofs and fuzz
+# targets exist across most crates regardless of class — this ledger tracks the
+# one evidence kind that is either present or silently absent.
+
+[crate.firmware]
+class = "embedded-binary"
+reason = "no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:82-93). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport."
+
+[crate.rsk-wipe]
+class = "out-of-scope"
+reason = "flash-erase utility, runs once in a maintainer's hands; not part of the runtime security argument."
+
+[crate.rsk-fido]
+class = "state-modelled"
+model = "RSKeySecurityState"
+
+[crate.rsk-device]
+class = "state-partial"
+model = "RSKeySecurityState"
+gap = "presence arbitration is modelled and Kani-proved; capability gating is RSKeyAdminSurface. Dispatcher selection/reset semantics are RSKeyAppletSeams; the remaining fast-path wiring is single-dispatch glue rather than a separately modelled state machine."
+
+[crate.rsk-sdk]
+class = "state-partial"
+model = "RSKeyAppletSeams"
+gap = "Dispatcher::current is the seam module's sel. APDU command chaining remains outside RSKeyTransport, which covers CTAPHID framing rather than the SDK's per-applet chain buffer."
+
+[crate.rsk-piv]
+class = "state-partial"
+model = "RSKeyAppletSeams"
+gap = "status lifetime is RSKeyAppletSeams; PIN/PUK budgets are RSKeyRetryLattice; NEVER/ONCE/ALWAYS slot policy and freshness spending are RSKeyAppletPolicies. Key material and touch I/O stay below these state abstractions."
+
+[crate.rsk-openpgp]
+class = "state-partial"
+model = "RSKeyAppletSeams"
+gap = "status lifetime is RSKeyAppletSeams; PW1/PW3/RC budgets are RSKeyRetryLattice; algorithm-attribute changes invalidating the old key pair are RSKeyAppletPolicies. MSE repointing and the per-slot UIF value space remain below the abstraction."
+
+[crate.rsk-oath]
+class = "state-partial"
+model = "RSKeyAppletSeams"
+gap = "status lifetime and access-code removal are RSKeyAppletSeams; calculation's access-code and touch gates are RSKeyAppletPolicies. The MAC access code has no retry budget, so its byte-level mutual-auth acceptance remains differential-oracle territory rather than a fabricated lattice counter."
+
+[crate.rsk-otp]
+class = "state-partial"
+model = "RSKeyAppletSeams"
+gap = "oathOtpPin status is in RSKeyAppletSeams; protected-slot configure/update/delete/swap and the combined use/session anti-replay step are RSKeyAppletPolicies. The six-byte slot code has no retry counter; four physical slots collapse to one symmetric lifecycle in the model."
+
+[crate.rsk-vendor]
+class = "state-partial"
+model = "RSKeySecurityState"
+gap = "ConfigOp/plat in the security model; the config-write pipeline it shares with rsk-devconf (persist_dev_conf) is RSKeyAdminSurface now. Still open: UNLOCK is modelled wider than its real gate (mse_ready + lock_engaged)."
+
+[crate.rsk-display]
+class = "state-partial"
+model = "RSKeyTrustedDisplay"
+gap = "the confirm ceremony (WhatIsConfirmedIsWhatIsShown, decomposed as SEC-DISP-001..003) is modelled; the wait owner and the fourth PIN door stay in RSKeySecurityState. The menus, settings flows and the device-PIN screens are navigation over that same armed-touch chokepoint, not separate security state."
+
+[crate.rsk-ui]
+class = "state-partial"
+model = "RSKeyTrustedDisplay"
+gap = "hit_confirm's disjoint Allow/Deny zones are the modelled seam (OnlyAllowConfirms's Rust owner); rendering, fonts and the settings codec are pure functions under their own 12 Kani proofs and render tests — no screen-transition state lives in this crate (the ceremony state machine is rsk-display's)."
+
+[crate.rsk-usb]
+class = "state-partial"
+model = "RSKeyTransport"
+gap = "the CTAPHID reassembler's channel/sequence/length state machine is modelled (M8); the async transport loop's bounded-write liveness (the 0x075D wedge fix) is guarded by the FrameSink seam's own mutation-tested regression, and the CCID/keyboard framing and secure_pin codec are single-step, Kani-proved and unit-tested."
+
+[crate.rsk-fs]
+class = "state-partial"
+model = "RSKeyStore"
+gap = "the committed store, the delete write-order and the present-cache soundness are modelled (M3 lifted powercut_model.rs to TLA+ and ties R0p to it); phase 6 composes the FIDO reset projection with delete_landed and the real byte-cuttable Fs stack. Values are still two opaque tokens, so a content-corrupting defect is out of reach, and Fs::factory_wipe's two-phase sweep remains the security module's ordering (SeedLeadsTheWipe), not this one's."
+
+[crate.rsk-store]
+class = "state-partial"
+model = "RSKeyStore"
+gap = "the Storage contract it implements — atomic append, an enumeration-completeness flag — is taken as RSKeyStore's backend assumption; the two-partition counter/main ring, is_counter_fid routing, wear and page reclaim, and compact are backend mechanics the model abstracts."
+
+[crate.rsk-rescue]
+class = "state-partial"
+model = "RSKeyAdminSurface"
+gap = "the operator-presence gate on every privileged command is modelled (PrivilegedOpNeedsPresence); the commands' own payloads — the phy identity record (its codec is rsk-phy now), KEYDEV signing, the fuse/rollback state machines — are single-step data handling carried by the crate's four test files, not a state machine."
+
+[crate.rsk-mgmt]
+class = "state-partial"
+model = "RSKeyAdminSurface"
+gap = "what is left after the EF_DEV_CONF codec moved to rsk-devconf: the CCID command surface (INS 0x1C/0x1D/0x1E/0x1F), the strict-config presence gate on WRITE CONFIG, and the process-global DEVICE_RESET latch the firmware drains after the SW_OK. AdminSurfaceAlwaysReachable models this applet as the always-on carve-out; the wipe the latch requests is the firmware's own factory_wipe, which this crate cannot observe, and the applet holds no flash state of its own."
+
+[crate.rsk-devconf]
+class = "state-partial"
+model = "RSKeyAdminSurface"
+gap = "the enabled-set lifecycle is modelled (mask writes, the lock-code-only write, the clamp as a construction). This crate DOES touch flash — it owns EF_DEV_CONF end to end (validate, merge onto the stored record, trim to cap, put) and the DEV_CONF_DIRTY latch the composition roots drain to reload their cached mask; who may drive a write is the four callers' gate, not this crate's. The TLV codec itself — well-formedness, merge widths, the two-parsers refusal — is single-step and carried by the crate's tests; still zero Kani proofs."
+
+[crate.rsk-crypto]
+class = "pure"
+evidence = ["crates/rsk-crypto/src/base64url_kani.rs", "fuzz/fuzz_targets/aes_gcm.rs", "fuzz/fuzz_targets/chachapoly.rs"]
+
+[crate.rsk-mldsa]
+class = "pure"
+evidence = ["crates/rsk-mldsa/src/round_kani.rs", "fuzz/fuzz_targets/mldsa_roundtrip.rs", "fuzz/fuzz_targets/mldsa_verify.rs"]
+note = "byte-exact vs ACVP KATs; -87 is a recorded stack dead-end, not a gap."
+
+[crate.rsk-rsa]
+class = "pure"
+evidence = ["crates/rsk-rsa/src/kani.rs"]
+note = "functional division spec + the sieve, proved."
+
+[crate.rsk-ec]
+class = "pure"
+evidence = ["crates/rsk-ec/src/tests.rs", "crates/rsk-ec/src/key_tests.rs", "crates/rsk-ec/src/key_x25519_tests.rs", "crates/rsk-ec/src/key_bp_kat.rs", "crates/rsk-ec/src/curve_tests.rs", "crates/rsk-ec/src/pubdo_tests.rs"]
+note = "the crate is the comb signers AND, since the key type came down out of rsk-openpgp, the PrivKey/Curve both card applets seal plus the 7F49 public-key DO. Still pure — no flash, no status word, no session. Zero Kani proofs and NOT a gap: every operation is checked against an independent reference rather than a model — byte-identical differential vs p256/p384/k256/p521 for the comb, OpenSSL 3.6 vectors for brainpool, RFC 7748 for X25519, and a re-parse of the DO for the wrapper. The one thing no differential can catch is a renumbered curve tag, because both sides would move together: curve_tests.rs writes the eight persisted bytes out one by one instead."
+
+[crate.rsk-sha512]
+class = "pure"
+evidence = ["fuzz/fuzz_targets/sha512_diff.rs"]
+note = "zero Kani proofs and NOT a gap: differential vs the sha2 crate."
+
+[crate.rsk-led]
+class = "pure"
+evidence = ["crates/rsk-led/src/kani.rs"]
+
+[crate.rsk-phy]
+class = "pure"
+evidence = ["crates/rsk-phy/src/kani.rs", "fuzz/fuzz_targets/phy_tlv.rs"]
+note = "the EF_PHY codec, lifted out of rsk-rescue: parse/overlay/serialize are total functions over host- and flash-reachable bytes. `load`/`save`/`merge_save` travel with them and DO touch flash — one FID, a read-modify-write, no lifecycle of its own — and who may drive that write is the callers' gate, not this crate's."
+
+[crate.rsk-bip39]
+class = "pure"
+evidence = ["crates/rsk-bip39/src/kani.rs"]
+
+[crate.rsk-slip39]
+class = "pure"
+evidence = ["crates/rsk-slip39/src/kani.rs", "crates/rsk-slip39/src/tests.rs"]
+
+[crate.rsk-bench]
+class = "out-of-scope"
+reason = "latency statistics for the on-device harness; not part of the security argument."

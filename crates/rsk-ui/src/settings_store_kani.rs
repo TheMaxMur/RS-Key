@@ -11,6 +11,7 @@ fn encode_apply_block_roundtrip() {
         brightness: kani::any(),
         sleep_secs: kani::any(),
         pin_declined: kani::any(),
+        scramble_pin: kani::any(),
     };
     let mut got = DisplayConfig::default();
     got.apply_block(&cfg.encode());

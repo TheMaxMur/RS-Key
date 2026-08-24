@@ -44,7 +44,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// The on-screen unlock flow, reached by a tap on the Locked screen. Reuses the
     /// device-PIN gate (the `EF_DEVICE_PIN` retry ladder, same as the destructive-action
@@ -153,7 +153,7 @@ where
             // `minPINLength` policy is still satisfied by typing it in full. (A PIN set
             // before the policy was raised may be shorter than `expected`.)
             match self.collect_pin(title, caption, 4, expected, &mut pin, true) {
-                rsk_fido::PinEntry::Entered(len) => {
+                rsk_sdk::PinEntry::Entered(len) => {
                     let mkek = read_fused(self.keys.mkek_source);
                     let dev = self.keys.device(&mkek);
                     let verdict = match scope {

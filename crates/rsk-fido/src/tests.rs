@@ -16,6 +16,12 @@ impl Rng for SeqRng {
 
 // Run process_cbor with a fresh context (empty flash).
 fn dispatch(data: &[u8], out: &mut [u8]) -> usize {
+    dispatch_seeded(data, out, false)
+}
+
+// As `dispatch`, optionally provisioning the seed and a persistent pinUvAuthToken
+// first — the pair getInfo's `encIdentifier` (0x19) needs before it exists.
+fn dispatch_seeded(data: &[u8], out: &mut [u8], with_token: bool) -> usize {
     let mut fs = Fs::new(RamStorage::new());
     let dev = Device {
         serial_hash: &[0xAB; 32],
@@ -23,6 +29,10 @@ fn dispatch(data: &[u8], out: &mut [u8]) -> usize {
         otp_key: None,
     };
     let mut rng = SeqRng(1);
+    if with_token {
+        crate::seed::ensure_seed(&dev, &mut fs, &mut rng).unwrap();
+        crate::seed::ensure_ppuat(&dev, &mut fs, &mut rng).unwrap();
+    }
     let mut state = FidoState::new();
     let mut presence = AlwaysConfirm;
     let mut ctx = Ctx {
@@ -45,9 +55,17 @@ fn dispatch_get_info_ok() {
     let n = dispatch(&[consts::CTAP_GET_INFO], &mut out);
     assert!(n > 1);
     assert_eq!(out[0], CTAP2_OK);
-    // The payload is the getInfo map: 0xB5 = map(21), one less on a
-    // `largeblob-ext` build (no maxSerializedLargeBlobArray).
-    assert_eq!(out[1], 0xB5 - u8::from(consts::LARGE_BLOB_EXT));
+    // Decode the map header instead of comparing its first byte. CBOR packs a count
+    // into that byte only up to 23; from 24 the byte is 0xB8 ("one length byte
+    // follows") for every count to 255, so the byte comparison this replaces went on
+    // passing when the roster crossed 24 and could no longer tell 24 from anything
+    // above it. `encIdentifier` (0x19) is absent here — no persistent token on an
+    // empty flash — so the count is the unconditional one.
+    let mut d = minicbor::Decoder::new(&out[1..n]);
+    assert_eq!(
+        d.map().unwrap().unwrap(),
+        24 - u64::from(consts::LARGE_BLOB_EXT)
+    );
 }
 
 #[test]
@@ -73,4 +91,47 @@ fn dispatch_get_assertion_routes_to_handler() {
     let n = dispatch(&[consts::CTAP_GET_ASSERTION], &mut out);
     assert_eq!(n, 1);
     assert_eq!(out[0], CtapError::InvalidCbor.as_u8());
+}
+
+/// The 0x19 and 0x1E payloads are built in `seed::` but assembled at the dispatch
+/// site, where the seed, the token and the RNG live. This drives the real command so
+/// the wiring is covered too: an encoder test passing `Some(..)` by hand would stay
+/// green if `process_cbor` never asked for either value.
+#[test]
+fn dispatch_get_info_carries_the_encrypted_members_once_a_token_exists() {
+    let mut plain = [0u8; 1024];
+    let n = dispatch_seeded(&[consts::CTAP_GET_INFO], &mut plain, false);
+    let mut with = [0u8; 1024];
+    let m = dispatch_seeded(&[consts::CTAP_GET_INFO], &mut with, true);
+    assert_eq!(plain[0], CTAP2_OK);
+    assert_eq!(with[0], CTAP2_OK);
+
+    let mut without = minicbor::Decoder::new(&plain[1..n]);
+    let mut d = minicbor::Decoder::new(&with[1..m]);
+    let entries = d.map().unwrap().unwrap();
+    assert_eq!(
+        entries,
+        without.map().unwrap().unwrap() + 2,
+        "a persistent token adds exactly encIdentifier and encCredStoreState"
+    );
+
+    let mut found = std::vec::Vec::new();
+    for _ in 0..entries {
+        match d.u32().unwrap() {
+            k @ (0x19 | 0x1E) => found.push((k, d.bytes().unwrap().len())),
+            _ => d.skip().unwrap(),
+        }
+    }
+    assert_eq!(
+        found,
+        std::vec![
+            (0x19, consts::ENC_GETINFO_MEMBER_LEN),
+            (0x1E, consts::ENC_GETINFO_MEMBER_LEN)
+        ],
+        "both are iv(16) ‖ ct(16), and 0x19 sorts before 0x1E"
+    );
+    assert!(
+        d.datatype().is_err(),
+        "the declared count must consume the map"
+    );
 }

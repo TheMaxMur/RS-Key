@@ -19,6 +19,7 @@
 
 use rsk_crypto::{Device, HmacDrbg, MlKem768Pair, base64url, chachapoly, sha256};
 use rsk_crypto::{kdf::PinKdf, mldsa44_verify, mlkem768_encapsulate, pinproto};
+use rsk_ec::{Curve, PrivKey};
 use rsk_fido::credential::{CredExt, CredInput, credential_create, credential_load};
 use rsk_fido::hmacsecret;
 use rsk_fido::seed::{ensure_seed, load_keydev};
@@ -26,11 +27,13 @@ use rsk_fido::{Ctx, FidoState, Rng};
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_openpgp::consts::{PW1_DEFAULT, PW1_MODE81, PW1_MODE82, PW3_DEFAULT, PW3_MODE83};
-use rsk_openpgp::keys::{Curve, MAX_RSA_DIGESTINFO, PrivKey, curve_from_attr, rsa_sign_em};
+use rsk_openpgp::keys::curve_from_attr;
 use rsk_openpgp::pso::parse_ecdh_point;
 use rsk_openpgp::{OpenpgpApplet, scan_files};
 use rsk_otp::hid::{FrameRx, FrameTx, REPORT_SIZE, RxOutcome};
-use rsk_rescue::phy::{PHY_MAX_SIZE, PhyData};
+use rsk_phy::{PHY_MAX_SIZE, PhyData};
+use rsk_rsa::MAX_RSA_DIGESTINFO;
+use rsk_rsa::pkcs1v15::rsa_sign_em;
 use rsk_sdk::apdu::Apdu;
 use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{Applet, ResBuf, Sw};
@@ -54,31 +57,7 @@ impl Rng for SeqRng {
 }
 
 struct CountRng(u8);
-impl rsk_oath::Rng for CountRng {
-    fn fill(&mut self, b: &mut [u8]) {
-        for x in b.iter_mut() {
-            *x = self.0;
-            self.0 = self.0.wrapping_add(1);
-        }
-    }
-}
-impl rsk_openpgp::Rng for CountRng {
-    fn fill(&mut self, b: &mut [u8]) {
-        for x in b.iter_mut() {
-            *x = self.0;
-            self.0 = self.0.wrapping_add(1);
-        }
-    }
-}
-impl rsk_rescue::Rng for CountRng {
-    fn fill(&mut self, b: &mut [u8]) {
-        for x in b.iter_mut() {
-            *x = self.0;
-            self.0 = self.0.wrapping_add(1);
-        }
-    }
-}
-impl rsk_otp::Rng for CountRng {
+impl rsk_sdk::Rng for CountRng {
     fn fill(&mut self, b: &mut [u8]) {
         for x in b.iter_mut() {
             *x = self.0;
@@ -1003,23 +982,7 @@ fn miri_cross_applet() {
     use rsk_sdk::Dispatcher;
 
     struct R(u64);
-    impl rsk_openpgp::Rng for R {
-        fn fill(&mut self, b: &mut [u8]) {
-            for x in b.iter_mut() {
-                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
-                *x = (self.0 >> 33) as u8;
-            }
-        }
-    }
-    impl rsk_oath::Rng for R {
-        fn fill(&mut self, b: &mut [u8]) {
-            for x in b.iter_mut() {
-                self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
-                *x = (self.0 >> 33) as u8;
-            }
-        }
-    }
-    impl rsk_otp::Rng for R {
+    impl rsk_sdk::Rng for R {
         fn fill(&mut self, b: &mut [u8]) {
             for x in b.iter_mut() {
                 self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
@@ -1301,17 +1264,10 @@ fn miri_piv_apdu() {
 #[test]
 fn miri_rescue_apdu() {
     use rsk_rescue::rollback::{ROLLBACK_REQUIRED_BIT, RollbackRaw};
-    use rsk_rescue::{Confirm, Platform, Presence, RescueApplet, SecureBootStatus, UserPresence};
+    use rsk_rescue::{AlwaysConfirm, Platform, RescueApplet, SecureBootStatus};
 
     const SERIAL_ID: [u8; 8] = [0xAA, 0xBB, 0xCC, 0xDD, 5, 6, 7, 8];
     const SERIAL_HASH: [u8; 32] = [0x22; 32];
-
-    struct AlwaysConfirm;
-    impl UserPresence for AlwaysConfirm {
-        fn request(&mut self, _c: Confirm<'_>) -> Presence {
-            Presence::Confirmed
-        }
-    }
 
     struct FakePlatform {
         time: Option<u32>,

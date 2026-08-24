@@ -5,7 +5,7 @@
 # Mutation testing over the host crates — the weekly deep-checks `mutants` row.
 #
 #   nix develop -c ./scripts/mutants-all.sh
-#   MUTANTS_SHARD=2/8 nix develop -c ./scripts/mutants-all.sh
+#   MUTANTS_SHARD=2/12 nix develop -c ./scripts/mutants-all.sh
 #
 # Coverage says a line ran. This says a test would notice if that line changed,
 # which is a different question and the one this tree keeps getting wrong: the

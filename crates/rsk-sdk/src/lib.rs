@@ -5,12 +5,21 @@
 
 //! `rsk-sdk` — core smartcard machinery: ISO-7816 APDU parsing ([`apdu`]),
 //! status words ([`sw`]), BER-TLV ([`tlv`]), the `Applet` trait with AID
-//! registry/dispatch ([`applet`]), and internal error codes ([`error`]).
+//! registry/dispatch ([`applet`]), internal error codes ([`error`]), and the
+//! two seams a composition root hands every applet: randomness ([`rng`]) and
+//! user presence ([`presence`]).
+//!
+//! Plus the device identity every applet echoes but none owns —
+//! [`FIRMWARE_VERSION`] and [`serial4`]. They are here for the same reason the
+//! seams are: four applets report each of them for four unrelated reasons, so
+//! whichever applet reported it first is the wrong home.
 
 pub mod apdu;
 pub mod applet;
 pub mod confirm;
 pub mod error;
+pub mod presence;
+pub mod rng;
 pub mod sw;
 pub mod tlv;
 
@@ -18,6 +27,8 @@ pub use apdu::Apdu;
 pub use applet::{Applet, Dispatcher, ResBuf};
 pub use confirm::{Confirm, ConfirmKind};
 pub use error::{Error, Result};
+pub use presence::{AlwaysConfirm, PinEntry, Presence, UserPresence};
+pub use rng::Rng;
 pub use sw::Sw;
 
 /// Parse a clean decimal env string to `u8` in const context (build.rs has
@@ -49,6 +60,18 @@ pub const FIRMWARE_VERSION_U32: u32 = ((FIRMWARE_VERSION.0 as u32) << 16)
     | ((FIRMWARE_VERSION.1 as u32) << 8)
     | (FIRMWARE_VERSION.2 as u32);
 
+/// First 4 bytes of the chip id with the top 6 bits cleared (`&= ~0xFC`) — the
+/// 8-digit Yubico serial. The same device identity four applets report for four
+/// unrelated reasons (the OpenPGP AID, PIV `INS 0xF8`, OTP GET SERIAL, the
+/// management DeviceInfo `SERIAL` tag), so it is declared once here beside
+/// [`FIRMWARE_VERSION`] rather than owned by whichever applet reports it first.
+pub fn serial4(serial_id: [u8; 8]) -> [u8; 4] {
+    let mut serial = [0u8; 4];
+    serial.copy_from_slice(&serial_id[..4]);
+    serial[0] &= 0x03;
+    serial
+}
+
 #[cfg(test)]
 #[path = "tests.rs"]
-mod version_tests;
+mod tests;

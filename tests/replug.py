@@ -94,11 +94,10 @@ def wait_back(timeout=REPLUG_TIMEOUT_S):
     sys.exit("FAIL: the FIDO HID device did not come back")
 
 
-def reset(dev=None, why="this authenticatorReset"):
-    """Replug the key, then reset it inside the window. Closes `dev` — the caller's
-    handle dies with the power cycle — and returns the fresh (dev, cid)."""
-    from ctaphid import send_cbor
-
+def power_cycle(dev=None, why="this power cycle"):
+    """Take the key through real power. Closes `dev` — the caller's handle dies with
+    it — and returns the fresh `(dev, cid, seen)`, `seen` being when it came back
+    (what [`reset`] measures its §6.6 window from)."""
     if _emu_power_cycle(why):
         from ctaphid import ctaphid_init, find, hid
 
@@ -107,14 +106,21 @@ def reset(dev=None, why="this authenticatorReset"):
         info = find()
         dev = hid.device()
         dev.open_path(info["path"])
-        cid, seen = ctaphid_init(dev), time.time()
-    else:
-        if dev is not None:
-            dev.close()
-        _prompt(why)
-        wait_gone()
-        print("   unplugged — plug it back in…")
-        dev, cid, seen = wait_back()
+        return dev, ctaphid_init(dev), time.time()
+    if dev is not None:
+        dev.close()
+    _prompt(why)
+    wait_gone()
+    print("   unplugged — plug it back in…")
+    return wait_back()
+
+
+def reset(dev=None, why="this authenticatorReset"):
+    """Replug the key, then reset it inside the window. Closes `dev` — the caller's
+    handle dies with the power cycle — and returns the fresh (dev, cid)."""
+    from ctaphid import send_cbor
+
+    dev, cid, seen = power_cycle(dev, why)
     status = send_cbor(dev, cid, bytes([CTAP_RESET]))[0]
     if status != CTAP2_OK:
         dev.close()

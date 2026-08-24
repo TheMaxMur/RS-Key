@@ -319,7 +319,7 @@ product looks like a YubiKey (`yubikey`, any case) but omits the smartcard `CCID
 token, the firmware appends ` OTP+FIDO+CCID` before enumerating — a token-less
 `Yubico YubiKey` reader name otherwise crashes `ykman` / Yubico Authenticator on
 Windows (`_pid_from_name` → `PID.of` → `KeyError('YK4_')`, which aborts the whole
-PC/SC scan). Source: `normalize_usb_product` in `phy.rs`.
+PC/SC scan). Source: `normalize_usb_product` in `crates/rsk-phy/src/lib.rs`.
 
 Each string is resolved in precedence order: an **explicit phy tag** (`0x0F` /
 `0x09`) wins; otherwise the **effective VID** picks a default — a Yubico VID
@@ -366,11 +366,13 @@ it is not a prefix — a real YubiKey refuses it too); and a prefix short enough
 match several applets resolves by registration order, which is the order of the
 table below, so probe with the full AID unless you mean to.
 
-**Where that SELECT works.** The recipe above is CCID's (§1.1), and three of the
-ten rows below are not CCID applets: **FIDO2, the FIDO2 backup id and U2F answer
-`6A82` (FILE_NOT_FOUND)**. CTAP1/U2F and CTAP2 ride CTAPHID and have no SELECT at
-all (§1.2), so those three are registered identifiers rather than anything this
-build dispatches to. The other transport is narrower still: `CTAPHID_MSG` offers
+**Where that SELECT works.** The recipe above is CCID's (§1.1), and two of the ten
+rows below are not CCID applets: **the FIDO2 backup id and the standalone U2F AID
+answer `6A82` (FILE_NOT_FOUND)** — registered identifiers rather than anything this
+build dispatches to. **The FIDO2 AID is selectable over CCID** and carries CTAP2
+*and* U2F there (§5.2); over CTAPHID the same applet has no SELECT at all (§1.2),
+which is why its row names both. The other transport is narrower still:
+`CTAPHID_MSG` offers
 exactly one applet, the vendor one, and every other AID answers `6A82` there —
 which is why a U2F command arriving after a vendor SELECT on the same session was
 a real bug (`tests/15_u2f_vendor_msg_isolation.py`). Measured on both transports,
@@ -378,9 +380,9 @@ all ten AIDs, and recorded in the **Transport** column.
 
 | Applet | AID | Transport | Spec status | Config-relevant? |
 |---|---|---|---|---|
-| FIDO2 | `A0 00 00 06 47 2F 00 01` | none — CTAPHID, no SELECT | Standard (CTAP2) | identity only |
-| FIDO2 (backup id) | `B0 00 00 06 47 2F 00 01` | none — CTAPHID, no SELECT | RS-Key | — |
-| U2F | `A0 00 00 05 27 10 02` | none — CTAPHID, no SELECT | Standard (CTAP1/U2F) | — |
+| **FIDO2 / U2F** | `A0 00 00 06 47 2F 00 01` | CCID (§5.2) + CTAPHID (no SELECT) | Standard (CTAP2 + CTAP1) | identity only |
+| FIDO2 (backup id) | `B0 00 00 06 47 2F 00 01` | none — unregistered | RS-Key | — |
+| U2F (standalone id) | `A0 00 00 05 27 10 02` | none — unregistered; U2F rides the FIDO2 AID | Standard (CTAP1/U2F) | — |
 | **Management** | `A0 00 00 05 27 47 11 17` | CCID | Yubico-compatible | **yes — §6** |
 | OATH | `A0 00 00 05 27 21 01` | CCID | Yubico OATH | data only |
 | OTP | `A0 00 00 05 27 20 01` | CCID | Yubico OTP | data only |
@@ -390,7 +392,7 @@ all ten AIDs, and recorded in the **Transport** column.
 | **Vendor / LED** | `F0 00 00 00 01` | CCID + `CTAPHID_MSG` | **RS-Key-specific** | **yes — §8** |
 
 Sources: `crates/rsk-fido/src/consts.rs`,
-`crates/rsk-mgmt`,
+`crates/rsk-mgmt` (+ `crates/rsk-devconf` for the DeviceInfo record),
 `crates/rsk-oath`,
 `crates/rsk-otp`,
 `crates/rsk-piv`,
@@ -427,11 +429,63 @@ needs only the identifiers above. RS-Key implements:
   from the *Begin* if it stalls. The same 30 s applies **between the fragments of a
   `largeBlobs` set**; there an abandoned transfer answers `CTAP2_ERR_INVALID_SEQ`
   and the previously stored array is left intact. `maxMsgSize` = `7609`.
+  `transportsForReset` (`0x1A`) is `["usb"]` — identical to `transports`
+  (`0x09`), because the FIDO applet is on USB-HID only and a reset is reachable
+  exactly where the applet is; it is an array of `AuthenticatorTransport`
+  strings, not a bit field. `pinComplexityPolicy` (`0x1B`) is `true` only on a
+  build that refuses a PIN beyond the length floor — the `strong-pin` and
+  `fips-profile` images block a repeated code point and a ±1 run; the default
+  build answers `false`, and the optional `pinComplexityPolicyURL` (`0x1C`) is
+  never emitted. `longTouchForReset` (`0x18`) is `false`: a reset takes the same
+  touch as any other presence check — CTAP 2.3 cut the long-touch hold from 2.2's
+  10 s to 5 s, and RS-Key implements neither gesture. `encIdentifier` (`0x19`) is
+  present **only once a persistent pinUvAuthToken has been issued**, and carries
+  `iv ‖ AES-128-CBC(k, id)` — 32 bytes — where `id` is a 128-bit device identifier
+  and `k = HKDF-SHA-256(salt = 32 zero bytes, IKM = that token, info =
+  "encIdentifier", L = 16)`. **The IV is regenerated on every getInfo**, so the
+  bytes differ each time while the identifier under them does not: a tool holding
+  the token recognises the device across sessions, and one without it learns
+  nothing. The identifier is derived from the device seed, so `authenticatorReset`
+  changes it.
+  **`encCredStoreState` (`0x1E`) is that same construction under the label
+  `encCredStoreState`**, over a 128-bit tag that moves whenever the set of
+  discoverable credentials does — a create, a `deleteCredential`, an
+  `updateUserInformation`, or a delete driven from the trusted display. Reads never
+  move it. A platform holding the token caches the plaintext and re-enumerates only
+  when it differs; one without the token sees bytes that change every call and learns
+  nothing. The tag is **stored**, not counted in RAM, so a power cycle does not reset
+  it — and it is written *ahead of* the change it describes, so what a torn write
+  leaves is a tag that over-reports (one wasted re-enumeration) rather than one that
+  under-reports (a stale cache). `authenticatorReset` clears it back to zero along
+  with the credentials it summarises.
+  **makeCredential accepts `attestationFormatsPreference` (request
+  `0x0B`)**: a list of exactly `["none"]` is answered with `fmt:"none"` and an
+  **empty — but present —** `attStmt`, and nothing is signed. Any other list, an
+  empty one, or an absent field leaves the usual `packed` statement, because
+  choosing by lowest supported index needs more than one supported format and
+  `attestationFormats` (`0x16`) stays `["packed"]`. An enterprise attestation that
+  was actually performed outranks the preference and is still returned in full.
+  **Vendor-facilitated (type 1) enterprise attestation reads a stored RP list.**
+  `enterpriseAttestation: 1` returns `ep` and the org certificate only for an RP on
+  that list; any other RP gets the ordinary `packed` statement with the device's own
+  certificate and no `ep`. The list holds up to **8** `sha256(rpId)` entries and is
+  **empty until written**, so a device upgraded from firmware without it behaves
+  exactly as before; `authenticatorReset` clears it. Write it with
+  `authenticatorConfig` (`0x0D`) subCommand `vendorPrototype` (`0xFF`) and
+  subCommandParams `{1: 0x0e6841934e719be7, 4: [rpId…]}` — the ids as **text**,
+  hashed on the device — gated by an `acfg` pinUvAuthToken and no touch, the same
+  authorization `enableEnterpriseAttestation` itself takes. An empty array clears the
+  list; more than 8 entries is refused with `CTAP2_ERR_KEY_STORE_FULL`, never
+  truncated. Type 2 (platform-managed) is unaffected — it applies to any RP once
+  enterprise attestation is enabled.
   Supported COSE algorithms:
   ES256 `-7`, ES384 `-35`, ES512 `-36`, ES256K `-47`, EdDSA `-8`,
-  ML-DSA-44 `-48`, ML-DSA-65 `-49` (both negotiable via `pubKeyCredParams`;
-  advertised in getInfo only under the `advertise-pqc` build). ML-DSA-87 `-50`
-  is recognised but unsupported: its response overruns `maxMsgSize`. The
+  ML-DSA-44 `-48`, ML-DSA-65 `-49`, ML-DSA-87 `-50` (all three negotiable via
+  `pubKeyCredParams`; advertised in getInfo only under the `advertise-pqc` build,
+  in descending security order). ML-DSA-87's 2592-byte public key and 4627-byte
+  signature are the widest the device mints, and the org attestation chain cap
+  (`ATT_CHAIN_MAX`) is derived so the worst-case makeCredential still fits the
+  7609-byte `maxMsgSize`. The
   curve-explicit ids ESP256 `-9`, Ed25519 `-19`, ESP384 `-51` and ESP512 `-52`
   are negotiable and unadvertised on the same terms, and the attested key
   carries the id the request selected rather than the classic spelling of the
@@ -444,7 +498,10 @@ needs only the identifiers above. RS-Key implements:
   so the Windows minidriver can enumerate the card; a host-written CHUID overrides it.
 - **OATH**: Yubico OATH (TOTP/HOTP).
 - **OTP**: Yubico OTP / HOTP keyboard + CCID.
-- **OpenPGP card 3.x.**
+- **OpenPGP card 3.x.** PUT DATA C1/C2/C3 changes a slot's algorithm
+  attribute; when the value changes, RS-Key invalidates that slot's existing
+  private/public key pair before the new attribute becomes visible. An
+  idempotent same-value write preserves the pair.
 
 The only RS-Key-specific bytes a config tool needs are §6 (Management config),
 §7 (Rescue), §8 (Vendor/LED) and §9 (CTAPHID `0x41`).
@@ -502,12 +559,58 @@ three control bytes; RS-Key accepts exactly those and answers `6A86`
 
 ---
 
+### 5.2 CTAP over CCID
+
+The FIDO applet answers on the CCID interface as well as on CTAPHID, as ISO 7816
+APDUs — the encoding CTAP 2.1 §11.2.1 defines for ISO7816 readers, which
+`python-fido2`'s `CtapPcscDevice` (and therefore `ykman` over PC/SC) speaks
+unchanged. PC/SC does not distinguish an NFC reader from the device's own CCID
+interface, so this is reachable over plain USB.
+
+| Step | APDU | Answer |
+|---|---|---|
+| Select | `00 A4 04 00 08 A0000006472F0001 00` | `9000` with body `U2F_V2` |
+| CTAP2 | `80 10 00 00 Lc <cmd ‖ CBOR> 00` | `9000` (or `61xx`, below) with `<status ‖ CBOR>` |
+| U2F | any interindustry-class APDU (`00 01/02/03 …`) | the CTAP1 answer |
+| Cancel | `80 11 11 00` | `9000` |
+
+**Chaining runs in both directions and a host needs both.** A CTAP2 command longer
+than 255 bytes arrives in `CLA|0x10` segments; a response longer than the short
+`Le` ships its first chunk with `61xx` and the rest through GET RESPONSE
+(`00 C0 00 00 <Le>`). A bare getInfo is already ~520 bytes, so a client that does
+not follow `61xx` sees nothing useful. Extended-length APDUs work too, in one
+exchange each way.
+
+**No `91 00` keep-alive is ever returned.** A touch wait blocks inside the
+exchange while the CCID transport streams T=1 time extensions, exactly as an OATH
+touch-flagged CALCULATE and an OpenPGP UIF signature already do, so the
+`NFCCTAP_GETRESPONSE` poll loop never runs. The cancel is still answered, because a
+host that gave up on a wait sends it regardless.
+
+**The transport is smaller than CTAPHID.** One CCID frame carries 2038 bytes, so
+that is the ceiling on a command *and* on a response here, against the 4078 that
+getInfo's `maxMsgSize` reports for CTAPHID. Commands stay well inside it; a
+response that does not fit comes back as a CTAP error rather than truncated. An
+ML-DSA credential's attestation does not fit and is CTAPHID-only in practice.
+
+**Both applications are gated separately.** One AID serves CTAP2 and U2F, and
+`ykman config usb --disable fido2` / `--disable u2f` name them apart, so the
+*commands* are gated rather than the SELECT: disabling one leaves the AID
+selectable for the other and answers the disabled half `6986`. With neither
+enabled the AID is gone (`6A82`).
+
+**⚠️ On the default `0x1209:0x0001` identity most hosts never bind the CCID
+interface at all** — the `ccid` driver whitelists USB ids and that one is not
+listed — so none of this is reachable there. A `VIDPID=Yubikey5` build, or a host
+carrying the `ccid-rs-key` overlay, is what makes the interface appear.
+
 ## 6. Management applet (Yubico-compatible) — applet enable/disable
 
 **AID `A0 00 00 05 27 47 11 17`. CLA `00`.** This is what `ykman` / Yubico
 Authenticator SELECT first to identify the key and to read/write which
-applications are enabled. Source:
-`crates/rsk-mgmt/src/lib.rs`.
+applications are enabled. Source: `crates/rsk-mgmt/src/lib.rs` for the command
+surface, `crates/rsk-devconf/src/lib.rs` for the `EF_DEV_CONF` record it reads
+and writes.
 
 **SELECT** returns the firmware version as an ASCII string, e.g. `35 2E 37 2E 34`
 (`"5.7.4"`).
@@ -686,7 +789,7 @@ above, to detect a firmware that predates a selector you send.
 
 The phy record is the device-config TLV blob. **It is the same format PicoForge
 already writes**, so an existing PicoForge config path largely works
-as-is. Source: `crates/rsk-rescue/src/phy.rs`.
+as-is. Source: `crates/rsk-phy/src/lib.rs`.
 
 Wire format: a flat sequence of `TAG(1) LEN(1) VALUE(LEN)` records, any order, all
 optional. An unknown tag is skipped; a record whose length runs past the buffer
@@ -1106,8 +1209,11 @@ SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x
    `authenticatorConfigCommands` (`0x1F`) lists `0xFF` and
    `vendorPrototypeConfigCommands` (`0x15`) enumerates the IDs below, so the arm
    and its commands are both detectable without probing — §6.11.3 ties the two,
-   so a build that hides one hides both. The supported
-   IDs, the ones PicoForge writes, set the phy record and take effect on the
+   so a build that hides one hides both. That array is the whole vendor arm, not
+   only its hardware half — `0x0e6841934e719be7` is the enterprise-attestation RP
+   list (§5), which takes an rpId array at key 4 and writes no hardware; treat an
+   unrecognised id as one you do not drive. The phy IDs, the ones PicoForge
+   writes, set the phy record and take effect on the
    next boot: `PhysicalVidPid 0x6fcb19b0cbe3acfa` (value `(vid<<16)|pid`),
    `PhysicalLedGpio 0x7b392a394de9f948`, `PhysicalLedBrightness 0x76a85945985d02fd`,
    `PhysicalOptions 0x269f3b09eceb805f` (bitmask `0x2` dimmable / `0x4`

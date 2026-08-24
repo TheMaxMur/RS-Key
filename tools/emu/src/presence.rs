@@ -141,13 +141,26 @@ fn printable(raw: &[u8]) -> String {
         .collect()
 }
 
-impl rsk_fido::UserPresence for EmuPresence {
-    fn request(&mut self, confirm: rsk_fido::Confirm<'_>) -> rsk_fido::Presence {
+impl rsk_sdk::UserPresence for EmuPresence {
+    /// A smartcard touch policy. Those applets are reached over CCID, which
+    /// carries no `CTAPHID_CANCEL` — a cancel is a non-confirmation, which is
+    /// how `firmware`'s button backend maps it too.
+    fn request(&mut self, confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
         match self.ask(confirm) {
-            Verdict::Confirmed => rsk_fido::Presence::Confirmed,
-            Verdict::Timeout => rsk_fido::Presence::Timeout,
-            Verdict::Declined => rsk_fido::Presence::Declined,
-            Verdict::Cancelled => rsk_fido::Presence::Cancelled,
+            Verdict::Confirmed => rsk_sdk::Presence::Confirmed,
+            Verdict::Declined => rsk_sdk::Presence::Declined,
+            Verdict::Timeout | Verdict::Cancelled => rsk_sdk::Presence::Timeout,
+        }
+    }
+
+    /// A CTAP2 ceremony, which *can* be cancelled mid-wait — the in-flight
+    /// command owes `CTAP2_ERR_KEEPALIVE_CANCEL`, so report it.
+    fn request_ceremony(&mut self, confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
+        match self.ask(confirm) {
+            Verdict::Confirmed => rsk_sdk::Presence::Confirmed,
+            Verdict::Timeout => rsk_sdk::Presence::Timeout,
+            Verdict::Declined => rsk_sdk::Presence::Declined,
+            Verdict::Cancelled => rsk_sdk::Presence::Cancelled,
         }
     }
 
@@ -164,68 +177,6 @@ impl rsk_fido::UserPresence for EmuPresence {
     /// screenless key under test is.
     fn shows_confirm(&self) -> bool {
         self.mode == PresenceMode::Terminal
-    }
-}
-
-// The sibling applets' traits carry no `Cancelled` arm — a cancel is a timeout
-// to them, which is how `firmware`'s button backend maps it too.
-impl rsk_openpgp::UserPresence for EmuPresence {
-    fn request(&mut self, confirm: rsk_openpgp::Confirm<'_>) -> rsk_openpgp::Presence {
-        match self.ask(confirm) {
-            Verdict::Confirmed => rsk_openpgp::Presence::Confirmed,
-            Verdict::Declined => rsk_openpgp::Presence::Declined,
-            Verdict::Timeout | Verdict::Cancelled => rsk_openpgp::Presence::Timeout,
-        }
-    }
-}
-
-impl rsk_oath::UserPresence for EmuPresence {
-    fn request(&mut self, confirm: rsk_oath::Confirm<'_>) -> rsk_oath::Presence {
-        match self.ask(confirm) {
-            Verdict::Confirmed => rsk_oath::Presence::Confirmed,
-            Verdict::Declined => rsk_oath::Presence::Declined,
-            Verdict::Timeout | Verdict::Cancelled => rsk_oath::Presence::Timeout,
-        }
-    }
-}
-
-impl rsk_otp::UserPresence for EmuPresence {
-    fn request(&mut self, confirm: rsk_otp::Confirm<'_>) -> rsk_otp::Presence {
-        match self.ask(confirm) {
-            Verdict::Confirmed => rsk_otp::Presence::Confirmed,
-            Verdict::Declined => rsk_otp::Presence::Declined,
-            Verdict::Timeout | Verdict::Cancelled => rsk_otp::Presence::Timeout,
-        }
-    }
-}
-
-impl rsk_mgmt::UserPresence for EmuPresence {
-    fn request(&mut self, confirm: rsk_mgmt::Confirm<'_>) -> rsk_mgmt::Presence {
-        match self.ask(confirm) {
-            Verdict::Confirmed => rsk_mgmt::Presence::Confirmed,
-            Verdict::Declined => rsk_mgmt::Presence::Declined,
-            Verdict::Timeout | Verdict::Cancelled => rsk_mgmt::Presence::Timeout,
-        }
-    }
-}
-
-impl rsk_vendor::UserPresence for EmuPresence {
-    fn request(&mut self, confirm: rsk_vendor::Confirm<'_>) -> rsk_vendor::Presence {
-        match self.ask(confirm) {
-            Verdict::Confirmed => rsk_vendor::Presence::Confirmed,
-            Verdict::Declined => rsk_vendor::Presence::Declined,
-            Verdict::Timeout | Verdict::Cancelled => rsk_vendor::Presence::Timeout,
-        }
-    }
-}
-
-impl rsk_rescue::UserPresence for EmuPresence {
-    fn request(&mut self, confirm: rsk_rescue::Confirm<'_>) -> rsk_rescue::Presence {
-        match self.ask(confirm) {
-            Verdict::Confirmed => rsk_rescue::Presence::Confirmed,
-            Verdict::Declined => rsk_rescue::Presence::Declined,
-            Verdict::Timeout | Verdict::Cancelled => rsk_rescue::Presence::Timeout,
-        }
     }
 }
 

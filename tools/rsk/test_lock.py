@@ -43,7 +43,8 @@ def _drive(monkeypatch, typed, state=STATE, after=LOCKED):
     monkeypatch.setattr(lock, "_state", lambda dev, cid: next(replies, after))
     monkeypatch.setattr(lock, "mse_handshake", lambda dev, cid: (bytes(32), b"aad"))
     monkeypatch.setattr(lock, "_config_vendor",
-                        lambda dev, cid, pin, vid, param=None: calls.append(vid) or 0)
+                        lambda dev, cid, pin, vid, param=None, rp_ids=None:
+                        calls.append(vid) or 0)
     monkeypatch.setattr("builtins.input", lambda prompt="": typed)
     return calls
 

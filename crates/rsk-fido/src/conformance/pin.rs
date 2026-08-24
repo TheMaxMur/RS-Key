@@ -16,7 +16,7 @@ use minicbor::encode::write::Cursor;
 use rsk_crypto::pinproto::{self, PinProto, public_xy};
 use rsk_crypto::sha256;
 
-const PIN: &[u8] = b"1234";
+use crate::test_pins::{NEW_PIN, PIN, WRONG_PIN};
 
 /// A short two-key clientPIN request `{1: proto=2, 2: subCommand}`.
 fn cp_short(sub: u64) -> Vec<u8> {
@@ -519,7 +519,7 @@ fn clientpin_wrong_pin_decrements_retries() {
     let pc = PinClient::establish(&mut a);
     assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.set_pin(PIN)));
     let before = pin_retries(&mut a);
-    let r = a.send(CTAP_CLIENT_PIN, &pc.get_token(b"9999"));
+    let r = a.send(CTAP_CLIENT_PIN, &pc.get_token(WRONG_PIN));
     assert_eq!(r.status, CtapError::PinInvalid.as_u8());
     assert_eq!(
         pin_retries(&mut a),
@@ -533,10 +533,10 @@ fn clientpin_change_pin() {
     let mut a = Authr::fresh();
     let pc = PinClient::establish(&mut a);
     assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.set_pin(PIN)));
-    assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.change_pin(PIN, b"5678")));
+    assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.change_pin(PIN, NEW_PIN)));
     // The new PIN yields a token; the old PIN is rejected.
     assert_eq!(
-        a.send(CTAP_CLIENT_PIN, &pc.get_token(b"5678")).status,
+        a.send(CTAP_CLIENT_PIN, &pc.get_token(NEW_PIN)).status,
         CTAP2_OK
     );
     assert_eq!(

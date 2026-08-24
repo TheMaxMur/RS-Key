@@ -9,7 +9,7 @@
 //! AID are both derived from the device serial: the PIN KDF roots on
 //! `serial_hash` (`kbase = HKDF(SALT_NOOTP, serial_hash)`, see
 //! `rsk_crypto::kdf`), and `full_aid` splices the BCD-encoded 8-digit device
-//! serial (`serial_bcd(rsk_mgmt::serial4(serial_id))`) in at offset 10.
+//! serial (`serial_bcd(rsk_sdk::serial4(serial_id))`) in at offset 10.
 //! `firmware/src/main.rs` computes both from a single boot-time read,
 //! `serial_id = get_chipid().unwrap_or(0)`, `serial_hash = sha256(serial_id)`.
 //!
@@ -200,7 +200,7 @@ fn serial_bcd_matches_yubikey_encoding() {
 }
 
 /// The OpenPGP card serial in the AID is the BCD of the device serial the other
-/// applets report (`rsk_mgmt::serial4`, PIV `INS 0xF8`) — the YubiKey convention,
+/// applets report (`rsk_sdk::serial4`, PIV `INS 0xF8`) — the YubiKey convention,
 /// so `gpg` renders it as the same decimal. Before this, OpenPGP spliced the *raw*
 /// chip-id bytes, so one device advertised two unrelated serials (issue #44).
 #[test]
@@ -215,7 +215,7 @@ fn card_aid_serial_matches_device_serial() {
 
     assert_eq!(
         &aid[10..14],
-        &crate::files::serial_bcd(&rsk_mgmt::serial4(id)),
+        &crate::files::serial_bcd(&rsk_sdk::serial4(id)),
         "the OpenPGP AID serial must be the BCD of the 8-digit device serial (== PIV F8)"
     );
     // The raw chip-id bytes must NOT leak into the AID.

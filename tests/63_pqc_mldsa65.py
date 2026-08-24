@@ -107,8 +107,10 @@ def main():
         assert status == 0x00
         algs = [e["alg"] for e in gi[10]]
         if -49 in algs:
-            assert algs == [-49, -48, -7, -35, -36, -8], f"algorithms list changed: {algs}"
-            print("getInfo: ML-DSA-65 (-49) and -44 (-48) advertised (advertise-pqc)")
+            assert algs == [-50, -49, -48, -7, -35, -36, -8], (
+                f"algorithms list changed: {algs}"
+            )
+            print("getInfo: all three ML-DSA sets advertised (advertise-pqc)")
         else:
             assert -48 not in algs, f"-48 without -49?: {algs}"
             print("getInfo: classic algorithms only (default build); -49 still negotiable")

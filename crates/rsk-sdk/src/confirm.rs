@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! The trusted-display confirmation context threaded through every applet's
-//! `UserPresence::request`. It says *what* a pending Approve/Deny prompt should
+//! The trusted-display confirmation context threaded through both
+//! [`UserPresence`](crate::UserPresence) asks. It says *what* an Approve/Deny prompt should
 //! show: a short, trusted, device-controlled `title` plus up to two **untrusted**
 //! relying-party fields the screen sanitizes before painting. The button presence
 //! backend ignores all of it; only the `display` build's on-screen backend reads

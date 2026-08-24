@@ -4,6 +4,7 @@
 use super::*;
 use crate::consts::{ALG_ED25519, ALG_ESP256, ALG_ESP384, ALG_ESP512, EF_ALWAYS_UV};
 use crate::seed::ensure_seed;
+use crate::test_pins::PIN;
 use minicbor::Decoder;
 use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
@@ -674,13 +675,51 @@ fn out_of_order_optional_keys_rejected() {
 
 #[test]
 fn unknown_top_level_key_ignored() {
-    // An unrecognized top-level key (0x0B) is skipped, not an error — the map
-    // still parses and the credential is created.
+    // An unrecognized top-level key is skipped, not an error — the map still parses
+    // and the credential is created. This used to send 0x0B, which CTAP 2.2 defines
+    // as `attestationFormatsPreference`; 0x0C is the first key still unassigned, and
+    // the type check that now guards 0x0B is pinned separately below.
     let req = mc_build(5, |e| {
         good_params(e);
-        e.u8(11).unwrap().u8(0).unwrap();
+        e.u8(12).unwrap().u8(0).unwrap();
     });
     assert!(!run(&req).0.is_empty());
+}
+
+/// `attestationFormatsPreference` is typed — "Array of String" — so a request that
+/// puts something else there is malformed, and is refused the same way every other
+/// mistyped field in this parser is. It is not treated as an ignorable hint: the
+/// key stopped being unassigned the moment CTAP 2.2 gave it a meaning, and a client
+/// sending an integer has a bug worth surfacing rather than silently absorbing.
+///
+/// The status is `CTAP2_ERR_CBOR_UNEXPECTED_TYPE`, which is what a wrong major type
+/// earns; `INVALID_CBOR` is what an indefinite-length array would earn instead.
+#[test]
+fn attestation_formats_preference_must_be_an_array() {
+    for tail in [
+        (|e: &mut Encoder<Cursor<&mut [u8]>>| {
+            e.u8(11).unwrap().u8(0).unwrap();
+        }) as fn(&mut Encoder<Cursor<&mut [u8]>>),
+        |e| {
+            e.u8(11).unwrap().str("none").unwrap();
+        },
+        |e| {
+            e.u8(11).unwrap().map(0).unwrap();
+        },
+    ] {
+        let req = mc_build(5, |e| {
+            good_params(e);
+            tail(e);
+        });
+        assert_eq!(run_err(&req), CtapError::CborUnexpectedType);
+    }
+
+    // A non-string INSIDE the array is the same mistake one level down.
+    let req = mc_build(5, |e| {
+        good_params(e);
+        e.u8(11).unwrap().array(1).unwrap().u8(0).unwrap();
+    });
+    assert_eq!(run_err(&req), CtapError::CborUnexpectedType);
 }
 
 #[test]
@@ -1358,7 +1397,7 @@ struct UvPad {
 impl UvPad {
     fn typing() -> Self {
         Self {
-            digits: b"1234",
+            digits: PIN,
             outcome: None,
             touches: 0,
         }
@@ -1478,7 +1517,7 @@ fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     let mut state = crate::FidoState::new();
     // §6.1.2 step 11.2: with the pad configured, uv:true is honored — the PIN is
     // typed on the device and never crosses the host. Step 13: that ceremony IS the
@@ -1510,7 +1549,7 @@ fn builtin_uv_decline_is_operation_denied() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     let mut state = crate::FidoState::new();
     // The one deliberate divergence from §6.1.2 step 11.2's error ladder: a Deny on
     // the pad stays OPERATION_DENIED. PUAT_REQUIRED would send the platform off to
@@ -1536,7 +1575,7 @@ fn always_uv_upgrades_a_tokenless_request_to_builtin_uv() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     fs.put(EF_ALWAYS_UV, &[1]).unwrap();
     let mut state = crate::FidoState::new();
     // §6.1.2 step 6.3: alwaysUv treats the "uv" option as true when the pad is
@@ -1696,13 +1735,14 @@ fn first_supported_alg_wins() {
         selected_alg(&[crate::consts::ALG_ES384, ALG_ES256]),
         Ok(crate::consts::ALG_ES384)
     );
-    // -50 (ML-DSA-87) is a recognized id without a backend: alone it is
-    // unsupported; alongside a classic alg the classic one is selected.
-    assert_eq!(
-        selected_alg(&[ALG_MLDSA87]),
-        Err(CtapError::UnsupportedAlgorithm)
-    );
-    assert_eq!(selected_alg(&[ALG_MLDSA87, ALG_ES256]), Ok(ALG_ES256));
+    // -50 (ML-DSA-87) has a backend since the ML-DSA-87 branch, so it follows
+    // the same first-supported-wins rule as every other id — including against
+    // its own siblings.
+    assert_eq!(selected_alg(&[ALG_MLDSA87]), Ok(ALG_MLDSA87));
+    assert_eq!(selected_alg(&[ALG_MLDSA87, ALG_ES256]), Ok(ALG_MLDSA87));
+    assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA87]), Ok(ALG_ES256));
+    assert_eq!(selected_alg(&[ALG_MLDSA87, ALG_MLDSA65]), Ok(ALG_MLDSA87));
+    assert_eq!(selected_alg(&[ALG_MLDSA65, ALG_MLDSA87]), Ok(ALG_MLDSA65));
 }
 
 // ---- Enterprise attestation ----
@@ -1915,13 +1955,94 @@ fn enterprise_type1_non_eligible_ignores_org_key() {
 
 #[test]
 fn vendor_ea_eligibility() {
-    // No RP qualifies for vendor-facilitated EA by default; the FIDO conformance
-    // test RPID qualifies only under the `ea-conformance-rpid` feature.
-    assert!(!rp_eligible_for_vendor_ea("example.com"));
+    // No RP qualifies for vendor-facilitated EA on a device with no stored list —
+    // an absent EF_EA_RPIDS is the empty list, which is what an already-provisioned
+    // device upgraded to this firmware reads. The FIDO conformance test RPID
+    // qualifies only under the `ea-conformance-rpid` feature.
+    let mut fs = Fs::new(RamStorage::new());
+    assert!(!rp_eligible_for_vendor_ea(&mut fs, &sha256(b"example.com")));
     assert_eq!(
-        rp_eligible_for_vendor_ea("enterprisetest.certinfra.fidoalliance.org"),
+        rp_eligible_for_vendor_ea(
+            &mut fs,
+            &sha256(b"enterprisetest.certinfra.fidoalliance.org")
+        ),
         cfg!(feature = "ea-conformance-rpid")
     );
+
+    // A stored list admits exactly its own entries, at any position.
+    let mut list = [0u8; 64];
+    list[..32].copy_from_slice(&sha256(b"first.example"));
+    list[32..].copy_from_slice(&sha256(b"corp.example.com"));
+    fs.put(EF_EA_RPIDS, &list).unwrap();
+    assert!(rp_eligible_for_vendor_ea(
+        &mut fs,
+        &sha256(b"first.example")
+    ));
+    assert!(rp_eligible_for_vendor_ea(
+        &mut fs,
+        &sha256(b"corp.example.com")
+    ));
+    assert!(!rp_eligible_for_vendor_ea(&mut fs, &sha256(b"example.com")));
+}
+
+#[test]
+fn enterprise_type1_listed_rp_uses_org_key() {
+    // The twin of `enterprise_type1_non_eligible_ignores_org_key`: the SAME request
+    // and the same org key, differing only in that the RP is on the stored list.
+    // It must now come back with `ep` and the org/EP cert — otherwise the storage
+    // is wired to nothing and the negative test above passes for the wrong reason.
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::seed::store_att_key(&dev(), &mut fs, &[0x21u8; 32]).unwrap();
+    let c1 = [0x30u8, 0x03, 1, 2, 3];
+    let mut packed = [0u8; 64];
+    let plen = crate::cert::att_chain_pack(&c1, &mut packed).unwrap();
+    fs.put(EF_ATT_CHAIN, &packed[..plen]).unwrap();
+    fs.put(EF_EA_ENABLED, &[1]).unwrap();
+    fs.put(EF_EA_RPIDS, &sha256(b"example.com")).unwrap();
+
+    let req = build_request_ea(1); // rp_id "example.com" — now listed
+    let mut out = [0u8; 1024];
+    let mut state = crate::FidoState::new();
+    let resp = {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        let len = make_credential(&mut ctx, &req, &mut out).unwrap();
+        out[..len].to_vec()
+    };
+    let mut d = Decoder::new(&resp);
+    assert_eq!(
+        d.map().unwrap().unwrap(),
+        4,
+        "a listed type-1 RP gets the `ep` field"
+    );
+    assert_eq!(d.u8().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "packed");
+    assert_eq!(d.u8().unwrap(), 2);
+    d.bytes().unwrap();
+    assert_eq!(d.u8().unwrap(), 3);
+    assert_eq!(d.map().unwrap().unwrap(), 3);
+    assert_eq!(d.str().unwrap(), "alg");
+    d.i64().unwrap();
+    assert_eq!(d.str().unwrap(), "sig");
+    d.bytes().unwrap();
+    assert_eq!(d.str().unwrap(), "x5c");
+    assert_eq!(d.array().unwrap().unwrap(), 1);
+    assert_eq!(
+        d.bytes().unwrap(),
+        &c1,
+        "a listed type-1 RP gets the org/EP cert"
+    );
+    assert_eq!(d.u8().unwrap(), 4);
+    assert!(d.bool().unwrap(), "ep = true");
 }
 
 /// A trusted-display backend: it collects a PIN on its own pad **and** paints the
@@ -1957,8 +2078,8 @@ impl crate::UserPresence for DisplayPad {
         true
     }
     fn collect_pin(&mut self, _min: usize, out: &mut [u8]) -> crate::PinEntry {
-        out[..4].copy_from_slice(b"1234");
-        crate::PinEntry::Entered(4)
+        out[..PIN.len()].copy_from_slice(PIN);
+        crate::PinEntry::Entered(PIN.len())
     }
 }
 
@@ -1972,7 +2093,7 @@ fn builtin_uv_still_names_the_registration_on_a_display() {
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
-    crate::clientpin::store_local_pin(&dev(), &mut fs, b"1234").unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
     let mut state = crate::FidoState::new();
     let cdh = [0xCDu8; 32];
     let mut out = [0u8; 1024];
@@ -2414,4 +2535,122 @@ fn enterprise_attestation_zero_is_a_value_not_an_absence() {
                 .is_empty()
         );
     }
+}
+
+// ---- attestationFormatsPreference (request 0x0B, CTAP 2.2) ----
+
+/// A response's `fmt` (1) and the SIZE of its attStmt (3), for a request whose
+/// `attestationFormatsPreference` is `formats` — absent when `None`.
+fn att_shape_for(formats: Option<&[&str]>) -> (std::string::String, u64) {
+    let req = mc_build(4 + u64::from(formats.is_some()), |e| {
+        good_params(e);
+        if let Some(list) = formats {
+            e.u8(11).unwrap().array(list.len() as u64).unwrap();
+            for f in list {
+                e.str(f).unwrap();
+            }
+        }
+    });
+    let (resp, _) = run(&req);
+    let mut d = Decoder::new(&resp);
+    d.map().unwrap();
+    assert_eq!(d.u8().unwrap(), 1);
+    let fmt = d.str().unwrap().to_string();
+    assert_eq!(d.u8().unwrap(), 2);
+    d.bytes().unwrap();
+    assert_eq!(d.u8().unwrap(), 3);
+    (fmt, d.map().unwrap().unwrap())
+}
+
+/// CTAP 2.2 `attestationFormatsPreference`: for an authenticator that emits exactly
+/// one format, a list of exactly `["none"]` is the ONLY shape that changes anything.
+/// The lowest-index-supported rule needs two formats to choose between, so a longer
+/// list — even one containing "none" — leaves the packed statement untouched. That
+/// containment is the safety property: `fmt:"none"` broke OpenSSH < 10.0 when this
+/// device emitted it unasked, and it is now reachable only on explicit request.
+#[test]
+fn attestation_formats_preference_omits_only_for_none_alone() {
+    for formats in [
+        None,
+        Some(&[] as &[&str]),
+        Some(&["packed"][..]),
+        Some(&["none", "packed"][..]),
+        Some(&["packed", "none"][..]),
+        Some(&["tpm"][..]),
+        Some(&["none", "none"][..]),
+    ] {
+        let (fmt, stmt) = att_shape_for(formats);
+        assert_eq!(fmt, "packed", "{formats:?} must not change the format");
+        assert_eq!(stmt, 3, "{formats:?} must keep the full {{alg, sig, x5c}}");
+    }
+
+    let (fmt, stmt) = att_shape_for(Some(&["none"]));
+    assert_eq!(fmt, "none");
+    // Present and empty, not absent: field 3 is required, and a reader that finds no
+    // attStmt sees an incomplete attestation object rather than a none-format one.
+    assert_eq!(
+        stmt, 0,
+        "the none statement is an EMPTY map, and it is written"
+    );
+}
+
+/// An enterprise attestation that was actually performed outranks the preference.
+/// It is explicitly enabled in flash and requested per credential, and it is the
+/// stronger claim; honouring `["none"]` over it would silently discard what an
+/// administrator turned on.
+#[test]
+fn enterprise_attestation_outranks_a_none_preference() {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(6).unwrap();
+        e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+        e.u8(2).unwrap().map(1).unwrap();
+        e.str("id").unwrap().str("example.com").unwrap();
+        e.u8(3).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+        e.str("name").unwrap().str("alice").unwrap();
+        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(10).unwrap().u64(2).unwrap();
+        e.u8(11).unwrap().array(1).unwrap().str("none").unwrap();
+        e.writer().position()
+    };
+    let (resp, _) = run_ea(&buf[..n], true).unwrap();
+    let mut d = Decoder::new(&resp);
+    d.map().unwrap();
+    assert_eq!(d.u8().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "packed", "EA must still be attested");
+    assert_eq!(d.u8().unwrap(), 2);
+    d.bytes().unwrap();
+    assert_eq!(d.u8().unwrap(), 3);
+    assert_eq!(d.map().unwrap().unwrap(), 3, "the full statement survives");
+}
+
+// The phase-4 trace reader. Its two bits are the ONLY thing R4c's makeCredential
+// arm computes from, so a swapped tuple or a misread key would leave the replay
+// describing a different request than the device answered — and still GREEN.
+#[test]
+fn the_trace_reader_reports_the_two_fields_the_gate_is_a_function_of() {
+    use super::assurance::trace_request_flags;
+    assert_eq!(
+        trace_request_flags(&build_request(true)),
+        Some((true, false))
+    );
+    assert_eq!(
+        trace_request_flags(&build_request(false)),
+        Some((false, false))
+    );
+    assert_eq!(
+        trace_request_flags(&build_request_pin(&[0xAA; 16], 1)),
+        Some((false, true))
+    );
+    assert_eq!(
+        trace_request_flags(&build_request_uv(true, Some((&[0xAA; 16], 2)))),
+        Some((true, true))
+    );
+    // A body the device itself would refuse to decode has no gate answer, and
+    // the mapper must not invent one from a default.
+    assert_eq!(trace_request_flags(&[0xFF, 0xFF]), None);
 }

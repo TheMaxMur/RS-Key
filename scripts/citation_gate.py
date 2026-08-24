@@ -3,24 +3,46 @@
 # Copyright (C) 2026 RS-Key contributors
 """Assert the TLA+ model still points at the code it says it models.
 
-`formal/RSKeySecurityState.tla` and `formal/README.md` carry ~160 `file.rs:line`
-citations — the whole bridge between the model and the implementation it claims
-to abstract. They were checked once, by hand, in a review pass. Code moves; a
-model whose citations have rotted is worse than no model, because it reads as
-authoritative and sends the next reader to a line that no longer says what it
-claims. Same failure as a stale CHANGELOG or an unbumped counter, so it lives
-beside them.
+The `formal/*.tla` modules, `formal/README.md` and `formal/comutants.toml` carry
+the `file.rs:line` citations — the whole bridge between the model and the
+implementation it claims to abstract. [`PAGES`] is the list and the success line
+counts them, so neither number is written down here to go stale. They were
+checked once, by hand, in a review pass. Code moves; a model whose citations
+have rotted is worse than no model, because it reads as authoritative and sends
+the next reader to a line that no longer says what it claims. Same failure as a
+stale CHANGELOG or an unbumped counter, so it lives beside them.
+
+The same claim is made in code — Kani proof headers, two test files and one fuzz
+target cite the call site they stand in for — and for a long time only the
+`formal/` half was read. Measured when the code half was added: 42 such
+citations, **19 naming code the surrounding prose was never about**, while the
+SAME three token gates cited on `formal/README.md` had followed every shift.
+`lib.rs:207`, introduced as "the dispatch prologue every CBOR command runs
+first", was 79 lines out and pointed at the response *epilogue*. So the code
+half is [`code_pages`]: derived from the tree rather than named, because which
+proof headers cite is not a decision anyone should be re-transcribing.
+
+The phase-1 `Refines Module!Invariant — SEC-*` tags are the semantic-address
+half of the same bridge. This gate shares their assurance check: every tag must
+resolve to its defining module and registry row, and every invariant in the two
+code-owning configurations must have a production tag.
 
 ## What is decidable, and what is not
 
 That `clientpin.rs:35` still *means* what the model says is a review question.
 That the file exists, that the line is inside it, and that a range runs forwards
 are not, so those are the rules — plus one drift signal that costs nothing: a
-citation whose first or last line is **blank**. Measured over all 175 citations
-in the tree today, none lands on a blank line, and a line that has drifted onto
-one has stopped being the code that was cited. It is deliberately not a
-content check: a rule that fires whenever anything above a cited line moves
-would be switched off inside a week, which is worse than no rule.
+citation whose first or last line is **blank**. Measured over every citation the
+gate reads, none lands on a blank line, and a line that has drifted onto
+one has stopped being the code that was cited. It is not a blanket
+content check, for the reason such a rule deserves: one that fires whenever
+anything above a cited line moves gets switched off inside a week. What *is*
+decidable is narrower, and is the failure this row kept missing — the cited text
+still exists in the file, at a different line. [`LOCK`] records what each
+citation pointed at, and only a locked line found ELSEWHERE is reported, naming
+the line it moved to. An edit in place leaves nothing to find and stays green.
+Measured: 75 citations rotted across three commits while this row printed `ok`,
+and every one of them was a move.
 
 ## Resolving a bare name
 
@@ -55,10 +77,18 @@ outright.
 
 ## The floor
 
-Each page must carry at least [`FLOOR`] citations. A regex that has stopped
+This is the NAMED half only. A derived page is in the set *because* it cites, so
+a per-page floor there asserts nothing; [`CODE_PAGES_FLOOR`] holds the size of
+the derived set instead, and what actually ratchets that half is [`LOCK`] — a
+page that stops being read turns every entry it had into an orphan, by name.
+
+Each page must carry at least its [`FLOOR`] citations — [`FLOOR_BY_PAGE`] where a
+page legitimately cites fewer, the default otherwise. A regex that has stopped
 matching finds nothing, loops over nothing and exits 0 — the shape four guards
-in this tree shipped with. The floor is well under today's 104 and 58, and the
-count only goes up as the model grows.
+in this tree shipped with. Every floor sits well under its page's real count, so
+it trips a regex that has stopped matching and nothing else; the per-page
+override is there so a tight model is not mistaken for a broken regex, and so no
+page is ever padded with citations it does not mean just to clear one number.
 
 ## Limits
 
@@ -66,9 +96,16 @@ count only goes up as the model grows.
 citations another agent's in-flight commits rotted while this guard was being
 written. Each names the commit that broke it and fails once it stops rotting.
 
-It does not read `.py`, `.md` or `.tla` citations, only `.rs` ones: those are all
-the pages carry. It cannot tell a citation that is merely *stale* from one that
-is *wrong* — a line that drifted onto other code still passes. And [`SEARCH`] is
+It resolves `.rs` citations only, and only on `.rs` pages plus the named
+`formal/` ones. Thirteen other files cite and are not read; the largest are this
+guard and its own table, which quote the rotted examples they are about, and
+`CHANGELOG.md`, whose entries cite the tree as it stood and must be allowed to
+rot. Four prose files (`assurance/*.toml`, `docs/guides/fips.md`,
+`docs/token-refinement.md`) carry live model→code claims that only a person
+reads; two of them were found rotted by hand while this list was being written,
+and repaired. Named here so each stays a decision. A citation *edited in place* still passes, and one that was
+wrong the day it was written locks wrong — so the lock diff is a thing to read,
+not a proof it hands you. And [`SEARCH`] is
 a hand-written list; entries are asserted to exist, not to be used, so an entry
 whose last citation goes away sits there harmlessly rather than turning an
 unrelated edit red.
@@ -78,17 +115,98 @@ import pathlib
 import re
 import sys
 
+import assurance_gate
 import gate_lines
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-#: The pages that carry citations. Both, because the README's invariant table is
-#: what a reader consults first and it cites more finely than the model does.
+#: The pages that carry citations: the model modules, the README — whose
+#: invariant table a reader consults first, and which cites more finely than the
+#: modules do — and the co-refutation ledger. A page absent here is not checked
+#: at all, which is the one failure this list can have, so it is the thing to
+#: extend when a module starts citing.
 PAGES = (
     pathlib.Path("formal/RSKeySecurityState.tla"),
     pathlib.Path("formal/RSKeyAppletSeams.tla"),
+    pathlib.Path("formal/RSKeyStore.tla"),
+    pathlib.Path("formal/RSKeyRetryLattice.tla"),
+    pathlib.Path("formal/RSKeyAdminSurface.tla"),
+    pathlib.Path("formal/RSKeyTrustedDisplay.tla"),
+    pathlib.Path("formal/RSKeyBootHardening.tla"),
+    pathlib.Path("formal/RSKeyTransport.tla"),
+    # The applet-policy module was the ninth `.tla` carrying citations and the
+    # only one this tuple did not name, so all four of its citations were
+    # unchecked — and one had rotted: `rsk-otp/src/lib.rs:564-569` was the swap's
+    # write-back tail ending on a blank line, not the access-code gate it claims.
+    pathlib.Path("formal/RSKeyAppletPolicies.tla"),
+    # The replay harness cites too, and R4c's whole content is a code rule
+    # quoted into TLA+ — the one page where a rotted citation would leave the
+    # model asserting a gate the firmware no longer has.
+    pathlib.Path("formal/TraceSecurity.tla"),
     pathlib.Path("formal/README.md"),
+    # The co-refutation ledger cites as finely as the modules and was guarded by
+    # nothing: 13 of its 16 citations named a file this gate could not resolve,
+    # and two landed on unrelated code — one of them wrong the day it was written.
+    pathlib.Path("formal/comutants.toml"),
+    # Not a model page but the config generator, and it makes the same kind of
+    # model-to-code claim: the two firmware constants its SYMMETRY argument is
+    # priced against. Both had moved — `consts.rs:361,334` named `EF_LARGEBLOB`
+    # and a doc comment, not MAX_PIN_RETRIES and PIN_MISMATCH_LIMIT.
+    pathlib.Path("formal/gen-configs.sh"),
 )
+
+#: Where a CITATION IN CODE lives. The `formal/` pages above are named one by
+#: one because there are thirteen of them and each was a decision; the code half
+#: is DERIVED, because it is not a decision — a Kani proof header or a fuzz
+#: target that cites code by line is making exactly the claim this row exists
+#: for, and transcribing which ones do is how the next one arrives unchecked.
+#: Measured when this was added: 7 files, 42 citations, of which 19 named code
+#: the surrounding prose was never about — while the SAME three call sites,
+#: cited on the gated `formal/README.md`, had followed the code.
+#:
+#: `.rs` under these roots and nowhere else. The roots are every first-party
+#: Rust of the tree -- the workspace's two non-`crates/` members, the two detached
+#: workspaces under `tools/`, and the fuzz targets. `third_party/` is the one
+#: `.rs` directory left out, and it is left out because a vendored fork's
+#: citations are its author's, not this tree's. The rest of the exclusions are
+#: not Rust and each has its own reason. `CHANGELOG.md` cites the tree as it
+#: stood at each entry, so its citations MUST be allowed to rot; this guard's own
+#: fixtures, and `scripts/citation_gate.py` itself, quote the rotted examples they
+#: exist to describe; the two `assurance/*.toml` files and two `docs/` pages cite
+#: in prose and are read by nobody but a person. Named limits, not oversights —
+#: see "Limits" above.
+CODE_ROOTS = ("crates/", "firmware/", "fuzz/", "tools/", "rsk-wipe/")
+
+#: Below this the derivation found nothing and every code page silently went
+#: unchecked — the loop-over-an-empty-set shape. It is deliberately 1 and not a
+#: transcribed count: what ratchets the derived set is [`LOCK`], which turns a
+#: page that stops being read into one orphaned entry per citation it had -- by
+#: measurement, taking the set from 7 pages to 1 produces 34 orphan messages and
+#: no floor message. The floor is the only signal in exactly one state: a tree
+#: with no lock file at all, where every lock rule is skipped.
+CODE_PAGES_FLOOR = 1
+
+
+def code_pages(root, tracked):
+    """Tracked `.rs` files under [`CODE_ROOTS`] that cite code by line."""
+    return tuple(
+        pathlib.Path(rel)
+        for rel in sorted(tracked)
+        if rel.startswith(CODE_ROOTS)
+        # `errors="replace"`: `tree_files` lists untracked files too, and a `.rs`
+        # that is not valid UTF-8 would end this row in a traceback -- which reads
+        # as a broken guard, which is how a guard gets switched off.
+        and next(citations((root / rel).read_text(errors="replace")), None) is not None
+    )
+
+
+#: Pages that must write a repo path, never a bare basename. `comutants.toml`
+#: reasons about five applets at once, so `lib.rs:1020` names nothing decidable —
+#: for a reader either. SEARCH cannot fix that; only the page can.
+#: `RSKeyAppletPolicies.tla` is the same shape over four applets: its bare
+#: `keypairgen.rs` named a crate outside SEARCH, and `lib.rs` would have named
+#: two of them. Widening SEARCH instead would make `lib.rs` ambiguous AND cited.
+PATHS_ONLY = frozenset({"comutants.toml", "RSKeyAppletPolicies.tla"})
 
 #: Where a bare basename is looked up, in order. The model's subject first.
 SEARCH = (
@@ -120,34 +238,94 @@ AMBIGUOUS = {
 #: longer fires is stale and fails, so each one ends when its citation is fixed.
 PENDING: dict[str, str] = {}
 
-#: Below this a page is not citing, it is failing to be parsed. Today: 111, 40, 82.
+#: What each citation pointed at when it was last locked, so drift is decidable.
+#: `--relock` regenerates it; the diff is the review surface, and is meant to be
+#: read — this file records an assertion, it does not prove one.
+LOCK = pathlib.Path("formal/citations.lock")
+
+#: Below this a page is not citing, it is failing to be parsed.
 FLOOR = 25
+
+#: Pages that legitimately cite fewer than the default — a smaller model is not a
+#: broken regex, and padding a page to clear a floor is the failure this guard's
+#: own docstring warns against. `RSKeyStore.tla` is the flash layer, a tight model
+#: whose floor of 9 still trips a regex that has stopped matching (it finds 0)
+#: without demanding the page be inflated.
+FLOOR_BY_PAGE = {
+    "RSKeyStore.tla": 9,
+    "RSKeyRetryLattice.tla": 6,
+    "RSKeyAdminSurface.tla": 5,
+    "RSKeyTrustedDisplay.tla": 6,
+    "RSKeyBootHardening.tla": 6,
+    "RSKeyTransport.tla": 5,
+    "comutants.toml": 8,
+    # The tightest page here, and deliberately so: it defers the PIV/OpenPGP retry
+    # counters to RSKeyRetryLattice. A floor of 3 still trips a regex that has
+    # stopped matching, which finds 0.
+    "RSKeyAppletPolicies.tla": 3,
+    # One `consts.rs:a,b` pair, priced into the SYMMETRY argument beside it. A
+    # floor of 1 is thin, but the failure it exists for — a regex that has
+    # stopped matching — still finds 0, and this page cannot grow much.
+    "gen-configs.sh": 1,
+    # The harness carries R4c's two rules and the pad the first of them is scoped
+    # by; the β projection above them cites nothing.
+    "TraceSecurity.tla": 3,
+}
+
+
+def floor_for(page):
+    return FLOOR_BY_PAGE.get(page.name, FLOOR)
 
 #: `path.rs:12`, `path.rs:12-20`, `path.rs:12-20, 44`, and the continuation
 #: `` `:44` `` that both pages use for a second reference to the same file. The
-#: bare form must sit right after a backtick so ordinary prose punctuation is not
-#: read as a line number.
+#: bare form must sit right after a backtick AND be closed by one: over the
+#: curated pages "a backtick before it" was enough, but the derived set is 450
+#: source files, where `` `LED_PERIOD_MS`: 250 ms `` is ordinary English and used
+#: to turn the row red with a message about a citation nobody wrote. Every real
+#: continuation in the tree is already closed (`` `:523-535` ``).
+#:
+#: A filename may not start right after a `:` either, or the path half of
+#: `https://host/path/pio.rs:120` reads as a citation to `//host/path/pio.rs` --
+#: realistic in an embedded crate that references upstream HAL source. Prose
+#: punctuation is unaffected: "see: state.rs:12" has a space in between.
 #: Every dash a prose editor can leave behind. An en dash reads as a citation to
 #: a single line with the upper bound silently discarded, in two pages whose prose
 #: already uses `—` and `·` throughout — measured: `state.rs:284–99991` passed.
 DASH = "-\u2010\u2011\u2012\u2013\u2014\u2212"
 CITE = re.compile(
-    r"(?:(?<![\w/.-])(?P<file>[\w./-]+\.rs)|(?<=`))"
+    r"(?:(?<![\w/.:-])(?P<file>[\w./-]+\.rs)|(?<=`)(?=:[^`]*`))"
     rf":\s*(?P<refs>\d+(?:\s*[{DASH}]\s*\d+)?(?:\s*,\s*\d+(?:\s*[{DASH}]\s*\d+)?)*)"
 )
 SPAN = re.compile(rf"(\d+)(?:\s*[{DASH}]\s*(\d+))?")
 
 
-def resolve(rel, tracked):
-    """(the file a citation names, a complaint). A `/` makes it a path, verbatim."""
+def resolve(rel, tracked, page=None):
+    """(the file a citation names, a complaint). A `/` makes it a path, verbatim.
+
+    A bare name on a page that IS code resolves against that page's own directory
+    first. Without it every `lib.rs:207` in a proof header is ambiguous across
+    four of the five [`SEARCH`] roots, and the one it means is the sibling the
+    author was looking at. The `formal/` pages hold no `.rs` siblings, so this
+    cannot re-point any citation that predates it.
+    """
     if "/" in rel:
         return (rel, None) if rel in tracked else (None, None)
     hits = [f"{d}/{rel}" for d in SEARCH if f"{d}/{rel}" in tracked]
-    if len(hits) < 2:
-        return (hits[0] if hits else None), None
+    if len(hits) == 1:
+        return hits[0], None
     picked, why = AMBIGUOUS.get(rel, (None, None))
     if picked in hits:
         return picked, None
+    # Only now the sibling. Taken FIRST it silently outranked [`AMBIGUOUS`], which
+    # exists to stop exactly that: a page in `firmware/src/` citing `vendor.rs`
+    # would have got the 197-line file the registry says is not meant, with no
+    # complaint. As a tie-break it decides only what nothing else can.
+    if page is not None:
+        sibling = str(pathlib.PurePosixPath(page).parent / rel)
+        if sibling in tracked:
+            return sibling, None
+    if not hits:
+        return None, None
     return hits[0], (
         f"`{rel}` is in {len(hits)} of the search directories"
         f" ({', '.join(hits)}); write the path, or register which one is meant"
@@ -170,7 +348,41 @@ def citations(text):
                 yield number, found.group("file"), start, end, found.group(0)
 
 
-def audit(root):
+def lock_text(line):
+    """A cited line as the lock stores it: stripped, and tabs made harmless."""
+    return line.strip().replace("\t", " ")
+
+
+def read_lock(root):
+    """{(page, file, start, end): (first line, last line)} as last locked."""
+    path = root / LOCK
+    if not path.is_file():
+        return {}
+    locked = {}
+    for line in path.read_text().splitlines():
+        if not line.strip() or line.startswith("#"):
+            continue
+        page, rel, span, first, last = line.split("\t")
+        start, _, end = span.partition("-")
+        locked[(page, rel, int(start), int(end))] = (first, last)
+    return locked
+
+
+def write_lock(root, entries):
+    body = "".join(
+        f"{page}\t{rel}\t{start}-{end}\t{first}\t{last}\n"
+        for (page, rel, start, end), (first, last) in sorted(entries.items())
+    )
+    (root / LOCK).write_text(
+        "# Generated by `scripts/citation_gate.py --relock`. One line per citation:\n"
+        "# page, cited file, span, and the first and last line as they read when\n"
+        "# locked. Read the diff — a changed line here is a citation changing what\n"
+        "# it points at, which is the thing this file exists to make visible.\n"
+        + body
+    )
+
+
+def audit(root, relock=False):
     """(problems, one-line summary) for how the model cites this checkout."""
     root = pathlib.Path(root)
     # git's answer, like the other guards: a filesystem walk also finds the
@@ -178,6 +390,7 @@ def audit(root):
     # copies of the tree in which a citation would resolve to the wrong file.
     tracked = {str(rel) for rel in gate_lines.tree_files(root) if rel.suffix == ".rs"}
     lengths, problems, total, said, carried = {}, [], 0, set(), set()
+    locked, entries, cited = read_lock(root), {}, set()
 
     def note(key, complaint):
         """A problem, unless it is one this row landed over and has not fixed."""
@@ -188,7 +401,13 @@ def audit(root):
 
     for missing in (d for d in SEARCH if not (root / d).is_dir()):
         problems.append(f"{missing} is in SEARCH but is not a directory any more")
-    for page in PAGES:
+    derived = code_pages(root, tracked)
+    if len(derived) < CODE_PAGES_FLOOR:
+        problems.append(
+            f"{len(derived)} code page(s) under {'/, '.join(CODE_ROOTS)} cite by line,"
+            f" under the floor of {CODE_PAGES_FLOOR}: the derivation stopped finding them"
+        )
+    for page in PAGES + derived:
         if not (root / page).is_file():
             problems.append(f"{page} is gone; the model's citations are unchecked")
             continue
@@ -205,7 +424,12 @@ def audit(root):
                 seen = None
             at = number
             if name:
-                seen, complaint = resolve(name, tracked)
+                if page.name in PATHS_ONLY and "/" not in name:
+                    problems.append(
+                        f"{page}: `{written}` is a bare name on a page that must"
+                        " write a repo path; nothing decides which crate it means"
+                    )
+                seen, complaint = resolve(name, tracked, page)
                 if complaint and complaint not in said:
                     said.add(complaint)
                     note(name, f"{page}: {complaint}")
@@ -221,6 +445,10 @@ def audit(root):
             if seen not in lengths:
                 lengths[seen] = (root / seen).read_text().splitlines()
             body = lengths[seen]
+            # Recorded before the ladder, not inside it: a citation that trips an
+            # earlier rule is still cited, and reporting it as an orphaned lock
+            # entry too is one cause wearing two messages.
+            cited.add((str(page), seen, start, end))
             if start < 1:
                 # `:0` is not a line. It slipped past both bounds checks and then
                 # read `body[-1]`, so it silently asserted about the LAST line.
@@ -235,23 +463,78 @@ def audit(root):
                     f"{page}: `{written}` -> {seen}, whose cited line is blank;"
                     " the code it named has moved",
                 )
-        if here < FLOOR:
+            elif locked or relock:
+                # Absent a lock file there is nothing to compare against, and a
+                # tree that has never been locked is not lying about anything;
+                # `test_the_lock_covers_every_citation` is what keeps it present.
+                key = (str(page), seen, start, end)
+                now = (lock_text(body[start - 1]), lock_text(body[end - 1]))
+                entries[key] = now
+                was = locked.get(key)
+                if was is None and not relock:
+                    problems.append(
+                        f"{page}: `{written}` is not in {LOCK}; check that it points"
+                        " where you mean it to, then re-run with --relock"
+                    )
+                elif was is not None and was != now and not relock:
+                    # Only a citation whose locked text is still IN the file has
+                    # demonstrably moved. Edited in place it is simply gone, and
+                    # firing on that is the false alarm this row would die of.
+                    moved = [n for n, l in enumerate(body, 1) if lock_text(l) == was[0]]
+                    if moved:
+                        # Nearest, not first: a locked line is often not unique
+                        # (`pub fn reset(&mut self) {` is in state.rs three
+                        # times), and first-match sends the reader to the wrong
+                        # one — the very thing this page's citations are for.
+                        near = min(moved, key=lambda n: abs(n - start))
+                        others = (
+                            f" ({len(moved) - 1} other line(s) read the same)"
+                            if len(moved) > 1
+                            else ""
+                        )
+                        note(
+                            written,
+                            f"{page}: `{written}` -> {seen} was locked to"
+                            f" `{was[0][:48]}`, which is now at :{near}{others};"
+                            " the citation has drifted",
+                        )
+        # A derived page is in the set BECAUSE it cites, so a per-page floor
+        # there asserts nothing; what ratchets that half is the lock.
+        floor = CODE_PAGES_FLOOR if page in derived else floor_for(page)
+        if here < floor:
             problems.append(
-                f"{page} yielded {here} citations, under the floor of {FLOOR}:"
+                f"{page} yielded {here} citations, under the floor of {floor}:"
                 " the page stopped citing, or this guard stopped reading it"
             )
         total += here
+    if relock:
+        write_lock(root, entries)
+    else:
+        for page, rel, start, end in sorted(set(locked) - cited):
+            problems.append(
+                f"{LOCK} still locks `{rel}:{start}-{end}` for {page}, which no"
+                " longer cites it; re-run with --relock"
+            )
     for key in sorted(set(PENDING) - carried):
         problems.append(
             f"`{key}` is in PENDING ({PENDING[key]}) but no longer rots; delete the entry"
         )
+    assurance_gate.check_property_tags(root, problems)
     debt = f", {len(carried)} carried" if carried else ""
     return problems, (
-        f"citation-gate: ok — {total} citations across {len(PAGES)} pages resolve{debt}"
+        f"citation-gate: ok — {total} citations across {len(PAGES)} model pages "
+        f"and {len(derived)} code pages resolve; "
+        f"phase-1 property tags close both ways{debt}"
     )
 
 
 def main():
+    if "--relock" in sys.argv[1:]:
+        problems, _ = audit(ROOT, relock=True)
+        print(f"citation-gate: {LOCK} rewritten; read the diff before committing it")
+        for line in problems:
+            print(f"  {line}")
+        return 1 if problems else 0
     problems, summary = audit(ROOT)
     if problems:
         print("citation-gate:")
@@ -260,7 +543,8 @@ def main():
         print(
             "\nThe model's `file.rs:line` citations are the only bridge between it\n"
             "and the code it abstracts. One that no longer resolves sends the next\n"
-            "reader somewhere the claim was never true. Re-point it, or drop it."
+            "reader somewhere the claim was never true. Its phase-1 property tags\n"
+            "must also resolve model→code and code→model. Repair or drop the claim."
         )
         return 1
     print(summary)

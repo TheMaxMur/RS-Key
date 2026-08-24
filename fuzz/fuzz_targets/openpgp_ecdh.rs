@@ -14,7 +14,7 @@
 //! Neither may panic; the agreement may only return a status word.
 
 use libfuzzer_sys::fuzz_target;
-use rsk_openpgp::keys::{Curve, PrivKey};
+use rsk_ec::{Curve, PrivKey};
 use rsk_openpgp::pso::parse_ecdh_point;
 
 fuzz_target!(|data: &[u8]| {

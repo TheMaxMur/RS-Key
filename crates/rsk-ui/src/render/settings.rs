@@ -21,9 +21,13 @@ pub(super) fn settings<D: DrawTarget<Color = Rgb565>>(
         SettingsPage::Brightness => settings_brightness(t, v.brightness),
         SettingsPage::Timeout => settings_timeout(t, v.timeout_secs),
         SettingsPage::Sleep => settings_sleep(t, v.sleep_secs),
-        SettingsPage::Security => {
-            settings_security(t, v.device_pin_set, v.fido_pin_set, v.backup_sealed)
-        }
+        SettingsPage::Security => settings_security(
+            t,
+            v.device_pin_set,
+            v.fido_pin_set,
+            v.backup_sealed,
+            v.scramble_pin,
+        ),
     }
 }
 
@@ -109,6 +113,7 @@ fn settings_security<D: DrawTarget<Color = Rgb565>>(
     device_pin_set: bool,
     fido_pin_set: bool,
     backup_sealed: bool,
+    scramble_pin: bool,
 ) -> Result<(), D::Error> {
     status_bar(t)?;
     title_bar(t, "Security", theme::ACCENT, true)?;
@@ -146,10 +151,27 @@ fn settings_security<D: DrawTarget<Color = Rgb565>>(
     // grouped with the other two credential PINs above the audit/backup/reset rows.
     components::rect_card(t, settings_row_rect(2))?;
     components::rect_row(t, settings_row_rect(2), Glyph::Lock, "PIV PIN", None, true)?;
+    // A toggle, not a drill-in: no chevron, and the trailing word IS the state. Scrambling
+    // costs muscle memory against a three-per-power-cycle mismatch limit, so it is off
+    // until the owner asks for it. `Rotate` (re-order), not `Apps` (a grid): the grid is
+    // the nav bar's Apps tab, and an icon means one thing per UI or it means nothing.
     components::rect_card(t, settings_row_rect(3))?;
     components::rect_row(
         t,
         settings_row_rect(3),
+        Glyph::Rotate,
+        "Scramble PIN pad",
+        Some(if scramble_pin {
+            ("On", theme::OK)
+        } else {
+            ("Off", theme::MUTED)
+        }),
+        false,
+    )?;
+    components::rect_card(t, settings_row_rect(4))?;
+    components::rect_row(
+        t,
+        settings_row_rect(4),
         Glyph::Clock,
         "Audit log",
         None,
@@ -158,10 +180,10 @@ fn settings_security<D: DrawTarget<Color = Rgb565>>(
     // The row shows the cheap export-*window* bit only ("Sealed" / "Review"); the full
     // 4-way state (no-seed / restore-only / sealed / review) lives on the Backup page, which
     // also reads `has_seed` + the build profile. The row deliberately skips that extra lookup.
-    components::rect_card(t, settings_row_rect(4))?;
+    components::rect_card(t, settings_row_rect(5))?;
     components::rect_row(
         t,
-        settings_row_rect(4),
+        settings_row_rect(5),
         Glyph::Lifebuoy,
         "Backup",
         Some(if backup_sealed {
@@ -171,7 +193,7 @@ fn settings_security<D: DrawTarget<Color = Rgb565>>(
         }),
         true,
     )?;
-    danger_row(t, settings_row_rect(5), "Factory reset")
+    danger_row(t, settings_row_rect(6), "Factory reset")
 }
 
 /// A destructive option row: a red-tinted rounded card with a warning glyph, label,

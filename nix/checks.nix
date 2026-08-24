@@ -36,7 +36,7 @@ in
     nativeBuildInputs = [
       pkgs.rustPlatform.cargoSetupHook
       toolchain
-      pkgs.gcc-arm-embedded # rsk-rsa-asm's build.rs (cc) even on the host build
+      pkgs.gcc-arm-embedded # rsk-rsa's build.rs (cc) even on the host build
     ];
     buildPhase = ''
       runHook preBuild

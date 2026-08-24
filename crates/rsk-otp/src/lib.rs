@@ -11,7 +11,9 @@ use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, aes128_encrypt_block, ct_eq, hmac_sha1, read_fused};
 use rsk_fs::{Fs, KeyFid, Storage};
-pub use rsk_sdk::Confirm;
+// The at-rest seal nonces' randomness and the `CHAL_BTN_TRIG` touch check are
+// `rsk-sdk`'s seams, shared with every sibling applet.
+pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 use zeroize::Zeroize;
 
@@ -19,12 +21,6 @@ mod counter;
 pub mod hid;
 pub mod seal;
 pub mod ticket;
-
-/// Randomness source for at-rest seal nonces (the firmware backs it with the
-/// hardware TRNG). Mirrors the sibling applets' `Rng` traits.
-pub trait Rng {
-    fn fill(&mut self, buf: &mut [u8]);
-}
 
 #[cfg(test)]
 mod tests_support;
@@ -35,31 +31,6 @@ pub const OTP_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x20, 0x01];
 /// Version reported in the status record — the shared
 /// [`rsk_sdk::FIRMWARE_VERSION`].
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
-
-/// Outcome of a touch request (CHAL_BTN_TRIG slots).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
-    Confirmed,
-    Timeout,
-    Declined,
-}
-
-/// Physical user presence; the firmware backs this with the BOOTSEL button
-/// (same shape as `rsk_openpgp::UserPresence`).
-pub trait UserPresence {
-    /// Ask for presence. `confirm` names the operation for a trusted on-screen
-    /// Approve/Deny prompt; the BOOTSEL-button backend ignores it.
-    fn request(&mut self, confirm: Confirm<'_>) -> Presence;
-}
-
-/// Test/no-button stand-in: confirms instantly.
-pub struct AlwaysConfirm;
-
-impl UserPresence for AlwaysConfirm {
-    fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
-        Presence::Confirmed
-    }
-}
 
 // FIDs: four contiguous slots — 1/2 (the classic short/long press) plus 3/4
 // (0xBB02/0xBB03), addressed everywhere as `EF_OTP_SLOT1 + (slot - 1)`. Slots 3/4
@@ -416,6 +387,7 @@ impl<'a> OtpApplet<'a> {
     }
 
     /// P1 = 0x01/0x03: write or delete a slot config.
+    /// Refines `RSKeyAppletPolicies!OtpSlotMutationNeedsItsCode` — SEC-POL-005.
     fn cmd_configure<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         if apdu.p1 == P1_CONFIG_SLOT2 && apdu.p2 != 0 {
             return Sw::INCORRECT_P1P2;
@@ -465,6 +437,7 @@ impl<'a> OtpApplet<'a> {
 
     /// P1 = 0x04/0x05: update the flag bytes of an existing config, keeping its
     /// fixed part / UID / key.
+    /// Refines `RSKeyAppletPolicies!OtpSlotMutationNeedsItsCode` — SEC-POL-005.
     fn cmd_update<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         if apdu.p1 == P1_UPDATE_SLOT2 && apdu.p2 != 0 {
             return Sw::INCORRECT_P1P2;
@@ -536,6 +509,7 @@ impl<'a> OtpApplet<'a> {
     /// satisfied by the default, so a plain `ykman otp swap` of unprotected slots
     /// is unchanged. Out-of-range offsets are rejected so a swap can never orphan a
     /// slot outside the 4-slot range.
+    /// Refines `RSKeyAppletPolicies!OtpSlotMutationNeedsItsCode` — SEC-POL-005.
     fn cmd_swap<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let (mut fid1, mut fid2) = (EF_OTP_SLOT1, EF_OTP_SLOT2);
         let mut code = [0u8; ACC_CODE_SIZE];
@@ -711,10 +685,10 @@ impl<'a> OtpApplet<'a> {
             P1_UPDATE_SLOT1 | P1_UPDATE_SLOT2 => self.cmd_update(apdu, fs, res),
             P1_SWAP => self.cmd_swap(apdu, fs, res),
             0x10 => {
-                res.extend(&rsk_mgmt::serial4(self.serial_id));
+                res.extend(&rsk_sdk::serial4(self.serial_id));
                 Sw::OK
             }
-            0x13 => rsk_mgmt::config_tlv(&rsk_mgmt::serial4(self.serial_id), fs, res),
+            0x13 => rsk_devconf::config_tlv(&rsk_sdk::serial4(self.serial_id), fs, res),
             0x14 => self.cmd_status_ext(fs, res),
             P1_CHAL_OTP_SLOT1 | P1_CHAL_OTP_SLOT2 | P1_CHAL_HMAC_SLOT1 | P1_CHAL_HMAC_SLOT2 => {
                 self.cmd_calculate(apdu, fs, res)
@@ -756,7 +730,7 @@ impl<'a> OtpApplet<'a> {
         if 1 + len > data.len() {
             return Sw::WRONG_DATA;
         }
-        match rsk_mgmt::persist_dev_conf(fs, &data[1..1 + len]) {
+        match rsk_devconf::persist_dev_conf(fs, &data[1..1 + len]) {
             Ok(()) => {
                 // ykman/yubikit confirm an OTP-transport write by the program-
                 // sequence byte in the status frame advancing (`_is_sequence_updated`),
@@ -765,8 +739,10 @@ impl<'a> OtpApplet<'a> {
                 self.config_seq = self.config_seq.wrapping_add(1);
                 Sw::OK
             }
-            Err(rsk_mgmt::DevConfError::TooLong | rsk_mgmt::DevConfError::BadTlv) => Sw::WRONG_DATA,
-            Err(rsk_mgmt::DevConfError::Store) => Sw::MEMORY_FAILURE,
+            Err(rsk_devconf::DevConfError::TooLong | rsk_devconf::DevConfError::BadTlv) => {
+                Sw::WRONG_DATA
+            }
+            Err(rsk_devconf::DevConfError::Store) => Sw::MEMORY_FAILURE,
         }
     }
 

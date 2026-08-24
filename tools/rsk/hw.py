@@ -36,7 +36,7 @@ from .backup import (
 from .common import add_pin_arg, connect_fido, device_has_pin, die, resolve_pin, sanitize
 from .status import RESCUE_AID, rescue_read
 
-# phy TLV tags — must match crates/rsk-rescue/src/phy.rs.
+# phy TLV tags — must match crates/rsk-phy/src/lib.rs.
 TAG_LED_GPIO = 0x04
 TAG_LED_DRIVER = 0x0C
 TAG_LED_ORDER = 0x0D  # RS-Key vendor tag (PicoForge skips it as unknown)

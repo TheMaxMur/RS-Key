@@ -25,6 +25,73 @@ impl Applet<()> for Echo {
     }
 }
 
+/// An applet that records the `reselect` flag it was handed, which is what the
+/// dispatcher's `current == Some(i)` decides and what PIV and OpenPGP branch on
+/// to keep or drop their session. Every other fake here ignores the flag, which
+/// is exactly why inverting that comparison was killed by no test (D2).
+struct FlagWatcher<'c> {
+    aid: &'static [u8],
+    seen: &'c std::cell::Cell<Option<bool>>,
+}
+impl Applet<()> for FlagWatcher<'_> {
+    fn aid(&self) -> &'static [u8] {
+        self.aid
+    }
+    fn select(&mut self, reselect: bool, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
+        self.seen.set(Some(reselect));
+        Sw::OK
+    }
+    fn process(&mut self, _apdu: &Apdu, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
+        Sw::OK
+    }
+}
+
+#[test]
+fn reselect_is_true_only_for_the_applet_already_current() {
+    const AID_A: &[u8] = &[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01];
+    const AID_B: &[u8] = &[0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10];
+    let (fa, fb) = (std::cell::Cell::new(None), std::cell::Cell::new(None));
+    let mut a = FlagWatcher {
+        aid: AID_A,
+        seen: &fa,
+    };
+    let mut b = FlagWatcher {
+        aid: AID_B,
+        seen: &fb,
+    };
+    let mut applets: [&mut dyn Applet<()>; 2] = [&mut a, &mut b];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+
+    for (aid, cell, want, why) in [
+        (AID_A, &fa, false, "the first SELECT is fresh"),
+        (
+            AID_A,
+            &fa,
+            true,
+            "selecting the applet already current is a RESELECT",
+        ),
+        (
+            AID_B,
+            &fb,
+            false,
+            "selecting a different applet is never a reselect",
+        ),
+        (
+            AID_A,
+            &fa,
+            false,
+            "coming back after another applet is a fresh select",
+        ),
+    ] {
+        let mut apdu = std::vec![0x00u8, 0xA4, 0x04, 0x00, aid.len() as u8];
+        apdu.extend_from_slice(aid);
+        let mut res = ResBuf::new(&mut out);
+        assert_eq!(disp.process(&apdu, &mut applets, &mut (), &mut res), Sw::OK);
+        assert_eq!(cell.get(), Some(want), "{why}");
+    }
+}
+
 #[test]
 fn select_then_dispatch() {
     let mut echo = Echo { selected: false };

@@ -1245,6 +1245,7 @@ fn view(page: SettingsPage) -> SettingsView {
         device_pin_set: true,
         fido_pin_set: true,
         backup_sealed: true,
+        scramble_pin: false,
     }
 }
 

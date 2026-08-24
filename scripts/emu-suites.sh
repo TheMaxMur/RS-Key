@@ -26,7 +26,8 @@ failed=()
 # A blank store per session is what keeps one suite's leftovers out of the next
 # session's assertions.
 start_emu() {
-  "$EMU" --store "$WORK/$1.store" "${@:2}" >"$WORK/$1.log" 2>&1 &
+  "$EMU" --store "$WORK/$1.store" --security-trace "$WORK/$1.security.jsonl" \
+    "${@:2}" >"$WORK/$1.log" 2>&1 &
   for _ in $(seq 50); do
     grep -q "device ready" "$WORK/$1.log" && return 0
     sleep 0.2
@@ -62,7 +63,8 @@ run_suite() {
 }
 
 echo "== building the emulator"
-cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST"
+cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST" \
+  --features security-trace
 
 echo
 echo "== on-device suites (socket transports)"
@@ -70,12 +72,51 @@ start_emu default
 for t in tests/[0-9]*.py; do
   case "$(basename "$t")" in
     # Their own sessions below: `30` wants the Yubico card identity, and `28`/`76`
-    # want a PIN already set.
-    30_* | 28_* | 76_*) continue ;;
+    # want a PIN already set. `16` wants one too and has no session of its own —
+    # it exists for the recording, which runs it where `21` has just set it. `09`
+    # is the mirror: it wants NO PIN, and in this sweep it would meet whichever
+    # one an earlier suite left behind.
+    30_* | 28_* | 76_* | 16_* | 09_*) continue ;;
     *) run_suite "$t" ;;
   esac
 done
 stop_emu
+
+# A bounded, security-dense slice of the real suite is replayed against the full
+# RSKeySecurityState model. Other sessions are traced too, but this one owns the
+# five coverage ratchets in formal/floors.txt.
+#
+# These suites in ONE emulator lifetime are what those ratchets were
+# measured on (formal/README.md, phase 4) — the replug between them is a recorded
+# boundary, and it is the only way `PowerCut` is reached. Recording fewer misses
+# the floors; keep this list and the committed trace moving together.
+# An entry may carry its own arguments; `16` needs the PIN `21` has just set.
+SECURITY_TRACE_SUITES=(
+  09_tokenless_gate_no_pin
+  21_pin_webauthn
+  "16_always_uv_gate --pin 1234"
+  20_clientpin
+  27_reset_window
+)
+
+echo
+echo "== formal security-state trace (${SECURITY_TRACE_SUITES[*]})"
+start_emu security --auto-touch-ms 1
+for suite in "${SECURITY_TRACE_SUITES[@]}"; do
+  read -r name args <<<"$suite"
+  # The split is on whitespace, so a suite whose NAME held a space would silently
+  # run a different file with the rest as arguments. None does; this makes the
+  # day one does a stop rather than a wrong recording.
+  [ -f "tests/$name.py" ] || { echo "FAIL: no suite tests/$name.py"; exit 1; }
+  # shellcheck disable=SC2086 -- `args` is a suite's own argument list, split on purpose
+  python tests/emu.py "tests/$name.py" $args >"$WORK/security-$name.out" 2>&1 || {
+    echo "FAIL: the security trace suite $name failed"
+    cat "$WORK/security-$name.out"
+    exit 1
+  }
+done
+stop_emu
+python scripts/security_trace.py "$WORK/security.security.jsonl"
 
 # `28` and `76` need a PIN on the device, and `21_pin_webauthn` is what sets it.
 # Their own session, because several suites in between reset the authenticator —

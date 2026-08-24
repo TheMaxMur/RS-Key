@@ -41,6 +41,7 @@ pub const EF_HARDENED: u16 = 0xCE14;
 /// reclaims its page, and without this the lap never runs again. Deferring to the next
 /// boot is deliberate: the lap is a multi-second stall that must not land inside a host
 /// command, and it is idempotent, so an interrupted one simply re-runs.
+/// Refines `RSKeyBootHardening!MarkerNeverLies` — SEC-BOOT-001.
 pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) {
     let _ = fs.delete(EF_HARDENED);
 }

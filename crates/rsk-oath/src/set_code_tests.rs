@@ -289,3 +289,105 @@ fn a_code_an_older_build_stored_still_opens_the_applet() {
     assert!(code_installed(&mut app, &mut fs));
     assert_eq!(validate(&mut app, &mut fs, &secret), Sw::OK);
 }
+
+// The two below were derived by co-refutation (`scripts/comutate.py`), which
+// re-injects each model mutant into the Rust and demands a red slice. Three of
+// this file's rules came back GREEN under the injection: the removal gate and
+// both directions of a refused VALIDATE were held by the model alone.
+
+#[test]
+fn a_deselect_drops_the_validate_unlock() {
+    // `RSKeyAppletSeams!NoStatusOutsideItsSelection` — SEC-SEAM-001 at the code
+    // level. The model catches an applet that keeps its status across a
+    // deselect (`BugSelectKeepsOtherApplet`); emptying this applet's `deselect`
+    // was killed by no test, so a second application selected in between would
+    // have inherited an unlocked store.
+    let (mut fs, rng) = fixture();
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let secret = [0xABu8; 20];
+    assert_eq!(set_code(&mut app, &mut fs, &secret), Sw::OK);
+    assert_eq!(validate(&mut app, &mut fs, &secret), Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[])).0,
+        Sw::OK,
+        "the unlock must hold inside its own selection"
+    );
+    Applet::deselect(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[])).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "the unlock must not outlive the selection that earned it"
+    );
+}
+
+#[test]
+fn the_removal_is_behind_the_same_gate_as_the_install() {
+    // `RSKeyAppletSeams!AccessCodeRemovalNeedsTheCode` — SEC-SEAM-006, at the
+    // code level. `73 00` is the card's one spelling of "remove the access
+    // code", so the gate above it is the whole distance between a stranger with
+    // a reader and a store unlocked for good. The model was blind to this for
+    // two revisions (its exemption fired exactly on the state the removal
+    // creates); the Rust half was asserted by nobody at all.
+    let (mut fs, rng) = fixture();
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    assert_eq!(set_code(&mut app, &mut fs, &[0xAB; 20]), Sw::OK);
+    // A SELECT leaves the applet locked, which is the state the removal must
+    // not escape — and `code_installed` asserts the gate and the challenge agree.
+    assert!(code_installed(&mut app, &mut fs));
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_SET_CODE, 0, 0, &tlv(TAG_KEY, &[]))
+        )
+        .0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+    );
+    assert!(
+        code_installed(&mut app, &mut fs),
+        "an unvalidated `73 00` removed the access code",
+    );
+}
+
+#[test]
+fn a_refused_validate_neither_grants_nor_drops_the_unlock() {
+    // `RSKeyAppletSeams!ExemptRefusalPreservesStatus` — SEC-SEAM-005, both
+    // directions. VALIDATE is exempt from the refusal rule its siblings follow,
+    // and exempt cuts both ways: a wrong proof may not unlock a locked applet,
+    // and may not lock an unlocked one either. A MAC challenge-response has no
+    // retry counter for a refusal to protect, so dropping the standing unlock
+    // would cost availability and buy nothing. E62 pins the word; this is the
+    // state behind it.
+    let (mut fs, rng) = fixture();
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let secret = [0xABu8; 20];
+    assert_eq!(set_code(&mut app, &mut fs, &secret), Sw::OK);
+
+    // One SELECT for the whole test: every SELECT rotates the challenge AND
+    // re-locks, so a second one would erase the standing unlock this measures.
+    let chal = card_challenge(&mut app, &mut fs);
+    let good = hmac_sha1(&secret, &chal);
+    let mut wrong = good;
+    wrong[0] ^= 0xFF;
+    let list =
+        |app: &mut OathApplet, fs: &mut Fs<RamStorage>| run(app, fs, &apdu(INS_LIST, 0, 0, &[])).0;
+
+    assert_eq!(validate_proof(&mut app, &mut fs, &wrong), Sw::WRONG_DATA);
+    assert_eq!(
+        list(&mut app, &mut fs),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "a refused VALIDATE unlocked the applet",
+    );
+
+    assert_eq!(validate_proof(&mut app, &mut fs, &good), Sw::OK);
+    assert_eq!(list(&mut app, &mut fs), Sw::OK);
+    assert_eq!(validate_proof(&mut app, &mut fs, &wrong), Sw::WRONG_DATA);
+    assert_eq!(
+        list(&mut app, &mut fs),
+        Sw::OK,
+        "a refused VALIDATE dropped the standing unlock",
+    );
+}

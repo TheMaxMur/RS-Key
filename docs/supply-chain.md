@@ -20,8 +20,8 @@ See [production.md](production.md) for that.
 |---|---|---|
 | Reproducible build | the 11 `.uf2` flavors | the binary is a pure function of the source at the tag. Anyone can rebuild it |
 | Repro **gate** | (CI, blocking) | the release job *fails* if any flavor doesn't rebuild bit-identical, so a non-reproducible image is never published |
-| Checksums + signature | `SHA256SUMS` + `SHA256SUMS.cosign.bundle` | the hashes were signed by this repo's release workflow (keyless cosign) |
-| Build provenance | a GitHub **attestation** (not a release file) | which reusable workflow, at which commit, on which runner built each `.uf2`. **SLSA v1 Build L3**, keyless via `attest-build-provenance` |
+| Checksums + signature | `SHA256SUMS` + `SHA256SUMS.sigstore.json` | the hashes were signed by this repo's release workflow (keyless cosign). Up to v0.4.10 the same file is named `SHA256SUMS.cosign.bundle` |
+| Build provenance | a GitHub **attestation**, plus `rs-key-<tag>.intoto.jsonl` on the release | which reusable workflow, at which commit, on which runner built each `.uf2`. **SLSA v1 Build L3**, keyless via `attest-build-provenance`. The API copy is authoritative; the file is for offline checking |
 | SBOM | `rs-key-<tag>-sbom.cdx.json` | the CycloneDX bill of materials for the firmware crate |
 | Dependency audit | `supply-chain/` (in-repo) | every dependency is covered by an imported audit or a recorded exemption (cargo-vet) |
 
@@ -45,7 +45,7 @@ CI already enforces this: the release job rebuilds all eleven flavors with
 
 ```sh
 cosign verify-blob \
-  --bundle SHA256SUMS.cosign.bundle \
+  --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@.*$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   SHA256SUMS

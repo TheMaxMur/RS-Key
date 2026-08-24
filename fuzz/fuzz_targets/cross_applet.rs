@@ -5,7 +5,7 @@
 
 //! Stateful cross-applet fuzzing over the *shipped* wiring. Every other applet
 //! target drives ONE applet from a fresh state; this one builds the real
-//! [`rsk_device::CcidApplets`] — the same seven-applet registration, in the same
+//! [`rsk_device::CcidApplets`] — the same eight-applet registration, in the same
 //! order, that the firmware and `tools/emu` run — over one shared flash `Fs`, RNG
 //! and presence source, then replays an attacker-chosen sequence of transport
 //! verbs against it. Selection, chaining, each applet's PIN/MSE/auth state, the
@@ -49,6 +49,9 @@
 use core::cell::RefCell;
 
 use libfuzzer_sys::fuzz_target;
+// DeviceInfo's `USB_ENABLED` tag — the one writable field that decides which
+// applets exist.
+use rsk_devconf::raw::TAG_USB_ENABLED;
 use rsk_device::{CcidApplets, Hooks};
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
@@ -69,9 +72,6 @@ const INS_GENERATE: u8 = 0x47;
 /// answer, and WRITE CONFIG is its ungated twin on the default build.
 const CTAP_READ_CONFIG: u8 = 0x42;
 const CTAP_WRITE_CONFIG: u8 = 0x43;
-/// DeviceInfo's `USB_ENABLED` tag — mirrors `rsk-mgmt`'s crate-private
-/// `TAG_USB_ENABLED`, the one writable field that decides which applets exist.
-const TAG_USB_ENABLED: u8 = 0x03;
 /// The four PIN references the trusted display's pad can be asked to collect.
 const PIN_REFS: [u8; 4] = [
     rsk_openpgp::consts::PW1_MODE81,
@@ -80,21 +80,27 @@ const PIN_REFS: [u8; 4] = [
     rsk_usb::secure_pin::PIV_PIN_P2,
 ];
 
-/// The seven applets in **registration order** — the order `CcidApplets` builds
+/// The eight applets in **registration order** — the order `CcidApplets` builds
 /// them in, which is what the dispatcher's enable mask is indexed by — each with
 /// the capability bit that gates it. `0` = ungated: management is the re-enable
 /// path and vendor/rescue are the recovery ones, so a disable is never final.
-const APPLETS: [(&[u8], u16); 7] = [
+/// FIDO's entry carries two bits because one AID serves two applications, and
+/// `cap_enabled` is an ANY test.
+const APPLETS: [(&[u8], u16); 8] = [
     (rsk_vendor::VENDOR_AID, 0),
-    (rsk_openpgp::consts::OPENPGP_AID, rsk_mgmt::CAP_OPENPGP),
+    (rsk_openpgp::consts::OPENPGP_AID, rsk_devconf::CAP_OPENPGP),
     (rsk_mgmt::MANAGEMENT_AID, 0),
-    (rsk_oath::OATH_AID, rsk_mgmt::CAP_OATH),
-    (rsk_otp::OTP_AID, rsk_mgmt::CAP_OTP),
-    (rsk_piv::PIV_AID, rsk_mgmt::CAP_PIV),
+    (rsk_oath::OATH_AID, rsk_devconf::CAP_OATH),
+    (rsk_otp::OTP_AID, rsk_devconf::CAP_OTP),
+    (rsk_piv::PIV_AID, rsk_devconf::CAP_PIV),
     (rsk_rescue::RESCUE_AID, 0),
+    (
+        rsk_fido::consts::FIDO_AID,
+        rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_U2F,
+    ),
 ];
 
-const OP_SELECT_MAX: u8 = 6;
+const OP_SELECT_MAX: u8 = 7;
 const OP_CTAP_MGMT: u8 = 0xF0;
 const OP_RESET_CARD: u8 = 0xF1;
 const OP_RESET_CHAINING: u8 = 0xF2;
@@ -109,29 +115,15 @@ const OP_SET_CAPS: u8 = 0xF6;
 struct Board;
 impl Hooks<RamStorage> for Board {}
 
-/// One physical button behind all seven applet traits, as on the device. Confirms
-/// instantly so the presence-gated commands stay reachable for the fuzzer.
+/// One physical button behind every applet, as on the device. Confirms instantly
+/// so the presence-gated commands stay reachable for the fuzzer.
 struct Finger;
 
-macro_rules! impl_presence {
-    ($($m:ident),+ $(,)?) => {$(
-        impl $m::UserPresence for Finger {
-            fn request(&mut self, _confirm: $m::Confirm<'_>) -> $m::Presence {
-                $m::Presence::Confirmed
-            }
-        }
-    )+};
+impl rsk_sdk::UserPresence for Finger {
+    fn request(&mut self, _confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
+        rsk_sdk::Presence::Confirmed
+    }
 }
-
-impl_presence!(
-    rsk_fido,
-    rsk_openpgp,
-    rsk_oath,
-    rsk_otp,
-    rsk_mgmt,
-    rsk_rescue,
-    rsk_vendor,
-);
 
 /// Deterministic host RNG; one instance feeds every applet, mirroring the single
 /// shared TRNG on device.
@@ -146,23 +138,11 @@ impl SeqRng {
     }
 }
 
-macro_rules! impl_rng {
-    ($($t:path),+ $(,)?) => {$(
-        impl $t for SeqRng {
-            fn fill(&mut self, buf: &mut [u8]) {
-                self.next(buf)
-            }
-        }
-    )+};
+impl rsk_sdk::Rng for SeqRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        self.next(buf)
+    }
 }
-
-impl_rng!(
-    rsk_fido::Rng,
-    rsk_openpgp::Rng,
-    rsk_oath::Rng,
-    rsk_otp::Rng,
-    rsk_rescue::Rng,
-);
 
 /// The rescue applet's board: no secure boot, no fuse this may burn, a session
 /// clock. Its deep OTP-lock / rollback arms belong to the dedicated `rescue_apdu`
@@ -247,12 +227,15 @@ fuzz_target!(|data: &[u8]| {
     let board = RefCell::new(Board);
     let finger = RefCell::new(Finger);
     let rescue = RefCell::new(RescueBoard::default());
+    // The device's one FIDO session state, as the worker holds it.
+    let fido_state = RefCell::new(rsk_fido::FidoState::new());
 
     let mut ccid = CcidApplets::new(
         &fs,
         &rng,
         &board,
         &finger,
+        &fido_state,
         &rescue,
         VendorBoard,
         SERIAL_ID,
@@ -277,7 +260,7 @@ fuzz_target!(|data: &[u8]| {
                 sel[4] = aid.len() as u8;
                 sel[5..5 + aid.len()].copy_from_slice(aid);
                 let enabled = ccid.caps_enabled(cap);
-                let sw = status(ccid.handle_apdu(&sel[..5 + aid.len()]));
+                let sw = status(ccid.handle_apdu(&sel[..5 + aid.len()], 0));
                 // No applet's own `select` answers FILE_NOT_FOUND, so this is
                 // exactly the gate: `ykman config usb --disable X` really removes
                 // X, and the three ungated applets can never be removed at all.
@@ -314,7 +297,7 @@ fuzz_target!(|data: &[u8]| {
             OP_REFRESH => {
                 let mask = ccid.refresh_enabled();
                 assert_eq!(
-                    mask & !rsk_mgmt::SUPPORTED_CAPS,
+                    mask & !rsk_devconf::SUPPORTED_CAPS,
                     0,
                     "the mask enables a capability this build does not have"
                 );
@@ -324,8 +307,8 @@ fuzz_target!(|data: &[u8]| {
                     // The wipe is not allowed to spare `EF_DEV_CONF`, or an owner
                     // who disabled every application has no way back.
                     assert_eq!(
-                        rsk_mgmt::read_enabled_caps(&mut fs.borrow_mut()),
-                        rsk_mgmt::SUPPORTED_CAPS,
+                        rsk_devconf::read_enabled_caps(&mut fs.borrow_mut()),
+                        rsk_devconf::SUPPORTED_CAPS,
                         "a factory wipe left the enabled-applications record behind"
                     );
                 }
@@ -336,7 +319,7 @@ fuzz_target!(|data: &[u8]| {
                 let mut payload = [0u8; 64];
                 let n = body.len().min(payload.len());
                 payload[..n].copy_from_slice(&body[..n]);
-                let otp_on = ccid.caps_enabled(rsk_mgmt::CAP_OTP);
+                let otp_on = ccid.caps_enabled(rsk_devconf::CAP_OTP);
                 let (_, len, _) = ccid.handle_otp_hid(slot, &payload);
                 if !otp_on && rsk_otp::is_function_slot(slot) {
                     assert_eq!(
@@ -372,7 +355,7 @@ fuzz_target!(|data: &[u8]| {
                 if matches!(Apdu::parse(raw), Ok(p) if p.ins == INS_GENERATE) {
                     continue;
                 }
-                let _ = status(ccid.handle_apdu(raw));
+                let _ = status(ccid.handle_apdu(raw, 0));
             }
         }
     }

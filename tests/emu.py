@@ -99,6 +99,7 @@ UNSUPPORTED = {
     "61_pqc_thirdparty_client": "driven through python-fido2's HID transport",
     "65_pqc_thirdparty_client65": "driven through python-fido2's HID transport",
     # Hardware by definition.
+    "29_reset_power_cut": "cuts physical USB power during a flash write",
     "54_sram_residue": "measures SRAM residue on a real chip",
     "90_otp_mkek_migration": "migrates the OTP MKEK; the emulator has no fuses",
 }
@@ -113,6 +114,7 @@ UNSUPPORTED = {
 # `scripts/emu-suites.sh` gives them a session with that PIN; this is for the
 # hand-run, and it turns a suite it has not been told about into a skip.
 NEEDS_ARGS = {
+    "16_always_uv_gate": "--pin",
     "28_ctap_spec_alignment": "--pin",
     "76_soft_lock": "--pin",
 }

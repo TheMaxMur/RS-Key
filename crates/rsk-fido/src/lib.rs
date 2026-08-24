@@ -39,109 +39,29 @@ pub mod state;
 pub mod u2f;
 pub mod vendor;
 
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub mod generated_token_edges;
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub mod reset_assurance;
+
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub use generated_token_edges::{AState, AbstractOp, AbstractOutcome};
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub type AbstractTokenState = AState;
+
 pub use error::{CTAP2_OK, CtapError, CtapResult};
 pub use reset::{FIDO_SEED_FIDS, is_fido_gate_fid, is_fido_seed_fid, survives_factory_reset};
 
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
-pub use rsk_sdk::{Confirm, ConfirmKind};
+// The randomness and user-presence seams, declared once in `rsk-sdk` — the crate
+// every applet already depends on — so the board writes one impl of each rather
+// than one per applet. Re-exported: callers name them `rsk_fido::Rng` and so on.
+pub use rsk_sdk::{AlwaysConfirm, Confirm, ConfirmKind, PinEntry, Presence, Rng, UserPresence};
 
 pub use state::FidoState;
-
-/// A source of random bytes — the device TRNG in `firmware`, a deterministic
-/// stream in tests. Decouples the FIDO logic from any specific `rand_core` version.
-pub trait Rng {
-    fn fill(&mut self, buf: &mut [u8]);
-}
-
-/// Outcome of asking for physical user presence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
-    /// The user touched the device.
-    Confirmed,
-    /// No touch within the timeout.
-    Timeout,
-    /// The user actively declined (no decline path on the BOOTSEL button today,
-    /// but tests and other front-ends can produce it → `OPERATION_DENIED`).
-    Declined,
-    /// The platform sent `CTAPHID_CANCEL` while the touch was awaited; the
-    /// in-flight CTAP2 command must answer `CTAP2_ERR_KEEPALIVE_CANCEL`.
-    Cancelled,
-}
-
-/// Outcome of collecting a built-in-UV PIN on the device's own UI (the
-/// trusted-display PIN pad). Built-in UV proves *user verification* without the
-/// PIN ever crossing the host — the anti-keylogger counterpart to the on-screen
-/// Approve/Deny that proves *user presence*.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PinEntry {
-    /// The user committed a PIN of this many ASCII-digit bytes, in `out[..len]`.
-    Entered(usize),
-    /// The user tapped Cancel on the pad — a deliberate decline.
-    Declined,
-    /// No completed entry within the presence timeout.
-    Timeout,
-    /// The platform sent `CTAPHID_CANCEL` while the pad was up.
-    Cancelled,
-    /// The backend has no on-device UI to collect a PIN (the default).
-    Unsupported,
-}
-
-/// Obtains physical user presence. The firmware polls the BOOTSEL button; with
-/// no button configured it confirms immediately, which is also what host tests
-/// use via [`AlwaysConfirm`].
-pub trait UserPresence {
-    /// Ask for presence. `confirm` describes the pending operation for a trusted
-    /// on-screen Approve/Deny prompt; the BOOTSEL-button backend ignores it.
-    fn request(&mut self, confirm: Confirm<'_>) -> Presence;
-
-    /// Whether this backend actually shows the [`Confirm`] to the user, so a touch
-    /// carries *which* operation it approves. The BOOTSEL button discards the title
-    /// and raises the same indication for every ceremony; only the trusted display
-    /// overrides this. CTAP 2.1 §6.6 exempts exactly such an authenticator from the
-    /// `authenticatorReset` power-up window ([`reset`](crate::reset::reset)).
-    fn shows_confirm(&self) -> bool {
-        false
-    }
-
-    /// Whether this backend can collect built-in user verification — a PIN entered
-    /// on the authenticator's own UI, so it never reaches the host. Only the
-    /// trusted-display backend overrides this; the BOOTSEL button and the host-test
-    /// stand-in have no UI to type a PIN, so built-in UV is absent and `options.uv`
-    /// stays unadvertised (and `clientPIN` 0x06/0x07 answer `UnsupportedOption`).
-    fn uv_available(&self) -> bool {
-        false
-    }
-
-    /// Collect a built-in-UV PIN on the device's own UI as ASCII digits into `out`,
-    /// refusing to *commit* below `min_len` characters so a fat-fingered short entry
-    /// can't burn a retry. Returns how the entry ended. The default — no on-device
-    /// UI — reports [`PinEntry::Unsupported`]; this is only reached on a backend
-    /// that also overrides [`uv_available`](Self::uv_available).
-    fn collect_pin(&mut self, _min_len: usize, _out: &mut [u8]) -> PinEntry {
-        PinEntry::Unsupported
-    }
-
-    /// Collect the authenticator's **own** device PIN — the one a trusted-display
-    /// build's onboarding sets, not the clientPIN — on the device's own UI. Separate
-    /// from [`collect_pin`](Self::collect_pin) because the screen must name which PIN
-    /// it is asking for: a pad captioned "FIDO PIN" that verifies the device PIN is
-    /// exactly the kind of lie the trusted display exists to prevent. Used by the
-    /// vendor gate when no clientPIN is set (see `vendor::pin_gate`).
-    fn collect_device_pin(&mut self, _min_len: usize, _out: &mut [u8]) -> PinEntry {
-        PinEntry::Unsupported
-    }
-}
-
-/// A [`UserPresence`] that confirms instantly — the no-button default and the
-/// host-test stand-in.
-pub struct AlwaysConfirm;
-
-impl UserPresence for AlwaysConfirm {
-    fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
-        Presence::Confirmed
-    }
-}
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub use state::{TOKEN_PERSISTENT_FIDS, TokenPersistentView};
 
 /// Per-request context the firmware threads into the FIDO commands: the device
 /// identity, the flash file system, an RNG, the cross-message PIN/UV state and
@@ -163,14 +83,14 @@ impl<S: Storage, R: Rng> Ctx<'_, S, R> {
     /// cancel) to `false`. Callers that must distinguish a `CTAPHID_CANCEL`
     /// (→ `KEEPALIVE_CANCEL`) use [`require_presence`](Self::require_presence).
     pub fn check_user_presence(&mut self, confirm: Confirm<'_>) -> bool {
-        self.presence.request(confirm) == Presence::Confirmed
+        self.presence.request_ceremony(confirm) == Presence::Confirmed
     }
 
     /// Obtain user presence for a CTAP2 command, mapping the outcome to its
     /// status code: a `CTAPHID_CANCEL` aborts with `KEEPALIVE_CANCEL`, any
     /// other non-confirmation (timeout, decline) with `OPERATION_DENIED`.
     pub fn require_presence(&mut self, confirm: Confirm<'_>) -> Result<(), CtapError> {
-        match self.presence.request(confirm) {
+        match self.presence.request_ceremony(confirm) {
             Presence::Confirmed => Ok(()),
             Presence::Cancelled => Err(CtapError::KeepAliveCancel),
             Presence::Timeout | Presence::Declined => Err(CtapError::OperationDenied),
@@ -180,6 +100,7 @@ impl<S: Storage, R: Rng> Ctx<'_, S, R> {
     /// The device seed for FIDO operations: the RAM copy a vendor `UNLOCK` left
     /// behind wins over flash; on a soft-locked device with no unlock this
     /// session, both fail and the operation errors out — that is the lock.
+    /// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
     pub fn load_keydev(&mut self) -> Option<[u8; 32]> {
         self.state
             .keydev_dec
@@ -247,6 +168,10 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
                 _ => (consts::MIN_PIN_LENGTH, false),
             };
             let remaining_rk = credential::remaining_discoverable(ctx.fs);
+            // Re-encrypted under a fresh IV on every getInfo, so the member cannot
+            // become a stable fingerprint (`seed::enc_identifier`).
+            let enc_id = seed::enc_identifier(&ctx.dev, ctx.fs, ctx.rng);
+            let enc_css = seed::enc_cred_store_state(&ctx.dev, ctx.fs, ctx.rng);
             getinfo::get_info(
                 ctx.fs.has_data(consts::EF_PIN),
                 min_pin,
@@ -255,6 +180,8 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
                 config::always_uv_enabled(ctx.fs),
                 ctx.presence.uv_available(),
                 remaining_rk,
+                enc_id.as_ref(),
+                enc_css.as_ref(),
                 &mut out[1..],
             )
         }
@@ -298,3 +225,7 @@ mod conformance;
 /// never shipped (see the module docs).
 #[cfg(feature = "bench")]
 pub mod bench;
+
+#[cfg(test)]
+#[path = "test_pins.rs"]
+mod test_pins;

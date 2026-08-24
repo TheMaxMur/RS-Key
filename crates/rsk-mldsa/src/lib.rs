@@ -29,7 +29,7 @@ mod testutil;
 #[cfg(test)]
 mod testvectors;
 
-use params::{ML_DSA_44, ML_DSA_65};
+use params::{ML_DSA_44, ML_DSA_65, ML_DSA_87};
 use sign::{ExpandedKey, verify};
 
 /// Length of the key-generation seed ξ (both parameter sets).
@@ -43,6 +43,10 @@ pub const MLDSA44_SIG_LEN: usize = 2420;
 pub const MLDSA65_PK_LEN: usize = 1952;
 /// ML-DSA-65 signature length.
 pub const MLDSA65_SIG_LEN: usize = 3309;
+/// ML-DSA-87 serialized public-key length.
+pub const MLDSA87_PK_LEN: usize = 2592;
+/// ML-DSA-87 signature length.
+pub const MLDSA87_SIG_LEN: usize = 4627;
 
 /// Errors from the fallible operations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +116,35 @@ impl MlDsa65 {
     }
 }
 
+/// An ML-DSA-87 keypair expanded from a 32-byte seed. Holds the NTT-domain
+/// precomputes (~31 KB); derive, use and drop within one request. Zeroizes on
+/// drop. Signs with an empty FIPS 204 context (the COSE/WebAuthn profile).
+pub struct MlDsa87(ExpandedKey<8, 7>);
+
+impl MlDsa87 {
+    /// Deterministically expand the keypair from ξ.
+    pub fn from_seed(xi: &[u8; SEED_LEN]) -> Self {
+        Self(ExpandedKey::from_seed(&ML_DSA_87, xi))
+    }
+
+    /// The serialized public key (the COSE `pub` parameter).
+    pub fn public_key(&self) -> [u8; MLDSA87_PK_LEN] {
+        let mut pk = [0u8; MLDSA87_PK_LEN];
+        self.0.write_public_key(&ML_DSA_87, &mut pk);
+        pk
+    }
+
+    /// Sign `msg` (empty context) into `out`; returns the signature length.
+    pub fn sign(&self, msg: &[u8], rnd: &[u8; 32], out: &mut [u8]) -> Result<usize, Error> {
+        if out.len() < MLDSA87_SIG_LEN {
+            return Err(Error::BufferTooSmall);
+        }
+        self.0
+            .sign(&ML_DSA_87, msg, &[], rnd, &mut out[..MLDSA87_SIG_LEN]);
+        Ok(MLDSA87_SIG_LEN)
+    }
+}
+
 /// Verify an ML-DSA-44 signature (empty context) against a serialized public
 /// key. Malformed keys or signatures verify as `false`.
 pub fn mldsa44_verify(pk: &[u8; MLDSA44_PK_LEN], msg: &[u8], sig: &[u8; MLDSA44_SIG_LEN]) -> bool {
@@ -122,4 +155,10 @@ pub fn mldsa44_verify(pk: &[u8; MLDSA44_PK_LEN], msg: &[u8], sig: &[u8; MLDSA44_
 /// key. Malformed keys or signatures verify as `false`.
 pub fn mldsa65_verify(pk: &[u8; MLDSA65_PK_LEN], msg: &[u8], sig: &[u8; MLDSA65_SIG_LEN]) -> bool {
     verify::<6, 5>(&ML_DSA_65, pk, msg, &[], sig)
+}
+
+/// Verify an ML-DSA-87 signature (empty context) against a serialized public
+/// key. Malformed keys or signatures verify as `false`.
+pub fn mldsa87_verify(pk: &[u8; MLDSA87_PK_LEN], msg: &[u8], sig: &[u8; MLDSA87_SIG_LEN]) -> bool {
+    verify::<8, 7>(&ML_DSA_87, pk, msg, &[], sig)
 }

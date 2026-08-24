@@ -24,9 +24,11 @@ rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-fido = { workspace = true }
 rsk-openpgp = { workspace = true }
+rsk-devconf = { workspace = true }
 rsk-mgmt = { workspace = true }
 rsk-oath = { workspace = true }
 rsk-otp = { workspace = true }
+rsk-phy = { workspace = true }
 rsk-piv = { workspace = true }
 rsk-rescue = { workspace = true }
 # The vendor AID's applet; this crate supplies its `Platform` (LED atomics, core1
@@ -58,7 +60,7 @@ rp-pac = { workspace = true }
 rsk-crypto = { workspace = true }
 # core1's prime search owns an IncrementalSieve per core, and the keygen-bench
 # vendor command times the primitives directly.
-rsk-rsa-asm = { workspace = true }
+rsk-rsa = { workspace = true }
 # Robust summary stats for the `bench` latency-harness vendor command. Optional —
 # pulled in only by `--features bench`, never the shipped image.
 rsk-bench = { workspace = true, optional = true }
@@ -73,8 +75,9 @@ cortex-m = "0.7"
 panic-halt = "1"
 smart-leds = "0.4"
 
-# Heap for the OpenPGP RSA path: the `rsa` crate's big-integer arithmetic needs
-# an allocator. FIDO and the rest of the device stay no-alloc — only RSA touches it.
+# Heap for the OpenPGP RSA path: `rsk-rsa`'s big-integer arithmetic (num-bigint-dig,
+# the only allocating dependency left) needs an allocator. FIDO and the rest of the
+# device stay no-alloc — only RSA touches it.
 embedded-alloc = "0.6"
 
 # Flash key/value backend for rsk-fs::Storage. sequential-storage is async-first;

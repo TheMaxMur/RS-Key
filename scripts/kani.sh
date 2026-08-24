@@ -5,7 +5,7 @@
 # The Kani roster, in tiers, with one owner.
 #
 # The proofs used to run in one place — the daily `deep-checks` row — because one
-# harness in `rsk-rescue` costs half an hour or more and nothing that expensive
+# harness in `rsk-phy` costs half an hour or more and nothing that expensive
 # belongs on a pull request. But that put every proof a day away from the change that broke
 # it, and the split is cheap once the cost is measured rather than assumed: the
 # whole fast tier discharges in ~212 s of solving (docs/testing.md carries the
@@ -42,16 +42,19 @@ cd "$(dirname "$0")/.."
 # wait, and the answer is to move its crate to SLOW, not to raise the cap.
 FAST="rsk-sdk rsk-fs rsk-crypto rsk-openpgp rsk-otp rsk-piv rsk-oath rsk-usb rsk-ui rsk-led rsk-slip39 rsk-bip39 rsk-device"
 
-# SLOW: the arithmetic and the state sequences. `rsk-rescue` carries
+# SLOW: the arithmetic and the state sequences. `rsk-phy` carries
 # `serialize_parse_roundtrip` (27m42s measured 2026-08-13; ~80 min was recorded
-# once), `rsk-rsa-asm` the functional division spec and the sieve, `rsk-mldsa` the
+# once), `rsk-rsa` the functional division spec and the sieve, `rsk-mldsa` the
 # rounding round-trips, `rsk-fido` the three sequence proofs (~12 min together,
 # and one of them peaks at 9.3 GiB).
-SLOW="rsk-rescue rsk-rsa-asm rsk-mldsa rsk-fido"
+# Both dated `rsk-phy` figures — this one and HEAVY's below — were taken while
+# that harness lived in `rsk-rescue`; `189f24c` moved the file byte-identical, so
+# they are inherited under the new crate name, not re-run.
+SLOW="rsk-phy rsk-rsa rsk-mldsa rsk-fido"
 
 # HEAVY: the crates that get a job of their own, because their peak
 # solver memory is near what a hosted runner has left over. Measured 2026-08-14:
-# `rsk-rescue`'s phy round-trip peaks at 11.1 GB and the runner dies under it
+# `rsk-phy`'s round-trip peaks at 11.1 GB and the runner dies under it
 # ("received a shutdown signal" at 50-58 min, twice, against a 6 h job cap and
 # with the run's other jobs still going, so neither a timeout nor a cancel);
 # `rsk-fido`'s 9.3 GiB fits, which the `state` row demonstrates on every run. The
@@ -59,7 +62,7 @@ SLOW="rsk-rescue rsk-rsa-asm rsk-mldsa rsk-fido"
 # rather than by how long a crate takes. The LIGHT shards below are the rest of
 # `all`, so nothing stops being proved — this job can die without taking the other
 # sixteen crates' verdicts with it.
-HEAVY="rsk-rescue"
+HEAVY="rsk-phy"
 
 # `all` less HEAVY, split three ways, one runner each. It used to be a single row
 # whose wall time was the sum of every crate's solving; three make it the slowest
@@ -67,11 +70,11 @@ HEAVY="rsk-rescue"
 # that drew HEAVY, applied to time rather than to memory.
 #
 # Balanced by cost, not by crate count: the three expensive crates left after
-# HEAVY (`rsk-fido`'s sequence proofs ~12 min, `rsk-rsa-asm`'s division spec and
+# HEAVY (`rsk-fido`'s sequence proofs ~12 min, `rsk-rsa`'s division spec and
 # sieve, `rsk-mldsa`'s rounding round-trips) go one per shard, and the fast crates
 # fill in around them.
 LIGHT1="rsk-fido rsk-ui rsk-piv rsk-oath"
-LIGHT2="rsk-rsa-asm rsk-device rsk-fs rsk-crypto rsk-bip39"
+LIGHT2="rsk-rsa rsk-device rsk-fs rsk-crypto rsk-bip39"
 LIGHT3="rsk-mldsa rsk-led rsk-sdk rsk-openpgp rsk-usb rsk-otp rsk-slip39"
 
 # Three hand-written lists can drift the way `without_heavy()`'s one could not: a
@@ -116,16 +119,16 @@ STATEFUL="rsk-fido rsk-fs"
 # they are a consistency check against the tree, not a ratchet against history:
 # deleting a harness and pasting the new number is self-consistent, and only
 # the diff shows it.
-FLOOR_pr=50
-FLOOR_state=8
-FLOOR_all=66
+FLOOR_pr=61
+FLOOR_state=24
+FLOOR_all=87
 # The four weekly rows partition `all`, so these sum to FLOOR_all and the guard
 # checks each against the tree the same way. A harness that moves between shards
 # has to move a number with it.
 FLOOR_heavy=5
-FLOOR_light1=17
-FLOOR_light2=21
-FLOOR_light3=23
+FLOOR_light1=27
+FLOOR_light2=27
+FLOOR_light3=28
 
 # Source-level `kani::cover!`s each tier must report on. Kani 0.67.0 has no
 # `--fail-uncoverable`, so an unsatisfiable cover prints "N of M cover properties
@@ -134,13 +137,13 @@ FLOOR_light3=23
 # is caught on its own (the row fails when the per-check listing is absent); the
 # floor is for the partial case, a cover that stopped being reported while the
 # rest still are. Counted from source by the same guard as the floors above.
-COVERS_pr=23
-COVERS_state=9
-COVERS_all=31
+COVERS_pr=31
+COVERS_state=26
+COVERS_all=51
 COVERS_heavy=1
-COVERS_light1=11
-COVERS_light2=3
-COVERS_light3=16
+COVERS_light1=23
+COVERS_light2=8
+COVERS_light3=19
 
 # `kani::cover!` properties CBMC may report unsatisfied while their source-level
 # cover is still reached. One `cover!` becomes several properties wherever the

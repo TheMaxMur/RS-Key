@@ -93,25 +93,43 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     rsk_crypto::ct_eq(a, b)
 }
 
-/// Decrement the PIN's retry counter in EF_PW_PRIV. Returns the remaining
-/// tries, or `Err` when blocked.
-fn pin_wrong_retry<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<u8, ()> {
+/// Charge one attempt against PIN `fid`'s retry counter in EF_PW_PRIV, then read
+/// the counter back before trusting it. `Ok(0)` = the last try was just spent.
+///
+/// Charged BEFORE the comparison, as `rsk-piv`'s `check_ref`, `rsk-fido`'s
+/// `spend_and_verify_pin_hash` and `rsk-oath`'s `spend_and_match_otp_pin` do. This
+/// counter is the applet's only rate limit — unlike clientPIN there is no per-boot
+/// soft lock — so charging after the comparison left a window where a program that
+/// silently did not land answered `63Cx` to a wrong password with the counter
+/// frozen: guesses at one power cycle apiece. The read-back does not close that on
+/// its own, because on a full counter the success path rewrites the value it
+/// already holds. The cost is that a cut here spends a try the holder did not use,
+/// which is the direction to fail in.
+/// Refines `RSKeyRetryLattice!WrongAttemptIsCharged` — SEC-LAT-002.
+fn spend_pin_retry<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<u8, Sw> {
     let mut pw = [0u8; 8];
     // `Fs::read` reports the record's *stored* length, not what it copied, so a
     // longer record would panic the `&pw[..n]` write-back — and a panic-halt image
     // never comes back. Clamp at every EF_PW_PRIV site, as `check_pin` does.
-    let n = fs.read(EF_PW_PRIV, &mut pw).ok_or(())?.min(pw.len());
+    let n = fs
+        .read(EF_PW_PRIV, &mut pw)
+        .ok_or(Sw::MEMORY_FAILURE)?
+        .min(pw.len());
     let idx = pw_retry_idx(fid);
-    if idx >= n || pw[idx] == 0 {
-        return Err(());
+    if idx >= n {
+        return Err(Sw::MEMORY_FAILURE);
+    }
+    if pw[idx] == 0 {
+        return Err(Sw::PIN_BLOCKED);
     }
     pw[idx] -= 1;
     let remaining = pw[idx];
-    fs.put(EF_PW_PRIV, &pw[..n]).map_err(|_| ())?;
-    if remaining == 0 {
-        Err(())
-    } else {
-        Ok(remaining)
+    fs.put(EF_PW_PRIV, &pw[..n])
+        .map_err(|_| Sw::MEMORY_FAILURE)?;
+    let mut back = [0u8; 8];
+    match fs.read(EF_PW_PRIV, &mut back) {
+        Some(m) if idx < m.min(back.len()) && back[idx] == remaining => Ok(remaining),
+        _ => Err(Sw::MEMORY_FAILURE),
     }
 }
 
@@ -155,9 +173,9 @@ fn set_pin_retry_counter<S: Storage>(fs: &mut Fs<S>, fid: u16, value: u8) -> Res
     fs.put(EF_PW_PRIV, &pw[..n]).map_err(|_| Sw::MEMORY_FAILURE)
 }
 
-/// Drop the access status of the reference `check_pin` was comparing. Keyed on
-/// `fid`, never on `p2`: RESET RETRY COUNTER checks `EF_RC` while passing
-/// `p2 = 0x81`, and a wrong resetting code must leave PW1.81 standing.
+/// Refines `RSKeyAppletSeams!NoStatusAfterARefusedAuth` — SEC-SEAM-002.
+/// Drop the compared reference's status by `fid`, never `p2`: RESET RETRY checks
+/// `EF_RC` with `p2 = 0x81`, and a wrong resetting code leaves PW1.81 standing.
 fn clear_access_status(sess: &mut Session, fid: u16, p2: u8) {
     if fid == EF_PW1 {
         if p2 == PW1_MODE81 {
@@ -172,8 +190,10 @@ fn clear_access_status(sess: &mut Session, fid: u16, p2: u8) {
 
 /// Verify `data` against the stored verifier of PIN `fid`. On success resets
 /// the retry counter and sets the matching `has_pw*` flag + session key; on
-/// failure decrements the counter, clears that reference's access status and
-/// returns `63 Cx` / blocked.
+/// failure clears that reference's access status and returns `63 Cx` / blocked.
+/// The attempt is charged before the comparison and given back on success.
+/// Refines `RSKeyRetryLattice!NoAuthWhenBlocked` — SEC-LAT-001.
+/// Refines `RSKeyRetryLattice!WrongAttemptIsCharged` — SEC-LAT-002.
 pub fn check_pin<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -211,12 +231,18 @@ pub fn check_pin<S: Storage>(
     if size - off != 32 {
         return Sw::CONDITIONS_NOT_SATISFIED;
     }
+    // Charged here, after the record reads above, so a card-state fault still costs
+    // nothing and only a real comparison is charged. See `spend_pin_retry`.
+    let remaining = match spend_pin_retry(fs, fid) {
+        Ok(left) => left,
+        Err(sw) => return sw,
+    };
     let verifier = dev.pin_derive_verifier(data);
     if !ct_eq(&rec[off..off + 32], &verifier) {
         // kbase-migration fallback: a verifier stored before the OTP key was
         // provisioned. A match under the pre-OTP arm is the correct PIN — re-wrap
-        // this PIN's DEK copy and re-store the verifier under the OTP generation,
-        // without burning a retry.
+        // this PIN's DEK copy and re-store the verifier under the OTP generation;
+        // the attempt charged above is given back by the success path below.
         let migrated = dev.otp_key.is_some()
             && ct_eq(
                 &rec[off..off + 32],
@@ -228,16 +254,19 @@ pub fn check_pin<S: Storage>(
             // reference here — in VERIFY and CHANGE alike — so a wrong password
             // stops PSO:CDS and the admin surface instead of leaving them open.
             clear_access_status(sess, fid, p2);
-            return match pin_wrong_retry(fs, fid) {
-                Ok(retries) => Sw::retries(retries),
-                Err(()) => Sw::PIN_BLOCKED,
+            return if remaining == 0 {
+                Sw::PIN_BLOCKED
+            } else {
+                Sw::retries(remaining)
             };
         }
         if let Err(sw) = migrate_pin_kbase(dev, fs, rng, fid, data) {
             return sw;
         }
     }
-    if let Err(sw) = pin_reset_retries(fs, fid, false) {
+    // The attempt is given back. `force`, because the charge above can have taken
+    // the counter to zero on a last try that turned out to be the right password.
+    if let Err(sw) = pin_reset_retries(fs, fid, true) {
         return sw;
     }
     // PW1.81 (PSO:CDS), PW1.82 (DECIPHER/INTERNAL AUTH) and PW3 are INDEPENDENT
@@ -621,7 +650,7 @@ pub(crate) fn put_verifier<S: Storage>(
     pin: &[u8],
 ) -> Result<(), Sw> {
     // A zero-length verifier is unrecoverable: check_pin's `rec[0] != 0` shape test
-    // short-circuits before pin_wrong_retry, so the reference can neither be
+    // short-circuits before spend_pin_retry, so the reference can neither be
     // verified nor blocked, and terminate.rs' escape hatch is refused forever.
     check_pin_len(fid, pin.len())?;
     store_verifier(dev, fs, fid, pin)
@@ -740,6 +769,7 @@ pub fn change_pin<S: Storage>(
 /// RESET RETRY COUNTER (INS 0x2C): reset PW1 to a new value, either via the
 /// resetting code (P1=0x00) or via a verified admin PIN (P1=0x02). Both re-seal
 /// the DEK under the new PW1 and reset its retry counter.
+/// Refines `RSKeyRetryLattice!BudgetRisesOnlyWithItsSecret` — SEC-LAT-003.
 pub fn reset_retry<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,

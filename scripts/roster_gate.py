@@ -49,16 +49,16 @@ to run less than it says while staying green:
 
 Limits, so the row is not read as more than it is. It compares flags, not what
 a row does: deleting the coverage row's `--fail-under-lines` leaves it
-selecting all 24 crates against no floor. "Executes" means "in a `run:`, not
-commented out", so `if: false` on that step is a correct selection over a job
-that asserts nothing — open on the Kani row too, so it is a class of its own
-and not this file's to close alone. A verb is owed one whole-tree row per file
-rather than a count, so *deleting* one of the three rustdoc permutations
-outright is caught by nothing here — narrowing it is the rule above's catch,
-losing it is not. And a selection whose verb is a substitution (`cargo "$1"`,
-five rows folded into one helper) counts for every verb its file owes, because
-nothing here resolves a shell variable — after such a refactor, deleting one of
-its callers is invisible too.
+selecting every crate under `crates/` against no floor. "Executes" means "in a
+`run:`, not commented out", so `if: false` on that step is a correct selection
+over a job that asserts nothing — open on the Kani row too, so it is a class of
+its own and not this file's to close alone. A verb is owed one whole-tree row
+per file rather than a count, so *deleting* one of the three rustdoc
+permutations outright is caught by nothing here — narrowing it is the rule
+above's catch, losing it is not. And a selection whose verb is a substitution
+(`cargo "$1"`, five rows folded into one helper) counts for every verb its file
+owes, because nothing here resolves a shell variable — after such a refactor,
+deleting one of its callers is invisible too.
 """
 
 import collections

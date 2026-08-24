@@ -19,11 +19,115 @@
 \* without a counterexample after a fix made its defect unreachable (E171) --
 \* far above any floor, and only visible because somebody read the matrix.
 \*
-\* Columns: <config or glob>  <GREEN|RED>  <min distinct, or - >  [heap]
+\* And a RED verdict alone is not the third half. A mutant can go red for a
+\* defect it does not model -- 2 of 24 co-refutation patches in this tree scored
+\* a kill that way -- so a RED row may name the invariant it must break, and the
+\* runner compares it. Measured on this file: flipping the alwaysUv mutant to the
+\* INVERSE defect kept `TraceSecurityBadAlwaysUvArm.cfg` red, on a different
+\* boundary and a different direction, and nothing noticed until the name was
+\* compared. The `Mut_*`/`Solo_*` families already name theirs through
+\* `gen-configs.sh`'s INVARIANTS block, so the column is for the rows that do not.
+\*
+\* Columns: <config or glob>  <GREEN|RED>  <min distinct, or - >  [heap]  [invariant]
 \* First match wins, so an exact name may precede its class glob.
 
 Shipped.cfg                          GREEN   20000000
 Seams.cfg                            GREEN   200
+\* The flash layer (RSKeyStore): a small exhaustive space -- 364 distinct at
+\* depth 6 -- so its floor is set near a third, the same rule as its siblings.
+Store.cfg                            GREEN   90
+\* The retry/recovery lattice (RSKeyRetryLattice): 243 distinct at depth 11, five
+\* budgeted references over a ceiling of two -- a third is the floor here too.
+Lattice.cfg                          GREEN   80
+\* Four-app operation policies (RSKeyAppletPolicies): 2268 distinct at depth 14;
+\* one third is the floor, separate from the real PIV/OpenPGP retry counters.
+Policies.cfg                         GREEN   750
+\* The administrative surface (RSKeyAdminSurface): 8 distinct -- a 3-capability
+\* mask whose properties are step ghosts, so the space IS the mask's power set.
+\* A third rounds to 3; below it the mask itself has collapsed.
+Admin.cfg                            GREEN   3
+\* The trusted-display ceremony (RSKeyTrustedDisplay): 5 distinct. At this size
+\* the third-rule stops serving -- losing even one state means an action died --
+\* so the floor sits one under the measurement instead.
+Display.cfg                          GREEN   4
+\* The cross-boot hardening (RSKeyBootHardening): 24 distinct at depth 5, the
+\* marker/weak/lock product across the reset line -- a third, as usual.
+Boot.cfg                             GREEN   8
+\* The same module with the open hardware assumption taking its other arm: a
+\* power-on that does NOT clear the scratch word makes a cold reset a warm one,
+\* so 6 of the 24 distinct states become unreachable. Both invariants still hold
+\* and all three boot mutants still redden on the same invariant -- the
+\* assumption buys REACHABILITY, not safety, which is what running it says.
+BootCarry.cfg                        GREEN   6
+\* The CTAPHID reassembler (RSKeyTransport): 13 distinct at depth 4, the
+\* owner/seq/got/need product over two channels -- a third rounds to 4.
+Transport.cfg                        GREEN   4
+\* Phase 4, trace validation: a replay is LINEAR (distinct = trace length + 1),
+\* and the length changes whenever the session is re-recorded -- so the floor
+\* is low and the real guarantee is the verdict pair: a divergence in the
+\* recorded session deadlocks (GREEN row goes RED), and the Bad row is the
+\* harness proven able to refuse a session at all.
+TraceSeams.cfg                       GREEN   5
+TraceSeamsBad.cfg                    RED     -
+\* Full RSKeySecurityState refinement replay: 49 inferred B micro-steps from
+\* 21 real CBOR boundaries across three suites and one replug. The α mutant's
+\* GREEN control, with R4b disabled, proves that the corresponding RED row is
+\* caught by R4b alone. The last two are R4c's, one per half of the gate rule,
+\* so a RED names which half was load-bearing rather than "a gate somewhere".
+\* The two GREEN rows are PINS, not thirds: a linear replay of 74 forced steps
+\* has exactly 75 states, so anything less is the model refusing to follow the
+\* recording. It reached 44 of 59 for three days and read as GREEN.
+TraceSecurity.cfg                    GREEN   75
+TraceSecurityBadBeta.cfg             RED     -       -       R4aRawRefinesB
+TraceSecurityBadAlpha.cfg            RED     -       -       R4bAlphaMatchesGamma
+TraceSecurityBadAlphaNoR4b.cfg       GREEN   75
+TraceSecurityBadOutcome.cfg          RED     -       -       R4bEventConsensus
+TraceSecurityBadUvNotRqd.cfg         RED     -       -       R4cGateAnswers
+TraceSecurityBadResetWindow.cfg      RED     -       -       R4cGateAnswers
+TraceSecurityBadAlwaysUvArm.cfg      RED     -       -       R4cGateAnswers
+TraceSecurityBadPinSet.cfg           RED     -       -       R4cGateAnswers
+\* The recorded session's coverage, ratcheted so a re-record cannot quietly cover
+\* less. Unlike the distinct-state floors above these are PINS at the measured
+\* value, not a third of it: a trace is a fixed recording, so it cannot shrink by
+\* fidelity churn -- only by someone recording a shorter session. Raise them when
+\* a richer session lands; never lower one without saying which flow was dropped.
+@TraceSecurityCommandsMin 40
+\* 58 until R4c, and every one of the nine that went was a MIS-MAPPING rather
+\* than coverage. Seven: the refused reset that ends `27_reset_window` was
+\* replayed as a full successful wipe, because over an already-empty store the
+\* two have the same raw footprint — it is one `Tick` and a stutter now, and the
+\* window decides. Two more: the sweep emitted one step per live record, but the
+\* seed arm empties `cred` and `rpent` with it, so the phase is two steps however
+\* many credentials B holds. The model had been refusing the surplus since the
+\* three-suite recording landed, and TLC was run with `-deadlock`.
+@TraceSecurityStepsMin 74
+@TraceSecurityActionsMin 22
+\* Boundaries whose outcome B answers from a GATE rule rather than from the
+\* actions -- there are none to read, both sides of each gate being a stutter.
+\* Without a floor here R4c is vacuous the moment a re-record loses them. Two of
+\* the seven carry `pin.set` FALSE (`tests/09_tokenless_gate_no_pin.py`), and
+\* they are the only ones `TraceSecurityBadPinSet.cfg` can go red at: against the
+\* recording without them that mutant replays green to the end.
+@TraceSecurityGatesMin 7
+\* Was 2, and both were the same shape: a token-less makeCredential, whose
+\* success and refusal write nothing either way. R4c answers them from `rk` and
+\* B's own state, so the replay commits to an outcome at every boundary it maps.
+@TraceSecurityAmbiguousMax 0
+\* Boundaries where B COMMITS to an outcome and R4b compares it with the device's.
+\* 12 until the recording carried the clientPIN SUBCOMMAND: a token re-issued with
+\* the permissions it already holds moves no raw field, so it arrived as a bare
+\* stutter and was indistinguishable from the `getKeyAgreement` that shares that
+\* footprint. Measured both ways -- with the rule 13, with `TOKEN_SUBCOMMANDS`
+\* emptied 12 -- because a mapping that retreats to NO-OPINION costs nothing and
+\* reads exactly as green without a floor here.
+@TraceSecurityOutcomesMin 13
+\* Phase 5. Reduced constants keep the labelled action check separate from the
+\* 60-million-state shipped safety row. Floors are calibrated after the first
+\* successful run; the non-vacuity guard still requires at least two states.
+TokenRefinement.cfg                  GREEN   2500000
+TokenRefinementBadMap.cfg            RED     -
+TokenRefinementOutcome.cfg           GREEN   2500000
+TokenRefinementDeadToken.cfg         RED     -
 \* The liveness layer builds a behaviour graph ON TOP of the state graph -- 23.7
 \* million nodes at these constants -- and runs out of memory at the 4 GB
 \* default after the state search has already completed (E172). The heap column
@@ -43,5 +147,49 @@ Solo_*.cfg                           RED     -
 SoloClause_*.cfg                     RED     -
 SeamMut_*.cfg                        RED     -
 SeamSolo_*.cfg                       RED     -
+StoreMut_*.cfg                       RED     -
+StoreSolo_*.cfg                      RED     -
+\* The store's induction probe, and it is the one that FOUND something.
+\* `StoreInv` alone is not inductive: from a type-correct state where the cache
+\* says EF_META is absent while a record stands, `MetaAdd` trusts it and rebuilds
+\* the blob from empty. `CacheHonest` is the conjunct the counterexample named.
+\* 1000 of the module's type-correct states survive `IndInv`; the floor is that
+\* count, because below it the predicate stopped admitting what it admitted.
+StoreInduction.cfg                   GREEN   1000
+\* One mutant, for the reason the boot family's row gives.
+StoreInductionMut_*.cfg              RED     -
+LatMut_*.cfg                         RED     -
+LatSolo_*.cfg                        RED     -
+PolicyMut_*.cfg                      RED     -
+PolicySolo_*.cfg                     RED     -
+AdminMut_*.cfg                       RED     -
+AdminSolo_*.cfg                      RED     -
+DispMut_*.cfg                        RED     -
+DispSolo_*.cfg                       RED     -
+BootMut_*.cfg                        RED     -
+BootSolo_*.cfg                       RED     -
+\* The same three on the assumption's FALSE arm, ONE invariant each: a power-on
+\* that leaves the scratch word standing changes what is REACHABLE (18 distinct
+\* against 24), and these rows are what say it changes no verdict. Solo-style so
+\* a RED here names the same defect the TRUE arm's row names -- a full-invariant
+\* configuration would let a sibling report a mutant gone unreachable.
+BootCarryMut_*.cfg                   RED     -
+\* The induction probe: `INIT IndInv` / `NEXT Next`, so every type-correct state
+\* the invariants admit is an initial state. DEPTH 1 is the claim -- every
+\* successor already being initial IS `IndInv /\ Next => IndInv'` -- and the
+\* runner holds these rows to it instead of to the vacuity depth floor, which
+\* would refuse them all. 48 of the module's 108 type-correct states survive
+\* `IndInv`; the floor is that count. Both probes pin the scratch word CLEARED:
+\* what they vary is the state, not the hardware assumption.
+BootInduction.cfg                    GREEN   48
+\* ONE mutant of it, and only one. `Init` satisfies `IndInv`, so a defect that
+\* breaks the step from an admitted state also breaks it from a reachable one --
+\* the induction mutants fire on a SUPERSET of their `*Solo_` twins' conditions
+\* and so cannot see a mutant that stopped firing, which is what the verdict
+\* column exists for. This row says the INIT/NEXT wiring can go red; the Solo
+\* rows are what carry the defects.
+BootInductionMut_*.cfg               RED     -
+TransMut_*.cfg                       RED     -
+TransSolo_*.cfg                      RED     -
 LiveMut_*.cfg                        RED     -
 FairMut_*.cfg                        RED     -

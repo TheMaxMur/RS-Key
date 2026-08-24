@@ -1,0 +1,25 @@
+[package]
+name = "rsk-devconf"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+[features]
+# Exposes the record's raw vocabulary (`raw`) to other crates' tests and to the
+# fuzz targets, which seed records no accepted write can produce. Only
+# `[dev-dependencies]` entries turn it on, so it never reaches a firmware image.
+test-util = []
+
+[dependencies]
+# The record lives in flash and its READ CONFIG response is built into an
+# `rsk-sdk` `ResBuf`, so the codec owns the read-modify-write instead of it
+# being re-typed in the four command surfaces that write it. Both are the
+# platform tier, so the edge points down — the pair `rsk-phy` and `rsk-store`
+# take.
+rsk-fs = { workspace = true }
+rsk-sdk = { workspace = true }
+
+[dev-dependencies]
+# RamStorage for the host tests (the same backend the applet crates use).
+rsk-fs = { workspace = true, features = ["test-util"] }

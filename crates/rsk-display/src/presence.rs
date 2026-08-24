@@ -15,7 +15,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     ui: &'a RefCell<Ui<'a, P, T, H, S, R>>,
 }
@@ -35,7 +35,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// Common entry for a touch ceremony: switch the LED to the touch indicator,
     /// drop any stale cancel left from an earlier wait, and arm the up-pending flag
@@ -71,7 +71,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     pub fn new(ui: &'a RefCell<Ui<'a, P, T, H, S, R>>) -> Self {
         Self { ui }
@@ -88,6 +88,8 @@ where
     /// the up-pending flag so the CTAPHID keepalive reports `UPNEEDED`, and polls
     /// the cancel flag each iteration — the same cross-executor contract the
     /// BOOTSEL wait honours through `rsk_device::presence::Arbiter`.
+    /// Refines `RSKeyTrustedDisplay!ConfirmNamesTheOperation` — SEC-DISP-001.
+    /// Refines `RSKeyTrustedDisplay!StaleTouchApprovesNothing` — SEC-DISP-002.
     fn confirm_wait(&mut self, confirm: Confirm<'_>) -> Outcome {
         let saved = self.ui.borrow_mut().ceremony_begin();
 
@@ -219,7 +221,7 @@ where
     /// The pad loop lives on [`Ui`] (which owns the panel + touch); borrow the shared
     /// `Ui` and run it there, so the host path and a display-initiated gate
     /// ([`Ui::run_delete`]) share one implementation.
-    fn collect_pin_impl(&mut self, min_len: usize, out: &mut [u8]) -> rsk_fido::PinEntry {
+    fn collect_pin_impl(&mut self, min_len: usize, out: &mut [u8]) -> rsk_sdk::PinEntry {
         // No up-front "N tries remaining" caption here, unlike the local unlock gate: the
         // worker already holds the shared `fs` RefCell borrowed across this CTAP call
         // (clientPIN 0x06 → get_uv_token), so re-reading the counter would double-borrow
@@ -251,7 +253,7 @@ where
         title: &'static str,
         min_len: usize,
         out: &mut [u8],
-    ) -> rsk_fido::PinEntry {
+    ) -> rsk_sdk::PinEntry {
         let expected = min_len.min(u8::MAX as usize) as u8;
         self.ui
             .borrow_mut()
@@ -259,38 +261,51 @@ where
     }
 }
 
-impl<'a, P, T, H, S, R> rsk_fido::UserPresence for TouchPresence<'a, P, T, H, S, R>
+impl<'a, P, T, H, S, R> rsk_sdk::UserPresence for TouchPresence<'a, P, T, H, S, R>
 where
     P: DrawTarget<Color = Rgb565>,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
-    fn request(&mut self, confirm: rsk_fido::Confirm<'_>) -> rsk_fido::Presence {
+    /// A smartcard touch policy: the trusted Approve/Deny prompt and nothing
+    /// else. No closing "Approved" card — OpenPGP/PIV call this once per
+    /// signature, so the pop would be both wrong-worded and a latency
+    /// regression. These applets are reached over CCID, which carries no
+    /// `CTAPHID_CANCEL`, so a cancel is a non-confirmation like a timeout.
+    fn request(&mut self, confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
+        match self.confirm_wait(confirm) {
+            Outcome::Confirmed => rsk_sdk::Presence::Confirmed,
+            Outcome::Declined => rsk_sdk::Presence::Declined,
+            Outcome::Timeout | Outcome::Cancelled => rsk_sdk::Presence::Timeout,
+        }
+    }
+
+    fn request_ceremony(&mut self, confirm: rsk_sdk::Confirm<'_>) -> rsk_sdk::Presence {
         // The design's incoming ceremony, picked by the request kind:
         //  - Register (makeCredential) → "Save new passkey?" card (Cancel/Save tap)
         //  - Generic (sign-in / selection / probe) → the trusted Approve/Hold prompt
         let outcome = match confirm.kind {
-            rsk_fido::ConfirmKind::Register => self.run_add_passkey(confirm),
-            rsk_fido::ConfirmKind::Generic => self.confirm_wait(confirm),
+            rsk_sdk::ConfirmKind::Register => self.run_add_passkey(confirm),
+            rsk_sdk::ConfirmKind::Generic => self.confirm_wait(confirm),
         };
         match outcome {
             Outcome::Confirmed => {
-                // A granted WebAuthn approval gets the design's brief "Approved" pop.
-                // Scoped to the FIDO ceremony path (one request per make/getAssertion),
-                // NOT the shared `confirm_wait`: OpenPGP/PIV touch policies call request()
-                // once per signature, so flashing this — and paying its ~0.4 s — on every
-                // PGP/PIV op would be both wrong-worded and a latency regression. The
-                // ceremony borrow is already released, so this re-borrow is safe.
+                // A granted host ceremony gets the design's brief "Approved" pop.
+                // Scoped to the ceremony ask — one per make/getAssertion, or per
+                // pinpad gate — NOT the shared `confirm_wait`: OpenPGP/PIV touch
+                // policies come in through `request` once per signature, and paying
+                // this ~0.4 s there would be a latency regression. The ceremony
+                // borrow is already released, so this re-borrow is safe.
                 self.ui
                     .borrow_mut()
                     .show_success(SuccessKind::Approved, Some(150));
-                rsk_fido::Presence::Confirmed
+                rsk_sdk::Presence::Confirmed
             }
-            Outcome::Declined => rsk_fido::Presence::Declined,
-            Outcome::Timeout => rsk_fido::Presence::Timeout,
-            Outcome::Cancelled => rsk_fido::Presence::Cancelled,
+            Outcome::Declined => rsk_sdk::Presence::Declined,
+            Outcome::Timeout => rsk_sdk::Presence::Timeout,
+            Outcome::Cancelled => rsk_sdk::Presence::Cancelled,
         }
     }
 
@@ -306,11 +321,11 @@ where
         true
     }
 
-    fn collect_pin(&mut self, min_len: usize, out: &mut [u8]) -> rsk_fido::PinEntry {
+    fn collect_pin(&mut self, min_len: usize, out: &mut [u8]) -> rsk_sdk::PinEntry {
         self.collect_pin_impl(min_len, out)
     }
 
-    fn collect_device_pin(&mut self, min_len: usize, out: &mut [u8]) -> rsk_fido::PinEntry {
+    fn collect_device_pin(&mut self, min_len: usize, out: &mut [u8]) -> rsk_sdk::PinEntry {
         // Name the *device* PIN, not the clientPIN: this pad stands in for the vendor
         // gate on a device whose only PIN is the one onboarding set, and a mislabelled
         // pad is the reported cause of the PIN confusion behind a factory reset. Blocks
@@ -325,109 +340,6 @@ where
             out,
             false,
         )
-    }
-}
-
-impl<'a, P, T, H, S, R> rsk_openpgp::UserPresence for TouchPresence<'a, P, T, H, S, R>
-where
-    P: DrawTarget<Color = Rgb565>,
-    T: TouchPad,
-    H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_device::Rng,
-{
-    fn request(&mut self, confirm: rsk_openpgp::Confirm<'_>) -> rsk_openpgp::Presence {
-        match self.confirm_wait(confirm) {
-            Outcome::Confirmed => rsk_openpgp::Presence::Confirmed,
-            Outcome::Declined => rsk_openpgp::Presence::Declined,
-            // OpenPGP/PIV run over CCID, which carries no CTAPHID_CANCEL.
-            Outcome::Timeout | Outcome::Cancelled => rsk_openpgp::Presence::Timeout,
-        }
-    }
-}
-
-impl<'a, P, T, H, S, R> rsk_otp::UserPresence for TouchPresence<'a, P, T, H, S, R>
-where
-    P: DrawTarget<Color = Rgb565>,
-    T: TouchPad,
-    H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_device::Rng,
-{
-    fn request(&mut self, confirm: rsk_otp::Confirm<'_>) -> rsk_otp::Presence {
-        match self.confirm_wait(confirm) {
-            Outcome::Confirmed => rsk_otp::Presence::Confirmed,
-            Outcome::Declined => rsk_otp::Presence::Declined,
-            Outcome::Timeout | Outcome::Cancelled => rsk_otp::Presence::Timeout,
-        }
-    }
-}
-
-impl<'a, P, T, H, S, R> rsk_oath::UserPresence for TouchPresence<'a, P, T, H, S, R>
-where
-    P: DrawTarget<Color = Rgb565>,
-    T: TouchPad,
-    H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_device::Rng,
-{
-    fn request(&mut self, confirm: rsk_oath::Confirm<'_>) -> rsk_oath::Presence {
-        match self.confirm_wait(confirm) {
-            Outcome::Confirmed => rsk_oath::Presence::Confirmed,
-            Outcome::Declined => rsk_oath::Presence::Declined,
-            Outcome::Timeout | Outcome::Cancelled => rsk_oath::Presence::Timeout,
-        }
-    }
-}
-
-impl<'a, P, T, H, S, R> rsk_rescue::UserPresence for TouchPresence<'a, P, T, H, S, R>
-where
-    P: DrawTarget<Color = Rgb565>,
-    T: TouchPad,
-    H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_device::Rng,
-{
-    fn request(&mut self, confirm: rsk_rescue::Confirm<'_>) -> rsk_rescue::Presence {
-        match self.confirm_wait(confirm) {
-            Outcome::Confirmed => rsk_rescue::Presence::Confirmed,
-            Outcome::Declined => rsk_rescue::Presence::Declined,
-            Outcome::Timeout | Outcome::Cancelled => rsk_rescue::Presence::Timeout,
-        }
-    }
-}
-
-impl<'a, P, T, H, S, R> rsk_vendor::UserPresence for TouchPresence<'a, P, T, H, S, R>
-where
-    P: DrawTarget<Color = Rgb565>,
-    T: TouchPad,
-    H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_device::Rng,
-{
-    fn request(&mut self, confirm: rsk_vendor::Confirm<'_>) -> rsk_vendor::Presence {
-        match self.confirm_wait(confirm) {
-            Outcome::Confirmed => rsk_vendor::Presence::Confirmed,
-            Outcome::Declined => rsk_vendor::Presence::Declined,
-            Outcome::Timeout | Outcome::Cancelled => rsk_vendor::Presence::Timeout,
-        }
-    }
-}
-
-impl<'a, P, T, H, S, R> rsk_mgmt::UserPresence for TouchPresence<'a, P, T, H, S, R>
-where
-    P: DrawTarget<Color = Rgb565>,
-    T: TouchPad,
-    H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_device::Rng,
-{
-    fn request(&mut self, confirm: rsk_mgmt::Confirm<'_>) -> rsk_mgmt::Presence {
-        match self.confirm_wait(confirm) {
-            Outcome::Confirmed => rsk_mgmt::Presence::Confirmed,
-            Outcome::Declined => rsk_mgmt::Presence::Declined,
-            Outcome::Timeout | Outcome::Cancelled => rsk_mgmt::Presence::Timeout,
-        }
     }
 }
 

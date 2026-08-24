@@ -282,3 +282,62 @@ fn a_text_run_uses_one_contiguous_write() {
     assert_eq!(target.draw, 0);
     assert_eq!(target.contiguous, 1);
 }
+
+/// Adjacent glyph boxes overlap: 8 of the 97 glyphs have a negative left bearing and
+/// 28 carry ink past their advance. So a later glyph's faint fringe lands on an
+/// earlier glyph's solid stroke, and taking the later coverage instead of the greater
+/// punches a near-background pixel into it. Adding a glyph must never lighten what
+/// the prefix already drew.
+#[test]
+fn a_following_glyph_never_lightens_the_one_before_it() {
+    for (role, pair) in [
+        (Role::Heading, "\\j"),
+        (Role::Heading, "(j"),
+        (Role::Ready, "()"),
+        (Role::Strong, "_j"),
+        (Role::BodyStrong, "gj"),
+    ] {
+        let at = EgPoint::new(20, 40);
+        let mut alone = Rec::new();
+        let mut both = Rec::new();
+        left(
+            &mut alone,
+            &pair[..1],
+            at,
+            role,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        left(&mut both, pair, at, role, Rgb565::WHITE, Rgb565::BLACK).unwrap();
+        // White on black, so the green channel *is* the coverage, monotonically.
+        let dimmed = alone
+            .pixels
+            .iter()
+            .zip(&both.pixels)
+            .enumerate()
+            .find(|(_, (a, b))| b.g() < a.g());
+        assert!(
+            dimmed.is_none(),
+            "{role:?} {pair:?}: the second glyph lightened a pixel the first had drawn: {:?}",
+            dimmed.map(|(i, (a, b))| (i % 320, i / 320, a.g(), b.g()))
+        );
+    }
+}
+
+/// The rename keypad's labels are drawn from this atlas, and a char that is not in it
+/// renders as `?` — which is how the space key came to read "SPACE". "Is it ASCII" was
+/// the wrong rule for that: the atlas is ASCII plus three, and the space key wants one
+/// of the three. Ask the atlas instead.
+#[test]
+fn every_t9_key_label_has_its_own_glyph() {
+    let fallback = glyph_index('?');
+    for (digit, letters) in crate::T9_KEY_LABELS {
+        for char in digit.chars().chain(letters.chars()) {
+            assert!(
+                char == '?' || glyph_index(char) != fallback,
+                "T9 label {digit:?}/{letters:?} uses {char:?}, which is not in the atlas"
+            );
+        }
+    }
+}

@@ -20,11 +20,12 @@ use minicbor::Encoder;
 use minicbor::encode::{Error, Write};
 
 use crate::consts::{
-    AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65,
-    CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO,
-    CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH,
+    AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87,
+    ATT_FMT_PACKED, CONFIG_AUT_DISABLE, CONFIG_AUT_ENABLE, CONFIG_EA_RPIDS,
+    CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
+    ENC_GETINFO_MEMBER_LEN, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH,
     MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS,
-    MAX_MSG_SIZE,
+    MAX_MSG_SIZE, PIN_COMPLEXITY_POLICY, TRANSPORTS,
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
@@ -55,6 +56,8 @@ pub fn get_info(
     always_uv: bool,
     builtin_uv: bool,
     remaining_rk: u16,
+    enc_identifier: Option<&[u8; ENC_GETINFO_MEMBER_LEN]>,
+    enc_cred_store_state: Option<&[u8; ENC_GETINFO_MEMBER_LEN]>,
     out: &mut [u8],
 ) -> CtapResult {
     let mut enc = Encoder::new(minicbor::encode::write::Cursor::new(out));
@@ -67,6 +70,8 @@ pub fn get_info(
         always_uv,
         builtin_uv,
         remaining_rk,
+        enc_identifier,
+        enc_cred_store_state,
     )
     .map_err(|_| CtapError::Other)?;
     Ok(enc.writer().position())
@@ -82,11 +87,19 @@ fn write_info<W: Write>(
     always_uv: bool,
     builtin_uv: bool,
     remaining_rk: u16,
+    enc_identifier: Option<&[u8; ENC_GETINFO_MEMBER_LEN]>,
+    enc_cred_store_state: Option<&[u8; ENC_GETINFO_MEMBER_LEN]>,
 ) -> Result<(), Error<W::Error>> {
     // Keys are ascending uints → CTAP canonical order (1-byte keys 0x01..0x16
-    // first, then the 2-byte keys 0x1D, 0x1F). The `largeblob-ext` build drops
-    // 0x0B with the command it describes.
-    enc.map(20 + u64::from(!LARGE_BLOB_EXT))?;
+    // first, then the 2-byte keys 0x18, 0x19, 0x1A, 0x1B, 0x1D, 0x1E, 0x1F — 24 and up
+    // need the extra byte). Three members are conditional: `largeblob-ext` drops 0x0B
+    // with the command it describes, and 0x19 / 0x1E each need a persistent token to
+    // key them.
+    enc.map(
+        23 + u64::from(!LARGE_BLOB_EXT)
+            + u64::from(enc_identifier.is_some())
+            + u64::from(enc_cred_store_state.is_some()),
+    )?;
 
     // 0x01 versions — advertise the full backward-compatible superset up to
     // FIDO_2_3 (the implemented surface: credMgmt, largeBlobs, credProtect,
@@ -195,7 +208,8 @@ fn write_info<W: Write>(
     // 0x09 transports — the FIDO interface is reachable over USB-HID only. (The
     // device also presents a PC/SC smartcard interface, but the FIDO applet is on
     // HID, so the FIDO transport list is just "usb".)
-    enc.u8(0x09)?.array(1)?.str("usb")?;
+    enc.u8(0x09)?;
+    transports(enc)?;
 
     // 0x0A algorithms — ES256 (-7), ES384 (-35), ES512 (-36), then EdDSA (-8).
     // `advertise-pqc` prepends ML-DSA-44 (off by default: shipped Firefoxes reject
@@ -221,11 +235,13 @@ fn write_info<W: Write>(
     // the `fido-conformance` build.
     let pqc = cfg!(feature = "advertise-pqc");
     let eddsa = cfg!(not(feature = "fido-conformance"));
-    // Under `advertise-pqc` both ML-DSA sets are advertised, -65 (-49) before -44
-    // (-48) so a relying party that ranks by list order prefers the stronger set.
+    // Under `advertise-pqc` all three ML-DSA sets are advertised in descending
+    // security order — -87 (-50), -65 (-49), -44 (-48) — so a relying party that
+    // ranks by list order prefers the stronger set.
     enc.u8(0x0A)?
-        .array(3 + 2 * u64::from(pqc) + u64::from(eddsa))?;
+        .array(3 + 3 * u64::from(pqc) + u64::from(eddsa))?;
     if pqc {
+        cose_public_key(enc, ALG_MLDSA87)?;
         cose_public_key(enc, ALG_MLDSA65)?;
         cose_public_key(enc, ALG_MLDSA44)?;
     }
@@ -280,24 +296,62 @@ fn write_info<W: Write>(
     // PicoForge, and §6.11.7 says vendors "MUST NOT count on obscurity of the
     // vendorCommandId value as any sort of security".
     enc.u8(0x15)?
-        .array(6)?
+        .array(7)?
         .u64(CONFIG_AUT_ENABLE)?
         .u64(CONFIG_AUT_DISABLE)?
         .u64(CONFIG_PHY_VIDPID)?
         .u64(CONFIG_PHY_LED_BRIGHTNESS)?
         .u64(CONFIG_PHY_LED_GPIO)?
-        .u64(CONFIG_PHY_OPTIONS)?;
+        .u64(CONFIG_PHY_OPTIONS)?
+        .u64(CONFIG_EA_RPIDS)?;
 
-    // 0x16 attestationFormats — the attestation statement formats we emit. Only
-    // "packed": makeCredential always carries basic attestation with the device x5c,
-    // and an enterprise request swaps in the org chain. Keep in sync with the
-    // metadata statements.
-    enc.u8(0x16)?.array(1)?.str("packed")?;
+    // 0x16 attestationFormats — the formats we CHOOSE from. Only "packed": an
+    // `attestationFormatsPreference` of exactly ["none"] still yields an empty
+    // statement (CTAP 2.2), but "none" is the absence of one, and listing it would
+    // make us multi-format and subject to the lowest-index rule. Keep in sync with
+    // the metadata statements.
+    enc.u8(0x16)?.array(1)?.str(ATT_FMT_PACKED)?;
+
+    // 0x17 uvCountSinceLastPinEntry is deliberately ABSENT: it counts internal UV
+    // that was NOT a PIN entry, so a platform can force a PIN before the user forgets
+    // it — a biometric's problem. Built-in UV here IS the PIN (`builtin_uv` collects
+    // it on the pad and verifies EF_PIN on clientPIN's own counter), so no gap opens.
+
+    // 0x18 longTouchForReset — false: a reset takes the same touch every other
+    // presence check takes. CTAP 2.3 §6.4 cut the long-touch hold from 2.2's 10 s to
+    // 5 s, so implementing the gesture is a UX decision, not an unresolved duration.
+    enc.u8(0x18)?.bool(false)?;
+
+    // 0x19 encIdentifier — iv ‖ AES-128-CBC(HKDF(persistent pinUvAuthToken), device
+    // identifier), built in `seed::enc_identifier`. Absent until such a token exists:
+    // only its holder can decrypt, and that gate is the whole privacy story.
+    if let Some(id) = enc_identifier {
+        enc.u8(0x19)?.bytes(id)?;
+    }
+
+    // 0x1A transportsForReset — where authenticatorReset is accepted: an array of
+    // AuthenticatorTransport strings, not the bit field Yubico's page describes.
+    // Same list as 0x09, because a reset is reachable exactly where the applet is.
+    enc.u8(0x1A)?;
+    transports(enc)?;
+
+    // 0x1B pinComplexityPolicy — a PIN rule BEYOND minPINLength, which 0x0D already
+    // reports; a raised floor alone is length, not complexity. Its optional URL
+    // companion (0x1C) stays absent — a docs link that rots is worse than none.
+    enc.u8(0x1B)?.bool(PIN_COMPLEXITY_POLICY)?;
 
     // 0x1D maxPINLength — max PIN length in Unicode code points. The PIN is padded
     // to 64 bytes on the wire, so the content is at most 63. A 2-byte CBOR key
     // (29 > 23), so it sorts after the 1-byte keys but before 0x1F → canonical.
     enc.u8(0x1D)?.u8(crate::clientpin::MAX_PIN_LENGTH as u8)?;
+
+    // 0x1E encCredStoreState — the 0x19 construction under its own label, over a tag
+    // that changes whenever the discoverable-credential set does. A platform holding
+    // the persistent token caches the plaintext and re-enumerates only when it moves;
+    // one without the token sees a value that differs on every call and says nothing.
+    if let Some(state) = enc_cred_store_state {
+        enc.u8(0x1E)?.bytes(state)?;
+    }
 
     // 0x1F authenticatorConfigCommands — the authenticatorConfig (0x0D) subcommands
     // we support: enableEnterpriseAttestation (0x01), toggleAlwaysUv (0x02),
@@ -324,6 +378,16 @@ fn write_info<W: Write>(
         .u8(0x03)?
         .u8(0xFF)?;
 
+    Ok(())
+}
+
+/// `transports` (0x09) and `transportsForReset` (0x1A) carry the same array; one
+/// writer so the two cannot drift apart.
+fn transports<W: Write>(enc: &mut Encoder<W>) -> Result<(), Error<W::Error>> {
+    enc.array(TRANSPORTS.len() as u64)?;
+    for t in TRANSPORTS {
+        enc.str(t)?;
+    }
     Ok(())
 }
 

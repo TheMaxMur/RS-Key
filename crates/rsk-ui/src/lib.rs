@@ -245,6 +245,7 @@ const _: () = {
 /// prompt area above the button band returns `None` (no accidental approval from a
 /// stray touch). The two rectangles are disjoint by construction, so at most one
 /// matches.
+/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.
 pub fn hit_confirm(p: Point) -> Option<Button> {
     if ALLOW_RECT.contains(p) {
         Some(Button::Allow)
@@ -320,6 +321,74 @@ pub enum PinKey {
     Reveal,
 }
 
+/// Digit cells on the pad: the 3x3 block, plus the `0` between Del and OK.
+pub const PIN_DIGIT_CELLS: usize = 10;
+
+/// Bytes [`PinLayout::shuffled`] draws from. Nine swaps need nine bytes; the rest is
+/// headroom for rejection sampling (see there).
+pub const PIN_SHUFFLE_ENTROPY: usize = 32;
+
+/// Where each digit sits on the PIN pad — the digit painted in each cell, by cell
+/// ordinal (`0..9` = the 3x3 block in reading order, `9` = the `0` key).
+///
+/// One value both paints the labels and answers the hit-test ([`pin_grid_key`],
+/// [`hit_pin`]), which is the entire point of it being a value rather than two
+/// tables: a pad drawn through one layout and tapped through another types digits
+/// nobody pressed, and nothing about the screen would look wrong.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PinLayout {
+    digits: [u8; PIN_DIGIT_CELLS],
+}
+
+impl Default for PinLayout {
+    fn default() -> Self {
+        Self::identity()
+    }
+}
+
+impl PinLayout {
+    /// The printed order — 1-9 in reading order, then 0. What every build has always
+    /// drawn, and what a device with the setting off still draws.
+    pub const fn identity() -> Self {
+        Self {
+            digits: [1, 2, 3, 4, 5, 6, 7, 8, 9, 0],
+        }
+    }
+
+    /// A uniformly random order, Fisher-Yates over `entropy`.
+    ///
+    /// One byte per swap with **rejection**, not `% bound`: a bare modulo over a byte
+    /// favours the low digits by up to 6/256, and a pad whose `1` sits top-left more
+    /// often than it should is a pad that leaks a little of what it exists to hide.
+    /// Exhausting 32 bytes on nine swaps needs 23 consecutive rejections (p < 1e-38);
+    /// that branch leaves the remaining cells unswapped rather than reusing a byte.
+    pub fn shuffled(entropy: &[u8; PIN_SHUFFLE_ENTROPY]) -> Self {
+        let mut out = Self::identity();
+        let mut next = entropy.iter().copied();
+        let mut i = PIN_DIGIT_CELLS - 1;
+        while i >= 1 {
+            let bound = (i + 1) as u16;
+            // The largest multiple of `bound` that fits in a byte; anything at or above
+            // it would wrap unevenly, so it is redrawn instead.
+            let limit = 256 - 256 % bound;
+            let mut j = i;
+            loop {
+                match next.next() {
+                    Some(b) if u16::from(b) < limit => {
+                        j = (u16::from(b) % bound) as usize;
+                        break;
+                    }
+                    Some(_) => continue,
+                    None => break,
+                }
+            }
+            out.digits.swap(i, j);
+            i -= 1;
+        }
+        out
+    }
+}
+
 /// The line shown under the pad: either a danger-coloured rejection (a wrong PIN is not
 /// a silent re-prompt) or a muted informational hint (the design's `enterpin` /
 /// `createpin` / `confirmpin` sub-labels). Distinct from the header `title`.
@@ -367,6 +436,10 @@ pub struct PinPad {
     pub expected: u8,
     /// Feedback / hint under the pad; `None` on a bare prompt.
     pub caption: Option<PinCaption>,
+    /// Where the digits sit. [`PinLayout::identity`] unless the owner turned on
+    /// Settings -> Security -> "Scramble PIN pad"; the caller that paints through this
+    /// must hit-test through the same value.
+    pub layout: PinLayout,
 }
 
 impl PinPad {
@@ -383,6 +456,7 @@ impl PinPad {
             title,
             expected: 0,
             caption: None,
+            layout: PinLayout::identity(),
         }
     }
 
@@ -397,6 +471,7 @@ impl PinPad {
             title,
             expected: 0,
             caption,
+            layout: PinLayout::identity(),
         }
     }
 
@@ -404,6 +479,12 @@ impl PinPad {
     /// the design's fixed indicator. The filled dots still grow past it for a longer PIN.
     pub const fn expecting(mut self, expected: u8) -> Self {
         self.expected = expected;
+        self
+    }
+
+    /// Lay the digits out through `layout` instead of the printed order.
+    pub const fn laid_out(mut self, layout: PinLayout) -> Self {
+        self.layout = layout;
         self
     }
 }
@@ -448,12 +529,12 @@ pub const fn pin_key_rect(col: u16, row: u16) -> Rect {
 
 /// The key at grid position `(col, row)`: rows 0–2 hold digits 1–9 in reading
 /// order; the bottom row is Del / 0 / OK.
-pub const fn pin_grid_key(col: u16, row: u16) -> PinKey {
+pub const fn pin_grid_key(col: u16, row: u16, layout: &PinLayout) -> PinKey {
     match (col, row) {
         (0, 3) => PinKey::Del,
-        (1, 3) => PinKey::Digit(0),
+        (1, 3) => PinKey::Digit(layout.digits[PIN_DIGIT_CELLS - 1]),
         (2, 3) => PinKey::Ok,
-        _ => PinKey::Digit((row * PIN_COLS + col + 1) as u8),
+        _ => PinKey::Digit(layout.digits[(row * PIN_COLS + col) as usize]),
     }
 }
 
@@ -475,7 +556,7 @@ const _: () = {
 /// Which PIN-pad key, if any, a tap at `p` selects. Cancel (header) is tested first,
 /// then the 3×4 grid. The rects are disjoint by construction, so at most one matches;
 /// a tap in a gap or margin selects nothing.
-pub fn hit_pin(p: Point) -> Option<PinKey> {
+pub fn hit_pin(p: Point, layout: &PinLayout) -> Option<PinKey> {
     if PIN_CANCEL_RECT.contains(p) {
         return Some(PinKey::Cancel);
     }
@@ -487,7 +568,7 @@ pub fn hit_pin(p: Point) -> Option<PinKey> {
         let mut col = 0;
         while col < PIN_COLS {
             if pin_key_rect(col, row).contains(p) {
-                return Some(pin_grid_key(col, row));
+                return Some(pin_grid_key(col, row, layout));
             }
             col += 1;
         }
@@ -556,6 +637,8 @@ pub struct SettingsView {
     /// Whether the seed-backup export window is sealed — the Security page's Backup row
     /// shows "Sealed" (the seed is backed up) or "Review" (the window is still open).
     pub backup_sealed: bool,
+    /// Whether the PIN pad scrambles its digits — the Security page's row shows On / Off.
+    pub scramble_pin: bool,
 }
 
 /// An entry on the settings Root list — the three domains, in display order.
@@ -598,6 +681,9 @@ pub enum SecurityEntry {
     /// or unblock a blocked PIN with the PUK). Independent of the device and FIDO PINs; each
     /// op is gated by knowledge of the current PIN/PUK, exactly like the host APDU path.
     PivPin,
+    /// Toggle "Scramble PIN pad" — whether the digit keys are laid out afresh at
+    /// random for every PIN entry. Toggles in place; the row shows On / Off.
+    ScramblePin,
     /// Open the read-only on-device audit log (the recent journal events).
     AuditLog,
     /// Open the read-only seed-backup status screen (whether the recovery seed is present
@@ -624,8 +710,8 @@ pub enum AdjustKey {
 /// land on the first row.
 const ROW_X: u16 = 13;
 const ROW_W: u16 = PANEL_W - 2 * ROW_X;
-const ROW_H: u16 = 36;
-const ROW_GAP: u16 = 6;
+const ROW_H: u16 = 32;
+const ROW_GAP: u16 = 4;
 const ROW_Y0: u16 = CONTENT_TOP + CONTENT_GAP;
 /// Number of Root list rows (Display / Security / Firmware).
 pub const SETTINGS_ROWS: u16 = 3;
@@ -673,9 +759,9 @@ pub fn hit_display(p: Point) -> Option<DisplayEntry> {
     None
 }
 
-/// Number of Security sub-page rows (Device PIN, FIDO PIN, PIV PIN, Audit log, Backup,
-/// Factory reset) — the longest settings list, so the shared row geometry is sized to fit it.
-pub const SECURITY_ROWS: u16 = 6;
+/// Number of Security sub-page rows (Device PIN, FIDO PIN, PIV PIN, Scramble PIN pad,
+/// Audit log, Backup, Factory reset) — the longest settings list, so the shared row geometry is sized to fit it.
+pub const SECURITY_ROWS: u16 = 7;
 
 /// The Security entry on row `i`, in list order (the three credential PINs first, the danger
 /// Factory reset stays last).
@@ -684,8 +770,9 @@ pub const fn security_row_entry(i: u16) -> SecurityEntry {
         0 => SecurityEntry::DevicePin,
         1 => SecurityEntry::FidoPin,
         2 => SecurityEntry::PivPin,
-        3 => SecurityEntry::AuditLog,
-        4 => SecurityEntry::Backup,
+        3 => SecurityEntry::ScramblePin,
+        4 => SecurityEntry::AuditLog,
+        5 => SecurityEntry::Backup,
         _ => SecurityEntry::FactoryReset,
     }
 }
@@ -1183,7 +1270,7 @@ pub const T9_KEY_LABELS: &[(&str, &str)] = &[
     ("7", "PQRS"),
     ("8", "TUV"),
     ("9", "WXYZ"),
-    ("0", "SPACE"),
+    ("0", "\u{2423}"),
 ];
 
 /// A key on the T9 rename keypad.

@@ -16,9 +16,17 @@ rsk-usb = { path = "../crates/rsk-usb" }
 rsk-crypto = { path = "../crates/rsk-crypto" }
 rsk-fido = { path = "../crates/rsk-fido" }
 rsk-openpgp = { path = "../crates/rsk-openpgp" }
+# The EC key type the two openpgp_ec* targets drive directly (`PrivKey` over
+# `Curve`); the applet no longer owns it, only its algorithm-attribute mapping.
+rsk-ec = { path = "../crates/rsk-ec" }
+# The RSA layer the two openpgp_* RSA targets now fuzz directly: the DigestInfo
+# parser (`rsa_sign_em`) and the import-side key rebuild (`rsa_from_pqe`).
+rsk-rsa = { path = "../crates/rsk-rsa" }
+rsk-devconf = { path = "../crates/rsk-devconf", features = ["test-util"] }
 rsk-mgmt = { path = "../crates/rsk-mgmt" }
 rsk-oath = { path = "../crates/rsk-oath" }
 rsk-otp = { path = "../crates/rsk-otp" }
+rsk-phy = { path = "../crates/rsk-phy" }
 rsk-piv = { path = "../crates/rsk-piv" }
 rsk-rescue = { path = "../crates/rsk-rescue" }
 # The applet wiring the firmware and `tools/emu` both run — registration order,
@@ -47,8 +55,8 @@ aes = { version = "0.8", default-features = false }
 # byte-identical to; the shared digest 0.10 makes the `Digest` traits unify.
 sha2 = { version = "0.10", default-features = false }
 # openpgp_key_load reconstructs an RSA key from attacker MPIs and checks n == p*q
-# against a plain BigUint multiply — the same `rsa` 0.9 rsk-openpgp imports.
-rsa = { version = "0.9", default-features = false }
+# against a plain BigUint multiply — the same bignum rsk-rsa is arithmetic over.
+num-bigint-dig = { version = "0.8.6", default-features = false, features = ["i128", "prime", "zeroize"] }
 # power_cut: the real on-device storage stack (pinned to the firmware's
 # version) over sequential-storage's power-cut-injecting mock flash (`_test`).
 sequential-storage = { version = "=8.0.0", features = ["_test"] }

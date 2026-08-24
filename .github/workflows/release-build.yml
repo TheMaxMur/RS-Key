@@ -45,6 +45,11 @@ on:
         required: true
         type: string
 
+# Deny by default at the workflow level. A job's own `permissions:` REPLACES this
+# block rather than intersecting it, so the build job's write scopes below still
+# apply in full.
+permissions: {}
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -179,22 +184,37 @@ jobs:
           cat SHA256SUMS
 
       - name: attest build provenance
+        id: attest
         # GitHub-native build provenance for every .uf2 — signed keyless via
         # Sigstore/Fulcio against this run's OIDC identity, recorded in the GitHub
-        # attestation API + the public Rekor log (NOT a release asset, so it is
-        # compatible with immutable releases). Because this runs in a reusable
+        # attestation API + the public Rekor log. Because this runs in a reusable
         # workflow, the provenance binds to THIS workflow's identity → SLSA Build
         # L3. Verify with `gh attestation verify --signer-workflow`.
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/*.uf2
 
+      - name: attach the provenance bundle as a release asset
+        # The attestation API and Rekor remain the primary record; this is a copy
+        # a consumer who has only the download can check offline. Attaching at
+        # CREATE time, which immutable releases allow — what they forbid is adding
+        # an asset afterwards (measured: HTTP 422 on every published release), and
+        # that is why the five already out cannot be fixed retroactively.
+        # `.intoto.jsonl` is also the only suffix OpenSSF Scorecard's
+        # releasesHaveProvenance probe looks for; it matches on the name alone.
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/rs-key-${{ steps.tag.outputs.tag }}.intoto.jsonl"
+
       - name: sign SHA256SUMS (keyless cosign)
         env:
           COSIGN_YES: "true"
         run: |
+          # `.sigstore.json`, not `.cosign.bundle`: the file is literally a
+          # `application/vnd.dev.sigstore.bundle.v0.3+json` (verified against the
+          # published v0.4.10 asset), and that is the canonical extension for one.
+          # Scorecard's releasesAreSigned matches on suffix and knows
+          # `.sigstore.json` but not `.bundle`, so the old name read as unsigned.
           cosign sign-blob \
-            --bundle dist/SHA256SUMS.cosign.bundle \
+            --bundle dist/SHA256SUMS.sigstore.json \
             dist/SHA256SUMS
 
       - name: extract release notes from CHANGELOG

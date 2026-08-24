@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# Standing assumptions: facts a model uses that the model itself cannot
+# establish. HAND-WRITTEN FIELDS ONLY: constant, statement, discharged_by, risk.
+# Which configurations pin an assumption, which arm each takes, and whether the
+# module branches on it at all are DERIVED by scripts/assumption_gate.py and
+# printed, never stored — the same rule properties.toml states, for the same
+# reason.
+#
+# The gate holds this file against the tree in both directions, and its third
+# rule is the one that earned the file. `PowerOnClearsScratch2` was an
+# `ASSUME` in RSKeyBootHardening and `TRUE` in all seven Boot configurations,
+# and nothing branched on it: deleting the line left every run bit-identical
+# (77 states, 24 distinct, depth 5, before and after). It named the open
+# question without letting anyone ask it. So an assumption must be ASSIGNED
+# BOTH WAYS by some configuration and READ BY AN ACTION, or it is a comment
+# with a type.
+
+[[assumption]]
+constant = "PowerOnClearsScratch2"
+statement = "A real RP2350 power-on reset clears WATCHDOG.scratch2, so the PIN soft-lock the previous cycle recorded does not ride through it."
+discharged_by = "A board measurement: write a known value to WATCHDOG.scratch2, cut power at the supply (not a warm reset — firmware/src/pin_lock.rs:54 writes the word on every CBOR dispatch, so the read must come from the first boot after), and read it back on the next boot. tests/54_sram_residue.py is the shape; the register is not SRAM, so it needs its own probe."
+# Which way an unconfirmed assumption fails matters more than that it is
+# unconfirmed, and this one fails towards MORE locking, not less: a word that
+# rides a power cycle carries the mismatch batch with it. The undefined-register
+# case is a third possibility and is already handled — the tag makes garbage read
+# as clear (firmware/src/pin_lock.rs:36-37) — so it is not this assumption's.
+risk = "usability"

@@ -8,12 +8,13 @@
 //! hash, or falls back to the raw private operation. The DigestInfo match + the
 //! `prefix ‖ hash` buffer construction must never panic or overflow `em`. This is
 //! the pure half of `rsa_sign` (no modexp), so it runs at full fuzzing speed; the
-//! raw fallback and the actual signature are the `rsa` crate's, exercised by the
+//! raw fallback and the actual signature are the modexp's, exercised by the
 //! unit tests. On-device the path sits behind a provisioned RSA key, out of reach
 //! of `openpgp_apdu`.
 
 use libfuzzer_sys::fuzz_target;
-use rsk_openpgp::keys::{MAX_RSA_DIGESTINFO, rsa_sign_em};
+use rsk_rsa::MAX_RSA_DIGESTINFO;
+use rsk_rsa::pkcs1v15::rsa_sign_em;
 
 fuzz_target!(|data: &[u8]| {
     let mut em = [0u8; MAX_RSA_DIGESTINFO];

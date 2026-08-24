@@ -37,6 +37,17 @@ below the 2560K code region), `cargo-audit`, `cargo-deny`, `cargo-vet` and
 `gitleaks`.
 Green check.sh is the bar for every commit.
 
+Two of those rows hold the crate tiers of
+[architecture.md](architecture.md#crates) rather than a dependency's licence or
+CVEs. `cargo-deny`'s `[bans]` stanza is the enforcing one: an applet that names
+another applet, or any crate but `rsk-crypto` that names one of the four
+hash/signature backends, is a banned edge and the row exits 2. The
+`-D unused-wrapper` flag fails it the other way too, when an allowlisted edge is
+gone and its entry has quietly become decoration. The `crate graph` row
+regenerates `docs/images/crate-graph.svg` from the manifests and fails when the
+committed drawing has drifted from them; its mutation table is
+`scripts/test_crate_graph.py`.
+
 ## Host tests
 
 `cargo test` must target the host explicitly (the workspace defaults to
@@ -55,8 +66,27 @@ it had rotted to 16 crates here, 20 on the nightly coverage row and 12 in
 `nix flake check`. `scripts/roster_gate.py` now holds every copy of the
 selection to that pair, and finds the copies rather than being told where they
 are.) Crypto tests pin NIST/RFC vectors; applet tests drive full protocol flows
-(register → assert, PIN lockout ladders, OpenPGP import → sign → verify against
-`RustCrypto`, PIV generate → attest → parse with `x509-parser`).
+(register → assert, PIN lockout ladders, OpenPGP import → sign → verify, PIV
+generate → attest → parse with `x509-parser`).
+
+RSA has no second implementation in the tree to check itself against — the `rsa`
+crate that used to serve as one left with RUSTSEC-2023-0071 — so its ground
+truth is frozen instead: `crates/rsk-rsa/src/vectors.rs` holds OpenSSL
+signatures and ciphertexts under three fixed keys, and every signature the card
+produces is compared to them byte for byte. `scripts/rsa_vectors.py` regenerates
+that file from python-cryptography; run it inside `nix develop`.
+
+Fixed vectors cannot say which imported `(p, q, e)` a key assembly *refuses*, so
+that half is settled by a differential against `rsa` 0.9.10 in a throwaway crate
+**outside** the workspace — `rsk-rsa` by path with `test-util`, plus
+`rsa = "=0.9.10"` — because the crate must not come back into any lockfile the
+SCA rows read. Rebuild it whenever the key assembly moves. Two things it teaches
+about itself: the comparison has to be *reachable* (a first attempt gated it
+behind `ra.is_ok() || ra.is_err()`, which is always true, and reported zero
+mismatches over zero comparisons — falsify each arm by perturbing one side), and
+upstream cannot be asked about an unbalanced key at all, because its CRT
+recombination is `while m.is_negative() { m += p }` and for `q ≫ p` that does not
+return.
 
 `rsk-display` is the odd one: its subject is a *screen*, and it is tested by
 giving the flow a panel that records what was drawn, a touch pad that reads back
@@ -77,7 +107,7 @@ credMgmt, U2F, extensions, large blobs, the vendor backup/lock commands,
 half that corpus runs soft-locked), OpenPGP dispatch + the EC/RSA crypto
 parsers, OATH/OTP/PIV/management/rescue dispatch, the keyboard frame codec,
 the phy TLV codec (parse∘serialize round-trip is an asserted invariant), the
-PIN protocols, AEADs, the DRBG, ML-DSA (both parameter sets: attacker-shaped
+PIN protocols, AEADs, the DRBG, ML-DSA (all three parameter sets: attacker-shaped
 verify decode, plus a keygen→sign→verify property that a one-bit tamper must
 break) / ML-KEM decoding, the FIDO post-quantum credential path (the
 `(alg, curve)` box codec + `CredKey` dispatch → sign / COSE-AKP encode), the
@@ -121,7 +151,10 @@ multi-step):
   garbage; a torn `delete` never leaves the value gone but its metadata
   alive), durability (every committed file reads back exactly; a spurious
   "absent" is the on-device "seed lost" disaster), and the key set. Cuts
-  landing inside the next mount's own repair are survived by dying again.
+  landing inside the next mount's own repair are survived by dying again. A
+  dedicated input class also runs the real FIDO reset on that same store,
+  checks `ResetNeverWeakensSurvivingState` after boot-time seed provisioning,
+  then mounts a second time to cross the reboot boundary again.
 
 ```sh
 nix develop .#fuzz -c cargo fuzz list
@@ -193,7 +226,7 @@ crypto-critical helpers, where a proof genuinely beats a sample:
   `meta_add`'s replace both mean. Stated by feeding the output back through the
   same function rather than by a second decoder, which would only prove two
   copies of one walk agree.
-- `rsk-rsa-asm`: `mod_small` proven *functionally* (`== v % m`, every
+- `rsk-rsa`: `mod_small` proven *functionally* (`== v % m`, every
   dividend up to 2 bytes and every modulus) and panic-free / `< m` for every
   input up to 8 bytes; the `IncrementalSieve` residue invariant
   (`res[i] == cand mod p_i` after a step, verdict identical to the flat
@@ -205,7 +238,7 @@ crypto-critical helpers, where a proof genuinely beats a sample:
   `len % 3` tail, with and without preceding full chunks); `decode` panic-free
   over every byte string up to 8 chars and writing exactly the length it
   reports, never a byte past it.
-- `rsk-rescue`: the `phy` device-configuration record: `parse` total over
+- `rsk-phy`: the `EF_PHY` device-configuration record: `parse` total over
   every byte string up to 12 bytes, always materializing an interface mask and
   always yielding a record that serializes back into `PHY_MAX_SIZE` (the
   read-modify-write the rescue interface performs); `overlay` never turning a
@@ -231,7 +264,10 @@ crypto-critical helpers, where a proof genuinely beats a sample:
   credentialManagement enumerate walk is servable only to the channel whose
   *Begin* opened it (`NoAuthorizationBypass`). The names are the ones
   `formal/RSKeySecurityState.tla` uses, so one property can be traced model →
-  code → harness by grep.
+  code → harness by grep. Phase 6 adds four one-step induction harnesses over
+  the reset's security-visible concrete projection: initialization and every
+  begin/delete/advance/abort/finish/power-cut step preserve
+  `ResetNeverWeakensSurvivingState` and its three independently named clauses.
 
 Kani is **not** in nixpkgs and its setup downloads a prebuilt CBMC bundle, so
 this is the one deliberately non-nix tool (install once, outside the dev
@@ -245,7 +281,7 @@ cargo install --locked kani-verifier --version 0.67.0 && cargo kani setup
 ./scripts/kani.sh light1   # one of the three weekly shards of "all but heavy"
 ./scripts/kani.sh light2
 ./scripts/kani.sh light3
-./scripts/kani.sh heavy    # rsk-rescue alone, in its own job
+./scripts/kani.sh heavy    # rsk-phy alone, in its own job
 ```
 
 `scripts/kani.sh` owns the tier → crate table and nothing else does, and it
@@ -287,17 +323,19 @@ run):
 
 | Tier | Crates | Harnesses | Covers | Solve | Slowest harness |
 |---|---|---|---|---|---|
-| `pr` | 13 | 50 | 23 | 199 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
-| `state` | 2 | 8 | 9 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
-| `all` | 17 | 66 | 31 | ~1 h 45 | `rsk-rescue::serialize_parse_roundtrip`, 27 m 42 s |
-| `light1` | 4 | 17 | 11 | not yet run | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
-| `light2` | 5 | 21 | 3 | not yet run | `rsk-rsa-asm`'s division spec and sieve |
-| `light3` | 7 | 23 | 16 | not yet run | `rsk-mldsa`'s rounding round-trips |
-| `heavy` | 1 | 5 | 1 | ~55 min | `rsk-rescue::serialize_parse_roundtrip`, 55 min (11.1 GB peak) |
+| `pr` | 13 | 61 | 31 | 276 s | `rsk-piv::set_protected_total_and_invariant`, 47 s |
+| `state` | 2 | 24 | 26 | ~10 min | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
+| `all` | 17 | 87 | 51 | ~1 h 46 | `rsk-phy::serialize_parse_roundtrip`, 27 m 42 s |
+| `light1` | 4 | 27 | 23 | not yet run | `rsk-fido::…_at_call_site`, ~7 min (9.3 GiB peak) |
+| `light2` | 5 | 27 | 8 | not yet run | `rsk-rsa`'s division spec and sieve |
+| `light3` | 7 | 28 | 19 | not yet run | `rsk-mldsa`'s rounding round-trips |
+| `heavy` | 1 | 5 | 1 | ~55 min | `rsk-phy::serialize_parse_roundtrip`, 55 min (11.1 GB peak) |
 
 `pr` and `state` are measured runs. `all` has never been run end to end here:
-its cover count is the two measured tiers plus `rsk-rescue`'s one, so
-**`FLOOR_all` is a number no run has reached**.
+its cover count is the two measured tiers plus `rsk-phy`'s one, so
+**`FLOOR_all` is a number no run has reached**. The `rsk-phy` times and the
+11.1 GB peak are **inherited**, not re-run: they were taken while that harness
+lived in `rsk-rescue`, and `189f24c` moved the file byte-identical.
 
 None of the six figures in the Harnesses and Covers columns is kept by hand, and
 neither are `kani.sh`'s `FLOOR_*`/`COVERS_*`. `scripts/kani_gate.py` counts the
@@ -411,16 +449,55 @@ small constants; the names are the ones the `rsk-fido` Kani harnesses use, so
 one property reads model → code → harness by grep.
 
 It exists because Kani proves a property over *one call* and RS-Key's dangerous
-defects have lived in *orderings*. It is a **design artefact, not an assurance
-layer**: it is not in `flake.nix`, not in the gate and not in CI, and a green
-run is a statement about the model. `formal/README.md` is its scope statement —
-what it covers, where it departs from the firmware **and in which direction**,
-the mutation experiment that keeps its invariants falsifiable, and the two
-counterexamples it has produced on the shipped tree. Read that before quoting a
-result from it.
+defects have lived in *orderings*. It is a **design artefact, not a proof of the
+firmware**: a green run is a statement about the model. `formal/README.md` is
+its scope statement — what it covers, where it departs from the firmware **and
+in which direction**, the mutation experiment that keeps its invariants
+falsifiable, and the counterexamples it has produced on the shipped tree. Read
+that before quoting a result from it.
 
 ```sh
-cd formal && ./gen-configs.sh && ./run-tlc.sh all   # needs tla2tools.jar + a JRE
+nix develop            # exports TLA2TOOLS_JAR; the JVM comes with it
+cd formal && ./gen-configs.sh && ./run-tlc.sh safety   # the tier CI runs
+```
+
+`safety` is the nine shipped models, their 71 mutation switches, floors and the vacuity check —
+`deep-checks.yml`'s weekly `formal` row, which also fires on any push touching
+`formal/`. `liveness` is the temporal half and is not in CI: it needs a 12g
+heap. `all` is both. Tier membership lives in `formal/run-tlc.sh`.
+
+The emulator CI also records raw security-state snapshots from the real
+`21_pin_webauthn` suite and replays them against `RSKeySecurityState`. R4a
+independently computes β from the raw fields; R4b compares the implementation's
+untrusted `abstract_token()` hint with the canonical TLA+ γ. The gate floors the
+trace at 10 commands, 20 B steps and 12 distinct actions, reports model actions
+not reached by traffic, and keeps one β mutation plus one α-only mutation RED.
+See `formal/README.md` for the exact boundary and claim.
+
+Phase 5 adds a narrower but connected refinement pilot for the token lifecycle.
+Its A relation and domains are exported by computation into Rust, TLC checks
+B→A, Kani checks bounded C→A obligations, and the emulator carries raw outcomes
+through a consensus validator. See [Token refinement pilot](token-refinement.md)
+for the exact InitC/wf boundary and the reset evidence table.
+
+Phase 6 closes that pilot's reset/reboot seam for
+`ResetNeverWeakensSurvivingState`. The bounded C→B projection uses the shipped
+reset classifier, the existing `rsk-fs` torn-delete rules compose underneath
+it, the `power_cut` target runs the real reset over byte-cuttable flash, and a
+destructive HIL script performs the same check across physical USB power loss.
+See [Cross-reset refinement pilot](reset-refinement.md) for the abstraction
+boundary, measurements, and the still-required per-board HIL witness.
+
+The companion co-refutation run asks whether production tests reject those
+same semantic defects. The original phase-2 baseline is fixed at 28 rows:
+26 are killed by code-level harnesses, two are unreachable by construction,
+and none remains a gap. Its generated table is in `formal/README.md`; ordinary
+`check.sh` rejects drift, while the full 67-entry live roster runs weekly:
+
+```sh
+python scripts/comutate.py --lint
+python scripts/comutate.py run
+python scripts/comutate.py run --write-readme  # full run, then refresh 28 rows
 ```
 
 ## Formal claims — what is and is not verified
@@ -438,14 +515,20 @@ is measured; nothing in it is an aspiration.
 > again, and a `credentialManagement` enumerate walk is servable only to the
 > channel whose *Begin* opened it. Those hold for every four- or five-operation
 > sequence from one starting state; longer sequences, other starting states and
-> the flash-backed persistent grant are outside them. On top of that sits a
+> the flash-backed persistent grant are outside them. Four more harnesses prove
+> initialization and one-step preservation of a finite reset projection across
+> reset phases, abort and reboot; the complete `FidoState` and byte-level flash
+> are linked by unit tests and sampled power-cut fuzz, not by that proof. On top
+> of that sits a
 > **TLA+ model** of the authenticator's security state. TLC checks six named
-> invariants exhaustively over ~13.2 million states at small constants. **That
+> invariants exhaustively over 60,020,016 states at small constants. **That
 > is a result about the model, not about the firmware binary**: it is only as
-> good as the model's fidelity to the code, which is maintained by hand. Every
+> good as the model's fidelity to the code. Citations and co-refutation are
+> maintained by hand; a bounded emulator trace also checks raw C-state → B and
+> α(C) = γ(B) at recorded boundaries, but says nothing about unrecorded runs. Every
 > invariant has been shown to be breakable by an injected defect, so none of
 > them is a check that cannot fail — and the model has already produced two
-> counterexamples on the shipped tree, both awaiting a ruling.
+> counterexamples on the shipped tree, both fixed and co-refuted since.
 
 The hedging is load-bearing, and the tree's own history is why. The model's
 green run once rested on an abstraction that made it **narrower** than the
@@ -740,15 +823,30 @@ from this page, both sharded across runners, a `repro` job that builds the
 hermetic firmware twice and requires bit-identical outputs
 ([build.md](build.md#nix-build-hermetic-no-dev-shell)), and an `llvm-cov` job
 that floors host-crate line coverage. Weekly, on Sunday: the full Kani roster,
-one runner per tier, and an advisory `cargo-mutants` sweep. No hidden state.
+one runner per tier, an advisory `cargo-mutants` sweep, the semantic
+co-refutation roster and TLC's formal safety tier. No hidden state.
 
 ```mermaid
 flowchart TB
     a["Merge gate — every commit / PR<br/>check.sh: fmt · clippy · host tests · firmware builds · size ratchet · audit · deny · vet · gitleaks<br/>proofs: Kani pr tier (+ state tier when the diff reaches it)"]
     b["Daily — deep-checks<br/>Miri (3 shards) · timed libFuzzer (4 shards) · repro (bit-identical build) · llvm-cov (coverage floor)"]
-    c["Weekly — deep-checks<br/>Kani: light1 · light2 · light3 · heavy — together the all roster<br/>cargo-mutants (8 shards, advisory)"]
+    c["Weekly — deep-checks<br/>Kani all roster · cargo-mutants (advisory)<br/>semantic co-refutation · TLC safety tier"]
     a ~~~ b ~~~ c
 ```
+
+One more workflow reports on a pull request and is deliberately absent from
+that diagram. `codeql.yml` runs GitHub's CodeQL over the Rust and Python
+sources — buildless (`build-mode: none`), since `firmware/` does not build on a
+host runner at all. It is advisory, not a gate: `check.sh` is still the whole
+bar. It runs on pull requests and on demand only, so there is no default-branch
+baseline and findings surface on the PR itself.
+
+Not over *all* of them: `.github/codeql/codeql-config.yml` keeps the test
+suites, the Kani siblings, `fuzz/`, `tests/` and `third_party/` out. Those are
+where the KATs and fixtures live, and a hard-coded-key query cannot tell a test
+vector from a secret — measured, they were 229 of 289 first-run alerts. The
+exclusion is at extraction, so a defect in a test helper is not found rather
+than found and filtered.
 
 ## Refactor metrics (advisory)
 

@@ -6,14 +6,11 @@
 //! slot's certificate object (`70/71/FE`-wrapped, as `ykman` expects) so GET
 //! DATA serves one immediately; IMPORT requires management-key auth.
 
-use rsa::RsaPrivateKey;
-use rsa::traits::PublicKeyParts;
 use rsk_crypto::Device;
+use rsk_ec::{Curve, MAX_EC_PUBDO, PrivKey, make_ec_pubkey_do};
 use rsk_fs::{Fs, Storage};
-use rsk_openpgp::Rng;
-use rsk_openpgp::keys::{
-    Curve, MAX_RSA_PUBDO, PrivKey, generate_rsa, make_ec_pubkey_do, make_rsa_response, rsa_from_pqe,
-};
+use rsk_rsa::{MAX_RSA_PUBDO, RsaKey, generate_rsa, make_rsa_response, rsa_from_pqe};
+use rsk_sdk::Rng;
 use rsk_sdk::tlv::find_tag;
 use rsk_sdk::{ResBuf, Sw};
 use zeroize::Zeroize;
@@ -62,7 +59,7 @@ pub(crate) fn parse_gen_template(data: &[u8]) -> Result<GenReq, Sw> {
 }
 
 /// The PIV algorithm id for an RSA key, keyed off its modulus length in bytes
-/// (`RsaPrivateKey::size()`): 128→1024, 256→2048, 384→3072, 512→4096. The single
+/// ([`RsaKey::size`]): 128→1024, 256→2048, 384→3072, 512→4096. The single
 /// source of truth for size→algo, shared by the firmware fast-path and the
 /// display retired-slot store so they cannot drift.
 pub(crate) fn rsa_algo_from_size(modulus_bytes: usize) -> Option<u8> {
@@ -271,13 +268,13 @@ pub(crate) fn generate_ec<S: Storage>(
         Ok(p) => p,
         Err(sw) => return sw,
     };
-    let Some(key) = PrivKey::generate(curve, rng) else {
+    let Some(key) = PrivKey::generate(curve, &mut crate::EcRng(rng)) else {
         return Sw::EXEC_ERROR;
     };
     let mut point = [0u8; MAX_EC_POINT];
     let plen = match key.public_point(&mut point) {
         Ok(n) => n,
-        Err(e) => return e,
+        Err(e) => return crate::ec_sw(e),
     };
     if let Err(e) = store_generated_cert(fs, rng, slot, req.algo, curve, &point[..plen], &key) {
         return e;
@@ -294,7 +291,7 @@ pub(crate) fn generate_ec<S: Storage>(
     if let Err(e) = meta_add_slot(fs, key_fid(slot).get(), &mbuf[..mlen]) {
         return e;
     }
-    let mut out = [0u8; 110];
+    let mut out = [0u8; MAX_EC_PUBDO];
     let n = make_ec_pubkey_do(&point[..plen], &mut out);
     if !res.extend(&out[..n]) {
         return Sw::WRONG_LENGTH;
@@ -313,11 +310,11 @@ pub(crate) fn finish_rsa<S: Storage>(
     slot: u8,
     algo: u8,
     pol: [u8; 2],
-    key: &RsaPrivateKey,
+    key: &RsaKey,
     res: &mut ResBuf,
 ) -> Sw {
-    let n = key.n().to_bytes_be();
-    let e = key.e().to_bytes_be();
+    let n = key.n_be();
+    let e = key.e_be();
     if let Err(sw) = store_slot_cert(
         fs,
         rng,
@@ -367,9 +364,9 @@ pub(crate) fn generate_rsa_blocking<S: Storage>(
         Ok(p) => p,
         Err(sw) => return sw,
     };
-    let key = match generate_rsa(rng, nbytes * 8) {
+    let key = match generate_rsa(&mut crate::RsaRng(&mut *rng), nbytes * 8) {
         Ok(k) => k,
-        Err(e) => return e,
+        Err(e) => return crate::rsa_sw(e),
     };
     finish_rsa(dev, fs, rng, slot, req.algo, pol, &key, res)
 }
@@ -406,11 +403,11 @@ pub(crate) fn generate_retired_ec<S: Storage>(
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     let curve = curve_for_algo(algo).ok_or(Sw::WRONG_DATA)?;
-    let Some(key) = PrivKey::generate(curve, rng) else {
+    let Some(key) = PrivKey::generate(curve, &mut crate::EcRng(rng)) else {
         return Err(Sw::EXEC_ERROR);
     };
     let mut point = [0u8; MAX_EC_POINT];
-    let plen = key.public_point(&mut point)?;
+    let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
     store_generated_cert(fs, rng, slot, algo, curve, &point[..plen], &key)?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)?;
     let pol = resolved_policies(slot, None, None)?;
@@ -429,7 +426,7 @@ pub(crate) fn store_retired_rsa<S: Storage>(
     fs: &mut Fs<S>,
     rng: &mut dyn Rng,
     slot: u8,
-    key: &RsaPrivateKey,
+    key: &RsaKey,
 ) -> Result<(), Sw> {
     if !is_retired(slot) {
         return Err(Sw::INCORRECT_P1P2);
@@ -438,8 +435,8 @@ pub(crate) fn store_retired_rsa<S: Storage>(
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     let algo = rsa_algo_from_size(key.size()).ok_or(Sw::EXEC_ERROR)?;
-    let n = key.n().to_bytes_be();
-    let e = key.e().to_bytes_be();
+    let n = key.n_be();
+    let e = key.e_be();
     store_slot_cert(
         fs,
         rng,
@@ -628,7 +625,9 @@ pub(crate) fn import<S: Storage>(
         ALGO_ECCP256 | ALGO_ECCP384 | ALGO_ED25519 | ALGO_X25519
     ) {
         let mut point = [0u8; MAX_EC_POINT];
-        match seal::load_ec_key(dev, fs, key_fid(slot)).and_then(|k| k.public_point(&mut point)) {
+        match seal::load_ec_key(dev, fs, key_fid(slot))
+            .and_then(|k| k.public_point(&mut point).map_err(crate::ec_sw))
+        {
             Ok(plen) => {
                 let _ = fs.put(pubkey_fid(slot), &point[..plen]);
                 ec_slot_meta(algo, pol, ORIGIN_IMPORTED, &point[..plen], &mut mbuf)
@@ -685,8 +684,8 @@ pub(crate) fn attest<S: Storage>(
                 Ok(k) => k,
                 Err(e) => return e,
             };
-            let n = key.n().to_bytes_be();
-            let e = key.e().to_bytes_be();
+            let n = key.n_be();
+            let e = key.e_be();
             x509::build_cert(
                 &x509::CertParams {
                     subject_slot: slot,
@@ -708,7 +707,7 @@ pub(crate) fn attest<S: Storage>(
             let mut point = [0u8; MAX_EC_POINT];
             let plen = match key.public_point(&mut point) {
                 Ok(n) => n,
-                Err(e) => return e,
+                Err(e) => return crate::ec_sw(e),
             };
             x509::build_cert(
                 &x509::CertParams {
@@ -734,7 +733,7 @@ pub(crate) fn attest<S: Storage>(
             let mut point = [0u8; MAX_EC_POINT];
             let plen = match key.public_point(&mut point) {
                 Ok(n) => n,
-                Err(e) => return e,
+                Err(e) => return crate::ec_sw(e),
             };
             x509::build_cert(
                 &x509::CertParams {

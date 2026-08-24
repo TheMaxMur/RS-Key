@@ -383,6 +383,94 @@ fn vendor_req(sub: &[u8], token: &[u8; 32]) -> std::vec::Vec<u8> {
     req
 }
 
+// The CONFIG_EA_RPIDS subCommandParams map `{1: id, 4: [rpId…]}`.
+fn subpara_ea_rpids(ids: &[&str]) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(2).unwrap();
+        e.u8(1).unwrap().u64(CONFIG_EA_RPIDS).unwrap();
+        e.u8(4).unwrap().array(ids.len() as u64).unwrap();
+        for id in ids {
+            e.str(id).unwrap();
+        }
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+fn set_rpids(fs: &mut Fs<RamStorage>, ids: &[&str]) -> CtapResult {
+    let mut st = armed(PERM_ACFG);
+    run_fs(fs, &mut st, &vendor_req(&subpara_ea_rpids(ids), &TOKEN))
+}
+
+#[test]
+fn ea_rpids_stored_as_hashes_and_survive_a_remount() {
+    let mut fs = Fs::new(RamStorage::new());
+    assert_eq!(
+        set_rpids(&mut fs, &["corp.example.com", "sso.example"]),
+        Ok(0)
+    );
+    // A remount is the power cycle: the record is read back off the same storage
+    // by a filesystem that has never seen the write.
+    let mut fs = Fs::new(fs.into_storage());
+    let mut buf = [0u8; 32 * MAX_EA_RPIDS];
+    assert_eq!(fs.read(EF_EA_RPIDS, &mut buf), Some(64));
+    assert_eq!(&buf[..32], &sha256(b"corp.example.com"));
+    assert_eq!(&buf[32..64], &sha256(b"sso.example"));
+}
+
+#[test]
+fn ea_rpids_empty_list_clears_the_record() {
+    let mut fs = Fs::new(RamStorage::new());
+    assert_eq!(set_rpids(&mut fs, &["corp.example.com"]), Ok(0));
+    assert!(fs.has_data(EF_EA_RPIDS));
+    assert_eq!(set_rpids(&mut fs, &[]), Ok(0));
+    assert!(
+        !fs.has_data(EF_EA_RPIDS),
+        "an empty list returns the device to its shipped state"
+    );
+}
+
+#[test]
+fn ea_rpids_overflow_is_refused_not_truncated() {
+    // The allowList-truncation shape: a list past the bound must fail loudly and
+    // leave the previous one intact, never silently store its first MAX_EA_RPIDS.
+    let mut fs = Fs::new(RamStorage::new());
+    assert_eq!(set_rpids(&mut fs, &["kept.example"]), Ok(0));
+    let too_many: std::vec::Vec<&str> = std::vec![
+        "a.example",
+        "b.example",
+        "c.example",
+        "d.example",
+        "e.example",
+        "f.example",
+        "g.example",
+        "h.example",
+        "i.example",
+    ];
+    assert_eq!(too_many.len(), MAX_EA_RPIDS + 1);
+    assert_eq!(set_rpids(&mut fs, &too_many), Err(CtapError::KeyStoreFull));
+    let mut buf = [0u8; 32 * MAX_EA_RPIDS];
+    assert_eq!(fs.read(EF_EA_RPIDS, &mut buf), Some(32));
+    assert_eq!(&buf[..32], &sha256(b"kept.example"));
+}
+
+#[test]
+fn ea_rpids_needs_the_acfg_permission() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut st = armed(0); // a valid token, no acfg
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut st,
+            &vendor_req(&subpara_ea_rpids(&["corp.example.com"]), &TOKEN)
+        ),
+        Err(CtapError::PinAuthInvalid)
+    );
+    assert!(!fs.has_data(EF_EA_RPIDS));
+}
+
 #[test]
 fn picoforge_config_sets_vidpid_in_phy() {
     let mut fs = Fs::new(RamStorage::new());
@@ -391,7 +479,7 @@ fn picoforge_config_sets_vidpid_in_phy() {
     let sub = subpara_vendor_int(CONFIG_PHY_VIDPID, vidpid);
     assert_eq!(run_fs(&mut fs, &mut st, &vendor_req(&sub, &TOKEN)), Ok(0));
     assert_eq!(
-        rsk_rescue::phy::load(&mut fs).unwrap().vid_pid,
+        rsk_phy::load(&mut fs).unwrap().vid_pid,
         Some((0x1050, 0x0407))
     );
 }
@@ -406,7 +494,7 @@ fn picoforge_config_sets_led_gpio_and_options_in_phy() {
     let o = subpara_vendor_int(CONFIG_PHY_OPTIONS, 0x0A);
     let mut st2 = armed(PERM_ACFG);
     assert_eq!(run_fs(&mut fs, &mut st2, &vendor_req(&o, &TOKEN)), Ok(0));
-    let p = rsk_rescue::phy::load(&mut fs).unwrap();
+    let p = rsk_phy::load(&mut fs).unwrap();
     assert_eq!(p.led_gpio, Some(22));
     assert_eq!(p.opts, 0x0A);
 }

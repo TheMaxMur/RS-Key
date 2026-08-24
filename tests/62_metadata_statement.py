@@ -226,6 +226,14 @@ def part_b(stmt):
         # drift against the statement, not as an oversight — add both together.
         "vendorPrototypeConfigCommands": m[0x15],
         "attestationFormats": m[0x16],
+        # 0x19 encIdentifier and 0x1E encCredStoreState are deliberately NOT
+        # mirrored: both appear only once a persistent pinUvAuthToken exists, and
+        # both are re-encrypted under a fresh IV on every getInfo, so no static
+        # statement can carry either. MDS3 allows them only as empty placeholders;
+        # absent here on purpose, not by oversight.
+        "longTouchForReset": m[0x18],
+        "transportsForReset": m[0x1A],
+        "pinComplexityPolicy": m[0x1B],
         "maxPINLength": m[0x1D],
         "authenticatorConfigCommands": m[0x1F],
     }

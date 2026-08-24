@@ -79,7 +79,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// Paint a settings page, snapshotting the live brightness/timeout/identity into
     /// the view. Clears `shown` so the ambient loop repaints once the menu releases
@@ -106,6 +106,7 @@ where
             device_pin_set,
             fido_pin_set,
             backup_sealed,
+            scramble_pin: self.scramble_pin,
         };
         let _ = rsk_ui::render(&mut self.panel, &Screen::Settings(view));
         self.shown = None;
@@ -145,7 +146,9 @@ where
                 let repaint = match match page {
                     SettingsPage::Root => self.settings_root(p, &mut last),
                     SettingsPage::Display => settings_display(p),
-                    SettingsPage::Security => self.settings_security(p, &mut last),
+                    SettingsPage::Security => {
+                        self.settings_security(p, &mut last, &mut display_dirty)
+                    }
                     SettingsPage::Brightness => self.settings_brightness(p, &mut display_dirty),
                     SettingsPage::Timeout => self.settings_timeout(p, &mut presence_dirty),
                     SettingsPage::Sleep => settings_sleep(p, &mut display_dirty),
@@ -231,7 +234,7 @@ where
 
     /// Security: each row runs its own modal, which may take many seconds — so the
     /// inactivity clock restarts when one returns, not when the tap landed.
-    fn settings_security(&mut self, p: rsk_ui::Point, last: &mut Instant) -> Nav {
+    fn settings_security(&mut self, p: rsk_ui::Point, last: &mut Instant, dirty: &mut bool) -> Nav {
         if rsk_ui::hit_title_back(p) {
             return Nav::Goto(SettingsPage::Root);
         }
@@ -239,6 +242,12 @@ where
             Some(SecurityEntry::DevicePin) => self.run_set_pin(PinScope::Device),
             Some(SecurityEntry::FidoPin) => self.run_set_pin(PinScope::Fido),
             Some(SecurityEntry::PivPin) => self.run_piv_pins(),
+            // A toggle, so it stays on this page: flip, mark the record dirty, repaint.
+            Some(SecurityEntry::ScramblePin) => {
+                self.scramble_pin = !self.scramble_pin;
+                *dirty = true;
+                return Nav::Stay;
+            }
             Some(SecurityEntry::AuditLog) => self.run_auditlog(),
             Some(SecurityEntry::Backup) => self.run_backup(),
             // A confirmed reset queues the reboot and returns `true` — leave at once
@@ -295,21 +304,22 @@ where
         if save_presence {
             let secs = (self.hooks.presence_timeout_ms() / 1000) as u8;
             let mut fs = self.fs.borrow_mut();
-            let mut phy = rsk_rescue::phy::load(&mut fs).unwrap_or_default();
+            let mut phy = rsk_phy::load(&mut fs).unwrap_or_default();
             phy.presence_timeout = Some(secs);
-            let _ = rsk_rescue::phy::save(&mut fs, &phy);
+            let _ = rsk_phy::save(&mut fs, &phy);
         }
     }
 
     /// Write the live display settings (brightness + sleep) plus the persisted
-    /// `pin_declined` flag to `EF_DISPLAY` in one record. Every `EF_DISPLAY` write goes
+    /// `pin_declined` and `scramble_pin` flags to `EF_DISPLAY` in one record. Every `EF_DISPLAY` write goes
     /// through here so the onboarding flag is never dropped by a brightness/sleep save (and
-    /// vice-versa) — the record carries all three fields. Synchronous; the worker is parked.
+    /// vice-versa) — the record carries all four fields. Synchronous; the worker is parked.
     pub(super) fn save_display_config(&mut self) {
         let cfg = rsk_ui::DisplayConfig {
             brightness: self.brightness,
             sleep_secs: (SLEEP_TIMEOUT_MS.load(Ordering::Relaxed) / 1000) as u16,
             pin_declined: self.pin_declined,
+            scramble_pin: self.scramble_pin,
         };
         let _ = self.fs.borrow_mut().put(EF_DISPLAY, &cfg.encode());
     }

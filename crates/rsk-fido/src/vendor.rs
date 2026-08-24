@@ -32,10 +32,9 @@ use rsk_crypto::mac::hkdf_sha256;
 use rsk_crypto::mlkem::{MLKEM768_CT_LEN, MLKEM768_EK_LEN, mlkem768_encapsulate};
 use rsk_crypto::pinproto::ecdh_raw;
 use rsk_crypto::sha256;
+use rsk_devconf::{DevConfError, persist_dev_conf};
 use rsk_fs::Storage;
 use rsk_led::{CONF_LEN as LED_CONF_LEN, EF_LED_CONF};
-use rsk_mgmt::{DevConfError, persist_dev_conf};
-use rsk_rescue::phy;
 
 use crate::cbordec::{cbor, def_map, skip_value};
 use crate::cert;
@@ -70,9 +69,16 @@ pub fn take_phy_written() -> bool {
     PHY_WRITTEN.swap(false, Ordering::Relaxed)
 }
 
-// Sized for ATT_IMPORT's wrapped key + a full cert chain (≤ 2048 B); every
-// other subcommand stays tiny. The pinUvAuth MAC covers these bytes verbatim.
-const MAX_RAW_SUBPARA: usize = 2200;
+/// Scratch for the pinUvAuth MAC message, which covers `subCommandParams`
+/// verbatim — so it caps how long those params may be. **This is a buffer guard,
+/// and it only exists on the PIN branch**; for years that made the accepted
+/// attestation-chain length depend on whether a PIN was set. `cert::ATT_CHAIN_MAX`
+/// now folds this ceiling in, so the limit is applied where BOTH paths pass.
+pub(crate) const MAX_RAW_SUBPARA: usize = 2200;
+/// What `att_import`'s `subCommandParams` costs around the chain itself: map
+/// header, both keys, the 60-byte wrapped scalar and its header, and a
+/// long-form byte-string header for the chain.
+pub(crate) const ATT_SUBPARA_OVERHEAD: usize = 1 + 1 + 2 + 60 + 1 + 3;
 
 #[derive(Default)]
 struct Req<'a> {
@@ -234,10 +240,10 @@ fn dispatch<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) 
 fn config_read<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
     match req.target {
         CONFIG_TARGET_PHY => {
-            let mut buf = [0u8; phy::PHY_MAX_SIZE];
+            let mut buf = [0u8; rsk_phy::PHY_MAX_SIZE];
             let n = ctx
                 .fs
-                .read(phy::EF_PHY, &mut buf)
+                .read(rsk_phy::EF_PHY, &mut buf)
                 .unwrap_or(0)
                 .min(buf.len());
             // Key 1: the raw stored record (overrides only) for read-modify-write.
@@ -307,7 +313,7 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
     }
     match req.target {
         CONFIG_TARGET_DEV_CONF => {
-            if rsk_mgmt::dev_conf_unchanged(ctx.fs, req.blob) {
+            if rsk_devconf::dev_conf_unchanged(ctx.fs, req.blob) {
                 return Ok(0);
             }
             persist_dev_conf(ctx.fs, req.blob).map_err(|e| match e {
@@ -327,10 +333,10 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
             // Only a record that actually loaded can be unchanged — an absent or
             // unreadable EF_PHY must take the write, or a host sending the default
             // values to repair it would be answered `Ok` with nothing stored.
-            if phy::load(ctx.fs).is_some_and(|cur| cur.overlay(req.blob) == cur) {
+            if rsk_phy::load(ctx.fs).is_some_and(|cur| cur.overlay(req.blob) == cur) {
                 return Ok(0);
             }
-            phy::merge_save(ctx.fs, req.blob).map_err(|_| CtapError::Other)?;
+            rsk_phy::merge_save(ctx.fs, req.blob).map_err(|_| CtapError::Other)?;
             PHY_WRITTEN.store(true, Ordering::Relaxed);
         }
         // The LED config block; persisted here and applied *live* by the firmware

@@ -25,6 +25,10 @@ on:
         description: "tag to (re)build a release for, e.g. v0.1.0"
         required: true
 
+# Deny by default at the workflow level; the release job below grants exactly the
+# scopes the reusable builder needs, and nothing else in this file runs.
+permissions: {}
+
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false

@@ -171,6 +171,7 @@ fn get_key_agreement<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) ->
     Ok(len)
 }
 
+/// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
 fn set_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Req,
@@ -221,6 +222,7 @@ fn set_pin<S: Storage, R: Rng>(
     Ok(0)
 }
 
+/// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
 fn change_pin<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Req,
@@ -396,6 +398,7 @@ fn get_pin_token<S: Storage, R: Rng>(
 /// write the clientPIN response. Shared by the PIN (0x05/0x09) and the built-in-UV
 /// (0x06) token paths once verification has already succeeded — the token itself
 /// is identical; only *how* the user verified differs.
+/// Refines `RSKeySecurityState!NoLiveTokenWithoutPinRecord` — SEC-FIDO-008.
 fn issue_token<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     proto: PinProto,
@@ -715,6 +718,7 @@ fn derive_shared<S: Storage, R: Rng>(
 
 /// Compare a candidate 16-byte PIN hash against the stored verifier. Decrements
 /// the retry counter first; on mismatch applies the lockout ladder.
+/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     pin_hash: &[u8],
@@ -868,15 +872,69 @@ fn pin_code_points(pin: &[u8]) -> Option<usize> {
     Some(core::str::from_utf8(pin).ok()?.chars().count())
 }
 
-/// A trivially guessable PIN — a single repeated code point (`000000`) or a ±1 run
-/// (`123456` / `654321`) — refused by the `strong-pin` / `fips-profile` builds atop the
-/// length floor. `pub` so the trusted-display PIN pad rejects them at entry too.
+/// PINs this profile refuses by shape, none of which the four structural rules below
+/// already reach. Two families: straight lines and diagonals on the 3x3 keypad
+/// (`159753`, `147258`, `258369`, `789456`, `147852`, `123654`), where the smudge
+/// pattern IS the PIN, and the mirror/stutter/Fibonacci runs people reach for when
+/// told "not 123456" (`123321`, `112233`, `112358`, `102030`). Six code points each:
+/// the floor is six here, so a four-digit entry could never be reached to be refused.
+#[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
+const PIN_DENYLIST: [&str; 10] = [
+    "159753", "147258", "258369", "789456", "147852", "123654", "123321", "112233", "112358",
+    "102030",
+];
+
+/// A trivially guessable PIN, refused by the `strong-pin` / `fips-profile` builds atop
+/// the length floor. `pub` so the trusted-display PIN pad rejects them at entry too.
+///
+/// Four rules, every one over **code points** rather than bytes. The floor next door
+/// counts code points (getInfo 0x0D), and a rule that disagreed with it about what a
+/// character is would let a PIN clear one and fail the other for a reason no message
+/// could explain:
+///
+/// * **Periodic** — some prefix of length `p <= n/2` repeated fills the whole PIN.
+///   `p == 1` is the old repeated-code-point rule (`000000`); `p > 1` is what it
+///   missed (`121212`, `123123`, `12121`).
+/// * **A ±1 run**, ascending or descending (`123456` / `654321`).
+/// * **Two or fewer distinct code points.** Not a length argument — a two-symbol PIN
+///   leaves exactly two smudges on the glass, and the search space a shoulder or a
+///   fingerprint leaves is then the orderings of two marks, whatever the length.
+/// * **On the denylist** below — shapes the three rules above cannot express.
+///
+/// Not UTF-8 is refused rather than measured, the same call the host path makes one
+/// step earlier: a byte count over-measures every non-ASCII PIN, and guessing is the
+/// wrong direction to fail in.
 #[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
 pub fn pin_is_trivial(pin: &[u8]) -> bool {
-    pin.len() >= 2
-        && (pin.iter().all(|&b| b == pin[0])
-            || pin.windows(2).all(|w| w[0].checked_add(1) == Some(w[1]))
-            || pin.windows(2).all(|w| w[1].checked_add(1) == Some(w[0])))
+    let Ok(text) = core::str::from_utf8(pin) else {
+        return true;
+    };
+    let mut cp = ['\0'; PADDED_PIN_LEN];
+    let mut n = 0;
+    for c in text.chars() {
+        if n == cp.len() {
+            return true; // longer than a PIN can be; refuse rather than measure a prefix
+        }
+        cp[n] = c;
+        n += 1;
+    }
+    let cp = &cp[..n];
+    if n < 2 {
+        return true;
+    }
+
+    let periodic = (1..=n / 2).any(|p| (p..n).all(|i| cp[i] == cp[i % p]));
+    let step = |d: i32| {
+        cp.windows(2)
+            .all(|w| (w[0] as i32).checked_add(d) == Some(w[1] as i32))
+    };
+    let distinct = cp
+        .iter()
+        .enumerate()
+        .filter(|(i, c)| !cp[..*i].contains(c))
+        .count();
+
+    periodic || step(1) || step(-1) || distinct <= 2 || PIN_DENYLIST.contains(&text)
 }
 
 /// Validate the padded new PIN and store the EF_PIN verifier (the host setPIN/changePIN
@@ -1192,6 +1250,11 @@ where
     f(&mut enc).map_err(|_| CtapError::Other)?;
     Ok(enc.writer().position())
 }
+
+/// The phase-4 trace reader (`formal/TraceSecurity.tla`).
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+#[path = "clientpin_assurance.rs"]
+pub mod assurance;
 
 #[cfg(test)]
 #[path = "clientpin_tests.rs"]

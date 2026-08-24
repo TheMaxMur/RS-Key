@@ -7,7 +7,7 @@
 SELECTs the management AID (A0 00 00 05 27 47 11 17) and reads its config, the
 same path `ykman` / Yubico Authenticator / `nitropy` use to identify the key and
 show its firmware version. Read-only and idempotent (no WRITE CONFIG — that's
-covered by the rsk-mgmt host tests). Run from the venv that has pyscard:
+covered by the rsk-mgmt and rsk-devconf host tests). Run from the venv that has pyscard:
 
     nix develop -c python tests/70_management.py
 """

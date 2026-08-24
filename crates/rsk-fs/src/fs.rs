@@ -18,7 +18,22 @@ const META_REC_HDR: usize = 4;
 
 /// One bit per 16-bit FID: the full `0x0000..=0xFFFF` space as a present/absent
 /// bitmap (8 KiB). Backs the fast-negative cache in [`Fs`].
+#[cfg(not(kani))]
 const FID_PRESENT_BYTES: usize = (u16::MAX as usize + 1) / 8;
+/// Three bytes under `cfg(kani)`: a symbolic index into 8 KiB costs CBMC 2.5 to
+/// 13 minutes per writing harness (measured — two of the six were over
+/// `scripts/kani.sh`'s 5-minute FAST cap), while the cache clauses are uniform in
+/// `fid`, and three bytes keep every within-byte and cross-byte neighbour
+/// reachable. What the shrink stops proving is stated below instead.
+#[cfg(kani)]
+const FID_PRESENT_BYTES: usize = 3;
+
+/// No `fid` can index past the map — the fact that lets every cache primitive
+/// skip a bound check. Compile-time and about the SHIPPED width, so it holds
+/// where the shrunk proofs no longer look, and it is the stronger statement
+/// anyway: a proof would only have covered the FIDs a harness enumerated.
+#[cfg(not(kani))]
+const _: () = assert!(((u16::MAX >> 3) as usize) < FID_PRESENT_BYTES);
 
 /// The file system: the set of live dynamic FIDs and a present-cache over a
 /// [`Storage`] backend.
@@ -107,6 +122,8 @@ impl<S: Storage> Fs<S> {
     /// absent. An unknown FID returns false so the caller falls through to the
     /// reliable backend (and then caches the result) — this is what prevents a
     /// post-power-cut false-absent. Confirmed-absent stays O(1).
+    ///
+    /// Refines `RSKeyStore!NoFalseAbsent` — SEC-STORE-002.
     #[inline]
     fn known_absent(&self, fid: u16) -> bool {
         self.decided_bit(fid) && !self.present_bit(fid)
@@ -130,8 +147,6 @@ impl<S: Storage> Fs<S> {
         self.decided[i] |= m;
     }
 
-    /// Mark `fid` known absent (sets the authority bit, clears present).
-    #[inline]
     /// [`record`](Self::record), but only when the backend actually answered.
     ///
     /// `Storage::read`/`size` return `None` both for "absent" and for "the read
@@ -145,6 +160,8 @@ impl<S: Storage> Fs<S> {
         }
     }
 
+    /// Mark `fid` known absent (sets the authority bit, clears present).
+    #[inline]
     fn mark_absent(&mut self, fid: u16) {
         let (i, m) = ((fid >> 3) as usize, 1u8 << (fid & 7));
         self.present[i] &= !m;
@@ -152,7 +169,10 @@ impl<S: Storage> Fs<S> {
     }
 
     /// Rebuild the dynamic-file set from what's already in storage (run once
-    /// after a reboot).
+    /// after a reboot). The `if complete` guard on the decided-fill is the
+    /// owner of the truncated-scan half of the cache-soundness property.
+    ///
+    /// Refines `RSKeyStore!NoFalseAbsent` — SEC-STORE-002.
     pub fn scan(&mut self) {
         // Disjoint field borrows so the `for_each_key` closure can update all
         // three while `self.storage` drives the pass.
@@ -408,6 +428,19 @@ impl<S: Storage> Fs<S> {
     /// drop: `meta_delete` has its own EF_META present-cache guard and skips the
     /// rewrite when `fid` had no record.
     ///
+    /// **The metadata drop's failure is returned, and the value goes anyway.** A
+    /// failed EF_META read is "cannot tell", not "no record", and EF_META is one
+    /// blob shared by every applet — so refusing the removal would stop every
+    /// delete on the device (a wipe included, since most callers discard this
+    /// result) for the lifetime of one flash fault, which trades an orphaned
+    /// record for a secret that outlives its erase. `Err` therefore names a
+    /// state, not a no-op: the value is gone and a record may still stand over
+    /// it. A caller that cannot live with that reads it — `rsk-piv`'s MOVE does,
+    /// because GET METADATA would answer for a key that is no longer there.
+    ///
+    /// Refines `RSKeyStore!NoOrphanedMetadata` — SEC-STORE-001, where the drop
+    /// landed, and Refines `RSKeyStore!NoSilentOrphan` — SEC-STORE-006, where not.
+    ///
     /// Unlike the read paths, the backend `remove` keys off the *raw* present bit
     /// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This
     /// deliberately keeps the cold-boot reset sweep O(1) (confirming 128 unknown
@@ -416,14 +449,14 @@ impl<S: Storage> Fs<S> {
     /// removal — the file lingers rather than data being lost, and the next read
     /// of it confirms-and-caches it present, after which delete works normally.
     pub fn delete(&mut self, fid: u16) -> Result<()> {
-        let _ = self.meta_delete(fid);
+        let meta = self.meta_delete(fid);
         if self.present_bit(fid) {
             self.storage.remove(fid)?;
             self.mark_absent(fid);
             self.write_gen = self.write_gen.wrapping_add(1);
         }
         self.dynamic.retain(|&f| f != fid);
-        Ok(())
+        meta
     }
 
     /// Delete `fid`, removing it from the backend UNCONDITIONALLY (unlike
@@ -513,6 +546,8 @@ impl<S: Storage> Fs<S> {
     /// records: PIV writes an optional cached public point this way, reserving
     /// space for every slot's 4-byte head so the cache can never crowd a head out
     /// (which would fail provisioning). `reserve == 0` is the plain add.
+    ///
+    /// Refines `RSKeyStore!NoRecordLostToMetaWrite` — SEC-STORE-003.
     pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {
         let mut scratch = [0u8; META_MAX];
         // Read the existing blob unless EF_META is *confirmed* absent. Treating
@@ -542,6 +577,13 @@ impl<S: Storage> Fs<S> {
     }
 
     /// Remove the metadata for `fid` (clears EF_META once empty).
+    ///
+    /// The `known_absent(EF_META)` bit is only ever set from a definitive answer
+    /// — a faulted read is `MemoryFatal` below, never absence — which is what
+    /// keeps the cache honest while records stand.
+    ///
+    /// Refines `RSKeyStore!NoFalseMetaAbsent` — SEC-STORE-004.
+    /// Refines `RSKeyStore!CacheHonest` — SEC-STORE-005.
     pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
         if self.known_absent(EF_META) {
             return Ok(()); // confirmed no meta blob → nothing to drop
@@ -611,10 +653,22 @@ fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Re
 }
 
 /// Kani proof harnesses (`cargo kani -p rsk-fs`).
+#[cfg(any(kani, test))]
+#[path = "store_assurance.rs"]
+pub mod store_assurance;
+
 #[cfg(kani)]
 #[path = "fs_kani.rs"]
 mod proofs;
 
+#[cfg(kani)]
+#[path = "store_refinement_kani.rs"]
+mod store_refinement_proofs;
+
 #[cfg(test)]
 #[path = "fs_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "store_steps_tests.rs"]
+mod store_steps;

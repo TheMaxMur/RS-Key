@@ -10,14 +10,16 @@
 
 pub mod keydev;
 pub mod otp_lock;
-pub mod phy;
 pub mod rollback;
 
 use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::{Fs, Storage};
-pub use rsk_sdk::Confirm;
+// The randomness and the presence check gating the privileged rescue commands
+// (attestation sign, cert write, phy/identity write, reboot-to-BOOTSEL) against
+// a hostile USB host are `rsk-sdk`'s seams, shared with every sibling applet.
+pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 
 /// Rescue applet AID.
@@ -78,28 +80,6 @@ pub trait Platform {
     fn set_rollback_required(&mut self) -> bool;
 }
 
-pub trait Rng {
-    fn fill(&mut self, buf: &mut [u8]);
-}
-
-/// Outcome of a user-presence request for a privileged rescue operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Presence {
-    Confirmed,
-    Timeout,
-    Declined,
-}
-
-/// Physical user presence, gating the runtime-reachable privileged rescue
-/// commands (attestation sign, cert write, phy/identity write, reboot-to-
-/// BOOTSEL) against a hostile USB host. On the trusted-display build the
-/// `confirm` names the operation for an on-screen Approve/Deny prompt; the
-/// BOOTSEL-button backend just waits for a press. Same shape as the sibling
-/// applets' `UserPresence`.
-pub trait UserPresence {
-    fn request(&mut self, confirm: Confirm<'_>) -> Presence;
-}
-
 pub struct RescueApplet<'a> {
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
@@ -158,6 +138,7 @@ impl<'a> RescueApplet<'a> {
     /// runtime operation. On the display build this renders a named Approve/Deny
     /// prompt; the BOOTSEL backend waits for a press. `true` only on Confirmed —
     /// a hostile USB host cannot drive these commands without the operator.
+    /// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.
     fn require_presence(&self, confirm: Confirm<'_>) -> bool {
         self.presence.borrow_mut().request(confirm) == Presence::Confirmed
     }
@@ -241,7 +222,7 @@ impl<'a> RescueApplet<'a> {
                 }
                 // Read-modify-write merge: a partial record overlays the stored one
                 // (a host that sends only changed tags can't wipe the rest).
-                if phy::merge_save(fs, apdu.data).is_err() {
+                if rsk_phy::merge_save(fs, apdu.data).is_err() {
                     return Sw::EXEC_ERROR;
                 }
                 Sw::OK
@@ -293,8 +274,8 @@ impl<'a> RescueApplet<'a> {
         match apdu.p1 {
             0x01 => {
                 // A never-written phy serializes to just the zeroed OPTS TLV.
-                let data = phy::load(fs).unwrap_or_default();
-                let mut buf = [0u8; phy::PHY_MAX_SIZE];
+                let data = rsk_phy::load(fs).unwrap_or_default();
+                let mut buf = [0u8; rsk_phy::PHY_MAX_SIZE];
                 match data.serialize(&mut buf) {
                     Some(n) => {
                         res.extend(&buf[..n]);
@@ -497,10 +478,14 @@ impl<S: Storage> Applet<Fs<S>> for RescueApplet<'_> {
     }
 }
 
+/// How many files FLASH INFO sums the sizes of. A window, not a limit: the store
+/// holds `MAX_DYNAMIC_FILES` and the count below is always exact.
+const FS_USAGE_WINDOW: usize = 512;
+
 /// File count + summed payload bytes for FLASH INFO. Sizes are summed for the
-/// first 512 files; the count is always exact.
+/// first [`FS_USAGE_WINDOW`] files; the count is always exact.
 fn fs_usage<S: Storage>(fs: &mut Fs<S>) -> (u32, u32) {
-    let mut fids = [0u16; 512];
+    let mut fids = [0u16; FS_USAGE_WINDOW];
     let mut nfiles = 0u32;
     fs.for_each_key(&mut |fid| {
         if (nfiles as usize) < fids.len() {

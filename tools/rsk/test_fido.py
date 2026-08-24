@@ -33,14 +33,30 @@ def _rust_const(path, name):
     return m.group(1).strip()
 
 
+def _rust_int(path, name):
+    """A Rust `usize` const that is plain arithmetic over literals."""
+    expr = _rust_const(path, name)
+    assert re.fullmatch(r"[\d+\-*()\s]+", expr), f"{name} is not plain arithmetic: {expr}"
+    return eval(expr)  # noqa: S307 — the pattern above admits digits and + - * ( ) only
+
+
 def test_att_chain_max_still_matches_the_firmware():
-    max_value = int(_rust_const("rsk-fs/src/lib.rs", "MAX_VALUE_BYTES"))
-    max_certs = int(_rust_const("rsk-fido/src/cert.rs", "ATT_CHAIN_MAX_CERTS"))
-    # Mirrors `ATT_CHAIN_MAX = MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS`; the
-    # expression is re-read too, so moving the formula fails here as well.
-    assert (_rust_const("rsk-fido/src/cert.rs", "ATT_CHAIN_MAX")
-            == "rsk_fs::MAX_VALUE_BYTES - 1 - 2 * ATT_CHAIN_MAX_CERTS")
-    assert fido.ATT_CHAIN_MAX == max_value - 1 - 2 * max_certs
+    store = (int(_rust_const("rsk-fs/src/lib.rs", "MAX_VALUE_BYTES"))
+             - 1 - 2 * int(_rust_const("rsk-fido/src/cert.rs", "ATT_CHAIN_MAX_CERTS")))
+    mac = (_rust_int("rsk-fido/src/vendor.rs", "MAX_RAW_SUBPARA")
+           - _rust_int("rsk-fido/src/vendor.rs", "ATT_SUBPARA_OVERHEAD"))
+    # The cap is the tightest of THREE ceilings. Two are plain arithmetic and are
+    # re-derived here; the third — room for the worst-case makeCredential inside
+    # maxMsgSize — is a multi-term Rust expression held by a build-time assert in
+    # cert.rs, and is slack today. Assert the Rust side still names all three, so
+    # dropping one fails here rather than silently widening the cap.
+    expr = _rust_const("rsk-fido/src/cert.rs", "ATT_CHAIN_MAX")
+    assert expr == "min3(CHAIN_CAP_STORE, CHAIN_CAP_MAC, CHAIN_CAP_RESPONSE)", expr
+    assert fido.ATT_CHAIN_MAX == min(store, mac)
+    # If the response ceiling ever became the binding one this mirror would be too
+    # generous and the CLI would forward a chain the device refuses — a loud
+    # InvalidParameter, not a silent overrun, but fix the mirror if it happens.
+    assert min(store, mac) == mac, "the MAC scratch is expected to bind"
 
 
 def _drive(monkeypatch, chain_len):

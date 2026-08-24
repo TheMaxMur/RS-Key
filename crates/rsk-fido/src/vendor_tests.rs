@@ -416,6 +416,74 @@ fn att_import_state_clear_roundtrip() {
     );
 }
 
+/// Build `n` fake DER SEQUENCEs of `body` bytes each, long-form length.
+fn fake_chain(n: usize, body: usize, out: &mut [u8]) -> usize {
+    let mut dst = 0;
+    for _ in 0..n {
+        out[dst] = 0x30;
+        out[dst + 1] = 0x82;
+        out[dst + 2..dst + 4].copy_from_slice(&(body as u16).to_be_bytes());
+        out[dst + 4..dst + 4 + body].fill(0x41);
+        dst += 4 + body;
+    }
+    dst
+}
+
+/// **Regression for the PIN-dependent chain cap.** `MAX_RAW_SUBPARA` is a scratch
+/// buffer for the pinUvAuth MAC, so its length check lived on the PIN branch only:
+/// a PIN-less device accepted chains a PIN-protected one refused `RequestTooLarge`,
+/// and a long enough one minted a makeCredential reply CTAPHID could not carry.
+/// `ATT_CHAIN_MAX` now folds that ceiling in, and `att_chain_pack` runs before
+/// either gate — so the answer no longer depends on how the caller authenticated.
+/// Both halves assert the SAME verdict on the SAME request; that is the point.
+#[test]
+fn oversized_chain_is_refused_the_same_with_and_without_a_pin() {
+    let mut chain = [0u8; 3600];
+    let clen = fake_chain(3, 1196, &mut chain);
+    assert!(
+        clen > crate::cert::ATT_CHAIN_MAX,
+        "the probe must exceed the cap"
+    );
+
+    for pin in [false, true] {
+        let (mut fs, mut rng, mut st) = setup();
+        let host = handshake(&mut fs, &mut rng, &mut st);
+        let blob = wrap32(&host, &[0x21u8; 32]);
+        if pin {
+            fs.put(EF_PIN, &[8, 4, 1]).unwrap();
+        }
+        let mut req = [0u8; 4096];
+        let n = att_import_req(&mut req, &blob, &chain[..clen]);
+        let mut out = [0u8; 128];
+        let r = call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out,
+        );
+        assert_eq!(
+            r,
+            Err(CtapError::InvalidParameter),
+            "chain of {clen} B, pin={pin}: refused by att_chain_pack either way"
+        );
+    }
+}
+
+/// The cap is the tightest of three ceilings, so the worst-case makeCredential
+/// reply fits one CTAPHID message with room to spare. A build-time assert in
+/// `cert.rs` holds the invariant; this states the margin in one place a reader
+/// will find it.
+#[test]
+fn the_widest_credential_fits_one_ctaphid_message() {
+    let worst = crate::makecredential::MC_RESPONSE_SANS_CHAIN + crate::cert::ATT_CHAIN_MAX;
+    assert!(
+        worst <= crate::consts::MAX_MSG_SIZE as usize,
+        "worst-case makeCredential {worst} B exceeds maxMsgSize"
+    );
+}
+
 #[test]
 fn att_import_without_pin_demands_the_named_confirmation() {
     // A PIN-less device waives `gate`'s PIN half, and MSE is ungated — so the whole
@@ -560,16 +628,56 @@ fn export_refused_after_another_channel_rekeys_the_mse() {
     }
 }
 
+/// What `fips-profile` does with the subcommand the two cases above stopped carrying:
+/// export is refused outright, ahead of the ceremony -- and the channel is spent
+/// anyway. The refusal returns from `backup_export`'s first line, so it is `vendor`'s
+/// wrapper, not the handler, that keeps the one-shot promise here; moving the spend
+/// into the handlers would quietly except this profile from it.
+#[cfg(feature = "fips-profile")]
 #[test]
-fn a_gated_subcommand_spends_the_mse_channel() {
-    // One handshake, one gated use: without this an interloper that squats the
-    // channel after a legitimate consumer would inherit a live key.
+fn fips_refuses_the_export_and_still_spends_the_channel() {
     let (mut fs, mut rng, mut st) = setup();
     handshake(&mut fs, &mut rng, &mut st);
     assert!(st.mse_active);
 
     let mut req = [0u8; 32];
     let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
+    let mut out = [0u8; 128];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::NotAllowed),
+        "the profile seals the seed in"
+    );
+    assert!(
+        !st.mse_active,
+        "a refused export must not leave the channel live"
+    );
+    assert_eq!(st.mse_key, [0u8; 32]);
+}
+
+#[test]
+fn a_gated_subcommand_spends_the_mse_channel() {
+    // One handshake, one gated use: without this an interloper that squats the
+    // channel after a legitimate consumer would inherit a live key.
+    //
+    // Carried on ATT_CLEAR, not BACKUP_EXPORT. The property is about `consumes_mse`,
+    // which lists five subcommands and does not care which — but `fips-profile`
+    // refuses export outright, ahead of the ceremony, so the declined-touch half below
+    // asserted a `OperationDenied` that profile never reaches. A carrier every profile
+    // actually runs is what makes the case mean the same thing on all of them.
+    let (mut fs, mut rng, mut st) = setup();
+    handshake(&mut fs, &mut rng, &mut st);
+    assert!(st.mse_active);
+
+    let mut req = [0u8; 32];
+    let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
     let mut out = [0u8; 128];
     let _ = call(
         &mut fs,
@@ -1286,7 +1394,7 @@ fn config_write_req(target: u64, blob: &[u8], authed: bool, buf: &mut [u8]) -> u
 fn dev_conf_readback(fs: &mut Fs<RamStorage>) -> std::vec::Vec<u8> {
     let mut out = [0u8; 128];
     let mut res = rsk_sdk::ResBuf::new(&mut out);
-    rsk_mgmt::config_tlv(&[0u8; 4], fs, &mut res);
+    rsk_devconf::config_tlv(&[0u8; 4], fs, &mut res);
     res.as_slice().to_vec()
 }
 
@@ -1452,11 +1560,11 @@ fn config_write_persists_phy_over_fido() {
     let (mut fs, mut rng, mut st) = setup();
     // A phy record setting the touch-wait timeout (tag 0x08) — the same record
     // the CCID rescue WRITE 0x1C persists.
-    let phy = rsk_rescue::phy::PhyData {
+    let phy = rsk_phy::PhyData {
         presence_timeout: Some(45),
         ..Default::default()
     };
-    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
     let blen = phy.serialize(&mut blob).unwrap();
     let mut req = [0u8; 128];
     let n = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut req);
@@ -1473,10 +1581,7 @@ fn config_write_persists_phy_over_fido() {
         Ok(0)
     );
     // The FIDO write lands in EF_PHY; boot / the CCID rescue READ path sees it.
-    assert_eq!(
-        rsk_rescue::phy::load(&mut fs).unwrap().presence_timeout,
-        Some(45)
-    );
+    assert_eq!(rsk_phy::load(&mut fs).unwrap().presence_timeout, Some(45));
 }
 
 /// Build a `VENDOR_CONFIG_READ` request `{1: subcmd, 2: {1: target}}` (ungated).
@@ -1499,11 +1604,11 @@ fn config_read_req(target: u64, buf: &mut [u8]) -> usize {
 fn config_read_returns_the_phy_record_ungated() {
     let (mut fs, mut rng, mut st) = setup();
     // Seed a phy record through the write path.
-    let phy = rsk_rescue::phy::PhyData {
+    let phy = rsk_phy::PhyData {
         presence_timeout: Some(30),
         ..Default::default()
     };
-    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
     let blen = phy.serialize(&mut blob).unwrap();
     let mut wreq = [0u8; 128];
     let wn = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut wreq);
@@ -1539,10 +1644,7 @@ fn config_read_returns_the_phy_record_ungated() {
     assert_eq!(d.map().unwrap(), Some(2));
     assert_eq!(d.u8().unwrap(), 1);
     let got = d.bytes().unwrap();
-    assert_eq!(
-        rsk_rescue::phy::PhyData::parse(got).presence_timeout,
-        Some(30)
-    );
+    assert_eq!(rsk_phy::PhyData::parse(got).presence_timeout, Some(30));
     assert_eq!(d.u8().unwrap(), 2);
     assert_eq!(d.map().unwrap(), Some(0));
 }
@@ -1769,7 +1871,7 @@ fn config_write_flood_cannot_evict_the_audit_ring() {
     assert_eq!(journal_state(&mut fs).1, 2);
 
     let mut led = [0u8; rsk_led::CONF_LEN];
-    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
     for i in 0..200u8 {
         led[0] = i;
         let n = config_write_req(CONFIG_TARGET_LED, &led, false, &mut req);
@@ -1783,7 +1885,7 @@ fn config_write_flood_cannot_evict_the_audit_ring() {
         )
         .unwrap();
 
-        let phy = rsk_rescue::phy::PhyData {
+        let phy = rsk_phy::PhyData {
             presence_timeout: Some(i + 1),
             ..Default::default()
         };
@@ -1821,10 +1923,7 @@ fn config_write_flood_cannot_evict_the_audit_ring() {
     let mut cur = [0u8; rsk_led::CONF_LEN];
     assert_eq!(fs.read(EF_LED_CONF, &mut cur), Some(rsk_led::CONF_LEN));
     assert_eq!(cur, led);
-    assert_eq!(
-        rsk_rescue::phy::load(&mut fs).unwrap().presence_timeout,
-        Some(200)
-    );
+    assert_eq!(rsk_phy::load(&mut fs).unwrap().presence_timeout, Some(200));
 }
 
 #[test]
@@ -1833,10 +1932,8 @@ fn phy_config_write_repairs_an_unreadable_record() {
     // or unreadable EF_PHY reads as `None`, and a host writing the default values to
     // repair it would otherwise be answered `Ok` with nothing stored.
     let (mut fs, mut rng, mut st) = setup();
-    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
-    let blen = rsk_rescue::phy::PhyData::default()
-        .serialize(&mut blob)
-        .unwrap();
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+    let blen = rsk_phy::PhyData::default().serialize(&mut blob).unwrap();
     let mut req = [0u8; 128];
     let n = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut req);
     let mut out = [0u8; 16];
@@ -1851,7 +1948,7 @@ fn phy_config_write_repairs_an_unreadable_record() {
         ),
         Ok(0)
     );
-    assert!(rsk_rescue::phy::load(&mut fs).is_some(), "record written");
+    assert!(rsk_phy::load(&mut fs).is_some(), "record written");
 }
 
 #[test]
@@ -1864,11 +1961,11 @@ fn idempotent_phy_and_led_config_writes_append_no_journal_entry() {
     fs.put(crate::consts::EF_AUDIT_ENABLED, &[1]).unwrap();
     let mut out = [0u8; 16];
 
-    let phy = rsk_rescue::phy::PhyData {
+    let phy = rsk_phy::PhyData {
         presence_timeout: Some(45),
         ..Default::default()
     };
-    let mut blob = [0u8; rsk_rescue::phy::PHY_MAX_SIZE];
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
     let blen = phy.serialize(&mut blob).unwrap();
     let mut req = [0u8; 128];
     let n = config_write_req(CONFIG_TARGET_PHY, &blob[..blen], false, &mut req);
@@ -1892,10 +1989,7 @@ fn idempotent_phy_and_led_config_writes_append_no_journal_entry() {
     )
     .unwrap();
     assert_eq!(journal_state(&mut fs), before);
-    assert_eq!(
-        rsk_rescue::phy::load(&mut fs).unwrap().presence_timeout,
-        Some(45)
-    );
+    assert_eq!(rsk_phy::load(&mut fs).unwrap().presence_timeout, Some(45));
 
     let mut led = [0u8; rsk_led::CONF_LEN];
     for (i, b) in led.iter_mut().enumerate() {
@@ -2034,6 +2128,9 @@ fn mse_coordinate_must_be_exactly_32_bytes() {
 /// token it belongs to is found missing.
 #[test]
 fn an_unsupported_protocol_is_judged_before_the_missing_token() {
+    // ATT_CLEAR rather than BACKUP_EXPORT for the reason in
+    // `a_gated_subcommand_spends_the_mse_channel`: the ordering under test is inside
+    // the shared `gate()`, and `fips-profile` answers export before ever reaching it.
     for proto in [0u64, 3, 255] {
         let (mut fs, mut rng, mut st) = setup();
         fs.put(EF_PIN, &[8, 4, 1]).unwrap();
@@ -2045,7 +2142,7 @@ fn an_unsupported_protocol_is_judged_before_the_missing_token() {
                 .unwrap()
                 .u8(1)
                 .unwrap()
-                .u64(VENDOR_BACKUP_EXPORT)
+                .u64(VENDOR_ATT_CLEAR)
                 .unwrap()
                 .u8(3)
                 .unwrap()

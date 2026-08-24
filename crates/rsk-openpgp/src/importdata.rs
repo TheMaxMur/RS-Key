@@ -6,18 +6,16 @@
 //! The CRT tag picks the slot; the algorithm comes from the slot's
 //! algorithm-attribute DO (`EF_ALGO_PRIV{1,2,3}`), set beforehand via PUT DATA.
 
-use rsa::traits::PublicKeyParts;
 use rsk_crypto::Device;
 use rsk_fs::{Fs, KeyFid, Storage};
 use rsk_sdk::Sw;
 
 use crate::consts::*;
-use crate::keys::{
-    MAX_EC_POINT, MAX_RSA_PUBDO, PrivKey, RSA_PUB_EXP_BE, curve_from_attr, make_ec_pubkey_do,
-    make_rsa_response, reset_sig_count, rsa_from_pqe, store_ec_key, store_rsa_key,
-};
+use crate::keys::{curve_from_attr, ec_sw, reset_sig_count, store_ec_key, store_rsa_key};
 use crate::origin;
 use crate::pin::Session;
+use rsk_ec::{MAX_EC_POINT, MAX_EC_PUBDO, PrivKey, make_ec_pubkey_do};
+use rsk_rsa::{MAX_RSA_PUBDO, RSA_PUB_EXP_BE, make_rsa_response, rsa_from_pqe};
 
 /// BER length: a byte < 0x80 is the length; `0x81` introduces a 1-byte length,
 /// `0x82` a 2-byte one. Advances `pos`.
@@ -169,7 +167,7 @@ fn try_import<S: Storage>(
             if e.is_empty() || p.is_empty() || q.is_empty() {
                 return Err(Sw::WRONG_DATA);
             }
-            // The CRT signer / DECIPHER hardcode e = 65537 (rsa_crt.rs); another
+            // The CRT signer / DECIPHER hardcode e = 65537 (rsk_rsa::crt); another
             // exponent signs with the wrong e while the public DO advertises the
             // real one -- silently unusable. gpg only ever imports e = 65537.
             if !e
@@ -229,13 +227,13 @@ fn try_import<S: Storage>(
             // sibling applet orders it this way for the same reason
             // (`rsk_piv::keygen`).
             let mut point = [0u8; MAX_EC_POINT];
-            let plen = key.public_point(&mut point)?;
+            let plen = key.public_point(&mut point).map_err(ec_sw)?;
 
             origin::mark(fs, fid, origin::ORIGIN_IMPORTED)?;
             store_ec_key(dev, fs, sess, fid, &key)?;
 
             // Store the public-key DO into EF_PB_* (slot FID + 3).
-            let mut pub_do = [0u8; 8 + MAX_EC_POINT];
+            let mut pub_do = [0u8; MAX_EC_PUBDO];
             let don = make_ec_pubkey_do(&point[..plen], &mut pub_do);
             fs.put(slot_pub_fid(fid), &pub_do[..don])
                 .map_err(|_| Sw::MEMORY_FAILURE)?;

@@ -169,6 +169,7 @@ impl CredMgmtState {
     /// Whether `channel` may take the next leg of the RP walk: it opened it, and
     /// the walk has not run out. Both halves in one place because a *Next* carries
     /// no authorization of its own (§6.8) — the pair IS the authorization check.
+    /// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
     pub fn may_walk_rps(&self, channel: u32) -> bool {
         self.channel == channel && self.rp_counter <= self.rp_total
     }
@@ -282,6 +283,7 @@ impl PinUvAuthToken {
 /// batch, spending the whole flash retry budget with no power cycle (CTAP 2.1
 /// §6.5.5.6).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 pub struct PinLock {
     /// clientPIN is locked until the authenticator is really power-cycled.
     pub engaged: bool,
@@ -419,6 +421,8 @@ impl FidoState {
     /// token / session key / ephemeral scalar). The DEVK, the journal's boot-entry
     /// flag and the warm-boot origin are device/power-cycle facts, not session
     /// state — they carry across, as does the in-flight request's channel.
+    ///
+    /// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
     pub fn reset(&mut self) {
         let devk_source = self.devk_source;
         let audit_boot_logged = self.audit_boot_logged;
@@ -483,6 +487,7 @@ impl FidoState {
 
     /// `resetPinUvAuthToken`: new random token, cleared permissions / flags. The
     /// credMgmt cursor goes with it, like [`Self::stop_using_token`].
+    /// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
     pub fn reset_pin_uv_auth_token(&mut self, rng: &mut impl Rng) {
         self.cm.reset();
         rng.fill(&mut self.paut.token);
@@ -542,6 +547,7 @@ impl FidoState {
     /// `stopUsingPinUvAuthToken` — drop the in-use state, permissions, and
     /// presence/rpId binding. The token bytes stay put; `in_use == false` and
     /// zero permissions make every downstream check fail closed.
+    /// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
     pub fn stop_using_token(&mut self) {
         self.paut.in_use = false;
         self.paut.permissions = 0;
@@ -590,6 +596,7 @@ impl FidoState {
     /// Expire an in-use token once its usage timer has run out (CTAP 2.1
     /// §6.5.5.7), checked before every CBOR command. Retires on either the
     /// rolling inactivity window or the absolute lifetime cap, whichever first.
+    /// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.
     pub fn expire_stale_token(&mut self, now_ms: u64) {
         if !self.paut.in_use {
             return;
@@ -657,10 +664,41 @@ pub(crate) fn puat_subcommand_msg(buf: &mut [u8], cmd: u8, subcommand: u8, param
 
 impl Drop for FidoState {
     fn drop(&mut self) {
-        self.ephemeral.zeroize();
-        self.paut.token.zeroize();
-        self.mse_key.zeroize();
-        if let Some(k) = self.keydev_dec.as_mut() {
+        // Exhaustive on purpose: a field added later stops this pattern compiling
+        // until someone decides whether it is a secret. Nothing else would catch a
+        // new key that misses the scrub — a dropped value has no test that reads it.
+        let Self {
+            ephemeral,
+            ephemeral_set: _,
+            // `d·G` — what getKeyAgreement hands to the host.
+            ephemeral_pub: _,
+            paut,
+            needs_power_cycle: _,
+            new_pin_mismatches: _,
+            // Session carry-over, all of it the host's own bytes or a cursor into
+            // flash: the clientDataHash and both hmac-secret salts arrive encrypted
+            // under the platform's key, and the enumerate positions are slot numbers.
+            gna: _,
+            cm: _,
+            // Large-blob fragments — CTAP 2.1 §11.5 makes the array the platform's
+            // ciphertext, keyed by a largeBlobKey this device never holds in RAM.
+            lba: _,
+            mse_active: _,
+            mse_cid: _,
+            mse_key,
+            // The device ephemeral public key, sent to the host as the AEAD AAD.
+            mse_pub: _,
+            keydev_dec,
+            // How to fetch the DEVK, not the DEVK.
+            devk_source: _,
+            audit_boot_logged: _,
+            warm_boot: _,
+            channel: _,
+        } = self;
+        ephemeral.zeroize();
+        paut.token.zeroize();
+        mse_key.zeroize();
+        if let Some(k) = keydev_dec.as_mut() {
             k.zeroize();
         }
     }
@@ -673,3 +711,14 @@ mod tests;
 #[cfg(kani)]
 #[path = "state_kani.rs"]
 mod proofs;
+
+#[cfg(kani)]
+#[path = "state_refinement_kani.rs"]
+mod refinement_proofs;
+
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+#[path = "state_assurance.rs"]
+mod assurance;
+
+#[cfg(any(test, kani, feature = "assurance-trace"))]
+pub use assurance::{TOKEN_PERSISTENT_FIDS, TokenPersistentView};

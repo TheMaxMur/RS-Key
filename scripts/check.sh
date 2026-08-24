@@ -115,6 +115,52 @@ firmware_stack_floor() {
   fi
 }
 
+# `assurance-trace` exposes α and generated proof domains to host tooling only.
+# Build two clean default images in one throwaway source tree, poisoning every
+# assurance-only module before the second. The poison must break a feature build
+# while remaining absent from firmware; compare loadable bytes, not ELF metadata.
+assurance_trace_is_image_neutral() {
+  local dir src elf_before elf_poison control
+  dir=$(mktemp -d)
+  src="$dir/src"
+  rsync -a --exclude .git --exclude target --exclude result --exclude formal/out ./ "$src/"
+
+  if cargo tree -p firmware -e features | grep -q 'rsk-fido feature "assurance-trace"'; then
+    echo "FAIL: firmware enables rsk-fido/assurance-trace." >&2
+    exit 1
+  fi
+
+  CARGO_TARGET_DIR="$dir/target-before" cargo build --manifest-path "$src/Cargo.toml" --release -p firmware
+  elf_before="$dir/target-before/thumbv8m.main-none-eabihf/release/firmware"
+  arm-none-eabi-objcopy -O binary "$elf_before" "$dir/before.bin"
+
+  for f in generated_token_edges.rs state_assurance.rs state_refinement_kani.rs \
+      reset_assurance.rs reset_refinement_kani.rs; do
+    printf '\ncompile_error!("assurance source reached production");\n' \
+      >> "$src/crates/rsk-fido/src/$f"
+  done
+  CARGO_TARGET_DIR="$dir/target-poison" cargo build --manifest-path "$src/Cargo.toml" --release -p firmware
+  elf_poison="$dir/target-poison/thumbv8m.main-none-eabihf/release/firmware"
+  arm-none-eabi-objcopy -O binary "$elf_poison" "$dir/poison.bin"
+
+  control="$dir/feature-control.log"
+  if CARGO_TARGET_DIR="$dir/target-control" cargo check --manifest-path "$src/Cargo.toml" \
+      -p rsk-fido --features assurance-trace > "$control" 2>&1; then
+    echo "FAIL: the assurance poison did not reach an assurance-trace build." >&2
+    exit 1
+  fi
+  if ! grep -q "assurance source reached production" "$control"; then
+    echo "FAIL: the assurance feature control failed for the wrong reason." >&2
+    tail -10 "$control" >&2
+    exit 1
+  fi
+  if ! cmp -s "$dir/before.bin" "$dir/poison.bin"; then
+    echo "FAIL: assurance-only source changed the firmware's loadable bytes." >&2
+    exit 1
+  fi
+  echo "assurance sources are absent from firmware; poisoned/default images are byte-identical"
+}
+
 # The vendor AID's three debug commands (INS 12/13/14) are timing oracles — over
 # the RSA keygen prime search and the EC/KDF hot paths — so each is feature-gated
 # and none may reach a shipped image. A `#[cfg]` is only as good as the default
@@ -257,6 +303,27 @@ fuzz_targets_are_alive() {
   fi
 }
 
+# First because it is the cheapest row in the file (~0.2 s over every file) and
+# because the class it catches makes a *different* check silently wrong: OpenSSF
+# Scorecard's SAST row parses EVERY file under `.github/workflows` with this same
+# actionlint, so one workflow that will not parse returns score -1 for the whole
+# check rather than merely failing detection — measured, a single tab in
+# `codeql.yml` did it. Nothing in the tree read that directory until now.
+#
+# No file arguments on purpose. actionlint discovers the workflows from the git
+# root itself, which covers `.yaml` as well as `.yml` (a `*.yml` glob does not),
+# and which is what makes an empty or missing directory an ERROR — `no YAML file
+# was found`, exit 3 — instead of the silent pass over nothing that this repo
+# keeps rediscovering. The nixpkgs package wraps shellcheck and pyflakes, so the
+# `run:` blocks are linted too even though neither is on PATH.
+#
+# Mutation table, each driven through THIS row and each exit code taken with no
+# pipe. Red, all stopping at row 1 of 1 with rc 1: `runs-on: ubunut-latest` →
+# `runner-label`; `${{ matrix.lang }}` → `expression`; a tab after `jobs:` →
+# `syntax-check`; an unquoted `$var` in a `run:` block → shellcheck SC2086. And
+# the direction that matters — with this row deleted, that same tab left all 98
+# rows green (`ALL CHECKS PASSED`, rc 0), so nothing else here reads a workflow.
+run "workflow lint"            actionlint -no-color -oneline
 run "fmt"                      cargo fmt --all --check
 # `BOARD` because `rsk-wipe`'s build script refuses to guess a flash size (see
 # the rsk-wipe steps below); `waveshare-one` is the reference board, whose
@@ -365,14 +432,17 @@ run_tests "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise
 # here unnoticed. This is also the only gate coverage `strict-up` gets.
 run_tests "test (fido-conformance)"  cargo test -p rsk-fido --features fido-conformance --target "$HOST"
 # The FIPS-style profile changes algorithm menus / PIN floor / export policy;
-# run its tests (name-filtered: the regular fixtures assume the 4-char PIN
-# floor) and type-check the locked firmware image.
-run_tests "test (fips: rsk-fido)"    cargo test -p rsk-fido --features fips-profile --target "$HOST" fips
-run_tests "test (fips: rsk-piv)"     cargo test -p rsk-piv --features fips-profile --target "$HOST" fips
+# run its tests and type-check the locked firmware image. The WHOLE suite, as for
+# fido-conformance above: the name filter these rows used to carry hid 63 failing
+# rsk-fido cases and 6 rsk-piv ones for as long as the feature existed — the
+# fixtures typed a PIN and provisioned a key size the profile refuses, so the
+# shipped image's only coverage was the handful of cases named after it.
+run_tests "test (fips: rsk-fido)"    cargo test -p rsk-fido --features fips-profile --target "$HOST"
+run_tests "test (fips: rsk-piv)"     cargo test -p rsk-piv --features fips-profile --target "$HOST"
 run "clippy (fips firmware)"   cargo clippy -p firmware --features fips-profile -- -D warnings
-# `strong-pin` raises the same 6-code-point floor and adds a trivial-PIN block, so it
-# reuses the fips name-filter dodge (regular fixtures assume the 4-char floor).
-run_tests "test (strong-pin)"        cargo test -p rsk-fido --features strong-pin --target "$HOST" strong_pin
+# `strong-pin` raises the same 6-code-point floor and adds a trivial-PIN block —
+# same reasoning as fips above, and its own filter hid 61 failing cases.
+run_tests "test (strong-pin)"        cargo test -p rsk-fido --features strong-pin --target "$HOST"
 run "clippy (strong-pin fw)"   cargo clippy -p firmware --features strong-pin -- -D warnings
 # `strict-config` restores today's strict admin-write authorization (the DEFAULT
 # build is the permissive full-YubiKey-compat surface). The default path is what
@@ -413,6 +483,7 @@ run "clippy (display strong-pin)" env LED_KIND=none cargo clippy -p firmware --f
 run_tests "test (display wiring)"    cargo test -p rsk-device --features display --target "$HOST"
 run "clippy (display wiring)"  cargo clippy -p rsk-device --features display --target "$HOST" --all-targets -- -D warnings
 run "build firmware (release)" cargo build --release -p firmware
+run "assurance-trace image identity" assurance_trace_is_image_neutral
 run "firmware size budget"     firmware_size_budget
 run "firmware stack floor"     firmware_stack_floor
 run "no debug vendor command in the image" debug_vendor_commands_absent
@@ -460,19 +531,22 @@ run "rsk-wipe refuses an unknown flash size" sh -c '
   }'
 run "flake.lock in sync"       lock_in_sync
 run "one embassy for all"      embassy_revs_match
-# RUSTSEC-2023-0071: rsa Marvin timing side-channel — no fixed release; it is the
-# OpenPGP RSA backend, mitigated by blinding. Justification in deny.toml.
-run "cargo-audit (SCA)"        cargo audit --ignore RUSTSEC-2023-0071
+# No `--ignore`: the tree carries no vulnerability advisory. RUSTSEC-2023-0071
+# (the `rsa` crate, no fixed release) was the last one and left with the crate.
+run "cargo-audit (SCA)"        cargo audit
 run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
-# Same RUSTSEC-2023-0071 carve-out as the workspace run above: the emulator pulls
-# the OpenPGP applet, and with it `rsa`.
 # The emulator's own host tests — today the USB/IP codec, whose struct layouts are
 # the Linux kernel's and whose framing rule decides how many bytes come off the
 # socket next; both fail silently on the wire rather than loudly.
 run_tests "test (emu)"               cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST"
+run_tests "test (emu security trace)" cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features security-trace
 run_tests "test (emu conformance)"   cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features fido-conformance
-run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock --ignore RUSTSEC-2023-0071
-run "cargo-deny"               cargo deny check
+run "cargo-audit (emu SCA)"    cargo audit --file tools/emu/Cargo.lock
+# Also the crate-tier rule (deny.toml `[bans] deny`): an applet may not name
+# another applet, and a crypto backend may only be named by the facade.
+# `-D unused-wrapper` is what keeps that allowlist honest — without it a wrapper
+# name whose edge is gone stays in the file as decoration and nothing says so.
+run "cargo-deny"               cargo deny check -D unused-wrapper
 # Supply-chain provenance-of-review: every dependency must be covered by an
 # imported audit (mozilla/google/isrg/zcash) or a recorded exemption. Fails when
 # a new, unreviewed crate enters the tree. --locked uses the committed
@@ -501,6 +575,11 @@ run "kani roster"              python scripts/kani_gate.py
 # rotted to 16 of 24 in the docs, 20 on the nightly coverage row, 12 in the
 # flake. This holds every copy of that selection to the tree.
 run "crate roster"             python scripts/roster_gate.py
+# The crate-layer drawing was hand-kept under a footer claiming the manifests
+# were its source: it named 17 of 28 crates, so 57 of the 100 edges had an
+# endpoint it could not draw, and it showed seven applets against eight. It is
+# emitted from the manifests now, and this row notices when it drifts.
+run "crate graph"              python scripts/crate_graph.py --check
 # The panel links committed coverage tables, not the host fonts. Rebuild them
 # from the Nix-pinned IBM Plex files and fail if the checked-in copy drifted.
 run "IBM Plex font data"       python scripts/generate_ui_fonts.py --check
@@ -513,7 +592,26 @@ run "IBM Plex font data"       python scripts/generate_ui_fonts.py --check
 # pointing at a line that has moved reads as authoritative while being wrong.
 run "bcd bump + CHANGELOG"     python scripts/bcd_gate.py
 run "SPDX headers"             python scripts/spdx_gate.py
+# 187 of the 188 configurations say "do not edit by hand" in their first line,
+# and nothing made that true: deleting a whole mutant family left every row
+# green, because run-tlc.sh lists families with `ls` so the tiers shrank with
+# them. This regenerates into a temp tree and diffs.
+run "generated TLC configs"    python scripts/config_gen_gate.py
 run "formal citations"         python scripts/citation_gate.py
+run "assurance registry"       python scripts/assurance_gate.py
+# A model constant that stands for a fact about the world, not a defect switch.
+# `PowerOnClearsScratch2` was TRUE in all seven Boot configurations and read by
+# no action: deleting its `ASSUME` left every run bit-identical.
+run "standing assumptions"     python scripts/assumption_gate.py
+# `floors.txt` catches a run that got smaller; this catches one whose
+# CONSTANTS are too small to express the defect its own mutants rebuild.
+# Two of the twenty-five module mutants go GREEN one element down.
+run "formal scopes"            python scripts/scope_gate.py
+run "comutants lint"           python scripts/comutate.py --lint
+run "seam trace map"           python scripts/trace_map.py
+run "security trace refinement" python scripts/security_trace.py --check-data formal/TraceSecurityData.tla formal/traces/security-phase4.jsonl
+run "token refinement export" ./scripts/token_refinement.sh --check
+run "token refinement completeness" python scripts/token_refinement_gate.py
 # The two guards above decide whether the gate covers the tree, and neither had
 # a single test while five commits rewrote them by hand. This is that hand
 # battery kept: a fixture workspace, one mutation per case, both directions.

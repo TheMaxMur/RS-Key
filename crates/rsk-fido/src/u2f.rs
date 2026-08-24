@@ -45,8 +45,9 @@ pub fn process_u2f<S: Storage, R: Rng>(
         CTAP_REGISTER => cmd_register(ctx, apdu, out),
         CTAP_AUTHENTICATE => cmd_authenticate(ctx, apdu, out),
         CTAP_VERSION => {
-            out[..6].copy_from_slice(b"U2F_V2");
-            (Sw::OK, 6)
+            let v = crate::consts::U2F_VERSION;
+            out[..v.len()].copy_from_slice(v);
+            (Sw::OK, v.len())
         }
         _ => (Sw::INS_NOT_SUPPORTED, 0),
     }

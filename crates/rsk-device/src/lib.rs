@@ -29,6 +29,7 @@ use alloc::boxed::Box;
 use rsk_fido::state::PinLock;
 
 mod ccid;
+mod ccid_fido;
 pub mod click;
 mod ctap;
 pub mod presence;
@@ -40,10 +41,12 @@ pub use ccid::CcidApplets;
 #[cfg(any(not(feature = "strict-config"), feature = "display"))]
 pub use ccid::gates_wiped_last;
 pub use ctap::AppletHandler;
+#[cfg(feature = "security-trace")]
+pub use ctap::SecurityTraceSnapshot;
 
 /// What [`Hooks::rsa_search`] answers. Named so an implementor can spell it
-/// without taking `rsa` and `alloc` into its own scope.
-pub type SearchResult = Option<Option<Box<rsa::RsaPrivateKey>>>;
+/// without taking `rsk_rsa` and `alloc` into its own scope.
+pub type SearchResult = Option<Option<Box<rsk_rsa::RsaKey>>>;
 
 /// What the reset that started this power cycle left behind.
 ///
@@ -102,47 +105,14 @@ pub trait Hooks<S: rsk_fs::Storage> {
     /// - `Some(None)` — the accelerator ran and found nothing; the command
     ///   reports `EXEC_ERROR`.
     /// - `Some(Some(key))` — the key.
-    fn rsa_search(&mut self, _nbits: usize, _rng: &mut dyn rsk_openpgp::Rng) -> SearchResult {
+    fn rsa_search(&mut self, _nbits: usize, _rng: &mut dyn rsk_sdk::Rng) -> SearchResult {
         None
     }
 }
 
-/// The randomness every applet in the set needs. One bound so the wiring names it
-/// once; the concrete type is the device TRNG or the emulator's DRBG.
-pub trait Rng:
-    rsk_fido::Rng + rsk_openpgp::Rng + rsk_oath::Rng + rsk_otp::Rng + rsk_rescue::Rng
-{
-}
-
-impl<T> Rng for T where
-    T: rsk_fido::Rng + rsk_openpgp::Rng + rsk_oath::Rng + rsk_otp::Rng + rsk_rescue::Rng
-{
-}
-
-/// The one physical presence source, behind every applet's own trait. The
-/// firmware's BOOTSEL button (or its screen) implements all of them; so does the
-/// emulator's terminal prompt.
-pub trait UserPresence:
-    rsk_fido::UserPresence
-    + rsk_openpgp::UserPresence
-    + rsk_oath::UserPresence
-    + rsk_otp::UserPresence
-    + rsk_mgmt::UserPresence
-    + rsk_rescue::UserPresence
-    + rsk_vendor::UserPresence
-{
-}
-
-impl<T> UserPresence for T where
-    T: rsk_fido::UserPresence
-        + rsk_openpgp::UserPresence
-        + rsk_oath::UserPresence
-        + rsk_otp::UserPresence
-        + rsk_mgmt::UserPresence
-        + rsk_rescue::UserPresence
-        + rsk_vendor::UserPresence
-{
-}
+// The wiring names `rsk_sdk::Rng` / `rsk_sdk::UserPresence` directly. Two
+// supertraits stood here only to reconcile one byte-identical declaration per
+// applet; the declarations moved into `rsk-sdk`, so the glue went with them.
 
 #[cfg(test)]
 mod tests;

@@ -146,9 +146,9 @@ pub trait Hooks {
     fn rsa_search_progress(
         &mut self,
         _nbits: usize,
-        _rng: &mut dyn rsk_openpgp::Rng,
+        _rng: &mut dyn rsk_sdk::Rng,
         _on_tick: &mut dyn FnMut(),
-    ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaPrivateKey>> {
+    ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaKey>> {
         None
     }
 }
@@ -290,9 +290,6 @@ struct BandCoverage<'a> {
     band: Rectangle,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct UnsupportedBandColor;
-
 impl<'a> BandCoverage<'a> {
     fn new(coverage: &'a mut [u8], band: rsk_ui::Rect) -> Self {
         coverage.fill(0);
@@ -305,13 +302,16 @@ impl<'a> BandCoverage<'a> {
         }
     }
 
-    fn encode(color: Rgb565) -> Result<u8, UnsupportedBandColor> {
+    /// The coverage that produced `color` on the TEXT/PANEL_BG ramp. Anything off the
+    /// ramp is ink, which is the 1-bit mask's rule this replaced: refusing it instead
+    /// would give a frame the only way it has to come back empty.
+    fn encode(color: Rgb565) -> u8 {
         (0..=rsk_ui::aa::COVERAGE_MAX)
             .find(|&coverage| {
                 rsk_ui::aa::blend_coverage(rsk_ui::theme::TEXT, rsk_ui::theme::PANEL_BG, coverage)
                     == color
             })
-            .ok_or(UnsupportedBandColor)
+            .unwrap_or(rsk_ui::aa::COVERAGE_MAX)
     }
 
     fn set(&mut self, index: usize, value: u8) {
@@ -333,7 +333,7 @@ impl Dimensions for BandCoverage<'_> {
 
 impl DrawTarget for BandCoverage<'_> {
     type Color = Rgb565;
-    type Error = UnsupportedBandColor;
+    type Error = core::convert::Infallible;
 
     fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
         &mut self,
@@ -345,7 +345,7 @@ impl DrawTarget for BandCoverage<'_> {
             let y = p.y - self.band.top_left.y;
             if x >= 0 && y >= 0 && x < w && (y as u32) < self.band.size.height {
                 let idx = y as usize * w as usize + x as usize;
-                self.set(idx, Self::encode(c)?);
+                self.set(idx, Self::encode(c));
             }
         }
         Ok(())
@@ -403,6 +403,10 @@ where
     /// `pin_declined`), held so every `EF_DISPLAY` write preserves it. Set true (and flushed)
     /// when the user dismisses onboarding; a factory reset wipes the record back to false.
     pin_declined: bool,
+    /// Scramble the PIN pad's digits on every entry (`EF_DISPLAY`'s `FLAG_SCRAMBLE_PIN`,
+    /// edited in Settings -> Security). Held here for the same reason as `pin_declined`:
+    /// every write to that record goes through one function and must carry all of it.
+    pub(crate) scramble_pin: bool,
     /// The shared flash store — the same `RefCell` the worker uses. The Passkeys tab
     /// borrows it to enumerate resident credentials; safe because the worker is parked
     /// (it never holds the borrow across an `.await`) while this thread-executor task
@@ -429,7 +433,7 @@ where
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
-    R: rsk_device::Rng,
+    R: rsk_sdk::Rng,
 {
     /// Take an already-initialized panel and touch controller, show the boot
     /// splash, restore the persisted display settings and raise the backlight.
@@ -486,6 +490,7 @@ where
             locked,
             onboarding,
             pin_declined: dcfg.pin_declined,
+            scramble_pin: dcfg.scramble_pin,
             fs,
             keys,
             rng,
@@ -524,12 +529,9 @@ where
             marquee_coverage,
             ..
         } = self;
-        let rendered = {
+        {
             let mut target = BandCoverage::new(marquee_coverage, band);
-            rsk_ui::render_pin_title(&mut target, title, off)
-        };
-        if rendered.is_err() {
-            marquee_coverage.fill(0);
+            let _ = rsk_ui::render_pin_title(&mut target, title, off);
         }
         let area = Rectangle::new(
             EgPoint::new(band.x as i32, band.y as i32),

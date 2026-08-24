@@ -40,8 +40,9 @@ pub(crate) const ATTR_ED25519: &[u8] = &[
 // and `putdata` accepts nothing else into C1/C2/C3 — one definition, so the card
 // can never generate a key it does not advertise (OpenPGP 3.4 §4.4.3.9: "a card
 // should reject unsupported values in the DO"). Without the check, `nbits` came
-// straight off the wire and `RsaKeygen::usable` took any 32-byte multiple, so a
-// PW3 holder could set 512 and have the *owner* generate a factorable key later.
+// straight off the wire and `rsk_rsa::RsaKeygen::usable` took any 32-byte
+// multiple, so a PW3 holder could set 512 and have the *owner* generate a
+// factorable key later.
 //
 // §4.4.3.9 also makes this the machine-readable contract a terminal is told to
 // use for key import, so an entry here is a promise, not a wish list: X448 and

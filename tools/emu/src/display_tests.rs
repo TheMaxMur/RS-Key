@@ -149,14 +149,15 @@ fn nav_tab(want: rsk_ui::NavTab) -> rsk_ui::Point {
 }
 
 fn pin_key(want: rsk_ui::PinKey) -> rsk_ui::Point {
-    target(|p| rsk_ui::hit_pin(p) == Some(want))
+    // The emulator drives a default device, whose pad is not scrambled.
+    target(|p| rsk_ui::hit_pin(p, &rsk_ui::PinLayout::identity()) == Some(want))
 }
 
 /// A contact every screen's hit test misses, so it is a no-op wherever it lands.
 fn nowhere() -> rsk_ui::Point {
     let miss = |p| {
         rsk_ui::hit_nav(p).is_none()
-            && rsk_ui::hit_pin(p).is_none()
+            && rsk_ui::hit_pin(p, &rsk_ui::PinLayout::identity()).is_none()
             && rsk_ui::hit_settings_root(p).is_none()
             && rsk_ui::hit_security(p).is_none()
             && rsk_ui::hit_onboard(p).is_none()
@@ -542,6 +543,7 @@ fn panel_bench(
         kv_total: crate::KV_TOTAL,
         flash_size: crate::FLASH_SIZE,
         trace: false,
+        security_trace: None,
         yubico: false,
         power_cut: None,
     };
@@ -867,12 +869,12 @@ fn the_panel_generates_the_rsa_key_the_wire_can() {
     let took = started.elapsed();
 
     // The applet's own encoder taking the key is what says it is a usable one of
-    // the size asked for, without this test learning the `rsa` crate's API:
+    // the size asked for, without this test learning the key type's own API:
     // `7F49 82 len`, then `81 82 len` and the modulus, then `82 len` and the
     // exponent. Exact, so a wrong size is caught in either direction.
     let mut out = [0u8; 1024];
-    let n = rsk_openpgp::keys::make_rsa_response(&key, &mut out);
-    let want = 5 + 4 + RSA_BITS / 8 + 2 + rsk_openpgp::keys::RSA_PUB_EXP_BE.len();
+    let n = rsk_rsa::make_rsa_response(&key, &mut out);
+    let want = 5 + 4 + RSA_BITS / 8 + 2 + rsk_rsa::RSA_PUB_EXP_BE.len();
     assert_eq!(
         n, want,
         "the response is not a {RSA_BITS}-bit modulus and a standard exponent"

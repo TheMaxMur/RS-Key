@@ -103,5 +103,5 @@
   <text class="co" x="40" y="336">A virgin device reads back as the single record <tspan class="mono">06 02 00 00</tspan> (zero OPTS).</text>
   <text class="co" x="40" y="356">Read-modify-write: change only your tags, preserve the rest. A length running past the buffer ends the parse; applied at boot.</text>
 
-  <text class="foot" x="34" y="392">Source: crates/rsk-rescue/src/phy.rs · reference client tools/rsk/hw.py (rsk hw)</text>
+  <text class="foot" x="34" y="392">Source: crates/rsk-phy/src/lib.rs · reference client tools/rsk/hw.py (rsk hw)</text>
 </svg>

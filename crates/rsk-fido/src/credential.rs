@@ -32,8 +32,8 @@ use rsk_fs::{Fs, Storage};
 use rsk_sdk::error::{Error, Result};
 
 use crate::consts::{
-    ALG_ES256, CURVE_P256, EF_CRED, EF_RP, MAX_CREDBLOB_LENGTH, MAX_RESIDENT_CREDENTIALS,
-    RP_NICK_MAX_LEN,
+    ALG_ES256, CRED_STATE_LEN, CURVE_P256, EF_CRED, EF_CRED_STATE, EF_RP, MAX_CREDBLOB_LENGTH,
+    MAX_RESIDENT_CREDENTIALS, RP_NICK_MAX_LEN,
 };
 
 // `MAX_CREDBLOB_LENGTH` (128) bounds the sealable credBlob inclusively, so the
@@ -726,6 +726,30 @@ pub(crate) fn slot_map<S: Storage>(fs: &mut Fs<S>, base: u16, out: &mut [bool]) 
     fs.present_slots(base, out);
 }
 
+/// The `encCredStoreState` plaintext (getInfo 0x1E): a 128-bit tag that changes
+/// whenever the discoverable-credential set does. An absent record reads as zero —
+/// the state of a store nothing has written to, which a fresh device and a
+/// just-reset one both are.
+pub(crate) fn cred_store_state<S: Storage>(fs: &mut Fs<S>) -> [u8; CRED_STATE_LEN] {
+    let mut tag = [0u8; CRED_STATE_LEN];
+    match fs.read(EF_CRED_STATE, &mut tag) {
+        Some(CRED_STATE_LEN) => tag,
+        // A short or absent record is the zero state rather than a partial one: the
+        // value is compared for equality by the platform and never interpreted, so
+        // half of an old one would be a tag that means nothing and collides freely.
+        _ => [0u8; CRED_STATE_LEN],
+    }
+}
+
+/// Advance that tag. Called **before** the write it describes, so a power cut
+/// between the two leaves a state that over-reports: the platform re-enumerates
+/// once, which costs a walk. The other order leaves a changed store under an
+/// unchanged tag — a stale cache with nothing to correct it.
+pub(crate) fn bump_cred_store_state<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
+    let next = u128::from_le_bytes(cred_store_state(fs)).wrapping_add(1);
+    fs.put(EF_CRED_STATE, &next.to_le_bytes())
+}
+
 /// Estimated free discoverable-credential slots (getInfo
 /// `remainingDiscoverableCredentials`, 0x14): the EF_CRED headroom, clamped so it
 /// never over-promises against the SHARED dynamic-file store (see [`remaining_rk`]).
@@ -759,6 +783,7 @@ pub(crate) fn remaining_rk<S: Storage>(fs: &mut Fs<S>, used_ef_cred: u16) -> u16
 // box, rpIdHash, rpId, userId, cached pubkey); a struct would add indirection for
 // the single makeCredential call site.
 #[allow(clippy::too_many_arguments)]
+/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
 pub fn credential_store<S: Storage>(
     seed: &[u8; 32],
     dev: &Device,
@@ -821,6 +846,7 @@ pub fn credential_store<S: Storage>(
     // already stops it being SERVED to the new credential, but leaving it behind
     // costs a flash record per reuse.
     crate::largeblobext::discard(fs, slot);
+    bump_cred_store_state(fs)?;
     if let Err(e) = fs.put(EF_CRED + slot, &rec[..total]) {
         if new_record {
             let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);

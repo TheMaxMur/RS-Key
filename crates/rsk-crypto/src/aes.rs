@@ -126,12 +126,21 @@ pub fn aes_ecb_decrypt_block(key: &[u8], block: &mut [u8; 16]) -> Result<()> {
     Ok(())
 }
 
-/// AES-256-CFB encrypt in place.
+/// AES-256-CFB encrypt in place. **Never for a new record.** It exists as the
+/// inverse of [`aes_decrypt_cfb_256`], and its only caller outside this crate's
+/// own round-trip is `rsk-openpgp`'s `legacy_cfb_blob_still_unseals_and_is_flagged`,
+/// which manufactures a pre-GCM record so the reader below can be tested against
+/// one. The IV that path passes is the nonce key — fixed for the life of the key,
+/// so two records sealed under one key repeat the keystream. That is why the
+/// format moved to GCM, and why nothing shipping calls this.
 pub fn aes_encrypt_cfb_256(key: &[u8; 32], iv: &[u8; 16], data: &mut [u8]) -> Result<()> {
     aes_encrypt(key, iv, Mode::Cfb, data)
 }
 
-/// AES-256-CFB decrypt in place.
+/// AES-256-CFB decrypt in place — read-only compatibility for records an older
+/// build wrote, and nothing else: `rsk-openpgp`'s `unseal_with` is the one caller,
+/// behind a width predicate without which any GCM authentication failure was
+/// reinterpreted as "this must be legacy" (see `keys.rs`'s own note).
 pub fn aes_decrypt_cfb_256(key: &[u8; 32], iv: &[u8; 16], data: &mut [u8]) -> Result<()> {
     aes_decrypt(key, iv, Mode::Cfb, data)
 }

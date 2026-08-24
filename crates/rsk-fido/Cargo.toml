@@ -24,10 +24,9 @@ rsk-ec = { workspace = true }
 rsk-crypto = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-led = { workspace = true }
-rsk-mgmt = { workspace = true }
-rsk-rescue = { workspace = true }
+rsk-devconf = { workspace = true }
+rsk-phy = { workspace = true }
 rsk-sdk = { workspace = true }
-sha2 = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
@@ -35,12 +34,13 @@ minicbor = { workspace = true }
 rsk-fs = { workspace = true, features = ["test-util"] }
 
 [features]
-# Kani cannot model the inline asm behind `cpufeatures`' runtime CPU
-# detection, so a harness that hashes reaches `__cpuid_count` and fails as
-# "unsupported construct". Only `scripts/kani.sh` turns this on; the firmware
-# never does, because forcing the soft backend swaps sha2's XIP-cache-sized
-# compressor for its ~28 KB unrolled one and moves the image (measured).
-kani-soft = ["sha2/force-soft", "rsk-crypto/kani-soft"]
+# Verification-only α/domain/table surface used by the emulator trace and the
+# phase-5 Kani bridge. Additive and never enabled by the shipping firmware.
+assurance-trace = []
+# `scripts/kani.sh` only: forwards to the dependency that carries the switch.
+# What it buys, and why the firmware must never turn it on, is in
+# `crates/rsk-crypto/Cargo.toml`.
+kani-soft = ["rsk-crypto/kani-soft"]
 # Advertise ML-DSA-44 (-48) in getInfo `algorithms` (0x0A). OFF by default:
 # shipped Firefoxes (authenticator-rs before 2026-06-02) hard-fail the whole
 # getInfo parse on an unknown COSE id. The PQC capability itself is always on —
