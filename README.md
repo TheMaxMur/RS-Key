@@ -27,6 +27,16 @@ browser, `ssh` and `git` signing, GPG, PIV, and TOTP codes.
 
 From a fresh board to a passkey login. Nothing to build.
 
+### Easy way: use the web flasher
+
+Use the [RS-Key Web Flasher](https://rskey.fob.wtf/) for a guided browser flow.
+It can download, verify, sign, and flash the firmware.
+
+**Browser requirement:** Flashing requires a desktop Chromium-based browser,
+such as Google Chrome or Microsoft Edge.
+
+### Manual way
+
 1. Download the newest **`rs-key-<version>-default.uf2`** from the
    [releases page](https://github.com/TheMaxMur/RS-Key/releases/latest).
 2. Hold the board's **BOOT** button while you plug it in. A drive named
