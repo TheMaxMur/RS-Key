@@ -26,6 +26,14 @@ No board yet? The [emulator](testing.md#without-a-board--the-emulator) runs the
 same applet code on your machine — enough to drive the protocol suites, and with
 `--display`, to try the trusted screen's Approve/Deny ceremony with a mouse.
 
+## 0. Easy way: use the web flasher
+
+Use the [RS-Key Web Flasher](https://rskey.fob.wtf/) for a guided browser flow.
+It can download, verify, sign, and flash the firmware.
+
+**Browser requirement:** Flashing requires a desktop Chromium-based browser,
+such as Google Chrome or Microsoft Edge.
+
 ## 1. Get the firmware
 
 Download the newest `rs-key-<version>-default.uf2` from the
@@ -64,6 +72,8 @@ hard to reach) add `--features no-touch`. All build knobs: [build.md](build.md).
 </details>
 
 ## 2. Flash
+
+To flash the firmware manually:
 
 1. Hold the **BOOT** button while plugging the board in (or hold BOOT, tap
    RESET). A mass-storage drive named `RP2350` appears.
