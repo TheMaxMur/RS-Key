@@ -8,6 +8,7 @@ import {
   addCommentOnce,
   buildMetadata,
   relatedPullRequests,
+  requestGitHubOidcToken,
   SAFE_VARIANTS,
   selectArtifacts,
 } from "./publish-preview.mjs";
@@ -17,6 +18,9 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
   delete process.env.GITHUB_TOKEN;
+  delete process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+  delete process.env.ACTIONS_ID_TOKEN_REQUEST_URL;
+  delete process.env.PREVIEW_API_URL;
   delete process.env.PREVIEW_PAGE_URL;
 });
 
@@ -105,6 +109,29 @@ test("metadata contains the GitHub run ID, attempt, and link", () => {
   assert.equal(metadata.runUrl, workflowRun.html_url);
   assert.equal(metadata.sourceRepository, "contributor/RS-Key");
   assert.equal("bytes" in metadata.assets[0], false);
+});
+
+test("the publisher requests an audience-scoped GitHub OIDC token", async () => {
+  process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN = "runner-credential";
+  process.env.ACTIONS_ID_TOKEN_REQUEST_URL = "https://token.actions.test/oidc?api-version=2.0";
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), "https://token.actions.test/oidc?api-version=2.0&audience=https%3A%2F%2Frskey.fob.wtf%2Fapi%2Fpreviews");
+    assert.equal(init.headers.Authorization, "Bearer runner-credential");
+    return Response.json({ value: "signed-github-jwt" });
+  };
+
+  assert.equal(
+    await requestGitHubOidcToken("https://rskey.fob.wtf/api/previews"),
+    "signed-github-jwt",
+  );
+});
+
+test("the preview workflow grants OIDC and has no upload secret", async () => {
+  const workflow = await readFile(new URL("../workflows/preview-publish.yml", import.meta.url), "utf8");
+  const publisher = await readFile(new URL("publish-preview.mjs", import.meta.url), "utf8");
+  assert.match(workflow, /id-token:\s*write/);
+  assert.doesNotMatch(workflow, /RS_KEY_FLASHER_UPLOAD_TOKEN/);
+  assert.doesNotMatch(publisher, /RS_KEY_FLASHER_UPLOAD_TOKEN/);
 });
 
 test("CI adds the partition table before UF2 conversion", async () => {

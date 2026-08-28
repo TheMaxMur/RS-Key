@@ -11,6 +11,7 @@ on:
 permissions:
   actions: read
   contents: read
+  id-token: write
   issues: write
 
 concurrency:
@@ -33,7 +34,6 @@ jobs:
       - name: publish preview firmware
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RS_KEY_FLASHER_UPLOAD_TOKEN: ${{ secrets.RS_KEY_FLASHER_UPLOAD_TOKEN }}
           PREVIEW_API_URL: https://rskey.fob.wtf/api/previews
           PREVIEW_PAGE_URL: https://rskey.fob.wtf/preview
         run: node .github/scripts/publish-preview.mjs

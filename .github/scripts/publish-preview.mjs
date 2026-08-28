@@ -139,7 +139,21 @@ async function downloadArtifact(repository, artifact, variant, directory) {
   };
 }
 
+export async function requestGitHubOidcToken(audience) {
+  const url = new URL(requiredEnvironment("ACTIONS_ID_TOKEN_REQUEST_URL"));
+  url.searchParams.set("audience", audience);
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${requiredEnvironment("ACTIONS_ID_TOKEN_REQUEST_TOKEN")}` },
+  });
+  if (!response.ok) throw new Error(`GitHub OIDC returned ${response.status}: ${await response.text()}`);
+  const body = await response.json();
+  if (!body || typeof body.value !== "string" || !body.value) throw new Error("GitHub OIDC returned no token.");
+  return body.value;
+}
+
 async function publish(metadata, assets) {
+  const previewApiUrl = requiredEnvironment("PREVIEW_API_URL");
+  const oidcToken = await requestGitHubOidcToken(previewApiUrl);
   const form = new FormData();
   form.set("metadata", JSON.stringify(metadata));
   for (const asset of assets) {
@@ -148,9 +162,9 @@ async function publish(metadata, assets) {
   let lastError;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const response = await fetch(requiredEnvironment("PREVIEW_API_URL"), {
+      const response = await fetch(previewApiUrl, {
         method: "POST",
-        headers: { Authorization: `Bearer ${requiredEnvironment("RS_KEY_FLASHER_UPLOAD_TOKEN")}` },
+        headers: { Authorization: `Bearer ${oidcToken}` },
         body: form,
       });
       if (!response.ok) throw new Error(`Preview API returned ${response.status}: ${await response.text()}`);
