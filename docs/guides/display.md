@@ -27,9 +27,20 @@ unaffected.
 The full GUI uses always-on antialiasing. Text uses four-bit IBM Plex Sans and
 Mono coverage data. Icons, circles, status rings, rounded cards, and controls
 blend their edges into the surface below them. The device does this with integer
-math and direct panel writes. It does not use a framebuffer or a heap, and there
-is no antialiasing setting to manage. Each text run, icon, or AA shape is sent as
-one contiguous RGB565 block to keep page changes responsive.
+math and retained panel writes. It does not use a framebuffer or a heap. A full
+page is recorded once as compact drawing commands. The firmware compares keyed
+128-bit tags for 32×32 visual-state tiles and merges the changed tiles. Typed UI
+components can provide smaller exact damage before composition. Each changed
+rectangle uses two 8-row RGB565 buffers while SPI DMA sends the other buffer.
+The buffers use the active stack and do not reduce permanent RAM. RLE checkpoints
+and a vertical command index let each band start at its own data. One panel
+address window stays open for each rectangle. Small animations still use direct
+partial redraws, and there is no antialiasing setting to manage. A scene or SPI
+failure stops UI input before an incomplete prompt can stay active.
+
+The board limit is 62.5 MHz. The RP2350 PL022 divider uses 37.5 MHz with the
+current 150 MHz peripheral clock; its next setting is 75 MHz, above that limit.
+This gives a 32.8 ms wire-time floor for a complete 240×320 RGB565 transfer.
 
 ## Try it without a board
 

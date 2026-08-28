@@ -97,6 +97,29 @@ const ALL: [Glyph; 24] = [
     Glyph::User,
 ];
 
+#[test]
+fn fixed_masks_match_the_original_sampler_exactly() {
+    for glyph in ALL {
+        for size in FIXED_SIZES {
+            let bitmap = pick(table(glyph), size);
+            let Some(coverage) = fixed_coverage(glyph, size) else {
+                continue;
+            };
+            let actual: std::vec::Vec<u8> = coverage.collect();
+            assert_eq!(actual.len(), usize::from(size) * usize::from(size));
+            for y in 0..i32::from(size) {
+                for x in 0..i32::from(size) {
+                    assert_eq!(
+                        actual[y as usize * usize::from(size) + x as usize],
+                        scaled_coverage(bitmap, x, y, i32::from(size)),
+                        "{glyph:?}@{size} differs at ({x},{y})"
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Every glyph carries exactly the canonical sizes, and each bitmap is a square grid
 /// of `size` rows × `size` columns over the `'#'`/`'.'` alphabet — the invariant the
 /// blitter and the symmetry test both rely on.

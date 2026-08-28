@@ -430,12 +430,6 @@ static PHY_PRODUCT: StaticCell<[u8; 64]> = StaticCell::new();
 // Holds a phy-provided iManufacturer string (`0x0F`) for the device's lifetime so
 // the descriptor's `&'static str` outlives the embassy Builder. 32-byte phy cap.
 static PHY_MANUFACTURER: StaticCell<[u8; 64]> = StaticCell::new();
-// The mipidsi SPI pixel-batch buffer for the `display` build: bigger = fewer SPI
-// transactions per fill. 4 KiB ≈ 8 full panel rows per chunk.
-#[cfg(feature = "display")]
-const DISPLAY_BUF_LEN: usize = 4096;
-#[cfg(feature = "display")]
-static DISPLAY_BUF: StaticCell<[u8; DISPLAY_BUF_LEN]> = StaticCell::new();
 /// The trusted-display panel + touch, shared by `status_task` (ambient status) and
 /// the `TouchPresence` backend (the confirm prompt). Both run on the THREAD executor;
 /// `TouchPresence::request` is synchronous, so they never race. Same RefCell
@@ -694,7 +688,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0986;
+    let device_release: u16 = 0x0988;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1019,11 +1013,10 @@ async fn main(spawner: Spawner) {
         use embassy_rp::spi::{Config as SpiConfig, Spi};
 
         let mut spi_cfg = SpiConfig::default();
-        // The ST7789 tops out at 62.5 MHz; running there (vs the 40 MHz bringup value)
-        // cuts a full-frame repaint ~35% for snappier screen transitions. If the panel's
-        // flex cable ever shows tearing/garbling, drop back toward 40 MHz.
+        // This is the panel limit. PL022 selects 37.5 MHz from the 150 MHz
+        // peripheral clock; its next divider would exceed the 62.5 MHz limit.
         spi_cfg.frequency = BUILD_DISPLAY_SPI_FREQ_HZ;
-        let spi = Spi::new_blocking(p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_cfg);
+        let spi = Spi::new_txonly(p.SPI1, p.PIN_10, p.PIN_11, p.DMA_CH0, Irqs, spi_cfg);
 
         let mut i2c_cfg = I2cConfig::default();
         i2c_cfg.frequency = BUILD_DISPLAY_I2C_FREQ_HZ;
@@ -1089,14 +1082,12 @@ async fn main(spawner: Spawner) {
             Level::High,
         );
 
-        let buf = DISPLAY_BUF.init([0u8; DISPLAY_BUF_LEN]);
         let panel = display::PanelHw {
             spi,
             cs,
             dc,
             rst,
             bl,
-            buf,
         };
         let touch = display::TouchHw { i2c, rst: tp_rst };
         let info = display::DeviceInfo {

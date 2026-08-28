@@ -131,8 +131,10 @@ fn an_unchanged_ambient_screen_is_not_repainted() {
     ui.ambient_repaint(1, &mut spin, &mut breathe);
     assert_eq!(ui.shown, Some(home(StatusKind::Idle, false, 0)));
     let frames = ui.panel.frames;
+    let damage = ui.panel.damage_presentations;
     ui.ambient_repaint(2, &mut spin, &mut breathe);
     assert_eq!(ui.panel.frames, frames);
+    assert_eq!(ui.panel.damage_presentations, damage);
 }
 
 #[test]
@@ -143,11 +145,38 @@ fn a_status_glyph_change_repaints_without_disarming_the_panel() {
     let (mut spin, mut breathe) = (rsk_ui::STATUS_ARC_START, 0u8);
     ui.ambient_repaint(1, &mut spin, &mut breathe);
     ui.touch_armed = true;
-    let frames = ui.panel.frames;
+    let writes = ui.panel.writes;
+    let damage = ui.panel.damage_presentations;
+    let rects = ui.panel.damage_rects.len();
     ui.hooks.led = rsk_led::STATUS_PROCESSING;
     ui.ambient_repaint(2, &mut spin, &mut breathe);
-    assert!(ui.panel.frames > frames, "the glyph did change");
+    assert!(ui.panel.writes > writes, "the glyph did change");
+    assert_eq!(ui.panel.damage_presentations, damage + 1);
+    assert_eq!(ui.panel.damage_rects.len(), rects + 1);
+    assert_eq!(
+        ui.panel.damage_rects[rects],
+        rsk_ui::Rect::new(
+            0,
+            rsk_ui::STATUS_BAR_H,
+            rsk_ui::PANEL_W,
+            rsk_ui::NAV_TOP - rsk_ui::STATUS_BAR_H,
+        )
+    );
     assert!(ui.touch_armed, "…but the surface under the finger did not");
+}
+
+#[test]
+fn one_changed_home_row_uses_one_retained_panel_window() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::idle());
+    ui.paint(home(StatusKind::Idle, false, 7));
+    let damage = ui.panel.damage_presentations;
+    let rects = ui.panel.damage_rects.len();
+
+    ui.paint(home(StatusKind::Idle, true, 7));
+
+    assert_eq!(ui.panel.damage_presentations, damage + 1);
+    assert_eq!(ui.panel.damage_rects.len(), rects + 1);
 }
 
 #[test]

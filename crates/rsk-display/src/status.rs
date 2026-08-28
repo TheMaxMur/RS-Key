@@ -108,7 +108,7 @@ pub(super) fn audit_kind(ev: u8) -> rsk_ui::AuditKind {
 
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
@@ -118,7 +118,13 @@ where
     /// useful apart: a repaint whose `shown` is not updated repaints for ever, and
     /// a `shown` without the repaint makes the loop believe a frame it never drew.
     fn paint(&mut self, screen: Screen) {
-        let _ = rsk_ui::render(&mut self.panel, &screen);
+        if let (Some(Screen::Home(previous)), Screen::Home(next)) = (self.shown, screen) {
+            // Home owns stable status/nav chrome. A typed component repaint avoids
+            // rebuilding it when only the status card or activity body changed.
+            let _ = rsk_ui::render_home_change(&mut self.damage_frame(), &previous, &next);
+        } else {
+            let _ = rsk_ui::render(&mut self.frame(), &screen);
+        }
         self.shown = Some(screen);
     }
 
@@ -207,11 +213,17 @@ where
         match screen {
             Screen::Home(v) if v.status != StatusKind::Idle => {
                 *spin = spin.wrapping_add(SPIN_STEP_DEG);
-                let _ = rsk_ui::render_status_arc(&mut self.panel, v.status, *spin);
+                assert!(
+                    rsk_ui::render_status_arc(&mut self.panel, v.status, *spin).is_ok(),
+                    "direct display presentation failed"
+                );
             }
             Screen::Locked if tick.is_multiple_of(BREATHE_TICKS) => {
                 *breathe = breathe.wrapping_add(1);
-                let _ = rsk_ui::render_locked_breathe(&mut self.panel, *breathe);
+                assert!(
+                    rsk_ui::render_locked_breathe(&mut self.panel, *breathe).is_ok(),
+                    "direct display presentation failed"
+                );
             }
             _ => {}
         }
@@ -357,7 +369,7 @@ where
 /// the panel (the `try_borrow_mut` is belt-and-suspenders).
 pub async fn status_loop<'a, P, T, H, S, R>(ui: &RefCell<Ui<'a, P, T, H, S, R>>)
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,

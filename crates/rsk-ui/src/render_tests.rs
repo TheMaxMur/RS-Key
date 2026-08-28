@@ -27,6 +27,7 @@ fn has_aa_color(d: &Rec, r: Rect, fg: Rgb565, bg: Rgb565) -> bool {
 /// assert a screen stayed inside the panel.
 struct Rec {
     px: std::vec::Vec<Rgb565>,
+    writes: std::vec::Vec<bool>,
     oob: bool,
 }
 
@@ -34,6 +35,7 @@ impl Rec {
     fn new() -> Self {
         Self {
             px: std::vec![BG; PANEL_W as usize * PANEL_H as usize],
+            writes: std::vec![false; PANEL_W as usize * PANEL_H as usize],
             oob: false,
         }
     }
@@ -45,6 +47,24 @@ impl Rec {
     }
     fn drew_anything(&self) -> bool {
         self.px.iter().any(|&c| c != BG)
+    }
+    fn reset_writes(&mut self) {
+        self.writes.fill(false);
+    }
+    fn wrote_anything(&self) -> bool {
+        self.writes.iter().any(|&wrote| wrote)
+    }
+    fn wrote_outside(&self, r: Rect) -> bool {
+        self.writes.iter().enumerate().any(|(i, &wrote)| {
+            let p = Point::new((i % PANEL_W as usize) as u16, (i / PANEL_W as usize) as u16);
+            wrote && !r.contains(p)
+        })
+    }
+    fn wrote_in(&self, r: Rect) -> bool {
+        self.writes.iter().enumerate().any(|(i, &wrote)| {
+            let p = Point::new((i % PANEL_W as usize) as u16, (i / PANEL_W as usize) as u16);
+            wrote && r.contains(p)
+        })
     }
 }
 
@@ -67,7 +87,9 @@ impl DrawTarget for Rec {
                 && (p.x as u32) < PANEL_W as u32
                 && (p.y as u32) < PANEL_H as u32
             {
-                self.px[p.y as usize * PANEL_W as usize + p.x as usize] = c;
+                let i = p.y as usize * PANEL_W as usize + p.x as usize;
+                self.px[i] = c;
+                self.writes[i] = true;
             } else {
                 self.oob = true;
             }
@@ -201,6 +223,99 @@ fn every_home_status_fits_and_draws_with_nav() {
 }
 
 #[test]
+fn home_fact_change_repaints_only_the_typed_card() {
+    let previous = HomeView {
+        status: StatusKind::Idle,
+        pin_set: false,
+        passkeys: 1234,
+    };
+    let next = HomeView {
+        status: StatusKind::Idle,
+        pin_set: true,
+        passkeys: 7,
+    };
+    let mut actual = Rec::new();
+    render(&mut actual, &Screen::Home(previous)).unwrap();
+    actual.reset_writes();
+    render_home_change(&mut actual, &previous, &next).unwrap();
+
+    let mut expected = Rec::new();
+    render(&mut expected, &Screen::Home(next)).unwrap();
+    assert_eq!(
+        actual.px, expected.px,
+        "partial Home card differs from a full paint"
+    );
+
+    let first = crate::row_rect(HOME_CARD_TOP, 0);
+    let last = crate::row_rect(HOME_CARD_TOP, 2);
+    let card = Rect::new(first.x, first.y, first.w, last.y + last.h - first.y);
+    assert!(actual.wrote_anything());
+    assert!(
+        !actual.wrote_outside(card),
+        "Home fact change touched stable chrome"
+    );
+    assert!(
+        !actual.wrote_in(first),
+        "Home fact change repainted the unchanged USB row"
+    );
+}
+
+#[test]
+fn hidden_home_facts_and_identical_views_do_not_draw() {
+    let previous = HomeView {
+        status: StatusKind::Processing,
+        pin_set: false,
+        passkeys: 2,
+    };
+    let next = HomeView {
+        passkeys: 99,
+        ..previous
+    };
+    let mut d = Rec::new();
+    render(&mut d, &Screen::Home(previous)).unwrap();
+    d.reset_writes();
+    render_home_change(&mut d, &previous, &next).unwrap();
+    assert!(
+        !d.wrote_anything(),
+        "a hidden Home fact rebuilt visible components"
+    );
+    render_home_change(&mut d, &next, &next).unwrap();
+    assert!(
+        !d.wrote_anything(),
+        "an identical Home view produced damage"
+    );
+}
+
+#[test]
+fn home_mode_change_repaints_content_but_preserves_chrome() {
+    let previous = HomeView {
+        status: StatusKind::Idle,
+        pin_set: true,
+        passkeys: 12,
+    };
+    let next = HomeView {
+        status: StatusKind::Touch,
+        ..previous
+    };
+    let mut actual = Rec::new();
+    render(&mut actual, &Screen::Home(previous)).unwrap();
+    actual.reset_writes();
+    render_home_change(&mut actual, &previous, &next).unwrap();
+
+    let mut expected = Rec::new();
+    render(&mut expected, &Screen::Home(next)).unwrap();
+    assert_eq!(
+        actual.px, expected.px,
+        "partial Home mode change differs from a full paint"
+    );
+    let content = Rect::new(0, STATUS_BAR_H, PANEL_W, NAV_TOP - STATUS_BAR_H);
+    assert!(
+        !actual.wrote_outside(content),
+        "Home mode change touched fixed chrome"
+    );
+}
+
+#[test]
 fn passkeys_list_paints_rows_in_their_hit_rects() {
     let rows = [
         RpRow {
@@ -225,6 +340,51 @@ fn passkeys_list_paints_rows_in_their_hit_rects() {
         );
     }
     assert!(has_color(&d, crate::nav_tab_rect(1), theme::ACCENT));
+}
+
+#[test]
+fn passkeys_page_damage_preserves_title_and_navigation() {
+    let stable = RpRow {
+        id: Label::clamp(b"stable.example"),
+        nick: Label::default(),
+        accounts: 1,
+    };
+    let previous = [
+        stable,
+        RpRow {
+            id: Label::clamp(b"first.example"),
+            nick: Label::default(),
+            accounts: 12,
+        },
+    ];
+    let next = [
+        stable,
+        RpRow {
+            id: Label::clamp(b"second.example"),
+            nick: Label::clamp(b"Work"),
+            accounts: 1,
+        },
+    ];
+    let mut actual = Rec::new();
+    render_passkeys_list(&mut actual, &previous, 0, 7).unwrap();
+    actual.reset_writes();
+    render_passkeys_page(&mut actual, &previous, 0, 7, &next, 1, 7).unwrap();
+
+    let mut expected = Rec::new();
+    render_passkeys_list(&mut expected, &next, 1, 7).unwrap();
+    assert_eq!(
+        actual.px, expected.px,
+        "partial Passkeys page differs from a full paint"
+    );
+    assert!(actual.wrote_anything());
+    assert!(
+        !actual.wrote_outside(PAGED_BODY_RECT),
+        "Passkeys page change touched fixed title or navigation"
+    );
+    assert!(
+        !actual.wrote_in(crate::row_rect(PK_LIST_TOP, 0)),
+        "Passkeys page change repainted an unchanged typed row"
+    );
 }
 
 #[test]
@@ -2064,6 +2224,40 @@ fn hold_fill_grows_left_to_right_with_a_flat_edge() {
     render_hold_fill(&mut d, r, "Hold", 0, 5, 10, theme::APPROVE).unwrap();
     let w = r.w / 2; // num/den = 5/10
     assert_eq!(d.at(r.x + w - 3, r.y + 2), wash);
+}
+
+#[test]
+fn hold_fill_repaints_only_the_new_strip_and_matches_one_step() {
+    let r = Rect::new(20, 200, 120, 60);
+    let mut incremental = Rec::new();
+    render_hold_button(&mut incremental, r, "Hold", theme::APPROVE).unwrap();
+    for (previous, next) in [(0, 2), (2, 5), (5, 10)] {
+        render_hold_fill(
+            &mut incremental,
+            r,
+            "Hold",
+            previous,
+            next,
+            10,
+            theme::APPROVE,
+        )
+        .unwrap();
+    }
+
+    let mut one_step = Rec::new();
+    render_hold_button(&mut one_step, r, "Hold", theme::APPROVE).unwrap();
+    render_hold_fill(&mut one_step, r, "Hold", 0, 10, 10, theme::APPROVE).unwrap();
+    assert_eq!(incremental.px, one_step.px);
+
+    incremental.reset_writes();
+    render_hold_fill(&mut incremental, r, "Hold", 4, 5, 10, theme::APPROVE).unwrap();
+    let strip = Rect::new(r.x + 48, r.y, 12, r.h);
+    assert!(incremental.wrote_anything());
+    assert!(!incremental.wrote_outside(strip));
+
+    incremental.reset_writes();
+    render_hold_fill(&mut incremental, r, "Hold", 5, 5, 10, theme::APPROVE).unwrap();
+    assert!(!incremental.wrote_anything());
 }
 
 /// Regression: `render_pin_dots` must clear the "+" overflow marker and the 10th

@@ -13,7 +13,7 @@ pub(super) const REVEAL_MASK_MS: u64 = 4_000;
 
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
@@ -57,7 +57,7 @@ where
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         'screen: loop {
             let view = self.load_backup();
-            let _ = rsk_ui::render_backup(&mut self.panel, &view);
+            let _ = rsk_ui::render_backup(&mut self.frame(), &view);
             self.shown = None;
             self.touch.wait_release(Instant::now(), idle_limit);
             let mut last = Instant::now();
@@ -106,7 +106,7 @@ where
             return;
         }
         'chooser: loop {
-            let _ = rsk_ui::render_backup_format(&mut self.panel);
+            let _ = rsk_ui::render_backup_format(&mut self.frame());
             self.shown = None;
             self.touch.wait_release(Instant::now(), idle_limit);
             let mut last = Instant::now();
@@ -146,7 +146,7 @@ where
     fn reveal_phrase(&mut self) {
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         self.touch.wait_release(Instant::now(), idle_limit);
-        let _ = rsk_ui::render_reveal_warning(&mut self.panel, rsk_ui::RevealKind::Phrase);
+        let _ = rsk_ui::render_reveal_warning(&mut self.frame(), rsk_ui::RevealKind::Phrase);
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
         if !self.hold_to_confirm("Hold to reveal", rsk_ui::theme::DANGER_FILL) {
@@ -180,7 +180,7 @@ where
         }
         let pages: u16 = rsk_bip39::WORD_COUNT.div_ceil(rsk_ui::SEED_WORDS_PER_PAGE) as u16;
         let mut page: u16 = 0;
-        let _ = rsk_ui::render_seed_phrase(&mut self.panel, &words, page, pages);
+        let _ = rsk_ui::render_seed_phrase(&mut self.frame(), &words, page, pages);
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
         let mut last = Instant::now();
@@ -198,7 +198,7 @@ where
                         rsk_ui::PagerKey::Prev => page.saturating_sub(1),
                         rsk_ui::PagerKey::Next => (page + 1).min(pages - 1),
                     };
-                    let _ = rsk_ui::render_seed_phrase(&mut self.panel, &words, page, pages);
+                    let _ = rsk_ui::render_seed_phrase(&mut self.frame(), &words, page, pages);
                     self.shown = None;
                     self.touch.wait_release(last, idle_limit);
                     last = Instant::now();
@@ -231,7 +231,7 @@ where
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         let (mut threshold, mut total): (u8, u8) = (2, 3); // default 2-of-3
         'picker: loop {
-            let _ = rsk_ui::render_share_picker(&mut self.panel, threshold, total);
+            let _ = rsk_ui::render_share_picker(&mut self.frame(), threshold, total);
             self.shown = None;
             self.touch.wait_release(Instant::now(), idle_limit);
             let mut last = Instant::now();
@@ -264,7 +264,7 @@ where
 
         // A deliberate hold over the warning before any secret is shown.
         self.touch.wait_release(Instant::now(), idle_limit);
-        let _ = rsk_ui::render_reveal_warning(&mut self.panel, rsk_ui::RevealKind::Shares);
+        let _ = rsk_ui::render_reveal_warning(&mut self.frame(), rsk_ui::RevealKind::Shares);
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
         if !self.hold_to_confirm("Hold to reveal", rsk_ui::theme::DANGER_FILL) {
@@ -327,8 +327,14 @@ where
                 }
                 shown_share = share;
             }
-            let _ =
-                rsk_ui::render_slip39_share(&mut self.panel, &words, share + 1, total, page, pages);
+            let _ = rsk_ui::render_slip39_share(
+                &mut self.frame(),
+                &words,
+                share + 1,
+                total,
+                page,
+                pages,
+            );
             self.shown = None;
             self.touch.wait_release(Instant::now(), idle_limit);
             let mut last = Instant::now();
@@ -376,7 +382,7 @@ where
         }
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         self.touch.wait_release(Instant::now(), idle_limit);
-        let _ = rsk_ui::render_seal_confirm(&mut self.panel);
+        let _ = rsk_ui::render_seal_confirm(&mut self.frame());
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
         if self.hold_to_confirm("Hold to seal", rsk_ui::theme::DANGER_FILL) {

@@ -112,8 +112,8 @@ What holds that now is `deny.toml`: each applet crate is banned except behind th
 | `rsk-bench` | robust summary statistics (median, MAD, a separate cold sample) for the on-device latency harness. Steady-state timing on the RP2350 is XIP-cache sensitive to ±~30 ms, so a mean fakes regressions; compiled in only under the `bench` feature, never into a shipped image |
 | `rsk-bip39` | BIP-39 mnemonic encode for the trusted display's recovery-phrase screen; `display` build only |
 | `rsk-slip39` | SLIP-39 (Shamir) share encode for the same screen, mirroring the host `shamir_mnemonic` exactly so `rsk backup restore` recombines; `display` build only |
-| `rsk-ui` | the trusted-display UI model (operation prompts, untrusted relying-party-string sanitizing, Allow/Deny button geometry); compiled only into the `display` build |
-| `rsk-display` | the trusted display's *flow* — which screen is shown when, the PIN pad, the browse modals, the Approve/Deny wait — over a panel and a touch controller it takes as type parameters, so the firmware drives an ST7789 and the emulator a window; `display` build only |
+| `rsk-ui` | the trusted-display UI model (operation prompts, untrusted relying-party-string sanitizing, Allow/Deny button geometry) plus its compact retained scene and 8-row rasterizer; compiled only into the `display` build |
+| `rsk-display` | the trusted display's *flow* — which screen is shown when, the PIN pad, the browse modals, the Approve/Deny wait — over a panel and a touch controller it takes as type parameters, so the firmware drives an ST7789 with semantic damage + two-band DMA and the emulator replays the same retained scene into a window; `display` build only |
 
 Everything except the two binaries is hardware-agnostic and runs the full
 test suite on the host ([testing.md](testing.md)).

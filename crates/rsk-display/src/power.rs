@@ -11,7 +11,7 @@ pub(super) const BREATHE_TICKS: u32 = 3;
 
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,

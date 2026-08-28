@@ -360,7 +360,7 @@ impl DrawTarget for BandCoverage<'_> {
 /// one of them reading the way it did when this was the firmware's own module.
 pub struct Ui<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
@@ -429,7 +429,7 @@ where
 
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
@@ -450,7 +450,7 @@ where
         keys: DeviceKeys,
         rng: &'a RefCell<R>,
     ) -> Self {
-        let _ = rsk_ui::render(&mut panel, &Screen::Splash);
+        let _ = rsk_ui::render(&mut rsk_ui::scene::Frame::new(&mut panel), &Screen::Splash);
 
         // Restore the persisted display settings before lighting the panel, so it
         // comes up at the saved brightness (no full-bright flash then dim) and the
@@ -502,6 +502,17 @@ where
         }
     }
 
+    /// Record and present one full frame. Small animation updates use `panel`
+    /// directly and do not rebuild the retained scene.
+    pub(crate) fn frame(&mut self) -> rsk_ui::scene::Frame<'_, P> {
+        rsk_ui::scene::Frame::new(&mut self.panel)
+    }
+
+    /// Record and present one typed component repaint as exact retained damage.
+    pub(crate) fn damage_frame(&mut self) -> rsk_ui::scene::DamageFrame<'_, P> {
+        rsk_ui::scene::DamageFrame::new(&mut self.panel)
+    }
+
     /// Refresh the Home status-card facts — whether a device PIN is set and how many
     /// resident passkeys are stored — into the cache the idle Home frame reads. Enumerates
     /// flash (the seed-unboxing RP walk), so it runs only at modal boundaries (boot, wake,
@@ -531,7 +542,10 @@ where
         } = self;
         {
             let mut target = BandCoverage::new(marquee_coverage, band);
-            let _ = rsk_ui::render_pin_title(&mut target, title, off);
+            assert!(
+                rsk_ui::render_pin_title(&mut target, title, off).is_ok(),
+                "marquee composition failed"
+            );
         }
         let area = Rectangle::new(
             EgPoint::new(band.x as i32, band.y as i32),
@@ -545,7 +559,10 @@ where
                 packed_coverage(marquee_coverage, i),
             )
         });
-        let _ = panel.fill_contiguous(&area, colors);
+        assert!(
+            panel.fill_contiguous(&area, colors).is_ok(),
+            "direct display presentation failed"
+        );
     }
 
     /// Record a panel-originated action in the on-device audit journal.

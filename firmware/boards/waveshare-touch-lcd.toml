@@ -20,7 +20,7 @@ size_mb = 16
 kvmain_kb = 1408
 
 [display]
-# ST7789 over SPI1 at up-to-62.5 MHz; drop to 40 if the flex cable misbehaves.
+# ST7789 limit. PL022 realizes 37.5 MHz from the default 150 MHz clock.
 spi_freq_hz = 62_500_000
 # GPIOs for the panel control lines.
 cs = 13

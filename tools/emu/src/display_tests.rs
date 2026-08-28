@@ -124,6 +124,16 @@ impl DrawTarget for NullPanel {
     }
 }
 
+impl rsk_ui::scene::FrameTarget for NullPanel {
+    fn damage_key(&self) -> rsk_ui::scene::DamageKey {
+        [0x0123_4567_89AB_CDEF, 0xFEDC_BA98_7654_3210]
+    }
+
+    fn present_scene(&mut self, _scene: &rsk_ui::scene::Scene) -> bool {
+        true
+    }
+}
+
 /// The centre of the control `hit` accepts, taken from `rsk-ui`'s own hit test
 /// rather than from copied coordinates — so a layout change moves the tap with it
 /// instead of silently making the script miss.

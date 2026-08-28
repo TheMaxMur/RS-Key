@@ -76,6 +76,9 @@ rsk-bench = { path = "crates/rsk-bench" }
 embedded-graphics = { version = "0.8", default-features = false }
 mipidsi = { version = "0.10" }
 embedded-hal-bus = { version = "0.3", default-features = false }
+# Keyed 128-bit damage tags stop untrusted display text from choosing a tile-hash
+# collision. SipHash is small, no_std, and already present in Cargo.lock.
+siphasher = { version = "1.0", default-features = false }
 minicbor = { version = "2.2", default-features = false }
 p256 = { version = "0.14", default-features = false, features = ["ecdsa", "arithmetic", "ecdh"] }
 # Additional FIDO2 signing curves; same 0.14 RustCrypto ecosystem as p256.
@@ -160,6 +163,14 @@ opt-level = 3
 # unrolling wins.)
 [profile.release.package.rsk-sha512]
 opt-level = "s"
+
+# The display renderer is a pixel-generation hot path. Keep it speed-optimized;
+# its retained scene prevents the larger loops from multiplying across bands.
+[profile.release.package.rsk-ui]
+opt-level = 3
+
+[profile.release.package.rsk-display]
+opt-level = 3
 
 [profile.dev]
 opt-level = "s"    # embassy/HAL needs some opt even in dev to fit/behave

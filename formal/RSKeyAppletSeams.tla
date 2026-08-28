@@ -536,7 +536,7 @@ FidoReset == UNCHANGED vars
 \* `Fs::factory_wipe` (crates/rsk-fs/src/fs.rs:326-373) is FLASH-only: it never
 \* sees an applet, so every in-RAM status here stands over freshly-defaulted
 \* verifiers until the reboot both callers queue immediately after
-\* (crates/rsk-device/src/ccid.rs:304-313, crates/rsk-display/src/pin.rs:681-689).
+\* (crates/rsk-device/src/ccid.rs:304-313, crates/rsk-display/src/pin.rs:705-731).
 \* Modelled as the wipe AND its reboot in one step, which is what makes the
 \* window unobservable -- and that is exactly the assumption to attack if anyone
 \* ever separates them.
