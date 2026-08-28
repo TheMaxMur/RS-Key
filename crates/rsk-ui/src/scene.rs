@@ -875,6 +875,12 @@ fn paint_command(command: Command, band: Rect, out: &mut [u8]) {
 }
 
 fn fill_color(out: &mut [u8], color: Rgb565) {
+    if let Some(template) = crate::page_templates::row(color.into_storage()) {
+        for chunk in out.chunks_mut(template.len()) {
+            chunk.copy_from_slice(&template[..chunk.len()]);
+        }
+        return;
+    }
     let bytes = color.into_storage().to_be_bytes();
     for pixel in out.as_chunks_mut::<2>().0 {
         pixel.copy_from_slice(&bytes);

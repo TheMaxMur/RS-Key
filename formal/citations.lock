@@ -201,7 +201,7 @@ formal/README.md	crates/rsk-sdk/src/applet.rs	208-210	fn selectable(&self, i: us
 formal/README.md	crates/rsk-sdk/src/applet.rs	374-390	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
 formal/README.md	crates/rsk-sdk/src/applet.rs	379-387	// A disabled applet is skipped, so its AID matches nothing	let reselect = self.current == Some(i);
 formal/README.md	crates/rsk-sdk/src/applet.rs	387-387	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
-formal/README.md	crates/rsk-ui/src/lib.rs	251-259	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
+formal/README.md	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	386-456	/// Drop an in-progress reassembly (e.g. on a receive timeout).	if seq != self.seq {
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	417-419	// Mid-transaction, an init-type frame that is not CTAPHID_INIT is a	// meaningless in such a frame. A continuation frame whose seq byte has
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	420-420	// the INIT bit set lands here (FIDO conformance HID-1 F-4 corrupts the	// the INIT bit set lands here (FIDO conformance HID-1 F-4 corrupts the
@@ -209,8 +209,8 @@ formal/README.md	crates/rsk-usb/src/ctaphid.rs	431-431	// expected is out of seq
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	433-435	return Outcome::Error(cid, ERR_INVALID_SEQ);	let bcnt = ((f[5] as usize) << 8) | f[6] as usize;
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	437-440	return Outcome::Error(cid, ERR_INVALID_LEN);	self.cmd = cmd;
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	565-565	request_cancel: fn(),	request_cancel: fn(),
-formal/README.md	firmware/src/main.rs	607-607	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
-formal/README.md	firmware/src/main.rs	609-620	// One-shot at-rest hardening. The seal migrations above re-key every secret	let _ = fs.put(rsk_fido::consts::EF_HARDENED, &[1u8]);
+formal/README.md	firmware/src/main.rs	613-613	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
+formal/README.md	firmware/src/main.rs	615-626	// One-shot at-rest hardening. The seal migrations above re-key every secret	let _ = fs.put(rsk_fido::consts::EF_HARDENED, &[1u8]);
 formal/README.md	firmware/src/pin_lock.rs	18-21	//! a real power cycle clears it. The *whole* lock moves: carrying the engaged flag	//!
 formal/README.md	firmware/src/presence.rs	99-106	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
 formal/README.md	firmware/src/worker.rs	434-434	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
@@ -277,8 +277,8 @@ formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	26-46	/// Set (`[1]`) onc
 formal/RSKeyBootHardening.tla	crates/rsk-oath/src/lib.rs	1156-1156	// (rsk-fs `EF_HARDENED` invariant; audit run-35).	// (rsk-fs `EF_HARDENED` invariant; audit run-35).
 formal/RSKeyBootHardening.tla	crates/rsk-openpgp/src/pin.rs	340-340	// both are rooted in the *public* chip serial (so the verifier is brute-forceable	// both are rooted in the *public* chip serial (so the verifier is brute-forceable
 formal/RSKeyBootHardening.tla	crates/rsk-piv/src/lib.rs	1281-1284	return Sw::MEMORY_FAILURE;	// the pre-OTP arm, which the public chip serial alone derives (rsk-fs
-formal/RSKeyBootHardening.tla	firmware/src/main.rs	609-620	// One-shot at-rest hardening. The seal migrations above re-key every secret	let _ = fs.put(rsk_fido::consts::EF_HARDENED, &[1u8]);
-formal/RSKeyBootHardening.tla	firmware/src/main.rs	619-619	if mkek.is_some() && !fs.has_data(rsk_fido::consts::EF_HARDENED) && fs.compact().is_ok() {	if mkek.is_some() && !fs.has_data(rsk_fido::consts::EF_HARDENED) && fs.compact().is_ok() {
+formal/RSKeyBootHardening.tla	firmware/src/main.rs	615-626	// One-shot at-rest hardening. The seal migrations above re-key every secret	let _ = fs.put(rsk_fido::consts::EF_HARDENED, &[1u8]);
+formal/RSKeyBootHardening.tla	firmware/src/main.rs	625-625	if mkek.is_some() && !fs.has_data(rsk_fido::consts::EF_HARDENED) && fs.compact().is_ok() {	if mkek.is_some() && !fs.has_data(rsk_fido::consts::EF_HARDENED) && fs.compact().is_ok() {
 formal/RSKeyBootHardening.tla	firmware/src/pin_lock.rs	18-21	//! a real power cycle clears it. The *whole* lock moves: carrying the engaged flag	//!
 formal/RSKeyBootHardening.tla	firmware/src/pin_lock.rs	36-37	const TAG: u32 = 0x5253_4B00;	const TAG_MASK: u32 = 0xFFFF_FF00;
 formal/RSKeyBootHardening.tla	firmware/src/pin_lock.rs	52-54	/// Refines `RSKeyBootHardening!TheWholeLockRides` — SEC-BOOT-002.	rp_pac::WATCHDOG.scratch2().write_value(encode(lock));
@@ -413,7 +413,7 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	900-907	// no MSE ha
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	968-974	/// `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or** shown as	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
 formal/RSKeySecurityState.tla	crates/rsk-fs/src/fs.rs	258-261	/// A FID can be yielded MORE THAN ONCE — the log-structured backend walks	/// below does).
 formal/RSKeySecurityState.tla	crates/rsk-usb/src/ctaphid.rs	757-762	// frames during fast/crypto processing would consume — and then	if up_pending() {
-formal/RSKeySecurityState.tla	firmware/src/main.rs	607-607	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
+formal/RSKeySecurityState.tla	firmware/src/main.rs	613-613	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
 formal/RSKeySecurityState.tla	firmware/src/presence.rs	99-106	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	434-434	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	526-528	// Nothing is in flight again: a wait started from here on is an on-panel	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
@@ -459,7 +459,7 @@ formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/clientpin.rs	536-537	pub fn n
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/getassertion.rs	616-617	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/makecredential.rs	660-661	// naming the rp being registered ([`needs_confirm`]).	if verified.needs_confirm(ctx.presence.shows_confirm()) {
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/u2f.rs	94-94	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
-formal/RSKeyTrustedDisplay.tla	crates/rsk-ui/src/lib.rs	251-259	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
+formal/RSKeyTrustedDisplay.tla	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
 formal/TraceSecurity.tla	crates/rsk-fido/src/clientpin.rs	609-609	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
 formal/TraceSecurity.tla	crates/rsk-fido/src/config.rs	317-317	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");
 formal/TraceSecurity.tla	crates/rsk-fido/src/makecredential.rs	528-546	let always_uv = crate::config::always_uv_enabled(ctx.fs);	Ok(UvOutcome::NONE)

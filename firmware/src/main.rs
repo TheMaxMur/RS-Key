@@ -25,7 +25,7 @@ use embassy_rp::pio::InterruptHandler as PioIrq;
 // from the phy record (PicoForge); a `none` build pulls in none of them. DMA_CH0
 // and the PIO0/DMA IRQs stay bound unconditionally (the type is used by
 // `bind_interrupts!` below — harmless when no backend uses it).
-#[cfg(not(led_kind = "none"))]
+#[cfg(any(feature = "display", not(led_kind = "none")))]
 use embassy_rp::pio::Pio;
 #[cfg(not(led_kind = "none"))]
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
@@ -238,8 +238,8 @@ pub(crate) const BUILD_DISPLAY_INVERT_COLORS: bool = env_u16(env!("PK_DISPLAY_IN
 pub(crate) const BUILD_DISPLAY_COLOR_ORDER: u8 = env_u16(env!("PK_DISPLAY_COLOR_ORDER")) as u8;
 
 // Display control GPIOs are board-configurable and claimed via AnyPin::steal
-// (CS/DC/RST/TP_RST) or Pwm::new_output_* (BL); SPI1 10/11/12 + I2C1 6/7 stay in
-// Peripherals. Reject a pad owned by two drivers at compile time (no runtime guard).
+// (CS/DC/RST/TP_RST) or Pwm::new_output_* (BL); PIO owns 10/11 and I2C1 owns 6/7.
+// Reject a pad owned by two drivers at compile time (no runtime guard).
 #[cfg(feature = "display")]
 const _: () = {
     const DISPLAY_CTLS: &[u8] = &[
@@ -249,8 +249,8 @@ const _: () = {
         BUILD_DISPLAY_TP_RST,
         BUILD_DISPLAY_BL_PIN,
     ];
-    // Pins the panel's hard-wired SPI1 (10/11/12) and I2C1 (6/7) already own.
-    const HW_PINS: &[u8] = &[10, 11, 12, 6, 7];
+    // Pins the panel's hard-wired PIO serial link (10/11) and I2C1 (6/7) own.
+    const HW_PINS: &[u8] = &[10, 11, 6, 7];
 
     const fn contains(hay: &[u8], needle: u8) -> bool {
         let mut i = 0;
@@ -277,7 +277,7 @@ const _: () = {
     while i < DISPLAY_CTLS.len() {
         assert!(
             !contains(HW_PINS, DISPLAY_CTLS[i]),
-            "panel control GPIO overlaps hard-wired SPI1/I2C1 pin 6/7/10/11/12"
+            "panel control GPIO overlaps hard-wired PIO/I2C1 pin 6/7/10/11"
         );
         i += 1;
     }
@@ -508,6 +508,12 @@ async fn main(spawner: Spawner) {
     arm_stack_limit();
 
     let mut config = embassy_rp::config::Config::default();
+    #[cfg(feature = "display")]
+    {
+        // The display PIO emits one SPI bit per two system-clock cycles.
+        config.clocks = embassy_rp::clocks::ClockConfig::system_freq(160_000_000)
+            .expect("160 MHz display clock must have valid PLL parameters");
+    }
     if let Some(xosc) = config.clocks.xosc.as_mut() {
         xosc.delay_multiplier = XOSC_DELAY_MULT;
     }
@@ -688,7 +694,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0988;
+    let device_release: u16 = 0x0989;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -999,7 +1005,7 @@ async fn main(spawner: Spawner) {
     }
 
     // Trusted display (the `display` build — always `LED_KIND=none` per the guard
-    // above, so the LED block compiled out and SPI1/I2C1/GPIO16 are free). Build the
+    // above, so the LED block compiled out and PIO0/I2C1/GPIO16 are free). Build the
     // panel + touch here, after the USB task is spawned, so its ~200 ms reset runs
     // while the interrupt executor enumerates — never delaying it. `status_task`
     // mirrors the device status; the `TouchPresence` backend (the `presence::Presence`
@@ -1010,13 +1016,19 @@ async fn main(spawner: Spawner) {
         use embassy_rp::gpio::{Level, Output};
         use embassy_rp::i2c::{Config as I2cConfig, I2c};
         use embassy_rp::pwm::Pwm;
-        use embassy_rp::spi::{Config as SpiConfig, Spi};
 
-        let mut spi_cfg = SpiConfig::default();
-        // This is the panel limit. PL022 selects 37.5 MHz from the 150 MHz
-        // peripheral clock; its next divider would exceed the 62.5 MHz limit.
-        spi_cfg.frequency = BUILD_DISPLAY_SPI_FREQ_HZ;
-        let spi = Spi::new_txonly(p.SPI1, p.PIN_10, p.PIN_11, p.DMA_CH0, Irqs, spi_cfg);
+        let Pio {
+            mut common, sm0, ..
+        } = Pio::new(p.PIO0, Irqs);
+        let spi = display::PioDisplayTx::new(
+            &mut common,
+            sm0,
+            p.PIN_10,
+            p.PIN_11,
+            p.DMA_CH0,
+            Irqs,
+            BUILD_DISPLAY_SPI_FREQ_HZ,
+        );
 
         let mut i2c_cfg = I2cConfig::default();
         i2c_cfg.frequency = BUILD_DISPLAY_I2C_FREQ_HZ;

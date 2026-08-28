@@ -45,7 +45,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   128-bit tags keep unchanged 32×32 visual-state tiles on the panel. Typed UI
   components also produce exact damage rectangles before they are composed. The
   ST7789 receives one continuous RAM write per rectangle from two alternating
-  8-row RGB565 buffers while the CPU composes the next band.
+  8-row RGB565 buffers while the CPU composes the next band. A TX-only PIO link
+  runs at 80 MHz, reducing full-frame wire time to 15.36 ms. Static raster rows
+  in flash avoid regenerating common page backgrounds.
   Text now lays out glyphs once and rasterizes coverage by row through RGB565
   lookup tables; fixed antialiasing masks and speed-optimized display crates
   remove the other repeated pixel math. The spinner's 15 exact phases use a

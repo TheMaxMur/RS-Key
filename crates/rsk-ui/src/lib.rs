@@ -19,6 +19,7 @@
 pub mod aa;
 pub mod font;
 pub mod glyph;
+mod page_templates;
 pub mod render;
 pub mod scene;
 pub mod settings_store;

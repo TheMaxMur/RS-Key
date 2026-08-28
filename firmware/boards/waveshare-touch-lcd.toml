@@ -2,7 +2,7 @@
 # Copyright (C) 2026 RS-Key contributors
 #
 # Waveshare RP2350-Touch-LCD-2.8 — the trusted-display build.
-# ST7789 240×320 panel over SPI1, CST328 touch over I2C1.
+# ST7789 240×320 panel over a PIO serial link, CST328 touch over I2C1.
 # Backlight PWM on GPIO16, touch RST on GPIO17.
 # No addressable LED (LED_KIND=none); the panel is the indicator.
 
@@ -20,8 +20,8 @@ size_mb = 16
 kvmain_kb = 1408
 
 [display]
-# ST7789 limit. PL022 realizes 37.5 MHz from the default 150 MHz clock.
-spi_freq_hz = 62_500_000
+# TX-only PIO uses two instructions per bit at a 160 MHz system clock.
+spi_freq_hz = 80_000_000
 # GPIOs for the panel control lines.
 cs = 13
 dc = 14

@@ -3,11 +3,19 @@
 
 //! Raw ST7789 transport for retained frames and small direct redraws.
 
+use core::convert::Infallible;
+
 use embassy_futures::{block_on, poll_once};
-use embassy_rp::gpio::Output;
-use embassy_rp::peripherals::SPI1;
-use embassy_rp::spi::{Async as SpiAsync, Error as SpiError, Spi};
-use embassy_time::Delay;
+use embassy_rp::dma::{Channel, ChannelInstance};
+use embassy_rp::gpio::{Level, Output};
+use embassy_rp::interrupt::typelevel::Binding;
+use embassy_rp::peripherals::{DMA_CH0, PIO0};
+use embassy_rp::pio::{
+    Common, Config as PioConfig, Direction, FifoJoin, LoadedProgram, PioPin, ShiftDirection,
+    StateMachine,
+};
+use embassy_rp::{Peri, dma};
+use embassy_time::{Duration, block_for};
 use embedded_graphics::{
     Pixel,
     draw_target::DrawTarget,
@@ -15,19 +23,96 @@ use embedded_graphics::{
     pixelcolor::{IntoStorage, Rgb565},
     primitives::Rectangle,
 };
-use embedded_hal_bus::spi::ExclusiveDevice;
-use mipidsi::Builder;
-use mipidsi::interface::SpiInterface;
-use mipidsi::models::ST7789;
 use mipidsi::options::{ColorInversion, ColorOrder};
 
 const DIRECT_CHUNK_BYTES: usize = rsk_ui::PANEL_W as usize * 2;
 const SOLID_CHUNK_BYTES: usize = DIRECT_CHUNK_BYTES * 2;
+const PANEL_PIXEL_FORMAT_RGB565: u8 = 0x55;
+
+/// TX-only mode-0 PIO transport. Two instructions generate one clock period.
+pub(crate) struct PioDisplayTx {
+    sm: StateMachine<'static, PIO0, 0>,
+    dma: Channel<'static>,
+    _program: LoadedProgram<'static, PIO0>,
+}
+
+impl PioDisplayTx {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        common: &mut Common<'static, PIO0>,
+        mut sm: StateMachine<'static, PIO0, 0>,
+        clk: Peri<'static, impl PioPin>,
+        mosi: Peri<'static, impl PioPin>,
+        dma: Peri<'static, DMA_CH0>,
+        irq: impl Binding<<DMA_CH0 as ChannelInstance>::Interrupt, dma::InterruptHandler<DMA_CH0>>
+        + 'static,
+        frequency: u32,
+    ) -> Self {
+        let program = embassy_rp::pio::program::pio_asm!(
+            ".side_set 1",
+            ".wrap_target",
+            "out pins, 1 side 0",
+            "nop side 1",
+            ".wrap",
+        );
+        let program = common.load_program(&program.program);
+        let mut clk = common.make_pio_pin(clk);
+        let mosi = common.make_pio_pin(mosi);
+        clk.set_output_inversion(false);
+
+        let mut config = PioConfig::default();
+        config.use_program(&program, &[&clk]);
+        config.set_out_pins(&[&mosi]);
+        config.shift_out.auto_fill = true;
+        config.shift_out.direction = ShiftDirection::Left;
+        config.shift_out.threshold = 8;
+        config.fifo_join = FifoJoin::TxOnly;
+        let divider = embassy_rp::clocks::clk_sys_freq() / (frequency * 2);
+        assert_eq!(divider * frequency * 2, embassy_rp::clocks::clk_sys_freq());
+        assert_eq!(
+            divider, 1,
+            "display PIO must run at one instruction per cycle"
+        );
+        config.clock_divider = 1u8.into();
+        sm.set_config(&config);
+        sm.set_pins(Level::Low, &[&clk, &mosi]);
+        sm.set_pin_dirs(Direction::Out, &[&clk, &mosi]);
+        sm.set_enable(true);
+
+        Self {
+            sm,
+            dma: Channel::new(dma, irq),
+            _program: program,
+        }
+    }
+
+    fn blocking_write(&mut self, bytes: &[u8]) {
+        for byte in bytes {
+            let value = u32::from_be_bytes([*byte, 0, 0, 0]);
+            while !self.sm.tx().try_push(value) {}
+            // Clear an earlier empty-FIFO latch so flush observes this byte.
+            self.sm.tx().stalled();
+        }
+        self.flush();
+    }
+
+    async fn write(&mut self, bytes: &[u8]) {
+        // A gap between DMA bands can latch a stall before the final band.
+        self.sm.tx().stalled();
+        let mut dma = self.dma.reborrow();
+        self.sm.tx().dma_push(&mut dma, bytes, false).await;
+    }
+
+    fn flush(&mut self) {
+        while !self.sm.tx().empty() {}
+        while !self.sm.tx().stalled() {}
+    }
+}
 
 /// The write-only panel after initialization. Complete frames use retained
 /// commands and two DMA bands; small animations use the raw direct path.
 pub(crate) struct Panel {
-    spi: Spi<'static, SPI1, SpiAsync>,
+    spi: PioDisplayTx,
     cs: Output<'static>,
     dc: Output<'static>,
     // Keep the panel out of reset. Dropping an embassy GPIO output disconnects it.
@@ -47,33 +132,15 @@ impl Panel {
     // Panel construction needs all fixed hardware parts and display options.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        mut spi: Spi<'static, SPI1, SpiAsync>,
-        mut cs: Output<'static>,
-        mut dc: Output<'static>,
+        spi: PioDisplayTx,
+        cs: Output<'static>,
+        dc: Output<'static>,
         rst: Output<'static>,
         damage_key: rsk_ui::scene::DamageKey,
         invert: ColorInversion,
         color_order: ColorOrder,
     ) -> Self {
-        let mut delay = Delay;
-        let rst = {
-            let mut setup_buffer = [0; 64];
-            // mipidsi is kept only for reset and setup. Its borrowed device is
-            // dropped here; complete pixel payloads then use raw SPI DMA.
-            let spi_dev = ExclusiveDevice::new(&mut spi, &mut cs, Delay).unwrap();
-            let di = SpiInterface::new(spi_dev, &mut dc, &mut setup_buffer);
-            let initialized = Builder::new(ST7789, di)
-                .display_size(rsk_ui::PANEL_W, rsk_ui::PANEL_H)
-                .invert_colors(invert)
-                .color_order(color_order)
-                .reset_pin(rst)
-                .init(&mut delay)
-                .unwrap();
-            let (di, _, rst) = initialized.release();
-            let (_spi_dev, _) = di.release();
-            rst.unwrap()
-        };
-        Self {
+        let mut panel = Self {
             spi,
             cs,
             dc,
@@ -81,54 +148,92 @@ impl Panel {
             damage_key,
             tile_tags: [0; rsk_ui::scene::DAMAGE_TILES],
             tags_valid: false,
-        }
+        };
+        panel.reset_and_init(invert, color_order);
+        panel
     }
 
-    fn begin_window(&mut self, rect: rsk_ui::Rect) -> Result<(), SpiError> {
+    fn command(&mut self, command: u8, params: &[u8]) {
+        self.cs.set_low();
+        self.dc.set_low();
+        self.spi.blocking_write(&[command]);
+        if !params.is_empty() {
+            self.dc.set_high();
+            self.spi.blocking_write(params);
+        }
+        self.cs.set_high();
+    }
+
+    fn reset_and_init(&mut self, invert: ColorInversion, color_order: ColorOrder) {
+        self._rst.set_low();
+        block_for(Duration::from_micros(10));
+        self._rst.set_high();
+        block_for(Duration::from_millis(150));
+        self.command(0x11, &[]);
+        block_for(Duration::from_millis(10));
+        self.command(
+            0x36,
+            &[if matches!(color_order, ColorOrder::Bgr) {
+                0x08
+            } else {
+                0
+            }],
+        );
+        self.command(
+            if matches!(invert, ColorInversion::Inverted) {
+                0x21
+            } else {
+                0x20
+            },
+            &[],
+        );
+        self.command(0x3A, &[PANEL_PIXEL_FORMAT_RGB565]);
+        block_for(Duration::from_millis(10));
+        self.command(0x13, &[]);
+        block_for(Duration::from_millis(10));
+        self.command(0x29, &[]);
+        block_for(Duration::from_millis(120));
+    }
+
+    fn begin_window(&mut self, rect: rsk_ui::Rect) {
         let right = rect.x + rect.w - 1;
         let bottom = rect.y + rect.h - 1;
         self.cs.set_low();
         self.dc.set_low();
-        self.spi.blocking_write(&[0x2A])?;
+        self.spi.blocking_write(&[0x2A]);
         self.dc.set_high();
         self.spi.blocking_write(&[
             (rect.x >> 8) as u8,
             rect.x as u8,
             (right >> 8) as u8,
             right as u8,
-        ])?;
+        ]);
         self.dc.set_low();
-        self.spi.blocking_write(&[0x2B])?;
+        self.spi.blocking_write(&[0x2B]);
         self.dc.set_high();
         self.spi.blocking_write(&[
             (rect.y >> 8) as u8,
             rect.y as u8,
             (bottom >> 8) as u8,
             bottom as u8,
-        ])?;
+        ]);
         self.dc.set_low();
-        self.spi.blocking_write(&[0x2C])?;
+        self.spi.blocking_write(&[0x2C]);
         self.dc.set_high();
-        Ok(())
     }
 
-    fn end_window(&mut self) -> Result<(), SpiError> {
-        let result = self.spi.flush();
+    fn end_window(&mut self) {
+        self.spi.flush();
         self.cs.set_high();
-        result
     }
 
-    fn present_rect(
-        &mut self,
-        scene: &rsk_ui::scene::Scene,
-        rect: rsk_ui::Rect,
-    ) -> Result<(), SpiError> {
+    fn present_rect(&mut self, scene: &rsk_ui::scene::Scene, rect: rsk_ui::Rect) {
         let mut band_a = [0; rsk_ui::scene::BAND_BYTES];
         let mut band_b = [0; rsk_ui::scene::BAND_BYTES];
         let max_band_height = rsk_ui::scene::dma_band_height(rect.w);
         let mut height_a = max_band_height.min(rect.h);
         scene.raster_band(rect, rect.y, height_a, &mut band_a);
-        self.begin_window(rect)?;
+        self.begin_window(rect);
         let mut y = rect.y + height_a;
 
         loop {
@@ -147,8 +252,8 @@ impl Panel {
                     0
                 };
                 match first {
-                    core::task::Poll::Ready(result) => result?,
-                    core::task::Poll::Pending => block_on(transfer.as_mut())?,
+                    core::task::Poll::Ready(()) => {}
+                    core::task::Poll::Pending => block_on(transfer.as_mut()),
                 }
             }
             if !has_b {
@@ -171,8 +276,8 @@ impl Panel {
                     0
                 };
                 match first {
-                    core::task::Poll::Ready(result) => result?,
-                    core::task::Poll::Pending => block_on(transfer.as_mut())?,
+                    core::task::Poll::Ready(()) => {}
+                    core::task::Poll::Pending => block_on(transfer.as_mut()),
                 }
             }
             if !has_a {
@@ -182,7 +287,7 @@ impl Panel {
             y += height_a;
         }
 
-        self.end_window()
+        self.end_window();
     }
 }
 
@@ -198,10 +303,7 @@ impl rsk_ui::scene::FrameTarget for Panel {
         let mut rects = [rsk_ui::Rect::new(0, 0, 0, 0); rsk_ui::scene::DAMAGE_TILES];
         let len = scene.damage_rects(&self.tile_tags, previous_valid, &mut next_tags, &mut rects);
         for rect in &rects[..len] {
-            if self.present_rect(scene, *rect).is_err() {
-                let _ = self.end_window();
-                return false;
-            }
+            self.present_rect(scene, *rect);
         }
         self.tile_tags = next_tags;
         self.tags_valid = true;
@@ -211,10 +313,7 @@ impl rsk_ui::scene::FrameTarget for Panel {
     fn present_damage(&mut self, scene: &rsk_ui::scene::Scene, rects: &[rsk_ui::Rect]) -> bool {
         self.tags_valid = false;
         for rect in rects {
-            if self.present_rect(scene, *rect).is_err() {
-                let _ = self.end_window();
-                return false;
-            }
+            self.present_rect(scene, *rect);
         }
         true
     }
@@ -222,7 +321,7 @@ impl rsk_ui::scene::FrameTarget for Panel {
 
 impl DrawTarget for Panel {
     type Color = Rgb565;
-    type Error = SpiError;
+    type Error = Infallible;
 
     fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
         &mut self,
@@ -243,9 +342,9 @@ impl DrawTarget for Panel {
             }
             if used != 0 && (point.y != previous.y || point.x != previous.x + 1) {
                 let rect = rsk_ui::Rect::new(start.x as u16, start.y as u16, used as u16 / 2, 1);
-                self.begin_window(rect)?;
-                block_on(self.spi.write(&row[..used]))?;
-                self.end_window()?;
+                self.begin_window(rect);
+                block_on(self.spi.write(&row[..used]));
+                self.end_window();
                 used = 0;
             }
             if used == 0 {
@@ -259,9 +358,9 @@ impl DrawTarget for Panel {
         }
         if used != 0 {
             let rect = rsk_ui::Rect::new(start.x as u16, start.y as u16, used as u16 / 2, 1);
-            self.begin_window(rect)?;
-            block_on(self.spi.write(&row[..used]))?;
-            self.end_window()?;
+            self.begin_window(rect);
+            block_on(self.spi.write(&row[..used]));
+            self.end_window();
         }
         Ok(())
     }
@@ -323,10 +422,11 @@ impl DrawTarget for Panel {
         if len_a == 0 {
             return Ok(());
         }
-        self.begin_window(rect)?;
+        self.begin_window(rect);
         if first_done {
-            block_on(self.spi.write(&chunk_a[..len_a]))?;
-            return self.end_window();
+            block_on(self.spi.write(&chunk_a[..len_a]));
+            self.end_window();
+            return Ok(());
         }
         let mut chunk_b = [0; DIRECT_CHUNK_BYTES];
         loop {
@@ -337,15 +437,15 @@ impl DrawTarget for Panel {
                 let first = poll_once(transfer.as_mut());
                 (len_b, done_b) = fill(&mut chunk_b);
                 match first {
-                    core::task::Poll::Ready(result) => result?,
-                    core::task::Poll::Pending => block_on(transfer.as_mut())?,
+                    core::task::Poll::Ready(()) => {}
+                    core::task::Poll::Pending => block_on(transfer.as_mut()),
                 }
             }
             if len_b == 0 {
                 break;
             }
             if done_b {
-                block_on(self.spi.write(&chunk_b[..len_b]))?;
+                block_on(self.spi.write(&chunk_b[..len_b]));
                 break;
             }
 
@@ -356,20 +456,21 @@ impl DrawTarget for Panel {
                 let first = poll_once(transfer.as_mut());
                 (next_len_a, done_a) = fill(&mut chunk_a);
                 match first {
-                    core::task::Poll::Ready(result) => result?,
-                    core::task::Poll::Pending => block_on(transfer.as_mut())?,
+                    core::task::Poll::Ready(()) => {}
+                    core::task::Poll::Pending => block_on(transfer.as_mut()),
                 }
             }
             if next_len_a == 0 {
                 break;
             }
             if done_a {
-                block_on(self.spi.write(&chunk_a[..next_len_a]))?;
+                block_on(self.spi.write(&chunk_a[..next_len_a]));
                 break;
             }
             len_a = next_len_a;
         }
-        self.end_window()
+        self.end_window();
+        Ok(())
     }
 
     fn fill_solid(&mut self, area: &Rectangle, color: Rgb565) -> Result<(), Self::Error> {
@@ -396,13 +497,14 @@ impl DrawTarget for Panel {
         for pixel in chunk.as_chunks_mut::<2>().0 {
             pixel.copy_from_slice(&bytes);
         }
-        self.begin_window(rect)?;
+        self.begin_window(rect);
         let mut remaining = usize::from(rect.w) * usize::from(rect.h) * 2;
         while remaining != 0 {
             let len = remaining.min(chunk.len());
-            block_on(self.spi.write(&chunk[..len]))?;
+            block_on(self.spi.write(&chunk[..len]));
             remaining -= len;
         }
-        self.end_window()
+        self.end_window();
+        Ok(())
     }
 }

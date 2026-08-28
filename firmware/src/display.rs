@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! This board's trusted display: the Waveshare RP2350-Touch-LCD-2.8 (ST7789 over
-//! SPI1, CST328 touch over I2C1), plus the board verbs the flow asks for.
+//! PIO serial output, CST328 touch over I2C1), plus the board verbs the flow asks for.
 //!
 //! The flow itself — which screen is shown when, the PIN pad, the Approve/Deny
 //! wait — is [`rsk_display`], where a host can run it against a window. What is
@@ -14,9 +14,8 @@ use core::cell::RefCell;
 
 use embassy_rp::gpio::{Input, Output};
 use embassy_rp::i2c::{Blocking as I2cBlocking, I2c};
-use embassy_rp::peripherals::{I2C1, SPI1};
+use embassy_rp::peripherals::I2C1;
 use embassy_rp::pwm::{Config as PwmConfig, Pwm};
-use embassy_rp::spi::{Async as SpiAsync, Spi};
 use embassy_time::{Duration, Instant, block_for};
 use mipidsi::options::{ColorInversion, ColorOrder};
 
@@ -32,6 +31,7 @@ use crate::handler::{FidoRng, Store};
 #[path = "display_panel.rs"]
 mod display_panel;
 use display_panel::Panel;
+pub(crate) use display_panel::PioDisplayTx;
 
 pub use rsk_display::{DeviceInfo, DeviceKeys, UI_YIELD_FLOOR_MS, piv_ref_title};
 
@@ -47,7 +47,7 @@ pub type TouchPresence =
 /// The panel's SPI bus + control pins, bundled so `main` stays
 /// within embassy's argument cap when it hands the peripherals over.
 pub struct PanelHw {
-    pub spi: Spi<'static, SPI1, SpiAsync>,
+    pub spi: PioDisplayTx,
     pub cs: Output<'static>,
     pub dc: Output<'static>,
     pub rst: Output<'static>,

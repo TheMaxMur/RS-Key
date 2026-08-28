@@ -118,7 +118,7 @@ build that collides `LED_POWER_PIN` or `USR_LED_PIN` with the LED data pin or a 
 `PRESENCE_PIN` (and refuse `USR_LED_PIN` outright on a display build, whose panel
 owns those pads), rejects a `WAKE_PIN` in the LCD/touch range (`10..=18`),
 **and rejects any of CS/DC/RST/TP_RST/BL colliding with each other, with the
-hard-wired SPI1 (PIN_10/11/12) or I2C1 (PIN_6/7) lines, an enabled `WAKE_PIN`,
+hard-wired PIO serial output (PIN_10/11) or I2C1 (PIN_6/7) lines, an enabled `WAKE_PIN`,
 or `LED_PIN`/`LED_POWER_PIN` when their LED driver is built** — a collision
 silently drives one pad from two owners at runtime, so it is checked at build time.
 

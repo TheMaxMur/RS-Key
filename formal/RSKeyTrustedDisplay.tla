@@ -67,7 +67,7 @@ CONSTANTS
     BugPreScreenTouchApproves,
     \* The Allow/Deny separation taken out: `hit_confirm` maps a tap to the
     \* button whose disjoint rectangle contains it, a stray touch above the
-    \* band to None (crates/rsk-ui/src/lib.rs:251-259), and every other exit --
+    \* band to None (crates/rsk-ui/src/lib.rs:252-260), and every other exit --
     \* Deny, the power button mid-ceremony, timeout, CTAPHID cancel -- ends the
     \* ceremony as Cancelled, "no signature is ever produced without the
     \* deliberate on-screen hold" (crates/rsk-display/src/presence.rs:120-124).
