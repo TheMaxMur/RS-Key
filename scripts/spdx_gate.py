@@ -19,7 +19,7 @@ buried under code that a reader scanning the top would never see.
 
 By extension, and the set is the one the tree is *already* at 100 % on — measured
 per extension, not chosen: `.rs` 436/436, `.py` 113/113, `.sh` 15/15, `.nix` 8/8,
-`.svg` 18/18, and one each of `.x`, `.tla`, `.js`, `.html`. `.c`/`.h`/`.S` join
+`.svg` 18/18, and one each of `.x`, `.tla`, `.js`, `.mjs`, `.html`. `.c`/`.h`/`.S` join
 them because the only ones in the tree are vendored and exempt below, so a
 *new* hand-written one is checked from the day it lands.
 
@@ -76,7 +76,7 @@ WINDOW = 3
 #: three exceptions are listed by name below rather than excusing the extension.
 #: Growing this set means stamping the files that do not — a bulk edit,
 #: deliberately not this guard's to make on its own.
-CHECKED = frozenset({".rs", ".py", ".sh", ".nix", ".svg", ".x", ".tla", ".js", ".html",
+CHECKED = frozenset({".rs", ".py", ".sh", ".nix", ".svg", ".x", ".tla", ".js", ".mjs", ".html",
                      ".c", ".h", ".S", ".yml"})
 
 #: Below this the guard is green over nothing. It has no roster to go empty, but

@@ -92,6 +92,11 @@ def test_a_python_file_with_no_header(tree):
     assert only(tree.problems(), "scripts/other.py has no")
 
 
+def test_an_mjs_file_with_no_header(tree):
+    tree.write(".github/scripts/publisher.mjs", "export const value = 1;\n")
+    assert only(tree.problems(), ".github/scripts/publisher.mjs has no")
+
+
 def test_a_header_below_the_window(tree):
     """Buried under code, where nobody scanning the top would ever see it."""
     tree.write(
