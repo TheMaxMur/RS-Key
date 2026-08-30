@@ -70,6 +70,38 @@ test("a fork pull request is resolved from the run head commit", async () => {
   }]);
 });
 
+test("a fork pull request is resolved from its head when the commit lookup is empty", async () => {
+  process.env.GITHUB_TOKEN = "test-token";
+  const sha = "c".repeat(40);
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(String(url));
+    if (String(url).includes(`/commits/${sha}/pulls`)) return Response.json([]);
+    assert.match(String(url), /pulls\?state=all&head=contributor%3Afeature%2Fpreview/);
+    return Response.json([{
+      number: 99,
+      title: "Fork firmware change",
+      html_url: "https://github.com/TheMaxMur/RS-Key/pull/99",
+      head: { sha },
+      base: { ref: "main" },
+    }]);
+  };
+
+  const pullRequests = await relatedPullRequests("TheMaxMur/RS-Key", {
+    head_sha: sha,
+    head_branch: "feature/preview",
+    head_repository: { full_name: "contributor/RS-Key" },
+    pull_requests: [],
+  });
+  assert.deepEqual(pullRequests, [{
+    number: 99,
+    title: "Fork firmware change",
+    url: "https://github.com/TheMaxMur/RS-Key/pull/99",
+    baseBranch: "main",
+  }]);
+  assert.equal(calls.length, 2);
+});
+
 test("an existing marker makes the PR comment idempotent", async () => {
   process.env.GITHUB_TOKEN = "test-token";
   process.env.PREVIEW_PAGE_URL = "https://rskey.fob.wtf/preview";
