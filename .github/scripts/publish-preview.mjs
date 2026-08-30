@@ -86,6 +86,12 @@ export async function relatedPullRequests(repository, workflowRun) {
       associated.push(await github(`/repos/${repository}/pulls/${reference.number}`));
     }
   }
+  const sourceRepository = workflowRun.head_repository?.full_name;
+  if (associated.length === 0 && sourceRepository && workflowRun.head_branch) {
+    const [owner] = sourceRepository.split("/");
+    const head = encodeURIComponent(`${owner}:${workflowRun.head_branch}`);
+    associated.push(...await pagedGithub(`/repos/${repository}/pulls?state=all&head=${head}`));
+  }
   return associated
     .filter((pullRequest) => pullRequest.head?.sha === workflowRun.head_sha)
     .map((pullRequest) => ({
