@@ -158,10 +158,12 @@ test("the publisher requests an audience-scoped GitHub OIDC token", async () => 
   );
 });
 
-test("the preview workflow grants OIDC and has no upload secret", async () => {
+test("the preview workflow grants OIDC and PR comment access with no upload secret", async () => {
   const workflow = await readFile(new URL("../workflows/preview-publish.yml", import.meta.url), "utf8");
   const publisher = await readFile(new URL("publish-preview.mjs", import.meta.url), "utf8");
   assert.match(workflow, /id-token:\s*write/);
+  assert.match(workflow, /pull-requests:\s*write/);
+  assert.doesNotMatch(workflow, /issues:\s*write/);
   assert.doesNotMatch(workflow, /RS_KEY_FLASHER_UPLOAD_TOKEN/);
   assert.doesNotMatch(publisher, /RS_KEY_FLASHER_UPLOAD_TOKEN/);
 });
