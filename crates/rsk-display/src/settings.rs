@@ -75,7 +75,7 @@ fn settings_sleep(p: rsk_ui::Point, dirty: &mut bool) -> Nav {
 
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
@@ -108,7 +108,7 @@ where
             backup_sealed,
             scramble_pin: self.scramble_pin,
         };
-        let _ = rsk_ui::render(&mut self.panel, &Screen::Settings(view));
+        let _ = rsk_ui::render(&mut self.frame(), &Screen::Settings(view));
         self.shown = None;
     }
 

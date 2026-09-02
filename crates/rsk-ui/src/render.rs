@@ -49,22 +49,23 @@ mod reset;
 mod settings;
 
 pub use applets::{
-    render_apps, render_oath, render_oath_cred, render_openpgp, render_openpgp_cardholder,
-    render_openpgp_key, render_piv, render_piv_extra, render_piv_keygen_confirm,
-    render_piv_keygen_pick, render_piv_keygen_rsa_pick, render_piv_keygen_working,
-    render_piv_pin_menu, render_piv_protect_confirm, render_piv_slot,
+    render_apps, render_oath, render_oath_cred, render_oath_page, render_openpgp,
+    render_openpgp_cardholder, render_openpgp_key, render_piv, render_piv_extra,
+    render_piv_extra_page, render_piv_keygen_confirm, render_piv_keygen_pick,
+    render_piv_keygen_rsa_pick, render_piv_keygen_working, render_piv_pin_menu,
+    render_piv_protect_confirm, render_piv_slot,
 };
-pub use audit::render_audit_log;
+pub use audit::{render_audit_log, render_audit_page};
 pub use backup::{
     SEED_WORDS_PER_PAGE, render_backup, render_backup_format, render_reveal_warning,
     render_seal_confirm, render_seed_phrase, render_share_picker, render_slip39_share,
 };
 pub use boot::render_locked_breathe;
 pub use ceremony::render_add_passkey;
-pub use home::{STATUS_ARC_START, render_status_arc};
+pub use home::{STATUS_ARC_START, render_home_change, render_status_arc};
 pub use passkeys::{
-    render_confirm_delete, render_passkeys_list, render_rename, render_rename_field,
-    render_rename_keys, render_service,
+    render_confirm_delete, render_passkeys_list, render_passkeys_page, render_rename,
+    render_rename_field, render_rename_keys, render_service, render_service_page,
 };
 pub use pin::{PIN_TITLE_BAND, pin_title_overflows, render_pin_dots, render_pin_title};
 pub use reset::{
@@ -78,6 +79,13 @@ use ceremony::confirm;
 use home::home;
 use pin::pin;
 use settings::settings;
+
+/// The page body between the fixed title chrome and bottom navigation. Paged tab
+/// screens can replace this region without rebuilding their unchanged chrome.
+pub const PAGED_BODY_RECT: Rect = Rect::new(0, CONTENT_TOP, PANEL_W, NAV_TOP - CONTENT_TOP);
+
+/// The page body below fixed title chrome on a pushed screen without bottom navigation.
+pub const PUSHED_BODY_RECT: Rect = Rect::new(0, CONTENT_TOP, PANEL_W, PANEL_H - CONTENT_TOP);
 
 // Local semantic aliases, all sourced from `theme` so the whole renderer speaks one
 // palette (these equal their tokens — re-sourcing is hygiene, not a visual change).
@@ -118,6 +126,17 @@ where
         Screen::Pin(pad) => pin(target, pad),
         Screen::Settings(view) => settings(target, view),
     }
+}
+
+/// Restore a component region to the page background before it is recomposed.
+/// The bounds belong to the typed component renderer that calls this function.
+fn clear_region<D: DrawTarget<Color = Rgb565>>(t: &mut D, rect: Rect) -> Result<(), D::Error> {
+    Rectangle::new(
+        EgPoint::new(rect.x as i32, rect.y as i32),
+        Size::new(rect.w as u32, rect.h as u32),
+    )
+    .into_styled(PrimitiveStyle::with_fill(BG))
+    .draw(t)
 }
 
 /// A right-aligned `"<n> <unit>"` footer just above the nav bar (the list / detail
@@ -973,15 +992,16 @@ pub fn render_hold_fill<D: DrawTarget<Color = Rgb565>>(
                 None,
                 BG,
             )?;
+            hold_label(
+                &mut clipped,
+                rect,
+                label,
+                hold_overlay(fill),
+                fill,
+                rect.x as i32 + w as i32,
+            )?;
         }
-        return hold_label(
-            t,
-            rect,
-            label,
-            hold_overlay(fill),
-            fill,
-            rect.x as i32 + w as i32,
-        );
+        return Ok(());
     }
     hold_label(t, rect, label, fill, fill, rect.x as i32)
 }

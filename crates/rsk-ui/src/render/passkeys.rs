@@ -24,6 +24,47 @@ where
     t.clear(BG)?;
     status_bar(t)?;
     title_bar(t, "Passkeys", theme::ACCENT, false)?;
+    passkeys_body(t, rows, page, total)?;
+    render_nav(t, NavTab::Passkeys)
+}
+
+/// Replace a Passkeys page body while its typed screen identity, title, and active
+/// navigation tab stay unchanged. The complete body is restored before composition.
+pub fn render_passkeys_page<D>(
+    t: &mut D,
+    previous_rows: &[RpRow],
+    previous_page: u16,
+    previous_total: u16,
+    rows: &[RpRow],
+    page: u16,
+    total: u16,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    if previous_rows == rows && previous_page == page && previous_total == total {
+        return Ok(());
+    }
+    if !rows.is_empty() && previous_rows.len() == rows.len() {
+        for (index, row) in rows.iter().enumerate() {
+            if previous_rows[index] != *row {
+                repaint_passkey_row(t, rows.len() as u16, index as u16, row)?;
+            }
+        }
+        if previous_page != page || previous_total != total {
+            clear_list_tail(t)?;
+            list_tail(t, page, total, "item", "items")?;
+        }
+        return Ok(());
+    }
+    clear_region(t, PAGED_BODY_RECT)?;
+    passkeys_body(t, rows, page, total)
+}
+
+fn passkeys_body<D>(t: &mut D, rows: &[RpRow], page: u16, total: u16) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
     if rows.is_empty() {
         glyph::draw(
             t,
@@ -43,37 +84,60 @@ where
     } else {
         components::list::group_card(t, PK_LIST_TOP, rows.len() as u16)?;
         for (i, r) in rows.iter().enumerate() {
-            let mut buf = [0u8; 5];
-            let trailing = if r.accounts > 1 {
-                Some((fmt_u16(r.accounts as u16, &mut buf), MUTED))
-            } else {
-                None
-            };
-            let name = r.shown();
-            components::list::row(
-                t,
-                PK_LIST_TOP,
-                i as u16,
-                service_glyph(name),
-                name,
-                trailing,
-                true,
-                true,
-                r.nick.is_empty(),
-                // An rpId already clipped to LABEL_MAX must still show its marker
-                // here, not just on the ceremony card — this list is where the owner
-                // audits what is stored, so a padded look-alike must not read as
-                // whole (audit run-33).
-                if r.nick.is_empty() {
-                    r.id.truncated
-                } else {
-                    r.nick.truncated
-                },
-            )?;
+            passkey_row(t, i as u16, r)?;
         }
         list_tail(t, page, total, "item", "items")?;
     }
-    render_nav(t, NavTab::Passkeys)
+    Ok(())
+}
+
+fn passkey_row<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    index: u16,
+    row: &RpRow,
+) -> Result<(), D::Error> {
+    let mut buf = [0u8; 5];
+    let trailing = if row.accounts > 1 {
+        Some((fmt_u16(row.accounts as u16, &mut buf), MUTED))
+    } else {
+        None
+    };
+    let name = row.shown();
+    // A source already clipped to LABEL_MAX must still show its marker here. This
+    // owner-audit list must not present an attacker-padded rpId as complete.
+    components::list::row(
+        t,
+        PK_LIST_TOP,
+        index,
+        service_glyph(name),
+        name,
+        trailing,
+        true,
+        true,
+        row.nick.is_empty(),
+        if row.nick.is_empty() {
+            row.id.truncated
+        } else {
+            row.nick.truncated
+        },
+    )
+}
+
+fn repaint_passkey_row<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    count: u16,
+    index: u16,
+    row: &RpRow,
+) -> Result<(), D::Error> {
+    let bounds = crate::row_rect(PK_LIST_TOP, index);
+    let mut clipped = t.clipped(&eg_rect(bounds));
+    components::list::group_card(&mut clipped, PK_LIST_TOP, count)?;
+    passkey_row(&mut clipped, index, row)
+}
+
+fn clear_list_tail<D: DrawTarget<Color = Rgb565>>(t: &mut D) -> Result<(), D::Error> {
+    let y = crate::row_rect(PK_LIST_TOP, crate::PK_ROWS_MAX as u16).y;
+    clear_region(t, Rect::new(0, y, PANEL_W, NAV_TOP - y))
 }
 
 /// The per-RP service detail: a back-chevron header + the (truncated) shown name (the
@@ -114,28 +178,93 @@ where
         theme::ACCENT,
         BG,
     )?;
+    service_body(t, accounts, page, total)?;
+    render_nav(t, NavTab::Passkeys)
+}
+
+/// Replace only a service detail's paged account body. The caller must use this
+/// only while the typed relying-party title and its edit/back chrome are unchanged.
+pub fn render_service_page<D>(
+    t: &mut D,
+    previous_accounts: &[AccountRow],
+    previous_page: u16,
+    previous_total: u16,
+    accounts: &[AccountRow],
+    page: u16,
+    total: u16,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    if previous_accounts == accounts && previous_page == page && previous_total == total {
+        return Ok(());
+    }
+    if !accounts.is_empty() && previous_accounts.len() == accounts.len() {
+        for (index, account) in accounts.iter().enumerate() {
+            if previous_accounts[index] != *account {
+                repaint_account_row(t, accounts.len() as u16, index as u16, account)?;
+            }
+        }
+        if previous_page != page || previous_total != total {
+            clear_list_tail(t)?;
+            list_tail(t, page, total, "account", "accounts")?;
+        }
+        return Ok(());
+    }
+    clear_region(t, PAGED_BODY_RECT)?;
+    service_body(t, accounts, page, total)
+}
+
+fn service_body<D>(
+    t: &mut D,
+    accounts: &[AccountRow],
+    page: u16,
+    total: u16,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
     components::list::group_card(t, PK_LIST_TOP, accounts.len() as u16)?;
     for (i, a) in accounts.iter().enumerate() {
-        let trailing = if a.protected {
-            Some(("UV", theme::ACCENT))
-        } else {
-            None
-        };
-        components::list::row(
-            t,
-            PK_LIST_TOP,
-            i as u16,
-            Glyph::Key,
-            a.name.as_str(),
-            trailing,
-            false,
-            true,
-            false,
-            a.name.truncated,
-        )?;
+        account_row(t, i as u16, a)?;
     }
-    list_tail(t, page, total, "account", "accounts")?;
-    render_nav(t, NavTab::Passkeys)
+    list_tail(t, page, total, "account", "accounts")
+}
+
+fn account_row<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    index: u16,
+    account: &AccountRow,
+) -> Result<(), D::Error> {
+    let trailing = if account.protected {
+        Some(("UV", theme::ACCENT))
+    } else {
+        None
+    };
+    components::list::row(
+        t,
+        PK_LIST_TOP,
+        index,
+        Glyph::Key,
+        account.name.as_str(),
+        trailing,
+        false,
+        true,
+        false,
+        account.name.truncated,
+    )
+}
+
+fn repaint_account_row<D: DrawTarget<Color = Rgb565>>(
+    t: &mut D,
+    count: u16,
+    index: u16,
+    account: &AccountRow,
+) -> Result<(), D::Error> {
+    let bounds = crate::row_rect(PK_LIST_TOP, index);
+    let mut clipped = t.clipped(&eg_rect(bounds));
+    components::list::group_card(&mut clipped, PK_LIST_TOP, count)?;
+    account_row(&mut clipped, index, account)
 }
 
 /// The rename screen: a T9 phone-style keypad for editing a device-local nickname.

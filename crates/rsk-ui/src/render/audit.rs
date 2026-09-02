@@ -28,6 +28,34 @@ where
     t.clear(BG)?;
     status_bar(t)?;
     title_bar(t, "Audit log", theme::ACCENT, true)?;
+    audit_body_list(t, rows, page, total, logging)
+}
+
+/// Replace the typed audit-log page body while its status and title chrome stay fixed.
+pub fn render_audit_page<D>(
+    t: &mut D,
+    rows: &[AuditRow],
+    page: u16,
+    total: u16,
+    logging: bool,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    clear_region(t, PUSHED_BODY_RECT)?;
+    audit_body_list(t, rows, page, total, logging)
+}
+
+fn audit_body_list<D>(
+    t: &mut D,
+    rows: &[AuditRow],
+    page: u16,
+    total: u16,
+    logging: bool,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
     if rows.is_empty() {
         // "No activity yet" is a claim about the world, and journalling is off by
         // default — so only make it when the device was actually watching. An owner

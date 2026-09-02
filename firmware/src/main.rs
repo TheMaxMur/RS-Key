@@ -25,7 +25,7 @@ use embassy_rp::pio::InterruptHandler as PioIrq;
 // from the phy record (PicoForge); a `none` build pulls in none of them. DMA_CH0
 // and the PIO0/DMA IRQs stay bound unconditionally (the type is used by
 // `bind_interrupts!` below — harmless when no backend uses it).
-#[cfg(not(led_kind = "none"))]
+#[cfg(any(feature = "display", not(led_kind = "none")))]
 use embassy_rp::pio::Pio;
 #[cfg(not(led_kind = "none"))]
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
@@ -238,8 +238,8 @@ pub(crate) const BUILD_DISPLAY_INVERT_COLORS: bool = env_u16(env!("PK_DISPLAY_IN
 pub(crate) const BUILD_DISPLAY_COLOR_ORDER: u8 = env_u16(env!("PK_DISPLAY_COLOR_ORDER")) as u8;
 
 // Display control GPIOs are board-configurable and claimed via AnyPin::steal
-// (CS/DC/RST/TP_RST) or Pwm::new_output_* (BL); SPI1 10/11/12 + I2C1 6/7 stay in
-// Peripherals. Reject a pad owned by two drivers at compile time (no runtime guard).
+// (CS/DC/RST/TP_RST) or Pwm::new_output_* (BL); PIO owns 10/11 and I2C1 owns 6/7.
+// Reject a pad owned by two drivers at compile time (no runtime guard).
 #[cfg(feature = "display")]
 const _: () = {
     const DISPLAY_CTLS: &[u8] = &[
@@ -249,8 +249,8 @@ const _: () = {
         BUILD_DISPLAY_TP_RST,
         BUILD_DISPLAY_BL_PIN,
     ];
-    // Pins the panel's hard-wired SPI1 (10/11/12) and I2C1 (6/7) already own.
-    const HW_PINS: &[u8] = &[10, 11, 12, 6, 7];
+    // Pins the panel's hard-wired PIO serial link (10/11) and I2C1 (6/7) own.
+    const HW_PINS: &[u8] = &[10, 11, 6, 7];
 
     const fn contains(hay: &[u8], needle: u8) -> bool {
         let mut i = 0;
@@ -277,7 +277,7 @@ const _: () = {
     while i < DISPLAY_CTLS.len() {
         assert!(
             !contains(HW_PINS, DISPLAY_CTLS[i]),
-            "panel control GPIO overlaps hard-wired SPI1/I2C1 pin 6/7/10/11/12"
+            "panel control GPIO overlaps hard-wired PIO/I2C1 pin 6/7/10/11"
         );
         i += 1;
     }
@@ -430,12 +430,6 @@ static PHY_PRODUCT: StaticCell<[u8; 64]> = StaticCell::new();
 // Holds a phy-provided iManufacturer string (`0x0F`) for the device's lifetime so
 // the descriptor's `&'static str` outlives the embassy Builder. 32-byte phy cap.
 static PHY_MANUFACTURER: StaticCell<[u8; 64]> = StaticCell::new();
-// The mipidsi SPI pixel-batch buffer for the `display` build: bigger = fewer SPI
-// transactions per fill. 4 KiB ≈ 8 full panel rows per chunk.
-#[cfg(feature = "display")]
-const DISPLAY_BUF_LEN: usize = 4096;
-#[cfg(feature = "display")]
-static DISPLAY_BUF: StaticCell<[u8; DISPLAY_BUF_LEN]> = StaticCell::new();
 /// The trusted-display panel + touch, shared by `status_task` (ambient status) and
 /// the `TouchPresence` backend (the confirm prompt). Both run on the THREAD executor;
 /// `TouchPresence::request` is synchronous, so they never race. Same RefCell
@@ -514,6 +508,12 @@ async fn main(spawner: Spawner) {
     arm_stack_limit();
 
     let mut config = embassy_rp::config::Config::default();
+    #[cfg(feature = "display")]
+    {
+        // The display PIO emits one SPI bit per two system-clock cycles.
+        config.clocks = embassy_rp::clocks::ClockConfig::system_freq(160_000_000)
+            .expect("160 MHz display clock must have valid PLL parameters");
+    }
     if let Some(xosc) = config.clocks.xosc.as_mut() {
         xosc.delay_multiplier = XOSC_DELAY_MULT;
     }
@@ -694,7 +694,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0986;
+    let device_release: u16 = 0x0989;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1005,7 +1005,7 @@ async fn main(spawner: Spawner) {
     }
 
     // Trusted display (the `display` build — always `LED_KIND=none` per the guard
-    // above, so the LED block compiled out and SPI1/I2C1/GPIO16 are free). Build the
+    // above, so the LED block compiled out and PIO0/I2C1/GPIO16 are free). Build the
     // panel + touch here, after the USB task is spawned, so its ~200 ms reset runs
     // while the interrupt executor enumerates — never delaying it. `status_task`
     // mirrors the device status; the `TouchPresence` backend (the `presence::Presence`
@@ -1016,14 +1016,19 @@ async fn main(spawner: Spawner) {
         use embassy_rp::gpio::{Level, Output};
         use embassy_rp::i2c::{Config as I2cConfig, I2c};
         use embassy_rp::pwm::Pwm;
-        use embassy_rp::spi::{Config as SpiConfig, Spi};
 
-        let mut spi_cfg = SpiConfig::default();
-        // The ST7789 tops out at 62.5 MHz; running there (vs the 40 MHz bringup value)
-        // cuts a full-frame repaint ~35% for snappier screen transitions. If the panel's
-        // flex cable ever shows tearing/garbling, drop back toward 40 MHz.
-        spi_cfg.frequency = BUILD_DISPLAY_SPI_FREQ_HZ;
-        let spi = Spi::new_blocking(p.SPI1, p.PIN_10, p.PIN_11, p.PIN_12, spi_cfg);
+        let Pio {
+            mut common, sm0, ..
+        } = Pio::new(p.PIO0, Irqs);
+        let spi = display::PioDisplayTx::new(
+            &mut common,
+            sm0,
+            p.PIN_10,
+            p.PIN_11,
+            p.DMA_CH0,
+            Irqs,
+            BUILD_DISPLAY_SPI_FREQ_HZ,
+        );
 
         let mut i2c_cfg = I2cConfig::default();
         i2c_cfg.frequency = BUILD_DISPLAY_I2C_FREQ_HZ;
@@ -1089,14 +1094,12 @@ async fn main(spawner: Spawner) {
             Level::High,
         );
 
-        let buf = DISPLAY_BUF.init([0u8; DISPLAY_BUF_LEN]);
         let panel = display::PanelHw {
             spi,
             cs,
             dc,
             rst,
             bl,
-            buf,
         };
         let touch = display::TouchHw { i2c, rst: tp_rst };
         let info = display::DeviceInfo {

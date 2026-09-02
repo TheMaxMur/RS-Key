@@ -24,3 +24,4 @@ kani-soft = []
 # lives here, host-tested against a recording target — exactly like `rsk-led`'s
 # codec. The firmware's `display.rs` only supplies the real ST7789 draw target.
 embedded-graphics = { workspace = true }
+siphasher = { workspace = true }

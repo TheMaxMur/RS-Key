@@ -38,6 +38,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Changed
+
+- **Trusted-display page changes now use a retained, framebuffer-less DMA
+  compositor.** One scene build records the laid-out frame. Per-boot keyed
+  128-bit tags keep unchanged 32×32 visual-state tiles on the panel. Typed UI
+  components also produce exact damage rectangles before they are composed. The
+  ST7789 receives one continuous RAM write per rectangle from two alternating
+  8-row RGB565 buffers while the CPU composes the next band. A TX-only PIO link
+  runs at 80 MHz, reducing full-frame wire time to 15.36 ms. Static raster rows
+  in flash avoid regenerating common page backgrounds.
+  Text now lays out glyphs once and rasterizes coverage by row through RGB565
+  lookup tables; fixed antialiasing masks and speed-optimized display crates
+  remove the other repeated pixel math. The spinner's 15 exact phases use a
+  flash lookup table. RLE checkpoints and a vertical command index skip work
+  from earlier bands. Narrow rectangles use the full fixed DMA buffer, semantic
+  damage skips unused tile hashing, and hold progress paints only its new strip.
+  The DMA buffers use the active stack, not permanent RAM, and the gate checks
+  the display build's stack reserve. A scene overflow or display transfer error
+  now stops input instead of leaving an active prompt with incomplete pixels.
+
 ## [0.4.11] - 2026-08-24
 
 The catch-up release, and the one where the instruments were audited harder than

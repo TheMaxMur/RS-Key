@@ -61,13 +61,13 @@ CONSTANTS
     \* (crates/rsk-display/src/power.rs:55-65 -- a contact predating this
     \* screen stays disarmed) and the
     \* ceremony's own `wait_release_ceremony` at card entry
-    \* (crates/rsk-display/src/presence.rs:190 -- "a finger already down
+    \* (crates/rsk-display/src/presence.rs:198 -- "a finger already down
     \* approves the card in the same frame it is painted, too fast to read").
     \* The switch removes the edge.
     BugPreScreenTouchApproves,
     \* The Allow/Deny separation taken out: `hit_confirm` maps a tap to the
     \* button whose disjoint rectangle contains it, a stray touch above the
-    \* band to None (crates/rsk-ui/src/lib.rs:248-256), and every other exit --
+    \* band to None (crates/rsk-ui/src/lib.rs:252-260), and every other exit --
     \* Deny, the power button mid-ceremony, timeout, CTAPHID cancel -- ends the
     \* ceremony as Cancelled, "no signature is ever produced without the
     \* deliberate on-screen hold" (crates/rsk-display/src/presence.rs:120-124).

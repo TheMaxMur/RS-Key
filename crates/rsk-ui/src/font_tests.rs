@@ -227,6 +227,45 @@ fn contiguous_text_matches_the_sparse_renderer() {
     }
 }
 
+#[test]
+fn aligned_and_clipped_text_matches_the_sparse_renderer() {
+    let text = "Clipped )j&?!";
+    for role in [Role::Heading, Role::Body, Role::MonoSmall] {
+        let text_width = width(text, role).unwrap() as i32;
+        for (alignment, at) in [
+            (Alignment::Center, EgPoint::new(18, 40)),
+            (Alignment::Right, EgPoint::new(82, 40)),
+        ] {
+            let start_x = match alignment {
+                Alignment::Center => at.x - text_width / 2,
+                Alignment::Right => at.x - text_width,
+                Alignment::Left => unreachable!(),
+            };
+            let mut contiguous = Rec::new();
+            let mut sparse = Rec::new();
+            draw(
+                &mut contiguous,
+                text,
+                at,
+                role,
+                Rgb565::WHITE,
+                Background::Solid(Rgb565::BLACK),
+                alignment,
+            )
+            .unwrap();
+            sparse_left(
+                &mut sparse,
+                text,
+                EgPoint::new(start_x, at.y),
+                role,
+                Rgb565::WHITE,
+                Rgb565::BLACK,
+            );
+            assert_eq!(contiguous.pixels, sparse.pixels, "{role:?}");
+        }
+    }
+}
+
 struct Transactions {
     draw: usize,
     contiguous: usize,

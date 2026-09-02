@@ -413,8 +413,7 @@ pub fn serve_display<P, T>(
     rng: &'static RefCell<EmuRng>,
     parts: crate::display::PanelParts<P, T>,
 ) where
-    P: embedded_graphics::draw_target::DrawTarget<Color = embedded_graphics::pixelcolor::Rgb565>
-        + 'static,
+    P: rsk_ui::scene::FrameTarget + 'static,
     T: rsk_display::TouchPad + 'static,
 {
     // Read off the hooks, not passed in beside them: the panel and the worker must

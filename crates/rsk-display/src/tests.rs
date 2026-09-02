@@ -34,8 +34,14 @@ pub struct Panel {
     /// with a `clear`, so this counts screens painted — including the ones a modal
     /// paints and then forgets by clearing `shown`.
     pub frames: usize,
+    /// Pixels submitted by full or semantic component paints.
+    pub writes: usize,
     /// A pixel was addressed outside the panel.
     pub oob: bool,
+    /// Retained semantic presentation batches since construction.
+    pub damage_presentations: usize,
+    /// Exact panel windows used by retained semantic presentation.
+    pub damage_rects: Vec<rsk_ui::Rect>,
 }
 
 impl Panel {
@@ -43,7 +49,10 @@ impl Panel {
         Self {
             px: vec![Rgb565::BLACK; rsk_ui::PANEL_W as usize * rsk_ui::PANEL_H as usize],
             frames: 0,
+            writes: 0,
             oob: false,
+            damage_presentations: 0,
+            damage_rects: Vec::new(),
         }
     }
 }
@@ -66,6 +75,7 @@ impl DrawTarget for Panel {
         for Pixel(p, c) in pixels {
             if p.x >= 0 && p.y >= 0 && p.x < w && p.y < h {
                 self.px[p.y as usize * w as usize + p.x as usize] = c;
+                self.writes += 1;
             } else {
                 self.oob = true;
             }
@@ -77,6 +87,28 @@ impl DrawTarget for Panel {
         self.px.fill(color);
         self.frames += 1;
         Ok(())
+    }
+}
+
+impl rsk_ui::scene::FrameTarget for Panel {
+    fn damage_key(&self) -> rsk_ui::scene::DamageKey {
+        [0x0123_4567_89AB_CDEF, 0xFEDC_BA98_7654_3210]
+    }
+
+    fn present_scene(&mut self, scene: &rsk_ui::scene::Scene) -> bool {
+        self.frames += 1;
+        scene.replay(self).is_ok()
+    }
+
+    fn present_damage(&mut self, scene: &rsk_ui::scene::Scene, rects: &[rsk_ui::Rect]) -> bool {
+        self.damage_presentations += 1;
+        self.damage_rects.extend_from_slice(rects);
+        for rect in rects {
+            if scene.replay_rect(self, *rect).is_err() {
+                return false;
+            }
+        }
+        true
     }
 }
 

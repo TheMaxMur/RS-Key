@@ -111,7 +111,7 @@ impl T9 {
 
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
@@ -128,7 +128,7 @@ where
         let mut t9 = T9::new(current);
 
         // Initial full-frame paint.
-        let _ = rsk_ui::render_rename(&mut self.panel, t9.value().as_str(), t9.pending, t9.group);
+        let _ = rsk_ui::render_rename(&mut self.frame(), t9.value().as_str(), t9.pending, t9.group);
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
 
@@ -183,9 +183,15 @@ where
     /// the active group moved. Repainting the keys on every character would flicker
     /// the pad under the finger doing the typing.
     fn repaint_rename(&mut self, t9: &T9, painted_group: &mut Option<usize>) {
-        let _ = rsk_ui::render_rename_field(&mut self.panel, t9.value().as_str(), t9.pending);
+        assert!(
+            rsk_ui::render_rename_field(&mut self.panel, t9.value().as_str(), t9.pending).is_ok(),
+            "direct display presentation failed"
+        );
         if *painted_group != t9.group {
-            let _ = rsk_ui::render_rename_keys(&mut self.panel, t9.group);
+            assert!(
+                rsk_ui::render_rename_keys(&mut self.panel, t9.group).is_ok(),
+                "direct display presentation failed"
+            );
             *painted_group = t9.group;
         }
         self.shown = None;
@@ -215,16 +221,12 @@ where
         // A pure OTP read (no flash / no shared borrow) — true only on a fused, secure-boot
         // device, where the boot ROM actually verifies the image signature on next boot.
         let secure_boot = self.hooks.secure_boot_enabled();
-        let _ = rsk_ui::render_firmware(
-            &mut self.panel,
-            self.info.version,
-            self.info.chipid,
-            secure_boot,
-        );
+        let info = (self.info.version, self.info.chipid);
+        let _ = rsk_ui::render_firmware(&mut self.frame(), info.0, info.1, secure_boot);
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
         if self.hold_to_confirm("Verify & install", rsk_ui::theme::ACCENT_FILL) {
-            let _ = rsk_ui::render_rebooting(&mut self.panel);
+            let _ = rsk_ui::render_rebooting(&mut self.frame());
             self.hooks.request_reboot(true);
             return true;
         }
@@ -331,7 +333,7 @@ where
         self.wake();
         note_activity();
         let _ = rsk_ui::render(
-            &mut self.panel,
+            &mut self.frame(),
             &Screen::Pin(
                 PinPad::with_caption(entered, title, caption)
                     .expecting(expected)
@@ -397,7 +399,10 @@ where
                 };
                 if repaint && done.is_none() {
                     let shown = if reveal { Some(&out[..entered]) } else { None };
-                    let _ = rsk_ui::render_pin_dots(&mut self.panel, entered, expected, shown);
+                    assert!(
+                        rsk_ui::render_pin_dots(&mut self.panel, entered, expected, shown).is_ok(),
+                        "direct display presentation failed"
+                    );
                 }
                 self.touch.wait_release(start, timeout);
                 if let Some(o) = done {
@@ -408,7 +413,10 @@ where
             // keep the cleartext digits lit until the presence timeout).
             if reveal && last_input.elapsed() >= Duration::from_millis(REVEAL_MASK_MS) {
                 reveal = false;
-                let _ = rsk_ui::render_pin_dots(&mut self.panel, entered, expected, None);
+                assert!(
+                    rsk_ui::render_pin_dots(&mut self.panel, entered, expected, None).is_ok(),
+                    "direct display presentation failed"
+                );
             }
             if self.hooks.cancel_requested() {
                 break rsk_sdk::PinEntry::Cancelled;
@@ -454,7 +462,7 @@ where
     /// scope has its own persistent counter (the device PIN's `EF_DEVICE_PIN`, the FIDO
     /// clientPIN's `EF_PIN`); a host `authenticatorReset` clears both.
     pub(super) fn show_pin_blocked(&mut self) {
-        let _ = rsk_ui::render_pin_blocked(&mut self.panel);
+        let _ = rsk_ui::render_pin_blocked(&mut self.frame());
         self.hold_notice();
     }
 
@@ -462,7 +470,7 @@ where
     /// failed" instead of the success pop and do NOT reboot — coming up fresh is
     /// exactly what would make a half-erased device read as factory-clean.
     pub(super) fn show_wipe_failed(&mut self) {
-        let _ = rsk_ui::render_wipe_failed(&mut self.panel);
+        let _ = rsk_ui::render_wipe_failed(&mut self.frame());
         self.hold_notice();
     }
 
@@ -502,9 +510,12 @@ where
     /// the wipe pop, which is followed by a reboot).
     pub(super) fn show_success(&mut self, kind: SuccessKind, hold_ms: Option<u64>) {
         let wait_done = hold_ms.is_none();
-        let _ = rsk_ui::render_success(&mut self.panel, kind, wait_done);
+        let _ = rsk_ui::render_success(&mut self.frame(), kind, wait_done);
         for pct in [55u16, 85, 106, 100] {
-            let _ = rsk_ui::render_success_circle(&mut self.panel, kind, pct);
+            assert!(
+                rsk_ui::render_success_circle(&mut self.panel, kind, pct).is_ok(),
+                "direct display presentation failed"
+            );
             block_for(Duration::from_millis(70));
         }
         self.shown = None;
@@ -565,7 +576,7 @@ where
             return; // no PIN, wrong PIN, or declined — nothing removed
         }
         // The destructive-action screen: name the rp + account, then require the hold.
-        let _ = rsk_ui::render_confirm_delete(&mut self.panel, rp, account);
+        let _ = rsk_ui::render_confirm_delete(&mut self.frame(), rp, account);
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
 
@@ -608,14 +619,18 @@ where
                     on_hold = true;
                     let held = hold_start.get_or_insert_with(Instant::now).elapsed();
                     let num = held.as_millis().min(HOLD_MS) as u16;
-                    let _ = rsk_ui::render_hold_fill(
-                        &mut self.panel,
-                        rsk_ui::DEL_HOLD_RECT,
-                        label,
-                        last_num,
-                        num,
-                        HOLD_MS as u16,
-                        fill,
+                    assert!(
+                        rsk_ui::render_hold_fill(
+                            &mut self.panel,
+                            rsk_ui::DEL_HOLD_RECT,
+                            label,
+                            last_num,
+                            num,
+                            HOLD_MS as u16,
+                            fill,
+                        )
+                        .is_ok(),
+                        "direct display presentation failed"
                     );
                     last_num = num;
                     if held >= Duration::from_millis(HOLD_MS) {
@@ -625,8 +640,16 @@ where
             }
             // Finger lifted or slid off the button: reset a building hold.
             if !on_hold && hold_start.take().is_some() {
-                let _ =
-                    rsk_ui::render_hold_button(&mut self.panel, rsk_ui::DEL_HOLD_RECT, label, fill);
+                assert!(
+                    rsk_ui::render_hold_button(
+                        &mut self.panel,
+                        rsk_ui::DEL_HOLD_RECT,
+                        label,
+                        fill,
+                    )
+                    .is_ok(),
+                    "direct display presentation failed"
+                );
                 last_num = 0;
             }
             // A queued host command aborts the (uncommitted) confirm so the worker can
@@ -670,7 +693,7 @@ where
             return false; // no PIN set is fine; a wrong PIN or decline aborts — nothing erased
         }
         // The destructive-action screen, then a deliberate hold to commit.
-        let _ = rsk_ui::render_confirm_factory_reset(&mut self.panel);
+        let _ = rsk_ui::render_confirm_factory_reset(&mut self.frame());
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
 
@@ -678,7 +701,7 @@ where
             // The scrub blocks the panel for seconds, so paint the notice first, then
             // wipe everything but the attestation and reboot into a fresh device. The
             // reboot clears RAM and re-seeds at boot, so no rng/state is needed here.
-            let _ = rsk_ui::render_erasing(&mut self.panel);
+            let _ = rsk_ui::render_erasing(&mut self.frame());
             let wiped = self
                 .fs
                 .borrow_mut()
@@ -843,7 +866,7 @@ where
             let _ = rsk_piv::files::scan_files(&dev, &mut fs, &mut *rng);
         }
         loop {
-            let _ = rsk_ui::render_piv_pin_menu(&mut self.panel);
+            let _ = rsk_ui::render_piv_pin_menu(&mut self.frame());
             self.shown = None;
             self.touch.wait_release(Instant::now(), idle);
             let mut last = Instant::now();
@@ -1078,7 +1101,7 @@ where
         if !self.local_pin_gate(PinScope::Device) {
             return;
         }
-        let _ = rsk_ui::render_piv_protect_confirm(&mut self.panel);
+        let _ = rsk_ui::render_piv_protect_confirm(&mut self.frame());
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle);
         if !self.hold_to_confirm("Hold to protect", rsk_ui::theme::ACCENT_FILL) {

@@ -532,6 +532,28 @@ where
     t.clear(BG)?;
     status_bar(t)?;
     title_bar_wide(t, "OATH", theme::ACCENT, true)?;
+    oath_body(t, rows, page, total)?;
+    render_nav(t, NavTab::Apps)
+}
+
+/// Replace an OATH page body while the typed applet title and Apps navigation stay fixed.
+pub fn render_oath_page<D>(
+    t: &mut D,
+    rows: &[OathRow],
+    page: u16,
+    total: u16,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    clear_region(t, PAGED_BODY_RECT)?;
+    oath_body(t, rows, page, total)
+}
+
+fn oath_body<D>(t: &mut D, rows: &[OathRow], page: u16, total: u16) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
     if total == 0 {
         glyph::draw(
             t,
@@ -581,7 +603,7 @@ where
             )?;
         }
     }
-    render_nav(t, NavTab::Apps)
+    Ok(())
 }
 
 /// One OATH credential's detail (back-only, no nav): its type, HMAC algorithm, digit
@@ -723,6 +745,27 @@ where
     t.clear(BG)?;
     status_bar(t)?;
     title_bar_wide(t, "Retired & F9", theme::ACCENT, true)?;
+    piv_extra_body(t, rows, page, total)
+}
+
+/// Replace a Retired/F9 page body while its typed title and back affordance stay fixed.
+pub fn render_piv_extra_page<D>(
+    t: &mut D,
+    rows: &[PivExtraRow],
+    page: u16,
+    total: u16,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
+    clear_region(t, PUSHED_BODY_RECT)?;
+    piv_extra_body(t, rows, page, total)
+}
+
+fn piv_extra_body<D>(t: &mut D, rows: &[PivExtraRow], page: u16, total: u16) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+{
     if rows.is_empty() {
         return empty_slot(
             t,

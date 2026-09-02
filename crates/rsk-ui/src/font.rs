@@ -12,6 +12,9 @@ use embedded_graphics::{
 
 use crate::aa::blend_coverage;
 
+const MAX_PLACED_GLYPHS: usize = 128;
+const MAX_TEXT_ROW: usize = 320;
+
 /// A typographic role from the display design.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
@@ -104,22 +107,73 @@ enum Background {
     },
 }
 
-impl Background {
-    fn at(self, x: i32) -> Rgb565 {
-        match self {
-            Self::Solid(color) => color,
-            Self::Split {
-                left,
-                right,
-                split_x,
-            } => {
-                if x < split_x {
-                    left
-                } else {
-                    right
+#[derive(Clone, Copy)]
+struct PlacedGlyph {
+    glyph: Glyph,
+    x: i32,
+    y: i32,
+}
+
+struct TextRaster {
+    font: Font,
+    placed: [PlacedGlyph; MAX_PLACED_GLYPHS],
+    placed_len: usize,
+    left: i32,
+    top: i32,
+    width: usize,
+    height: usize,
+    x: usize,
+    y: usize,
+    alpha: [u8; MAX_TEXT_ROW],
+    background_left: [Rgb565; 16],
+    background_right: [Rgb565; 16],
+    split_x: i32,
+}
+
+impl TextRaster {
+    fn prepare_row(&mut self) {
+        self.alpha[..self.width].fill(0);
+        let screen_y = self.top + self.y as i32;
+        for placed in &self.placed[..self.placed_len] {
+            let glyph = placed.glyph;
+            let glyph_y = screen_y - placed.y;
+            if glyph_y < 0 || glyph_y >= i32::from(glyph.height) {
+                continue;
+            }
+            let row = glyph_y as usize * usize::from(glyph.width);
+            for glyph_x in 0..usize::from(glyph.width) {
+                let screen_x = placed.x + glyph_x as i32;
+                if screen_x >= self.left && screen_x < self.left + self.width as i32 {
+                    let x = (screen_x - self.left) as usize;
+                    self.alpha[x] = self.alpha[x].max(coverage(self.font, glyph, row + glyph_x));
                 }
             }
         }
+    }
+}
+
+impl Iterator for TextRaster {
+    type Item = Rgb565;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.y == self.height {
+            return None;
+        }
+        if self.x == 0 {
+            self.prepare_row();
+        }
+        let alpha = usize::from(self.alpha[self.x]);
+        let color = if self.left + (self.x as i32) < self.split_x {
+            self.background_left[alpha]
+        } else {
+            self.background_right[alpha]
+        };
+        self.x += 1;
+        if self.x == self.width {
+            self.x = 0;
+            self.y += 1;
+        }
+        Some(color)
     }
 }
 
@@ -133,13 +187,26 @@ fn draw<D: DrawTarget<Color = Rgb565>>(
     alignment: Alignment,
 ) -> Result<(), D::Error> {
     let font = font(role);
-    let text_width = width(text, role).unwrap_or(0) as i32;
+    let text_width = match alignment {
+        Alignment::Left => 0,
+        Alignment::Center | Alignment::Right => width(text, role).unwrap_or(0) as i32,
+    };
     let start_x = match alignment {
         Alignment::Left => at.x,
         Alignment::Center => at.x - text_width / 2,
         Alignment::Right => at.x - text_width,
     };
     let baseline = at.y + (i32::from(font.ascent) - i32::from(font.descent)) / 2;
+    let clip = t.bounding_box();
+    let clip_right = clip.top_left.x + clip.size.width as i32;
+    let clip_bottom = clip.top_left.y + clip.size.height as i32;
+    let dummy = PlacedGlyph {
+        glyph: font.glyphs[0],
+        x: 0,
+        y: 0,
+    };
+    let mut placed = [dummy; MAX_PLACED_GLYPHS];
+    let mut placed_len = 0;
     let mut pen_x = start_x;
     let mut left = i32::MAX;
     let mut top = i32::MAX;
@@ -155,10 +222,42 @@ fn draw<D: DrawTarget<Color = Rgb565>>(
             right = right.max(x + i32::from(glyph.width));
             bottom = bottom.max(y + i32::from(glyph.height));
         }
+        let visible = x < clip_right
+            && x + i32::from(glyph.width) > clip.top_left.x
+            && y < clip_bottom
+            && y + i32::from(glyph.height) > clip.top_left.y;
+        if visible {
+            assert!(placed_len < placed.len(), "text glyph capacity exceeded");
+            placed[placed_len] = PlacedGlyph { glyph, x, y };
+            placed_len += 1;
+        }
         pen_x += i32::from(glyph.advance);
     }
     if left >= right || top >= bottom {
         return Ok(());
+    }
+
+    left = left.max(clip.top_left.x);
+    top = top.max(clip.top_left.y);
+    right = right.min(clip_right).min(left + MAX_TEXT_ROW as i32);
+    bottom = bottom.min(clip_bottom);
+    if left >= right || top >= bottom {
+        return Ok(());
+    }
+
+    let mut background_left = [Rgb565::new(0, 0, 0); 16];
+    let mut background_right = [Rgb565::new(0, 0, 0); 16];
+    let (left_bg, right_bg, split_x) = match bg {
+        Background::Solid(color) => (color, color, i32::MAX),
+        Background::Split {
+            left,
+            right,
+            split_x,
+        } => (left, right, split_x),
+    };
+    for alpha in 0..16 {
+        background_left[alpha] = blend_coverage(color, left_bg, alpha as u8);
+        background_right[alpha] = blend_coverage(color, right_bg, alpha as u8);
     }
 
     let area = Rectangle::new(
@@ -167,32 +266,21 @@ fn draw<D: DrawTarget<Color = Rgb565>>(
     );
     t.fill_contiguous(
         &area,
-        (top..bottom).flat_map(|py| {
-            (left..right).map(move |px| {
-                let mut alpha = 0;
-                let mut pen_x = start_x;
-                for char in text.chars() {
-                    let glyph = font.glyphs[glyph_index(char)];
-                    let x = pen_x + i32::from(glyph.left);
-                    let y = baseline + i32::from(glyph.top);
-                    if px >= x
-                        && px < x + i32::from(glyph.width)
-                        && py >= y
-                        && py < y + i32::from(glyph.height)
-                    {
-                        let column = (px - x) as usize;
-                        let row = (py - y) as usize;
-                        // Glyph boxes overlap -- 8 of the 97 have a negative left
-                        // bearing, 28 carry ink past their advance -- so the pair
-                        // composites, and the greater coverage wins, not the later.
-                        let index = row * usize::from(glyph.width) + column;
-                        alpha = alpha.max(coverage(font, glyph, index));
-                    }
-                    pen_x += i32::from(glyph.advance);
-                }
-                blend_coverage(color, bg.at(px), alpha)
-            })
-        }),
+        TextRaster {
+            font,
+            placed,
+            placed_len,
+            left,
+            top,
+            width: (right - left) as usize,
+            height: (bottom - top) as usize,
+            x: 0,
+            y: 0,
+            alpha: [0; MAX_TEXT_ROW],
+            background_left,
+            background_right,
+            split_x,
+        },
     )
 }
 

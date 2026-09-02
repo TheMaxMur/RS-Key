@@ -1706,11 +1706,11 @@ what the registry refuses:
   edges*, so a finger already down when the card paints would read as a tap on
   it; the release edge is the whole defence, and it is two layers — the ambient
   chokepoint (`crates/rsk-display/src/power.rs:55-65`) and the ceremony's own
-  release wait (`crates/rsk-display/src/presence.rs:190`);
+  release wait (`crates/rsk-display/src/presence.rs:198`);
 - `OnlyAllowConfirms` — Deny, the power button, timeout and CTAPHID cancel all
   end as Cancelled (`crates/rsk-display/src/presence.rs:120-124`); the
   Allow/Deny rectangles are disjoint and a stray touch above the band is no
-  button at all (`crates/rsk-ui/src/lib.rs:248-256`).
+  button at all (`crates/rsk-ui/src/lib.rs:252-260`).
 
 All three are ghosts, and the module says why plainly: a completed ceremony
 leaves nothing on the glass, so no reachable *state* distinguishes a phished

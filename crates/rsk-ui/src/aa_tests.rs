@@ -156,6 +156,118 @@ fn rounded_rect_fast_path_matches_all_samples() {
     }
 }
 
+fn legacy_rounded_rect(
+    target: &mut Rec,
+    rect: Rect,
+    diameter: u32,
+    fill: Option<Rgb565>,
+    border: Option<(Rgb565, u16)>,
+    bg: Rgb565,
+) {
+    for py in i32::from(rect.y)..i32::from(rect.y + rect.h) {
+        for px in i32::from(rect.x)..i32::from(rect.x + rect.w) {
+            let outer = rounded_coverage_slow(rect, diameter, px, py);
+            let color = if let Some((stroke, width)) = border {
+                let inner = inset(rect, width);
+                let inner_diameter = diameter.saturating_sub(u32::from(width) * 2);
+                let inner_coverage = rounded_coverage_slow(inner, inner_diameter, px, py);
+                if let Some(fill) = fill {
+                    blend_three(fill, stroke, bg, inner_coverage, outer)
+                } else {
+                    blend_coverage(stroke, bg, outer.saturating_sub(inner_coverage))
+                }
+            } else if let Some(fill) = fill {
+                blend_coverage(fill, bg, outer)
+            } else {
+                bg
+            };
+            target.pixels[py as usize * target.side + px as usize] = color;
+        }
+    }
+}
+
+#[test]
+fn rounded_rect_spans_match_the_original_pixels_exactly() {
+    let bg = Rgb565::new(2, 4, 6);
+    let fill = Rgb565::new(27, 51, 11);
+    let stroke = Rgb565::new(30, 7, 24);
+    for diameter in [6, 8, 9, 10, 11, 16, 17] {
+        for (fill, border) in [
+            (Some(fill), None),
+            (Some(fill), Some((stroke, 1))),
+            (Some(fill), Some((stroke, 2))),
+            (None, Some((stroke, 1))),
+            (None, Some((stroke, 2))),
+            (None, None),
+        ] {
+            let rect = Rect::new(3, 5, 41, 29);
+            let mut expected = Rec::new(48, Rgb565::BLUE);
+            legacy_rounded_rect(&mut expected, rect, diameter, fill, border, bg);
+            let mut actual = Rec::new(48, Rgb565::BLUE);
+            rounded_rect(&mut actual, rect, diameter, fill, border, bg).unwrap();
+            assert_eq!(
+                actual.pixels, expected.pixels,
+                "diameter={diameter}, fill={fill:?}, border={border:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn status_ring_mask_matches_all_distance_samples() {
+    let diameter = 50;
+    let width = 3;
+    let center = diameter as i32 * SAMPLE_SCALE / 2;
+    let inner = center - width as i32 * SAMPLE_SCALE;
+    for y in 0..diameter as usize {
+        for x in 0..diameter as usize {
+            let mut expected = 0u16;
+            for sy in 0..SAMPLES {
+                for sx in 0..SAMPLES {
+                    let px = x as i32 * SAMPLE_SCALE + sx * 2 + 1 - center;
+                    let py = y as i32 * SAMPLE_SCALE + sy * 2 + 1 - center;
+                    let distance = px * px + py * py;
+                    if distance <= center * center && distance > inner * inner {
+                        expected |= 1 << (sy * SAMPLES + sx);
+                    }
+                }
+            }
+            assert_eq!(fixed_ring_samples(diameter, width, x, y), Some(expected));
+        }
+    }
+}
+
+#[test]
+fn status_arc_phase_table_matches_every_sample() {
+    let center = 50 * SAMPLE_SCALE / 2;
+    for phase in 0..STATUS_ARC_PHASES {
+        let start = STATUS_ARC_BASE_DEG + phase as i32 * STATUS_ARC_STEP_DEG;
+        for y in 0..50usize {
+            for x in 0..50usize {
+                let samples = RING_50_3[y * 50 + x];
+                let mut ring = 0u8;
+                let mut arc = 0u8;
+                for sy in 0..SAMPLES {
+                    for sx in 0..SAMPLES {
+                        let bit = 1 << (sy * SAMPLES + sx);
+                        if samples & bit != 0 {
+                            let px = x as i32 * SAMPLE_SCALE + sx * 2 + 1 - center;
+                            let py = y as i32 * SAMPLE_SCALE + sy * 2 + 1 - center;
+                            ring += 1;
+                            arc += u8::from(angle_in_arc(px, py, start, 270));
+                        }
+                    }
+                }
+                assert_eq!(
+                    fixed_ring_arc_coverage(50, 3, start, 270, x, y),
+                    Some((min_coverage(arc), min_coverage(ring)))
+                );
+            }
+        }
+    }
+    assert_eq!(fixed_ring_arc_coverage(50, 3, -89, 270, 0, 0), None);
+}
+
 #[test]
 fn ring_arc_draws_track_mark_and_partial_pixels() {
     let mut target = Rec::new(32, Rgb565::BLACK);
@@ -224,6 +336,7 @@ fn shape_reports_target_errors() {
 struct Transactions {
     draw: usize,
     contiguous: usize,
+    solid: usize,
 }
 
 impl OriginDimensions for Transactions {
@@ -256,13 +369,19 @@ impl DrawTarget for Transactions {
         );
         Ok(())
     }
+
+    fn fill_solid(&mut self, _area: &Rectangle, _color: Rgb565) -> Result<(), Self::Error> {
+        self.solid += 1;
+        Ok(())
+    }
 }
 
 #[test]
-fn shapes_use_one_contiguous_write_each() {
+fn shapes_use_contiguous_masks_and_solid_spans() {
     let mut target = Transactions {
         draw: 0,
         contiguous: 0,
+        solid: 0,
     };
     filled_circle(
         &mut target,
@@ -303,5 +422,6 @@ fn shapes_use_one_contiguous_write_each() {
     )
     .unwrap();
     assert_eq!(target.draw, 0);
-    assert_eq!(target.contiguous, 4);
+    assert_eq!(target.contiguous, 5);
+    assert_eq!(target.solid, 1);
 }

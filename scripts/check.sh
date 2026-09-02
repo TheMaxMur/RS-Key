@@ -501,6 +501,7 @@ run "partition table fences the store (16M)" partition_table_fences_the_store
 # no-touch build below, which stays the last `-p firmware` build so target/ keeps
 # the no-touch test image (see docs/build.md).
 run "build firmware (display)" env LED_KIND=none cargo build --release -p firmware --features display
+run "firmware stack floor (display)" firmware_stack_floor
 # Machine-checked "no size cost for keys without a screen": the display UI crate
 # and its driver stack must be absent from the DEFAULT firmware dependency tree, so
 # a standard key can not pull any of the screen code in.

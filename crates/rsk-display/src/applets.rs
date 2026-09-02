@@ -55,7 +55,7 @@ fn service_title(rp_id: &Label, view: &ServiceView) -> Label {
 
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
@@ -88,11 +88,26 @@ where
             if let Some(p) = self.touch.read() {
                 last = Instant::now();
                 if let Some(k) = rsk_ui::hit_pager(p) {
-                    page = paged(page, total, k);
-                    let r = self.load_rps(&mut rows, &mut hashes, page);
-                    n = r.0;
-                    total = r.1;
-                    self.render_list(&rows[..n], page, total);
+                    let next_page = paged(page, total, k);
+                    if next_page != page {
+                        let previous_rows = rows;
+                        let previous_n = n;
+                        let previous_page = page;
+                        let previous_total = total;
+                        page = next_page;
+                        let r = self.load_rps(&mut rows, &mut hashes, page);
+                        n = r.0;
+                        total = r.1;
+                        let _ = rsk_ui::render_passkeys_page(
+                            &mut self.damage_frame(),
+                            &previous_rows[..previous_n],
+                            previous_page,
+                            previous_total,
+                            &rows[..n],
+                            page,
+                            total,
+                        );
+                    }
                     self.touch.wait_release(last, idle_limit);
                     last = Instant::now();
                     continue;
@@ -191,9 +206,24 @@ where
                     };
                 }
                 if let Some(k) = rsk_ui::hit_pager(p) {
-                    view.page = paged(view.page, view.total, k);
-                    self.service_reload(hash, &mut view);
-                    self.service_paint(rp_id, &view);
+                    let next_page = paged(view.page, view.total, k);
+                    if next_page != view.page {
+                        let previous_accounts = view.accts;
+                        let previous_n = view.n;
+                        let previous_page = view.page;
+                        let previous_total = view.total;
+                        view.page = next_page;
+                        self.service_reload(hash, &mut view);
+                        let _ = rsk_ui::render_service_page(
+                            &mut self.damage_frame(),
+                            &previous_accounts[..previous_n],
+                            previous_page,
+                            previous_total,
+                            &view.accts[..view.n],
+                            view.page,
+                            view.total,
+                        );
+                    }
                     self.touch.wait_release(last, idle_limit);
                     last = Instant::now();
                     continue;
@@ -288,7 +318,7 @@ where
 
     fn service_paint(&mut self, rp_id: &Label, view: &ServiceView) {
         let _ = rsk_ui::render_service(
-            &mut self.panel,
+            &mut self.frame(),
             &service_title(rp_id, view),
             view.nick.is_empty(),
             &view.accts[..view.n],
@@ -322,7 +352,7 @@ where
     /// worker. Returns the next nav destination (`None` = back to idle Home).
     pub(super) fn run_apps(&mut self) -> Option<NavTab> {
         let view = self.load_apps();
-        let _ = rsk_ui::render_apps(&mut self.panel, &view);
+        let _ = rsk_ui::render_apps(&mut self.frame(), &view);
         self.shown = None;
         self.touch
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
@@ -349,7 +379,7 @@ where
                     // Back from an applet: re-snapshot (a host op may have run while parked)
                     // and repaint the chooser.
                     let view = self.load_apps();
-                    let _ = rsk_ui::render_apps(&mut self.panel, &view);
+                    let _ = rsk_ui::render_apps(&mut self.frame(), &view);
                     self.shown = None;
                     self.touch.wait_release(Instant::now(), idle_limit);
                     last = Instant::now();
@@ -432,7 +462,7 @@ where
     /// chooser, `Some(tab)` leaves the hub to that tab.
     fn run_openpgp(&mut self) -> Option<NavTab> {
         let view = self.load_openpgp();
-        let _ = rsk_ui::render_openpgp(&mut self.panel, &view);
+        let _ = rsk_ui::render_openpgp(&mut self.frame(), &view);
         self.shown = None;
         self.touch
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
@@ -458,7 +488,7 @@ where
                     if self.asleep {
                         break None;
                     }
-                    let _ = rsk_ui::render_openpgp(&mut self.panel, &view);
+                    let _ = rsk_ui::render_openpgp(&mut self.frame(), &view);
                     self.shown = None;
                     self.touch.wait_release(Instant::now(), idle_limit);
                     last = Instant::now();
@@ -486,7 +516,7 @@ where
     /// button / a queued host command / inactivity all return to the overview.
     fn run_openpgp_key(&mut self, slot: usize) {
         let view = self.load_openpgp_key(slot);
-        let _ = rsk_ui::render_openpgp_key(&mut self.panel, &view);
+        let _ = rsk_ui::render_openpgp_key(&mut self.frame(), &view);
         self.shown = None;
         self.touch
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
@@ -515,7 +545,7 @@ where
     /// power button / a queued host command / inactivity all return to the overview.
     fn run_openpgp_cardholder(&mut self) {
         let view = self.load_openpgp_cardholder();
-        let _ = rsk_ui::render_openpgp_cardholder(&mut self.panel, &view);
+        let _ = rsk_ui::render_openpgp_cardholder(&mut self.frame(), &view);
         self.shown = None;
         self.touch
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
@@ -586,7 +616,7 @@ where
     /// slot's detail. Mirrors [`Self::run_openpgp`].
     fn run_piv(&mut self) -> Option<NavTab> {
         let view = self.load_piv();
-        let _ = rsk_ui::render_piv(&mut self.panel, &view);
+        let _ = rsk_ui::render_piv(&mut self.frame(), &view);
         self.shown = None;
         self.touch
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
@@ -613,7 +643,7 @@ where
                         break None;
                     }
                     let view = self.load_piv();
-                    let _ = rsk_ui::render_piv(&mut self.panel, &view);
+                    let _ = rsk_ui::render_piv(&mut self.frame(), &view);
                     self.shown = None;
                     self.touch.wait_release(Instant::now(), idle_limit);
                     last = Instant::now();
@@ -641,7 +671,7 @@ where
     /// reference (primary `0x9A…`, retired `0x82…0x95`, or F9).
     fn run_piv_slot(&mut self, slot: u8) {
         let view = self.load_piv_slot(slot);
-        let _ = rsk_ui::render_piv_slot(&mut self.panel, &view);
+        let _ = rsk_ui::render_piv_slot(&mut self.frame(), &view);
         self.shown = None;
         self.touch
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
@@ -711,7 +741,7 @@ where
         let mut rows = [rsk_ui::PivExtraRow::default(); rsk_ui::PK_ROWS_MAX];
         let mut page: u16 = 0;
         let (mut n, mut total) = self.load_piv_extra(&mut rows, page);
-        let _ = rsk_ui::render_piv_extra(&mut self.panel, &rows[..n], page, total);
+        let _ = rsk_ui::render_piv_extra(&mut self.frame(), &rows[..n], page, total);
         self.shown = None;
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         self.touch.wait_release(Instant::now(), idle_limit);
@@ -726,12 +756,19 @@ where
                     break;
                 }
                 if let Some(k) = rsk_ui::hit_pager(p) {
-                    page = paged(page, total, k);
-                    let r = self.load_piv_extra(&mut rows, page);
-                    n = r.0;
-                    total = r.1;
-                    let _ = rsk_ui::render_piv_extra(&mut self.panel, &rows[..n], page, total);
-                    self.shown = None;
+                    let next_page = paged(page, total, k);
+                    if next_page != page {
+                        page = next_page;
+                        let r = self.load_piv_extra(&mut rows, page);
+                        n = r.0;
+                        total = r.1;
+                        let _ = rsk_ui::render_piv_extra_page(
+                            &mut self.damage_frame(),
+                            &rows[..n],
+                            page,
+                            total,
+                        );
+                    }
                     self.touch.wait_release(last, idle_limit);
                     last = Instant::now();
                     continue;
@@ -749,7 +786,7 @@ where
                     let r = self.load_piv_extra(&mut rows, page);
                     n = r.0;
                     total = r.1;
-                    let _ = rsk_ui::render_piv_extra(&mut self.panel, &rows[..n], page, total);
+                    let _ = rsk_ui::render_piv_extra(&mut self.frame(), &rows[..n], page, total);
                     self.shown = None;
                     self.touch.wait_release(Instant::now(), idle_limit);
                     last = Instant::now();
@@ -785,7 +822,7 @@ where
         };
         // A deliberate hold before the write.
         let _ = rsk_ui::render_piv_keygen_confirm(
-            &mut self.panel,
+            &mut self.frame(),
             slot,
             rsk_piv::info::algo_name(algo),
         );
@@ -833,7 +870,7 @@ where
     /// when the user left without choosing.
     fn piv_pick_algo(&mut self, slot: u8) -> Option<u8> {
         loop {
-            let _ = rsk_ui::render_piv_keygen_pick(&mut self.panel, slot);
+            let _ = rsk_ui::render_piv_keygen_pick(&mut self.frame(), slot);
             self.shown = None;
             match self.pick_row(rsk_ui::PIV_KEYGEN_PICK_TOP, rsk_ui::PIV_KEYGEN_PICK_ROWS) {
                 Pick::Leave | Pick::Back => return None,
@@ -844,7 +881,7 @@ where
                 // The RSA row: fall through to the size sub-picker.
                 Pick::Row(_) => {}
             }
-            let _ = rsk_ui::render_piv_keygen_rsa_pick(&mut self.panel, slot);
+            let _ = rsk_ui::render_piv_keygen_rsa_pick(&mut self.frame(), slot);
             self.shown = None;
             match self.pick_row(rsk_ui::PIV_KEYGEN_PICK_TOP, rsk_ui::PIV_RSA_PICK_ROWS) {
                 Pick::Leave => return None,
@@ -905,7 +942,7 @@ where
         &mut self,
         nbits: usize,
     ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaKey>> {
-        let _ = rsk_ui::render_piv_keygen_working(&mut self.panel);
+        let _ = rsk_ui::render_piv_keygen_working(&mut self.frame());
         self.shown = None;
         let mut rng = self.rng.borrow_mut();
         let panel = &mut self.panel;
@@ -915,7 +952,10 @@ where
         let mut tick = || {
             if last_paint.elapsed() >= Duration::from_millis(KEYGEN_SPIN_MS) {
                 spin = spin.wrapping_add(SPIN_STEP_DEG);
-                let _ = rsk_ui::render_status_arc(panel, StatusKind::Processing, spin);
+                assert!(
+                    rsk_ui::render_status_arc(panel, StatusKind::Processing, spin).is_ok(),
+                    "direct display presentation failed"
+                );
                 last_paint = Instant::now();
             }
         };
@@ -953,7 +993,7 @@ where
         let mut rows = [rsk_ui::OathRow::default(); rsk_ui::PK_ROWS_MAX];
         let mut page: u16 = 0;
         let (mut n, mut total) = self.load_oath(&mut rows, page);
-        let _ = rsk_ui::render_oath(&mut self.panel, &rows[..n], page, total);
+        let _ = rsk_ui::render_oath(&mut self.frame(), &rows[..n], page, total);
         self.shown = None;
         self.touch
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
@@ -969,12 +1009,19 @@ where
                     break None;
                 }
                 if let Some(k) = rsk_ui::hit_pager(p) {
-                    page = paged(page, total, k);
-                    let r = self.load_oath(&mut rows, page);
-                    n = r.0;
-                    total = r.1;
-                    let _ = rsk_ui::render_oath(&mut self.panel, &rows[..n], page, total);
-                    self.shown = None;
+                    let next_page = paged(page, total, k);
+                    if next_page != page {
+                        page = next_page;
+                        let r = self.load_oath(&mut rows, page);
+                        n = r.0;
+                        total = r.1;
+                        let _ = rsk_ui::render_oath_page(
+                            &mut self.damage_frame(),
+                            &rows[..n],
+                            page,
+                            total,
+                        );
+                    }
                     self.touch.wait_release(last, idle_limit);
                     last = Instant::now();
                     continue;
@@ -988,7 +1035,7 @@ where
                     let r = self.load_oath(&mut rows, page);
                     n = r.0;
                     total = r.1;
-                    let _ = rsk_ui::render_oath(&mut self.panel, &rows[..n], page, total);
+                    let _ = rsk_ui::render_oath(&mut self.frame(), &rows[..n], page, total);
                     self.shown = None;
                     self.touch.wait_release(Instant::now(), idle_limit);
                     last = Instant::now();
@@ -1041,7 +1088,7 @@ where
     /// power button / a queued host command / inactivity all return to the list.
     fn run_oath_cred(&mut self, idx: usize) {
         let view = self.load_oath_cred(idx);
-        let _ = rsk_ui::render_oath_cred(&mut self.panel, &view);
+        let _ = rsk_ui::render_oath_cred(&mut self.frame(), &view);
         self.shown = None;
         self.touch
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
@@ -1069,7 +1116,7 @@ where
     /// Repaint the Passkeys list (a full-frame paint) and mark the panel for the ambient
     /// loop to refresh once the tab closes.
     fn render_list(&mut self, rows: &[RpRow], page: u16, total: u16) {
-        let _ = rsk_ui::render_passkeys_list(&mut self.panel, rows, page, total);
+        let _ = rsk_ui::render_passkeys_list(&mut self.frame(), rows, page, total);
         self.shown = None;
     }
 
@@ -1166,7 +1213,7 @@ where
             .borrow_mut()
             .has_data(rsk_fido::consts::EF_AUDIT_ENABLED);
         let (mut n, mut total) = self.load_events(&mut rows, page);
-        let _ = rsk_ui::render_audit_log(&mut self.panel, &rows[..n], page, total, logging);
+        let _ = rsk_ui::render_audit_log(&mut self.frame(), &rows[..n], page, total, logging);
         self.shown = None;
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         self.touch.wait_release(Instant::now(), idle_limit);
@@ -1181,13 +1228,20 @@ where
                     return;
                 }
                 if let Some(k) = rsk_ui::hit_pager(p) {
-                    page = paged(page, total, k);
-                    let r = self.load_events(&mut rows, page);
-                    n = r.0;
-                    total = r.1;
-                    let _ =
-                        rsk_ui::render_audit_log(&mut self.panel, &rows[..n], page, total, logging);
-                    self.shown = None;
+                    let next_page = paged(page, total, k);
+                    if next_page != page {
+                        page = next_page;
+                        let r = self.load_events(&mut rows, page);
+                        n = r.0;
+                        total = r.1;
+                        let _ = rsk_ui::render_audit_page(
+                            &mut self.damage_frame(),
+                            &rows[..n],
+                            page,
+                            total,
+                            logging,
+                        );
+                    }
                     self.touch.wait_release(last, idle_limit);
                     last = Instant::now();
                     continue;

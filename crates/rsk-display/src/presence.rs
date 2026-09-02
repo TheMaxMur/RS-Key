@@ -11,7 +11,7 @@ use super::*;
 /// trusted Approve/Deny prompt and block-waits a tap.
 pub struct TouchPresence<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
@@ -31,7 +31,7 @@ enum Outcome {
 
 impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
@@ -67,7 +67,7 @@ where
 
 impl<'a, P, T, H, S, R> TouchPresence<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,
@@ -104,7 +104,7 @@ where
             // trusted prompt is actually visible, and count it as activity.
             u.wake();
             note_activity();
-            let _ = rsk_ui::render(&mut u.panel, &Screen::Confirm(prompt));
+            let _ = rsk_ui::render(&mut u.frame(), &Screen::Confirm(prompt));
             u.shown = None; // force the status loop to repaint once we release it
             // Debounce: the CST328 reports a level, not an edge, so a finger still
             // down from a previous ceremony would start filling this hold on the
@@ -130,14 +130,18 @@ where
                     Some(Button::Allow) => {
                         let held = hold_start.get_or_insert_with(Instant::now).elapsed();
                         let num = held.as_millis().min(HOLD_MS) as u16;
-                        let _ = rsk_ui::render_hold_fill(
-                            &mut u.panel,
-                            ALLOW_RECT,
-                            "Hold to approve",
-                            last_num,
-                            num,
-                            HOLD_MS as u16,
-                            rsk_ui::theme::APPROVE,
+                        assert!(
+                            rsk_ui::render_hold_fill(
+                                &mut u.panel,
+                                ALLOW_RECT,
+                                "Hold to approve",
+                                last_num,
+                                num,
+                                HOLD_MS as u16,
+                                rsk_ui::theme::APPROVE,
+                            )
+                            .is_ok(),
+                            "direct display presentation failed"
                         );
                         last_num = num;
                         if held >= Duration::from_millis(HOLD_MS) {
@@ -147,11 +151,15 @@ where
                     // Finger lifted or slid off the buttons: reset a building hold.
                     None => {
                         if hold_start.take().is_some() {
-                            let _ = rsk_ui::render_hold_button(
-                                &mut u.panel,
-                                ALLOW_RECT,
-                                "Hold to approve",
-                                rsk_ui::theme::APPROVE,
+                            assert!(
+                                rsk_ui::render_hold_button(
+                                    &mut u.panel,
+                                    ALLOW_RECT,
+                                    "Hold to approve",
+                                    rsk_ui::theme::APPROVE,
+                                )
+                                .is_ok(),
+                                "direct display presentation failed"
                             );
                             last_num = 0;
                         }
@@ -184,7 +192,7 @@ where
             let mut u = self.ui.borrow_mut();
             u.wake();
             note_activity();
-            let _ = rsk_ui::render_add_passkey(&mut u.panel, &rp, &account);
+            let _ = rsk_ui::render_add_passkey(&mut u.frame(), &rp, &account);
             u.shown = None;
             // Save is a single tap and this loop polls before any delay, so without
             // a release wait a finger already down approves the card in the same
@@ -263,7 +271,7 @@ where
 
 impl<'a, P, T, H, S, R> rsk_sdk::UserPresence for TouchPresence<'a, P, T, H, S, R>
 where
-    P: DrawTarget<Color = Rgb565>,
+    P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
     S: rsk_fs::Storage,

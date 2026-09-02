@@ -66,7 +66,7 @@ formal/README.md	crates/rsk-display/src/gates.rs	139-146	let mut pin = [0u8; 64]
 formal/README.md	crates/rsk-display/src/power.rs	55-65	pub(super) fn armed_touch(&mut self) -> Option<rsk_ui::Point> {	}
 formal/README.md	crates/rsk-display/src/presence.rs	45-48	let saved = self.hooks.led_status();	self.hooks.set_up_pending(true);
 formal/README.md	crates/rsk-display/src/presence.rs	120-124	let mut last_num: u16 = 0;	// no signature is ever produced without the deliberate on-screen hold.
-formal/README.md	crates/rsk-display/src/presence.rs	190-190	// a release wait a finger already down approves the card in the same	// a release wait a finger already down approves the card in the same
+formal/README.md	crates/rsk-display/src/presence.rs	198-198	// a release wait a finger already down approves the card in the same	// a release wait a finger already down approves the card in the same
 formal/README.md	crates/rsk-fido/src/clientpin.rs	136-136	match req.subcommand {	match req.subcommand {
 formal/README.md	crates/rsk-fido/src/clientpin.rs	185-187	if ctx.fs.has_data(EF_PIN) {	}
 formal/README.md	crates/rsk-fido/src/clientpin.rs	214-218	// No PIN was set, so no `pcmr` grant can be outstanding — except one a build	let res = store_new_pin(ctx, &padded);
@@ -201,7 +201,7 @@ formal/README.md	crates/rsk-sdk/src/applet.rs	208-210	fn selectable(&self, i: us
 formal/README.md	crates/rsk-sdk/src/applet.rs	374-390	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
 formal/README.md	crates/rsk-sdk/src/applet.rs	379-387	// A disabled applet is skipped, so its AID matches nothing	let reselect = self.current == Some(i);
 formal/README.md	crates/rsk-sdk/src/applet.rs	387-387	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
-formal/README.md	crates/rsk-ui/src/lib.rs	248-256	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
+formal/README.md	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	386-456	/// Drop an in-progress reassembly (e.g. on a receive timeout).	if seq != self.seq {
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	417-419	// Mid-transaction, an init-type frame that is not CTAPHID_INIT is a	// meaningless in such a frame. A continuation frame whose seq byte has
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	420-420	// the INIT bit set lands here (FIDO conformance HID-1 F-4 corrupts the	// the INIT bit set lands here (FIDO conformance HID-1 F-4 corrupts the
@@ -239,7 +239,7 @@ formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	91-109	pub struct Ccid
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	304-313	#[cfg(not(feature = "strict-config"))]	.is_ok()
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	348-363	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ctap.rs	177-181	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
-formal/RSKeyAppletSeams.tla	crates/rsk-display/src/pin.rs	681-689	let _ = rsk_ui::render_erasing(&mut self.panel);	)
+formal/RSKeyAppletSeams.tla	crates/rsk-display/src/pin.rs	705-731	let wiped = self	return true;
 formal/RSKeyAppletSeams.tla	crates/rsk-fido/src/reset.rs	159-193	/// never re-provisioned, its *absence* is the permissive state, and what it gates	/// not OpenPGP's, so the band is not contiguously one applet's) or the vendor counter
 formal/RSKeyAppletSeams.tla	crates/rsk-fs/src/fs.rs	326-373	/// that is still live and, for PIV, not PIN-bound at rest — or, for OATH, leaves	return Err(Error::MemoryFatal);
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	183-191	/// allowed); with a code set, SELECT resets it and VALIDATE/VERIFY PIN	otp_pin_verified: bool,
@@ -454,12 +454,12 @@ formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/power.rs	55-65	pub(super) 
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/power.rs	56-59	match self.touch.read() {	None
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	91-91	/// Refines `RSKeyTrustedDisplay!ConfirmNamesTheOperation` — SEC-DISP-001.	/// Refines `RSKeyTrustedDisplay!ConfirmNamesTheOperation` — SEC-DISP-001.
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	120-124	let mut last_num: u16 = 0;	// no signature is ever produced without the deliberate on-screen hold.
-formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	190-190	// a release wait a finger already down approves the card in the same	// a release wait a finger already down approves the card in the same
+formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	198-198	// a release wait a finger already down approves the card in the same	// a release wait a finger already down approves the card in the same
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/clientpin.rs	536-537	pub fn needs_confirm(self, shows_confirm: bool) -> bool {	!self.up_collected || shows_confirm
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/getassertion.rs	616-617	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/makecredential.rs	660-661	// naming the rp being registered ([`needs_confirm`]).	if verified.needs_confirm(ctx.presence.shows_confirm()) {
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/u2f.rs	94-94	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
-formal/RSKeyTrustedDisplay.tla	crates/rsk-ui/src/lib.rs	248-256	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
+formal/RSKeyTrustedDisplay.tla	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
 formal/TraceSecurity.tla	crates/rsk-fido/src/clientpin.rs	609-609	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
 formal/TraceSecurity.tla	crates/rsk-fido/src/config.rs	317-317	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");
 formal/TraceSecurity.tla	crates/rsk-fido/src/makecredential.rs	528-546	let always_uv = crate::config::always_uv_enabled(ctx.fs);	Ok(UvOutcome::NONE)

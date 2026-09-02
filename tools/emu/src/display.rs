@@ -94,6 +94,16 @@ impl DrawTarget for Panel {
     }
 }
 
+impl rsk_ui::scene::FrameTarget for Panel {
+    fn damage_key(&self) -> rsk_ui::scene::DamageKey {
+        [0x0123_4567_89AB_CDEF, 0xFEDC_BA98_7654_3210]
+    }
+
+    fn present_scene(&mut self, scene: &rsk_ui::scene::Scene) -> bool {
+        scene.replay(self).is_ok()
+    }
+}
+
 /// The window, the buffer it shows and the backlight it shows it at.
 ///
 /// Held apart from [`Touch`] and shared, because the panel is a *buffer* here

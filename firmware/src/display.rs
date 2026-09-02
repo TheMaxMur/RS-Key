@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! This board's trusted display: the Waveshare RP2350-Touch-LCD-2.8 (ST7789 over
-//! SPI1, CST328 touch over I2C1), plus the board verbs the flow asks for.
+//! PIO serial output, CST328 touch over I2C1), plus the board verbs the flow asks for.
 //!
 //! The flow itself — which screen is shown when, the PIN pad, the Approve/Deny
 //! wait — is [`rsk_display`], where a host can run it against a window. What is
@@ -14,16 +14,10 @@ use core::cell::RefCell;
 
 use embassy_rp::gpio::{Input, Output};
 use embassy_rp::i2c::{Blocking as I2cBlocking, I2c};
-use embassy_rp::peripherals::{I2C1, SPI1};
+use embassy_rp::peripherals::I2C1;
 use embassy_rp::pwm::{Config as PwmConfig, Pwm};
-use embassy_rp::spi::{Blocking as SpiBlocking, Spi};
-use embassy_time::{Delay, Duration, Instant, block_for};
-use embedded_hal_bus::spi::ExclusiveDevice;
-
-use mipidsi::interface::SpiInterface;
-use mipidsi::models::ST7789;
+use embassy_time::{Duration, Instant, block_for};
 use mipidsi::options::{ColorInversion, ColorOrder};
-use mipidsi::{Builder, Display};
 
 extern crate alloc;
 use alloc::boxed::Box;
@@ -34,15 +28,15 @@ use rsk_rsa::RsaKey;
 use crate::flash_storage::FlashStorage;
 use crate::handler::{FidoRng, Store};
 
+#[path = "display_panel.rs"]
+mod display_panel;
+use display_panel::Panel;
+pub(crate) use display_panel::PioDisplayTx;
+
 pub use rsk_display::{DeviceInfo, DeviceKeys, UI_YIELD_FLOOR_MS, piv_ref_title};
 
 /// CST328 7-bit I2C address.
 const CST328_ADDR: u16 = 0x1A;
-
-/// The fully-built ST7789 panel (write-only, blocking SPI1, no framebuffer).
-type Panel = Display<SpiInterface<'static, PanelSpi, Output<'static>>, ST7789, Output<'static>>;
-/// The SPI bus + CS presented as one `SpiDevice` for mipidsi.
-type PanelSpi = ExclusiveDevice<Spi<'static, SPI1, SpiBlocking>, Output<'static>, Delay>;
 
 /// This board's instance of the flow.
 pub type Ui = rsk_display::Ui<'static, Panel, Touch, DisplayHooks, FlashStorage, FidoRng>;
@@ -50,17 +44,16 @@ pub type Ui = rsk_display::Ui<'static, Panel, Touch, DisplayHooks, FlashStorage,
 pub type TouchPresence =
     rsk_display::TouchPresence<'static, Panel, Touch, DisplayHooks, FlashStorage, FidoRng>;
 
-/// The panel's SPI bus + control pins + pixel buffer, bundled so `main` stays
+/// The panel's SPI bus + control pins, bundled so `main` stays
 /// within embassy's argument cap when it hands the peripherals over.
 pub struct PanelHw {
-    pub spi: Spi<'static, SPI1, SpiBlocking>,
+    pub spi: PioDisplayTx,
     pub cs: Output<'static>,
     pub dc: Output<'static>,
     pub rst: Output<'static>,
     /// GPIO16 backlight, driven as PWM for brightness (constructed at zero duty so
     /// the panel stays dark through init — no white flash).
     pub bl: Pwm<'static>,
-    pub buf: &'static mut [u8],
 }
 
 /// The CST328 touch controller's I2C bus + reset pin.
@@ -246,17 +239,11 @@ pub fn build(
         dc,
         rst,
         bl,
-        buf,
     } = panel;
     let TouchHw {
         i2c,
         rst: mut tp_rst,
     } = touch;
-
-    // The panel is write-only, so the only way `ExclusiveDevice` errors is a
-    // CS-toggle programming bug.
-    let spi_dev = ExclusiveDevice::new(spi, cs, Delay).unwrap();
-    let di = SpiInterface::new(spi_dev, dc, buf);
 
     // ST7789 240x320 portrait. Inversion and color order from board config.
     let invert = if crate::BUILD_DISPLAY_INVERT_COLORS {
@@ -268,14 +255,13 @@ pub fn build(
         1 => ColorOrder::Bgr,
         _ => ColorOrder::Rgb,
     };
-    let mut delay = Delay;
-    let panel = Builder::new(ST7789, di)
-        .display_size(rsk_ui::PANEL_W, rsk_ui::PANEL_H)
-        .invert_colors(invert)
-        .color_order(color_order)
-        .reset_pin(rst)
-        .init(&mut delay)
-        .unwrap();
+    let mut damage_key_bytes = [0u8; 16];
+    rsk_sdk::Rng::fill(&mut *rng.borrow_mut(), &mut damage_key_bytes);
+    let damage_key = [
+        u64::from_le_bytes(damage_key_bytes[..8].try_into().unwrap()),
+        u64::from_le_bytes(damage_key_bytes[8..].try_into().unwrap()),
+    ];
+    let panel = Panel::new(spi, cs, dc, rst, damage_key, invert, color_order);
 
     // CST328 reset pulse (high → low → high), then normal reporting mode.
     tp_rst.set_high();
