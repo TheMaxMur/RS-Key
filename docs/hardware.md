@@ -100,12 +100,15 @@ designs fit the boards above:
 - **[Waveshare RP2350 2.8-inch case](https://makerworld.com/en/models/3204749-waveshare-rp2350-2-8inch-case)**
   by [@cofob](https://cofob.dev/). Designed for RS-Key and recommended for the
   RP2350-Touch-LCD-2.8. PETG is the recommended print material.
+- **[Waveshare RP2350 2.8-inch case](https://www.thingiverse.com/thing:7404751)**
+  by Mono. Designed for RS-Key, reliable USB and button performance as well as
+  sturdyness. PETG material recommended.
 
-The two Printables designs are licensed **CC BY-SA 4.0**: print, sell, and remix
-them freely, as long as you credit the authors and keep any derivative under the
-same license. Check each MakerWorld page for the design license before you reuse
-the design. All are third-party designs, linked for convenience, not part of
-this project.
+The two Printables designs as well as the Thingiverse design are licensed
+**CC BY-SA 4.0**: print, sell, and remix them freely, as long as you credit the
+authors and keep any derivative under the same license. Check each MakerWorld
+page for the design license before you reuse the design. All are third-party
+designs, linked for convenience, not part of this project.
 
 ## What the hardware does not give you
 
