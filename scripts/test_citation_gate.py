@@ -712,8 +712,8 @@ def test_the_bundle_roster_is_the_directory(tree):
 
 
 def test_a_bundle_citation_past_the_end_of_the_file(tree):
-    """The whole class, before the widening: 517 citations over eleven bundles and
-    not one of them reachable from any gate."""
+    """The whole class, before the widening: 517 citations over the eleven bundles
+    of that day, and not one of them reachable from any gate."""
     tree.edit(BUNDLE_PAGE, "clientpin.rs:4-6", "clientpin.rs:4-600")
     assert only(tree.problems(), "which has 8 lines")
 

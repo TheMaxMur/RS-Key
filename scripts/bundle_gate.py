@@ -460,9 +460,9 @@ OWNED_PAIR = re.compile(
 #: `name=<count>/<roster>`, the shape three of the ledger's axes carry. The pair
 #: rule reads `persistent=12/4` as `persistent=12` and stops at the slash, so the
 #: DENOMINATOR fell through to the bare-integer rule, which asks only whether the
-#: number stands SOMEWHERE in the derived line — 33 denominators over 11 bundles
-#: held that way, and `persistent=12/4 → 12/11` was exit 0 off the `api=11` in
-#: the same line. Compared as the whole token, numerator included.
+#: number stands SOMEWHERE in the derived line — 33 denominators over the 11
+#: bundles of that day held that way, 51 over 17 today — and `persistent=12/4 →
+#: 12/11` was exit 0 off the `api=11` beside it. Compared whole, numerator included.
 #:
 #: Arms, over the shipped bundles: `persistent=12/4 → 12/11` and `outcomes=7/6 →
 #: 7/12` are each exit 1 here, naming the token; delete this clause and both are
@@ -496,10 +496,10 @@ CLAIMED_TOTAL = re.compile(rf"(\d+) {re.escape(STANDING)}")
 #: no `name=value` pair at all. `gate_ghost` and `gate_matrix` are written
 #: entirely that way, so the pair rule reads NOTHING in either and every number
 #: fell through to the bare-integer rule, which asks only whether the digits
-#: stand SOMEWHERE in the derived line: 33 + 99 numbers over 11 bundles held
-#: that way, and `(37 covered → (37 equivalent` and `21 action(s) → 24 action(s)`
-#: were each exit 0 on the shipped tree, every swap taking its digits off a
-#: sibling count of the very line it falsifies.
+#: stand SOMEWHERE in the derived line: 33 + 99 numbers over the 11 bundles of
+#: that day held that way, 51 + 153 over 17 today, and `(37 covered → (37
+#: equivalent` and `21 action(s) → 24 action(s)` were each exit 0 on the shipped
+#: tree, every swap taking its digits off a sibling count of the line it falsifies.
 #:
 #: The lookbehind is what keeps this off the numbers another rule already reads
 #: IN POSITION: `=` for the pair rule, `/` and `,` for the fraction rule and for
@@ -525,10 +525,10 @@ CLAIMED_TOTAL = re.compile(rf"(\d+) {re.escape(STANDING)}")
 #: accident: a `<count> <noun>` the row is CITING goes in backticks, which is
 #: where this tree already puts quoted history — `SEC-FIDO-003` quotes the `4
 #: standing assumption(s)` it once carried, and that is the one honest text a
-#: version reading every occurrence called red. Measured over all 11 bundles:
-#: 2 false findings without the carve-out, 0 with it, and all 55 gate lines
-#: carry balanced backticks. The cost is that an UNquoted `<count> <derived
-#: noun>` anywhere in a `gate_*` line now reads as a transcription of it.
+#: version reading every occurrence called red. Measured over the 11 bundles of
+#: that day: 2 false findings without the carve-out, 0 with it; and all 85 gate
+#: lines carry balanced backticks now. The cost is that an UNquoted `<count>
+#: <derived noun>` anywhere in a `gate_*` line now reads as a transcription of it.
 #:
 #: Arms, over the shipped bundles: `(37 covered → (37 equivalent`, `21 action(s)
 #: → 24 action(s)`, `11 guard(s) → 24 guards`, `31 build configurations → 37
@@ -565,12 +565,12 @@ DERIVED_WORD = re.compile(r"(?<![\w-])([A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*)(?
 #: new way to switch the clause off — backtick a whole transcription and every
 #: count in it stops being compared, with the pair and bare-integer rules the
 #: only things left — so the reading is counted and floored. Under the measured
-#: 12, which is the same 12 in every one of the eleven bundles because they all
+#: 12, which is the same 12 in every one of the seventeen bundles because they all
 #: transcribe the same five lines: 3 of `gate_ghost`, 1 of `gate_assumption`, 8
 #: of `gate_matrix`, and none of the two lines written entirely in pairs. Per
 #: bundle and not over the roster, because a roster total is exactly what one
 #: bundle going quiet does not move: backticking `gate_matrix` alone takes one
-#: bundle to 4 and the roster to 124, and only the first of those is a floor
+#: bundle to 4 and the roster to 196, and only the first of those is a floor
 #: anything sits under.
 UNIT_FLOOR = 9
 
@@ -640,12 +640,12 @@ LOG_NAME = re.compile(r"[A-Za-z0-9_.\-/]*\.log(?:\.gz)?")
 #: What [`quoted_numbers`] must reach. THE POINT OF THE RULE, not decoration:
 #: `check_evidence`'s only shape rule keyed on a `board_revision` no row carried,
 #: so it guarded zero rows while reading as if it guarded the hardware axis. The
-#: measured tree is 281 numbers over 90 joins; AT the measurement like every
+#: measured tree is 289 numbers over 91 joins; AT the measurement like every
 #: ratchet here, so a join that stops forming is a finding rather than a quieter
-#: summary line. Moved from 198 over 63 when the six `SEC-STORE-*` bundles landed:
-#: every model verdict they carry quotes its own run's states, distinct and depth
-#: beside the log that printed them, which is 83 more numbers over 27 more joins.
-QUOTE_FLOOR, QUOTE_JOIN_FLOOR = 281, 90
+#: summary line. 198 over 63 before the six `SEC-STORE-*` bundles landed with 83
+#: more numbers over 27 more joins, and 8 more over 1 more when their `t_tier`
+#: named its own log as well as `formal/runs.toml`, which no rule here can read.
+QUOTE_FLOOR, QUOTE_JOIN_FLOOR = 289, 91
 
 #: The two rosters above must name the same ten groups. One in `GROUPS` and not
 #: in `FLOORS` is a `KeyError`; one in `FLOORS` and not in `GROUPS` is silently
@@ -1333,10 +1333,10 @@ def gate_words(
     Two shapes, because the two corpora are two shapes. Four gates derive ONE
     line, so every [`DERIVED_WORD`] of it must stand in the claim. `gate_registry`
     derives a ROSTER and the claim transcribes one row of it, abbreviated: two of
-    the eleven bundles write the id and the verdict without the invariant name,
+    the seventeen bundles write the id and the verdict without the invariant name,
     so requiring every word there is the rule firing on honest text — measured.
     What that row is held to instead is its own id, its own verdict, and no
-    sibling's verdict, each of which every one of the eleven carries today.
+    sibling's verdict, each of which every one of the seventeen carries today.
     """
     if key != "gate_registry":
         named = {name for name, _ in CLAIMED_PAIR.findall(derived)}
@@ -1649,8 +1649,9 @@ def orphan_evidence(
     `./` or `../` spelling would surface HERE, as a loud finding naming the file,
     rather than as a normalisation quietly agreeing with whatever was written.
 
-    By full path and never by name: 15 basenames are carried by more than one
-    directory — `tlc-Shipped.log` by all eleven, `tlc-AlwaysUv.log` by nine — and
+    By full path and never by name: 17 basenames are carried by more than one
+    directory — `tlc-Shipped.log` by eleven, `tlc-AlwaysUv.log` by nine,
+    `tlc-Store.log` by the six `SEC-STORE-*` — and
     they are different runs of the same configuration. A name-keyed reading lets
     one bundle's copy discharge every other bundle's, which is the join
     [`quoted_join`] already had to un-widen for its own reason.
