@@ -62,17 +62,17 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-REF-004` | `R4bEventConsensus` | 2 of 9 | 0 | 2 of 9 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-REF-005` | `NoAuthorizationBypassA` | 1 of 2 | 0 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-REF-006` | `RequiredGateAgreesWithRelation` | 0 of 1 | 0 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
-| `SEC-FIDO-001` | `NoAuthorizationBypass` | 5 of 50 | 12 | 0 of 0 | 4 | 0 | 3 | 4 | `f52b720` stale (58 input(s) newer) | BOUNDED |
-| `SEC-FIDO-002` | `NoCrossTransportTouchConsumption` | 5 of 42 | 5 | 0 of 0 | 2 | 0 | 3 | 4 | `31c21a7` stale (3 input(s) newer) | BOUNDED |
-| `SEC-FIDO-003` | `NoTokenAfterInvalidation` | 5 of 45 | 6 | 0 of 0 | 2 | 0 | 4 | 0 | `31c21a7` stale (9 input(s) newer) | BOUNDED |
-| `SEC-FIDO-004` | `NoAccessibleSecretWithoutGate` | 5 of 39 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | `31c21a7` stale (5 input(s) newer) | MODELLED-ONLY |
-| `SEC-FIDO-005` | `NoUnmanageableCredential` | 5 of 40 | 3 | 0 of 0 | 0 | 0 | 4 | 0 | `31c21a7` stale (6 input(s) newer) | MODELLED-ONLY |
-| `SEC-FIDO-006` | `ResetNeverWeakensSurvivingState` | 5 of 40 | 3 | 0 of 0 | 1 | 0 | 4 | 0 | `31c21a7` stale (4 input(s) newer) | BOUNDED |
-| `SEC-FIDO-006A` | `ResetKeepsThePinGate` | 1 of 2 | 1 | 0 of 0 | 1 | 0 | 4 | 0 | `b185fc3` stale (2 input(s) newer) | BOUNDED |
-| `SEC-FIDO-006B` | `ResetKeepsTheAlwaysUvGate` | 1 of 2 | 1 | 0 of 0 | 1 | 0 | 4 | 0 | `b185fc3` stale (2 input(s) newer) | BOUNDED |
-| `SEC-FIDO-006C` | `ResetKeepsTheBackupSeal` | 1 of 2 | 1 | 0 of 0 | 1 | 0 | 4 | 0 | `b185fc3` stale (2 input(s) newer) | BOUNDED |
-| `SEC-FIDO-007` | `RamNeverOutlivesFlashSeed` | 4 of 5 | 1 | 0 of 0 | 0 | 1 | 4 | 0 | `3e08f75` stale (9 input(s) newer) | MODELLED-ONLY |
-| `SEC-FIDO-008` | `NoLiveTokenWithoutPinRecord` | 4 of 5 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `31c21a7` stale (4 input(s) newer) | MODELLED-ONLY |
+| `SEC-FIDO-001` | `NoAuthorizationBypass` | 5 of 50 | 12 | 0 of 0 | 4 | 0 | 3 | 4 | `f52b720` stale (59 input(s) newer) | BOUNDED |
+| `SEC-FIDO-002` | `NoCrossTransportTouchConsumption` | 5 of 42 | 5 | 0 of 0 | 2 | 0 | 3 | 4 | `31c21a7` stale (4 input(s) newer) | BOUNDED |
+| `SEC-FIDO-003` | `NoTokenAfterInvalidation` | 5 of 45 | 6 | 0 of 0 | 2 | 0 | 4 | 0 | `31c21a7` stale (10 input(s) newer) | BOUNDED |
+| `SEC-FIDO-004` | `NoAccessibleSecretWithoutGate` | 5 of 39 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | `31c21a7` stale (6 input(s) newer) | MODELLED-ONLY |
+| `SEC-FIDO-005` | `NoUnmanageableCredential` | 5 of 40 | 3 | 0 of 0 | 0 | 0 | 4 | 0 | `31c21a7` stale (7 input(s) newer) | MODELLED-ONLY |
+| `SEC-FIDO-006` | `ResetNeverWeakensSurvivingState` | 5 of 40 | 3 | 0 of 0 | 1 | 0 | 4 | 0 | `31c21a7` stale (5 input(s) newer) | BOUNDED |
+| `SEC-FIDO-006A` | `ResetKeepsThePinGate` | 1 of 2 | 1 | 0 of 0 | 1 | 0 | 4 | 0 | `b185fc3` stale (3 input(s) newer) | BOUNDED |
+| `SEC-FIDO-006B` | `ResetKeepsTheAlwaysUvGate` | 1 of 2 | 1 | 0 of 0 | 1 | 0 | 4 | 0 | `b185fc3` stale (3 input(s) newer) | BOUNDED |
+| `SEC-FIDO-006C` | `ResetKeepsTheBackupSeal` | 1 of 2 | 1 | 0 of 0 | 1 | 0 | 4 | 0 | `b185fc3` stale (3 input(s) newer) | BOUNDED |
+| `SEC-FIDO-007` | `RamNeverOutlivesFlashSeed` | 4 of 5 | 1 | 0 of 0 | 0 | 1 | 4 | 0 | `3e08f75` stale (10 input(s) newer) | MODELLED-ONLY |
+| `SEC-FIDO-008` | `NoLiveTokenWithoutPinRecord` | 4 of 5 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `31c21a7` stale (5 input(s) newer) | MODELLED-ONLY |
 | `SEC-FIDO-009` | `OpAdvancesIsOneActivity` | 1 of 2 | 0 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-FIDO-L01` | `EveryOpQuiesces` | 2 of 3 | 0 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-FIDO-L02` | `EveryWaitReleases` | 2 of 3 | 0 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
@@ -166,17 +166,17 @@ Three spellings of "not current", which used to sit on two different pages and i
 
 | Kind | Subject | What is outstanding |
 |---|---|---|
-| bundle | `SEC-FIDO-001` | 58 input(s) newer than `f52b720` |
-| bundle | `SEC-FIDO-002` | 3 input(s) newer than `31c21a7` |
-| bundle | `SEC-FIDO-003` | 9 input(s) newer than `31c21a7` |
-| bundle | `SEC-FIDO-004` | 5 input(s) newer than `31c21a7` |
-| bundle | `SEC-FIDO-005` | 6 input(s) newer than `31c21a7` |
-| bundle | `SEC-FIDO-006` | 4 input(s) newer than `31c21a7` |
-| bundle | `SEC-FIDO-006A` | 2 input(s) newer than `b185fc3` |
-| bundle | `SEC-FIDO-006B` | 2 input(s) newer than `b185fc3` |
-| bundle | `SEC-FIDO-006C` | 2 input(s) newer than `b185fc3` |
-| bundle | `SEC-FIDO-007` | 9 input(s) newer than `3e08f75` |
-| bundle | `SEC-FIDO-008` | 4 input(s) newer than `31c21a7` |
+| bundle | `SEC-FIDO-001` | 59 input(s) newer than `f52b720` |
+| bundle | `SEC-FIDO-002` | 4 input(s) newer than `31c21a7` |
+| bundle | `SEC-FIDO-003` | 10 input(s) newer than `31c21a7` |
+| bundle | `SEC-FIDO-004` | 6 input(s) newer than `31c21a7` |
+| bundle | `SEC-FIDO-005` | 7 input(s) newer than `31c21a7` |
+| bundle | `SEC-FIDO-006` | 5 input(s) newer than `31c21a7` |
+| bundle | `SEC-FIDO-006A` | 3 input(s) newer than `b185fc3` |
+| bundle | `SEC-FIDO-006B` | 3 input(s) newer than `b185fc3` |
+| bundle | `SEC-FIDO-006C` | 3 input(s) newer than `b185fc3` |
+| bundle | `SEC-FIDO-007` | 10 input(s) newer than `3e08f75` |
+| bundle | `SEC-FIDO-008` | 5 input(s) newer than `31c21a7` |
 | bundle | `SEC-ADM-002` | no raw evidence bundle |
 | bundle | `SEC-ADM-004` | no raw evidence bundle |
 | bundle | `SEC-BOOT-001` | no raw evidence bundle |
