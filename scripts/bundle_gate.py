@@ -121,12 +121,14 @@ BUNDLE = BUNDLE_DIR / "SEC-FIDO-001.toml"
 #: green, which is the family "the table was DELETED rather than EMPTIED" one
 #: layer out.
 #:
-#: Moved 2 -> 8 the day the six remaining P0 bundles landed, and 8 -> 11 the day
+#: Moved 2 -> 8 the day the six remaining P0 bundles landed, 8 -> 11 the day
 #: `SEC-FIDO-006` was split into `SEC-FIDO-006A/B/C` and the three clause bundles
-#: landed together. The value is the measured roster and not a margin under it: a
-#: floor below the count is a bundle that can leave with the row green, which is
-#: the direction above.
-ROSTER_FLOOR = 11
+#: landed together, and 11 -> 17 the day the six `SEC-STORE-*` bundles landed —
+#: the rest of the `p0-launch` tranche, which until then carried no bundle at all.
+#: The value is the measured roster and not a margin under it: a floor below the
+#: count is a bundle that can leave with the row green, which is the direction
+#: above.
+ROSTER_FLOOR = 17
 
 #: The evidence store. Held BOTH ways, like [`BUNDLE_DIR`] one layer in: the
 #: `[[artifact]]` rule below reads a bundle's path and asks whether the tree has
@@ -157,8 +159,10 @@ STORE = BUNDLE_DIR / "logs"
 #: at the root that are `SEC-FIDO-001`'s — the one bundle with no directory of its
 #: own, which is why this walks the store rather than the ten names. Like
 #: `ROSTER_FLOOR` it moves UP when a slice lands, and a diff someone has to write
-#: is the point.
-STORE_FLOOR = 100
+#: is the point. 100 -> 126 with the six `SEC-STORE-*` bundles: 25 TLC logs over
+#: six new directories, plus the one gzipped Kani log the store slice's only
+#: BOUNDED row rests on.
+STORE_FLOOR = 126
 
 REGISTRY = pathlib.Path("assurance/properties.toml")
 #: Where a bare `Name.cfg` lives. The bundle names TLC configurations without a
@@ -636,10 +640,12 @@ LOG_NAME = re.compile(r"[A-Za-z0-9_.\-/]*\.log(?:\.gz)?")
 #: What [`quoted_numbers`] must reach. THE POINT OF THE RULE, not decoration:
 #: `check_evidence`'s only shape rule keyed on a `board_revision` no row carried,
 #: so it guarded zero rows while reading as if it guarded the hardware axis. The
-#: measured tree is 198 numbers over 63 joins; AT the measurement like every
+#: measured tree is 281 numbers over 90 joins; AT the measurement like every
 #: ratchet here, so a join that stops forming is a finding rather than a quieter
-#: summary line.
-QUOTE_FLOOR, QUOTE_JOIN_FLOOR = 198, 63
+#: summary line. Moved from 198 over 63 when the six `SEC-STORE-*` bundles landed:
+#: every model verdict they carry quotes its own run's states, distinct and depth
+#: beside the log that printed them, which is 83 more numbers over 27 more joins.
+QUOTE_FLOOR, QUOTE_JOIN_FLOOR = 281, 90
 
 #: The two rosters above must name the same ten groups. One in `GROUPS` and not
 #: in `FLOORS` is a `KeyError`; one in `FLOORS` and not in `GROUPS` is silently

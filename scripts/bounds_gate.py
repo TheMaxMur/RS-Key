@@ -100,12 +100,15 @@ SECTION = "## The bounds"
 LAUNCH = "p0-launch"
 TABLE_HEADER = "| Bound | Value | What stops being proved |"
 
-#: Floors, at the measured counts of this tree: 11 bundles, 83 method rows
-#: carrying at least one bound, 397 bounds, and **all 397** of those carrying the
+#: Floors, at the measured counts of this tree: 17 bundles, 107 method rows
+#: carrying at least one bound, 541 bounds, and **all 541** of those carrying the
 #: per-bound consequence. Moved from 8/61/295/295 the day `SEC-FIDO-006` was
-#: split into `SEC-FIDO-006A/B/C` and the three clause bundles landed; each new
-#: value was READ OFF `table()` over the eleven bundles rather than added up from
-#: the three deltas, which each reported the count as of the moment it was
+#: split into `SEC-FIDO-006A/B/C` and the three clause bundles landed, and from
+#: 11/83/397/397 the day the six `SEC-STORE-*` bundles landed — which is the whole
+#: `p0-launch` tranche carrying a bundle for the first time, so the denominator
+#: this page is about and the set of bundles it renders became the same 17. Each
+#: new value was READ OFF `table()` over the seventeen bundles rather than added
+#: up from the deltas, which each reported the count as of the moment it was
 #: written and so could only be a lower bound on the merge.
 #:
 #: Each is the DEFAULT of an [`audit`] parameter and is
@@ -117,10 +120,10 @@ TABLE_HEADER = "| Bound | Value | What stops being proved |"
 #: by construction because nothing can be under it; at the count it is the ratchet
 #: the other three are — dropping one `stops_*` is red until an author moves it in
 #: the same diff, which is the direction a floor exists for.
-BUNDLE_FLOOR = 11
-ROW_FLOOR = 83
-BOUNDS_FLOOR = 397
-PROSE_FLOOR = 397
+BUNDLE_FLOOR = 17
+ROW_FLOOR = 107
+BOUNDS_FLOOR = 541
+PROSE_FLOOR = 541
 
 #: A rendered bound row, for the completeness rule. It reads the page ON DISK
 #: rather than the string `render` just built, so a filter inside `render` and a
