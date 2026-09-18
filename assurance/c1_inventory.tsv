@@ -37,8 +37,19 @@
 # question needs decision SITES as its unit, not functions, and that inventory has
 # not been built.
 #
+# WHICH IMAGE. The count is flavour-blind, and two crates make that measurable:
+# rsk-ui and rsk-display are `optional` in firmware/Cargo.toml and reach only the
+# `display` build — scripts/check.sh asserts in as many words that they are absent
+# from the default image. They contribute 74 functions over 908 span lines here,
+# 35 functions over 610 of them in the core, so the default flavour's core is 12 916
+# and the display flavour's is 13 526. A ratchet that does not name its flavour
+# would read a feature flip as 610 lines of progress.
+#
 # COLUMNS: fn, file:line, span lines, label, rule, why, properties. `label` is
-# after adversarial review, which moved 392 lines into the core and 215 out.
+# after adversarial review, which moved 392 lines into the core and 215 out. The
+# five rows review moved OUT carry rule `M` and a `why` beginning REVIEW:, with the
+# argument it refuted named — they are the only place this file contradicts rule 1
+# of its own predicate, and they do it on evidence rather than on doubt.
 new	crates/rsk-oath/src/lib.rs:202	20	decides	D4	sets the initial access status validated=true — a code-less applet comes out of new() unlocked (MX-SEAM-003 refers to this line)	SEC-SEAM-001
 device	crates/rsk-oath/src/lib.rs:223	7	marshals	M	builds Device from the already-read serial_hash/serial_id/otp_key, no branch at all	-
 cmd_put	crates/rsk-oath/src/lib.rs:244	62	decides	D1,D3	!validated → SECURITY_STATUS_NOT_SATISFIED, then seal_put into the selected slot — the only credential write	SEC-POL-004
@@ -66,7 +77,7 @@ aid	crates/rsk-oath/src/lib.rs:1218	3	marshals	M	returns the constant OATH_AID	-
 deselect	crates/rsk-oath/src/lib.rs:1222	8	decides	D4	clears validated, otp_pin_verified and chain on leaving the applet	SEC-SEAM-001
 select	crates/rsk-oath/src/lib.rs:1231	35	decides	D4,D5	validated = !code_set, where code_set = try_has_key(EF_OATH_CODE).unwrap_or(true) — a failed probe locks rather than opens	SEC-SEAM-001,SEC-SEAM-004,SEC-STORE-002
 process	crates/rsk-oath/src/lib.rs:1267	41	decides	D4,D5	line :1274 clears chain on any non-SEND REMAINING, and :1295 routes SEND REMAINING by chain — this cursor is itself the page authorization	SEC-POL-004
-p1p2_ok	crates/rsk-oath/src/lib.rs:1310	25	marshals	D5	the line INS_RESET → p1==0xDE && p2==0xAD is the only barrier before a full wipe, judged before dispatch	-
+p1p2_ok	crates/rsk-oath/src/lib.rs:1310	25	marshals	M	REVIEW: `DE AD` is a magic constant any host sends — it separates a typo, it does not refuse authorization (was D5)	-
 challenge_of	crates/rsk-oath/src/lib.rs:1336	7	marshals	M	the only condition is challenge length ≤ CHALLENGE_MAX	-
 calc_all_challenge	crates/rsk-oath/src/lib.rs:1344	7	marshals	M	body grammar: challenge must be the first TLV	-
 cred_property	crates/rsk-oath/src/lib.rs:1352	8	decides	D5	the only reader of PROP_TOUCH/PROP_INCREASING; an absent tag yields 0, i.e. "no touch required"	SEC-POL-004
@@ -76,7 +87,7 @@ bulk_computable	crates/rsk-oath/src/lib.rs:1407	8	decides	D5	the condition for i
 alg_supported	crates/rsk-oath/src/lib.rs:1416	9	marshals	M	match on three literal nibbles; the domain is exactly oath_hmac's, so a spurious true yields None, not a code	-
 code_modulus	crates/rsk-oath/src/lib.rs:1426	8	decides	D5	code width: None → DATA_INVALID in VERIFY CODE, and the value itself sets the entropy of the compared OTP	SEC-POL-004
 oath_hmac	crates/rsk-oath/src/lib.rs:1435	18	decides	D2	computes the MAC itself, from which the OTP code and the access-code check are derived; None is the refusal path of both	SEC-POL-004
-calculate	crates/rsk-oath/src/lib.rs:1454	24	marshals	D2	puts the code truncated per RFC 4226 into ResBuf — here the secret goes out onto the wire	SEC-POL-004
+calculate	crates/rsk-oath/src/lib.rs:1454	24	marshals	M	REVIEW: the decision to hand out a code is already taken in cmd_calculate/calc_all_page; no branch here moves D1-D4 (was D2)	SEC-POL-004
 present_creds	crates/rsk-oath/src/lib.rs:1479	25	marshals	M	enumeration of the in-RAM present bits into a list of fids, no policy	-
 is_oath_cred_fid	crates/rsk-oath/src/lib.rs:1505	4	decides	D5	the range that sweep must wipe on RESET; outside it a record survives the wipe	SEC-STORE-006
 is_oath_lock_fid	crates/rsk-oath/src/lib.rs:1510	13	decides	D5	which records count as locks — deleting them last is itself the order the wipe relies on	SEC-STORE-006
@@ -290,7 +301,7 @@ next_use_counter	crates/rsk-otp/src/counter.rs:10	17	decides	D3	returns persist=
 boot_use_counter	crates/rsk-otp/src/counter.rs:28	8	decides	D3	None at the ceiling means "do not write"; the counter is never lowered	SEC-POL-006
 is_chal_resp_slot	crates/rsk-otp/src/lib.rs:110	12	decides	D5	a two-bit parse of the slot mode; its false in cmd_calculate is a refusal to issue a response under the slot's secret	SEC-POL-006
 slot_needs_touch	crates/rsk-otp/src/lib.rs:123	5	marshals	M	the only two consumers (lib.rs:384, lib.rs:390) are the CONFIG*_TOUCH bits in the status for the host	-
-is_function_slot	crates/rsk-otp/src/lib.rs:169	27	marshals	D5	the set of "function" P1s by which ccid.rs:440 silences OTP with CAP_OTP cleared	SEC-ADM-004
+is_function_slot	crates/rsk-otp/src/lib.rs:169	27	marshals	M	REVIEW: `matches!` over nine P1 literals, which D5 excludes in as many words (was D5)	SEC-ADM-004
 new	crates/rsk-otp/src/lib.rs:218	17	marshals	M	constructor: lays out the fields, no branch at all and no effect at all	-
 device	crates/rsk-otp/src/lib.rs:236	7	marshals	M	assembles Device from the serial and the MKEK that was read — struct assembly	-
 read_slot_m	crates/rsk-otp/src/lib.rs:244	31	decides	D5	the Err→None fold: a refusal by the medium is declared an unprogrammed slot, and that is the condition of the write in button_ticket	SEC-STORE-002
@@ -661,7 +672,7 @@ cap_enabled	crates/rsk-devconf/src/lib.rs:629	6	decides	D4	the cap==0 carve-out 
 clamp_usb_enabled	crates/rsk-devconf/src/lib.rs:636	21	marshals	M	edits only the response draft in config_tlv; enforcement lives in enabled_from_conf's own & SUPPORTED_CAPS	SEC-ADM-004
 push_tlv	crates/rsk-devconf/src/lib.rs:658	11	marshals	M	appends a tag-len-value to the buffer and silently returns on overflow	-
 gates_wiped_last	crates/rsk-device/src/ccid.rs:113	41	decides	D3	a fold over the applets' predicates defines the ORDER of deletion in factory_wipe: gate records go last (ccid.rs:148-152)	SEC-BOOT-001
-new	crates/rsk-device/src/ccid.rs:158	69	marshals	D4	reads the initial enabled_caps mask from flash (ccid.rs:223) and sets up ONE presence source for vendor and rescue, closing the cross-AID gate bypass	SEC-ADM-002,SEC-ADM-004
+new	crates/rsk-device/src/ccid.rs:158	69	marshals	M	REVIEW: a 69-line struct literal whose one live line calls read_enabled_caps, counted separately as 25 core lines — double count (was D4)	SEC-ADM-002,SEC-ADM-004
 refresh_enabled	crates/rsk-device/src/ccid.rs:228	7	decides	D4	reloads the permission cache from flash, after which the next command sees the new set	SEC-ADM-004
 caps_enabled	crates/rsk-device/src/ccid.rs:236	5	decides	D4	the worker gates the FIDO2 (CBOR) and U2F (MSG) transports on it, not only CCID	SEC-ADM-001,SEC-ADM-004
 applet_enable_mask	crates/rsk-device/src/ccid.rs:242	11	decides	D4	folds APPLET_CAPS into the dispatcher's index mask — a translation of "permissions" into "addresses" (ccid.rs:246-248)	SEC-ADM-001,SEC-ADM-004
@@ -681,7 +692,7 @@ device	crates/rsk-rescue/src/lib.rs:129	7	marshals	M	a Device struct literal ove
 require_presence	crates/rsk-rescue/src/lib.rs:137	8	decides	D1	the only point where physical presence is spent: true only on Presence::Confirmed; marked Refines SEC-ADM-002	SEC-ADM-002
 keydev_sign	crates/rsk-rescue/src/lib.rs:146	65	decides	D2	P1=01 means oracle signing over the device key behind presence (lib.rs:154); P1=03 means overwriting the identity certificate	SEC-ADM-002
 write	crates/rsk-rescue/src/lib.rs:212	57	decides	D3	P1=01 rewrites the phy record (VID/PID, interfaces, LED) behind presence (lib.rs:220); an unknown P1 refuses with 6A86 rather than a "silent success"	SEC-ADM-002
-read	crates/rsk-rescue/src/lib.rs:270	70	marshals	D5	P1=01 answers MEMORY_FAILURE on a faulted read instead of a synthesised default (lib.rs:280) — the same fault-vs-absence choice as in read_enabled_caps	-
+read	crates/rsk-rescue/src/lib.rs:270	70	marshals	M	REVIEW: every arm reads a value and serialises it; read_enabled_caps feeds cap_enabled, this feeds only the USB answer (was D5)	-
 reboot	crates/rsk-rescue/src/lib.rs:341	19	decides	D1	P1=01 (BOOTSEL, an aid to an at-rest dump) is behind presence; P1=00 one line below is not (lib.rs:350,355)	SEC-ADM-002
 otp_lock	crates/rsk-rescue/src/lib.rs:361	13	decides	D5	the p2!=0x00 refusal and the P1 whitelist are the first of three latches on the irreversible fuse burn (lib.rs:365,369)	SEC-ADM-002
 lock_page58	crates/rsk-rescue/src/lib.rs:375	42	decides	D3	magic, an MKEK provisioning check (lib.rs:390), presence and read-back around the IRREVERSIBLE write of the OTP row	SEC-ADM-002

@@ -467,7 +467,8 @@ SCOPED = {
     # Reached by widening a published unit into the vocabulary the shape scan
     # already enumerates: `85 entries` is the roster, a sentence seven commits in
     # this series have now had to hand-correct — 69 -> 71 -> 72 -> 73 -> 76 -> 79
-    # -> 80 -> 85.
+    # -> 80 -> 85 -> 87. The eighth correction was MISSED by its own commit and
+    # caught by review: a seam batch grew the roster and the sentence stood.
     (
         "formal/README.md",
         "**31 of 31 mutants are caught",
@@ -476,7 +477,7 @@ SCOPED = {
     "claim, and the generated roster line carries the same 30",
     (
         "docs/formal.md",
-        "85 entries: 79 of the 80 executable patches are killed",
+        "87 entries: 79 of the 82 executable patches are killed",
     ): "the whole-tree roster restated in the page that introduces the phase-2 "
     "table, whose generated region beside it gives the phase-2 line and not this "
     "total",
@@ -487,7 +488,7 @@ SCOPED = {
     # stays gone.
     (
         "formal/README.md",
-        "**85 entries: 79 executable patches killed",
+        "**87 entries: 79 of the 82 executable patches killed",
     ): "the co-mutant roster restated where its composition is broken down, which the "
     "generated line beside it does not give — the copy that read 69, then 71, 72 and "
     "73, re-measured by hand in four commits of this series. Its own claim that a "

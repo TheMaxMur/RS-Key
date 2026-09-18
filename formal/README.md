@@ -1807,8 +1807,8 @@ so the kill measured a defence in depth rather than the modelled defect. It now
 widens both layers, and `put_data_c4_refuses_a_user_status` drives the command
 so the outer gate is asserted too.
 
-The live roster is **85 entries: 79 executable patches killed, one measured gap,
-five unreachable with recorded evidence.**
+The live roster is **87 entries: 79 of the 82 executable patches killed, three
+measured gaps, five unreachable with recorded evidence.**
 
 ## The sixth module — `RSKeyAdminSurface.tla`
 
