@@ -398,6 +398,8 @@ list_safety() {
   echo Lattice.cfg             # the fourth module: the retry/recovery lattice
   ls LatMut_*.cfg
   ls LatSolo_*.cfg
+  echo LatInduction.cfg    # IndInv /\ Next => IndInv' over the counters, and
+  ls LatInductionMut_*.cfg # what says that probe can go red
   echo Policies.cfg            # the four applets' stateful operation policies
   ls PolicyMut_*.cfg
   ls PolicySolo_*.cfg
