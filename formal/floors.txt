@@ -330,6 +330,15 @@ StoreInduction.cfg                   GREEN   1000
 StoreInductionMut_*.cfg              RED     -
 LatMut_*.cfg                         RED     -
 LatSolo_*.cfg                        RED     -
+\* The lattice's induction probe. Unlike the store's it FOUND nothing: the three
+\* invariants are step recorders, so a state satisfying them carries `viol = {}`
+\* and no other conjunct is needed -- `IndInv` is `TypeOK /\ viol = {}` and one
+\* step of `Next` never leaves it. The floor is the count of type-correct states
+\* the predicate admits at `Max = 2` (3^5 counter assignments over the five
+\* references), because below it the predicate stopped admitting what it admits.
+LatInduction.cfg                     GREEN   243
+\* One mutant, for the reason the store family's row gives.
+LatInductionMut_*.cfg                RED     -
 PolicyMut_*.cfg                      RED     -
 PolicySolo_*.cfg                     RED     -
 AdminMut_*.cfg                       RED     -

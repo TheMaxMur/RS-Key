@@ -197,4 +197,28 @@ WrongAttemptIsCharged == "WrongAttemptIsCharged" \notin viol
 \* `correct`, so it is not a writer here.
 BudgetRisesOnlyWithItsSecret == "BudgetRisesOnlyWithItsSecret" \notin viol
 
+(***************************************************************************)
+(* THE INDUCTION PROBE. Everything above is checked over what `Init` can     *)
+(* REACH. `LatInduction.cfg` asks the stronger question with the same        *)
+(* checker: does one step from ANY type-correct state the three invariants   *)
+(* admit land in one that still does?                                        *)
+(*                                                                           *)
+(* Here the answer is cheap to predict and was still worth measuring, because *)
+(* the three are STEP recorders: a state satisfying them carries `viol = {}`  *)
+(* and nothing else, so the probe's initial states are every counter          *)
+(* assignment rather than the ones a ladder can reach. That is the whole      *)
+(* difference between this row and `Lattice.cfg`, and it is the one that      *)
+(* matters for the source obligation: an inductive invariant needs no         *)
+(* reachability argument, which is what a deductive prover would be bought    *)
+(* for.                                                                       *)
+(*                                                                           *)
+(* What it still does NOT give is the maximum. `Max` is a TLC CONSTANT, so a  *)
+(* GREEN row here is GREEN at that one value; the production ceiling is the   *)
+(* `u8` stored beside each counter, and it is                                 *)
+(* `crates/rsk-piv/src/retry_lattice_kani.rs` that ranges over all 256 of     *)
+(* them, against the functions VERIFY and RESET RETRY COUNTER call.           *)
+(***************************************************************************)
+IndInv == TypeOK /\ NoAuthWhenBlocked /\ WrongAttemptIsCharged
+            /\ BudgetRisesOnlyWithItsSecret
+
 =============================================================================
