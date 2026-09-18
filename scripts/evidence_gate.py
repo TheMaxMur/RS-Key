@@ -98,6 +98,7 @@ import comutate
 import claims_gate
 import gate_lines
 import platform_gate
+import run_count_gate
 import scope_gate
 import verdict_gate
 
@@ -428,17 +429,35 @@ def evidence_inputs(root, name, pid, checked, module):
     """The files a property's recorded evidence is ABOUT, derived.
 
     Its model and the modules that model EXTENDS, every configuration checking
-    it, the Kani files carrying its harnesses, the production owners whose
-    `Refines` tag names it, and the files its killed code twins patch. Derived
-    rather than read from the bundle's own `expires_on_owner_change`, which is a
-    hand-written list of the same thing — and which named two classes this
-    derivation had to grow before it agreed with it.
+    it, the record those configurations were last OBSERVED in, the Kani files
+    carrying its harnesses, the production owners whose `Refines` tag names it,
+    and the files its killed code twins patch. Derived rather than read from the
+    bundle's own `expires_on_owner_change`, which is a hand-written list of the
+    same thing — and which named two classes this derivation had to grow before
+    it agreed with it.
+
+    `run_count_gate.RECORD` is the newest of those classes, and the tree
+    demonstrated it against this function rather than an argument suggesting it.
+    A bundle transcribes a TLC closing line per configuration, and a RED closing
+    is where the run STOPPED, not where the model ends — so it moves when the
+    tier is re-run with the model untouched. Measured across `982fb2f`, which
+    touches the record and generated pages and NO model, configuration or source:
+    `Mut_BugTokenlessIgnoresAlwaysUv.cfg` went 61236/10696 to 59974/10559, and a
+    bundle dated at its parent read `fresh` over 45 derived inputs with every
+    number in the tree re-measured underneath it. Anchored on the whole file and
+    not on a tier or a row, because `--record` rewrites it wholesale and a row
+    anchor is the line-number key `docs/platform-assumptions.md` already argues
+    against. Conditioned on the property HAVING a configuration: one with none
+    transcribes no run, and dating it against the record would be the decoration
+    this module refuses everywhere else.
     """
     out = set()
     if module:
         out.add(f"formal/{module}.tla")
         for parent in scope_gate.ancestors(module, root / "formal"):
             out.add(f"formal/{parent}.tla")
+    if checked.get(name):
+        out.add(str(run_count_gate.RECORD))
     out |= {f"formal/{cfg}" for cfg in checked.get(name, [])}
     out |= set(comutant_patch_files(root, name))
     snake = assurance_gate.snake(name)
@@ -454,6 +473,43 @@ def evidence_inputs(root, name, pid, checked, module):
         ):
             out.add(str(path.relative_to(root)))
     return sorted(out)
+
+
+# The mutation table for the run-record clause above. Each arm was driven on a
+# COPY of `scripts/` under the session scratchpad, never on the file being
+# edited, so no arm's verdict is a mutant reading another mutant. Every row names
+# the assertion that fell AND its direction: a case that says "fresh where stale
+# was owed" is this defect, and one that says the reverse is its inverse.
+#
+#   clause                 the arm with the clause out            direction
+#   `out.add(RECORD)`      `..._re_recorded_run_after_the_        `assert 'fresh' ==
+#                          bundle_goes_stale` fails, and          'stale'` — the axis
+#                          `..._not_dated_against_the_record`     called a bundle current
+#                          fails on its positive half             over a re-recorded tier
+#   the `if checked`       only `..._not_dated_against_the_       `assert 'formal/runs.
+#   condition              record` fails, on its `not in` half    toml' not in …` — the
+#                          (4 passed, 1 failed)                   record dated a property
+#                                                                 no configuration checks
+#   `RECORD` itself        swapped for `formal/floors.txt`: the   same two, same
+#   (the imported          same two cases fall                    directions — the clause
+#   constant)                                                     is the record's, not any
+#                                                                 neighbouring formal/ file
+#
+# And the arm that needs no fixture, because this tree's own HEAD is the defect.
+# `982fb2f` touches `formal/runs.toml` and four generated pages, no model, no
+# configuration, no source — and it re-ran both tiers. Dated at its parent
+# `68eaca6` and read at it: `SEC-FIDO-002` is `stale` behind `formal/runs.toml`
+# over 46 inputs with the clause, and `fresh` over 45 with it out. `SEC-FIDO-006A`
+# the same at 6 and 5. That commit moved `Mut_BugTokenlessIgnoresAlwaysUv.cfg`
+# from 61236/10696 to 59974/10559, a line `SEC-FIDO-002`'s own bundle transcribes.
+#
+# What the clause does NOT do, said because the 22 rows it moved on the page are
+# +1 each and a reader could take them for a repair: every bundle here was stale
+# before it. Measured over the 104 (bundle, input) pairs behind them, 91 moved in
+# content, 5 in comments alone, 8 are configurations that did not yet exist — and
+# 80 of the 81 TLC closings the bundles cite differ from `formal/runs.toml`'s
+# today, `Shipped.cfg` by 77563872 distinct states against 108618956. The clause
+# buys a date that cannot be right for the wrong reason; it buys no freshness.
 
 
 def freshness(root, commit, inputs):

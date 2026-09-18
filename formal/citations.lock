@@ -84,7 +84,7 @@ assurance/bundle/SEC-FIDO-002.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...
 assurance/bundle/SEC-FIDO-002.toml	scripts/assurance_gate.py	103-103	TAG = re.compile(r"Refines\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)")	TAG = re.compile(r"Refines\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)")
 assurance/bundle/SEC-FIDO-002.toml	scripts/assurance_gate.py	220-222	def grep_word(files: list[pathlib.Path], word: str) -> list[str]:	return [f.name for f in files if pat.search(f.read_text(errors="ignore"))]
 assurance/bundle/SEC-FIDO-002.toml	scripts/comutate.py	891-893	# Sequential runs share the main build cache: only the patched	"CARGO_TARGET_DIR": str(root / "target"),
-assurance/bundle/SEC-FIDO-002.toml	scripts/evidence_gate.py	449-455	for path in assurance_gate.production_rust(root):	out.add(str(path.relative_to(root)))
+assurance/bundle/SEC-FIDO-002.toml	scripts/evidence_gate.py	468-474	for path in assurance_gate.production_rust(root):	out.add(str(path.relative_to(root)))
 assurance/bundle/SEC-FIDO-002.toml	scripts/ghost_gate.py	62-64	#: The invariant whose ghost this is. One name, because a second ghost would want	INVARIANT = "NoAuthorizationBypass"
 assurance/bundle/SEC-FIDO-002.toml	scripts/kani.sh	307-307	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-display/src/gates.rs	149-149	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
@@ -120,7 +120,7 @@ assurance/bundle/SEC-FIDO-003.toml	formal/gen-configs.sh	185-187	elif [ -n "$on"
 assurance/bundle/SEC-FIDO-003.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-003.toml	fuzz/fuzz_targets/fido_session.rs	1430-1433	assert_ne!(	);
 assurance/bundle/SEC-FIDO-003.toml	scripts/citation_gate.py	618-621	return re.compile(	)
-assurance/bundle/SEC-FIDO-003.toml	scripts/evidence_gate.py	459-490	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
+assurance/bundle/SEC-FIDO-003.toml	scripts/evidence_gate.py	515-546	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
 assurance/bundle/SEC-FIDO-003.toml	scripts/kani.sh	307-307	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
 assurance/bundle/SEC-FIDO-003.toml	scripts/platform_gate.py	1890-1918	def check_bundles(root, ids, findings):	)
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-device/src/ctap.rs	201-201	persistent_grant_record: fs.has_key(EF_PAUTHTOKEN),	persistent_grant_record: fs.has_key(EF_PAUTHTOKEN),
@@ -167,7 +167,7 @@ assurance/bundle/SEC-FIDO-004.toml	scripts/assurance_gate.py	220-222	def grep_wo
 assurance/bundle/SEC-FIDO-004.toml	scripts/assurance_gate.py	1053-1062	for cfg_name in OWNER_CFGS:	)
 assurance/bundle/SEC-FIDO-004.toml	scripts/citation_gate.py	368-374	def bundle_pages(root):	)
 assurance/bundle/SEC-FIDO-004.toml	scripts/comutate.py	898-902	"RUSTFLAGS": (	).strip(),
-assurance/bundle/SEC-FIDO-004.toml	scripts/evidence_gate.py	459-490	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
+assurance/bundle/SEC-FIDO-004.toml	scripts/evidence_gate.py	515-546	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
 assurance/bundle/SEC-FIDO-004.toml	scripts/ghost_gate.py	64-64	INVARIANT = "NoAuthorizationBypass"	INVARIANT = "NoAuthorizationBypass"
 assurance/bundle/SEC-FIDO-004.toml	scripts/platform_gate.py	1890-1918	def check_bundles(root, ids, findings):	)
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	795-795	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
