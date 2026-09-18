@@ -1128,6 +1128,7 @@ formal/comutants.toml	crates/rsk-oath/src/increasing_tests.rs	36-36	assert_eq!(s
 formal/comutants.toml	crates/rsk-oath/src/lib.rs	1222-1229	/// Drop the VALIDATE result on deselect / card reset, so a later session must	}
 formal/comutants.toml	crates/rsk-oath/src/lib.rs	1262-1263	self.validated = !code_set;	self.otp_pin_verified = false;
 formal/comutants.toml	crates/rsk-oath/src/otp_pin_tests.rs	66-66	assert!(!safe_open(&mut app, &mut fs), "closed before any PIN");	assert!(!safe_open(&mut app, &mut fs), "closed before any PIN");
+formal/comutants.toml	crates/rsk-oath/src/removal_tests.rs	180-180	Applet::select(&mut app, false, &mut fs, &mut res);	Applet::select(&mut app, false, &mut fs, &mut res);
 formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	45-45	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	322-322	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/tests.rs	1328-1328	assert_eq!(run(app, fs, &apdu(INS_SET_CODE, 0, 0, &d)).0, Sw::OK);	assert_eq!(run(app, fs, &apdu(INS_SET_CODE, 0, 0, &d)).0, Sw::OK);

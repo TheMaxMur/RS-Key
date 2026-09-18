@@ -1243,6 +1243,29 @@ slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
 note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:355-358."
 
+[comutant.BugOathReselectUnrecorded]
+status = "patch"
+file = "crates/rsk-oath/src/lib.rs"
+find = """
+    fn select(&mut self, _reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+"""
+replace = """
+    fn select(&mut self, reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+"""
+find2 = """
+        self.validated = !code_set;
+        self.otp_pin_verified = false;
+"""
+replace2 = """
+        if !reselect {
+            self.validated = !code_set;
+            self.otp_pin_verified = false;
+        }
+"""
+slice = ["cargo", "test", "-p", "rsk-oath", "-p", "rsk-device"]
+expect = "gap"
+note = "GAP, and the row exists to say so. The model switch takes OATH's exemption out of the REQUIREMENT — the recorder inside `Reselect` — and this takes it out of the IMPLEMENTATION, the same fact's other side the way BugCodelessOathIsAStatus's twin is: `select` honours the `reselect` flag the applet trait hands it and keeps `validated` and `otp_pin_verified` through a SELECT of its own AID, which is what PIV and OpenPGP do and what OATH deliberately does not. Every command in the slice stayed green. No test calls `Applet::select` with `reselect = true` — crates/rsk-oath/src/removal_tests.rs:180 is the only direct call and it passes `false`, every other test reaches `select` through a helper that does the same — and `rsk-device`'s CCID tests re-select nothing, so the one applet whose re-SELECT is a recorded exception has no test at that seam. Direction read: the model half is refused at `ReselectPreservesAccessStatus` over a re-SELECT that DROPPED `oathOtpPin` — the applet re-locking where the widened requirement says it must keep, which is the direction that says the exemption is load-bearing. The code half would have had to fall the other way, in the SERVED direction, and nothing was there to say it."
+
 [comutant.BugCardResetKeepsStatus]
 status = "unreachable"
 evidence = """the applets' deselect is redundant with their own fresh SELECT, so
@@ -1377,6 +1400,26 @@ replace = """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
 note = "inc_sig_count stops clearing PW1 under the one-shot PW status, so one VERIFY signs for ever — the one-signature rule with nothing enforcing it."
+
+[comutant.BugDecipherGhostSpentLikeSig]
+status = "patch"
+file = "crates/rsk-openpgp/src/pso.rs"
+find = """
+            if !sess.has_pw2 {
+                return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+            }
+            (sess.algo_dec, sess.pk_dec)
+"""
+replace = """
+            if !sess.has_pw2 {
+                return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
+            }
+            sess.has_pw1 = false;
+            (sess.algo_dec, sess.pk_dec)
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "gap"
+note = "GAP, and the row exists to say so. The model switch spends the REQUIREMENT ghost `psig` at the decipher reference; this is the implementation side of the same sentence — PSO:DECIPHER clearing `sess.has_pw1`, the PW1 no. 81 status that EF_PW_PRIV[0] = 0 makes valid for exactly one PSO:CDS. Unconditional where the model spends only under the one-shot status, so it is a superset of the modelled defect rather than a narrower one. Every command in the slice stayed green: nothing signs after a decipher, so a DECIPHER that consumed the signature PIN would ship — and its sibling BugSigPinNotSpent, which mutates whether that spend happens at all, is killed by this same slice. Direction read: the model half falls on `NoKeyOpOnTheAdminStatus`'s STRUCTURAL clause `held[\"pw1\"] = psig`, with held.pw1 TRUE against psig FALSE and `viol` still EMPTY — the implementation KEEPING a freshness the requirement retired, which is the SERVED direction. The code half would have answered 6982 to the next CDS, the REFUSED direction: the same split read from the other side, and the reason the two halves are two clauses."
 
 [comutant.BugUserStatusOpensAdmin]
 status = "patch"

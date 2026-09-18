@@ -441,9 +441,10 @@ echo "wrote Shipped.cfg, 2 historical configs, ${#BUGS[@]} mutant configs and ${
 # carries the measurement), so a product would multiply 17 M states by this
 # module's own and buy no new interleavings.
 SEAM_BUGS=(BugSelectKeepsOtherApplet BugReselectResetsStatus
+           BugOathReselectUnrecorded
            BugCardResetKeepsStatus BugAdminOpensKeyOps
            BugFailedChangeKeepsStatus BugPinFreshNotSpent BugPinFreshOutlivesPin
-           BugSigPinNotSpent
+           BugSigPinNotSpent BugDecipherGhostSpentLikeSig
            BugUserStatusOpensAdmin BugRefusedValidateGrants
            BugPwStatusIgnoresAdmin BugPivChangeResetsStatus
            BugRefusedValidateDropsUnlock BugRemoveCodeUnvalidated
@@ -455,12 +456,18 @@ seam_target() {
   case "$1" in
     BugSelectKeepsOtherApplet)  echo NoStatusOutsideItsSelection ;;
     BugReselectResetsStatus)    echo ReselectPreservesAccessStatus ;;
+    # The recorder's OATH exemption removed: the same invariant, reddened from
+    # the other side -- by a re-lock the shipped applet performs on purpose.
+    BugOathReselectUnrecorded)  echo ReselectPreservesAccessStatus ;;
     BugCardResetKeepsStatus)    echo NoStatusOutsideItsSelection ;;
     BugAdminOpensKeyOps)        echo NoKeyOpOnTheAdminStatus ;;
     BugFailedChangeKeepsStatus) echo NoStatusAfterARefusedAuth ;;
     BugPinFreshNotSpent)        echo NoKeyOpOnTheAdminStatus ;;
     BugPinFreshOutlivesPin)     echo NoKeyOpOnTheAdminStatus ;;
     BugSigPinNotSpent)          echo NoKeyOpOnTheAdminStatus ;;
+    # The same invariant's STRUCTURAL clause `held["pw1"] = psig`, split the
+    # other way: the ghost spends at the decipher reference, `held` does not.
+    BugDecipherGhostSpentLikeSig) echo NoKeyOpOnTheAdminStatus ;;
     BugUserStatusOpensAdmin)    echo NoKeyOpOnTheAdminStatus ;;
     BugRefusedValidateGrants)   echo NoStatusAfterARefusedAuth ;;
     BugPwStatusIgnoresAdmin)    echo NoKeyOpOnTheAdminStatus ;;
