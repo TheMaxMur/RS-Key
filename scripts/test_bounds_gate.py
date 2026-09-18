@@ -9,7 +9,7 @@ is deleted as fast as one that cannot go red.
 
 The fixture is a COPY OF THE REAL BUNDLES rather than a mini-tree, and that is
 the point rather than laziness. Every floor here is at this tree's measured count
-— 8 bundles, 61 method rows, 295 bounds — so a synthetic tree would be under all
+— 17 bundles, 107 method rows, 541 bounds — so a synthetic tree would be under all
 three before a case touched it, and the only way to test a rule would have been
 to hand `audit` a smaller floor. That is the shape this tree has already
 measured: a ceiling a case patches down is a ceiling whose SHIPPED value is never
@@ -571,6 +571,25 @@ def test_the_rows_without_a_bundle_are_derived_from_the_ledger(tree):
     for pid in tranche:
         assert f"`{pid}`" in page, f"{pid} is in the tranche and on no line of the page"
     assert "`SEC-STORE-006`" in page
+
+
+def test_a_tranche_row_that_lost_its_bundle_is_named_on_the_page(tree):
+    """The same derivation, run over a tranche that is KNOWN to be uncovered.
+
+    The case above holds at equality, and so does `unbundled = []` — the whole
+    derivation hardcoded to "none are missing" passed all 46 cases of this table,
+    because every `p0-launch` row carries a bundle today and the page's sentence
+    reads `0 of its 17 rows` either way. Removing one bundle makes the difference
+    exactly one row, which the page then has to NAME; the hardcoded empty answer
+    still prints `0` and `none`, and that is this case going red.
+    """
+    orphan = "SEC-STORE-006"
+    (tree.root / f"assurance/bundle/{orphan}.toml").unlink()
+    tree.git("add", "-A")
+    tranche = bounds_gate.launch_tranche(tree.root)
+    page = bounds_gate.render(tree.root)
+    assert f"**1 of its {len(tranche)} rows** carry no bundle" in page
+    assert f"— `{orphan}`." in page
 
 
 def test_a_tranche_that_resolves_to_nothing(tree):

@@ -2222,7 +2222,7 @@ def check_freshness(name, entry, findings, vector):
     file.
 
     Being STALE is not a finding here, for the reason it is not one there: measured
-    over the 11 bundles that record a commit, 11 are stale, so a red on staleness
+    over the 17 bundles that record a commit, 11 are stale, so a red on staleness
     is a gate that is red as its resting state. What is a finding is a settled row
     with no date at all, and one whose date this history does not have — the two
     ways the axis stops being computable. The staleness itself lands on

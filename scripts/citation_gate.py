@@ -308,20 +308,20 @@ SCRIPT_PAGES_FLOOR = 1
 #: Read off the directory for the reason `bundle_gate.py` gives at its own
 #: `BUNDLE_DIR`: a roster written down is a roster to remember to extend, and the
 #: next bundle then arrives unchecked. Measured the day this was added: 517
-#: citations over the eleven, of which 20 were already wrong by this row's own
-#: rules — 12 naming a file the tree does not have, 4 landing on a blank line, 2
-#: past the end, 2 basenames that resolve two ways — plus 11 bare continuations
-#: bound to nothing. Not one of them was reachable from any gate before.
+#: citations over the eleven bundles of that day, of which 20 were already wrong
+#: by this row's own rules — 12 naming a file the tree does not have, 4 landing
+#: on a blank line, 2 past the end, 2 basenames that resolve two ways — plus 11
+#: bare continuations bound to nothing. Not one was reachable from any gate before.
 BUNDLE_ROOT = "assurance/bundle/"
 
 #: The bundle half's own floor, apart from its two siblings for the same reason
-#: they are apart from each other. It is 1, not 11: what a number here can catch
+#: they are apart from each other. It is 1, not 17: what a number here can catch
 #: is the derivation finding NOTHING, and the roster ratchet — a bundle leaving —
 #: is `bundle_gate.py`'s `ROSTER_FLOOR`, which already refuses it. Two guards
 #: holding one number is how the second one comes to disagree with the first.
 #:
 #: It said `BUNDLE_FLOOR` until it was read by hand, and that name EXISTS — it is
-#: `bounds_gate.py`'s, and it is 11 as well — so the sentence named a real
+#: `bounds_gate.py`'s, and it is 17 as well — so the sentence named a real
 #: constant of the right value in the wrong guard. Nothing here could see it:
 #: this file resolves `file:line` SPANS, and a symbol named in prose carries no
 #: line to resolve, so a reference to a name is checked by a reader or by no one.

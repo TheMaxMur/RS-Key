@@ -1031,7 +1031,8 @@ def test_a_transcribed_fraction_denominator_is_that_gate_s(tmp_path, old, new):
     here is replaced by one the SAME line carries (`11` off `api=11`, `12` off
     `softlock=12`), so the old two rules are both satisfied and only
     [`bundle_gate.CLAIMED_FRACTION`] can speak: measured, all three were exit 0
-    before it. 33 denominators over 11 bundles were held that way.
+    before it. 33 denominators over the 11 bundles of that day were held that way;
+    the rule reads 51 over 17 now.
 
     The count is asserted because it is the whole point — one finding, quoting
     the WHOLE token. A message naming `persistent=14` would be the pair rule
@@ -1309,7 +1310,7 @@ def test_a_pair_name_written_once_stays_the_pair_rule_s(tmp_path):
     """The clause above is scoped to names that REPEAT, so the ledger's nine axes
     and the registry's seven are untouched by it — a widening that reached them
     would make every pair depend on the word a bundle happens to put in front of
-    it, and the eleven bundles reflow that word freely.
+    it, and the seventeen bundles reflow that word freely.
 
     Driven rather than argued: `keys=2` moved off its own line is still ONE
     finding, and it is the pair rule's."""
@@ -1375,7 +1376,7 @@ def test_a_lowercase_word_of_a_derived_line_is_the_gate_s_prose(tmp_path):
     """Where that rule stops. `ok`, `record`, `over` and `consulting` are the
     gate's sentence and not its data — SEC-FIDO-005 drops the `ok` from two of its
     lines, and requiring it would be the rule firing on honest text. Measured over
-    all eleven: it is the only word a capital-or-digit filter has to spare.
+    all seventeen: it is the only word a capital-or-digit filter has to spare.
 
     So are the PAIR names, which two rules already hold in position: requiring the
     word `TRUE` is satisfied on SEC-FIDO-003 — the one bundle that transcribes no
@@ -1399,10 +1400,10 @@ def test_the_registry_row_transcribed_is_named_and_answered_by_this_property_s(
     """The roster gate's half of the same rule, and it cannot be the other half.
 
     Its corpus is a roster, so the claim transcribes ONE row of it and abbreviates:
-    two of the eleven bundles write the id and the verdict without the invariant
+    two of the seventeen bundles write the id and the verdict without the invariant
     name, and requiring every derived word there is the rule firing on honest text
-    — measured, 2 of 11. What the row is held to instead is its own id, its own
-    verdict, and no sibling's verdict; every one of the eleven carries all three
+    — measured, 2 of 17. What the row is held to instead is its own id, its own
+    verdict, and no sibling's verdict; every one of the seventeen carries all three
     today, and the roster is where the alternatives come from rather than a list
     here.
 
@@ -1641,7 +1642,7 @@ def test_the_registry_line_picked_is_the_subject_s():
 
 # ---- a number printed next to a log occurs in that log ----------------------
 #
-# The measured population is 198 numbers over 63 joins, and the arms below are
+# The measured population is 289 numbers over 91 joins, and the arms below are
 # one per clause of `quoted_join` plus the floor: each deletes its clause alone
 # and the gate goes green over the defect underneath it.
 
@@ -1869,7 +1870,7 @@ def test_a_file_in_the_store_that_no_bundle_cites(tmp_path, relative):
 
 def test_an_orphan_wearing_a_cited_basename(tmp_path):
     """The hole a name-keyed reading ships with, and it is not hypothetical here:
-    15 basenames are carried by more than one directory, `tlc-Shipped.log` by all
+    17 basenames are carried by more than one directory, `tlc-Shipped.log` by
     eleven. Against a set of NAMES this file is cited eleven times over and the
     rule says nothing, while the run it holds is in no bundle at all."""
     root = tree(tmp_path)

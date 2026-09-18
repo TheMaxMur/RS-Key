@@ -2405,7 +2405,7 @@ def test_the_owner_is_refused_by_its_vocabulary_and_not_by_an_escape(tree):
 # claims stale" — measured at 0: `grep -c stale scripts/platform_gate.py` found
 # nothing, and the tree's only freshness machine (`evidence_gate.freshness`) reads
 # bundles, not this registry. These cases are that axis. Being stale is NOT a
-# finding, for the reason it is not one there: 11 of the 11 bundles that record a
+# finding, for the reason it is not one there: 11 of the 17 bundles that record a
 # commit are stale, so a red on staleness is a gate red at rest. The staleness
 # lands on the page, and the page's byte-diff is what makes it something a person
 # has to write down — which is what the last three cases here drive.
