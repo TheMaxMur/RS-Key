@@ -199,7 +199,7 @@ SCOPE_SPAN_CAP = 4
 #: 27 in its own comment one commit after being written, thirty lines from the
 #: constant, in the guard whose whole subject is a hand-typed number going
 #: stale. `scripts/` is outside the scan, so nothing was ever going to catch it.)
-SCOPE_CEILING = 39
+SCOPE_CEILING = 40
 
 #: The other rule, and the one the shape scan cannot be: a value the generator
 #: PRINTS may not appear as a literal anywhere else. It needs no noun list, no
@@ -486,6 +486,17 @@ SCOPED = {
     # gone, the cell fell under no rule, and the entry retired as it predicted; the
     # boot family took the roster to 79, the OATH seam batch takes it to 85, and it
     # stays gone.
+    # `` `BugPanelCancelable` | … | 230 states `` collided the day the safety tier
+    # reached 230 configurations. The same coincidence retired
+    # `NoStatusAfterARefusedAuth | 73 states` when the roster left 73, and this one
+    # will retire the same way: it is a co-mutant's state count, in a column of
+    # state counts, and it moves when that mutant's model does.
+    (
+        "formal/README.md",
+        "— E45's ruling | `NoCrossTransportTouchConsumption` | 230 states",
+    ): "a co-mutant's own state count in the co-refutation table, which the tier's "
+    "configuration count reached by coincidence — the column beside it is all state "
+    "counts and none of them is a roster",
     (
         "formal/README.md",
         "**87 entries: 79 of the 82 executable patches killed",
@@ -553,6 +564,10 @@ TABLE_GROUPS = (
      ("StoreInductionMut_*.cfg",)),
     ("`Lattice.cfg` — the fourth module: the retry/recovery lattice", ("Lattice.cfg",)),
     ("`LatMut_*.cfg` / `LatSolo_*.cfg`", ("LatMut_*.cfg", "LatSolo_*.cfg")),
+    ("`LatInduction.cfg` — `IndInv /\\ Next => IndInv'`, the probe that found NOTHING",
+     ("LatInduction.cfg",)),
+    ("`LatInductionMut_*.cfg` — what says that probe can go red",
+     ("LatInductionMut_*.cfg",)),
     ("`Policies.cfg` — all four applets' stateful operation policies",
      ("Policies.cfg",)),
     ("`PolicyMut_*.cfg` / `PolicySolo_*.cfg`", ("PolicyMut_*.cfg", "PolicySolo_*.cfg")),

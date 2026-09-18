@@ -92,9 +92,9 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-STORE-004` | `NoFalseMetaAbsent` | 2 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` fresh | MODELLED-ONLY |
 | `SEC-STORE-005` | `CacheHonest` | 2 of 4 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` fresh | MODELLED-ONLY |
 | `SEC-STORE-006` | `NoSilentOrphan` | 2 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` fresh | MODELLED-ONLY |
-| `SEC-LAT-001` | `NoAuthWhenBlocked` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-LAT-002` | `WrongAttemptIsCharged` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-LAT-001` | `NoAuthWhenBlocked` | 2 of 6 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-LAT-002` | `WrongAttemptIsCharged` | 2 of 7 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | 2 of 6 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-POL-001` | `PivOperationNeedsSlotPolicy` | 1 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-POL-002` | `PivAlwaysSpendsFreshness` | 1 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-POL-003` | `AttributeChangeInvalidatesTheKey` | 1 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
@@ -296,7 +296,7 @@ For the commit that carries this page — which is why no commit is named here: 
 
 | Tier | Command | Taken | Against | Host |
 |---|---|---|---|---|
-| `liveness` | `./formal/run-tlc.sh liveness` | 2026-09-18 | `68eaca6` | Apple M5 Pro (18 cores) |
-| `safety` | `./formal/run-tlc.sh safety` | 2026-09-18 | `68eaca6` | Apple M5 Pro (18 cores) |
+| `liveness` | `./formal/run-tlc.sh liveness` | 2026-09-18 | `086a60b` | Apple M5 Pro (18 cores) |
+| `safety` | `./formal/run-tlc.sh safety` | 2026-09-18 | `086a60b` | Apple M5 Pro (18 cores) |
 
 **Raw evidence bundles:** `SEC-FIDO-001`, `SEC-FIDO-002`, `SEC-FIDO-003`, `SEC-FIDO-004`, `SEC-FIDO-005`, `SEC-FIDO-006`, `SEC-FIDO-006A`, `SEC-FIDO-006B`, `SEC-FIDO-006C`, `SEC-FIDO-007`, `SEC-FIDO-008`, `SEC-STORE-001`, `SEC-STORE-002`, `SEC-STORE-003`, `SEC-STORE-004`, `SEC-STORE-005`, `SEC-STORE-006` — of 59 registered properties. Stale against this commit: `SEC-FIDO-001`, `SEC-FIDO-002`, `SEC-FIDO-003`, `SEC-FIDO-004`, `SEC-FIDO-005`, `SEC-FIDO-006`, `SEC-FIDO-006A`, `SEC-FIDO-006B`, `SEC-FIDO-006C`, `SEC-FIDO-007`, `SEC-FIDO-008`.
