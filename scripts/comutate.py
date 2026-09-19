@@ -886,6 +886,38 @@ def with_target(cmd: list[str], host: str) -> list[str]:
     return cmd + ["--target", host] if cmd[:2] == ["cargo", "test"] else list(cmd)
 
 
+def slice_env(cmd: list[str], root: pathlib.Path) -> dict[str, str]:
+    """The environment one slice or proof runs in.
+
+    The dev shell is nix's and the Kani toolchain is not: `cargo kani setup`
+    downloads CBMC's own binaries, built against the runner's glibc, and
+    `LD_LIBRARY_PATH` puts nix's libraries in front of theirs. Measured on the
+    weekly row -- `goto-cc: /lib/x86_64-linux-gnu/libc.so.6: version
+    `GLIBC_ABI_DT_X86_64_PLT' not found (required by /nix/store/...-glibc-2.42-61
+    /lib/libm.so.6)`, a nix libm beside the system libc, exit 1 and no verdict.
+    Dropped for a kani command and kept for every other, because a `cargo test`
+    slice is nix-built and its libudev, libpcsclite and libSDL2 are on that path.
+    """
+    env = {
+        **__import__("os").environ,
+        # Sequential runs share the main build cache: only the patched
+        # crate recompiles, instead of a cold dependency tree per mutant.
+        "CARGO_TARGET_DIR": str(root / "target"),
+        # `scripts/kani.sh`'s reason, and it applies to any kani slice run
+        # from here: on x86_64 a harness that hashes reaches `cpufeatures`'
+        # inline-asm CPU probe, which Kani calls unsupported -- a tool limit
+        # wearing the shape of a property violation, invisible on aarch64.
+        "RUSTFLAGS": (
+            __import__("os").environ.get("RUSTFLAGS", "")
+            + ' --cfg sha2_backend="soft" --cfg poly1305_force_soft'
+            " --cfg sha1_force_soft"
+        ).strip(),
+    }
+    if cmd[:2] == ["cargo", "kani"]:
+        env.pop("LD_LIBRARY_PATH", None)
+    return env
+
+
 def run_slice(cmd: list[str], wt: pathlib.Path, root: pathlib.Path, host: str):
     """One command in the worktree, sharing the main build cache.
 
@@ -896,25 +928,7 @@ def run_slice(cmd: list[str], wt: pathlib.Path, root: pathlib.Path, host: str):
     """
     cmd = with_target(cmd, host)
     return subprocess.run(
-        cmd,
-        cwd=wt,
-        capture_output=True,
-        text=True,
-        env={
-            **__import__("os").environ,
-            # Sequential runs share the main build cache: only the patched
-            # crate recompiles, instead of a cold dependency tree per mutant.
-            "CARGO_TARGET_DIR": str(root / "target"),
-            # `scripts/kani.sh`'s reason, and it applies to any kani slice run
-            # from here: on x86_64 a harness that hashes reaches `cpufeatures`'
-            # inline-asm CPU probe, which Kani calls unsupported -- a tool limit
-            # wearing the shape of a property violation, invisible on aarch64.
-            "RUSTFLAGS": (
-                __import__("os").environ.get("RUSTFLAGS", "")
-                + ' --cfg sha2_backend="soft" --cfg poly1305_force_soft'
-                " --cfg sha1_force_soft"
-            ).strip(),
-        },
+        cmd, cwd=wt, capture_output=True, text=True, env=slice_env(cmd, root)
     )
 
 

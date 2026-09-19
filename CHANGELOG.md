@@ -3474,6 +3474,19 @@ the release carries the flag, the decision stays yours
   last lines before the worktree it ran in is removed — `proof-broke` with a
   wrapper's message and nothing under it was one round trip of a weekly row.
 
+- **And what it said, when it could: a nix library in front of a toolchain that
+  is not nix's.** `goto-cc: /lib/x86_64-linux-gnu/libc.so.6: version
+  `GLIBC_ABI_DT_X86_64_PLT' not found (required by
+  /nix/store/…-glibc-2.42-61/lib/libm.so.6)` — the dev shell exports
+  `LD_LIBRARY_PATH` for the binaries it builds, and `cargo kani setup` downloads
+  CBMC's, built against the runner's own glibc. A nix libm beside the system libc
+  is exit 1 and no verdict, which is how `BugCmWalkIgnoresChannel` spent three
+  weekly rows as a survivor. The proof half runs with that path dropped and every
+  other slice keeps it, because a `cargo test` slice IS nix-built and its
+  libudev, libpcsclite and libSDL2 are on it. The rule that made this readable at
+  all is the one above: the row printed the tool's own words instead of a verdict
+  it had not earned.
+
 - **The weekly `formal` row stopped finishing, and said `cancelled` rather than
   anything about the model.** The safety tier outgrew the single job it ran in:
   one configuration took most of that job's budget, the row reported it and was

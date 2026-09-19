@@ -643,6 +643,23 @@ def test_one_entry_patches_several_files(tmp_path):
 # ---- the proof half ----------------------------------------------------------
 
 
+def test_the_nix_library_path_is_dropped_for_a_kani_command_and_kept_otherwise(monkeypatch):
+    # Measured on the weekly row: nix's libm reached CBMC's own binaries through
+    # `LD_LIBRARY_PATH` and `goto-cc` died on a versioned symbol the system libc
+    # does not carry — exit 1, no verdict, and the mutant scored a survivor. A
+    # `cargo test` slice is nix-built and still needs that path.
+    monkeypatch.setenv("LD_LIBRARY_PATH", "/nix/store/whatever/lib")
+    root = pathlib.Path("/tmp/anywhere")
+    kani = comutate.slice_env(["cargo", "kani", "-p", "x", "--harness", "y"], root)
+    assert "LD_LIBRARY_PATH" not in kani
+    test = comutate.slice_env(["cargo", "test", "-p", "x"], root)
+    assert test["LD_LIBRARY_PATH"] == "/nix/store/whatever/lib"
+    # And the two it sets for every command are still set for both.
+    for env in (kani, test):
+        assert env["CARGO_TARGET_DIR"] == str(root / "target")
+        assert '--cfg sha2_backend="soft"' in env["RUSTFLAGS"]
+
+
 def test_the_host_target_goes_on_a_cargo_test_and_nowhere_else():
     # `cargo kani` has no `--target`: it answers `error: unexpected argument
     # '--target' found`, which this file's own classifier reads as build-broke —

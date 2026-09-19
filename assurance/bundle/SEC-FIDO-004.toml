@@ -285,7 +285,7 @@ name = "rustc"
 version = "1.96.0 (ac68faa20 2026-05-25)"
 provenance = "flake.lock"
 invocation = "cargo test -p rsk-fido --target aarch64-apple-darwin, over a worktree carrying the BugPpuatIsAGate patch"
-environment = "nix develop; CARGO_TARGET_DIR pointed at the main build cache and RUSTFLAGS carrying the three soft-backend cfgs scripts/comutate.py:912-916 sets"
+environment = "nix develop; CARGO_TARGET_DIR pointed at the main build cache and RUSTFLAGS carrying the three soft-backend cfgs scripts/comutate.py:910-914 sets"
 
 [[tool]]
 name = "cargo"

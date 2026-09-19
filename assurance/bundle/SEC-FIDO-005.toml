@@ -299,7 +299,7 @@ name = "rustc"
 version = "1.96.0 (ac68faa20 2026-05-25)"
 provenance = "flake.lock"
 invocation = "cargo test -p rsk-fido --lib --target aarch64-apple-darwin, in a detached worktree at this commit with the comutant's two hunks applied"
-environment = "nix develop; CARGO_TARGET_DIR pointed at the main tree's cache, which is what scripts/comutate.py:905-907 does for the same reason — only the patched crate recompiles"
+environment = "nix develop; CARGO_TARGET_DIR pointed at the main tree's cache, which is what scripts/comutate.py:903-905 does for the same reason — only the patched crate recompiles"
 
 [[tool]]
 name = "cargo"

@@ -350,7 +350,7 @@ name = "rustc"
 version = "1.96.0 (ac68faa20 2026-05-25)"
 provenance = "flake.lock"
 invocation = "cargo test -p rsk-device --target aarch64-apple-darwin, over a detached worktree carrying one comutant patch"
-environment = "nix develop, CARGO_TARGET_DIR set to the main tree's target so the worktree shares the build cache — scripts/comutate.py:905-907's own convention"
+environment = "nix develop, CARGO_TARGET_DIR set to the main tree's target so the worktree shares the build cache — scripts/comutate.py:903-905's own convention"
 
 [[tool]]
 name = "cargo"
