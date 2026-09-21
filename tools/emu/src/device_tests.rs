@@ -94,9 +94,16 @@ fn bench_with(name: &str, presence: PresenceMode) -> (PathBuf, Jobs, Arc<Signals
     );
     assert_eq!(use_counter(&path), Some(0), "a freshly programmed slot");
 
+    let (jobs, signals, device) = boot(&path, presence);
+    (path, jobs, signals, device)
+}
+
+/// Start the device thread over the image at `path` as it stands: a process start,
+/// which is also how a restart over `--store` meets the store it left behind.
+fn boot(path: &Path, presence: PresenceMode) -> (Jobs, Arc<Signals>, JoinHandle<()>) {
     let (jobs, requests) = job_queue();
     let cfg = Config {
-        store: Some(path.clone()),
+        store: Some(path.to_path_buf()),
         presence,
         display: false,
         usbip: None,
@@ -114,7 +121,7 @@ fn bench_with(name: &str, presence: PresenceMode) -> (PathBuf, Jobs, Arc<Signals
         let signals = signals.clone();
         std::thread::spawn(move || run(cfg, requests, signals, None, None))
     };
-    (path, jobs, signals, device)
+    (jobs, signals, device)
 }
 
 /// Send one job and wait for its answer.
@@ -244,6 +251,102 @@ fn every_boot_runs_the_boot_block() {
         );
         shut_down(path, jobs, device);
     }
+}
+
+/// The relying party and client data hash the store-restart test registers under.
+const RESTART_RP: &str = "example.com";
+const RESTART_CDH: [u8; 32] = [0x5a; 32];
+
+/// A CBOR text string short enough to be its own header.
+fn tstr(s: &str) -> Vec<u8> {
+    assert!(s.len() < 24, "not the single-byte text header");
+    let mut v = vec![0x60 | s.len() as u8];
+    v.extend_from_slice(s.as_bytes());
+    v
+}
+
+/// makeCredential for a discoverable ES256 credential of account `user`, keys in the
+/// canonical order the device insists on (length first, then bytewise).
+fn make_resident(user: u8) -> Vec<u8> {
+    use crate::pin_client::{bstr, map};
+    let mut rp = vec![0xA1];
+    rp.extend(tstr("id"));
+    rp.extend(tstr(RESTART_RP));
+    let mut account = vec![0xA2];
+    account.extend(tstr("id"));
+    account.extend(bstr(&[user; 32]));
+    account.extend(tstr("name"));
+    account.extend(tstr("account"));
+    let mut params = vec![0x81, 0xA2];
+    params.extend(tstr("alg"));
+    params.push(0x26); // -7, ES256
+    params.extend(tstr("type"));
+    params.extend(tstr("public-key"));
+    let mut options = vec![0xA1];
+    options.extend(tstr("rk"));
+    options.push(0xF5);
+    let mut v = vec![rsk_fido::consts::CTAP_MAKE_CREDENTIAL];
+    v.extend(map(&[
+        (1, bstr(&RESTART_CDH)),
+        (2, rp),
+        (3, account),
+        (4, params),
+        (7, options),
+    ]));
+    v
+}
+
+/// The silent `up:false` discovery a platform sends before it asks the user anything.
+fn discover() -> Vec<u8> {
+    use crate::pin_client::{bstr, map};
+    let mut options = vec![0xA1];
+    options.extend(tstr("up"));
+    options.push(0xF4);
+    let mut v = vec![rsk_fido::consts::CTAP_GET_ASSERTION];
+    v.extend(map(&[
+        (1, tstr(RESTART_RP)),
+        (2, bstr(&RESTART_CDH)),
+        (5, options),
+    ]));
+    v
+}
+
+/// How many resident credentials the image holds as a fresh mount reads them — a
+/// boot's view of the store, which is what a restarted device has to agree with.
+fn resident_records(path: &Path) -> usize {
+    use rsk_fido::consts::{EF_CRED, MAX_RESIDENT_CREDENTIALS};
+    let mut slots = [false; MAX_RESIDENT_CREDENTIALS as usize];
+    mount(path).present_slots(EF_CRED, &mut slots);
+    slots.into_iter().filter(|&occupied| occupied).count()
+}
+
+/// `main.rs` rebuilds the store's in-RAM file index before anything reads it. A device
+/// restarted over `--store` without that reads every slot free: its resident credential
+/// answers as absent, and the next registration takes that credential's slot.
+#[test]
+fn a_restart_over_the_store_keeps_its_resident_credentials() {
+    use crate::pin_client::CTAP2_OK;
+
+    let status = |jobs: &Jobs, data: Vec<u8>| ask(jobs, Job::Cbor { cid: CID, data })[0];
+    let (path, jobs, _signals, device) = bench("restart");
+    assert_eq!(
+        status(&jobs, make_resident(1)),
+        CTAP2_OK,
+        "the first registration"
+    );
+    assert_eq!(resident_records(&path), 1, "the image holds it");
+    drop(jobs);
+    device.join().unwrap();
+
+    let (jobs, _signals, device) = boot(&path, PresenceMode::Instant);
+    let found = status(&jobs, discover());
+    let registered = status(&jobs, make_resident(2));
+    assert_eq!(
+        (found, registered, resident_records(&path)),
+        (CTAP2_OK, CTAP2_OK, 2),
+        "a restarted device must find the credential it holds and register the next beside it"
+    );
+    shut_down(path, jobs, device);
 }
 
 /// Every [`Job`] variant, and whether a queued one is a request the parked worker

@@ -17,7 +17,7 @@
 //! RSA keygen accelerator (the applets' own single-core path runs instead) and the
 //! watchdog register that carries the clientPIN soft lock across a warm reset.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, RefCell, RefMut};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -496,7 +496,7 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
     // alike. The seal migrations are no-ops without an OTP root; `scan_files` lays
     // down the OpenPGP DOs, without which SELECT succeeds over an empty PW-status DO.
     let boot_block = || {
-        let mut fsb = fs.borrow_mut();
+        let mut fsb = rescan(fs);
         let mut rngb = rng.borrow_mut();
         let _ = rsk_fido::seed::migrate_keydev_boot(&dev(), &mut fsb);
         rsk_rescue::keydev::migrate_kbase(&dev(), &mut fsb, &mut *rngb);
@@ -812,6 +812,15 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
             eprintln!("emu: warm reboot — RAM state dropped, the reset window stays shut");
         }
     }
+}
+
+/// The store with its in-RAM file index rebuilt, as `main.rs` does before anything reads
+/// flash. Reads by FID reach flash either way, but without the index every slot bitmap
+/// reads empty: resident credentials and OATH entries enumerate as absent and lose their slots.
+fn rescan(fs: &RefCell<Fs<EmuStore>>) -> RefMut<'_, Fs<EmuStore>> {
+    let mut store = fs.borrow_mut();
+    store.scan();
+    store
 }
 
 /// What the phase-4 replay reads out of a request, taken from the applet's own

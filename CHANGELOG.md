@@ -163,6 +163,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   through all three, and one of them now also kills the recorded code-level GAP
   `BugWipeWithoutItsReboot`. **bcdDevice → 0x09DB.**
 
+### Internal
+
+- **`tools/emu` restarted over a `--store` image saw every slot as free.**
+  `firmware/src/main.rs` rebuilds the store's in-RAM file index (`Fs::scan`) before
+  anything reads flash; the emulator's boot block never did. Reads by FID still
+  reached flash, but everything that walks a slot bitmap came back empty and a new
+  record took an occupied slot. Measured after a restart: a resident credential
+  answered as absent and the next registration overwrote it, and OATH listed nothing
+  and put a new name over the live credential. One process hid it, because the index
+  survives a replug in RAM. The boot block now scans first, at process start, replug
+  and warm reboot alike. `a_restart_over_the_store_keeps_its_resident_credentials`
+  fails without the process-start scan (the credential is not found, and two
+  registrations leave one record); the replug and warm-reboot scans rebuild an index
+  that already matches flash unless a fault was injected, so no test separates them.
+  Host-only: no firmware image differs.
+
 ## [0.4.11] - 2026-09-08
 
 The catch-up release, and the one where the instruments were audited harder than
