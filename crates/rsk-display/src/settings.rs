@@ -29,6 +29,9 @@ enum Nav {
     Goto(SettingsPage),
     /// Leave the menu, handing the ambient loop its next destination.
     Leave(Option<NavTab>),
+    /// A factory reset wiped the store and queued its reboot: leave writing nothing, as an
+    /// edit the debounce has not flushed would re-create its record past the wipe.
+    Wiped,
 }
 
 /// The −/+ of an adjust page, or `None` for Back / a miss — which [`adjust_exit`]
@@ -132,7 +135,7 @@ where
         let persist_after = Duration::from_millis(SETTINGS_PERSIST_QUIET_MS);
 
         // Track whether the user actually changed a knob, so the persist on exit is one
-        // flash write per editing session (on every exit path), not one per −/+ tap.
+        // flash write per editing session (on every exit but a wipe's), not one per −/+ tap.
         let mut display_dirty = false;
         let mut presence_dirty = false;
 
@@ -154,6 +157,11 @@ where
                     SettingsPage::Sleep => settings_sleep(p, &mut display_dirty),
                 } {
                     Nav::Leave(next) => break next,
+                    Nav::Wiped => {
+                        display_dirty = false;
+                        presence_dirty = false;
+                        break None;
+                    }
                     Nav::Idle => false,
                     Nav::Stay => true,
                     Nav::Goto(next) => {
@@ -217,10 +225,10 @@ where
             // Security drills into Set/Change PIN + Factory reset (the destructive
             // reset lives one tap deeper).
             Some(RootEntry::Security) => Nav::Goto(SettingsPage::Security),
-            // Firmware: the installed-version + reboot-to-update sub-flow. A
-            // completed update hold queues a reboot and returns `true` — leave the
-            // menu so the ambient loop can park and hand the executor to the worker,
-            // which scrubs + resets. A cancel falls back to this list.
+            // Firmware: the installed-version + reboot-to-update sub-flow. A completed
+            // hold queues a reboot and returns `true`: leave, still writing a pending edit
+            // (an update wipes nothing), so the ambient loop can park and hand the executor
+            // to the worker, which scrubs + resets. A cancel falls back to this list.
             Some(RootEntry::Firmware) => {
                 if self.run_firmware() {
                     return Nav::Leave(None);
@@ -250,13 +258,11 @@ where
             }
             Some(SecurityEntry::AuditLog) => self.run_auditlog(),
             Some(SecurityEntry::Backup) => self.run_backup(),
-            // A confirmed reset queues the reboot and returns `true` — leave at once
-            // so nothing runs between the wipe and the reset (`persist_settings`
-            // would otherwise re-create EF_DISPLAY, carrying `pin_declined` across
-            // the factory reset). A cancel falls back to this page.
+            // A confirmed reset queues the reboot and returns `true`. A cancel or a failed
+            // wipe falls back to this page.
             Some(SecurityEntry::FactoryReset) => {
                 if self.run_factory_reset() {
-                    return Nav::Leave(None);
+                    return Nav::Wiped;
                 }
             }
             None => return Nav::Idle,

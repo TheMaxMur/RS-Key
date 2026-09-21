@@ -686,12 +686,12 @@ where
     /// org attestation ([`rsk_fido::survives_factory_reset`]), and reboots — the next
     /// boot re-provisions a fresh seed, so the device returns blank.
     ///
-    /// Returns `true` once a reboot is queued, so the caller exits the menu — the
-    /// same contract `run_firmware` carries, and for the same reason: this used to
-    /// diverge into `SCB::sys_reset`, and once it started merely *queueing* the
-    /// reboot (audit run-34 #16) anything the caller ran afterwards could re-create
-    /// a record the wipe had just erased (audit run-35: `persist_settings` carried
-    /// `pin_declined` across the reset).
+    /// Returns `true` once the reboot is queued, and the caller must then leave the menu
+    /// writing nothing: the wipe is flash-only and the reboot has not happened yet, so a
+    /// record written in between outlives the reset. `persist_settings` is the write that
+    /// did (audit run-35, and again for an edit its debounce had not flushed).
+    /// `run_firmware` returns `true` on the same terms but wipes nothing, so its caller
+    /// may still persist.
     pub(super) fn run_factory_reset(&mut self) -> bool {
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         // Let the Settings-row tap's finger lift before the next touch is read.

@@ -242,6 +242,14 @@ impl Pad {
         Self::from(vec![None], Some(p))
     }
 
+    /// [`Self::taps`], then a finger that comes down on `p` and stays: the hold a
+    /// confirm screen at the end of those taps waits for.
+    pub fn taps_then_hold(points: &[rsk_ui::Point], p: rsk_ui::Point) -> Self {
+        let mut pad = Self::taps(points);
+        pad.tail = Some(p);
+        pad
+    }
+
     /// The exact sample sequence, for a case the shapes above do not describe.
     pub fn script(samples: &[Option<rsk_ui::Point>]) -> Self {
         Self::from(samples.to_vec(), None)

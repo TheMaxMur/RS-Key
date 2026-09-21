@@ -1105,6 +1105,7 @@ formal/TraceSecurity.tla	crates/rsk-fido/src/reset.rs	260-260	!ctx.state.warm_bo
 formal/comutants.toml	crates/rsk-device/src/ctap.rs	127-128	let boot = hooks.borrow_mut().boot_state();	st.restore_pin_lock(boot.lock);
 formal/comutants.toml	crates/rsk-device/src/ctap_tests.rs	101-123	#[test]	}
 formal/comutants.toml	crates/rsk-device/src/ctap_tests.rs	122-122	assert_eq!(carried.mismatches, 3, "the mismatch count was dropped");	assert_eq!(carried.mismatches, 3, "the mismatch count was dropped");
+formal/comutants.toml	crates/rsk-display/src/settings_tests.rs	283-283	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	220-220	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	493-495	if force_change_pending(ctx) {	}
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	845-847	if fid == EF_PIN {	}

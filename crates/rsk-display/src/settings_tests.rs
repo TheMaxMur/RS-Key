@@ -212,6 +212,159 @@ fn the_scramble_row_toggles_in_place_and_persists() {
     assert!(!ui.scramble_pin);
 }
 
+/// The row of a settings list that `hit` reads as `want`, found through `rsk-ui`'s own
+/// hit test so a reordered list moves the tap with it.
+fn row<E: PartialEq>(
+    rows: u16,
+    hit: impl Fn(rsk_ui::Point) -> Option<E>,
+    want: E,
+) -> rsk_ui::Point {
+    (0..rows)
+        .map(|i| center(rsk_ui::settings_row_rect(i)))
+        .find(|&p| hit(p).as_ref() == Some(&want))
+        .expect("the list has that row")
+}
+
+/// `EF_DISPLAY` as the next boot would read it, if there is one.
+fn stored_display<S: rsk_fs::Storage>(fs: &RefCell<Fs<S>>) -> Option<rsk_ui::DisplayConfig> {
+    let mut buf = [0u8; rsk_ui::DISPLAY_CONF_LEN];
+    let n = fs.borrow_mut().read(EF_DISPLAY, &mut buf)?;
+    let mut cfg = rsk_ui::DisplayConfig::default();
+    cfg.apply_block(&buf[..n]);
+    Some(cfg)
+}
+
+/// A completed factory reset leaves the menu at once, writing nothing. An edit the debounce
+/// had not flushed rode the exit persist into the store the reset had just wiped, ahead of
+/// its queued reboot, and that reboot read both records back.
+#[test]
+fn a_factory_reset_writes_no_edit_into_the_store_it_wiped() {
+    let env = Env::new();
+    let taps = [
+        row(
+            rsk_ui::SETTINGS_ROWS,
+            rsk_ui::hit_settings_root,
+            RootEntry::Display,
+        ),
+        row(
+            rsk_ui::DISPLAY_ROWS,
+            rsk_ui::hit_display,
+            DisplayEntry::Timeout,
+        ),
+        center(rsk_ui::ADJ_PLUS_RECT),
+        center(rsk_ui::TITLE_BACK_RECT),
+        center(rsk_ui::TITLE_BACK_RECT),
+        row(
+            rsk_ui::SETTINGS_ROWS,
+            rsk_ui::hit_settings_root,
+            RootEntry::Security,
+        ),
+        row(
+            rsk_ui::SECURITY_ROWS,
+            rsk_ui::hit_security,
+            SecurityEntry::ScramblePin,
+        ),
+        row(
+            rsk_ui::SECURITY_ROWS,
+            rsk_ui::hit_security,
+            SecurityEntry::FactoryReset,
+        ),
+    ];
+    let mut ui = env.ui(Pad::taps_then_hold(&taps, center(rsk_ui::DEL_HOLD_RECT)));
+    // What declining onboarding leaves behind, so the wipe has a record to remove.
+    ui.pin_declined = true;
+    ui.save_display_config();
+
+    let started = Instant::now();
+    ui.run_settings();
+    // Well inside the menu's own idle exit, which a menu still open over the wipe waits out.
+    let left_at_once = started.elapsed() < Duration::from_millis(MENU_INACTIVITY_MS / 2);
+    let phy = env.fs.borrow_mut().has_data(rsk_phy::EF_PHY);
+    assert_eq!(
+        (ui.hooks.reboot, stored_display(&env.fs), phy, left_at_once),
+        (Some(false), None, false, true),
+        "a completed reset must leave the menu at once, with no display or phy record \
+         for its reboot to read"
+    );
+}
+
+/// A firmware update's reboot keeps an edit the user has watched take effect, as every
+/// other exit does: it wipes nothing, and the image is replaced under the store.
+#[test]
+fn an_edit_is_written_before_a_firmware_update_reboots() {
+    let env = Env::new();
+    let taps = [
+        row(
+            rsk_ui::SETTINGS_ROWS,
+            rsk_ui::hit_settings_root,
+            RootEntry::Display,
+        ),
+        row(
+            rsk_ui::DISPLAY_ROWS,
+            rsk_ui::hit_display,
+            DisplayEntry::Brightness,
+        ),
+        center(rsk_ui::ADJ_MINUS_RECT),
+        center(rsk_ui::TITLE_BACK_RECT),
+        center(rsk_ui::TITLE_BACK_RECT),
+        row(
+            rsk_ui::SETTINGS_ROWS,
+            rsk_ui::hit_settings_root,
+            RootEntry::Firmware,
+        ),
+    ];
+    let mut ui = env.ui(Pad::taps_then_hold(&taps, center(rsk_ui::DEL_HOLD_RECT)));
+    ui.set_brightness(BRIGHTNESS_LEVELS);
+
+    ui.run_settings();
+    assert_eq!(
+        (
+            ui.hooks.reboot,
+            stored_display(&env.fs).map(|cfg| cfg.brightness)
+        ),
+        (Some(true), Some(BRIGHTNESS_LEVELS - 1)),
+        "the brightness step must be on flash before the update reboot"
+    );
+}
+
+/// Only a completed wipe drops the edit: a reset abandoned at its confirm screen falls back
+/// to the Security page, and the edit is written when the menu is left.
+#[test]
+fn an_abandoned_factory_reset_keeps_the_edit() {
+    let env = Env::new();
+    let taps = [
+        row(
+            rsk_ui::SETTINGS_ROWS,
+            rsk_ui::hit_settings_root,
+            RootEntry::Security,
+        ),
+        row(
+            rsk_ui::SECURITY_ROWS,
+            rsk_ui::hit_security,
+            SecurityEntry::ScramblePin,
+        ),
+        row(
+            rsk_ui::SECURITY_ROWS,
+            rsk_ui::hit_security,
+            SecurityEntry::FactoryReset,
+        ),
+        center(rsk_ui::PK_BACK_RECT),
+        center(rsk_ui::TITLE_BACK_RECT),
+        center(rsk_ui::nav_tab_rect(0)),
+    ];
+    let mut ui = env.ui(Pad::taps(&taps));
+
+    ui.run_settings();
+    assert_eq!(
+        (
+            ui.hooks.reboot,
+            stored_display(&env.fs).map(|cfg| cfg.scramble_pin)
+        ),
+        (None, Some(true)),
+        "an abandoned reset must neither reboot nor lose the scramble toggle"
+    );
+}
+
 /// The touch-timeout save carried its own copy of the phy read-modify-write — a
 /// `load(..).unwrap_or_default()` — so a probe the flash could not answer read as
 /// "no record was ever written" and the exit path saved a DEFAULT record with the

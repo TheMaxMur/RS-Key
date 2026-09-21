@@ -38,6 +38,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- An on-panel factory reset no longer leaves a pending Settings edit behind. The
+  menu's exit still wrote after a completed reset, and its debounce writes an edit
+  only after 1.5 s without a tap. So toggling Scramble PIN, or stepping brightness,
+  display sleep or the touch timeout, and then reaching Factory reset with no such
+  pause wrote `EF_DISPLAY` or `EF_PHY` back into the store the reset had just wiped,
+  ahead of its queued reboot. `EF_DISPLAY` carries `pin_declined`, so a device whose
+  owner had declined onboarding came back without offering it: the 0.4.6 fix for
+  that record made the reset leave the menu at once, and leaving still wrote. A
+  reset abandoned at its confirm screen still keeps the edit, and so does Settings →
+  Firmware, whose reboot to BOOTSEL wipes nothing. Host tests drive the real menu
+  through all three, and one of them now also kills the recorded code-level GAP
+  `BugWipeWithoutItsReboot`. **bcdDevice → 0x09DB.**
+
 ## [0.4.11] - 2026-09-08
 
 The catch-up release, and the one where the instruments were audited harder than
