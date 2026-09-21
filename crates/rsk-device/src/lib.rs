@@ -33,6 +33,7 @@ mod ccid_fido;
 pub mod click;
 mod ctap;
 pub mod presence;
+pub mod reboot;
 
 pub use ccid::CcidApplets;
 // The union is only reachable where a device-wide wipe is: `Management RESET` on

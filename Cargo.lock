@@ -2144,6 +2144,7 @@ dependencies = [
 name = "rsk-display"
 version = "0.1.0"
 dependencies = [
+ "embassy-futures",
  "embassy-time",
  "embedded-graphics",
  "rsk-bip39",

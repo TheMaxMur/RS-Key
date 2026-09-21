@@ -203,7 +203,7 @@ assurance/bundle/SEC-FIDO-005.toml	scripts/bundle_gate.py	1450-1450	verdicts = l
 assurance/bundle/SEC-FIDO-005.toml	scripts/comutate.py	337-365	def solo_index(root: pathlib.Path) -> dict[str, list[str]]:	return out
 assurance/bundle/SEC-FIDO-005.toml	scripts/comutate.py	903-905	# Sequential runs share the main build cache: only the patched	"CARGO_TARGET_DIR": str(root / "target"),
 assurance/bundle/SEC-FIDO-005.toml	scripts/platform_gate.py	1890-1918	def check_bundles(root, ids, findings):	)
-assurance/bundle/SEC-FIDO-006.toml	crates/rsk-device/src/lib.rs	54-54	/// power-cycled, and §6.6 opens the `authenticatorReset` window only just after a	/// power-cycled, and §6.6 opens the `authenticatorReset` window only just after a
+assurance/bundle/SEC-FIDO-006.toml	crates/rsk-device/src/lib.rs	55-55	/// power-cycled, and §6.6 opens the `authenticatorReset` window only just after a	/// power-cycled, and §6.6 opens the `authenticatorReset` window only just after a
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/consts.rs	368-368	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/consts.rs	372-372	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/consts.rs	404-404	pub const RESET_WINDOW_MS: u64 = 10_000;	pub const RESET_WINDOW_MS: u64 = 10_000;
@@ -1105,7 +1105,7 @@ formal/TraceSecurity.tla	crates/rsk-fido/src/reset.rs	260-260	!ctx.state.warm_bo
 formal/comutants.toml	crates/rsk-device/src/ctap.rs	127-128	let boot = hooks.borrow_mut().boot_state();	st.restore_pin_lock(boot.lock);
 formal/comutants.toml	crates/rsk-device/src/ctap_tests.rs	101-123	#[test]	}
 formal/comutants.toml	crates/rsk-device/src/ctap_tests.rs	122-122	assert_eq!(carried.mismatches, 3, "the mismatch count was dropped");	assert_eq!(carried.mismatches, 3, "the mismatch count was dropped");
-formal/comutants.toml	crates/rsk-display/src/settings_tests.rs	283-283	assert_eq!(	assert_eq!(
+formal/comutants.toml	crates/rsk-display/src/settings_tests.rs	270-270	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	220-220	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	493-495	if force_change_pending(ctx) {	}
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	845-847	if fid == EF_PIN {	}

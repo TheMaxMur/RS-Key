@@ -107,7 +107,7 @@ pub trait Hooks {
     fn host_request_pending(&self) -> bool {
         false
     }
-    /// Queue a warm reboot, optionally into BOOTSEL (Settings → Firmware update).
+    /// Queue a warm reboot, optionally into BOOTSEL; `reboot_pending` then holds until the reset.
     fn request_reboot(&mut self, _bootsel: bool) {}
     fn reboot_pending(&self) -> bool {
         false
@@ -382,7 +382,8 @@ where
     /// wait — land on `Screen::Onboard`, whose full-width "Continue without PIN"
     /// button covers the exact coordinates of the ceremony's Deny/Allow band, and
     /// silently consume a fresh device's one-time PIN offer (audit run-33). Every
-    /// modal flow already debounces on *entry*; this is the ambient screens' end.
+    /// modal flow already debounces on *entry*; this is the ambient screens' end. A
+    /// handled tap disarms it too, since the flow it opened can close on a contact still down.
     touch_armed: bool,
     /// Read-only identity shown on the settings Firmware screen.
     info: DeviceInfo,

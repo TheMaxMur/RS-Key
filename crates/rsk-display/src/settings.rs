@@ -262,6 +262,9 @@ where
             // wipe falls back to this page.
             Some(SecurityEntry::FactoryReset) => {
                 if self.run_factory_reset() {
+                    // The wipe took `EF_PIN`, but a token lives in RAM until the reset and a
+                    // host command already waiting runs first: end that session now.
+                    self.hooks.note_local_pin_changed();
                     return Nav::Wiped;
                 }
             }

@@ -10,8 +10,7 @@
 //! reboot-to-BOOTSEL gate) lives in `crates/rsk-vendor`, where it is host-tested
 //! and where `tools/emu` can reach it.
 
-use core::sync::atomic::{AtomicU8, Ordering};
-
+use rsk_device::reboot::RebootSlot;
 use rsk_fs::{Fs, Storage};
 // Only the measurement builds answer a bench APDU, so only they name a status
 // word here; the shipped image has no use for either import.
@@ -33,34 +32,35 @@ const SEL_OTP_READ: u8 = 3;
 #[cfg(feature = "bench")]
 const OTP_READ_REPS: u32 = 100;
 
-/// Pending reboot request: 0 = none, 1 = warm reboot,
-/// 2 = secure reboot to the BOOTSEL bootloader. Set by the applet's REBOOT and
-/// consumed by the worker once the SW_OK response has been sent — the reset can't
-/// run inline or the host never sees the reply.
-static REBOOT: AtomicU8 = AtomicU8::new(0);
+/// The pending reboot. Set by the applet's REBOOT and consumed by the worker once
+/// the SW_OK response has been sent — the reset can't run inline or the host never
+/// sees the reply.
+static REBOOT: RebootSlot = RebootSlot::new();
 
-/// Take and clear any pending reboot request (the worker, after the response
-/// flushes). `Some(1)` = warm reboot, `Some(2)` = secure reboot to BOOTSEL.
+/// Take any pending reboot request (the worker, after the response flushes).
+/// `Some(1)` = warm reboot, `Some(2)` = secure reboot to BOOTSEL.
 pub fn take_reboot() -> Option<u8> {
-    match REBOOT.swap(0, Ordering::Relaxed) {
-        0 => None,
-        m => Some(m),
-    }
+    REBOOT.take()
 }
 
 /// Queue a reboot (also used by the rescue applet's REBOOT_BOOTSEL command).
 pub fn request_reboot(bootsel: bool) {
-    REBOOT.store(if bootsel { 2 } else { 1 }, Ordering::Relaxed);
+    REBOOT.queue(bootsel);
 }
 
-/// Whether a reboot is queued but not yet serviced (peek, does not clear). The display's
+/// The worker has begun a reset, whether or not a request queued it.
+pub fn begin_reset() {
+    REBOOT.begin_reset();
+}
+
+/// Whether a reboot is queued or under way, from the request until the reset. The display's
 /// ambient loop reads this to park itself once a Settings → Firmware update is requested —
 /// it must stop busy-waiting and yield so the worker (same thread-mode executor) gets
 /// scheduled to scrub the live secrets and reset. Display-only: the standard key never
 /// queues a reboot off-transport (the worker services those inline after the SW_OK).
 #[cfg(feature = "display")]
 pub fn reboot_pending() -> bool {
-    REBOOT.load(Ordering::Relaxed) != 0
+    REBOOT.pending()
 }
 
 /// This board's hardware, handed to the applet. A ZST: every capability it

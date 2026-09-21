@@ -49,7 +49,12 @@ zeroize = { workspace = true }
 # feature `tools/emu` turns on). NOT `mock-driver` — its clock only moves when a
 # test advances it, and `block_for` busy-waits on `Instant::now()`, so every poll
 # loop in this crate would spin for ever under it.
-embassy-time = { workspace = true, features = ["std"] }
+# `generic-queue-8`: a `Timer` awaited under `embassy_futures::block_on` has no
+# embassy executor to hold its queue item (the queue `tools/emu` turns on too).
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }
+# `status_loop` and a stand-in worker on one executor, the way the firmware runs
+# them: the firmware's own `select`, already in the image, not a new dependency.
+embassy-futures = { workspace = true }
 # The RAM `Storage` every other applet crate's tests already run against, so a
 # flow that reads or writes flash is exercised against the real `Fs`.
 rsk-fs = { workspace = true, features = ["test-util"] }

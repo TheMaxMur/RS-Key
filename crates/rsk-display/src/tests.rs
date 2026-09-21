@@ -242,11 +242,13 @@ impl Pad {
         Self::from(vec![None], Some(p))
     }
 
-    /// [`Self::taps`], then a finger that comes down on `p` and stays: the hold a
-    /// confirm screen at the end of those taps waits for.
+    /// [`Self::taps`], then a finger down on `p` for three times the polls a hold needs to
+    /// commit, then lifted: the hold a confirm screen at the end of those taps waits for. A
+    /// flow that never commits, or reads on past it, sees the finger go instead of hanging.
     pub fn taps_then_hold(points: &[rsk_ui::Point], p: rsk_ui::Point) -> Self {
         let mut pad = Self::taps(points);
-        pad.tail = Some(p);
+        let polls = 3 * (HOLD_MS / TOUCH_POLL_MS) as usize;
+        pad.script.extend(vec![Some(p); polls]);
         pad
     }
 
@@ -298,7 +300,11 @@ pub struct Board {
     pub cancel_in: core::cell::Cell<Option<u32>>,
     /// A host command is queued — what makes a modal yield the executor.
     pub host_pending: bool,
+    /// The last reboot the flow asked for, as a record a test can assert.
     pub reboot: Option<bool>,
+    /// The device's reboot slot that request goes into, which a test takes from the way
+    /// `firmware/src/worker.rs` does.
+    pub slot: rsk_device::reboot::RebootSlot,
     pub presence_ms: u32,
     pub secure_boot: bool,
     pub attach_ms: u64,
@@ -319,6 +325,7 @@ impl Board {
             cancel_in: core::cell::Cell::new(None),
             host_pending: false,
             reboot: None,
+            slot: rsk_device::reboot::RebootSlot::new(),
             // Short enough that a flow which blocks to its presence timeout ends
             // inside a test rather than the device's 30 s.
             presence_ms: 400,
@@ -361,9 +368,10 @@ impl Hooks for Board {
     }
     fn request_reboot(&mut self, bootsel: bool) {
         self.reboot = Some(bootsel);
+        self.slot.queue(bootsel);
     }
     fn reboot_pending(&self) -> bool {
-        self.reboot.is_some()
+        self.slot.pending()
     }
     fn note_local_pin_changed(&mut self) {
         self.pin_changed += 1;
@@ -575,6 +583,19 @@ pub fn center(r: rsk_ui::Rect) -> rsk_ui::Point {
 /// controls and clear of the nav bar, so a tap that must be a miss is one.
 pub fn nowhere() -> rsk_ui::Point {
     rsk_ui::Point::new(rsk_ui::PANEL_W - 1, 0)
+}
+
+/// The row of a settings list that `hit` reads as `want`, found through `rsk-ui`'s own
+/// hit test so a reordered list moves the tap with it.
+pub fn settings_row<E: PartialEq>(
+    rows: u16,
+    hit: impl Fn(rsk_ui::Point) -> Option<E>,
+    want: E,
+) -> rsk_ui::Point {
+    (0..rows)
+        .map(|i| center(rsk_ui::settings_row_rect(i)))
+        .find(|&p| hit(p).as_ref() == Some(&want))
+        .expect("the list has that row")
 }
 
 /// The cell that *paints* `key` under `layout`, found through `rsk-ui`'s own grid —
@@ -868,6 +889,41 @@ fn a_host_ceremony_does_not_postpone_the_lock() {
     assert_eq!(LAST_LOCAL_MS.load(Ordering::Relaxed), local_before);
     note_local_activity();
     assert_ne!(LAST_LOCAL_MS.load(Ordering::Relaxed), local_before);
+}
+
+/// `firmware/src/worker.rs` around a queued reboot, for the tests that stand in for it:
+/// the idle tick that takes the request, and the wait `Worker::reboot` spends before its
+/// scrub and reset. Held to that source by [`the_worker_latches_the_reboot_slot_before_its_wait`].
+pub const WORKER_TICK_MS: u64 = 16;
+pub const WORKER_RESET_WAIT_MS: u64 = 200;
+
+/// The panel parks on the reboot slot only while the board latches it before the wait
+/// that yields to the panel — and the stand-in worker `status_tests.rs` drives it with
+/// proves that about the board only while it keeps the board's tick and wait.
+#[test]
+fn the_worker_latches_the_reboot_slot_before_its_wait() {
+    let raw = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../firmware/src/worker.rs"),
+    )
+    .expect("firmware/src/worker.rs");
+    let worker = strip_line_comments(&raw);
+    let reboot = fn_body(&worker, "async fn reboot(&mut self, mode: u8) -> !");
+    let latch = reboot.find("crate::vendor::begin_reset();");
+    let wait = reboot.find(".await");
+    assert!(
+        matches!((latch, wait), (Some(latch), Some(wait)) if latch < wait),
+        "`Worker::reboot` no longer latches the slot before its first await"
+    );
+    assert!(
+        reboot.contains(&format!(
+            "Timer::after(Duration::from_millis({WORKER_RESET_WAIT_MS})).await"
+        )),
+        "`Worker::reboot`'s wait moved away from the stand-in's"
+    );
+    assert!(
+        worker.contains(&format!("const BTN_POLL_MS: u64 = {WORKER_TICK_MS};")),
+        "the worker's idle tick moved away from the stand-in's"
+    );
 }
 
 /// `Worker::run` races several wake sources and `host_request_pending` decides

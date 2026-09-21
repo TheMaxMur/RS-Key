@@ -40,6 +40,25 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- The trusted panel no longer comes back to life between a factory reset and the
+  reset itself. The worker takes a queued reboot and then waits 200 ms before its
+  scrub and reset, on the executor the panel shares, and taking the request cleared
+  the flag the panel parks on: the panel handled input in that wait, over a store the
+  reset had already wiped. The "Hold to wipe" button's bottom edge overlaps the nav
+  bar, and a flow that closes on a contact still down left the panel armed, so a
+  finger still there could reopen a tab and hold the reset off — and an edit made
+  there would write the old `pin_declined` into the wiped store. The reboot slot now
+  reads pending from the request until the reset, taken or begun by a Management
+  RESET's wipe, and a handled tap disarms the panel until the finger lifts. That also
+  stops a contact resting on the panel from counting as a fresh tap every tick, which
+  kept the auto-lock from ever arming. A completed reset ends the host's
+  pinUvAuthToken before the next CTAPHID command, too: a command already waiting is
+  still answered before the reboot, and could spend the token the wipe left alive
+  (`authenticatorConfig` writing `EF_EA_ENABLED` into the wiped store).
+  `PLAT-TOKEN-004` records what still runs in that window. The slot lives in
+  `rsk-device`; host tests drive the panel's own loop against a stand-in worker that
+  a source check holds to `firmware/src/worker.rs`. **bcdDevice → 0x09DC.**
+
 - An on-panel factory reset no longer leaves a pending Settings edit behind. The
   menu's exit still wrote after a completed reset, and its debounce writes an edit
   only after 1.5 s without a tap. So toggling Scramble PIN, or stepping brightness,

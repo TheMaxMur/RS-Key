@@ -698,6 +698,9 @@ impl<'a> Worker<'a> {
     /// while a pattern written through picoboot read straight back, so the platform
     /// clears it and there is nothing there to reach.
     async fn reboot(&mut self, mode: u8) -> ! {
+        // Before the wait, not after: the wait yields to the display, and a Management RESET's
+        // wipe reaches here with no request queued for its ambient loop to park on.
+        crate::vendor::begin_reset();
         embassy_time::Timer::after(Duration::from_millis(200)).await;
         self.ctap.scrub_secrets();
         self.ccid.scrub();

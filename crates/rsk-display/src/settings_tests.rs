@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{Env, Pad, center, nowhere};
+use crate::tests::{Env, Pad, center, nowhere, settings_row};
 
 #[test]
 fn an_adjust_page_decodes_only_minus_and_plus() {
@@ -212,19 +212,6 @@ fn the_scramble_row_toggles_in_place_and_persists() {
     assert!(!ui.scramble_pin);
 }
 
-/// The row of a settings list that `hit` reads as `want`, found through `rsk-ui`'s own
-/// hit test so a reordered list moves the tap with it.
-fn row<E: PartialEq>(
-    rows: u16,
-    hit: impl Fn(rsk_ui::Point) -> Option<E>,
-    want: E,
-) -> rsk_ui::Point {
-    (0..rows)
-        .map(|i| center(rsk_ui::settings_row_rect(i)))
-        .find(|&p| hit(p).as_ref() == Some(&want))
-        .expect("the list has that row")
-}
-
 /// `EF_DISPLAY` as the next boot would read it, if there is one.
 fn stored_display<S: rsk_fs::Storage>(fs: &RefCell<Fs<S>>) -> Option<rsk_ui::DisplayConfig> {
     let mut buf = [0u8; rsk_ui::DISPLAY_CONF_LEN];
@@ -241,12 +228,12 @@ fn stored_display<S: rsk_fs::Storage>(fs: &RefCell<Fs<S>>) -> Option<rsk_ui::Dis
 fn a_factory_reset_writes_no_edit_into_the_store_it_wiped() {
     let env = Env::new();
     let taps = [
-        row(
+        settings_row(
             rsk_ui::SETTINGS_ROWS,
             rsk_ui::hit_settings_root,
             RootEntry::Display,
         ),
-        row(
+        settings_row(
             rsk_ui::DISPLAY_ROWS,
             rsk_ui::hit_display,
             DisplayEntry::Timeout,
@@ -254,17 +241,17 @@ fn a_factory_reset_writes_no_edit_into_the_store_it_wiped() {
         center(rsk_ui::ADJ_PLUS_RECT),
         center(rsk_ui::TITLE_BACK_RECT),
         center(rsk_ui::TITLE_BACK_RECT),
-        row(
+        settings_row(
             rsk_ui::SETTINGS_ROWS,
             rsk_ui::hit_settings_root,
             RootEntry::Security,
         ),
-        row(
+        settings_row(
             rsk_ui::SECURITY_ROWS,
             rsk_ui::hit_security,
             SecurityEntry::ScramblePin,
         ),
-        row(
+        settings_row(
             rsk_ui::SECURITY_ROWS,
             rsk_ui::hit_security,
             SecurityEntry::FactoryReset,
@@ -294,12 +281,12 @@ fn a_factory_reset_writes_no_edit_into_the_store_it_wiped() {
 fn an_edit_is_written_before_a_firmware_update_reboots() {
     let env = Env::new();
     let taps = [
-        row(
+        settings_row(
             rsk_ui::SETTINGS_ROWS,
             rsk_ui::hit_settings_root,
             RootEntry::Display,
         ),
-        row(
+        settings_row(
             rsk_ui::DISPLAY_ROWS,
             rsk_ui::hit_display,
             DisplayEntry::Brightness,
@@ -307,7 +294,7 @@ fn an_edit_is_written_before_a_firmware_update_reboots() {
         center(rsk_ui::ADJ_MINUS_RECT),
         center(rsk_ui::TITLE_BACK_RECT),
         center(rsk_ui::TITLE_BACK_RECT),
-        row(
+        settings_row(
             rsk_ui::SETTINGS_ROWS,
             rsk_ui::hit_settings_root,
             RootEntry::Firmware,
@@ -333,17 +320,17 @@ fn an_edit_is_written_before_a_firmware_update_reboots() {
 fn an_abandoned_factory_reset_keeps_the_edit() {
     let env = Env::new();
     let taps = [
-        row(
+        settings_row(
             rsk_ui::SETTINGS_ROWS,
             rsk_ui::hit_settings_root,
             RootEntry::Security,
         ),
-        row(
+        settings_row(
             rsk_ui::SECURITY_ROWS,
             rsk_ui::hit_security,
             SecurityEntry::ScramblePin,
         ),
-        row(
+        settings_row(
             rsk_ui::SECURITY_ROWS,
             rsk_ui::hit_security,
             SecurityEntry::FactoryReset,

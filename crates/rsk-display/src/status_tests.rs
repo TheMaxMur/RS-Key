@@ -2,7 +2,10 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{Env, PIN, Pad, backdate, backdate_local, center, nowhere};
+use crate::tests::{
+    Env, PIN, Pad, WORKER_RESET_WAIT_MS, WORKER_TICK_MS, backdate, backdate_local, center, nowhere,
+    settings_row,
+};
 
 fn home(status: StatusKind, pin_set: bool, passkeys: u16) -> Screen {
     Screen::Home(HomeView {
@@ -307,4 +310,110 @@ fn a_sleeping_panel_ignores_everything_but_a_wake_source() {
     ui.tick_asleep();
     assert!(ui.asleep);
     assert_eq!(ui.panel.frames, frames, "a blanked panel stays blank");
+}
+
+/// The centre of the nav tab `want`, found through `rsk-ui`'s own hit test.
+fn nav_tab(want: NavTab) -> rsk_ui::Point {
+    (0..rsk_ui::NAV_TABS.len() as u16)
+        .map(|i| center(rsk_ui::nav_tab_rect(i)))
+        .find(|&p| rsk_ui::hit_nav(p) == Some(want))
+        .expect("the nav bar has that tab")
+}
+
+/// Well past the reset flow's own few seconds, for a stand-in worker still waiting on it.
+const RESET_FLOW_BOUND: Duration = Duration::from_secs(30);
+
+/// From a completed factory reset to the reset itself the panel handles no input and the
+/// host's session is over. The worker takes the queued reboot and waits before its scrub, on
+/// the panel's executor: a slot that read clear once taken let the panel run in that wait.
+#[test]
+fn a_panel_reset_leaves_no_input_or_session_until_the_reset() {
+    let env = Env::new();
+    let security = settings_row(
+        rsk_ui::SETTINGS_ROWS,
+        rsk_ui::hit_settings_root,
+        RootEntry::Security,
+    );
+    let reset = settings_row(
+        rsk_ui::SECURITY_ROWS,
+        rsk_ui::hit_security,
+        SecurityEntry::FactoryReset,
+    );
+    let mut ui = env.ui(Pad::taps_then_hold(
+        &[nav_tab(NavTab::Settings), security, reset],
+        center(rsk_ui::DEL_HOLD_RECT),
+    ));
+    ui.onboarding = false;
+    let ui = RefCell::new(ui);
+
+    // `Worker::run`'s idle tick taking the request, then `Worker::reboot`: the latch, and the
+    // wait before its scrub with a wake press inside it.
+    let worker = async {
+        let bound = Instant::now() + RESET_FLOW_BOUND;
+        let mode = loop {
+            let taken = ui.borrow().hooks.slot.take();
+            if taken.is_some() || Instant::now() >= bound {
+                break taken;
+            }
+            Timer::after_millis(WORKER_TICK_MS).await;
+        };
+        ui.borrow().hooks.slot.begin_reset();
+        ui.borrow().hooks.wake_polls.set(1);
+        Timer::after_millis(WORKER_RESET_WAIT_MS).await;
+        let ui = ui.borrow();
+        let hooks = &ui.hooks;
+        (mode, ui.asleep, hooks.wake_polls.get(), hooks.pin_changed)
+    };
+    let embassy_futures::select::Either::Second(at_reset) =
+        embassy_futures::block_on(embassy_futures::select::select(status_loop(&ui), worker))
+    else {
+        unreachable!("the status loop never returns");
+    };
+    assert_eq!(
+        at_reset,
+        (Some(1), false, 1, 1),
+        "a completed reset must queue its reboot, handle no input until the reset, and end \
+         the host's session"
+    );
+}
+
+/// A finger still down when the flow a tap opened has closed is not a second tap: Settings
+/// left through the nav bar hands the ambient loop the very contact that left it.
+#[test]
+fn a_finger_still_down_when_a_tab_closes_is_not_a_second_tap() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::taps_then_hold(
+        &[nav_tab(NavTab::Settings)],
+        nav_tab(NavTab::Home),
+    ));
+    ui.onboarding = false;
+    // The lead-in samples arm the panel; the tap then runs Settings until Home is held.
+    let opened = (0..3).any(|_| ui.handle_local_input(StatusKind::Idle));
+    let again = ui.handle_local_input(StatusKind::Idle);
+    assert_eq!(
+        (opened, again),
+        (true, false),
+        "the contact that closed the tab must not be a tap on the screen it returned to"
+    );
+}
+
+/// A contact resting on the panel — a finger, or something lying on it — is one tap. Read
+/// as a fresh one every tick it kept the local-activity clock current, and the auto-lock
+/// never armed for as long as it rested.
+#[test]
+fn a_contact_resting_on_the_panel_cannot_hold_the_lock_off() {
+    let env = Env::new();
+    env.set_device_pin(PIN);
+    let mut ui = env.ui(Pad::held(nowhere()));
+    ui.locked = false;
+    ui.touch_armed = true;
+    let landed = ui.handle_local_input(StatusKind::Idle);
+    backdate_local(lock_after_ms(SLEEP_TIMEOUT_MS.load(Ordering::Relaxed)));
+    let rested = ui.handle_local_input(StatusKind::Idle);
+    ui.tick_deadlines();
+    assert_eq!(
+        (landed, rested, ui.locked),
+        (true, false, true),
+        "a resting contact must not count as a tap again, or the auto-lock never arms"
+    );
 }
