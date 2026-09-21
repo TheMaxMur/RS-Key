@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A credentialManagement or getAssertion walk opened on a CTAPHID channel can no
+  longer be continued over CCID. A getNextRP / getNextCredential / getNextAssertion
+  carries no pinUvAuthParam of its own (§6.8): its authorization is that it arrives on
+  the `FidoState::channel` whose Begin opened the walk, and the same binds the
+  seed-backup MSE key. Only the CTAPHID handler stamped that field, so a FIDO command
+  over CCID ran with whatever CTAPHID CID was there last — letting a PC/SC process that
+  holds no token take the next leg of a walk a CTAPHID credential manager had opened,
+  reading its RP ids, user entities, credential ids and public keys, and knocking the
+  manager's own walk out of step. CCID now stamps the reserved channel 0 (which
+  `rsk_usb::ctaphid::CidAllocator` never hands out) before every dispatch, so a walk or
+  MSE key one transport opened is not continuable from the other; two PC/SC clients on
+  the one reader still share it, as they already share the card. A host test opens a
+  walk on a CTAPHID channel and asserts the CCID getNextRP is refused `NOT_ALLOWED`.
+  **bcdDevice → 0x09DF.**
+
 - The clientPIN soft lock now survives a warm reboot even when the wrong PINs were
   spent over CCID. After `PIN_MISMATCH_LIMIT` consecutive wrong PINs CTAP 2.1
   §6.5.5.6 stops accepting attempts until a real power cycle; that lock lives in RAM,

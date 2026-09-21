@@ -382,6 +382,11 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         // panel's one-shot clientPIN signal is taken here as well: the token it ends
         // must not survive into the next command on either transport.
         crate::reset_token_on_local_pin_change(self.hooks, self.fido.state, self.rng);
+        // CCID has no CTAPHID channel, so its FIDO commands run on the reserved id 0
+        // (`rsk_usb::ctaphid::CidAllocator` never hands it out): a credMgmt walk, a
+        // getNextAssertion or an MSE key one transport opened is not continuable from it.
+        const CCID_NO_CHANNEL: u32 = 0;
+        self.fido.state.borrow_mut().channel = CCID_NO_CHANNEL;
         // The keygen fast paths bypass `Dispatcher::process`, so the class byte it
         // judges has to be judged ahead of them: a chaining segment is not a command
         // yet, and a secure-messaging class is refused. Falling through is what

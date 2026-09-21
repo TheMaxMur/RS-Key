@@ -816,6 +816,59 @@ fn a_soft_lock_engaged_over_ccid_is_handed_over_for_persisting() {
     );
 }
 
+/// `credentialManagement { getNextRP }` (§6.8): subcommand 0x03, no params, no token.
+fn get_next_rp() -> Vec<u8> {
+    std::vec![
+        rsk_fido::consts::CTAP_CREDENTIAL_MGMT,
+        0xA1,
+        0x01,
+        rsk_fido::consts::CM_ENUMERATE_RPS_NEXT as u8,
+    ]
+}
+
+/// A getNextRP carries no pinUvAuthParam — its authorization IS the channel whose
+/// Begin opened the walk (§6.8). CCID stamped no channel, so it ran with the last
+/// CTAPHID CID and could take the next leg of a walk a CTAPHID manager had opened,
+/// reading the RP ids that manager's token had bought, having shown none of its own.
+#[test]
+fn a_credmgmt_walk_bound_to_a_ctaphid_channel_is_not_continuable_over_ccid() {
+    // The first CID `rsk_usb::ctaphid::CidAllocator` hands out, so a CCID sentinel set
+    // to any real channel (not just some arbitrary one) would collide with it here.
+    const CHANNEL: u32 = 0x0100_0000;
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    let mut ccid = env.ccid();
+    // FIDO is selected over CCID up front, as a PC/SC session does once: the getNextRP
+    // below is then the first CCID APDU after the walk is bound, so the channel it runs
+    // on has to be stamped BEFORE its dispatch, not swept by the next command's entry.
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    // A walk enumerateRPsBegin opened on CTAPHID channel CHANNEL, with a leg to serve.
+    {
+        let mut st = env.fido_state.borrow_mut();
+        st.channel = CHANNEL;
+        st.cm.channel = CHANNEL;
+        st.cm.rp_counter = 1;
+        st.cm.rp_total = 1;
+    }
+    // The channel that opened it may take the next leg: the store holds no RP, so the
+    // gate passes and the scan reports NoCredentials rather than refusing the caller.
+    assert_eq!(
+        ctap.handle_cbor(CHANNEL, &get_next_rp(), 0)[0],
+        rsk_fido::CtapError::NoCredentials.as_u8(),
+        "the channel that opened the walk was refused its own next leg"
+    );
+    // Over CCID the same walk must be refused — a smart-card reader is not that channel.
+    let (over_ccid, _) = exchange_chained(&mut ccid, &ctap_msg(&get_next_rp()));
+    assert_eq!(
+        over_ccid[0],
+        rsk_fido::CtapError::NotAllowed.as_u8(),
+        "a credMgmt walk opened on a CTAPHID channel was continued over CCID"
+    );
+}
+
 #[test]
 fn u2f_over_ccid_answers_its_version_command() {
     let env = Env::new();
