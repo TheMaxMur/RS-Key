@@ -84,7 +84,7 @@ assurance/bundle/SEC-FIDO-002.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...
 assurance/bundle/SEC-FIDO-002.toml	scripts/assurance_gate.py	103-103	TAG = re.compile(r"Refines\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)")	TAG = re.compile(r"Refines\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)")
 assurance/bundle/SEC-FIDO-002.toml	scripts/assurance_gate.py	220-222	def grep_word(files: list[pathlib.Path], word: str) -> list[str]:	return [f.name for f in files if pat.search(f.read_text(errors="ignore"))]
 assurance/bundle/SEC-FIDO-002.toml	scripts/comutate.py	903-905	# Sequential runs share the main build cache: only the patched	"CARGO_TARGET_DIR": str(root / "target"),
-assurance/bundle/SEC-FIDO-002.toml	scripts/evidence_gate.py	449-455	for path in assurance_gate.production_rust(root):	out.add(str(path.relative_to(root)))
+assurance/bundle/SEC-FIDO-002.toml	scripts/evidence_gate.py	468-474	for path in assurance_gate.production_rust(root):	out.add(str(path.relative_to(root)))
 assurance/bundle/SEC-FIDO-002.toml	scripts/ghost_gate.py	62-64	#: The invariant whose ghost this is. One name, because a second ghost would want	INVARIANT = "NoAuthorizationBypass"
 assurance/bundle/SEC-FIDO-002.toml	scripts/kani.sh	307-307	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-display/src/gates.rs	149-149	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
@@ -120,7 +120,7 @@ assurance/bundle/SEC-FIDO-003.toml	formal/gen-configs.sh	185-187	elif [ -n "$on"
 assurance/bundle/SEC-FIDO-003.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-003.toml	fuzz/fuzz_targets/fido_session.rs	1430-1433	assert_ne!(	);
 assurance/bundle/SEC-FIDO-003.toml	scripts/citation_gate.py	618-621	return re.compile(	)
-assurance/bundle/SEC-FIDO-003.toml	scripts/evidence_gate.py	459-490	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
+assurance/bundle/SEC-FIDO-003.toml	scripts/evidence_gate.py	515-546	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
 assurance/bundle/SEC-FIDO-003.toml	scripts/kani.sh	307-307	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
 assurance/bundle/SEC-FIDO-003.toml	scripts/platform_gate.py	1890-1918	def check_bundles(root, ids, findings):	)
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-device/src/ctap.rs	201-201	persistent_grant_record: fs.has_key(EF_PAUTHTOKEN),	persistent_grant_record: fs.has_key(EF_PAUTHTOKEN),
@@ -167,7 +167,7 @@ assurance/bundle/SEC-FIDO-004.toml	scripts/assurance_gate.py	220-222	def grep_wo
 assurance/bundle/SEC-FIDO-004.toml	scripts/assurance_gate.py	1053-1062	for cfg_name in OWNER_CFGS:	)
 assurance/bundle/SEC-FIDO-004.toml	scripts/citation_gate.py	368-374	def bundle_pages(root):	)
 assurance/bundle/SEC-FIDO-004.toml	scripts/comutate.py	910-914	"RUSTFLAGS": (	).strip(),
-assurance/bundle/SEC-FIDO-004.toml	scripts/evidence_gate.py	459-490	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
+assurance/bundle/SEC-FIDO-004.toml	scripts/evidence_gate.py	515-546	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
 assurance/bundle/SEC-FIDO-004.toml	scripts/ghost_gate.py	64-64	INVARIANT = "NoAuthorizationBypass"	INVARIANT = "NoAuthorizationBypass"
 assurance/bundle/SEC-FIDO-004.toml	scripts/platform_gate.py	1890-1918	def check_bundles(root, ids, findings):	)
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	795-795	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
@@ -199,7 +199,7 @@ assurance/bundle/SEC-FIDO-005.toml	formal/gen-configs.sh	185-187	elif [ -n "$on"
 assurance/bundle/SEC-FIDO-005.toml	formal/gen-configs.sh	322-322	emit Historical_E76.cfg BugSeedDoesNotLead TRUE TRUE	emit Historical_E76.cfg BugSeedDoesNotLead TRUE TRUE
 assurance/bundle/SEC-FIDO-005.toml	formal/gen-configs.sh	329-329	for b in "${BUGS[@]}"; do emit "Mut_$b.cfg" "$b" FALSE TRUE; done	for b in "${BUGS[@]}"; do emit "Mut_$b.cfg" "$b" FALSE TRUE; done
 assurance/bundle/SEC-FIDO-005.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
-assurance/bundle/SEC-FIDO-005.toml	scripts/bundle_gate.py	1450-1450	verdicts = len(named) - inverse	verdicts = len(named) - inverse
+assurance/bundle/SEC-FIDO-005.toml	scripts/bundle_gate.py	1456-1456	verdicts = len(named) - inverse	verdicts = len(named) - inverse
 assurance/bundle/SEC-FIDO-005.toml	scripts/comutate.py	337-365	def solo_index(root: pathlib.Path) -> dict[str, list[str]]:	return out
 assurance/bundle/SEC-FIDO-005.toml	scripts/comutate.py	903-905	# Sequential runs share the main build cache: only the patched	"CARGO_TARGET_DIR": str(root / "target"),
 assurance/bundle/SEC-FIDO-005.toml	scripts/platform_gate.py	1890-1918	def check_bundles(root, ids, findings):	)
@@ -419,6 +419,36 @@ assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	69-74	# The invariant a MUT
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	74-74	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	231-234	if [ -z "${inv:-}" ] || [ "$inv" = "-" ]; then	fi
 assurance/bundle/SEC-FIDO-008.toml	scripts/citation_gate.py	368-374	def bundle_pages(root):	)
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	596-596	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	596-605	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	625-625	pub fn force_delete(&mut self, fid: u16) -> Result<()> {	pub fn force_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	646-646	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/powercut.rs	43-43	pub fn delete_landed(	pub fn delete_landed(
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/store_assurance.rs	235-235	pub fn delete_orphaned_metadata(after: &StoreView, subject: usize) -> bool {	pub fn delete_orphaned_metadata(after: &StoreView, subject: usize) -> bool {
+assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	214-214	fn known_absent(&self, fid: u16) -> bool {	fn known_absent(&self, fid: u16) -> bool {
+assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	247-247	fn settle<T>(&mut self, fid: u16, r: Option<T>) -> Result<Option<T>> {	fn settle<T>(&mut self, fid: u16, r: Option<T>) -> Result<Option<T>> {
+assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	268-268	pub fn scan(&mut self) {	pub fn scan(&mut self) {
+assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	343-343	pub fn try_read(&mut self, fid: u16, buf: &mut [u8]) -> Result<Option<usize>> {	pub fn try_read(&mut self, fid: u16, buf: &mut [u8]) -> Result<Option<usize>> {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	763-763	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	799-799	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	834-834	fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Result<usize> {	fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Result<usize> {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/powercut.rs	56-56	pub fn meta_add_landed(old: Option<&[u8]>, new: &[u8], fits: bool, got: Option<&[u8]>) -> bool {	pub fn meta_add_landed(old: Option<&[u8]>, new: &[u8], fits: bool, got: Option<&[u8]>) -> bool {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/store_assurance.rs	244-244	pub fn meta_add_lost_a_record(before: &StoreView, after: &StoreView, subject: usize) -> bool {	pub fn meta_add_lost_a_record(before: &StoreView, after: &StoreView, subject: usize) -> bool {
+assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	257-257	fn mark_absent(&mut self, fid: u16) {	fn mark_absent(&mut self, fid: u16) {
+assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	799-799	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	803-810	let mut scratch = [0u8; META_MAX];	self.mark_absent(EF_META);
+assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/powercut.rs	61-61	pub fn meta_delete_landed(old: Option<&[u8]>, got: Option<&[u8]>) -> bool {	pub fn meta_delete_landed(old: Option<&[u8]>, got: Option<&[u8]>) -> bool {
+assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/store_assurance.rs	252-252	pub fn meta_delete_false_absent(after: &StoreView) -> bool {	pub fn meta_delete_false_absent(after: &StoreView) -> bool {
+assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	214-214	fn known_absent(&self, fid: u16) -> bool {	fn known_absent(&self, fid: u16) -> bool {
+assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	257-257	fn mark_absent(&mut self, fid: u16) {	fn mark_absent(&mut self, fid: u16) {
+assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	799-799	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	803-810	let mut scratch = [0u8; META_MAX];	self.mark_absent(EF_META);
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	596-596	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	618-621	/// value may be live. This folds the two into one answer, which is what a caller	/// [`force_delete_halves`](Self::force_delete_halves) instead.
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	625-625	pub fn force_delete(&mut self, fid: u16) -> Result<()> {	pub fn force_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	646-646	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/powercut.rs	43-43	pub fn delete_landed(	pub fn delete_landed(
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/store_assurance.rs	224-228	// A FOURTH step clause has no projection here, deliberately. `NoSilentOrphan` —	// projection over `StoreView` alone could not see the half that decides it.
 assurance/crates.toml	crates/rsk-device/src/ctap.rs	82-93	fido_state: &'a RefCell<rsk_fido::FidoState>,	}
 assurance/deleters.toml	crates/rsk-fido/src/vendor.rs	426-426	// so U2F REGISTER answered 6F00 on every later call — the same key-without-chain	// so U2F REGISTER answered 6F00 on every later call — the same key-without-chain
 assurance/deleters.toml	crates/rsk-openpgp/src/putdata.rs	161-161	Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,	Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,
@@ -1129,6 +1159,7 @@ formal/comutants.toml	crates/rsk-oath/src/increasing_tests.rs	36-36	assert_eq!(s
 formal/comutants.toml	crates/rsk-oath/src/lib.rs	1222-1229	/// Drop the VALIDATE result on deselect / card reset, so a later session must	}
 formal/comutants.toml	crates/rsk-oath/src/lib.rs	1262-1263	self.validated = !code_set;	self.otp_pin_verified = false;
 formal/comutants.toml	crates/rsk-oath/src/otp_pin_tests.rs	66-66	assert!(!safe_open(&mut app, &mut fs), "closed before any PIN");	assert!(!safe_open(&mut app, &mut fs), "closed before any PIN");
+formal/comutants.toml	crates/rsk-oath/src/removal_tests.rs	180-180	Applet::select(&mut app, false, &mut fs, &mut res);	Applet::select(&mut app, false, &mut fs, &mut res);
 formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	45-45	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	322-322	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/tests.rs	1328-1328	assert_eq!(run(app, fs, &apdu(INS_SET_CODE, 0, 0, &d)).0, Sw::OK);	assert_eq!(run(app, fs, &apdu(INS_SET_CODE, 0, 0, &d)).0, Sw::OK);

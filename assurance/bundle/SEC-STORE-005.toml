@@ -1,0 +1,410 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# SEC-STORE-005 `CacheHonest` — the flash layer's evidence bundle, written to stage 1A
+# item 3's ten-group contract and held to it by `scripts/bundle_gate.py`.
+#
+# It is one of six that landed together, and the six are one MODEL: every row
+# below is a configuration of `formal/RSKeyStore.tla`, so the build, tool,
+# assumption and freshness groups are common to all six by construction rather
+# than by copying. What is this property's alone is the invariant, the switches
+# that reach it, the production sites that refine it, and the costs of ITS runs.
+#
+# Two things this bundle deliberately does NOT do:
+#
+#  * it does not borrow a sibling's kill. Nine `Bug*` switches exist and each
+#    property cites only the ones that reddened ITS invariant, which is why the
+#    mutation groups here are not the same size;
+#  * it does not re-measure a number it did not run. Every count in a `[result]`
+#    or `[[mutation]]` leaf beside a configuration name is transcribed from the
+#    `[[artifact]]` log of that same run, and `bundle_gate.quoted_numbers` holds
+#    it there.
+#
+# One measured caveat, recorded because it changes how a number here reads: a RED
+# TLC run stops at the FIRST violation its two workers reach, so its `states` and
+# `distinct` counts are not reproducible. Re-running one of these configurations
+# in the same session printed a different distinct count. The GREEN runs are
+# reproducible in states and distinct; their `depth` is not, which
+# `formal/floors.txt` already records and is why no floor stands on it.
+#
+# The deletion arm, one clause at a time. A mutant going red says the gate
+# noticed; it does not say WHICH clause noticed, and a clause that never fires
+# alone is one the suite can lose with every row still green. So each of the
+# eight gate mutations below was run a second time with the ONE
+# `findings.append` that reports it replaced by `pass` — measured on
+# SEC-STORE-001, whose clauses are the same code all six are held to, and with
+# `scripts/bundle_gate.py` restored by digest after every arm:
+#
+#  * the `[freshness]` group taken out of this bundle
+#    whole gate: exit 1, 1 finding(s); clause gone: exit 0, 0 finding(s)
+#    exit 0 — this clause is the only thing that catches it
+#  * the first `[[artifact]]`'s `bytes` moved by one
+#    whole gate: exit 1, 1 finding(s); clause gone: exit 0, 0 finding(s)
+#    exit 0 — this clause is the only thing that catches it
+#  * one hex digit of the first `sha256` changed
+#    whole gate: exit 1, 1 finding(s); clause gone: exit 0, 0 finding(s)
+#    exit 0 — this clause is the only thing that catches it
+#  * a `[[cost]]`'s `peak_memory_mb` written as a range
+#    whole gate: exit 1, 1 finding(s); clause gone: exit 0, 0 finding(s)
+#    exit 0 — this clause is the only thing that catches it
+#  * method #1's configuration re-pointed at one that is not in the tree
+#    whole gate: exit 1, 2 finding(s); clause gone: exit 1, 1 finding(s)
+#    still exit 1, caught by: a 'model-check' row resolving ['.tla'] and no .cfg — a file in the tree is not the artifact this method's own 
+#  * the first mutation row's `direction` replaced with a word nobody has to defend
+#    whole gate: exit 1, 1 finding(s); clause gone: exit 0, 0 finding(s)
+#    exit 0 — this clause is the only thing that catches it
+#  * the clean run's state count moved by one in a `[result]` leaf
+#    whole gate: exit 1, 1 finding(s); clause gone: exit 0, 0 finding(s)
+#    exit 0 — this clause is the only thing that catches it
+#  * every `bound_*` of method #1 but one stripped
+#    whole gate: exit 1, 2 finding(s); clause gone: exit 1, 1 finding(s)
+#    still exit 1, caught by: 19 `bound_*` key(s) over the method rows, under the floor of 24 — a scope sentence beside one bound is the sam
+#
+# Two of the eight are NOT solely load-bearing, and that is the result rather
+# than a defect: a second clause catches the same mutant. Six are, which means
+# deleting any one of those six takes a real check out of the tree with nothing
+# in this directory going red.
+#
+
+[property]
+id = "SEC-STORE-005"
+invariant = "RSKeyStore!CacheHonest"
+statement = "EF_META's presence cache says absent only when no metadata record stands, which is what makes a rebuild-from-empty safe."
+subjects = ["crates/rsk-fs/src/fs.rs::meta_delete — the writer of the bit this invariant is about (crates/rsk-fs/src/fs.rs:799)", "crates/rsk-fs/src/fs.rs::mark_absent — where the confirmed-absent bit is set (crates/rsk-fs/src/fs.rs:257)", "crates/rsk-fs/src/fs.rs::known_absent — where it is trusted (crates/rsk-fs/src/fs.rs:214)", "crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob — the harness at the same fault site", "formal/RSKeyStore.tla — IndInv, where CacheHonest is the conjunct that made the predicate inductive"]
+requirement = "docs/threat-model.md TM-HOST-READ-FAULT. This is the premise a rebuild-from-empty rests on: `meta_add` trusts the metaAbsent bit, so the bit saying absent when a record stands is what turns one write into the loss of every record"
+threat_clause = "docs/threat-model.md#TM-HOST-READ-FAULT"
+threat_clause_reading = "assurance/properties.toml sources this row onto audit run-36, formal/README.md's induction probes and TM-HOST-READ-FAULT. The third is the clause; the first two are where the finding came from, and formal/floors.txt records the same thing — `CacheHonest` is named there as the conjunct the induction counterexample found"
+owners_writers = ["crates/rsk-fs/src/fs.rs", "crates/rsk-fs/src/store_meta_kani.rs", "formal/RSKeyStore.tla"]
+owner_of_the_kill = "formal/RSKeyStore.tla's MetaDelete disjunct, shared with SEC-STORE-004 — one switch, two invariants, and the solo configurations are what tell them apart"
+status_in_the_registry = "MODELLED-ONLY, and the weakest row of the six by the registry's own counts: cfgs=4 against SEC-STORE-003's 15. The reason is structural rather than neglect — only one Bug* switch reaches this invariant, and only one configuration checks it alone"
+
+[build]
+commit = "982fb2f9af4302a931faea8196e0897c0b4442e9"
+tree_state = "clean at capture — `git status --porcelain` in the /Users/maxmur/rs-key-wt-store worktree printed nothing while every run below was taken; the only files this work adds are these bundles and the logs they cite, written afterwards"
+matrix_column = "firmware"
+cargo_features = "the default workspace feature set, with no `--features` flag on any row; the proof row is `cargo kani -p rsk-fs` on that same set, under its own `--cfg kani`"
+board_knobs = "BOARD unset and LED_KIND unset. Nothing on this property's path reads either — `Fs` is generic over the `Storage` trait and the store model carries no flash geometry at all, which is the same reason assurance/configurations.toml records that a column moving the geometry is one SEC-STORE-* cannot argue closure over"
+host_triple = "aarch64-apple-darwin"
+firmware_triple = "thumbv8m.main-none-eabihf"
+machine = "18 cores, macOS 27.0 aarch64 — the figure TLC's own banner records in every log cited below, so the artifact and this line cannot disagree"
+
+[[method]]
+obligation = "show that `CacheHonest` holds of every reachable state of the flash layer, over the whole action set and not one path through it"
+method = "model-check"
+artifact = "Store.cfg formal/RSKeyStore.tla"
+bound_fids = 2
+stops_fids = "any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown"
+bound_values_per_fid = 3
+stops_values_per_fid = "nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads"
+bound_variables = 7
+stops_variables = "every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind"
+bound_invariants = 6
+stops_invariants = "whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down"
+bound_bug_switches = 9
+stops_bug_switches = "any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have"
+bound_next_disjuncts = 7
+stops_next_disjuncts = "any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next"
+shipped_relation = "the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them"
+cfg = "none"
+features = "none"
+
+[[method]]
+obligation = "show that the GREEN above is not vacuous — that a configuration which BREAKS `CacheHonest` is refused, and refused BY NAME"
+method = "mutation"
+artifact = "StoreSolo_CacheHonest.cfg"
+bound_bug_switches_for_this_invariant = 1
+stops_bug_switches_for_this_invariant = "the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it"
+bound_tiers = 1
+stops_tiers = "nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one"
+bound_recorded_runs = 1
+stops_recorded_runs = "every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none"
+bound_killed = 1
+stops_killed = "whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there"
+bound_store_configurations = 22
+stops_store_configurations = "any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it"
+bound_distinct_states_green = 364
+stops_distinct_states_green = "everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space"
+shipped_relation = "a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does"
+cfg = "none"
+features = "none"
+
+[[method]]
+obligation = "read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has"
+method = "review"
+artifact = "crates/rsk-fs/src/fs.rs::meta_delete crates/rsk-fs/src/fs.rs::mark_absent crates/rsk-fs/src/fs.rs::known_absent crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob"
+bound_refinement_markers = 1
+stops_refinement_markers = "every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count"
+bound_fs_removal_sites = 4
+stops_fs_removal_sites = "removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table"
+bound_fs_source_lines = 895
+stops_fs_source_lines = "everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly"
+bound_reviewers = 1
+stops_reviewers = "independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out"
+bound_files_read = 2
+stops_files_read = "the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name"
+bound_crate_kani_proofs = 13
+stops_crate_kani_proofs = "whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree"
+shipped_relation = "this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image"
+cfg = "none"
+features = "none"
+
+[[method]]
+obligation = "carry `CacheHonest` out of the model and onto something the host runs: the two harnesses at the fault site this invariant is the premise of"
+method = "bounded proof"
+artifact = "crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_refused_rather_than_rebuilt_from_empty crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob"
+bound_view_fids = 3
+stops_view_fids = "any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one"
+bound_step_predicates = 3
+stops_step_predicates = "the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state"
+bound_kani_proofs_in_crate = 13
+stops_kani_proofs_in_crate = "every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle"
+bound_harnesses_run = 5
+stops_harnesses_run = "the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here"
+bound_symbolic_fids = 24
+stops_symbolic_fids = "the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of"
+bound_cover_properties = 2
+stops_cover_properties = "whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one"
+shipped_relation = "the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked"
+cfg = "kani"
+features = "none"
+
+[[tool]]
+name = "TLC"
+version = "2.19 of 08 August 2024 (rev: 5a47802)"
+provenance = "tlaplus 1.7.4 out of the dev shell; the jar is whatever $TLA2TOOLS_JAR names, realized by flake.lock rather than by a hand-made store path"
+invocation = "nix develop -c ./formal/run-tlc.sh <Configuration>.cfg"
+environment = "WORKERS=2, HEAP=4g, which the banner reports as 3641MB heap and 64MB offheap, on Mac OS X 27.0 aarch64"
+
+[[tool]]
+name = "JVM"
+version = "openjdk 1.8.0_492, Zulu 8.94.0.17-CA-macos-aarch64"
+provenance = "the dev shell's zulu-ca-jdk 8.0.492, which is what run-tlc.sh takes for $JAVA"
+invocation = "nix develop -c java -version"
+environment = "the same shell every TLC row below ran in"
+
+[[tool]]
+name = "cargo-kani"
+version = "0.67.0"
+provenance = "the version pinned as KANI_VERSION in .github/workflows/ci.yml and read by scripts/kani_gate.py. cargo-kani is in no nix file, so its pin is a number in a workflow rather than a hash in flake.lock — AS-RESET-7 is the row that carries that gap"
+invocation = "nix develop -c cargo kani -p rsk-fs --harness <name>"
+environment = "aarch64-apple-darwin, default workspace features, --cfg kani"
+
+[[tool]]
+name = "rustc"
+version = "1.96.0 (ac68faa20 2026-05-25)"
+provenance = "the dev shell's pinned stable toolchain, printed by its banner on every command here"
+invocation = "nix develop -c rustc -vV"
+environment = "host aarch64-apple-darwin; no firmware image is built for anything in this bundle"
+
+[[tool]]
+name = "the gate suite"
+version = "the tree at the commit this bundle records"
+provenance = "scripts/*.py of this checkout, run through the same dev shell"
+invocation = "nix develop -c python scripts/bundle_gate.py, and the four gates result.gate_* transcribe"
+environment = "the dev shell's python 3; no network and no board on any row"
+
+[result]
+m_shipped = "GREEN. Store.cfg checked 6 named invariants over the two-FID space and found no error: 4185 states generated, 364 distinct states found, 0 states left on queue, depth 7"
+m_solo_cache_honest = "RED: CacheHonest. StoreSolo_CacheHonest.cfg: 183 states generated, 58 distinct states found, depth 4. The one configuration in the tree that reports this invariant by name."
+m_induction = "GREEN. StoreInduction.cfg starts from IndInv rather than Init: 12460 states generated, 1000 distinct states found, 0 left on queue, depth 1 — one step out of every admitted state, which is what makes it an inductiveness probe rather than a reachability run"
+m_why_one_mutant = "This bundle carries ONE model mutant and not four. Nine Bug* switches exist and exactly one reaches this invariant; the other eight are evidence about the other five rows, and borrowing one would be a kill this property did not score"
+m_the_mut_half_is_absent = "There is no StoreMut_CacheHonest.cfg. formal/gen-configs.sh emits a Mut_/Solo_ pair per SWITCH, not per invariant, so the Mut_ half of BugMetaDeleteDropsOnFault is the row SEC-STORE-004 cites. Saying so is the point: an absent configuration is a gap and not a silence"
+b_kani_at_the_fault_site = "`a_faulted_meta_read_is_never_cached_as_an_absent_blob` verified with 0 of 269 checks failed, read off assurance/bundle/logs/SEC-STORE-002/kani-rsk-fs-store.log.gz. The registry counts kani=0 here because the harness name carries no `cache_honest`, which is the NAME match scripts/assurance_gate.py does"
+r_production = "`Fs::meta_delete` sets the absent bit only on the arm where the backend said absent, and returns `Err(Error::MemoryFatal)` where it said nothing — crates/rsk-fs/src/fs.rs:803-810, the same three lines SEC-STORE-004 reads for its own clause"
+r_induction_finding = "formal/floors.txt records that `StoreInv` alone is NOT inductive and that CacheHonest is the conjunct the counterexample named. That is the strongest thing in this bundle and it is a finding about the PREDICATE, not a proof of the property"
+t_tier = "formal/runs.toml records the safety tier at 2026-09-18 on 68eaca6; 22 of its rows are Store*.cfg and this bundle cites 3 of them. All three agree with the record on states, on distinct and on depth: assurance/bundle/logs/SEC-STORE-005/tlc-Store.log searched to depth 7, which is what the record reads for Store.cfg. Over the six SEC-STORE bundles exactly one RED row disagrees with the record, StoreMut_BugDeleteMetaOnlyUnderPresent.cfg in SEC-STORE-001 and on states and distinct — the worker race the header records — and one GREEN row does, Store.cfg and on DEPTH alone, where three of the six copies of that run searched one level shallower than the record. No GREEN state or distinct count disagrees anywhere"
+r_absent = "the most of the six. One switch reaches this invariant, one configuration checks it alone, and there is no Mut_ half, no host test, no board run and no registry attribution for either harness at its fault site. The induction probe is the strongest thing here and what it produced is a finding about `StoreInv`, not a proof of `CacheHonest`"
+r_registry_reading = "the `gate_registry` line below is scripts/assurance_gate.py's DERIVATION and not a verdict anyone typed: cfgs counts the configurations naming this invariant, mut the solo kills, kani the harnesses whose function name contains the snake of the invariant name, rust the production sites naming it. Where this bundle disagrees with one of those counts it says so in a leaf above rather than changing it"
+r_docs = "docs/store-refinement.md is the page this slice's refinement argument is written on, and assurance/properties.toml sources four of the six rows onto it. This bundle does not restate it; it records which runs stand behind it"
+t_gate_rows = "scripts/check.sh runs this bundle through `slice evidence bundle` (scripts/bundle_gate.py) and its bounds through `bundle bounds table` (scripts/bounds_gate.py); the assumption ids are held by `platform assumptions` (scripts/platform_gate.py) and the registry line by `assurance registry` (scripts/assurance_gate.py)"
+m_green_reproducibility = "measured in this session rather than assumed: the clean configuration re-run twelve times printed the same states and distinct counts every time and two different depths, which is what formal/floors.txt already records about TLC's depth under two workers. The RED rows are NOT reproducible in states or distinct, and the numbers quoted for them are each held to their own log"
+r_column = "the firmware column. assurance/configurations.toml records that SEC-STORE-* cannot argue closure over a column that moves the flash geometry, so the equivalence this row claims is to columns that do not"
+gate_ghost = "ghost-gate: ok — 21 action(s) record NoAuthorizationBypass over 24 route(s), consulting 11 guard(s)"
+gate_ledger = "token-refinement-gate: GREEN keys=2 api=11 volatile=11/10 persistent=14/5 outcomes=7/6 walk=4 softlock=12 window=2 testonly=1"
+gate_assumption = "5 standing assumption(s) AlwaysUvShipped TRUE=5 FALSE=91 ForceChangeModelled TRUE=3 FALSE=93 PowerOnClearsScratch2 TRUE=11 FALSE=4 RekeyOrderModelled TRUE=2 FALSE=13 WidePerms TRUE=3 FALSE=93"
+gate_matrix = "matrix-gate: ok — 40 P0-family properties × 31 build configurations = 1240 cells (37 covered, 143 equivalent, 0 conditional, 106 out-of-scope, 954 gap)"
+gate_registry = "SEC-STORE-005 CacheHonest MODELLED-ONLY cfgs=4 mut=1 co=1 kani=0 fuzz=0 rust=1 test=0"
+
+[[artifact]]
+run = "the clean run, every switch FALSE, with CacheHonest among the invariants it checks"
+path = "assurance/bundle/logs/SEC-STORE-005/tlc-Store.log"
+bytes = 1178
+sha256 = "e9c049a366d67959b1b2e54d98b76792da130a71b51d0c8cd3237b2625ceb38a"
+
+[[artifact]]
+run = "the one configuration that checks this invariant alone, under BugMetaDeleteDropsOnFault"
+path = "assurance/bundle/logs/SEC-STORE-005/tlc-StoreSolo_CacheHonest.log"
+bytes = 1850
+sha256 = "da5371949cc3cb16cf702f8c5edc63d0f014bd9a22ec1cc459a8e315730df169"
+
+[[artifact]]
+run = "the inductiveness probe — the run whose counterexample named this conjunct"
+path = "assurance/bundle/logs/SEC-STORE-005/tlc-StoreInduction.log"
+bytes = 1454
+sha256 = "edb65c56809f78d4fc9c355a5fbeb2829bc0452e5ab2643a393a2b54b5fd18da"
+
+[[assumption]]
+id = "AS-RESET-1"
+statement = "A torn flash write leaves the old record or a detectably bad one, never a plausible wrong one. The store model takes this structurally: `Delete` is the only action with a cut point between two backend writes, and the cut sets `dead` rather than inventing a third value"
+kind = "platform"
+discharger = "a recorded PASS of tests/29_reset_power_cut.py on a throwaway board with a real supply cut — the discharge PLAT-FLASH-001 already names. It is pending and no board has run it, so this is owed rather than held"
+expressible = "not in this model. There is no partial write to quantify over — a torn write is the absence of the second one — so the assumption is what makes that abstraction sound rather than something the abstraction establishes"
+registered = "yes — assurance/platform.toml PLAT-FLASH-001, status pending, whose `covers` already claims `slice:AS-RESET-1` and whose `supports` already lists all six SEC-STORE-* rows"
+
+[[assumption]]
+id = "AS-RESET-6"
+statement = "TLC is sound for the finite configurations it checks, and the verdict recorded for a configuration is the verdict that run produced"
+kind = "tool TCB"
+discharger = "a pinned checker and a recorded artifact. tlaplus 1.7.4 is pinned by flake.lock, formal/run-tlc.sh records the jar's sha256 prefix, and every `[[artifact]]` row below carries its log's own digest"
+expressible = "no — a checker cannot check itself, and nothing in this tree re-derives TLC's answer by a second route"
+registered = "yes — assurance/platform.toml PLAT-TOOL-004, status pending, whose `covers` already claims `slice:AS-RESET-6` and whose `supports` already lists all six SEC-STORE-* rows"
+
+[[assumption]]
+id = "AS-RESET-7"
+statement = "Kani/CBMC is sound for the arithmetic its harnesses bound, and the solver that ran is the pinned one — which for cargo-kani means a version number in a workflow file and not a hash in flake.lock"
+kind = "tool TCB"
+discharger = "the pinned toolchain and a recorded log. cargo-kani 0.67.0 is held by scripts/kani_gate.py's KANI_VERSION; the hash half does not exist, and that gap is the assumption rather than something this bundle closes"
+expressible = "no, for AS-RESET-6's reason one row up, and with one gap more: the tool's identity is a string in CI rather than a digest in the lock file"
+registered = "yes — assurance/platform.toml PLAT-TOOL-003, status pending, whose `covers` already claims `slice:AS-RESET-7`"
+
+[[assumption]]
+id = "TCB-1"
+statement = "rustc lowers the `Fs` source this bundle reads to machine code that keeps its meaning. The production half of every refinement claim below is a statement about source, not about the image"
+kind = "compiler"
+discharger = "the pinned stable toolchain and nothing further. No translation validation exists in this tree and none is claimed here"
+expressible = "no — it is the step out of the language the whole slice is written in"
+registered = "yes — assurance/platform.toml already claims `slice:TCB-1`, which is why this bundle spends no registry edit on it"
+
+[[assumption]]
+id = "AS-RESET-2"
+statement = "The 2-FID space these configurations check stands for the whole 16-bit FID space: every invariant below is per-FID, or between a subject and ONE bystander, so a third file adds no shape the pair does not already carry"
+kind = "model fidelity"
+discharger = "argued rather than discharged. assurance/abstractions.toml NAR-STORE-FIDS records the same narrowing as `bounded-elsewhere` and cites `scopes:RSKeyStore/Fids`; the proof half widens it for the cache clauses alone, over a symbolic FID pair"
+expressible = "not inside the model — raising `Fids` to three is a different configuration and a different state count, and no run in this bundle is that run"
+registered = "yes — assurance/platform.toml already claims `slice:AS-RESET-2`. The store reading of it is this row's, and the narrowing it names is assurance/abstractions.toml NAR-STORE-FIDS"
+
+[[assumption]]
+id = "AS-RESET-3"
+statement = "TLC reporting the FIRST invariant it finds violated is a property of the runner and not of the defect, so a Mut_ configuration checking seven invariants may name a sibling. What separates them is the Solo_ configuration beside it, which checks one invariant alone"
+kind = "model fidelity"
+discharger = "the paired configurations themselves. formal/gen-configs.sh emits a Mut_/Solo_ pair for every Bug* switch, and where this property has both halves both are run and recorded below"
+expressible = "yes, and it is: the Solo_ run IS the discharge. Where a property has no Solo_ row of its own this bundle says so rather than borrowing the Mut_ one"
+registered = "yes — assurance/platform.toml already claims `slice:AS-RESET-3`"
+
+[[mutation]]
+level = "B"
+mutant = "StoreSolo_CacheHonest"
+invocation = "nix develop -c ./formal/run-tlc.sh StoreSolo_CacheHonest.cfg"
+expected = "RED: CacheHonest"
+verdict = "RED: CacheHonest, 183 states generated, 58 distinct states found, depth 4, 0.81 s wall"
+fell = "CacheHonest, and this is the ONLY configuration in the tree that can report it: the Mut_ half of the same switch checks seven invariants and names NoFalseMetaAbsent first, so without this solo row the switch would be evidence about SEC-STORE-004 alone. The direction is modelled — the failing state has the metaAbsent bit set with a record still standing"
+direction = "modelled"
+
+[[mutation]]
+level = "gate"
+mutant = "the `[freshness]` group taken out of this bundle"
+invocation = "<edit SEC-STORE-005.toml>; nix develop -c python scripts/bundle_gate.py"
+expected = "EXIT=1: group `freshness` is missing"
+verdict = "EXIT=1, `group `freshness` is missing — stage 1A item 3 blocks the exit on any field of the contract, not on most of them`"
+fell = "the ten-group roster, which blocks the exit on any field of the contract"
+direction = "modelled"
+
+[[mutation]]
+level = "gate"
+mutant = "the first `[[artifact]]`'s `bytes` moved by one"
+invocation = "<edit SEC-STORE-005.toml>; nix develop -c python scripts/bundle_gate.py"
+expected = "EXIT=1: the recorded byte count and the file disagree"
+verdict = "EXIT=1, ``assurance/bundle/logs/SEC-STORE-005/tlc-Store.log` is 1178 bytes and the bundle records 1179 — a log that was edited is not the unedited output of the run`"
+fell = "the byte-count half of the artifact rule — a log that was edited is not the unedited output of the run"
+direction = "modelled"
+
+[[mutation]]
+level = "gate"
+mutant = "one hex digit of the first `sha256` changed"
+invocation = "<edit SEC-STORE-005.toml>; nix develop -c python scripts/bundle_gate.py"
+expected = "EXIT=1: the log hashes to something else"
+verdict = "EXIT=1, ``assurance/bundle/logs/SEC-STORE-005/tlc-Store.log` hashes to e9c049a366d67959… and the bundle records b9c049a366d67959… — the log is not the one the run wrote`"
+fell = "the digest half of the artifact rule, which is what a byte count alone cannot see"
+direction = "modelled"
+
+[[mutation]]
+level = "gate"
+mutant = "a `[[cost]]`'s `peak_memory_mb` written as a range"
+invocation = "<edit SEC-STORE-005.toml>; nix develop -c python scripts/bundle_gate.py"
+expected = "EXIT=1: a range is an estimate, not a measurement"
+verdict = "EXIT=1, ``peak_memory_mb` is '126-132', which is not a number — a range is an estimate, and an estimate in any of the three voids the measurement`"
+fell = "the cost rule's number check, one of the three item 10 measures"
+direction = "modelled"
+
+[[mutation]]
+level = "gate"
+mutant = "method #1's configuration re-pointed at one that is not in the tree"
+invocation = "<edit SEC-STORE-005.toml>; nix develop -c python scripts/bundle_gate.py"
+expected = "EXIT=1: the configuration is not in the tree"
+verdict = "EXIT=1, ``StoreNope.cfg` is not in the tree — a method row's artifact is the proof it claims, and one nothing resolves is a claim nobody can refute`"
+fell = "the method-artifact resolver — a claim nothing resolves is a claim nobody can refute"
+direction = "modelled"
+
+[[mutation]]
+level = "gate"
+mutant = "the first mutation row's `direction` replaced with a word nobody has to defend"
+invocation = "<edit SEC-STORE-005.toml>; nix develop -c python scripts/bundle_gate.py"
+expected = "EXIT=1: the direction is not one of the two"
+verdict = "EXIT=1, `direction 'killed' is not one of ('modelled', 'inverse') — a red run is not evidence until the direction is read`"
+fell = "the direction rule — a red run is not evidence until the direction is read"
+direction = "modelled"
+
+[[mutation]]
+level = "gate"
+mutant = "the clean run's state count moved by one in a `[result]` leaf"
+invocation = "<edit SEC-STORE-005.toml>; nix develop -c python scripts/bundle_gate.py"
+expected = "EXIT=1: the number is in no line of the log it stands beside"
+verdict = "EXIT=1, ``4186` `states` is in no line of `assurance/bundle/logs/SEC-STORE-005/tlc-Store.log` — a number printed next to a log is a transcription of it, and re-measuring the run does not re-measure the l`"
+fell = "`quoted_numbers` — a number printed next to a log is a transcription of it"
+direction = "modelled"
+
+[[mutation]]
+level = "gate"
+mutant = "every `bound_*` of method #1 but one stripped"
+invocation = "<edit SEC-STORE-005.toml>; nix develop -c python scripts/bundle_gate.py"
+expected = "EXIT=1: the row is under the per-row bound floor, and the bundle under the group floor"
+verdict = "EXIT=1, `1 bound(s), under the floor of 2`"
+fell = "`method_bounds` — a scope sentence beside one bound is the row the roster was added to refuse"
+direction = "modelled"
+
+[freshness]
+measured = "2026-09-18, Europe/Moscow"
+expires_on_prover_bump = "tlaplus 1.7.4 or its jar hash — every model verdict here is TLC's, and PLAT-TOOL-004 is the registry entry that says so"
+expires_on_toolchain_bump = "cargo-kani 0.67.0 wherever a proof row stands, rustc 1.96.0 for the production reading; AS-RESET-7 is what the first of those rests on"
+expires_on_stepping = "nothing here is a hardware result and no row claims one. A stepping change revalidates PLAT-FLASH-001, the entry this property's tear assumption hangs on, and PLAT-FLASH-001 is `pending` on a board test nobody has run"
+expires_on_model_change = "formal/RSKeyStore.tla's Next disjunction, its Fids constant, or a tenth Bug* switch entering formal/gen-configs.sh — each moves the space these states were counted over"
+expires_on_schema_change = "assurance/properties.toml's field set, or the INVARIANTS ordering formal/gen-configs.sh writes, which is what decides WHICH invariant a Mut_ row reports first"
+
+[[cost]]
+artifact = "assurance/bundle/logs/SEC-STORE-005/tlc-Store.log"
+human_minutes = 0
+runner_seconds = 0.88
+peak_memory_mb = 183.8
+basis = "one `formal/run-tlc.sh` invocation under /usr/bin/time -l; the seconds are its `real` and the megabytes its `maximum resident set size` divided by 1048576. human_minutes is 0 because no human drove this run — it was issued from a script, and the reviewer's minutes are a cost this bundle has not paid yet"
+
+[[cost]]
+artifact = "assurance/bundle/logs/SEC-STORE-005/tlc-StoreSolo_CacheHonest.log"
+human_minutes = 0
+runner_seconds = 0.81
+peak_memory_mb = 132.5
+basis = "one `formal/run-tlc.sh` invocation under /usr/bin/time -l; the seconds are its `real` and the megabytes its `maximum resident set size` divided by 1048576. human_minutes is 0 because no human drove this run — it was issued from a script, and the reviewer's minutes are a cost this bundle has not paid yet"
+
+[[cost]]
+artifact = "assurance/bundle/logs/SEC-STORE-005/tlc-StoreInduction.log"
+human_minutes = 0
+runner_seconds = 1.03
+peak_memory_mb = 291.5
+basis = "one `formal/run-tlc.sh` invocation under /usr/bin/time -l; the seconds are its `real` and the megabytes its `maximum resident set size` divided by 1048576. human_minutes is 0 because no human drove this run — it was issued from a script, and the reviewer's minutes are a cost this bundle has not paid yet"
+
+[[cost]]
+artifact = "writing this bundle and its five siblings"
+human_minutes = 41
+runner_seconds = 0
+peak_memory_mb = 0
+basis = "measured wall clock of the session that captured every artifact here and wrote the six bundles, from the first timing file to the last write, and SHARED across the six rather than counted once per bundle. The two zeros are exact: authoring ran no runner and allocated nothing this measures"
+

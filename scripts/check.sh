@@ -762,7 +762,7 @@ run "SPDX headers"             python scripts/spdx_gate.py
 # bullets SAY (comutate's Three families really do live on two bullets) and stays
 # silent where no cardinal survives its clauses.
 run "docstring list counts"    python scripts/docstring_count_gate.py
-# 229 of the 230 configurations say "do not edit by hand" in their first line,
+# 235 of the 236 configurations say "do not edit by hand" in their first line,
 # and nothing made that true: deleting a whole mutant family left every row
 # green, because run-tlc.sh lists families with `ls` so the tiers shrank with
 # them. This regenerates into a temp tree and diffs.

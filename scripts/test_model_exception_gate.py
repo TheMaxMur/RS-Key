@@ -223,7 +223,7 @@ def test_the_criterion_defect_reddens_the_row(tmp_path):
 
     red = subprocess.run([sys.executable, str(guard)], capture_output=True, text=True)
     assert red.returncode == 1, red.stdout
-    assert "RSKeyAppletSeams.tla:227 `a = Oath`" in red.stderr, red.stderr
+    assert "RSKeyAppletSeams.tla:237 `a = Oath`" in red.stderr, red.stderr
     assert "no longer narrows" in red.stderr
 
 

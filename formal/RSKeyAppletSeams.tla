@@ -40,6 +40,11 @@ CONSTANTS
     \* 637ed98 taken back out: PIV and OpenPGP used to reset on EVERY select,
     \* ignoring the `reselect` flag the trait hands them.
     BugReselectResetsStatus,
+    \* The OTHER half of the same recorder: OATH's exemption from it, removed.
+    \* The conformance claim is a claim about PIV and OpenPGP, and OATH is
+    \* exempted in the WRITER rather than in the invariant; widen it to OATH and
+    \* the shipped tree is red for a re-lock the applet does on purpose.
+    BugOathReselectUnrecorded,
     \* crates/rsk-device/src/ccid.rs:354-369 -- the ICC power transition.
     BugCardResetKeepsStatus,
     \* e5da38b taken back out: PW3, the admin PIN, standing in for PW1/PW2 on
@@ -58,6 +63,11 @@ CONSTANTS
     \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:406-420,
     \* `inc_sig_count` clearing has_pw1 under the one-shot PW status.
     BugSigPinNotSpent,
+    \* The REQUIREMENT half of the one-shot spend, widened off the reference it
+    \* belongs to: EF_PW_PRIV[0] = 0 makes PW1 no. 81 valid for one PSO:CDS and
+    \* says nothing about no. 82, so a DECIPHER that spent `psig` would retire a
+    \* freshness the implementation still holds.
+    BugDecipherGhostSpentLikeSig,
     \* A user status opening the ADMIN surface -- the reverse of
     \* BugAdminOpensKeyOps, and unfalsifiable until the surface existed.
     BugUserStatusOpensAdmin,
@@ -233,8 +243,10 @@ Reselect(a) ==
                   ELSE (held'["pivPin"] /\ fresh)
     /\ pfresh' = (held'["pivPin"] /\ pfresh)
     \* The conformance recorder. PIV and OpenPGP must come through a re-SELECT
-    \* with everything standing; OATH is the recorded exception.
-    /\ viol' = IF a = Oath \/ held' = held
+    \* with everything standing; OATH is the recorded exception, and the switch
+    \* is that exemption taken out of the requirement rather than out of the
+    \* step above -- the two clauses fail apart, which is why they are two.
+    /\ viol' = IF (a = Oath /\ ~BugOathReselectUnrecorded) \/ held' = held
                  THEN viol ELSE viol \cup {"ReselectPreservesAccessStatus"}
     /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, refused >>
 
@@ -445,7 +457,11 @@ PgpKeyOp(r) ==
                                     ELSE viol \cup {"NoKeyOpOnTheAdminStatus"}
     /\ held' = IF r = "pw1" /\ oneShotSig /\ ~BugSigPinNotSpent
                  THEN [held EXCEPT !["pw1"] = FALSE] ELSE held
-    /\ psig'  = IF r = "pw1" /\ oneShotSig THEN FALSE ELSE psig
+    \* The switch widens the GHOST alone: `held` still spends at PW1.81 only, so
+    \* a decipher retires the requirement's freshness while the implementation
+    \* keeps it, which is the split `held["pw1"] = psig` exists to see.
+    /\ psig'  = IF (r = "pw1" \/ BugDecipherGhostSpentLikeSig) /\ oneShotSig
+                  THEN FALSE ELSE psig
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, refused >>
 
 \* PUT DATA C4 -- the PW status byte that makes PW1.81 one-shot -- is an

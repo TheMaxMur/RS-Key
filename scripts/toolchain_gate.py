@@ -13,7 +13,7 @@ bootrom and every FFI boundary appeared in no registry, no gate and no page. A
 `grep -rn "flip-link\\|rust-lld" assurance/ scripts/*.py` answered with nothing.
 
 What did exist was per-bundle: a `[[tool]]` group inside each evidence bundle,
-floored at 20 leaves by scripts/bundle_gate.py, 62 rows over 11 bundles and 9
+floored at 20 leaves by scripts/bundle_gate.py, 92 rows over 17 bundles and 12
 distinct names. Those rows carry a `version` STRING and no hash of any kind — the
 only sha256 a bundle holds is on an `[[artifact]]`. A version string in a bundle
 is a record of what somebody wrote down at the time, which is the right thing for

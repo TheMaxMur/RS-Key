@@ -110,6 +110,24 @@ ReplayBad.cfg   RED     -       -       BarNeverOpens
 Solo_*.cfg      RED     -
 """
 
+#: The observed-run record, present because `run_count_gate` makes it mandatory —
+#: a tree without it has recorded no run at all — and because the freshness axis
+#: now dates a modelled property against it. The axis reads this file's PATH and
+#: not its content, so one row is enough; what it has to be is a file the fixture
+#: can commit and then move.
+RUNS = """\
+[[run]]
+tier = "safety"
+command = "./formal/run-tlc.sh safety"
+date = "2026-01-01"
+commit = "0000000000000000000000000000000000000000"
+host = "a fixture"
+workers = 2
+matrix = '''
+Shipped.cfg    GREEN   states=1  distinct=1  depth=1  1s
+'''
+"""
+
 COMUTANTS = """\
 pending_floor = 0
 
@@ -213,6 +231,7 @@ class Tree:
         self.write("formal/Replay.cfg", REPLAY_CFG)
         self.write("formal/ReplayBad.cfg", REPLAY_CFG)
         self.write("formal/floors.txt", FLOORS)
+        self.write("formal/runs.toml", RUNS)
         self.write("formal/comutants.toml", COMUTANTS)
         self.write("formal/traces/session.jsonl", '{"action": "Start"}\n')
         self.write("scripts/check.sh", CHECK_SH)
@@ -733,6 +752,41 @@ def test_a_configuration_committed_after_the_bundle_goes_stale(tree):
     tree.append("formal/Shipped.cfg", "\n")
     tree.commit("touch a configuration after the evidence was taken")
     assert "formal/Shipped.cfg" in tree.vector("SEC-T-001")["behind"]
+
+
+def test_a_re_recorded_run_after_the_bundle_goes_stale(tree):
+    """The clause the tree demonstrated against the axis rather than for it.
+
+    `982fb2f` touches `formal/runs.toml` and the generated pages and NO model,
+    configuration or source, and it re-ran both tiers: a RED closing is where the
+    run stopped, so `Mut_BugTokenlessIgnoresAlwaysUv.cfg` went 61236/10696 to
+    59974/10559 across it — a line `SEC-FIDO-002` transcribes. Driven on the real
+    history before the clause existed, a bundle dated at that commit's parent
+    reported `fresh` over 45 derived inputs with every TLC number in the tree
+    re-measured underneath it.
+    """
+    tree.append("formal/runs.toml", "\n# the tier re-run, model untouched\n")
+    tree.commit("re-record the tier after the evidence was taken")
+    vector = tree.vector("SEC-T-001")
+    assert vector["freshness"] == "stale"
+    assert "formal/runs.toml" in vector["behind"]
+
+
+def test_a_property_no_configuration_checks_is_not_dated_against_the_record(tree):
+    """The other half of that clause: it is conditioned, not blanket.
+
+    A property no configuration checks transcribes no run, so the record is not a
+    file its evidence is about — and an input on every property alike is the
+    decoration this module refuses of a hand-written column.
+    """
+    checked = assurance_gate.checked_names(tree.root / "formal")
+    assert "RuledAwayRisk" not in checked
+    assert "formal/runs.toml" not in evidence_gate.evidence_inputs(
+        tree.root, "RuledAwayRisk", "SEC-R-001", checked, None
+    )
+    assert "formal/runs.toml" in evidence_gate.evidence_inputs(
+        tree.root, "FooStaysClosed", "SEC-T-001", checked, "Mini"
+    )
 
 
 def test_a_comutant_patch_target_committed_after_the_bundle_goes_stale(tree):

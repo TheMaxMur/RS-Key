@@ -12,9 +12,9 @@ It replaces a hand-typed table. Fourteen rows stood under `The bounds` in [the s
 
 ## What is rendered
 
-**Every bundle the tree has — 11 of them.** Not the first slice's alone: the exit criterion says *the slice's bundle* because there was one when it was written, and rendering one now would leave most of the tree's bounds unshown, which is the same table written in parallel with a smaller denominator.
+**Every bundle the tree has — 17 of them.** Not the first slice's alone: the exit criterion says *the slice's bundle* because there was one when it was written, and rendering one now would leave most of the tree's bounds unshown, which is the same table written in parallel with a smaller denominator.
 
-Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all in the SEC-FIDO family, so *all the bundles* and *the P0-launch rows that have any raw evidence at all* are one set. The rest of that tranche is the difference, derived here rather than typed: **6 of its 17 rows** carry no bundle, so there is nothing to render for them — `SEC-STORE-001`, `SEC-STORE-002`, `SEC-STORE-003`, `SEC-STORE-004`, `SEC-STORE-005`, `SEC-STORE-006`.
+Every one of the 17 is a `p0-launch` row of `assurance/configurations.toml`, all in the SEC-FIDO and SEC-STORE family, so *all the bundles* and *the P0-launch rows that have any raw evidence at all* are one set. The rest of that tranche is the difference, derived here rather than typed: **0 of its 17 rows** carry no bundle, so there is nothing to render for them — none.
 
 | Property | Invariant | Bundle | Method rows | Bounds | With a per-bound consequence |
 |---|---|---|---:|---:|---:|
@@ -29,8 +29,14 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `SEC-FIDO-006C` | `ResetKeepsTheBackupSeal` | `assurance/bundle/SEC-FIDO-006C.toml` | 8 | 37 | 37 |
 | `SEC-FIDO-007` | `RamNeverOutlivesFlashSeed` | `assurance/bundle/SEC-FIDO-007.toml` | 5 | 26 | 26 |
 | `SEC-FIDO-008` | `NoLiveTokenWithoutPinRecord` | `assurance/bundle/SEC-FIDO-008.toml` | 8 | 42 | 42 |
+| `SEC-STORE-001` | `RSKeyStore!NoOrphanedMetadata` | `assurance/bundle/SEC-STORE-001.toml` | 4 | 24 | 24 |
+| `SEC-STORE-002` | `RSKeyStore!NoFalseAbsent` | `assurance/bundle/SEC-STORE-002.toml` | 4 | 24 | 24 |
+| `SEC-STORE-003` | `RSKeyStore!NoRecordLostToMetaWrite` | `assurance/bundle/SEC-STORE-003.toml` | 4 | 24 | 24 |
+| `SEC-STORE-004` | `RSKeyStore!NoFalseMetaAbsent` | `assurance/bundle/SEC-STORE-004.toml` | 4 | 24 | 24 |
+| `SEC-STORE-005` | `RSKeyStore!CacheHonest` | `assurance/bundle/SEC-STORE-005.toml` | 4 | 24 | 24 |
+| `SEC-STORE-006` | `RSKeyStore!NoSilentOrphan` | `assurance/bundle/SEC-STORE-006.toml` | 4 | 24 | 24 |
 
-**397 of 397** bounds carry a per-bound consequence. The column is `stops_<name>` beside `bound_<name>` in the bundle — the same way `shipped_relation` already travels with a method row, one field down — so the consequence moves with the number instead of being re-typed beside it. A cell reading `—` would be a bound the bundle carries no such field for; what such a bound costs is then only in its row's `shipped_relation`, printed under each table as the row note.
+**541 of 541** bounds carry a per-bound consequence. The column is `stops_<name>` beside `bound_<name>` in the bundle — the same way `shipped_relation` already travels with a method row, one field down — so the consequence moves with the number instead of being re-typed beside it. A cell reading `—` would be a bound the bundle carries no such field for; what such a bound costs is then only in its row's `shipped_relation`, printed under each table as the row note.
 
 ## The bounds, by property
 
@@ -326,7 +332,7 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_configurations` | `7` | an eighth way for this invariant to fail. Seven switches are seven defects somebody wrote, so non-degeneracy covers those seven and no failure mode nobody modelled |
 | `bound_conjuncts_falsified` | `3` | nothing — all three conjuncts are separately falsified, which is the strongest single statement in this bundle, because a conjunction whose clauses are never falsified apart is a conjunction with a passenger. What it does not say is that each clause is falsified in every way it could be |
 
-> **Row note (`shipped_relation`).** every one of the seven checks TypeOK and this invariant and NOTHING ELSE (formal/gen-configs.sh:181-184 emits the SOLO block — the WORKING-TREE numbers, re-taken by content after a sibling slice grew that file by 69 lines NET — 72 added and 3 removed, 923 lines to 992; the same four lines stood at :173-176 at this bundle's `build.commit`, which stays where it is because `scripts/evidence_gate.py:459-490` dates a bundle by a commit git can resolve and the one carrying this file does not exist yet), with exactly one Bug* TRUE and every other FALSE, which is what tells a kill from a neighbouring invariant's. `mut = 7` IS this set: `assurance_gate.solo_target_counts` counts single-target Solo_* configurations. All three conjuncts are separately falsified — the ghost by BugPinWriteBeforeRevoke, the session term by four, the persistent term by two — and that is the strongest single statement in this bundle, because a conjunction whose clauses are never falsified apart is a conjunction with a passenger
+> **Row note (`shipped_relation`).** every one of the seven checks TypeOK and this invariant and NOTHING ELSE (formal/gen-configs.sh:181-184 emits the SOLO block — the WORKING-TREE numbers, re-taken by content after a sibling slice grew that file by 69 lines NET — 72 added and 3 removed, 923 lines to 992; the same four lines stood at :173-176 at this bundle's `build.commit`, which stays where it is because `scripts/evidence_gate.py:515-546` dates a bundle by a commit git can resolve and the one carrying this file does not exist yet), with exactly one Bug* TRUE and every other FALSE, which is what tells a kill from a neighbouring invariant's. `mut = 7` IS this set: `assurance_gate.solo_target_counts` counts single-target Solo_* configurations. All three conjuncts are separately falsified — the ghost by BugPinWriteBeforeRevoke, the session term by four, the persistent term by two — and that is the strongest single statement in this bundle, because a conjunction whose clauses are never falsified apart is a conjunction with a passenger
 
 #### Method 6 — tier C: the session token's own state machine, over a symbolic five-operation sequence
 
@@ -1199,3 +1205,375 @@ Every one of the 11 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_transitions_changed_by_removal` | `0` | the currency of the measurement. Both zeros are the review's, recorded in `formal/README.md` and not re-taken here — no TLC run was performed for this bundle |
 
 > **Row note (`shipped_relation`).** three sites in the module rest on this sentence: `ConfigGuard` at :1091 carries no `pin.set` conjunct because config.rs:243-245 tests the MAC and PERM_ACFG and nothing else, and the two `~(gate.alwaysUv /\ ~pin.set)` conjuncts at :935 and :1056 are kept only because the Rust has them. formal/README.md:929-935 records the measurement: removed from BOTH call sites the reachable space is bit-identical AND the transition count is unchanged, so the conjunct disables nothing. THE DISTINCTION THIS ROW EXISTS FOR: it is the GUARD that is inert, not the invariant. The invariant has a reachable falsifying state — 98 069 distinct, depth 12 — the moment one switch is armed. The two zeros are that measurement's, taken by the review formal/README.md records and NOT re-taken here; no TLC run was performed for this bundle
+
+### `SEC-STORE-001` — `RSKeyStore!NoOrphanedMetadata`
+
+#### Method 1 — show that `NoOrphanedMetadata` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `NoOrphanedMetadata` is refused, and refused BY NAME
+
+`mutation` over StoreMut_BugDeleteValueBeforeMeta.cfg StoreSolo_BugDeleteValueBeforeMeta.cfg StoreMut_BugDeleteMetaOnlyUnderPresent.cfg StoreSolo_BugDeleteMetaOnlyUnderPresent.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `2` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `2` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `4` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `4` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::delete crates/rsk-fs/src/fs.rs::force_delete crates/rsk-fs/src/fs.rs::force_delete_halves crates/rsk-fs/src/powercut.rs::delete_landed crates/rsk-fs/src/store_assurance.rs::delete_orphaned_metadata. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `5` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `3` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `NoOrphanedMetadata` out of the model and onto something the host runs: the model's Delete-step violation predicate, projected onto a real `StoreView`
+
+`trace` over crates/rsk-fs/src/store_assurance.rs::delete_orphaned_metadata. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked
+
+### `SEC-STORE-002` — `RSKeyStore!NoFalseAbsent`
+
+#### Method 1 — show that `NoFalseAbsent` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `NoFalseAbsent` is refused, and refused BY NAME
+
+`mutation` over StoreMut_BugCacheFaultAsAbsent.cfg StoreSolo_BugCacheFaultAsAbsent.cfg StoreMut_BugTruncatedScanDecidesAll.cfg StoreSolo_BugTruncatedScanDecidesAll.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `2` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `2` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `4` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `4` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::known_absent crates/rsk-fs/src/fs.rs::settle crates/rsk-fs/src/fs.rs::scan crates/rsk-fs/src/fs.rs::try_read. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `2` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `2` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `NoFalseAbsent` out of the model and onto something the host runs: the three harnesses the registry counts as this row's kani=3, run for this bundle
+
+`bounded proof` over crates/rsk-fs/src/store_refinement_kani.rs::no_false_absent_from_a_neighbours_delete crates/rsk-fs/src/store_refinement_kani.rs::no_false_absent_survives_a_faulted_confirm crates/rsk-fs/src/store_refinement_kani.rs::no_false_absent_reader_trusts_only_a_decided_bit. cfg: kani. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked
+
+### `SEC-STORE-003` — `RSKeyStore!NoRecordLostToMetaWrite`
+
+#### Method 1 — show that `NoRecordLostToMetaWrite` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `NoRecordLostToMetaWrite` is refused, and refused BY NAME
+
+`mutation` over StoreMut_BugMetaAddDropsOnFault.cfg StoreMut_BugMetaWriteTearsBlob.cfg StoreMut_BugMetaDeleteTearsBlob.cfg StoreInductionMut_BugMetaAddDropsOnFault.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `3` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `2` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `4` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `4` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::meta_add_reserve crates/rsk-fs/src/fs.rs::rebuild_meta crates/rsk-fs/src/fs.rs::meta_delete crates/rsk-fs/src/store_assurance.rs::meta_add_lost_a_record crates/rsk-fs/src/powercut.rs::meta_add_landed. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `2` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `3` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `NoRecordLostToMetaWrite` out of the model and onto something the host runs: the model's MetaAdd-step violation predicate, projected onto a real `StoreView`
+
+`trace` over crates/rsk-fs/src/store_assurance.rs::meta_add_lost_a_record. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked
+
+### `SEC-STORE-004` — `RSKeyStore!NoFalseMetaAbsent`
+
+#### Method 1 — show that `NoFalseMetaAbsent` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `NoFalseMetaAbsent` is refused, and refused BY NAME
+
+`mutation` over StoreMut_BugMetaDeleteDropsOnFault.cfg StoreSolo_BugMetaDeleteDropsOnFault.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `1` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `2` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `2` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `2` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::meta_delete crates/rsk-fs/src/fs.rs::mark_absent crates/rsk-fs/src/store_assurance.rs::meta_delete_false_absent crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob crates/rsk-fs/src/powercut.rs::meta_delete_landed. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `2` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `4` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `NoFalseMetaAbsent` out of the model and onto something the host runs: the harness at the fault site, beside the step predicate it does not replace
+
+`bounded proof` over crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob crates/rsk-fs/src/store_assurance.rs::meta_delete_false_absent. cfg: kani. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked
+
+### `SEC-STORE-005` — `RSKeyStore!CacheHonest`
+
+#### Method 1 — show that `CacheHonest` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `CacheHonest` is refused, and refused BY NAME
+
+`mutation` over StoreSolo_CacheHonest.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `1` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `1` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `1` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `1` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::meta_delete crates/rsk-fs/src/fs.rs::mark_absent crates/rsk-fs/src/fs.rs::known_absent crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `1` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `2` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `CacheHonest` out of the model and onto something the host runs: the two harnesses at the fault site this invariant is the premise of
+
+`bounded proof` over crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_refused_rather_than_rebuilt_from_empty crates/rsk-fs/src/store_meta_kani.rs::a_faulted_meta_read_is_never_cached_as_an_absent_blob. cfg: kani. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked
+
+### `SEC-STORE-006` — `RSKeyStore!NoSilentOrphan`
+
+#### Method 1 — show that `NoSilentOrphan` holds of every reachable state of the flash layer, over the whole action set and not one path through it
+
+`model-check` over Store.cfg formal/RSKeyStore.tla. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_fids` | `2` | any shape that needs a third file — a three-way aliasing of the present map, or a metadata blob holding more records than the pair can put in it. AS-RESET-2 is the row that says why the pair is argued to be enough, and it is argued rather than shown |
+| `bound_values_per_fid` | `3` | nothing about a value the model never writes. Two stored values plus the absent sentinel is what makes an overwrite observable; a third would add no distinction this invariant reads |
+| `bound_variables` | `7` | every part of the real `Fs` outside these seven — the dynamic-fid vector, the write generation counter, the sealed-payload layer, and flash geometry of any kind |
+| `bound_invariants` | `6` | whatever is true of the store and is not one of these six. A GREEN run says nothing about a clause nobody wrote down |
+| `bound_bug_switches` | `9` | any defect outside the nine formal/gen-configs.sh emits a switch for. The mutation score below is out of those nine and not out of the defects the store can have |
+| `bound_next_disjuncts` | `7` | any action the model does not have. There is no compaction, no `factory_wipe`, and no concurrent second caller in this Next |
+
+> **Row note (`shipped_relation`).** the model is `Fs` over a `Storage`, with the medium's failure modes as switches and the geometry left out. What is shipped is one instance of that shape at 16-bit FIDs; what is checked is two FIDs, and AS-RESET-2 is the row that argues the step between them
+
+#### Method 2 — show that the GREEN above is not vacuous — that a configuration which BREAKS `NoSilentOrphan` is refused, and refused BY NAME
+
+`mutation` over StoreMut_BugDeleteHidesFaultedDrop.cfg StoreSolo_BugDeleteHidesFaultedDrop.cfg. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_bug_switches_for_this_invariant` | `1` | the other switches of the nine. A switch that breaks a sibling invariant is evidence about that sibling, and this row does not borrow it |
+| `bound_tiers` | `2` | nothing about a tier this property has no configuration in. Where the count is 1 there is no Solo_ half and the row says so instead of implying one |
+| `bound_recorded_runs` | `2` | every run not in the `[[artifact]]` rows below. A verdict with no log beside it is a sentence, and this bundle carries none |
+| `bound_killed` | `2` | whether the kill was for the modelled defect rather than its inverse. That is the `direction` column of every `[[mutation]]` row, read one at a time, and two of twenty-four co-refutation patches in this tree failed exactly there |
+| `bound_store_configurations` | `22` | any configuration formal/gen-configs.sh does not emit. The roster is generated, so a defect nobody wrote a switch for has no row anywhere in it |
+| `bound_distinct_states_green` | `364` | everything the mutants explore beyond the clean run's space. A RED row stops at its first violation, so its own state count is a property of when TLC found the bug and not of the space |
+
+> **Row note (`shipped_relation`).** a switch is a defect the shipped tree does not have: gen-configs.sh writes every `Bug*` FALSE in Store.cfg, so the mutants say what the model would catch and not what the code does
+
+#### Method 3 — read the production sites the model claims to abstract, and say whether the ordering the invariant rests on is the ordering the code has
+
+`review` over crates/rsk-fs/src/fs.rs::delete crates/rsk-fs/src/fs.rs::force_delete crates/rsk-fs/src/fs.rs::force_delete_halves crates/rsk-fs/src/powercut.rs::delete_landed. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_refinement_markers` | `4` | every site that refines this invariant and says so nowhere. The markers are doc comments, so a site that drifts out of one is invisible to this count |
+| `bound_fs_removal_sites` | `4` | removals outside `Fs`. assurance/deleters.toml's own header says its two scope rules cannot see these four, which is why they are a separate table |
+| `bound_fs_source_lines` | `895` | everything read as prose rather than as code. A line count is the size of what was read, not evidence that it was read correctly |
+| `bound_reviewers` | `1` | independence. One reader wrote this bundle and read these sites, so nothing here is a second opinion and the row says so rather than leaving the count out |
+| `bound_files_read` | `2` | the rest of the crate. rsk-fs is fifteen source files and this row opened the ones the subjects name |
+| `bound_crate_kani_proofs` | `13` | whether any of them is about THIS invariant. The count is the crate's; the attribution is the registry's NAME match, and this bundle records where the two disagree |
+
+> **Row note (`shipped_relation`).** this is the only row of the four that touches shipped Rust, and it is a READING rather than a proof. TCB-1 is what carries it to the image
+
+#### Method 4 — carry `NoSilentOrphan` out of the model and onto something the host runs: the ghost `viol` the faulted Delete arm writes, against the production pair that keeps the two failures apart
+
+`trace` over formal/RSKeyStore.tla crates/rsk-fs/src/fs.rs::force_delete_halves. cfg: none. features: none.
+
+| Bound | Value | What stops being proved |
+|---|---|---|
+| `bound_view_fids` | `3` | any shape needing a fourth file. `store_assurance::VIEW_FIDS` is a three-element array, so the host sweep's projection is as narrow as the model's pair plus one |
+| `bound_step_predicates` | `3` | the fourth invariant, which has none. crates/rsk-fs/src/store_assurance.rs says why: NoSilentOrphan forbids an answer rather than a state |
+| `bound_kani_proofs_in_crate` | `13` | every clause no harness in the crate states. Thirteen proofs is the crate's whole bounded surface, and only five of them ran for this bundle |
+| `bound_harnesses_run` | `5` | the eight this bundle did not run — the four in powercut_kani.rs, the one in fs_kani.rs, and three more of the refinement file. Their verdicts are not here |
+| `bound_symbolic_fids` | `24` | the shipped 65536. Under `cfg(kani)` `FID_PRESENT_BYTES` is 3, so the map is 24 bits and EF_META is re-aliased to 0x0017 to sit inside it — a shrink crates/rsk-fs/src/store_meta_kani.rs itself lists three consequences of |
+| `bound_cover_properties` | `2` | whether the harness reached anything a cover does not name. Two satisfied covers say the assumed domain is non-empty, not that it is the right one |
+
+> **Row note (`shipped_relation`).** the projection is verification-only and excluded from production builds, so this row says the shipped primitives satisfy the model's clauses — not that the shipped image was checked

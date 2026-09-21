@@ -76,8 +76,12 @@ WINDOW = 3
 #: three exceptions are listed by name below rather than excusing the extension.
 #: Growing this set means stamping the files that do not — a bulk edit,
 #: deliberately not this guard's to make on its own.
+#: `.tsv` joined it the cheap way: the tree held one, and it was stamped before
+#: the extension was. The neighbouring `.txt`/`.cfg` say "data" and go unchecked,
+#: so a measurement landing as data would otherwise have been the one file in
+#: assurance/ whose terms a reader guesses.
 CHECKED = frozenset({".rs", ".py", ".sh", ".nix", ".svg", ".x", ".tla", ".js", ".mjs", ".html",
-                     ".c", ".h", ".S", ".yml"})
+                     ".c", ".h", ".S", ".yml", ".tsv"})
 
 #: Below this the guard is green over nothing. It has no roster to go empty, but
 #: it does walk a tree, and a walk that returns nothing exits 0 — the shape four

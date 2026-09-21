@@ -199,7 +199,7 @@ SCOPE_SPAN_CAP = 4
 #: 27 in its own comment one commit after being written, thirty lines from the
 #: constant, in the guard whose whole subject is a hand-typed number going
 #: stale. `scripts/` is outside the scan, so nothing was ever going to catch it.)
-SCOPE_CEILING = 39
+SCOPE_CEILING = 40
 
 #: The other rule, and the one the shape scan cannot be: a value the generator
 #: PRINTS may not appear as a literal anywhere else. It needs no noun list, no
@@ -467,7 +467,8 @@ SCOPED = {
     # Reached by widening a published unit into the vocabulary the shape scan
     # already enumerates: `85 entries` is the roster, a sentence seven commits in
     # this series have now had to hand-correct — 69 -> 71 -> 72 -> 73 -> 76 -> 79
-    # -> 80 -> 85.
+    # -> 80 -> 85 -> 87. The eighth correction was MISSED by its own commit and
+    # caught by review: a seam batch grew the roster and the sentence stood.
     (
         "formal/README.md",
         "**31 of 31 mutants are caught",
@@ -476,7 +477,7 @@ SCOPED = {
     "claim, and the generated roster line carries the same 30",
     (
         "docs/formal.md",
-        "85 entries: 79 of the 80 executable patches are killed",
+        "87 entries: 79 of the 82 executable patches are killed",
     ): "the whole-tree roster restated in the page that introduces the phase-2 "
     "table, whose generated region beside it gives the phase-2 line and not this "
     "total",
@@ -485,9 +486,20 @@ SCOPED = {
     # gone, the cell fell under no rule, and the entry retired as it predicted; the
     # boot family took the roster to 79, the OATH seam batch takes it to 85, and it
     # stays gone.
+    # `` `BugPanelCancelable` | … | 230 states `` collided the day the safety tier
+    # reached 230 configurations. The same coincidence retired
+    # `NoStatusAfterARefusedAuth | 73 states` when the roster left 73, and this one
+    # will retire the same way: it is a co-mutant's state count, in a column of
+    # state counts, and it moves when that mutant's model does.
     (
         "formal/README.md",
-        "**85 entries: 79 executable patches killed",
+        "— E45's ruling | `NoCrossTransportTouchConsumption` | 230 states",
+    ): "a co-mutant's own state count in the co-refutation table, which the tier's "
+    "configuration count reached by coincidence — the column beside it is all state "
+    "counts and none of them is a roster",
+    (
+        "formal/README.md",
+        "**87 entries: 79 of the 82 executable patches killed",
     ): "the co-mutant roster restated where its composition is broken down, which the "
     "generated line beside it does not give — the copy that read 69, then 71, 72 and "
     "73, re-measured by hand in four commits of this series. Its own claim that a "
@@ -552,6 +564,10 @@ TABLE_GROUPS = (
      ("StoreInductionMut_*.cfg",)),
     ("`Lattice.cfg` — the fourth module: the retry/recovery lattice", ("Lattice.cfg",)),
     ("`LatMut_*.cfg` / `LatSolo_*.cfg`", ("LatMut_*.cfg", "LatSolo_*.cfg")),
+    ("`LatInduction.cfg` — `IndInv /\\ Next => IndInv'`, the probe that found NOTHING",
+     ("LatInduction.cfg",)),
+    ("`LatInductionMut_*.cfg` — what says that probe can go red",
+     ("LatInductionMut_*.cfg",)),
     ("`Policies.cfg` — all four applets' stateful operation policies",
      ("Policies.cfg",)),
     ("`PolicyMut_*.cfg` / `PolicySolo_*.cfg`", ("PolicyMut_*.cfg", "PolicySolo_*.cfg")),

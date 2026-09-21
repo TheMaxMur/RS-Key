@@ -86,7 +86,7 @@
 [[exception]]
 id = "MX-SEAM-001"
 module = "RSKeyAppletSeams.tla"
-line = 125
+line = 135
 shape = "set"
 site = "Refs"
 clause = "Refs"
@@ -106,7 +106,7 @@ owed = "SeamSolo_BugRecoveryRefHoldsStatus.cfg"
 [[exception]]
 id = "MX-SEAM-002"
 module = "RSKeyAppletSeams.tla"
-line = 206
+line = 216
 shape = "clause"
 site = "ClearedFor"
 clause = 'r = "oathCode"'
@@ -128,7 +128,7 @@ carried_by = "NAR-OATH-REMOVAL"
 [[exception]]
 id = "MX-SEAM-003"
 module = "RSKeyAppletSeams.tla"
-line = 211
+line = 221
 shape = "clause"
 site = "AllCleared"
 clause = 'r = "oathCode"'
@@ -151,7 +151,7 @@ carried_by = "NAR-OATH-REMOVAL"
 [[exception]]
 id = "MX-SEAM-004"
 module = "RSKeyAppletSeams.tla"
-line = 227
+line = 237
 shape = "clause"
 site = "Reselect"
 clause = "a = Oath"
@@ -163,7 +163,10 @@ oracle reading behind it — three applets, and the third does the opposite of t
 other two — and it is a hole in the strongest direction: a change that made PIV
 or OpenPGP re-lock would be caught by `ReselectPreservesAccessStatus`, while a
 change that made OATH KEEP its unlock is caught by nothing at all, because the
-sibling clause at :210 also stops the recorder firing at it.
+sibling `viol'` clause below — MX-SEAM-005 — also stops the recorder firing at
+it. So this row still owes a requirement-side statement and not a switch:
+MX-SEAM-005 was paid with one because widening the RECORDER reddens the shipped
+tree, and widening the STEP here reddens nothing.
 '''
 mutant = "owes"
 owed = "SeamSolo_BugOathReselectKeepsStatus.cfg"
@@ -171,26 +174,35 @@ owed = "SeamSolo_BugOathReselectKeepsStatus.cfg"
 [[exception]]
 id = "MX-SEAM-005"
 module = "RSKeyAppletSeams.tla"
-line = 237
+line = 249
 shape = "clause"
 site = "Reselect"
 clause = "a = Oath"
 kind = "narrowing"
 production = "The recorder half of the same fact: `ReselectPreservesAccessStatus` is a conformance claim about PIV and OpenPGP, so OATH is exempted in the writer rather than in the invariant, because the exemption belongs to that applet and not to the rule."
 why = '''
-Two rows and not one, because the two clauses fail apart. Delete the one at :200
-and OATH keeps its status while this one keeps the recorder quiet, so the model
-goes green over the defect; delete this one and the shipped tree goes RED at
-`ReselectPreservesAccessStatus` for a behaviour the product has on purpose. A
-single row would have described whichever of those someone thought of first.
+Two rows and not one, because the two clauses fail apart. Delete the `held'`
+clause above and OATH keeps its status while this one keeps the recorder quiet,
+so the model goes green over the defect; delete this one and the shipped tree
+goes RED at `ReselectPreservesAccessStatus` for a behaviour the product has on
+purpose. A single row would have described whichever someone thought of first.
+
+`BugOathReselectUnrecorded` is that second sentence, measured. It is refused at
+`ReselectPreservesAccessStatus`, and the DIRECTION is the one that says the
+exemption is load-bearing rather than decorative: the counterexample SELECTs
+OATH, verifies its OTP PIN, re-SELECTs, and the recorder fires because
+`oathOtpPin` fell TRUE -> FALSE — a status DROPPED where the widened requirement
+says it must be kept, never a status served where none was earned. With the
+switch off the same configuration is GREEN over the shipped seam space, which is
+what says the arm is compiled in rather than decorative. The code twin is a
+measured GAP and formal/comutants.toml carries why: no slice re-SELECTs anything.
 '''
-mutant = "owes"
-owed = "SeamSolo_BugOathReselectUnrecorded.cfg"
+mutant = "SeamSolo_BugOathReselectUnrecorded.cfg"
 
 [[exception]]
 id = "MX-SEAM-006"
 module = "RSKeyAppletSeams.tla"
-line = 446
+line = 458
 shape = "clause"
 site = "PgpKeyOp"
 clause = 'r = "pw1"'
@@ -209,7 +221,7 @@ carried_by = "NAR-ASSIGNMENT-HOLES"
 [[exception]]
 id = "MX-SEAM-007"
 module = "RSKeyAppletSeams.tla"
-line = 448
+line = 463
 shape = "clause"
 site = "PgpKeyOp"
 clause = 'r = "pw1"'
@@ -221,15 +233,25 @@ clauses are the implementation half and the requirement half of one fact, and
 they are what makes `BugSigPinNotSpent` fall structurally rather than through its
 own `viol` assignment; narrowing them together would let a mutant repair the
 property it is meant to break.
+
+`BugDecipherGhostSpentLikeSig` widens THIS half alone and is refused at
+`NoKeyOpOnTheAdminStatus`. Which conjunct fell is the whole content of the run
+and is recorded here because the invariant's NAME would not carry it: `viol` is
+EMPTY in the counterexample, so it is not the ghost recorder that fell but the
+STRUCTURAL clause `held["pw1"] = psig`, with held.pw1 TRUE against psig FALSE
+after a PSO:DECIPHER under the one-shot status. That is the SERVED direction —
+the implementation keeping a freshness the requirement has retired — and it is
+also why MX-SEAM-006, which moves the implementation half instead, is still
+owed: a spend that only takes PW1.82 down reaches no clause here at all. With
+the switch off the configuration is GREEN. The code twin is a measured GAP.
 '''
-mutant = "owes"
-owed = "SeamSolo_BugDecipherGhostSpentLikeSig.cfg"
+mutant = "SeamSolo_BugDecipherGhostSpentLikeSig.cfg"
 carried_by = "NAR-ASSIGNMENT-HOLES"
 
 [[exception]]
 id = "MX-SEAM-008"
 module = "RSKeyAppletSeams.tla"
-line = 614
+line = 630
 shape = "clause"
 site = "NoStatusOutsideItsSelection"
 clause = 'r = "oathCode"'
@@ -252,7 +274,7 @@ carried_by = "NAR-OATH-REMOVAL"
 [[exception]]
 id = "MX-SEAM-009"
 module = "RSKeyAppletSeams.tla"
-line = 190
+line = 200
 shape = "clause"
 site = "Init"
 clause = 'r = "oathCode"'
@@ -274,7 +296,7 @@ carried_by = "NAR-OATH-REMOVAL"
 [[exception]]
 id = "MX-SEAM-010"
 module = "RSKeyAppletSeams.tla"
-line = 573
+line = 589
 shape = "clause"
 site = "FactoryWipe"
 clause = 'r = "oathCode"'

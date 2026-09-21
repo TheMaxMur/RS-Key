@@ -140,7 +140,7 @@ SoloClause_ResetKeepsThePinGate.cfg          RED: ResetKeepsThePinGate          
 Fairness.cfg                                 GREEN                                    states=151264817  distinct=14514424  depth=46  229s
 FairMut_BugFairnessFoldsLocalCeremony.cfg    RED: OpAdvancesIsOneActivity             states=73         distinct=40        depth=4   0s
 Seams.cfg                                    GREEN                                    states=6045       distinct=410       depth=11  1s
-SeamMut_BugAdminOpensKeyOps.cfg              RED: NoKeyOpOnTheAdminStatus             states=336        distinct=65        depth=5   1s
+SeamMut_BugAdminOpensKeyOps.cfg              RED: NoKeyOpOnTheAdminStatus             states=349        distinct=67        depth=5   1s
 SeamMut_BugCardResetKeepsStatus.cfg          RED: NoStatusOutsideItsSelection         states=93         distinct=29        depth=4   1s
 SeamMut_BugCodelessOathIsAStatus.cfg         RED: NoStatusOutsideItsSelection         states=?          distinct=?         depth=?   1s
 SeamMut_BugDeselectKeepsOathUnlock.cfg       RED: NoStatusOutsideItsSelection         states=345        distinct=64        depth=5   1s
@@ -285,7 +285,6 @@ TokenRefinement.cfg                          GREEN                              
 TokenRefinementBadMap.cfg                    RED: Error: Action property line 138, col 17 to line 138, col 30 of module RSKeyTokenAbstract is violated. states=1543       distinct=525       depth=6   0s
 TokenRefinementOutcome.cfg                   GREEN                                    states=48737609   distinct=4611484   depth=44  300s
 TokenRefinementDeadToken.cfg                 RED: Error: Action property R1oTokenOutcomes is violated. states=2          distinct=2         depth=2   1s
-
 '''
 tlc = '''
 Shipped.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 10:44:54) 1401505939 states generated, 108618956 distinct states found, 0 states left on queue. The depth of the complete state graph search is 58. Finished in 47min 33s
