@@ -379,8 +379,8 @@ impl rsk_display::Hooks for EmuDisplayHooks {
     fn note_local_pin_changed(&mut self) {
         self.links.local_pin.set(true);
     }
-    /// Both events mean the same thing to the worker — end the RAM
-    /// `pinUvAuthToken` before the next CBOR command — so they share one flag, as
+    /// Both events mean the same thing to the worker — end the RAM `pinUvAuthToken`
+    /// before either transport's next FIDO command — so they share one flag, as
     /// `firmware/src/display.rs` maps them to one signal.
     fn note_local_pin_failed(&mut self) {
         self.links.local_pin.set(true);

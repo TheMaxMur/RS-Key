@@ -378,6 +378,10 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         // clock and the enabled-applications mask — are stamped on here, one
         // dispatch before they are read.
         self.fido.stamp(now_ms, self.enabled_caps);
+        // FIDO runs here too, over the `FidoState` the CTAPHID handler shares, so the
+        // panel's one-shot clientPIN signal is taken here as well: the token it ends
+        // must not survive into the next command on either transport.
+        crate::reset_token_on_local_pin_change(self.hooks, self.fido.state, self.rng);
         // The keygen fast paths bypass `Dispatcher::process`, so the class byte it
         // judges has to be judged ahead of them: a chaining segment is not a command
         // yet, and a secure-messaging class is refused. Falling through is what

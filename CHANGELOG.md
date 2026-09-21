@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A FIDO PIN changed or mistyped on the trusted panel, or a factory reset there, now
+  ends a host's pinUvAuthToken over CCID as well. FIDO also runs as ISO 7816 APDUs
+  on the smart-card interface (`80 10`, what python-fido2's `CtapPcscDevice` sends
+  over PC/SC), which is on by default and shares CTAPHID's session state, but only
+  a CBOR command over CTAPHID took the panel's one-shot signal. So the token a host
+  already held kept passing every `pinUvAuthParam` check over CCID —
+  makeCredential, getAssertion, credentialManagement, authenticatorConfig,
+  largeBlobs and the vendor 0x41 command — until a CTAPHID CBOR command took the
+  signal or the token's own §6.5.5.7 limits (30 s idle, 10 minutes in all) retired
+  it. Both transports now take the signal through one function before they
+  dispatch, and any CCID APDU takes it. A host test on each transport has a
+  credentialManagement call that verified answer `PIN_AUTH_INVALID` once the
+  signal is raised; the CTAPHID test used to check only that the flag was read,
+  which a take moved after the dispatch still passed. **bcdDevice → 0x09DD.**
+
 - The trusted panel no longer comes back to life between a factory reset and the
   reset itself. The worker takes a queued reboot and then waits 200 ms before its
   scrub and reset, on the executor the panel shares, and taking the request cleared

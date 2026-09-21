@@ -15,9 +15,9 @@ use zeroize::Zeroize;
 use crate::flash_storage::FlashStorage;
 use crate::vendor::VendorPlatform;
 
-/// Raised when the trusted display commits a new clientPIN; consumed by the next
-/// CBOR dispatch to end the RAM session token. The flash-backed `pcmr` grant is not
-/// signalled — `store_local_pin` revokes that where the flash is.
+/// Raised when the trusted display commits a new clientPIN; taken by the next CBOR
+/// command or CCID APDU to end the RAM session token. The flash-backed `pcmr` grant is
+/// not signalled — `store_local_pin` revokes that where the flash is.
 ///
 /// Cross-task because the display holds only `Fs` while `FidoState` lives here in
 /// the worker's handler. Same shape as `worker::MSG_DESELECT`: set on one task,

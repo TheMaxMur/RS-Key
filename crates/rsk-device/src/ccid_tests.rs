@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{Env, TestRng, VendorBoard, apdu, dev_conf, select, sw};
+use crate::tests::{Env, TestRng, VendorBoard, apdu, dev_conf, get_creds_metadata, select, sw};
 #[cfg(not(feature = "strict-config"))]
 use crate::tests::{TruncatedScan, WriteStuck};
 #[cfg(not(feature = "strict-config"))]
@@ -749,6 +749,39 @@ fn both_transports_answer_from_one_session_state() {
         over_hid.as_slice(),
         over_ccid.as_slice(),
         "the same power cycle must have exactly one clientPIN key agreement"
+    );
+}
+
+/// The panel's clientPIN signal (a re-key, a rejected PIN, a wipe) ends the host's token on
+/// both FIDO transports. They share one `FidoState`, but only the CTAPHID handler read the
+/// signal, so over a smart-card reader the old token kept working.
+#[test]
+fn a_panel_pin_change_ends_the_token_over_ccid_too() {
+    let env = Env::new();
+    // A live cm-permission token, as getPinUvAuthTokenUsingPinWithPermissions leaves one.
+    {
+        let mut state = env.fido_state.borrow_mut();
+        state.reset_pin_uv_auth_token(&mut *env.rng.borrow_mut());
+        state.begin_using_token(false, 0);
+        state.paut.permissions = rsk_fido::state::PERM_CM;
+    }
+    let metadata = ctap_msg(&get_creds_metadata(&env.fido_state.borrow().paut.token));
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+
+    let (before, _) = exchange_chained(&mut ccid, &metadata);
+    env.board.borrow_mut().local_pin_change = true;
+    let (after, _) = exchange_chained(&mut ccid, &metadata);
+    assert_eq!(
+        (before[0], after[0]),
+        (
+            rsk_fido::CTAP2_OK,
+            rsk_fido::CtapError::PinAuthInvalid.as_u8()
+        ),
+        "the token the old PIN authorized must stop verifying over CCID once the panel changed it"
     );
 }
 

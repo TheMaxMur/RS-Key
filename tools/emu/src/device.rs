@@ -81,7 +81,7 @@ pub struct EmuHooks {
 
 impl Hooks<EmuStore> for EmuHooks {
     /// Consumed once, exactly as the firmware swaps its `LOCAL_PIN_CHANGED`: the
-    /// token dies before the next CBOR command, not before every later one.
+    /// token dies before either transport's next FIDO command, not every later one.
     fn local_pin_changed(&mut self) -> bool {
         self.local_pin.replace(false)
     }
@@ -259,7 +259,7 @@ impl Queued {
 }
 
 /// The two handles the panel and the worker hold jointly, where a board has two
-/// globals: the local-PIN event `EmuHooks` consumes before the next CBOR command
+/// globals: the local-PIN event `EmuHooks` reports to the next CBOR or CCID dispatch
 /// (`firmware/src/handler.rs`'s `LOCAL_PIN_CHANGED`), and the USB attach clock a
 /// power cycle restarts (`crate::usb_attach`). One clock, not two, is what stops a
 /// panel-originated audit entry and a host-originated one from being stamped on

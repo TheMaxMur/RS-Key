@@ -367,3 +367,21 @@ pub fn dev_conf(caps: u16) -> Vec<u8> {
     blob.extend_from_slice(&tlv);
     blob
 }
+
+/// `credentialManagement { getCredsMetadata, pinUvAuthProtocol: 2, pinUvAuthParam }`,
+/// the parameter MACed under `token` over the subcommand byte (CTAP 2.1 §6.8.2).
+pub fn get_creds_metadata(token: &[u8; 32]) -> Vec<u8> {
+    let subcommand = rsk_fido::consts::CM_GET_CREDS_METADATA as u8;
+    let mut param = [0u8; 32];
+    let n = rsk_crypto::pinproto::authenticate(
+        rsk_crypto::pinproto::PinProto::Two,
+        token,
+        &[subcommand],
+        &mut param,
+    )
+    .expect("a 32-byte MAC fits");
+    let mut body = std::vec![rsk_fido::consts::CTAP_CREDENTIAL_MGMT, 0xA3];
+    body.extend_from_slice(&[0x01, subcommand, 0x03, 0x02, 0x04, 0x58, n as u8]);
+    body.extend_from_slice(&param[..n]);
+    body
+}

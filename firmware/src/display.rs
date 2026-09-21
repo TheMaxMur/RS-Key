@@ -173,9 +173,9 @@ impl rsk_display::Hooks for DisplayHooks {
     }
 
     /// The same worker signal, because its whole effect is what both events need:
-    /// end the RAM `pinUvAuthToken` before the next CBOR command. They stay mapped
-    /// together only while that holds — a re-key-*specific* side effect added
-    /// there would then fire on a failed check too.
+    /// end the RAM `pinUvAuthToken` before either transport's next FIDO command. They
+    /// stay mapped together only while that holds — a re-key-*specific* side effect
+    /// added there would then fire on a failed check too.
     fn note_local_pin_failed(&mut self) {
         crate::handler::note_local_pin_changed();
     }

@@ -309,23 +309,15 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
     /// reset window a host has to hit runs from the moment the device could answer
     /// at all. The transport owns that clock, so it supplies it.
     pub fn handle_cbor(&mut self, cid: u32, data: &[u8], now_ms: u64) -> &[u8] {
-        // The trusted display re-keyed the clientPIN since the last command: end
-        // every session credential the old PIN authorized, before this one can use
-        // it. Set on the display task, consumed here — `FidoState` is ours, not its.
+        // The trusted display re-keyed or rejected the clientPIN, or wiped the device,
+        // since the last command: end every session credential the PIN authorized before
+        // this one can use it. Set on the display task, taken by whichever transport runs first.
         //
         // RAM only. §6.5.5.6 step 15's persistent half used to be signalled through
-        // this same flag, which an APDU-only warm reboot drops before any CBOR command
-        // consumes it — leaving the `pcmr` grant live for ever (audit run-37). It is
+        // this same flag, which an APDU-only warm reboot dropped before any CBOR command
+        // consumed it — leaving the `pcmr` grant live for ever (audit run-37). It is
         // now revoked inside the write that installs the new verifier.
-        if self.hooks.borrow_mut().local_pin_changed() {
-            let mut rngb = self.rng.borrow_mut();
-            self.fido_state
-                .borrow_mut()
-                .reset_pin_uv_auth_token(&mut *rngb);
-            // The host path also clears `needs_power_cycle` here; that field is
-            // crate-private and leaving the RAM soft lock armed only fails closed
-            // (host clientPIN stays blocked until a replug), so it stays as it is.
-        }
+        crate::reset_token_on_local_pin_change(self.hooks, self.fido_state, self.rng);
         let mkek = read_fused(self.mkek_source);
         let dev = Device {
             serial_hash: &self.serial_hash,

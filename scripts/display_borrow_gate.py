@@ -64,7 +64,7 @@ HANDLE = f"{CRATE}/src/presence.rs"
 
 #: The call that receives the borrows. The block that holds them is the one
 #: CONTAINING it, found by walking up on brace depth — not by a line window. A
-#: window was the first spelling and it was wrong: the real `ctap.rs` borrows
+#: window was the first spelling and it was wrong: the real `ctap.rs` borrowed
 #: `hooks` nineteen lines above the handoff and a fourteen-line window excluded
 #: it by that spacing alone, so an unrelated edit in between would have widened
 #: the rule silently. Measured on the fixture, where the same borrow sits two

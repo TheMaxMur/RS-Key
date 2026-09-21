@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{Env, apdu, select, sw};
+use crate::tests::{Env, apdu, get_creds_metadata, select, sw};
 
 /// U2F VERSION — the one U2F command that touches no credential and needs no
 /// touch, so it can stand for "did this reach the FIDO applet?".
@@ -170,12 +170,26 @@ fn a_panel_pin_change_is_consumed_before_the_next_command_runs() {
     // Set on the display task and consumed here, once: a session credential the
     // old PIN authorized must not survive into the command after the re-key.
     let env = Env::new();
-    env.board.borrow_mut().local_pin_change = true;
     let mut ctap = env.ctap();
-    ctap.handle_cbor(1, &GET_INFO, 0);
-    assert!(
-        !env.board.borrow().local_pin_change,
-        "the one-shot flag was not read"
+    // A live cm-permission token, as getPinUvAuthTokenUsingPinWithPermissions leaves one.
+    {
+        let mut state = env.fido_state.borrow_mut();
+        state.reset_pin_uv_auth_token(&mut *env.rng.borrow_mut());
+        state.begin_using_token(false, 0);
+        state.paut.permissions = rsk_fido::state::PERM_CM;
+    }
+    let metadata = get_creds_metadata(&env.fido_state.borrow().paut.token);
+
+    let before = ctap.handle_cbor(1, &metadata, 0)[0];
+    env.board.borrow_mut().local_pin_change = true;
+    let after = ctap.handle_cbor(1, &metadata, 0)[0];
+    assert_eq!(
+        (before, after),
+        (
+            rsk_fido::CTAP2_OK,
+            rsk_fido::CtapError::PinAuthInvalid.as_u8()
+        ),
+        "the token the old PIN authorized must stop verifying once the panel changed it"
     );
 }
 

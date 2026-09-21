@@ -111,6 +111,23 @@ pub trait Hooks<S: rsk_fs::Storage> {
     }
 }
 
+/// End the host's session token once the trusted display re-keyed or rejected the
+/// clientPIN, or wiped the device. Both transports call this before they dispatch:
+/// whichever reads the one-shot signal first ends the token in the state they share.
+pub(crate) fn reset_token_on_local_pin_change<S: rsk_fs::Storage, R: rsk_sdk::Rng>(
+    hooks: &core::cell::RefCell<dyn Hooks<S>>,
+    fido_state: &core::cell::RefCell<rsk_fido::FidoState>,
+    rng: &core::cell::RefCell<R>,
+) {
+    if hooks.borrow_mut().local_pin_changed() {
+        let mut rngb = rng.borrow_mut();
+        fido_state.borrow_mut().reset_pin_uv_auth_token(&mut *rngb);
+        // The host path also clears `needs_power_cycle` here; that field is
+        // crate-private and leaving the RAM soft lock armed only fails closed
+        // (host clientPIN stays blocked until a replug), so it stays as it is.
+    }
+}
+
 // The wiring names `rsk_sdk::Rng` / `rsk_sdk::UserPresence` directly. Two
 // supertraits stood here only to reconcile one byte-identical declaration per
 // applet; the declarations moved into `rsk-sdk`, so the glue went with them.

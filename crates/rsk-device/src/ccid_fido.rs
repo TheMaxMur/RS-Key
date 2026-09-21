@@ -37,7 +37,7 @@ pub struct FidoCcidApplet<'a, R: rsk_sdk::Rng + 'static> {
     /// the restart-by-reboot attack `FidoState::restore_pin_lock` exists to close.
     /// It also carries the PIN/UV token, the credential-management walk and the
     /// soft lock's RAM seed, none of which may fork per transport.
-    state: &'a RefCell<rsk_fido::FidoState>,
+    pub(crate) state: &'a RefCell<rsk_fido::FidoState>,
     rng: &'a RefCell<R>,
     presence: &'a RefCell<dyn rsk_sdk::UserPresence>,
     serial_id: [u8; 8],
