@@ -128,6 +128,18 @@ pub(crate) fn reset_token_on_local_pin_change<S: rsk_fs::Storage, R: rsk_sdk::Rn
     }
 }
 
+/// Hand the clientPIN soft lock to the board after a dispatch on either transport. It is
+/// RAM-only, and a host can ask for `SCB::sys_reset` ungated (vendor or rescue 0x1F P1=00,
+/// the phy config-write reboot): a lock left behind refunds the §6.5.5.6 retry budget.
+pub(crate) fn persist_pin_lock<S: rsk_fs::Storage>(
+    hooks: &core::cell::RefCell<dyn Hooks<S>>,
+    fido_state: &core::cell::RefCell<rsk_fido::FidoState>,
+) {
+    hooks
+        .borrow_mut()
+        .store_pin_lock(fido_state.borrow().pin_lock());
+}
+
 // The wiring names `rsk_sdk::Rng` / `rsk_sdk::UserPresence` directly. Two
 // supertraits stood here only to reconcile one byte-identical declaration per
 // applet; the declarations moved into `rsk-sdk`, so the glue went with them.

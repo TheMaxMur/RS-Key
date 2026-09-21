@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{Env, apdu, get_creds_metadata, select, sw};
+use crate::tests::{Env, apdu, dev, get_creds_metadata, select, sw, wrong_pin_token_request};
 
 /// U2F VERSION — the one U2F command that touches no credential and needs no
 /// touch, so it can stand for "did this reach the FIDO applet?".
@@ -149,6 +149,28 @@ fn a_cold_boot_is_the_default() {
     let env = Env::new();
     let ctap = env.ctap();
     assert!(!ctap.fido_state.borrow().warm_boot);
+}
+
+#[test]
+fn the_soft_lock_handed_over_is_the_one_the_command_left() {
+    // A hand-over taken before the dispatch counts the same and is one command stale:
+    // a reboot right after the third wrong PIN would find the second one's batch.
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    rsk_fido::passkeys::store_local_pin(&dev(), &mut env.fs.borrow_mut(), b"123456")
+        .expect("the test PIN meets the default policy");
+    let wrong = wrong_pin_token_request();
+    for _ in 0..rsk_fido::consts::PIN_MISMATCH_LIMIT {
+        ctap.handle_cbor(1, &wrong, 0);
+    }
+    assert_eq!(
+        env.board.borrow().pin_locks.last().copied(),
+        Some(rsk_fido::state::PinLock {
+            engaged: true,
+            mismatches: rsk_fido::consts::PIN_MISMATCH_LIMIT,
+        }),
+        "the lock handed over after the third wrong PIN is not the one it left"
+    );
 }
 
 #[test]

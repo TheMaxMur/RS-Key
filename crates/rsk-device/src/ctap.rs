@@ -343,14 +343,9 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
             };
             rsk_fido::process_cbor(&mut ctx, data, &mut self.resp)
         };
-        // Persist the clientPIN soft lock across a warm reboot. It is RAM-only, and a
-        // host can request `SCB::sys_reset` ungated (vendor 0x1F P1=0, the rescue
-        // twin, or the phy config-write auto-reboot) — which cleared it and let host
-        // malware burn the whole retry budget unattended, the exact thing CTAP 2.1
-        // §6.5.5.6's power-cycle requirement exists to prevent.
-        self.hooks
-            .borrow_mut()
-            .store_pin_lock(self.fido_state.borrow().pin_lock());
+        // After the dispatch, so the lock handed over is the one this command left — the
+        // CCID transport hands its own over the same way.
+        crate::persist_pin_lock(self.hooks, self.fido_state);
         // A vendor (0x41) CONFIG_WRITE with the LED target persists EF_LED_CONF,
         // but the LED atomics live here in the firmware — reload the block after
         // any 0x41 command to apply it live, matching the CCID SET_LED. 0x41 is

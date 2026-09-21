@@ -423,6 +423,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
             let sw = self.disp.process(apdu, &mut applets, &mut *fsb, &mut res);
             (sw, res.len())
         };
+        // The FIDO applet spends clientPIN attempts here too, and the vendor and rescue
+        // applets serve an ungated warm reboot on this same interface.
+        crate::persist_pin_lock(self.hooks, self.fido.state);
         self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
         &self.resp[..n + 2]
     }

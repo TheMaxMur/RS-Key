@@ -335,6 +335,16 @@ impl<S: Storage> Env<S> {
     }
 }
 
+/// The device key-derivation inputs the handlers are built with, so a test can seal
+/// or verify a record the same way a dispatch would. No secret of its own.
+pub fn dev() -> rsk_crypto::Device<'static> {
+    rsk_crypto::Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL_ID,
+        otp_key: None,
+    }
+}
+
 /// A short-form APDU. `Lc` is omitted for an empty body, so a SELECT and a
 /// case-1 command are both spelled here rather than at every call site.
 pub fn apdu(cla: u8, ins: u8, p1: u8, p2: u8, data: &[u8]) -> Vec<u8> {
@@ -383,5 +393,36 @@ pub fn get_creds_metadata(token: &[u8; 32]) -> Vec<u8> {
     let mut body = std::vec![rsk_fido::consts::CTAP_CREDENTIAL_MGMT, 0xA3];
     body.extend_from_slice(&[0x01, subcommand, 0x03, 0x02, 0x04, 0x58, n as u8]);
     body.extend_from_slice(&param[..n]);
+    body
+}
+
+/// The P-256 base point (SEC 2 §2.4.2), whose private half is 1.
+const P256_G: ([u8; 32], [u8; 32]) = (
+    [
+        0x6B, 0x17, 0xD1, 0xF2, 0xE1, 0x2C, 0x42, 0x47, 0xF8, 0xBC, 0xE6, 0xE5, 0x63, 0xA4, 0x40,
+        0xF2, 0x77, 0x03, 0x7D, 0x81, 0x2D, 0xEB, 0x33, 0xA0, 0xF4, 0xA1, 0x39, 0x45, 0xD8, 0x98,
+        0xC2, 0x96,
+    ],
+    [
+        0x4F, 0xE3, 0x42, 0xE2, 0xFE, 0x1A, 0x7F, 0x9B, 0x8E, 0xE7, 0xEB, 0x4A, 0x7C, 0x0F, 0x9E,
+        0x16, 0x2B, 0xCE, 0x33, 0x57, 0x6B, 0x31, 0x5E, 0xCE, 0xCB, 0xB6, 0x40, 0x68, 0x37, 0xBF,
+        0x51, 0xF5,
+    ],
+);
+
+/// `clientPIN { pinUvAuthProtocol: 2, getPinToken, keyAgreement: G, pinHashEnc }` whose PIN
+/// hash is wrong for any PIN: a valid platform key is all the key agreement checks, and 32
+/// zero bytes decrypt to a hash no PIN has.
+pub fn wrong_pin_token_request() -> Vec<u8> {
+    let mut body = std::vec![rsk_fido::consts::CTAP_CLIENT_PIN, 0xA4, 0x01, 0x02, 0x02];
+    body.push(rsk_fido::consts::CP_GET_PIN_TOKEN as u8);
+    // keyAgreement: COSE_Key { kty: EC2, alg: ECDH-ES+HKDF-256, crv: P-256, x, y }.
+    body.extend_from_slice(&[0x03, 0xA5, 0x01, 0x02, 0x03, 0x38, 0x18, 0x20, 0x01]);
+    body.extend_from_slice(&[0x21, 0x58, 0x20]);
+    body.extend_from_slice(&P256_G.0);
+    body.extend_from_slice(&[0x22, 0x58, 0x20]);
+    body.extend_from_slice(&P256_G.1);
+    body.extend_from_slice(&[0x06, 0x58, 0x20]);
+    body.extend_from_slice(&[0; 32]);
     body
 }

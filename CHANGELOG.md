@@ -40,6 +40,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- The clientPIN soft lock now survives a warm reboot even when the wrong PINs were
+  spent over CCID. After `PIN_MISMATCH_LIMIT` consecutive wrong PINs CTAP 2.1
+  §6.5.5.6 stops accepting attempts until a real power cycle; that lock lives in RAM,
+  and only the board carries it across the ungated warm reboots a host can request
+  (the vendor and rescue applets' `INS_REBOOT` P1=00, the phy config-write reboot).
+  The lock was handed to the board only after a CTAPHID CBOR command, never after a
+  FIDO command over CCID — so three wrong PINs on the smart-card interface engaged the
+  lock in RAM alone, and a PC/SC process could then send the ungated reboot (served on
+  that same interface) to come back with the batch cleared and guess three more, over
+  and over, unattended — the restart-by-reboot attack §6.5.5.6 exists to stop. Both
+  transports now hand the lock over through one function after every dispatch. Host
+  tests spend the limit over each transport and assert the engaged lock reaches the
+  board; the CTAPHID one also pins that the lock handed over is the one the command
+  left, which a hand-over moved before the dispatch would get one command wrong. The
+  register only a real power-on clears is unchanged, so a board measurement still owes
+  `PLAT-RESET-001`. **bcdDevice → 0x09DE.**
+
 - A FIDO PIN changed or mistyped on the trusted panel, or a factory reset there, now
   ends a host's pinUvAuthToken over CCID as well. FIDO also runs as ISO 7816 APDUs
   on the smart-card interface (`80 10`, what python-fido2's `CtapPcscDevice` sends

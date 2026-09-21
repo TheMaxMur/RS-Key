@@ -44,7 +44,7 @@ pub struct Boot {
     /// It was a warm reset (`sys_reset`), not a power-on: anything keying on "just
     /// powered up" must refuse to trust the restarted uptime.
     pub warm: bool,
-    /// The clientPIN soft lock as of the last CBOR dispatch before that reset.
+    /// The clientPIN soft lock as of the last FIDO dispatch before that reset.
     pub lock: PinLock,
 }
 

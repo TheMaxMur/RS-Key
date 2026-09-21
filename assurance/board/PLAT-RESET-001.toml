@@ -3,11 +3,11 @@
 #
 # M7-Q1. The measurement the model's PowerOnClearsScratch2 arm stands on, and
 # the one place a warm reset is NOT a substitute: firmware/src/pin_lock.rs
-# writes the word on every CBOR dispatch, so the read has to come from the
+# writes the word on every FIDO dispatch (CTAPHID or CCID), so the read has to come from the
 # FIRST boot after the supply is cut.
 
 assumption = "PLAT-RESET-001"
-method = "Set a PIN, spend PIN_MISMATCH_LIMIT wrong attempts so pin_lock writes its tag and batch into WATCHDOG.scratch2, then cut the supply at the USB source — not `picotool reboot`, not a SYSRESETREQ, both of which audit run-27 already measured as CARRYING the word. Read scratch2 on the first boot after, before any CBOR dispatch can rewrite it."
+method = "Set a PIN, spend PIN_MISMATCH_LIMIT wrong attempts so pin_lock writes its tag and batch into WATCHDOG.scratch2, then cut the supply at the USB source — not `picotool reboot`, not a SYSRESETREQ, both of which audit run-27 already measured as CARRYING the word. Read scratch2 on the first boot after, before any FIDO command on either transport can rewrite it."
 boot_config = "The shipped DEFAULT image: secure boot off, 4 MB flash, no --features always-uv, partition table applied (scripts/pt.sh or nix build .#firmware)."
 expected = "scratch2 reads as CLEARED on the first boot after the cut, so the soft lock does not ride the power cycle. PASS = cleared or unreadable-as-garbage, because firmware/src/pin_lock.rs:36-37's tag makes garbage read as clear. FAIL = the tag and the mismatch batch read back intact. INCONCLUSIVE = the read could not be taken on the first boot, which is the only failure mode that does not settle the row either way."
 outcome = "planned"

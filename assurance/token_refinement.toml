@@ -289,10 +289,10 @@ disposition = "out-of-scope"
 why = "restores the lock from the board's boot state on every power-up; B's clause is (lock.policyMism >= MismatchLimit) => lock.soft and A has no image of it"
 
 [[softlock_owner]]
-file = "crates/rsk-device/src/ctap.rs"
-function = "handle_cbor"
+file = "crates/rsk-device/src/lib.rs"
+function = "persist_pin_lock"
 disposition = "out-of-scope"
-why = "stores the lock through Hooks after every dispatch, which is what makes it survive an ungated SCB::sys_reset"
+why = "stores the lock through Hooks after every dispatch on both transports — AppletHandler::handle_cbor and CcidApplets::handle_apdu call it — which is what makes it survive an ungated SCB::sys_reset"
 
 [[softlock_owner]]
 file = "crates/rsk-device/src/ctap.rs"

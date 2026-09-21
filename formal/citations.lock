@@ -909,7 +909,7 @@ formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1292-1294	Err(sw) => retu
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1312-1312	if set_retries_left(fs, retry, left - 1).is_err() {	if set_retries_left(fs, retry, left - 1).is_err() {
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1447-1447	puk: &[u8],	puk: &[u8],
 formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	202-205	backup_sealed_record: fs.has_data(EF_BACKUP_SEALED),	credential_slots_raw: credentials.iter().filter(|present| **present).count() as u16,
-formal/RSKeySecurityState.tla	crates/rsk-device/src/ctap.rs	346-353	// Persist the clientPIN soft lock across a warm reboot. It is RAM-only, and a	.store_pin_lock(self.fido_state.borrow().pin_lock());
+formal/RSKeySecurityState.tla	crates/rsk-device/src/lib.rs	131-140	/// Hand the clientPIN soft lock to the board after a dispatch on either transport. It is	.store_pin_lock(fido_state.borrow().pin_lock());
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	25-26	/// No host request in flight: an on-panel (local) flow owns the button.	pub const SCOPE_NONE: u8 = 0;
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	25-169	/// No host request in flight: an on-panel (local) flow owns the button.	}
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	26-26	pub const SCOPE_NONE: u8 = 0;	pub const SCOPE_NONE: u8 = 0;

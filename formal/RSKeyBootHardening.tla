@@ -121,7 +121,8 @@ VARIABLES
     marker,   \* EF_HARDENED present: the at-rest lap has run and nothing awaits it
     weak,     \* 0..MaxWeak: superseded weak-sealed copies awaiting the scrub
     \* What WATCHDOG.scratch2 holds -- the last `set()` before the reset
-    \* (firmware/src/pin_lock.rs:52-54, written whole on every CBOR dispatch).
+    \* (firmware/src/pin_lock.rs:52-54, written whole on every FIDO dispatch,
+    \* CTAPHID or CCID).
     \* Survives a warm reset; a power-on reset clears it, and the TAG makes an
     \* undefined register read as clear too.
     recorded,

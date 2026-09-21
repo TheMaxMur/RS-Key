@@ -785,6 +785,37 @@ fn a_panel_pin_change_ends_the_token_over_ccid_too() {
     );
 }
 
+/// Three wrong PINs over CCID engage the §6.5.5.6 soft lock, and it has to reach the board
+/// as CTAPHID's does: the vendor and rescue applets serve an ungated warm reboot on this
+/// same interface, and a lock only RAM held gave a PC/SC host three guesses per reboot.
+#[test]
+fn a_soft_lock_engaged_over_ccid_is_handed_over_for_persisting() {
+    let env = Env::new();
+    let _power_up = env.ctap();
+    rsk_fido::passkeys::store_local_pin(&crate::tests::dev(), &mut env.fs.borrow_mut(), b"123456")
+        .expect("the test PIN meets the default policy");
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+
+    let wrong = ctap_msg(&crate::tests::wrong_pin_token_request());
+    let answers: Vec<u8> = (0..rsk_fido::consts::PIN_MISMATCH_LIMIT)
+        .map(|_| exchange_chained(&mut ccid, &wrong).0[0])
+        .collect();
+    assert_eq!(
+        answers.last().copied(),
+        Some(rsk_fido::CtapError::PinAuthBlocked.as_u8()),
+        "the wrong PINs did not engage the lock in RAM: {answers:?}"
+    );
+    assert_eq!(
+        env.board.borrow().pin_locks.last().map(|lock| lock.engaged),
+        Some(true),
+        "the soft lock three wrong PINs engaged over CCID never reached the board"
+    );
+}
+
 #[test]
 fn u2f_over_ccid_answers_its_version_command() {
     let env = Env::new();

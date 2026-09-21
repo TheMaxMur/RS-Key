@@ -59,7 +59,7 @@
 id = "PLAT-RESET-001"
 class = "reset"
 statement = "A real RP2350 power-on reset clears `WATCHDOG.scratch2`, so the PIN soft-lock the previous cycle recorded does not ride through it."
-discharge = "A board measurement: write a known value to WATCHDOG.scratch2, cut power at the supply — not a warm reset, because firmware/src/pin_lock.rs writes the word on every CBOR dispatch, so the read must come from the first boot after — and read it back. tests/54_sram_residue.py is the shape; the register is not SRAM, so it needs its own probe."
+discharge = "A board measurement: write a known value to WATCHDOG.scratch2, cut power at the supply — not a warm reset, because firmware/src/pin_lock.rs writes the word on every FIDO dispatch (CTAPHID or CCID), so the read must come from the first boot after — and read it back. tests/54_sram_residue.py is the shape; the register is not SRAM, so it needs its own probe."
 discharge_owner = "maintainer"
 status = "pending"
 # Towards MORE locking, not less: a word that rides a power cycle carries the
