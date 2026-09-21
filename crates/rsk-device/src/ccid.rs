@@ -432,6 +432,12 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         // applets serve an ungated warm reboot on this same interface.
         crate::persist_pin_lock(self.hooks, self.fido.state);
         self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
+        // A vendor (0x41) CBOR command over CCID persists EF_LED_CONF / EF_PHY like it
+        // does over CTAPHID; re-apply the live LED block and any phy reboot the same way.
+        // A config write is one short APDU, so testing the raw APDU needs no reassembly.
+        if sw == Sw::OK && Apdu::parse(apdu).is_ok_and(|p| crate::ccid_fido::is_vendor_cbor(&p)) {
+            crate::apply_vendor_config(self.hooks, self.fs);
+        }
         &self.resp[..n + 2]
     }
 

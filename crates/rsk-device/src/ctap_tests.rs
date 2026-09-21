@@ -222,6 +222,9 @@ fn a_vendor_command_reapplies_the_configuration_outside_flash() {
     // A vendor CONFIG_WRITE persists the LED block, but its live copy is a set of
     // atomics the flash record does not reach — so the board is told after any
     // 0x41, matching the CCID SET_LED.
+    let _phy = crate::tests::PHY_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let env = Env::new();
     let mut ctap = env.ctap();
     ctap.handle_cbor(1, &[rsk_fido::consts::CTAP_VENDOR], 0);
@@ -241,6 +244,9 @@ fn an_ordinary_command_does_not_touch_the_configuration() {
 fn nothing_reboots_without_a_phy_write() {
     // The auto-reboot exists so a changed USB identity takes effect without a
     // replug; it must not fire for any other vendor command.
+    let _phy = crate::tests::PHY_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let env = Env::new();
     let mut ctap = env.ctap();
     ctap.handle_cbor(1, &[rsk_fido::consts::CTAP_VENDOR], 0);

@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A vendor (`0x41`) config write over CCID now applies its out-of-flash effects, as it
+  already did over CTAPHID. After such a command the CTAPHID handler re-loads the LED
+  block (whose live copy is firmware-side atomics the flash record does not reach) and,
+  if the write changed the boot-only USB identity, warm-reboots so it takes effect
+  without a replug. FIDO's CTAP2 vendor commands also run as ISO 7816 APDUs over CCID
+  (`80 10`, what python-fido2's `CtapPcscDevice` / ykman send), and that path did
+  neither: a vendor `CONFIG_WRITE` with the LED target sent that way took no effect
+  until the next reboot, and — worse — a phy write over CCID left the one-shot "phy
+  changed" flag standing, so the next unrelated CTAPHID `0x41` command (even an audit
+  read) consumed it and rebooted the device. (This is distinct from the `rsk led`
+  path, which selects the Vendor AID and writes the live LED atomics directly.) Both
+  effects now run through one shared helper that either transport calls for a `0x41`
+  command. Host tests over CCID assert the LED reload happens and that the phy write
+  reboots on the write, not on a later command. **bcdDevice → 0x09E0.**
+
 - A credentialManagement or getAssertion walk opened on a CTAPHID channel can no
   longer be continued over CCID. A getNextRP / getNextCredential / getNextAssertion
   carries no pinUvAuthParam of its own (§6.8): its authorization is that it arrives on

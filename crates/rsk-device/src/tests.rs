@@ -426,3 +426,31 @@ pub fn wrong_pin_token_request() -> Vec<u8> {
     body.extend_from_slice(&[0; 32]);
     body
 }
+
+/// Serialises the tests that touch the process-global `rsk_fido::vendor` phy-written
+/// flag: one 0x41 phy write sets it and every 0x41 command reads it, so cargo's
+/// parallel threads would otherwise race a setter against a reader.
+pub static PHY_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// A vendor `CONFIG_WRITE` (0x41) CBOR command `{1: subcmd, 2: {1: target, 2: blob}}`,
+/// unauthenticated — the same request `rsk-fido`'s `config_write_req` builds.
+pub fn vendor_config_write(target: u64, blob: &[u8]) -> Vec<u8> {
+    use minicbor::Encoder;
+    use minicbor::encode::write::Cursor;
+    let mut buf = std::vec![0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(2).unwrap();
+        e.u8(1)
+            .unwrap()
+            .u64(rsk_fido::consts::VENDOR_CONFIG_WRITE)
+            .unwrap();
+        e.u8(2).unwrap().map(2).unwrap();
+        e.u8(1).unwrap().u64(target).unwrap();
+        e.u8(2).unwrap().bytes(blob).unwrap();
+        e.writer().position()
+    };
+    let mut body = std::vec![rsk_fido::consts::CTAP_VENDOR];
+    body.extend_from_slice(&buf[..n]);
+    body
+}

@@ -346,25 +346,11 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
         // After the dispatch, so the lock handed over is the one this command left — the
         // CCID transport hands its own over the same way.
         crate::persist_pin_lock(self.hooks, self.fido_state);
-        // A vendor (0x41) CONFIG_WRITE with the LED target persists EF_LED_CONF,
-        // but the LED atomics live here in the firmware — reload the block after
-        // any 0x41 command to apply it live, matching the CCID SET_LED. 0x41 is
-        // rare (backup/audit/config), so the extra flash read is negligible, and
-        // it is a no-op when the record is absent or unchanged.
+        // A vendor (0x41) command may persist EF_LED_CONF / EF_PHY, whose live effect
+        // is outside the file system; re-apply it after the write, as CCID now does.
+        // 0x41 is rare, so the extra flash read is negligible and a no-op if unchanged.
         if data.first() == Some(&rsk_fido::consts::CTAP_VENDOR) {
-            let mut fsb = self.fs.borrow_mut();
-            self.hooks.borrow_mut().config_written(&mut fsb);
-            // A PHY config-write changes the USB identity, which is only read at
-            // boot. If power-cycle-on-reset is enabled (phy opts, the default),
-            // warm-reboot so the new VID/PID/product/interfaces apply without a
-            // manual replug (fixes the "config doesn't take effect" report). The
-            // reset runs in the worker after this response flushes.
-            if rsk_fido::vendor::take_phy_written() {
-                let phy = rsk_phy::load(&mut fsb).unwrap_or_default();
-                if phy.opts & rsk_phy::OPT_DISABLE_POWER_RESET == 0 {
-                    self.hooks.borrow_mut().request_reboot();
-                }
-            }
+            crate::apply_vendor_config(self.hooks, self.fs);
         }
         &self.resp[..n]
     }

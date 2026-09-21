@@ -869,6 +869,68 @@ fn a_credmgmt_walk_bound_to_a_ctaphid_channel_is_not_continuable_over_ccid() {
     );
 }
 
+/// A vendor (0x41) command over CCID must re-apply the LED block that lives outside
+/// flash, as the CTAPHID handler does — else a `rsk led` write over PC/SC takes no
+/// effect until the next reboot.
+#[test]
+fn a_vendor_command_over_ccid_reapplies_the_configuration() {
+    let _phy = crate::tests::PHY_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    exchange_chained(&mut ccid, &ctap_msg(&[rsk_fido::consts::CTAP_VENDOR]));
+    assert_eq!(
+        env.board.borrow().config_written,
+        1,
+        "a 0x41 command over CCID did not re-apply the live configuration"
+    );
+}
+
+/// A phy write over CCID changes the boot-only USB identity, so it must warm-reboot on
+/// the write. Left unhandled, the flag it set was taken by the next unrelated CTAPHID
+/// 0x41 command, rebooting on that one — even an audit read.
+#[test]
+fn a_phy_write_over_ccid_reboots_on_the_write_not_a_later_command() {
+    let _phy = crate::tests::PHY_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let env = Env::new();
+    let phy = rsk_phy::PhyData {
+        presence_timeout: Some(45),
+        ..Default::default()
+    };
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+    let blen = phy.serialize(&mut blob).unwrap();
+    let write = ctap_msg(&crate::tests::vendor_config_write(
+        rsk_fido::consts::CONFIG_TARGET_PHY,
+        &blob[..blen],
+    ));
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    exchange_chained(&mut ccid, &write);
+    assert_eq!(
+        env.board.borrow().reboots,
+        1,
+        "a phy write over CCID must warm-reboot on the write"
+    );
+    // The one-shot flag must be gone: a later unrelated CTAPHID 0x41 does not inherit it.
+    let mut ctap = env.ctap();
+    ctap.handle_cbor(1, &[rsk_fido::consts::CTAP_VENDOR], 0);
+    assert_eq!(
+        env.board.borrow().reboots,
+        1,
+        "a later CTAPHID command inherited the phy write's reboot"
+    );
+}
+
 #[test]
 fn u2f_over_ccid_answers_its_version_command() {
     let env = Env::new();

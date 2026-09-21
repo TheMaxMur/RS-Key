@@ -140,6 +140,24 @@ pub(crate) fn persist_pin_lock<S: rsk_fs::Storage>(
         .store_pin_lock(fido_state.borrow().pin_lock());
 }
 
+/// Re-apply what a vendor (0x41) config write persisted but that lives outside the
+/// file system, after the dispatch that wrote it: the LED atomics (a no-op when
+/// unchanged), and a warm reboot if it changed the boot-only USB identity. Both
+/// transports call this for a 0x41 FIDO command.
+pub(crate) fn apply_vendor_config<S: rsk_fs::Storage>(
+    hooks: &core::cell::RefCell<dyn Hooks<S>>,
+    fs: &core::cell::RefCell<rsk_fs::Fs<S>>,
+) {
+    let mut fsb = fs.borrow_mut();
+    hooks.borrow_mut().config_written(&mut fsb);
+    if rsk_fido::vendor::take_phy_written() {
+        let phy = rsk_phy::load(&mut fsb).unwrap_or_default();
+        if phy.opts & rsk_phy::OPT_DISABLE_POWER_RESET == 0 {
+            hooks.borrow_mut().request_reboot();
+        }
+    }
+}
+
 // The wiring names `rsk_sdk::Rng` / `rsk_sdk::UserPresence` directly. Two
 // supertraits stood here only to reconcile one byte-identical declaration per
 // applet; the declarations moved into `rsk-sdk`, so the glue went with them.
