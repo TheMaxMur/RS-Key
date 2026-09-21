@@ -36,240 +36,246 @@
 [[run]]
 tier = "liveness"
 command = "./formal/run-tlc.sh liveness"
-date = "2026-09-19"
-commit = "9f0fccc844739c6a3e4530d3c52cbc596d807b8e"
+date = "2026-09-21"
+commit = "73d6063cec7bc9ab3665f5155dd9ab31e2a14d8a"
 host = "Apple M5 Pro (18 cores)"
 workers = 2
 matrix = '''
-Liveness.cfg                                 GREEN                                    states=151264817  distinct=14514424  depth=46  2604s
-LiveMut_BugAssertWedgesOnTimeout.cfg         RED: Error: Temporal properties were violated. states=565718     distinct=84781     depth=?   4s
-LiveMut_BugWaitScopeNotCleared.cfg           RED: Error: Temporal properties were violated. states=506554     distinct=78018     depth=?   4s
-LiveMut_BugWalkNeverExpires.cfg              RED: Error: Temporal properties were violated. states=625119     distinct=91811     depth=?   4s
+Liveness.cfg                                 GREEN                                    states=151264817  distinct=14514424  depth=46  2611s
+LiveMut_BugAssertWedgesOnTimeout.cfg         RED: Error: Temporal properties were violated. states=572382     distinct=86068     depth=?   4s
+LiveMut_BugWaitScopeNotCleared.cfg           RED: Error: Temporal properties were violated. states=519172     distinct=79229     depth=?   4s
+LiveMut_BugWalkNeverExpires.cfg              RED: Error: Temporal properties were violated. states=625980     distinct=91126     depth=?   4s
 '''
 tlc = '''
-Liveness.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 13:09:54) 151264817 states generated, 14514424 distinct states found, 0 states left on queue. The depth of the complete state graph search is 46. Finished in 43min 23s
-LiveMut_BugAssertWedgesOnTimeout.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 13:53:18) 565718 states generated, 84781 distinct states found, 41404 states left on queue. Finished in 03s
-LiveMut_BugWaitScopeNotCleared.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 13:53:23) 506554 states generated, 78018 distinct states found, 39360 states left on queue. Finished in 03s
-LiveMut_BugWalkNeverExpires.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 13:53:27) 625119 states generated, 91811 distinct states found, 44482 states left on queue. Finished in 03s
+Liveness.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 23:03:58) 151264817 states generated, 14514424 distinct states found, 0 states left on queue. The depth of the complete state graph search is 46. Finished in 43min 30s
+LiveMut_BugAssertWedgesOnTimeout.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 23:47:29) 572382 states generated, 86068 distinct states found, 42356 states left on queue. Finished in 03s
+LiveMut_BugWaitScopeNotCleared.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 23:47:34) 519172 states generated, 79229 distinct states found, 39815 states left on queue. Finished in 03s
+LiveMut_BugWalkNeverExpires.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 23:47:37) 625980 states generated, 91126 distinct states found, 43598 states left on queue. Finished in 03s
 '''
 
 [[run]]
 tier = "safety"
 command = "./formal/run-tlc.sh safety"
-date = "2026-09-19"
-commit = "9f0fccc844739c6a3e4530d3c52cbc596d807b8e"
+date = "2026-09-21"
+commit = "73d6063cec7bc9ab3665f5155dd9ab31e2a14d8a"
 host = "Apple M5 Pro (18 cores)"
 workers = 2
 matrix = '''
-Shipped.cfg                                  GREEN                                    states=1401505939 distinct=108618956 depth=58  2854s
-AlwaysUv.cfg                                 GREEN                                    states=385191607  distinct=31451172  depth=51  745s
-PermWide.cfg                                 GREEN                                    states=497332297  distinct=29185896  depth=45  802s
-PermWideMut_BugConsumeKeepsMcGa.cfg          RED: NoAuthorizationBypass               states=220355     distinct=25074     depth=9   2s
-PermWideMut_BugStopUsingKeepsPerms.cfg       RED: NoTokenAfterInvalidation            states=4016       distinct=1289      depth=7   1s
+Shipped.cfg                                  GREEN                                    states=1401505939 distinct=108618956 depth=58  2852s
+AlwaysUv.cfg                                 GREEN                                    states=385191607  distinct=31451172  depth=51  746s
+PermWide.cfg                                 GREEN                                    states=497332297  distinct=29185896  depth=45  813s
+PermWideMut_BugConsumeKeepsMcGa.cfg          RED: NoAuthorizationBypass               states=136102     distinct=16049     depth=9   2s
+PermWideMut_BugStopUsingKeepsPerms.cfg       RED: NoTokenAfterInvalidation            states=3913       distinct=1261      depth=7   1s
 ForceChange.cfg                              GREEN                                    states=156123019  distinct=14853324  depth=46  258s
-Historical_E76.cfg                           GREEN                                    states=1401567499 distinct=108618956 depth=58  2835s
-Historical_E77.cfg                           RED: NoAccessibleSecretWithoutGate       states=2167884    distinct=241070    depth=13  6s
-Mut_BugBackupSealedNotAGate.cfg              RED: ResetNeverWeakensSurvivingState     states=27460      distinct=6123      depth=8   1s
-Mut_BugChangePinKeepsPpuat.cfg               RED: NoTokenAfterInvalidation            states=19959      distinct=4533      depth=8   1s
-Mut_BugCmWalkIgnoresChannel.cfg              RED: NoAuthorizationBypass               states=17752      distinct=4140      depth=8   1s
-Mut_BugConsumeKeepsMcGa.cfg                  RED: NoAuthorizationBypass               states=60781      distinct=11144     depth=9   1s
+Historical_E76.cfg                           GREEN                                    states=1401567499 distinct=108618956 depth=58  2858s
+Historical_E77.cfg                           RED: NoAccessibleSecretWithoutGate       states=2115917    distinct=236219    depth=13  5s
+Mut_BugBackupSealedNotAGate.cfg              RED: ResetNeverWeakensSurvivingState     states=28898      distinct=6451      depth=8   2s
+Mut_BugChangePinKeepsPpuat.cfg               RED: NoTokenAfterInvalidation            states=20793      distinct=4651      depth=8   1s
+Mut_BugCmWalkIgnoresChannel.cfg              RED: NoAuthorizationBypass               states=18009      distinct=4209      depth=8   1s
+Mut_BugConsumeKeepsMcGa.cfg                  RED: NoAuthorizationBypass               states=58311      distinct=10810     depth=9   1s
 Mut_BugCredBeforeRp.cfg                      RED: NoUnmanageableCredential            states=7685       distinct=2073      depth=7   1s
-Mut_BugDeleteRpBeforeCred.cfg                RED: NoUnmanageableCredential            states=4679214    distinct=492986    depth=14  10s
-Mut_BugForceChangeIgnored.cfg                RED: NoAuthorizationBypass               states=17668      distinct=4143      depth=8   1s
+Mut_BugDeleteRpBeforeCred.cfg                RED: NoUnmanageableCredential            states=4663688    distinct=490641    depth=14  11s
+Mut_BugForceChangeIgnored.cfg                RED: NoAuthorizationBypass               states=18311      distinct=4250      depth=8   1s
 Mut_BugHostPreemptsLocalWait.cfg             RED: NoAuthorizationBypass               states=89         distinct=40        depth=4   1s
-Mut_BugLocalPinIgnoresBudget.cfg             RED: NoAuthorizationBypass               states=3144765    distinct=333227    depth=14  7s
-Mut_BugLocalPinKeepsToken.cfg                RED: NoTokenAfterInvalidation            states=6106       distinct=1670      depth=7   1s
-Mut_BugNoConsumeAfterUp.cfg                  RED: NoAuthorizationBypass               states=57340      distinct=10631     depth=9   2s
+Mut_BugLocalPinIgnoresBudget.cfg             RED: NoAuthorizationBypass               states=3137775    distinct=332251    depth=14  8s
+Mut_BugLocalPinKeepsToken.cfg                RED: NoTokenAfterInvalidation            states=5736       distinct=1584      depth=7   1s
+Mut_BugNoConsumeAfterUp.cfg                  RED: NoAuthorizationBypass               states=58329      distinct=10810     depth=9   2s
 Mut_BugNoDropStaleCancelAtEntry.cfg          RED: NoCrossTransportTouchConsumption    states=386        distinct=169       depth=5   1s
-Mut_BugNoTouchRequired.cfg                   RED: NoAuthorizationBypass               states=799        distinct=271       depth=5   0s
-Mut_BugPanelCancelable.cfg                   RED: NoCrossTransportTouchConsumption    states=687        distinct=240       depth=5   0s
-Mut_BugPinWriteBeforeRevoke.cfg              RED: NoTokenAfterInvalidation            states=23323      distinct=5181      depth=8   2s
-Mut_BugPpuatIsAGate.cfg                      RED: NoAccessibleSecretWithoutGate       states=2260331    distinct=249725    depth=13  6s
-Mut_BugResetGatesFirst.cfg                   RED: ResetNeverWeakensSurvivingState     states=27236      distinct=6074      depth=8   1s
-Mut_BugSeedDoesNotLead.cfg                   RED: NoUnmanageableCredential            states=2578596    distinct=284821    depth=13  6s
-Mut_BugSetPinKeepsPpuat.cfg                  RED: NoAccessibleSecretWithoutGate       states=2058027    distinct=240990    depth=13  6s
+Mut_BugNoTouchRequired.cfg                   RED: NoAuthorizationBypass               states=801        distinct=271       depth=5   0s
+Mut_BugPanelCancelable.cfg                   RED: NoCrossTransportTouchConsumption    states=707        distinct=248       depth=5   0s
+Mut_BugPinWriteBeforeRevoke.cfg              RED: NoTokenAfterInvalidation            states=23413      distinct=5194      depth=8   2s
+Mut_BugPpuatIsAGate.cfg                      RED: NoAccessibleSecretWithoutGate       states=2434450    distinct=266323    depth=13  6s
+Mut_BugResetGatesFirst.cfg                   RED: ResetNeverWeakensSurvivingState     states=28790      distinct=6406      depth=8   1s
+Mut_BugSeedDoesNotLead.cfg                   RED: NoUnmanageableCredential            states=2578579    distinct=284842    depth=13  7s
+Mut_BugSetPinKeepsPpuat.cfg                  RED: NoAccessibleSecretWithoutGate       states=1763862    distinct=210428    depth=13  5s
 Mut_BugSetPinOverExisting.cfg                RED: NoAuthorizationBypass               states=2434       distinct=718       depth=6   1s
-Mut_BugSoftLockLostOnWarmReset.cfg           RED: NoAuthorizationBypass               states=57563      distinct=10666     depth=9   1s
-Mut_BugStateResetAfterWipe.cfg               RED: ResetNeverWeakensSurvivingState     states=1357438    distinct=165225    depth=12  4s
-Mut_BugStopUsingKeepsPerms.cfg               RED: NoTokenAfterInvalidation            states=6146       distinct=1674      depth=7   1s
-Mut_BugTokenSurvivesPinChange.cfg            RED: NoTokenAfterInvalidation            states=170348     distinct=25419     depth=10  2s
-Mut_BugTokenlessIgnoresAlwaysUv.cfg          RED: NoAuthorizationBypass               states=59847      distinct=10545     depth=9   1s
-Mut_BugTouchNotSpent.cfg                     RED: NoCrossTransportTouchConsumption    states=5137       distinct=1429      depth=7   1s
-Mut_BugUnscopedCancel.cfg                    RED: NoCrossTransportTouchConsumption    states=549        distinct=189       depth=5   0s
-Mut_BugUnscopedOtpCancel.cfg                 RED: NoCrossTransportTouchConsumption    states=664        distinct=233       depth=5   1s
-Mut_BugUvNotRqdIgnoresRk.cfg                 RED: NoAuthorizationBypass               states=2836       distinct=746       depth=6   1s
-Mut_BugWarmResetReopensWindow.cfg            RED: NoAuthorizationBypass               states=530        distinct=179       depth=5   1s
-Mut_BugWrongPinKeepsToken.cfg                RED: NoTokenAfterInvalidation            states=6081       distinct=1663      depth=7   1s
-Solo_BugBackupSealedNotAGate.cfg             RED: ResetNeverWeakensSurvivingState     states=27463      distinct=6154      depth=8   1s
-Solo_BugChangePinKeepsPpuat.cfg              RED: NoTokenAfterInvalidation            states=19931      distinct=4548      depth=8   1s
-Solo_BugCmWalkIgnoresChannel.cfg             RED: NoAuthorizationBypass               states=17856      distinct=4151      depth=8   1s
-Solo_BugConsumeKeepsMcGa.cfg                 RED: NoAuthorizationBypass               states=79951      distinct=14102     depth=9   1s
-Solo_BugCredBeforeRp.cfg                     RED: NoUnmanageableCredential            states=7094       distinct=1953      depth=7   1s
-Solo_BugDeleteRpBeforeCred.cfg               RED: NoUnmanageableCredential            states=4664455    distinct=490293    depth=14  11s
-Solo_BugForceChangeIgnored.cfg               RED: NoAuthorizationBypass               states=18184      distinct=4238      depth=8   1s
+Mut_BugSoftLockLostOnWarmReset.cfg           RED: NoAuthorizationBypass               states=61752      distinct=11229     depth=9   1s
+Mut_BugStateResetAfterWipe.cfg               RED: ResetNeverWeakensSurvivingState     states=1363970    distinct=166600    depth=12  5s
+Mut_BugStopUsingKeepsPerms.cfg               RED: NoTokenAfterInvalidation            states=6023       distinct=1660      depth=7   1s
+Mut_BugTokenSurvivesPinChange.cfg            RED: NoTokenAfterInvalidation            states=172117     distinct=25923     depth=10  1s
+Mut_BugTokenlessIgnoresAlwaysUv.cfg          RED: NoAuthorizationBypass               states=54480      distinct=9827      depth=9   2s
+Mut_BugTouchNotSpent.cfg                     RED: NoCrossTransportTouchConsumption    states=5162       distinct=1431      depth=7   1s
+Mut_BugUnscopedCancel.cfg                    RED: NoCrossTransportTouchConsumption    states=538        distinct=183       depth=5   1s
+Mut_BugUnscopedOtpCancel.cfg                 RED: NoCrossTransportTouchConsumption    states=679        distinct=240       depth=5   0s
+Mut_BugUvNotRqdIgnoresRk.cfg                 RED: NoAuthorizationBypass               states=2836       distinct=746       depth=6   0s
+Mut_BugWarmResetReopensWindow.cfg            RED: NoAuthorizationBypass               states=482        distinct=171       depth=5   0s
+Mut_BugWrongPinKeepsToken.cfg                RED: NoTokenAfterInvalidation            states=6147       distinct=1679      depth=7   1s
+Solo_BugBackupSealedNotAGate.cfg             RED: ResetNeverWeakensSurvivingState     states=28813      distinct=6437      depth=8   2s
+Solo_BugChangePinKeepsPpuat.cfg              RED: NoTokenAfterInvalidation            states=21055      distinct=4674      depth=8   1s
+Solo_BugCmWalkIgnoresChannel.cfg             RED: NoAuthorizationBypass               states=17204      distinct=4040      depth=8   1s
+Solo_BugConsumeKeepsMcGa.cfg                 RED: NoAuthorizationBypass               states=80683      distinct=14185     depth=9   2s
+Solo_BugCredBeforeRp.cfg                     RED: NoUnmanageableCredential            states=7685       distinct=2073      depth=7   1s
+Solo_BugDeleteRpBeforeCred.cfg               RED: NoUnmanageableCredential            states=4656430    distinct=489306    depth=14  10s
+Solo_BugForceChangeIgnored.cfg               RED: NoAuthorizationBypass               states=18635      distinct=4304      depth=8   1s
 Solo_BugHostPreemptsLocalWait.cfg            RED: NoAuthorizationBypass               states=89         distinct=40        depth=4   1s
-Solo_BugLocalPinIgnoresBudget.cfg            RED: NoAuthorizationBypass               states=3132986    distinct=332029    depth=14  7s
-Solo_BugLocalPinKeepsToken.cfg               RED: NoTokenAfterInvalidation            states=6064       distinct=1674      depth=7   1s
-Solo_BugNoConsumeAfterUp.cfg                 RED: NoAuthorizationBypass               states=58425      distinct=10826     depth=9   2s
-Solo_BugNoDropStaleCancelAtEntry.cfg         RED: NoCrossTransportTouchConsumption    states=383        distinct=167       depth=4   0s
-Solo_BugNoTouchRequired.cfg                  RED: NoAuthorizationBypass               states=799        distinct=271       depth=5   1s
-Solo_BugPanelCancelable.cfg                  RED: NoCrossTransportTouchConsumption    states=685        distinct=237       depth=5   1s
-Solo_BugPinWriteBeforeRevoke.cfg             RED: NoTokenAfterInvalidation            states=23326      distinct=5194      depth=8   2s
-Solo_BugPpuatIsAGate.cfg                     RED: NoAccessibleSecretWithoutGate       states=2097027    distinct=234111    depth=13  5s
-Solo_BugResetGatesFirst.cfg                  RED: ResetNeverWeakensSurvivingState     states=28722      distinct=6397      depth=8   1s
-Solo_BugSeedDoesNotLead.cfg                  RED: NoUnmanageableCredential            states=2579485    distinct=284999    depth=13  7s
-Solo_BugSetPinKeepsPpuat.cfg                 RED: NoTokenAfterInvalidation            states=6425106    distinct=680132    depth=15  14s
-Solo_BugSetPinOverExisting.cfg               RED: NoAuthorizationBypass               states=2486       distinct=744       depth=6   1s
-Solo_BugSoftLockLostOnWarmReset.cfg          RED: NoAuthorizationBypass               states=62716      distinct=11387     depth=9   1s
-Solo_BugStateResetAfterWipe.cfg              RED: ResetNeverWeakensSurvivingState     states=1367271    distinct=167268    depth=12  4s
-Solo_BugStopUsingKeepsPerms.cfg              RED: NoTokenAfterInvalidation            states=6146       distinct=1674      depth=7   1s
-Solo_BugTokenSurvivesPinChange.cfg           RED: NoTokenAfterInvalidation            states=170776     distinct=25455     depth=10  2s
-Solo_BugTokenlessIgnoresAlwaysUv.cfg         RED: NoAuthorizationBypass               states=58876      distinct=10360     depth=9   1s
-Solo_BugTouchNotSpent.cfg                    RED: NoCrossTransportTouchConsumption    states=4945       distinct=1382      depth=7   1s
-Solo_BugUnscopedCancel.cfg                   RED: NoCrossTransportTouchConsumption    states=549        distinct=189       depth=5   1s
-Solo_BugUnscopedOtpCancel.cfg                RED: NoCrossTransportTouchConsumption    states=672        distinct=237       depth=5   1s
-Solo_BugUvNotRqdIgnoresRk.cfg                RED: NoAuthorizationBypass               states=2829       distinct=745       depth=6   1s
-Solo_BugWarmResetReopensWindow.cfg           RED: NoAuthorizationBypass               states=540        distinct=185       depth=5   1s
+Solo_BugLocalPinIgnoresBudget.cfg            RED: NoAuthorizationBypass               states=3137200    distinct=332253    depth=14  8s
+Solo_BugLocalPinKeepsToken.cfg               RED: NoTokenAfterInvalidation            states=6128       distinct=1683      depth=7   1s
+Solo_BugNoConsumeAfterUp.cfg                 RED: NoAuthorizationBypass               states=58243      distinct=10801     depth=9   1s
+Solo_BugNoDropStaleCancelAtEntry.cfg         RED: NoCrossTransportTouchConsumption    states=386        distinct=169       depth=5   1s
+Solo_BugNoTouchRequired.cfg                  RED: NoAuthorizationBypass               states=789        distinct=266       depth=5   1s
+Solo_BugPanelCancelable.cfg                  RED: NoCrossTransportTouchConsumption    states=673        distinct=236       depth=5   1s
+Solo_BugPinWriteBeforeRevoke.cfg             RED: NoTokenAfterInvalidation            states=23544      distinct=5220      depth=8   1s
+Solo_BugPpuatIsAGate.cfg                     RED: NoAccessibleSecretWithoutGate       states=2131025    distinct=238311    depth=13  6s
+Solo_BugResetGatesFirst.cfg                  RED: ResetNeverWeakensSurvivingState     states=27252      distinct=6088      depth=8   1s
+Solo_BugSeedDoesNotLead.cfg                  RED: NoUnmanageableCredential            states=2577726    distinct=284701    depth=13  7s
+Solo_BugSetPinKeepsPpuat.cfg                 RED: NoTokenAfterInvalidation            states=6422684    distinct=679732    depth=15  14s
+Solo_BugSetPinOverExisting.cfg               RED: NoAuthorizationBypass               states=2491       distinct=745       depth=6   1s
+Solo_BugSoftLockLostOnWarmReset.cfg          RED: NoAuthorizationBypass               states=62124      distinct=11454     depth=9   1s
+Solo_BugStateResetAfterWipe.cfg              RED: ResetNeverWeakensSurvivingState     states=1369838    distinct=167738    depth=12  4s
+Solo_BugStopUsingKeepsPerms.cfg              RED: NoTokenAfterInvalidation            states=6092       distinct=1667      depth=7   1s
+Solo_BugTokenSurvivesPinChange.cfg           RED: NoTokenAfterInvalidation            states=170418     distinct=25420     depth=10  2s
+Solo_BugTokenlessIgnoresAlwaysUv.cfg         RED: NoAuthorizationBypass               states=61353      distinct=10793     depth=9   1s
+Solo_BugTouchNotSpent.cfg                    RED: NoCrossTransportTouchConsumption    states=5032       distinct=1400      depth=7   1s
+Solo_BugUnscopedCancel.cfg                   RED: NoCrossTransportTouchConsumption    states=551        distinct=191       depth=5   1s
+Solo_BugUnscopedOtpCancel.cfg                RED: NoCrossTransportTouchConsumption    states=673        distinct=243       depth=5   1s
+Solo_BugUvNotRqdIgnoresRk.cfg                RED: NoAuthorizationBypass               states=2836       distinct=746       depth=6   1s
+Solo_BugWarmResetReopensWindow.cfg           RED: NoAuthorizationBypass               states=520        distinct=184       depth=5   1s
 Solo_BugWrongPinKeepsToken.cfg               RED: NoTokenAfterInvalidation            states=6140       distinct=1670      depth=7   1s
-Solo_NoAccessibleSecretWithoutGate.cfg       RED: NoAccessibleSecretWithoutGate       states=483746     distinct=63870     depth=11  2s
-Solo_NoLiveTokenWithoutPinRecord.cfg         RED: NoLiveTokenWithoutPinRecord         states=1026813    distinct=123856    depth=12  3s
-Solo_RamNeverOutlivesFlashSeed.cfg           RED: RamNeverOutlivesFlashSeed           states=9530       distinct=2546      depth=7   1s
-SoloClause_ResetKeepsTheAlwaysUvGate.cfg     RED: ResetKeepsTheAlwaysUvGate           states=29218298   distinct=2789491   depth=18  57s
-SoloClause_ResetKeepsTheBackupSeal.cfg       RED: ResetKeepsTheBackupSeal             states=27321      distinct=6130      depth=8   2s
-SoloClause_ResetKeepsThePinGate.cfg          RED: ResetKeepsThePinGate                states=12468167   distinct=1239080   depth=16  25s
+Solo_NoAccessibleSecretWithoutGate.cfg       RED: NoAccessibleSecretWithoutGate       states=606359     distinct=77661     depth=11  3s
+Solo_NoLiveTokenWithoutPinRecord.cfg         RED: NoLiveTokenWithoutPinRecord         states=1241291    distinct=144835    depth=12  3s
+Solo_RamNeverOutlivesFlashSeed.cfg           RED: RamNeverOutlivesFlashSeed           states=10149      distinct=2683      depth=7   1s
+SoloClause_ResetKeepsTheAlwaysUvGate.cfg     RED: ResetKeepsTheAlwaysUvGate           states=29210332   distinct=2788247   depth=18  58s
+SoloClause_ResetKeepsTheBackupSeal.cfg       RED: ResetKeepsTheBackupSeal             states=27301      distinct=6130      depth=8   1s
+SoloClause_ResetKeepsThePinGate.cfg          RED: ResetKeepsThePinGate                states=12468418   distinct=1239141   depth=16  25s
 Fairness.cfg                                 GREEN                                    states=151264817  distinct=14514424  depth=46  229s
 FairMut_BugFairnessFoldsLocalCeremony.cfg    RED: OpAdvancesIsOneActivity             states=73         distinct=40        depth=4   0s
 Seams.cfg                                    GREEN                                    states=6045       distinct=410       depth=11  1s
-SeamMut_BugAdminOpensKeyOps.cfg              RED: NoKeyOpOnTheAdminStatus             states=349        distinct=67        depth=5   1s
+SeamMut_BugAdminOpensKeyOps.cfg              RED: NoKeyOpOnTheAdminStatus             states=320        distinct=62        depth=5   1s
 SeamMut_BugCardResetKeepsStatus.cfg          RED: NoStatusOutsideItsSelection         states=93         distinct=29        depth=4   1s
 SeamMut_BugCodelessOathIsAStatus.cfg         RED: NoStatusOutsideItsSelection         states=?          distinct=?         depth=?   1s
-SeamMut_BugDeselectKeepsOathUnlock.cfg       RED: NoStatusOutsideItsSelection         states=345        distinct=64        depth=5   1s
-SeamMut_BugFailedChangeKeepsStatus.cfg       RED: NoStatusAfterARefusedAuth           states=348        distinct=68        depth=5   1s
-SeamMut_BugFreshCardOpensOtpPin.cfg          RED: NoStatusOutsideItsSelection         states=?          distinct=?         depth=?   0s
-SeamMut_BugPinFreshNotSpent.cfg              RED: NoKeyOpOnTheAdminStatus             states=127        distinct=37        depth=4   1s
+SeamMut_BugDecipherGhostSpentLikeSig.cfg     RED: NoKeyOpOnTheAdminStatus             states=2960       distinct=282       depth=8   1s
+SeamMut_BugDeselectKeepsOathUnlock.cfg       RED: NoStatusOutsideItsSelection         states=413        distinct=70        depth=5   1s
+SeamMut_BugFailedChangeKeepsStatus.cfg       RED: NoStatusAfterARefusedAuth           states=335        distinct=66        depth=5   0s
+SeamMut_BugFreshCardOpensOtpPin.cfg          RED: NoStatusOutsideItsSelection         states=?          distinct=?         depth=?   1s
+SeamMut_BugOathReselectUnrecorded.cfg        RED: ReselectPreservesAccessStatus       states=314        distinct=63        depth=5   1s
+SeamMut_BugPinFreshNotSpent.cfg              RED: NoKeyOpOnTheAdminStatus             states=160        distinct=44        depth=4   1s
 SeamMut_BugPinFreshOutlivesPin.cfg           RED: NoKeyOpOnTheAdminStatus             states=120        distinct=37        depth=4   1s
 SeamMut_BugPivChangeResetsStatus.cfg         RED: ExemptRefusalPreservesStatus        states=142        distinct=42        depth=4   1s
-SeamMut_BugPwStatusIgnoresAdmin.cfg          RED: NoKeyOpOnTheAdminStatus             states=175        distinct=47        depth=4   1s
-SeamMut_BugRefusedValidateDropsUnlock.cfg    RED: ExemptRefusalPreservesStatus        states=109        distinct=32        depth=4   0s
+SeamMut_BugPwStatusIgnoresAdmin.cfg          RED: NoKeyOpOnTheAdminStatus             states=175        distinct=47        depth=4   0s
+SeamMut_BugRefusedValidateDropsUnlock.cfg    RED: ExemptRefusalPreservesStatus        states=109        distinct=32        depth=4   1s
 SeamMut_BugRefusedValidateGrants.cfg         RED: NoStatusAfterARefusedAuth           states=382        distinct=70        depth=5   1s
-SeamMut_BugRemoveCodeUnvalidated.cfg         RED: AccessCodeRemovalNeedsTheCode       states=377        distinct=71        depth=5   1s
+SeamMut_BugRemoveCodeUnvalidated.cfg         RED: AccessCodeRemovalNeedsTheCode       states=396        distinct=73        depth=5   1s
 SeamMut_BugReselectResetsStatus.cfg          RED: ReselectPreservesAccessStatus       states=119        distinct=37        depth=4   1s
-SeamMut_BugResetKeepsOathUnlock.cfg          RED: NoStatusOutsideItsSelection         states=384        distinct=71        depth=5   1s
-SeamMut_BugSelectKeepsOtherApplet.cfg        RED: NoStatusOutsideItsSelection         states=77         distinct=27        depth=4   1s
-SeamMut_BugSigPinNotSpent.cfg                RED: NoKeyOpOnTheAdminStatus             states=1825       distinct=211       depth=7   1s
-SeamMut_BugUserStatusOpensAdmin.cfg          RED: NoKeyOpOnTheAdminStatus             states=144        distinct=43        depth=4   0s
+SeamMut_BugResetKeepsOathUnlock.cfg          RED: NoStatusOutsideItsSelection         states=383        distinct=71        depth=5   1s
+SeamMut_BugSelectKeepsOtherApplet.cfg        RED: NoStatusOutsideItsSelection         states=77         distinct=27        depth=4   0s
+SeamMut_BugSigPinNotSpent.cfg                RED: NoKeyOpOnTheAdminStatus             states=1703       distinct=203       depth=7   0s
+SeamMut_BugUserStatusOpensAdmin.cfg          RED: NoKeyOpOnTheAdminStatus             states=144        distinct=43        depth=4   1s
 SeamMut_BugWipeWithoutItsReboot.cfg          RED: NoStatusOutsideItsSelection         states=99         distinct=29        depth=4   1s
-SeamSolo_BugAdminOpensKeyOps.cfg             RED: NoKeyOpOnTheAdminStatus             states=324        distinct=65        depth=5   1s
+SeamSolo_BugAdminOpensKeyOps.cfg             RED: NoKeyOpOnTheAdminStatus             states=308        distinct=62        depth=5   1s
 SeamSolo_BugCardResetKeepsStatus.cfg         RED: NoStatusOutsideItsSelection         states=93         distinct=29        depth=4   1s
-SeamSolo_BugCodelessOathIsAStatus.cfg        RED: NoStatusOutsideItsSelection         states=?          distinct=?         depth=?   1s
-SeamSolo_BugDeselectKeepsOathUnlock.cfg      RED: NoStatusOutsideItsSelection         states=394        distinct=69        depth=5   0s
-SeamSolo_BugFailedChangeKeepsStatus.cfg      RED: NoStatusAfterARefusedAuth           states=348        distinct=68        depth=5   0s
+SeamSolo_BugCodelessOathIsAStatus.cfg        RED: NoStatusOutsideItsSelection         states=?          distinct=?         depth=?   0s
+SeamSolo_BugDecipherGhostSpentLikeSig.cfg    RED: NoKeyOpOnTheAdminStatus             states=3101       distinct=290       depth=8   1s
+SeamSolo_BugDeselectKeepsOathUnlock.cfg      RED: NoStatusOutsideItsSelection         states=394        distinct=69        depth=5   1s
+SeamSolo_BugFailedChangeKeepsStatus.cfg      RED: NoStatusAfterARefusedAuth           states=367        distinct=70        depth=5   1s
 SeamSolo_BugFreshCardOpensOtpPin.cfg         RED: NoStatusOutsideItsSelection         states=?          distinct=?         depth=?   1s
-SeamSolo_BugPinFreshNotSpent.cfg             RED: NoKeyOpOnTheAdminStatus             states=143        distinct=42        depth=4   1s
-SeamSolo_BugPinFreshOutlivesPin.cfg          RED: NoKeyOpOnTheAdminStatus             states=136        distinct=42        depth=4   1s
-SeamSolo_BugPivChangeResetsStatus.cfg        RED: ExemptRefusalPreservesStatus        states=159        distinct=44        depth=4   1s
-SeamSolo_BugPwStatusIgnoresAdmin.cfg         RED: NoKeyOpOnTheAdminStatus             states=175        distinct=47        depth=4   0s
-SeamSolo_BugRefusedValidateDropsUnlock.cfg   RED: ExemptRefusalPreservesStatus        states=109        distinct=32        depth=4   1s
-SeamSolo_BugRefusedValidateGrants.cfg        RED: NoStatusAfterARefusedAuth           states=381        distinct=70        depth=5   1s
-SeamSolo_BugRemoveCodeUnvalidated.cfg        RED: AccessCodeRemovalNeedsTheCode       states=396        distinct=73        depth=5   1s
-SeamSolo_BugReselectResetsStatus.cfg         RED: ReselectPreservesAccessStatus       states=103        distinct=32        depth=4   1s
-SeamSolo_BugResetKeepsOathUnlock.cfg         RED: NoStatusOutsideItsSelection         states=401        distinct=72        depth=5   1s
-SeamSolo_BugSelectKeepsOtherApplet.cfg       RED: NoStatusOutsideItsSelection         states=77         distinct=27        depth=4   0s
-SeamSolo_BugSigPinNotSpent.cfg               RED: NoKeyOpOnTheAdminStatus             states=1894       distinct=215       depth=7   1s
-SeamSolo_BugUserStatusOpensAdmin.cfg         RED: NoKeyOpOnTheAdminStatus             states=144        distinct=43        depth=4   1s
-SeamSolo_BugWipeWithoutItsReboot.cfg         RED: NoStatusOutsideItsSelection         states=99         distinct=29        depth=4   1s
+SeamSolo_BugOathReselectUnrecorded.cfg       RED: ReselectPreservesAccessStatus       states=343        distinct=68        depth=5   1s
+SeamSolo_BugPinFreshNotSpent.cfg             RED: NoKeyOpOnTheAdminStatus             states=160        distinct=44        depth=4   0s
+SeamSolo_BugPinFreshOutlivesPin.cfg          RED: NoKeyOpOnTheAdminStatus             states=136        distinct=42        depth=4   0s
+SeamSolo_BugPivChangeResetsStatus.cfg        RED: ExemptRefusalPreservesStatus        states=142        distinct=42        depth=4   1s
+SeamSolo_BugPwStatusIgnoresAdmin.cfg         RED: NoKeyOpOnTheAdminStatus             states=175        distinct=47        depth=4   1s
+SeamSolo_BugRefusedValidateDropsUnlock.cfg   RED: ExemptRefusalPreservesStatus        states=125        distinct=37        depth=4   1s
+SeamSolo_BugRefusedValidateGrants.cfg        RED: NoStatusAfterARefusedAuth           states=394        distinct=72        depth=5   1s
+SeamSolo_BugRemoveCodeUnvalidated.cfg        RED: AccessCodeRemovalNeedsTheCode       states=409        distinct=75        depth=5   0s
+SeamSolo_BugReselectResetsStatus.cfg         RED: ReselectPreservesAccessStatus       states=135        distinct=42        depth=4   1s
+SeamSolo_BugResetKeepsOathUnlock.cfg         RED: NoStatusOutsideItsSelection         states=420        distinct=73        depth=5   1s
+SeamSolo_BugSelectKeepsOtherApplet.cfg       RED: NoStatusOutsideItsSelection         states=77         distinct=27        depth=4   1s
+SeamSolo_BugSigPinNotSpent.cfg               RED: NoKeyOpOnTheAdminStatus             states=1791       distinct=210       depth=7   1s
+SeamSolo_BugUserStatusOpensAdmin.cfg         RED: NoKeyOpOnTheAdminStatus             states=158        distinct=46        depth=4   1s
+SeamSolo_BugWipeWithoutItsReboot.cfg         RED: NoStatusOutsideItsSelection         states=99         distinct=29        depth=4   0s
 Store.cfg                                    GREEN                                    states=4185       distinct=364       depth=6   1s
 StoreMut_BugCacheFaultAsAbsent.cfg           RED: NoFalseAbsent                       states=55         distinct=24        depth=3   1s
-StoreMut_BugDeleteHidesFaultedDrop.cfg       RED: NoSilentOrphan                      states=175        distinct=61        depth=4   0s
-StoreMut_BugDeleteMetaOnlyUnderPresent.cfg   RED: NoOrphanedMetadata                  states=195        distinct=65        depth=4   0s
+StoreMut_BugDeleteHidesFaultedDrop.cfg       RED: NoSilentOrphan                      states=175        distinct=61        depth=4   1s
+StoreMut_BugDeleteMetaOnlyUnderPresent.cfg   RED: NoOrphanedMetadata                  states=195        distinct=66        depth=4   1s
 StoreMut_BugDeleteValueBeforeMeta.cfg        RED: NoOrphanedMetadata                  states=171        distinct=61        depth=4   1s
-StoreMut_BugMetaAddDropsOnFault.cfg          RED: NoRecordLostToMetaWrite             states=183        distinct=58        depth=4   1s
-StoreMut_BugMetaDeleteDropsOnFault.cfg       RED: NoFalseMetaAbsent                   states=183        distinct=58        depth=4   1s
-StoreMut_BugMetaDeleteTearsBlob.cfg          RED: NoRecordLostToMetaWrite             states=189        distinct=64        depth=4   0s
-StoreMut_BugMetaWriteTearsBlob.cfg           RED: NoRecordLostToMetaWrite             states=221        distinct=77        depth=4   0s
+StoreMut_BugMetaAddDropsOnFault.cfg          RED: NoRecordLostToMetaWrite             states=183        distinct=58        depth=4   0s
+StoreMut_BugMetaDeleteDropsOnFault.cfg       RED: NoFalseMetaAbsent                   states=183        distinct=57        depth=4   1s
+StoreMut_BugMetaDeleteTearsBlob.cfg          RED: NoRecordLostToMetaWrite             states=189        distinct=64        depth=4   1s
+StoreMut_BugMetaWriteTearsBlob.cfg           RED: NoRecordLostToMetaWrite             states=221        distinct=77        depth=4   1s
 StoreMut_BugTruncatedScanDecidesAll.cfg      RED: NoFalseAbsent                       states=59         distinct=25        depth=3   1s
 StoreSolo_BugCacheFaultAsAbsent.cfg          RED: NoFalseAbsent                       states=55         distinct=24        depth=3   1s
-StoreSolo_BugDeleteHidesFaultedDrop.cfg      RED: NoSilentOrphan                      states=175        distinct=61        depth=4   1s
+StoreSolo_BugDeleteHidesFaultedDrop.cfg      RED: NoSilentOrphan                      states=175        distinct=61        depth=4   0s
 StoreSolo_BugDeleteMetaOnlyUnderPresent.cfg  RED: NoOrphanedMetadata                  states=195        distinct=66        depth=4   1s
-StoreSolo_BugDeleteValueBeforeMeta.cfg       RED: NoOrphanedMetadata                  states=171        distinct=61        depth=4   0s
+StoreSolo_BugDeleteValueBeforeMeta.cfg       RED: NoOrphanedMetadata                  states=171        distinct=61        depth=4   1s
 StoreSolo_BugMetaAddDropsOnFault.cfg         RED: NoRecordLostToMetaWrite             states=183        distinct=58        depth=4   1s
 StoreSolo_BugMetaDeleteDropsOnFault.cfg      RED: NoFalseMetaAbsent                   states=183        distinct=58        depth=4   1s
-StoreSolo_BugMetaDeleteTearsBlob.cfg         RED: NoRecordLostToMetaWrite             states=189        distinct=64        depth=4   1s
-StoreSolo_BugMetaWriteTearsBlob.cfg          RED: NoRecordLostToMetaWrite             states=221        distinct=77        depth=4   1s
-StoreSolo_BugTruncatedScanDecidesAll.cfg     RED: NoFalseAbsent                       states=59         distinct=25        depth=3   0s
+StoreSolo_BugMetaDeleteTearsBlob.cfg         RED: NoRecordLostToMetaWrite             states=189        distinct=64        depth=4   0s
+StoreSolo_BugMetaWriteTearsBlob.cfg          RED: NoRecordLostToMetaWrite             states=221        distinct=77        depth=4   0s
+StoreSolo_BugTruncatedScanDecidesAll.cfg     RED: NoFalseAbsent                       states=59         distinct=25        depth=3   1s
 StoreSolo_CacheHonest.cfg                    RED: CacheHonest                         states=183        distinct=58        depth=4   1s
 StoreInduction.cfg                           GREEN                                    states=12460      distinct=1000      depth=1   1s
 StoreInductionMut_BugMetaAddDropsOnFault.cfg RED: NoRecordLostToMetaWrite             states=1499       distinct=1002      depth=2   1s
 Lattice.cfg                                  GREEN                                    states=2431       distinct=243       depth=11  1s
-LatMut_BugRecoveryWithoutSecret.cfg          RED: BudgetRisesOnlyWithItsSecret        states=17         distinct=9         depth=3   1s
-LatMut_BugUseWhenBlocked.cfg                 RED: NoAuthWhenBlocked                   states=73         distinct=30        depth=4   0s
+LatMut_BugRecoveryWithoutSecret.cfg          RED: BudgetRisesOnlyWithItsSecret        states=17         distinct=9         depth=3   0s
+LatMut_BugUseWhenBlocked.cfg                 RED: NoAuthWhenBlocked                   states=73         distinct=30        depth=4   1s
 LatMut_BugWrongDoesNotSpend.cfg              RED: WrongAttemptIsCharged               states=2          distinct=2         depth=2   1s
 LatSolo_BugRecoveryWithoutSecret.cfg         RED: BudgetRisesOnlyWithItsSecret        states=17         distinct=9         depth=3   1s
-LatSolo_BugUseWhenBlocked.cfg                RED: NoAuthWhenBlocked                   states=63         distinct=28        depth=4   1s
-LatSolo_BugWrongDoesNotSpend.cfg             RED: WrongAttemptIsCharged               states=2          distinct=2         depth=2   0s
-Policies.cfg                                 GREEN                                    states=9200521    distinct=331776    depth=19  7s
+LatSolo_BugUseWhenBlocked.cfg                RED: NoAuthWhenBlocked                   states=83         distinct=33        depth=4   0s
+LatSolo_BugWrongDoesNotSpend.cfg             RED: WrongAttemptIsCharged               states=2          distinct=2         depth=2   1s
+LatInduction.cfg                             GREEN                                    states=2673       distinct=243       depth=1   1s
+LatInductionMut_BugWrongDoesNotSpend.cfg     RED: WrongAttemptIsCharged               states=271        distinct=245       depth=2   1s
+Policies.cfg                                 GREEN                                    states=9200521    distinct=331776    depth=19  6s
 PolicyMut_BugOathCodeIgnored.cfg             RED: OathCredentialNeedsItsGates         states=305        distinct=79        depth=4   1s
 PolicyMut_BugOathTouchIgnored.cfg            RED: OathCredentialNeedsItsGates         states=357        distinct=87        depth=4   1s
-PolicyMut_BugOtpBootKeepsPosition.cfg        RED: OtpCounterNeverRepeats              states=12204      distinct=1508      depth=6   1s
-PolicyMut_BugOtpCodeIgnored.cfg              RED: OtpSlotMutationNeedsItsCode         states=568        distinct=115       depth=4   0s
-PolicyMut_BugOtpCounterRepeats.cfg           RED: OtpCounterNeverRepeats              states=2810       distinct=434       depth=5   1s
-PolicyMut_BugOtpPressTypesUnpersisted.cfg    RED: OtpCounterNeverRepeats              states=14232      distinct=1981      depth=6   1s
-PolicyMut_BugOtpSwapKeepsSession.cfg         RED: OtpCounterNeverRepeats              states=14200      distinct=2031      depth=6   1s
+PolicyMut_BugOtpBootKeepsPosition.cfg        RED: OtpCounterNeverRepeats              states=12073      distinct=1495      depth=6   1s
+PolicyMut_BugOtpCodeIgnored.cfg              RED: OtpSlotMutationNeedsItsCode         states=568        distinct=115       depth=4   1s
+PolicyMut_BugOtpCounterRepeats.cfg           RED: OtpCounterNeverRepeats              states=2843       distinct=437       depth=5   1s
+PolicyMut_BugOtpPressTypesUnpersisted.cfg    RED: OtpCounterNeverRepeats              states=13988      distinct=1963      depth=6   1s
+PolicyMut_BugOtpSwapKeepsSession.cfg         RED: OtpCounterNeverRepeats              states=14339      distinct=2049      depth=6   1s
 PolicyMut_BugPgpAttributeKeepsKey.cfg        RED: AttributeChangeInvalidatesTheKey    states=207        distinct=63        depth=4   1s
-PolicyMut_BugPivAlwaysDoesNotSpend.cfg       RED: PivAlwaysSpendsFreshness            states=788        distinct=175       depth=4   1s
+PolicyMut_BugPivAlwaysDoesNotSpend.cfg       RED: PivAlwaysSpendsFreshness            states=741        distinct=166       depth=4   0s
 PolicyMut_BugPivPolicyIgnored.cfg            RED: PivOperationNeedsSlotPolicy         states=39         distinct=16        depth=3   1s
-PolicySolo_BugOathCodeIgnored.cfg            RED: OathCredentialNeedsItsGates         states=305        distinct=79        depth=4   1s
-PolicySolo_BugOathTouchIgnored.cfg           RED: OathCredentialNeedsItsGates         states=357        distinct=87        depth=4   0s
-PolicySolo_BugOtpBootKeepsPosition.cfg       RED: OtpCounterNeverRepeats              states=12237      distinct=1509      depth=6   1s
-PolicySolo_BugOtpCodeIgnored.cfg             RED: OtpSlotMutationNeedsItsCode         states=572        distinct=114       depth=4   1s
-PolicySolo_BugOtpCounterRepeats.cfg          RED: OtpCounterNeverRepeats              states=2810       distinct=434       depth=5   1s
-PolicySolo_BugOtpPressTypesUnpersisted.cfg   RED: OtpCounterNeverRepeats              states=14013      distinct=1966      depth=6   1s
-PolicySolo_BugOtpSwapKeepsSession.cfg        RED: OtpCounterNeverRepeats              states=14170      distinct=2029      depth=6   1s
-PolicySolo_BugPgpAttributeKeepsKey.cfg       RED: AttributeChangeInvalidatesTheKey    states=207        distinct=63        depth=4   1s
-PolicySolo_BugPivAlwaysDoesNotSpend.cfg      RED: PivAlwaysSpendsFreshness            states=788        distinct=175       depth=4   1s
-PolicySolo_BugPivPolicyIgnored.cfg           RED: PivOperationNeedsSlotPolicy         states=34         distinct=14        depth=3   1s
-Admin.cfg                                    GREEN                                    states=101        distinct=8         depth=3   0s
+PolicySolo_BugOathCodeIgnored.cfg            RED: OathCredentialNeedsItsGates         states=329        distinct=83        depth=4   1s
+PolicySolo_BugOathTouchIgnored.cfg           RED: OathCredentialNeedsItsGates         states=357        distinct=87        depth=4   1s
+PolicySolo_BugOtpBootKeepsPosition.cfg       RED: OtpCounterNeverRepeats              states=12240      distinct=1509      depth=6   1s
+PolicySolo_BugOtpCodeIgnored.cfg             RED: OtpSlotMutationNeedsItsCode         states=568        distinct=115       depth=4   1s
+PolicySolo_BugOtpCounterRepeats.cfg          RED: OtpCounterNeverRepeats              states=2841       distinct=437       depth=5   1s
+PolicySolo_BugOtpPressTypesUnpersisted.cfg   RED: OtpCounterNeverRepeats              states=14021      distinct=1964      depth=6   1s
+PolicySolo_BugOtpSwapKeepsSession.cfg        RED: OtpCounterNeverRepeats              states=14100      distinct=2026      depth=6   1s
+PolicySolo_BugPgpAttributeKeepsKey.cfg       RED: AttributeChangeInvalidatesTheKey    states=207        distinct=63        depth=4   0s
+PolicySolo_BugPivAlwaysDoesNotSpend.cfg      RED: PivAlwaysSpendsFreshness            states=821        distinct=181       depth=4   1s
+PolicySolo_BugPivPolicyIgnored.cfg           RED: PivOperationNeedsSlotPolicy         states=39         distinct=16        depth=3   1s
+Admin.cfg                                    GREEN                                    states=101        distinct=8         depth=3   1s
 AdminMut_BugAdminGateable.cfg                RED: AdminSurfaceAlwaysReachable         states=2          distinct=2         depth=2   1s
-AdminMut_BugLockWriteResetsCaps.cfg          RED: DisableSetSurvivesLockWrite         states=99         distinct=9         depth=3   1s
+AdminMut_BugLockWriteResetsCaps.cfg          RED: DisableSetSurvivesLockWrite         states=99         distinct=9         depth=3   0s
 AdminMut_BugMaskIsCosmetic.cfg               RED: DisabledAppletNeverDispatches       states=40         distinct=10        depth=3   1s
-AdminMut_BugPrivilegedOpUngated.cfg          RED: PrivilegedOpNeedsPresence           states=21         distinct=10        depth=3   0s
+AdminMut_BugPrivilegedOpUngated.cfg          RED: PrivilegedOpNeedsPresence           states=21         distinct=10        depth=3   1s
 AdminSolo_BugAdminGateable.cfg               RED: AdminSurfaceAlwaysReachable         states=2          distinct=2         depth=2   1s
-AdminSolo_BugLockWriteResetsCaps.cfg         RED: DisableSetSurvivesLockWrite         states=86         distinct=9         depth=3   1s
+AdminSolo_BugLockWriteResetsCaps.cfg         RED: DisableSetSurvivesLockWrite         states=99         distinct=9         depth=3   0s
 AdminSolo_BugMaskIsCosmetic.cfg              RED: DisabledAppletNeverDispatches       states=40         distinct=10        depth=3   1s
-AdminSolo_BugPrivilegedOpUngated.cfg         RED: PrivilegedOpNeedsPresence           states=21         distinct=10        depth=3   0s
+AdminSolo_BugPrivilegedOpUngated.cfg         RED: PrivilegedOpNeedsPresence           states=21         distinct=10        depth=3   1s
 Display.cfg                                  GREEN                                    states=15         distinct=5         depth=3   1s
-DispMut_BugAnyTapApproves.cfg                RED: OnlyAllowConfirms                   states=15         distinct=6         depth=3   1s
+DispMut_BugAnyTapApproves.cfg                RED: OnlyAllowConfirms                   states=15         distinct=6         depth=3   0s
 DispMut_BugPadSubstitutesForCard.cfg         RED: ConfirmNamesTheOperation            states=12         distinct=6         depth=3   1s
-DispMut_BugPreScreenTouchApproves.cfg        RED: StaleTouchApprovesNothing           states=15         distinct=6         depth=4   0s
+DispMut_BugPreScreenTouchApproves.cfg        RED: StaleTouchApprovesNothing           states=15         distinct=6         depth=4   1s
 DispSolo_BugAnyTapApproves.cfg               RED: OnlyAllowConfirms                   states=15         distinct=6         depth=3   1s
-DispSolo_BugPadSubstitutesForCard.cfg        RED: ConfirmNamesTheOperation            states=12         distinct=6         depth=3   1s
-DispSolo_BugPreScreenTouchApproves.cfg       RED: StaleTouchApprovesNothing           states=15         distinct=6         depth=4   0s
-Boot.cfg                                     GREEN                                    states=77         distinct=24        depth=5   0s
+DispSolo_BugPadSubstitutesForCard.cfg        RED: ConfirmNamesTheOperation            states=12         distinct=6         depth=3   0s
+DispSolo_BugPreScreenTouchApproves.cfg       RED: StaleTouchApprovesNothing           states=15         distinct=6         depth=4   1s
+Boot.cfg                                     GREEN                                    states=77         distinct=24        depth=5   1s
 BootCarry.cfg                                GREEN                                    states=67         distinct=18        depth=5   1s
-BootMut_BugMarkerBeforeScrub.cfg             RED: MarkerNeverLies                     states=57         distinct=26        depth=5   1s
-BootMut_BugPartialLockCarry.cfg              RED: TheWholeLockRides                   states=61         distinct=26        depth=5   0s
-BootMut_BugRekeyKeepsTheMarker.cfg           RED: MarkerNeverLies                     states=2          distinct=2         depth=2   0s
-BootSolo_BugMarkerBeforeScrub.cfg            RED: MarkerNeverLies                     states=56         distinct=26        depth=5   1s
-BootSolo_BugPartialLockCarry.cfg             RED: TheWholeLockRides                   states=61         distinct=26        depth=5   1s
-BootSolo_BugRekeyKeepsTheMarker.cfg          RED: MarkerNeverLies                     states=2          distinct=2         depth=2   0s
-BootCarryMut_BugMarkerBeforeScrub.cfg        RED: MarkerNeverLies                     states=55         distinct=20        depth=5   0s
+BootMut_BugMarkerBeforeScrub.cfg             RED: MarkerNeverLies                     states=56         distinct=26        depth=5   0s
+BootMut_BugPartialLockCarry.cfg              RED: TheWholeLockRides                   states=61         distinct=26        depth=5   1s
+BootMut_BugRekeyKeepsTheMarker.cfg           RED: MarkerNeverLies                     states=2          distinct=2         depth=2   1s
+BootSolo_BugMarkerBeforeScrub.cfg            RED: MarkerNeverLies                     states=55         distinct=26        depth=5   1s
+BootSolo_BugPartialLockCarry.cfg             RED: TheWholeLockRides                   states=61         distinct=26        depth=5   0s
+BootSolo_BugRekeyKeepsTheMarker.cfg          RED: MarkerNeverLies                     states=2          distinct=2         depth=2   1s
+BootCarryMut_BugMarkerBeforeScrub.cfg        RED: MarkerNeverLies                     states=55         distinct=20        depth=5   1s
 BootCarryMut_BugPartialLockCarry.cfg         RED: TheWholeLockRides                   states=59         distinct=20        depth=5   1s
-BootCarryMut_BugRekeyKeepsTheMarker.cfg      RED: MarkerNeverLies                     states=2          distinct=2         depth=2   1s
-BootInduction.cfg                            GREEN                                    states=180        distinct=48        depth=1   0s
-BootInductionMut_BugRekeyKeepsTheMarker.cfg  RED: MarkerNeverLies                     states=101        distinct=50        depth=2   0s
+BootCarryMut_BugRekeyKeepsTheMarker.cfg      RED: MarkerNeverLies                     states=2          distinct=2         depth=2   0s
+BootInduction.cfg                            GREEN                                    states=180        distinct=48        depth=1   1s
+BootInductionMut_BugRekeyKeepsTheMarker.cfg  RED: MarkerNeverLies                     states=101        distinct=50        depth=2   1s
 Historical_BootWriteThenRearm.cfg            RED: MarkerNeverLies                     states=31         distinct=16        depth=4   1s
-Historical_BootRearmThenWrite.cfg            GREEN                                    states=141        distinct=38        depth=7   1s
-Transport.cfg                                GREEN                                    states=127        distinct=13        depth=5   0s
-TransMut_BugContIgnoresChannel.cfg           RED: NoCrossChannelSplice                states=42         distinct=11        depth=4   0s
+Historical_BootRearmThenWrite.cfg            GREEN                                    states=141        distinct=38        depth=7   0s
+Transport.cfg                                GREEN                                    states=127        distinct=13        depth=4   1s
+TransMut_BugContIgnoresChannel.cfg           RED: NoCrossChannelSplice                states=42         distinct=11        depth=4   1s
 TransMut_BugContIgnoresSeq.cfg               RED: NoSequenceGap                       states=45         distinct=10        depth=4   1s
-TransMut_BugInitLenUnchecked.cfg             RED: NoBufferOverrun                     states=28         distinct=8         depth=3   1s
-TransSolo_BugContIgnoresChannel.cfg          RED: NoCrossChannelSplice                states=42         distinct=11        depth=4   0s
-TransSolo_BugContIgnoresSeq.cfg              RED: NoSequenceGap                       states=45         distinct=10        depth=4   1s
+TransMut_BugInitLenUnchecked.cfg             RED: NoBufferOverrun                     states=28         distinct=8         depth=3   0s
+TransSolo_BugContIgnoresChannel.cfg          RED: NoCrossChannelSplice                states=42         distinct=11        depth=4   1s
+TransSolo_BugContIgnoresSeq.cfg              RED: NoSequenceGap                       states=45         distinct=10        depth=3   1s
 TransSolo_BugInitLenUnchecked.cfg            RED: NoBufferOverrun                     states=28         distinct=8         depth=3   1s
-TraceSeams.cfg                               GREEN                                    states=15         distinct=14        depth=14  1s
+TraceSeams.cfg                               GREEN                                    states=15         distinct=14        depth=14  0s
 TraceSeamsBad.cfg                            RED: Error: Deadlock reached.            states=2          distinct=2         depth=2   1s
 TraceSecurity.cfg                            GREEN                                    states=78         distinct=76        depth=76  1s
-TraceSecurityBadBeta.cfg                     RED: R4aRawRefinesB                      states=21         distinct=20        depth=20  0s
+TraceSecurityBadBeta.cfg                     RED: R4aRawRefinesB                      states=21         distinct=20        depth=20  1s
 TraceSecurityBadAlpha.cfg                    RED: R4bAlphaMatchesGamma                states=22         distinct=21        depth=21  1s
 TraceSecurityBadAlphaNoR4b.cfg               GREEN                                    states=78         distinct=76        depth=76  1s
 TraceSecurityBadOutcome.cfg                  RED: R4bEventConsensus                   states=11         distinct=10        depth=10  1s
@@ -280,236 +286,243 @@ TraceSecurityBadPinSet.cfg                   RED: R4cGateAnswers                
 TokenGate.cfg                                GREEN                                    states=1043       distinct=44        depth=3   1s
 TokenGateOracle.cfg                          GREEN                                    states=506        distinct=22        depth=1   1s
 TokenGateDisagreement.cfg                    RED: RequiredGateAgreesWithRelation      states=?          distinct=?         depth=?   1s
-TokenGateMut_BugUnauthorizedEdge.cfg         RED: NoAuthorizationBypassA              states=?          distinct=?         depth=?   2s
-TokenRefinement.cfg                          GREEN                                    states=48737609   distinct=4611484   depth=44  305s
-TokenRefinementBadMap.cfg                    RED: Error: Action property line 138, col 17 to line 138, col 30 of module RSKeyTokenAbstract is violated. states=1543       distinct=525       depth=6   0s
-TokenRefinementOutcome.cfg                   GREEN                                    states=48737609   distinct=4611484   depth=44  300s
+TokenGateMut_BugUnauthorizedEdge.cfg         RED: NoAuthorizationBypassA              states=?          distinct=?         depth=?   1s
+TokenRefinement.cfg                          GREEN                                    states=48737609   distinct=4611484   depth=44  300s
+TokenRefinementBadMap.cfg                    RED: Error: Action property line 138, col 17 to line 138, col 30 of module RSKeyTokenAbstract is violated. states=1491       distinct=499       depth=6   1s
+TokenRefinementOutcome.cfg                   GREEN                                    states=48737609   distinct=4611484   depth=44  303s
 TokenRefinementDeadToken.cfg                 RED: Error: Action property R1oTokenOutcomes is violated. states=2          distinct=2         depth=2   1s
+
 '''
 tlc = '''
-Shipped.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 10:44:54) 1401505939 states generated, 108618956 distinct states found, 0 states left on queue. The depth of the complete state graph search is 58. Finished in 47min 33s
-AlwaysUv.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 11:32:29) 385191607 states generated, 31451172 distinct states found, 0 states left on queue. The depth of the complete state graph search is 51. Finished in 12min 24s
-PermWide.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 11:44:53) 497332297 states generated, 29185896 distinct states found, 0 states left on queue. The depth of the complete state graph search is 45. Finished in 13min 21s
-PermWideMut_BugConsumeKeepsMcGa.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 11:58:15) 220355 states generated, 25074 distinct states found, 17793 states left on queue. The depth of the complete state graph search is 9. Finished in 01s
-PermWideMut_BugStopUsingKeepsPerms.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 11:58:17) 4016 states generated, 1289 distinct states found, 807 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-ForceChange.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 11:58:18) 156123019 states generated, 14853324 distinct states found, 0 states left on queue. The depth of the complete state graph search is 46. Finished in 04min 17s
-Historical_E76.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:02:37) 1401567499 states generated, 108618956 distinct states found, 0 states left on queue. The depth of the complete state graph search is 58. Finished in 47min 14s
-Historical_E77.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:49:51) 2167884 states generated, 241070 distinct states found, 108045 states left on queue. The depth of the complete state graph search is 13. Finished in 05s
-Mut_BugBackupSealedNotAGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:49:57) 27460 states generated, 6123 distinct states found, 3792 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Mut_BugChangePinKeepsPpuat.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:49:58) 19959 states generated, 4533 distinct states found, 2731 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Mut_BugCmWalkIgnoresChannel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:00) 17752 states generated, 4140 distinct states found, 2464 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Mut_BugConsumeKeepsMcGa.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:01) 60781 states generated, 11144 distinct states found, 6870 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
-Mut_BugCredBeforeRp.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:02) 7685 states generated, 2073 distinct states found, 1298 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Mut_BugDeleteRpBeforeCred.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:03) 4679214 states generated, 492986 distinct states found, 207834 states left on queue. The depth of the complete state graph search is 14. Finished in 10s
-Mut_BugForceChangeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:14) 17668 states generated, 4143 distinct states found, 2450 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Mut_BugHostPreemptsLocalWait.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:15) 89 states generated, 40 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-Mut_BugLocalPinIgnoresBudget.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:16) 3144765 states generated, 333227 distinct states found, 140359 states left on queue. The depth of the complete state graph search is 14. Finished in 07s
-Mut_BugLocalPinKeepsToken.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:24) 6106 states generated, 1670 distinct states found, 972 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Mut_BugNoConsumeAfterUp.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:25) 57340 states generated, 10631 distinct states found, 6543 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
-Mut_BugNoDropStaleCancelAtEntry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:26) 386 states generated, 169 distinct states found, 137 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Mut_BugNoTouchRequired.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:27) 799 states generated, 271 distinct states found, 196 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Mut_BugPanelCancelable.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:28) 687 states generated, 240 distinct states found, 182 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Mut_BugPinWriteBeforeRevoke.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:29) 23323 states generated, 5181 distinct states found, 3291 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Mut_BugPpuatIsAGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:30) 2260331 states generated, 249725 distinct states found, 111307 states left on queue. The depth of the complete state graph search is 13. Finished in 05s
-Mut_BugResetGatesFirst.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:36) 27236 states generated, 6074 distinct states found, 3783 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Mut_BugSeedDoesNotLead.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:37) 2578596 states generated, 284821 distinct states found, 127683 states left on queue. The depth of the complete state graph search is 13. Finished in 06s
-Mut_BugSetPinKeepsPpuat.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:44) 2058027 states generated, 240990 distinct states found, 108023 states left on queue. The depth of the complete state graph search is 13. Finished in 04s
-Mut_BugSetPinOverExisting.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:49) 2434 states generated, 718 distinct states found, 465 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-Mut_BugSoftLockLostOnWarmReset.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:50) 57563 states generated, 10666 distinct states found, 6518 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
-Mut_BugStateResetAfterWipe.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:52) 1357438 states generated, 165225 distinct states found, 81584 states left on queue. The depth of the complete state graph search is 12. Finished in 03s
-Mut_BugStopUsingKeepsPerms.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:56) 6146 states generated, 1674 distinct states found, 976 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Mut_BugTokenSurvivesPinChange.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:57) 170348 states generated, 25419 distinct states found, 15010 states left on queue. The depth of the complete state graph search is 10. Finished in 01s
-Mut_BugTokenlessIgnoresAlwaysUv.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:50:58) 59847 states generated, 10545 distinct states found, 6419 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
-Mut_BugTouchNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:00) 5137 states generated, 1429 distinct states found, 832 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Mut_BugUnscopedCancel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:01) 549 states generated, 189 distinct states found, 148 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Mut_BugUnscopedOtpCancel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:02) 664 states generated, 233 distinct states found, 179 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Mut_BugUvNotRqdIgnoresRk.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:03) 2836 states generated, 746 distinct states found, 490 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-Mut_BugWarmResetReopensWindow.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:04) 530 states generated, 179 distinct states found, 141 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Mut_BugWrongPinKeepsToken.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:05) 6081 states generated, 1663 distinct states found, 971 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Solo_BugBackupSealedNotAGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:06) 27463 states generated, 6154 distinct states found, 3829 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Solo_BugChangePinKeepsPpuat.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:07) 19931 states generated, 4548 distinct states found, 2749 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Solo_BugCmWalkIgnoresChannel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:08) 17856 states generated, 4151 distinct states found, 2470 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Solo_BugConsumeKeepsMcGa.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:09) 79951 states generated, 14102 distinct states found, 8805 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
-Solo_BugCredBeforeRp.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:11) 7094 states generated, 1953 distinct states found, 1200 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Solo_BugDeleteRpBeforeCred.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:12) 4664455 states generated, 490293 distinct states found, 206201 states left on queue. The depth of the complete state graph search is 14. Finished in 09s
-Solo_BugForceChangeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:22) 18184 states generated, 4238 distinct states found, 2536 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Solo_BugHostPreemptsLocalWait.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:23) 89 states generated, 40 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-Solo_BugLocalPinIgnoresBudget.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:24) 3132986 states generated, 332029 distinct states found, 140322 states left on queue. The depth of the complete state graph search is 14. Finished in 06s
-Solo_BugLocalPinKeepsToken.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:31) 6064 states generated, 1674 distinct states found, 979 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Solo_BugNoConsumeAfterUp.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:32) 58425 states generated, 10826 distinct states found, 6633 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
-Solo_BugNoDropStaleCancelAtEntry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:34) 383 states generated, 167 distinct states found, 135 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-Solo_BugNoTouchRequired.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:35) 799 states generated, 271 distinct states found, 196 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Solo_BugPanelCancelable.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:36) 685 states generated, 237 distinct states found, 179 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Solo_BugPinWriteBeforeRevoke.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:37) 23326 states generated, 5194 distinct states found, 3297 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Solo_BugPpuatIsAGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:38) 2097027 states generated, 234111 distinct states found, 106461 states left on queue. The depth of the complete state graph search is 13. Finished in 04s
-Solo_BugResetGatesFirst.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:43) 28722 states generated, 6397 distinct states found, 3887 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-Solo_BugSeedDoesNotLead.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:45) 2579485 states generated, 284999 distinct states found, 127815 states left on queue. The depth of the complete state graph search is 13. Finished in 05s
-Solo_BugSetPinKeepsPpuat.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:51:51) 6425106 states generated, 680132 distinct states found, 268045 states left on queue. The depth of the complete state graph search is 15. Finished in 13s
-Solo_BugSetPinOverExisting.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:05) 2486 states generated, 744 distinct states found, 488 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-Solo_BugSoftLockLostOnWarmReset.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:06) 62716 states generated, 11387 distinct states found, 6898 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
-Solo_BugStateResetAfterWipe.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:07) 1367271 states generated, 167268 distinct states found, 82272 states left on queue. The depth of the complete state graph search is 12. Finished in 03s
-Solo_BugStopUsingKeepsPerms.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:11) 6146 states generated, 1674 distinct states found, 976 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Solo_BugTokenSurvivesPinChange.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:12) 170776 states generated, 25455 distinct states found, 15003 states left on queue. The depth of the complete state graph search is 10. Finished in 00s
-Solo_BugTokenlessIgnoresAlwaysUv.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:14) 58876 states generated, 10360 distinct states found, 6316 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
-Solo_BugTouchNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:15) 4945 states generated, 1382 distinct states found, 809 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Solo_BugUnscopedCancel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:16) 549 states generated, 189 distinct states found, 148 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Solo_BugUnscopedOtpCancel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:17) 672 states generated, 237 distinct states found, 182 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Solo_BugUvNotRqdIgnoresRk.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:18) 2829 states generated, 745 distinct states found, 490 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-Solo_BugWarmResetReopensWindow.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:19) 540 states generated, 185 distinct states found, 146 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-Solo_BugWrongPinKeepsToken.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:20) 6140 states generated, 1670 distinct states found, 972 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Solo_NoAccessibleSecretWithoutGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:21) 483746 states generated, 63870 distinct states found, 35025 states left on queue. The depth of the complete state graph search is 11. Finished in 01s
-Solo_NoLiveTokenWithoutPinRecord.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:23) 1026813 states generated, 123856 distinct states found, 61390 states left on queue. The depth of the complete state graph search is 12. Finished in 02s
-Solo_RamNeverOutlivesFlashSeed.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:27) 9530 states generated, 2546 distinct states found, 1516 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-SoloClause_ResetKeepsTheAlwaysUvGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:52:28) 29218298 states generated, 2789491 distinct states found, 897162 states left on queue. The depth of the complete state graph search is 18. Finished in 56s
-SoloClause_ResetKeepsTheBackupSeal.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:53:25) 27321 states generated, 6130 distinct states found, 3835 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
-SoloClause_ResetKeepsThePinGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:53:26) 12468167 states generated, 1239080 distinct states found, 457440 states left on queue. The depth of the complete state graph search is 16. Finished in 24s
-Fairness.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:53:51) 151264817 states generated, 14514424 distinct states found, 0 states left on queue. The depth of the complete state graph search is 46. Finished in 03min 48s
-FairMut_BugFairnessFoldsLocalCeremony.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:40) 73 states generated, 40 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-Seams.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:41) 6045 states generated, 410 distinct states found, 0 states left on queue. The depth of the complete state graph search is 11. Finished in 00s
-SeamMut_BugAdminOpensKeyOps.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:42) 336 states generated, 65 distinct states found, 39 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamMut_BugCardResetKeepsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:42) 93 states generated, 29 distinct states found, 19 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamMut_BugCodelessOathIsAStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:43) Finished in 00s
-SeamMut_BugDeselectKeepsOathUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:44) 345 states generated, 64 distinct states found, 37 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamMut_BugFailedChangeKeepsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:45) 348 states generated, 68 distinct states found, 41 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamMut_BugFreshCardOpensOtpPin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:46) Finished in 00s
-SeamMut_BugPinFreshNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:47) 127 states generated, 37 distinct states found, 26 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamMut_BugPinFreshOutlivesPin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:47) 120 states generated, 37 distinct states found, 26 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamMut_BugPivChangeResetsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:48) 142 states generated, 42 distinct states found, 30 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamMut_BugPwStatusIgnoresAdmin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:49) 175 states generated, 47 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamMut_BugRefusedValidateDropsUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:50) 109 states generated, 32 distinct states found, 22 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamMut_BugRefusedValidateGrants.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:51) 382 states generated, 70 distinct states found, 40 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamMut_BugRemoveCodeUnvalidated.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:52) 377 states generated, 71 distinct states found, 42 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamMut_BugReselectResetsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:52) 119 states generated, 37 distinct states found, 26 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamMut_BugResetKeepsOathUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:53) 384 states generated, 71 distinct states found, 41 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamMut_BugSelectKeepsOtherApplet.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:54) 77 states generated, 27 distinct states found, 17 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamMut_BugSigPinNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:55) 1825 states generated, 211 distinct states found, 83 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-SeamMut_BugUserStatusOpensAdmin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:56) 144 states generated, 43 distinct states found, 31 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamMut_BugWipeWithoutItsReboot.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:57) 99 states generated, 29 distinct states found, 19 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamSolo_BugAdminOpensKeyOps.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:57) 324 states generated, 65 distinct states found, 40 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamSolo_BugCardResetKeepsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:58) 93 states generated, 29 distinct states found, 19 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamSolo_BugCodelessOathIsAStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:57:59) Finished in 00s
-SeamSolo_BugDeselectKeepsOathUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:00) 394 states generated, 69 distinct states found, 38 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamSolo_BugFailedChangeKeepsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:01) 348 states generated, 68 distinct states found, 41 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamSolo_BugFreshCardOpensOtpPin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:02) Finished in 00s
-SeamSolo_BugPinFreshNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:02) 143 states generated, 42 distinct states found, 30 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamSolo_BugPinFreshOutlivesPin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:03) 136 states generated, 42 distinct states found, 30 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamSolo_BugPivChangeResetsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:04) 159 states generated, 44 distinct states found, 31 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamSolo_BugPwStatusIgnoresAdmin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:05) 175 states generated, 47 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamSolo_BugRefusedValidateDropsUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:06) 109 states generated, 32 distinct states found, 22 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamSolo_BugRefusedValidateGrants.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:06) 381 states generated, 70 distinct states found, 40 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamSolo_BugRemoveCodeUnvalidated.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:07) 396 states generated, 73 distinct states found, 42 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamSolo_BugReselectResetsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:08) 103 states generated, 32 distinct states found, 22 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamSolo_BugResetKeepsOathUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:09) 401 states generated, 72 distinct states found, 41 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-SeamSolo_BugSelectKeepsOtherApplet.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:10) 77 states generated, 27 distinct states found, 17 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamSolo_BugSigPinNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:11) 1894 states generated, 215 distinct states found, 81 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-SeamSolo_BugUserStatusOpensAdmin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:12) 144 states generated, 43 distinct states found, 31 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-SeamSolo_BugWipeWithoutItsReboot.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:12) 99 states generated, 29 distinct states found, 19 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-Store.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:13) 4185 states generated, 364 distinct states found, 0 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-StoreMut_BugCacheFaultAsAbsent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:14) 55 states generated, 24 distinct states found, 19 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-StoreMut_BugDeleteHidesFaultedDrop.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:15) 175 states generated, 61 distinct states found, 50 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreMut_BugDeleteMetaOnlyUnderPresent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:16) 195 states generated, 65 distinct states found, 53 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreMut_BugDeleteValueBeforeMeta.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:17) 171 states generated, 61 distinct states found, 50 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreMut_BugMetaAddDropsOnFault.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:17) 183 states generated, 58 distinct states found, 47 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreMut_BugMetaDeleteDropsOnFault.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:18) 183 states generated, 58 distinct states found, 47 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreMut_BugMetaDeleteTearsBlob.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:19) 189 states generated, 64 distinct states found, 53 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreMut_BugMetaWriteTearsBlob.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:20) 221 states generated, 77 distinct states found, 66 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreMut_BugTruncatedScanDecidesAll.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:21) 59 states generated, 25 distinct states found, 20 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-StoreSolo_BugCacheFaultAsAbsent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:21) 55 states generated, 24 distinct states found, 19 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-StoreSolo_BugDeleteHidesFaultedDrop.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:22) 175 states generated, 61 distinct states found, 50 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreSolo_BugDeleteMetaOnlyUnderPresent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:23) 195 states generated, 66 distinct states found, 54 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreSolo_BugDeleteValueBeforeMeta.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:24) 171 states generated, 61 distinct states found, 50 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreSolo_BugMetaAddDropsOnFault.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:25) 183 states generated, 58 distinct states found, 47 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreSolo_BugMetaDeleteDropsOnFault.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:25) 183 states generated, 58 distinct states found, 47 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreSolo_BugMetaDeleteTearsBlob.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:26) 189 states generated, 64 distinct states found, 53 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreSolo_BugMetaWriteTearsBlob.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:27) 221 states generated, 77 distinct states found, 66 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreSolo_BugTruncatedScanDecidesAll.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:28) 59 states generated, 25 distinct states found, 20 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-StoreSolo_CacheHonest.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:29) 183 states generated, 58 distinct states found, 47 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-StoreInduction.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:29) 12460 states generated, 1000 distinct states found, 0 states left on queue. The depth of the complete state graph search is 1. Finished in 00s
-StoreInductionMut_BugMetaAddDropsOnFault.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:30) 1499 states generated, 1002 distinct states found, 961 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
-Lattice.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:31) 2431 states generated, 243 distinct states found, 0 states left on queue. The depth of the complete state graph search is 11. Finished in 00s
-LatMut_BugRecoveryWithoutSecret.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:32) 17 states generated, 9 distinct states found, 5 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-LatMut_BugUseWhenBlocked.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:33) 73 states generated, 30 distinct states found, 21 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-LatMut_BugWrongDoesNotSpend.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:34) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
-LatSolo_BugRecoveryWithoutSecret.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:34) 17 states generated, 9 distinct states found, 5 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-LatSolo_BugUseWhenBlocked.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:35) 63 states generated, 28 distinct states found, 20 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-LatSolo_BugWrongDoesNotSpend.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:36) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
-Policies.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:37) 9200521 states generated, 331776 distinct states found, 0 states left on queue. The depth of the complete state graph search is 19. Finished in 05s
-PolicyMut_BugOathCodeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:43) 305 states generated, 79 distinct states found, 66 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-PolicyMut_BugOathTouchIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:44) 357 states generated, 87 distinct states found, 72 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-PolicyMut_BugOtpBootKeepsPosition.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:45) 12204 states generated, 1508 distinct states found, 1075 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-PolicyMut_BugOtpCodeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:46) 568 states generated, 115 distinct states found, 94 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-PolicyMut_BugOtpCounterRepeats.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:47) 2810 states generated, 434 distinct states found, 331 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-PolicyMut_BugOtpPressTypesUnpersisted.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:48) 14232 states generated, 1981 distinct states found, 1480 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-PolicyMut_BugOtpSwapKeepsSession.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:48) 14200 states generated, 2031 distinct states found, 1531 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-PolicyMut_BugPgpAttributeKeepsKey.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:49) 207 states generated, 63 distinct states found, 52 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-PolicyMut_BugPivAlwaysDoesNotSpend.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:50) 788 states generated, 175 distinct states found, 144 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-PolicyMut_BugPivPolicyIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:51) 39 states generated, 16 distinct states found, 11 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-PolicySolo_BugOathCodeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:52) 305 states generated, 79 distinct states found, 66 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-PolicySolo_BugOathTouchIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:53) 357 states generated, 87 distinct states found, 72 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-PolicySolo_BugOtpBootKeepsPosition.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:54) 12237 states generated, 1509 distinct states found, 1074 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-PolicySolo_BugOtpCodeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:55) 572 states generated, 114 distinct states found, 93 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-PolicySolo_BugOtpCounterRepeats.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:55) 2810 states generated, 434 distinct states found, 331 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-PolicySolo_BugOtpPressTypesUnpersisted.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:56) 14013 states generated, 1966 distinct states found, 1473 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-PolicySolo_BugOtpSwapKeepsSession.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:57) 14170 states generated, 2029 distinct states found, 1530 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-PolicySolo_BugPgpAttributeKeepsKey.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:58) 207 states generated, 63 distinct states found, 52 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-PolicySolo_BugPivAlwaysDoesNotSpend.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:58:59) 788 states generated, 175 distinct states found, 144 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-PolicySolo_BugPivPolicyIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:00) 34 states generated, 14 distinct states found, 11 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-Admin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:01) 101 states generated, 8 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-AdminMut_BugAdminGateable.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:02) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
-AdminMut_BugLockWriteResetsCaps.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:02) 99 states generated, 9 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-AdminMut_BugMaskIsCosmetic.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:03) 40 states generated, 10 distinct states found, 5 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-AdminMut_BugPrivilegedOpUngated.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:04) 21 states generated, 10 distinct states found, 6 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-AdminSolo_BugAdminGateable.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:05) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
-AdminSolo_BugLockWriteResetsCaps.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:05) 86 states generated, 9 distinct states found, 1 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-AdminSolo_BugMaskIsCosmetic.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:06) 40 states generated, 10 distinct states found, 5 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-AdminSolo_BugPrivilegedOpUngated.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:07) 21 states generated, 10 distinct states found, 6 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-Display.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:08) 15 states generated, 5 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-DispMut_BugAnyTapApproves.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:08) 15 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-DispMut_BugPadSubstitutesForCard.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:09) 12 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-DispMut_BugPreScreenTouchApproves.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:10) 15 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-DispSolo_BugAnyTapApproves.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:10) 15 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-DispSolo_BugPadSubstitutesForCard.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:11) 12 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-DispSolo_BugPreScreenTouchApproves.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:12) 15 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-Boot.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:13) 77 states generated, 24 distinct states found, 0 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-BootCarry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:13) 67 states generated, 18 distinct states found, 0 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-BootMut_BugMarkerBeforeScrub.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:14) 57 states generated, 26 distinct states found, 10 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-BootMut_BugPartialLockCarry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:15) 61 states generated, 26 distinct states found, 9 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-BootMut_BugRekeyKeepsTheMarker.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:16) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
-BootSolo_BugMarkerBeforeScrub.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:16) 56 states generated, 26 distinct states found, 11 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-BootSolo_BugPartialLockCarry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:17) 61 states generated, 26 distinct states found, 9 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-BootSolo_BugRekeyKeepsTheMarker.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:18) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
-BootCarryMut_BugMarkerBeforeScrub.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:19) 55 states generated, 20 distinct states found, 6 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-BootCarryMut_BugPartialLockCarry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:19) 59 states generated, 20 distinct states found, 4 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-BootCarryMut_BugRekeyKeepsTheMarker.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:20) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
-BootInduction.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:21) 180 states generated, 48 distinct states found, 0 states left on queue. The depth of the complete state graph search is 1. Finished in 00s
-BootInductionMut_BugRekeyKeepsTheMarker.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:22) 101 states generated, 50 distinct states found, 37 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
-Historical_BootWriteThenRearm.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:22) 31 states generated, 16 distinct states found, 9 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-Historical_BootRearmThenWrite.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:23) 141 states generated, 38 distinct states found, 0 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
-Transport.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:24) 127 states generated, 13 distinct states found, 0 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
-TransMut_BugContIgnoresChannel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:25) 42 states generated, 11 distinct states found, 4 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-TransMut_BugContIgnoresSeq.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:25) 45 states generated, 10 distinct states found, 3 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-TransMut_BugInitLenUnchecked.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:26) 28 states generated, 8 distinct states found, 4 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-TransSolo_BugContIgnoresChannel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:27) 42 states generated, 11 distinct states found, 4 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-TransSolo_BugContIgnoresSeq.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:28) 45 states generated, 10 distinct states found, 3 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
-TransSolo_BugInitLenUnchecked.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:28) 28 states generated, 8 distinct states found, 4 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-TraceSeams.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:29) 15 states generated, 14 distinct states found, 0 states left on queue. The depth of the complete state graph search is 14. Finished in 00s
-TraceSeamsBad.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:30) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
-TraceSecurity.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:31) 78 states generated, 76 distinct states found, 0 states left on queue. The depth of the complete state graph search is 76. Finished in 00s
-TraceSecurityBadBeta.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:32) 21 states generated, 20 distinct states found, 0 states left on queue. The depth of the complete state graph search is 20. Finished in 00s
-TraceSecurityBadAlpha.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:33) 22 states generated, 21 distinct states found, 0 states left on queue. The depth of the complete state graph search is 21. Finished in 00s
-TraceSecurityBadAlphaNoR4b.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:34) 78 states generated, 76 distinct states found, 0 states left on queue. The depth of the complete state graph search is 76. Finished in 00s
-TraceSecurityBadOutcome.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:35) 11 states generated, 10 distinct states found, 0 states left on queue. The depth of the complete state graph search is 10. Finished in 00s
-TraceSecurityBadUvNotRqd.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:35) 45 states generated, 44 distinct states found, 0 states left on queue. The depth of the complete state graph search is 44. Finished in 00s
-TraceSecurityBadResetWindow.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:36) 77 states generated, 76 distinct states found, 0 states left on queue. The depth of the complete state graph search is 76. Finished in 00s
-TraceSecurityBadAlwaysUvArm.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:37) 52 states generated, 51 distinct states found, 0 states left on queue. The depth of the complete state graph search is 51. Finished in 00s
-TraceSecurityBadPinSet.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:38) 13 states generated, 12 distinct states found, 0 states left on queue. The depth of the complete state graph search is 12. Finished in 00s
-TokenGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:39) 1043 states generated, 44 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
-TokenGateOracle.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:40) 506 states generated, 22 distinct states found, 0 states left on queue. The depth of the complete state graph search is 1. Finished in 00s
-TokenGateDisagreement.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:42) Finished in 00s
-TokenGateMut_BugUnauthorizedEdge.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:43) Finished in 00s
-TokenRefinement.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 12:59:44) 48737609 states generated, 4611484 distinct states found, 0 states left on queue. The depth of the complete state graph search is 44. Finished in 05min 04s
-TokenRefinementBadMap.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 13:04:49) 1543 states generated, 525 distinct states found, 320 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
-TokenRefinementOutcome.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 13:04:50) 48737609 states generated, 4611484 distinct states found, 0 states left on queue. The depth of the complete state graph search is 44. Finished in 05min 00s
-TokenRefinementDeadToken.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-19 13:09:51) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+Shipped.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 20:37:24) 1401505939 states generated, 108618956 distinct states found, 0 states left on queue. The depth of the complete state graph search is 58. Finished in 47min 31s
+AlwaysUv.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 21:24:56) 385191607 states generated, 31451172 distinct states found, 0 states left on queue. The depth of the complete state graph search is 51. Finished in 12min 25s
+PermWide.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 21:37:23) 497332297 states generated, 29185896 distinct states found, 0 states left on queue. The depth of the complete state graph search is 45. Finished in 13min 32s
+PermWideMut_BugConsumeKeepsMcGa.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 21:50:56) 136102 states generated, 16049 distinct states found, 11434 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
+PermWideMut_BugStopUsingKeepsPerms.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 21:50:57) 3913 states generated, 1261 distinct states found, 790 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+ForceChange.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 21:50:58) 156123019 states generated, 14853324 distinct states found, 0 states left on queue. The depth of the complete state graph search is 46. Finished in 04min 17s
+Historical_E76.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 21:55:16) 1401567499 states generated, 108618956 distinct states found, 0 states left on queue. The depth of the complete state graph search is 58. Finished in 47min 37s
+Historical_E77.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:42:54) 2115917 states generated, 236219 distinct states found, 106412 states left on queue. The depth of the complete state graph search is 13. Finished in 05s
+Mut_BugBackupSealedNotAGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:00) 28898 states generated, 6451 distinct states found, 3911 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Mut_BugChangePinKeepsPpuat.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:01) 20793 states generated, 4651 distinct states found, 2856 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Mut_BugCmWalkIgnoresChannel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:02) 18009 states generated, 4209 distinct states found, 2513 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Mut_BugConsumeKeepsMcGa.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:03) 58311 states generated, 10810 distinct states found, 6621 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
+Mut_BugCredBeforeRp.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:05) 7685 states generated, 2073 distinct states found, 1298 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Mut_BugDeleteRpBeforeCred.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:06) 4663688 states generated, 490641 distinct states found, 206441 states left on queue. The depth of the complete state graph search is 14. Finished in 10s
+Mut_BugForceChangeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:16) 18311 states generated, 4250 distinct states found, 2550 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Mut_BugHostPreemptsLocalWait.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:18) 89 states generated, 40 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+Mut_BugLocalPinIgnoresBudget.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:19) 3137775 states generated, 332251 distinct states found, 140189 states left on queue. The depth of the complete state graph search is 14. Finished in 07s
+Mut_BugLocalPinKeepsToken.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:26) 5736 states generated, 1584 distinct states found, 927 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Mut_BugNoConsumeAfterUp.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:28) 58329 states generated, 10810 distinct states found, 6626 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
+Mut_BugNoDropStaleCancelAtEntry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:29) 386 states generated, 169 distinct states found, 137 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Mut_BugNoTouchRequired.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:30) 801 states generated, 271 distinct states found, 196 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Mut_BugPanelCancelable.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:31) 707 states generated, 248 distinct states found, 188 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Mut_BugPinWriteBeforeRevoke.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:32) 23413 states generated, 5194 distinct states found, 3295 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Mut_BugPpuatIsAGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:33) 2434450 states generated, 266323 distinct states found, 116950 states left on queue. The depth of the complete state graph search is 13. Finished in 05s
+Mut_BugResetGatesFirst.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:39) 28790 states generated, 6406 distinct states found, 3883 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Mut_BugSeedDoesNotLead.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:41) 2578579 states generated, 284842 distinct states found, 127716 states left on queue. The depth of the complete state graph search is 13. Finished in 06s
+Mut_BugSetPinKeepsPpuat.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:47) 1763862 states generated, 210428 distinct states found, 96260 states left on queue. The depth of the complete state graph search is 13. Finished in 04s
+Mut_BugSetPinOverExisting.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:52) 2434 states generated, 718 distinct states found, 465 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+Mut_BugSoftLockLostOnWarmReset.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:53) 61752 states generated, 11229 distinct states found, 6859 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
+Mut_BugStateResetAfterWipe.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:55) 1363970 states generated, 166600 distinct states found, 82091 states left on queue. The depth of the complete state graph search is 12. Finished in 03s
+Mut_BugStopUsingKeepsPerms.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:43:59) 6023 states generated, 1660 distinct states found, 976 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Mut_BugTokenSurvivesPinChange.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:00) 172117 states generated, 25923 distinct states found, 15352 states left on queue. The depth of the complete state graph search is 10. Finished in 01s
+Mut_BugTokenlessIgnoresAlwaysUv.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:02) 54480 states generated, 9827 distinct states found, 5983 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
+Mut_BugTouchNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:03) 5162 states generated, 1431 distinct states found, 831 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Mut_BugUnscopedCancel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:04) 538 states generated, 183 distinct states found, 143 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Mut_BugUnscopedOtpCancel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:05) 679 states generated, 240 distinct states found, 184 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Mut_BugUvNotRqdIgnoresRk.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:06) 2836 states generated, 746 distinct states found, 490 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+Mut_BugWarmResetReopensWindow.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:07) 482 states generated, 171 distinct states found, 136 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Mut_BugWrongPinKeepsToken.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:08) 6147 states generated, 1679 distinct states found, 978 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Solo_BugBackupSealedNotAGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:09) 28813 states generated, 6437 distinct states found, 3916 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Solo_BugChangePinKeepsPpuat.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:10) 21055 states generated, 4674 distinct states found, 2866 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Solo_BugCmWalkIgnoresChannel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:11) 17204 states generated, 4040 distinct states found, 2384 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Solo_BugConsumeKeepsMcGa.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:12) 80683 states generated, 14185 distinct states found, 8854 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
+Solo_BugCredBeforeRp.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:14) 7685 states generated, 2073 distinct states found, 1298 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Solo_BugDeleteRpBeforeCred.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:15) 4656430 states generated, 489306 distinct states found, 205527 states left on queue. The depth of the complete state graph search is 14. Finished in 10s
+Solo_BugForceChangeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:26) 18635 states generated, 4304 distinct states found, 2577 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Solo_BugHostPreemptsLocalWait.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:27) 89 states generated, 40 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+Solo_BugLocalPinIgnoresBudget.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:28) 3137200 states generated, 332253 distinct states found, 140285 states left on queue. The depth of the complete state graph search is 14. Finished in 06s
+Solo_BugLocalPinKeepsToken.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:35) 6128 states generated, 1683 distinct states found, 980 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Solo_BugNoConsumeAfterUp.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:36) 58243 states generated, 10801 distinct states found, 6618 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
+Solo_BugNoDropStaleCancelAtEntry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:38) 386 states generated, 169 distinct states found, 137 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Solo_BugNoTouchRequired.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:38) 789 states generated, 266 distinct states found, 193 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Solo_BugPanelCancelable.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:39) 673 states generated, 236 distinct states found, 179 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Solo_BugPinWriteBeforeRevoke.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:40) 23544 states generated, 5220 distinct states found, 3318 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Solo_BugPpuatIsAGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:42) 2131025 states generated, 238311 distinct states found, 108485 states left on queue. The depth of the complete state graph search is 13. Finished in 04s
+Solo_BugResetGatesFirst.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:47) 27252 states generated, 6088 distinct states found, 3799 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+Solo_BugSeedDoesNotLead.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:48) 2577726 states generated, 284701 distinct states found, 127610 states left on queue. The depth of the complete state graph search is 13. Finished in 05s
+Solo_BugSetPinKeepsPpuat.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:44:55) 6422684 states generated, 679732 distinct states found, 267830 states left on queue. The depth of the complete state graph search is 15. Finished in 13s
+Solo_BugSetPinOverExisting.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:09) 2491 states generated, 745 distinct states found, 488 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+Solo_BugSoftLockLostOnWarmReset.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:10) 62124 states generated, 11454 distinct states found, 7045 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
+Solo_BugStateResetAfterWipe.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:11) 1369838 states generated, 167738 distinct states found, 82365 states left on queue. The depth of the complete state graph search is 12. Finished in 03s
+Solo_BugStopUsingKeepsPerms.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:15) 6092 states generated, 1667 distinct states found, 973 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Solo_BugTokenSurvivesPinChange.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:17) 170418 states generated, 25420 distinct states found, 15008 states left on queue. The depth of the complete state graph search is 10. Finished in 00s
+Solo_BugTokenlessIgnoresAlwaysUv.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:18) 61353 states generated, 10793 distinct states found, 6624 states left on queue. The depth of the complete state graph search is 9. Finished in 00s
+Solo_BugTouchNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:19) 5032 states generated, 1400 distinct states found, 816 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Solo_BugUnscopedCancel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:21) 551 states generated, 191 distinct states found, 150 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Solo_BugUnscopedOtpCancel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:21) 673 states generated, 243 distinct states found, 187 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Solo_BugUvNotRqdIgnoresRk.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:22) 2836 states generated, 746 distinct states found, 490 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+Solo_BugWarmResetReopensWindow.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:23) 520 states generated, 184 distinct states found, 146 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+Solo_BugWrongPinKeepsToken.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:24) 6140 states generated, 1670 distinct states found, 972 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Solo_NoAccessibleSecretWithoutGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:25) 606359 states generated, 77661 distinct states found, 41570 states left on queue. The depth of the complete state graph search is 11. Finished in 01s
+Solo_NoLiveTokenWithoutPinRecord.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:28) 1241291 states generated, 144835 distinct states found, 70356 states left on queue. The depth of the complete state graph search is 12. Finished in 03s
+Solo_RamNeverOutlivesFlashSeed.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:32) 10149 states generated, 2683 distinct states found, 1564 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+SoloClause_ResetKeepsTheAlwaysUvGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:45:33) 29210332 states generated, 2788247 distinct states found, 896974 states left on queue. The depth of the complete state graph search is 18. Finished in 57s
+SoloClause_ResetKeepsTheBackupSeal.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:46:30) 27301 states generated, 6130 distinct states found, 3840 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+SoloClause_ResetKeepsThePinGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:46:32) 12468418 states generated, 1239141 distinct states found, 457475 states left on queue. The depth of the complete state graph search is 16. Finished in 25s
+Fairness.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:46:57) 151264817 states generated, 14514424 distinct states found, 0 states left on queue. The depth of the complete state graph search is 46. Finished in 03min 47s
+FairMut_BugFairnessFoldsLocalCeremony.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:46) 73 states generated, 40 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+Seams.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:47) 6045 states generated, 410 distinct states found, 0 states left on queue. The depth of the complete state graph search is 11. Finished in 00s
+SeamMut_BugAdminOpensKeyOps.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:48) 320 states generated, 62 distinct states found, 37 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamMut_BugCardResetKeepsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:48) 93 states generated, 29 distinct states found, 19 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamMut_BugCodelessOathIsAStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:49) Finished in 00s
+SeamMut_BugDecipherGhostSpentLikeSig.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:50) 2960 states generated, 282 distinct states found, 77 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+SeamMut_BugDeselectKeepsOathUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:51) 413 states generated, 70 distinct states found, 38 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamMut_BugFailedChangeKeepsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:52) 335 states generated, 66 distinct states found, 40 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamMut_BugFreshCardOpensOtpPin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:53) Finished in 00s
+SeamMut_BugOathReselectUnrecorded.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:53) 314 states generated, 63 distinct states found, 38 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamMut_BugPinFreshNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:54) 160 states generated, 44 distinct states found, 31 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamMut_BugPinFreshOutlivesPin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:55) 120 states generated, 37 distinct states found, 26 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamMut_BugPivChangeResetsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:56) 142 states generated, 42 distinct states found, 30 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamMut_BugPwStatusIgnoresAdmin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:57) 175 states generated, 47 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamMut_BugRefusedValidateDropsUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:58) 109 states generated, 32 distinct states found, 22 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamMut_BugRefusedValidateGrants.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:58) 382 states generated, 70 distinct states found, 40 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamMut_BugRemoveCodeUnvalidated.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:50:59) 396 states generated, 73 distinct states found, 42 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamMut_BugReselectResetsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:00) 119 states generated, 37 distinct states found, 26 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamMut_BugResetKeepsOathUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:01) 383 states generated, 71 distinct states found, 41 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamMut_BugSelectKeepsOtherApplet.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:02) 77 states generated, 27 distinct states found, 17 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamMut_BugSigPinNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:03) 1703 states generated, 203 distinct states found, 83 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+SeamMut_BugUserStatusOpensAdmin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:04) 144 states generated, 43 distinct states found, 31 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamMut_BugWipeWithoutItsReboot.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:04) 99 states generated, 29 distinct states found, 19 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamSolo_BugAdminOpensKeyOps.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:05) 308 states generated, 62 distinct states found, 38 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamSolo_BugCardResetKeepsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:06) 93 states generated, 29 distinct states found, 19 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamSolo_BugCodelessOathIsAStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:07) Finished in 00s
+SeamSolo_BugDecipherGhostSpentLikeSig.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:08) 3101 states generated, 290 distinct states found, 75 states left on queue. The depth of the complete state graph search is 8. Finished in 00s
+SeamSolo_BugDeselectKeepsOathUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:09) 394 states generated, 69 distinct states found, 38 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamSolo_BugFailedChangeKeepsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:09) 367 states generated, 70 distinct states found, 41 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamSolo_BugFreshCardOpensOtpPin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:10) Finished in 00s
+SeamSolo_BugOathReselectUnrecorded.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:11) 343 states generated, 68 distinct states found, 41 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamSolo_BugPinFreshNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:12) 160 states generated, 44 distinct states found, 31 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamSolo_BugPinFreshOutlivesPin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:13) 136 states generated, 42 distinct states found, 30 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamSolo_BugPivChangeResetsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:14) 142 states generated, 42 distinct states found, 30 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamSolo_BugPwStatusIgnoresAdmin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:14) 175 states generated, 47 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamSolo_BugRefusedValidateDropsUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:15) 125 states generated, 37 distinct states found, 26 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamSolo_BugRefusedValidateGrants.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:16) 394 states generated, 72 distinct states found, 41 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamSolo_BugRemoveCodeUnvalidated.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:17) 409 states generated, 75 distinct states found, 43 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamSolo_BugReselectResetsStatus.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:18) 135 states generated, 42 distinct states found, 30 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamSolo_BugResetKeepsOathUnlock.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:18) 420 states generated, 73 distinct states found, 41 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+SeamSolo_BugSelectKeepsOtherApplet.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:19) 77 states generated, 27 distinct states found, 17 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamSolo_BugSigPinNotSpent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:20) 1791 states generated, 210 distinct states found, 85 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+SeamSolo_BugUserStatusOpensAdmin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:21) 158 states generated, 46 distinct states found, 32 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+SeamSolo_BugWipeWithoutItsReboot.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:22) 99 states generated, 29 distinct states found, 19 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+Store.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:23) 4185 states generated, 364 distinct states found, 0 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+StoreMut_BugCacheFaultAsAbsent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:24) 55 states generated, 24 distinct states found, 19 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+StoreMut_BugDeleteHidesFaultedDrop.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:24) 175 states generated, 61 distinct states found, 50 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreMut_BugDeleteMetaOnlyUnderPresent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:25) 195 states generated, 66 distinct states found, 54 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreMut_BugDeleteValueBeforeMeta.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:26) 171 states generated, 61 distinct states found, 50 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreMut_BugMetaAddDropsOnFault.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:27) 183 states generated, 58 distinct states found, 47 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreMut_BugMetaDeleteDropsOnFault.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:28) 183 states generated, 57 distinct states found, 46 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreMut_BugMetaDeleteTearsBlob.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:28) 189 states generated, 64 distinct states found, 53 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreMut_BugMetaWriteTearsBlob.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:29) 221 states generated, 77 distinct states found, 66 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreMut_BugTruncatedScanDecidesAll.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:30) 59 states generated, 25 distinct states found, 20 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+StoreSolo_BugCacheFaultAsAbsent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:31) 55 states generated, 24 distinct states found, 19 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+StoreSolo_BugDeleteHidesFaultedDrop.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:32) 175 states generated, 61 distinct states found, 50 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreSolo_BugDeleteMetaOnlyUnderPresent.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:33) 195 states generated, 66 distinct states found, 54 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreSolo_BugDeleteValueBeforeMeta.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:33) 171 states generated, 61 distinct states found, 50 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreSolo_BugMetaAddDropsOnFault.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:34) 183 states generated, 58 distinct states found, 47 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreSolo_BugMetaDeleteDropsOnFault.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:35) 183 states generated, 58 distinct states found, 47 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreSolo_BugMetaDeleteTearsBlob.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:36) 189 states generated, 64 distinct states found, 53 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreSolo_BugMetaWriteTearsBlob.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:37) 221 states generated, 77 distinct states found, 66 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreSolo_BugTruncatedScanDecidesAll.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:38) 59 states generated, 25 distinct states found, 20 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+StoreSolo_CacheHonest.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:38) 183 states generated, 58 distinct states found, 47 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+StoreInduction.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:39) 12460 states generated, 1000 distinct states found, 0 states left on queue. The depth of the complete state graph search is 1. Finished in 00s
+StoreInductionMut_BugMetaAddDropsOnFault.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:40) 1499 states generated, 1002 distinct states found, 961 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+Lattice.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:41) 2431 states generated, 243 distinct states found, 0 states left on queue. The depth of the complete state graph search is 11. Finished in 00s
+LatMut_BugRecoveryWithoutSecret.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:42) 17 states generated, 9 distinct states found, 5 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+LatMut_BugUseWhenBlocked.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:43) 73 states generated, 30 distinct states found, 21 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+LatMut_BugWrongDoesNotSpend.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:43) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+LatSolo_BugRecoveryWithoutSecret.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:44) 17 states generated, 9 distinct states found, 5 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+LatSolo_BugUseWhenBlocked.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:45) 83 states generated, 33 distinct states found, 23 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+LatSolo_BugWrongDoesNotSpend.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:46) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+LatInduction.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:46) 2673 states generated, 243 distinct states found, 0 states left on queue. The depth of the complete state graph search is 1. Finished in 00s
+LatInductionMut_BugWrongDoesNotSpend.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:47) 271 states generated, 245 distinct states found, 240 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+Policies.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:48) 9200521 states generated, 331776 distinct states found, 0 states left on queue. The depth of the complete state graph search is 19. Finished in 05s
+PolicyMut_BugOathCodeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:55) 305 states generated, 79 distinct states found, 66 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+PolicyMut_BugOathTouchIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:55) 357 states generated, 87 distinct states found, 72 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+PolicyMut_BugOtpBootKeepsPosition.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:56) 12073 states generated, 1495 distinct states found, 1064 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+PolicyMut_BugOtpCodeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:57) 568 states generated, 115 distinct states found, 94 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+PolicyMut_BugOtpCounterRepeats.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:58) 2843 states generated, 437 distinct states found, 333 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+PolicyMut_BugOtpPressTypesUnpersisted.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:51:59) 13988 states generated, 1963 distinct states found, 1468 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+PolicyMut_BugOtpSwapKeepsSession.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:00) 14339 states generated, 2049 distinct states found, 1546 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+PolicyMut_BugPgpAttributeKeepsKey.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:01) 207 states generated, 63 distinct states found, 52 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+PolicyMut_BugPivAlwaysDoesNotSpend.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:02) 741 states generated, 166 distinct states found, 137 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+PolicyMut_BugPivPolicyIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:03) 39 states generated, 16 distinct states found, 11 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+PolicySolo_BugOathCodeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:03) 329 states generated, 83 distinct states found, 69 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+PolicySolo_BugOathTouchIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:04) 357 states generated, 87 distinct states found, 72 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+PolicySolo_BugOtpBootKeepsPosition.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:05) 12240 states generated, 1509 distinct states found, 1074 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+PolicySolo_BugOtpCodeIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:06) 568 states generated, 115 distinct states found, 94 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+PolicySolo_BugOtpCounterRepeats.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:07) 2841 states generated, 437 distinct states found, 333 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+PolicySolo_BugOtpPressTypesUnpersisted.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:08) 14021 states generated, 1964 distinct states found, 1468 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+PolicySolo_BugOtpSwapKeepsSession.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:09) 14100 states generated, 2026 distinct states found, 1530 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+PolicySolo_BugPgpAttributeKeepsKey.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:10) 207 states generated, 63 distinct states found, 52 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+PolicySolo_BugPivAlwaysDoesNotSpend.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:11) 821 states generated, 181 distinct states found, 149 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+PolicySolo_BugPivPolicyIgnored.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:12) 39 states generated, 16 distinct states found, 11 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+Admin.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:12) 101 states generated, 8 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+AdminMut_BugAdminGateable.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:13) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+AdminMut_BugLockWriteResetsCaps.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:14) 99 states generated, 9 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+AdminMut_BugMaskIsCosmetic.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:15) 40 states generated, 10 distinct states found, 5 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+AdminMut_BugPrivilegedOpUngated.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:15) 21 states generated, 10 distinct states found, 6 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+AdminSolo_BugAdminGateable.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:16) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+AdminSolo_BugLockWriteResetsCaps.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:17) 99 states generated, 9 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+AdminSolo_BugMaskIsCosmetic.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:18) 40 states generated, 10 distinct states found, 5 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+AdminSolo_BugPrivilegedOpUngated.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:18) 21 states generated, 10 distinct states found, 6 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+Display.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:19) 15 states generated, 5 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+DispMut_BugAnyTapApproves.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:20) 15 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+DispMut_BugPadSubstitutesForCard.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:21) 12 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+DispMut_BugPreScreenTouchApproves.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:21) 15 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+DispSolo_BugAnyTapApproves.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:22) 15 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+DispSolo_BugPadSubstitutesForCard.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:23) 12 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+DispSolo_BugPreScreenTouchApproves.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:24) 15 states generated, 6 distinct states found, 0 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+Boot.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:24) 77 states generated, 24 distinct states found, 0 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+BootCarry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:25) 67 states generated, 18 distinct states found, 0 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+BootMut_BugMarkerBeforeScrub.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:26) 56 states generated, 26 distinct states found, 11 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+BootMut_BugPartialLockCarry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:27) 61 states generated, 26 distinct states found, 9 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+BootMut_BugRekeyKeepsTheMarker.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:27) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+BootSolo_BugMarkerBeforeScrub.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:28) 55 states generated, 26 distinct states found, 12 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+BootSolo_BugPartialLockCarry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:29) 61 states generated, 26 distinct states found, 9 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+BootSolo_BugRekeyKeepsTheMarker.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:30) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+BootCarryMut_BugMarkerBeforeScrub.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:30) 55 states generated, 20 distinct states found, 6 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+BootCarryMut_BugPartialLockCarry.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:31) 59 states generated, 20 distinct states found, 4 states left on queue. The depth of the complete state graph search is 5. Finished in 00s
+BootCarryMut_BugRekeyKeepsTheMarker.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:32) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+BootInduction.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:33) 180 states generated, 48 distinct states found, 0 states left on queue. The depth of the complete state graph search is 1. Finished in 00s
+BootInductionMut_BugRekeyKeepsTheMarker.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:33) 101 states generated, 50 distinct states found, 37 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+Historical_BootWriteThenRearm.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:34) 31 states generated, 16 distinct states found, 9 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+Historical_BootRearmThenWrite.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:35) 141 states generated, 38 distinct states found, 0 states left on queue. The depth of the complete state graph search is 7. Finished in 00s
+Transport.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:36) 127 states generated, 13 distinct states found, 0 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+TransMut_BugContIgnoresChannel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:36) 42 states generated, 11 distinct states found, 4 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+TransMut_BugContIgnoresSeq.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:37) 45 states generated, 10 distinct states found, 3 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+TransMut_BugInitLenUnchecked.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:38) 28 states generated, 8 distinct states found, 4 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+TransSolo_BugContIgnoresChannel.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:39) 42 states generated, 11 distinct states found, 4 states left on queue. The depth of the complete state graph search is 4. Finished in 00s
+TransSolo_BugContIgnoresSeq.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:39) 45 states generated, 10 distinct states found, 3 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+TransSolo_BugInitLenUnchecked.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:40) 28 states generated, 8 distinct states found, 4 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+TraceSeams.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:41) 15 states generated, 14 distinct states found, 0 states left on queue. The depth of the complete state graph search is 14. Finished in 00s
+TraceSeamsBad.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:42) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
+TraceSecurity.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:43) 78 states generated, 76 distinct states found, 0 states left on queue. The depth of the complete state graph search is 76. Finished in 00s
+TraceSecurityBadBeta.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:44) 21 states generated, 20 distinct states found, 0 states left on queue. The depth of the complete state graph search is 20. Finished in 00s
+TraceSecurityBadAlpha.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:44) 22 states generated, 21 distinct states found, 0 states left on queue. The depth of the complete state graph search is 21. Finished in 00s
+TraceSecurityBadAlphaNoR4b.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:45) 78 states generated, 76 distinct states found, 0 states left on queue. The depth of the complete state graph search is 76. Finished in 00s
+TraceSecurityBadOutcome.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:46) 11 states generated, 10 distinct states found, 0 states left on queue. The depth of the complete state graph search is 10. Finished in 00s
+TraceSecurityBadUvNotRqd.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:47) 45 states generated, 44 distinct states found, 0 states left on queue. The depth of the complete state graph search is 44. Finished in 00s
+TraceSecurityBadResetWindow.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:48) 77 states generated, 76 distinct states found, 0 states left on queue. The depth of the complete state graph search is 76. Finished in 00s
+TraceSecurityBadAlwaysUvArm.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:49) 52 states generated, 51 distinct states found, 0 states left on queue. The depth of the complete state graph search is 51. Finished in 00s
+TraceSecurityBadPinSet.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:50) 13 states generated, 12 distinct states found, 0 states left on queue. The depth of the complete state graph search is 12. Finished in 00s
+TokenGate.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:51) 1043 states generated, 44 distinct states found, 0 states left on queue. The depth of the complete state graph search is 3. Finished in 00s
+TokenGateOracle.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:52) 506 states generated, 22 distinct states found, 0 states left on queue. The depth of the complete state graph search is 1. Finished in 00s
+TokenGateDisagreement.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:53) Finished in 00s
+TokenGateMut_BugUnauthorizedEdge.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:54) Finished in 00s
+TokenRefinement.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:52:56) 48737609 states generated, 4611484 distinct states found, 0 states left on queue. The depth of the complete state graph search is 44. Finished in 04min 59s
+TokenRefinementBadMap.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:57:55) 1491 states generated, 499 distinct states found, 300 states left on queue. The depth of the complete state graph search is 6. Finished in 00s
+TokenRefinementOutcome.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 22:57:56) 48737609 states generated, 4611484 distinct states found, 0 states left on queue. The depth of the complete state graph search is 44. Finished in 05min 02s
+TokenRefinementDeadToken.cfg with 2 workers on 18 cores (Mac OS X 27.0 aarch64) Starting... (2026-09-21 23:02:59) 2 states generated, 2 distinct states found, 0 states left on queue. The depth of the complete state graph search is 2. Finished in 00s
 
 '''
