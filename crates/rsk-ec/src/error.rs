@@ -13,7 +13,7 @@
 //!
 //! The split between [`EcError::Failed`] and [`EcError::BadPoint`] is not
 //! cosmetic: it is what keeps a signature failure answering `6400` while a
-//! malformed ECDH peer point keeps answering `6984`. One shared "it failed"
+//! malformed ECDH peer point keeps answering `6A80`. One shared "it failed"
 //! variant would have to pick one of the two and silently change the other.
 
 /// Why an EC private-key operation refused. The variants are exhaustive on
@@ -25,13 +25,13 @@ pub enum EcError {
     /// zero scalar, or a signer that could not produce `r ‖ s`. Applets answer
     /// `Sw::EXEC_ERROR`.
     Failed,
-    /// The caller's bytes are not a usable point or scalar for this curve — a
-    /// peer point that does not parse, or one of the wrong width. Applets
-    /// answer `Sw::DATA_INVALID`.
+    /// The peer point does not decode for this curve: the wrong width or tag, or
+    /// the identity. Applets answer `Sw::WRONG_DATA`, as a YubiKey 5.8.0 does in
+    /// both OpenPGP and PIV.
     BadPoint,
-    /// The peer point is well-formed but unusable: an X25519 point of small order,
-    /// whose agreement is all zeros. The tables answer `MEMORY_FAILURE`, as a
-    /// YubiKey 5.8.0's OpenPGP does; PIV's agreement answers `6A80` before them.
+    /// The peer point decodes but is unusable: a coordinate off the field or the
+    /// curve, or an X25519 point of small order. The tables answer `MEMORY_FAILURE`,
+    /// as a YubiKey 5.8.0's OpenPGP does; PIV's agreement answers `6A80` before them.
     RejectedPoint,
     /// The curve does not offer this operation at all: X25519 never signs,
     /// Ed25519 never agrees. Applets answer `Sw::FUNC_NOT_SUPPORTED`.

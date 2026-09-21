@@ -40,6 +40,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP answers an unusable ECDH peer point the way a YubiKey does.
+  PSO:DECIPHER answered `6984` to every point it could not use. A YubiKey 5.8.0
+  tells two cases apart on each of its curves (P-256/384/521, brainpool
+  P-256/384, secp256k1, X25519): `6A80` for bytes the curve cannot decode, the
+  identity included, and `6581` for a decoded point with a coordinate off the
+  field or the curve. RS-Key now does the same. PIV already answered `6A80` to
+  both, as a YubiKey's PIV does, and is unchanged. One neighbour moved with it:
+  an agreement over a stored scalar the curve refuses answered `6984` and now
+  answers `6400`, as signing with that key always has — a key only an older
+  build's unchecked import could have stored. `bcdDevice` 0x09E1 → 0x09E2.
+
 - An X25519 agreement with a small-order peer is refused now, as a YubiKey
   refuses it. Such a point agrees to 32 zero bytes whatever the key, and both
   PSO:DECIPHER (OpenPGP Cv25519) and GENERAL AUTHENTICATE (PIV X25519) handed

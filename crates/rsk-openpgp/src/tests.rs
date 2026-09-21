@@ -1275,6 +1275,62 @@ fn cv25519_decipher_refuses_a_small_order_peer() {
     }
 }
 
+#[test]
+fn ecdh_decipher_sorts_unusable_points_like_a_yubikey() {
+    // Measured on a YubiKey 5.8.0's OpenPGP, alike on each of its curves: 6A80 for
+    // bytes the curve cannot decode, 6581 for a decoded point it refuses.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC2, ATTR_P256_ECDH), Sw::OK);
+    let (_, sw) = run(&mut app, &mut fs, &ec_import(0xB8, &[0x22u8; 32]));
+    assert_eq!(sw, Sw::OK);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
+    let peer = p256_vk(&[0x33u8; 32]).to_sec1_point(false);
+    let valid = peer.as_bytes();
+    let mut off_curve = valid.to_vec();
+    *off_curve.last_mut().unwrap() ^= 1;
+    let mut past_p = valid.to_vec();
+    past_p[1..33].fill(0xFF);
+    for (point, want) in [
+        (off_curve.as_slice(), Sw::MEMORY_FAILURE),
+        (past_p.as_slice(), Sw::MEMORY_FAILURE),
+        (&valid[1..], Sw::WRONG_DATA),
+        (&[0x00][..], Sw::WRONG_DATA),
+        (&[][..], Sw::WRONG_DATA),
+    ] {
+        let (z, sw) = run(&mut app, &mut fs, &ecdh_decipher(point));
+        assert_eq!(sw, want, "peer {point:02x?}");
+        assert!(z.is_empty(), "a refused agreement must return no data");
+    }
+}
+
+#[test]
+fn cv25519_decipher_refuses_a_point_of_the_wrong_width() {
+    // A YubiKey 5.8.0's OpenPGP answers 6A80 to a 31-byte u and to 32 bytes
+    // behind a stray prefix.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC2, ATTR_CV25519), Sw::OK);
+    let (_, sw) = run(&mut app, &mut fs, &ec_import(0xB8, &[0x11u8; 32]));
+    assert_eq!(sw, Sw::OK);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
+    let mut prefixed = vec![0x00u8];
+    prefixed.extend_from_slice(&[0x09u8; 32]);
+    for point in [&[0x09u8; 31][..], prefixed.as_slice()] {
+        let (z, sw) = run(&mut app, &mut fs, &ecdh_decipher(point));
+        assert_eq!(sw, Sw::WRONG_DATA, "peer {point:02x?}");
+        assert!(z.is_empty(), "a refused agreement must return no data");
+    }
+}
+
 // ---- GENERATE ASYMMETRIC KEY PAIR (0x47) ---------------------------------
 
 // A linear-congruential RNG, better distributed than CountRng for the RSA

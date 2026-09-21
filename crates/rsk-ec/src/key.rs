@@ -17,7 +17,8 @@
 use zeroize::{Zeroize, Zeroizing};
 
 use p256::ecdsa::signature::hazmat::PrehashSigner;
-use p256::elliptic_curve::sec1::FromSec1Point;
+use p256::elliptic_curve::sec1::{FromSec1Point, ModulusSize, Sec1Point, ToSec1Point};
+use p256::elliptic_curve::{AffinePoint, CurveArithmetic, FieldBytesSize, PublicKey};
 
 use crate::{Curve, EcError, Rng};
 
@@ -393,14 +394,28 @@ impl PrivKey {
     }
 }
 
+/// A Weierstrass agreement's peer point, sorted as a YubiKey 5.8.0 sorts it: bytes
+/// that do not decode, or decode to the identity, are [`EcError::BadPoint`]; a
+/// decoded coordinate off the field or the curve is [`EcError::RejectedPoint`].
+fn sec1_peer<C>(peer_point: &[u8]) -> Result<PublicKey<C>, EcError>
+where
+    C: CurveArithmetic,
+    FieldBytesSize<C>: ModulusSize,
+    AffinePoint<C>: FromSec1Point<C> + ToSec1Point<C>,
+{
+    let ep = Sec1Point::<C>::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
+    if ep.is_identity() {
+        return Err(EcError::BadPoint);
+    }
+    Option::from(PublicKey::<C>::from_sec1_point(&ep)).ok_or(EcError::RejectedPoint)
+}
+
 /// P-256 ECDH: peer point parsed as a SEC1 uncompressed point, shared secret =
 /// the affine x-coordinate.
 fn ecdh_p256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = p256::SecretKey::from_bytes(&p256::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let ep = p256::Sec1Point::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
-    let peer = Option::<p256::PublicKey>::from(p256::PublicKey::from_sec1_point(&ep))
-        .ok_or(EcError::BadPoint)?;
+        .map_err(|_| EcError::Failed)?;
+    let peer = sec1_peer::<p256::NistP256>(peer_point)?;
     let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let z = shared.raw_secret_bytes();
     out[..z.len()].copy_from_slice(z.as_slice());
@@ -410,10 +425,8 @@ fn ecdh_p256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usi
 /// P-384 ECDH — same SEC1 idiom as [`ecdh_p256`], 48-byte shared x-coordinate.
 fn ecdh_p384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = p384::SecretKey::from_bytes(&p384::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let ep = p384::Sec1Point::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
-    let peer = Option::<p384::PublicKey>::from(p384::PublicKey::from_sec1_point(&ep))
-        .ok_or(EcError::BadPoint)?;
+        .map_err(|_| EcError::Failed)?;
+    let peer = sec1_peer::<p384::NistP384>(peer_point)?;
     let shared = p384::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let z = shared.raw_secret_bytes();
     out[..z.len()].copy_from_slice(z.as_slice());
@@ -423,10 +436,8 @@ fn ecdh_p384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usi
 /// P-521 ECDH — 66-byte shared x-coordinate.
 fn ecdh_p521(scalar: &[u8; 66], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = p521::SecretKey::from_bytes(&p521::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let ep = p521::Sec1Point::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
-    let peer = Option::<p521::PublicKey>::from(p521::PublicKey::from_sec1_point(&ep))
-        .ok_or(EcError::BadPoint)?;
+        .map_err(|_| EcError::Failed)?;
+    let peer = sec1_peer::<p521::NistP521>(peer_point)?;
     let shared = p521::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let z = shared.raw_secret_bytes();
     out[..z.len()].copy_from_slice(z.as_slice());
@@ -436,10 +447,8 @@ fn ecdh_p521(scalar: &[u8; 66], peer_point: &[u8], out: &mut [u8]) -> Result<usi
 /// secp256k1 ECDH — 32-byte shared x-coordinate.
 fn ecdh_k256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = k256::SecretKey::from_bytes(&k256::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let ep = k256::Sec1Point::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
-    let peer = Option::<k256::PublicKey>::from(k256::PublicKey::from_sec1_point(&ep))
-        .ok_or(EcError::BadPoint)?;
+        .map_err(|_| EcError::Failed)?;
+    let peer = sec1_peer::<k256::Secp256k1>(peer_point)?;
     let shared = k256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     let z = shared.raw_secret_bytes();
     out[..z.len()].copy_from_slice(z.as_slice());
@@ -499,10 +508,8 @@ fn pubkey_bp384(s: &[u8; 48], out: &mut [u8]) -> Result<usize, EcError> {
 /// brainpoolP256r1 ECDH — SEC1 peer point, 32-byte shared x-coordinate.
 fn ecdh_bp256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = bp256::r1::SecretKey::from_bytes(&bp256::r1::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let pk =
-        bp256::elliptic_curve::PublicKey::<bp256::BrainpoolP256r1>::from_sec1_bytes(peer_point)
-            .map_err(|_| EcError::BadPoint)?;
+        .map_err(|_| EcError::Failed)?;
+    let pk = sec1_peer::<bp256::BrainpoolP256r1>(peer_point)?;
     let shared =
         bp256::elliptic_curve::ecdh::diffie_hellman(sk.to_nonzero_scalar(), pk.as_affine());
     let z = shared.raw_secret_bytes();
@@ -513,10 +520,8 @@ fn ecdh_bp256(scalar: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<us
 /// brainpoolP384r1 ECDH — SEC1 peer point, 48-byte shared x-coordinate.
 fn ecdh_bp384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
     let sk = bp384::r1::SecretKey::from_bytes(&bp384::r1::FieldBytes::from(*scalar))
-        .map_err(|_| EcError::BadPoint)?;
-    let pk =
-        bp384::elliptic_curve::PublicKey::<bp384::BrainpoolP384r1>::from_sec1_bytes(peer_point)
-            .map_err(|_| EcError::BadPoint)?;
+        .map_err(|_| EcError::Failed)?;
+    let pk = sec1_peer::<bp384::BrainpoolP384r1>(peer_point)?;
     let shared =
         bp384::elliptic_curve::ecdh::diffie_hellman(sk.to_nonzero_scalar(), pk.as_affine());
     let z = shared.raw_secret_bytes();

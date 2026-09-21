@@ -85,7 +85,7 @@ impl rsk_rsa::Rng for RsaRng<'_> {
 pub(crate) fn ec_sw(e: EcError) -> Sw {
     match e {
         EcError::Failed => Sw::EXEC_ERROR,
-        EcError::BadPoint => Sw::DATA_INVALID,
+        EcError::BadPoint => Sw::WRONG_DATA,
         EcError::RejectedPoint => Sw::MEMORY_FAILURE,
         EcError::Unsupported => Sw::FUNC_NOT_SUPPORTED,
     }

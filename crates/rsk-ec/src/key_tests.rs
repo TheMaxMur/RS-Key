@@ -90,3 +90,72 @@ fn ecdh_weierstrass_dh_symmetry() {
     b[0] = 0;
     ecdh_symmetry(Curve::P521, &a, &b, 66);
 }
+
+#[test]
+fn weierstrass_ecdh_tells_undecodable_from_off_curve() {
+    // A YubiKey 5.8.0's OpenPGP answers these apart on every curve it has: 6A80
+    // for bytes the curve cannot decode, 6581 for a decoded point off the curve.
+    let curves = [
+        Curve::P256,
+        Curve::P384,
+        Curve::P521,
+        Curve::K256,
+        Curve::Bp256,
+        Curve::Bp384,
+    ];
+    for curve in curves {
+        let key = PrivKey::from_scalar(curve, &[0x11; 31]).unwrap();
+        let mut point = [0u8; MAX_EC_POINT];
+        let n = key.public_point(&mut point).unwrap();
+        let valid = &point[..n];
+        let flen = (n - 1) / 2;
+        let mut off_curve = valid.to_vec();
+        *off_curve.last_mut().unwrap() ^= 1;
+        // x at or past p: a coordinate that decodes but is no field element.
+        let mut past_p = valid.to_vec();
+        past_p[1..1 + flen].fill(0xFF);
+        let mut out = [0u8; 66];
+        assert!(key.ecdh(valid, &mut out).is_ok(), "{curve:?}: the control");
+        for refused in [&off_curve, &past_p] {
+            assert_eq!(
+                key.ecdh(refused, &mut out),
+                Err(EcError::RejectedPoint),
+                "{curve:?}: {refused:02x?}"
+            );
+        }
+        let undecodable = [&valid[1..], &[0x00][..], &[][..]];
+        for bad in undecodable {
+            assert_eq!(
+                key.ecdh(bad, &mut out),
+                Err(EcError::BadPoint),
+                "{curve:?}: {bad:02x?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ecdh_over_a_stored_scalar_the_curve_refuses_is_a_failure() {
+    // The peer is not at fault, so not BadPoint: the agreement fails the way
+    // signing with the same key does, whatever point arrives.
+    let curves = [
+        Curve::P256,
+        Curve::P384,
+        Curve::P521,
+        Curve::K256,
+        Curve::Bp256,
+        Curve::Bp384,
+    ];
+    for curve in curves {
+        let peer = PrivKey::from_scalar(curve, &[0x11; 31]).unwrap();
+        let mut point = [0u8; MAX_EC_POINT];
+        let n = peer.public_point(&mut point).unwrap();
+        let zero = PrivKey::from_scalar(curve, &[0x00]).unwrap();
+        let mut out = [0u8; 66];
+        assert_eq!(
+            zero.ecdh(&point[..n], &mut out),
+            Err(EcError::Failed),
+            "{curve:?}"
+        );
+    }
+}

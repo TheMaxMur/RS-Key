@@ -227,8 +227,8 @@ fn ec_sw_reproduces_every_status_word() {
     );
     assert_eq!(
         ec_sw(EcError::BadPoint),
-        Sw::DATA_INVALID,
-        "an unusable point or scalar must stay 6984"
+        Sw::WRONG_DATA,
+        "an undecodable peer point must stay 6A80, identical to the OpenPGP copy"
     );
     assert_eq!(
         ec_sw(EcError::RejectedPoint),
