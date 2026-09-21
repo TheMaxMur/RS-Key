@@ -25,9 +25,9 @@ pub enum EcError {
     /// zero scalar, or a signer that could not produce `r ‖ s`. Applets answer
     /// `Sw::EXEC_ERROR`.
     Failed,
-    /// The peer point does not decode for this curve: the wrong width or tag, or
-    /// the identity. Applets answer `Sw::WRONG_DATA`, as a YubiKey 5.8.0 does in
-    /// both OpenPGP and PIV.
+    /// The peer point is not an encoding this curve's agreement takes: the wrong
+    /// width or tag, compressed, compact, prefixed, or the identity. Applets answer
+    /// `Sw::WRONG_DATA`, as a YubiKey 5.8.0 does in both OpenPGP and PIV.
     BadPoint,
     /// The peer point decodes but is unusable: a coordinate off the field or the
     /// curve, or an X25519 point of small order. The tables answer `MEMORY_FAILURE`,

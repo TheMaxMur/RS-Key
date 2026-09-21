@@ -40,6 +40,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- ECDH takes only the point encodings a YubiKey takes. An X25519 peer is the
+  bare 32-byte u; the `0x40`-prefixed OpenPGP native form was accepted as well,
+  and a YubiKey 5.8.0 answers `6A80` to it in OpenPGP and PIV even around a good
+  point. A Weierstrass peer is the uncompressed `04 ‖ x ‖ y`; a compressed or
+  compact (`05 ‖ x`) one had its y rebuilt and was used, and the YubiKey answers
+  `6A80` to both on every curve it has. RS-Key now refuses all three with
+  `6A80`. A host that already decrypts on a YubiKey sends the accepted forms, so
+  it is unaffected. `bcdDevice` 0x09E2 → 0x09E3.
+
 - OpenPGP answers an unusable ECDH peer point the way a YubiKey does.
   PSO:DECIPHER answered `6984` to every point it could not use. A YubiKey 5.8.0
   tells two cases apart on each of its curves (P-256/384/521, brainpool

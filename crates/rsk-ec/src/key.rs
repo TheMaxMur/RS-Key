@@ -17,7 +17,7 @@
 use zeroize::{Zeroize, Zeroizing};
 
 use p256::ecdsa::signature::hazmat::PrehashSigner;
-use p256::elliptic_curve::sec1::{FromSec1Point, ModulusSize, Sec1Point, ToSec1Point};
+use p256::elliptic_curve::sec1::{FromSec1Point, ModulusSize, Sec1Point, Tag, ToSec1Point};
 use p256::elliptic_curve::{AffinePoint, CurveArithmetic, FieldBytesSize, PublicKey};
 
 use crate::{Curve, EcError, Rng};
@@ -394,9 +394,9 @@ impl PrivKey {
     }
 }
 
-/// A Weierstrass agreement's peer point, sorted as a YubiKey 5.8.0 sorts it: bytes
-/// that do not decode, or decode to the identity, are [`EcError::BadPoint`]; a
-/// decoded coordinate off the field or the curve is [`EcError::RejectedPoint`].
+/// A Weierstrass agreement's peer point, sorted as a YubiKey 5.8.0 sorts it: all but
+/// an uncompressed `04 ‖ x ‖ y` (compressed, compact, identity, undecodable) is
+/// [`EcError::BadPoint`]; a coordinate off the field or the curve, [`EcError::RejectedPoint`].
 fn sec1_peer<C>(peer_point: &[u8]) -> Result<PublicKey<C>, EcError>
 where
     C: CurveArithmetic,
@@ -404,7 +404,7 @@ where
     AffinePoint<C>: FromSec1Point<C> + ToSec1Point<C>,
 {
     let ep = Sec1Point::<C>::from_bytes(peer_point).map_err(|_| EcError::BadPoint)?;
-    if ep.is_identity() {
+    if ep.tag() != Tag::Uncompressed {
         return Err(EcError::BadPoint);
     }
     Option::from(PublicKey::<C>::from_sec1_point(&ep)).ok_or(EcError::RejectedPoint)
@@ -529,19 +529,11 @@ fn ecdh_bp384(scalar: &[u8; 48], peer_point: &[u8], out: &mut [u8]) -> Result<us
     Ok(z.len())
 }
 
-/// X25519 ECDH (OpenPGP Cv25519). The stored scalar is the big-endian MPI; X25519
-/// wants it little-endian (RFC 7748) — reverse it (x25519-dalek clamps). The peer
-/// key arrives as the OpenPGP `0x40`-prefixed native point (little-endian
-/// u-coordinate); accept it with or without the prefix. The shared secret is the
-/// 32-byte little-endian X25519 result.
+/// X25519 ECDH (OpenPGP Cv25519, PIV X25519): the big-endian MPI scalar reversed
+/// into RFC 7748's little-endian (x25519-dalek clamps), against the bare 32-byte u —
+/// a YubiKey 5.8.0 refuses the `0x40`-prefixed native form in both applets.
 fn ecdh_x25519(scalar_be: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Result<usize, EcError> {
-    let u = match peer_point.len() {
-        33 if peer_point[0] == 0x40 => &peer_point[1..],
-        32 => peer_point,
-        _ => return Err(EcError::BadPoint),
-    };
-    let mut peer = [0u8; 32];
-    peer.copy_from_slice(u);
+    let peer: [u8; 32] = peer_point.try_into().map_err(|_| EcError::BadPoint)?;
     let mut le = *scalar_be;
     le.reverse();
     let mut shared = x25519_dalek::x25519(le, peer);

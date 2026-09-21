@@ -3754,6 +3754,60 @@ fn x25519_agreement_refuses_a_small_order_peer() {
     }
 }
 
+#[test]
+fn ecdh_refuses_a_compressed_or_prefixed_peer() {
+    // A YubiKey 5.8.0's PIV answers 6A80 to a compressed or compact P-256 point and
+    // to an X25519 u behind the 0x40 prefix, though every one is a good point.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+
+    let template = gen_template(ALGO_ECCP256);
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9D, &template);
+    assert_eq!(sw, Sw::OK);
+    use p256::elliptic_curve::sec1::ToSec1Point;
+    let host = p256::SecretKey::from_slice(&[7u8; 32]).unwrap();
+    let compressed = host.public_key().to_sec1_point(true);
+    let mut compact = compressed.as_bytes().to_vec();
+    compact[0] = 0x05;
+    for point in [compressed.as_bytes(), compact.as_slice()] {
+        let mut msg = vec![0x7C, 0x25, 0x82, 0x00, 0x85, 0x21];
+        msg.extend_from_slice(point);
+        let (sw, out) = run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_ECCP256,
+            0x9D,
+            &msg,
+        );
+        assert_eq!(
+            sw,
+            Sw::WRONG_DATA,
+            "P-256 peer {point:02x?} must answer 6A80"
+        );
+        assert!(out.is_empty());
+    }
+
+    let template = gen_template(ALGO_X25519);
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9D, &template);
+    assert_eq!(sw, Sw::OK);
+    let host_u = x25519_dalek::x25519([0x33u8; 32], x25519_dalek::X25519_BASEPOINT_BYTES);
+    let mut msg = vec![0x7C, 0x23, 0x85, 0x21, 0x40];
+    msg.extend_from_slice(&host_u);
+    let (sw, out) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_X25519, 0x9D, &msg);
+    assert_eq!(
+        sw,
+        Sw::WRONG_DATA,
+        "a 0x40-prefixed X25519 u must answer 6A80"
+    );
+    assert!(out.is_empty());
+}
+
 /// An imported private scalar is exactly the field length or it is not that
 /// key. Ours bounded it from above only, so a one-byte P-256 scalar was stored
 /// and signed with (`d = 1`, a key anyone can forge against), and 32 bytes

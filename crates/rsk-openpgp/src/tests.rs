@@ -1203,7 +1203,7 @@ const ATTR_CV25519: &[u8] = &[
 #[test]
 fn import_cv25519_dec_then_pso_decipher() {
     // RFC 7748 §6.1: import Alice (her LE scalar reversed into the big-endian
-    // OpenPGP MPI), decipher Bob's 0x40-prefixed ephemeral key → shared K.
+    // OpenPGP MPI), decipher Bob's bare ephemeral key → shared K.
     let alice_le = hx("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a");
     let bob_pub = hx("de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f");
     let k = hx("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742");
@@ -1222,9 +1222,8 @@ fn import_cv25519_dec_then_pso_decipher() {
 
     verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
 
-    // PSO:DECIPHER with the 0x40-prefixed peer point.
-    let mut point = vec![0x40u8];
-    point.extend_from_slice(&bob_pub);
+    // PSO:DECIPHER with the bare peer point.
+    let point = bob_pub.clone();
     let f86 = [&[0x86, point.len() as u8], point.as_slice()].concat();
     let f7f49 = [&[0x7F, 0x49, f86.len() as u8], f86.as_slice()].concat();
     let a6 = [&[0xA6, f7f49.len() as u8], f7f49.as_slice()].concat();
@@ -1278,7 +1277,7 @@ fn cv25519_decipher_refuses_a_small_order_peer() {
 #[test]
 fn ecdh_decipher_sorts_unusable_points_like_a_yubikey() {
     // Measured on a YubiKey 5.8.0's OpenPGP, alike on each of its curves: 6A80 for
-    // bytes the curve cannot decode, 6581 for a decoded point it refuses.
+    // an encoding it does not take (compressed too), 6581 for a point it refuses.
     let rng = RefCell::new(CountRng(7));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
@@ -1295,9 +1294,14 @@ fn ecdh_decipher_sorts_unusable_points_like_a_yubikey() {
     *off_curve.last_mut().unwrap() ^= 1;
     let mut past_p = valid.to_vec();
     past_p[1..33].fill(0xFF);
+    let compressed = p256_vk(&[0x33u8; 32]).to_sec1_point(true);
+    let mut compact = compressed.as_bytes().to_vec();
+    compact[0] = 0x05;
     for (point, want) in [
         (off_curve.as_slice(), Sw::MEMORY_FAILURE),
         (past_p.as_slice(), Sw::MEMORY_FAILURE),
+        (compressed.as_bytes(), Sw::WRONG_DATA),
+        (compact.as_slice(), Sw::WRONG_DATA),
         (&valid[1..], Sw::WRONG_DATA),
         (&[0x00][..], Sw::WRONG_DATA),
         (&[][..], Sw::WRONG_DATA),
@@ -1311,7 +1315,7 @@ fn ecdh_decipher_sorts_unusable_points_like_a_yubikey() {
 #[test]
 fn cv25519_decipher_refuses_a_point_of_the_wrong_width() {
     // A YubiKey 5.8.0's OpenPGP answers 6A80 to a 31-byte u and to 32 bytes
-    // behind a stray prefix.
+    // behind any prefix, the 0x40 of OpenPGP's native form included.
     let rng = RefCell::new(CountRng(7));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
@@ -1324,7 +1328,9 @@ fn cv25519_decipher_refuses_a_point_of_the_wrong_width() {
 
     let mut prefixed = vec![0x00u8];
     prefixed.extend_from_slice(&[0x09u8; 32]);
-    for point in [&[0x09u8; 31][..], prefixed.as_slice()] {
+    let mut native = vec![0x40u8];
+    native.extend_from_slice(&[0x09u8; 32]);
+    for point in [&[0x09u8; 31][..], prefixed.as_slice(), native.as_slice()] {
         let (z, sw) = run(&mut app, &mut fs, &ecdh_decipher(point));
         assert_eq!(sw, Sw::WRONG_DATA, "peer {point:02x?}");
         assert!(z.is_empty(), "a refused agreement must return no data");

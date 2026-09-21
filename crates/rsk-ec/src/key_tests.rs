@@ -114,6 +114,12 @@ fn weierstrass_ecdh_tells_undecodable_from_off_curve() {
         // x at or past p: a coordinate that decodes but is no field element.
         let mut past_p = valid.to_vec();
         past_p[1..1 + flen].fill(0xFF);
+        // The same good point, compressed (`02|03 ‖ x`, y's parity in the tag) and
+        // compact (`05 ‖ x`, y left to the reader).
+        let mut compressed = vec![0x02 | (valid[n - 1] & 1)];
+        compressed.extend_from_slice(&valid[1..1 + flen]);
+        let mut compact = compressed.clone();
+        compact[0] = 0x05;
         let mut out = [0u8; 66];
         assert!(key.ecdh(valid, &mut out).is_ok(), "{curve:?}: the control");
         for refused in [&off_curve, &past_p] {
@@ -123,7 +129,13 @@ fn weierstrass_ecdh_tells_undecodable_from_off_curve() {
                 "{curve:?}: {refused:02x?}"
             );
         }
-        let undecodable = [&valid[1..], &[0x00][..], &[][..]];
+        let undecodable = [
+            &valid[1..],
+            compressed.as_slice(),
+            compact.as_slice(),
+            &[0x00][..],
+            &[][..],
+        ];
         for bad in undecodable {
             assert_eq!(
                 key.ecdh(bad, &mut out),

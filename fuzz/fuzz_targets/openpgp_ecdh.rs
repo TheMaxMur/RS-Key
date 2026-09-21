@@ -19,8 +19,8 @@ use rsk_openpgp::pso::parse_ecdh_point;
 
 fuzz_target!(|data: &[u8]| {
     // Fixed valid scalars — we are fuzzing the parse + the peer-point decode, not
-    // the private keys. P-256 = SEC1 Weierstrass; X25519 = the 0x40-prefixed
-    // Montgomery point + the big-endian→little-endian scalar reversal.
+    // the private keys. P-256 = SEC1 Weierstrass; X25519 = the bare 32-byte
+    // Montgomery u + the big-endian→little-endian scalar reversal.
     let p256 = PrivKey::from_scalar(Curve::P256, &[0x11; 32]).unwrap();
     let x25519 = PrivKey::from_scalar(Curve::X25519, &[0x22; 32]).unwrap();
     let mut out = [0u8; 64];
@@ -33,7 +33,8 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Also feed the raw bytes straight in, so the point decoders see unwrapped
-    // adversarial points (wrong length / off curve / identity / 0x40 handling).
+    // adversarial points (wrong length / off curve / identity / compressed /
+    // prefixed / small order).
     let _ = p256.ecdh(data, &mut out);
     let _ = x25519.ecdh(data, &mut out);
 });

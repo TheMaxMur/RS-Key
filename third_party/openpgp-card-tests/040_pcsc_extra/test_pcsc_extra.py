@@ -424,7 +424,8 @@ def test_openpgp_x25519_decipher(card):
     card.cmd_put_data_odd(0x3F, 0xFF, import_ec_apdu(CRT_DEC, scalar_be))
     eph = X25519PrivateKey.generate()
     eph_pub = eph.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    assert card.cmd_pso(0x80, 0x86, decipher_apdu_data(b"\x40" + eph_pub)) == dec.exchange(eph.public_key())
+    # The bare u: a YubiKey 5.8.0 answers 6A80 to the 0x40-prefixed native form.
+    assert card.cmd_pso(0x80, 0x86, decipher_apdu_data(eph_pub)) == dec.exchange(eph.public_key())
 
 
 def test_openpgp_keygen_public_key_round_trip(card):

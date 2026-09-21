@@ -14,8 +14,9 @@ RFC 7748 implementation):
 
 Wire-format notes (the gotcha): the private scalar is sent as a big-endian OpenPGP
 MPI (so cryptography's little-endian raw key, reversed); the ephemeral peer key is
-the 0x40-prefixed native little-endian u-coordinate; the card returns the 32-byte
-little-endian shared secret. All values are < 255 bytes, so plain short APDUs.
+the bare 32-byte little-endian u-coordinate — a YubiKey refuses the 0x40-prefixed
+native form, and so does the card; the card returns the 32-byte little-endian
+shared secret. All values are < 255 bytes, so plain short APDUs.
 
 PW3 (admin, default "12345678"); re-runnable. rsk-wipe first if PINs were changed.
 """
@@ -113,7 +114,7 @@ def main():
 
     eph = X25519PrivateKey.generate()
     eph_pub = eph.public_key().public_bytes(RAW, RAWPUB)  # 32-byte LE u-coordinate
-    peer = bytes([0x40]) + eph_pub  # OpenPGP native point format
+    peer = eph_pub  # bare u: the 0x40-prefixed native form is refused
     z, _, _ = tx(decipher_apdu(peer), "PSO:DECIPHER (Cv25519 ECDH)")
     z = bytes(z)
 
@@ -122,8 +123,9 @@ def main():
         fail(f"ECDH shared secret mismatch:\n  card={z.hex()}\n  host={expected.hex()}")
     print("  Cv25519 shared secret MATCHES host (RFC 7748)")
 
-    # A YubiKey 5.8.0 answers a small-order u (all-zero agreement) with 6581, and so
-    # must the card.
+    # A YubiKey 5.8.0 answers these two, and so must the card: the prefixed native
+    # form is refused as an encoding, a small-order u (all-zero agreement) as a point.
+    tx(decipher_apdu(bytes([0x40]) + eph_pub), "PSO:DECIPHER (0x40 || u)", expect=(0x6A, 0x80))
     tx(decipher_apdu(bytes(32)), "PSO:DECIPHER (small-order u = 0)", expect=(0x65, 0x81))
 
     print("PASS")
