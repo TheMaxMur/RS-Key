@@ -1206,9 +1206,9 @@ scripts/security_trace.py	crates/rsk-fido/src/clientpin.rs	136-136	match req.sub
 scripts/security_trace.py	crates/rsk-fido/src/config.rs	248-248	ctx.state.mark_token_used(ctx.now_ms);	ctx.state.mark_token_used(ctx.now_ms);
 scripts/security_trace.py	crates/rsk-fido/src/consts.rs	404-404	pub const RESET_WINDOW_MS: u64 = 10_000;	pub const RESET_WINDOW_MS: u64 = 10_000;
 scripts/security_trace.py	crates/rsk-fido/src/reset.rs	260-260	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS
-scripts/security_trace.py	tools/emu/src/device.rs	754-755	crate::security_trace::POWER_CYCLE,	0,
+scripts/security_trace.py	tools/emu/src/device.rs	822-823	crate::security_trace::POWER_CYCLE,	0,
 scripts/test_run_tlc.py	scripts/verdict_gate.py	619-634	if row["invariant"] is not None:	" that name")
-scripts/test_security_trace.py	tools/emu/src/device.rs	754-755	crate::security_trace::POWER_CYCLE,	0,
+scripts/test_security_trace.py	tools/emu/src/device.rs	822-823	crate::security_trace::POWER_CYCLE,	0,
 scripts/test_token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
 scripts/test_token_refinement_gate.py	crates/rsk-fido/src/credential.rs	919-919	let fid = EF_RP + i;	let fid = EF_RP + i;
 scripts/test_token_refinement_gate.py	firmware/src/main.rs	1167-1167	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));

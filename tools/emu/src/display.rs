@@ -271,10 +271,9 @@ pub struct EmuDisplayHooks {
     wake: Rc<Cell<bool>>,
     led: Cell<u8>,
     timeout_ms: Cell<u32>,
-    reboot: Cell<bool>,
-    /// The local-PIN event and the attach clock, both shared with the worker half
-    /// — a board reaches the same two through `crate::handler` and
-    /// `crate::usb_attach`.
+    /// The local-PIN event, the attach clock and the reboot queue, all shared with the
+    /// worker half — a board reaches the same three through `crate::handler`,
+    /// `crate::usb_attach` and `crate::vendor`.
     links: PanelLinks,
     /// Host requests the device thread has not picked up. A modal holds the single
     /// executor, so this is the only way the flow can learn one is waiting.
@@ -303,7 +302,6 @@ impl EmuDisplayHooks {
             wake,
             led: Cell::default(),
             timeout_ms: Cell::new(30_000),
-            reboot: Cell::new(false),
             links: PanelLinks::default(),
             queued,
             repaint,
@@ -311,7 +309,7 @@ impl EmuDisplayHooks {
         }
     }
 
-    /// The two cells the worker half shares with the panel. Read from here rather
+    /// The cells the worker half shares with the panel. Read from here rather
     /// than passed in beside the panel, so the two ends cannot be handed different
     /// ones — a pair that does not match is the defect this seam exists to prevent,
     /// and it fails nothing.
@@ -370,11 +368,12 @@ impl rsk_display::Hooks for EmuDisplayHooks {
                 && since.elapsed()
                     >= embassy_time::Duration::from_millis(rsk_display::UI_YIELD_FLOOR_MS))
     }
-    fn request_reboot(&mut self, _bootsel: bool) {
-        self.reboot.set(true);
+    /// Queued for the device thread, which takes it after a waiting job or on an idle pass.
+    fn request_reboot(&mut self, bootsel: bool) {
+        self.links.reboot.set(Some(bootsel));
     }
     fn reboot_pending(&self) -> bool {
-        self.reboot.get()
+        self.links.reboot.get().is_some()
     }
     fn note_local_pin_changed(&mut self) {
         self.links.local_pin.set(true);

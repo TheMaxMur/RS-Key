@@ -8,9 +8,9 @@
 //! firmware runs, not a second implementation of them. What is left here is this
 //! build's half: the store, the DRBG, the presence prompt, and the [`Hooks`] that
 //! answer for hardware it does not have. The worker's own sequencing (refresh the
-//! capability set when the dirty latch is up, run a queued reboot only after the
-//! response is out) is mirrored from `firmware/src/worker.rs` and is the one thing
-//! still written twice.
+//! capability set when the dirty latch is up, run a queued reboot or wipe once the
+//! response is out or on an idle pass) is mirrored from `firmware/src/worker.rs` and
+//! is the one thing still written twice.
 //!
 //! Deliberately absent, because there is no hardware under them: the LED, the OTP
 //! keyboard interface, the vendor applet's LED / core1 / bench arms, the dual-core
@@ -258,16 +258,15 @@ impl Queued {
     }
 }
 
-/// The two handles the panel and the worker hold jointly, where a board has two
-/// globals: the local-PIN event `EmuHooks` reports to the next CBOR or CCID dispatch
-/// (`firmware/src/handler.rs`'s `LOCAL_PIN_CHANGED`), and the USB attach clock a
-/// power cycle restarts (`crate::usb_attach`). One clock, not two, is what stops a
-/// panel-originated audit entry and a host-originated one from being stamped on
-/// different ones — which is the whole point of `Hooks::attach_elapsed_ms`.
+/// What the panel and the worker hold jointly, where a board has globals: the local-PIN
+/// event (`firmware/src/handler.rs`'s `LOCAL_PIN_CHANGED`), the one attach clock both stamp
+/// audit entries with (`crate::usb_attach`) and the reboot queue (`firmware/src/vendor.rs`).
 #[derive(Clone)]
 pub struct PanelLinks {
     pub local_pin: Rc<Cell<bool>>,
     pub attach: Rc<Cell<Instant>>,
+    /// A reboot the panel queued for the worker; `Some(true)` asks for BOOTSEL.
+    pub reboot: Rc<Cell<Option<bool>>>,
 }
 
 impl Default for PanelLinks {
@@ -275,6 +274,7 @@ impl Default for PanelLinks {
         Self {
             local_pin: Rc::new(Cell::new(false)),
             attach: Rc::new(Cell::new(Instant::now())),
+            reboot: Rc::new(Cell::new(None)),
         }
     }
 }
@@ -577,9 +577,76 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
     // keeps it: the MSG applet selection is one global for every channel, so a
     // change of channel has to drop it (audit run-34 #27).
     let mut last_msg_cid: Option<u32> = None;
+    // Raised by a Management RESET's dispatch; its wipe waits until the answer is out.
+    let mut device_reset = false;
+    // Whether the last pass answered a job, so what that job queued runs before the next one.
+    let mut answered = false;
 
     loop {
-        let req = match jobs.try_next() {
+        let next = jobs.try_next();
+        // A queued reboot is taken after an answer or on an idle pass, never ahead of a
+        // waiting request: a board's worker takes it after each transport request and on its
+        // idle tick, and a request already waiting beats that tick.
+        if std::mem::take(&mut answered) || matches!(next, Err(TryRecvError::Empty)) {
+            let rescue_reboot = platform.borrow_mut().reboot_requested.take();
+            if let Some(true) = rescue_reboot {
+                eprintln!("emu: host asked for BOOTSEL; there is no bootloader to fall into");
+            }
+            let panel_reboot = links.reboot.take();
+            if let Some(true) = panel_reboot {
+                eprintln!("emu: the panel asked for BOOTSEL; there is no bootloader to fall into");
+            }
+            // Only a completed wipe reboots, as on the board: coming up fresh after a failed
+            // one is what makes a half-erased device look factory-clean.
+            let wiped = std::mem::take(&mut device_reset) && ccid.factory_wipe();
+            // A warm reboot drops RAM state and leaves the attach clock alone: only a power
+            // cycle reopens the §6.6 window, which is the distinction `Job::Replug` carries.
+            if reboot_requested.replace(false)
+                || rescue_reboot == Some(false)
+                || panel_reboot == Some(false)
+                || wiped
+            {
+                let _ = boot_block();
+                hooks.borrow_mut().warm = true;
+                ctap = AppletHandler::new(
+                    fs,
+                    rng,
+                    &hooks,
+                    presence,
+                    &fido_state,
+                    EmuVendorPlatform {
+                        reboot: reboot_requested.clone(),
+                    },
+                    serial_id,
+                    serial_hash,
+                    mkek_source,
+                    devk_source,
+                );
+                // Every applet afresh, as a boot builds them: one that had provisioned its
+                // files already would skip that after a wipe (PIV answered `6A88`).
+                ccid = CcidApplets::new(
+                    fs,
+                    rng,
+                    &hooks,
+                    presence,
+                    &fido_state,
+                    &platform,
+                    EmuVendorPlatform {
+                        reboot: reboot_requested.clone(),
+                    },
+                    serial_id,
+                    serial_hash,
+                    mkek_source,
+                    devk_source,
+                    cfg.kv_total,
+                    cfg.flash_size,
+                    openpgp_mfr(cfg.yubico),
+                );
+                last_msg_cid = None;
+                eprintln!("emu: warm reboot — RAM state dropped, the reset window stays shut");
+            }
+        }
+        let req = match next {
             Ok(req) => req,
             // Nothing queued: yield, so a display loop selected against this one
             // gets to run. 1 ms keeps the socket latency invisible.
@@ -673,7 +740,8 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                 body
             }
             Job::Apdu(data) => {
-                let body = ccid.handle_apdu(&data, now_ms).to_vec();
+                let (body, reset) = dispatch_apdu(&mut ccid, &data, now_ms);
+                device_reset |= reset;
                 ccid.scrub();
                 if cfg.trace {
                     eprintln!(
@@ -774,42 +842,12 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
         signals.set_wait_scope(signals::SCOPE_NONE);
         // A disconnected client is not an error: it just stopped listening.
         let _ = req.reply.send(out);
+        answered = true;
 
         // The worker's own sequencing, mirrored: a config write flips the dirty
         // latch and every gate has to see the new set before the next request.
         if rsk_devconf::take_dev_conf_dirty() {
             ccid.refresh_enabled();
-        }
-        // Both reboot paths — the vendor applet's INS_REBOOT and the rescue
-        // applet's twin — land in one queue on the device, and both run only after
-        // the response is out. A warm reboot drops RAM state and leaves the attach
-        // clock alone: only a power cycle reopens the §6.6 window, which is the
-        // whole distinction `Job::Replug` carries.
-        let rescue_reboot = platform.borrow_mut().reboot_requested.take();
-        if let Some(true) = rescue_reboot {
-            eprintln!("emu: host asked for BOOTSEL; there is no bootloader to fall into");
-        }
-        if reboot_requested.replace(false) || rescue_reboot == Some(false) {
-            ccid.reset_card();
-            let _ = boot_block();
-            hooks.borrow_mut().warm = true;
-            ctap = AppletHandler::new(
-                fs,
-                rng,
-                &hooks,
-                presence,
-                &fido_state,
-                EmuVendorPlatform {
-                    reboot: reboot_requested.clone(),
-                },
-                serial_id,
-                serial_hash,
-                mkek_source,
-                devk_source,
-            );
-            ccid.refresh_enabled();
-            last_msg_cid = None;
-            eprintln!("emu: warm reboot — RAM state dropped, the reset window stays shut");
         }
     }
 }
@@ -821,6 +859,22 @@ fn rescan(fs: &RefCell<Fs<EmuStore>>) -> RefMut<'_, Fs<EmuStore>> {
     let mut store = fs.borrow_mut();
     store.scan();
     store
+}
+
+/// One CCID dispatch, and whether it raised Management's device-reset request. That flag is
+/// process-wide and a test binary runs many devices at once, so its raise and its take share
+/// a lock: otherwise another device's dispatch could take it and wipe that device instead.
+fn dispatch_apdu(
+    ccid: &mut CcidApplets<'_, EmuStore, EmuRng, EmuVendorPlatform>,
+    apdu: &[u8],
+    now_ms: u64,
+) -> (Vec<u8>, bool) {
+    static DEVICE_RESET_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _held = DEVICE_RESET_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let body = ccid.handle_apdu(apdu, now_ms).to_vec();
+    (body, rsk_mgmt::take_device_reset())
 }
 
 /// What the phase-4 replay reads out of a request, taken from the applet's own

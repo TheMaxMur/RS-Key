@@ -165,6 +165,31 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **`tools/emu` answered a Management RESET without wiping, and never took the reboot a
+  panel factory reset queues.** `firmware/src/worker.rs` wipes everything but the
+  attestation once RESET's `9000` is out and warm-reboots into a fresh seed, and takes a
+  reboot the trusted display queues after the next transport request or on its idle tick.
+  The emulator left the store whole, with the request raised for the life of the process;
+  the panel's reset did wipe, then parked on its request for good while the host was
+  answered from a store with no seed. One reboot step now runs after each answer and on an
+  idle pass, never ahead of a request already waiting, and builds the CCID applets afresh
+  as well as the CTAP handler: PIV, still holding the applet that had provisioned its
+  files, skipped that after the wipe and answered VERIFY `6A88`. A BOOTSEL the panel asks
+  for is logged and dropped, as the rescue applet's already was. The reset flag is
+  process-wide and a test binary runs many devices, so a dispatch raises and takes it
+  under one lock. `a_management_reset_wipes_the_store_once_it_has_answered` and
+  `a_factory_reset_on_the_panel_reboots_the_device` fail against the old loop,
+  `piv_takes_its_default_pin_again_after_a_management_reset` against a reboot that keeps
+  the applets, and `a_waiting_request_is_answered_before_the_panels_reboot` — its host
+  shares the device loop's thread, so the order is not a race — against a reboot taken
+  ahead of a waiting request; between them they also kill the request dropped, the wipe
+  without its reboot, the panel's reboot unserved, its request never cleared and a loop
+  with no idle pass. The reboot does not rebuild the panel's own `Ui`, which keeps its
+  RAM state: a lock taken before a host reset lingers where a board boots onto onboarding,
+  and `pin_declined`, scramble and brightness survive, so the next settings save writes
+  them back into the wiped image. A replug has the same gap; both are left for their own
+  change. Host-only: no firmware image differs.
+
 - **`tools/emu` restarted over a `--store` image saw every slot as free.**
   `firmware/src/main.rs` rebuilds the store's in-RAM file index (`Fs::scan`) before
   anything reads flash; the emulator's boot block never did. Reads by FID still

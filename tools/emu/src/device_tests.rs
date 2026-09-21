@@ -349,6 +349,172 @@ fn a_restart_over_the_store_keeps_its_resident_credentials() {
     shut_down(path, jobs, device);
 }
 
+/// ykman's device-wide reset, as `rsk_mgmt`'s crate-private `INS_DEVICE_RESET` names it.
+const INS_DEVICE_RESET: u8 = 0x1F;
+
+/// `firmware/src/worker.rs` answers a Management RESET first, then wipes everything but the
+/// attestation and warm-reboots into a fresh seed. The emulator answered 9000 and stopped
+/// there, with the store left whole.
+#[test]
+fn a_management_reset_wipes_the_store_once_it_has_answered() {
+    use crate::pin_client::CTAP2_OK;
+    use rsk_fido::consts::EF_KEY_DEV;
+
+    let (path, jobs, _signals, device) = bench("management-reset");
+    let registered = ask(
+        &jobs,
+        Job::Cbor {
+            cid: CID,
+            data: make_resident(1),
+        },
+    )[0];
+    assert_eq!(registered, CTAP2_OK, "a credential for the reset to wipe");
+    let selected = sw(&ask(&jobs, select(rsk_mgmt::MANAGEMENT_AID)));
+    assert_eq!(selected, SW_OK, "Management is selected");
+
+    let answered = sw(&ask(&jobs, device_reset()));
+    // The wipe runs after the answer is out, so one more round trip lands it.
+    ask(&jobs, Job::OtpStatus);
+    assert_eq!(
+        (
+            answered,
+            resident_records(&path),
+            mount(&path).has_key(EF_KEY_DEV)
+        ),
+        (SW_OK, 0, true),
+        "an answered reset must leave no credential, and a seed the reboot provisioned"
+    );
+    shut_down(path, jobs, device);
+}
+
+/// ISO 7816-4 VERIFY, which PIV checks its PIN reference under.
+const INS_VERIFY: u8 = 0x20;
+
+/// A board builds every applet afresh after the wipe, so PIV lays its default PIN down again
+/// on the next SELECT. The emulator kept the applet that had provisioned its files already,
+/// and VERIFY with the default PIN answered `6A88` until the process restarted.
+#[test]
+fn piv_takes_its_default_pin_again_after_a_management_reset() {
+    use rsk_piv::files::{DEFAULT_PIN, REF_PIN};
+
+    let (path, jobs, _signals, device) = bench("management-reset-piv");
+    let piv = sw(&ask(&jobs, select(rsk_piv::PIV_AID)));
+    assert_eq!(piv, SW_OK, "PIV provisions its files");
+    let management = sw(&ask(&jobs, select(rsk_mgmt::MANAGEMENT_AID)));
+    assert_eq!(management, SW_OK, "Management is selected");
+    assert_eq!(
+        sw(&ask(&jobs, device_reset())),
+        SW_OK,
+        "the reset is answered"
+    );
+
+    let piv = sw(&ask(&jobs, select(rsk_piv::PIV_AID)));
+    let mut verify = vec![0x00, INS_VERIFY, 0x00, REF_PIN, DEFAULT_PIN.len() as u8];
+    verify.extend_from_slice(&DEFAULT_PIN);
+    let verified = sw(&ask(&jobs, Job::Apdu(verify)));
+    assert_eq!(
+        (piv, verified),
+        (SW_OK, SW_OK),
+        "a factory-reset PIV must take its default PIN"
+    );
+    shut_down(path, jobs, device);
+}
+
+/// A board's worker polls its transport ahead of the idle tick, so a request already waiting
+/// when the panel queues a reboot is answered by the device as it stands, and the reboot
+/// follows. The host runs on the device loop's thread, where the panel's handle is.
+#[test]
+fn a_waiting_request_is_answered_before_the_panels_reboot() {
+    let fs: &'static RefCell<Fs<EmuStore>> = Box::leak(Box::new(RefCell::new(Fs::new(
+        crate::store::open(None, None).expect("an in-memory store"),
+    ))));
+    let rng: &'static RefCell<EmuRng> =
+        Box::leak(Box::new(RefCell::new(EmuRng::from_seed(&[0x5e; 32]))));
+    let signals = Arc::new(Signals::default());
+    let presence = RefCell::new(EmuPresence::new(
+        PresenceMode::Instant,
+        None,
+        signals.clone(),
+    ));
+    let links = PanelLinks::default();
+    let (jobs, requests) = job_queue();
+    let cfg = Config {
+        store: None,
+        presence: PresenceMode::Instant,
+        display: false,
+        usbip: None,
+        seed: Some(vec![0x5e; 32]),
+        serial: SERIAL,
+        kv_total: crate::KV_TOTAL,
+        flash_size: crate::FLASH_SIZE,
+        trace: false,
+        security_trace: None,
+        yubico: false,
+        power_cut: None,
+    };
+    let version = || Job::Msg {
+        cid: CID,
+        data: U2F_VERSION.to_vec(),
+    };
+
+    let host = async {
+        let selected = reply(queue(
+            &jobs,
+            Job::Msg {
+                cid: CID,
+                data: select_vendor(),
+            },
+        ))
+        .await;
+        assert_eq!(sw(&selected), SW_OK, "the vendor AID selects over MSG");
+        // The device loop is parked on its idle timer, so both land before its next pass.
+        let waiting = queue(&jobs, version());
+        links.reboot.set(Some(false));
+        let before = reply(waiting).await;
+        let after = reply(queue(&jobs, version())).await;
+        (sw(&before), after, links.reboot.get())
+    };
+    let device = serve(cfg, requests, signals, links.clone(), fs, rng, &presence);
+    let embassy_futures::select::Either::Second((before, after, pending)) =
+        crate::park::block_on(embassy_futures::select::select(device, host))
+    else {
+        panic!("the device loop stopped before the host was done");
+    };
+    assert_eq!(
+        (before, after.as_slice(), pending),
+        (SW_INS_NOT_SUPPORTED, U2F_V2_OK, None),
+        "the waiting U2F command must still reach the selection, and the reboot drop it after"
+    );
+}
+
+/// The answer to a job [`queue`] sent, yielding to a device loop on this thread until it comes.
+async fn reply(answer: mpsc::Receiver<Option<Vec<u8>>>) -> Vec<u8> {
+    loop {
+        match answer.try_recv() {
+            Ok(body) => return body.expect("a body"),
+            Err(TryRecvError::Empty) => embassy_futures::yield_now().await,
+            Err(TryRecvError::Disconnected) => panic!("the device loop dropped the job"),
+        }
+    }
+}
+
+/// SELECT by AID, the way a host opens an application.
+fn select(aid: &[u8]) -> Job {
+    let mut apdu = vec![0x00, 0xA4, 0x04, 0x00, aid.len() as u8];
+    apdu.extend_from_slice(aid);
+    Job::Apdu(apdu)
+}
+
+/// Management's device-wide reset, which only the Management application answers.
+fn device_reset() -> Job {
+    Job::Apdu(vec![0x00, INS_DEVICE_RESET, 0x00, 0x00])
+}
+
+/// The status word that closes a response APDU.
+fn sw(response: &[u8]) -> [u8; 2] {
+    [response[response.len() - 2], response[response.len() - 1]]
+}
+
 /// Every [`Job`] variant, and whether a queued one is a request the parked worker
 /// is owed the executor for (`rsk_display::Hooks::host_request_pending`). The
 /// membership is the `REQ` set of `firmware/src/worker.rs` — get it wrong in
