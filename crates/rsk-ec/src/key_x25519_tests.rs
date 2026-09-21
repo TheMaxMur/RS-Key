@@ -55,3 +55,38 @@ fn x25519_rejects_bad_peer_length() {
     assert_eq!(key.ecdh(&[0u8; 31], &mut out), Err(EcError::BadPoint));
     assert_eq!(key.ecdh(&[0u8; 40], &mut out), Err(EcError::BadPoint));
 }
+
+/// The small-order u libsodium's `has_small_order` lists, p-1 and the non-canonical
+/// p, p+1 among them. Each agrees to all zeros, and so does each with bit 255 set.
+const SMALL_ORDER: [&str; 7] = [
+    "0000000000000000000000000000000000000000000000000000000000000000",
+    "0100000000000000000000000000000000000000000000000000000000000000",
+    "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+    "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+    "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+    "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+];
+
+#[test]
+fn x25519_refuses_every_small_order_peer() {
+    // A YubiKey 5.8.0 refuses all fourteen, in PIV and in OpenPGP alike; X25519
+    // masks bit 255, so the high twin is the same point.
+    let key = PrivKey::from_scalar(Curve::X25519, &[0x11u8; 32]).unwrap();
+    for u in SMALL_ORDER {
+        for high in [0x00, 0x80] {
+            let mut peer = hex(u);
+            peer[31] |= high;
+            let mut out = [0xA5u8; 32];
+            assert_eq!(
+                key.ecdh(&peer, &mut out),
+                Err(EcError::RejectedPoint),
+                "{u} | {high:#04x}"
+            );
+            assert_eq!(
+                out, [0xA5u8; 32],
+                "a refused agreement must leave `out` alone"
+            );
+        }
+    }
+}

@@ -29,6 +29,10 @@ pub enum EcError {
     /// peer point that does not parse, or one of the wrong width. Applets
     /// answer `Sw::DATA_INVALID`.
     BadPoint,
+    /// The peer point is well-formed but unusable: an X25519 point of small order,
+    /// whose agreement is all zeros. The tables answer `MEMORY_FAILURE`, as a
+    /// YubiKey 5.8.0's OpenPGP does; PIV's agreement answers `6A80` before them.
+    RejectedPoint,
     /// The curve does not offer this operation at all: X25519 never signs,
     /// Ed25519 never agrees. Applets answer `Sw::FUNC_NOT_SUPPORTED`.
     Unsupported,

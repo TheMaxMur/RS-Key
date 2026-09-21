@@ -541,6 +541,11 @@ fn ecdh_x25519(scalar_be: &[u8; 32], peer_point: &[u8], out: &mut [u8]) -> Resul
     le.reverse();
     let mut shared = x25519_dalek::x25519(le, peer);
     le.zeroize();
+    // A small-order peer agrees to all zeros whatever the scalar: RFC 7748 §6.1
+    // allows refusing it, a YubiKey 5.8.0 does. The OR-fold keeps it branch-free.
+    if shared.iter().fold(0, |acc, b| acc | b) == 0 {
+        return Err(EcError::RejectedPoint);
+    }
     out[..32].copy_from_slice(&shared);
     shared.zeroize();
     Ok(32)

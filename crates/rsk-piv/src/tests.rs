@@ -218,8 +218,8 @@ fn rsa_sw_reproduces_every_status_word() {
 fn ec_sw_reproduces_every_status_word() {
     // The EC twin of the table above, and it must stay identical to the other
     // applet's copy — `rsk-ec` names the target in each variant's doc. Assert
-    // the three arms one by one, so a swapped pair cannot pass by covering for
-    // each other.
+    // the arms one by one, so a swapped pair cannot pass by covering for each
+    // other.
     assert_eq!(
         ec_sw(EcError::Failed),
         Sw::EXEC_ERROR,
@@ -229,6 +229,11 @@ fn ec_sw_reproduces_every_status_word() {
         ec_sw(EcError::BadPoint),
         Sw::DATA_INVALID,
         "an unusable point or scalar must stay 6984"
+    );
+    assert_eq!(
+        ec_sw(EcError::RejectedPoint),
+        Sw::MEMORY_FAILURE,
+        "the arm stays 6581 like the OpenPGP copy; PIV's agreement answers 6A80 first"
     );
     assert_eq!(
         ec_sw(EcError::Unsupported),
@@ -3721,6 +3726,32 @@ fn x25519_generate_has_no_cert_and_agrees() {
     let cardpk: [u8; 32] = card_point.as_slice().try_into().unwrap();
     let expected = x25519_dalek::x25519(host_scalar, cardpk);
     assert_eq!(shared, &expected[..]);
+}
+
+#[test]
+fn x25519_agreement_refuses_a_small_order_peer() {
+    // A YubiKey 5.8.0's PIV answers 6A80 to all seven small-order encodings;
+    // `rsk-ec` walks the whole list, and u = 0 and u = 1 stand for it here.
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let template = gen_template(ALGO_X25519);
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9D, &template);
+    assert_eq!(sw, Sw::OK);
+
+    let mut one = [0u8; 32];
+    one[0] = 1;
+    for u in [[0u8; 32], one] {
+        let mut msg = vec![0x7C, 0x22, 0x85, 0x20];
+        msg.extend_from_slice(&u);
+        let (sw, out) = run(&mut app, &mut fs, INS_AUTHENTICATE, ALGO_X25519, 0x9D, &msg);
+        assert_eq!(sw, Sw::WRONG_DATA, "a small-order peer must answer 6A80");
+        assert!(out.is_empty(), "a refused agreement must return no data");
+    }
 }
 
 /// An imported private scalar is exactly the field length or it is not that

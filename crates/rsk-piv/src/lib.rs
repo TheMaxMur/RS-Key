@@ -80,12 +80,13 @@ impl rsk_rsa::Rng for RsaRng<'_> {
 }
 
 /// The status word each [`EcError`] answers with — the EC twin of [`rsa_sw`],
-/// and `rsk-openpgp` (`keys::ec_sw`) carries the same three arms for the same
-/// reason. `ec_sw_reproduces_every_status_word` pins them.
+/// and `rsk-openpgp` (`keys::ec_sw`) carries the same arms for the same reason.
+/// `ec_sw_reproduces_every_status_word` pins them.
 pub(crate) fn ec_sw(e: EcError) -> Sw {
     match e {
         EcError::Failed => Sw::EXEC_ERROR,
         EcError::BadPoint => Sw::DATA_INVALID,
+        EcError::RejectedPoint => Sw::MEMORY_FAILURE,
         EcError::Unsupported => Sw::FUNC_NOT_SUPPORTED,
     }
 }

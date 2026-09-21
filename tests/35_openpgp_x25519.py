@@ -122,6 +122,10 @@ def main():
         fail(f"ECDH shared secret mismatch:\n  card={z.hex()}\n  host={expected.hex()}")
     print("  Cv25519 shared secret MATCHES host (RFC 7748)")
 
+    # A YubiKey 5.8.0 answers a small-order u (all-zero agreement) with 6581, and so
+    # must the card.
+    tx(decipher_apdu(bytes(32)), "PSO:DECIPHER (small-order u = 0)", expect=(0x65, 0x81))
+
     print("PASS")
     return 0
 

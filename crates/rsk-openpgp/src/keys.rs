@@ -54,7 +54,7 @@ impl rsk_ec::Rng for EcRng<'_> {
 }
 
 /// The status word each [`EcError`] answers with. This table **is** wire
-/// surface — `ec_sw_reproduces_every_status_word` pins all three arms — and
+/// surface — `ec_sw_reproduces_every_status_word` pins every arm — and
 /// `rsk-piv` carries its own copy, for the reason `rsk_ec::EcError`'s module
 /// doc gives: a shared mapping in `rsk-sdk` would put the EC crate in every
 /// applet's dependency closure.
@@ -62,6 +62,7 @@ pub(crate) fn ec_sw(e: EcError) -> Sw {
     match e {
         EcError::Failed => Sw::EXEC_ERROR,
         EcError::BadPoint => Sw::DATA_INVALID,
+        EcError::RejectedPoint => Sw::MEMORY_FAILURE,
         EcError::Unsupported => Sw::FUNC_NOT_SUPPORTED,
     }
 }

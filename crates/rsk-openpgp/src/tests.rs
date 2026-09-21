@@ -1238,6 +1238,43 @@ fn import_cv25519_dec_then_pso_decipher() {
     );
 }
 
+/// PSO:DECIPHER around a peer point: `A6 { 7F49 { 86 <point> } }`.
+fn ecdh_decipher(point: &[u8]) -> Vec<u8> {
+    let f86 = [&[0x86, point.len() as u8], point].concat();
+    let f7f49 = [&[0x7F, 0x49, f86.len() as u8], f86.as_slice()].concat();
+    let a6 = [&[0xA6, f7f49.len() as u8], f7f49.as_slice()].concat();
+    let mut a = vec![0x00, consts::INS_PSO, 0x80, 0x86, a6.len() as u8];
+    a.extend_from_slice(&a6);
+    a
+}
+
+#[test]
+fn cv25519_decipher_refuses_a_small_order_peer() {
+    // A YubiKey 5.8.0's OpenPGP answers 6581 to all seven small-order encodings;
+    // `rsk-ec` walks the whole list, and u = 0 and u = 1 stand for it here.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC2, ATTR_CV25519), Sw::OK);
+    let (_, sw) = run(&mut app, &mut fs, &ec_import(0xB8, &[0x11u8; 32]));
+    assert_eq!(sw, Sw::OK);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
+    let mut one = [0u8; 32];
+    one[0] = 1;
+    for u in [[0u8; 32], one] {
+        let (z, sw) = run(&mut app, &mut fs, &ecdh_decipher(&u));
+        assert_eq!(
+            sw,
+            Sw::MEMORY_FAILURE,
+            "a small-order peer must answer 6581"
+        );
+        assert!(z.is_empty(), "a refused agreement must return no data");
+    }
+}
+
 // ---- GENERATE ASYMMETRIC KEY PAIR (0x47) ---------------------------------
 
 // A linear-congruential RNG, better distributed than CountRng for the RSA

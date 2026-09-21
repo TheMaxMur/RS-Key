@@ -23,8 +23,8 @@ fn ec_sw_reproduces_every_status_word() {
     // This table **is** wire surface: the status word a PSO / INTERNAL
     // AUTHENTICATE answers with when the key refuses. It must stay identical
     // to `rsk-piv`'s copy — `rsk-ec` names the target in each variant's doc.
-    // Assert the three arms one by one, so a swapped pair cannot pass by
-    // covering for each other.
+    // Assert the arms one by one, so a swapped pair cannot pass by covering for
+    // each other.
     assert_eq!(
         ec_sw(EcError::Failed),
         Sw::EXEC_ERROR,
@@ -34,6 +34,11 @@ fn ec_sw_reproduces_every_status_word() {
         ec_sw(EcError::BadPoint),
         Sw::DATA_INVALID,
         "an unusable point or scalar must stay 6984"
+    );
+    assert_eq!(
+        ec_sw(EcError::RejectedPoint),
+        Sw::MEMORY_FAILURE,
+        "a small-order peer must answer 6581, as a YubiKey 5.8.0's OpenPGP does"
     );
     assert_eq!(
         ec_sw(EcError::Unsupported),

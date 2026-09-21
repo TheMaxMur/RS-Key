@@ -40,6 +40,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- An X25519 agreement with a small-order peer is refused now, as a YubiKey
+  refuses it. Such a point agrees to 32 zero bytes whatever the key, and both
+  PSO:DECIPHER (OpenPGP Cv25519) and GENERAL AUTHENTICATE (PIV X25519) handed
+  those zeros back with `9000`. A YubiKey 5.8.0 answers `6581` in OpenPGP and
+  `6A80` in PIV to all seven small-order encodings, measured twice, and RS-Key
+  answers the same. No key material was exposed — the zeros are the same for
+  every key — so this is parity, not a disclosure.
+  `bcdDevice` 0x09E0 → 0x09E1.
+
 - A vendor (`0x41`) config write over CCID now applies its out-of-flash effects, as it
   already did over CTAPHID. After such a command the CTAPHID handler re-loads the LED
   block (whose live copy is firmware-side atomics the flash record does not reach) and,
