@@ -76,6 +76,16 @@ signatures and ciphertexts under three fixed keys, and every signature the card
 produces is compared to them byte for byte. `scripts/rsa_vectors.py` regenerates
 that file from python-cryptography; run it inside `nix develop`.
 
+ML-DSA's ground truth is NIST's own. `third_party/acvp/` holds every ACVP-Server
+case `rsk-mldsa` can express — the external interface, pure, μ computed inside:
+75 keyGen, 90 sigGen (deterministic and hedged) and 45 sigVer across ML-DSA-44,
+-65 and -87, one line of hex each. The host tests read them with `include_str!`,
+so a missing file fails the build instead of running zero cases, and each test
+asserts its count. keyGen is checked on `sk` as well as `pk`, because sigGen
+signs from the vector's own `sk` and nothing else sees the `K` the seed
+expansion derives. `scripts/acvp_vectors.py` rewrites the files from the pinned
+ACVP-Server commit, byte for byte.
+
 Fixed vectors cannot say which imported `(p, q, e)` a key assembly *refuses*, so
 that half is settled by a differential against `rsa` 0.9.10 in a throwaway crate
 **outside** the workspace — `rsk-rsa` by path with `test-util`, plus

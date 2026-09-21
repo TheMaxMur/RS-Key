@@ -1,6 +1,6 @@
 # third_party — code from elsewhere
 
-Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Three
+Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Four
 unrelated kinds live here:
 
 - **Two external conformance suites** — `pico-fido-tests/`,
@@ -21,6 +21,12 @@ unrelated kinds live here:
   the display flavor links it — under **OFL-1.1**, which `ibm-plex/LICENSE.txt`
   carries. OFL governs the font data, AGPL-3.0-only the rest of the image; the
   two coexist because neither is a derivative of the other.
+- **Test vectors** — `acvp/`, NIST's ACVP-Server ML-DSA keyGen/sigGen/sigVer
+  cases, filtered to what `crates/rsk-mldsa` can express and written one line of
+  hex per case by `scripts/acvp_vectors.py`. Read only by that crate's host tests
+  (`include_str!` under `#[cfg(test)]`), never by the firmware. Upstream keeps
+  its terms in a README notice rather than a licence file, so `acvp/LICENSE`
+  carries that notice intact, with the origin and what was changed.
 
 Both suite directories carry their own licenses, distinct from the repository's own
 AGPL-3.0-only. Note the split between each file's **per-file header** (the
@@ -38,6 +44,7 @@ Vendored from upstream at:
 |---|---|---|
 | `pico-fido-tests/` | `b1bacec29db76f6944f9db9ffb595934a89c5a41` | 2026-08-02 |
 | `openpgp-card-tests/` | `1472b26574b2e74d371fe052c7e5f5e30cd2a997` | 2026-07-27 |
+| `acvp/` | `975de31eb83d87039ec88934fdc47d8c312b892d` (ACVP-Server `v1.1.0.43`) | 2026-08-12 |
 
 Only the pytest part is taken — the docker scripts, build wrappers and C sources
 that sit beside them upstream are not vendored. Record the commit when you

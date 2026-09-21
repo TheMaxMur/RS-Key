@@ -37,64 +37,123 @@ fn self_verify_and_tamper_rejects() {
 
 #[test]
 fn acvp_keygen_pk_exact() {
-    for kat in KEYGEN {
+    assert_eq!(KEYGEN.len(), 75, "ACVP keyGen cases");
+    for kat in KEYGEN.iter() {
         let mut xi = [0u8; 32];
         xi.copy_from_slice(&unhex(kat.seed));
-        let expected = unhex(kat.pk);
-        match kat.set {
+        let pk = match kat.set {
             44 => {
                 let key = ExpandedKey::<4, 4>::from_seed(&ML_DSA_44, &xi);
                 let mut pk = vec![0u8; 1312];
                 key.write_public_key(&ML_DSA_44, &mut pk);
-                assert_eq!(pk, expected, "ACVP keyGen pk (ML-DSA-44)");
+                pk
             }
             65 => {
                 let key = ExpandedKey::<6, 5>::from_seed(&ML_DSA_65, &xi);
                 let mut pk = vec![0u8; 1952];
                 key.write_public_key(&ML_DSA_65, &mut pk);
-                assert_eq!(pk, expected, "ACVP keyGen pk (ML-DSA-65)");
+                pk
             }
             87 => {
                 let key = ExpandedKey::<8, 7>::from_seed(&ML_DSA_87, &xi);
                 let mut pk = vec![0u8; 2592];
                 key.write_public_key(&ML_DSA_87, &mut pk);
-                assert_eq!(pk, expected, "ACVP keyGen pk (ML-DSA-87)");
+                pk
             }
             s => panic!("unexpected param set {s}"),
-        }
+        };
+        let (tc, set) = (kat.tc_id, kat.set);
+        assert!(
+            pk == unhex(kat.pk),
+            "ACVP keyGen pk, tcId {tc} (ML-DSA-{set})"
+        );
     }
+}
+
+/// keyGen's `sk`, which the `pk` check never reads, and nothing else does: sigGen
+/// signs from the vector's own `sk`, so `K` and the secret vectors the seed
+/// expansion derives went unchecked. The key holds those only as NTT/Montgomery
+/// precomputes, so both keys are compared there, mod q.
+#[test]
+fn acvp_keygen_sk_matches_the_expansion() {
+    assert_eq!(KEYGEN.len(), 75, "ACVP keyGen cases");
+    for kat in KEYGEN.iter() {
+        let mut xi = [0u8; 32];
+        xi.copy_from_slice(&unhex(kat.seed));
+        let sk = unhex(kat.sk);
+        let same = match kat.set {
+            44 => same_secret(
+                &ExpandedKey::<4, 4>::from_seed(&ML_DSA_44, &xi),
+                &ExpandedKey::<4, 4>::from_sk_bytes(&ML_DSA_44, &sk),
+            ),
+            65 => same_secret(
+                &ExpandedKey::<6, 5>::from_seed(&ML_DSA_65, &xi),
+                &ExpandedKey::<6, 5>::from_sk_bytes(&ML_DSA_65, &sk),
+            ),
+            87 => same_secret(
+                &ExpandedKey::<8, 7>::from_seed(&ML_DSA_87, &xi),
+                &ExpandedKey::<8, 7>::from_sk_bytes(&ML_DSA_87, &sk),
+            ),
+            s => panic!("unexpected param set {s}"),
+        };
+        let (tc, set) = (kat.tc_id, kat.set);
+        assert!(same, "ACVP keyGen sk, tcId {tc} (ML-DSA-{set})");
+    }
+}
+
+fn same_secret<const K: usize, const L: usize>(
+    a: &ExpandedKey<K, L>,
+    b: &ExpandedKey<K, L>,
+) -> bool {
+    let mod_q = |v: &[Poly]| {
+        v.iter()
+            .flat_map(|p| p.0)
+            .map(|c| c.rem_euclid(Q))
+            .collect::<Vec<_>>()
+    };
+    a.rho == b.rho
+        && a.cap_k == b.cap_k
+        && a.tr == b.tr
+        && mod_q(&a.s1_hat_mont) == mod_q(&b.s1_hat_mont)
+        && mod_q(&a.s2_hat_mont) == mod_q(&b.s2_hat_mont)
+        && mod_q(&a.t0_hat_mont) == mod_q(&b.t0_hat_mont)
 }
 
 #[test]
 fn acvp_siggen_signature_exact() {
-    for kat in SIGGEN {
+    assert_eq!(SIGGEN.len(), 90, "ACVP sigGen cases");
+    for kat in SIGGEN.iter() {
         let sk = unhex(kat.sk);
         let msg = unhex(kat.msg);
         let ctx = unhex(kat.ctx);
         let mut rnd = [0u8; 32];
         rnd.copy_from_slice(&unhex(kat.rnd));
-        let expected = unhex(kat.sig);
-        match kat.set {
+        let sig = match kat.set {
             44 => {
                 let key = ExpandedKey::<4, 4>::from_sk_bytes(&ML_DSA_44, &sk);
                 let mut sig = vec![0u8; 2420];
                 key.sign(&ML_DSA_44, &msg, &ctx, &rnd, &mut sig);
-                assert_eq!(sig, expected, "ACVP sigGen (ML-DSA-44)");
+                sig
             }
             65 => {
                 let key = ExpandedKey::<6, 5>::from_sk_bytes(&ML_DSA_65, &sk);
                 let mut sig = vec![0u8; 3309];
                 key.sign(&ML_DSA_65, &msg, &ctx, &rnd, &mut sig);
-                assert_eq!(sig, expected, "ACVP sigGen (ML-DSA-65)");
+                sig
             }
             87 => {
                 let key = ExpandedKey::<8, 7>::from_sk_bytes(&ML_DSA_87, &sk);
                 let mut sig = vec![0u8; 4627];
                 key.sign(&ML_DSA_87, &msg, &ctx, &rnd, &mut sig);
-                assert_eq!(sig, expected, "ACVP sigGen (ML-DSA-87)");
+                sig
             }
             s => panic!("unexpected param set {s}"),
-        }
+        };
+        let (tc, set) = (kat.tc_id, kat.set);
+        assert!(
+            sig == unhex(kat.sig),
+            "ACVP sigGen, tcId {tc} (ML-DSA-{set})"
+        );
     }
 }
 
@@ -163,7 +222,8 @@ fn stack_floor_probe() {
 
 #[test]
 fn acvp_sigver_accept_reject() {
-    for kat in SIGVER {
+    assert_eq!(SIGVER.len(), 45, "ACVP sigVer cases");
+    for kat in SIGVER.iter() {
         let pk = unhex(kat.pk);
         let msg = unhex(kat.msg);
         let ctx = unhex(kat.ctx);
@@ -174,10 +234,15 @@ fn acvp_sigver_accept_reject() {
             87 => verify::<8, 7>(&ML_DSA_87, &pk, &msg, &ctx, &sig),
             s => panic!("unexpected param set {s}"),
         };
+        let want = if kat.expected {
+            "should have verified"
+        } else {
+            "should have been refused"
+        };
+        let (tc, set, reason) = (kat.tc_id, kat.set, kat.reason);
         assert_eq!(
             got, kat.expected,
-            "ACVP sigVer set {} ({})",
-            kat.set, kat.reason
+            "ACVP sigVer, tcId {tc} (ML-DSA-{set}, {reason}): {want}"
         );
     }
 }
