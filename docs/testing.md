@@ -840,6 +840,12 @@ nightly. It is the answer to the oldest gap in this table: `tests/*.py` were
 hand-run against a flashed key, so nothing caught a *test* that had rotted — and
 several had.
 
+It builds the emulator with `debug_assert!` and overflow checks on, and so does
+`scripts/usbip-suites.sh` below. A plain `--release` build turns both off, and a
+false assertion or a wrapped counter in an applet then answers on as if nothing
+happened. Nothing in the tree branches on `cfg(debug_assertions)`, so the suites
+drive the same command surface either way.
+
 `--usbip` goes further: it serves the USB/IP protocol, so a Linux host's
 `vhci_hcd` attaches the emulator as a genuine USB device — `/dev/hidraw*`, a
 PC/SC reader, something a browser can talk to. What enumerates there is the

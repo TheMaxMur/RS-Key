@@ -33,7 +33,9 @@ if [ "$(uname)" != "Linux" ]; then
 fi
 
 echo "== building the emulator"
-cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST_TARGET"
+# Assertions and overflow checks on, as `emu-suites.sh` builds it: the suites are the oracle.
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
+  cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST_TARGET"
 
 echo "== building the guest"
 nix build .#usbip-vm --no-link --print-out-paths >"$WORK/vm-path"

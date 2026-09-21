@@ -63,7 +63,10 @@ run_suite() {
 }
 
 echo "== building the emulator"
-cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST" \
+# The suites are the oracle, and a plain release build turns debug_assert! and
+# overflow checks off: a false assertion or a wrapped counter would answer on.
+CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
+  cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST" \
   --features security-trace
 
 echo
