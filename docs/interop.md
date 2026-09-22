@@ -88,7 +88,7 @@ accordingly:
 |---|---|---|---|---|
 | `fido2-token -L` / `-I` (libfido2) | enumeration + getInfo | no-touch | `tests/interop/run.py` | ✅ `0759` |
 | `fido2-cred` / `fido2-assert` (libfido2) | make credential / get assertion | touch | manual (`fido2-cred -M` ‖ `fido2-assert -G`) | ✅ `0759` (touch ×2, assertion verified `2026-06-13`) |
-| python-fido2 (Yubico) | full CTAP2 flows | **no-touch** build | `pytest third_party/pico-fido-tests/pico-fido` | ⚠️ `075A` — 191 passed / 4 failed / 9 errored; [all test-side, not firmware defects](#suite-triage) |
+| pico-fido's suite (python-fido2) | full CTAP2 flows | **no-touch** build | `python tests/third_party.py fido` (board or `--usbip`) | ⚠️ hand run, `075A` — [four test-side failures](#suite-triage) |
 | [Telesma](https://github.com/go-ctap/app) (`go-ctap/ctap`) | inspect + manage over a CTAP client stack that is neither libfido2 nor python-fido2, and claims 2.0–**2.3** | touch | manual (desktop app) | ⏳ untested |
 | Chrome WebAuthn | register + authenticate | touch | [webauthn.io](https://webauthn.io) (manual) | ✅ user-attested (macOS/Linux/Win, `2026-06-13`) |
 | Firefox WebAuthn | register + authenticate | touch | [webauthn.io](https://webauthn.io) (manual) | ✅ user-attested (macOS/Linux/Win, `2026-06-13`) |
@@ -102,7 +102,7 @@ accordingly:
 | `gpg --card-status` | application-related-data read | either | `tests/interop/run.py` | ✅ `0759` |
 | `gpg --edit-card` keygen/sign/encrypt | full card lifecycle | touch (UIF) | manual | ✅ `075A` (EC+RSA `generate` land on-card after the [GET DATA short-Le fix](#get-data-short-le-chaining-fixed-on-0x075a); was ❌ on `0759`) |
 | `ykman openpgp info` | `Tlv.unpack(0x6E, …)` strict parse | either (needs `VIDPID=Yubikey5`) | `tests/interop/run.py` | ✅ `0759` (was ❌ on `0758`) |
-| openpgp-card-tests (Gnuk-derived) | spec suite | no-touch | `pytest third_party/openpgp-card-tests/…` | ⚠️ `075A` — `001_initial_check` 31/34; [3 fails, one root, not a defect](#suite-triage) |
+| openpgp-card-tests (Gnuk-derived) | spec suite | no-touch | `python tests/third_party.py openpgp` | ✅ every PR over the emulator socket; what it may fail is [the ledger](#the-ledger) |
 
 ### PIV
 
@@ -110,6 +110,7 @@ accordingly:
 |---|---|---|---|---|
 | `ykman piv info` | discovery + slot state | no-touch (needs `VIDPID=Yubikey5`) | `tests/interop/run.py` | ✅ `0759` |
 | OpenSC `pkcs11-tool` | PKCS#11 module load + enumerate | no-touch | `pkcs11-tool --module …/opensc-pkcs11.so -L -O` | ✅ `075A` (loads + enumerates; OpenSC auto-selects the OpenPGP app via PKCS#15 emulation — 2 slots, metadata + object store read clean; sign/cert untested on a fresh card) |
+| ykman's `tests/device` (Yubico) | PIV, OATH, OpenPGP, OTP and management over CCID, through ykman's library and CLI | no-touch (emulator `--yubico`) | `python tests/third_party.py ykman` | ✅ every PR over the emulator socket; what it may fail is [the ledger](#the-ledger) |
 | macOS native (`sc_auth`, Keychain) | system smartcard discovery | no-touch | `sc_auth identities`, `system_profiler SPSmartCardsDataType` | ✅ `075A` (CryptoTokenKit sees the reader + ATR, binds `pivtoken.appex`; no paired identity on a fresh card) |
 
 ### OATH / OTP
@@ -142,21 +143,30 @@ refuses a snapshot whose FIDO AAGUID does not match its `--label`.
 fidelity gap
 ([fixed on `0x081C`](#read-config-usbenabled-clamped-to-supported--fixed-0x081c)).
 The re-run on the fixed build (bcd `0x081C`) is clean: **85 identical, 77
-expected-divergence, 0 rule-violations, 0 unexpected.** Representative expected
-divergences:
+expected-divergence, 0 rule-violations, 0 unexpected.**
 
-| Field | Real | RS-Key | Why it is expected |
-|---|---|---|---|
-| `ccid.atr` | `3bfd13…5900` | *same* | RS-Key reproduces the YubiKey ATR byte-for-byte (a `MATCH`, not a diff) |
-| `fido.getinfo.aaguid` | (Yubico's model AAGUID) | `2479c7bf-…` | RS-Key self-assigns its AAGUID, deliberately not Yubico's |
-| `fido.getinfo.versions` | `…FIDO_2_1_PRE` | `…FIDO_2_3` | RS-Key targets the final specs; drops the legacy `_PRE` (and never claims `FIDO_2_2` — CTAP 2.3 §6.4 forbids that string) |
-| `fido.getinfo.algorithms` / `extensions` | ES256/EdDSA/… | superset | RS-Key adds ES384/512 (+ML-DSA, credBlob, thirdPartyPayment) |
-| `fido.getinfo.maxMsgSize` etc. | 1536 | 7609 | RS-Key's buffers/capacities are larger |
-| `fido.getinfo.transports` | `nfc, usb` | `usb` | RS-Key is USB-only, no NFC |
-| `mgmt.formFactor` | USB-C (3) | USB-A (1) | RS-Key reports the 5A form factor; the reference is a 5C |
-| `mgmt.usbSupported` | `0x033f` | `0x023b` | the real 5C also has YubiHSM Auth, which RS-Key does not implement |
-| `openpgp.application_version` | `5.7.4` | `4.6.0` | RS-Key's OpenPGP app is pico-openpgp 4.6.x |
-| `usb.serialNumber` / `bcdDevice` | (none) / fw | `rs-key-0001` / `0x081b` | RS-Key's USB serial is fixed; bcdDevice is a build counter |
+### The ledger
+
+Every difference either harness tolerates is declared in one of two files, and
+nowhere else:
+
+- [`tests/interop/divergences.py`](https://github.com/TheMaxMur/RS-Key/blob/main/tests/interop/divergences.py)
+  — the field rules for the snapshot diff. `Ignore` (per-device randomness),
+  `Tolerance` (a live counter), `ExpectDiff` (both sides pinned to a pattern) and
+  `Superset` (RS-Key may add, never lack), each with the reason it is allowed. A
+  divergence that drifts off its pattern is a `RULE_VIOLATION`, not a pass.
+- [`tests/third_party.py`](https://github.com/TheMaxMur/RS-Key/blob/main/tests/third_party.py)
+  — `DIVERGENCES` for the three vendored suites, as strict `xfail`, so one that
+  gets fixed *fails* the run; and `INAPPLICABLE` for what RS-Key does not
+  implement or the socket harness cannot serve.
+
+Each entry states its reason in a line: a spec clause, or the measurement it
+rests on — a YubiKey 5.8.0 reading, a Gnuk expectation, a capacity RS-Key keeps
+larger on purpose (255 OATH accounts against a YubiKey's 64), a decision still
+open with the maintainer (a wrong OpenPGP password is `63Cx` here per OpenPGP
+3.4 §7.2.2, `6982` on a YubiKey). This page deliberately does not copy them out:
+a hand table of fields was what went stale the last time, and the triage prose
+below was the time before that.
 
 Notable **matches** (not just structural, but exact): the CCID ATR, PIN retry
 budget (8), `minPINLength` (4), pinUvAuthProtocols (`[2, 1]`), the six USB
@@ -172,33 +182,31 @@ the HMAC-SHA1 + dynamic-truncation engine matches. The same control could not ru
 
 ## Suite triage
 
-Detail for the ⚠️ / multi-result cells above.
+The three vendored suites — pico-fido's, the Gnuk-derived OpenPGP card one and
+ykman's `tests/device` — run on every pull request against `tools/emu`
+(`scripts/emu-suites.sh`), and what they are expected to fail is the ledger
+above, entry by entry, rather than prose here. Read a run's own summary for the
+current counts; a number typed onto this page is a number that starts rotting the
+day it is written.
 
-**python-fido2 (Yubico): `075A`, 191 passed / 4 failed / 9 errored (8m26s).** All
-four failures are test-side, not firmware defects:
+What no suite covers is the half that needs real USB or a person at the desk.
+Those runs are recorded here with their date and the build they ran on:
 
-- `test_lockout` / `test_pin_attempts` need a manual `device.reboot()`
-  (conftest.py:205 human prompt, unanswered headless) → our spec-correct
-  `PIN_AUTH_BLOCKED` correctly persists.
-- `test_option_up` calls `doGA(options=…)`, no such kwarg — a broken upstream
-  test, since repaired in our fork of it (`third_party/README.md`); it passes.
-- `test_bad_auth` expects the upstream `0xE0` for an invalid `(0,0)` EC
-  keyAgreement, where our `INVALID_PARAMETER` is spec-reasonable.
-- The 9 errors are `test_070_oath` fixture setup, not core CTAP2.
+**Yubico Authenticator (app), `075A`, 2026-06-13** (built `VIDPID=Yubikey5`; the
+GUI gates on the "Yubico YubiKey" reader name). Detects the key and all six
+applications (OTP/PIV/OATH/OpenPGP/U2F/FIDO2); OATH add → calculate → delete all
+work in-GUI. The displayed TOTP `111429` then `629022` matched an independent
+software HMAC-SHA1 TOTP of the same secret and window.
 
-**openpgp-card-tests (Gnuk-derived): `075A`, `001_initial_check` 31/34.** The
-3 fails (`6E`, `65`, `7A`) share one root and are not a defect:
-`util.get_data_object` strips the constructed-DO wrapper only when
-`is_yubikey=True` (never set in this Gnuk config), so our deliberately-wrapped
-templates (the bug-#1 ykman/real-Yubikey requirement) fail the Gnuk "unwrapped"
-asserts. Wrapping is mandatory for ykman; the two expectations are mutually
-exclusive.
-
-**Yubico Authenticator (app): `075A`** (built `VIDPID=Yubikey5`; the GUI gates
-on the "Yubico YubiKey" reader name). Detects the key + all 6 apps
-(OTP/PIV/OATH/OpenPGP/U2F/FIDO2); OATH add → calculate → delete all work in-GUI.
-The displayed TOTP `111429` then `629022` cryptographically matched an
-independent software HMAC-SHA1 TOTP of the same secret/window (`2026-06-13`).
+**pico-fido's suite, `075A`, 2026-06.** It reaches the device through
+python-fido2's HID transport, which wants real USB, so it runs by hand on a board
+(or under `--usbip`) rather than on every pull request: 191 passed, 4 failed, 9
+errored. Two failures want a human to replug
+(`test_lockout`, `test_pin_attempts` — our `PIN_AUTH_BLOCKED` persists, as it
+should), one calls a helper with a kwarg it does not take (repaired in our fork of
+the pico-fido copy, see `third_party/README.md`), and one expects upstream's
+`0xE0` where CTAP's `INVALID_PARAMETER` is the reasonable answer to an invalid
+`(0,0)` keyAgreement. The nine errors are that suite's own OATH fixture.
 
 ## Known issues
 
