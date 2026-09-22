@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Every suite that needs no board, in one command — the on-device `tests/*.py`
-# and the vendored OpenPGP conformance suite, all against `tools/emu`.
+# Every suite that needs no board, in one command — the on-device `tests/*.py`,
+# the vendored OpenPGP conformance suite and ykman's device tests, against `tools/emu`.
 #
 # One script so CI is a thin caller and the local run is the same thing, the way
 # `check.sh` is for the gate. What is NOT here is the half that wants real USB
@@ -159,13 +159,22 @@ else
 fi
 
 echo
+echo "== third_party: ykman's own device tests (Yubico card identity)"
+yk=0
+start_emu ykman --yubico --auto-touch-ms 1
+python tests/third_party.py ykman -q || yk=$?
+stop_emu
+
+echo
 echo "on-device: $pass passed, $fail failed, $skip refused by name"
 if [ ${#failed[@]} -gt 0 ]; then
   printf 'failed: %s\n' "${failed[*]}"
 fi
 echo "third_party (openpgp): $tp_note"
+echo "third_party (ykman): pytest exit $yk"
 
 [ "$fail" -eq 0 ] || exit 1
 [ "$tp" -eq 0 ] || exit 1
+[ "$yk" -eq 0 ] || exit 1
 echo
 echo "EMULATOR SUITES PASSED"

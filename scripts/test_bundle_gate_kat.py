@@ -40,7 +40,7 @@ NOT_A_CASE = (
 #: Accepted, and each for a reason the rule has to keep. The last two are what
 #: refuted the two stronger shapes: `card_test_reset_pw3.py` matches no
 #: `python_files` pattern and its methods run anyway, because 57 of that suite's
-#: 62 collected modules are `from card_test_… import *`; and neither third-party
+#: 62 collected modules are `from card_test_… import *`; and no third-party
 #: tree is under a pytest root `check.sh` names — `tests/third_party.py` calls
 #: `pytest.main` on them instead.
 A_CASE = (

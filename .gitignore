@@ -17,6 +17,8 @@ result-*
 /secrets/
 secure_boot_*.pem
 *.pem
+# ykman's own test fixtures: keys and certificates Yubico publishes for its suite.
+!/third_party/ykman-tests/tests/files/**/*.pem
 /tools/tui/target/
 /tools/emu/target/
 # `rsk-emu --store <path>` writes a flash image, and that image holds the device

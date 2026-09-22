@@ -318,8 +318,8 @@ UNIT_TEST = re.compile(r"#\[test\]")
 #: (`narrow_gate.py::test_functions`, `token_refinement_gate.py::
 #: test_only_sources`). **pytest's ROOTS, derived from `check.sh`**: the rows
 #: hand it three (`scripts`, `tools/rsk`, `tests/interop`) while
-#: `tests/third_party.py` calls `pytest.main` over two more trees carrying 90
-#: collected `test_*.py` between them, every one of which the rule would call
+#: `tests/third_party.py` calls `pytest.main` over three more trees carrying 103
+#: `test_*.py` between them, every one of which the rule would call
 #: un-run. What the prefix alone still cannot see is a `def test_*` that runs no
 #: vector; the `.rs` arm cannot see that either, since `#[test]` says a function
 #: is a test and not what it checks.

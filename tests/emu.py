@@ -249,6 +249,25 @@ class CardRequestTimeoutException(SmartcardException):
     pass
 
 
+class ExclusiveConnectCardConnection:
+    """pyscard's exclusive-access wrapper, which ykman opens every card through. The
+    emulator's card has one client by construction, so it only delegates."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+
+
+class ListReadersException(SmartcardException):
+    pass
+
+
+class EstablishContextException(SmartcardException):
+    pass
+
+
 class AnyCardType:
     """pyscard's "any card will do" filter. There is exactly one card here, so it
     is a marker and nothing else."""
@@ -425,6 +444,18 @@ def _install_smartcard():
     exceptions.NoCardException = NoCardException
     exceptions.CardRequestTimeoutException = CardRequestTimeoutException
 
+    exclusive = types.ModuleType("smartcard.ExclusiveConnectCardConnection")
+    exclusive.ExclusiveConnectCardConnection = ExclusiveConnectCardConnection
+
+    # ykman imports the PC/SC exceptions; `PCSCContext` it only tries after one.
+    pcsc = types.ModuleType("smartcard.pcsc")
+    pcsc.__path__ = []
+    pcsc_exceptions = types.ModuleType("smartcard.pcsc.PCSCExceptions")
+    pcsc_exceptions.ListReadersException = ListReadersException
+    pcsc_exceptions.EstablishContextException = EstablishContextException
+    pcsc.PCSCExceptions = pcsc_exceptions
+    sys.modules["smartcard.pcsc.PCSCExceptions"] = pcsc_exceptions
+
     sys.modules["smartcard"] = pkg
     for name, module in (
         ("System", system),
@@ -433,6 +464,8 @@ def _install_smartcard():
         ("CardType", card_type),
         ("CardRequest", card_request),
         ("Exceptions", exceptions),
+        ("ExclusiveConnectCardConnection", exclusive),
+        ("pcsc", pcsc),
     ):
         sys.modules[f"smartcard.{name}"] = module
         setattr(pkg, name, module)

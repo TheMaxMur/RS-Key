@@ -4,11 +4,11 @@
 
 """Run the vendored upstream suites against RS-Key, with every divergence named.
 
-`third_party/` holds two ecosystems' own conformance suites — pico-fido's and
-pico-openpgp/Gnuk's. They are somebody else's tests under somebody else's
-license, so the run is steered from outside by a pytest plugin and everything
-RS-Key deliberately does not do for them is listed in [`DIVERGENCES`] with its
-reason.
+`third_party/` holds three ecosystems' own conformance suites — pico-fido's,
+pico-openpgp/Gnuk's and Yubico's (ykman's `tests/device`). They are somebody
+else's tests under somebody else's license, so the run is steered from outside
+by a pytest plugin and everything RS-Key deliberately does not do for them is
+listed in [`DIVERGENCES`] with its reason.
 
 No assertion in those directories is ever edited — a disagreement about
 behaviour belongs in that list, where it stays visible. A defect in the suite's
@@ -24,15 +24,21 @@ by one that did (`tests/interop`).
 
     python tests/third_party.py fido            # the pico-fido suite
     python tests/third_party.py openpgp         # the OpenPGP card suite
+    python tests/third_party.py ykman           # ykman's device tests
     python tests/third_party.py all -- -x       # everything; extra pytest args
 
-Both suites want a device that answers like a flashed no-touch build. Against
+The suites want a device that answers like a flashed no-touch build. Against
 `tools/emu` that means `--usbip` on a Linux host (they use python-fido2's and
 pyscard's own transports, which want real USB), and `pcscd` carrying the
-`ccid-rs-key` reader list for the card half.
+`ccid-rs-key` reader list for the card half. The card suites also run over the
+emulator's socket; ykman's runs only there, the emulator started `--yubico`.
 """
+import atexit
 import os
+import shutil
 import sys
+import tempfile
+import types
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -48,6 +54,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUITES = {
     "fido": ("third_party/pico-fido-tests/pico-fido", False),
     "openpgp": ("third_party/openpgp-card-tests", True),
+    # Yubico's own: ykman's `tests/device`, CCID half, against the Yubico identity. The
+    # root is `tests/` because its conftest declares `--device`; nothing else there runs.
+    "ykman": ("third_party/ykman-tests/tests", True),
 }
 
 # What RS-Key deliberately does not do the way these suites expect. The key is a
@@ -261,6 +270,22 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_000_initial_card.py::test_key_attributes_2": "RSA-2048 reads 01 0800 0011 00, as on a YubiKey 5.8.0; the suite wants Gnuk's 0020 from a card it does not know is one",
         "test_000_initial_card.py::test_key_attributes_3": "RSA-2048 reads 01 0800 0011 00, as on a YubiKey 5.8.0; the suite wants Gnuk's 0020 from a card it does not know is one",
     },
+    "ykman": {
+        # OpenPGP 3.4 §7.2.2 answers a wrong password 63Cx, as RS-Key does; a YubiKey
+        # answers 6982, the only one yubikit turns into InvalidPinError. The maintainer's call.
+        "test_openpgp.py::test_change_pin": "a wrong PIN is 63Cx per OpenPGP 3.4 §7.2.2; a YubiKey 5.8.0 answers 6982, which yubikit reads as InvalidPinError",
+        "test_openpgp.py::test_change_admin": "a wrong PIN is 63Cx per OpenPGP 3.4 §7.2.2; a YubiKey 5.8.0 answers 6982, which yubikit reads as InvalidPinError",
+        # Yubico extensions RS-Key does not implement, xfailed rather than removed so
+        # an implementation shows up as a strict XPASS.
+        "test_openpgp.py::test_change_pin_retries": "Yubico's SET PIN RETRIES (INS F2) is not implemented (6D00); past it the test also wants 6982 for a wrong PIN, where RS-Key answers 63Cx",
+        "test_openpgp.py::test_attestation": "Yubico's OpenPGP attestation key and certificate are not implemented",
+        "cli/piv/test_read_write_object.py::TestReadWriteObject::test_write_read_preserves_ansi_escapes": "PIV objects outside SP 800-73's table (5F0001 here) are 6A80 where a YubiKey 5.8.0 stores any 5Fxxxx: open, the maintainer's call",
+        "cli/test_config.py::TestConfigLockCode::test_set_lock_code": "the configuration lock is not implemented: its codes are stripped, never stored (docs/protocol.md)",
+        # A capacity RS-Key keeps on purpose: more accounts than a YubiKey holds.
+        "cli/test_oath.py::TestOATH::test_add_max_creds": "RS-Key holds 255 OATH accounts; the suite wants a YubiKey 5.7's 64, the 65th refused",
+        # brainpoolP512r1 (OID tail 01 01 0D): no no_std arithmetic for it yet.
+        "\\x01\\x01\\r]": "brainpoolP512r1 is not offered: no no_std arithmetic for it (docs/guides/openpgp.md)",
+    },
 }
 
 # Whole modules that exercise a *vendor extension* RS-Key does not implement.
@@ -305,6 +330,16 @@ INAPPLICABLE: dict[str, dict[str, str]] = {
         "030_kdfsingle/test_066_adminfull_kdfsingle.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
         "030_kdfsingle/test_076_adminless_kdfsingle.py": "clearing PW3 to empty: §4.3.1 sets an 8-character minimum",
     },
+    "ykman": {
+        "test_hsmauth.py": "YubiHSM Auth: RS-Key has no hsmauth application",
+        "test_securitydomain.py": "the GlobalPlatform security domain: RS-Key has no SCP03/SCP11",
+        "test_scp.py": "SCP03/SCP11 secure channels: RS-Key has none",
+        # This runner's limit, not RS-Key's: it serves CCID and hides HID, and on USB
+        # ykman reaches OTP over the keyboard interface. They stay deselected here.
+        "[OtpConnection": "OTP over the keyboard HID interface: the socket shim serves CCID only",
+        "test_interfaces.py": "reopens every USB interface, HID ones included",
+        "cli/test_otp.py::TestSlotCalculate": "`ykman otp calculate` on USB needs the OTP HID connection",
+    },
 }
 
 # Sections moved to the end of the run. `040_pcsc_extra` switches applets (PIV,
@@ -316,15 +351,15 @@ INAPPLICABLE: dict[str, dict[str, str]] = {
 LAST: dict[str, tuple[str, ...]] = {
     "fido": (),
     "openpgp": ("040_pcsc_extra/",),
+    "ykman": (),
 }
 
 
 def _match(patterns, nodeid):
-    """The first pattern that is a substring of `nodeid`, with its reason."""
-    for pattern, reason in patterns.items():
-        if pattern in nodeid:
-            return pattern, reason
-    return None, None
+    """The longest pattern that is a substring of `nodeid`, with its reason: the most
+    specific wins, so one that is a prefix of another test's name cannot take it."""
+    hits = [(pattern, reason) for pattern, reason in patterns.items() if pattern in nodeid]
+    return max(hits, key=lambda hit: len(hit[0]), default=(None, None))
 
 
 class Plugin:
@@ -429,12 +464,60 @@ def _install_reboot():
     device.reboot = reboot
 
 
+# What ykman's PC/SC half takes for a USB YubiKey: it reads the kind off the reader name.
+YKMAN_READER = "Yubico YubiKey OTP+FIDO+CCID 00 00"
+
+
+def _install_ykman():
+    """Point ykman at the emulator alone, and return the `--device` its fixtures want:
+    a reader named like a YubiKey's, and HID backends that list nothing, since they
+    would reach every real key on this host."""
+    emu.EmuReader.name = YKMAN_READER
+    # ykman's CLI records every serial it meets; the emulator's is none of the user's.
+    os.environ["XDG_DATA_HOME"] = tempfile.mkdtemp(prefix="rsk-ykman-")
+    atexit.register(shutil.rmtree, os.environ["XDG_DATA_HOME"], True)
+    if sys.platform == "darwin":
+        _stub_macos_hid()
+    import ykman.device
+    from yubikit.core.fido import FidoConnection
+    from yubikit.core.otp import OtpConnection
+
+    for kind in (OtpConnection, FidoConnection):
+        ykman.device._CONNECTION_LIST_MAPPING[kind] = lambda: []
+    devices = ykman.device.list_all_devices()
+    if len(devices) != 1:
+        print(f"ykman sees {len(devices)} devices over the emulator socket: is tools/emu up?")
+        return None
+    return ["--device", str(devices[0][1].serial)]
+
+
+def _stub_macos_hid():
+    """nix Python's libffi aborts on macOS (`closures.c:258`) at the ctypes callbacks
+    fido2's and ykman's macOS HID backends build on import; neither is used here."""
+
+    def refuse(*_):
+        raise OSError("HID is not served over the emulator socket")
+
+    fido = types.ModuleType("fido2.hid.macos")
+    fido.list_descriptors = lambda: []
+    fido.get_descriptor = refuse
+    fido.open_connection = refuse
+    ykman_hid = types.ModuleType("ykman.hid.macos")
+    ykman_hid.list_devices = lambda: []
+    sys.modules.update({"fido2.hid.macos": fido, "ykman.hid.macos": ykman_hid})
+
+
 def run(suite, extra):
     import pytest
 
     rel, shim = SUITES[suite]
     if shim:
         emu.install()
+    if suite == "ykman":
+        device = _install_ykman()
+        if device is None:
+            return 1
+        extra = [*device, *extra]
     print(f"== {suite}: {rel}{' (over the emulator socket)' if shim else ''}")
     return pytest.main([os.path.join(ROOT, rel), *extra], plugins=[Plugin(suite)])
 

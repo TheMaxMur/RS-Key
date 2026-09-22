@@ -811,21 +811,28 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
 
 ## The vendored upstream suites
 
-Two other ecosystems' own conformance suites live in
+Three other ecosystems' own conformance suites live in
 [third_party/](https://github.com/TheMaxMur/RS-Key/tree/main/third_party) —
-pico-fido's and pico-openpgp/Gnuk's — and `tests/third_party.py` runs them against
-RS-Key:
+pico-fido's, pico-openpgp/Gnuk's and Yubico's own `ykman` device tests — and
+`tests/third_party.py` runs them against RS-Key:
 
 ```sh
 nix develop -c python tests/third_party.py openpgp   # over the emulator's card socket
+nix develop -c python tests/third_party.py ykman     # the same, emulator started --yubico
 nix develop -c python tests/third_party.py fido      # needs a board, or --usbip
 ```
 
+ykman's suite covers PIV, OATH, OpenPGP, OTP and the management applet over CCID,
+through ykman's own library and CLI. Over the socket it sees no HID, so its OTP-HID
+and interface tests are deselected, as are the applications RS-Key has none of
+(YubiHSM Auth, SCP03/SCP11). Its first run found the defects fixed in 0x09EA
+(OpenPGP RSA attributes) and 0x09EB (OTP INS 03).
+
 No assertion in those directories is edited. The run is steered from outside by a
 pytest plugin that supplies the power cycle the CTAP 2.1 §6.6 reset window needs,
-names every deliberate divergence as a strict `xfail`, and deselects the modules
-that exercise a vendor extension RS-Key does not implement. Both lists carry a
-spec citation per entry, and `strict` means a divergence that gets fixed *fails*
+names every divergence as a strict `xfail`, and deselects what RS-Key does not
+implement or the runner cannot serve. Every entry carries its reason, a spec
+clause or a measurement, and `strict` means a divergence that gets fixed *fails*
 the run instead of staying listed for ever — which is how the last refresh caught
 one that upstream had corrected.
 

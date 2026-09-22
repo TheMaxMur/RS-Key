@@ -5,12 +5,12 @@ RS-Key has three test layers below this one (`tests/`, the vendored
 suites, and the host `cargo test` / fuzz / Kani stack, see
 [testing.md](testing.md)). All of them drive the device at the **protocol**
 level: APDUs, CBOR, CTAPHID frames. They prove the wire format is correct
-against *our* reading of the specs and against two upstream suites.
+against *our* reading of the specs and against three upstream suites.
 
 ```mermaid
 flowchart BT
     a["Host cargo test · fuzz · Kani<br/>(protocol logic)"] --> c
-    b["Vendored third_party suites<br/>(python-fido2, OpenPGP card)"] --> c
+    b["Vendored third_party suites<br/>(python-fido2, OpenPGP card, ykman)"] --> c
     c["Interop — this page<br/>real gpg / ssh / ykman / browsers, on hardware"]
 ```
 

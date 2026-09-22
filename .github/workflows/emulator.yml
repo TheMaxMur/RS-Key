@@ -94,7 +94,7 @@ jobs:
           key: emu-${{ runner.os }}-${{ hashFiles('tools/emu/Cargo.lock', 'flake.lock') }}
           restore-keys: emu-${{ runner.os }}-
 
-      - name: the on-device suites + the OpenPGP conformance suite, against tools/emu
+      - name: the on-device suites + the OpenPGP and ykman suites, against tools/emu
         run: nix develop -c ./scripts/emu-suites.sh
         env:
           HOST_TARGET: x86_64-unknown-linux-gnu
