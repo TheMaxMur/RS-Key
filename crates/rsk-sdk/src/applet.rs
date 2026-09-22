@@ -399,11 +399,11 @@ impl Dispatcher {
             };
         }
 
-        // The master-file SELECT (`00 A4 00 0C …`, GnuPG scdaemon's `3F00` probe)
-        // must answer 6D00 like a YubiKey, or scdaemon skips its YubiKey detection
-        // and shows a raw serial (issue #44). Key on P2=0x0C (SELECT, no response
-        // data): INS 0xA4 is overloaded — OATH reuses it for CALCULATE ALL
-        // (`A4 p1=00 p2=01`), which must still reach the applet, not be shadowed.
+        // The master-file SELECT (`00 A4 00 0C …`, scdaemon's `3F00` probe) answers
+        // 6D00 like a YubiKey, or scdaemon skips its YubiKey detection: it shows a raw
+        // serial (issue #44), and stops forgiving the 6581 an empty OpenPGP slot's key
+        // read answers, which fails `gpg --card-status`. Key on P2=0x0C: INS 0xA4 is
+        // overloaded — OATH's CALCULATE ALL (`A4 p1=00 p2=01`) must still reach it.
         if apdu.ins == 0xA4 && apdu.p1 == 0x00 && apdu.p2 == 0x0C {
             return Sw::INS_NOT_SUPPORTED;
         }

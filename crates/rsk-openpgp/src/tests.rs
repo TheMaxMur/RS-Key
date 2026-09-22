@@ -1627,20 +1627,83 @@ fn generate_p256_sig_sign_verifies_and_reads_back() {
 }
 
 #[test]
+fn reading_an_empty_slots_public_key_answers_6581_like_a_yubikey() {
+    // A YubiKey 5.8.0, reset, two rounds: GENERATE's P1 = 81 read of a slot with no
+    // key answers 6581 for SIG, DEC and AUT, under RSA attributes and P-256 ones.
+    let rng = RefCell::new(LcgRng(1));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let p256 = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
+    for p256_attrs in [false, true] {
+        let mut fs = make_fs();
+        let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+        if p256_attrs {
+            verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+            for (tag, algo) in [(0xC1, 0x13), (0xC2, 0x12), (0xC3, 0x13)] {
+                let attr = [&[algo][..], &p256].concat();
+                assert_eq!(put(&mut app, &mut fs, 0x00, tag, &attr), Sw::OK);
+            }
+        }
+        for crt in [0xB6, 0xB8, 0xA4] {
+            let sw = keygen(&mut app, &mut fs, 0x81, crt).1;
+            assert_eq!(
+                sw,
+                Sw::MEMORY_FAILURE,
+                "slot {crt:02X}, P-256: {p256_attrs}"
+            );
+        }
+    }
+}
+
+#[test]
+fn reading_a_public_key_the_flash_cannot_serve_answers_6581() {
+    // Both reads GENERATE's P1 = 81 makes of the public-key DO answer a fault 6581:
+    // the size probe (`has_data`, which reads a fault as absent) and the read itself.
+    let rng = RefCell::new(CountRng(7));
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC1, ATTR_P256), Sw::OK);
+    let key = ec_import(0xB6, &[0x11u8; 32]);
+    assert_eq!(run(&mut app, &mut fs, &key).1, Sw::OK);
+    let read = [0x00, consts::INS_KEYPAIR_GEN, 0x81, 0x00, 0x02, 0xB6, 0x00];
+    assert_eq!(
+        run(&mut app, &mut fs, &read).1,
+        Sw::OK,
+        "control: the key reads"
+    );
+
+    medium.stick_after(consts::EF_PB_SIG, 1);
+    let faulted_read = run(&mut app, &mut fs, &read).1;
+    medium.stick(None);
+    assert_eq!(
+        faulted_read,
+        Sw::MEMORY_FAILURE,
+        "the read faulted, the probe passed"
+    );
+
+    medium.stick_once(consts::EF_PB_SIG);
+    let faulted_probe = run(&mut app, &mut fs, &read).1;
+    medium.stick(None);
+    assert_eq!(faulted_probe, Sw::MEMORY_FAILURE, "the size probe faulted");
+}
+
+#[test]
 fn generate_requires_pw3() {
     let rng = RefCell::new(LcgRng(1));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
-    // Generate without admin auth is refused; reading an absent key is not found.
+    // Generate without admin auth is refused; reading an absent key answers 6581,
+    // as a YubiKey 5.8.0 does.
     assert_eq!(
         keygen(&mut app, &mut fs, 0x80, 0xB6).1,
         Sw::SECURITY_STATUS_NOT_SATISFIED
     );
-    assert_eq!(
-        keygen(&mut app, &mut fs, 0x81, 0xB6).1,
-        Sw::REFERENCE_NOT_FOUND
-    );
+    assert_eq!(keygen(&mut app, &mut fs, 0x81, 0xB6).1, Sw::MEMORY_FAILURE);
 }
 
 #[test]

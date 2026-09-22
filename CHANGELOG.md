@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP answers a public-key read from an empty slot `6581`, as a YubiKey
+  does. GENERATE ASYMMETRIC KEY PAIR with `P1 = 81` on a slot with no public
+  key answered `6A88`; a YubiKey 5.8.0 answers `6581` for the signature, decryption
+  and authentication slots alike, under RSA attributes and P-256 ones. The
+  vendored OpenPGP suite expects `6581` only from a card it knows is a YubiKey,
+  so its three empty-slot cells are listed divergences now.
+  `bcdDevice` 0x09E8 → 0x09E9.
+
 - OpenPGP answers a private-key command on an empty slot `6985`, as a YubiKey
   does. PSO:CDS, PSO:DECIPHER (its RSA and ECDH arms) and INTERNAL
   AUTHENTICATE with no key in the slot answered `6A88`; a YubiKey 5.8.0 answers

@@ -199,17 +199,19 @@ fn store_public<S: Storage>(
     Ok(pub_do.len())
 }
 
-/// `P1 = 0x81`: return the stored public-key DO from `EF_PB_*` (slot FID + 3).
+/// `P1 = 0x81`: return the stored public-key DO from `EF_PB_*` (slot FID + 3). A
+/// slot with no key answers `6581`, as a YubiKey 5.8.0 does for all three slots,
+/// and so does one whose DO the flash cannot serve.
 fn read_public<S: Storage>(fs: &mut Fs<S>, fid: KeyFid, out: &mut [u8]) -> Result<usize, Sw> {
     if !fs.has_data(slot_pub_fid(fid)) {
-        return Err(Sw::REFERENCE_NOT_FOUND);
+        return Err(Sw::MEMORY_FAILURE);
     }
     // Fs::read returns the value's full stored length; the backend copied only
     // min(len, out.len()). Clamp before returning, like every other reader in the
     // crate, so the caller's `scratch[..n]` slice can never run past `out`.
     fs.read(slot_pub_fid(fid), out)
         .map(|n| n.min(out.len()))
-        .ok_or(Sw::REFERENCE_NOT_FOUND)
+        .ok_or(Sw::MEMORY_FAILURE)
 }
 
 // --- CCID keepalive path: split RSA generate so the slow keygen can run async ---

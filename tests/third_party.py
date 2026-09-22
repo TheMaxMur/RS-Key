@@ -249,6 +249,12 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # reaches the witness comparison that would answer 6984. 6A80 is the
         # bad-data-field code for a witness the card never issued.
         "::test_piv_management_auth_flow_binding": "the replayed witness is refused by challenge kind (6A80) before the comparison that answers 6984",
+        # GET PUBLIC KEY on an empty slot: the suite wants 6581 only from a card it
+        # knows is a YubiKey, and this harness never says so. RS-Key answers 6581 as
+        # a YubiKey 5.8.0 does — all three slots, RSA and P-256 attributes, two rounds.
+        "test_000_initial_card.py::test_public_key_1": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
+        "test_000_initial_card.py::test_public_key_2": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
+        "test_000_initial_card.py::test_public_key_3": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
     },
 }
 
