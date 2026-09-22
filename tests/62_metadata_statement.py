@@ -6,8 +6,9 @@
 
     nix develop -c python tests/62_metadata_statement.py
 
-This is a drift guard for `metadata/rs-key.metadata.json`. It is NOT in the
-main hardware gate (run it by hand, like the pair/secure-boot scripts).
+This is a drift guard for `metadata/rs-key.metadata.json`. Part A and Part C are
+host-only, so `scripts/emu-suites.sh` sweeps them on every pull request; Part B
+needs a device and is the half you run by hand on a board.
 
 Part A (host-only, always runs):
   * required MDS3 statement fields present;
@@ -46,6 +47,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 META = os.path.join(ROOT, "metadata", "rs-key.metadata.json")
 CONF_META = os.path.join(ROOT, "metadata", "rs-key.conformance.metadata.json")
+U2F_META = os.path.join(ROOT, "metadata", "rs-key.u2f.metadata.json")
 BUILD_RS = os.path.join(ROOT, "crates", "rsk-fido", "build.rs")
 
 # FIDO Registry (v2.2) sign-algorithm string <-> COSE alg id, classic set only.
@@ -287,10 +289,46 @@ def part_b(stmt):
           f"(stateful fields {sorted(STATEFUL | STATEFUL_OPTIONS)} ignored)")
 
 
+def part_c(stmt):
+    """Every published statement through python-fido2's own MDS3 model — a second
+    reader of the same bytes, the one a relying party's library uses."""
+    from fido2.mds3 import MetadataStatement
+
+    fails = []
+    paths = [p for p in (META, CONF_META, U2F_META) if os.path.exists(p)]
+    for path in paths:
+        raw = json.load(open(path))
+        name = os.path.basename(path)
+        try:
+            parsed = MetadataStatement.from_dict(raw)
+        except Exception as e:  # noqa: BLE001 — any refusal is the finding
+            fails.append(f"{name}: python-fido2 refuses it — {type(e).__name__}: {e}")
+            continue
+        if parsed.authenticator_version != raw["authenticatorVersion"]:
+            fails.append(f"{name}: authenticatorVersion read back as {parsed.authenticator_version}")
+        if raw.get("aaguid") and str(parsed.aaguid) != raw["aaguid"]:
+            fails.append(f"{name}: aaguid read back as {parsed.aaguid}")
+
+    # A parser that takes anything proves nothing about what it took: the same
+    # statement without a required member must be refused.
+    try:
+        MetadataStatement.from_dict({k: v for k, v in stmt.items() if k != "attestationTypes"})
+        fails.append("python-fido2 accepted a statement with no attestationTypes — Part C proves nothing")
+    except Exception:  # noqa: BLE001 — the refusal is the point
+        pass
+
+    if fails:
+        for f in fails:
+            print(f"  FAIL: {f}")
+        sys.exit(f"Part C: {len(fails)} failure(s)")
+    print(f"Part C OK — {len(paths)} statement(s) parse under python-fido2's MDS3 model")
+
+
 def main():
     stmt = json.load(open(META))
     part_a(stmt)
     check_conformance_variant(stmt)
+    part_c(stmt)
     part_b(stmt)
 
 
