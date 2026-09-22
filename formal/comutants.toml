@@ -1402,7 +1402,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "inc_sig_count stops clearing PW1 under the one-shot PW status, so one VERIFY signs for ever — the one-signature rule with nothing enforcing it."
+note = "spend_one_shot_pw1 stops clearing PW1 under the one-shot PW status, so one VERIFY signs for ever — the one-signature rule with nothing enforcing it."
 
 [comutant.BugDecipherGhostSpentLikeSig]
 status = "patch"

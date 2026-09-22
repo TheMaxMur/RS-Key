@@ -795,7 +795,7 @@ formal/README.md	crates/rsk-oath/src/lib.rs	1224-1228	/// `select` recomputes `v
 formal/README.md	crates/rsk-oath/src/lib.rs	1226-1226	self.validated = false;	self.validated = false;
 formal/README.md	crates/rsk-oath/src/lib.rs	1609-1609	if deleted > RESET_MAX_DELETES {	if deleted > RESET_MAX_DELETES {
 formal/README.md	crates/rsk-openpgp/src/internalaut.rs	45-48	// §7.2.13 names PW1 no. 82 and nothing else; PW3 used to stand in, and a	return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
-formal/README.md	crates/rsk-openpgp/src/keys.rs	406-420	/// Bump the 3-byte big-endian PSO:CDS counter. If the PW-status "PW1 valid for	sess.has_pw1 = false;
+formal/README.md	crates/rsk-openpgp/src/keys.rs	406-420	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
 formal/README.md	crates/rsk-openpgp/src/lib.rs	354-357	/// valid AID and an ICC power cycle clear them (the dispatcher's `deselect`).	self.reset_session();
 formal/README.md	crates/rsk-openpgp/src/pin.rs	81-94	pub fn reset(&mut self) {	}
 formal/README.md	crates/rsk-openpgp/src/pin.rs	139-139	pw[idx] -= 1;	pw[idx] -= 1;
@@ -806,7 +806,7 @@ formal/README.md	crates/rsk-openpgp/src/pin.rs	240-240	Some(n) if n >= 3 && rec[
 formal/README.md	crates/rsk-openpgp/src/pin.rs	267-269	// comparison, but a YubiKey 5.7.4 clears exactly the addressed	// stops PSO:CDS and the admin surface instead of leaving them open.
 formal/README.md	crates/rsk-openpgp/src/pin.rs	895-895	Some(n) if n >= 1 => rc_rec[0] as usize,	Some(n) if n >= 1 => rc_rec[0] as usize,
 formal/README.md	crates/rsk-openpgp/src/pin.rs	898-898	if data.len() <= rc_len {	if data.len() <= rc_len {
-formal/README.md	crates/rsk-openpgp/src/pso.rs	80-92	(0x9E, 0x9A) => {	if !sess.has_pw2 {
+formal/README.md	crates/rsk-openpgp/src/pso.rs	87-99	(0x9E, 0x9A) => {	if !sess.has_pw2 {
 formal/README.md	crates/rsk-openpgp/src/putdata.rs	59-65	pub fn write_authorized(sess: &Session, fid: u16) -> bool {	}
 formal/README.md	crates/rsk-openpgp/src/putdata.rs	246-249	pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {	}
 formal/README.md	crates/rsk-openpgp/src/terminate.rs	181-181	let mut deleted = 0u32;	let mut deleted = 0u32;
@@ -894,7 +894,7 @@ formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1190-1211	// Any attempt 
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1224-1228	/// `select` recomputes `validated` from whether a code is set.	self.chain = Chain::None;
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1232-1233	/// algorithm) when an access code is set.	fn select(&mut self, _reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1258-1262	self.chain = Chain::None;	self.validated = !code_set;
-formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/keys.rs	406-420	/// Bump the 3-byte big-endian PSO:CDS counter. If the PW-status "PW1 valid for	sess.has_pw1 = false;
+formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/keys.rs	406-420	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/lib.rs	259-261	// moved the tag below the ACL and left this one above it.	return Sw::SECURITY_STATUS_NOT_SATISFIED;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	19-38	pub struct Session {	session_rc: [u8; 32],
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	81-94	pub fn reset(&mut self) {	}

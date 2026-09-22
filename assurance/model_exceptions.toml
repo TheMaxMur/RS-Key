@@ -207,7 +207,7 @@ shape = "clause"
 site = "PgpKeyOp"
 clause = 'r = "pw1"'
 kind = "narrowing"
-production = "EF_PW_PRIV[0] = 0 makes PW1 no. 81 valid for exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs). PW1 no. 82 — PSO:DECIPHER and INTERNAL AUTHENTICATE — carries no such rule and is not spent."
+production = "EF_PW_PRIV[0] = 0 makes PW1 no. 81 valid for exactly one PSO:CDS: crates/rsk-openpgp/src/keys.rs spends it, and pso.rs decides when — after every PSO:CDS past its PIN check. PW1 no. 82 — PSO:DECIPHER and INTERNAL AUTHENTICATE — carries no such rule and is not spent."
 why = '''
 The one-shot spend is narrowed to the signature reference. `BugSigPinNotSpent`
 mutates whether the spend HAPPENS and is required RED; nothing mutates which
@@ -226,7 +226,7 @@ shape = "clause"
 site = "PgpKeyOp"
 clause = 'r = "pw1"'
 kind = "narrowing"
-production = "The requirement-side twin of the line above: `psig` is the freshness the specification leaves behind, and it is spent by a signature under the one-shot status and by nothing else."
+production = "The requirement-side twin of the line above: `psig` is the freshness the specification leaves behind, and it is spent by a signature under the one-shot status. The implementation also spends it on a PSO:CDS it refuses past the PIN check (5352d50), which the model has no action for; that can only take a status away."
 why = '''
 Kept apart from MX-SEAM-006 for the reason the ghost exists at all. The two
 clauses are the implementation half and the requirement half of one fact, and

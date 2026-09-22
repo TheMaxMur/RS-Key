@@ -61,7 +61,7 @@ CONSTANTS
     \* refines. `pfresh` remains the requirement-side copy that exposes the split.
     BugPinFreshOutlivesPin,
     \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:406-420,
-    \* `inc_sig_count` clearing has_pw1 under the one-shot PW status.
+    \* `spend_one_shot_pw1` clearing has_pw1 under the one-shot PW status.
     BugSigPinNotSpent,
     \* The REQUIREMENT half of the one-shot spend, widened off the reference it
     \* belongs to: EF_PW_PRIV[0] = 0 makes PW1 no. 81 valid for one PSO:CDS and

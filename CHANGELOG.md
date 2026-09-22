@@ -40,6 +40,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP spends a one-shot PW1 on every PSO:CDS past the PIN check, as a
+  YubiKey does. With PW1 valid for one signature (`C4` byte `00`), a PSO:CDS
+  the card refused — no key in the slot, an input past k − 11 — left the
+  verification standing, so the next PSO:CDS signed without a new VERIFY. A
+  YubiKey 5.8.0 spends it on those refused attempts too, and RS-Key now spends
+  it after every PSO:CDS past the PIN check; the signature counter still moves
+  only for a signature, on both.
+  `bcdDevice` 0x09E6 → 0x09E7.
+
 - OpenPGP signs an RSA PSO:CDS or INTERNAL AUTHENTICATE the way a YubiKey
   does: PKCS#1 v1.5 over the command data exactly as sent. A bare hash of a
   hash's length was wrapped in a DigestInfo first, and any other input — a

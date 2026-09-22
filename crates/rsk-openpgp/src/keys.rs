@@ -403,15 +403,15 @@ pub fn reset_sig_count<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
         .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
-/// Bump the 3-byte big-endian PSO:CDS counter. If the PW-status "PW1 valid for
-/// one signature" flag is set (`EF_PW_PRIV[0] == 0`), clears the PW1 session.
-pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -> Result<(), Sw> {
+/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set
+/// (`EF_PW_PRIV[0] == 0`): PSO:CDS runs this after every attempt past its PIN check.
+pub fn spend_one_shot_pw1<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) {
     let mut pw = [0u8; 8];
     // A probe that FAILED is not a status byte reading "valid for several": the
     // collapsed `read` left PW1 standing, so one flash fault bought unlimited
     // further signatures on a single PIN entry. Fail closed by spending PW1 rather
-    // than refusing — the signature this call has already produced was authorised,
-    // and only the NEXT one is in question.
+    // than refusing — the attempt this command made was authorised, and only the
+    // NEXT one is in question.
     let one_shot = match fs.try_read(EF_PW_PRIV, &mut pw) {
         Ok(v) => v.is_some() && pw[0] == 0,
         Err(_) => true,
@@ -419,6 +419,10 @@ pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -> Result<(
     if one_shot {
         sess.has_pw1 = false;
     }
+}
+
+/// Bump the 3-byte big-endian PSO:CDS counter, after a signature and only then.
+pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     let mut c = [0u8; 3];
     fs.read(EF_SIG_COUNT, &mut c)
         .ok_or(Sw::REFERENCE_NOT_FOUND)?;

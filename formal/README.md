@@ -1419,7 +1419,7 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 |---|---|---|
 | `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:374-390` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:200-204` · `crates/rsk-openpgp/src/pin.rs:81-94` · `crates/rsk-oath/src/lib.rs:1224-1228` · `crates/rsk-device/src/ccid.rs:354-369` (the ICC power transition) |
 | `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:184-187` · `crates/rsk-openpgp/src/pin.rs:190-202` · `crates/rsk-oath/src/lib.rs:1160-1161` |
-| `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:80-92` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:57-65`, `:113-117` |
+| `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:87-99` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:57-65`, `:113-117` |
 | `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:366-369` · `crates/rsk-openpgp/src/lib.rs:354-357` |
 | `AccessCodeRemovalNeedsTheCode` | Removing the OATH access code needs the validated status the code bought. **A step rule — its violation produces exactly the exempt code-less state, so no state predicate can see it** | `crates/rsk-oath/src/lib.rs:330-332` (the shared gate) · `:337-349` (the removal path) |
 
@@ -1508,7 +1508,7 @@ surface to be about**: `pivMgm` was written by one action and read by no guard,
 so the invariant's converse — a *user* status opening the *admin* surface — was
 unfalsifiable. `AdminOp` costs a handful of states and `BugUserStatusOpensAdmin`
 falls in 48. It also found the second `pin_fresh`-shaped hole, one applet over:
-OpenPGP's `inc_sig_count` clears `has_pw1` under the one-shot PW status
+OpenPGP's `spend_one_shot_pw1` clears `has_pw1` under the one-shot PW status
 (`crates/rsk-openpgp/src/keys.rs:406-420`), which `PgpKeyOp` had no term for —
 `BugSigPinNotSpent`, RED in 361 once `oneShotSig`/`psig` exist. And a **refused
 OATH `VALIDATE` that GRANTS the unlock was invisible**, because the `refused`
@@ -1766,7 +1766,7 @@ first is what co-refutation is for and the second is what it costs.
 
 | Gap | What the code level could not see |
 |---|---|
-| `BugSigPinNotSpent` | `inc_sig_count` clearing PW1 under the one-shot PW status — the §7.2.10 rule that one VERIFY signs once. No host test wrote C4 = `00` at all. |
+| `BugSigPinNotSpent` | `spend_one_shot_pw1` clearing PW1 under the one-shot PW status — the §7.2.10 rule that one VERIFY signs once. No host test wrote C4 = `00` at all. |
 | `BugRemoveCodeUnvalidated` | SEC-SEAM-006's own defect. The model's blindness here was closed two revisions ago; the Rust half was asserted by nobody, so `73 00` past the gate was a green run. |
 | `BugRefusedValidateGrants` / `BugRefusedValidateDropsUnlock` | Both directions of a refused OATH VALIDATE — one that *unlocks* while answering `6A80`, and one that drops a standing unlock a MAC challenge-response has no counter to protect. |
 

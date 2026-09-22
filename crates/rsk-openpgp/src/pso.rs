@@ -16,7 +16,7 @@ use crate::consts::*;
 use crate::importdata::tag_len;
 use crate::keys::{
     ec_sw, inc_sig_count, load_aes_key, load_ec_key, load_rsa_crt, load_rsa_key, rsa_decipher,
-    rsa_decipher_legacy, rsa_sign_block,
+    rsa_decipher_legacy, rsa_sign_block, spend_one_shot_pw1,
 };
 use crate::pin::Session;
 use crate::{Rng, UserPresence, check_uif};
@@ -40,7 +40,14 @@ pub fn pso<S: Storage>(
     apdu: &Apdu,
     out: &mut [u8],
 ) -> (usize, Sw) {
-    match try_pso(dev, fs, sess, rng, presence, apdu, out) {
+    // A YubiKey 5.8.0 spends a one-shot PW1 on a refused PSO:CDS as on a signature, so
+    // every attempt past the PIN check spends it here — after it, as the unseal reads PW1.
+    let spends = (apdu.p1, apdu.p2) == (0x9E, 0x9A) && sess.has_pw1;
+    let res = try_pso(dev, fs, sess, rng, presence, apdu, out);
+    if spends {
+        spend_one_shot_pw1(fs, sess);
+    }
+    match res {
         Ok(n) => (n, Sw::OK),
         Err(sw) => (0, sw),
     }
@@ -49,7 +56,7 @@ pub fn pso<S: Storage>(
 fn try_pso<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
-    sess: &mut Session,
+    sess: &Session,
     rng: &mut dyn Rng,
     presence: &mut dyn UserPresence,
     apdu: &Apdu,
@@ -108,7 +115,7 @@ fn try_pso<S: Storage>(
         if (p1, p2) == (0x9E, 0x9A) {
             let crt = load_rsa_crt(dev, fs, sess, pk_fid)?;
             let n = rsa_sign_block(&crt, rng, data, out)?;
-            inc_sig_count(fs, sess)?;
+            inc_sig_count(fs)?;
             return Ok(n);
         }
         // DECIPHER: PKCS#1 v1.5 decrypt the ciphertext that follows the leading
@@ -131,7 +138,7 @@ fn try_pso<S: Storage>(
     if (p1, p2) == (0x9E, 0x9A) {
         // COMPUTE SIGNATURE over the supplied digest / message.
         let n = key.sign(data, out).map_err(ec_sw)?;
-        inc_sig_count(fs, sess)?;
+        inc_sig_count(fs)?;
         Ok(n)
     } else {
         // DECIPHER (ECDH): extract the peer public point and agree.

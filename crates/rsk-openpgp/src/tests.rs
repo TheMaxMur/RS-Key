@@ -1098,6 +1098,93 @@ fn rsa_signs_the_command_data_as_given_like_a_yubikey() {
 }
 
 #[test]
+fn a_refused_pso_cds_spends_a_one_shot_pw1_like_a_yubikey() {
+    // A YubiKey 5.8.0 with PW1 valid for one PSO:CDS (two rounds): a CDS refused for
+    // having no key, or for its length, spends the verification all the same, and
+    // only a signature bumps the counter.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0xC4, &[0x00]), Sw::OK);
+    let cds = |data: &[u8]| {
+        [
+            &[0x00, consts::INS_PSO, 0x9E, 0x9A, data.len() as u8][..],
+            data,
+        ]
+        .concat()
+    };
+    // VERIFY with no data answers 9000 while PW1 stands, 63Cx once it is spent.
+    let status = [0x00, consts::INS_VERIFY, 0x00, consts::PW1_MODE81];
+    let counter = |fs: &mut Fs<RamStorage>| {
+        let mut c = [0u8; 3];
+        fs.read(consts::EF_SIG_COUNT, &mut c);
+        c
+    };
+    let di = [DI_SHA256, &[0x42; 32]].concat();
+
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    assert_ne!(
+        run(&mut app, &mut fs, &cds(&di)).1,
+        Sw::OK,
+        "no key: refused"
+    );
+    assert_ne!(
+        run(&mut app, &mut fs, &status).1,
+        Sw::OK,
+        "no key: PW1 spent"
+    );
+
+    for crt in [0xB6, 0xB8] {
+        let key = rsa_import(crt, &[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q));
+        assert_eq!(run(&mut app, &mut fs, &key).1, Sw::OK);
+    }
+    // From here on a fresh session holds PW1 alone, as gpg's forcesig flow does: a
+    // standing PW3 would unseal the key for a spend moved ahead of the signature.
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let before = counter(&mut fs);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    let too_long = cds(&[0x5A; 246]);
+    assert_eq!(run(&mut app, &mut fs, &too_long).1, Sw::MEMORY_FAILURE);
+    assert_ne!(
+        run(&mut app, &mut fs, &status).1,
+        Sw::OK,
+        "246 bytes: PW1 spent"
+    );
+    assert_eq!(counter(&mut fs), before, "a refusal is not a signature");
+
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    assert_eq!(
+        run(&mut app, &mut fs, &cds(&di)).1,
+        Sw::OK,
+        "PW1 alone unseals"
+    );
+    assert_ne!(
+        run(&mut app, &mut fs, &status).1,
+        Sw::OK,
+        "a signature spends it"
+    );
+    assert_ne!(counter(&mut fs), before, "and counts");
+
+    // The one-shot status is PW1 no. 81's: a DECIPHER on no. 82 leaves it standing.
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+    let ct = [vec![0x00], hx(rsk_rsa::vectors::ENCRYPT[2].1)].concat();
+    let decipher = [
+        &[0x00, consts::INS_PSO, 0x80, 0x86, 0x00, 0x01, 0x01][..],
+        &ct,
+    ]
+    .concat();
+    assert_eq!(run(&mut app, &mut fs, &decipher).1, Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &status).1,
+        Sw::OK,
+        "a DECIPHER spends no PW1 81"
+    );
+}
+
+#[test]
 fn import_rsa_holds_the_key_to_the_algorithm_attribute() {
     // §4.4.3.12: "The length of the key data shall match the values given in the
     // DO 'Algorithm attributes' (C1 - C3)." Without it the card gives two answers
@@ -2922,9 +3009,9 @@ fn put_data_judges_the_tag_before_the_body_length() {
 #[test]
 fn the_one_shot_pw_status_spends_pw1_at_the_signature() {
     // OpenPGP 3.4 §7.2.10: with DO C4's first byte at 0x00, "PW1 valid for one
-    // PSO:CDS" — the second signature must ask again. `inc_sig_count` is where
-    // that is enforced, *after* the signature, and the flag's only writer is a
-    // PW3 PUT DATA C4 (which is why the two live or die together).
+    // PSO:CDS" — the second signature must ask again. `spend_one_shot_pw1` enforces
+    // it after every PSO:CDS attempt, and the flag's only writer is a PW3 PUT DATA
+    // C4 (which is why the two live or die together).
     let rng = RefCell::new(CountRng(7));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
@@ -3058,15 +3145,15 @@ fn a_faulted_uif_probe_does_not_lower_a_permanent_touch_requirement() {
 }
 
 /// OpenPGP 3.4 §7.2.10: DO `C4`'s first byte at `0x00` is "PW1 valid for ONE
-/// PSO:CDS", and `inc_sig_count` is the only place that spends it. It read the flag
+/// PSO:CDS", and `spend_one_shot_pw1` is the only place that spends it. It read the flag
 /// with `Fs::read`, which answers the same `None` for "no PW status stored" and for
 /// one the flash could not serve — and that arm LEAVES PW1 STANDING. So one faulted
 /// probe turned a one-shot PIN entry into an unlimited signing session for whoever
 /// is on the wire after the owner's one legitimate signature.
 ///
-/// Aimed at `EF_PW_PRIV` alone: the statement immediately below reads `EF_SIG_COUNT`
-/// and already refuses, so a whole-backend fault would be caught by the neighbour
-/// and prove nothing about this line.
+/// Aimed at `EF_PW_PRIV` alone: a whole-backend fault would also fail the counter's
+/// read, which runs first, and refuse the signature itself — proving nothing about
+/// this probe.
 #[test]
 fn a_faulted_pw_status_probe_does_not_extend_a_one_shot_pin() {
     let rng = RefCell::new(CountRng(7));
