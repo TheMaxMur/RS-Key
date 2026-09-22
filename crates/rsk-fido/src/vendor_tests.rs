@@ -2674,3 +2674,55 @@ fn a_device_pin_no_pad_can_collect_is_not_a_gate_that_may_be_skipped() {
         "the attestation key was destroyed behind a gate nobody could answer"
     );
 }
+
+/// ATT_CLEAR erases the attestation key and then its chain, cut at every point. A
+/// key with no chain is the harmful survivor — `u2f::cmd_register` takes the
+/// attested branch on the key and then fails the chain read, so every later U2F
+/// REGISTER answers 6F00 — and the order is what keeps that state unreachable: only
+/// a chain with no key can survive, and that one falls back to self-attestation.
+#[test]
+fn a_torn_att_clear_never_leaves_the_key_without_its_chain() {
+    rsk_fs::cut::sweep(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            let mut rng = SeqRng(1);
+            let d = dev();
+            ensure_seed(&d, &mut fs, &mut rng).unwrap();
+            crate::seed::store_att_key(&d, &mut fs, &[3u8; 32]).unwrap();
+            fs.put(EF_ATT_CHAIN, &[0xC4; 64]).unwrap();
+            (fs, medium)
+        },
+        |fs| {
+            let mut rng = SeqRng(7);
+            let mut st = FidoState::new();
+            handshake(fs, &mut rng, &mut st);
+            let mut req = [0u8; 64];
+            let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
+            let mut out = [0u8; 512];
+            call(
+                fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out,
+            )
+            .is_ok()
+        },
+        |fs, budget, completed, medium| {
+            let (key, chain) = (fs.has_key(EF_ATT_KEY), fs.has_data(EF_ATT_CHAIN));
+            assert!(
+                chain || !key,
+                "budget {budget}: the key survived its chain, so U2F REGISTER answers 6F00 — {:?}",
+                medium.ops()
+            );
+            if completed {
+                assert!(
+                    !key && !chain,
+                    "budget {budget}: ATT_CLEAR reported success and something survived"
+                );
+            }
+        },
+    );
+}

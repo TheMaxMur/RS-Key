@@ -76,7 +76,10 @@ until the command completes, and the oracle is the command's own, since only it 
 what it owns: setPIN leaves no PIN or a whole one with the old grant revoked, a
 two-fragment large-blob write leaves an array that still hashes to its own trailer,
 setMinPINLength leaves the old floor or the new one and never a forced PIN change
-over a live grant. Those three are the sweeps so far; the loop asserts that some
+over a live grant, the vendor ATT_CLEAR never leaves the attestation key without
+its chain (a key with no chain is what made every later U2F REGISTER answer
+`6F00`), and credMgmt's updateUserInformation never changes a credential behind
+an unmoved store-state tag. The loop asserts that some
 budget tore the command and some let it finish, so one that stopped reaching the
 command reads as vacuous rather than as a pass. The `power_cut` fuzz target below
 does this to the storage stack; these do it to a command, where the ordering between

@@ -76,8 +76,8 @@ fn mc_request(rp_id: &str, uid: &[u8], name: &str) -> std::vec::Vec<u8> {
 }
 
 // Register a resident credential, returning its (resident_id, pubkey x, y).
-fn register(
-    fs: &mut Fs<RamStorage>,
+fn register<S: rsk_fs::Storage>(
+    fs: &mut Fs<S>,
     rng: &mut SeqRng,
     rp_id: &str,
     uid: &[u8],
@@ -2299,4 +2299,79 @@ fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
         }
     }
     assert!(saw_torn, "vacuous: no budget tore the delete");
+}
+
+/// updateUserInformation rewrites a credential's box, cut at every mutation. The
+/// name that comes back is the old one or the new one, and the store-state tag moves
+/// BEFORE the record does: a platform that cached the tag re-enumerates after a cut
+/// that landed the rewrite, where the other order would leave it holding a name the
+/// key no longer has.
+#[test]
+fn a_torn_update_user_never_changes_a_credential_behind_the_store_state() {
+    let before = std::cell::Cell::new(0u128);
+    let cred_id = std::cell::RefCell::new(std::vec::Vec::new());
+    rsk_fs::cut::sweep(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            let mut rng = SeqRng(1);
+            ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+            let (id, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+            *cred_id.borrow_mut() = id;
+            before.set(u128::from_le_bytes(
+                crate::credential::cred_store_state(&mut fs).unwrap(),
+            ));
+            (fs, medium)
+        },
+        |fs| {
+            let mut state = armed(PERM_CM);
+            let mut out = [0u8; 512];
+            let req = cm_request(
+                0x07,
+                Some(&subpara_update(
+                    &cred_id.borrow(),
+                    &[1, 1],
+                    "alice2",
+                    "Alice Two",
+                )),
+                &TOKEN,
+            );
+            run(fs, &mut state, &req, &mut out).is_ok()
+        },
+        |fs, budget, completed, medium| {
+            let mut state = armed(PERM_CM);
+            let mut out = [0u8; 512];
+            let rp_hash = sha256(b"example.com");
+            let n = run(
+                fs,
+                &mut state,
+                &cm_request(0x04, Some(&subpara_rpidhash(&rp_hash)), &TOKEN),
+                &mut out,
+            )
+            .unwrap_or_else(|e| {
+                panic!("budget {budget}: the credential no longer enumerates: {e:?}")
+            });
+            let name = cred_user_name(&out[..n]);
+            assert!(
+                name == "alice" || name == "alice2",
+                "budget {budget}: neither the old name nor the new one ({name}) — {:?}",
+                medium.ops()
+            );
+            let now = u128::from_le_bytes(crate::credential::cred_store_state(fs).unwrap());
+            if name == "alice2" {
+                assert_ne!(
+                    now,
+                    before.get(),
+                    "budget {budget}: the rewrite landed behind an unchanged store state — {:?}",
+                    medium.ops()
+                );
+            }
+            if completed {
+                assert_eq!(
+                    name, "alice2",
+                    "budget {budget}: the update reported success"
+                );
+            }
+        },
+    );
 }
