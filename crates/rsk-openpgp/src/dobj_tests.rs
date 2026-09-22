@@ -23,11 +23,71 @@ fn algo_default_is_rsa2k() {
         w.build(EF_ALGO_SIG)
     };
     // emit_algo always self-writes the tag + length (C1 06) ahead of the
-    // value; GET DATA strips the outer tag for FUNC DOs.
+    // value; GET DATA strips the outer tag for FUNC DOs. A reset YubiKey 5.8.0
+    // reports 01 0800 0011 00: e is 17 bits long.
     assert_eq!(
         &out[..n],
-        &[0xC1, 6, ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00]
+        &[0xC1, 6, ALGO_RSA, 0x08, 0x00, 0x00, 0x11, 0x00]
     );
+}
+
+/// An older build stored the exponent length it was sent, 32 from gpg's default;
+/// the card reports 17 for it, as a YubiKey 5.8.0 does for any length it took.
+#[test]
+fn a_stored_32_bit_exponent_length_reads_as_17() {
+    let mut fs = fs();
+    fs.put(EF_ALGO_PRIV1, &[ALGO_RSA, 0x0C, 0x00, 0x00, 0x20, 0x00])
+        .unwrap();
+    let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+    let mut out = [0u8; 64];
+    let n = DoWriter::new(&mut out, &mut fs, &aid).build(EF_ALGO_SIG);
+    assert_eq!(
+        &out[..n],
+        &[0xC1, 6, ALGO_RSA, 0x0C, 0x00, 0x00, 0x11, 0x00]
+    );
+}
+
+/// A length below 65537's, which only a build older than the PUT DATA check could have
+/// stored, reads back as stored: GENERATE and IMPORT refuse it, so the card must not
+/// report the advertised 17 over it.
+#[test]
+fn a_stored_16_bit_exponent_length_reads_back_as_stored() {
+    let mut fs = fs();
+    let stored = [ALGO_RSA, 0x08, 0x00, 0x00, 0x10, 0x00];
+    fs.put(EF_ALGO_PRIV1, &stored).unwrap();
+    let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+    let mut out = [0u8; 64];
+    let n = DoWriter::new(&mut out, &mut fs, &aid).build(EF_ALGO_SIG);
+    assert_eq!(&out[2..n], &stored);
+    assert!(!advertised_algo(EF_ALGO_SIG, &out[2..n]));
+}
+
+/// DO `0xFA` offers RSA with the 17-bit exponent length a YubiKey 5.8.0 offers,
+/// in every slot and at 2048, 3072 and 4096 bits: `yubikit` refuses to set any
+/// attribute the list does not hold, so a 32 here left it no RSA at all.
+#[test]
+fn algorithm_information_offers_rsa_with_a_17_bit_exponent() {
+    let mut fs = fs();
+    let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+    let mut out = [0u8; 512];
+    let n = DoWriter::new(&mut out, &mut fs, &aid).build(EF_ALGO_INFO);
+    let body = &out[4..n]; // FA 82 LL LL
+    let mut rsa = Vec::new();
+    let mut at = 0;
+    while at < body.len() {
+        let (tag, len) = (body[at], usize::from(body[at + 1]));
+        let value = &body[at + 2..at + 2 + len];
+        if value[0] == ALGO_RSA {
+            assert_eq!(&value[3..], &[0x00, 0x11, 0x00], "{tag:02x}: {value:02x?}");
+            rsa.push((tag, u16::from_be_bytes([value[1], value[2]])));
+        }
+        at += 2 + len;
+    }
+    for tag in [0xC1, 0xC2, 0xC3] {
+        for bits in [2048, 3072, 4096] {
+            assert!(rsa.contains(&(tag, bits)), "{tag:02x} lacks RSA-{bits}");
+        }
+    }
 }
 
 #[test]

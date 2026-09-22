@@ -11,10 +11,12 @@ use crate::files::{DoSource, FuncDo, source};
 
 // Algorithm-attribute templates, each prefixed with its TLV length byte —
 // `emit_algo` copies `algo[0]+1` bytes after the tag.
-const ATTR_RSA1K: &[u8] = &[6, ALGO_RSA, 0x04, 0x00, 0x00, 0x20, 0x00];
-const ATTR_RSA2K: &[u8] = &[6, ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00];
-const ATTR_RSA3K: &[u8] = &[6, ALGO_RSA, 0x0C, 0x00, 0x00, 0x20, 0x00];
-const ATTR_RSA4K: &[u8] = &[6, ALGO_RSA, 0x10, 0x00, 0x00, 0x20, 0x00];
+const E_HI: u8 = RSA_E_BITS_BE[0];
+const E_LO: u8 = RSA_E_BITS_BE[1];
+const ATTR_RSA1K: &[u8] = &[6, ALGO_RSA, 0x04, 0x00, E_HI, E_LO, 0x00];
+const ATTR_RSA2K: &[u8] = &[6, ALGO_RSA, 0x08, 0x00, E_HI, E_LO, 0x00];
+const ATTR_RSA3K: &[u8] = &[6, ALGO_RSA, 0x0C, 0x00, E_HI, E_LO, 0x00];
+const ATTR_RSA4K: &[u8] = &[6, ALGO_RSA, 0x10, 0x00, E_HI, E_LO, 0x00];
 pub(crate) const ATTR_P256K1: &[u8] = &[6, ALGO_ECDSA, 0x2b, 0x81, 0x04, 0x00, 0x0a];
 pub(crate) const ATTR_P256R1: &[u8] = &[
     9, ALGO_ECDSA, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07,
@@ -77,11 +79,9 @@ pub(crate) const ALGO_DEC_SUPPORTED: &[&[u8]] = &[
 ];
 pub(crate) const ALGO_AUT_SUPPORTED: &[&[u8]] = ALGO_SIG_SUPPORTED;
 
-/// Whether `data` is an algorithm attribute this card advertises for `fid`
-/// (C1/C2/C3). `data` is the DO *value*; the templates carry a leading TLV length
-/// byte, so compare against `attr[1..]` — after the same ECDSA→ECDH rewrite
-/// [`DoWriter::emit_algo`] applies to the DEC list, so what we accept is exactly what DO
-/// `0xFA` published.
+/// Whether `data`, a C1/C2/C3 value, is an attribute DO `0xFA` advertises for `fid`:
+/// matched against `attr[1..]` after [`DoWriter::emit_algo`]'s ECDSA→ECDH rewrite, and
+/// with an RSA exponent length from 17 bits up read as the 17 it is stored as.
 pub(crate) fn advertised_algo(fid: u16, data: &[u8]) -> bool {
     let set = match fid {
         EF_ALGO_SIG => ALGO_SIG_SUPPORTED,
@@ -100,9 +100,39 @@ pub(crate) fn advertised_algo(fid: u16, data: &[u8]) -> bool {
             (Some((&(ALGO_ECDSA | ALGO_ECDH), lhs)), Some((&(ALGO_ECDSA | ALGO_ECDH), rhs))) => {
                 lhs == rhs
             }
+            // A YubiKey 5.8.0 takes any e length from 17 bits and stores 17
+            // ([`canonical_algo`]); the size and the import format must match.
+            (Some((&ALGO_RSA, lhs)), Some((&ALGO_RSA, rhs))) => {
+                rhs.len() == lhs.len()
+                    && lhs[..2] == rhs[..2]
+                    && lhs[4] == rhs[4]
+                    && u16::from_be_bytes([rhs[2], rhs[3]]) >= RSA_E_BITS
+            }
             _ => val == data,
         }
     })
+}
+
+/// An RSA attribute as a YubiKey 5.8.0 stores and reports it: an exponent length of
+/// 17 bits or more becomes [`RSA_E_BITS`]. `None` for anything else, a shorter length
+/// an older build stored included, so it reads back as the refusal it is.
+pub(crate) fn canonical_algo(attr: &[u8]) -> Option<[u8; 6]> {
+    match *attr {
+        [ALGO_RSA, n_hi, n_lo, e_hi, e_lo, format]
+            if u16::from_be_bytes([e_hi, e_lo]) >= RSA_E_BITS =>
+        {
+            Some([ALGO_RSA, n_hi, n_lo, E_HI, E_LO, format])
+        }
+        _ => None,
+    }
+}
+
+/// Whether `a` and `b` name the same key, reading RSA as [`canonical_algo`] does.
+pub(crate) fn same_algo(a: &[u8], b: &[u8]) -> bool {
+    match (canonical_algo(a), canonical_algo(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => a == b,
+    }
 }
 
 /// Builds DO responses into a caller buffer, reading sub-DOs from `fs`.
@@ -433,7 +463,12 @@ impl<'a, S: Storage> DoWriter<'a, S> {
                 let len = self.fs.size(priv_fid).unwrap_or(0);
                 self.push((fid & 0xff) as u8);
                 self.push((len & 0xff) as u8);
+                let at = self.pos;
                 self.read_flash(priv_fid);
+                // An older build stored the e length it was sent.
+                if let Some(attr) = canonical_algo(&self.out[at..self.pos]) {
+                    self.out[at..self.pos].copy_from_slice(&attr);
+                }
                 2 + len
             }
         }

@@ -1053,8 +1053,8 @@ note = "spend_pin stops clearing freshness: one VERIFY authorises every later op
 [comutant.BugPgpAttributeKeepsKey]
 status = "patch"
 file = "crates/rsk-openpgp/src/putdata.rs"
-find = "        if current != replacement {"
-replace = "        if false && current != replacement {"
+find = "        if !crate::dobj::same_algo(current, replacement) {"
+replace = "        if false && !crate::dobj::same_algo(current, replacement) {"
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
 note = "a changed algorithm attribute keeps the stored key pair, so the slot's metadata and its key material disagree — the state AttributeChangeInvalidatesTheKey forbids."

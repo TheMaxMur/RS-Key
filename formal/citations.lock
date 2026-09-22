@@ -451,7 +451,7 @@ assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/powercut.rs	43-43	pub fn d
 assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/store_assurance.rs	224-228	// A FOURTH step clause has no projection here, deliberately. `NoSilentOrphan` —	// projection over `StoreView` alone could not see the half that decides it.
 assurance/crates.toml	crates/rsk-device/src/ctap.rs	82-93	fido_state: &'a RefCell<rsk_fido::FidoState>,	}
 assurance/deleters.toml	crates/rsk-fido/src/vendor.rs	426-426	// so U2F REGISTER answered 6F00 on every later call — the same key-without-chain	// so U2F REGISTER answered 6F00 on every later call — the same key-without-chain
-assurance/deleters.toml	crates/rsk-openpgp/src/putdata.rs	161-161	Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,	Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,
+assurance/deleters.toml	crates/rsk-openpgp/src/putdata.rs	163-163	Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,	Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,
 assurance/platform.toml	crates/rsk-device/src/ccid.rs	311-311	pub fn factory_wipe(&mut self) -> bool {	pub fn factory_wipe(&mut self) -> bool {
 assurance/platform.toml	crates/rsk-device/src/ctap.rs	221-221	keydev_ram_raw: st.keydev_dec.is_some(),	keydev_ram_raw: st.keydev_dec.is_some(),
 assurance/platform.toml	crates/rsk-device/src/presence.rs	26-32	pub const SCOPE_NONE: u8 = 0;	pub const SCOPE_OTP: u8 = 3;
@@ -808,7 +808,7 @@ formal/README.md	crates/rsk-openpgp/src/pin.rs	895-895	Some(n) if n >= 1 => rc_r
 formal/README.md	crates/rsk-openpgp/src/pin.rs	898-898	if data.len() <= rc_len {	if data.len() <= rc_len {
 formal/README.md	crates/rsk-openpgp/src/pso.rs	87-99	(0x9E, 0x9A) => {	if !sess.has_pw2 {
 formal/README.md	crates/rsk-openpgp/src/putdata.rs	59-65	pub fn write_authorized(sess: &Session, fid: u16) -> bool {	}
-formal/README.md	crates/rsk-openpgp/src/putdata.rs	246-249	pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {	}
+formal/README.md	crates/rsk-openpgp/src/putdata.rs	248-251	pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {	}
 formal/README.md	crates/rsk-openpgp/src/terminate.rs	181-181	let mut deleted = 0u32;	let mut deleted = 0u32;
 formal/README.md	crates/rsk-openpgp/src/terminate.rs	212-212	if deleted > WIPE_MAX_DELETES {	if deleted > WIPE_MAX_DELETES {
 formal/README.md	crates/rsk-piv/src/auth.rs	57-65	/// skips the PIN; listing known gated values made unknown bytes ungated.	}

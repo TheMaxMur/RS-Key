@@ -140,6 +140,8 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
     {
         return Sw::WRONG_DATA;
     }
+    let rsa = crate::dobj::canonical_algo(data).filter(|_| algorithm_slot(fid).is_some());
+    let data = rsa.as_ref().map_or(data, |attr| &attr[..]);
 
     // Refines `RSKeyAppletPolicies!AttributeChangeInvalidatesTheKey` — SEC-POL-003.
     if let Some(slot) = algorithm_slot(fid) {
@@ -156,7 +158,7 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
             _ => DEFAULT_ALGO,
         };
         let replacement = if data.is_empty() { DEFAULT_ALGO } else { data };
-        if current != replacement {
+        if !crate::dobj::same_algo(current, replacement) {
             match fs.try_has_key(slot) {
                 Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,
                 Err(_) => return Sw::MEMORY_FAILURE,

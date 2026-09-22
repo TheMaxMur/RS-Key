@@ -1297,8 +1297,8 @@ fn import_refuses_an_unadvertised_stored_algorithm_attribute() {
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
     verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
 
-    // rsa2048 with a non-standard 17-bit exponent field: not in DO 0xFA.
-    fs.put(consts::EF_ALGO_PRIV1, &[0x01, 0x08, 0x00, 0x00, 0x11, 0x00])
+    // rsa2048 with an exponent field too short for 65537: not in DO 0xFA.
+    fs.put(consts::EF_ALGO_PRIV1, &[0x01, 0x08, 0x00, 0x00, 0x10, 0x00])
         .unwrap();
     let (_, sw) = run(
         &mut app,

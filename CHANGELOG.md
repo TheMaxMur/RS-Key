@@ -40,6 +40,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP offers and stores RSA attributes the way a YubiKey does, so
+  `ykman openpgp keys import` and every other yubikit client can set RSA.
+  DO `0xFA` listed RSA with a 32-bit exponent length (`01 0800 0020 00`), and
+  yubikit sets only an attribute that list holds, built with the 17 bits a
+  YubiKey lists: it refused RSA outright. PUT DATA C1/C2/C3 took nothing but 32
+  either, so a host writing a YubiKey's `0011` got `6A80`. A YubiKey 5.8.0 lists
+  17, takes any length from 17 bits up and stores 17, and refuses 16, another
+  import format or another width; RS-Key now does all of that, and the default
+  is `01 0800 0011 00`. An attribute an older build stored with 32 reads back as
+  17 and keeps its key; only a change of size retires one. Back on an older
+  build, which takes only 32, a slot set here refuses GENERATE and IMPORT until a
+  factory reset clears its attribute; its keys go on working.
+  `bcdDevice` 0x09E9 → 0x09EA.
+
 - OpenPGP answers a public-key read from an empty slot `6581`, as a YubiKey
   does. GENERATE ASYMMETRIC KEY PAIR with `P1 = 81` on a slot with no public
   key answered `6A88`; a YubiKey 5.8.0 answers `6581` for the signature, decryption

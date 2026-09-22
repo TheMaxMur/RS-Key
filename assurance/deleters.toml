@@ -254,7 +254,7 @@ answer = "read"
 class = "secret-or-gate"
 metadata = "none"
 disposition = "must-read"
-why = "resetPersistentPinUvAuthToken revokes a capability (SEC-FIDO-003); all four callers map the error to CTAP2_ERR_OTHER rather than report a token cleared. The folded answer is kept deliberately (reviewed 0x0989): the record half here is only ever the shared blob being unreadable, but that is equally true of vendor.rs:426/428 and crates/rsk-openpgp/src/putdata.rs:161/167, and splitting the halves for this caller alone would re-open the swallowed drop 0x0987 closed. One-shot commands lose the command, not a sweep's range."
+why = "resetPersistentPinUvAuthToken revokes a capability (SEC-FIDO-003); all four callers map the error to CTAP2_ERR_OTHER rather than report a token cleared. The folded answer is kept deliberately (reviewed 0x0989): the record half here is only ever the shared blob being unreadable, but that is equally true of vendor.rs:426/428 and crates/rsk-openpgp/src/putdata.rs:163/169, and splitting the halves for this caller alone would re-open the swallowed drop 0x0987 closed. One-shot commands lose the command, not a sweep's range."
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
@@ -434,7 +434,7 @@ why = "the same DEK again, staged by a PUT DATA 0xD3 that tore or was refused. I
 
 [[site]]
 file = "crates/rsk-openpgp/src/putdata.rs"
-line = 161
+line = 163
 call = "Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,"
 verb = "force_delete"
 answer = "read"
@@ -445,7 +445,7 @@ why = "SEC-POL-003: changing a slot's algorithm attribute invalidates its key, a
 
 [[site]]
 file = "crates/rsk-openpgp/src/putdata.rs"
-line = 167
+line = 169
 call = "Ok(true) if fs.force_delete(public).is_err() => return Sw::MEMORY_FAILURE,"
 verb = "force_delete"
 answer = "read"
@@ -456,7 +456,7 @@ why = "the public half of the same invalidation — a point still served for a k
 
 [[site]]
 file = "crates/rsk-openpgp/src/putdata.rs"
-line = 217
+line = 219
 call = "let _ = fs.delete(target);"
 verb = "delete"
 answer = "discarded"

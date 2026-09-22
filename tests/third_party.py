@@ -255,6 +255,11 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_000_initial_card.py::test_public_key_1": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
         "test_000_initial_card.py::test_public_key_2": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
         "test_000_initial_card.py::test_public_key_3": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
+        # RSA attributes carry a 17-bit exponent length, as a YubiKey's do; the suite
+        # takes Gnuk's 32 from a card it does not know is one.
+        "test_000_initial_card.py::test_key_attributes_1": "RSA-2048 reads 01 0800 0011 00, as on a YubiKey 5.8.0; the suite wants Gnuk's 0020 from a card it does not know is one",
+        "test_000_initial_card.py::test_key_attributes_2": "RSA-2048 reads 01 0800 0011 00, as on a YubiKey 5.8.0; the suite wants Gnuk's 0020 from a card it does not know is one",
+        "test_000_initial_card.py::test_key_attributes_3": "RSA-2048 reads 01 0800 0011 00, as on a YubiKey 5.8.0; the suite wants Gnuk's 0020 from a card it does not know is one",
     },
 }
 

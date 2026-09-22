@@ -36,10 +36,10 @@ fn algo_sig_is_stripped_to_bare_value() {
     let a = aid();
     let mut out = [0u8; 64];
     let mut cur = None;
-    // C1 06 01 08 00 00 20 00 -> strip outer C1 06 -> bare rsa2k attributes.
+    // C1 06 01 08 00 00 11 00 -> strip outer C1 06 -> bare rsa2k attributes.
     let (n, sw) = get_data(EF_ALGO_SIG, false, false, &mut fs, &a, &mut cur, &mut out);
     assert_eq!(sw, Sw::OK);
-    assert_eq!(&out[..n], &[ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00]);
+    assert_eq!(&out[..n], &[ALGO_RSA, 0x08, 0x00, 0x00, 0x11, 0x00]);
 }
 
 #[test]

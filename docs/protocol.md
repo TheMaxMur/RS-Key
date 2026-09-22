@@ -512,7 +512,10 @@ needs only the identifiers above. RS-Key implements:
 - **OpenPGP card 3.x.** PUT DATA C1/C2/C3 changes a slot's algorithm
   attribute; when the value changes, RS-Key invalidates that slot's existing
   private/public key pair before the new attribute becomes visible. An
-  idempotent same-value write preserves the pair.
+  idempotent same-value write preserves the pair. RSA attributes carry a 17-bit
+  exponent length, as a YubiKey's do: DO `0xFA` lists `01 nnnn 0011 00`, PUT
+  DATA takes any length from 17 bits and stores 17, and two attributes that
+  differ only there are the same value.
 
 The only RS-Key-specific bytes a config tool needs are §6 (Management config),
 §7 (Rescue), §8 (Vendor/LED) and §9 (CTAPHID `0x41`).

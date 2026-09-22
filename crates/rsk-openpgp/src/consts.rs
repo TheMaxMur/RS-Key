@@ -26,10 +26,22 @@ pub const ALGO_ECDH: u8 = 0x12;
 pub const ALGO_ECDSA: u8 = 0x13;
 pub const ALGO_EDDSA: u8 = 0x16;
 
+/// The exponent length, in bits, every RSA attribute carries: 65537's, which a
+/// YubiKey 5.8.0 advertises in DO `0xFA` and stores for any length from 17 up.
+pub(crate) const RSA_E_BITS: u16 = 17;
+pub(crate) const RSA_E_BITS_BE: [u8; 2] = RSA_E_BITS.to_be_bytes();
+
 /// Default algorithm attribute when the slot has no `EF_ALGO_PRIV*` —
 /// RSA-2048, gpg's default. dobj.rs's C1/C2/C3 GET DATA fallback
 /// (`ATTR_RSA2K`) encodes the same default and must change with it.
-pub(crate) const DEFAULT_ALGO: &[u8] = &[ALGO_RSA, 0x08, 0x00, 0x00, 0x20, 0x00];
+pub(crate) const DEFAULT_ALGO: &[u8] = &[
+    ALGO_RSA,
+    0x08,
+    0x00,
+    RSA_E_BITS_BE[0],
+    RSA_E_BITS_BE[1],
+    0x00,
+];
 
 /// ATR for the OpenPGP card.
 pub const ATR_OPENPGP: &[u8] = &[
