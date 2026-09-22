@@ -2242,3 +2242,37 @@ fn boot_bump_retries_a_refused_write_and_pins_what_it_cannot_close() {
         "RESIDUAL CLOSED: update docs/threat-model.md's TM-HOST-OTP-REPLAY"
     );
 }
+
+/// INS 03 answers what SELECT does, in every CLA-00 shape a YubiKey 5.8.0 answered it;
+/// after the NDEF write, which answers nothing, it is where yubikit sees the
+/// programming sequence move. Its neighbour INS 04 stays `6D00`, as there.
+#[test]
+fn yk2_status_answers_the_select_status() {
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let (_, selected) = select(&mut app, &mut fs);
+    for raw in [
+        &[0x00, INS_YK2_STATUS, 0x00, 0x00][..],
+        &[0x00, INS_YK2_STATUS, 0x00, 0x00, 0x00],
+        &[0x00, INS_YK2_STATUS, 0x01, 0x00],
+        &[0x00, INS_YK2_STATUS, 0x00, 0x01],
+        &[0x00, INS_YK2_STATUS, 0x00, 0x00, 0x02, 0xAA, 0xBB],
+    ] {
+        assert_eq!(
+            run(&mut app, &mut fs, raw),
+            (Sw::OK, selected.clone()),
+            "{raw:02x?}"
+        );
+    }
+    let (sw, _) = run(&mut app, &mut fs, &[0x00, 0x04, 0x00, 0x00]);
+    assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
+    #[cfg(not(feature = "strict-config"))]
+    {
+        let (sw, body) = run(&mut app, &mut fs, &otp_apdu(P1_NDEF1, 0, &[0x55; 62]));
+        assert_eq!((sw, body.len()), (Sw::OK, 0));
+        let (_, status) = run(&mut app, &mut fs, &[0x00, INS_YK2_STATUS, 0x00, 0x00]);
+        assert_eq!(status[3], selected[3] + 1, "the programming sequence");
+    }
+}

@@ -326,7 +326,7 @@ OtpSwap(j, k, codeMatches) ==
 (***************************************************************************)
 (* A cold boot: the RAM session restarts at zero, so `power_up_bump`       *)
 (* advances the persisted half of every plain slot it can read that still  *)
-(* has room, before USB is up (crates/rsk-otp/src/lib.rs:1082-1127). That  *)
+(* has room, before USB is up (crates/rsk-otp/src/lib.rs:1087-1132). That  *)
 (* is what keeps one power cycle's pairs out of the next one's, so the mark*)
 (* deliberately SURVIVES the cycle.                                        *)
 (***************************************************************************)

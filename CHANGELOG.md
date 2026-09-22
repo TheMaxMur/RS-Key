@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- The OTP applet answers INS `03` over CCID with its status, as a YubiKey does,
+  so a yubikit client driving it over CCID can write an NDEF configuration. That
+  write answers no status and yubikit asks for it with `03`, which RS-Key
+  answered `6D00`: the write landed and the client reported a failure. A YubiKey
+  5.8.0 answers `03` with the 6-byte status SELECT returns, for any P1, P2, body
+  or Le.
+  `bcdDevice` 0x09EA → 0x09EB.
+
 - OpenPGP offers and stores RSA attributes the way a YubiKey does, so
   `ykman openpgp keys import` and every other yubikit client can set RSA.
   DO `0xFA` listed RSA with a 32-bit exponent length (`01 0800 0020 00`), and

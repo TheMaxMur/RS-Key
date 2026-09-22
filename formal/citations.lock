@@ -870,7 +870,7 @@ formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	519-533	// An absent sl
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	608-615	// The access code gates a swap's move/delete just as it gates	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	611-615	let unmatched =	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	643-649	// The replay position is a PAIR — the record's persisted use counter and	);
-formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	1082-1127	pub fn power_up_bump<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {	}
+formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	1087-1132	pub fn power_up_bump<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/tests.rs	1485-1485	fn configure_does_not_rewind_the_session_counter() {	fn configure_does_not_rewind_the_session_counter() {
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/ticket.rs	166-166	let (counter, new_session, bumped) = next_use_counter(counter, session);	let (counter, new_session, bumped) = next_use_counter(counter, session);
 formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	58-66	fn pin_satisfied(sess: &Session, pinpol: u8) -> bool {	}

@@ -955,6 +955,10 @@ fn scanmap_scancode(map: &[u8], ch: u8) -> Option<u8> {
     YUBICO_CHARSET.iter().position(|&c| c == ch).map(|i| map[i])
 }
 
+/// YK2 STATUS: the status record SELECT answers. yubikit reads it after the NDEF
+/// write, which answers none; a YubiKey 5.8.0 serves it for any P1, P2, body or Le.
+const INS_YK2_STATUS: u8 = 0x03;
+
 impl<S: Storage> Applet<Fs<S>> for OtpApplet<'_> {
     fn aid(&self) -> &'static [u8] {
         OTP_AID
@@ -972,6 +976,7 @@ impl<S: Storage> Applet<Fs<S>> for OtpApplet<'_> {
         }
         match apdu.ins {
             INS_OTP => self.cmd_otp(apdu, fs, res),
+            INS_YK2_STATUS => self.status(fs, res),
             _ => Sw::INS_NOT_SUPPORTED,
         }
     }
