@@ -40,6 +40,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP signs an RSA PSO:CDS or INTERNAL AUTHENTICATE the way a YubiKey
+  does: PKCS#1 v1.5 over the command data exactly as sent. A bare hash of a
+  hash's length was wrapped in a DigestInfo first, and any other input — a
+  DigestInfo with a byte appended, an empty block, 102 bytes — was signed raw,
+  with no padding at all, up to the modulus width. A YubiKey 5.8.0 pads anything
+  from 0 to k − 11 bytes as type 1 and answers `6581` past that (measured at
+  RSA-2048; the tests hold the same limit at every size to 4096), and RS-Key now
+  does both. A host that sends a SHA-1 or SHA-2 DigestInfo, as gpg does, gets the
+  signature it always got; a DigestInfo for any other hash — scdaemon still
+  builds RIPEMD-160's — was signed raw and now gets one that verifies; and a host
+  that relied on a bare hash being wrapped now gets the YubiKey's signature over
+  the bare bytes. With MSE pointing INTERNAL
+  AUTHENTICATE at the decryption key, the raw arm had exponentiated any block
+  with that key — the unpadded block PSO:DECIPHER refuses; that is gone with it.
+  `bcdDevice` 0x09E5 → 0x09E6.
+
 - OpenPGP PSO:DECIPHER answers every RSA cryptogram it refuses with `6581`, as
   a YubiKey 5.8.0 does. A padding or decryption failure answered `6400`, and a
   cryptogram short of the modulus `6A80`; the YubiKey answers `6581` to each of

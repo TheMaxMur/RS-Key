@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! PKCS#1 v1.5 (RFC 8017): the DigestInfo encoding the signature paths build,
-//! the two signers over it — one on the asm CRT core ([`crate::crt`]), one on a
-//! full [`RsaKey`] for the PIV certificate path — the decryption both DECIPHER
-//! arms end in, and the constant-time unpadding they read the block back with.
+//! PKCS#1 v1.5 (RFC 8017): the DigestInfo encoding the PIV certificate signer
+//! builds, the two signers — one on the asm CRT core ([`crate::crt`]) over the
+//! bytes a host sends, one on a full [`RsaKey`] for the PIV certificate path —
+//! the decryption both DECIPHER arms end in, and the constant-time unpadding they
+//! read the block back with.
 //!
 //! Every structural test in that unpad is a mask, never a branch: which of the
 //! four ways an EM can be malformed must not be timeable, or the status word's
@@ -46,9 +47,14 @@ const DIGESTINFOS: [(&[u8], usize); 5] = [
 /// Largest DigestInfo `rsa_sign_em` builds: 19-byte prefix (SHA-512) + 64-byte hash.
 pub const MAX_RSA_DIGESTINFO: usize = 19 + 64;
 
+/// PKCS#1 v1.5's framing: `00 01|02`, at least eight bytes of padding and the `00`
+/// separator, so a block of `k` bytes carries at most `k − 11` (RFC 8017 §9.2).
+pub const PKCS1_V15_OVERHEAD: usize = 11;
+
 /// Find the recognised DigestInfo prefix + hash for a canonical PKCS#1 DigestInfo
-/// (`SEQ { SEQ { OID, NULL }, OCTET STRING }`). gpg always sends the canonical
-/// form, so a prefix + exact-length match identifies it without a full DER walk.
+/// (`SEQ { SEQ { OID, NULL }, OCTET STRING }`). The PIV certificate path builds the
+/// canonical form itself, so a prefix + exact-length match identifies it without a
+/// full DER walk.
 fn match_digestinfo(data: &[u8]) -> Option<(&'static [u8], &[u8])> {
     for (prefix, hlen) in DIGESTINFOS {
         if data.len() == prefix.len() + hlen && data.starts_with(prefix) {
@@ -61,8 +67,9 @@ fn match_digestinfo(data: &[u8]) -> Option<(&'static [u8], &[u8])> {
 /// Decide what PKCS#1 v1.5 should sign: write the canonical DigestInfo
 /// (`prefix ‖ hash`) for a recognised DigestInfo or a bare hash whose length
 /// names the algorithm into `em`, returning its length; `None` means neither (the
-/// raw private-op fallback). Pure (no key / modexp), so the `openpgp_rsa_sign`
-/// fuzz target exercises the parser + buffer construction at full speed.
+/// raw private-op fallback). Only [`rsa_sign`] asks: OpenPGP signs what it is sent.
+/// Pure (no key / modexp), so the `openpgp_rsa_sign` fuzz target exercises the
+/// parser + buffer construction at full speed.
 pub fn rsa_sign_em(data: &[u8], em: &mut [u8; MAX_RSA_DIGESTINFO]) -> Option<usize> {
     let (prefix, hash): (&[u8], &[u8]) = if let Some(di) = match_digestinfo(data) {
         di
@@ -80,7 +87,7 @@ pub fn rsa_sign_em(data: &[u8], em: &mut [u8; MAX_RSA_DIGESTINFO]) -> Option<usi
 /// into the pre-zeroed `em` (RFC 8017 §9.2). `PS` is `0xFF`·(mlen−dlen−3), and
 /// the width check is what holds it to the mandatory eight bytes.
 fn emsa_block(di: &[u8], mlen: usize, em: &mut [u8]) -> Result<(), RsaError> {
-    if mlen < di.len() + 11 {
+    if mlen < di.len() + PKCS1_V15_OVERHEAD {
         return Err(RsaError::BadWidth);
     }
     let ps_end = mlen - di.len() - 1;
@@ -90,11 +97,11 @@ fn emsa_block(di: &[u8], mlen: usize, em: &mut [u8]) -> Result<(), RsaError> {
     Ok(())
 }
 
-/// PKCS#1 v1.5 sign over the supplied data with the cached CRT params on the
-/// UMAAL asm. If `data` is a DigestInfo (or a bare hash whose length names the
-/// algorithm), build the EMSA-PKCS1-v1_5 encoding and sign that; otherwise treat
-/// `data` as a raw block. Either way the block runs through the blinded,
-/// Bellcore-fault-checked private op ([`crate::crt::private_op`]).
+/// PKCS#1 v1.5 over `data` exactly as given, with the cached CRT params on the
+/// UMAAL asm: `00 01 FF… 00 ‖ data` through the blinded, Bellcore-fault-checked
+/// private op ([`crate::crt::private_op`]). This is how a YubiKey 5.8.0 signs for
+/// OpenPGP: a DigestInfo is what a conformant host sends, a bare hash is not
+/// wrapped in one, and nothing is signed raw. `BadWidth` past `mlen − 11` bytes.
 pub fn rsa_sign_crt(
     crt: &crate::crt::RsaCrt,
     data: &[u8],
@@ -103,19 +110,7 @@ pub fn rsa_sign_crt(
 ) -> Result<usize, RsaError> {
     let mlen = crt.modulus_len();
     let mut em = [0u8; MAX_RSA_BYTES];
-    let mut di = [0u8; MAX_RSA_DIGESTINFO];
-    match rsa_sign_em(data, &mut di) {
-        Some(dlen) => emsa_block(&di[..dlen], mlen, &mut em)?,
-        // gpg never reaches this — it always sends a DigestInfo — but a raw block
-        // still signs (left-padded to the modulus width) through the same blinded,
-        // fault-checked op, so no non-conformant caller sees a different path.
-        None => {
-            if data.len() > mlen {
-                return Err(RsaError::BadBlock);
-            }
-            em[mlen - data.len()..mlen].copy_from_slice(data);
-        }
-    }
+    emsa_block(data, mlen, &mut em)?;
     crate::crt::private_op(crt, &em[..mlen], rng, out)
 }
 

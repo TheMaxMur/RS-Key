@@ -94,7 +94,9 @@ RSA-1024 to -4096. All 201 decryption cases run through both PSO:DECIPHER arms
 behind the padding indicator a host sends: a valid one must give its message
 back, an invalid one must be answered `6581`, which is what a YubiKey 5.8.0
 answers every such shape. All 152 signing cases the card can hold (e = 65537)
-run through both signers, fed the DigestInfo and the bare hash, byte for byte.
+run through both signers, byte for byte: the CRT one OpenPGP signs with, fed the
+DigestInfo a host sends, and the full-key one PIV certificates use, fed that and
+the bare hash it infers the DigestInfo from.
 `scripts/wycheproof_vectors.py` rewrites the files from the pinned commit.
 
 Fixed vectors cannot say which imported `(p, q, e)` a key assembly *refuses*, so

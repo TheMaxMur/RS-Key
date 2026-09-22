@@ -431,7 +431,7 @@ pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -> Result<(
 //
 // The algorithm lives in [`rsk_rsa`]; what stays here is the applet's own half —
 // sealing a key into the DEK-protected store, loading it back, and the
-// PSO:DECIPHER command framing. The stored blob is `P ‖ Q ‖ dP ‖ dQ ‖ qInv`
+// PSO:DECIPHER and signing command framing. The stored blob is `P ‖ Q ‖ dP ‖ dQ ‖ qInv`
 // (older `P ‖ Q` blobs still load); on load the exponent is forced to 65537 —
 // gpg only ever imports e = 65537.
 
@@ -566,6 +566,21 @@ pub fn rsa_decipher(
         .map_err(|_| Sw::MEMORY_FAILURE);
     em.zeroize();
     res
+}
+
+/// PSO:CDS and INTERNAL AUTHENTICATE for RSA: PKCS#1 v1.5 over the command data as
+/// sent. A YubiKey 5.8.0 signs anything up to `k − 11` bytes that way and answers
+/// `6581` past it, the width PKCS#1 v1.5's framing leaves.
+pub fn rsa_sign_block(
+    crt: &RsaCrt,
+    rng: &mut dyn Rng,
+    data: &[u8],
+    out: &mut [u8],
+) -> Result<usize, Sw> {
+    if data.len() + rsk_rsa::pkcs1v15::PKCS1_V15_OVERHEAD > crt.modulus_len() {
+        return Err(Sw::MEMORY_FAILURE);
+    }
+    rsk_rsa::pkcs1v15::rsa_sign_crt(crt, data, &mut RsaRng(rng), out).map_err(rsa_sw)
 }
 
 /// [`rsa_decipher`] for a key the asm CRT core cannot take: a legacy `P‖Q` blob

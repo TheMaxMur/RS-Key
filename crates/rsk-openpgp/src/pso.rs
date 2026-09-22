@@ -16,7 +16,7 @@ use crate::consts::*;
 use crate::importdata::tag_len;
 use crate::keys::{
     ec_sw, inc_sig_count, load_aes_key, load_ec_key, load_rsa_crt, load_rsa_key, rsa_decipher,
-    rsa_decipher_legacy, rsa_sw,
+    rsa_decipher_legacy, rsa_sign_block,
 };
 use crate::pin::Session;
 use crate::{Rng, UserPresence, check_uif};
@@ -107,8 +107,7 @@ fn try_pso<S: Storage>(
     if algo0 == ALGO_RSA {
         if (p1, p2) == (0x9E, 0x9A) {
             let crt = load_rsa_crt(dev, fs, sess, pk_fid)?;
-            let n = rsk_rsa::pkcs1v15::rsa_sign_crt(&crt, data, &mut crate::keys::RsaRng(rng), out)
-                .map_err(rsa_sw)?;
+            let n = rsa_sign_block(&crt, rng, data, out)?;
             inc_sig_count(fs, sess)?;
             return Ok(n);
         }

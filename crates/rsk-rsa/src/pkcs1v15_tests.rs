@@ -155,15 +155,24 @@ fn sign_crt_digestinfo_matches_openssl() {
 }
 
 #[test]
-fn sign_crt_refuses_a_raw_block_wider_than_the_modulus() {
-    // Not a DigestInfo and not a length-inferable hash, so it takes the raw arm —
-    // where anything past the modulus width is `BadBlock` (`WRONG_DATA`).
+fn sign_crt_pads_up_to_k_minus_11_bytes_and_refuses_past_it() {
+    // Type 1 needs `00 01`, eight bytes of padding and the `00` separator: 245 bytes
+    // of data is the most a 2048-bit block carries, and 246 is `BadWidth`.
     let key = test_key();
+    let crt = crt_of(&key);
     let mut out = [0u8; MAX_RSA_BYTES];
-    let wide = [0x11u8; 257];
+    let most = [0x11u8; 245];
+    let n = rsa_sign_crt(&crt, &most, &mut SeqRng(6), &mut out).unwrap();
+    let (n_be, e_be) = (key.n_be(), key.e_be());
+    assert!(crate::verify::verify_pkcs1v15(
+        &n_be,
+        &e_be,
+        &most,
+        &out[..n]
+    ));
     assert_eq!(
-        rsa_sign_crt(&crt_of(&key), &wide, &mut SeqRng(6), &mut out),
-        Err(RsaError::BadBlock)
+        rsa_sign_crt(&crt, &[0x11u8; 246], &mut SeqRng(7), &mut out),
+        Err(RsaError::BadWidth)
     );
 }
 

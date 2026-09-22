@@ -1049,6 +1049,55 @@ fn import_rsa_sig_then_pso_sign_verifies() {
 }
 
 #[test]
+fn rsa_signs_the_command_data_as_given_like_a_yubikey() {
+    // A YubiKey 5.8.0 (RSA-2048, two rounds) pads whatever PSO:CDS or INTERNAL
+    // AUTHENTICATE is sent as PKCS#1 type 1, 0 to k − 11 bytes — a bare hash is not
+    // wrapped in a DigestInfo, nothing is signed raw — and answers 6581 past that.
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    for crt in [0xB6, 0xA4] {
+        let key = rsa_import(crt, &[0x01, 0x00, 0x01], &hx(RSA_P), &hx(RSA_Q));
+        assert_eq!(run(&mut app, &mut fs, &key).1, Sw::OK);
+    }
+    let di_tail = [DI_SHA256, &[0x42; 32], &[0x00]].concat();
+    let inputs: [(&str, &[u8]); 5] = [
+        ("empty", &[]),
+        ("a bare SHA-256", &[0x42; 32]),
+        ("a DigestInfo with 00 appended", &di_tail),
+        ("102 bytes", &[0x5A; 102]),
+        ("245 bytes", &[0x5A; 245]),
+    ];
+    let commands = [
+        ("PSO:CDS", consts::INS_PSO, 0x9E, 0x9A, consts::PW1_MODE81),
+        (
+            "INTERNAL AUTHENTICATE",
+            consts::INS_INTERNAL_AUT,
+            0x00,
+            0x00,
+            consts::PW1_MODE82,
+        ),
+    ];
+    for (name, ins, p1, p2, pw) in commands {
+        let command = |data: &[u8]| [&[0x00, ins, p1, p2, data.len() as u8][..], data].concat();
+        for (what, data) in inputs {
+            verify_pin(&mut app, &mut fs, pw, consts::PW1_DEFAULT);
+            let (sig, sw) = run(&mut app, &mut fs, &command(data));
+            assert_eq!(sw, Sw::OK, "{name} over {what}");
+            assert!(
+                rsa_verify(data, &sig),
+                "{name} over {what}: type 1 over it as sent"
+            );
+        }
+        verify_pin(&mut app, &mut fs, pw, consts::PW1_DEFAULT);
+        let (_, sw) = run(&mut app, &mut fs, &command(&[0x5A; 246]));
+        assert_eq!(sw, Sw::MEMORY_FAILURE, "{name} over 246 bytes");
+    }
+}
+
+#[test]
 fn import_rsa_holds_the_key_to_the_algorithm_attribute() {
     // §4.4.3.12: "The length of the key data shall match the values given in the
     // DO 'Algorithm attributes' (C1 - C3)." Without it the card gives two answers

@@ -131,8 +131,8 @@ pub const ENCRYPT: &[(&str, &str)] = &[
 ];
 
 /// `(SHA-256 digest, signature)` under the [`P_HEX`] key — RSASSA-PKCS1-v1_5.
-/// The digest is what a host sends as a bare hash; prefixed with the SHA-256
-/// DigestInfo header it is what gpg sends. Both spellings owe this signature.
+/// Prefixed with the SHA-256 DigestInfo header it is what gpg sends, and both
+/// signers owe this signature for that; `rsa_sign` owes it for the bare digest too.
 pub const SIGN_SHA256: &[(&str, &str)] = &[
 {table(sig)}
 ];
