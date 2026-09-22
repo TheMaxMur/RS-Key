@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP PSO:DECIPHER answers every RSA cryptogram it refuses with `6581`, as
+  a YubiKey 5.8.0 does. A padding or decryption failure answered `6400`, and a
+  cryptogram short of the modulus `6A80`; the YubiKey answers `6581` to each of
+  them — bad padding in any position, c = 0, n − 1 and n, bytes prepended, a
+  cryptogram one byte short or the padding indicator alone. A command with no
+  data at all still answers `6A80`, which is the YubiKey's answer too.
+  `bcdDevice` 0x09E4 → 0x09E5.
+
 - OpenPGP PSO:DECIPHER with an RSA key decrypted a cryptogram with bytes
   appended. It read the first modulus-width bytes after the padding indicator and
   dropped the rest, so `ct ‖ 00 00` gave back the message `ct` carries. A

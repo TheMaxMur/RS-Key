@@ -559,14 +559,11 @@ pub fn rsa_decipher(
     let key_size = crt.modulus_len();
     let ct = cryptogram(data, key_size)?;
     let mut em = [0u8; MAX_RSA_BYTES];
-    // A malformed block answered `EXEC_ERROR` when the `rsa` crate owned this
-    // path; keep that status word, so moving the implementation does not move the
-    // wire surface with it.
+    // `MEMORY_FAILURE` for every refusal, whichever step it came from: a YubiKey
+    // 5.8.0 answers it to bad padding in any position, to c = 0, n - 1 and n.
     let res = rsk_rsa::crt::private_op(crt, ct, &mut RsaRng(rng), &mut em[..key_size])
-        .map_err(rsa_sw)
-        .and_then(|_| {
-            rsk_rsa::pkcs1v15::unpad_encrypt(&em[..key_size], out).map_err(|_| Sw::EXEC_ERROR)
-        });
+        .and_then(|_| rsk_rsa::pkcs1v15::unpad_encrypt(&em[..key_size], out))
+        .map_err(|_| Sw::MEMORY_FAILURE);
     em.zeroize();
     res
 }
@@ -585,21 +582,19 @@ pub fn rsa_decipher_legacy(
 ) -> Result<usize, Sw> {
     let key_size = key.size();
     let ct = cryptogram(data, key_size)?;
-    // Every failure here is `EXEC_ERROR`, which is what the `rsa` crate's
-    // `decrypt_blinded` collapsed to. Deliberately coarser than the asm arm,
-    // which answers `rsa_sw` for the private op and only collapses on the unpad.
-    rsk_rsa::pkcs1v15::rsa_decrypt(key, ct, &mut RsaRng(rng), out).map_err(|_| Sw::EXEC_ERROR)
+    // The asm arm's answer to every refusal, so the two arms stay one surface.
+    rsk_rsa::pkcs1v15::rsa_decrypt(key, ct, &mut RsaRng(rng), out).map_err(|_| Sw::MEMORY_FAILURE)
 }
 
-/// The cryptogram behind the padding indicator, exactly one modulus wide. Reading
-/// the first `key_size` bytes decrypted one with anything appended; a YubiKey 5.8.0
-/// answers that `6581`.
+/// The cryptogram behind the padding indicator, exactly one modulus wide. A
+/// YubiKey 5.8.0 answers `6A80` to a command with no data at all and `6581` to a
+/// cryptogram of any other width, longer or shorter.
 fn cryptogram(data: &[u8], key_size: usize) -> Result<&[u8], Sw> {
-    let ct = data.get(1..).ok_or(Sw::WRONG_DATA)?;
-    match ct.len().cmp(&key_size) {
-        core::cmp::Ordering::Less => Err(Sw::WRONG_DATA),
-        core::cmp::Ordering::Greater => Err(Sw::MEMORY_FAILURE),
-        core::cmp::Ordering::Equal => Ok(ct),
+    let (_, ct) = data.split_first().ok_or(Sw::WRONG_DATA)?;
+    if ct.len() == key_size {
+        Ok(ct)
+    } else {
+        Err(Sw::MEMORY_FAILURE)
     }
 }
 
