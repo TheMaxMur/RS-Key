@@ -23,14 +23,14 @@ unrelated kinds live here:
   two coexist because neither is a derivative of the other.
 - **Test vectors** — `acvp/`, NIST's ACVP-Server ML-DSA keyGen/sigGen/sigVer
   cases, filtered to what `crates/rsk-mldsa` can express and written one line of
-  hex per case by `scripts/acvp_vectors.py`; and `wycheproof/`, C2SP Wycheproof's
-  RSA PKCS#1 v1.5 decryption and signing cases, written the same way by
-  `scripts/wycheproof_vectors.py`. Read only by host tests (`include_str!` under
-  `#[cfg(test)]` or `rsk-rsa`'s dev-only `test-util`), never by the firmware.
-  ACVP-Server keeps its terms in a README notice rather than a licence file, so
-  `acvp/LICENSE` carries that notice intact, with the origin and what was
-  changed; `wycheproof/LICENSE` is upstream's Apache-2.0, and each file's header
-  says what was changed.
+  hex per case by `scripts/acvp_vectors.py`; and `wycheproof/`, C2SP
+  Wycheproof's RSA PKCS#1 v1.5 decryption and signing cases and its ECDH and
+  X25519 cases, written the same way by `scripts/wycheproof_vectors.py`. Read
+  only by host tests (`include_str!` under `#[cfg(test)]` or `rsk-rsa`'s
+  dev-only `test-util`), never by the firmware. ACVP-Server keeps its terms in a
+  README notice rather than a licence file, so `acvp/LICENSE` carries that
+  notice intact, with the origin and what was changed; `wycheproof/LICENSE` is
+  upstream's Apache-2.0, and each file's header says what was changed.
 
 Both suite directories carry their own licenses, distinct from the repository's own
 AGPL-3.0-only. Note the split between each file's **per-file header** (the

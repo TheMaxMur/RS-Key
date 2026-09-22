@@ -559,3 +559,7 @@ mod x25519_tests;
 #[cfg(test)]
 #[path = "key_bp_kat.rs"]
 mod bp_kat;
+
+#[cfg(test)]
+#[path = "key_wycheproof_tests.rs"]
+mod wycheproof_tests;

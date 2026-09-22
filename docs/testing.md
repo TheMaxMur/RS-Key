@@ -97,6 +97,20 @@ answers every such shape. All 152 signing cases the card can hold (e = 65537)
 run through both signers, byte for byte: the CRT one OpenPGP signs with, fed the
 DigestInfo a host sends, and the full-key one PIV certificates use, fed that and
 the bare hash it infers the DigestInfo from.
+
+Key agreement gets the same treatment. Wycheproof's ECDH cases for P-256, P-384,
+P-521, secp256k1 and brainpoolP256r1/P384r1 (points off the curve, compressed,
+empty and of the wrong width, shared secrets that start with zero bytes) and its
+X25519 cases (low-order and non-canonical peers included) run through
+`PrivKey::ecdh`, 4058 in all. Wycheproof has no bare-point file for secp256k1 or
+brainpool, so the script takes the point out of each case's SubjectPublicKeyInfo
+and drops the cases whose SPKI is itself the fault (its ASN.1, curve parameters
+spelled out or swapped), which a card never parses. A valid case must give its
+shared secret at the field's width. A refusal must be the one a YubiKey 5.8.0's
+OpenPGP makes: `6A80` (`BadPoint`) for anything but `04 ‖ x ‖ y` at the field's
+width, compressed points included, and `6581` (`RejectedPoint`) for such a point
+off the curve or an X25519 peer that agrees to all zeros. The other X25519 cases
+agree as RFC 7748 computes them.
 `scripts/wycheproof_vectors.py` rewrites the files from the pinned commit.
 
 Fixed vectors cannot say which imported `(p, q, e)` a key assembly *refuses*, so
