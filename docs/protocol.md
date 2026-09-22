@@ -272,7 +272,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | `6883` | LAST_CHAIN_EXPECTED | an APDU arrived that neither continues nor closes the open command chain |
 | `6982` | SECURITY_STATUS_NOT_SATISFIED | auth/precondition missing |
 | `6984` | DATA_INVALID | malformed payload (e.g. bad guard magic) |
-| `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset) |
+| `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset); OpenPGP PSO:CDS, the RSA and ECDH arms of PSO:DECIPHER and INTERNAL AUTHENTICATE with no key in the slot, as a YubiKey 5.8.0 answers them |
 | `6A80` | WRONG_DATA | bad data field |
 | `6A86` | INCORRECT_P1P2 | unsupported P1/P2 |
 | `6A88` | REFERENCE_NOT_FOUND | the object, key or PIN the request names is absent (PIV `GET METADATA`, `MOVE KEY`, the PIN commands' key reference; OpenPGP `SELECT DATA` and in-application `SELECT`) |

@@ -40,6 +40,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP answers a private-key command on an empty slot `6985`, as a YubiKey
+  does. PSO:CDS, PSO:DECIPHER (its RSA and ECDH arms) and INTERNAL
+  AUTHENTICATE with no key in the slot answered `6A88`; a YubiKey 5.8.0 answers
+  `6985` to all three, under the default RSA attributes and under P-256 ones
+  alike.
+  `bcdDevice` 0x09E7 → 0x09E8.
+
 - OpenPGP spends a one-shot PW1 on every PSO:CDS past the PIN check, as a
   YubiKey does. With PW1 valid for one signature (`C4` byte `00`), a PSO:CDS
   the card refused — no key in the slot, an input past k − 11 — left the

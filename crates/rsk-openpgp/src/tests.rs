@@ -1185,6 +1185,69 @@ fn a_refused_pso_cds_spends_a_one_shot_pw1_like_a_yubikey() {
 }
 
 #[test]
+fn a_private_key_command_on_an_empty_slot_answers_6985_like_a_yubikey() {
+    // A YubiKey 5.8.0, reset, two rounds: PSO:CDS, PSO:DECIPHER and INTERNAL
+    // AUTHENTICATE with no key in the slot answer 6985 under the default RSA
+    // attributes and under P-256 ones alike.
+    let rng = RefCell::new(CountRng(7));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let p256 = [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
+    let ecdh_point = [
+        &[0xA6, 0x46, 0x7F, 0x49, 0x43, 0x86, 0x41, 0x04][..],
+        &[0x11; 64],
+    ]
+    .concat();
+    for p256_attrs in [false, true] {
+        let mut fs = make_fs();
+        let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+        verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+        if p256_attrs {
+            for (tag, algo) in [(0xC1, 0x13), (0xC2, 0x12), (0xC3, 0x13)] {
+                let attr = [&[algo][..], &p256].concat();
+                assert_eq!(put(&mut app, &mut fs, 0x00, tag, &attr), Sw::OK);
+            }
+        }
+        verify_pin(&mut app, &mut fs, consts::PW1_MODE81, consts::PW1_DEFAULT);
+        verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+        let decipher = if p256_attrs {
+            ecdh_point.clone()
+        } else {
+            [vec![0x00], vec![0; 256]].concat()
+        };
+        let commands: [(&str, u8, u8, u8, Vec<u8>); 3] = [
+            (
+                "PSO:CDS",
+                consts::INS_PSO,
+                0x9E,
+                0x9A,
+                [DI_SHA256, &[0x42; 32]].concat(),
+            ),
+            ("PSO:DECIPHER", consts::INS_PSO, 0x80, 0x86, decipher),
+            (
+                "INTERNAL AUTHENTICATE",
+                consts::INS_INTERNAL_AUT,
+                0x00,
+                0x00,
+                vec![0x5A; 20],
+            ),
+        ];
+        for (name, ins, p1, p2, data) in commands {
+            let lc = u8::try_from(data.len())
+                .map_or(vec![0x00, (data.len() >> 8) as u8, data.len() as u8], |b| {
+                    vec![b]
+                });
+            let apdu = [&[0x00, ins, p1, p2][..], &lc, &data].concat();
+            let sw = run(&mut app, &mut fs, &apdu).1;
+            assert_eq!(
+                sw,
+                Sw::CONDITIONS_NOT_SATISFIED,
+                "{name}, P-256 attributes: {p256_attrs}"
+            );
+        }
+    }
+}
+
+#[test]
 fn import_rsa_holds_the_key_to_the_algorithm_attribute() {
     // §4.4.3.12: "The length of the key data shall match the values given in the
     // DO 'Algorithm attributes' (C1 - C3)." Without it the card gives two answers

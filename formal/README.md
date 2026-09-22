@@ -1467,7 +1467,7 @@ it.
 | `BugFailedChangeKeepsStatus` | `aa47867` taken back out: a refused OTP-PIN change that leaves the safe open | `NoStatusAfterARefusedAuth` | 74 states |
 | `BugPinFreshNotSpent` | `crates/rsk-piv/src/auth.rs:113-117` — one VERIFY, one key operation | `NoKeyOpOnTheAdminStatus` | 45 states |
 | `BugPinFreshOutlivesPin` | the selection clamp removed, so `pin_fresh` survives after `has_pin` is cleared | `NoKeyOpOnTheAdminStatus` | 42 states |
-| `BugSigPinNotSpent` | `crates/rsk-openpgp/src/keys.rs:406-420` — the same shape one applet over, PW1 valid for one PSO:CDS | `NoKeyOpOnTheAdminStatus` | 212 states |
+| `BugSigPinNotSpent` | `crates/rsk-openpgp/src/keys.rs:411-425` — the same shape one applet over, PW1 valid for one PSO:CDS | `NoKeyOpOnTheAdminStatus` | 212 states |
 | `BugUserStatusOpensAdmin` | a *user* status opening the admin surface — the converse `BugAdminOpensKeyOps` cannot express | `NoKeyOpOnTheAdminStatus` | 48 states |
 | `BugRefusedValidateGrants` | a refused OATH access-code `VALIDATE` that grants the unlock | `NoStatusAfterARefusedAuth` | 73 states |
 | `BugPwStatusIgnoresAdmin` | a *user* status writing the PW status byte — PUT DATA `0xC4` is PW3's (`crates/rsk-openpgp/src/putdata.rs:246-249`, and the ACL one layer up at `:59-65`) | `NoKeyOpOnTheAdminStatus` | 49 states |
@@ -1509,7 +1509,7 @@ so the invariant's converse — a *user* status opening the *admin* surface — 
 unfalsifiable. `AdminOp` costs a handful of states and `BugUserStatusOpensAdmin`
 falls in 48. It also found the second `pin_fresh`-shaped hole, one applet over:
 OpenPGP's `spend_one_shot_pw1` clears `has_pw1` under the one-shot PW status
-(`crates/rsk-openpgp/src/keys.rs:406-420`), which `PgpKeyOp` had no term for —
+(`crates/rsk-openpgp/src/keys.rs:411-425`), which `PgpKeyOp` had no term for —
 `BugSigPinNotSpent`, RED in 361 once `oneShotSig`/`psig` exist. And a **refused
 OATH `VALIDATE` that GRANTS the unlock was invisible**, because the `refused`
 ghost provably never names that reference: exempting the action from the refusal

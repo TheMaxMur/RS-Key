@@ -305,6 +305,11 @@ pub fn store_ec_key<S: Storage>(
     r
 }
 
+/// What PSO:CDS, PSO:DECIPHER's RSA and ECDH arms and INTERNAL AUTHENTICATE answer
+/// with no key in the slot (or one the flash cannot serve): `6985` from a YubiKey
+/// 5.8.0 for all three, RSA or EC attributes.
+const KEY_ABSENT: Sw = Sw::CONDITIONS_NOT_SATISFIED;
+
 /// Read and unseal the EC key stored at `fid`. A key still in the legacy CFB
 /// seal is transparently re-sealed to the authenticated fresh-nonce format.
 pub fn load_ec_key<S: Storage>(
@@ -314,7 +319,7 @@ pub fn load_ec_key<S: Storage>(
     fid: KeyFid,
 ) -> Result<PrivKey, Sw> {
     let mut blob = [0u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD];
-    let n = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
+    let n = fs.read_key(fid, &mut blob).ok_or(KEY_ABSENT)?;
     let n = n.min(blob.len());
     let mut kdata = [0u8; MAX_EC_KDATA];
     let r = (|| {
@@ -487,7 +492,7 @@ pub fn load_rsa_key<S: Storage>(
     fid: KeyFid,
 ) -> Result<RsaKey, Sw> {
     let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
-    let bn = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
+    let bn = fs.read_key(fid, &mut blob).ok_or(KEY_ABSENT)?;
     let bn = bn.min(blob.len());
     let mut kdata = [0u8; MAX_CRT_PLAIN];
     let res = (|| {
@@ -521,7 +526,7 @@ pub fn load_rsa_crt<S: Storage>(
     fid: KeyFid,
 ) -> Result<RsaCrt, Sw> {
     let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
-    let bn = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
+    let bn = fs.read_key(fid, &mut blob).ok_or(KEY_ABSENT)?;
     let bn = bn.min(blob.len());
     let mut kdata = [0u8; MAX_CRT_PLAIN];
     let unsealed = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len);
