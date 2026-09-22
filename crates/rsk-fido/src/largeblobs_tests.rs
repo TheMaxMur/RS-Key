@@ -615,3 +615,57 @@ fn a_faulted_pin_probe_does_not_open_the_large_blob_write_gate() {
         "and the array it would have destroyed is still the one on flash"
     );
 }
+
+/// A two-fragment write, cut at every mutation it makes. The array on flash is the
+/// old one or the new one and never a splice of the two: the fragments accumulate in
+/// RAM and only the last one commits, so a cut can lose the transfer but cannot leave
+/// a serialized array whose trailing SHA-256 no longer covers it — the check every
+/// platform runs before trusting a blob (§6.10.3).
+#[test]
+fn a_torn_large_blob_write_leaves_a_whole_array() {
+    let blob = valid_blob(&[0xCD; 60]);
+    let split = 50;
+    rsk_fs::cut::sweep(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            fs.put(EF_LARGEBLOB, &LARGEBLOB_INITIAL).unwrap();
+            (fs, medium)
+        },
+        |fs| {
+            let mut state = armed(PERM_LBW);
+            let mut out = [0u8; 64];
+            let first = set_request(0, Some(blob.len() as u64), &blob[..split], &TOKEN);
+            let second = set_request(split as u64, None, &blob[split..], &TOKEN);
+            run(fs, &mut state, &first, &mut out).is_ok()
+                && run(fs, &mut state, &second, &mut out).is_ok()
+        },
+        |fs, budget, completed, medium| {
+            let mut stored = [0u8; 256];
+            let n = fs
+                .read(EF_LARGEBLOB, &mut stored)
+                .unwrap_or_else(|| panic!("budget {budget}: the array is gone altogether"));
+            let array = &stored[..n];
+            let (body, tail) = array.split_at(n - 16);
+            assert_eq!(
+                tail,
+                &sha256(body)[..16],
+                "budget {budget}: the array on flash no longer hashes to its own trailer — {:?}",
+                medium.ops()
+            );
+            let whole = array == &blob[..] || array == LARGEBLOB_INITIAL;
+            assert!(
+                whole,
+                "budget {budget}: neither the old array nor the new one — {:?}",
+                medium.ops()
+            );
+            if completed {
+                assert_eq!(
+                    array,
+                    &blob[..],
+                    "budget {budget}: the write reported success and the old array survived"
+                );
+            }
+        },
+    );
+}

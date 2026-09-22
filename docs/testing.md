@@ -69,6 +69,19 @@ are.) Crypto tests pin NIST/RFC vectors; applet tests drive full protocol flows
 (register → assert, PIN lockout ladders, OpenPGP import → sign → verify, PIV
 generate → attest → parse with `x509-parser`).
 
+A command that writes can be put through a **cut sweep**: run it once per cut point
+— the flash refuses everything past the k-th mutation — reboot on the same medium,
+and read what survived. `rsk_fs::cut::sweep` holds the loop, k grows
+until the command completes, and the oracle is the command's own, since only it knows
+what it owns: setPIN leaves no PIN or a whole one with the old grant revoked, a
+two-fragment large-blob write leaves an array that still hashes to its own trailer,
+setMinPINLength leaves the old floor or the new one and never a forced PIN change
+over a live grant. Those three are the sweeps so far; the loop asserts that some
+budget tore the command and some let it finish, so one that stopped reaching the
+command reads as vacuous rather than as a pass. The `power_cut` fuzz target below
+does this to the storage stack; these do it to a command, where the ordering between
+two records lives.
+
 RSA has no second implementation in the tree to check itself against — the `rsa`
 crate that used to serve as one left with RUSTSEC-2023-0071 — so its ground
 truth is frozen instead: `crates/rsk-rsa/src/vectors.rs` holds OpenSSL

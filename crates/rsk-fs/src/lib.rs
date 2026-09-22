@@ -137,3 +137,9 @@ pub const MAX_VALUE_BYTES: usize = 4078;
 /// backend's key-pointer cache (firmware `MAIN_CACHE_KEYS`) MUST stay `>=` this, or
 /// files past the cache read/migrate off an O(flash) latency cliff.
 pub const MAX_DYNAMIC_FILES: usize = 1280;
+
+/// The command-level power-cut sweep the applet suites share. Dev-only, like
+/// [`storage::faults`], whose media it drives.
+#[cfg(any(test, feature = "test-util"))]
+#[path = "cut.rs"]
+pub mod cut;

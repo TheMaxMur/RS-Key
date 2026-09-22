@@ -757,3 +757,60 @@ fn a_faulted_min_pin_probe_does_not_lower_the_floor() {
         "a setMinPINLength that could not read the floor it must not lower has to refuse"
     );
 }
+
+/// setMinPINLength over a PIN too short for the new floor, cut at every mutation.
+/// The floor never comes back lower than it was — it is monotonic across a power cut
+/// too — and the record that lands with `forceChangePin` never stands over the grant
+/// the old PIN's holder had: `clear_ppuat` runs before the put, so no cut point can
+/// leave a token minted under a PIN the owner is now required to change.
+#[test]
+fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
+    use crate::consts::EF_PAUTHTOKEN;
+
+    rsk_fs::cut::sweep(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            let mut pin_file = [0u8; 35];
+            pin_file[0] = 8; // retries
+            pin_file[1] = 4; // a 4-code-point PIN, under the floor this raises
+            pin_file[2] = 1; // verifier format
+            fs.put(EF_PIN, &pin_file).unwrap();
+            fs.put(EF_MINPINLEN, &[4, 0]).unwrap();
+            // The grant the old PIN's holder carries, minted as provisioning mints it.
+            crate::seed::ensure_ppuat(&dev(), &mut fs, &mut SeqRng(3)).unwrap();
+            (fs, medium)
+        },
+        |fs| {
+            let mut state = armed(PERM_ACFG);
+            let req = config_request(0x03, &subpara_min_pin(6), &TOKEN);
+            run_fs(fs, &mut state, &req).is_ok()
+        },
+        |fs, budget, completed, medium| {
+            let mut buf = [0u8; 2];
+            let n = fs
+                .read(EF_MINPINLEN, &mut buf)
+                .unwrap_or_else(|| panic!("budget {budget}: the policy record is gone"));
+            assert_eq!(
+                n, 2,
+                "budget {budget}: the record that landed is not a policy record"
+            );
+            assert!(
+                buf[0] == 4 || buf[0] == 6,
+                "budget {budget}: the floor is neither the old one (4) nor the new one (6): {} — {:?}",
+                buf[0],
+                medium.ops()
+            );
+            if buf[1] == 1 {
+                assert!(
+                    !fs.has_data(EF_PAUTHTOKEN.get()),
+                    "budget {budget}: a forced PIN change landed over the old holder's grant — {:?}",
+                    medium.ops()
+                );
+            }
+            if completed {
+                assert_eq!(buf, [6, 1], "budget {budget}: the command reported success");
+            }
+        },
+    );
+}

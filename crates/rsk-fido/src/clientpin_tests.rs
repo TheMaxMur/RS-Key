@@ -3189,3 +3189,61 @@ fn a_faulted_grant_read_does_not_hand_out_a_new_pcmr_token() {
 // needs this module's fixture.
 #[path = "clientpin_perms_tests.rs"]
 mod perms;
+
+/// setPIN, cut at every write it makes. The grant provisioning minted is revoked
+/// before the new verifier lands, so no cut point leaves a PIN standing over a token
+/// its holder did not set; the record that lands is whole, at a full retry budget,
+/// and verifies. Two sites hold that order — `set_pin`'s own `clear_ppuat` and
+/// `write_pin_verifier`'s — so this goes red only when both are reversed.
+#[test]
+fn a_torn_set_pin_leaves_no_pin_or_a_usable_one() {
+    use crate::consts::{EF_PAUTHTOKEN, MAX_PIN_RETRIES};
+
+    rsk_fs::cut::sweep(
+        || {
+            let (fs, medium, _) = setup_cut();
+            (fs, medium)
+        },
+        |fs| {
+            let mut rng = SeqRng(5);
+            let mut state = FidoState::new();
+            let plat = key_agreement(fs, &mut rng, &mut state, PinProto::Two, 2);
+            let mut out = [0u8; 256];
+            run(fs, &mut rng, &mut state, &plat.set_pin_req(PIN), &mut out).is_ok()
+        },
+        |fs, budget, completed, medium| {
+            let mut stored = [0u8; PIN_FILE_LEN];
+            let Some(len) = fs.read(EF_PIN, &mut stored) else {
+                assert!(
+                    !completed,
+                    "budget {budget}: setPIN reported success and no PIN survived"
+                );
+                return;
+            };
+            assert_eq!(
+                len,
+                PIN_FILE_LEN,
+                "budget {budget}: the record that landed is not a PIN record — {:?}",
+                medium.ops()
+            );
+            assert_eq!(
+                stored[0], MAX_PIN_RETRIES,
+                "budget {budget}: the PIN landed with a spent retry budget"
+            );
+            assert!(
+                !fs.has_data(EF_PAUTHTOKEN.get()),
+                "budget {budget}: the new PIN landed over the grant provisioning minted — {:?}",
+                medium.ops()
+            );
+            // Usable, not merely present: the PIN that landed is the one set.
+            let mut rng = SeqRng(9);
+            let mut state = FidoState::new();
+            let plat = key_agreement(fs, &mut rng, &mut state, PinProto::Two, 2);
+            let mut out = [0u8; 256];
+            assert!(
+                run(fs, &mut rng, &mut state, &plat.get_token_req(PIN), &mut out).is_ok(),
+                "budget {budget}: the PIN that survived does not verify"
+            );
+        },
+    );
+}
