@@ -106,3 +106,30 @@ fn decipher_refuses_a_short_command_field() {
         Err(Sw::WRONG_DATA)
     );
 }
+
+#[test]
+fn decipher_refuses_a_cryptogram_with_bytes_appended() {
+    // Wycheproof's `appended bytes to ciphertext`: reading the first modulus-width
+    // bytes after the indicator decrypted it and dropped the tail. A YubiKey 5.8.0
+    // answers 6581, one byte appended or two.
+    let key = test_key();
+    let crt = crt_of(&key);
+    let (_, ct) = ENCRYPT[2];
+    let mut out = [0u8; MAX_RSA_BYTES];
+    for tail in [&[0x00u8][..], &[0x00, 0x00]] {
+        let mut data = vec![0x00u8];
+        data.extend(hex(ct));
+        data.extend_from_slice(tail);
+        let n = tail.len();
+        assert_eq!(
+            rsa_decipher(&crt, &mut SeqRng(14), &data, &mut out),
+            Err(Sw::MEMORY_FAILURE),
+            "the asm CRT arm, {n} byte(s) appended"
+        );
+        assert_eq!(
+            rsa_decipher_legacy(&key, &mut SeqRng(15), &data, &mut out),
+            Err(Sw::MEMORY_FAILURE),
+            "the legacy arm, {n} byte(s) appended"
+        );
+    }
+}

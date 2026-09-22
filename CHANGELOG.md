@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP PSO:DECIPHER with an RSA key decrypted a cryptogram with bytes
+  appended. It read the first modulus-width bytes after the padding indicator and
+  dropped the rest, so `ct ‖ 00 00` gave back the message `ct` carries. A
+  YubiKey 5.8.0 answers `6581` to it, one byte appended or two, and so does
+  RS-Key now: the cryptogram must be exactly one modulus wide. Wycheproof's
+  `appended bytes to ciphertext` case found it, on RSA-2048, -3072 and -4096 and
+  both DECIPHER arms. `bcdDevice` 0x09E3 → 0x09E4.
+
 - ECDH takes only the point encodings a YubiKey takes. An X25519 peer is the
   bare 32-byte u; the `0x40`-prefixed OpenPGP native form was accepted as well,
   and a YubiKey 5.8.0 answers `6A80` to it in OpenPGP and PIV even around a good

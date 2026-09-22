@@ -557,7 +557,7 @@ pub fn rsa_decipher(
     out: &mut [u8],
 ) -> Result<usize, Sw> {
     let key_size = crt.modulus_len();
-    let ct = data.get(1..1 + key_size).ok_or(Sw::WRONG_DATA)?;
+    let ct = cryptogram(data, key_size)?;
     let mut em = [0u8; MAX_RSA_BYTES];
     // A malformed block answered `EXEC_ERROR` when the `rsa` crate owned this
     // path; keep that status word, so moving the implementation does not move the
@@ -584,11 +584,23 @@ pub fn rsa_decipher_legacy(
     out: &mut [u8],
 ) -> Result<usize, Sw> {
     let key_size = key.size();
-    let ct = data.get(1..1 + key_size).ok_or(Sw::WRONG_DATA)?;
+    let ct = cryptogram(data, key_size)?;
     // Every failure here is `EXEC_ERROR`, which is what the `rsa` crate's
     // `decrypt_blinded` collapsed to. Deliberately coarser than the asm arm,
     // which answers `rsa_sw` for the private op and only collapses on the unpad.
     rsk_rsa::pkcs1v15::rsa_decrypt(key, ct, &mut RsaRng(rng), out).map_err(|_| Sw::EXEC_ERROR)
+}
+
+/// The cryptogram behind the padding indicator, exactly one modulus wide. Reading
+/// the first `key_size` bytes decrypted one with anything appended; a YubiKey 5.8.0
+/// answers that `6581`.
+fn cryptogram(data: &[u8], key_size: usize) -> Result<&[u8], Sw> {
+    let ct = data.get(1..).ok_or(Sw::WRONG_DATA)?;
+    match ct.len().cmp(&key_size) {
+        core::cmp::Ordering::Less => Err(Sw::WRONG_DATA),
+        core::cmp::Ordering::Greater => Err(Sw::MEMORY_FAILURE),
+        core::cmp::Ordering::Equal => Ok(ct),
+    }
 }
 
 #[cfg(test)]
