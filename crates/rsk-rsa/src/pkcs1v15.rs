@@ -266,3 +266,7 @@ pub fn unpad_encrypt(em: &[u8], out: &mut [u8]) -> Result<usize, RsaError> {
 #[cfg(test)]
 #[path = "pkcs1v15_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pkcs1v15_wycheproof_tests.rs"]
+mod wycheproof_tests;

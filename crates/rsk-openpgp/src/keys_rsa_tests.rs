@@ -220,3 +220,34 @@ fn decipher_refuses_a_cryptogram_with_bytes_appended() {
         );
     }
 }
+
+/// Every Wycheproof decryption case through both DECIPHER arms, behind the padding
+/// indicator a host sends: the asm CRT arm over the five-field blob a sealed key
+/// holds, and the legacy one. A valid case gives its message back; an invalid one
+/// is refused with 6581, the one answer a YubiKey 5.8.0 gives every such shape.
+#[test]
+fn wycheproof_decipher_reads_the_valid_and_refuses_the_rest() {
+    use rsk_rsa::wycheproof::{Outcome, decrypt};
+    let cases = decrypt();
+    assert_eq!(cases.len(), 201, "Wycheproof RSA decryption cases");
+    for case in &cases {
+        let (bits, tc, comment) = (case.bits, case.tc_id, case.comment);
+        let at = format!("RSA-{bits} tcId {tc} ({comment})");
+        let blob: Vec<u8> = case.crt.iter().flat_map(|f| hex(f)).collect();
+        let crt = crt_from_plain(&blob).unwrap_or_else(|e| panic!("{at}: CRT blob {e:?}"));
+        let key = rsa_from_pqe(&[0x01, 0x00, 0x01], &hex(case.crt[0]), &hex(case.crt[1]))
+            .unwrap_or_else(|| panic!("{at}: the key"));
+        let data = [vec![0x00], hex(case.ct)].concat();
+        let mut out = [0u8; MAX_RSA_BYTES];
+        let asm = rsa_decipher(&crt, &mut SeqRng(21), &data, &mut out).map(|n| out[..n].to_vec());
+        let legacy =
+            rsa_decipher_legacy(&key, &mut SeqRng(22), &data, &mut out).map(|n| out[..n].to_vec());
+        let want = match case.result {
+            Outcome::Valid => Ok(hex(case.msg)),
+            Outcome::Invalid => Err(Sw::MEMORY_FAILURE),
+            Outcome::Acceptable => panic!("{at}: no decryption case is merely acceptable"),
+        };
+        assert_eq!(asm, want, "{at}: the asm CRT arm");
+        assert_eq!(legacy, want, "{at}: the legacy arm");
+    }
+}

@@ -758,3 +758,7 @@ mod fixtures;
 
 #[cfg(test)]
 mod tests;
+
+/// Wycheproof's RSA cases, dev-only like [`vectors`].
+#[cfg(any(test, feature = "test-util"))]
+pub mod wycheproof;

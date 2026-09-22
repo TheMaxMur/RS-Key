@@ -23,10 +23,14 @@ unrelated kinds live here:
   two coexist because neither is a derivative of the other.
 - **Test vectors** — `acvp/`, NIST's ACVP-Server ML-DSA keyGen/sigGen/sigVer
   cases, filtered to what `crates/rsk-mldsa` can express and written one line of
-  hex per case by `scripts/acvp_vectors.py`. Read only by that crate's host tests
-  (`include_str!` under `#[cfg(test)]`), never by the firmware. Upstream keeps
-  its terms in a README notice rather than a licence file, so `acvp/LICENSE`
-  carries that notice intact, with the origin and what was changed.
+  hex per case by `scripts/acvp_vectors.py`; and `wycheproof/`, C2SP Wycheproof's
+  RSA PKCS#1 v1.5 decryption and signing cases, written the same way by
+  `scripts/wycheproof_vectors.py`. Read only by host tests (`include_str!` under
+  `#[cfg(test)]` or `rsk-rsa`'s dev-only `test-util`), never by the firmware.
+  ACVP-Server keeps its terms in a README notice rather than a licence file, so
+  `acvp/LICENSE` carries that notice intact, with the origin and what was
+  changed; `wycheproof/LICENSE` is upstream's Apache-2.0, and each file's header
+  says what was changed.
 
 Both suite directories carry their own licenses, distinct from the repository's own
 AGPL-3.0-only. Note the split between each file's **per-file header** (the
@@ -45,6 +49,7 @@ Vendored from upstream at:
 | `pico-fido-tests/` | `b1bacec29db76f6944f9db9ffb595934a89c5a41` | 2026-08-02 |
 | `openpgp-card-tests/` | `1472b26574b2e74d371fe052c7e5f5e30cd2a997` | 2026-07-27 |
 | `acvp/` | `975de31eb83d87039ec88934fdc47d8c312b892d` (ACVP-Server `v1.1.0.43`) | 2026-08-12 |
+| `wycheproof/` | `3fa63dd0344abb611f1fb1d77e119938603ea230` | 2026-09-02 |
 
 Only the pytest part is taken — the docker scripts, build wrappers and C sources
 that sit beside them upstream are not vendored. Record the commit when you

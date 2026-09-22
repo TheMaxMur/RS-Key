@@ -86,6 +86,17 @@ signs from the vector's own `sk` and nothing else sees the `K` the seed
 expansion derives. `scripts/acvp_vectors.py` rewrites the files from the pinned
 ACVP-Server commit, byte for byte.
 
+RSA's second opinion is Wycheproof's, whose cases are written to break an
+implementation. `third_party/wycheproof/` holds its PKCS#1 v1.5 decryption cases
+for RSA-2048, -3072 and -4096 — bad padding in every position, `c` at 0, n − 1
+and n, cryptograms short, long and prepended — and its signing cases from
+RSA-1024 to -4096. All 201 decryption cases run through both PSO:DECIPHER arms
+behind the padding indicator a host sends: a valid one must give its message
+back, an invalid one must be answered `6581`, which is what a YubiKey 5.8.0
+answers every such shape. All 152 signing cases the card can hold (e = 65537)
+run through both signers, fed the DigestInfo and the bare hash, byte for byte.
+`scripts/wycheproof_vectors.py` rewrites the files from the pinned commit.
+
 Fixed vectors cannot say which imported `(p, q, e)` a key assembly *refuses*, so
 that half is settled by a differential against `rsa` 0.9.10 in a throwaway crate
 **outside** the workspace — `rsk-rsa` by path with `test-util`, plus
