@@ -37,16 +37,32 @@ fn read_config_body_fits_the_smallest_transport_buffer() {
     assert!(!res.as_slice().is_empty(), "empty body reported as success");
     assert_eq!(res.as_slice()[0] as usize, res.len() - 1);
 
-    // A maximum-size stored blob still fits — that is what the cap is derived for.
-    let mut blob = std::vec![0x08, (EF_DEV_CONF_MAX - 2) as u8];
-    blob.extend_from_slice(&std::vec![0u8; EF_DEV_CONF_MAX - 2]);
-    assert_eq!(blob.len(), EF_DEV_CONF_MAX);
-    fs.put(EF_DEV_CONF, &blob).unwrap();
-    let mut body = [0u8; MIN_CONFIG_RES_CAP];
-    let mut res = ResBuf::new(&mut body);
-    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
-    assert!(!res.as_slice().is_empty());
-    assert_eq!(res.as_slice()[0] as usize, res.len() - 1);
+    // The widest record the writer stores and the read side validates takes the echo
+    // branch. The room is slack at 64 bytes, so the buffer then shrinks to one byte
+    // short of the whole body, where the room binds and must cut whole entries.
+    let widest = widest_storable_record();
+    persist_dev_conf(&mut fs, &widest).unwrap();
+    for cap in [MIN_CONFIG_RES_CAP, CONFIG_TLV_FIXED + widest.len() - 1] {
+        let mut body = std::vec![0u8; cap];
+        let mut res = ResBuf::new(&mut body);
+        assert_eq!(
+            config_tlv(&[0; 4], &mut fs, &mut res),
+            Sw::OK,
+            "cap {cap}: the body did not fit"
+        );
+        let body = res.as_slice();
+        assert_eq!(body[0] as usize, body.len() - 1, "cap {cap}: length byte");
+        assert!(tlv_whole(&body[1..]), "cap {cap}: an entry was cut in half");
+        assert!(
+            tlv_get(&body[1..], TAG_AUTO_EJECT_TIMEOUT).is_some(),
+            "cap {cap}: the synthesised default was served, not the echo"
+        );
+        assert_eq!(
+            tlv_get(&body[1..], TAG_CONFIG_LOCK),
+            Some(&[0x00][..]),
+            "cap {cap}: the trailing CONFIG_LOCK was lost"
+        );
+    }
 }
 
 /// Whether every byte of `blob` belongs to a complete TLV entry — what
@@ -481,17 +497,11 @@ fn a_full_width_legacy_record_still_accepts_a_write_that_adds_a_tag() {
     );
 }
 
-/// `EF_DEV_CONF_MAX` is derived from the smallest response buffer so that "a stored
-/// blob can never be one a consumer must silently drop" — a claim that only holds
-/// while the cap is at or above the widest record the *writer's own validator*
-/// accepts. That side was never checked, and it is the side that moves: since
-/// `well_formed_writable` gained a per-tag width table (audit run-34 #25) the widest
-/// storable record is 24 bytes against a 42-byte cap, so the cap's arithmetic can
-/// drift 18 bytes in either direction unobserved. The tag set is scanned rather than
-/// listed, so a new writable tag joins the record instead of ageing beside it.
-#[test]
-fn the_widest_record_the_validator_accepts_is_stored_and_echoed_whole() {
-    let widest: Vec<u8> = (0u8..=255)
+/// Every writable tag the writer keeps, once, at its widest. The tag set is scanned
+/// rather than listed, so a new writable tag joins the record instead of ageing
+/// beside it.
+fn widest_storable_record() -> Vec<u8> {
+    (0u8..=255)
         .filter(|&t| writable_tag(t))
         // The lock tags never reach flash (`strip_config_lock`), so they cannot
         // widen the stored record however wide the request is.
@@ -510,7 +520,19 @@ fn the_widest_record_the_validator_accepts_is_stored_and_echoed_whole() {
             e.extend(core::iter::repeat_n(0u8, len));
             e
         })
-        .collect();
+        .collect()
+}
+
+/// `EF_DEV_CONF_MAX` is derived from the smallest response buffer so that "a stored
+/// blob can never be one a consumer must silently drop" — a claim that only holds
+/// while the cap is at or above the widest record the *writer's own validator*
+/// accepts. That side was never checked, and it is the side that moves: since
+/// `well_formed_writable` gained a per-tag width table (audit run-34 #25) the widest
+/// storable record is 24 bytes against a 42-byte cap, so the cap's arithmetic can
+/// drift 18 bytes in either direction unobserved.
+#[test]
+fn the_widest_record_the_validator_accepts_is_stored_and_echoed_whole() {
+    let widest = widest_storable_record();
     assert!(well_formed_writable(&widest));
     assert!(
         widest.len() <= EF_DEV_CONF_MAX,

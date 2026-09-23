@@ -634,13 +634,15 @@ sum to 4+4+4+3+4+3+2. The cap is documented as making the writer and the smalles
 transport meet exactly. It has not bound anything for two audits.
 
 The test that appeared to hold it is the more useful finding.
-`read_config_body_fits_the_smallest_transport_buffer` builds its blob **from
-`EF_DEV_CONF_MAX`**, so both sides of the comparison move together and the only
-thing it can observe is that the cap equals itself — and its single over-wide
-entry fails the read gate, which routes the read to the synthesised fallback
+`read_config_body_fits_the_smallest_transport_buffer` built its blob **from
+`EF_DEV_CONF_MAX`**, so both sides of the comparison moved together and the only
+thing it could observe was that the cap equals itself — and its single over-wide
+entry failed the read gate, which routed the read to the synthesised fallback
 instead of the echo path the test names. Its two assertions, non-empty and
-self-consistent, are both satisfied by a response whose echo was **dropped
-entirely**, which is the audit run-33 wedge itself.
+self-consistent, were both satisfied by a response whose echo was **dropped
+entirely**, which is the audit run-33 wedge itself. It now stores the widest
+record below and reads it back into a buffer one byte short of the whole body,
+the one place the echo's room arithmetic binds.
 
 The replacement scans `writable_tag` over `0..=255` and takes each width from
 `max_value_len`, so the record widens with the tag set rather than ageing beside
