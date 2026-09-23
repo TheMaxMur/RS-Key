@@ -130,7 +130,7 @@ const CHAIN_BUF_SIZE: usize = 16;
 const RESP_CHAIN_CAP: usize = 16;
 
 /// `61 XX` bytes-remaining; SW2 saturates to `00` (= 256+ left) per ISO 7816-4.
-const fn bytes_remaining(left: usize) -> Sw {
+pub const fn bytes_remaining(left: usize) -> Sw {
     Sw::new(0x61, if left > 0xFF { 0 } else { left as u8 })
 }
 
@@ -354,6 +354,7 @@ impl Dispatcher {
                 nc: total,
                 ne: apdu.ne,
                 data: &self.chain[..total],
+                extended: apdu.extended,
             };
             // A disabled current applet is unreachable, like a dropped selection.
             let cur = self.current.filter(|&i| self.selectable(i));

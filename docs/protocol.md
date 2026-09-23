@@ -115,12 +115,13 @@ available, `00` = 256+), and the host issues `GET RESPONSE` (`00 C0 00 00 <Le>`)
 until `9000`. Any `GET DATA` reading a certificate object over 256 bytes chains
 this way, so a host that sends `GET DATA` without an `Le` must still follow `61xx`.
 
-OATH `LIST` (`0xA1`) and `CALCULATE ALL` (`0xA4`) responses that outgrow one
-frame chain the YubiKey-OATH way instead: `61 XX` followed by **SEND REMAINING**
-(`00 A5 00 00`) rather than `GET RESPONSE`, matching what ykman / Yubico
-Authenticator send. A host that stops at the first frame still sees a valid
-(shorter) list. SEND REMAINING never judges its P1-P2, and with no page owed it
-answers `6D00`, as a YubiKey 5.8.0 does.
+OATH `LIST` (`0xA1`) and `CALCULATE ALL` (`0xA4`) responses that outgrow the
+command's `Le` chain the YubiKey-OATH way instead: `61 XX` followed by **SEND
+REMAINING** (`00 A5 00 00`) rather than `GET RESPONSE`, matching what ykman /
+Yubico Authenticator send. A short command with no `Le` gets 256 bytes a frame and
+an extended one as much as a CCID frame holds. Frames are cut at the byte, so an entry can
+straddle two of them: join the frames before parsing. SEND REMAINING never judges
+its P1-P2, and with no page owed it answers `6D00`, as a YubiKey 5.8.0 does.
 
 Seven OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
 (`0x01`) is strict about the credential body — KEY TLV 16..=66 bytes (a secret

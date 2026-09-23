@@ -12,6 +12,7 @@ fn apdu(p1: u8, p2: u8, data: &[u8]) -> Apdu<'_> {
         nc: data.len(),
         ne: 0,
         data,
+        extended: false,
     }
 }
 

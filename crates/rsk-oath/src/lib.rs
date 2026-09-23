@@ -171,6 +171,15 @@ enum Chain {
     },
 }
 
+/// How a LIST / CALCULATE ALL frame ended: with the last byte, with more to send
+/// (the FID and offset to resume at, and the bytes left), or at an entry that
+/// changed under the cursor.
+enum Stop {
+    Done,
+    More(u16, usize, usize),
+    Lost,
+}
+
 pub struct OathApplet<'a> {
     serial_id: [u8; 8],
     serial_hash: [u8; 32],
@@ -196,6 +205,9 @@ pub struct OathApplet<'a> {
     /// position in the sorted present-cred sweep to resume on SEND REMAINING.
     chain: Chain,
     chain_at: u16,
+    /// Bytes already sent of the entry at FID `chain_at`: a page ends where its `Ne`
+    /// does, inside an entry if need be, as a YubiKey 5.8.0's do.
+    chain_skip: u16,
 }
 
 impl<'a> OathApplet<'a> {
@@ -217,6 +229,7 @@ impl<'a> OathApplet<'a> {
             challenge: [0; CHALLENGE_LEN],
             chain: Chain::None,
             chain_at: 0,
+            chain_skip: 0,
         }
     }
 
@@ -430,77 +443,82 @@ impl<'a> OathApplet<'a> {
         let ext = apdu.nc == 1 && apdu.data[0] == 0x01;
         self.chain = Chain::List { ext };
         self.chain_at = 0;
-        self.list_page(fs, res)
+        self.chain_skip = 0;
+        self.page(fs, res, frame_cap(apdu))
     }
 
-    /// Emit LIST name entries from `self.chain_at` until the response frame fills.
-    /// On overrun, stash the resume position and return `61xx` (SEND REMAINING
-    /// continues here); otherwise clear the chain and return OK. The sweep order
-    /// is the stable sorted present-cred list, so pages never skip or repeat.
-    fn list_page<S: Storage>(&mut self, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        let Chain::List { ext } = self.chain else {
-            return Sw::OK;
-        };
-        let start = self.chain_at as usize;
-        let mut resume = None;
-        {
+    /// One frame of the pending LIST / CALCULATE ALL: up to `cap` bytes from where the
+    /// last stopped, cut at the byte as a YubiKey 5.8.0 cuts them. `61xx` names what is
+    /// left (`00` for 256 and up); the frame with the last byte answers `9000`.
+    fn page<S: Storage>(&mut self, fs: &mut Fs<S>, res: &mut ResBuf, cap: usize) -> Sw {
+        let chain = self.chain;
+        let budget = cap.min(res.capacity() - res.len());
+        let stop = {
             let mkek = read_fused(self.mkek_source);
             let dev = self.device(&mkek);
             let mut fids = [0u16; MAX_OATH_CRED as usize];
             let nfids = present_creds(fs, &mut fids);
             let mut scratch = [0u8; CRED_MAX];
-            let mut idx = start;
+            let mut entry = [0u8; PAGE_ENTRY_MAX];
+            // By FID, not by index: the list is rebuilt every frame, and one that lost
+            // an entry must not slide the cursor onto another.
+            let mut idx = fids[..nfids].partition_point(|&f| f < self.chain_at);
+            let (mut skip, mut sent) = (self.chain_skip as usize, 0);
+            let mut stop = Stop::Done;
             while idx < nfids {
-                let fid = fids[idx];
-                idx += 1;
-                let Some(n) = seal::seal_read(&dev, fs, KeyFid::new(fid), &mut scratch) else {
-                    continue;
+                let len = match page_entry(&chain, &dev, fs, fids[idx], &mut scratch, &mut entry) {
+                    Some(len) if len > skip && (skip == 0 || fids[idx] == self.chain_at) => len,
+                    // The entry the last frame stopped inside is gone, or no longer
+                    // what it sent the head of: its tail cannot be told.
+                    _ if skip > 0 => {
+                        stop = Stop::Lost;
+                        break;
+                    }
+                    _ => {
+                        idx += 1;
+                        continue;
+                    }
                 };
-                let blob = &scratch[..n.min(CRED_MAX)];
-                let (Some(name), Some(key)) = (
-                    find_tag(blob, TAG_NAME as u16),
-                    find_tag(blob, TAG_KEY as u16),
-                ) else {
-                    continue;
-                };
-                if key.is_empty() || name.len() + 2 > 255 {
-                    continue;
-                }
-                let entry = 2 + 1 + name.len() + ext as usize;
-                if res.len() + entry > res.capacity() {
-                    resume = Some(idx - 1);
+                let need = len - skip;
+                let take = need.min(budget - sent);
+                res.extend(&entry[skip..skip + take]);
+                sent += take;
+                if take < need {
+                    // What is left, counted only as far as SW2 can say it.
+                    let mut left = need - take;
+                    for &fid in &fids[idx + 1..nfids] {
+                        if left > 0xFF {
+                            break;
+                        }
+                        left += page_entry(&chain, &dev, fs, fid, &mut scratch, &mut entry)
+                            .unwrap_or(0);
+                    }
+                    stop = Stop::More(fids[idx], skip + take, left);
                     break;
                 }
-                res.push(TAG_NAME_LIST);
-                res.push((name.len() + 1 + ext as usize) as u8);
-                res.push(key[0]);
-                res.extend(name);
-                if ext {
-                    let mut props = 0u8;
-                    if find_tag(blob, TAG_PWS_LOGIN as u16).is_some()
-                        || find_tag(blob, TAG_PWS_PASSWORD as u16).is_some()
-                        || find_tag(blob, TAG_PWS_METADATA as u16).is_some()
-                    {
-                        props |= 0x4;
-                    }
-                    if cred_property(blob) & PROP_TOUCH != 0 {
-                        props |= 0x1;
-                    }
-                    res.push(props);
-                }
+                (idx, skip) = (idx + 1, 0);
             }
-        }
-        match resume {
-            Some(at) => {
-                self.chain_at = at as u16;
-                Sw::BYTES_REMAINING_00
+            if skip > 0 && idx == nfids {
+                stop = Stop::Lost;
             }
-            None => {
+            stop
+        };
+        match stop {
+            Stop::More(at, skip, left) => {
+                (self.chain_at, self.chain_skip) = (at, skip as u16);
+                rsk_sdk::applet::bytes_remaining(left)
+            }
+            Stop::Done => {
                 self.chain = Chain::None;
                 Sw::OK
             }
+            Stop::Lost => {
+                self.chain = Chain::None;
+                Sw::MEMORY_FAILURE
+            }
         }
     }
+
     /// Refines `RSKeyAppletSeams!ExemptRefusalPreservesStatus` — SEC-SEAM-005.
     fn cmd_validate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let data = &apdu.data[..apdu.nc];
@@ -681,7 +699,8 @@ impl<'a> OathApplet<'a> {
             chal_len: chal.len() as u8,
         };
         self.chain_at = 0;
-        self.calc_all_page(fs, res)
+        self.chain_skip = 0;
+        self.page(fs, res, frame_cap(apdu))
     }
 
     /// Raise every only-increasing credential's mark to `chal`, in store order,
@@ -716,7 +735,7 @@ impl<'a> OathApplet<'a> {
             // A blob an older build wrote can have no room for a mark, or carry
             // a `D0` of another width — it kept unrecognised tags verbatim. One
             // such record must not fail the bulk read for the whole store, so
-            // skip it here; `calc_all_page` gives it no code either, and its own
+            // skip it here; `page_entry` gives it no code either, and its own
             // CALCULATE still refuses.
             if !mark_has_room(&scratch[..n]) {
                 continue;
@@ -735,88 +754,6 @@ impl<'a> OathApplet<'a> {
             }
         }
         Ok(())
-    }
-
-    /// Emit CALCULATE ALL entries from `self.chain_at` until the frame fills
-    /// (each reserves the 64-byte worst-case response), paging via `61xx` /
-    /// SEND REMAINING exactly like [`Self::list_page`].
-    fn calc_all_page<S: Storage>(&mut self, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        let Chain::CalcAll {
-            p2,
-            chal: chal_buf,
-            chal_len,
-        } = self.chain
-        else {
-            return Sw::OK;
-        };
-        let chal = &chal_buf[..chal_len as usize];
-        let start = self.chain_at as usize;
-        let mut resume = None;
-        {
-            let mkek = read_fused(self.mkek_source);
-            let dev = self.device(&mkek);
-            let mut fids = [0u16; MAX_OATH_CRED as usize];
-            let nfids = present_creds(fs, &mut fids);
-            let mut scratch = [0u8; CRED_MAX];
-            let mut idx = start;
-            while idx < nfids {
-                let fid = fids[idx];
-                idx += 1;
-                let Some(n) = seal::seal_read(&dev, fs, KeyFid::new(fid), &mut scratch) else {
-                    continue;
-                };
-                let blob = &scratch[..n.min(CRED_MAX)];
-                let (Some(name), Some(key)) = (
-                    find_tag(blob, TAG_NAME as u16),
-                    find_tag(blob, TAG_KEY as u16),
-                ) else {
-                    continue;
-                };
-                if key.len() < 2 || name.len() > 255 {
-                    continue;
-                }
-                // Worst-case entry: name TLV + full-response TLV (64 + digits).
-                if res.len() + 2 + name.len() + 2 + 65 > res.capacity() {
-                    resume = Some(idx - 1);
-                    break;
-                }
-                res.push(TAG_NAME);
-                res.push(name.len() as u8);
-                res.extend(name);
-                if key[0] & OATH_TYPE_MASK == OATH_TYPE_HOTP {
-                    // HOTP is never computed in bulk (it would burn counters).
-                    res.push(TAG_NO_RESPONSE);
-                    res.push(1);
-                    res.push(key[1]);
-                } else if cred_property(blob) & PROP_TOUCH != 0 {
-                    res.push(TAG_TOUCH_RESPONSE);
-                    res.push(1);
-                    res.push(key[1]);
-                } else if bulk_computable(blob, key[0]) {
-                    res.push(TAG_RESPONSE + p2);
-                    // `alg_supported` is exactly `oath_hmac`'s domain.
-                    let _ = calculate(p2 == 0x01, key, chal, res);
-                } else {
-                    // A build before PUT's rule could store an algorithm nibble
-                    // that has no HMAC. There is no code — and a `0x76` TLV one
-                    // byte long is not one either, so say so with the protocol's
-                    // own "no response" rather than a malformed frame under 9000.
-                    res.push(TAG_NO_RESPONSE);
-                    res.push(1);
-                    res.push(key[1]);
-                }
-            }
-        }
-        match resume {
-            Some(at) => {
-                self.chain_at = at as u16;
-                Sw::BYTES_REMAINING_00
-            }
-            None => {
-                self.chain = Chain::None;
-                Sw::OK
-            }
-        }
     }
 
     fn cmd_verify_code<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
@@ -1293,8 +1230,7 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
             // YKOATH response chaining: continue the LIST / CALCULATE ALL page whose
             // last frame returned 61xx. None owed is 6D00, as on a YubiKey 5.8.0.
             INS_SEND_REMAINING => match self.chain {
-                Chain::List { .. } => self.list_page(fs, res),
-                Chain::CalcAll { .. } => self.calc_all_page(fs, res),
+                Chain::List { .. } | Chain::CalcAll { .. } => self.page(fs, res, frame_cap(apdu)),
                 Chain::None => Sw::INS_NOT_SUPPORTED,
             },
             INS_VERIFY_CODE => self.cmd_verify_code(apdu, fs),
@@ -1449,6 +1385,98 @@ fn oath_hmac(alg: u8, key: &[u8], msg: &[u8], out: &mut [u8; 64]) -> Option<usiz
         }
         _ => None,
     }
+}
+
+/// The widest LIST / CALCULATE ALL entry: a 255-byte name TLV and a full-width
+/// response TLV (a SHA-512 MAC and its digits byte).
+const PAGE_ENTRY_MAX: usize = 2 + 255 + 2 + 1 + 64;
+
+/// The most one response frame may carry for `apdu`, as a YubiKey 5.8.0 cuts it:
+/// its `Ne`, where a short command with no `Le` still means 256 and an extended one
+/// means no cap below the transport's buffer.
+fn frame_cap(apdu: &Apdu) -> usize {
+    match (apdu.ne, apdu.extended) {
+        (0, false) => rsk_sdk::apdu::NE_SHORT_MAX,
+        (0, true) => usize::MAX,
+        (ne, _) => ne,
+    }
+}
+
+/// The whole entry `chain` answers for the credential at `fid`, built into `out`;
+/// its length, or `None` for a credential the read leaves out. Pure, so a frame
+/// that stopped inside it rebuilds it byte for byte.
+fn page_entry<S: Storage>(
+    chain: &Chain,
+    dev: &Device,
+    fs: &mut Fs<S>,
+    fid: u16,
+    scratch: &mut [u8; CRED_MAX],
+    out: &mut [u8; PAGE_ENTRY_MAX],
+) -> Option<usize> {
+    let n = seal::seal_read(dev, fs, KeyFid::new(fid), scratch)?;
+    let blob = &scratch[..n.min(CRED_MAX)];
+    let (Some(name), Some(key)) = (
+        find_tag(blob, TAG_NAME as u16),
+        find_tag(blob, TAG_KEY as u16),
+    ) else {
+        return None;
+    };
+    let mut e = ResBuf::new(out);
+    match *chain {
+        Chain::List { ext } => {
+            if key.is_empty() || name.len() + 2 > 255 {
+                return None;
+            }
+            e.push(TAG_NAME_LIST);
+            e.push((name.len() + 1 + ext as usize) as u8);
+            e.push(key[0]);
+            e.extend(name);
+            if ext {
+                let mut props = 0u8;
+                if find_tag(blob, TAG_PWS_LOGIN as u16).is_some()
+                    || find_tag(blob, TAG_PWS_PASSWORD as u16).is_some()
+                    || find_tag(blob, TAG_PWS_METADATA as u16).is_some()
+                {
+                    props |= 0x4;
+                }
+                if cred_property(blob) & PROP_TOUCH != 0 {
+                    props |= 0x1;
+                }
+                e.push(props);
+            }
+        }
+        Chain::CalcAll { p2, chal, chal_len } => {
+            if key.len() < 2 || name.len() > 255 {
+                return None;
+            }
+            e.push(TAG_NAME);
+            e.push(name.len() as u8);
+            e.extend(name);
+            if key[0] & OATH_TYPE_MASK == OATH_TYPE_HOTP {
+                // HOTP is never computed in bulk (it would burn counters).
+                e.push(TAG_NO_RESPONSE);
+                e.push(1);
+                e.push(key[1]);
+            } else if cred_property(blob) & PROP_TOUCH != 0 {
+                e.push(TAG_TOUCH_RESPONSE);
+                e.push(1);
+                e.push(key[1]);
+            } else if bulk_computable(blob, key[0]) {
+                e.push(TAG_RESPONSE + p2);
+                // `alg_supported` is exactly `oath_hmac`'s domain.
+                let _ = calculate(p2 == 0x01, key, &chal[..chal_len as usize], &mut e);
+            } else {
+                // A build before PUT's rule could store an algorithm nibble that
+                // has no HMAC. There is no code, and a `0x76` TLV one byte long is
+                // not one either: the protocol's own "no response" says so.
+                e.push(TAG_NO_RESPONSE);
+                e.push(1);
+                e.push(key[1]);
+            }
+        }
+        Chain::None => return None,
+    }
+    Some(e.len())
 }
 
 /// Append `[len][digits][code]` to `res` — the RFC 4226 dynamic truncation

@@ -40,6 +40,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OATH LIST and CALCULATE ALL cap each response frame at the command's `Le`,
+  as a YubiKey 5.8.0 does: a short command with no `Le` gets 256 bytes, and
+  the rest comes through SEND REMAINING, cut at the byte and with the bytes
+  left named in `61xx` once fewer than 256 remain. An extended command still
+  gets as much as one CCID frame holds. RS-Key sent the whole list in one
+  frame to a short command, past the 256 bytes ISO 7816-4 allows it, and cut
+  its own pages only at whole entries. ykman and Yubico Authenticator join
+  `61xx` frames, so they read the same list.
+  `bcdDevice` 0x09EE → 0x09EF.
+
 - OATH SEND REMAINING (`00 A5`) with no LIST or CALCULATE ALL page owed
   answers `6D00`, as a YubiKey 5.8.0 does, and a page that is owed is served
   whatever P1-P2 carry. With no page owed RS-Key answered `9000` and an empty

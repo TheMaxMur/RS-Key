@@ -1935,7 +1935,7 @@ fn acct_name(i: u16) -> Vec<u8> {
 fn enumerate_all(app: &mut OathApplet, fs: &mut Fs<RamStorage>, first: &[u8]) -> (usize, Vec<u8>) {
     let (mut sw, mut body) = run_fw(app, fs, first);
     let mut pages = 1;
-    while sw == Sw::BYTES_REMAINING_00 {
+    while sw.sw1() == 0x61 {
         let (s, b) = run_fw(app, fs, &apdu(INS_SEND_REMAINING, 0, 0, &[]));
         sw = s;
         body.extend(b);

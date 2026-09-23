@@ -149,3 +149,24 @@ fn an_extended_lc_is_the_whole_16_bit_value_never_its_low_byte() {
         assert_eq!(a.data.last(), Some(&((nc - 1) as u8)), "body truncated");
     }
 }
+
+/// `extended` records the length ENCODING, which `ne` cannot say once `Le` is
+/// absent: a short case 3 and an extended one both leave `ne` 0.
+#[test]
+fn extended_records_the_encoding_where_ne_cannot() {
+    for (raw, extended, ne) in [
+        (&[0x00, 0xA1, 0, 0][..], false, 256),
+        (&[0x00, 0xA1, 0, 0, 0x00], false, 256),
+        (&[0x00, 0xA4, 0, 1, 0x01, 0x74], false, 0),
+        (&[0x00, 0xA4, 0, 1, 0x00, 0x00, 0x01, 0x74], true, 0),
+        (&[0x00, 0xA1, 0, 0, 0x00, 0x00, 0x00], true, 65536),
+        (
+            &[0x00, 0xA4, 0, 1, 0x00, 0x00, 0x01, 0x74, 0x00, 0x10],
+            true,
+            16,
+        ),
+    ] {
+        let a = Apdu::parse(raw).unwrap();
+        assert_eq!((a.extended, a.ne), (extended, ne), "{raw:02X?}");
+    }
+}

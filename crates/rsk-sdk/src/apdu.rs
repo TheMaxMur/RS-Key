@@ -31,6 +31,10 @@ pub struct Apdu<'a> {
     /// (0 → 256 short, 0 → 65536 extended).
     pub ne: usize,
     pub data: &'a [u8],
+    /// Whether the command used the extended length encoding. An absent `Le` leaves
+    /// `ne` 0 in both encodings, and what that allows differs by applet — OATH, as
+    /// a YubiKey 5.8.0, caps a short command at [`NE_SHORT_MAX`] and not an extended one.
+    pub extended: bool,
 }
 
 impl<'a> Apdu<'a> {
@@ -45,6 +49,7 @@ impl<'a> Apdu<'a> {
         let mut nc = 0usize;
         let mut ne = 0usize;
         let mut data: &[u8] = &[];
+        let mut extended = false;
 
         if size == 4 {
             // Case 1 (Ne still defaults to 256).
@@ -57,6 +62,7 @@ impl<'a> Apdu<'a> {
             };
         } else if buf[4] == 0 && size >= 7 {
             // Extended length (leading 0 marker).
+            extended = true;
             if size == 7 {
                 ne = match be16(&buf[5..7]) {
                     0 => NE_EXT_MAX,
@@ -103,6 +109,7 @@ impl<'a> Apdu<'a> {
             nc,
             ne,
             data,
+            extended,
         })
     }
 

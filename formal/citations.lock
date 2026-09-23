@@ -10,7 +10,7 @@ assurance/abstractions.toml	crates/rsk-fido/src/reset.rs	37-37	if !ctx.presence.
 assurance/abstractions.toml	crates/rsk-fido/src/state.rs	33-51	/// State carried between `getAssertion` and `getNextAssertion` when resident	pub slots: [u16; MAX_ASSERTION_CREDS],
 assurance/abstractions.toml	crates/rsk-fido/src/state.rs	326-333	/// drops the channel, and every gated consumer spends it — so an interloper	/// the seed from being encrypted to a second process is that the channel is
 assurance/abstractions.toml	crates/rsk-fido/src/state.rs	530-530	if self.paut.in_use {	if self.paut.in_use {
-assurance/abstractions.toml	crates/rsk-oath/src/lib.rs	330-332	if !self.validated {	}
+assurance/abstractions.toml	crates/rsk-oath/src/lib.rs	343-345	if !self.validated {	}
 assurance/assumptions.toml	crates/rsk-fido/src/clientpin.rs	380-386	if force_change_pending(ctx) {	}
 assurance/assumptions.toml	crates/rsk-fido/src/clientpin.rs	811-821	if migrated && rsk_fs::request_rescrub(ctx.fs).is_err() {	.map_err(|_| CtapError::Other)?;
 assurance/assumptions.toml	crates/rsk-fs/src/fs_tests.rs	392-392	fn a_reset_between_a_re_key_and_its_rescrub_leaves_the_marker_lying() {	fn a_reset_between_a_re_key_and_its_rescrub_leaves_the_marker_lying() {
@@ -787,14 +787,14 @@ formal/README.md	crates/rsk-fs/src/fs_tests.rs	505-505	assert!(	assert!(
 formal/README.md	crates/rsk-fs/src/lib.rs	28-78	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	}
 formal/README.md	crates/rsk-fs/src/lib.rs	62-62	let _ = fs.delete(EF_HARDENED);	let _ = fs.delete(EF_HARDENED);
 formal/README.md	crates/rsk-fs/src/lib.rs	80-98	/// Run the one-shot at-rest scrub lap: iff [`EF_HARDENED`] is absent, drive a full	}
-formal/README.md	crates/rsk-oath/src/lib.rs	330-332	if !self.validated {	}
-formal/README.md	crates/rsk-oath/src/lib.rs	337-349	if let Some([key]) = parse_exact(data, [TAG_KEY]) {	};
-formal/README.md	crates/rsk-oath/src/lib.rs	540-542	// states left a host unable to tell a wrong password from no password.	return Sw::WRONG_DATA;
-formal/README.md	crates/rsk-oath/src/lib.rs	1160-1161	self.validated = false;	self.otp_pin_verified = false;
-formal/README.md	crates/rsk-oath/src/lib.rs	1224-1228	/// `select` recomputes `validated` from whether a code is set.	self.chain = Chain::None;
-formal/README.md	crates/rsk-oath/src/lib.rs	1226-1226	self.validated = false;	self.validated = false;
-formal/README.md	crates/rsk-oath/src/lib.rs	1262-1262	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
-formal/README.md	crates/rsk-oath/src/lib.rs	1609-1609	if deleted > RESET_MAX_DELETES {	if deleted > RESET_MAX_DELETES {
+formal/README.md	crates/rsk-oath/src/lib.rs	343-345	if !self.validated {	}
+formal/README.md	crates/rsk-oath/src/lib.rs	350-362	if let Some([key]) = parse_exact(data, [TAG_KEY]) {	};
+formal/README.md	crates/rsk-oath/src/lib.rs	558-560	// states left a host unable to tell a wrong password from no password.	return Sw::WRONG_DATA;
+formal/README.md	crates/rsk-oath/src/lib.rs	1097-1098	self.validated = false;	self.otp_pin_verified = false;
+formal/README.md	crates/rsk-oath/src/lib.rs	1161-1165	/// `select` recomputes `validated` from whether a code is set.	self.chain = Chain::None;
+formal/README.md	crates/rsk-oath/src/lib.rs	1163-1163	self.validated = false;	self.validated = false;
+formal/README.md	crates/rsk-oath/src/lib.rs	1199-1199	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
+formal/README.md	crates/rsk-oath/src/lib.rs	1637-1637	if deleted > RESET_MAX_DELETES {	if deleted > RESET_MAX_DELETES {
 formal/README.md	crates/rsk-openpgp/src/internalaut.rs	45-48	// §7.2.13 names PW1 no. 82 and nothing else; PW3 used to stand in, and a	return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
 formal/README.md	crates/rsk-openpgp/src/keys.rs	411-425	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
 formal/README.md	crates/rsk-openpgp/src/lib.rs	354-357	/// valid AID and an ICC power cycle clear them (the dispatcher's `deselect`).	self.reset_session();
@@ -827,9 +827,9 @@ formal/README.md	crates/rsk-piv/src/lib.rs	1324-1324	&& ct_eq(	&& ct_eq(
 formal/README.md	crates/rsk-piv/src/lib.rs	1448-1448	puk: &[u8],	puk: &[u8],
 formal/README.md	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/README.md	crates/rsk-sdk/src/applet.rs	208-210	fn selectable(&self, i: usize) -> bool {	}
-formal/README.md	crates/rsk-sdk/src/applet.rs	374-390	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
-formal/README.md	crates/rsk-sdk/src/applet.rs	379-387	// A disabled applet is skipped, so its AID matches nothing	let reselect = self.current == Some(i);
-formal/README.md	crates/rsk-sdk/src/applet.rs	387-387	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
+formal/README.md	crates/rsk-sdk/src/applet.rs	375-391	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
+formal/README.md	crates/rsk-sdk/src/applet.rs	380-388	// A disabled applet is skipped, so its AID matches nothing	let reselect = self.current == Some(i);
+formal/README.md	crates/rsk-sdk/src/applet.rs	388-388	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
 formal/README.md	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	405-475	pub fn feed(&mut self, f: &[u8; HID_RPT_SIZE]) -> Outcome {	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	435-435	let bcnt = ((f[5] as usize) << 8) | f[6] as usize;	let bcnt = ((f[5] as usize) << 8) | f[6] as usize;
@@ -862,7 +862,7 @@ formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	243-251	/// bit `i` s
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	340-340	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
 formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/RSKeyAdminSurface.tla	crates/rsk-sdk/src/applet.rs	203-205	pub fn set_enabled(&mut self, mask: u32) {	}
-formal/RSKeyAppletPolicies.tla	crates/rsk-oath/src/lib.rs	585-617	// gated here, before the HOTP counter burns.	fs,
+formal/RSKeyAppletPolicies.tla	crates/rsk-oath/src/lib.rs	603-635	// gated here, before the HOTP counter burns.	fs,
 formal/RSKeyAppletPolicies.tla	crates/rsk-openpgp/src/keypairgen.rs	79-122	let priv_fid = slot_algo_fid(fid);	// sibling reader `info::slot_algo` has the same `attr.len() >= 3` gate.
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/counter.rs	16-26	pub(crate) fn next_use_counter(counter: u16, session: u8) -> (u16, u8, bool) {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	334-349	// The advance this press owes the PERSISTED half of the position. A	}
@@ -883,18 +883,18 @@ formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ctap.rs	177-181	EF_PIN, EF_RP,
 formal/RSKeyAppletSeams.tla	crates/rsk-display/src/pin.rs	713-721	let _ = rsk_ui::render_erasing(&mut self.frame());	)
 formal/RSKeyAppletSeams.tla	crates/rsk-fido/src/reset.rs	263-305	/// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus	}
 formal/RSKeyAppletSeams.tla	crates/rsk-fs/src/fs.rs	462-513	/// that is still live and, for PIV, not PIN-bound at rest — or, for OATH, leaves	return Err(Error::MemoryFatal);
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	183-191	/// allowed); with a code set, a new SELECT resets it, a re-SELECT keeps it,	otp_pin_verified: bool,
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	214-215	presence,	validated: true,
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	330-332	if !self.validated {	}
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	337-349	if let Some([key]) = parse_exact(data, [TAG_KEY]) {	};
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	345-345	self.validated = true;	self.validated = true;
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	397-403	// Installing a new access code drops any OTP-PIN: VERIFY PIN sets the same	self.validated = false;
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	540-542	// states left a host unable to tell a wrong password from no password.	return Sw::WRONG_DATA;
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1160-1161	self.validated = false;	self.otp_pin_verified = false;
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1190-1211	// Any attempt clears a prior unlock; only a correct PIN re-validates below.	self.validated = true;
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1224-1228	/// `select` recomputes `validated` from whether a code is set.	self.chain = Chain::None;
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1259-1263	// A code-less applet is open on every SELECT. With a code, a re-SELECT keeps a	self.otp_pin_verified = false;
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1262-1262	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	192-200	/// allowed); with a code set, a new SELECT resets it, a re-SELECT keeps it,	otp_pin_verified: bool,
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	226-227	presence,	validated: true,
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	343-345	if !self.validated {	}
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	350-362	if let Some([key]) = parse_exact(data, [TAG_KEY]) {	};
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	358-358	self.validated = true;	self.validated = true;
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	410-416	// Installing a new access code drops any OTP-PIN: VERIFY PIN sets the same	self.validated = false;
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	558-560	// states left a host unable to tell a wrong password from no password.	return Sw::WRONG_DATA;
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1097-1098	self.validated = false;	self.otp_pin_verified = false;
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1127-1148	// Any attempt clears a prior unlock; only a correct PIN re-validates below.	self.validated = true;
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1161-1165	/// `select` recomputes `validated` from whether a code is set.	self.chain = Chain::None;
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1196-1200	// A code-less applet is open on every SELECT. With a code, a re-SELECT keeps a	self.otp_pin_verified = false;
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1199-1199	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/keys.rs	411-425	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/lib.rs	259-261	// moved the tag below the ACL and left this one above it.	return Sw::SECURITY_STATUS_NOT_SATISFIED;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	19-38	pub struct Session {	session_rc: [u8; 32],
@@ -911,8 +911,8 @@ formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	522-536	return Sw::PIN_BLO
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	544-578	// the retry counter … shall be decremented by one." A YubiKey 5.7.4 does	/// `6A88` for anything but `P1 = 00, P2 = 80`, as on `change_pin` — and here
 formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	145-145	apdu.ins == 0xA4 && apdu.p1 == 0x04 && (apdu.p2 == 0x00 || apdu.p2 == 0x04)	apdu.ins == 0xA4 && apdu.p1 == 0x04 && (apdu.p2 == 0x00 || apdu.p2 == 0x04)
 formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	222-230	///	{
-formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	374-390	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
-formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	379-387	// A disabled applet is skipped, so its AID matches nothing	let reselect = self.current == Some(i);
+formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	375-391	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
+formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	380-388	// A disabled applet is skipped, so its AID matches nothing	let reselect = self.current == Some(i);
 formal/RSKeyAppletSeams.tla	firmware/src/pin_lock.rs	12-21	//! [`rsk_fido::state::PinLock`] lives in RAM and is rebuilt clear on every boot,	//!
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	811-813	if migrated && rsk_fs::request_rescrub(ctx.fs).is_err() {	}
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	811-821	if migrated && rsk_fs::request_rescrub(ctx.fs).is_err() {	.map_err(|_| CtapError::Other)?;
@@ -921,7 +921,7 @@ formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	28-78	/// Set (`[1]`) onc
 formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	62-62	let _ = fs.delete(EF_HARDENED);	let _ = fs.delete(EF_HARDENED);
 formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	80-98	/// Run the one-shot at-rest scrub lap: iff [`EF_HARDENED`] is absent, drive a full	}
 formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	99-99	if fs.compact().is_ok() {	if fs.compact().is_ok() {
-formal/RSKeyBootHardening.tla	crates/rsk-oath/src/lib.rs	1206-1206	if rsk_fs::request_rescrub(fs).is_ok() {	if rsk_fs::request_rescrub(fs).is_ok() {
+formal/RSKeyBootHardening.tla	crates/rsk-oath/src/lib.rs	1143-1143	if rsk_fs::request_rescrub(fs).is_ok() {	if rsk_fs::request_rescrub(fs).is_ok() {
 formal/RSKeyBootHardening.tla	crates/rsk-openpgp/src/pin.rs	330-330	rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;	rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;
 formal/RSKeyBootHardening.tla	crates/rsk-piv/src/lib.rs	1337-1337	if rsk_fs::request_rescrub(fs).is_err() {	if rsk_fs::request_rescrub(fs).is_err() {
 formal/RSKeyBootHardening.tla	firmware/src/pin_lock.rs	18-21	//! a real power cycle clears it. The *whole* lock moves: carrying the engaged flag	//!
@@ -1157,8 +1157,8 @@ formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	505-505	assert!(	assert!(
 formal/comutants.toml	crates/rsk-fs/src/storage.rs	78-78	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,
 formal/comutants.toml	crates/rsk-oath/src/code_tests.rs	154-154	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/increasing_tests.rs	36-36	assert_eq!(sw, Sw::WRONG_DATA, "a refusal must read as 6A80");	assert_eq!(sw, Sw::WRONG_DATA, "a refusal must read as 6A80");
-formal/comutants.toml	crates/rsk-oath/src/lib.rs	1222-1229	/// Drop the VALIDATE result on deselect / card reset, so a later session must	}
-formal/comutants.toml	crates/rsk-oath/src/lib.rs	1262-1263	self.validated = !code_set || (reselect && self.validated);	self.otp_pin_verified = false;
+formal/comutants.toml	crates/rsk-oath/src/lib.rs	1159-1166	/// Drop the VALIDATE result on deselect / card reset, so a later session must	}
+formal/comutants.toml	crates/rsk-oath/src/lib.rs	1199-1200	self.validated = !code_set || (reselect && self.validated);	self.otp_pin_verified = false;
 formal/comutants.toml	crates/rsk-oath/src/otp_pin_tests.rs	66-66	assert!(!safe_open(&mut app, &mut fs), "closed before any PIN");	assert!(!safe_open(&mut app, &mut fs), "closed before any PIN");
 formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	45-45	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	322-322	assert_eq!(	assert_eq!(
@@ -1214,5 +1214,5 @@ scripts/test_token_refinement_gate.py	crates/rsk-fido/src/credential.rs	919-919	
 scripts/test_token_refinement_gate.py	firmware/src/main.rs	1167-1167	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
 scripts/token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
 scripts/token_refinement_gate.py	firmware/src/main.rs	1167-1167	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
-scripts/trace_map.py	crates/rsk-sdk/src/applet.rs	387-387	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
+scripts/trace_map.py	crates/rsk-sdk/src/applet.rs	388-388	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
 tools/emu/src/hid.rs	crates/rsk-usb/src/ctaphid.rs	621-634	async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {	}

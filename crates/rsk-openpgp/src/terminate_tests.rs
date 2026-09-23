@@ -54,6 +54,7 @@ fn apdu() -> Apdu<'static> {
         nc: 0,
         ne: 0,
         data: &[],
+        extended: false,
     }
 }
 
