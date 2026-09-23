@@ -131,7 +131,7 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # not found) rather than 6982. Dropping the selection on a power transition
         # is deliberate — it is what makes a second local process re-authenticate
         # (ApduHandler::reset_card).
-        "test_070_oath.py::test_auth": "a 13-byte access code; and a card reset deselects the applet, so LIST without SELECT is 6A82",
+        "test_070_oath.py::test_auth": "a 13-byte access code; a card reset deselects the applet, so LIST without SELECT is 6A82; and it expects a re-SELECT to re-lock, where a YubiKey 5.8.0 keeps the VALIDATE",
         "test_070_oath.py::test_noauth": "a 13-byte access code; and a card reset deselects the applet, so LIST without SELECT is 6A82",
         # These send CALCULATE with a bare `74` tag — no length byte, no value —
         # which is not a TLV. With the encoded empty challenge `74 00` that ykman

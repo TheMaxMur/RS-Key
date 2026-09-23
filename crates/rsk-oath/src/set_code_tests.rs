@@ -371,7 +371,7 @@ fn a_refused_validate_neither_grants_nor_drops_the_unlock() {
     let secret = [0xABu8; 20];
     assert_eq!(set_code(&mut app, &mut fs, &secret), Sw::OK);
 
-    // One SELECT for the whole test: every SELECT rotates the challenge AND
+    // One SELECT for the whole test: every new SELECT rotates the challenge AND
     // re-locks, so a second one would erase the standing unlock this measures.
     let chal = card_challenge(&mut app, &mut fs);
     let good = hmac_sha1(&secret, &chal);

@@ -124,12 +124,14 @@ ykman oath access forget            # drop the cached password
 ```
 
 How it works on-card: the password becomes an HMAC key (PBKDF2 over the
-password, salted with the device serial, done host-side by `ykman`). On every
-fresh connection the card issues a random challenge; the host must answer with
-`HMAC(key, challenge)` before any account command is allowed. The card
-answers the host's challenge with the same key (mutual proof). Selecting the
-applet again re-locks it. The compare is constant-time and full-length, so a
-truncated or guessed response can't brute-force its way in one byte at a time.
+password, salted with the device serial, done host-side by `ykman`). Selecting
+the applet issues a random challenge, and the host must answer with
+`HMAC(key, challenge)` before any account command is allowed. The card answers
+the host's challenge with the same key (mutual proof). The proof then holds, as
+on a YubiKey, until another application is selected, the card is reset, or the
+key is unplugged; a SELECT of OATH while it is already selected keeps it. The
+compare is constant-time and full-length, so a truncated or guessed response
+can't brute-force its way in one byte at a time.
 
 Footguns:
 

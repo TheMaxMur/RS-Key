@@ -901,7 +901,7 @@ run "security trace refinement" python scripts/security_trace.py --check-data fo
 run "ghost completeness"       python scripts/ghost_gate.py
 # And the other end of the same question: not what a ghost's writers are, but
 # where a model deliberately stops being about the product. `RSKeyAppletSeams`
-# hard-codes `\/ a = Oath` TWICE -- once to re-lock OATH on a re-SELECT, once to
+# hard-coded `\/ a = Oath` TWICE -- once to re-lock OATH on a re-SELECT, once to
 # keep the conformance recorder quiet about it -- and deleting either changed the
 # input of no gate. Nothing was a registry for that class: `git grep -i exempt
 # scripts/` found only tier exclusions. This derives the narrowings out of the

@@ -294,7 +294,7 @@ def main():
         fail("SET CODE: SELECT lacks challenge/algo TLVs")
     _, sw = oath.apdu(INS_LIST, 0, 0, want=None)
     if sw != 0x6982:
-        fail(f"LIST while locked: SW {sw:04X} != 6982 (validated should reset on SELECT)")
+        fail(f"LIST while locked: SW {sw:04X} != 6982 (SET CODE should leave the session locked)")
     # Wrong response must not unlock.
     host_chal = bytes([9] * 8)
     _, sw = oath.apdu(

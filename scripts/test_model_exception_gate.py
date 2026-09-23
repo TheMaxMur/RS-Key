@@ -8,14 +8,15 @@ time, and asserts the MESSAGE rather than a count — a red for the wrong reason
 proves as little as a green.
 
 Two of the cases are not fixtures. `test_the_criterion_defect_reddens_the_row`
-deletes `\\/ a = Oath` from a COPY of this checkout's own `RSKeyAppletSeams.tla`
-— the exact clause stage 6's exit criterion is about, the one whose deletion
-changed the input of no gate before this row existed — and drives the gate as a
-PROCESS, because `check.sh` reads an exit code and not a list of findings.
-`test_a_narrowing_over_a_state_variable_reddens_the_row` is the hole this table
-found in the guard while it was being written: with the subject rule scoped to
-bound names, a constructed `(sel = Piv \\/ sel = Pgp)` passed at rc 0. Closing it
-turned up two real narrowings in `RSKeyAppletPolicies` that nothing had a row for.
+deletes the recorder's `\\/ (a = Oath …)` from a COPY of this checkout's own
+`RSKeyAppletSeams.tla` — the one of stage 6's two clauses the model still has,
+whose deletion changed the input of no gate before this row existed — and drives
+the gate as a PROCESS, because `check.sh` reads an exit code and not a list of
+findings. `test_a_narrowing_over_a_state_variable_reddens_the_row` is the hole
+this table found in the guard while it was being written: with the subject rule
+scoped to bound names, a constructed `(sel = Piv \\/ sel = Pgp)` passed at rc 0.
+Closing it turned up two real narrowings in `RSKeyAppletPolicies` that nothing
+had a row for.
 
 Both directions, because a guard that cannot go green is deleted as fast as one
 that cannot go red: the clean fixture passes, this checkout's own registry
@@ -197,7 +198,8 @@ def test_the_derivation_finds_every_shape(tmp_path):
 
 
 def test_the_criterion_defect_reddens_the_row(tmp_path):
-    """`\\/ a = Oath` deleted from a copy of THIS tree, driven as `check.sh` drives it.
+    """The recorder's `\\/ (a = Oath …)` deleted from a copy of THIS tree, driven as
+    `check.sh` drives it.
 
     Not the fixture: the clause stage 6 names, in the module it lives in, run
     through `main()` so the assertion is on the PROCESS exit code. Fourteen of
@@ -218,12 +220,17 @@ def test_the_criterion_defect_reddens_the_row(tmp_path):
 
     seams = scratch / "formal" / "RSKeyAppletSeams.tla"
     text = seams.read_text()
-    assert "IF BugReselectResetsStatus \\/ a = Oath" in text
-    seams.write_text(text.replace("IF BugReselectResetsStatus \\/ a = Oath", "IF BugReselectResetsStatus"))
+    exemption = (
+        "\n                  \\/ (a = Oath /\\ ~BugOathReselectUnrecorded"
+        "\n                      /\\ held' = [held EXCEPT ![\"oathOtpPin\"] = FALSE])"
+    )
+    assert exemption in text
+    # Two blank lines in its place, so every row below keeps its line.
+    seams.write_text(text.replace(exemption, "\n\n"))
 
     red = subprocess.run([sys.executable, str(guard)], capture_output=True, text=True)
     assert red.returncode == 1, red.stdout
-    assert "RSKeyAppletSeams.tla:237 `a = Oath`" in red.stderr, red.stderr
+    assert "RSKeyAppletSeams.tla:251 `a = Oath`" in red.stderr, red.stderr
     assert "no longer narrows" in red.stderr
 
 

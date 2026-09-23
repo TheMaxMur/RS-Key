@@ -180,8 +180,8 @@ pub struct OathApplet<'a> {
     rng: &'a RefCell<dyn Rng>,
     presence: &'a RefCell<dyn UserPresence>,
     /// Access-code session state. `true` when no code is set (everything
-    /// allowed); with a code set, SELECT resets it and VALIDATE/VERIFY PIN
-    /// flip it back.
+    /// allowed); with a code set, a new SELECT resets it, a re-SELECT keeps it,
+    /// and VALIDATE/VERIFY PIN flip it back.
     validated: bool,
     /// Whether *this* session presented the OTP PIN. Distinct from `validated`,
     /// which VERIFY PIN also sets (it doubles as VALIDATE for the nitropy flow)
@@ -1230,7 +1230,7 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
 
     /// SELECT response: version + device id, plus a fresh challenge (and its
     /// algorithm) when an access code is set.
-    fn select(&mut self, _reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+    fn select(&mut self, reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let (maj, min, patch) = VERSION;
         res.push(TAG_T_VERSION);
         res.push(3);
@@ -1256,10 +1256,10 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
         }
         // A new SELECT abandons any pending LIST / CALCULATE ALL page.
         self.chain = Chain::None;
-        // With a code set, every new SELECT must start locked: protected
-        // commands work only after VALIDATE (or VERIFY PIN). The PIN itself is
-        // never inherited across a SELECT, code or no code.
-        self.validated = !code_set;
+        // A code-less applet is open on every SELECT. With a code, a re-SELECT keeps a
+        // VALIDATE, as a YubiKey 5.8.0 and PIV and OpenPGP do; a new SELECT locks. The
+        // OTP PIN (Nitrokey's, no oracle) is never inherited across any SELECT.
+        self.validated = !code_set || (reselect && self.validated);
         self.otp_pin_verified = false;
         Sw::OK
     }

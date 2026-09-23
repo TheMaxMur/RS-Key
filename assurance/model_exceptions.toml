@@ -6,7 +6,7 @@
 # A `.tla` module here is checked exhaustively over the surface it names, so
 # every clause that takes something OUT of that surface moves a piece of the
 # product beyond every mutant the module has. `RSKeyAppletSeams`'s `Reselect`
-# hard-codes `\/ a = Oath` twice — once to clear the statuses OATH does not keep
+# hard-coded `\/ a = Oath` twice — once to clear the statuses OATH did not keep
 # through a re-SELECT, once to stop the conformance recorder firing at it — and
 # for the whole life of that module, deleting either changed the input of no
 # gate. This file is the ledger those clauses were missing, and stage 6's exit
@@ -72,8 +72,8 @@
 # configuration at all. Those rows owe a requirement-side statement first, and
 # an invariant is not free here: it is a `[[property]]` in
 # assurance/properties.toml, which is the registry the matrix, the evidence
-# bundles and the generated pages all read. MX-SEAM-004/005 are out for a reason
-# of their own, and their rows state it: the two clauses cannot switch apart.
+# bundles and the generated pages all read. MX-SEAM-005 is out for a reason of
+# its own, and its row states it.
 #
 # The other price a seam switch pays is a code twin: formal/comutants.toml is
 # closed-world over `SeamMut_*`, so a switch with no host-testable twin cannot
@@ -149,60 +149,39 @@ mutant = "SeamSolo_BugResetKeepsOathUnlock.cfg"
 carried_by = "NAR-OATH-REMOVAL"
 
 [[exception]]
-id = "MX-SEAM-004"
-module = "RSKeyAppletSeams.tla"
-line = 237
-shape = "clause"
-site = "Reselect"
-clause = "a = Oath"
-kind = "narrowing"
-production = "OATH ignores the `reselect` flag the applet trait hands it and re-locks (crates/rsk-oath/src/lib.rs), while PIV and OpenPGP keep everything — SP 800-73-4 pt2 3.1.1 makes it a `shall`, OpenPGP 3.4.1 4.2 holds access status until a select to a different DF, and a YubiKey 5.7.4 was measured keeping both."
-why = '''
-The clause the criterion is about. It is a recorded, deliberate asymmetry with no
-oracle reading behind it — three applets, and the third does the opposite of the
-other two — and it is a hole in the strongest direction: a change that made PIV
-or OpenPGP re-lock would be caught by `ReselectPreservesAccessStatus`, while a
-change that made OATH KEEP its unlock is caught by nothing at all, because the
-sibling `viol'` clause below — MX-SEAM-005 — also stops the recorder firing at
-it. So this row still owes a requirement-side statement and not a switch:
-MX-SEAM-005 was paid with one because widening the RECORDER reddens the shipped
-tree, and widening the STEP here reddens nothing.
-'''
-mutant = "owes"
-owed = "SeamSolo_BugOathReselectKeepsStatus.cfg"
-
-[[exception]]
 id = "MX-SEAM-005"
 module = "RSKeyAppletSeams.tla"
-line = 249
+line = 251
 shape = "clause"
 site = "Reselect"
 clause = "a = Oath"
 kind = "narrowing"
-production = "The recorder half of the same fact: `ReselectPreservesAccessStatus` is a conformance claim about PIV and OpenPGP, so OATH is exempted in the writer rather than in the invariant, because the exemption belongs to that applet and not to the rule."
+production = "The recorder: `ReselectPreservesAccessStatus` is a conformance claim about every applet's access status, and OATH's OTP PIN is exempted in the writer rather than in the invariant, because the exemption belongs to that applet. The PIN is Nitrokey's password-safe extension — a YubiKey answers 6D00 to INS B1–B5, so no oracle speaks for it — and `select` never lets it survive a SELECT (crates/rsk-oath/src/lib.rs). OATH's VALIDATE is not exempt: a YubiKey 5.8.0 keeps it through a re-SELECT, measured twice."
 why = '''
-Two rows and not one, because the two clauses fail apart. Delete the `held'`
-clause above and OATH keeps its status while this one keeps the recorder quiet,
-so the model goes green over the defect; delete this one and the shipped tree
-goes RED at `ReselectPreservesAccessStatus` for a behaviour the product has on
-purpose. A single row would have described whichever someone thought of first.
+The one OATH narrowing left in `Reselect`. The `held'` step used to exempt the
+whole applet — OATH re-locked on every SELECT, with no oracle reading behind it,
+and a second row owed a mutant for that step. The reading retired it: the step
+now drops only `oathOtpPin`, and the VALIDATE surviving is the rule.
 
-`BugOathReselectUnrecorded` is that second sentence, measured. It is refused at
+`BugOathReselectUnrecorded` is this sentence, measured. It is refused at
 `ReselectPreservesAccessStatus`, and the DIRECTION is the one that says the
 exemption is load-bearing rather than decorative: the counterexample SELECTs
 OATH, verifies its OTP PIN, re-SELECTs, and the recorder fires because
-`oathOtpPin` fell TRUE -> FALSE — a status DROPPED where the widened requirement
-says it must be kept, never a status served where none was earned. With the
-switch off the same configuration is GREEN over the shipped seam space, which is
-what says the arm is compiled in rather than decorative. The code twin is a
-measured GAP and formal/comutants.toml carries why: no slice re-SELECTs anything.
+`oathOtpPin` fell TRUE -> FALSE with the exemption gone. With the switch off the
+same configuration is GREEN over the shipped seam space. The code twin is killed
+by crates/rsk-oath/src/reselect_tests.rs: a re-SELECT that kept the OTP PIN
+would open the password safe.
+
+The step's own `a = Oath` — the `ELSE IF` that drops the PIN — is not a shape
+this gate's clause detector reads, so no row can carry it here; the Rust test
+`a_reselect_of_the_oath_aid_drops_the_otp_pin` is all that pays for it.
 '''
 mutant = "SeamSolo_BugOathReselectUnrecorded.cfg"
 
 [[exception]]
 id = "MX-SEAM-006"
 module = "RSKeyAppletSeams.tla"
-line = 458
+line = 461
 shape = "clause"
 site = "PgpKeyOp"
 clause = 'r = "pw1"'
@@ -221,7 +200,7 @@ carried_by = "NAR-ASSIGNMENT-HOLES"
 [[exception]]
 id = "MX-SEAM-007"
 module = "RSKeyAppletSeams.tla"
-line = 463
+line = 466
 shape = "clause"
 site = "PgpKeyOp"
 clause = 'r = "pw1"'
@@ -251,7 +230,7 @@ carried_by = "NAR-ASSIGNMENT-HOLES"
 [[exception]]
 id = "MX-SEAM-008"
 module = "RSKeyAppletSeams.tla"
-line = 630
+line = 633
 shape = "clause"
 site = "NoStatusOutsideItsSelection"
 clause = 'r = "oathCode"'
@@ -296,7 +275,7 @@ carried_by = "NAR-OATH-REMOVAL"
 [[exception]]
 id = "MX-SEAM-010"
 module = "RSKeyAppletSeams.tla"
-line = 589
+line = 592
 shape = "clause"
 site = "FactoryWipe"
 clause = 'r = "oathCode"'

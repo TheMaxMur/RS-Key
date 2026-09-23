@@ -75,7 +75,7 @@ cmd_change_otp_pin	crates/rsk-oath/src/lib.rs:1139	41	decides	D1,D3,D4	clears va
 cmd_verify_otp_pin	crates/rsk-oath/src/lib.rs:1181	34	decides	D1,D3,D4	any attempt clears validated; success sets validated=true, otp_pin_verified=true and resets the counter	SEC-SEAM-002
 aid	crates/rsk-oath/src/lib.rs:1218	3	marshals	M	returns the constant OATH_AID	-
 deselect	crates/rsk-oath/src/lib.rs:1222	8	decides	D4	clears validated, otp_pin_verified and chain on leaving the applet	SEC-SEAM-001
-select	crates/rsk-oath/src/lib.rs:1231	35	decides	D4,D5	validated = !code_set, where code_set = try_has_key(EF_OATH_CODE).unwrap_or(true) — a failed probe locks rather than opens	SEC-SEAM-001,SEC-SEAM-004,SEC-STORE-002
+select	crates/rsk-oath/src/lib.rs:1231	35	decides	D4,D5	validated = !code_set || (reselect && validated), where code_set = try_has_key(EF_OATH_CODE).unwrap_or(true) — a failed probe locks a new SELECT rather than opening it	SEC-SEAM-001,SEC-SEAM-004,SEC-STORE-002
 process	crates/rsk-oath/src/lib.rs:1267	41	decides	D4,D5	line :1274 clears chain on any non-SEND REMAINING, and :1295 routes SEND REMAINING by chain — this cursor is itself the page authorization	SEC-POL-004
 p1p2_ok	crates/rsk-oath/src/lib.rs:1310	25	marshals	M	REVIEW: `DE AD` is a magic constant any host sends — it separates a typo, it does not refuse authorization (was D5)	-
 challenge_of	crates/rsk-oath/src/lib.rs:1336	7	marshals	M	the only condition is challenge length ≤ CHALLENGE_MAX	-

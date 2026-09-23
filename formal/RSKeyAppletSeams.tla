@@ -37,13 +37,13 @@ CONSTANTS
     \* crates/rsk-sdk/src/applet.rs:379-387 -- a SELECT of a DIFFERENT AID deselects the
     \* applet that was current, and the deselect is what resets its session.
     BugSelectKeepsOtherApplet,
-    \* 637ed98 taken back out: PIV and OpenPGP used to reset on EVERY select,
-    \* ignoring the `reselect` flag the trait hands them.
+    \* 637ed98 taken back out: PIV, OpenPGP and OATH's VALIDATE reset on EVERY
+    \* select, ignoring the `reselect` flag the trait hands them.
     BugReselectResetsStatus,
     \* The OTHER half of the same recorder: OATH's exemption from it, removed.
-    \* The conformance claim is a claim about PIV and OpenPGP, and OATH is
-    \* exempted in the WRITER rather than in the invariant; widen it to OATH and
-    \* the shipped tree is red for a re-lock the applet does on purpose.
+    \* The claim covers every applet's status but OATH's OTP PIN, exempted in the
+    \* WRITER rather than in the invariant; widen it to the PIN and the shipped
+    \* tree is red for a drop the applet does on purpose.
     BugOathReselectUnrecorded,
     \* crates/rsk-device/src/ccid.rs:354-369 -- the ICC power transition.
     BugCardResetKeepsStatus,
@@ -151,10 +151,10 @@ VARIABLES
     \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:166-180). The
     \* only status here that is a two-part thing.
     fresh,
-    \* Whether OATH has an access code provisioned. It decides what a SELECT
-    \* means: `validated = !code_set` (crates/rsk-oath/src/lib.rs:1258-1262), so
-    \* a code-less applet is unlocked by design and only a provisioned one has a
-    \* status a SELECT can take away.
+    \* Whether OATH has an access code provisioned. It decides what a new SELECT
+    \* means: `validated = !code_set` (crates/rsk-oath/src/lib.rs:1262), so a
+    \* code-less applet is unlocked by design and only a provisioned one has a
+    \* status a SELECT elsewhere can take away.
     oathCodeSet,
     \* Whether PW1 is the one-shot kind: EF_PW_PRIV[0] = 0 makes PW1.81 valid for
     \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:411-425), which is
@@ -229,24 +229,27 @@ AllCleared ==
 \* deselect at all. PIV and OpenPGP therefore keep everything (637ed98: SP
 \* 800-73-4 pt2 3.1.1 makes it a `shall`, OpenPGP 3.4.1 4.2 says access status
 \* holds until a select to a DIFFERENT DF, and a YubiKey 5.7.4 was measured
-\* keeping all of it). OATH does not: it ignores the flag and re-locks
-\* (crates/rsk-oath/src/lib.rs:1232-1233), which is a recorded, deliberate asymmetry
-\* rather than an oversight -- it has no oracle reading behind it.
+\* keeping all of it). OATH keeps its VALIDATE too, as a YubiKey 5.8.0 was measured
+\* doing, and drops only the OTP PIN: Nitrokey's, so no oracle speaks for it, and
+\* never inherited across a SELECT (crates/rsk-oath/src/lib.rs:1259-1263).
 Reselect(a) ==
     /\ sel = a
-    /\ held' = IF BugReselectResetsStatus \/ a = Oath
-                 THEN ClearedFor(held, a) ELSE held
+    /\ held' = IF BugReselectResetsStatus THEN ClearedFor(held, a)
+               ELSE IF a = Oath THEN [held EXCEPT !["oathOtpPin"] = FALSE]
+               ELSE held
     \* Parenthesised: `=` binds TIGHTER than `/\` in TLA+, so without them
     \* this reads `(fresh' = held'["pivPin"]) /\ fresh` -- an extra guard
     \* requiring `fresh`, which disabled both SELECT actions outright.
     /\ fresh' = IF BugPinFreshOutlivesPin THEN fresh
                   ELSE (held'["pivPin"] /\ fresh)
     /\ pfresh' = (held'["pivPin"] /\ pfresh)
-    \* The conformance recorder. PIV and OpenPGP must come through a re-SELECT
-    \* with everything standing; OATH is the recorded exception, and the switch
-    \* is that exemption taken out of the requirement rather than out of the
-    \* step above -- the two clauses fail apart, which is why they are two.
-    /\ viol' = IF (a = Oath /\ ~BugOathReselectUnrecorded) \/ held' = held
+    \* The conformance recorder. Every applet must come through a re-SELECT with
+    \* everything standing but OATH's OTP PIN, the recorded exception; the switch
+    \* is that exemption taken out of the requirement rather than out of the step
+    \* above -- the two clauses fail apart, which is why they are two.
+    /\ viol' = IF held' = held
+                  \/ (a = Oath /\ ~BugOathReselectUnrecorded
+                      /\ held' = [held EXCEPT !["oathOtpPin"] = FALSE])
                  THEN viol ELSE viol \cup {"ReselectPreservesAccessStatus"}
     /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, refused >>
 
@@ -686,10 +689,10 @@ ExemptRefusalPreservesStatus == "ExemptRefusalPreservesStatus" \notin viol
 \* pt2 3.1.1 makes it a `shall` ("the PIV AID or the right-truncated version
 \* thereof" leaves all security status indicators unchanged), OpenPGP 3.4.1 4.2
 \* says access status holds until a select to a DIFFERENT DF, and a YubiKey
-\* 5.7.4 was measured keeping all of it on both applets. Without this the
-\* switch that rebuilds the pre-637ed98 tree would be a mutant nothing catches.
+\* 5.7.4 kept all of it on both applets, a 5.8.0 OATH's VALIDATE. Without this
+\* the switch rebuilding the pre-637ed98 tree would be a mutant nothing catches.
 \*
-\* Ghost, one writer: Reselect. OATH is exempt in the writer rather than here,
+\* Ghost, one writer: Reselect. OATH's OTP PIN is exempt in the writer, not here,
 \* because its exemption is a property of that applet and not of the rule.
 ReselectPreservesAccessStatus == "ReselectPreservesAccessStatus" \notin viol
 

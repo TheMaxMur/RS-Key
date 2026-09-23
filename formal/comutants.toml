@@ -1232,6 +1232,11 @@ note = "selecting a different AID no longer deselects the applet that was curren
 
 [comutant.BugReselectResetsStatus]
 status = "patch"
+slice = ["cargo", "test", "-p", "rsk-piv", "-p", "rsk-oath"]
+expect = "killed"
+note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:355-358. The OATH site joined on 2026-09-23, when a YubiKey 5.8.0 was measured keeping an OATH VALIDATE through a re-SELECT too: reverting it is killed by crates/rsk-oath/src/reselect_tests.rs."
+
+[[comutant.BugReselectResetsStatus.site]]
 file = "crates/rsk-piv/src/lib.rs"
 find = """
         if !reselect {
@@ -1242,32 +1247,30 @@ replace = """
         let _ = reselect;
         self.sess.reset();
 """
-slice = ["cargo", "test", "-p", "rsk-piv"]
-expect = "killed"
-note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:355-358."
+
+[[comutant.BugReselectResetsStatus.site]]
+file = "crates/rsk-oath/src/lib.rs"
+find = """
+        self.validated = !code_set || (reselect && self.validated);
+"""
+replace = """
+        self.validated = !code_set;
+"""
 
 [comutant.BugOathReselectUnrecorded]
 status = "patch"
 file = "crates/rsk-oath/src/lib.rs"
 find = """
-    fn select(&mut self, _reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-"""
-replace = """
-    fn select(&mut self, reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-"""
-find2 = """
-        self.validated = !code_set;
+        self.validated = !code_set || (reselect && self.validated);
         self.otp_pin_verified = false;
 """
-replace2 = """
-        if !reselect {
-            self.validated = !code_set;
-            self.otp_pin_verified = false;
-        }
+replace = """
+        self.validated = !code_set || (reselect && self.validated);
+        self.otp_pin_verified = reselect && self.otp_pin_verified;
 """
 slice = ["cargo", "test", "-p", "rsk-oath", "-p", "rsk-device"]
-expect = "gap"
-note = "GAP, and the row exists to say so. The model switch takes OATH's exemption out of the REQUIREMENT — the recorder inside `Reselect` — and this takes it out of the IMPLEMENTATION, the same fact's other side the way BugCodelessOathIsAStatus's twin is: `select` honours the `reselect` flag the applet trait hands it and keeps `validated` and `otp_pin_verified` through a SELECT of its own AID, which is what PIV and OpenPGP do and what OATH deliberately does not. Every command in the slice stayed green. No test calls `Applet::select` with `reselect = true` — crates/rsk-oath/src/removal_tests.rs:180 is the only direct call and it passes `false`, every other test reaches `select` through a helper that does the same — and `rsk-device`'s CCID tests re-select nothing, so the one applet whose re-SELECT is a recorded exception has no test at that seam. Direction read: the model half is refused at `ReselectPreservesAccessStatus` over a re-SELECT that DROPPED `oathOtpPin` — the applet re-locking where the widened requirement says it must keep, which is the direction that says the exemption is load-bearing. The code half would have had to fall the other way, in the SERVED direction, and nothing was there to say it."
+expect = "killed"
+note = "OATH's exemption taken out of the IMPLEMENTATION, the model switch taking it out of the REQUIREMENT: a re-SELECT keeps the OTP PIN as well as the VALIDATE. Since 2026-09-23 the VALIDATE surviving a re-SELECT is the rule, not the defect — a YubiKey 5.8.0 keeps it (measured twice), so the exemption narrowed to the OTP PIN, which is Nitrokey's and has no oracle. Was a GAP while the exemption covered both: no test drove a re-SELECT of OATH at all. Killed by crates/rsk-oath/src/reselect_tests.rs `a_reselect_of_the_oath_aid_drops_the_otp_pin`, through the real Dispatcher. Direction read: the model half is refused at ReselectPreservesAccessStatus over a re-SELECT that DROPPED oathOtpPin with the exemption gone; the code half keeps it, and the test reads the password safe opening where it must answer 6982."
 
 [comutant.BugCardResetKeepsStatus]
 status = "unreachable"
@@ -1275,9 +1278,10 @@ evidence = """the applets' deselect is redundant with their own fresh SELECT, so
 removing it from the ICC power transition changes nothing observable. Three
 applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:391-393
 (sess.reset), crates/rsk-openpgp/src/lib.rs:337-339 (reset_session), crates/rsk-oath/src/lib.rs:1222-1229
-(validated + otp_pin_verified) — and all three ALSO re-lock in select: piv and
-openpgp on `if !reselect`, oath by recomputing `validated = !code_set` and clearing
-otp_pin_verified unconditionally (crates/rsk-oath/src/lib.rs:1262-1263). After Dispatcher::reset_card
+(validated + otp_pin_verified) — and all three ALSO re-lock in select on a
+select that is not a re-SELECT: piv and openpgp on `if !reselect`, oath by
+recomputing `validated = !code_set` there and clearing otp_pin_verified on every
+SELECT (crates/rsk-oath/src/lib.rs:1262-1263). After Dispatcher::reset_card
 takes `self.current` (crates/rsk-sdk/src/applet.rs:227) every route back to an applet is a
 `select(reselect = false)`, so no reachable command sees an inherited status.
 The first patch here neutered the WHOLE reset_card call and scored a false kill:
@@ -1713,7 +1717,7 @@ note = "`Session::new()`'s second default flipped: a fresh applet answers OTP-PI
 status = "patch"
 file = "crates/rsk-oath/src/lib.rs"
 find = """
-        self.validated = !code_set;
+        self.validated = !code_set || (reselect && self.validated);
         self.otp_pin_verified = false;
 """
 replace = """
@@ -1722,7 +1726,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-oath"]
 expect = "killed"
-note = "`select`'s recompute pinned open: a PROVISIONED applet comes back unlocked. This is the observable half of the model's `ClearedFor`, which is applied where OATH is or becomes the current applet; `deselect`'s own clear is the other half and has its own entry under BugResetKeepsOathUnlock, where nothing is selected at all. 122 passed, 12 failed. The witness is `crates/rsk-oath/src/set_code_tests.rs:45` — \"the challenge and the gate disagree about whether a code is set\": SELECT still offers the challenge that says a code is installed and LIST is served anyway. `crates/rsk-oath/src/code_tests.rs:154` says the same as a control, \"a fresh SELECT on a code-locked applet is unvalidated\". Both fell in the SERVED direction; none said a command was refused."
+note = "`select`'s recompute pinned open: a PROVISIONED applet comes back unlocked. This is the observable half of the model's `ClearedFor`, which is applied where OATH becomes the current applet — a re-SELECT keeps the VALIDATE since 2026-09-23; `deselect`'s own clear is the other half and has its own entry under BugResetKeepsOathUnlock, where nothing is selected at all. 129 passed, 13 failed (re-measured 2026-09-23). The witness is `crates/rsk-oath/src/set_code_tests.rs:45` — \"the challenge and the gate disagree about whether a code is set\": SELECT still offers the challenge that says a code is installed and LIST is served anyway. `crates/rsk-oath/src/code_tests.rs:154` says the same as a control, \"a fresh SELECT on a code-locked applet is unvalidated\". Both fell in the SERVED direction; none said a command was refused."
 
 [comutant.BugResetKeepsOathUnlock]
 status = "patch"
@@ -1759,13 +1763,13 @@ note = "A recorded GAP until the Settings fix that stopped a completed reset's m
 status = "patch"
 file = "crates/rsk-oath/src/lib.rs"
 find = """
-        self.validated = !code_set;
+        self.validated = !code_set || (reselect && self.validated);
         self.otp_pin_verified = false;
 """
 replace = """
-        self.validated = false;
+        self.validated = reselect && self.validated;
         self.otp_pin_verified = false;
 """
 slice = ["cargo", "test", "-p", "rsk-oath"]
 expect = "killed"
-note = "The exemption removed from the IMPLEMENTATION, where the model switch removes it from the requirement: `select` locks a code-less applet instead of computing `!code_set`. Its model twin is the only one in this batch that edits an invariant rather than a step, so the code twin is the same fact's other side — if `NoStatusOutsideItsSelection` may not exempt a code-less OATH, a code-less OATH must not be open, and the tests say what that costs. 118 passed, 16 failed. Direction read: `crates/rsk-oath/src/tests.rs:1328` is `lock_with_code`'s own `assert_eq!(SET CODE, Sw::OK)` failing — the helper cannot install a code because the applet it must install it on is now locked — and `crates/rsk-oath/src/increasing_tests.rs:36` is \"a refusal must read as 6A80\" over a CALCULATE answered 6982. Every one fell in the REFUSED direction, which is the defect this models; none said something was served."
+note = "The exemption removed from the IMPLEMENTATION, where the model switch removes it from the requirement: `select` locks a code-less applet instead of computing `!code_set`. Its model twin is the only one in this batch that edits an invariant rather than a step, so the code twin is the same fact's other side — if `NoStatusOutsideItsSelection` may not exempt a code-less OATH, a code-less OATH must not be open, and the tests say what that costs. 122 passed, 20 failed (re-measured 2026-09-23). Direction read: `crates/rsk-oath/src/tests.rs:1328` is `lock_with_code`'s own `assert_eq!(SET CODE, Sw::OK)` failing — the helper cannot install a code because the applet it must install it on is now locked — and `crates/rsk-oath/src/increasing_tests.rs:36` is \"a refusal must read as 6A80\" over a CALCULATE answered 6982. Every one fell in the REFUSED direction, which is the defect this models; none said something was served."

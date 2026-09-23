@@ -2552,7 +2552,7 @@ fn an_otp_pin_is_required_before_the_password_safe_is_served() {
         Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 
-    // And a re-SELECT does not inherit it.
+    // And a SELECT does not inherit it.
     assert_eq!(
         run(
             &mut app,
@@ -2568,3 +2568,8 @@ fn an_otp_pin_is_required_before_the_password_safe_is_served() {
         Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 }
+
+/// Which SELECT keeps the access status: a re-SELECT keeps the VALIDATE, as on a
+/// YubiKey 5.8.0, and drops the OTP PIN.
+#[path = "reselect_tests.rs"]
+mod reselect_tests;

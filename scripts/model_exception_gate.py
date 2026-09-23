@@ -14,7 +14,7 @@ Stage 6 asks that each such exception be a registry row with its own mutant, and
 that an exception in a model with no row redden the gate. Before this row there
 was no registry and no gate: `git grep -i exempt scripts/` found only tier
 exclusions, and deleting `\\/ a = Oath` from `RSKeyAppletSeams` — the clause that
-lets OATH re-lock on a re-SELECT while PIV and OpenPGP must not — changed the
+let OATH re-lock on a re-SELECT while PIV and OpenPGP could not — changed the
 input of nothing.
 
 WHICH EXCEPTIONS EXIST IS DERIVED HERE, never stored. That is the whole

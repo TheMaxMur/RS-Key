@@ -40,6 +40,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A SELECT of the OATH applet while it is already selected keeps a VALIDATE, as
+  a YubiKey 5.8.0 does; selecting another application and coming back, a card
+  reset, or a replug still locks it. RS-Key re-locked on every SELECT, so a
+  client that re-selects between commands was asked for the access code again
+  where a YubiKey does not ask. This widens how long a VALIDATE holds, as the
+  same rule did for PIV and OpenPGP. The password-safe OTP PIN is still dropped
+  by every SELECT.
+  `bcdDevice` 0x09EC → 0x09ED.
+
 - An unconfigured device reports `DEVICE_FLAGS = 00` in its management
   DeviceInfo, as a factory YubiKey 5.8.0 does. It reported `80`, the touch-eject
   flag, for a mode RS-Key never implemented; `ykman --diagnose` and any raw

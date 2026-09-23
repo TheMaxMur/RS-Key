@@ -1420,7 +1420,7 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 | `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:374-390` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:200-204` · `crates/rsk-openpgp/src/pin.rs:81-94` · `crates/rsk-oath/src/lib.rs:1224-1228` · `crates/rsk-device/src/ccid.rs:354-369` (the ICC power transition) |
 | `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:184-187` · `crates/rsk-openpgp/src/pin.rs:190-202` · `crates/rsk-oath/src/lib.rs:1160-1161` |
 | `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:87-99` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:57-65`, `:113-117` |
-| `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:366-369` · `crates/rsk-openpgp/src/lib.rs:354-357` |
+| `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status but OATH's OTP PIN. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:366-369` · `crates/rsk-openpgp/src/lib.rs:354-357` · `crates/rsk-oath/src/lib.rs:1262` |
 | `AccessCodeRemovalNeedsTheCode` | Removing the OATH access code needs the validated status the code bought. **A step rule — its violation produces exactly the exempt code-less state, so no state predicate can see it** | `crates/rsk-oath/src/lib.rs:330-332` (the shared gate) · `:337-349` (the removal path) |
 
 The fourth one points the other way from the first three and that is why it is
@@ -1428,7 +1428,8 @@ separate: `637ed98` **widened** the authentication window, so no safety
 invariant here can see it, and without a property of its own the switch that
 rebuilds the pre-`637ed98` tree would be a mutant nothing catches. Its authority
 is SP 800-73-4 pt 2 §3.1.1 (a `shall`), OpenPGP 3.4.1 §4.2, and a YubiKey 5.7.4
-measured keeping every status through a re-SELECT on both applets.
+measured keeping every status through a re-SELECT on both applets; a 5.8.0 keeps
+OATH's VALIDATE the same way.
 
 ### What a refused authentication costs — three applets, three rules
 
@@ -1461,7 +1462,7 @@ it.
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
 | `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:379-387` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
-| `BugReselectResetsStatus` | `637ed98` taken back out: PIV and OpenPGP resetting on every select | `ReselectPreservesAccessStatus` | 42 states |
+| `BugReselectResetsStatus` | `637ed98` taken back out: PIV, OpenPGP and OATH's VALIDATE resetting on every select | `ReselectPreservesAccessStatus` | 42 states |
 | `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:354-369` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
 | `BugAdminOpensKeyOps` | `e5da38b` taken back out: PW3 standing in for PW1/PW2 | `NoKeyOpOnTheAdminStatus` | 67 states |
 | `BugFailedChangeKeepsStatus` | `aa47867` taken back out: a refused OTP-PIN change that leaves the safe open | `NoStatusAfterARefusedAuth` | 74 states |
@@ -2932,7 +2933,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 7 | 6 | 0 | 0 | 0 |
 | `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 7 | 6 | 0 | 0 | 0 |
-| `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 1 | 0 | 0 | 0 |
+| `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-STORE-001` | `NoOrphanedMetadata` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 2 | 2 | 0 | 0 | 0 |
