@@ -3247,3 +3247,126 @@ fn a_torn_set_pin_leaves_no_pin_or_a_usable_one() {
         },
     );
 }
+
+/// A PIN record cut short cannot be verified against and must not be spent from:
+/// getPinToken answers ERR_OTHER before the decrement and leaves the record as it
+/// was. An empty one reads as no PIN at all, with the full budget on offer.
+#[test]
+fn a_pin_record_of_the_wrong_length_is_neither_verified_nor_spent() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 256];
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(PIN),
+        &mut out,
+    )
+    .unwrap();
+    let mut rec = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_FILE_LEN));
+
+    fs.put(EF_PIN, &rec[..PIN_FILE_LEN - 1]).unwrap();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_req(PIN),
+            &mut out
+        ),
+        Err(CtapError::Other)
+    );
+    let mut after = [0u8; PIN_FILE_LEN];
+    assert_eq!(
+        fs.read(EF_PIN, &mut after),
+        Some(PIN_FILE_LEN - 1),
+        "the short record was rewritten"
+    );
+    assert_eq!(after[..PIN_FILE_LEN - 1], rec[..PIN_FILE_LEN - 1]);
+
+    fs.put(EF_PIN, &[]).unwrap();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_req(PIN),
+            &mut out
+        ),
+        Err(CtapError::PinNotSet)
+    );
+    let n = run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &build(&[(1, V::U(2)), (2, V::U(1))]),
+        &mut out,
+    )
+    .unwrap();
+    let mut d = Decoder::new(&out[..n]);
+    d.map().unwrap();
+    assert_eq!(d.u8().unwrap(), 3);
+    assert_eq!(
+        d.u8().unwrap(),
+        MAX_PIN_RETRIES,
+        "an empty record read as a spent budget"
+    );
+}
+
+/// The whole retry budget, spent by wrong PINs across the replugs the mismatch
+/// limit forces: the eighth answers PIN_BLOCKED, and from then on so does the right
+/// PIN. Every other test stopped at a third mismatch, so this lockout never ran.
+#[test]
+fn the_last_wrong_pin_locks_the_pin_for_good() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let mut out = [0u8; 256];
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(PIN),
+        &mut out,
+    )
+    .unwrap();
+    for n in 1..=MAX_PIN_RETRIES {
+        let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+        let got = run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_req(WRONG_PIN),
+            &mut out,
+        );
+        let want = if n == MAX_PIN_RETRIES {
+            CtapError::PinBlocked
+        } else if n % PIN_MISMATCH_LIMIT == 0 {
+            CtapError::PinAuthBlocked
+        } else {
+            CtapError::PinInvalid
+        };
+        assert_eq!(got, Err(want), "wrong PIN {n} of {MAX_PIN_RETRIES}");
+        if state.needs_power_cycle {
+            // A replug: the RAM state goes, the flash counter stays.
+            state = FidoState::new();
+        }
+    }
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_req(PIN),
+            &mut out
+        ),
+        Err(CtapError::PinBlocked),
+        "the right PIN got through a spent budget"
+    );
+}
