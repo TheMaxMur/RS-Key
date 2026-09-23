@@ -905,8 +905,8 @@ run "ghost completeness"       python scripts/ghost_gate.py
 # keep the conformance recorder quiet about it -- and deleting either changed the
 # input of no gate. Nothing was a registry for that class: `git grep -i exempt
 # scripts/` found only tier exclusions. This derives the narrowings out of the
-# `.tla` (a narrowing operand, a set literal that omits what its sibling has, a
-# CASE that answers for part of its domain) and holds them to
+# `.tla` (a narrowing operand or `IF` condition, a set literal that omits what
+# its sibling has, a CASE that answers for part of its domain) and holds them to
 # assurance/model_exceptions.toml both ways -- an exception with no row, and a
 # row whose clause the model no longer has. How many there are and how many still
 # owe a mutant is DERIVED and printed on every green run; the ledger records the

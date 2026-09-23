@@ -29,13 +29,15 @@ type into it:
 * `clause` — a comparison of a narrowed subject against a domain literal.
   Narrowed three ways, and the second and third are holes this guard's own table
   found in it: the subject is BOUND (a parameter or a `\\A`/`\\E`/`|->` binder) and
-  the comparison is an operand of `\\/` or `/\\`; or the subject is bound and the
+  the comparison GUARDS something — an operand of `\\/` or `/\\`, or the end of
+  an `IF`'s condition, `ELSE IF` and a negation included; or the subject is bound and the
   comparison IS a function constructor's body, where there is no connective to be
   an operand of; or the subject is a state VARIABLE the definition compares
   against two different literals, which is a guard enumerating part of a domain.
-  The connective is what separates an exception from a dispatch:
-  `IF a = Piv THEN … ELSE …` answers for every applet, `IF Bug… \\/ a = Oath THEN`
-  adds one. A `CASE` is dispatch throughout and nothing inside one is collected;
+  An `IF a = Piv THEN … ELSE …` that answers for every applet is collected with
+  the rest and disposed of as `dispatch`: telling it from an `ELSE IF a = Oath` —
+  one applet's exception to the rule its `ELSE` states — is the judgement no scan
+  makes. A `CASE` is dispatch throughout and nothing inside one is collected;
 * `set` — a set literal that is a proper subset of another in the same module, or
   that disagrees with a same-named literal in a sibling module while overlapping
   it. Both directions of the second, so neither module is the privileged one;
@@ -154,7 +156,7 @@ FUNCTION = re.compile(r"\|->")
 SHAPES = ("clause", "set", "case")
 #: The judgement the derivation cannot make. `narrowing` is a hole in the model
 #: standing for a fact about the product; `dispatch` is a per-case answer the
-#: connective test read as a hole; `mutant-arm` is a defect the module carries on
+#: guard test read as a hole; `mutant-arm` is a defect the module carries on
 #: purpose, and it is the one kind that may never say `owes`.
 KINDS = ("narrowing", "dispatch", "mutant-arm")
 OWES = "owes"
@@ -333,14 +335,17 @@ def visible_sets(module, code):
 
 
 def comparisons(lines, low, high, names, strings):
-    """[(line, subject, operator, literal, is a connective operand)] in one definition.
+    """[(line, subject, operator, literal, guards)] in one definition.
 
     Every comparison of a lowercase identifier against a domain literal, with the
-    one fact the shapes below dispatch on: whether it stands as an OPERAND of
-    `\\/` or `/\\`. That test is taken over TOKENS rather than over the line —
-    reading the line for a connective anywhere calls `IF a = Piv THEN x \\/ y` a
-    narrowing, which is the direction that fills a registry with rows nobody can
-    decide.
+    one fact the shapes below dispatch on: whether it GUARDS — stands as an
+    operand of `\\/` or `/\\`, or as the end of an `IF`'s condition, right before
+    its `THEN`, so `IF ~(a = Oath) THEN` counts. The test is taken over TOKENS rather than over the line: reading the
+    line for a connective anywhere calls the `a = Piv` of `IF y THEN a = Piv ELSE
+    x \\/ z` an operand of the `\\/` in the other branch.
+
+    The `IF` half was a hole: `Reselect`'s `ELSE IF a = Oath THEN`, OATH's OTP PIN
+    dropped by a re-SELECT, is a narrowing this scan did not see at all.
     """
     tokens = []
     for number in range(low, high + 1):
@@ -373,13 +378,14 @@ def comparisons(lines, low, high, names, strings):
             after += 1
         left = tokens[before][0] if before >= 0 else None
         right = tokens[after][0] if after < len(tokens) else None
+        condition = right == "THEN"
         found.append(
             (
                 tokens[i][1],
                 subject,
                 operator,
                 literal,
-                left in CONNECTIVES or right in CONNECTIVES,
+                left in CONNECTIVES or right in CONNECTIVES or condition,
             )
         )
     return found
@@ -394,11 +400,10 @@ def clause_sites(module, code):
 
     * it is BOUND — an operator parameter or a `\\A`/`\\E`/`|->` binder — so it
       ranges over a set and pinning it to one member takes the rest out. Then the
-      comparison must stand as a connective operand, which is what separates
-      `IF Bug… \\/ a = Oath THEN` from the total dispatch `IF a = Piv THEN … ELSE`;
+      comparison must GUARD: a connective operand, or the end of an `IF`'s condition;
     * or it is a STATE VARIABLE the definition compares against two DIFFERENT
-      domain literals, each as a connective operand — a guard enumerating part of
-      a domain. `/\\ sel = Piv` is an action's own subject and not a narrowing;
+      domain literals, each as a guard — enumerating part of a
+      domain. `/\\ sel = Piv` is an action's own subject and not a narrowing;
       `/\\ (sel = Piv \\/ sel = Pgp)` is one, and with only the bound rule a
       constructed defect of exactly that shape passed at rc 0. Closing it found a
       real one: `RSKeyAppletPolicies`'s `PivKeyOp` spends for two of the three PIN
@@ -419,14 +424,14 @@ def clause_sites(module, code):
         seen = comparisons(lines, low, high, names, strings)
         enumerated = {
             subject
-            for subject in {s for _l, s, _o, _lit, conn in seen if conn}
-            if len({lit for _l, s, _o, lit, conn in seen if conn and s == subject}) > 1
+            for subject in {s for _l, s, _o, _lit, guards in seen if guards}
+            if len({lit for _l, s, _o, lit, guards in seen if guards and s == subject}) > 1
         }
-        for number, subject, operator, literal, connective in seen:
+        for number, subject, operator, literal, guards in seen:
             if subject in bound:
-                if not (connective or FUNCTION.search(lines[number - 1])):
+                if not (guards or FUNCTION.search(lines[number - 1])):
                     continue
-            elif not (connective and subject in enumerated):
+            elif not (guards and subject in enumerated):
                 continue
             found.append(
                 {

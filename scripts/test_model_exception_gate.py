@@ -38,8 +38,9 @@ import model_exception_gate as gate
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 #: A fixture module with one of each shape: a narrowing operand joined by `\\/`, a
-#: total dispatch that must NOT be collected, a set literal that omits what its
-#: sibling has, and a `CASE` that answers for part of its domain.
+#: total dispatch collected as a clause and disposed of as `dispatch`, a set
+#: literal that omits what its sibling has, and a `CASE` that answers for part of
+#: its domain.
 MODEL = '''\
 --------------------------- MODULE RSKeyFixture ---------------------------
 EXTENDS Naturals
@@ -113,6 +114,19 @@ mutant = "owes"
 owed = "FixSolo_BugTerminalRefRecovers.cfg"
 
 [[exception]]
+id = "MX-FIX-005"
+module = "RSKeyFixture.tla"
+line = 11
+shape = "clause"
+site = "Dispatch"
+clause = "x = Piv"
+kind = "dispatch"
+production = "each applet answers with its own value."
+why = "an IF's condition, collected; the judgement that it leaves nothing out is this row's."
+mutant = "owes"
+owed = "FixSolo_BugDispatchSwapsArms.cfg"
+
+[[exception]]
 id = "MX-FIX-004"
 module = "RSKeyFixture.tla"
 line = 15
@@ -126,6 +140,7 @@ production = "the second reference is not a recovery target."
 why = "measured against every containing set, not the smallest."
 mutant = "owes"
 owed = "FixSolo_BugSecondRefRecovers.cfg"
+
 """
 
 
@@ -184,10 +199,11 @@ def test_this_checkout_is_green():
 
 
 def test_the_derivation_finds_every_shape(tmp_path):
-    """The dispatch is NOT collected, and each of the three shapes is."""
+    """Each of the three shapes is collected, the IF-guarded dispatch included."""
     build(tmp_path)
     found = gate.exceptions(tmp_path)
     assert {(s["site"], s["shape"]) for s in found} == {
+        ("Dispatch", "clause"),
         ("Narrow", "clause"),
         ("Small", "set"),
         ("Recover", "case"),
@@ -208,7 +224,7 @@ def test_the_criterion_defect_reddens_the_row(tmp_path):
     """
     scratch = tmp_path / "tree"
     (scratch / "scripts").mkdir(parents=True)
-    shutil.copytree(ROOT / "formal", scratch / "formal")
+    shutil.copytree(ROOT / "formal", scratch / "formal", ignore=shutil.ignore_patterns("out", "states"))
     (scratch / "assurance").mkdir()
     for name in ("model_exceptions.toml", "abstractions.toml"):
         shutil.copy(ROOT / "assurance" / name, scratch / "assurance" / name)
@@ -246,6 +262,35 @@ def test_a_narrowing_over_a_state_variable_reddens_the_row(tmp_path):
     )
     assert says(found, "narrows `sel = Piv`"), found
     assert says(found, "does not dispose of it"), found
+
+
+def test_an_if_condition_is_a_narrowing_and_its_branch_is_not(tmp_path):
+    """`Reselect`'s `ELSE IF a = Oath THEN`, OATH's OTP PIN dropped by a re-SELECT,
+    was invisible: the comparison is no connective's operand. The end of an `IF`'s
+    condition guards, `ELSE IF` and a negation included, at its own line; a
+    comparison inside a branch still does not."""
+    model = plus(
+        "Step(x) == IF x = Oath THEN 1 ELSE 2",
+        "Chain(x) == IF BugFixtureSwitch THEN 0 ELSE IF x = Oath THEN 1 ELSE 2",
+        "Negated(x) == IF ~(x = Oath) THEN 1 ELSE 2",
+        "Branch(x, y) == IF y THEN x = Oath ELSE FALSE",
+    )
+    found = problems(tmp_path, model=model)
+    lines = model.splitlines()
+    for site in ("Step", "Chain", "Negated"):
+        at = next(n for n, line in enumerate(lines, 1) if line.startswith(f"{site}("))
+        assert says(found, f"RSKeyFixture.tla:{at} narrows `x = Oath` in {site}"), found
+    assert not says(found, "in Branch"), found
+
+
+def test_an_if_condition_enumerates_a_state_variable_too(tmp_path):
+    """An `IF` condition guards for the state-variable rule as well, so a variable
+    compared against two literals across a `/\\` and an `IF` is enumerated."""
+    found = problems(
+        tmp_path, model=plus("Picked == /\\ sel = Piv\n          /\\ z' = IF sel = Oath THEN 1 ELSE 2")
+    )
+    assert says(found, "narrows `sel = Piv`"), found
+    assert says(found, "narrows `sel = Oath`"), found
 
 
 # ---- the two directions of the ledger rule -----------------------------------
@@ -293,7 +338,7 @@ def test_a_set_that_gains_a_member_reddens_its_row(tmp_path):
         tmp_path, model=MODEL.replace('Refs == {"a", "b", "c"}', 'Refs == {"a", "b", "c", "d"}')
     )
     assert says(found, "omits derives as"), found
-    assert len(gate.exceptions(tmp_path)) == 4, "the mutation must not shrink the roster"
+    assert len(gate.exceptions(tmp_path)) == 5, "the mutation must not shrink the roster"
 
 
 def test_a_case_is_measured_against_every_superset(tmp_path):
@@ -445,9 +490,10 @@ def test_two_rows_cannot_address_the_same_narrowing(tmp_path):
         ledger=LEDGER.replace('id = "MX-FIX-004"\nmodule = "RSKeyFixture.tla"\nline = 15',
                               'id = "MX-FIX-004"\nmodule = "RSKeyFixture.tla"\nline = 15')
         + LEDGER[LEDGER.index('[[exception]]\nid = "MX-FIX-004"'):].replace(
-            'id = "MX-FIX-004"', 'id = "MX-FIX-005"'),
+            'id = "MX-FIX-004"', 'id = "MX-FIX-006"'),
     )
     assert says(found, "addresses nothing"), found
+    assert not says(found, "carry the id"), found
 
 
 def test_a_row_that_addresses_nothing_is_a_finding_not_a_traceback(tmp_path):
@@ -555,7 +601,7 @@ def test_a_model_edit_that_touches_no_narrowing_stays_green(tmp_path):
     )
     assert problems(tmp_path, model=model) == []
     build(tmp_path, model=model)
-    assert len(gate.exceptions(tmp_path)) == 4
+    assert len(gate.exceptions(tmp_path)) == 5
 
 
 def test_check_sh_runs_this_row():

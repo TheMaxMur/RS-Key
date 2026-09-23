@@ -14,16 +14,17 @@
 # the row, and a row here naming an exception the model no longer has reddens it
 # the other way.
 #
-# WHICH EXCEPTIONS EXIST IS DERIVED, never stored. scripts/model_exception_gate.py
-# scans every `formal/*.tla` for three shapes — a narrowing operand, a set
-# literal that omits what a sibling has, a `CASE` that answers for part of its
-# domain — over each module's OWN vocabulary, resolved through `EXTENDS`. A
-# roster typed here and typed again into the gate's regex is the failure this
-# tree has already paid for four times: the list in the source shrinks, the copy
-# in the guard shrinks with it, and the registry stays "complete" over a shorter
-# list. Measured while this landed: scoping the vocabulary to the module's own
-# text hid `RSKeyTokenGate`'s only narrowing, because the eleven operations it
-# narrows are defined in the module it extends.
+# WHICH EXCEPTIONS EXIST IS DERIVED, never stored.
+# scripts/model_exception_gate.py scans every `formal/*.tla` for three shapes —
+# a narrowing operand or `IF` condition, a set literal that omits what a sibling
+# has, a `CASE` that answers for part of its domain — over each module's OWN
+# vocabulary, resolved through `EXTENDS`. A roster typed here and typed again
+# into the gate's regex is the failure this tree has already paid for four
+# times: the list in the source shrinks, the copy in the guard shrinks with it,
+# and the registry stays "complete" over a shorter list. Measured while this
+# landed: scoping the vocabulary to the module's own text hid `RSKeyTokenGate`'s
+# only narrowing, because the eleven operations it narrows are defined in the
+# module it extends.
 #
 # HAND-WRITTEN FIELDS ONLY: id, kind, production, why, mutant, owed, carried_by.
 # `module`, `line`, `shape`, `site`, `clause`, `against` and `omits` address the
@@ -33,7 +34,7 @@
 # kind
 #   narrowing   a hole in the model standing for a fact about the product: this
 #               applet, this reference, this operation, and not its siblings
-#   dispatch    a per-case answer the operand test read as a hole. A label, and a
+#   dispatch    a per-case answer the guard test read as a hole. A label, and a
 #               label can be wrong — nothing here can check it, the way nothing
 #               in assurance/deleters.toml can check a `class`
 #   mutant-arm  a defect the module carries on purpose, driven by a configuration.
@@ -172,9 +173,7 @@ same configuration is GREEN over the shipped seam space. The code twin is killed
 by crates/rsk-oath/src/reselect_tests.rs: a re-SELECT that kept the OTP PIN
 would open the password safe.
 
-The step's own `a = Oath` — the `ELSE IF` that drops the PIN — is not a shape
-this gate's clause detector reads, so no row can carry it here; the Rust test
-`a_reselect_of_the_oath_aid_drops_the_otp_pin` is all that pays for it.
+The step's own `a = Oath`, the `ELSE IF` that drops the PIN, is MX-SEAM-011.
 '''
 mutant = "SeamSolo_BugOathReselectUnrecorded.cfg"
 
@@ -294,6 +293,119 @@ but the split — a wipe and a reboot as two steps, with the window between them
 '''
 mutant = "SeamSolo_BugWipeWithoutItsReboot.cfg"
 carried_by = "NAR-OATH-REMOVAL"
+
+[[exception]]
+id = "MX-SEAM-011"
+module = "RSKeyAppletSeams.tla"
+line = 238
+shape = "clause"
+site = "Reselect"
+clause = "a = Oath"
+kind = "narrowing"
+production = "`select` in crates/rsk-oath/src/lib.rs clears `otp_pin_verified` on every SELECT, a re-SELECT included, while a VALIDATE survives a re-SELECT. The OTP PIN guards Nitrokey's password safe — a YubiKey answers 6D00 to INS B1–B5, so no oracle speaks for keeping it — and what it opens is stored passwords."
+why = '''
+The step's half of OATH's exemption; MX-SEAM-005 is the recorder's. A re-SELECT
+drops `oathOtpPin` and keeps everything else, and nothing in the model requires
+the drop: a scratch copy whose step KEEPS the PIN is GREEN over Seams.cfg at the
+same 410 distinct states (measured 2026-09-23). The recorder accepts
+`held' = held`, and the seam invariant sees only a status held outside the
+selection that bought it, which a re-SELECT never leaves. So the debt is a
+requirement before it is a mutant. What pays for the clause today is
+crates/rsk-oath/src/reselect_tests.rs `a_reselect_of_the_oath_aid_drops_the_otp_pin`.
+'''
+mutant = "owes"
+owed = "SeamSolo_BugReselectKeepsOathOtpPin.cfg"
+
+[[exception]]
+id = "MX-SEAM-012"
+module = "RSKeyAppletSeams.tla"
+line = 328
+shape = "clause"
+site = "PgpVerify"
+clause = 'r = "pw1"'
+kind = "dispatch"
+production = "`psig` is PW1 no. 81's signature freshness, the status PSO:CDS spends (crates/rsk-openpgp/src/keys.rs), so a VERIFY arms it for no. 81 and for no other reference: no. 82 and PW3 answer for their own statuses."
+why = '''
+A per-reference answer, not an exception: each reference a VERIFY addresses moves
+its own status, and `psig` belongs to one of them. No switch drives it. The
+mutant owed is a VERIFY of any reference arming the signature, and the property
+to refute it already exists: on a scratch copy that change is RED at
+`NoKeyOpOnTheAdminStatus` (measured 2026-09-23), so what is missing is only the
+switch and its code twin.
+'''
+mutant = "owes"
+owed = "SeamSolo_BugAnyPgpVerifyArmsSig.cfg"
+
+[[exception]]
+id = "MX-SEAM-013"
+module = "RSKeyAppletSeams.tla"
+line = 339
+shape = "clause"
+site = "PgpChangeRefused"
+clause = 'r = "pw1"'
+kind = "dispatch"
+production = "A refused CHANGE REFERENCE DATA clears exactly the reference it addressed (crates/rsk-openpgp/src/pin.rs), and `psig` is no. 81's signature freshness, so only a refused PW1 change takes it down."
+why = '''
+MX-SEAM-012's per-reference answer on the clearing side: a refused change of
+no. 82 or PW3 leaves the signature freshness where it was. No switch drives it;
+a refused PW1 change that left `psig` standing is RED at
+`NoKeyOpOnTheAdminStatus` on a scratch copy (measured 2026-09-23), so the switch
+and its code twin are what is owed.
+'''
+mutant = "owes"
+owed = "SeamSolo_BugRefusedPw1ChangeKeepsSig.cfg"
+
+[[exception]]
+id = "MX-SEAM-014"
+module = "RSKeyAppletSeams.tla"
+line = 505
+shape = "clause"
+site = "AdminOpGuard"
+clause = "a = Piv"
+kind = "mutant-arm"
+production = "A user status opening the ADMIN surface — PIV's PIN beside its management key, PW1 beside PW3 — built on purpose so `NoKeyOpOnTheAdminStatus` has a converse that can go red."
+why = '''
+Not a hole but the defect `BugUserStatusOpensAdmin` switches in: the whole `THEN`
+branch is the widened gate, and its per-applet `IF` is collected with it.
+'''
+mutant = "SeamSolo_BugUserStatusOpensAdmin.cfg"
+
+[[exception]]
+id = "MX-SEAM-015"
+module = "RSKeyAppletSeams.tla"
+line = 507
+shape = "clause"
+site = "AdminOpGuard"
+clause = "a = Piv"
+kind = "dispatch"
+production = "PUT DATA of an administrative DO needs the 9B management key on PIV and PW3 on OpenPGP (crates/rsk-openpgp/src/putdata.rs `write_authorized`): each applet's own admin status, never a user one."
+why = '''
+Each applet answers with its own admin status and nothing is left out. The
+switch claimed here replaces exactly this dispatch with MX-SEAM-014's arm, and
+its configuration is RED at `NoKeyOpOnTheAdminStatus`. One direction only: a
+NARROWER or swapped guard just disables `AdminOp`, a step that changes nothing
+on the shipped tree, so no configuration can make that half fail.
+'''
+mutant = "SeamSolo_BugUserStatusOpensAdmin.cfg"
+
+[[exception]]
+id = "MX-SEAM-016"
+module = "RSKeyAppletSeams.tla"
+line = 508
+shape = "clause"
+site = "AdminOpPolicy"
+clause = "a = Piv"
+kind = "dispatch"
+production = "The requirement side of MX-SEAM-015: the admin status each applet names for its administrative surface, the management key on PIV and PW3 on OpenPGP."
+why = '''
+The recorder's copy of the same dispatch, which the guard is held against. It
+reads no switch. A requirement naming one admin status for both applets is RED
+at `NoKeyOpOnTheAdminStatus` on a scratch copy (measured 2026-09-23): the guard
+and the requirement agree per applet, not by coincidence, and the switch that
+would show it on every run is what is owed.
+'''
+mutant = "owes"
+owed = "SeamSolo_BugAdminPolicyIgnoresApplet.cfg"
 
 [[exception]]
 id = "MX-LAT-001"
