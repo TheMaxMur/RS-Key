@@ -273,3 +273,7 @@ pub(crate) fn curve_from_id(b: u8) -> Option<Curve> {
         _ => return None, // PIV stores P-256/P-384 and the 25519 curves
     })
 }
+
+#[cfg(test)]
+#[path = "seal_tests.rs"]
+mod tests;

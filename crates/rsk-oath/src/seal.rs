@@ -110,3 +110,7 @@ pub fn seal_read<S: Storage>(
     blob.zeroize();
     Some(pt_len)
 }
+
+#[cfg(test)]
+#[path = "seal_tests.rs"]
+mod tests;
