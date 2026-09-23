@@ -2726,3 +2726,458 @@ fn a_torn_att_clear_never_leaves_the_key_without_its_chain() {
         },
     );
 }
+
+/// LOAD re-keys every credential on the device, and with no PIN `gate` is one touch,
+/// so the replacement is named first, as ATT_IMPORT's is: declining that prompt alone
+/// refuses the load, and a confirmed load asks twice.
+#[test]
+fn load_without_pin_demands_the_named_confirmation() {
+    let (mut fs, mut rng, mut st) = setup();
+    let old = load_keydev(&dev(), &mut fs).unwrap();
+    let new_seed = [0x33u8; 32];
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let mut req = [0u8; 128];
+    let n = load_req(&mut req, &wrap32(&host, &new_seed));
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert_eq!(
+        load_keydev(&dev(), &mut fs),
+        Some(old),
+        "a declined load replaced the seed"
+    );
+
+    // The declined attempt spent the channel, so re-handshake and re-wrap.
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let n = load_req(&mut req, &wrap32(&host, &new_seed));
+    let mut counting = CountingPresence { calls: 0 };
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut counting,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(
+        counting.calls, 2,
+        "the seed was replaced on gate's generic touch alone"
+    );
+    assert_eq!(load_keydev(&dev(), &mut fs), Some(new_seed));
+}
+
+/// A LOAD blob that is not `nonce ‖ seed ‖ tag` is refused before any prompt, and the
+/// seed in force stays.
+#[test]
+fn load_of_a_short_blob_is_refused() {
+    let (mut fs, mut rng, mut st) = setup();
+    let old = load_keydev(&dev(), &mut fs).unwrap();
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let blob = wrap32(&host, &[0x33u8; 32]);
+    let mut req = [0u8; 128];
+    let n = load_req(&mut req, &blob[..LOCK_BLOB_LEN - 1]);
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::MissingParameter)
+    );
+    assert_eq!(load_keydev(&dev(), &mut fs), Some(old));
+}
+
+/// A seed that decrypts but is no P-256 scalar (zero here) is refused, and the seed
+/// every credential derives from stays.
+#[test]
+fn load_of_a_seed_that_is_no_scalar_is_refused() {
+    let (mut fs, mut rng, mut st) = setup();
+    let old = load_keydev(&dev(), &mut fs).unwrap();
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let mut req = [0u8; 128];
+    let n = load_req(&mut req, &wrap32(&host, &[0u8; 32]));
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::InvalidParameter)
+    );
+    assert_eq!(load_keydev(&dev(), &mut fs), Some(old));
+}
+
+/// LOAD drops the old attestation certificate before the new seed commits (audit
+/// run-32), and a medium that will not drop it refuses the load: the seed never moves
+/// out from under the certificate that signs for it.
+#[test]
+fn load_is_refused_when_the_old_certificate_cannot_be_dropped() {
+    use rsk_fs::storage::faults::RemoveStuck;
+
+    let (backend, medium) = RemoveStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let mut rng = SeqRng(1);
+    let mut st = FidoState::new();
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let old = load_keydev(&dev(), &mut fs).unwrap();
+    assert!(
+        fs.has_data(EF_EE_DEV),
+        "fixture: a certificate stands over the seed"
+    );
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    medium.refuse(Some(EF_EE_DEV));
+    let mut req = [0u8; 128];
+    let n = load_req(&mut req, &wrap32(&host, &[0x33u8; 32]));
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::Other)
+    );
+    assert_eq!(
+        load_keydev(&dev(), &mut fs),
+        Some(old),
+        "the seed moved under a certificate that did not"
+    );
+}
+
+/// FINALIZE closes the seed export for good — only a reset reopens it — so its touch
+/// is the whole consent: declined, nothing is sealed.
+#[test]
+fn finalize_without_touch_seals_nothing() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut req = [0u8; 16];
+    let n = one_byte_req(&mut req, VENDOR_BACKUP_FINALIZE);
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert!(
+        !state_flags(&mut fs, &mut rng, &mut st).0,
+        "a declined FINALIZE sealed the backup"
+    );
+}
+
+/// An attestation key that decrypts but is no P-256 scalar is refused before either
+/// record is written, so no chain lands without the key it certifies.
+#[test]
+fn att_import_of_a_key_that_is_no_scalar_writes_nothing() {
+    let (mut fs, mut rng, mut st) = setup();
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let mut req = [0u8; 256];
+    let n = att_import_req(&mut req, &wrap32(&host, &[0u8; 32]), &[0x30, 0x03, 1, 2, 3]);
+    let mut out = [0u8; 128];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::InvalidParameter)
+    );
+    assert!(crate::seed::load_att_key(&dev(), &mut fs).is_none());
+    assert!(!fs.has_data(EF_ATT_CHAIN), "a chain landed without its key");
+}
+
+/// Turning the audit trail on or off takes a touch even with no PIN, so a silent host
+/// cannot flip it: declined, logging stays off.
+#[test]
+fn audit_config_without_touch_changes_nothing() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut req = [0u8; 32];
+    let n = audit_config_req(1, &mut req);
+    let mut out = [0u8; 32];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert!(
+        !crate::journal::is_enabled(&mut fs),
+        "a declined AUDIT_CONFIG turned logging on"
+    );
+}
+
+/// Target 0 turns the trail off, and journals the DISABLE while logging is still on,
+/// so the last live entry marks when it stopped.
+#[test]
+fn audit_config_disable_journals_the_stop_and_turns_logging_off() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut req = [0u8; 32];
+    let mut out = [0u8; 32];
+    let n = audit_config_req(1, &mut req);
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert!(
+        crate::journal::is_enabled(&mut fs),
+        "fixture: logging is on"
+    );
+    let (_, before, _) = journal_state(&mut fs);
+
+    let n = audit_config_req(0, &mut req);
+    let r = call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(&out[..r], &[0xA1, 0x01, 0xF4], "the answer is {{1: false}}");
+    assert!(
+        !crate::journal::is_enabled(&mut fs),
+        "a DISABLE left logging on"
+    );
+    let (_, after, _) = journal_state(&mut fs);
+    assert_eq!(
+        after,
+        before + 1,
+        "the DISABLE was not journalled before logging stopped"
+    );
+}
+
+/// A channel-wrapped key is exactly `nonce ‖ key ‖ tag`; a blob of another length is
+/// refused before anything is decrypted.
+#[test]
+fn unlock_with_a_blob_of_the_wrong_length_is_invalid() {
+    let (mut fs, mut rng, mut st) = setup();
+    let _ = handshake(&mut fs, &mut rng, &mut st);
+    let mut req = [0u8; 128];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut req[..]));
+        e.map(2).unwrap();
+        e.u8(1).unwrap().u64(VENDOR_UNLOCK).unwrap();
+        e.u8(2).unwrap().map(1).unwrap().u8(1).unwrap();
+        e.bytes(&[0x5Au8; LOCK_BLOB_LEN - 1]).unwrap();
+        e.writer().position()
+    };
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::InvalidParameter)
+    );
+}
+
+/// UNLOCK carries its key over the MSE channel, so with no channel there is nothing
+/// to open it with.
+#[test]
+fn unlock_without_mse_is_not_allowed() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut req = [0u8; 128];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut req[..]));
+        e.map(2).unwrap();
+        e.u8(1).unwrap().u64(VENDOR_UNLOCK).unwrap();
+        e.u8(2).unwrap().map(1).unwrap().u8(1).unwrap();
+        e.bytes(&[0x5Au8; LOCK_BLOB_LEN]).unwrap();
+        e.writer().position()
+    };
+    let mut out = [0u8; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::NotAllowed)
+    );
+}
+
+/// An MSE key with a coordinate missing is a missing parameter, and opens no channel.
+#[test]
+fn mse_without_a_coordinate_is_missing_parameter() {
+    let (mut fs, mut rng, mut st) = setup();
+    let (hx, _) = P256Key::from_scalar(&[0x42u8; 32]).unwrap().public_xy();
+    let mut req = [0u8; 200];
+    let n = build_mse_coords(&mut req, &hx, &[]);
+    let mut out = [0u8; 200];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::MissingParameter)
+    );
+    assert!(!st.mse_ready(), "a refused MSE left a channel open");
+}
+
+/// `{1: subcmd, 3: 2, 4: mac}`: a vendor subcommand with no parameters, carrying a
+/// pinUvAuthParam under `token` over `0xff×32 ‖ 0x41 ‖ subcmd`, as `pin_gate` checks.
+fn authed_one_byte_req(buf: &mut [u8], subcmd: u64, token: &[u8; 32]) -> usize {
+    use rsk_crypto::pinproto;
+
+    let mut vp = [0u8; 34];
+    let vp_len = crate::state::puat_subcommand_msg(&mut vp, CTAP_VENDOR, subcmd as u8, &[]);
+    let mut mac = [0u8; 32];
+    let mlen = pinproto::authenticate(PinProto::Two, token, &vp[..vp_len], &mut mac).unwrap();
+    let mut e = Encoder::new(Cursor::new(buf));
+    e.map(3).unwrap();
+    e.u8(1).unwrap().u64(subcmd).unwrap();
+    e.u8(3).unwrap().u8(2).unwrap();
+    e.u8(4).unwrap().bytes(&mac[..mlen]).unwrap();
+    e.writer().position()
+}
+
+/// With a PIN set, `pin_gate` is the PIN half of the gate on the seed moves, the
+/// attestation identity and the audit chain: it takes a token whose MAC is over this
+/// subcommand AND that carries `acfg`, and then no touch is asked. Before this, the
+/// default build never reached the check, and strict-config only with a good token.
+#[test]
+fn a_gated_read_with_a_pin_takes_only_a_valid_acfg_token() {
+    let (mut fs, mut rng, mut st) = setup();
+    fs.put(EF_PIN, &[8, 4, 1]).unwrap();
+    arm_acfg(&mut st);
+    let mut req = [0u8; 96];
+    let mut out = [0u8; 3072];
+
+    let n = authed_one_byte_req(&mut req, VENDOR_AUDIT_READ, &[0x55; 32]);
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::PinAuthInvalid),
+        "a MAC under another key opened the audit journal"
+    );
+
+    let n = authed_one_byte_req(&mut req, VENDOR_AUDIT_READ, &ACFG_TOKEN);
+    st.paut.permissions = crate::state::PERM_GA;
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::PinAuthInvalid),
+        "a token without acfg opened the audit journal"
+    );
+
+    arm_acfg(&mut st);
+    assert!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        )
+        .is_ok(),
+        "a valid acfg token was refused, or a touch was still asked"
+    );
+}
+
+/// AUDIT_CHECKPOINT signs the chain head with the device key, and takes a touch as
+/// well as the PIN half: declined, nothing is signed. The journal's own tests call
+/// the signer directly, so this gate had never been reached.
+#[test]
+fn audit_checkpoint_without_touch_signs_nothing() {
+    let (mut fs, mut rng, mut st) = setup();
+    fs.put(crate::consts::EF_AUDIT_ENABLED, &[1]).unwrap();
+    st.devk_source = Some(|| Some([7; 32]));
+    let mut req = [0u8; 64];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut req[..]));
+        e.map(2).unwrap();
+        e.u8(1).unwrap().u64(VENDOR_AUDIT_CHECKPOINT).unwrap();
+        e.u8(2).unwrap().map(1).unwrap().u8(1).unwrap();
+        e.bytes(&[0x42u8; 32]).unwrap();
+        e.writer().position()
+    };
+    let mut out = [0u8; 512];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut Decline,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied),
+        "a checkpoint was signed without a touch"
+    );
+    assert!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        )
+        .is_ok(),
+        "control: a touched checkpoint is signed"
+    );
+}
