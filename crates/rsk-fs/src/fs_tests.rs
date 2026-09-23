@@ -1795,3 +1795,78 @@ fn a_re_arm_the_present_cache_skipped_is_not_reported_as_landed() {
          recovered is still a re-arm this power cycle could not be shown to land"
     );
 }
+
+/// A record whose length runs past the end of `EF_META` is where the walk stops.
+/// Both parsers own that stop — the reader and the rebuild a later `meta_add`
+/// runs — so a truncated tail is unreadable, never a slice out of bounds, and it
+/// is dropped rather than carried forward into the blob that gets written back.
+#[test]
+fn a_meta_record_longer_than_the_blob_stops_both_walks() {
+    let mut st = RamStorage::new();
+    let mut blob = std::vec![0xB0, 0x00, 0x00, 0x07];
+    blob.extend_from_slice(b"keep-me");
+    // Claims 16 bytes and carries none.
+    blob.extend_from_slice(&[0xB0, 0x01, 0x00, 0x10]);
+    st.write(EF_META, &blob).unwrap();
+    let mut fs = Fs::new(st);
+    fs.scan();
+
+    let mut out = [0u8; 32];
+    assert_eq!(fs.meta_find(0xB000, &mut out), Some(7));
+    assert_eq!(&out[..7], b"keep-me");
+    assert_eq!(
+        fs.meta_find(0xB001, &mut out),
+        None,
+        "a truncated record read"
+    );
+
+    fs.meta_add(0xB002, b"new").unwrap();
+    assert_eq!(fs.meta_find(0xB000, &mut out), Some(7));
+    assert_eq!(fs.meta_find(0xB002, &mut out), Some(3));
+    assert_eq!(
+        fs.meta_find(0xB001, &mut out),
+        None,
+        "the rebuild carried the truncated tail forward"
+    );
+}
+
+/// A backend whose enumeration yields every key TWICE — what a ring holding two
+/// live copies of one fid looks like from `for_each_key`.
+struct DoubleWalk(RamStorage);
+
+impl Storage for DoubleWalk {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        self.0.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+        self.0.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> Result<()> {
+        self.0.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.0.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        let mut seen = std::vec::Vec::new();
+        let complete = self.0.for_each_key(&mut |fid| seen.push(fid));
+        for fid in seen {
+            f(fid);
+            f(fid);
+        }
+        complete
+    }
+}
+
+/// The registry `scan` rebuilds is a set, not a tally: a key yielded twice spends
+/// ONE file of the capacity budget, or a store carrying a duplicate would bind the
+/// cap at half the files it actually holds.
+#[test]
+fn an_enumeration_that_yields_a_key_twice_registers_it_once() {
+    let mut st = RamStorage::new();
+    st.write(0xCC10, b"one").unwrap();
+    st.write(0xCC11, b"two").unwrap();
+    let mut fs = Fs::new(DoubleWalk(st));
+    fs.scan();
+    assert_eq!(fs.free_dynamic(), MAX_DYNAMIC_FILES - 2);
+}
