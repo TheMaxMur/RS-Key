@@ -3370,3 +3370,428 @@ fn the_last_wrong_pin_locks_the_pin_for_good() {
         "the right PIN got through a spent budget"
     );
 }
+
+/// A present-but-empty `EF_MINPINLEN` sets no policy, so setPIN measures the new PIN
+/// against the build's `MIN_PIN_LENGTH` — not against the zero an unread byte of the
+/// buffer holds, under which a PIN of any length is stored.
+#[test]
+fn an_empty_min_pin_record_leaves_the_build_floor_in_force() {
+    let (mut fs, mut rng) = setup();
+    fs.put(EF_MINPINLEN, &[]).unwrap();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    let mut out = [0u8; 256];
+    let short = &PIN[..usize::from(MIN_PIN_LENGTH) - 1];
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.set_pin_req(short),
+            &mut out
+        ),
+        Err(CtapError::PinPolicyViolation),
+        "a PIN under the build floor was stored over an empty policy record"
+    );
+    assert!(!fs.has_data(EF_PIN));
+}
+
+/// `spend_and_verify_pin_hash` refuses a spent budget itself instead of trusting the
+/// gate in front of it, which every command path runs first — so it is driven
+/// directly. Past it, the decrement wraps the counter to 255 in a release build.
+#[test]
+fn a_spent_budget_is_refused_before_the_decrement() {
+    let (mut fs, mut rng, mut state, _plat) = setup_with_pin(PIN);
+    let mut rec = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_FILE_LEN));
+    rec[0] = 0;
+    fs.put(EF_PIN, &rec).unwrap();
+    let pin_hash = sha256(PIN);
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(
+        spend_and_verify_pin_hash(&mut ctx, &pin_hash[..16]),
+        Err(CtapError::PinBlocked)
+    );
+    assert_eq!(ef_pin_retries(&mut fs), 0, "a spent counter was rewritten");
+}
+
+/// The pad's verify reads the same record, and a record of the wrong length is as
+/// unusable there: Blocked, with nothing spent and nothing rewritten.
+#[test]
+fn a_local_verify_over_a_short_pin_record_is_blocked_and_spends_nothing() {
+    let (mut fs, _rng, _state, _plat) = setup_with_pin(PIN);
+    let mut rec = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_FILE_LEN));
+    fs.put(EF_PIN, &rec[..PIN_FILE_LEN - 1]).unwrap();
+    assert!(matches!(
+        spend_and_verify_local_pin(&dev(), &mut fs, PIN),
+        LocalPin::Blocked
+    ));
+    let mut after = [0u8; PIN_FILE_LEN];
+    assert_eq!(
+        fs.read(EF_PIN, &mut after),
+        Some(PIN_FILE_LEN - 1),
+        "the short record was rewritten"
+    );
+    assert_eq!(after[..PIN_FILE_LEN - 1], rec[..PIN_FILE_LEN - 1]);
+}
+
+/// On an OTP-keyed device — every fused card — a wrong PIN also meets the pre-OTP
+/// fallback, and the fallback must fail it too. No test sent one before, so a
+/// fallback that matched anything was green on both paths.
+#[test]
+fn a_wrong_pin_on_an_otp_keyed_device_is_wrong_on_both_paths() {
+    const OTP_KEY: [u8; 32] = [0x7B; 32];
+    fn otp_dev() -> Device<'static> {
+        Device {
+            otp_key: Some(&OTP_KEY),
+            ..dev()
+        }
+    }
+
+    // The verifier is the pre-OTP one, so the fallback really compares.
+    let (mut fs, mut rng, mut state, _plat) = setup_with_pin(PIN);
+    let mut before = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut before), Some(PIN_FILE_LEN));
+    let wrong = sha256(WRONG_PIN);
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: otp_dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        assert_eq!(
+            spend_and_verify_pin_hash(&mut ctx, &wrong[..16]),
+            Err(CtapError::PinInvalid),
+            "the host path let a wrong PIN through the pre-OTP fallback"
+        );
+    }
+    match spend_and_verify_local_pin(&otp_dev(), &mut fs, WRONG_PIN) {
+        LocalPin::Wrong { retries_left } => assert_eq!(retries_left, MAX_PIN_RETRIES - 2),
+        _ => panic!("the pad let a wrong PIN through the pre-OTP fallback"),
+    }
+    let mut after = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut after), Some(PIN_FILE_LEN));
+    assert_eq!(after[1..], before[1..], "a wrong PIN re-keyed the verifier");
+}
+
+/// A verify that re-keys a pre-OTP verifier re-arms the at-rest lap first, and a
+/// medium that will not drop the marker turns the verify away on both paths: the
+/// chip-serial verifier stays the record in force, not superseded under a latch.
+#[test]
+fn a_refused_re_arm_turns_a_migrating_verify_away() {
+    use rsk_fs::storage::faults::RemoveStuck;
+    const OTP_KEY: [u8; 32] = [0x7C; 32];
+    fn otp_dev() -> Device<'static> {
+        Device {
+            otp_key: Some(&OTP_KEY),
+            ..dev()
+        }
+    }
+
+    let (backend, medium) = RemoveStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut padded = [0u8; PADDED_PIN_LEN];
+    padded[..PIN.len()].copy_from_slice(PIN);
+    let mut state = FidoState::new();
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        store_new_pin(&mut ctx, &padded).unwrap();
+    }
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    medium.refuse(Some(rsk_fs::EF_HARDENED));
+    let mut before = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut before), Some(PIN_FILE_LEN));
+
+    let pin_hash = sha256(PIN);
+    {
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: otp_dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        assert_eq!(
+            spend_and_verify_pin_hash(&mut ctx, &pin_hash[..16]),
+            Err(CtapError::Other)
+        );
+    }
+    assert!(matches!(
+        spend_and_verify_local_pin(&otp_dev(), &mut fs, PIN),
+        LocalPin::Blocked
+    ));
+    let mut after = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut after), Some(PIN_FILE_LEN));
+    assert_eq!(
+        after[1..],
+        before[1..],
+        "the verifier was re-keyed with the at-rest lap still latched"
+    );
+}
+
+/// A PIN that fills the whole 64-byte block leaves no terminating zero, so it is past
+/// maxPINLength's 63 and refused as policy (CTAP 2.1 §6.5.5.5), with nothing stored.
+#[test]
+fn a_pin_filling_the_padded_block_is_policy_violation() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    let mut out = [0u8; 256];
+    let whole = [b'7'; PADDED_PIN_LEN];
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.set_pin_req(&whole),
+            &mut out
+        ),
+        Err(CtapError::PinPolicyViolation)
+    );
+    assert!(!fs.has_data(EF_PIN));
+}
+
+/// The device PIN's bounds are the build's own — `MIN_PIN_LENGTH` and the
+/// host-representable `MAX_PIN_LENGTH`, no host policy — and a PIN outside them is
+/// refused with nothing stored.
+#[test]
+fn store_device_pin_enforces_its_length_bounds() {
+    let (mut fs, _rng) = setup();
+    match store_device_pin(&dev(), &mut fs, &PIN[..usize::from(MIN_PIN_LENGTH) - 1]) {
+        Err(SetPinError::TooShort { min }) => assert_eq!(min, MIN_PIN_LENGTH),
+        other => panic!("expected TooShort, got {other:?}"),
+    }
+    match store_device_pin(&dev(), &mut fs, &[b'5'; MAX_PIN_LENGTH + 1]) {
+        Err(SetPinError::TooLong { max }) => assert_eq!(max as usize, MAX_PIN_LENGTH),
+        other => panic!("expected TooLong, got {other:?}"),
+    }
+    assert!(!fs.has_data(EF_DEVICE_PIN));
+}
+
+/// The pad's verify reads its decrement back before trusting it, as the host's does
+/// (`pin_verify_fails_closed_when_the_retry_write_does_not_persist`): a counter write
+/// the medium reports and does not keep turns even the right PIN away.
+#[test]
+fn a_local_verify_fails_closed_when_the_retry_write_does_not_persist() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct StaleEfPin {
+        inner: RamStorage,
+        drop_ef_pin_writes: Rc<Cell<bool>>,
+    }
+    impl Storage for StaleEfPin {
+        fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+            self.inner.read(fid, buf)
+        }
+        fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+            if fid == EF_PIN && self.drop_ef_pin_writes.get() {
+                return Ok(()); // reports success, persists nothing
+            }
+            self.inner.write(fid, data)
+        }
+        fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+            self.inner.remove(fid)
+        }
+        fn size(&mut self, fid: u16) -> Option<usize> {
+            self.inner.size(fid)
+        }
+        fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+            self.inner.for_each_key(f)
+        }
+    }
+
+    let drop_writes = Rc::new(Cell::new(false));
+    let mut fs = Fs::new(StaleEfPin {
+        inner: RamStorage::new(),
+        drop_ef_pin_writes: drop_writes.clone(),
+    });
+    ensure_seed(&dev(), &mut fs, &mut SeqRng(1)).unwrap();
+    store_local_pin(&dev(), &mut fs, PIN).unwrap();
+    assert!(
+        matches!(
+            spend_and_verify_local_pin(&dev(), &mut fs, PIN),
+            LocalPin::Ok
+        ),
+        "control: the right PIN verifies on a medium that keeps its writes"
+    );
+    drop_writes.set(true);
+    assert!(
+        matches!(
+            spend_and_verify_local_pin(&dev(), &mut fs, PIN),
+            LocalPin::Blocked
+        ),
+        "the pad trusted a retry counter it could not read back"
+    );
+}
+
+/// Built-in UV shares clientPIN's budget and its per-boot mismatch lockout, and
+/// refuses while either stands (UV_BLOCKED, §6.5.5.7.3) before a consent card or a
+/// PIN entry: past the lockout the pad would take guesses a boot no longer allows.
+#[test]
+fn builtin_uv_is_blocked_by_the_power_cycle_lockout_or_a_spent_budget() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(PIN);
+    state.needs_power_cycle = true; // what three wrong PINs in one boot leave
+    let mut out = [0u8; 256];
+    let mut pad = UvPad::typing(PIN);
+    assert_eq!(
+        run_with(
+            &mut pad,
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_uv_token_req(PERM_GA as u64),
+            &mut out,
+        ),
+        Err(CtapError::UvBlocked),
+        "the pad took the PIN past the per-boot lockout"
+    );
+    assert!(
+        pad.titles.is_empty(),
+        "a locked-out UV painted a consent card"
+    );
+
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(PIN);
+    let mut rec = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_FILE_LEN));
+    rec[0] = 0;
+    fs.put(EF_PIN, &rec).unwrap();
+    let mut pad = UvPad::typing(PIN);
+    assert_eq!(
+        run_with(
+            &mut pad,
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_uv_token_req(PERM_GA as u64),
+            &mut out,
+        ),
+        Err(CtapError::UvBlocked)
+    );
+    assert!(pad.titles.is_empty(), "a blocked UV painted a consent card");
+}
+
+/// A pending forced PIN change holds the built-in-UV token back as it holds the
+/// host-PIN one: the pad verifies, and no token is issued until changePIN.
+#[test]
+fn builtin_uv_token_waits_for_a_forced_pin_change() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(PIN);
+    fs.put(EF_MINPINLEN, &[MIN_PIN_LENGTH, 1]).unwrap();
+    let before = state.paut.token;
+    let mut out = [0u8; 256];
+    let mut pad = UvPad::typing(PIN);
+    assert_eq!(
+        run_with(
+            &mut pad,
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_uv_token_req(PERM_GA as u64),
+            &mut out,
+        ),
+        Err(CtapError::PinPolicyViolation),
+        "a UV token was issued over a pending forced change"
+    );
+    assert_eq!(
+        state.paut.token, before,
+        "the refused request minted a token"
+    );
+}
+
+/// Three wrong PINs in a boot lock clientPIN until a power cycle, and the lock is
+/// read before the PIN is: even the right one is turned away, with no retry spent,
+/// on getPinToken and changePIN alike. The lockout test stops at the third wrong
+/// PIN, so neither check had been reached; without them the budget goes in one boot.
+#[test]
+fn the_power_cycle_lockout_turns_the_right_pin_away() {
+    let (mut fs, mut rng, mut state, _plat) = setup_with_pin(PIN);
+    state.needs_power_cycle = true; // what three wrong PINs in one boot leave
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    let mut out = [0u8; 256];
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_req(PIN),
+            &mut out
+        ),
+        Err(CtapError::PinAuthBlocked),
+        "getPinToken took a PIN past the per-boot lockout"
+    );
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.change_pin_req(PIN, NEW_PIN),
+            &mut out
+        ),
+        Err(CtapError::PinAuthBlocked),
+        "changePIN took a PIN past the per-boot lockout"
+    );
+    assert_eq!(
+        ef_pin_retries(&mut fs),
+        MAX_PIN_RETRIES,
+        "a locked-out attempt spent a retry"
+    );
+}
+
+/// changePIN's pinUvAuthParam covers `newPinEnc ‖ pinHashEnc` (CTAP 2.1 §6.5.5.6), and
+/// a MAC that does not verify is refused before the old PIN is tried: no retry is
+/// spent and the PIN stands. setPIN's twin had a test; this one had none.
+#[test]
+fn change_pin_with_a_bad_pin_auth_param_changes_nothing() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(PIN);
+    let mut before = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut before), Some(PIN_FILE_LEN));
+    let mut padded = [0u8; PADDED_PIN_LEN];
+    padded[..NEW_PIN.len()].copy_from_slice(NEW_PIN);
+    let npe = plat.enc(&padded);
+    let old = sha256(PIN);
+    let phe = plat.enc(&old[..16]);
+    let bad_mac = [0u8; 32];
+    let req = build(&[
+        (1, V::U(plat.wire)),
+        (2, V::U(4)),
+        (3, V::Cose(&plat.x, &plat.y)),
+        (4, V::B(&bad_mac[..plat.proto.mac_len()])),
+        (5, V::B(&npe)),
+        (6, V::B(&phe)),
+    ]);
+    let mut out = [0u8; 256];
+    assert_eq!(
+        run(&mut fs, &mut rng, &mut state, &req, &mut out),
+        Err(CtapError::PinAuthInvalid),
+        "a changePIN whose MAC does not verify was acted on"
+    );
+    let mut after = [0u8; PIN_FILE_LEN];
+    assert_eq!(fs.read(EF_PIN, &mut after), Some(PIN_FILE_LEN));
+    assert_eq!(after, before, "a refused changePIN touched the PIN record");
+}

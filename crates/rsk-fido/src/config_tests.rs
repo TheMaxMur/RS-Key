@@ -814,3 +814,115 @@ fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
         },
     );
 }
+
+/// A present-but-empty `EF_MINPINLEN` sets no policy, so the floor the monotonic
+/// guard holds is the build's `MIN_PIN_LENGTH` — not the zero an unread byte of the
+/// buffer holds, under which setMinPINLength could lower it.
+#[test]
+fn an_empty_min_pin_record_holds_the_build_floor() {
+    let mut fs = Fs::new(RamStorage::new());
+    fs.put(EF_MINPINLEN, &[]).unwrap();
+    let mut state = armed(PERM_ACFG);
+    let under = u64::from(MIN_PIN_LENGTH) - 1;
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut state,
+            &config_request(0x03, &subpara_min_pin(under), &TOKEN)
+        ),
+        Err(CtapError::PinPolicyViolation),
+        "setMinPINLength went under the build floor over an empty policy record"
+    );
+}
+
+// The setMinPINLength subCommandParams map `{1: new_min, 3: forceChangePin = true}`.
+fn subpara_min_pin_force(new_min: u64) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 32];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(2).unwrap().u8(1).unwrap().u64(new_min).unwrap();
+        e.u8(3).unwrap().bool(true).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// `forceChangePin` (CTAP 2.1 §6.11.4) demands a change of a PIN the new floor does
+/// not itself condemn, so it is honoured over a PIN long enough — and with no PIN to
+/// change it is PIN_NOT_SET, with no policy stored. No test sent the key before.
+#[test]
+fn force_change_pin_is_honoured_and_needs_a_pin() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = armed(PERM_ACFG);
+    let req = config_request(0x03, &subpara_min_pin_force(6), &TOKEN);
+    assert_eq!(run_fs(&mut fs, &mut state, &req), Err(CtapError::PinNotSet));
+    assert!(
+        !fs.has_data(EF_MINPINLEN),
+        "a forced change with no PIN stored a policy"
+    );
+
+    // An 8-character PIN: the floor of 6 does not force a change, the request does.
+    let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+    pin_file[..3].copy_from_slice(&[8, 8, 1]);
+    fs.put(EF_PIN, &pin_file).unwrap();
+    assert_eq!(run_fs(&mut fs, &mut state, &req), Ok(0));
+    let mut buf = [0u8; 2];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut buf), Some(2));
+    assert_eq!(buf, [6, 1], "forceChangePin was not stored");
+    assert_ne!(
+        state.paut.token, TOKEN,
+        "a forced change left the token alive"
+    );
+}
+
+/// A PIN exactly as long as the new floor meets it: no change is forced, and the
+/// token that set the floor stands.
+#[test]
+fn a_pin_at_the_new_floor_is_not_forced_to_change() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+    pin_file[..3].copy_from_slice(&[8, 6, 1]);
+    fs.put(EF_PIN, &pin_file).unwrap();
+    let mut state = armed(PERM_ACFG);
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut state,
+            &config_request(0x03, &subpara_min_pin(6), &TOKEN)
+        ),
+        Ok(0)
+    );
+    let mut buf = [0u8; 2];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut buf), Some(2));
+    assert_eq!(buf, [6, 0], "a PIN at the floor was forced to change");
+    assert_eq!(state.paut.token, TOKEN, "a PIN at the floor lost its token");
+}
+
+/// With newMinPINLength absent the floor stays where it is (CTAP 2.1 §6.11.4), so a
+/// request that only sets forceChangePin must not read the absence as a floor of 0.
+#[test]
+fn force_change_pin_alone_keeps_the_floor() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
+    pin_file[..3].copy_from_slice(&[8, 8, 1]);
+    fs.put(EF_PIN, &pin_file).unwrap();
+    let mut state = armed(PERM_ACFG);
+    let mut sub = [0u8; 8];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut sub[..]));
+        e.map(1).unwrap().u8(3).unwrap().bool(true).unwrap();
+        e.writer().position()
+    };
+    assert_eq!(
+        run_fs(
+            &mut fs,
+            &mut state,
+            &config_request(0x03, &sub[..n], &TOKEN)
+        ),
+        Ok(0),
+        "a forceChangePin with no newMinPINLength was read as lowering the floor"
+    );
+    let mut buf = [0u8; 2];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut buf), Some(2));
+    assert_eq!(buf, [MIN_PIN_LENGTH, 1]);
+}
