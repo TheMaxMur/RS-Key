@@ -647,3 +647,18 @@ fn a_faulted_probe_reports_the_mask_it_enforces() {
     );
     assert_eq!(enforced, NO_CAPS);
 }
+
+/// A factory YubiKey reports `DEVICE_FLAGS = 00`, and so must a store no host has
+/// configured. The default was `80` (EJECT), a touch-eject mode RS-Key never
+/// implemented, which `ykman --diagnose` and any raw DeviceInfo reader saw set.
+#[test]
+fn an_unconfigured_device_reports_device_flags_00() {
+    let mut fs = fs();
+    let mut body = [0u8; MIN_CONFIG_RES_CAP];
+    let mut res = ResBuf::new(&mut body);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    assert_eq!(
+        tlv_get(&res.as_slice()[1..], TAG_DEVICE_FLAGS),
+        Some(&[0x00][..])
+    );
+}

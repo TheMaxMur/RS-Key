@@ -68,7 +68,7 @@ fn writable_tag(tag: u8) -> bool {
     )
 }
 
-const FLAG_EJECT: u8 = 0x80;
+const DEVICE_FLAGS_FACTORY: u8 = 0x00; // a factory YubiKey's: no touch-eject (80), no wakeup (40)
 const FORM_FACTOR_USB_A_KEYCHAIN: u8 = 0x01;
 
 /// EF holding the persisted enabled-applications TLV. Outside both the FIDO and
@@ -207,7 +207,7 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
                 TAG_USB_ENABLED,
                 &read_enabled_caps(fs).to_be_bytes(),
             );
-            push_tlv(&mut buf, &mut n, TAG_DEVICE_FLAGS, &[FLAG_EJECT]);
+            push_tlv(&mut buf, &mut n, TAG_DEVICE_FLAGS, &[DEVICE_FLAGS_FACTORY]);
             push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[0x00]);
         }
     }

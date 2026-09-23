@@ -646,11 +646,11 @@ Response = one **leading overall-length byte**, then concatenated `TAG LEN VALUE
 | `04` | FORM_FACTOR | 1 | `01` = USB-A keychain |
 | `05` | VERSION | 3 | `major, minor, patch` (`05 07 04`) |
 | `03` | USB_ENABLED | 2 | currently-enabled capability bitmask (BE16) |
-| `08` | DEVICE_FLAGS | 1 | `80` = eject |
+| `08` | DEVICE_FLAGS | 1 | `80` = touch-eject, `40` = remote wakeup; `00` unless a host set them |
 | `0A` | CONFIG_LOCK | 1 | `00` = unlocked |
 
 When no host config has been written, the device returns the **defaults**:
-`USB_ENABLED` = all-supported, `DEVICE_FLAGS = 80`, `CONFIG_LOCK = 00`. Once
+`USB_ENABLED` = all-supported, `DEVICE_FLAGS = 00`, `CONFIG_LOCK = 00`. Once
 WRITE CONFIG has stored a blob, READ CONFIG echoes that blob after the fixed
 `USB_SUPPORTED/SERIAL/FORM_FACTOR/VERSION` prefix, then always appends
 `CONFIG_LOCK = 00`.
@@ -1204,7 +1204,7 @@ All bytes hex; `→` shows the response (status word omitted when `9000`).
 ```
 SELECT  00 A4 04 00 08 A0 00 00 05 27 47 11 17 00
 READ    00 1D 00 00 00
-→  <len> 01 02 023B 02 04 <serial> 04 01 01 05 03 050800 03 02 023B 08 01 80 0A 01 00
+→  <len> 01 02 023B 02 04 <serial> 04 01 01 05 03 050800 03 02 023B 08 01 00 0A 01 00
 ```
 
 **Read the phy record (Rescue):**

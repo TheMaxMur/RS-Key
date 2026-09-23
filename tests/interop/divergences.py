@@ -266,7 +266,9 @@ RULES = [
      ExpectDiff(None, None, "real 5C also supports/enables YubiHSM Auth (+extras) RS-Key lacks")),
     ("mgmt.chalRespTimeout", Ignore("challenge-response typing timeout — cosmetic; RS-Key leaves 0")),
     ("mgmt.autoEjectTimeout", Ignore("auto-eject timeout — cosmetic")),
-    ("mgmt.deviceFlags", ExpectDiff(None, r"(?i)<missing>", "RS-Key's DeviceInfo omits the device-flags tag")),
+    ("mgmt.deviceFlags", ExpectDiff(None, r"(?i)<missing>",
+                                    "a host-written config is echoed without the device-flags tag; "
+                                    "unconfigured, both report 00")),
     ("mgmt.configLock", ExpectDiff(None, r"(?i)<missing>", "RS-Key's DeviceInfo omits the config-lock tag")),
     ("mgmt.tag_0x*", Ignore("vendor-specific DeviceInfo tags differ between models")),
 

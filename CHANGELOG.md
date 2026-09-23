@@ -40,6 +40,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- An unconfigured device reports `DEVICE_FLAGS = 00` in its management
+  DeviceInfo, as a factory YubiKey 5.8.0 does. It reported `80`, the touch-eject
+  flag, for a mode RS-Key never implemented; `ykman --diagnose` and any raw
+  DeviceInfo reader saw it set.
+  `bcdDevice` 0x09EB → 0x09EC.
+
 - The OTP applet answers INS `03` over CCID with its status, as a YubiKey does,
   so a yubikit client driving it over CCID can write an NDEF configuration. That
   write answers no status and yubikit asks for it with `03`, which RS-Key
