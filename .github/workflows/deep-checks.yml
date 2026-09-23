@@ -16,6 +16,13 @@
 #          (scripts/fuzz-all.sh). The corpus is carried between runs via the
 #          actions cache, so its coverage accumulates day over day; crash
 #          artifacts are uploaded.
+#          Both rows run every target twice, `config: [default, flavours]`: the
+#          shipped build flavours are compile-time, so the default image leaves
+#          the 67 `feature = "…"` sites they guard in the crates this workspace
+#          builds uncompiled, and nothing behind one is fuzzed at all. The union
+#          is in fuzz/Cargo.toml. The jobs are parallel, so the wall time is one
+#          config's — the runner minutes and the cache footprint do double, and
+#          the corpus entries are what the 10 GB repo quota evicts first.
 #   fuzz-coverage — per-target libFuzzer region/line coverage over that
 #          accumulated corpus (scripts/fuzz-coverage.sh): a summary table on the
 #          step page and the per-target HTML uploaded. Advisory, not a gate.
@@ -68,7 +75,9 @@
 # runs BOTH cadences, which is what makes an edit here self-testing. Local
 # equivalents:
 #   nix develop .#fuzz -c ./scripts/miri-all.sh   (MIRI_SHARD=2/3 for one shard)
-#   nix develop .#fuzz -c ./scripts/fuzz-all.sh   (FUZZ_SECONDS=30 to shorten)
+#   nix develop .#fuzz -c ./scripts/fuzz-all.sh   (FUZZ_SECONDS=30 to shorten,
+#                                                  FUZZ_CONFIG=flavours for the
+#                                                  second config both rows run)
 #   nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
 #   ./scripts/kani.sh all   (needs `cargo install kani-verifier` first — not nix)
 #   ./scripts/kani.sh light1   ./scripts/kani.sh heavy   # what the weekly rows run
@@ -97,6 +106,7 @@ on:
         "scripts/fuzz-coverage.sh",
         "scripts/fuzz-all.sh",
         "scripts/miri-all.sh",
+        "fuzz/Cargo.toml",
         "scripts/mutants-all.sh",
         "scripts/comutate.py",
         "scripts/kani.sh",
@@ -122,6 +132,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3]
+        config: [default, flavours]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -140,13 +151,14 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             fuzz/target
-          key: miri-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
-          restore-keys: miri-${{ runner.os }}-
+          key: miri-${{ runner.os }}-${{ matrix.config }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
+          restore-keys: miri-${{ runner.os }}-${{ matrix.config }}-
 
       - name: miri — every fuzz target's logic under the UB checker
         run: nix develop .#fuzz -c ./scripts/miri-all.sh
         env:
           MIRI_SHARD: ${{ matrix.shard }}/3
+          FUZZ_CONFIG: ${{ matrix.config }}
 
   fuzz:
     if: github.event.schedule != '41 5 * * 0'
@@ -156,6 +168,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
+        config: [default, flavours]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -174,22 +187,24 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             fuzz/target
-          key: fuzz-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
-          restore-keys: fuzz-${{ runner.os }}-
+          key: fuzz-${{ runner.os }}-${{ matrix.config }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
+          restore-keys: fuzz-${{ runner.os }}-${{ matrix.config }}-
 
-      # One corpus entry per shard: four jobs cannot write one key, and a shard
-      # only ever fuzzes its own slice of the roster. The slice is positional, so
-      # adding a target shifts the ones after it into a neighbouring shard and
-      # costs them their accumulated inputs once — see the comment in
-      # scripts/fuzz-all.sh for why balance won that trade.
+      # One corpus entry per shard and config: eight jobs cannot write one key,
+      # and a shard only ever fuzzes its own slice of the roster. The slice is
+      # positional, so adding a target shifts the ones after it into a
+      # neighbouring shard and costs them their accumulated inputs once — see the
+      # comment in scripts/fuzz-all.sh for why balance won that trade. The second
+      # restore prefix is the shard's other config: an input is bytes, so a
+      # flavours job starting from the default corpus is a head start rather than
+      # pollution, and it is what keeps the first run of a new config off empty.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-s${{ matrix.shard }}-${{ github.run_id }}
-          restore-keys: fuzz-corpus-s${{ matrix.shard }}-
-
-      - name: build every fuzz target
-        run: nix develop .#fuzz -c cargo fuzz build
+          key: fuzz-corpus-s${{ matrix.shard }}-${{ matrix.config }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-s${{ matrix.shard }}-${{ matrix.config }}-
+            fuzz-corpus-s${{ matrix.shard }}-
 
       # A script, not an inline `-c bash -c '…'`: that form loses the dev shell's
       # PATH here and `cargo` falls through to the image's rustup shim, which
@@ -202,12 +217,16 @@ jobs:
         env:
           FUZZ_SECONDS: ${{ inputs.fuzz_seconds || '120' }}
           FUZZ_SHARD: ${{ matrix.shard }}/4
+          FUZZ_CONFIG: ${{ matrix.config }}
 
+      # The config is in the name because two jobs uploading one name is an error
+      # on v4+, and a crash that only the flavours build finds is the whole point
+      # of the dimension — it must arrive labelled.
       - name: upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: fuzz-artifacts-${{ github.run_id }}-s${{ matrix.shard }}
+          name: fuzz-artifacts-${{ github.run_id }}-s${{ matrix.shard }}-${{ matrix.config }}
           path: fuzz/artifacts/
           if-no-files-found: ignore
 
@@ -215,7 +234,7 @@ jobs:
         if: always()
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-s${{ matrix.shard }}-${{ github.run_id }}
+          key: fuzz-corpus-s${{ matrix.shard }}-${{ matrix.config }}-${{ github.run_id }}
 
   fuzz-coverage:
     if: github.event.schedule != '41 5 * * 0'
@@ -249,27 +268,32 @@ jobs:
       # pass. One restore per shard, because that is how they are stored; they
       # extract into the same tree and the per-target directories are disjoint.
       # Restoring only one would measure a quarter of the roster against a floor
-      # written for all of it.
+      # written for all of it. The `default` half of each shard's pair: this row
+      # builds no flavour, so the table it prints is that build's.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-s1-${{ github.run_id }}
-          restore-keys: fuzz-corpus-s1-
+          key: fuzz-corpus-s1-default-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-s1-default-
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-s2-${{ github.run_id }}
-          restore-keys: fuzz-corpus-s2-
+          key: fuzz-corpus-s2-default-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-s2-default-
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-s3-${{ github.run_id }}
-          restore-keys: fuzz-corpus-s3-
+          key: fuzz-corpus-s3-default-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-s3-default-
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-s4-${{ github.run_id }}
-          restore-keys: fuzz-corpus-s4-
+          key: fuzz-corpus-s4-default-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-s4-default-
 
       - name: per-target libFuzzer coverage over the accumulated corpus
         run: nix develop .#fuzz -c ./scripts/fuzz-coverage.sh

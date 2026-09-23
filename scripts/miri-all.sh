@@ -6,6 +6,7 @@
 #
 #   nix develop .#fuzz -c ./scripts/miri-all.sh
 #   MIRI_SHARD=2/4 nix develop .#fuzz -c ./scripts/miri-all.sh
+#   FUZZ_CONFIG=flavours nix develop .#fuzz -c ./scripts/miri-all.sh
 #
 # A file rather than an inline `run:`, for the reason `scripts/fuzz-all.sh` states
 # at length: that form loses the dev shell's PATH on a GitHub runner and `cargo`
@@ -27,6 +28,18 @@ MANIFEST=fuzz/Cargo.toml
 # not a floor. Raise it in the commit that adds a test.
 MIRI_TEST_FLOOR=49
 
+# FUZZ_CONFIG=flavours builds the shipped flavours' on side — the `flavours`
+# union feature in fuzz/Cargo.toml — instead of the default image's off side.
+# One name for both runners, because it selects the fuzz workspace's features
+# and not the runner's. Same roster either way; CI runs the row once per config
+# and a bare local run is `default`.
+FUZZ_CONFIG="${FUZZ_CONFIG:-default}"
+case "$FUZZ_CONFIG" in
+  default) config_args=() ;;
+  flavours) config_args=(--features flavours) ;;
+  *) echo "::error::FUZZ_CONFIG=$FUZZ_CONFIG is not default or flavours"; exit 1 ;;
+esac
+
 if ! cargo miri --version >/dev/null 2>&1; then
   echo "FAIL: cargo-miri is not on PATH — this is not the .#fuzz dev shell." >&2
   echo "      cargo:     $(command -v cargo || echo '(none)')" >&2
@@ -41,9 +54,9 @@ fi
 # re-executes each test binary once per seed and `--list` prints the whole roster
 # eight times over — 392 lines for 49 tests, measured. Without the dedup the shards
 # would be slices of a list with eight copies of everything.
-mapfile -t tests < <(cargo miri test --manifest-path "$MANIFEST" -- --list 2>/dev/null | sed -n 's/: test$//p' | sort -u)
+mapfile -t tests < <(cargo miri test --manifest-path "$MANIFEST" ${config_args[@]+"${config_args[@]}"} -- --list 2>/dev/null | sed -n 's/: test$//p' | sort -u)
 
-echo "roster: ${#tests[@]} tests (floor ${MIRI_TEST_FLOOR})"
+echo "roster: ${#tests[@]} tests (floor ${MIRI_TEST_FLOOR}), config ${FUZZ_CONFIG}"
 if [ "${#tests[@]}" -lt "$MIRI_TEST_FLOOR" ]; then
   echo "::error::--list yielded ${#tests[@]} tests, under the ${MIRI_TEST_FLOOR} floor — the roster shrank or the list failed"
   exit 1
@@ -90,11 +103,11 @@ echo "shard ${MIRI_SHARD}: ${mine} of ${#tests[@]} tests"
 # seed processes write to one stdout concurrently and shred each other's lines —
 # `test result: test result: okokokok. 0 passed;` is verbatim from a run that
 # passed. `scripts/kani.sh` refuses `--jobs` over the same hazard.
-selected="$(cargo miri test --manifest-path "$MANIFEST" -- --list --exact ${skip[@]+"${skip[@]}"} 2>/dev/null | sed -n 's/: test$//p' | sort -u | wc -l | tr -d ' ')"
+selected="$(cargo miri test --manifest-path "$MANIFEST" ${config_args[@]+"${config_args[@]}"} -- --list --exact ${skip[@]+"${skip[@]}"} 2>/dev/null | sed -n 's/: test$//p' | sort -u | wc -l | tr -d ' ')"
 if [ "${selected:-0}" -ne "$mine" ]; then
   echo "::error::shard ${MIRI_SHARD} selects ${selected:-0} tests, expected ${mine} — a --skip name no longer matches"
   exit 1
 fi
 
-cargo miri test --manifest-path "$MANIFEST" -- --exact ${skip[@]+"${skip[@]}"}
-echo "miri: shard ${MIRI_SHARD}, ${mine} of ${#tests[@]} tests, no UB"
+cargo miri test --manifest-path "$MANIFEST" ${config_args[@]+"${config_args[@]}"} -- --exact ${skip[@]+"${skip[@]}"}
+echo "miri: shard ${MIRI_SHARD}, config ${FUZZ_CONFIG}, ${mine} of ${#tests[@]} tests, no UB"

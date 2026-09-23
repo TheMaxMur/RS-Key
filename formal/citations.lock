@@ -118,7 +118,7 @@ assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/state.rs	600-600	pub fn e
 assurance/bundle/SEC-FIDO-003.toml	formal/gen-configs.sh	181-184	if [ -n "$on" ] && [ "${SOLO:-0}" = 1 ]; then	echo "    ${SOLO_INV:-$(target_inv "$on")}"
 assurance/bundle/SEC-FIDO-003.toml	formal/gen-configs.sh	185-187	elif [ -n "$on" ]; then	for i in "${ALL_INV[@]}"; do [ "$i" = "$t" ] || echo "    $i"; done
 assurance/bundle/SEC-FIDO-003.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
-assurance/bundle/SEC-FIDO-003.toml	fuzz/fuzz_targets/fido_session.rs	1430-1433	assert_ne!(	);
+assurance/bundle/SEC-FIDO-003.toml	fuzz/fuzz_targets/fido_session.rs	1431-1434	assert_ne!(	);
 assurance/bundle/SEC-FIDO-003.toml	scripts/citation_gate.py	618-621	return re.compile(	)
 assurance/bundle/SEC-FIDO-003.toml	scripts/evidence_gate.py	515-546	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
 assurance/bundle/SEC-FIDO-003.toml	scripts/kani.sh	307-307	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
@@ -569,13 +569,13 @@ assurance/platform.toml	firmware/src/worker.rs	397-397	if rsk_mgmt::take_device_
 assurance/platform.toml	firmware/src/worker.rs	434-434	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
 assurance/platform.toml	formal/gen-configs.sh	211-225	# `clauses=1` HERE and on no other baseline, and the choice is a measurement.	# SeedReachable restatement).
 assurance/platform.toml	formal/gen-configs.sh	322-322	emit Historical_E76.cfg BugSeedDoesNotLead TRUE TRUE	emit Historical_E76.cfg BugSeedDoesNotLead TRUE TRUE
-assurance/platform.toml	fuzz/fuzz_targets/fido_session.rs	1432-1432	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"
+assurance/platform.toml	fuzz/fuzz_targets/fido_session.rs	1433-1433	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"
 assurance/platform.toml	fuzz/fuzz_targets/power_cut.rs	76-78	const FIDS: [u16; 9] = [	];
 assurance/platform.toml	fuzz/fuzz_targets/power_cut.rs	202-202	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
 assurance/platform.toml	scripts/check.sh	199-248	assurance_trace_is_image_neutral() {	}
 assurance/platform.toml	scripts/check.sh	514-514	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"
 assurance/platform.toml	scripts/citation_gate.py	556-556	EXTS = "rs|sh|txt|py"	EXTS = "rs|sh|txt|py"
-assurance/platform.toml	scripts/fuzz-all.sh	41-41	mapfile -t targets < <(cargo fuzz list)	mapfile -t targets < <(cargo fuzz list)
+assurance/platform.toml	scripts/fuzz-all.sh	54-54	mapfile -t targets < <(cargo fuzz list)	mapfile -t targets < <(cargo fuzz list)
 assurance/platform.toml	scripts/kani_gate.py	389-409	def workflow_pins(root):	}
 assurance/platform.toml	scripts/kani_gate.py	697-708	elif len(said) > 1:	)
 assurance/platform.toml	tests/29_reset_power_cut.py	527-530	assert assertion_status != 0, (	)

@@ -96,9 +96,10 @@ const CP_SET_PIN: u64 = 0x03;
 /// The host's ECDH scalar — fixed, so a session costs one scalar multiply instead
 /// of a keygen and an input keeps its meaning across runs. In `[1, n)` for P-256.
 const HOST_SCALAR: [u8; 32] = [0x42; 32];
-/// The PIN the handshake sets. Eight bytes clears `MIN_PIN_LENGTH` on both the
-/// default build (4) and `strong-pin` (6).
-const PIN: &[u8] = b"12345678";
+/// The PIN the handshake sets: eight code points clear `MIN_PIN_LENGTH` on the
+/// default build (4) and `strong-pin` (6), and the mix clears `pin_is_trivial`,
+/// which `strong-pin`/`fips-profile` apply — a refused setPIN kills the token leg.
+const PIN: &[u8] = b"9f4a27c3";
 /// Widest pinUvAuthToken plaintext [`Sess::issued_token`] will decrypt. Two CBC
 /// blocks of slack over the 32 it must be, so an over-long token is decrypted and
 /// measured rather than refused by the buffer — the bound itself is an assert.

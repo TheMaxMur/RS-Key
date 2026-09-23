@@ -6,6 +6,7 @@
 #
 #   nix develop .#fuzz -c ./scripts/fuzz-all.sh
 #   FUZZ_SECONDS=30 nix develop .#fuzz -c ./scripts/fuzz-all.sh
+#   FUZZ_CONFIG=flavours nix develop .#fuzz -c ./scripts/fuzz-all.sh
 #
 # A FILE, not an inline `nix develop .#fuzz -c bash -euo pipefail -c '…'`, which
 # is what the workflow used to carry. That form loses the dev shell's PATH on a
@@ -38,14 +39,31 @@ FUZZ_SECONDS="${FUZZ_SECONDS:-120}"
 # floor. Lower all three copies in the commit that removes a target.
 FUZZ_TARGET_FLOOR=53
 
+# FUZZ_CONFIG=flavours builds the shipped flavours' on side — the `flavours`
+# union feature in fuzz/Cargo.toml — instead of the default image's off side.
+# One name for both runners, because it selects the fuzz workspace's features
+# and not the runner's. Same roster either way; CI runs the row once per config
+# and a bare local run is `default`.
+FUZZ_CONFIG="${FUZZ_CONFIG:-default}"
+case "$FUZZ_CONFIG" in
+  default) config_args=() ;;
+  flavours) config_args=(--features flavours) ;;
+  *) echo "::error::FUZZ_CONFIG=$FUZZ_CONFIG is not default or flavours"; exit 1 ;;
+esac
+
 mapfile -t targets < <(cargo fuzz list)
 # The corpus lives in one LRU-evictable cache entry; on a restore miss every
 # target starts from empty and the run still says DONE.
-echo "roster: ${#targets[@]} targets (floor ${FUZZ_TARGET_FLOOR}), corpus: $(find fuzz/corpus -type f 2>/dev/null | wc -l) inputs restored"
+echo "roster: ${#targets[@]} targets (floor ${FUZZ_TARGET_FLOOR}), config ${FUZZ_CONFIG}, corpus: $(find fuzz/corpus -type f 2>/dev/null | wc -l) inputs restored"
 if [ "${#targets[@]}" -lt "$FUZZ_TARGET_FLOOR" ]; then
   echo "::error::cargo fuzz list yielded ${#targets[@]} targets, under the ${FUZZ_TARGET_FLOOR} floor — the roster shrank or the list failed"
   exit 1
 fi
+
+# The whole roster before this shard fuzzes its slice: a target that fails to
+# compile is as often another shard's as this one's, and this is the only place the
+# config's features become a build, so the workflow needs no second copy of them.
+cargo fuzz build ${config_args[@]+"${config_args[@]}"}
 
 # FUZZ_SHARD=i/k — this runner's slice of the roster, so the row's wall time is
 # the slowest shard's rather than the sum of every target's. Sliced only AFTER the
@@ -85,7 +103,7 @@ echo "shard ${FUZZ_SHARD}: ${#mine[@]} of ${#targets[@]} targets"
 failed=""
 for t in "${mine[@]}"; do
   echo "::group::${t} (${FUZZ_SECONDS}s)"
-  if ! cargo fuzz run "$t" -- -max_total_time="$FUZZ_SECONDS" -print_final_stats=1; then
+  if ! cargo fuzz run ${config_args[@]+"${config_args[@]}"} "$t" -- -max_total_time="$FUZZ_SECONDS" -print_final_stats=1; then
     failed="$failed $t"
   fi
   echo "::endgroup::"
@@ -95,4 +113,4 @@ if [ -n "$failed" ]; then
   echo "::error::crashing targets:$failed"
   exit 1
 fi
-echo "fuzz: shard ${FUZZ_SHARD}, ${#mine[@]} of ${#targets[@]} targets, ${FUZZ_SECONDS}s each, no crashes"
+echo "fuzz: shard ${FUZZ_SHARD}, config ${FUZZ_CONFIG}, ${#mine[@]} of ${#targets[@]} targets, ${FUZZ_SECONDS}s each, no crashes"

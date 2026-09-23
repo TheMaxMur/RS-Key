@@ -303,6 +303,10 @@ fuzz_target!(|data: &[u8]| {
                 );
             }
             OP_FACTORY_WIPE => {
+                // The device-wide wipe is the default build's: under
+                // `strict-config` rsk-device compiles no such method, and the
+                // firmware's own caller carries this same cfg (worker.rs).
+                #[cfg(not(feature = "strict-config"))]
                 if ccid.factory_wipe() {
                     // The wipe is not allowed to spare `EF_DEV_CONF`, or an owner
                     // who disabled every application has no way back.
@@ -335,7 +339,13 @@ fuzz_target!(|data: &[u8]| {
                 let hi = byte(data, &mut i);
                 let lo = byte(data, &mut i);
                 let blob = [0x04, TAG_USB_ENABLED, 0x02, hi, lo];
+                #[cfg(not(feature = "strict-config"))]
                 let _ = ccid.ctap_mgmt(CTAP_WRITE_CONFIG, &blob);
+                // That arm is the default build's; `strict-config` compiles none, so
+                // the record goes in through the function it calls. Without this the
+                // mask is stuck on and the SELECT gate above only ever checks one side.
+                #[cfg(feature = "strict-config")]
+                let _ = rsk_devconf::persist_dev_conf(&mut fs.borrow_mut(), &blob[1..]);
             }
             // A raw APDU. The length is its own byte rather than the opcode's:
             // reserving `0x00`–`0x06` would otherwise make every 4-, 5- and

@@ -64,6 +64,39 @@ sequential-storage = { version = "=8.0.0", features = ["_test"] }
 embedded-storage-async = "0.4"
 embassy-futures = "0.1"
 
+[features]
+# The shipped build flavours, forwarded exactly as firmware/Cargo.toml forwards
+# them: identical names let a target carry the applet crate's own
+# `cfg(feature = "…")` rather than ask which union it is in (cross_applet does).
+advertise-pqc = ["rsk-fido/advertise-pqc"]
+fips-profile = ["rsk-fido/fips-profile", "rsk-piv/fips-profile"]
+strong-pin = ["rsk-fido/strong-pin"]
+strict-up = ["rsk-fido/strict-up"]
+always-uv = ["rsk-fido/always-uv"]
+# `rsk-device/display` is on for every config here (the dependency line above), so
+# the two `any(not(strict-config), display)` sites stay compiled where a
+# display-less strict-config image drops them.
+strict-config = [
+    "rsk-mgmt/strict-config",
+    "rsk-fido/strict-config",
+    "rsk-otp/strict-config",
+    "rsk-vendor/strict-config",
+    "rsk-device/strict-config",
+]
+# All six at once — the second config the deep-checks `fuzz` and `miri` rows run;
+# one union and not six configs because they are additive and no crate refuses a
+# combination. `largeblob-ext` is out: CTAP 2.3 §12.4 forbids serving both
+# large-blob designs, so it WITHDRAWS command 0x0C instead of adding to it, and
+# would take the 2.1 path out of the fuzzed set.
+flavours = [
+    "advertise-pqc",
+    "fips-profile",
+    "strong-pin",
+    "strict-up",
+    "always-uv",
+    "strict-config",
+]
+
 [[bin]]
 name = "apdu"
 path = "fuzz_targets/apdu.rs"

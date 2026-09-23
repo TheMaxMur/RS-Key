@@ -229,6 +229,21 @@ the `MIRIFLAGS` policy is set by the `.#fuzz` shell):
 nix develop .#fuzz -c cargo miri test --manifest-path fuzz/Cargo.toml
 ```
 
+Both build the **default** image, where the shipped flavours — `strict-config`,
+`fips-profile`, `strong-pin`, `strict-up`, `always-uv`, `advertise-pqc` — are
+compile-time off, so nothing behind one of the 67 `feature = "…"` sites they guard
+in the crates this workspace builds is fuzzed at all. `FUZZ_CONFIG=flavours` builds
+the `flavours` union in `fuzz/Cargo.toml` instead, and CI runs each row once per
+config. The knob belongs to the two runners — a bare `cargo miri test` takes
+`--features flavours` itself. The union forwards as the firmware's manifest does,
+with one difference it cannot dodge: this workspace always enables
+`rsk-device/display`, so two sites written `any(not(strict-config), display)` stay
+compiled here where a display-less `strict-config` image drops them.
+
+```sh
+FUZZ_CONFIG=flavours nix develop .#fuzz -c ./scripts/fuzz-all.sh
+```
+
 Neither suite gates a commit. CI runs both daily in the `deep-checks`
 workflow: the Miri suite, plus a timed libFuzzer pass over every target with
 the corpus carried between runs, crash artifacts uploaded. A separate
