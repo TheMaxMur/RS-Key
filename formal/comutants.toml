@@ -1408,21 +1408,20 @@ note = "spend_one_shot_pw1 stops clearing PW1 under the one-shot PW status, so o
 status = "patch"
 file = "crates/rsk-openpgp/src/pso.rs"
 find = """
-            if !sess.has_pw2 {
-                return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
-            }
-            (sess.algo_dec, sess.pk_dec)
+    let res = try_pso(dev, fs, sess, rng, presence, apdu, out);
+    if spends {
+        spend_one_shot_pw1(fs, sess);
+    }
 """
 replace = """
-            if !sess.has_pw2 {
-                return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
-            }
-            sess.has_pw1 = false;
-            (sess.algo_dec, sess.pk_dec)
+    let res = try_pso(dev, fs, sess, rng, presence, apdu, out);
+    if spends || (apdu.p1, apdu.p2) == (0x80, 0x86) {
+        spend_one_shot_pw1(fs, sess);
+    }
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
-expect = "gap"
-note = "GAP, and the row exists to say so. The model switch spends the REQUIREMENT ghost `psig` at the decipher reference; this is the implementation side of the same sentence — PSO:DECIPHER clearing `sess.has_pw1`, the PW1 no. 81 status that EF_PW_PRIV[0] = 0 makes valid for exactly one PSO:CDS. Unconditional where the model spends only under the one-shot status, so it is a superset of the modelled defect rather than a narrower one. Every command in the slice stayed green: nothing signs after a decipher, so a DECIPHER that consumed the signature PIN would ship — and its sibling BugSigPinNotSpent, which mutates whether that spend happens at all, is killed by this same slice. Direction read: the model half falls on `NoKeyOpOnTheAdminStatus`'s STRUCTURAL clause `held[\"pw1\"] = psig`, with held.pw1 TRUE against psig FALSE and `viol` still EMPTY — the implementation KEEPING a freshness the requirement retired, which is the SERVED direction. The code half would have answered 6982 to the next CDS, the REFUSED direction: the same split read from the other side, and the reason the two halves are two clauses."
+expect = "killed"
+note = "PSO:DECIPHER spends PW1 no. 81 the way PSO:CDS does — under the one-shot PW status only, as the model switch spends the REQUIREMENT ghost `psig` at the decipher reference `/\\ oneShotSig`. Was a GAP: nothing signed after a decipher, so every command in the slice stayed green. Killed by crates/rsk-openpgp/src/tests.rs `a_refused_pso_cds_spends_a_one_shot_pw1_like_a_yubikey`, whose last clause deciphers on PW1 no. 82 between a VERIFY no. 81 and a status check: 63C3 under this patch, measured 2026-09-23. Re-pointed at `pso()` the same day: the decipher arm moved into `try_pso`, which holds the session by `&`, and the old patch (`sess.has_pw1 = false` inside the arm) no longer compiled — `comutate.py run` answered build-broke, not a verdict."
 
 [comutant.BugUserStatusOpensAdmin]
 status = "patch"

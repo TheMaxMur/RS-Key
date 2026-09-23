@@ -82,7 +82,7 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-TRACE-004` | `R4cGateAnswers` | 2 of 9 | 0 | 2 of 9 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | 2 of 31 | 6 | 1 of 2 | 0 | 0 | 10 | 0 | — | MODELLED-ONLY |
 | `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | 2 of 26 | 2 | 1 of 2 | 0 | 0 | 10 | 0 | — | MODELLED-ONLY |
-| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | 2 of 31 | 5 | 1 of 2 | 0 | 0 | 10 | 0 | — | MODELLED-ONLY |
+| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | 2 of 31 | 6 | 1 of 2 | 0 | 0 | 10 | 0 | — | MODELLED-ONLY |
 | `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | 2 of 26 | 1 | 1 of 2 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | 2 of 26 | 2 | 1 of 2 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | 2 of 25 | 1 | 1 of 2 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |

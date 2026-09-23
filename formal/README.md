@@ -2931,7 +2931,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-TRACE-004` | `R4cGateAnswers` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 | 0 |
 | `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 7 | 6 | 0 | 0 | 0 |
 | `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
-| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 7 | 5 | 0 | 0 | 0 |
+| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 7 | 6 | 0 | 0 | 0 |
 | `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 1 | 0 | 0 | 0 |
 | `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 1 | 1 | 0 | 0 | 0 |
