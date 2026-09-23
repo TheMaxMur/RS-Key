@@ -40,6 +40,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OATH SEND REMAINING (`00 A5`) with no LIST or CALCULATE ALL page owed
+  answers `6D00`, as a YubiKey 5.8.0 does, and a page that is owed is served
+  whatever P1-P2 carry. With no page owed RS-Key answered `9000` and an empty
+  body under `00 00` and `6B00` under any other pair, and it refused an owed
+  page with `6B00` unless P1-P2 were `00 00`. ykman and Yubico Authenticator
+  send SEND REMAINING only after a `61xx`, with `00 00`, so they saw neither
+  difference.
+  `bcdDevice` 0x09ED → 0x09EE.
+
 - A SELECT of the OATH applet while it is already selected keeps a VALIDATE, as
   a YubiKey 5.8.0 does; selecting another application and coming back, a card
   reset, or a replug still locks it. RS-Key re-locked on every SELECT, so a

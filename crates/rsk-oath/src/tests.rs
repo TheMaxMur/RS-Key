@@ -1988,7 +1988,7 @@ fn list_and_calc_all_paginate_the_full_store() {
 
     // Any command other than SEND REMAINING abandons a half-read page: after a
     // LIST returns 61xx, an unrelated CALCULATE clears the cursor, so the next
-    // SEND REMAINING is an empty OK, not a stale resumed frame.
+    // SEND REMAINING finds no page owed (6D00), not a stale resumed frame.
     let (sw, _) = run_fw(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
     assert_eq!(sw, Sw::BYTES_REMAINING_00);
     let mut d = tlv(TAG_NAME, &acct_name(0));
@@ -1996,7 +1996,7 @@ fn list_and_calc_all_paginate_the_full_store() {
     let (sw, _) = run_fw(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x01, &d));
     assert_eq!(sw, Sw::OK);
     let (sw, body) = run_fw(&mut app, &mut fs, &apdu(INS_SEND_REMAINING, 0, 0, &[]));
-    assert_eq!(sw, Sw::OK);
+    assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
     assert!(body.is_empty(), "abandoned page must not resume");
 }
 
@@ -2573,3 +2573,8 @@ fn an_otp_pin_is_required_before_the_password_safe_is_served() {
 /// YubiKey 5.8.0, and drops the OTP PIN.
 #[path = "reselect_tests.rs"]
 mod reselect_tests;
+
+/// Paging a long response through SEND REMAINING, and what SEND REMAINING answers
+/// with no page owed, as on a YubiKey 5.8.0.
+#[path = "paging_tests.rs"]
+mod paging_tests;

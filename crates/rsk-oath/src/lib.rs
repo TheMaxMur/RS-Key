@@ -1290,12 +1290,12 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
             INS_CALCULATE => self.cmd_calculate(apdu, fs, res),
             INS_VALIDATE => self.cmd_validate(apdu, fs, res),
             INS_CALC_ALL => self.cmd_calculate_all(apdu, fs, res),
-            // YKOATH response chaining: continue the LIST / CALCULATE ALL page
-            // whose previous frame returned 61xx. No pending page => empty OK.
+            // YKOATH response chaining: continue the LIST / CALCULATE ALL page whose
+            // last frame returned 61xx. None owed is 6D00, as on a YubiKey 5.8.0.
             INS_SEND_REMAINING => match self.chain {
                 Chain::List { .. } => self.list_page(fs, res),
                 Chain::CalcAll { .. } => self.calc_all_page(fs, res),
-                Chain::None => Sw::OK,
+                Chain::None => Sw::INS_NOT_SUPPORTED,
             },
             INS_VERIFY_CODE => self.cmd_verify_code(apdu, fs),
             INS_VERIFY_PIN => self.cmd_verify_otp_pin(apdu, fs),
@@ -1325,11 +1325,11 @@ fn p1p2_ok(ins: u8, p1: u8, p2: u8) -> bool {
         // *both* bytes are set — `(00,02)`, `(01,00)`, `(02,00)`, `(00,FF)` and
         // `(FF,00)` all reach its handler, where every sibling wants `00 00`.
         INS_VALIDATE => p1 == 0x00 || p2 == 0x00,
-        INS_PUT | INS_DELETE | INS_SET_CODE | INS_RENAME | INS_LIST | INS_SEND_REMAINING
-        | INS_VERIFY_CODE | INS_VERIFY_PIN | INS_CHANGE_PIN | INS_SET_PIN | INS_GET_CREDENTIAL => {
+        INS_PUT | INS_DELETE | INS_SET_CODE | INS_RENAME | INS_LIST | INS_VERIFY_CODE
+        | INS_VERIFY_PIN | INS_CHANGE_PIN | INS_SET_PIN | INS_GET_CREDENTIAL => {
             p1 == 0x00 && p2 == 0x00
         }
-        _ => true,
+        _ => true, // SEND REMAINING too: a 5.8.0 never judges its pair (measured).
     }
 }
 

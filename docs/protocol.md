@@ -119,7 +119,8 @@ OATH `LIST` (`0xA1`) and `CALCULATE ALL` (`0xA4`) responses that outgrow one
 frame chain the YubiKey-OATH way instead: `61 XX` followed by **SEND REMAINING**
 (`00 A5 00 00`) rather than `GET RESPONSE`, matching what ykman / Yubico
 Authenticator send. A host that stops at the first frame still sees a valid
-(shorter) list.
+(shorter) list. SEND REMAINING never judges its P1-P2, and with no page owed it
+answers `6D00`, as a YubiKey 5.8.0 does.
 
 Seven OATH rules a host has to expect, all matching a YubiKey 5.7.4. `PUT`
 (`0x01`) is strict about the credential body — KEY TLV 16..=66 bytes (a secret
