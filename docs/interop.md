@@ -155,6 +155,11 @@ nowhere else:
   `Tolerance` (a live counter), `ExpectDiff` (both sides pinned to a pattern) and
   `Superset` (RS-Key may add, never lack), each with the reason it is allowed. A
   divergence that drifts off its pattern is a `RULE_VIOLATION`, not a pass.
+  Every emulator run holds the getInfo, ATR and DeviceInfo rules against a
+  YubiKey 5.8.0 frozen in
+  [`tests/interop/baseline/`](https://github.com/TheMaxMur/RS-Key/tree/main/tests/interop/baseline),
+  so one that stops describing the reference fails there, not at the next
+  two-key sweep.
 - [`tests/third_party.py`](https://github.com/TheMaxMur/RS-Key/blob/main/tests/third_party.py)
   — `DIVERGENCES` for the three vendored suites, as strict `xfail`, so one that
   gets fixed *fails* the run; and `INAPPLICABLE` for what RS-Key does not

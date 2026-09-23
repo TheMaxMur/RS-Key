@@ -238,3 +238,65 @@ def test_kv_lines_scrapes_prose():
     out = nz.kv_lines("Device type: YubiKey 5C NFC\nSerial number: 12345678\n", "ykman.info")
     assert out["ykman.info.device_type"] == "YubiKey 5C NFC"
     assert out["ykman.info.serial_number"] == "12345678"
+
+
+# ── diff --cells ─────────────────────────────────────────────────────────────
+
+def _labelled(label, **cells):
+    return {"meta": {"label": label}, "cells": cells}
+
+
+def test_cells_keeps_only_the_named_cells():
+    s = _labelled("real", a={"status": "ok", "parsed": {"x": 1}}, b={"status": "ok", "parsed": {"y": 2}})
+    assert list(diff.restrict(s, ["a"])["cells"]) == ["a"]
+
+
+def test_cells_refuses_a_cell_the_snapshot_did_not_capture():
+    # The emulator has no USB stack, so its descriptor cell skips. Named anyway,
+    # the comparison would run over whatever the other side happened to hold.
+    s = _labelled("rsk", usb_descriptors={"status": "skip", "parsed": {}})
+    with pytest.raises(SystemExit):
+        diff.restrict(s, ["usb_descriptors"])
+    with pytest.raises(SystemExit):
+        diff.restrict(s, ["mgmt_tlv"])
+
+
+def test_the_58_references_new_members_have_rules_of_their_own():
+    # A YubiKey 5.8.0 advertises these too, so the `key_0x*` catch-all (whose real
+    # side must be absent) would call every difference in them a rule violation.
+    assert dv.classify("fido.getinfo.key_0x1a", ["nfc", "smart-card", "usb"],
+                       ["smart-card", "usb"])["bucket"] == dv.ALLOWED
+    assert dv.classify("fido.getinfo.key_0x1a", ["smart-card", "usb"],
+                       ["smart-card"])["bucket"] == dv.RULE_VIOLATION
+    assert dv.classify("fido.getinfo.key_0x1f", ["2", "3"],
+                       ["1", "2", "255", "3"])["bucket"] == dv.ALLOWED
+    assert dv.classify("fido.getinfo.key_0x1f", ["2", "3"], ["3"])["bucket"] == dv.RULE_VIOLATION
+
+
+def test_previewsign_is_the_one_extension_rsk_may_lack():
+    real = ["credProtect", "hmac-secret", "previewSign"]
+    assert dv.classify("fido.getinfo.extensions", real,
+                       ["credProtect", "hmac-secret"])["bucket"] == dv.ALLOWED
+    assert dv.classify("fido.getinfo.extensions", real,
+                       ["credProtect", "previewSign"])["bucket"] == dv.UNEXPECTED
+
+
+def test_cells_refuses_an_empty_list():
+    # `--cells ,` compares zero fields and would report clean.
+    with pytest.raises(SystemExit):
+        diff.restrict(_labelled("real", a={"status": "ok", "parsed": {"x": 1}}), [])
+
+
+def test_a_member_both_keys_carry_is_compared_not_excused():
+    # RS-Key's extras are allowed while the reference lacks them. When it carries
+    # one too (5.8.0 has 0x18-0x1F), a difference is RS-Key's gap, reported as
+    # such, instead of a violation that blames the reference for having it.
+    assert dv.classify("fido.getinfo.key_0x2a", dv.MISSING, 7)["bucket"] == dv.ALLOWED
+    r = dv.classify("fido.getinfo.key_0x1d", 63, 64)
+    assert r["bucket"] == dv.UNEXPECTED and "reference carries" in r["detail"]
+    assert dv.classify("fido.getinfo.key_0x1d", 63, 63)["bucket"] == dv.MATCH
+
+
+def test_capacity_pins_are_anchored():
+    assert dv.classify("fido.getinfo.maxCredBlobLength", 32, 128)["bucket"] == dv.ALLOWED
+    assert dv.classify("fido.getinfo.maxCredBlobLength", 32, 1280)["bucket"] == dv.RULE_VIOLATION

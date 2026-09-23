@@ -45,6 +45,23 @@ def flatten(snapshot):
     return out
 
 
+def restrict(snapshot, cells):
+    """Keep only `cells`, refusing one either snapshot did not capture: skipped on
+    both sides, a cell compares zero fields and reports clean; on one, every field
+    reads as a gap the device may not have."""
+    if not cells:
+        sys.exit("--cells names no cell")
+    kept = {}
+    for name in cells:
+        c = snapshot.get("cells", {}).get(name)
+        if not c or c.get("status") != "ok":
+            label = snapshot.get("meta", {}).get("label", "?")
+            state = (c or {}).get("status", "absent")
+            sys.exit(f"--cells: {name} is {state} in the {label} snapshot")
+        kept[name] = c
+    return {**snapshot, "cells": kept}
+
+
 def compare(real_snap, rsk_snap):
     """Classify the union of canonical fields across the two snapshots."""
     real, rsk = flatten(real_snap), flatten(rsk_snap)
@@ -137,6 +154,8 @@ def main():
     ap.add_argument("rsk", help="snapshot JSON captured from RS-Key")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument("--markdown", action="store_true", help="docs/interop.md-style block")
+    ap.add_argument("--cells", help="compare only these cells, comma-separated; each must "
+                    "have been captured on both sides")
     args = ap.parse_args()
 
     with open(args.real) as f:
@@ -146,6 +165,10 @@ def main():
 
     if real_snap.get("meta", {}).get("label") == rsk_snap.get("meta", {}).get("label"):
         sys.exit("both snapshots carry the same --label; did you capture the same device twice?")
+
+    if args.cells:
+        names = [c for c in args.cells.split(",") if c]
+        real_snap, rsk_snap = restrict(real_snap, names), restrict(rsk_snap, names)
 
     results = compare(real_snap, rsk_snap)
     if args.json:

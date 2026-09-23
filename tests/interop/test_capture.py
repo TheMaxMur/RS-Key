@@ -9,6 +9,9 @@ the labelled device, and `_fw_from` labels the snapshot with its firmware. Run:
 
     nix develop -c python -m pytest tests/interop/test_capture.py -q
 """
+import json
+import os
+
 import capture
 
 SLOTS = """\
@@ -95,3 +98,39 @@ def test_is_rsk_knows_both_identities_and_never_a_yubikey():
     assert capture._is_rsk("RS-Key Security Key (emulator) 00 00")
     assert capture._is_rsk("YubiKey RSK OTP+FIDO+CCID")
     assert not capture._is_rsk("Yubico YubiKey OTP+FIDO+CCID")
+
+
+# ── the frozen baseline ──────────────────────────────────────────────────────
+
+def test_baseline_strips_serials_and_keeps_only_presence_of_encrypted_members():
+    cells = {
+        "mgmt_tlv": capture.cell(parsed={"mgmt.serial": 12345678, "mgmt.version": "5.8.0"},
+                                 raw="0302023b"),
+        "fido_getinfo": capture.cell(parsed={"fido.getinfo.key_0x19": "f06c25ef",
+                                             "fido.getinfo.minPINLength": 4}),
+        "usb_descriptors": capture.cell(parsed={"usb.serialNumber": "abc",
+                                                "usb.idVendor": "0x1050"}),
+    }
+    flat = {k: v for c in capture.strip_for_baseline(cells).values()
+            for k, v in c["parsed"].items()}
+    assert "mgmt.serial" not in flat and "usb.serialNumber" not in flat
+    assert flat["fido.getinfo.key_0x19"] == "<present>"
+    assert "fido.getinfo.key_0x1e" not in flat, "presence must not be invented"
+    assert flat["mgmt.version"] == "5.8.0" and flat["fido.getinfo.minPINLength"] == 4
+    assert all(c["raw"] == "" for c in cells.values())
+
+
+def test_the_frozen_baseline_holds_only_what_a_baseline_may():
+    # A re-freeze without `--baseline` would commit the serial, OATH account names
+    # and the PKCS#11 dump, and gitleaks knows none of them as a secret.
+    path = os.path.join(os.path.dirname(__file__), "baseline", "yubikey-5.8.0.json")
+    with open(path) as f:
+        snap = json.load(f)
+    assert snap["meta"]["baseline"] is True
+    assert set(snap["cells"]) == {"usb_descriptors", "fido_getinfo", "ccid_atr", "mgmt_tlv"}
+    for name, c in snap["cells"].items():
+        assert c["status"] == "ok" and c["raw"] == "", name
+        for key in capture.BASELINE_DROP:
+            assert key not in c["parsed"], f"{name} keeps {key}"
+        for key in capture.BASELINE_PRESENCE:
+            assert c["parsed"].get(key, "<present>") == "<present>", f"{name} keeps {key}'s bytes"

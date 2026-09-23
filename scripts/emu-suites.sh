@@ -3,7 +3,8 @@
 # Copyright (C) 2026 RS-Key contributors
 
 # Every suite that needs no board, in one command — the on-device `tests/*.py`,
-# the vendored OpenPGP conformance suite and ykman's device tests, against `tools/emu`.
+# the vendored OpenPGP conformance suite, ykman's device tests and the diff against
+# a frozen YubiKey 5.8.0 (tests/interop/baseline), against `tools/emu`.
 #
 # One script so CI is a thin caller and the local run is the same thing, the way
 # `check.sh` is for the gate. What is NOT here is the half that wants real USB
@@ -166,15 +167,34 @@ python tests/third_party.py ykman -q || yk=$?
 stop_emu
 
 echo
+echo "== interop: the emulator against the frozen YubiKey 5.8.0 (tests/interop/baseline)"
+# A fresh store is the factory state the key was frozen in, and `--yubico` makes
+# the ATR the YubiKey's, byte for byte. The USB descriptor cell skips here: this
+# socket transport has no USB stack for it to read.
+bl=0
+start_emu baseline --yubico
+python tests/emu.py tests/interop/capture.py --label rsk --baseline \
+  --out "$WORK/emu-baseline.json" >"$WORK/baseline.out" 2>&1 || bl=$?
+stop_emu
+if [ "$bl" -eq 0 ]; then
+  python tests/interop/diff.py tests/interop/baseline/yubikey-5.8.0.json \
+    "$WORK/emu-baseline.json" --cells fido_getinfo,ccid_atr,mgmt_tlv \
+    >>"$WORK/baseline.out" 2>&1 || bl=$?
+  tail -1 "$WORK/baseline.out"
+fi
+
+echo
 echo "on-device: $pass passed, $fail failed, $skip refused by name"
 if [ ${#failed[@]} -gt 0 ]; then
   printf 'failed: %s\n' "${failed[*]}"
 fi
 echo "third_party (openpgp): $tp_note"
 echo "third_party (ykman): pytest exit $yk"
+echo "interop baseline: exit $bl"
 
 [ "$fail" -eq 0 ] || exit 1
 [ "$tp" -eq 0 ] || exit 1
 [ "$yk" -eq 0 ] || exit 1
+[ "$bl" -eq 0 ] || { cat "$WORK/baseline.out"; exit 1; }
 echo
 echo "EMULATOR SUITES PASSED"

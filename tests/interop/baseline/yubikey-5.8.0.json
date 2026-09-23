@@ -1,0 +1,144 @@
+{
+  "meta": {
+    "label": "real",
+    "baseline": true,
+    "date": "2026-09-23",
+    "fido_aaguid": "f4ce5fc0-57d3-46f5-a736-efb7d5bc63b5",
+    "fw": "5.8.0",
+    "bcdDevice": "0x0580"
+  },
+  "cells": {
+    "usb_descriptors": {
+      "raw": "",
+      "parsed": {
+        "usb.idVendor": "0x1050",
+        "usb.idProduct": "0x0407",
+        "usb.bcdDevice": "0x0580",
+        "usb.manufacturer": "Yubico",
+        "usb.product": "YubiKey OTP+FIDO+CCID"
+      },
+      "status": "ok",
+      "transport": "usb",
+      "touch": false,
+      "mutating": false,
+      "detail": ""
+    },
+    "fido_getinfo": {
+      "raw": "",
+      "parsed": {
+        "fido.getinfo.versions": [
+          "FIDO_2_0",
+          "FIDO_2_1",
+          "FIDO_2_1_PRE",
+          "FIDO_2_3",
+          "U2F_V2"
+        ],
+        "fido.getinfo.extensions": [
+          "credBlob",
+          "credProtect",
+          "hmac-secret",
+          "hmac-secret-mc",
+          "largeBlobKey",
+          "minPinLength",
+          "previewSign",
+          "thirdPartyPayment"
+        ],
+        "fido.getinfo.aaguid": "f4ce5fc0-57d3-46f5-a736-efb7d5bc63b5",
+        "fido.getinfo.options.rk": true,
+        "fido.getinfo.options.up": true,
+        "fido.getinfo.options.plat": false,
+        "fido.getinfo.options.alwaysUv": false,
+        "fido.getinfo.options.credMgmt": true,
+        "fido.getinfo.options.authnrCfg": true,
+        "fido.getinfo.options.clientPin": false,
+        "fido.getinfo.options.largeBlobs": true,
+        "fido.getinfo.options.perCredMgmtRO": true,
+        "fido.getinfo.options.pinUvAuthToken": true,
+        "fido.getinfo.options.setMinPINLength": true,
+        "fido.getinfo.options.makeCredUvNotRqd": true,
+        "fido.getinfo.options.credentialMgmtPreview": true,
+        "fido.getinfo.maxMsgSize": 1536,
+        "fido.getinfo.pinUvAuthProtocols": [
+          "1",
+          "2"
+        ],
+        "fido.getinfo.maxCredentialCountInList": 8,
+        "fido.getinfo.maxCredentialIdLength": 128,
+        "fido.getinfo.transports": [
+          "nfc",
+          "smart-card",
+          "usb"
+        ],
+        "fido.getinfo.algorithms": [
+          "-35",
+          "-7",
+          "-8"
+        ],
+        "fido.getinfo.maxSerializedLargeBlobArray": 4096,
+        "fido.getinfo.forcePINChange": false,
+        "fido.getinfo.minPINLength": 4,
+        "fido.getinfo.firmwareVersion": 329728,
+        "fido.getinfo.maxCredBlobLength": 32,
+        "fido.getinfo.maxRPIDsForSetMinPINLength": 1,
+        "fido.getinfo.remainingDiscoverableCredentials": 100,
+        "fido.getinfo.attestationFormats": [
+          "packed"
+        ],
+        "fido.getinfo.key_0x18": false,
+        "fido.getinfo.key_0x19": "<present>",
+        "fido.getinfo.key_0x1a": [
+          "nfc",
+          "smart-card",
+          "usb"
+        ],
+        "fido.getinfo.key_0x1b": false,
+        "fido.getinfo.key_0x1d": 63,
+        "fido.getinfo.key_0x1e": "<present>",
+        "fido.getinfo.key_0x1f": [
+          "2",
+          "3"
+        ]
+      },
+      "status": "ok",
+      "transport": "hid",
+      "touch": false,
+      "mutating": false,
+      "detail": ""
+    },
+    "ccid_atr": {
+      "raw": "",
+      "parsed": {
+        "ccid.atr": "3bfd1300008131fe158073c021c057597562694b657940"
+      },
+      "status": "ok",
+      "transport": "ccid",
+      "touch": false,
+      "mutating": false,
+      "detail": ""
+    },
+    "mgmt_tlv": {
+      "raw": "",
+      "parsed": {
+        "mgmt.usbSupported": 5951,
+        "mgmt.usbEnabled": 5951,
+        "mgmt.formFactor": 3,
+        "mgmt.version": "5.8.0",
+        "mgmt.autoEjectTimeout": 0,
+        "mgmt.chalRespTimeout": 15,
+        "mgmt.deviceFlags": 0,
+        "mgmt.nfcSupported": 1855,
+        "mgmt.nfcEnabled": 1855,
+        "mgmt.configLock": 0,
+        "mgmt.tag_0xf": "00",
+        "mgmt.tag_0x20": "000000",
+        "mgmt.tag_0x21": "000000",
+        "mgmt.tag_0x10": "01"
+      },
+      "status": "ok",
+      "transport": "ccid",
+      "touch": false,
+      "mutating": false,
+      "detail": ""
+    }
+  }
+}

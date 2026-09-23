@@ -408,6 +408,9 @@ def install():
     fake = types.ModuleType("hid")
     fake.device = EmuHid
     fake.enumerate = _enumerate
+    # `_enumerate`'s descriptor fields are placeholders, not the emulator's; a
+    # caller that would report them as USB descriptors checks this first.
+    fake.NO_USB_STACK = True
     sys.modules["hid"] = fake
     _install_smartcard()
     _patch_replug()

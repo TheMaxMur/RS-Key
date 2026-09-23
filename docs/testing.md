@@ -915,6 +915,12 @@ nightly. It is the answer to the oldest gap in this table: `tests/*.py` were
 hand-run against a flashed key, so nothing caught a *test* that had rotted — and
 several had.
 
+Its last session diffs a fresh emulator against a YubiKey 5.8.0 frozen in
+`tests/interop/baseline/`: getInfo, the ATR and the management DeviceInfo. A
+change to what the device advertises fails the run unless a rule in
+`tests/interop/divergences.py` allows it. That directory's README names the
+rules that allow any value — written for a key whose state can differ.
+
 It builds the emulator with `debug_assert!` and overflow checks on, and so does
 `scripts/usbip-suites.sh` below. A plain `--release` build turns both off, and a
 false assertion or a wrapped counter in an applet then answers on as if nothing

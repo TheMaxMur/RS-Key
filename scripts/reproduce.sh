@@ -58,7 +58,7 @@ PHASES=(
   "model-safety|model|~110 min|TLC over the safety tier: the eight modules, their mutants, the solo twins and the recorded floors|./formal/run-tlc.sh safety"
   "model-liveness|model|~35 min|TLC over the liveness tier: the temporal properties and one mutant per property|./formal/run-tlc.sh liveness"
   "comutants|deep|~60 min|co-refutation: every model defect injected into production Rust, each patch expected to redden a named test|python scripts/comutate.py run"
-  "emu|deep|~15 min|the on-device suites and the vendored OpenPGP conformance suite, against tools/emu instead of a board|./scripts/emu-suites.sh"
+  "emu|deep|~15 min|the on-device suites, the vendored OpenPGP and ykman suites and the diff against a frozen YubiKey 5.8.0, against tools/emu instead of a board|./scripts/emu-suites.sh"
   "proofs-all|deep|~8 h|the weekly Kani roster: every harness in every proven crate, in the four tiers CI shards it into|./scripts/kani.sh light1 && ./scripts/kani.sh light2 && ./scripts/kani.sh light3 && ./scripts/kani.sh heavy"
   "coverage|deep|~20 min|host-crate line coverage against the floor the weekly job holds|cargo llvm-cov --summary-only --fail-under-lines 80 --target \$HOST_TRIPLE --workspace --exclude firmware --exclude rsk-wipe"
   "repro|deep|~30 min|the hermetic firmware build is bit-identical on a rebuild|nix build .#firmware -o result-repro && nix build .#firmware --rebuild"
@@ -87,7 +87,7 @@ TIERS=(
 REFUSED=(
   "on-device suites|the numbered tests/*.py drive real USB and real flash on an RP2350 board; tools/emu covers 48 of them and the emu phase runs those"
   "USB-stack suites|tests that need a host USB stack run tools/emu --usbip inside a Linux guest with vhci_hcd and KVM (scripts/usbip-suites.sh); a macOS or hosted-runner checkout has neither"
-  "two-key interop|the RS-Key/YubiKey differential cells under tests/interop need both keys attached; the allow-list they are held to is checked by the gate phase, the cells themselves are not run"
+  "two-key interop|the RS-Key/YubiKey differential cells under tests/interop need both keys attached; the emu phase runs three of them (getInfo, ATR, DeviceInfo) against a frozen YubiKey 5.8.0, the rest are not run"
   "fuzz corpus coverage|scripts/fuzz-coverage.sh measures the corpus the weekly job has accumulated across runs, which is a CI cache artefact and not a property of this checkout"
   "CodeQL|the buildless CodeQL pass runs on GitHub's own infrastructure, is advisory, and has no local entry point"
   "release provenance|signing, attestation and the published-artifact half of the release manifest need a tag and the maintainer's signing identity; scripts/release_gate.py checks the recipe, not a release"

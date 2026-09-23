@@ -89,6 +89,20 @@ class ExpectDiff(Rule):
         return RULE_VIOLATION, "; ".join(bad)
 
 
+class RsKeyExtra(Rule):
+    """A member RS-Key advertises that the reference may lack: allowed while the
+    reference lacks it. Once the reference carries it too, a difference is a gap
+    in RS-Key — not a stale pin blaming the reference, which ExpectDiff would say."""
+    kind = "RSK_EXTRA"
+
+    def classify(self, real, rsk):
+        if real == rsk:
+            return MATCH, None
+        if real == MISSING:
+            return ALLOWED, None
+        return UNEXPECTED, "the reference carries this member too"
+
+
 class Superset(Rule):
     kind = "SUPERSET"
 
@@ -164,11 +178,14 @@ RULES = [
                 "RS-Key bcdDevice is an internal build counter, not a firmware version")),
     ("usb.product", ExpectDiff(None, r"(?i)yubikey", "product strings differ; RS-Key carries 'RSK'")),
     ("usb.manufacturer", ExpectDiff(None, None, "manufacturer string may differ")),
-    ("ccid.atr", ExpectDiff(None, None, "ATR historical bytes differ (real spells 'YubiKey')")),
+    # rsk-usb's ATR_YUBIKEY (a YubiKey's, byte for byte) or ATR_RSKEY (relabelled).
+    ("ccid.atr", ExpectDiff(None, r"^(3bfd1300008131fe158073c021c057597562694b657940"
+                                  r"|3bfc1300008131fe158073c021c05652532d4b65794b)$",
+                            "ATR historical bytes differ (real spells 'YubiKey')")),
     ("ccid.reader", ExpectDiff(None, None, "PC/SC reader name differs")),
     ("mgmt.serial", ExpectDiff(r"\d+", None, "serial is chip-id-derived and differs")),
     ("mgmt.formFactor",
-     ExpectDiff(None, None, "RS-Key hardcodes USB-A keychain (0x01) vs the real 5C's USB-C")),
+     ExpectDiff(None, r"^1$", "RS-Key hardcodes USB-A keychain (0x01) vs the real 5C's USB-C")),
     ("mgmt.nfcSupported", ExpectDiff(None, r"(?i)(<missing>|^0$|none)", "RS-Key has no NFC")),
     ("mgmt.nfcEnabled", ExpectDiff(None, r"(?i)(<missing>|^0$|none)", "RS-Key has no NFC")),
     ("fido.getinfo.aaguid",
@@ -176,21 +193,22 @@ RULES = [
     ("openpgp.aid", ExpectDiff(None, None, "OpenPGP AID manufacturer + serial bytes differ")),
 
     # ── capacity constants — RS-Key is larger, expected to differ ──────────
-    ("fido.getinfo.maxMsgSize", ExpectDiff(None, r"7609", "RS-Key maxMsgSize 7609 vs real ~1200")),
+    ("fido.getinfo.maxMsgSize", ExpectDiff(None, r"^7609$", "RS-Key maxMsgSize 7609 vs real ~1200")),
     ("fido.getinfo.maxCredentialCountInList",
-     ExpectDiff(None, r"16", "RS-Key allows 16 vs real 8")),
-    ("fido.getinfo.maxCredentialIdLength", ExpectDiff(None, None, "credential-id box length differs")),
+     ExpectDiff(None, r"^16$", "RS-Key allows 16 vs real 8")),
+    ("fido.getinfo.maxCredentialIdLength",
+     ExpectDiff(None, r"^\d+$", "credential-id box length differs; a vanished field does not")),
     ("fido.getinfo.maxSerializedLargeBlobArray",
-     ExpectDiff(None, r"4078",
+     ExpectDiff(None, r"^4078$",
                 "RS-Key advertises its store's true per-value ceiling, rsk_fs::MAX_VALUE_BYTES")),
-    ("fido.getinfo.maxCredBlobLength", ExpectDiff(None, r"128", "RS-Key 128 vs real 32")),
+    ("fido.getinfo.maxCredBlobLength", ExpectDiff(None, r"^128$", "RS-Key 128 vs real 32")),
     # A YubiKey publishes neither 0x15 nor the 0xFF entry in 0x1F; RS-Key implements
     # the arm, and §6.11.3 ties the two. Pinned EMPTY: the ids are 64-bit, and
     # Yubico's Android SDK fails the whole getInfo on one (issue #111).
     ("fido.getinfo.vendorPrototypeConfigCommands",
      ExpectDiff(None, r"^$",
                 "RS-Key implements vendorPrototype, so §6.11.3 needs 0x15 present; §6.4 lets it be empty")),
-    ("fido.getinfo.maxRPIDsForSetMinPINLength", ExpectDiff(None, None, "RS-Key 8 vs real 1")),
+    ("fido.getinfo.maxRPIDsForSetMinPINLength", ExpectDiff(None, r"^8$", "RS-Key 8 vs real 1")),
 
     # ── FIDO getInfo option skew (build-config), each side pinned ──────────
     # alwaysUv is a runtime toggle on BOTH keys (`ykman fido config
@@ -218,13 +236,25 @@ RULES = [
      Superset("RS-Key drops U2F_V2 under alwaysUv (CTAP 2.1 §7.2.4) and the legacy FIDO_2_1_PRE, "
               "and adds FIDO_2_3 (never FIDO_2_2 — CTAP 2.3 §6.4 forbids that string)",
               exclude={"U2F_V2", "FIDO_2_1_PRE"})),
-    ("fido.getinfo.extensions", Superset("RS-Key extension set is a superset")),
+    ("fido.getinfo.extensions",
+     Superset("RS-Key extension set is a superset, less previewSign: YubiKey 5.8's "
+              "signing extension, a WebAuthn draft RS-Key does not implement",
+              exclude={"previewSign"})),
     ("fido.getinfo.algorithms", Superset("RS-Key advertises a superset (ES384/512/256K, +ML-DSA)")),
     ("fido.getinfo.attestationFormats", Superset("attestation-format set; order-insensitive")),
     # Both keys route the FIDO AID onto CCID, so both list `smart-card`; the radio is
     # the only difference left. `_scalar` sorts, hence `smart-card,usb`.
     ("fido.getinfo.transports",
      ExpectDiff(r"nfc", r"^smart-card,usb$", "RS-Key has no radio; a real key also lists nfc")),
+    # 0x1A transportsForReset and 0x1F authenticatorConfigCommands, which 5.8.0
+    # advertises too: ahead of the `key_0x*` catch-all, whose real side must be absent.
+    ("fido.getinfo.key_0x1a",
+     ExpectDiff(r"nfc|<missing>", r"^smart-card,usb$",
+                "transportsForReset: the same radio difference; a pre-5.8 reference lacks it")),
+    ("fido.getinfo.key_0x1f",
+     ExpectDiff(r"^(2,3|<missing>)$", r"^1,2,255,3$",
+                "authenticatorConfigCommands: RS-Key also serves enableEnterpriseAttestation "
+                "(1) and vendorPrototype (0xFF)")),
     ("fido.getinfo.certifications",
      ExpectDiff(None, r"(?i)<missing>", "RS-Key advertises no FIDO/FIPS certification levels")),
 
@@ -248,10 +278,7 @@ RULES = [
     ("openpgp.touch_policy", Ignore("per-key UIF, rendered only for a slot that holds a key")),
 
     # ── extra getInfo fields RS-Key advertises that the reference lacks ────
-    # (the reverse — real has a field rsk lacks — fails the real-side pin below
-    #  and surfaces as a RULE_VIOLATION, which is what we want.)
-    ("fido.getinfo.key_0x*",
-     ExpectDiff(r"<missing>", None, "RS-Key advertises an extra/experimental getInfo field")),
+    ("fido.getinfo.key_0x*", RsKeyExtra("RS-Key advertises a getInfo member the reference lacks")),
     ("fido.getinfo.options.ep",
      ExpectDiff(r"<missing>", None, "RS-Key advertises the enterprise-attestation (ep) option")),
     ("fido.getinfo.options.plat",
@@ -270,7 +297,8 @@ RULES = [
                                     "a host-written config is echoed without the device-flags tag; "
                                     "unconfigured, both report 00")),
     ("mgmt.configLock", ExpectDiff(None, r"(?i)<missing>", "RS-Key's DeviceInfo omits the config-lock tag")),
-    ("mgmt.tag_0x*", Ignore("vendor-specific DeviceInfo tags differ between models")),
+    ("mgmt.tag_0x*", Ignore("DeviceInfo tags differ between models; 0x10 is yubikit's "
+                            "MORE_DATA paging flag, and only page 0 is read")),
 
     # ── gpg-card / OpenSC views of the same two cards ─────────────────────
     ("openpgp.gpg.serial_number", Ignore("the OpenPGP AID embeds the chip-derived serial")),
