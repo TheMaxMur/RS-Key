@@ -86,3 +86,12 @@ def test_fw_label_reads_the_version_ykman_info_prints():
     # The ykman cell keeps its own namespace; `mgmt.*` is the raw TLV's.
     parsed = capture.nz.kv_lines("Firmware version: 5.8.0\n", "ykman.info")
     assert capture._fw_from({"ykman_info": {"parsed": parsed}}) == "5.8.0"
+
+
+def test_is_rsk_knows_both_identities_and_never_a_yubikey():
+    # The default identity and the emulator are named `RS-Key …`; only the
+    # VIDPID=Yubikey5 build carries `RSK`. Knowing the one marker left both of
+    # them unrecognised, so a capture labelled `rsk` found no device at all.
+    assert capture._is_rsk("RS-Key Security Key (emulator) 00 00")
+    assert capture._is_rsk("YubiKey RSK OTP+FIDO+CCID")
+    assert not capture._is_rsk("Yubico YubiKey OTP+FIDO+CCID")
