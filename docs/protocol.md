@@ -108,12 +108,15 @@ segment is starting a **new** chain, not continuing the old one.
 
 ![ISO-7816 short-APDU cases. Every command opens with the four-byte header CLA INS P1 P2. Case 1 is header only; Case 2 appends a one-byte Le (expected response length, 00 meaning up to 256); Case 3 appends Lc then Lc bytes of command data; Case 4 appends Lc, data, and Le. SELECT is a Case 4 command, VERIFY a Case 3 command](images/apdu-cases.svg)
 
-A success body longer than the request's `Le` (including a Case-3 command that
-carries no `Le` at all, capped at 256) is returned with ISO-7816 **response
-chaining**: the first chunk ships with status `61 XX` (`XX` = further bytes
-available, `00` = 256+), and the host issues `GET RESPONSE` (`00 C0 00 00 <Le>`)
-until `9000`. Any `GET DATA` reading a certificate object over 256 bytes chains
-this way, so a host that sends `GET DATA` without an `Le` must still follow `61xx`.
+PIV, OpenPGP and CTAP over CCID answer a success body longer than the request's
+`Le` with ISO-7816 **response chaining**: the first chunk ships with status
+`61 XX` (`XX` = further bytes available, `00` = 256+), and the host issues
+`GET RESPONSE` (`00 C0 00 00 <Le>`) until `9000`. A short command with no `Le`
+(Case 1 or Case 3) is capped at 256; an extended one with no `Le` is not, and gets
+the whole body in one frame, as a YubiKey 5.8.0 answers it. `GET RESPONSE` is cut
+by its own encoding the same way. A certificate object over 256 bytes chains when
+it is read with a short `GET DATA`, so a host that sends a short `GET DATA` without
+an `Le` must still follow `61xx`.
 
 OATH `LIST` (`0xA1`) and `CALCULATE ALL` (`0xA4`) responses that outgrow the
 command's `Le` chain the YubiKey-OATH way instead: `61 XX` followed by **SEND
@@ -594,8 +597,8 @@ interface, so this is reachable over plain USB.
 than 255 bytes arrives in `CLA|0x10` segments; a response longer than the short
 `Le` ships its first chunk with `61xx` and the rest through GET RESPONSE
 (`00 C0 00 00 <Le>`). A bare getInfo is already ~520 bytes, so a client that does
-not follow `61xx` sees nothing useful. Extended-length APDUs work too, in one
-exchange each way.
+not follow `61xx` sees nothing useful. An extended-length APDU with no `Le`, or
+`Le` 0000, gets the whole response in one exchange.
 
 **No `91 00` keep-alive is ever returned.** A touch wait blocks inside the
 exchange while the CCID transport streams T=1 time extensions, exactly as an OATH

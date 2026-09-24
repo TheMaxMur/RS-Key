@@ -444,7 +444,7 @@ impl<'a> OathApplet<'a> {
         self.chain = Chain::List { ext };
         self.chain_at = 0;
         self.chain_skip = 0;
-        self.page(fs, res, frame_cap(apdu))
+        self.page(fs, res, apdu.frame_cap())
     }
 
     /// One frame of the pending LIST / CALCULATE ALL: up to `cap` bytes from where the
@@ -700,7 +700,7 @@ impl<'a> OathApplet<'a> {
         };
         self.chain_at = 0;
         self.chain_skip = 0;
-        self.page(fs, res, frame_cap(apdu))
+        self.page(fs, res, apdu.frame_cap())
     }
 
     /// Raise every only-increasing credential's mark to `chal`, in store order,
@@ -1230,7 +1230,7 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
             // YKOATH response chaining: continue the LIST / CALCULATE ALL page whose
             // last frame returned 61xx. None owed is 6D00, as on a YubiKey 5.8.0.
             INS_SEND_REMAINING => match self.chain {
-                Chain::List { .. } | Chain::CalcAll { .. } => self.page(fs, res, frame_cap(apdu)),
+                Chain::List { .. } | Chain::CalcAll { .. } => self.page(fs, res, apdu.frame_cap()),
                 Chain::None => Sw::INS_NOT_SUPPORTED,
             },
             INS_VERIFY_CODE => self.cmd_verify_code(apdu, fs),
@@ -1390,17 +1390,6 @@ fn oath_hmac(alg: u8, key: &[u8], msg: &[u8], out: &mut [u8; 64]) -> Option<usiz
 /// The widest LIST / CALCULATE ALL entry: a 255-byte name TLV and a full-width
 /// response TLV (a SHA-512 MAC and its digits byte).
 const PAGE_ENTRY_MAX: usize = 2 + 255 + 2 + 1 + 64;
-
-/// The most one response frame may carry for `apdu`, as a YubiKey 5.8.0 cuts it:
-/// its `Ne`, where a short command with no `Le` still means 256 and an extended one
-/// means no cap below the transport's buffer.
-fn frame_cap(apdu: &Apdu) -> usize {
-    match (apdu.ne, apdu.extended) {
-        (0, false) => rsk_sdk::apdu::NE_SHORT_MAX,
-        (0, true) => usize::MAX,
-        (ne, _) => ne,
-    }
-}
 
 /// The whole entry `chain` answers for the credential at `fid`, built into `out`;
 /// its length, or `None` for a credential the read leaves out. Pure, so a frame

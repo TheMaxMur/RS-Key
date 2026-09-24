@@ -5,7 +5,7 @@
 
 use zeroize::Zeroize;
 
-use crate::apdu::{Apdu, NE_SHORT_MAX};
+use crate::apdu::Apdu;
 use crate::sw::Sw;
 
 /// A response buffer an applet writes its RAPDU body into. The status word is
@@ -99,8 +99,8 @@ pub trait Applet<C> {
     fn deselect(&mut self, _ctx: &mut C) {}
     /// Whether the dispatcher may apply ISO 7816-4 outgoing response chaining
     /// (a `61xx` status + GET RESPONSE `0xC0` follow-ups) when a response body
-    /// exceeds the command's short `Le`. Default off — only applets whose host
-    /// stacks speak standard GET RESPONSE opt in (OpenPGP for `gpg`/`scdaemon`,
+    /// exceeds the command's [`Apdu::frame_cap`]. Default off — only applets whose
+    /// host stacks speak standard GET RESPONSE opt in (OpenPGP for `gpg`/`scdaemon`,
     /// PIV for OpenSC/`ykman`). OATH has its own SEND REMAINING (`0xA5`) scheme
     /// and stays off; the vendor/rescue tools use extended `Le` so never need it.
     fn response_chaining(&self) -> bool {
@@ -155,8 +155,8 @@ pub struct Dispatcher {
     chain: [u8; CHAIN_BUF_SIZE],
     chain_len: usize,
     /// Outgoing response chaining: when an opted-in applet's body exceeds the
-    /// command's short `Le`, the first `Le` bytes ship with `61xx` and this
-    /// holds the remainder for the GET RESPONSE (`0xC0`) follow-ups.
+    /// command's frame cap, the bytes within it ship with `61xx` and this holds
+    /// the remainder for the GET RESPONSE (`0xC0`) follow-ups.
     pending: [u8; RESP_CHAIN_CAP],
     pending_len: usize,
     pending_off: usize,
@@ -263,7 +263,7 @@ impl Dispatcher {
         // GET RESPONSE (0xC0): hand back the next slice of a chained response
         // before touching the applets — it is a transport command, not theirs.
         if apdu.ins == 0xC0 && self.pending_off < self.pending_len {
-            return self.serve_pending(apdu.ne, res);
+            return self.serve_pending(apdu.frame_cap(), res);
         }
         // Any other command abandons a partially-read chained response.
         self.clear_pending();
@@ -365,7 +365,7 @@ impl Dispatcher {
             };
             // A chained command can carry private-key IMPORT data.
             self.chain[..total].zeroize();
-            return self.maybe_chain(sw, apdu.ne, chain_ok, res);
+            return self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res);
         }
 
         // SELECT by AID, ISO 7816-4 truncated: the candidate must be a PREFIX of
@@ -394,7 +394,7 @@ impl Dispatcher {
                     self.current = Some(i);
                     let chain_ok = applets[i].response_chaining();
                     let sw = applets[i].select(reselect, ctx, res);
-                    self.maybe_chain(sw, apdu.ne, chain_ok, res)
+                    self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res)
                 }
                 None => Sw::FILE_NOT_FOUND,
             };
@@ -414,7 +414,7 @@ impl Dispatcher {
             Some(i) if self.selectable(i) => {
                 let chain_ok = applets[i].response_chaining();
                 let sw = applets[i].process(&apdu, ctx, res);
-                self.maybe_chain(sw, apdu.ne, chain_ok, res)
+                self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res)
             }
             _ => Sw::FILE_NOT_FOUND,
         }
@@ -445,12 +445,12 @@ impl Dispatcher {
         self.chaining = false;
     }
 
-    /// Serve the next chunk of a chained response to a GET RESPONSE (`0xC0`).
-    /// Returns `61xx` while bytes remain, then the original status word.
-    fn serve_pending(&mut self, ne: usize, res: &mut ResBuf) -> Sw {
-        let want = if ne == 0 { NE_SHORT_MAX } else { ne };
+    /// Serve the next chunk of a chained response to a GET RESPONSE (`0xC0`): as
+    /// much as its own [`Apdu::frame_cap`] allows and `res` holds. Returns `61xx`
+    /// while bytes remain, then the original status word.
+    fn serve_pending(&mut self, cap: usize, res: &mut ResBuf) -> Sw {
         let remaining = self.pending_len - self.pending_off;
-        let take = want.min(remaining);
+        let take = cap.min(remaining).min(res.capacity() - res.len());
         res.extend(&self.pending[self.pending_off..self.pending_off + take]);
         self.pending_off += take;
         let left = self.pending_len - self.pending_off;
@@ -463,31 +463,28 @@ impl Dispatcher {
         }
     }
 
-    /// If an opted-in applet's success body overruns the command's short `Le`,
-    /// hold the tail for GET RESPONSE and ship the first `Le` bytes with `61xx`.
-    /// Otherwise the response (and status) pass through unchanged — so extended
-    /// `Le` consumers (ykman, our APDU tests) and non-chaining applets are
-    /// byte-for-byte unaffected.
+    /// If an opted-in applet's success body overruns the command's `cap` (its
+    /// [`Apdu::frame_cap`]), hold the tail for GET RESPONSE and ship the first `cap`
+    /// bytes with `61xx`. Otherwise the response (and status) pass through
+    /// unchanged, as they always do for an applet that does not chain.
     ///
-    /// `ne == 0` is a case-3 command (data, no `Le`): ISO 7816-4 still caps its
-    /// response at the short maximum, so a larger body must chain via `61xx` too.
-    /// yubikey.rs / age-plugin read slot certs this way and drop any slot whose
-    /// cert overruns 256 bytes if we dump it whole instead of chaining.
-    fn maybe_chain(&mut self, sw: Sw, ne: usize, chaining_ok: bool, res: &mut ResBuf) -> Sw {
-        let ne = if ne == 0 { NE_SHORT_MAX } else { ne };
-        if !chaining_ok || !sw.is_ok() || res.len() <= ne {
+    /// A short case-3 command (data, no `Le`) is capped at 256, so a larger body
+    /// chains via `61xx` too: yubikey.rs / age-plugin read slot certs this way and
+    /// drop any slot whose cert overruns 256 bytes if we dump it whole instead.
+    fn maybe_chain(&mut self, sw: Sw, cap: usize, chaining_ok: bool, res: &mut ResBuf) -> Sw {
+        if !chaining_ok || !sw.is_ok() || res.len() <= cap {
             return sw;
         }
-        let tail_len = res.len() - ne;
+        let tail_len = res.len() - cap;
         if tail_len > self.pending.len() {
             // Cannot buffer the remainder; leave the response intact (legacy).
             return sw;
         }
-        self.pending[..tail_len].copy_from_slice(&res.as_slice()[ne..]);
+        self.pending[..tail_len].copy_from_slice(&res.as_slice()[cap..]);
         self.pending_len = tail_len;
         self.pending_off = 0;
         self.pending_sw = sw;
-        res.truncate(ne);
+        res.truncate(cap);
         bytes_remaining(tail_len)
     }
 }

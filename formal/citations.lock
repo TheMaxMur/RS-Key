@@ -794,7 +794,7 @@ formal/README.md	crates/rsk-oath/src/lib.rs	1097-1098	self.validated = false;	se
 formal/README.md	crates/rsk-oath/src/lib.rs	1161-1165	/// `select` recomputes `validated` from whether a code is set.	self.chain = Chain::None;
 formal/README.md	crates/rsk-oath/src/lib.rs	1163-1163	self.validated = false;	self.validated = false;
 formal/README.md	crates/rsk-oath/src/lib.rs	1199-1199	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
-formal/README.md	crates/rsk-oath/src/lib.rs	1637-1637	if deleted > RESET_MAX_DELETES {	if deleted > RESET_MAX_DELETES {
+formal/README.md	crates/rsk-oath/src/lib.rs	1626-1626	if deleted > RESET_MAX_DELETES {	if deleted > RESET_MAX_DELETES {
 formal/README.md	crates/rsk-openpgp/src/internalaut.rs	45-48	// §7.2.13 names PW1 no. 82 and nothing else; PW3 used to stand in, and a	return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
 formal/README.md	crates/rsk-openpgp/src/keys.rs	411-425	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
 formal/README.md	crates/rsk-openpgp/src/lib.rs	354-357	/// valid AID and an ICC power cycle clear them (the dispatcher's `deselect`).	self.reset_session();

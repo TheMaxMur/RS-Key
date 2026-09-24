@@ -32,8 +32,7 @@ pub struct Apdu<'a> {
     pub ne: usize,
     pub data: &'a [u8],
     /// Whether the command used the extended length encoding. An absent `Le` leaves
-    /// `ne` 0 in both encodings, and what that allows differs by applet — OATH, as
-    /// a YubiKey 5.8.0, caps a short command at [`NE_SHORT_MAX`] and not an extended one.
+    /// `ne` 0 in both encodings, and [`Self::frame_cap`] is where they differ.
     pub extended: bool,
 }
 
@@ -125,6 +124,17 @@ impl<'a> Apdu<'a> {
     #[inline]
     pub fn is_secure_messaging(&self) -> bool {
         self.cla & CLA_SM_MASK != 0
+    }
+
+    /// The most one response frame may carry for this command, as a YubiKey 5.8.0
+    /// cuts it: its `Ne`, where a short command with no `Le` still means 256 and an
+    /// extended one means no cap below the transport's buffer.
+    pub fn frame_cap(&self) -> usize {
+        match (self.ne, self.extended) {
+            (0, false) => NE_SHORT_MAX,
+            (0, true) => usize::MAX,
+            (ne, _) => ne,
+        }
     }
 }
 

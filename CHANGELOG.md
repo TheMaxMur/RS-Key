@@ -40,6 +40,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV, OpenPGP and CTAP over CCID answer an extended command that carries no
+  `Le` with the whole response in one frame, as a YubiKey 5.8.0 does, and an
+  extended GET RESPONSE with no `Le` takes the rest of a chained response
+  whole. RS-Key cut both at 256 bytes and chained the rest through `61xx`.
+  python-fido2's `CtapPcscDevice` with `use_ext_apdu` sends exactly that form
+  and does not follow `61xx`, so its getInfo failed outright; ykman and Yubico
+  Authenticator send it too over USB, and paid a GET RESPONSE round trip per
+  256 bytes of a certificate or an RSA public key. A short command is still cut
+  at its `Le`, or at 256 where it carries none.
+  `bcdDevice` 0x09EF → 0x09F0.
+
 - OATH LIST and CALCULATE ALL cap each response frame at the command's `Le`,
   as a YubiKey 5.8.0 does: a short command with no `Le` gets 256 bytes, and
   the rest comes through SEND REMAINING, cut at the byte and with the bytes

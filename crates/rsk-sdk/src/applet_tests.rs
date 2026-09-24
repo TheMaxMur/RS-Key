@@ -1287,3 +1287,6 @@ fn a_chain_past_the_reassembly_buffer_is_a_length_error_at_either_end() {
         "a final segment past the buffer"
     );
 }
+
+#[path = "frames_tests.rs"]
+mod frames;

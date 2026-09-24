@@ -347,9 +347,9 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         PIV_AID
     }
 
-    /// PIV GET DATA (certificates) routinely exceeds 256 bytes; OpenSC/`ykman`
-    /// read it with a short `Le` and standard GET RESPONSE, so opt into the
-    /// dispatcher's response chaining.
+    /// PIV GET DATA (certificates) routinely exceeds 256 bytes, and a short
+    /// command (OpenSC, yubikey.rs) reads the rest with standard GET RESPONSE,
+    /// so opt into the dispatcher's response chaining.
     fn response_chaining(&self) -> bool {
         true
     }
