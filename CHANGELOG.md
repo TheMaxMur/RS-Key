@@ -40,6 +40,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV GENERATE replaces a slot's certificate only when that certificate
+  carries the key being replaced, and keeps any other — as a YubiKey keeps
+  every certificate, since its GENERATE writes none. The keep-a-moved-key's-
+  certificate rule of 0x09FD held only until the slot got a key: an IMPORT, a key
+  moved in, or one GENERATE, and the next GENERATE wrote its self-signed
+  certificate over the one for the key that had moved away. Regenerating the key
+  a slot's certificate is for — the one the last GENERATE wrote, say — still
+  writes a fresh one. A certificate stored compressed, one for a key an IMPORT
+  has since replaced, or one beside a key the firmware cannot read back stays,
+  and the new key gets none: write one with `ykman piv certificates generate`.
+  `bcdDevice` 0x0A01 → 0x0A02.
+
 - The Management applet has no device-wide reset any more, as a YubiKey 5.8.0
   has none: INS `1E` answers `9000` and does nothing, whatever the P1-P2 or
   data under class `00` or `80`, and INS `1F` (ykman's `device_reset`, which it
@@ -92,8 +104,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   certificate instead of writing its self-signed one over it. A key move leaves
   the source slot's certificate behind, as a YubiKey does, and that certificate
   belongs to the key that moved; a YubiKey's GENERATE writes no certificate, so
-  it keeps it too. A slot that holds a key still gets a fresh self-signed
-  certificate on GENERATE.
+  it keeps it too. Which certificate a GENERATE over a key replaces is 0x0A02's
+  rule, above.
   `bcdDevice` 0x09FC → 0x09FD.
 
 - PIV MOVE KEY and its delete (`ykman piv keys move` / `keys delete`) leave

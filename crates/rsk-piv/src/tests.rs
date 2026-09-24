@@ -9861,11 +9861,11 @@ fn move_key_leaves_every_certificate_where_it_was() {
     }
 }
 
-/// GENERATE into a slot a MOVE left holding a certificate and no key keeps that
-/// certificate: it certifies the key that moved, and a YubiKey's GENERATE writes
-/// none. A slot that still holds a key gets the self-signed one as before.
+/// GENERATE replaces a slot's certificate only when it certifies the key being
+/// replaced. One for another key — what a MOVE leaves — survives every key the slot
+/// gets after it, as a YubiKey keeps it (its IMPORT and GENERATE write none).
 #[test]
-fn generate_keeps_the_certificate_a_move_left_behind() {
+fn generate_replaces_only_the_certificate_of_the_key_it_replaces() {
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
@@ -9873,9 +9873,87 @@ fn generate_keeps_the_certificate_a_move_left_behind() {
     select(&mut app, &mut fs);
     auth_mgm(&mut app, &mut fs);
     let template = gen_template(ALGO_ECCP256);
-    let generate = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| {
-        run(app, fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0
+    let generate = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, slot: u8| {
+        run(app, fs, INS_ASYM_KEYGEN, 0, slot, &template).0
     };
+    let cert = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, tag: u8| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[0x5C, 0x03, 0x5F, 0xC1, tag],
+        )
+    };
+    // Control first: regenerating a key replaces the certificate that certifies it.
+    assert_eq!(generate(&mut app, &mut fs, 0x9C), Sw::OK);
+    let first = cert(&mut app, &mut fs, 0x0A);
+    assert_eq!(generate(&mut app, &mut fs, 0x9C), Sw::OK);
+    assert_ne!(
+        cert(&mut app, &mut fs, 0x0A),
+        first,
+        "a regenerated key kept the old certificate"
+    );
+    // 9A's certificate names the key that moves to 82; each later key 9A gets leaves it.
+    assert_eq!(generate(&mut app, &mut fs, 0x9A), Sw::OK);
+    let moved = cert(&mut app, &mut fs, 0x05);
+    let mut import = vec![0x06, 32];
+    import.extend_from_slice(&[0x33; 32]);
+    let steps: [(&str, u8, u8, &[u8]); 5] = [
+        ("MOVE 9A to 82", INS_MOVE_KEY, 0x82, &[]),
+        ("IMPORT into 9A", INS_IMPORT_ASYM, ALGO_ECCP256, &import),
+        (
+            "GENERATE over the imported key",
+            INS_ASYM_KEYGEN,
+            0,
+            &template,
+        ),
+        (
+            "GENERATE over the generated key",
+            INS_ASYM_KEYGEN,
+            0,
+            &template,
+        ),
+        ("delete 9A's key", INS_MOVE_KEY, 0xFF, &[]),
+    ];
+    for (name, ins, p1, body) in steps {
+        assert_eq!(
+            run(&mut app, &mut fs, ins, p1, 0x9A, body).0,
+            Sw::OK,
+            "{name}"
+        );
+        assert_eq!(
+            cert(&mut app, &mut fs, 0x05),
+            moved,
+            "{name} replaced 82's certificate"
+        );
+    }
+    // A key moved in from 9C, whose own certificate stayed in 9C, and then a GENERATE.
+    assert_eq!(
+        run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x9C, &[]).0,
+        Sw::OK
+    );
+    assert_eq!(generate(&mut app, &mut fs, 0x9A), Sw::OK);
+    assert_eq!(
+        cert(&mut app, &mut fs, 0x05),
+        moved,
+        "a key moved in let GENERATE replace it"
+    );
+}
+
+/// A MOVE whose head delete failed leaves the moved key's head, point included, over a
+/// slot with no key. That names no key in the slot, so it is not taken as the key the
+/// certificate there certifies, and GENERATE keeps that certificate.
+#[test]
+fn a_head_without_its_key_does_not_let_generate_replace_the_certificate() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
     let cert_9a = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| {
         run(
             app,
@@ -9886,28 +9964,283 @@ fn generate_keeps_the_certificate_a_move_left_behind() {
             &[0x5C, 0x03, 0x5F, 0xC1, 0x05],
         )
     };
-    assert_eq!(generate(&mut app, &mut fs), Sw::OK);
-    // The certificate a CA issued for 9A's key.
-    put_cert(&mut app, &mut fs, 0x05, 0xCA);
-    let issued = cert_9a(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+        Sw::OK
+    );
+    let moved = cert_9a(&mut app, &mut fs);
     assert_eq!(
         run(&mut app, &mut fs, INS_MOVE_KEY, 0x82, 0x9A, &[]).0,
         Sw::OK
     );
-    assert_eq!(generate(&mut app, &mut fs), Sw::OK);
+    let mut head = [0u8; 4 + MAX_EC_POINT];
+    let n = fs.meta_find(key_fid(0x82).get(), &mut head).unwrap();
+    assert!(n > 4, "control: the head carries the moved key's point");
+    fs.meta_add(key_fid(0x9A).get(), &head[..n]).unwrap();
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+        Sw::OK
+    );
     assert_eq!(
         cert_9a(&mut app, &mut fs),
-        issued,
-        "the certificate of the key now in 82 was replaced"
+        moved,
+        "a stale head let GENERATE replace it"
     );
-    // Control: 9A holds a key now, so the next GENERATE writes its own certificate.
-    assert_eq!(generate(&mut app, &mut fs), Sw::OK);
-    let own = cert_9a(&mut app, &mut fs);
-    assert_eq!(own.0, Sw::OK);
-    assert_ne!(
-        own, issued,
-        "a slot with a key no longer gets its certificate"
+}
+
+/// The same rule on the RSA path the board's keygen finishes through: the certificate a
+/// MOVE left stays, and the next RSA GENERATE into its own slot still gets a fresh one.
+#[test]
+fn an_rsa_generate_keeps_the_certificate_a_move_left_behind() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let cert_9a = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05],
+        )
+    };
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            0x9A,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
     );
+    let moved = cert_9a(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_MOVE_KEY, 0x82, 0x9A, &[]).0,
+        Sw::OK
+    );
+    let key = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 1024).unwrap();
+    let pol = [PINPOLICY_ONCE, TOUCHPOLICY_NEVER];
+    let mut resp = [0u8; 1024];
+    for _ in 0..2 {
+        let (_, sw) = app.rsa_generate_finish(&mut fs, &mut TestRng(5), 0x9A, pol, &key, &mut resp);
+        assert_eq!(sw, Sw::OK);
+        assert_eq!(
+            cert_9a(&mut app, &mut fs),
+            moved,
+            "an RSA GENERATE replaced 82's certificate"
+        );
+    }
+    // Control: once 9A's own certificate is there, an RSA GENERATE of another key
+    // replaces it with one for that key. The same key twice would also pass with the
+    // key stored before its certificate is judged.
+    let own = [0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x00];
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &own).0,
+        Sw::OK
+    );
+    let (_, sw) = app.rsa_generate_finish(&mut fs, &mut TestRng(5), 0x9A, pol, &key, &mut resp);
+    assert_eq!(sw, Sw::OK);
+    let written = cert_9a(&mut app, &mut fs);
+    let other = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(100)), 1024).unwrap();
+    let (_, sw) = app.rsa_generate_finish(&mut fs, &mut TestRng(6), 0x9A, pol, &other, &mut resp);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(written.0, Sw::OK, "an empty object got no certificate");
+    let fresh = cert_9a(&mut app, &mut fs);
+    assert_ne!(fresh, written, "a regenerated RSA key kept the old one");
+    let n = other.n_be();
+    assert!(
+        fresh.1.windows(n.len()).any(|w| w == &n[..]),
+        "the fresh certificate is not the new key's"
+    );
+}
+
+/// The match is on the whole key: an object carrying all of the slot's point but its
+/// last byte is some other key's certificate, and GENERATE keeps it.
+#[test]
+fn a_certificate_carrying_part_of_the_slots_key_is_kept() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+        Sw::OK
+    );
+    let mut point = [0u8; MAX_EC_POINT];
+    let n = fs.read(pubkey_fid(0x9A), &mut point).unwrap();
+    let mut body = vec![0x30, 0x03];
+    body.extend_from_slice(&point[..n - 1]);
+    let mut put = vec![0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, body.len() as u8];
+    put.extend_from_slice(&body);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &put).0,
+        Sw::OK
+    );
+    let read = [0x5C, 0x03, 0x5F, 0xC1, 0x05];
+    let before = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &read);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &read),
+        before,
+        "a partial match let GENERATE replace it"
+    );
+}
+
+/// A key GENERATE cannot read back certifies nothing: the certificate beside it stays,
+/// and the GENERATE still replaces the key. Refusing would leave that slot's key
+/// unreplaceable by the one command meant to replace it.
+#[test]
+fn generate_over_an_unreadable_key_keeps_the_certificate_and_replaces_the_key() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+        Sw::OK
+    );
+    let read = [0x5C, 0x03, 0x5F, 0xC1, 0x05];
+    let before = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &read);
+    // Only the sealed scalar is left to derive the point from, and it is junk.
+    fs.delete(pubkey_fid(0x9A)).unwrap();
+    let head = [
+        ALGO_ECCP256,
+        PINPOLICY_ONCE,
+        TOUCHPOLICY_NEVER,
+        ORIGIN_GENERATED,
+    ];
+    fs.meta_add(key_fid(0x9A).get(), &head).unwrap();
+    fs.put(key_fid(0x9A).get(), &[0xAB; 64]).unwrap();
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]).0,
+        Sw::EXEC_ERROR,
+        "control: the key cannot be read back"
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &read),
+        before,
+        "the certificate beside an unreadable key was replaced"
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]).0,
+        Sw::OK,
+        "the key was not replaced"
+    );
+}
+
+/// A key made before the per-slot point cache, or whose best-effort cache write failed,
+/// is read through its head's point or through `d·G`, and regenerating it still
+/// replaces the certificate that carries it.
+#[test]
+fn a_key_without_its_cached_point_still_gets_a_fresh_certificate() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    let read = [0x5C, 0x03, 0x5F, 0xC1, 0x05];
+    for (name, point_in_head) in [("the head's point", true), ("d·G", false)] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+            Sw::OK
+        );
+        let before = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &read);
+        fs.delete(pubkey_fid(0x9A)).unwrap();
+        let mut head = [0u8; 4 + MAX_EC_POINT];
+        let n = fs.meta_find(key_fid(0x9A).get(), &mut head).unwrap();
+        assert!(n > 4, "{name}: control: the head carries the point");
+        if !point_in_head {
+            fs.meta_add(key_fid(0x9A).get(), &head[..4]).unwrap();
+        }
+        assert_eq!(
+            run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+            Sw::OK,
+            "{name}"
+        );
+        assert_ne!(
+            run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &read),
+            before,
+            "{name}: a regenerated key kept the old certificate"
+        );
+    }
+}
+
+/// A head GET METADATA would not report — none, or one too short to name the key —
+/// names no key a certificate could carry, so GENERATE keeps the certificate. The
+/// empty one also must not be read past its end.
+#[test]
+fn a_key_without_a_reportable_head_does_not_let_generate_replace_the_certificate() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    let heads: [(&str, u8, Option<&[u8]>); 3] = [
+        ("no head", 0x9A, None),
+        ("an empty head", 0x9C, Some(&[])),
+        (
+            "a three-byte head",
+            0x9D,
+            Some(&[ALGO_ECCP256, PINPOLICY_ONCE, TOUCHPOLICY_NEVER]),
+        ),
+    ];
+    for (name, slot, head) in heads {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, slot, &template).0,
+            Sw::OK
+        );
+        let tag = [
+            0x5C,
+            0x03,
+            0x5F,
+            0xC1,
+            cert_fid_for_slot(slot).unwrap() as u8,
+        ];
+        let before = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &tag);
+        match head {
+            None => fs.meta_delete(key_fid(slot).get()).unwrap(),
+            Some(h) => fs.meta_add(key_fid(slot).get(), h).unwrap(),
+        }
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_METADATA, 0, slot, &[]).0,
+            Sw::REFERENCE_NOT_FOUND,
+            "{name}: control"
+        );
+        assert_eq!(
+            run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, slot, &template).0,
+            Sw::OK,
+            "{name}"
+        );
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &tag),
+            before,
+            "{name} let GENERATE replace the certificate"
+        );
+    }
 }
 
 /// The probe that keeps such a certificate must not read a faulted one as absent,
@@ -9963,6 +10296,37 @@ fn a_faulted_certificate_probe_does_not_let_generate_replace_it() {
         Sw::REFERENCE_NOT_FOUND,
         "the refused GENERATE left a key behind"
     );
+}
+
+/// The probes that find the slot's key and its head refuse a GENERATE they cannot
+/// serve, as the certificate's own probe does, before anything is written.
+#[test]
+fn a_faulted_key_or_head_probe_refuses_generate_before_it_writes() {
+    let key = key_fid(SLOT_AUTHENTICATION).get();
+    for (name, fid) in [("the key", key), ("the head", rsk_fs::EF_META)] {
+        let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+        let cert = cert_fid_for_slot(SLOT_AUTHENTICATION).unwrap();
+        let before = (medium.value(cert), medium.value(key));
+        assert!(before.0.is_some(), "{name}: control");
+        medium.stick_once(fid);
+        let template = gen_template(ALGO_ECCP256);
+        let sw = run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            SLOT_AUTHENTICATION,
+            &template,
+        )
+        .0;
+        medium.stick(None);
+        assert_eq!(sw, Sw::MEMORY_FAILURE, "{name}");
+        assert_eq!(
+            (medium.value(cert), medium.value(key)),
+            before,
+            "{name}: the refused GENERATE wrote"
+        );
+    }
 }
 
 /// PIV PUT DATA as a YubiKey 5.8.0 answers it, read twice: without the management

@@ -200,7 +200,7 @@ pub fn next_free_retired<S: Storage>(fs: &mut Fs<S>) -> Option<u8> {
 /// Physical presence at the trusted display authorises it (no management-key auth, unlike
 /// the host GENERATE), and it is restricted to retired slots that hold no key. The slot
 /// comes from [`next_free_retired`], which also skips a slot holding only a certificate —
-/// this call would replace that certificate with the self-signed one it writes. Writes the
+/// that certificate is someone's, and the new key would get none of its own. Writes the
 /// sealed key, that certificate (none for X25519) and the metadata, so the slot then looks
 /// exactly like a host-generated one. RSA goes through [`store_retired_rsa`] (its prime
 /// search runs in the firmware).

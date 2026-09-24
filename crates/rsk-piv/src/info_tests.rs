@@ -98,8 +98,8 @@ fn next_free_retired_skips_taken_slots() {
 }
 
 /// A slot holding only a certificate is populated to [`read_extra`], so the picker must
-/// skip it too — offering it would have the generate overwrite that certificate under a
-/// screen promising it adds to an empty slot.
+/// skip it too — offering it would put a new key beside someone's certificate under a
+/// screen promising an empty slot.
 #[test]
 fn next_free_retired_skips_a_cert_without_a_key() {
     let mut fs = fs();

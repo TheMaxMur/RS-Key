@@ -151,9 +151,10 @@ ykman piv info
 
 Generating in a slot already writes a self-signed certificate into that slot's
 certificate object, so a GET DATA serves one immediately even before you run
-`certificates generate`. The one exception is a slot that holds a certificate
-and no key — what a key move leaves behind: that certificate is kept, as a
-YubiKey keeps it. Management-key auth is required to generate.
+`certificates generate`. It replaces only a certificate that carries the key it
+replaces: one for any other key — what a key move leaves behind — is kept, as a
+YubiKey keeps it, and so is one stored compressed. X25519 writes none.
+Management-key auth is required to generate.
 
 For a real CA, emit a CSR instead of a self-signed cert:
 
@@ -314,9 +315,9 @@ ykman piv certificates import 82 cert.pem
 ykman piv certificates delete 9a
 ```
 
-A generate into a slot a move left keeps its certificate rather than writing a
-self-signed one over it. On a display build, the panel's **Generate key** skips a
-retired slot that still holds a certificate: delete it to free the slot.
+A key generated or imported into the slot later keeps that certificate too. On a
+display build, the panel's **Generate key** skips a retired slot that still holds
+a certificate: delete it to free the slot.
 
 Moves go both ways — a key parked in a retired slot can come back to an active
 one. A move onto a slot that already holds a key is refused, as on a YubiKey

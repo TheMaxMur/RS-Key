@@ -992,46 +992,22 @@ impl PivApplet<'_> {
         meta: &[u8],
         res: &mut ResBuf,
     ) -> Sw {
+        let mut public = [0u8; MAX_RSA_BYTES];
+        let pn = match keygen::slot_public(dev, fs, slot, meta, &mut public) {
+            Ok(n) => n,
+            Err(sw) => return sw,
+        };
         let mut body = [0u8; MAX_RSA_PUBDO];
         let n = match meta[0] {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
-                // Emit the public modulus without rebuilding the private key: GET
-                // METADATA needs only N (= p·q) + e (always 65537 for PIV), never
-                // `from_p_q`'s ~50 ms CRT precompute. Output byte-identical.
-                let mut nbuf = [0u8; MAX_RSA_BYTES];
-                let nlen = match seal::load_rsa_modulus(dev, fs, key_fid(slot), &mut nbuf) {
-                    Ok(l) => l,
-                    Err(_) => return Sw::EXEC_ERROR,
-                };
-                make_rsa_pub_body(&nbuf[..nlen], RSA_PUB_EXP_BE, &mut body)
+                make_rsa_pub_body(&public[..pn], RSA_PUB_EXP_BE, &mut body)
             }
-            ALGO_ECCP256 | ALGO_ECCP384 | ALGO_ED25519 | ALGO_X25519 => {
-                // Emit the slot public point without recomputing the ~tens-of-ms
-                // `d·G`. Prefer the per-slot cache file (O(1), works at any slot
-                // count); then the legacy in-EF_META cache (older keys that fit);
-                // finally derive it from the sealed scalar (pre-cache keys).
-                let mut point = [0u8; MAX_EC_POINT];
-                let pt: &[u8] = if let Some(pn) = fs.read(pubkey_fid(slot), &mut point) {
-                    &point[..pn.min(point.len())]
-                } else if meta.len() > 4 {
-                    &meta[4..]
-                } else {
-                    let key = match seal::load_ec_key(dev, fs, key_fid(slot)) {
-                        Ok(k) => k,
-                        Err(_) => return Sw::EXEC_ERROR,
-                    };
-                    let plen = match key.public_point(&mut point) {
-                        Ok(p) => p,
-                        Err(e) => return ec_sw(e),
-                    };
-                    &point[..plen]
-                };
+            _ => {
                 body[0] = 0x86;
-                let ll = format_len(pt.len() as u16, &mut body[1..4]);
-                body[1 + ll..1 + ll + pt.len()].copy_from_slice(pt);
-                1 + ll + pt.len()
+                let ll = format_len(pn as u16, &mut body[1..4]);
+                body[1 + ll..1 + ll + pn].copy_from_slice(&public[..pn]);
+                1 + ll + pn
             }
-            _ => return Sw::REFERENCE_NOT_FOUND,
         };
         if push_tlv(res, 0x04, &body[..n]).is_err() {
             return Sw::WRONG_LENGTH;
@@ -1231,7 +1207,7 @@ impl PivApplet<'_> {
 
 /// Largest stored data-object body (certificate objects included); bounded so
 /// the `53`-wrapped response fits the 2 KiB CCID response buffer.
-const MAX_OBJECT: usize = 1900;
+pub(crate) const MAX_OBJECT: usize = 1900;
 
 /// The `5C` path and the `53` object of a PUT DATA body, read as a YubiKey 5.8.0
 /// reads them: `5C 03` first, `53` straight after in its shortest length form, and
