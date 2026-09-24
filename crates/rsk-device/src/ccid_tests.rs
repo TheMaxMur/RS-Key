@@ -462,8 +462,17 @@ fn a_host_build_falls_through_to_the_applets_own_keygen() {
     // must fall through to normal dispatch rather than report a failure — the
     // difference between `None` and `Some(None)` is load-bearing.
     let env = Env::new();
+    // PW3 verified, so nothing but the missing accelerator can send it back.
+    rsk_openpgp::scan_files(
+        &crate::tests::dev(),
+        &mut env.fs.borrow_mut(),
+        &mut *env.rng.borrow_mut(),
+    )
+    .unwrap();
     let mut ccid = env.ccid();
     ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0);
+    let pw3 = apdu(0x00, 0x20, 0x00, 0x83, rsk_openpgp::consts::PW3_DEFAULT);
+    assert_eq!(sw(ccid.handle_apdu(&pw3, 0)), rsk_sdk::Sw::OK);
     let generate = apdu(
         0x00,
         rsk_openpgp::consts::INS_KEYPAIR_GEN,
@@ -471,28 +480,22 @@ fn a_host_build_falls_through_to_the_applets_own_keygen() {
         0x00,
         &[0xB6, 0x00],
     );
-    // Not `Some(2)` (an EXEC_ERROR answer): the command has to reach the applet.
+    // Not an EXEC_ERROR answer: the command has to reach the applet.
     assert!(ccid.try_rsa_keygen(&generate).is_none());
 }
 
-#[test]
-fn a_keygen_fast_path_judges_the_class_byte_too() {
-    // Both fast paths run BEFORE `Dispatcher::process`, so its class-byte rule has
-    // to be applied ahead of them or a GENERATE is the one command that escapes it.
-    // Measured on a YubiKey 5.7.4: `04 47 00 9A …` is `6E00` where `00 47 …` is
-    // `6982`, and `10 47 …` is accumulated as a chain segment, never executed.
+type Ccid<'a> = CcidApplets<'a, rsk_fs::storage::ram::RamStorage, TestRng, VendorBoard>;
+
+/// PIV selected and its default AES-192 management key authenticated.
+fn piv_as_admin(ccid: &mut Ccid<'_>) {
     const DEFAULT_MGM: [u8; 24] = [
         1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8,
     ];
     const AES192: u8 = rsk_piv::files::ALGO_AES192;
-    let env = Env::new();
-    env.board.borrow_mut().accelerator = true;
-    let mut ccid = env.ccid();
     assert_eq!(
         sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0)),
         rsk_sdk::Sw::OK
     );
-    // The management key, so GENERATE is refused for its class and not for auth.
     let step1 = ccid
         .handle_apdu(
             &apdu(0x00, 0x87, AES192, 0x9B, &[0x7C, 0x02, 0x81, 0x00]),
@@ -508,6 +511,19 @@ fn a_keygen_fast_path_judges_the_class_byte_too() {
         sw(ccid.handle_apdu(&apdu(0x00, 0x87, AES192, 0x9B, &answer), 0)),
         rsk_sdk::Sw::OK
     );
+}
+
+#[test]
+fn a_keygen_fast_path_judges_the_class_byte_too() {
+    // Both fast paths run BEFORE `Dispatcher::process`, so its class-byte rule has
+    // to be applied ahead of them or a GENERATE is the one command that escapes it.
+    // Measured on a YubiKey 5.7.4: `04 47 00 9A …` is `6E00` where `00 47 …` is
+    // `6982`, and `10 47 …` is accumulated as a chain segment, never executed.
+    let env = Env::new();
+    env.board.borrow_mut().accelerator = true;
+    let mut ccid = env.ccid();
+    // The management key, so GENERATE is refused for its class and not for auth.
+    piv_as_admin(&mut ccid);
     // RSA-2048 into 9A: the one command the firmware runs off the dispatcher.
     let generate = |cla| {
         apdu(
@@ -535,6 +551,144 @@ fn a_keygen_fast_path_judges_the_class_byte_too() {
         (sw(&seg), seg.len()),
         (rsk_sdk::Sw::OK, 2),
         "a chain segment was executed instead of accumulated"
+    );
+}
+
+/// The frames of one command's answer, joined through GET RESPONSE: each frame's
+/// status word and length, and the whole body.
+fn frames(ccid: &mut Ccid<'_>, command: &[u8]) -> (Vec<(rsk_sdk::Sw, usize)>, Vec<u8>) {
+    let mut got = Vec::new();
+    let mut body = Vec::new();
+    let mut res = ccid.handle_apdu(command, 0).to_vec();
+    loop {
+        let status = sw(&res);
+        got.push((status, res.len() - 2));
+        body.extend_from_slice(&res[..res.len() - 2]);
+        if status.sw1() != 0x61 || got.len() > 16 {
+            return (got, body);
+        }
+        res = ccid
+            .handle_apdu(&[0x00, 0xC0, 0x00, 0x00, 0x00], 0)
+            .to_vec();
+    }
+}
+
+/// The fixed RSA-2048 key the test board's accelerator finds.
+fn rsa2048() -> Box<rsk_rsa::RsaKey> {
+    use rsk_rsa::vectors::{P_HEX, Q_HEX, hex};
+    let key = rsk_rsa::keygen::rsa_from_pqe(rsk_rsa::RSA_PUB_EXP_BE, &hex(P_HEX), &hex(Q_HEX));
+    Box::new(key.expect("the fixture's primes make a key"))
+}
+
+#[test]
+fn a_fast_path_keygen_is_cut_at_the_frame_cap_like_any_answer() {
+    // Both fast paths answer off the dispatcher, and wrote the public key whole
+    // whatever the GENERATE's Le. A YubiKey 5.8.0 cuts an RSA-2048 GENERATE's
+    // answer at 256 bytes for a short command, PIV and OpenPGP alike (measured
+    // twice), and answers an extended one with no Le whole.
+    let env = Env::new();
+    env.board.borrow_mut().accelerator = true;
+    // The boot block lays OpenPGP's files down, PW3 among them; nothing boots here.
+    rsk_openpgp::scan_files(
+        &crate::tests::dev(),
+        &mut env.fs.borrow_mut(),
+        &mut *env.rng.borrow_mut(),
+    )
+    .unwrap();
+    let mut ccid = env.ccid();
+    let piv = |ext: bool| {
+        let t = [0xAC, 0x03, 0x80, 0x01, 0x07];
+        match ext {
+            false => [&[0x00, 0x47, 0x00, 0x9A, 0x05][..], &t[..], &[0x00][..]].concat(),
+            true => [&[0x00, 0x47, 0x00, 0x9A, 0x00, 0x00, 0x05][..], &t[..]].concat(),
+        }
+    };
+    let pgp = |ext: bool| match ext {
+        false => std::vec![0x00, 0x47, 0x80, 0x00, 0x02, 0xB6, 0x00, 0x00],
+        true => std::vec![0x00, 0x47, 0x80, 0x00, 0x00, 0x00, 0x02, 0xB6, 0x00],
+    };
+    for app in ["piv", "openpgp"] {
+        for ext in [false, true] {
+            match app {
+                "piv" => piv_as_admin(&mut ccid),
+                _ => {
+                    ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0);
+                    let pw3 = apdu(0x00, 0x20, 0x00, 0x83, rsk_openpgp::consts::PW3_DEFAULT);
+                    assert_eq!(sw(ccid.handle_apdu(&pw3, 0)), rsk_sdk::Sw::OK);
+                }
+            }
+            env.board.borrow_mut().search_key = Some(rsa2048());
+            let command = if app == "piv" { piv(ext) } else { pgp(ext) };
+            let (got, body) = frames(&mut ccid, &command);
+            assert!(
+                env.board.borrow().search_key.is_none(),
+                "{app}: the fast path did not fire, so this test proves nothing"
+            );
+            // The joined frames are the key's public-key DO, byte for byte.
+            let mut pubdo = [0u8; rsk_rsa::MAX_RSA_PUBDO];
+            let n = rsk_rsa::make_rsa_response(&rsa2048(), &mut pubdo);
+            assert_eq!(body, &pubdo[..n], "{app}, extended {ext}: another body");
+            let whole = body.len();
+            assert!(whole > 256, "{app}: a {whole}-byte key cannot tell");
+            let want = match ext {
+                false => std::vec![
+                    (rsk_sdk::Sw::new(0x61, (whole - 256) as u8), 256),
+                    (rsk_sdk::Sw::OK, whole - 256),
+                ],
+                true => std::vec![(rsk_sdk::Sw::OK, whole)],
+            };
+            assert_eq!(got, want, "{app}, extended {ext}");
+        }
+    }
+}
+
+#[test]
+fn a_fast_path_keygen_drops_a_held_tail_and_a_stranded_chain() {
+    // Any command but GET RESPONSE drops the tail the dispatcher holds, and one
+    // outside an open chain drops the chain. The fast paths answer off the
+    // dispatcher, so `Dispatcher::chain_response` has to do both for them.
+    let env = Env::new();
+    env.board.borrow_mut().accelerator = true;
+    let mut ccid = env.ccid();
+    piv_as_admin(&mut ccid);
+    let template = [0xAC, 0x03, 0x80, 0x01, 0x07];
+    let short = [
+        &[0x00, 0x47, 0x00, 0x9A, 0x05][..],
+        &template[..],
+        &[0x00][..],
+    ]
+    .concat();
+    let ext = [
+        &[0x00, 0x47, 0x00, 0x9A, 0x00, 0x00, 0x05][..],
+        &template[..],
+    ]
+    .concat();
+    let generate = |ccid: &mut Ccid<'_>, command: &[u8]| {
+        env.board.borrow_mut().search_key = Some(rsa2048());
+        sw(ccid.handle_apdu(command, 0))
+    };
+
+    assert_eq!(generate(&mut ccid, &short).sw1(), 0x61, "no tail was held");
+    assert_eq!(generate(&mut ccid, &ext), rsk_sdk::Sw::OK);
+    let gr = ccid
+        .handle_apdu(&[0x00, 0xC0, 0x00, 0x00, 0x00], 0)
+        .to_vec();
+    assert_eq!(
+        (sw(&gr), gr.len()),
+        (rsk_sdk::Sw::WRONG_DATA, 2),
+        "the first key's tail outlived the second key's answer"
+    );
+
+    // A stranded segment, then a GENERATE: a command sharing the segment's header
+    // afterwards is read alone, not as the chain's final segment.
+    let segment = [0x10, 0xCB, 0x3F, 0xFF, 0x02, 0x5C, 0x03];
+    assert_eq!(sw(ccid.handle_apdu(&segment, 0)), rsk_sdk::Sw::OK);
+    assert_eq!(generate(&mut ccid, &ext), rsk_sdk::Sw::OK);
+    let alone = [0x00, 0xCB, 0x3F, 0xFF, 0x03, 0x5F, 0xC1, 0x05];
+    assert_eq!(
+        sw(ccid.handle_apdu(&alone, 0)),
+        rsk_sdk::Sw::WRONG_DATA,
+        "the stranded segment outlived the GENERATE and prefixed the next command"
     );
 }
 

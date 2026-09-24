@@ -40,6 +40,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- An RSA key generated on the board (PIV GENERATE, OpenPGP GENERATE) is
+  answered in frames like every other response: a short command gets at most
+  its `Le`, 256 bytes where it carries none, and the rest through GET RESPONSE,
+  as on a YubiKey 5.8.0. The dual-core keygen answers off the applet
+  dispatcher, and it sent the whole public key in one frame whatever the
+  command's `Le` — 270 bytes for RSA-2048 to a client that asked for at most
+  256. Host builds and the emulator run the applet's own keygen and were not
+  affected.
+  `bcdDevice` 0x09F1 → 0x09F2.
+
 - PIV answers a GET RESPONSE (`00 C0`) with nothing left to serve `6A80`, as a
   YubiKey 5.8.0's PIV does in every form it was read in; RS-Key answered
   `6D00`, and `6A80` only to a one-byte body. OpenPGP, OATH, management, OTP

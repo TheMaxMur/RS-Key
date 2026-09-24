@@ -421,9 +421,9 @@ impl Dispatcher {
     }
 
     /// Drop any held GET RESPONSE remainder, scrubbing it (it can be PSO output).
-    /// Public so a transport that short-circuits [`Self::process`] (the firmware's
-    /// dual-core RSA-keygen fast path) can drop a stale chained-response tail the
-    /// way a normal dispatch would.
+    /// Public so a transport that dispatches around [`Self::process`] (the CCID
+    /// pinpad's out-of-band VERIFY) can drop a stale chained-response tail the way
+    /// a normal dispatch would.
     pub fn clear_pending(&mut self) {
         if self.pending_len > 0 {
             self.pending[..self.pending_len].zeroize();
@@ -434,15 +434,31 @@ impl Dispatcher {
 
     /// Drop any half-accumulated incoming command chain, scrubbing it (chained
     /// segments can hold private-key IMPORT data). Public for the same reason as
-    /// [`Self::clear_pending`]: a transport that short-circuits [`Self::process`]
-    /// (the RSA-keygen fast path) must reset the incoming chaining state too, so a
-    /// stale chain cannot concatenate onto a later command.
+    /// [`Self::clear_pending`]: a transport that dispatches around [`Self::process`]
+    /// must reset the incoming chaining state too, so a stale chain cannot
+    /// concatenate onto a later command.
     pub fn clear_chaining(&mut self) {
         if self.chain_len > 0 {
             self.chain[..self.chain_len].zeroize();
         }
         self.chain_len = 0;
         self.chaining = false;
+    }
+
+    /// The answer half of [`Self::process`], for a response an applet made outside
+    /// it (the RSA-keygen fast path): drop the held tail and any open chain, then,
+    /// for an applet whose `response_chaining` is `chaining_ok`, cut the body at
+    /// `cap` (the command's [`Apdu::frame_cap`]) and hold the rest for GET RESPONSE.
+    pub fn chain_response(
+        &mut self,
+        sw: Sw,
+        cap: usize,
+        chaining_ok: bool,
+        res: &mut ResBuf,
+    ) -> Sw {
+        self.clear_pending();
+        self.clear_chaining();
+        self.maybe_chain(sw, cap, chaining_ok, res)
     }
 
     /// Serve the next chunk of a chained response to a GET RESPONSE (`0xC0`): as

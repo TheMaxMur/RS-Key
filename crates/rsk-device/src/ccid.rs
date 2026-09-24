@@ -392,20 +392,24 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         // yet, and a secure-messaging class is refused. Falling through is what
         // answers both — measured on a YubiKey 5.7.4, `04 47 00 9A …` is `6E00`
         // where `00 47 …` is `6982`, and `10 47 …` is accumulated, never executed.
-        let dispatchable =
-            Apdu::parse(apdu).is_ok_and(|p| !p.is_chaining() && !p.is_secure_messaging());
-        // They also bypass the drop of a stale GET RESPONSE remainder and the reset
-        // of an interrupted command chain; a GENERATE is neither a 0xC0 nor a chain
-        // segment, so clearing both here matches the ordinary dispatch (applet.rs).
-        if dispatchable && let Some(n) = self.try_rsa_keygen(apdu) {
-            self.disp.clear_pending();
-            self.disp.clear_chaining();
-            return &self.resp[..n];
+        let fast_cap = Apdu::parse(apdu)
+            .ok()
+            .filter(|p| !p.is_chaining() && !p.is_secure_messaging())
+            .map(|p| p.frame_cap());
+        // They also bypass the answer half of dispatch: the stale GET RESPONSE tail
+        // and chain it drops, and the frame cap it cuts the body at, which
+        // `Dispatcher::chain_response` does for them.
+        if let Some(cap) = fast_cap
+            && let Some((sw, n)) = self.try_rsa_keygen(apdu)
+        {
+            let chaining = Applet::<Fs<S>>::response_chaining(&self.openpgp);
+            return self.finish_fast_path(cap, chaining, sw, n);
         }
-        if dispatchable && let Some(n) = self.try_piv_rsa_keygen(apdu) {
-            self.disp.clear_pending();
-            self.disp.clear_chaining();
-            return &self.resp[..n];
+        if let Some(cap) = fast_cap
+            && let Some((sw, n)) = self.try_piv_rsa_keygen(apdu)
+        {
+            let chaining = Applet::<Fs<S>>::response_chaining(&self.piv);
+            return self.finish_fast_path(cap, chaining, sw, n);
         }
         // A disabled application's applet is invisible: SELECT (and any command to
         // it) returns FILE_NOT_FOUND, so `ykman config usb --disable X` really
@@ -513,12 +517,12 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     }
 
     /// If `apdu` is an on-card RSA `GENERATE ASYMMETRIC KEY`, run the (slow) prime
-    /// search + key store to completion and return the response length in
-    /// `self.resp`. Returns `None` for everything else (incl. EC generate, which
+    /// search + key store to completion and return the status and the body length
+    /// in `self.resp`. Returns `None` for everything else (incl. EC generate, which
     /// the dispatcher handles inline) so the caller falls through to normal
     /// dispatch. The search is the board's ([`crate::Hooks::rsa_search`]) and
     /// blocks this task; the CCID transport streams time-extensions meanwhile.
-    fn try_rsa_keygen(&mut self, apdu: &[u8]) -> Option<usize> {
+    fn try_rsa_keygen(&mut self, apdu: &[u8]) -> Option<(Sw, usize)> {
         // The cap check closes the contrived window where OpenPGP was selected and
         // then disabled — the fast path bypasses the dispatcher's own gate.
         if self.disp.current() != Some(IDX_OPENPGP) || !self.caps_enabled(rsk_devconf::CAP_OPENPGP)
@@ -548,8 +552,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
             self.hooks.borrow_mut().rsa_search(nbits, &mut *rng)?
         };
         let Some(key) = key else {
-            self.resp[..2].copy_from_slice(&Sw::EXEC_ERROR.to_bytes());
-            return Some(2);
+            return Some((Sw::EXEC_ERROR, 0));
         };
         let (n, sw) = {
             let mut fsb = self.fs.borrow_mut();
@@ -562,15 +565,14 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
                 &mut self.resp[..RESP_CAP - 2],
             )
         };
-        self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
-        Some(n + 2)
+        Some((sw, n))
     }
 
     /// The PIV twin of [`Self::try_rsa_keygen`]: PIV GENERATE (INS 0x47,
     /// P1 = 0x00) with an RSA algorithm runs its dual-core prime search here so
     /// the CCID transport can stream time-extensions. Validation errors fall
     /// through to normal dispatch for the right status word.
-    fn try_piv_rsa_keygen(&mut self, apdu: &[u8]) -> Option<usize> {
+    fn try_piv_rsa_keygen(&mut self, apdu: &[u8]) -> Option<(Sw, usize)> {
         if self.disp.current() != Some(IDX_PIV) || !self.caps_enabled(rsk_devconf::CAP_PIV) {
             return None;
         }
@@ -590,8 +592,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
             self.hooks.borrow_mut().rsa_search(nbits, &mut *rng)?
         };
         let Some(key) = key else {
-            self.resp[..2].copy_from_slice(&Sw::EXEC_ERROR.to_bytes());
-            return Some(2);
+            return Some((Sw::EXEC_ERROR, 0));
         };
         let (n, sw) = {
             let mut fsb = self.fs.borrow_mut();
@@ -605,8 +606,18 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
                 &mut self.resp[..RESP_CAP - 2],
             )
         };
+        Some((sw, n))
+    }
+
+    /// A fast path's answer of `n` body bytes in `resp`, given the answer half of
+    /// dispatch ([`Dispatcher::chain_response`]); the response APDU.
+    fn finish_fast_path(&mut self, cap: usize, chaining: bool, sw: Sw, n: usize) -> &[u8] {
+        let mut res = ResBuf::new(&mut self.resp[..RESP_CAP - 2]);
+        res.commit(n);
+        let sw = self.disp.chain_response(sw, cap, chaining, &mut res);
+        let n = res.len();
         self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
-        Some(n + 2)
+        &self.resp[..n + 2]
     }
 }
 

@@ -39,10 +39,12 @@ pub struct Board {
     /// one-shot flag.
     pub local_pin_change: bool,
     pub boot_state_reads: usize,
-    /// Off by default, as a host build is; set it and [`Hooks::rsa_search`] says
-    /// "the accelerator ran and found nothing", which is what lets a test see
-    /// whether a keygen fast path fired at all.
+    /// Off by default, as a host build is; set, [`Hooks::rsa_search`] answers as
+    /// an accelerator that ran, finding `search_key` — which is what lets a test
+    /// see whether a keygen fast path fired at all.
     pub accelerator: bool,
+    /// What the accelerator finds, once: `None` is the search that found nothing.
+    pub search_key: Option<Box<rsk_rsa::RsaKey>>,
 }
 
 impl<S: Storage> Hooks<S> for Board {
@@ -64,9 +66,13 @@ impl<S: Storage> Hooks<S> for Board {
     }
     // `None` — no accelerator — is what a host build is, and the fall-through it
     // causes is itself under test in `ccid_tests`; `accelerator` opts into the
-    // other answer so a test can tell a fast path that fired from one that did not.
+    // other two answers, a failed search and a found key.
     fn rsa_search(&mut self, _nbits: usize, _rng: &mut dyn rsk_sdk::Rng) -> SearchResult {
-        if self.accelerator { Some(None) } else { None }
+        if self.accelerator {
+            Some(self.search_key.take())
+        } else {
+            None
+        }
     }
 }
 
