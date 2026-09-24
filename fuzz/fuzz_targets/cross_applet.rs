@@ -71,6 +71,7 @@ const INS_GENERATE: u8 = 0x47;
 /// The ykman vendor commands the FIDO transport serves: READ CONFIG must always
 /// answer, and WRITE CONFIG is its ungated twin on the default build.
 const CTAP_READ_CONFIG: u8 = 0x42;
+#[cfg(not(feature = "strict-config"))]
 const CTAP_WRITE_CONFIG: u8 = 0x43;
 /// The four PIN references the trusted display's pad can be asked to collect.
 const PIN_REFS: [u8; 4] = [
