@@ -935,7 +935,11 @@ transports, over a driver written against URBs), so the descriptors and the
 interface order are the real ones. The suites this shim refuses for wanting raw
 USB — `02_usb_interfaces`, `61`/`65` (python-fido2's own transport),
 `73_otp_keyboard`, `77_otp_touch_wait` — run there instead, as ordinary hardware
-suites with nothing faked, and so does the pico-fido conformance suite. Needs
+suites with nothing faked, and so does the pico-fido conformance suite. So does
+OpenSC's own PKCS#11 suite, p11test (`tests/p11test/run.sh`): it reads PIV and
+OpenPGP through `opensc-pkcs11.so`, as ssh and a browser do, and diffs each result
+against the reference beside it. A YubiKey 5.8.0 provisioned the same way answers PIV
+identically; its OpenPGP differs only where RS-Key keeps RSA-1024 and MSE. Needs
 Linux and root; the emulator itself can stay on a Mac, because USB/IP is
 network-transparent. See `tools/emu/README.md`.
 

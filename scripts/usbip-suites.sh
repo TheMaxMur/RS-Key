@@ -5,10 +5,11 @@
 # The other half of `emu-suites.sh`: the suites that need a real USB stack.
 #
 # `emu-suites.sh` runs everything the emulator can serve over a socket. These
-# five (`02`, `61`, `65`, `73`, `77`) and the pico-fido conformance suite cannot
-# be served that way — they read USB descriptors, or go through python-fido2's and
-# pyscard's own transports, which want a device the kernel enumerated. So the
-# emulator serves USB/IP here, and a Linux guest with `vhci_hcd` attaches it:
+# five (`02`, `61`, `65`, `73`, `77`), the pico-fido conformance suite and OpenSC's
+# p11test cannot be served that way — they read USB descriptors, or go through
+# python-fido2's, pyscard's and pcsc-lite's own transports, which want a device
+# the kernel enumerated. So the emulator serves USB/IP here, and a Linux guest
+# with `vhci_hcd` attaches it:
 #
 #   [ this host ]  rsk-emu --usbip  <--- TCP 3240 --->  [ VM ]  vhci_hcd -> /dev/hidraw*
 #
@@ -45,7 +46,7 @@ echo "== starting the emulators (USB/IP + the card socket the reset window needs
 # Bound to every interface, not loopback: the guest reaches this host as a peer
 # on QEMU's user network, so a 127.0.0.1 bind would be invisible to it.
 #
-# Two of them, on separate ports, because two suites need the Yubico identity and
+# Two of them, on separate ports, because three suites need the Yubico identity and
 # the rest must NOT have it (the default identity is the one whose CCID interface
 # a stock driver skips — see `scripts/usbip-guest.sh`). Both at once rather than
 # in sequence so the guest boots once: under TCG a boot costs more than a process.
@@ -79,6 +80,11 @@ RSK_REPO="$PWD" RSK_OUT="$WORK/out" \
   "$VM"/bin/run-*-vm </dev/null 2>&1 | tee "$WORK/vm.log" || true
 
 status="$(cat "$WORK/out/status" 2>/dev/null || echo "")"
+# p11test's JSONs outlive `$WORK`: they are what a reference update copies in.
+rm -rf target/p11test
+if [ -d "$WORK/out/p11test" ]; then
+  mkdir -p target/p11test && cp "$WORK/out/p11test"/*.json target/p11test/ 2>/dev/null || true
+fi
 if [ -z "$status" ]; then
   echo
   echo "FAIL: the guest never wrote a status — it did not reach the suites" >&2

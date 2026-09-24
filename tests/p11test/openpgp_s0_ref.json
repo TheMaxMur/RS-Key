@@ -1,0 +1,406 @@
+{
+"time": 0,
+"results": [
+{
+	"test_id": "wait_test",
+	"result": "skip"
+},
+{
+	"test_id": "supported_mechanisms_test",
+	"data": [
+	[
+		"MECHANISM",
+		"MIN KEY",
+		"MAX KEY",
+		"FLAGS"
+	],
+	[
+		"SHA_1",
+		"0",
+		"0",
+		"CKF_DIGEST"
+	],
+	[
+		"SHA224",
+		"0",
+		"0",
+		"CKF_DIGEST"
+	],
+	[
+		"SHA256",
+		"0",
+		"0",
+		"CKF_DIGEST"
+	],
+	[
+		"SHA384",
+		"0",
+		"0",
+		"CKF_DIGEST"
+	],
+	[
+		"SHA512",
+		"0",
+		"0",
+		"CKF_DIGEST"
+	],
+	[
+		"MD5",
+		"0",
+		"0",
+		"CKF_DIGEST"
+	],
+	[
+		"RIPEMD160",
+		"0",
+		"0",
+		"CKF_DIGEST"
+	],
+	[
+		"GOSTR3411",
+		"0",
+		"0",
+		"CKF_DIGEST"
+	],
+	[
+		"ECDSA",
+		"256",
+		"521",
+		"CKF_HW,CKF_SIGN,CKF_VERIFY,CKF_EC_NAMEDCURVE"
+	],
+	[
+		"ECDSA_SHA1",
+		"256",
+		"521",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"ECDSA_SHA224",
+		"256",
+		"521",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"ECDSA_SHA256",
+		"256",
+		"521",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"ECDSA_SHA384",
+		"256",
+		"521",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"ECDSA_SHA512",
+		"256",
+		"521",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"ECDH1_COFACTOR_DERIVE",
+		"256",
+		"521",
+		"CKF_HW,CKF_DERIVE,CKF_EC_NAMEDCURVE"
+	],
+	[
+		"ECDH1_DERIVE",
+		"255",
+		"521",
+		"CKF_HW,CKF_DERIVE,CKF_EC_NAMEDCURVE"
+	],
+	[
+		"EC_KEY_PAIR_GEN",
+		"256",
+		"521",
+		"CKF_HW,CKF_GENERATE_KEY_PAIR,CKF_EC_NAMEDCURVE"
+	],
+	[
+		"EDDSA",
+		"255",
+		"255",
+		"CKF_HW,CKF_SIGN"
+	],
+	[
+		"EC_EDWARDS_KEY_PAIR_GEN",
+		"255",
+		"255",
+		"CKF_HW,CKF_GENERATE_KEY_PAIR"
+	],
+	[
+		"0x00001056",
+		"255",
+		"255",
+		"CKF_HW,CKF_GENERATE_KEY_PAIR"
+	],
+	[
+		"RSA_PKCS",
+		"1024",
+		"4096",
+		"CKF_HW,CKF_DECRYPT,CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"SHA1_RSA_PKCS",
+		"1024",
+		"4096",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"SHA224_RSA_PKCS",
+		"1024",
+		"4096",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"SHA256_RSA_PKCS",
+		"1024",
+		"4096",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"SHA384_RSA_PKCS",
+		"1024",
+		"4096",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"SHA512_RSA_PKCS",
+		"1024",
+		"4096",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"MD5_RSA_PKCS",
+		"1024",
+		"4096",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"RIPEMD160_RSA_PKCS",
+		"1024",
+		"4096",
+		"CKF_SIGN,CKF_VERIFY"
+	],
+	[
+		"RSA_PKCS_KEY_PAIR_GEN",
+		"1024",
+		"4096",
+		"CKF_HW,CKF_GENERATE_KEY_PAIR"
+	]],
+	"result": "pass"
+},
+{
+	"test_id": "interface_test",
+	"result": "pass"
+},
+{
+	"test_id": "readonly_tests",
+	"data": [
+	[
+		"KEY ID",
+		"MECHANISM",
+		"SIGN&VERIFY WORKS",
+		"ENCRYPT&DECRYPT WORKS"
+	],
+	[
+		"02",
+		"RSA_PKCS",
+		"",
+		"YES"
+	],
+	[
+		"03",
+		"RSA_PKCS",
+		"YES",
+		"YES"
+	],
+	[
+		"03",
+		"MD5_RSA_PKCS",
+		"YES",
+		""
+	],
+	[
+		"03",
+		"SHA1_RSA_PKCS",
+		"YES",
+		""
+	],
+	[
+		"03",
+		"RIPEMD160_RSA_PKCS",
+		"YES",
+		""
+	],
+	[
+		"03",
+		"SHA256_RSA_PKCS",
+		"YES",
+		""
+	],
+	[
+		"03",
+		"SHA384_RSA_PKCS",
+		"YES",
+		""
+	],
+	[
+		"03",
+		"SHA512_RSA_PKCS",
+		"YES",
+		""
+	],
+	[
+		"03",
+		"SHA224_RSA_PKCS",
+		"YES",
+		""
+	]],
+	"result": "pass"
+},
+{
+	"test_id": "multipart_tests",
+	"data": [
+	[
+		"KEY ID",
+		"MECHANISM",
+		"MULTIPART SIGN&VERIFY WORKS"
+	],
+	[
+		"03",
+		"MD5_RSA_PKCS",
+		"YES"
+	],
+	[
+		"03",
+		"SHA1_RSA_PKCS",
+		"YES"
+	],
+	[
+		"03",
+		"RIPEMD160_RSA_PKCS",
+		"YES"
+	],
+	[
+		"03",
+		"SHA256_RSA_PKCS",
+		"YES"
+	],
+	[
+		"03",
+		"SHA384_RSA_PKCS",
+		"YES"
+	],
+	[
+		"03",
+		"SHA512_RSA_PKCS",
+		"YES"
+	],
+	[
+		"03",
+		"SHA224_RSA_PKCS",
+		"YES"
+	]],
+	"result": "pass"
+},
+{
+	"test_id": "ec_sign_size_test",
+	"result": "pass"
+},
+{
+	"test_id": "usage_test",
+	"data": [
+	[
+		"KEY ID",
+		"LABEL",
+		"TYPE",
+		"BITS",
+		"VERIFY PUBKEY",
+		"SIGN",
+		"VERIFY",
+		"ENCRYPT",
+		"DECRYPT",
+		"WRAP",
+		"UNWRAP",
+		"ENCAPSULATE",
+		"DECAPSULATE",
+		"DERIVE PUBLIC",
+		"DERIVE PRIVATE",
+		"ALWAYS AUTH"
+	],
+	[
+		"02",
+		"Encryption key",
+		"RSA",
+		"2048",
+		"",
+		"",
+		"",
+		"YES",
+		"YES",
+		"YES",
+		"YES",
+		"",
+		"",
+		"",
+		"",
+		""
+	],
+	[
+		"03",
+		"Authentication key",
+		"RSA",
+		"2048",
+		"",
+		"YES",
+		"YES",
+		"YES",
+		"YES",
+		"YES",
+		"YES",
+		"",
+		"",
+		"",
+		"",
+		""
+	]],
+	"result": "pass"
+},
+{
+	"test_id": "pss_oaep_test",
+	"result": "unknown"
+},
+{
+	"test_id": "derive_tests",
+	"data": [
+	[
+		"KEY ID",
+		"MECHANISM",
+		"DERIVE WORKS"
+	]],
+	"result": "pass"
+},
+{
+	"test_id": "secret_tests",
+	"data": [
+	[
+		"KEY ID",
+		"MECHANISM",
+		"SIGN&VERIFY WORKS",
+		"ENCRYPT&DECRYPT WORKS"
+	]],
+	"result": "pass"
+},
+{
+	"test_id": "wrap_tests",
+	"data": [
+	[
+		"KEY ID",
+		"MECHANISM",
+		"WRAP WORKS",
+		"UNWRAP WORKS"
+	]],
+	"result": "pass"
+}]
+}

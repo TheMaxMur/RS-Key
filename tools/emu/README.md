@@ -158,12 +158,12 @@ with a real key, for the same reason.
 Needs Linux and root for `vhci_hcd`; the emulator itself can stay on a Mac,
 because USB/IP is network-transparent.
 
-All of that in one command — including the two identities, since `73` wants the
-Yubico one and the rest must not have it — is `scripts/usbip-suites.sh`, which is
-also what CI runs. It boots a guest that owns a `vhci_hcd`
-(`nix build .#usbip-vm`) because a GitHub-hosted runner cannot be one, and keeps
-the emulators outside it on the VM host. All six run: `02`, `61`, `65`, `73`,
-`77` and the pico-fido conformance suite.
+All of that in one command — including the two identities, since `73`, `77` and
+p11test want the Yubico one and the rest must not have it — is
+`scripts/usbip-suites.sh`, which is also what CI runs. It boots a guest that owns
+a `vhci_hcd` (`nix build .#usbip-vm`) because a GitHub-hosted runner cannot be
+one, and keeps the emulators outside it on the VM host. All seven run: `02`,
+`61`, `65`, `73`, `77`, the pico-fido conformance suite and OpenSC's p11test.
 
 `77` needs the emulator's stdin held **open** — the runner uses a fifo it never
 writes to. On EOF the emulator correctly stops pretending anyone could answer and

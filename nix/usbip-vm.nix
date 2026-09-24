@@ -31,6 +31,18 @@
     (nixpkgs + "/nixos/modules/virtualisation/qemu-vm.nix")
     (
       { pkgs, config, ... }:
+      let
+        # OpenSC with its PKCS#11 suite: nixpkgs builds it without cmocka, and
+        # p11test is a noinst program, so neither the suite nor its binary ships.
+        opensc-p11test = pkgs.opensc.overrideAttrs (old: {
+          pname = "opensc-p11test";
+          buildInputs = old.buildInputs ++ [ pkgs.cmocka ];
+          configureFlags = (old.configureFlags or [ ]) ++ [ "--enable-cmocka" ];
+          postInstall = (old.postInstall or "") + ''
+            install -Dm755 src/tests/p11test/p11test $out/bin/p11test
+          '';
+        });
+      in
       {
         # The whole reason this guest exists.
         boot.kernelModules = [ "vhci-hcd" ];
@@ -48,6 +60,7 @@
           config.boot.kernelPackages.usbip
           pkgs.gnupg # the OpenPGP suites shell out to gpg-connect-agent
           pkgs.yubikey-manager # `ykman otp chalresp --touch` arms the slot 77 needs
+          opensc-p11test # `tests/p11test/run.sh`
         ];
 
         # Boot time is the budget here: this runs under TCG on every PR, so the
@@ -95,6 +108,8 @@
             rskPython
             config.boot.kernelPackages.usbip
             pkgs.yubikey-manager
+            opensc-p11test
+            pkgs.diffutils # p11test's result against its reference
             pkgs.kmod
             pkgs.coreutils
             pkgs.gnugrep

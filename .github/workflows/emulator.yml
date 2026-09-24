@@ -14,10 +14,11 @@
 #
 # Two halves, because the transport splits them:
 #   sockets — everything the emulator can serve over TCP, on the runner directly.
-#   usb     — `02`, `61`, `65`, `73`, `77` and the pico-fido conformance suite,
-#             which read USB descriptors or go through python-fido2's and
-#             pyscard's own transports. Those need a kernel that enumerated the
-#             device, i.e. `vhci_hcd` — which a GitHub-hosted runner has no way to
+#   usb     — `02`, `61`, `65`, `73`, `77`, the pico-fido conformance suite and
+#             OpenSC's p11test, which read USB descriptors or go through
+#             python-fido2's, pyscard's and pcsc-lite's own transports. Those need
+#             a kernel that enumerated the device, i.e. `vhci_hcd` — which a
+#             GitHub-hosted runner has no way to
 #             provide (no module loading, and no reliable /dev/kvm either). So
 #             they run inside a QEMU guest under software emulation; see
 #             `scripts/usbip-suites.sh`.
