@@ -34,7 +34,7 @@ EXTENDS Naturals
 
 (* Mutation switches. All FALSE is the shipped tree. *)
 CONSTANTS
-    \* crates/rsk-sdk/src/applet.rs:388-396 -- a SELECT of a DIFFERENT AID deselects the
+    \* crates/rsk-sdk/src/applet.rs:397-401 -- a SELECT of a DIFFERENT AID deselects the
     \* applet that was current, and the deselect is what resets its session.
     BugSelectKeepsOtherApplet,
     \* 637ed98 taken back out: PIV, OpenPGP and OATH's VALIDATE reset on EVERY
@@ -120,7 +120,7 @@ CONSTANTS
     BugCodelessOathIsAStatus
 
 \* The three CCID applets that carry an in-RAM security status. `NoApplet` is
-\* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:145): nothing
+\* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:149): nothing
 \* selected, which is where a card reset leaves the dispatcher.
 Piv      == "piv"
 Pgp      == "pgp"
@@ -145,7 +145,7 @@ InvNames == { "NoKeyOpOnTheAdminStatus", "NoStatusAfterARefusedAuth",
               "AccessCodeRemovalNeedsTheCode" }
 
 VARIABLES
-    sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:145)
+    sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:149)
     held,   \* [Refs -> BOOLEAN]: the in-RAM security statuses
     \* PIV's `pin_fresh` -- the UNSPENT half of `has_pin`, which a PIN-policy
     \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:166-180). The

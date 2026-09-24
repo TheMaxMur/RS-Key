@@ -828,8 +828,8 @@ formal/README.md	crates/rsk-piv/src/lib.rs	1481-1481	puk: &[u8],	puk: &[u8],
 formal/README.md	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/README.md	crates/rsk-sdk/src/applet.rs	208-210	fn selectable(&self, i: usize) -> bool {	}
 formal/README.md	crates/rsk-sdk/src/applet.rs	383-399	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
-formal/README.md	crates/rsk-sdk/src/applet.rs	388-396	// A disabled applet is skipped, so its AID matches nothing	let reselect = self.current == Some(i);
 formal/README.md	crates/rsk-sdk/src/applet.rs	396-396	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
+formal/README.md	crates/rsk-sdk/src/applet.rs	397-401	if let Some(c) = self.current	}
 formal/README.md	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	405-475	pub fn feed(&mut self, f: &[u8; HID_RPT_SIZE]) -> Outcome {	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	435-435	let bcnt = ((f[5] as usize) << 8) | f[6] as usize;	let bcnt = ((f[5] as usize) << 8) | f[6] as usize;
@@ -909,10 +909,10 @@ formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	184-187	fn set_pin(&mut se
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	200-204	self.clear_challenge();	pub struct PivApplet<'a> {
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	525-539	return Sw::PIN_BLOCKED;	// the oracle's order too.
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	547-581	// the retry counter … shall be decremented by one." A YubiKey 5.7.4 does	/// `6A88` for anything but `P1 = 00, P2 = 80`, as on `change_pin` — and here
-formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	145-145	apdu.ins == 0xA4 && apdu.p1 == 0x04 && (apdu.p2 == 0x00 || apdu.p2 == 0x04)	apdu.ins == 0xA4 && apdu.p1 == 0x04 && (apdu.p2 == 0x00 || apdu.p2 == 0x04)
+formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	149-149	current: Option<usize>,	current: Option<usize>,
 formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	222-230	///	{
 formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	383-399	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
-formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	388-396	// A disabled applet is skipped, so its AID matches nothing	let reselect = self.current == Some(i);
+formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	397-401	if let Some(c) = self.current	}
 formal/RSKeyAppletSeams.tla	firmware/src/pin_lock.rs	12-21	//! [`rsk_fido::state::PinLock`] lives in RAM and is rebuilt clear on every boot,	//!
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	811-813	if migrated && rsk_fs::request_rescrub(ctx.fs).is_err() {	}
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	811-821	if migrated && rsk_fs::request_rescrub(ctx.fs).is_err() {	.map_err(|_| CtapError::Other)?;
