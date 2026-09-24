@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A refused PIV RSA IMPORT leaves the key already in the slot in use. Whether
+  the new key could be laid out for the CRT signer (primes that share a factor,
+  a prime width it cannot take) was decided after the slot's metadata was
+  dropped, so that refusal (`6400`, `6700`) left the old key unreachable: GET
+  METADATA and every use answered `6A88`. It is decided before anything is
+  written now.
+  `bcdDevice` 0x09F6 → 0x09F7.
+
 - On the board, an RSA GENERATE (PIV, OpenPGP) that does not close an open
   command chain is refused `6883` and runs nothing, like any other command
   outside the chain and as a YubiKey 5.8.0 refuses it; one that closes the chain

@@ -9470,3 +9470,74 @@ fn import_refuses_a_bad_slot_as_it_refuses_a_bad_body() {
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
 }
+
+/// A refused RSA import leaves the slot's key standing. The seal refuses a pair it
+/// cannot lay out for the CRT signer (`6700`, `6400`), and it did so after the
+/// slot's metadata was dropped, so the key already there went unreachable.
+#[test]
+fn a_refused_rsa_import_leaves_the_slots_key_standing() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let mut scalar = vec![0x06, 32];
+    scalar.extend_from_slice(&[0x11u8; 32]);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_IMPORT_ASYM,
+            ALGO_ECCP256,
+            0x9A,
+            &scalar
+        )
+        .0,
+        Sw::OK
+    );
+    let before = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
+    assert_eq!(before.0, Sw::OK);
+    let tlv = |tag: u8, v: &[u8]| {
+        let mut out = vec![tag];
+        match v.len() {
+            n if n < 0x80 => out.push(n as u8),
+            n if n < 0x100 => out.extend_from_slice(&[0x81, n as u8]),
+            n => out.extend_from_slice(&[0x82, (n >> 8) as u8, n as u8]),
+        }
+        out.extend_from_slice(v);
+        out
+    };
+    // 2^(8·len) - k, big-endian.
+    let less = |len: usize, k: u8| {
+        let mut v = vec![0xFF; len];
+        v[len - 1] = 0u8.wrapping_sub(k);
+        v
+    };
+    // Each pair makes a modulus of the right byte length and only the seal refuses
+    // it, each for one reason: a 255-byte prime, the factor 3 in both primes, and
+    // a 288-byte prime whose layout outgrows the seal's buffer.
+    for (algo, p, q, want) in [
+        (ALGO_RSA2048, vec![3], less(255, 3), Sw::WRONG_LENGTH),
+        (ALGO_RSA2048, less(128, 1), less(128, 7), Sw::EXEC_ERROR),
+        (ALGO_RSA4096, less(224, 1), less(288, 3), Sw::WRONG_LENGTH),
+    ] {
+        let mut body = tlv(0x01, &p);
+        body.extend(tlv(0x02, &q));
+        assert_eq!(
+            run(&mut app, &mut fs, INS_IMPORT_ASYM, algo, 0x9A, &body).0,
+            want
+        );
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]),
+            before,
+            "a refused import ({want:?}) moved the slot"
+        );
+    }
+    assert_eq!(
+        sign_p256(&mut app, &mut fs, 0x9A),
+        Sw::OK,
+        "9A no longer signs"
+    );
+}

@@ -493,6 +493,9 @@ fn import_rsa<S: Storage>(
     if key.size() != want {
         return Err(Sw::WRONG_DATA);
     }
+    // The seal refuses a pair it cannot lay out for the CRT signer. Ask it before
+    // the meta drop, after which a refusal left the slot's key unreachable.
+    seal::check_rsa_layout(&key)?;
     drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_rsa_key(dev, fs, rng, key_fid(slot), &key)
 }

@@ -192,6 +192,18 @@ pub fn load_ec_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Res
     r
 }
 
+/// Refuse what [`store_rsa_key`] would, before anything is written: a pair that
+/// shares a factor, or a prime width the CRT signer cannot take. A caller that
+/// first drops what the key replaces must not learn it afterwards.
+pub fn check_rsa_layout(key: &RsaKey) -> Result<(), Sw> {
+    let mut plain = [0u8; MAX_PLAIN];
+    let r = crt::crt_plaintext(key, &mut plain)
+        .map(|_| ())
+        .map_err(rsa_sw);
+    plain.zeroize();
+    r
+}
+
 /// Seal an RSA key as `P ‖ Q ‖ dP ‖ dQ ‖ qInv` (the shared CRT layout — see
 /// [`crt::crt_plaintext`]), so a signature no longer rebuilds `d`, `dP`, `dQ`
 /// and `qInv` (two modular inversions) every time.
