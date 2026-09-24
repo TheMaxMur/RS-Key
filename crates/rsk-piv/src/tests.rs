@@ -4827,8 +4827,22 @@ fn the_attestation_identity_is_not_host_replaceable() {
             &scalar
         )
         .0,
-        Sw::INCORRECT_P1P2,
+        Sw::WRONG_DATA,
         "IMPORT at F9"
+    );
+    // The control: the body is a key this card takes, so that `6A80` is the slot's.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_IMPORT_ASYM,
+            ALGO_ECCP384,
+            0x82,
+            &scalar
+        )
+        .0,
+        Sw::OK,
+        "the same key into 82"
     );
     let mut cert = vec![TAG_DATA_PATH, 0x03, 0x5F, 0xFF, 0x01, TAG_DATA_OBJECT, 0x03];
     cert.extend_from_slice(&[0x41, 0x42, 0x43]);
@@ -4885,18 +4899,27 @@ fn the_attestation_identity_is_not_host_replaceable() {
         .0,
         Sw::OK
     );
-    assert_eq!(
-        run(
-            &mut app,
-            &mut fs,
-            INS_ATTESTATION,
-            SLOT_AUTHENTICATION,
-            0,
-            &[]
-        )
-        .0,
-        Sw::OK
+    let (sw, att) = run(
+        &mut app,
+        &mut fs,
+        INS_ATTESTATION,
+        SLOT_AUTHENTICATION,
+        0,
+        &[],
     );
+    assert_eq!(sw, Sw::OK);
+    // …signed by the key F9's certificate names: the metadata above is a cache, and
+    // a key written under it would not show there.
+    let f9cert = find_tag(find_tag(&obj, 0x53).unwrap(), 0x70).unwrap();
+    let (_, f9) = x509_parser::parse_x509_certificate(f9cert).unwrap();
+    let spk = &f9.tbs_certificate.subject_pki.subject_public_key.data;
+    let vk = p384::ecdsa::VerifyingKey::from_sec1_bytes(spk).unwrap();
+    let (_, att_cert) = x509_parser::parse_x509_certificate(&att).unwrap();
+    let digest: [u8; 32] = sha2::Sha256::digest(att_cert.tbs_certificate.as_ref()).into();
+    let sig = p384::ecdsa::Signature::from_der(&att_cert.signature_value.data).unwrap();
+    use p384::ecdsa::signature::hazmat::PrehashVerifier as _;
+    vk.verify_prehash(&digest, &sig)
+        .expect("F9's certificate does not verify the attestation");
 }
 
 /// `GET METADATA F9` answered `6A88` — "referenced data not found" — on a card
@@ -9405,4 +9428,45 @@ fn a_faulted_pivman_probe_does_not_admit_a_hidden_printed_write() {
         Sw::MEMORY_FAILURE,
         "a write that could not read the escrow it must not land under has to refuse"
     );
+}
+
+/// A YubiKey 5.8.0 refuses an authenticated IMPORT with nothing but `6A80`, a bad
+/// slot as a bad algorithm or body (read twice over this matrix); without the
+/// management key every cell is `6982`.
+#[test]
+fn import_refuses_a_bad_slot_as_it_refuses_a_bad_body() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    let mut ec_key = vec![0x06, 0x20];
+    ec_key.extend(1..=32u8);
+    for authed in [false, true] {
+        select(&mut app, &mut fs);
+        if authed {
+            auth_mgm(&mut app, &mut fs);
+        }
+        for p1 in [0x00, 0x07, ALGO_ECCP256, 0xFF] {
+            for p2 in [0x9A, 0x9B, 0x80, 0x00, 0x82] {
+                for body in [&[][..], &[0x01, 0x02], &ec_key] {
+                    let want = if !authed {
+                        Sw::SECURITY_STATUS_NOT_SATISFIED
+                    } else if p1 == ALGO_ECCP256 && matches!(p2, 0x9A | 0x82) && body == &ec_key[..]
+                    {
+                        Sw::OK
+                    } else {
+                        Sw::WRONG_DATA
+                    };
+                    assert_eq!(
+                        run(&mut app, &mut fs, INS_IMPORT_ASYM, p1, p2, body).0,
+                        want,
+                        "P1 {p1:02X} P2 {p2:02X} body {body:02X?}, authed={authed}"
+                    );
+                }
+            }
+        }
+    }
+    // No refused cell wrote anything: 9B and 80 name the management key and the PIN.
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
 }

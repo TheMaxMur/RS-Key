@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV IMPORT ASYMMETRIC KEY into a slot that takes no key is refused `6A80` once
+  the management key is in, as a YubiKey 5.8.0 refuses it and as RS-Key already
+  refused a bad algorithm, policy or key encoding there; it was `6A86`. A
+  YubiKey refused an authenticated IMPORT with nothing else across P1
+  `00`/`07`/`11`/`FF`, P2 `9A`/`9B`/`80`/`00`/`82` and three bodies. Slot `f9`
+  stays refused ([limitations](docs/limitations.md)), with the same `6A80`.
+  `bcdDevice` 0x09F4 → 0x09F5.
+
 - A GET RESPONSE is judged by its class byte as a YubiKey 5.8.0 judges it. While
   a tail is owed, a secure-messaging class (`84 C0`) is served that tail, where
   RS-Key answered `6E00`. With the chaining bit (`10`, `90`, `1C`) it is a

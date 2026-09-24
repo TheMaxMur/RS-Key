@@ -606,7 +606,9 @@ pub(crate) fn import<S: Storage>(
     // management key replace the device's attestation identity irreversibly over
     // one APDU. Pinned by a test and docs/limitations.md; do not "fix" it.
     if !is_key(slot) {
-        return Sw::INCORRECT_P1P2;
+        // `6A80`, not a P1P2 refusal: a YubiKey 5.8.0 answers a bad slot as it
+        // answers a bad algorithm or body once the management key is in.
+        return Sw::WRONG_DATA;
     }
     // SP 800-131A: no RSA-1024 import under the FIPS-style profile either.
     if cfg!(feature = "fips-profile") && algo == ALGO_RSA1024 {
