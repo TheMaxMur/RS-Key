@@ -221,7 +221,7 @@ AllCleared ==
     [r \in Refs |-> r = "oathCode" /\ (~oathCodeSet \/ BugResetKeepsOathUnlock)]
 
 (***************************************************************************)
-(* SELECT. crates/rsk-sdk/src/applet.rs:383-399 -- the ONE place that       *)
+(* SELECT. crates/rsk-sdk/src/applet.rs:391-407 -- the ONE place that       *)
 (* decides what a selection does to the applet that was current.           *)
 (***************************************************************************)
 
@@ -537,7 +537,7 @@ PivKeyOp ==
 \* SCardDisconnect(SCARD_RESET_CARD) / CCID_POWER_OFF / CCID_POWER_ON:
 \* `Dispatcher::reset_card` deselects, which drops the selected applet's
 \* security status (crates/rsk-device/src/ccid.rs:354-369,
-\* crates/rsk-sdk/src/applet.rs:222-230). This is the one the `cross_applet`
+\* crates/rsk-sdk/src/applet.rs:227-235). This is the one the `cross_applet`
 \* fuzz target already watches, one layer down.
 \* Its own trailing UNCHANGED named `psig` while the ELSE branch assigned it, so
 \* `psig' = FALSE /\ psig' = psig` pinned the whole action to a no-op wherever

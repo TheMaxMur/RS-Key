@@ -827,7 +827,7 @@ formal/README.md	crates/rsk-piv/src/lib.rs	1332-1332	&& ct_eq(	&& ct_eq(
 formal/README.md	crates/rsk-piv/src/lib.rs	1456-1456	puk: &[u8],	puk: &[u8],
 formal/README.md	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/README.md	crates/rsk-sdk/src/applet.rs	208-210	fn selectable(&self, i: usize) -> bool {	}
-formal/README.md	crates/rsk-sdk/src/applet.rs	383-399	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
+formal/README.md	crates/rsk-sdk/src/applet.rs	391-407	let found = applets.iter().enumerate().position(|(i, app)| {	None => Sw::FILE_NOT_FOUND,
 formal/README.md	crates/rsk-sdk/src/applet.rs	396-396	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
 formal/README.md	crates/rsk-sdk/src/applet.rs	397-401	if let Some(c) = self.current	}
 formal/README.md	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
@@ -910,8 +910,8 @@ formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	200-204	self.clear_challen
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	525-539	return Sw::PIN_BLOCKED;	// the oracle's order too.
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	547-581	// the retry counter … shall be decremented by one." A YubiKey 5.7.4 does	/// `6A88` for anything but `P1 = 00, P2 = 80`, as on `change_pin` — and here
 formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	149-149	current: Option<usize>,	current: Option<usize>,
-formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	222-230	///	{
-formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	383-399	// answered to the AID SP 800-85A-4 C.1.1.2 names as invalid. A YubiKey	{
+formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	227-235	pub fn reset_card<C>(&mut self, applets: &mut [&mut dyn Applet<C>], ctx: &mut C) {	}
+formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	391-407	let found = applets.iter().enumerate().position(|(i, app)| {	None => Sw::FILE_NOT_FOUND,
 formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	397-401	if let Some(c) = self.current	}
 formal/RSKeyAppletSeams.tla	firmware/src/pin_lock.rs	12-21	//! [`rsk_fido::state::PinLock`] lives in RAM and is rebuilt clear on every boot,	//!
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	811-813	if migrated && rsk_fs::request_rescrub(ctx.fs).is_err() {	}
@@ -1190,7 +1190,7 @@ formal/comutants.toml	crates/rsk-piv/src/lib.rs	810-810	if !self.sess.has_mgm {	
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	1059-1059	if !self.sess.has_mgm {	if !self.sess.has_mgm {
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	1153-1153	if !self.sess.has_mgm {	if !self.sess.has_mgm {
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	1321-1321	if set_retries_left(fs, retry, left - 1).is_err() {	if set_retries_left(fs, retry, left - 1).is_err() {
-formal/comutants.toml	crates/rsk-sdk/src/applet.rs	227-227	pub fn reset_card<C>(&mut self, applets: &mut [&mut dyn Applet<C>], ctx: &mut C) {	pub fn reset_card<C>(&mut self, applets: &mut [&mut dyn Applet<C>], ctx: &mut C) {
+formal/comutants.toml	crates/rsk-sdk/src/applet.rs	228-228	if let Some(i) = self.current.take()	if let Some(i) = self.current.take()
 formal/comutants.toml	firmware/src/pin_lock.rs	18-21	//! a real power cycle clears it. The *whole* lock moves: carrying the engaged flag	//!
 formal/comutants.toml	firmware/src/worker.rs	397-398	if rsk_mgmt::take_device_reset() && self.ccid.factory_wipe() {	self.reboot(1).await;
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	368-368	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
