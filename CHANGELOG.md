@@ -40,6 +40,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV's discovery object (`7E`) carries the PIN usage policy `40 00`, as a
+  YubiKey 5.8.0's does. RS-Key sent `40 10`, whose second byte ranks the
+  application PIN above a global PIN the card does not have.
+  `bcdDevice` 0x09FA → 0x09FB.
+
 - FIDO over CCID takes CTAP2's MSG, GETRESPONSE and CONTROL (`10`, `11`, `12`)
   under class `00` as under `80`, as a YubiKey 5.8.0 does; answers a poll or
   cancel with nothing pending `9000` with `CTAP2_ERR_USER_ACTION_TIMEOUT`,

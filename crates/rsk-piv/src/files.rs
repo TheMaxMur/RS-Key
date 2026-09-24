@@ -227,11 +227,12 @@ pub(crate) fn read_needs_pin(id: u32) -> bool {
 
 pub const DISCOVERY_ID: u32 = 0x7E;
 
-/// The discovery object (returned raw, not wrapped in `53`): the full PIV AID
-/// + PIN-usage policy `40 10`.
+/// The discovery object (returned raw, not wrapped in `53`): the full PIV AID and
+/// the PIN usage policy `40 00`, a YubiKey 5.8.0's to the byte. The second byte
+/// ranks the application PIN against a global PIN, and this card has none.
 pub const DISCOVERY: &[u8] = &[
     0x7E, 0x12, 0x4F, 0x0B, 0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00, 0x5F,
-    0x2F, 0x02, 0x40, 0x10,
+    0x2F, 0x02, 0x40, 0x00,
 ];
 
 /// SP 800-73 padded PIN-block wire length (PIN/PUK padded to 8 with `0xFF`).

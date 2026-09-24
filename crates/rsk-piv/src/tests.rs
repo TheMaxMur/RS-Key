@@ -9762,3 +9762,28 @@ fn get_data_refuses_what_it_cannot_read_as_a_yubikey_does() {
         }
     }
 }
+
+/// The discovery object byte for byte as a YubiKey 5.8.0 serves it: the full PIV
+/// AID, then a PIN usage policy of `40 00`. RS-Key answered `40 10`, a second byte
+/// that ranks the application PIN above a global PIN it does not have.
+#[test]
+fn discovery_is_a_yubikeys_to_the_byte() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let yubikey = [
+        0x7E, 0x12, 0x4F, 0x0B, 0xA0, 0x00, 0x00, 0x03, 0x08, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00,
+        0x5F, 0x2F, 0x02, 0x40, 0x00,
+    ];
+    let (sw, body) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &[0x5C, 0x01, 0x7E],
+    );
+    assert_eq!((sw, body.as_slice()), (Sw::OK, &yubikey[..]));
+}
