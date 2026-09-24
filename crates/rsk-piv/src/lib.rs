@@ -706,16 +706,18 @@ impl PivApplet<'_> {
 
     /// GET DATA (INS 0xCB).
     fn get_data<S: Storage>(&mut self, fs: &mut Fs<S>, apdu: &Apdu, res: &mut ResBuf) -> Sw {
+        // A YubiKey 5.8.0 answers a P1-P2 other than `3FFF`, and a tag list it
+        // cannot read, as it answers an object it does not hold: `6A82`.
         if apdu.p1 != 0x3F || apdu.p2 != 0xFF {
-            return Sw::INCORRECT_P1P2;
+            return Sw::FILE_NOT_FOUND;
         }
         let d = apdu.data;
         if d.len() < 3 || d[0] != TAG_DATA_PATH {
-            return Sw::WRONG_DATA;
+            return Sw::FILE_NOT_FOUND;
         }
         let l = d[1] as usize;
         if l == 0 || l > 3 || d.len() < 2 + l {
-            return Sw::WRONG_DATA;
+            return Sw::FILE_NOT_FOUND;
         }
         let mut id: u32 = 0;
         for &b in &d[2..2 + l] {

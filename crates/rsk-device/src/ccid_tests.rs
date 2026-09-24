@@ -708,6 +708,18 @@ fn a_keygen_fast_path_yields_to_an_open_chain() {
         rsk_sdk::Sw::EXEC_ERROR,
         "piv: the fast path did not fire, so this test proves nothing"
     );
+    // 9A's certificate object, so the chain joined would read something.
+    let object = [0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x03, 0x70, 0x01, 0x00];
+    assert_eq!(
+        sw(ccid.handle_apdu(&apdu(0x00, 0xDB, 0x3F, 0xFF, &object), 0)),
+        rsk_sdk::Sw::OK
+    );
+    let joined = apdu(0x00, 0xCB, 0x3F, 0xFF, &[0x5C, 0x03, 0x5F, 0xC1, 0x05]);
+    assert_eq!(
+        sw(ccid.handle_apdu(&joined, 0)),
+        rsk_sdk::Sw::OK,
+        "control: the joined read finds 5FC105"
+    );
     arm();
     assert_eq!(sw(ccid.handle_apdu(&segment, 0)), rsk_sdk::Sw::OK);
     assert_eq!(
@@ -716,9 +728,10 @@ fn a_keygen_fast_path_yields_to_an_open_chain() {
         "piv, outside the chain"
     );
     assert!(untouched(), "piv: a GENERATE outside the chain ran");
-    // The refusal dropped the chain, so its would-be final segment is read alone.
+    // The refusal dropped the chain, so its would-be final segment is read alone:
+    // a list with no `5C`, `6A82`, where joined to the segment it reads 5FC105.
     let alone = [0x00, 0xCB, 0x3F, 0xFF, 0x03, 0x5F, 0xC1, 0x05];
-    assert_eq!(sw(ccid.handle_apdu(&alone, 0)), rsk_sdk::Sw::WRONG_DATA);
+    assert_eq!(sw(ccid.handle_apdu(&alone, 0)), rsk_sdk::Sw::FILE_NOT_FOUND);
     // Joined, PIV reads `FF FF AC 03 …`, a body its template does not open.
     let junk = [0x10, 0x47, 0x00, 0x9A, 0x02, 0xFF, 0xFF];
     assert_eq!(sw(ccid.handle_apdu(&junk, 0)), rsk_sdk::Sw::OK);

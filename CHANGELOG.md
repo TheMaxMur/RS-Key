@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV GET DATA answers `6A82` to a tag list it cannot read and to a P1-P2 other
+  than `3FFF`, the answer for an object it does not hold, as a YubiKey 5.8.0
+  does. RS-Key answered a missing or malformed list (no data, `5C 00`, a length
+  the data does not carry, a long-form length, a four-byte tag, another outer
+  tag) `6A80`, and a wrong P1-P2 `6A86`. A one-byte body stays `6A80`, as on
+  every PIV command.
+  `bcdDevice` 0x09F8 → 0x09F9.
+
 - PIV MOVE KEY onto a slot that already holds a key is refused `6A80` and keeps
   both keys, as a YubiKey 5.8.0 refuses it; RS-Key moved over it and destroyed
   the key that was there, with its certificate. Its other refusals follow the

@@ -9645,3 +9645,120 @@ fn move_key_refuses_as_a_yubikey_does_and_destroys_nothing() {
         }
     }
 }
+
+/// GET DATA as a YubiKey 5.8.0 answers it, read twice with the object absent and
+/// present: a tag list it cannot read, and any P1-P2 but `3FFF`, is `6A82`, as
+/// for an object it does not hold; a one-byte body stays every PIV command's `6A80`.
+#[test]
+fn get_data_refuses_what_it_cannot_read_as_a_yubikey_does() {
+    enum Want {
+        Is(Sw),
+        TheObject,
+    }
+    let rows: [(&str, &[u8], Want); 20] = [
+        ("no data", &[], Want::Is(Sw::FILE_NOT_FOUND)),
+        ("5C", &[0x5C], Want::Is(Sw::WRONG_DATA)),
+        ("5C00", &[0x5C, 0x00], Want::Is(Sw::FILE_NOT_FOUND)),
+        ("5C01, no byte", &[0x5C, 0x01], Want::Is(Sw::FILE_NOT_FOUND)),
+        ("discovery", &[0x5C, 0x01, 0x7E], Want::Is(Sw::OK)),
+        (
+            "5C027F61",
+            &[0x5C, 0x02, 0x7F, 0x61],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        ("5FC105", &[0x5C, 0x03, 0x5F, 0xC1, 0x05], Want::TheObject),
+        (
+            "unknown",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x99],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        (
+            "four-byte tag",
+            &[0x5C, 0x04, 0x5F, 0xC1, 0x05, 0x00],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        (
+            "short tag",
+            &[0x5C, 0x03, 0x5F, 0xC1],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        (
+            "long-form length",
+            &[0x5C, 0x81, 0x03, 0x5F, 0xC1, 0x05],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        (
+            "tag 53",
+            &[0x53, 0x03, 0x5F, 0xC1, 0x05],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        ("no 5C", &[0x5F, 0xC1, 0x05], Want::Is(Sw::FILE_NOT_FOUND)),
+        (
+            "trailing byte",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x00],
+            Want::TheObject,
+        ),
+        (
+            "trailing list",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x5C, 0x01],
+            Want::TheObject,
+        ),
+        (
+            "5C025FC1",
+            &[0x5C, 0x02, 0x5F, 0xC1],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        (
+            "5FFF00",
+            &[0x5C, 0x03, 0x5F, 0xFF, 0x00],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        // Its low three bytes name 5FC105, which a read that kept them would find.
+        (
+            "four-byte 005FC105",
+            &[0x5C, 0x04, 0x00, 0x5F, 0xC1, 0x05],
+            Want::Is(Sw::FILE_NOT_FOUND),
+        ),
+        // PIN-gated, and no PIN is verified: the P1-P2 is judged before the PIN.
+        (
+            "5FC103",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x03],
+            Want::Is(Sw::SECURITY_STATUS_NOT_SATISFIED),
+        ),
+        // Synthesized for the Windows minidriver, where a reset YubiKey has none.
+        ("CHUID", &[0x5C, 0x03, 0x5F, 0xC1, 0x02], Want::Is(Sw::OK)),
+    ];
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    for present in [false, true] {
+        if present {
+            let obj = [
+                0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x05, 0x70, 0x03, 1, 2, 3,
+            ];
+            assert_eq!(
+                run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &obj).0,
+                Sw::OK
+            );
+        }
+        for (p1, p2) in [(0x3F, 0xFF), (0x3F, 0xFE), (0x00, 0x00)] {
+            for (name, body, want) in &rows {
+                let want = match want {
+                    _ if body.len() == 1 => Sw::WRONG_DATA,
+                    _ if (p1, p2) != (0x3F, 0xFF) => Sw::FILE_NOT_FOUND,
+                    Want::Is(sw) => *sw,
+                    Want::TheObject if present => Sw::OK,
+                    Want::TheObject => Sw::FILE_NOT_FOUND,
+                };
+                assert_eq!(
+                    run(&mut app, &mut fs, INS_GET_DATA, p1, p2, body).0,
+                    want,
+                    "{name} at {p1:02X}{p2:02X}, object present: {present}"
+                );
+            }
+        }
+    }
+}
