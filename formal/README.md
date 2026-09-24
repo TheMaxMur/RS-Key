@@ -375,7 +375,7 @@ those are where a hole costs the most:
 
 | Mutation | Verdict | Owned by |
 |---|---|---|
-| `crates/rsk-sdk/src/applet.rs:388` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
+| `crates/rsk-sdk/src/applet.rs:396` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
 | `clientpin.rs:241` `+` → `*` — the padded-length bound | **model-blind, real** | `change_pin_over_protocol_one` |
 | `clientpin.rs:330` `\|\|` → `&&` — the legacy token's argument check | **model-blind, real** | `the_legacy_get_pin_token_refuses_an_rp_id` |
 | `clientpin.rs:391` `\|` → `^` on `PERM_MC \| PERM_GA` | equivalent — `0x01` and `0x02` are disjoint | — |
@@ -1419,7 +1419,7 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 
 | Invariant | What it asserts | The Rust that owns it |
 |---|---|---|
-| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:375-391` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:200-204` · `crates/rsk-openpgp/src/pin.rs:81-94` · `crates/rsk-oath/src/lib.rs:1161-1165` · `crates/rsk-device/src/ccid.rs:354-369` (the ICC power transition) |
+| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:383-399` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:200-204` · `crates/rsk-openpgp/src/pin.rs:81-94` · `crates/rsk-oath/src/lib.rs:1161-1165` · `crates/rsk-device/src/ccid.rs:354-369` (the ICC power transition) |
 | `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:184-187` · `crates/rsk-openpgp/src/pin.rs:190-202` · `crates/rsk-oath/src/lib.rs:1097-1098` |
 | `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:87-99` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:57-65`, `:113-117` |
 | `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status but OATH's OTP PIN. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:366-369` · `crates/rsk-openpgp/src/lib.rs:354-357` · `crates/rsk-oath/src/lib.rs:1199` |
@@ -1463,7 +1463,7 @@ it.
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:380-388` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
+| `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:388-396` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
 | `BugReselectResetsStatus` | `637ed98` taken back out: PIV, OpenPGP and OATH's VALIDATE resetting on every select | `ReselectPreservesAccessStatus` | 42 states |
 | `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:354-369` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
 | `BugAdminOpensKeyOps` | `e5da38b` taken back out: PW3 standing in for PW1/PW2 | `NoKeyOpOnTheAdminStatus` | 67 states |

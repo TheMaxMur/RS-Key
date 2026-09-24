@@ -250,6 +250,19 @@ impl Dispatcher {
             Err(_) => return Sw::WRONG_LENGTH,
         };
 
+        // GET RESPONSE (0xC0) is the transport's, not an applet's. While a tail is
+        // owed its SM bits are not judged: a YubiKey 5.8.0 serves the rest of an
+        // answer it already began in the clear.
+        let get_response = apdu.ins == INS_GET_RESPONSE;
+        if get_response && !apdu.is_chaining() && self.pending_off < self.pending_len {
+            return self.serve_pending(apdu.frame_cap(), res);
+        }
+        // With the chaining bit and no chain open a YubiKey 5.8.0 answers it `9000`
+        // and changes nothing: no chain opens, a held tail waits for the next one.
+        if get_response && apdu.is_chaining() && !self.chaining {
+            return Sw::OK;
+        }
+
         // The class byte, one owner for every applet. A YubiKey 5.7.4 examines
         // exactly two bits and in this order: chaining wins outright (`1C`, `90`
         // and `FF` are plain segments there, so an SM refusal must not touch
@@ -260,11 +273,6 @@ impl Dispatcher {
             return Sw::CLA_NOT_SUPPORTED;
         }
 
-        // GET RESPONSE (0xC0): hand back the next slice of a chained response
-        // before touching the applets — it is a transport command, not theirs.
-        if apdu.ins == INS_GET_RESPONSE && self.pending_off < self.pending_len {
-            return self.serve_pending(apdu.frame_cap(), res);
-        }
         // Any other command abandons a partially-read chained response.
         self.clear_pending();
 

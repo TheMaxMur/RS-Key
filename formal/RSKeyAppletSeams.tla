@@ -34,7 +34,7 @@ EXTENDS Naturals
 
 (* Mutation switches. All FALSE is the shipped tree. *)
 CONSTANTS
-    \* crates/rsk-sdk/src/applet.rs:380-388 -- a SELECT of a DIFFERENT AID deselects the
+    \* crates/rsk-sdk/src/applet.rs:388-396 -- a SELECT of a DIFFERENT AID deselects the
     \* applet that was current, and the deselect is what resets its session.
     BugSelectKeepsOtherApplet,
     \* 637ed98 taken back out: PIV, OpenPGP and OATH's VALIDATE reset on EVERY
@@ -221,7 +221,7 @@ AllCleared ==
     [r \in Refs |-> r = "oathCode" /\ (~oathCodeSet \/ BugResetKeepsOathUnlock)]
 
 (***************************************************************************)
-(* SELECT. crates/rsk-sdk/src/applet.rs:375-391 -- the ONE place that       *)
+(* SELECT. crates/rsk-sdk/src/applet.rs:383-399 -- the ONE place that       *)
 (* decides what a selection does to the applet that was current.           *)
 (***************************************************************************)
 

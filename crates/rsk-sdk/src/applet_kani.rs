@@ -103,10 +103,11 @@ fn buffers_sane(d: &Dispatcher) {
 /// another's command (audit run-34 #26, and run-35 for the non-SELECT half).
 ///
 /// The fourth pins the class-byte rule the dispatcher now owns for every
-/// applet: `CLA & 0x0C` without the chaining bit is refused before dispatch,
-/// so a client that believes it negotiated secure messaging can never be
-/// answered in the clear. It is also why the fifth clause has to exclude those
-/// classes — a SELECT is not exempt from it.
+/// applet: `CLA & 0x0C` without the chaining bit reaches no applet, so none
+/// answers a client that believes it negotiated secure messaging in the clear.
+/// It is `6E00`, save a GET RESPONSE for an owed tail, which the dispatcher
+/// serves itself on a path `Stub` never opens. It is also why the fifth clause
+/// has to exclude those classes — a SELECT is not exempt from it.
 ///
 /// The fifth is run-37 stated positively: a well-formed SELECT for a
 /// registered AID reaches the applet, whatever chain state it walks into.

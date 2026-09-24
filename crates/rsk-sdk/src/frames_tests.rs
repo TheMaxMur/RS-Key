@@ -229,3 +229,97 @@ fn a_chained_command_is_cut_by_its_final_segment() {
         assert_eq!(frames(&apdus, &GR_LE_00), all, "final segment {form}");
     }
 }
+
+/// The status and length of each answer to `apdus`, sent in order to a card
+/// holding a `BODY`-byte answer.
+fn answers(apdus: &[&[u8]]) -> Vec<Frame> {
+    let mut c = Chunky {
+        body_len: BODY,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 2048];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    apdus
+        .iter()
+        .map(|a| {
+            let sw = disp.process(a, &mut applets, &mut (), &mut res);
+            (sw.0, res.len())
+        })
+        .collect()
+}
+
+#[test]
+fn get_response_class_bits_as_a_yubikey_reads_them() {
+    // While a tail is owed an SM class is served like `00`; the chaining bit is a
+    // `9000` that changes nothing unless a chain is open, where it is a command
+    // outside that chain like any other. Measured twice on a YubiKey 5.8.0.
+    let first = short(Some(0x00));
+    let gr = |cla: u8, le: u8| vec![cla, 0xC0, 0x00, 0x00, le];
+    let segment = vec![0x10, 0xCA, 0x00, 0x00, 0x02, 0x5C, 0x03];
+    let owed = (0x6100, 256);
+    let rows: [Row<Vec<Vec<u8>>>; 10] = [
+        (
+            "SM class, owed",
+            vec![first.clone(), gr(0x84, 0), gr(0x00, 0), gr(0x00, 0)],
+            &[owed, owed, (0x61E8, 256), (0x9000, 232)],
+        ),
+        // Drained to the end: while 256 or more bytes remain SW2 is `00`, so only
+        // the last frames show a byte gone missing.
+        (
+            "chaining bit, owed",
+            vec![
+                first.clone(),
+                gr(0x10, 0),
+                gr(0x00, 0),
+                gr(0x00, 0),
+                gr(0x00, 0),
+            ],
+            &[owed, (0x9000, 0), owed, (0x61E8, 256), (0x9000, 232)],
+        ),
+        (
+            "chaining bit twice, owed",
+            vec![first.clone(), gr(0x10, 0), gr(0x10, 0), gr(0x00, 0)],
+            &[owed, (0x9000, 0), (0x9000, 0), owed],
+        ),
+        (
+            "90, owed",
+            vec![first.clone(), gr(0x90, 0), gr(0x00, 0)],
+            &[owed, (0x9000, 0), owed],
+        ),
+        (
+            "1C, owed",
+            vec![first.clone(), gr(0x1C, 0), gr(0x00, 0)],
+            &[owed, (0x9000, 0), owed],
+        ),
+        (
+            "chaining bit, Le 10",
+            vec![first.clone(), gr(0x10, 0x10), gr(0x00, 0x10)],
+            &[owed, (0x9000, 0), (0x6100, 16)],
+        ),
+        (
+            "chaining bit, idle",
+            vec![gr(0x10, 0), first.clone()],
+            &[(0x9000, 0), owed],
+        ),
+        ("SM class, idle", vec![gr(0x84, 0)], &[(0x6E00, 0)]),
+        (
+            "chaining bit, chain open",
+            vec![segment.clone(), gr(0x10, 0)],
+            &[(0x9000, 0), (0x6883, 0)],
+        ),
+        // A segment is not a GET RESPONSE: it drops the tail, and the one after
+        // it is outside the chain the segment opened.
+        (
+            "segment, owed",
+            vec![first.clone(), segment, gr(0x00, 0)],
+            &[owed, (0x9000, 0), (0x6883, 0)],
+        ),
+    ];
+    for (form, apdus, want) in rows {
+        let apdus: Vec<&[u8]> = apdus.iter().map(Vec::as_slice).collect();
+        assert_eq!(answers(&apdus), want, "{form}");
+    }
+}

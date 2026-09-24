@@ -95,8 +95,9 @@ def select(conn, aid):
 ```
 
 The class byte is judged before the command, for every applet and for SELECT
-itself. Bit `0x10` marks a **command-chaining** segment and is looked at first, so
-`10`, `1C`, `90` and `FF` are all ordinary segments. Otherwise a class carrying a
+itself, `GET RESPONSE` aside (below). Bit `0x10` marks a **command-chaining**
+segment and is looked at first, so `10`, `1C`, `90` and `FF` are all ordinary
+segments. Otherwise a class carrying a
 secure-messaging indication (`CLA & 0x0C`: `04`, `0C`, `84`, `8C`, …) answers
 `6E00` — **no applet here implements secure messaging**, and OpenPGP's Extended
 Capabilities says so. Applets that additionally name a class of their own reject
@@ -117,9 +118,15 @@ PIV, OpenPGP and CTAP over CCID answer a success body longer than the request's
 the whole body in one frame, as a YubiKey 5.8.0 answers it. `GET RESPONSE` is cut
 by its own encoding the same way. A certificate object over 256 bytes chains when
 it is read with a short `GET DATA`, so a host that sends a short `GET DATA` without
-an `Le` must still follow `61xx`. A `GET RESPONSE` with nothing left to serve is
-`6A80` on PIV and `6D00` on OpenPGP, OATH, management, OTP and FIDO, as on a
-YubiKey 5.8.0.
+an `Le` must still follow `61xx`. A `00 C0` with nothing left to serve is `6A80`
+on PIV and `6D00` on OpenPGP, OATH, management, OTP and FIDO. While a tail is
+owed, a `GET RESPONSE` without the chaining bit serves it whatever its class,
+secure messaging included, since that answer already began in the clear. With
+the chaining bit (`10`, `90`, `1C`), owed tail or not, it is a `9000` that opens
+no chain and leaves any tail for the next one; inside an open chain it is
+`6883`, like any command outside that chain. All of it as on a YubiKey 5.8.0.
+With nothing owed, a secure-messaging `GET RESPONSE` is `6E00`, like any command
+in that class.
 
 OATH `LIST` (`0xA1`) and `CALCULATE ALL` (`0xA4`) responses that outgrow the
 command's `Le` chain the YubiKey-OATH way instead: `61 XX` followed by **SEND

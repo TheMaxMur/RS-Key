@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A GET RESPONSE is judged by its class byte as a YubiKey 5.8.0 judges it. While
+  a tail is owed, a secure-messaging class (`84 C0`) is served that tail, where
+  RS-Key answered `6E00`. With the chaining bit (`10`, `90`, `1C`) it is a
+  `9000` that changes nothing, owed tail or not: RS-Key served the tail to it,
+  or, with none owed, opened a chain on its header that the next command then
+  broke or ended (a GET DATA got `6883`). Inside an open chain it stays `6883`.
+  `bcdDevice` 0x09F3 → 0x09F4.
+
 - OATH, management and OTP serve a command under class `80` as they do under
   `00`: a known instruction runs, an unknown one is `6D00`. A YubiKey 5.8.0 does
   that on every card applet; RS-Key refused every class but `00` there with
