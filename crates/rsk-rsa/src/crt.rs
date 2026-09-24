@@ -305,6 +305,25 @@ pub fn private_op(
     Ok(mlen)
 }
 
+/// The pairwise-consistency test a key takes before it is stored: laid out as the
+/// signer holds it (its refusals are [`crt_plaintext`]'s too), it signs one block
+/// through [`private_op`]'s fault check at e = 65537. Composite primes fail here.
+pub fn pairwise_consistent(key: &RsaKey, rng: &mut dyn Rng) -> Result<(), RsaError> {
+    let mut plain = [0u8; MAX_CRT_PLAIN];
+    let mut sig = [0u8; MAX_RSA_BYTES];
+    let r = (|| {
+        let n = crt_plaintext(key, &mut plain)?;
+        let crt = crt_from_plain(&plain[..n])?;
+        let mlen = crt.modulus_len();
+        let mut block = [0u8; MAX_RSA_BYTES];
+        block[mlen - 1] = 2;
+        private_op(&crt, &block[..mlen], rng, &mut sig).map(|_| ())
+    })();
+    plain.zeroize();
+    sig.zeroize();
+    r
+}
+
 #[cfg(test)]
 #[path = "crt_tests.rs"]
 mod tests;

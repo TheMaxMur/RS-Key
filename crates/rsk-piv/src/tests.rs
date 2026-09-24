@@ -9503,9 +9503,9 @@ fn import_refuses_a_bad_slot_as_it_refuses_a_bad_body() {
     verify_pin(&mut app, &mut fs);
 }
 
-/// A refused RSA import leaves the slot's key standing. The seal refuses a pair it
-/// cannot lay out for the CRT signer (`6700`, `6400`), and it did so after the
-/// slot's metadata was dropped, so the key already there went unreachable.
+/// A refused RSA import leaves the slot's key standing. The seal refused a pair it
+/// could not lay out for the CRT signer after the slot's metadata was dropped, so
+/// the key already there went unreachable. Each refusal is `6A80`, as a YubiKey's.
 #[test]
 fn a_refused_rsa_import_leaves_the_slots_key_standing() {
     let rng = RefCell::new(TestRng(7));
@@ -9547,13 +9547,13 @@ fn a_refused_rsa_import_leaves_the_slots_key_standing() {
         v[len - 1] = 0u8.wrapping_sub(k);
         v
     };
-    // Each pair makes a modulus of the right byte length and only the seal refuses
-    // it, each for one reason: a 255-byte prime, the factor 3 in both primes, and
-    // a 288-byte prime whose layout outgrows the seal's buffer.
+    // Each pair makes a modulus of the right byte length and is refused for one
+    // reason: primes of 1 and 255 bytes, the factor 3 in both, and primes of 224
+    // and 288 bytes where RSA-4096 takes 256 each.
     for (algo, p, q, want) in [
-        (ALGO_RSA2048, vec![3], less(255, 3), Sw::WRONG_LENGTH),
-        (ALGO_RSA2048, less(128, 1), less(128, 7), Sw::EXEC_ERROR),
-        (ALGO_RSA4096, less(224, 1), less(288, 3), Sw::WRONG_LENGTH),
+        (ALGO_RSA2048, vec![3], less(255, 3), Sw::WRONG_DATA),
+        (ALGO_RSA2048, less(128, 1), less(128, 7), Sw::WRONG_DATA),
+        (ALGO_RSA4096, less(224, 1), less(288, 3), Sw::WRONG_DATA),
     ] {
         let mut body = tlv(0x01, &p);
         body.extend(tlv(0x02, &q));
@@ -10150,4 +10150,97 @@ fn put_data_reads_its_body_as_a_yubikey_does() {
         );
         assert_eq!(read(&mut app, &mut fs, 0x05).0, Sw::FILE_NOT_FOUND);
     }
+}
+
+/// RSA IMPORT refusals a YubiKey 5.8.0 makes, read twice, all `6A80` with the slot
+/// kept: a prime sent wider than half the modulus, a short modulus, `p = q`, and
+/// composite factors, which RS-Key stored as a key that refused every signature.
+#[test]
+fn rsa_import_refuses_a_key_a_yubikey_refuses() {
+    use rsk_rsa::vectors::{N1024_HEX, P_HEX, Q_HEX, hex};
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0,
+        Sw::OK
+    );
+    let before = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
+    let (p, q, composite) = (hex(P_HEX), hex(Q_HEX), hex(N1024_HEX));
+    assert!(
+        rsk_rsa::rsa_from_pqe(&[0x01, 0x00, 0x01], &composite, &p).is_some(),
+        "the composite pair assembles, so only the trial signature can refuse it"
+    );
+    // Two 1017-bit primes in 128-byte fields: the widths hold, the modulus is 255 bytes.
+    let p1017 = hex(
+        "01fd0790b5c0ef2a339d6dba60b8341cdb84bad62f16e4f52e7bb84c2a843f969f0707f838383987e35118ce7e6e0d5d6572b0cb5303cf51f12cd90e89e587ef4dd4a5ab206424484805e322a7c3440f1e7b8828de09be2f12675bab240d2b99c940ceaf72651e94a448e03c067b2cd62fca48f7180c6010659f3aae18476085",
+    );
+    let q1017 = hex(
+        "01d69e1125599be3014de8443bf1fd257f6382f8ed0640e270900cacd72e480eba5928124737175e8eab66c6e58a74fe24b55a6ef82a621fdbac5bd6b91ee421b05c2aa372ddfad45bd84cddcdc200df74647ce677f06dc99c2e54ec5da58c24f5f66ce8d5d29983d652d6587b591f1f9872fd3360ad7833abd4689054e10f03",
+    );
+    let tlvs = |fields: &[(u8, &[u8])]| {
+        let mut b = Vec::new();
+        for (tag, v) in fields {
+            b.extend_from_slice(&[*tag, 0x81, v.len() as u8]);
+            b.extend_from_slice(v);
+        }
+        b
+    };
+    let zero_led = |v: &[u8]| [&[0][..], v].concat();
+    for (name, body) in [
+        ("composite p", tlvs(&[(1, &composite), (2, &p)])),
+        (
+            "p with a leading zero",
+            tlvs(&[(1, &zero_led(&p)), (2, &q)]),
+        ),
+        (
+            "q with a leading zero",
+            tlvs(&[(1, &p), (2, &zero_led(&q))]),
+        ),
+        ("a 255-byte modulus", tlvs(&[(1, &p1017), (2, &q1017)])),
+        ("p = q", tlvs(&[(1, &p), (2, &p)])),
+    ] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_IMPORT_ASYM,
+                ALGO_RSA2048,
+                0x9A,
+                &body
+            )
+            .0,
+            Sw::WRONG_DATA,
+            "{name}"
+        );
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]),
+            before,
+            "{name}: the refusal moved the slot"
+        );
+    }
+    // Control: the same primes, with CRT fields a YubiKey takes whatever they hold.
+    let junk = [0x5A; 128];
+    let good = tlvs(&[(1, &p), (2, &q), (3, &junk), (4, &junk), (5, &junk)]);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_IMPORT_ASYM,
+            ALGO_RSA2048,
+            0x9A,
+            &good
+        )
+        .0,
+        Sw::OK
+    );
+    let (sw, meta) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
+    assert_eq!(
+        (sw, find_tag(&meta, 0x01)),
+        (Sw::OK, Some(&[ALGO_RSA2048][..]))
+    );
 }

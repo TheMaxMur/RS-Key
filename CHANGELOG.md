@@ -40,6 +40,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV RSA IMPORT refuses every key it will not use with `6A80`, as a YubiKey
+  5.8.0 does, and keeps the slot's key. It takes each prime at exactly half the
+  modulus width (a prime sent with a leading zero byte was taken), and a key
+  must sign one trial block before it replaces anything: RS-Key stored a pair of
+  composite "primes", which assembles into a key that then refused every
+  signature (`6400`). A pair it could not lay out for the CRT signer answered
+  `6700` or `6400`, and one it could not assemble at all (`p = q` among them)
+  `6400`.
+  `bcdDevice` 0x09FE → 0x09FF.
+
 - PIV PUT DATA reads its request as a YubiKey 5.8.0 does. Without the
   management key it answers `6982` whatever the P1-P2 or body (a one-byte body
   stays every PIV command's `6A80`); with it, a P1-P2
@@ -101,7 +111,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 - A refused PIV RSA IMPORT leaves the key already in the slot in use. Whether
   the new key could be laid out for the CRT signer (primes that share a factor,
   a prime width it cannot take) was decided after the slot's metadata was
-  dropped, so that refusal (`6400`, `6700`) left the old key unreachable: GET
+  dropped, so that refusal left the old key unreachable: GET
   METADATA and every use answered `6A88`. It is decided before anything is
   written now.
   `bcdDevice` 0x09F6 → 0x09F7.

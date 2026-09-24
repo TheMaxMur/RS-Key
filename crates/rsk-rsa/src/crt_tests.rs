@@ -204,3 +204,16 @@ fn crt_from_plain_rejects_non_mult32_width() {
     // `P‖Q` blob of a width the asm cannot take answers `WRONG_LENGTH`.
     assert_eq!(crt_from_plain(&[0u8; 200]).err(), Some(RsaError::BadWidth));
 }
+
+#[test]
+fn a_key_on_composite_factors_fails_the_pairwise_test() {
+    // A 1024-bit product of two primes as `p`, beside a real prime: the pair
+    // assembles -- `d` exists modulo lcm(p - 1, q - 1) -- and cannot sign.
+    let composite = hex(crate::vectors::N1024_HEX);
+    let key = crate::rsa_from_pqe(crate::RSA_PUB_EXP_BE, &composite, &hex(P_HEX))
+        .expect("the pair assembles, so only the trial signature can refuse it");
+    let mut rng = SeqRng(1);
+    assert_eq!(pairwise_consistent(&key, &mut rng), Err(RsaError::Failed));
+    assert_eq!(pairwise_consistent(&test_key(), &mut rng), Ok(()));
+    assert_eq!(pairwise_consistent(&test_key_1024(), &mut rng), Ok(()));
+}

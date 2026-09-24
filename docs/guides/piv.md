@@ -179,7 +179,10 @@ ykman piv certificates import 9d existing-cert.pem
 ```
 
 Import is management-key gated and also accepts RSA-2048/1024, P-256/P-384 and
-Ed25519/X25519.
+Ed25519/X25519. A host sends each prime of an RSA key at exactly half the
+modulus width, and the key signs one trial block before it replaces anything; a
+pair that is not a working key (`p = q`, composite factors) is refused `6A80` and
+the slot keeps its key, as on a YubiKey.
 An imported key keeps whatever copy you imported it from. Your call which way
 the trade-off goes. Imported keys **cannot be attested** (see below): attestation
 proves on-card *generation*, which import didn't do.

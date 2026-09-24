@@ -479,7 +479,8 @@ pub(crate) fn store_retired_rsa<S: Storage>(
 }
 
 /// Import an RSA key from its CRT primes (tags 0x01 `p`, 0x02 `q`), fixing the
-/// public exponent at 65537; the modulus size must match the requested algo.
+/// public exponent at 65537. A YubiKey 5.8.0 takes each prime at exactly half the
+/// modulus width, and answers `6A80` to every key it will not use.
 fn import_rsa<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -488,23 +489,22 @@ fn import_rsa<S: Storage>(
     slot: u8,
     data: &[u8],
 ) -> Result<(), Sw> {
-    let p = find_tag(data, 0x01).filter(|v| !v.is_empty());
-    let q = find_tag(data, 0x02).filter(|v| !v.is_empty());
-    let (Some(p), Some(q)) = (p, q) else {
-        return Err(Sw::WRONG_DATA);
-    };
-    let Some(key) = rsa_from_pqe(&[0x01, 0x00, 0x01], p, q) else {
-        return Err(Sw::EXEC_ERROR);
-    };
     let Some(want) = rsa_size_from_algo(algo) else {
         return Err(Sw::WRONG_DATA);
     };
-    if key.size() != want {
+    let (Some(p), Some(q)) = (find_tag(data, 0x01), find_tag(data, 0x02)) else {
+        return Err(Sw::WRONG_DATA);
+    };
+    if p.len() * 2 != want || q.len() * 2 != want {
         return Err(Sw::WRONG_DATA);
     }
-    // The seal refuses a pair it cannot lay out for the CRT signer. Ask it before
-    // the meta drop, after which a refusal left the slot's key unreachable.
-    seal::check_rsa_layout(&key)?;
+    let key = rsa_from_pqe(&[0x01, 0x00, 0x01], p, q)
+        .filter(|key| key.size() == want)
+        .ok_or(Sw::WRONG_DATA)?;
+    // Before the meta drop, after which a refusal would leave the slot's key unreachable.
+    // Composite factors pass `rsa_from_pqe` and fail only this trial signature.
+    rsk_rsa::crt::pairwise_consistent(&key, &mut crate::RsaRng(&mut *rng))
+        .map_err(|_| Sw::WRONG_DATA)?;
     drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_rsa_key(dev, fs, rng, key_fid(slot), &key)
 }
