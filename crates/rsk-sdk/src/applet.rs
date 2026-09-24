@@ -453,10 +453,16 @@ impl Dispatcher {
         self.chaining = false;
     }
 
+    /// Whether a command chain is open: a segment taken and its final one due.
+    pub fn chain_open(&self) -> bool {
+        self.chaining
+    }
+
     /// The answer half of [`Self::process`], for a response an applet made outside
-    /// it (the RSA-keygen fast path): drop the held tail and any open chain, then,
-    /// for an applet whose `response_chaining` is `chaining_ok`, cut the body at
-    /// `cap` (the command's [`Apdu::frame_cap`]) and hold the rest for GET RESPONSE.
+    /// it (the RSA-keygen fast path): drop the held tail, then, for an applet whose
+    /// `response_chaining` is `chaining_ok`, cut the body at `cap` (the command's
+    /// [`Apdu::frame_cap`]) and hold the rest for GET RESPONSE. Never with a chain
+    /// open: a command then is the dispatcher's, to join to it or refuse `6883`.
     pub fn chain_response(
         &mut self,
         sw: Sw,
@@ -464,8 +470,8 @@ impl Dispatcher {
         chaining_ok: bool,
         res: &mut ResBuf,
     ) -> Sw {
+        debug_assert!(!self.chaining, "a response made outside an open chain");
         self.clear_pending();
-        self.clear_chaining();
         self.maybe_chain(sw, cap, chaining_ok, res)
     }
 

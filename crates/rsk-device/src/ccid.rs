@@ -395,9 +395,12 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         let fast_cap = Apdu::parse(apdu)
             .ok()
             .filter(|p| !p.is_chaining() && !p.is_secure_messaging())
+            // Nor one while a chain is open: the dispatcher joins it to that chain,
+            // or refuses it `6883` as a YubiKey 5.8.0 does.
+            .filter(|_| !self.disp.chain_open())
             .map(|p| p.frame_cap());
-        // They also bypass the answer half of dispatch: the stale GET RESPONSE tail
-        // and chain it drops, and the frame cap it cuts the body at, which
+        // They also bypass the answer half of dispatch: the stale GET RESPONSE tail it
+        // drops, and the frame cap it cuts the body at, which
         // `Dispatcher::chain_response` does for them.
         if let Some(cap) = fast_cap
             && let Some((sw, n)) = self.try_rsa_keygen(apdu)

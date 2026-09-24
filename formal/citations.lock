@@ -52,7 +52,7 @@ assurance/board/PLAT-TRNG-002.toml	scripts/platform_gate.py	1337-1337	OUTCOME_ST
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/clientpin.rs	724-724	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/state.rs	172-172	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/state.rs	286-286	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
-assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/ccid_tests.rs	928-928	fn both_transports_answer_from_one_session_state() {	fn both_transports_answer_from_one_session_state() {
+assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/ccid_tests.rs	998-998	fn both_transports_answer_from_one_session_state() {	fn both_transports_answer_from_one_session_state() {
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	4-21	//! Presence-scope arbitration: one physical button, four transports, and the	//! `NoCrossTransportTouchConsumption` (`formal/RSKeySecurityState.tla`).
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	13-14	//! touch the key for somebody else's operation. CTAP 2.1 §11.2.9.1.4 scopes a	//! cancel to its own channel.
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	26-32	pub const SCOPE_NONE: u8 = 0;	pub const SCOPE_OTP: u8 = 3;

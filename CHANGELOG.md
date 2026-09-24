@@ -40,6 +40,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- On the board, an RSA GENERATE (PIV, OpenPGP) that does not close an open
+  command chain is refused `6883` and runs nothing, like any other command
+  outside the chain and as a YubiKey 5.8.0 refuses it; one that closes the chain
+  is joined to it. The accelerated keygen took the GENERATE alone and ran it,
+  then dropped the chain.
+  `bcdDevice` 0x09F5 → 0x09F6.
+
 - PIV IMPORT ASYMMETRIC KEY into a slot that takes no key is refused `6A80` once
   the management key is in, as a YubiKey 5.8.0 refuses it and as RS-Key already
   refused a bad algorithm, policy or key encoding there; it was `6A86`. A

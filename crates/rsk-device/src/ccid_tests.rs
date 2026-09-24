@@ -643,10 +643,10 @@ fn a_fast_path_keygen_is_cut_at_the_frame_cap_like_any_answer() {
 }
 
 #[test]
-fn a_fast_path_keygen_drops_a_held_tail_and_a_stranded_chain() {
-    // Any command but GET RESPONSE drops the tail the dispatcher holds, and one
-    // outside an open chain drops the chain. The fast paths answer off the
-    // dispatcher, so `Dispatcher::chain_response` has to do both for them.
+fn a_fast_path_keygen_drops_a_held_tail() {
+    // Any command but GET RESPONSE drops the tail the dispatcher holds. The fast
+    // paths answer off the dispatcher, so `Dispatcher::chain_response` drops it
+    // for them.
     let env = Env::new();
     env.board.borrow_mut().accelerator = true;
     let mut ccid = env.ccid();
@@ -678,18 +678,88 @@ fn a_fast_path_keygen_drops_a_held_tail_and_a_stranded_chain() {
         (rsk_sdk::Sw::WRONG_DATA, 2),
         "the first key's tail outlived the second key's answer"
     );
+}
 
-    // A stranded segment, then a GENERATE: a command sharing the segment's header
-    // afterwards is read alone, not as the chain's final segment.
+#[test]
+fn a_keygen_fast_path_yields_to_an_open_chain() {
+    // With a chain open a GENERATE is the dispatcher's. Outside the chain it is
+    // `6883` and runs nothing, as on a YubiKey 5.8.0 (read twice, after a stranded
+    // GET DATA segment); as the chain's final segment it is joined to the chain.
+    let env = Env::new();
+    env.board.borrow_mut().accelerator = true;
+    rsk_openpgp::scan_files(
+        &crate::tests::dev(),
+        &mut env.fs.borrow_mut(),
+        &mut *env.rng.borrow_mut(),
+    )
+    .unwrap();
+    let mut ccid = env.ccid();
     let segment = [0x10, 0xCB, 0x3F, 0xFF, 0x02, 0x5C, 0x03];
-    assert_eq!(sw(ccid.handle_apdu(&segment, 0)), rsk_sdk::Sw::OK);
-    assert_eq!(generate(&mut ccid, &ext), rsk_sdk::Sw::OK);
-    let alone = [0x00, 0xCB, 0x3F, 0xFF, 0x03, 0x5F, 0xC1, 0x05];
+    let piv_generate = [0x00, 0x47, 0x00, 0x9A, 0x05, 0xAC, 0x03, 0x80, 0x01, 0x07];
+    let pgp_generate = [0x00, 0x47, 0x80, 0x00, 0x02, 0xB6, 0x00];
+    // A key for the accelerator to hand out, so a fast path that fires takes it.
+    let arm = || env.board.borrow_mut().search_key = Some(rsa2048());
+    let untouched = || env.board.borrow().search_key.is_some();
+    // The control: with no chain open the fast path fires, and with no key to find
+    // answers EXEC_ERROR for itself.
+    piv_as_admin(&mut ccid);
     assert_eq!(
-        sw(ccid.handle_apdu(&alone, 0)),
-        rsk_sdk::Sw::WRONG_DATA,
-        "the stranded segment outlived the GENERATE and prefixed the next command"
+        sw(ccid.handle_apdu(&piv_generate, 0)),
+        rsk_sdk::Sw::EXEC_ERROR,
+        "piv: the fast path did not fire, so this test proves nothing"
     );
+    arm();
+    assert_eq!(sw(ccid.handle_apdu(&segment, 0)), rsk_sdk::Sw::OK);
+    assert_eq!(
+        sw(ccid.handle_apdu(&piv_generate, 0)),
+        rsk_sdk::Sw::LAST_CHAIN_EXPECTED,
+        "piv, outside the chain"
+    );
+    assert!(untouched(), "piv: a GENERATE outside the chain ran");
+    // The refusal dropped the chain, so its would-be final segment is read alone.
+    let alone = [0x00, 0xCB, 0x3F, 0xFF, 0x03, 0x5F, 0xC1, 0x05];
+    assert_eq!(sw(ccid.handle_apdu(&alone, 0)), rsk_sdk::Sw::WRONG_DATA);
+    // Joined, PIV reads `FF FF AC 03 …`, a body its template does not open.
+    let junk = [0x10, 0x47, 0x00, 0x9A, 0x02, 0xFF, 0xFF];
+    assert_eq!(sw(ccid.handle_apdu(&junk, 0)), rsk_sdk::Sw::OK);
+    assert_eq!(
+        sw(ccid.handle_apdu(&piv_generate, 0)),
+        rsk_sdk::Sw::WRONG_DATA,
+        "piv, the chain's final segment"
+    );
+    // A segment with no data opens a chain as well; joined, the applet's own
+    // keygen answers, and the accelerator is still not asked.
+    assert_eq!(
+        sw(ccid.handle_apdu(&[0x10, 0x47, 0x00, 0x9A], 0)),
+        rsk_sdk::Sw::OK
+    );
+    assert_eq!(
+        sw(ccid.handle_apdu(&piv_generate, 0)).sw1(),
+        0x61,
+        "piv, the final segment of an empty chain"
+    );
+    assert!(
+        untouched(),
+        "piv: the fast path took a chain's final segment"
+    );
+
+    ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0);
+    let pw3 = apdu(0x00, 0x20, 0x00, 0x83, rsk_openpgp::consts::PW3_DEFAULT);
+    assert_eq!(sw(ccid.handle_apdu(&pw3, 0)), rsk_sdk::Sw::OK);
+    env.board.borrow_mut().search_key = None;
+    assert_eq!(
+        sw(ccid.handle_apdu(&pgp_generate, 0)),
+        rsk_sdk::Sw::EXEC_ERROR,
+        "openpgp: the fast path did not fire, so this test proves nothing"
+    );
+    arm();
+    assert_eq!(sw(ccid.handle_apdu(&segment, 0)), rsk_sdk::Sw::OK);
+    assert_eq!(
+        sw(ccid.handle_apdu(&pgp_generate, 0)),
+        rsk_sdk::Sw::LAST_CHAIN_EXPECTED,
+        "openpgp, outside the chain"
+    );
+    assert!(untouched(), "openpgp: a GENERATE outside the chain ran");
 }
 
 // --- the CCID pinpad gate (trusted-display builds only) ---------------------
