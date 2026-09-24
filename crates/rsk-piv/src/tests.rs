@@ -5300,11 +5300,9 @@ fn the_bit_group_template_is_not_an_alias_of_a_data_object() {
         Sw::FILE_NOT_FOUND,
         "7F61 after writing 5FC1B6"
     );
-    // Both cards refuse the `5C`-form write to `7F61` — this pins `put_data`'s
-    // own 3-byte-path guard, not the map, and it passes with the alias restored.
-    // It is here because it is why the alias was only ever reachable from the
-    // other end. (A *bare* `7F 61 …` body is a different encoding and lands on
-    // the acknowledged-not-stored arm.)
+    // Both cards refuse the `5C`-form write to `7F61`. That pins `put_data`'s own
+    // path guard, not the map (it passes with the alias restored), and is why the
+    // alias was only reachable from the other end. A bare `7F 61` body is `6A80`.
     let mut bad = bitgt.to_vec();
     bad.extend_from_slice(&[TAG_DATA_OBJECT, 0x02, 0x42, 0x42]);
     assert_eq!(
@@ -9965,4 +9963,191 @@ fn a_faulted_certificate_probe_does_not_let_generate_replace_it() {
         Sw::REFERENCE_NOT_FOUND,
         "the refused GENERATE left a key behind"
     );
+}
+
+/// PIV PUT DATA as a YubiKey 5.8.0 answers it, read twice: without the management
+/// key `6982` whatever the request but a one-byte body; with it, `6A80` to a P1-P2
+/// other than `3FFF` and to a body not `5C 03 <id>` then `53` in its shortest form.
+#[test]
+fn put_data_reads_its_body_as_a_yubikey_does() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, p1: u8, p2: u8, body: &[u8]| {
+        run(app, fs, INS_PUT_DATA, p1, p2, body).0
+    };
+    let read = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, tag: u8| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[0x5C, 0x03, 0x5F, 0xC1, tag],
+        )
+    };
+    let good = [0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA];
+    let unauthenticated: [(u8, u8, &[u8]); 6] = [
+        (0x3F, 0xFF, &good),
+        (0x3F, 0xFE, &good),
+        (0x00, 0x00, &good),
+        (0x3F, 0xFF, &[]),
+        (0x3F, 0xFF, &good[..5]),
+        (0x3F, 0xFF, &[0x7E, 0x00]),
+    ];
+    for (p1, p2, body) in unauthenticated {
+        assert_eq!(
+            put(&mut app, &mut fs, p1, p2, body),
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "no management key, {p1:02X}{p2:02X} {body:02X?}"
+        );
+    }
+    // A one-byte body is every PIV command's `6A80`, and it comes before the key.
+    assert_eq!(put(&mut app, &mut fs, 0x3F, 0xFF, &[0x5C]), Sw::WRONG_DATA);
+    auth_mgm(&mut app, &mut fs);
+    for (p1, p2) in [
+        (0x3F, 0xFE),
+        (0x00, 0x00),
+        (0x3F, 0x00),
+        (0x00, 0xFF),
+        (0xFF, 0xFF),
+    ] {
+        assert_eq!(
+            put(&mut app, &mut fs, p1, p2, &good),
+            Sw::WRONG_DATA,
+            "{p1:02X}{p2:02X}"
+        );
+    }
+    assert_eq!(read(&mut app, &mut fs, 0x05).0, Sw::FILE_NOT_FOUND);
+    let indefinite = [
+        &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x80][..],
+        &[0x42; 0x80],
+    ]
+    .concat();
+    let refused: [(&str, &[u8]); 19] = [
+        ("empty", &[]),
+        ("5C alone", &good[..5]),
+        ("53 alone", &good[5..]),
+        ("two-byte tag", &[0x5C, 0x02, 0x5F, 0xC1, 0x53, 0x01, 0xAA]),
+        (
+            "four-byte tag",
+            &[0x5C, 0x04, 0x00, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA],
+        ),
+        ("empty tag", &[0x5C, 0x00, 0x53, 0x01, 0xAA]),
+        (
+            "53 overruns",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x02, 0xAA],
+        ),
+        (
+            "53 before 5C",
+            &[0x53, 0x01, 0xAA, 0x5C, 0x03, 0x5F, 0xC1, 0x05],
+        ),
+        (
+            "53 81 01",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x81, 0x01, 0xAA],
+        ),
+        (
+            "53 82 0001",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x82, 0x00, 0x01, 0xAA],
+        ),
+        (
+            "53 80",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x80, 0xAA, 0x00, 0x00],
+        ),
+        (
+            "5C 81 03",
+            &[0x5C, 0x81, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA],
+        ),
+        (
+            "two 5C",
+            &[
+                0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x5C, 0x03, 0x5F, 0xC1, 0x0A, 0x53, 0x01, 0xAA,
+            ],
+        ),
+        (
+            "54 for 53",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x54, 0x01, 0xAA],
+        ),
+        (
+            "a byte before 5C",
+            &[0x00, 0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA],
+        ),
+        ("an ID cut short", &[0x5C, 0x03, 0x5F, 0xC1]),
+        ("53 80 over 128 bytes", &indefinite),
+        ("discovery", &[0x7E, 0x00]),
+        ("BIT group template", &[0x7F, 0x61, 0x00]),
+    ];
+    for (name, body) in refused {
+        assert_eq!(
+            put(&mut app, &mut fs, 0x3F, 0xFF, body),
+            Sw::WRONG_DATA,
+            "{name}"
+        );
+        for tag in [0x05, 0x0A] {
+            assert_eq!(
+                read(&mut app, &mut fs, tag).0,
+                Sw::FILE_NOT_FOUND,
+                "{name} stored 5FC1{tag:02X}"
+            );
+        }
+    }
+    // Taken: the object is the first `53`, and what follows it is not read.
+    let long = [
+        &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x81, 0x80][..],
+        &[0x42; 0x80],
+    ]
+    .concat();
+    let form = |len: &[u8], fill: u8, n: usize| {
+        [
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53][..],
+            len,
+            &vec![fill; n],
+        ]
+        .concat()
+    };
+    let (short, one, two) = (
+        form(&[0x7F], 0x43, 0x7F),
+        form(&[0x81, 0xFF], 0x44, 0xFF),
+        form(&[0x82, 0x01, 0x00], 0x45, 0x100),
+    );
+    let taken: [(&str, &[u8], &[u8]); 6] = [
+        (
+            "a trailing byte",
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA, 0xFF],
+            &[0xAA],
+        ),
+        (
+            "a second 53",
+            &[
+                0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x01, 0xAA, 0x53, 0x01, 0xBB,
+            ],
+            &[0xAA],
+        ),
+        ("53 81 80", &long, &[0x42; 0x80]),
+        ("53 7F", &short, &[0x43; 0x7F]),
+        ("53 81 FF", &one, &[0x44; 0xFF]),
+        ("53 82 0100", &two, &[0x45; 0x100]),
+    ];
+    for (name, body, object) in taken {
+        assert_eq!(put(&mut app, &mut fs, 0x3F, 0xFF, body), Sw::OK, "{name}");
+        let (sw, got) = read(&mut app, &mut fs, 0x05);
+        assert_eq!(sw, Sw::OK, "{name}");
+        assert_eq!(find_tag(&got, 0x53), Some(object), "{name}");
+    }
+    // An empty `53` deletes, whether or not there is an object to delete.
+    for _ in 0..2 {
+        assert_eq!(
+            put(
+                &mut app,
+                &mut fs,
+                0x3F,
+                0xFF,
+                &[0x5C, 0x03, 0x5F, 0xC1, 0x05, 0x53, 0x00]
+            ),
+            Sw::OK
+        );
+        assert_eq!(read(&mut app, &mut fs, 0x05).0, Sw::FILE_NOT_FOUND);
+    }
 }

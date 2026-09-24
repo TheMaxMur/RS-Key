@@ -288,7 +288,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | `6982` | SECURITY_STATUS_NOT_SATISFIED | auth/precondition missing |
 | `6984` | DATA_INVALID | malformed payload (e.g. bad guard magic) |
 | `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset); OpenPGP PSO:CDS, the RSA and ECDH arms of PSO:DECIPHER and INTERNAL AUTHENTICATE with no key in the slot, as a YubiKey 5.8.0 answers them |
-| `6A80` | WRONG_DATA | bad data field; PIV `MOVE KEY` onto a slot that holds a key or takes none, or onto itself |
+| `6A80` | WRONG_DATA | bad data field; PIV `MOVE KEY` onto a slot that holds a key or takes none, or onto itself; PIV `PUT DATA` with a P1-P2 other than `3FFF` |
 | `6A86` | INCORRECT_P1P2 | unsupported P1/P2 |
 | `6A88` | REFERENCE_NOT_FOUND | the object, key or PIN the request names is absent (PIV `GET METADATA`, `MOVE KEY`, the PIN commands' key reference; OpenPGP `SELECT DATA` and in-application `SELECT`) |
 | `6B00` | WRONG_P1P2 | P1/P2 outside what this command takes — including a DO that `P1P2` addresses and the command does not serve (OpenPGP `GET DATA`, `PUT DATA`) |
@@ -521,6 +521,11 @@ needs only the identifiers above. RS-Key implements:
 - **PIV**: NIST SP 800-73 (Yubico PIV extensions for metadata). `GET DATA`
   answers `6A82` to a tag list it cannot read and to a P1-P2 other than `3FFF`,
   the answer for an object the card does not hold, as a YubiKey 5.8.0 does.
+  `PUT DATA` answers `6982` without the management key, then `6A80` to a P1-P2
+  other than `3FFF` and to a body that is not `5C 03 <id>` followed directly by
+  `53` with its length in the shortest form; bytes after the object are ignored.
+  It stores `5FC100`–`5FC1EF` and `5FFF00` up to 1900 bytes, where a YubiKey
+  takes any `5Fxxxx` up to 3063.
   `GET DATA` for the CHUID (`5FC102`) returns a synthesized default (non-federal FASC-N + a
   device-stable GUID = `sha256(serial)[..16]`) when the host has not written one,
   so the Windows minidriver can enumerate the card; a host-written CHUID overrides it.

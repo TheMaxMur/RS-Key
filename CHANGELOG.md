@@ -40,6 +40,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV PUT DATA reads its request as a YubiKey 5.8.0 does. Without the
+  management key it answers `6982` whatever the P1-P2 or body (a one-byte body
+  stays every PIV command's `6A80`); with it, a P1-P2
+  other than `3FFF` is `6A80` (was `6A86`, judged before the key), and so is any
+  body that is not `5C 03 <id>` followed directly by `53` with its length in the
+  shortest form. RS-Key searched the body for either tag, so it stored an
+  object whose `53` came before the `5C` or after a second `5C`, or whose length
+  was written longer than it needs; and it answered `9000` to a discovery
+  (`7E`) or BIT group template (`7F61`) write it did not store. Bytes after the
+  object are still ignored.
+  `bcdDevice` 0x09FD → 0x09FE.
+
 - PIV GENERATE into a slot that holds a certificate and no key keeps that
   certificate instead of writing its self-signed one over it. A key move leaves
   the source slot's certificate behind, as a YubiKey does, and that certificate

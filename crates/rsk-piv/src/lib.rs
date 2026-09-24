@@ -804,25 +804,18 @@ impl PivApplet<'_> {
 
     /// PUT DATA (INS 0xDB, management-gated).
     fn put_data<S: Storage>(&mut self, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
-        if apdu.p1 != 0x3F || apdu.p2 != 0xFF {
-            return Sw::INCORRECT_P1P2;
-        }
+        // A YubiKey 5.8.0 answers `6982` without the management key whatever the
+        // request (a one-byte body is refused before any command runs), then
+        // `6A80` to a P1-P2 or a body it cannot take.
         if !self.sess.has_mgm {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        // Discovery / biometric writes are acknowledged with a bare OK (not stored).
-        if !apdu.data.is_empty() && (apdu.data[0] == 0x7E || apdu.data[0] == 0x7F) {
-            return Sw::OK;
+        if apdu.p1 != 0x3F || apdu.p2 != 0xFF {
+            return Sw::WRONG_DATA;
         }
-        let (Some(path), Some(obj)) = (
-            find_tag(apdu.data, TAG_DATA_PATH as u16),
-            find_tag(apdu.data, TAG_DATA_OBJECT as u16),
-        ) else {
+        let Some((path, obj)) = put_data_parts(apdu.data) else {
             return Sw::WRONG_DATA;
         };
-        if path.len() != 3 {
-            return Sw::WRONG_DATA;
-        }
         let fid = match (path[0], path[1], path[2]) {
             // ADMIN DATA (5FFF00): the protection flags. Plaintext (non-secret).
             (0x5F, 0xFF, 0x00) => EF_PIVMAN_DATA,
@@ -1239,6 +1232,21 @@ impl PivApplet<'_> {
 /// Largest stored data-object body (certificate objects included); bounded so
 /// the `53`-wrapped response fits the 2 KiB CCID response buffer.
 const MAX_OBJECT: usize = 1900;
+
+/// The `5C` path and the `53` object of a PUT DATA body, read as a YubiKey 5.8.0
+/// reads them: `5C 03` first, `53` straight after in its shortest length form, and
+/// anything past the object ignored. `None` is its `6A80`.
+fn put_data_parts(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    let rest = data.strip_prefix(&[TAG_DATA_PATH, 3])?;
+    let (path, rest) = rest.split_at_checked(3)?;
+    let (len, rest) = match rest.strip_prefix(&[TAG_DATA_OBJECT])? {
+        [n @ 0..=0x7F, rest @ ..] => (usize::from(*n), rest),
+        [0x81, n @ 0x80..=0xFF, rest @ ..] => (usize::from(*n), rest),
+        [0x82, hi @ 1..=0xFF, lo, rest @ ..] => (usize::from(*hi) << 8 | usize::from(*lo), rest),
+        _ => return None,
+    };
+    Some((path, rest.get(..len)?))
+}
 
 const RETRY_PIN: usize = 0;
 const RETRY_PUK: usize = 2;
