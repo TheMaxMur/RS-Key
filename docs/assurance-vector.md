@@ -86,12 +86,12 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | 2 of 26 | 2 | 1 of 2 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | 2 of 26 | 2 | 1 of 2 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | 2 of 25 | 1 | 1 of 2 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-STORE-001` | `NoOrphanedMetadata` | 2 of 13 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (1 input(s) newer) | MODELLED-ONLY |
-| `SEC-STORE-002` | `NoFalseAbsent` | 2 of 13 | 2 | 0 of 0 | 3 | 0 | 4 | 0 | `982fb2f` stale (1 input(s) newer) | BOUNDED |
-| `SEC-STORE-003` | `NoRecordLostToMetaWrite` | 2 of 15 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (1 input(s) newer) | MODELLED-ONLY |
-| `SEC-STORE-004` | `NoFalseMetaAbsent` | 2 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (1 input(s) newer) | MODELLED-ONLY |
-| `SEC-STORE-005` | `CacheHonest` | 2 of 4 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (1 input(s) newer) | MODELLED-ONLY |
-| `SEC-STORE-006` | `NoSilentOrphan` | 2 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (1 input(s) newer) | MODELLED-ONLY |
+| `SEC-STORE-001` | `NoOrphanedMetadata` | 2 of 13 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (2 input(s) newer) | MODELLED-ONLY |
+| `SEC-STORE-002` | `NoFalseAbsent` | 2 of 13 | 2 | 0 of 0 | 3 | 0 | 4 | 0 | `982fb2f` stale (2 input(s) newer) | BOUNDED |
+| `SEC-STORE-003` | `NoRecordLostToMetaWrite` | 2 of 15 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (2 input(s) newer) | MODELLED-ONLY |
+| `SEC-STORE-004` | `NoFalseMetaAbsent` | 2 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (2 input(s) newer) | MODELLED-ONLY |
+| `SEC-STORE-005` | `CacheHonest` | 2 of 4 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (2 input(s) newer) | MODELLED-ONLY |
+| `SEC-STORE-006` | `NoSilentOrphan` | 2 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (2 input(s) newer) | MODELLED-ONLY |
 | `SEC-LAT-001` | `NoAuthWhenBlocked` | 2 of 6 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-LAT-002` | `WrongAttemptIsCharged` | 2 of 7 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | 2 of 6 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
@@ -177,12 +177,12 @@ Three spellings of "not current", which used to sit on two different pages and i
 | bundle | `SEC-FIDO-006C` | 3 input(s) newer than `b185fc3` |
 | bundle | `SEC-FIDO-007` | 10 input(s) newer than `3e08f75` |
 | bundle | `SEC-FIDO-008` | 5 input(s) newer than `31c21a7` |
-| bundle | `SEC-STORE-001` | 1 input(s) newer than `982fb2f` |
-| bundle | `SEC-STORE-002` | 1 input(s) newer than `982fb2f` |
-| bundle | `SEC-STORE-003` | 1 input(s) newer than `982fb2f` |
-| bundle | `SEC-STORE-004` | 1 input(s) newer than `982fb2f` |
-| bundle | `SEC-STORE-005` | 1 input(s) newer than `982fb2f` |
-| bundle | `SEC-STORE-006` | 1 input(s) newer than `982fb2f` |
+| bundle | `SEC-STORE-001` | 2 input(s) newer than `982fb2f` |
+| bundle | `SEC-STORE-002` | 2 input(s) newer than `982fb2f` |
+| bundle | `SEC-STORE-003` | 2 input(s) newer than `982fb2f` |
+| bundle | `SEC-STORE-004` | 2 input(s) newer than `982fb2f` |
+| bundle | `SEC-STORE-005` | 2 input(s) newer than `982fb2f` |
+| bundle | `SEC-STORE-006` | 2 input(s) newer than `982fb2f` |
 | bundle | `SEC-ADM-002` | no raw evidence bundle |
 | bundle | `SEC-ADM-004` | no raw evidence bundle |
 | bundle | `SEC-BOOT-001` | no raw evidence bundle |

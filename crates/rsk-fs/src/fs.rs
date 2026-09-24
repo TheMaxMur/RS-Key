@@ -331,7 +331,7 @@ impl<S: Storage> Fs<S> {
     /// **unwritten branch** — `if probe { return Err(..) }`, where the harm is a
     /// `return` that does not happen (`vendor::pin_gate`, `backup_export`); a
     /// **consumed value** — `None` resolving to a default a later statement persists
-    /// or signs (`journal::load_meta`'s genesis, PIV `MOVE KEY`'s "no certificate");
+    /// or signs (`journal::load_meta`'s genesis, PIV GENERATE's "no certificate");
     /// or a **latched flag** — stored and read by a later command, so the fault and
     /// the harm sit in different call frames (`oath::select`'s `validated`,
     /// [`scan_truncated`](Self#structfield.scan_truncated), PIV `scan_files`'

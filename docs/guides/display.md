@@ -236,7 +236,9 @@ point is ever shown, and no OATH code is computed (the device has no clock).
   listing the *populated* retired key-management slots (82–95) and F9. From it,
   **Generate key** creates a key (EC P-256/P-384, Ed25519, X25519, or RSA
   2048/3072/4096) into the next *free* retired slot, gated by the device PIN and
-  a hold, restricted to empty slots (add-only, never overwrite). There is no
+  a hold, restricted to empty slots (add-only, never overwrite). A slot whose key
+  was moved or deleted still holds its certificate, so it is not free until that
+  certificate is deleted (`ykman piv certificates delete 82`). There is no
   management-key auth: physical presence at the panel *is* the authorisation.
 - **OATH**: the stored credentials (label, TOTP/HOTP, a padlock when
   touch-gated), each with a detail (type, HMAC algorithm, digits, TOTP step).

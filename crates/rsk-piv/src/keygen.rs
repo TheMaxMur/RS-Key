@@ -136,7 +136,8 @@ pub(crate) fn resolved_policies(
 }
 
 /// Build the slot's self-signed certificate and store it (70/71/FE-wrapped)
-/// in the paired certificate object.
+/// in the paired certificate object, unless the slot holds a certificate and no
+/// key: that one certifies a key living elsewhere, as a MOVE leaves it.
 fn store_slot_cert<S: Storage>(
     fs: &mut Fs<S>,
     rng: &mut dyn Rng,
@@ -145,6 +146,15 @@ fn store_slot_cert<S: Storage>(
     spki: x509::Spki,
     signer: x509::Signer,
 ) -> Result<(), Sw> {
+    let fid = cert_fid_for_slot(slot).ok_or(Sw::WRONG_DATA)?;
+    // A YubiKey's GENERATE writes no certificate, so it keeps that one. A probe the
+    // medium could not serve is neither keyless nor empty: overwriting is the loss.
+    let keyless = !fs
+        .try_has_key(key_fid(slot))
+        .map_err(|_| Sw::MEMORY_FAILURE)?;
+    if keyless && fs.try_has_data(fid).map_err(|_| Sw::MEMORY_FAILURE)? {
+        return Ok(());
+    }
     let mut cert = [0u8; x509::MAX_CERT];
     let n = x509::build_cert(
         &x509::CertParams {
@@ -160,7 +170,6 @@ fn store_slot_cert<S: Storage>(
     )?;
     let mut obj = [0u8; x509::MAX_CERT + 16];
     let on = wrap_cert_object(&cert[..n], &mut obj);
-    let fid = cert_fid_for_slot(slot).ok_or(Sw::WRONG_DATA)?;
     fs.put(fid, &obj[..on]).map_err(|_| Sw::MEMORY_FAILURE)
 }
 

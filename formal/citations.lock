@@ -1180,7 +1180,7 @@ formal/comutants.toml	crates/rsk-otp/src/tests.rs	2184-2184	fn boot_bump_retries
 formal/comutants.toml	crates/rsk-otp/src/tests.rs	2217-2217	assert_ne!(	assert_ne!(
 formal/comutants.toml	crates/rsk-piv/src/auth.rs	63-63	PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,	PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,
 formal/comutants.toml	crates/rsk-piv/src/auth.rs	115-119	fn spend_pin(&mut self) {	}
-formal/comutants.toml	crates/rsk-piv/src/keygen.rs	603-603	if !sess.has_mgm {	if !sess.has_mgm {
+formal/comutants.toml	crates/rsk-piv/src/keygen.rs	612-612	if !sess.has_mgm {	if !sess.has_mgm {
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	184-187	fn set_pin(&mut self, verified: bool) {	}
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	289-289	if p1 != 0x00 || !self.sess.has_mgm || !is_key(p2) {	if p1 != 0x00 || !self.sess.has_mgm || !is_key(p2) {
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	391-393	fn deselect(&mut self, _fs: &mut Fs<S>) {	}

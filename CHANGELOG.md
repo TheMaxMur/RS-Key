@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV GENERATE into a slot that holds a certificate and no key keeps that
+  certificate instead of writing its self-signed one over it. A key move leaves
+  the source slot's certificate behind, as a YubiKey does, and that certificate
+  belongs to the key that moved; a YubiKey's GENERATE writes no certificate, so
+  it keeps it too. A slot that holds a key still gets a fresh self-signed
+  certificate on GENERATE.
+  `bcdDevice` 0x09FC → 0x09FD.
+
 - PIV MOVE KEY and its delete (`ykman piv keys move` / `keys delete`) leave
   every certificate object where it is, as a YubiKey 5.8.0 does. RS-Key carried
   the source slot's certificate to the destination, deleted the destination's

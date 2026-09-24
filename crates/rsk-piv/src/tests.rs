@@ -4744,7 +4744,7 @@ fn move_and_delete_key() {
     let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x82, &[]);
     assert_eq!(sw, Sw::OK);
     assert_eq!(find_tag(&md, 0x01).unwrap(), &[ALGO_ECCP256]);
-    // The certificate the generate wrote stays in 9A's object, as a YubiKey leaves it.
+    // The certificate the generate wrote stays in 9A's object: a move carries none.
     let (sw, _) = run(
         &mut app,
         &mut fs,
@@ -9861,4 +9861,108 @@ fn move_key_leaves_every_certificate_where_it_was() {
             .collect();
         assert_eq!(after, before, "{name}: a certificate object changed");
     }
+}
+
+/// GENERATE into a slot a MOVE left holding a certificate and no key keeps that
+/// certificate: it certifies the key that moved, and a YubiKey's GENERATE writes
+/// none. A slot that still holds a key gets the self-signed one as before.
+#[test]
+fn generate_keeps_the_certificate_a_move_left_behind() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    let generate = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| {
+        run(app, fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0
+    };
+    let cert_9a = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[0x5C, 0x03, 0x5F, 0xC1, 0x05],
+        )
+    };
+    assert_eq!(generate(&mut app, &mut fs), Sw::OK);
+    // The certificate a CA issued for 9A's key.
+    put_cert(&mut app, &mut fs, 0x05, 0xCA);
+    let issued = cert_9a(&mut app, &mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_MOVE_KEY, 0x82, 0x9A, &[]).0,
+        Sw::OK
+    );
+    assert_eq!(generate(&mut app, &mut fs), Sw::OK);
+    assert_eq!(
+        cert_9a(&mut app, &mut fs),
+        issued,
+        "the certificate of the key now in 82 was replaced"
+    );
+    // Control: 9A holds a key now, so the next GENERATE writes its own certificate.
+    assert_eq!(generate(&mut app, &mut fs), Sw::OK);
+    let own = cert_9a(&mut app, &mut fs);
+    assert_eq!(own.0, Sw::OK);
+    assert_ne!(
+        own, issued,
+        "a slot with a key no longer gets its certificate"
+    );
+}
+
+/// The probe that keeps such a certificate must not read a faulted one as absent,
+/// or GENERATE writes its self-signed certificate over it. It refuses instead, and
+/// before anything is written.
+#[test]
+fn a_faulted_certificate_probe_does_not_let_generate_replace_it() {
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    put_cert(&mut app, &mut fs, 0x05, 0xCA);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_MOVE_KEY,
+            0x82,
+            SLOT_AUTHENTICATION,
+            &[]
+        )
+        .0,
+        Sw::OK
+    );
+    let fid = cert_fid_for_slot(SLOT_AUTHENTICATION).unwrap();
+    let before = medium.value(fid);
+    assert!(before.is_some(), "control: the certificate stayed behind");
+    medium.stick(Some(fid));
+    let template = gen_template(ALGO_ECCP256);
+    let sw = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0,
+        SLOT_AUTHENTICATION,
+        &template,
+    )
+    .0;
+    medium.stick(None);
+    assert_eq!(
+        medium.value(fid),
+        before,
+        "the certificate was written over"
+    );
+    assert_eq!(sw, Sw::MEMORY_FAILURE);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_GET_METADATA,
+            0,
+            SLOT_AUTHENTICATION,
+            &[]
+        )
+        .0,
+        Sw::REFERENCE_NOT_FOUND,
+        "the refused GENERATE left a key behind"
+    );
 }
