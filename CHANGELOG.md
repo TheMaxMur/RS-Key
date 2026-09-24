@@ -40,6 +40,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV MOVE KEY and its delete (`ykman piv keys move` / `keys delete`) leave
+  every certificate object where it is, as a YubiKey 5.8.0 does. RS-Key carried
+  the source slot's certificate to the destination, deleted the destination's
+  own certificate when the source had none, and deleted the slot's certificate
+  on a key delete, so a certificate held in a slot with no key was lost to a
+  move onto it. A certificate now stays with the slot, not the key: re-import it
+  where the key went if a host should find the key there.
+  `bcdDevice` 0x09FB → 0x09FC.
+
 - PIV's discovery object (`7E`) carries the PIN usage policy `40 00`, as a
   YubiKey 5.8.0's does. RS-Key sent `40 10`, whose second byte ranks the
   application PIN above a global PIN the card does not have.

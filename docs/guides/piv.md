@@ -291,13 +291,17 @@ move onto that slot: delete it (`ykman piv keys delete`) and move again.
 
 ## Move and delete keys
 
-`ykman piv` 5.7 can move a key (with its certificate and metadata) between
-slots, or delete it:
+`ykman piv` 5.7 can move a key (with its metadata) between slots, or delete it:
 
 ```sh
-ykman piv keys move 9a 82          # 9a → retired slot 82, cert + metadata follow
+ykman piv keys move 9a 82          # 9a → retired slot 82, metadata follows
 ykman piv keys delete 9c           # wipe the signature slot's key
 ```
+
+Certificates stay where they are, as on a YubiKey: a move leaves the source
+slot's certificate behind and the destination's in place, and a delete keeps the
+slot's certificate. Re-import the certificate into the new slot
+(`ykman piv certificates import 82 cert.pem`) if a host should find the key there.
 
 Moves go both ways — a key parked in a retired slot can come back to an active
 one. A move onto a slot that already holds a key is refused, as on a YubiKey

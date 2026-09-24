@@ -533,18 +533,7 @@ why = "PUT DATA with an empty body IS the object delete, so the removal is the w
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1206
-call = "let _ = fs.delete(tofid);"
-verb = "delete"
-answer = "discarded"
-class = "bookkeeping"
-metadata = "none"
-disposition = "best-effort"
-why = "clearing the destination's certificate when the source has none. A public object, read back with GET DATA, gating nothing — a survivor is the destination's previous cert."
-
-[[site]]
-file = "crates/rsk-piv/src/lib.rs"
-line = 1241
+line = 1219
 call = "let dropped = fs.delete_key(key_fid(from));"
 verb = "delete_key"
 answer = "read"
@@ -555,7 +544,7 @@ why = "MOVE with to = 0xFF, the slot delete. The head earns a retry because one 
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1242
+line = 1220
 call = "let _ = fs.delete(pubkey_fid(from));"
 verb = "delete"
 answer = "discarded"
@@ -563,17 +552,6 @@ class = "bookkeeping"
 metadata = "none"
 disposition = "best-effort"
 why = "the source's cached public point. Heads live on key_fid alone, so this fid carries none, and GET METADATA derives the point when it is absent."
-
-[[site]]
-file = "crates/rsk-piv/src/lib.rs"
-line = 1244
-call = "let _ = fs.delete(f);"
-verb = "delete"
-answer = "discarded"
-class = "bookkeeping"
-metadata = "none"
-disposition = "best-effort"
-why = "the source's certificate. Public, gating nothing, and MOVE's own answer already covers the key and its head."
 
 
 # --- the removals `Fs` performs on its own behalf ------------------------------

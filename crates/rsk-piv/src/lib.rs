@@ -1142,7 +1142,8 @@ impl PivApplet<'_> {
     }
 
     /// MOVE KEY (INS 0xF6, Yubico 5.7, management-gated): move (or, to 0xFF,
-    /// delete) a key with its certificate object and metadata.
+    /// delete) a key with its metadata. Certificate objects stay where they are, as
+    /// a YubiKey 5.8.0 leaves them: carrying one wrote over the destination's own.
     fn move_key<S: Storage>(&mut self, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
         // The command's whole request is in P1P2, so a body says nothing and is
         // ignored rather than refused — a YubiKey 5.7.4 answers `6982`
@@ -1167,7 +1168,6 @@ impl PivApplet<'_> {
             Ok(None) => return Sw::REFERENCE_NOT_FOUND,
             Err(_) => return Sw::MEMORY_FAILURE,
         };
-        let (cert_from, cert_to) = (cert_fid_for_slot(from), cert_fid_for_slot(to));
         if to != 0xFF {
             // Same power-cut ordering as IMPORT: the destination's own origin
             // record goes before its new key, so a tear can never leave the moved
@@ -1182,28 +1182,6 @@ impl PivApplet<'_> {
             {
                 blob.zeroize();
                 return Sw::MEMORY_FAILURE;
-            }
-            let mut obj = [0u8; MAX_OBJECT];
-            // `try_read`: the absent arm below DELETES the destination's certificate
-            // and the source's goes at the end of the move, so a probe read as "no
-            // certificate" destroyed both and still answered 9000.
-            let cert = match cert_from.map(|f| fs.try_read(f, &mut obj)) {
-                Some(Ok(n)) => n,
-                None => None,
-                Some(Err(_)) => {
-                    blob.zeroize();
-                    return Sw::MEMORY_FAILURE;
-                }
-            };
-            // Clamp the full stored length to the buffer (flash-corruption guard,
-            // as in get_data); host-written certs are already <= MAX_OBJECT.
-            if let (Some(n), Some(tofid)) = (cert, cert_to) {
-                if fs.put(tofid, &obj[..n.min(obj.len())]).is_err() {
-                    blob.zeroize();
-                    return Sw::MEMORY_FAILURE;
-                }
-            } else if let Some(tofid) = cert_to {
-                let _ = fs.delete(tofid);
             }
             // Sized to read the full source record (head + any cached point).
             // The point is carried to the destination best-effort — kept when
@@ -1228,7 +1206,7 @@ impl PivApplet<'_> {
             }
         }
         // Carry the cached public point to the destination slot (best-effort), then
-        // drop the source's — MOVE relocates the whole slot. Skip the carry when
+        // drop the source's — the point is the key's, as its metadata is. Skip it when
         // `to == 0xFF` (the delete sentinel): there is no destination slot, so a put
         // to `pubkey_fid(0xFF)` would only strand an unread `0xD4FF` orphan file.
         if to != 0xFF {
@@ -1240,9 +1218,6 @@ impl PivApplet<'_> {
         blob.zeroize();
         let dropped = fs.delete_key(key_fid(from));
         let _ = fs.delete(pubkey_fid(from));
-        if let Some(f) = cert_from {
-            let _ = fs.delete(f);
-        }
         // A head left over a key that is GONE is what GET METADATA, and the
         // PIN/touch gate reading the same record, would answer for. One EF_META
         // read can fault where the next lands, so the head earns a retry; the key

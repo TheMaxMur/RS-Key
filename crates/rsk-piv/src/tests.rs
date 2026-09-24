@@ -4744,7 +4744,7 @@ fn move_and_delete_key() {
     let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x82, &[]);
     assert_eq!(sw, Sw::OK);
     assert_eq!(find_tag(&md, 0x01).unwrap(), &[ALGO_ECCP256]);
-    // The certificate object moved with it.
+    // The certificate the generate wrote stays in 9A's object, as a YubiKey leaves it.
     let (sw, _) = run(
         &mut app,
         &mut fs,
@@ -4753,7 +4753,7 @@ fn move_and_delete_key() {
         0xFF,
         &[0x5C, 0x03, 0x5F, 0xC1, 0x05],
     );
-    assert_eq!(sw, Sw::FILE_NOT_FOUND);
+    assert_eq!(sw, Sw::OK);
     let (sw, _) = run(
         &mut app,
         &mut fs,
@@ -4762,7 +4762,7 @@ fn move_and_delete_key() {
         0xFF,
         &[0x5C, 0x03, 0x5F, 0xC1, 0x0D],
     );
-    assert_eq!(sw, Sw::OK);
+    assert_eq!(sw, Sw::FILE_NOT_FOUND);
     // Retired → active works too — the trip is not one-way. Measured on a
     // YubiKey 5.7.4: 82 → 9A, 9A → 82 and 82 → 9C all answer 9000, three runs.
     let (sw, _) = run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x82, &[]);
@@ -8570,8 +8570,8 @@ impl Storage for MetaFaults {
 /// repair exists for.
 ///
 /// The budget counts EF_META reads, and this path takes more than the two the
-/// head is about — the pubkey and certificate deletes each try one, for fids that
-/// carry no head at all. So the "nothing lands" case arms the medium for the whole
+/// head is about — the pubkey delete tries one, for a fid that carries no head at
+/// all. So the "nothing lands" case arms the medium for the whole
 /// command rather than counting: a flash that cannot be read is not a budget.
 fn move_delete_under_faults(meta_faults: usize, break_remove: bool) -> (Sw, bool, bool) {
     let rng = RefCell::new(TestRng(7));
@@ -9055,10 +9055,9 @@ fn put_cert<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, tag: u8, fill: u8) 
     assert_eq!(run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &obj).0, Sw::OK);
 }
 
-/// `MOVE KEY` reads the source certificate and, finding none, DELETES the
-/// destination's — then deletes the source's at the end of the move. `Fs::read`
-/// answers the same `None` for "no certificate" and "I could not read it", so one
-/// faulted probe destroyed both certificates and still answered 9000.
+/// `MOVE KEY` read the source certificate and, finding none, DELETED the
+/// destination's, so one faulted probe destroyed both and still answered 9000. It
+/// reads no certificate now, so a stuck one neither stops the move nor is touched.
 #[test]
 fn a_faulted_certificate_probe_does_not_destroy_both_certificates() {
     let (mut app, mut fs, medium, _rng, _pres) = moved_card();
@@ -9082,19 +9081,14 @@ fn a_faulted_certificate_probe_does_not_destroy_both_certificates() {
         &[],
     )
     .0;
-    // The destruction first, then the status word: the loss is the finding, and the
-    // refusal is only how it is now avoided.
+    // The destruction first, then the status word: the loss is the finding.
     assert_eq!(
         medium.value(to),
         dst,
         "the destination's certificate is gone"
     );
     assert_eq!(medium.value(from), src, "and so is the source's");
-    assert_eq!(
-        sw,
-        Sw::MEMORY_FAILURE,
-        "a move that could not read the certificate it carries must refuse"
-    );
+    assert_eq!(sw, Sw::OK, "a certificate the move never reads stopped it");
 }
 
 /// The moved key's metadata head is what `GET METADATA` and the PIN/touch gate read.
@@ -9786,4 +9780,85 @@ fn discovery_is_a_yubikeys_to_the_byte() {
         &[0x5C, 0x01, 0x7E],
     );
     assert_eq!((sw, body.as_slice()), (Sw::OK, &yubikey[..]));
+}
+
+/// MOVE KEY and its delete (`to` = `FF`) as a YubiKey 5.8.0 runs them, read twice:
+/// the key moves with its metadata, and no certificate object is read, written or
+/// removed. RS-Key carried the source's certificate and deleted the destination's.
+#[test]
+fn move_key_leaves_every_certificate_where_it_was() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    let cert = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, tag: u8| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[0x5C, 0x03, 0x5F, 0xC1, tag],
+        )
+    };
+    let has_key = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, slot: u8| {
+        run(app, fs, INS_GET_METADATA, 0, slot, &[]).0 == Sw::OK
+    };
+    let delete_cert = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, tag: u8| {
+        let obj = [0x5C, 0x03, 0x5F, 0xC1, tag, 0x53, 0x00];
+        assert_eq!(run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &obj).0, Sw::OK);
+    };
+    // (key slot, its certificate object's tag) for the slots below.
+    let (s9a, s9c, s9d, s9e, s82, s83) = (
+        (0x9A, 0x05),
+        (0x9C, 0x0A),
+        (0x9D, 0x0B),
+        (0x9E, 0x01),
+        (0x82, 0x0D),
+        (0x83, 0x0E),
+    );
+    for (slot, _) in [s9a, s9e, s82] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, slot, &template).0,
+            Sw::OK
+        );
+    }
+    // Each certificate is a marker the moves must leave byte for byte; 82 keeps its
+    // key with no certificate, and 9D and 83 hold a certificate with no key.
+    delete_cert(&mut app, &mut fs, s82.1);
+    for (_, tag) in [s9a, s9e, s9d, s83] {
+        put_cert(&mut app, &mut fs, tag, tag);
+    }
+    let before: Vec<_> = [s9a, s9c, s9d, s9e, s82, s83]
+        .iter()
+        .map(|&(_, tag)| cert(&mut app, &mut fs, tag))
+        .collect();
+    for (name, to, from) in [
+        ("key and certificate onto an empty slot", s9c.0, s9a.0),
+        ("key and certificate onto a certificate", s9d.0, s9e.0),
+        ("a key alone onto a certificate", s83.0, s82.0),
+        ("the delete of a key beside its certificate", 0xFF, s9d.0),
+    ] {
+        assert_eq!(
+            run(&mut app, &mut fs, INS_MOVE_KEY, to, from, &[]).0,
+            Sw::OK,
+            "{name}"
+        );
+        assert!(
+            !has_key(&mut app, &mut fs, from),
+            "{name}: the source key stayed"
+        );
+        assert!(
+            to == 0xFF || has_key(&mut app, &mut fs, to),
+            "{name}: the key did not arrive"
+        );
+        let after: Vec<_> = [s9a, s9c, s9d, s9e, s82, s83]
+            .iter()
+            .map(|&(_, tag)| cert(&mut app, &mut fs, tag))
+            .collect();
+        assert_eq!(after, before, "{name}: a certificate object changed");
+    }
 }
