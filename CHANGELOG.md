@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV MOVE KEY onto a slot that already holds a key is refused `6A80` and keeps
+  both keys, as a YubiKey 5.8.0 refuses it; RS-Key moved over it and destroyed
+  the key that was there, with its certificate. Its other refusals follow the
+  same reading: an empty source, or deleting an empty slot, `6A88` (was
+  `6A82`); a destination that takes no key, or a move onto itself, `6A80` (was
+  `6A86`); a source that takes no key `6A88` (was `6A86`).
+  `bcdDevice` 0x09F7 → 0x09F8.
+
 - A refused PIV RSA IMPORT leaves the key already in the slot in use. Whether
   the new key could be laid out for the CRT signer (primes that share a factor,
   a prime width it cannot take) was decided after the slot's metadata was

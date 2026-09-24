@@ -1106,6 +1106,39 @@ impl PivApplet<'_> {
         Sw::OK
     }
 
+    /// The refusal a MOVE KEY from `from` to `to` gets before anything is read or
+    /// written, in the order a YubiKey 5.8.0 judges it; `None` when it may go on.
+    fn move_refusal<S: Storage>(fs: &mut Fs<S>, to: u8, from: u8) -> Option<Sw> {
+        // The destination, the source, then the pair: one that takes no key `6A80`,
+        // one that takes none `6A88`, and a self-move (which would write the key
+        // back and then delete it) `6A80`.
+        if !is_key(to) && to != 0xFF {
+            return Some(Sw::WRONG_DATA);
+        }
+        if !is_key(from) {
+            return Some(Sw::REFERENCE_NOT_FOUND);
+        }
+        if to == from {
+            return Some(Sw::WRONG_DATA);
+        }
+        // Then the slots, source first: an empty source is `6A88` even onto a key,
+        // and a move onto a key is `6A80` with both kept. A probe the medium could
+        // not serve is neither empty nor free.
+        match fs.try_has_key(key_fid(from)) {
+            Ok(true) => {}
+            Ok(false) => return Some(Sw::REFERENCE_NOT_FOUND),
+            Err(_) => return Some(Sw::MEMORY_FAILURE),
+        }
+        if to == 0xFF {
+            return None;
+        }
+        match fs.try_has_key(key_fid(to)) {
+            Ok(false) => None,
+            Ok(true) => Some(Sw::WRONG_DATA),
+            Err(_) => Some(Sw::MEMORY_FAILURE),
+        }
+    }
+
     /// MOVE KEY (INS 0xF6, Yubico 5.7, management-gated): move (or, to 0xFF,
     /// delete) a key with its certificate object and metadata.
     fn move_key<S: Storage>(&mut self, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
@@ -1118,23 +1151,18 @@ impl PivApplet<'_> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let (to, from) = (apdu.p1, apdu.p2);
-        if (!is_key(to) && to != 0xFF) || !is_key(from) {
-            return Sw::INCORRECT_P1P2;
-        }
-        // A self-move would write the key back then delete the source — the same
-        // slot — destroying it; reject before any write, as real hardware does.
-        if to == from {
-            return Sw::INCORRECT_P1P2;
+        if let Some(sw) = Self::move_refusal(fs, to, from) {
+            return sw;
         }
         // The sealed blob is bound to the device, not the fid, so it moves
         // verbatim. Sized to the largest sealed record (RSA-4096 `P ‖ Q`); a
         // smaller buffer would truncate/overrun-slice a 3072/4096 key's blob.
         let mut blob = [0u8; seal::MAX_BLOB];
-        // `try_read_key`: FILE_NOT_FOUND over a slot the medium merely could not
-        // read tells the host the slot is EMPTY, and its next move is to fill it.
+        // `try_read_key`: the empty-slot answer over a slot the medium merely could
+        // not read tells the host the slot is EMPTY, and its next move is to fill it.
         let blob_n = match fs.try_read_key(key_fid(from), &mut blob) {
             Ok(Some(n)) => n,
-            Ok(None) => return Sw::FILE_NOT_FOUND,
+            Ok(None) => return Sw::REFERENCE_NOT_FOUND,
             Err(_) => return Sw::MEMORY_FAILURE,
         };
         let (cert_from, cert_to) = (cert_fid_for_slot(from), cert_fid_for_slot(to));

@@ -5026,7 +5026,7 @@ fn move_key_same_slot_rejected() {
     );
     assert_eq!(sw, Sw::OK);
     let (sw, _) = run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x9A, &[]);
-    assert_eq!(sw, Sw::INCORRECT_P1P2);
+    assert_eq!(sw, Sw::WRONG_DATA);
     // The key survives the rejected self-move.
     let (sw, md) = run(&mut app, &mut fs, INS_GET_METADATA, 0, 0x9A, &[]);
     assert_eq!(sw, Sw::OK);
@@ -8216,7 +8216,7 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
     auth_mgm(&mut app, &mut fs);
     assert_eq!(
         run(&mut app, &mut fs, INS_MOVE_KEY, 0x9A, 0x9C, &long).0,
-        Sw::FILE_NOT_FOUND,
+        Sw::REFERENCE_NOT_FOUND,
         "MOVE KEY authorised: the empty source slot, not the body"
     );
     assert_eq!(
@@ -8240,7 +8240,7 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
     }
     assert_eq!(
         run(&mut app, &mut fs, INS_MOVE_KEY, 0x01, 0x9C, &[]).0,
-        Sw::INCORRECT_P1P2,
+        Sw::WRONG_DATA,
         "MOVE KEY authorised: a destination naming no slot"
     );
 }
@@ -9007,6 +9007,46 @@ fn moved_card() -> (
     (app, fs, medium, rng, pres)
 }
 
+/// A destination whose key the medium could not probe is not a free slot: a move
+/// onto it would write over whatever key is there, so it refuses instead. 82 holds
+/// a key as well, or the present index answers "absent" without asking the medium.
+#[test]
+fn a_faulted_destination_probe_does_not_move_onto_it() {
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    let template = gen_template(ALGO_ECCP256);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x82, &template).0,
+        Sw::OK
+    );
+    let (from, to) = (key_fid(SLOT_AUTHENTICATION).get(), key_fid(0x82).get());
+    let (src, dst) = (medium.value(from), medium.value(to));
+    assert!(
+        src.is_some() && dst.is_some(),
+        "control: both keys are on the medium"
+    );
+    medium.stick(Some(to));
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_MOVE_KEY,
+            0x82,
+            SLOT_AUTHENTICATION,
+            &[]
+        )
+        .0,
+        Sw::MEMORY_FAILURE,
+        "a destination that could not be probed was taken for a free one"
+    );
+    medium.stick(None);
+    assert_eq!(medium.value(from), src, "the source key moved");
+    assert_eq!(
+        medium.value(to),
+        dst,
+        "the destination key was written over"
+    );
+}
+
 /// Write a certificate object at `tag` (`5FC1xx`) with a recognisable body.
 fn put_cert<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, tag: u8, fill: u8) {
     let body = std::vec![fill; 40];
@@ -9127,8 +9167,8 @@ fn a_faulted_readback_does_not_report_a_move_that_left_the_key() {
     );
 }
 
-/// `FILE_NOT_FOUND` over a slot the medium merely could not read tells the host the
-/// slot is EMPTY, and a host that believes it fills the slot — over a live key.
+/// The empty-slot answer over a slot the medium merely could not read tells the host
+/// the slot is EMPTY, and a host that believes it fills the slot — over a live key.
 #[test]
 fn a_faulted_source_probe_does_not_report_the_slot_empty() {
     let (mut app, mut fs, medium, _rng, _pres) = moved_card();
@@ -9540,4 +9580,68 @@ fn a_refused_rsa_import_leaves_the_slots_key_standing() {
         Sw::OK,
         "9A no longer signs"
     );
+}
+
+/// MOVE KEY as a YubiKey 5.8.0 answers it, read twice: onto an occupied slot it
+/// is refused `6A80` and both keys stay; from an empty slot (onto a key too), or
+/// one that takes no key, `6A88`; onto itself or a slot that takes no key, `6A80`.
+#[test]
+fn move_key_refuses_as_a_yubikey_does_and_destroys_nothing() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let key = |b: u8| {
+        let mut s = vec![0x06, 32];
+        s.extend_from_slice(&[b; 32]);
+        s
+    };
+    let rows: [(&str, u8, u8, Sw); 13] = [
+        ("occupied", 0x9C, 0x9A, Sw::WRONG_DATA),
+        ("empty", 0x9D, 0x9A, Sw::OK),
+        ("from empty", 0x9E, 0x9D, Sw::REFERENCE_NOT_FOUND),
+        ("from empty onto a key", 0x9C, 0x9D, Sw::REFERENCE_NOT_FOUND),
+        ("onto itself", 0x9A, 0x9A, Sw::WRONG_DATA),
+        ("empty onto itself", 0x9D, 0x9D, Sw::WRONG_DATA),
+        ("FF onto itself", 0xFF, 0xFF, Sw::REFERENCE_NOT_FOUND),
+        ("delete", 0xFF, 0x9A, Sw::OK),
+        ("delete empty", 0xFF, 0x9D, Sw::REFERENCE_NOT_FOUND),
+        ("retired", 0x82, 0x9A, Sw::OK),
+        ("destination 00", 0x00, 0x9A, Sw::WRONG_DATA),
+        ("destination 9B", 0x9B, 0x9A, Sw::WRONG_DATA),
+        ("source 9B", 0x9C, 0x9B, Sw::REFERENCE_NOT_FOUND),
+    ];
+    for (name, to, from, want) in rows {
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+        let mut fs = new_fs();
+        select(&mut app, &mut fs);
+        auth_mgm(&mut app, &mut fs);
+        for (slot, b) in [(0x9A, 0x11), (0x9C, 0x22)] {
+            let sw = run(
+                &mut app,
+                &mut fs,
+                INS_IMPORT_ASYM,
+                ALGO_ECCP256,
+                slot,
+                &key(b),
+            )
+            .0;
+            assert_eq!(sw, Sw::OK);
+        }
+        let slots = [0x9A, 0x9B, 0x9C];
+        let before: Vec<_> = slots
+            .iter()
+            .map(|&s| run(&mut app, &mut fs, INS_GET_METADATA, 0, s, &[]))
+            .collect();
+        assert_eq!(
+            run(&mut app, &mut fs, INS_MOVE_KEY, to, from, &[]).0,
+            want,
+            "{name}"
+        );
+        if want != Sw::OK {
+            let after: Vec<_> = slots
+                .iter()
+                .map(|&s| run(&mut app, &mut fs, INS_GET_METADATA, 0, s, &[]))
+                .collect();
+            assert_eq!(after, before, "{name}: a refused move changed a slot");
+        }
+    }
 }

@@ -285,7 +285,9 @@ metadata is dropped before the new key is written, so a power cut between the tw
 leaves a slot that reads as empty (`GET METADATA` → `6A88`) rather than one whose
 key and its recorded provenance disagree. Re-run the import; the slot works again
 once it completes. That ordering is what keeps attestation honest — it can never
-certify an imported key as generated on-device.
+certify an imported key as generated on-device. An interrupted move keeps its
+source key, and the copy it left at the destination has no metadata and blocks a
+move onto that slot: delete it (`ykman piv keys delete`) and move again.
 
 ## Move and delete keys
 
@@ -298,8 +300,11 @@ ykman piv keys delete 9c           # wipe the signature slot's key
 ```
 
 Moves go both ways — a key parked in a retired slot can come back to an active
-one. Moving a key onto its own slot is refused, because the source-delete would
-erase what the move just wrote. Both operations require management-key auth.
+one. A move onto a slot that already holds a key is refused, as on a YubiKey
+(`ykman` says `DEST slot is not empty`): delete that key first if that is what
+you mean. Moving a key onto its own slot is refused too, because the
+source-delete would erase what the move just wrote. Both operations require
+management-key auth.
 
 ## Use it
 
