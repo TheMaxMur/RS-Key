@@ -347,11 +347,8 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
         // CCID transport hands its own over the same way.
         crate::persist_pin_lock(self.hooks, self.fido_state);
         // A vendor (0x41) command may persist EF_LED_CONF / EF_PHY, whose live effect
-        // is outside the file system; re-apply it after the write, as CCID now does.
-        // 0x41 is rare, so the extra flash read is negligible and a no-op if unchanged.
-        if data.first() == Some(&rsk_fido::consts::CTAP_VENDOR) {
-            crate::apply_vendor_config(self.hooks, self.fs);
-        }
+        // is outside the file system; re-apply it after the write, as CCID does.
+        crate::apply_vendor_config(self.hooks, self.fs, self.fido_state);
         &self.resp[..n]
     }
 }

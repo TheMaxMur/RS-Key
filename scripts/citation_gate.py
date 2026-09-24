@@ -590,7 +590,7 @@ def cite_pattern(exts):
     or `formal/comutants.toml`, named in the same sentence WITHOUT a line
     number, so no binder can reach it and the ref lands on the last `.rs` name
     instead. Strengthening the binder does not save it -- `the module's own
-    :1751 comment` sits in a sentence that has already named `state.rs:584-599`,
+    :1751 comment` sits in a sentence that has already named `state.rs:601-616`,
     and nothing local decides between the two.
 
     And the noise is the smaller half. Of the 148, only 12 land out of bounds or

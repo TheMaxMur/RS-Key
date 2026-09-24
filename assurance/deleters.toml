@@ -254,11 +254,11 @@ answer = "read"
 class = "secret-or-gate"
 metadata = "none"
 disposition = "must-read"
-why = "resetPersistentPinUvAuthToken revokes a capability (SEC-FIDO-003); all four callers map the error to CTAP2_ERR_OTHER rather than report a token cleared. The folded answer is kept deliberately (reviewed 0x0989): the record half here is only ever the shared blob being unreadable, but that is equally true of vendor.rs:426/428 and crates/rsk-openpgp/src/putdata.rs:163/169, and splitting the halves for this caller alone would re-open the swallowed drop 0x0987 closed. One-shot commands lose the command, not a sweep's range."
+why = "resetPersistentPinUvAuthToken revokes a capability (SEC-FIDO-003); all four callers map the error to CTAP2_ERR_OTHER rather than report a token cleared. The folded answer is kept deliberately (reviewed 0x0989): the record half here is only ever the shared blob being unreadable, but that is equally true of vendor.rs:414/416 and crates/rsk-openpgp/src/putdata.rs:163/169, and splitting the halves for this caller alone would re-open the swallowed drop 0x0987 closed. One-shot commands lose the command, not a sweep's range."
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 434
+line = 422
 call = ".force_delete(EF_ATT_KEY.get())"
 verb = "force_delete"
 answer = "read"
@@ -269,7 +269,7 @@ why = "ATT_CLEAR, measured: discarding these two reported 'org attestation remov
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 437
+line = 425
 call = ".force_delete(EF_ATT_CHAIN)"
 verb = "force_delete"
 answer = "read"
@@ -280,7 +280,7 @@ why = "the chain half of the same erase, ordered after the key so the surviving 
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 924
+line = 912
 call = "if ctx.fs.delete(EF_EE_DEV).is_err() {"
 verb = "delete"
 answer = "read"

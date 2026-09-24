@@ -394,11 +394,6 @@ pub fn wrong_pin_token_request() -> Vec<u8> {
     body
 }
 
-/// Serialises the tests that touch the process-global `rsk_fido::vendor` phy-written
-/// flag: one 0x41 phy write sets it and every 0x41 command reads it, so cargo's
-/// parallel threads would otherwise race a setter against a reader.
-pub static PHY_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// A vendor `CONFIG_WRITE` (0x41) CBOR command `{1: subcmd, 2: {1: target, 2: blob}}`,
 /// unauthenticated — the same request `rsk-fido`'s `config_write_req` builds.
 pub fn vendor_config_write(target: u64, blob: &[u8]) -> Vec<u8> {

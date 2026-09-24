@@ -40,6 +40,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A vendor `CONFIG_WRITE` of the LED block or the phy record sent over CCID as a
+  command chain took effect only at the next reboot: the LED block did not reload
+  and a changed USB identity did not re-enumerate. The router looked for the
+  vendor command in the chain's last segment, whose data is the tail of the CBOR
+  message. RS-Key's own tools never chain these writes (`rsk led` over PC/SC sends
+  the vendor applet's SET LED, and python-fido2 chains only past 250 bytes); a
+  third-party PC/SC host that chains short commands met it. The live effects now
+  follow the write itself, on both transports and however it was framed, and a
+  vendor command that does not write the LED block no longer reloads it.
+  `bcdDevice` 0x0A02 → 0x0A03.
+
 - PIV GENERATE replaces a slot's certificate only when that certificate
   carries the key being replaced, and keeps any other — as a YubiKey keeps
   every certificate, since its GENERATE writes none. The keep-a-moved-key's-

@@ -359,6 +359,11 @@ pub struct FidoState {
     /// request like `Ctx::now_ms`, stamped by the firmware before each dispatch;
     /// survives [`Self::reset`] because the request outlives the state it clears.
     pub channel: u32,
+    /// Set by a vendor `CONFIG_WRITE` of the LED block (a replay too) or of a changed
+    /// phy record, whose effect lives outside flash: the LED atomics, and a warm reboot
+    /// that re-enumerates the new USB identity. The transport takes them per command.
+    pub(crate) led_written: bool,
+    pub(crate) phy_written: bool,
 }
 
 impl Default for FidoState {
@@ -388,7 +393,19 @@ impl FidoState {
             audit_boot_logged: false,
             warm_boot: false,
             channel: 0,
+            led_written: false,
+            phy_written: false,
         }
+    }
+
+    /// Take and clear the "a vendor write took the LED block" signal.
+    pub fn take_led_written(&mut self) -> bool {
+        core::mem::take(&mut self.led_written)
+    }
+
+    /// Take and clear the "a vendor write changed the phy record" signal.
+    pub fn take_phy_written(&mut self) -> bool {
+        core::mem::take(&mut self.phy_written)
     }
 
     /// Whether the seed-backup channel is live **and** owned by the channel this
@@ -694,6 +711,9 @@ impl Drop for FidoState {
             audit_boot_logged: _,
             warm_boot: _,
             channel: _,
+            // One-command signals that a config record was persisted.
+            led_written: _,
+            phy_written: _,
         } = self;
         ephemeral.zeroize();
         paut.token.zeroize();

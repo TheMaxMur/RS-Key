@@ -1070,14 +1070,11 @@ fn a_credmgmt_walk_bound_to_a_ctaphid_channel_is_not_continuable_over_ccid() {
     );
 }
 
-/// A vendor (0x41) command over CCID must re-apply the LED block that lives outside
-/// flash, as the CTAPHID handler does — else a `rsk led` write over PC/SC takes no
-/// effect until the next reboot.
+/// A vendor LED write over CCID must re-apply the LED block that lives outside flash,
+/// as the CTAPHID handler does — else a `rsk led` write over PC/SC takes no effect
+/// until the next reboot. A vendor command that writes nothing reloads nothing.
 #[test]
-fn a_vendor_command_over_ccid_reapplies_the_configuration() {
-    let _phy = crate::tests::PHY_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+fn an_led_write_over_ccid_reapplies_the_configuration() {
     let env = Env::new();
     let mut ccid = env.ccid();
     assert_eq!(
@@ -1087,8 +1084,48 @@ fn a_vendor_command_over_ccid_reapplies_the_configuration() {
     exchange_chained(&mut ccid, &ctap_msg(&[rsk_fido::consts::CTAP_VENDOR]));
     assert_eq!(
         env.board.borrow().config_written,
+        0,
+        "a failed 0x41 reloaded"
+    );
+    let write = crate::tests::vendor_config_write(rsk_fido::consts::CONFIG_TARGET_LED, &LED_BLOCK);
+    exchange_chained(&mut ccid, &ctap_msg(&write));
+    assert_eq!(
+        env.board.borrow().config_written,
         1,
-        "a 0x41 command over CCID did not re-apply the live configuration"
+        "an LED write over CCID did not re-apply the live configuration"
+    );
+}
+
+/// Longer than the LED block (`rsk_led::CONF_LEN`, 17 bytes); the write keeps its head.
+const LED_BLOCK: [u8; 32] = [0x11; 32];
+
+/// A phy record carrying `OPT_DISABLE_POWER_RESET` is stored and reboots nothing: its
+/// owner has said the replug is theirs to do.
+#[test]
+fn a_phy_write_that_disables_the_power_reset_reboots_nothing() {
+    let env = Env::new();
+    let phy = rsk_phy::PhyData {
+        presence_timeout: Some(45),
+        opts: rsk_phy::OPT_DISABLE_POWER_RESET,
+        ..Default::default()
+    };
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+    let blen = phy.serialize(&mut blob).unwrap();
+    let write = ctap_msg(&crate::tests::vendor_config_write(
+        rsk_fido::consts::CONFIG_TARGET_PHY,
+        &blob[..blen],
+    ));
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    assert_eq!(exchange_chained(&mut ccid, &write).1, rsk_sdk::Sw::OK);
+    let stored = rsk_phy::load(&mut env.fs.borrow_mut()).map(|p| p.presence_timeout);
+    assert_eq!(
+        (stored, env.board.borrow().reboots),
+        (Some(Some(45)), 0),
+        "the record must land, and nothing reboot"
     );
 }
 
@@ -1097,9 +1134,6 @@ fn a_vendor_command_over_ccid_reapplies_the_configuration() {
 /// 0x41 command, rebooting on that one — even an audit read.
 #[test]
 fn a_phy_write_over_ccid_reboots_on_the_write_not_a_later_command() {
-    let _phy = crate::tests::PHY_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = Env::new();
     let phy = rsk_phy::PhyData {
         presence_timeout: Some(45),
@@ -1492,9 +1526,6 @@ fn fido_over_ccid_answers_each_instruction_as_a_yubikey_does() {
 /// must run the same post-write side effects: here, the phy write's reboot.
 #[test]
 fn a_vendor_write_under_class_00_reboots_like_one_under_80() {
-    let _phy = crate::tests::PHY_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = Env::new();
     let phy = rsk_phy::PhyData {
         presence_timeout: Some(45),
@@ -1517,6 +1548,61 @@ fn a_vendor_write_under_class_00_reboots_like_one_under_80() {
         env.board.borrow().reboots,
         1,
         "a phy write under class 00 did not reboot"
+    );
+}
+
+/// The router takes a vendor write's side effects from the write itself, so one a
+/// host sends as a command chain applies as a single APDU does: the LED block
+/// reloads, and a changed phy record reboots.
+#[test]
+fn a_chained_vendor_write_applies_as_a_single_apdu_does() {
+    let env = Env::new();
+    let phy = rsk_phy::PhyData {
+        presence_timeout: Some(45),
+        ..Default::default()
+    };
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+    let blen = phy.serialize(&mut blob).unwrap();
+    let writes = [
+        (
+            "the LED block",
+            rsk_fido::consts::CONFIG_TARGET_LED,
+            &LED_BLOCK[..],
+            (1, 0),
+        ),
+        (
+            "the phy record",
+            rsk_fido::consts::CONFIG_TARGET_PHY,
+            &blob[..blen],
+            (1, 1),
+        ),
+    ];
+    let mut ccid = env.ccid();
+    for (name, target, body, want) in writes {
+        assert_eq!(
+            sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+            rsk_sdk::Sw::OK
+        );
+        let write = crate::tests::vendor_config_write(target, body);
+        let (head, tail) = write.split_at(write.len() / 2);
+        let segment = apdu(0x90, 0x10, 0x00, 0x00, head);
+        assert_eq!(sw(ccid.handle_apdu(&segment, 0)), rsk_sdk::Sw::OK, "{name}");
+        let last = exchange_chained(&mut ccid, &apdu(0x80, 0x10, 0x00, 0x00, tail));
+        assert_eq!(last, (vec![0x00], rsk_sdk::Sw::OK), "{name}: the write");
+        let board = env.board.borrow();
+        assert_eq!(
+            (board.config_written, board.reboots),
+            want,
+            "{name}: the chained write's side effects"
+        );
+    }
+    // Taken once: the next command, on the same handler, inherits neither.
+    exchange_chained(&mut ccid, &ctap_msg(GET_INFO));
+    let board = env.board.borrow();
+    assert_eq!(
+        (board.config_written, board.reboots),
+        (1, 1),
+        "a later command re-ran the side effects"
     );
 }
 

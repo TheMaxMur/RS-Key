@@ -218,17 +218,24 @@ fn a_panel_pin_change_is_consumed_before_the_next_command_runs() {
 // --- the live-config reload -------------------------------------------------
 
 #[test]
-fn a_vendor_command_reapplies_the_configuration_outside_flash() {
+fn an_led_write_reapplies_the_configuration_outside_flash() {
     // A vendor CONFIG_WRITE persists the LED block, but its live copy is a set of
-    // atomics the flash record does not reach — so the board is told after any
-    // 0x41, matching the CCID SET_LED.
-    let _phy = crate::tests::PHY_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    // atomics the flash record does not reach — so the board is told after the
+    // write, matching the CCID SET_LED, and after nothing else.
     let env = Env::new();
     let mut ctap = env.ctap();
     ctap.handle_cbor(1, &[rsk_fido::consts::CTAP_VENDOR], 0);
+    assert_eq!(
+        env.board.borrow().config_written,
+        0,
+        "a failed 0x41 reloaded"
+    );
+    let write = crate::tests::vendor_config_write(rsk_fido::consts::CONFIG_TARGET_LED, &[0x11; 32]);
+    ctap.handle_cbor(1, &write, 0);
     assert_eq!(env.board.borrow().config_written, 1);
+    // A replay writes no flash and is still applied live, as the CCID SET_LED is.
+    ctap.handle_cbor(1, &write, 0);
+    assert_eq!(env.board.borrow().config_written, 2, "a replayed LED write");
 }
 
 #[test]
@@ -244,9 +251,6 @@ fn an_ordinary_command_does_not_touch_the_configuration() {
 fn nothing_reboots_without_a_phy_write() {
     // The auto-reboot exists so a changed USB identity takes effect without a
     // replug; it must not fire for any other vendor command.
-    let _phy = crate::tests::PHY_WRITE_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
     let env = Env::new();
     let mut ctap = env.ctap();
     ctap.handle_cbor(1, &[rsk_fido::consts::CTAP_VENDOR], 0);

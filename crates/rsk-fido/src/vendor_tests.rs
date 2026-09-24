@@ -1706,8 +1706,8 @@ fn config_write_read_led_block_over_fido() {
     )
     .unwrap();
 
-    // Read the block back (ungated). Live-apply of the atomics is a firmware
-    // handler concern (reload after 0x41) — exercised on-device, not here.
+    // Read the block back (ungated). Live-apply of the atomics is the transport's,
+    // after the write that marks it — rsk-device's LED-write tests.
     let mut rreq = [0u8; 32];
     let rn = config_read_req(CONFIG_TARGET_LED, &mut rreq);
     let mut rout = [0u8; 64];
@@ -2200,6 +2200,89 @@ fn an_unsupported_protocol_is_judged_before_the_missing_token() {
             "protocol {proto}"
         );
     }
+}
+
+/// Run one vendor request and take the two marks it left for the transport.
+fn marks<S: Storage>(
+    fs: &mut Fs<S>,
+    rng: &mut SeqRng,
+    st: &mut FidoState,
+    req: &[u8],
+) -> (bool, bool, bool) {
+    let mut out = [0u8; 64];
+    let ok = call(fs, rng, st, &mut AlwaysConfirm, req, &mut out).is_ok();
+    (ok, st.take_led_written(), st.take_phy_written())
+}
+
+/// What a CONFIG_WRITE marks for the transport to apply once it is answered: every
+/// LED write, a replay included (applied live, as the CCID SET LED is), and a phy
+/// record it changed. A refused write, the other target and a read mark nothing.
+#[test]
+fn config_write_marks_only_the_live_effects_it_owes() {
+    let (mut fs, medium, mut rng, mut st) = setup_stuck();
+    let led = [0x11u8; rsk_led::CONF_LEN];
+    let phy = |timeout| {
+        let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+        let rec = rsk_phy::PhyData {
+            presence_timeout: Some(timeout),
+            ..Default::default()
+        };
+        let n = rec.serialize(&mut blob).unwrap();
+        blob[..n].to_vec()
+    };
+    let req = |target, blob: &[u8]| {
+        let mut buf = [0u8; 128];
+        let n = config_write_req(target, blob, false, &mut buf);
+        buf[..n].to_vec()
+    };
+    let mut read = [0u8; 32];
+    let rn = config_read_req(CONFIG_TARGET_LED, &mut read);
+    let rows = [
+        (
+            "a DEV_CONF write",
+            req(CONFIG_TARGET_DEV_CONF, DEV_CONF_BLOB),
+            (true, false, false),
+        ),
+        ("a CONFIG_READ", read[..rn].to_vec(), (true, false, false)),
+        (
+            "an LED block one byte short",
+            req(CONFIG_TARGET_LED, &led[..rsk_led::CONF_LEN - 1]),
+            (false, false, false),
+        ),
+        (
+            "an LED write",
+            req(CONFIG_TARGET_LED, &led),
+            (true, true, false),
+        ),
+        (
+            "its replay",
+            req(CONFIG_TARGET_LED, &led),
+            (true, true, false),
+        ),
+        (
+            "a phy write",
+            req(CONFIG_TARGET_PHY, &phy(45)),
+            (true, false, true),
+        ),
+        (
+            "its replay",
+            req(CONFIG_TARGET_PHY, &phy(45)),
+            (true, false, false),
+        ),
+    ];
+    for (name, request, want) in rows {
+        assert_eq!(marks(&mut fs, &mut rng, &mut st, &request), want, "{name}");
+    }
+    // A changed record the store cannot read back is refused before anything lands.
+    medium.stick(Some(rsk_phy::EF_PHY));
+    let refused = marks(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &req(CONFIG_TARGET_PHY, &phy(50)),
+    );
+    medium.stick(None);
+    assert_eq!(refused, (false, false, false), "a refused phy write");
 }
 
 /// A provisioned card on a medium whose reads of one chosen record can be made to

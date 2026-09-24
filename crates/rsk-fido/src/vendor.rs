@@ -56,20 +56,6 @@ use crate::seed::{
 use crate::state::{PERM_ACFG, puat_subcommand_msg};
 use crate::{Ctx, Rng};
 
-use core::sync::atomic::{AtomicBool, Ordering};
-
-/// Set when a FIDO `CONFIG_WRITE` persists the PHY record; the firmware handler
-/// consumes it to warm-reboot (re-enumerate) so the new USB identity applies
-/// without a manual replug, unless `OPT_DISABLE_POWER_RESET` is set. Cross-layer
-/// because the reboot verb lives in the firmware, not this applet.
-static PHY_WRITTEN: AtomicBool = AtomicBool::new(false);
-
-/// Take and clear the "a PHY config-write just happened" flag (the firmware
-/// handler reads it after the `0x41` response flushes).
-pub fn take_phy_written() -> bool {
-    PHY_WRITTEN.swap(false, Ordering::Relaxed)
-}
-
 /// Scratch for the pinUvAuth MAC message, which covers `subCommandParams`
 /// verbatim — so it caps how long those params may be. **This is a buffer guard,
 /// and it only exists on the PIN branch**; for years that made the accepted
@@ -346,16 +332,18 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
                 return Ok(0);
             }
             rsk_phy::merge_save(ctx.fs, req.blob).map_err(|_| CtapError::Other)?;
-            PHY_WRITTEN.store(true, Ordering::Relaxed);
+            ctx.state.phy_written = true;
         }
-        // The LED config block; persisted here and applied *live* by the firmware
-        // CTAPHID handler, which reloads EF_LED_CONF after a 0x41 command (the LED
-        // atomics are firmware-side). The CCID SET_LED writes the same record.
+        // The LED config block; persisted here and applied *live* by the transport,
+        // which reloads EF_LED_CONF once the write is answered (the LED atomics are
+        // firmware-side). The CCID SET_LED writes the same record.
         CONFIG_TARGET_LED => {
             if req.blob.len() < LED_CONF_LEN {
                 return Err(CtapError::InvalidLength);
             }
             let want = &req.blob[..LED_CONF_LEN];
+            // Applied live even when flash already holds it, as the CCID SET_LED is.
+            ctx.state.led_written = true;
             let mut cur = [0u8; LED_CONF_LEN];
             if ctx.fs.read(EF_LED_CONF, &mut cur) == Some(LED_CONF_LEN) && &cur[..] == want {
                 return Ok(0);

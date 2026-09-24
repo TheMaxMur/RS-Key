@@ -1094,7 +1094,8 @@ Keys 3/4 are present only when a PIN is set (see gating).
 > merge** — only the TLV tags in the blob are updated, the rest preserved (the same
 > `merge_save` the CCID path uses), effective on the next boot); `0x02` = the LED config block
 > (`EF_LED_CONF`, §8, `CONF_LEN` bytes), persisted and then applied **live** by the
-> firmware, which reloads the block after a `0x41` command (the LED atomics are
+> firmware, which reloads the block once that write is answered, over either
+> transport and however it was framed (the LED atomics are
 > firmware-side; `CONFIG_READ 0x02` returns the current block, seeded with the build
 > defaults on first boot, so a host can read-modify-write it — **verbatim**, so it
 > can differ from what renders once §8's touch normalization applies). No MSE
@@ -1106,8 +1107,9 @@ Keys 3/4 are present only when a PIN is set (see gating).
 > The write lands in the same `EF_DEV_CONF`, so a later CCID READ CONFIG echoes it.
 >
 > **Replays and the audit journal.** A write whose result equals what is already
-> stored returns `0x00` and does nothing at all — no flash write, no journal entry,
-> and for `PHY` no auto-reboot latch. The comparison is against the *merged*
+> stored returns `0x00` and writes nothing — no flash write, no journal entry, and
+> for `PHY` no auto-reboot latch. An `LED` replay is still applied live, as SET LED's
+> is. The comparison is against the *merged*
 > record for `PHY`, so a partial blob that changes nothing is also a no-op; an
 > absent or unreadable `EF_PHY` is never "unchanged", so a host writing the default
 > values to repair one is not answered `0x00` with nothing stored.

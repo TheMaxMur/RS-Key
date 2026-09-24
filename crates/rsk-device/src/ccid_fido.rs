@@ -34,15 +34,6 @@ const INS_CTAP_CONTROL: u8 = 0x12;
 /// ceremony and its next getInfo, which needs the applet as it was.
 const P1_CONTROL_END: u8 = 0x01;
 
-/// Whether `apdu` is a CTAP2 vendor (0x41) command, under either class MSG takes —
-/// the CCID twin of the CTAPHID handler's `data.first() == CTAP_VENDOR`, so the
-/// router can run the same post-write side effects (the LED reload and phy reboot).
-pub(crate) fn is_vendor_cbor(apdu: &Apdu) -> bool {
-    apdu.is_basic_class()
-        && apdu.ins == INS_CTAP_MSG
-        && apdu.data.first() == Some(&rsk_fido::consts::CTAP_VENDOR)
-}
-
 /// FIDO over CCID. Holds no FIDO state of its own; every field is a handle the
 /// CTAPHID transport also holds.
 pub struct FidoCcidApplet<'a, R: rsk_sdk::Rng + 'static> {
