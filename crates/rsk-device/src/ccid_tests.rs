@@ -2,11 +2,9 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+#[cfg(not(feature = "strict-config"))]
+use crate::tests::WriteStuck;
 use crate::tests::{Env, TestRng, VendorBoard, apdu, dev_conf, get_creds_metadata, select, sw};
-#[cfg(not(feature = "strict-config"))]
-use crate::tests::{TruncatedScan, WriteStuck};
-#[cfg(not(feature = "strict-config"))]
-use rsk_fs::storage::faults::RemoveStuck;
 
 /// The eight AIDs in registration order, so a test can walk the whole set.
 const AIDS: [(&str, &[u8]); 8] = [
@@ -19,77 +17,6 @@ const AIDS: [(&str, &[u8]); 8] = [
     ("rescue", rsk_rescue::RESCUE_AID),
     ("fido", rsk_fido::consts::FIDO_AID),
 ];
-
-/// The CCID wrapper's return value is what the caller turns into a reboot that
-/// looks like success, and it was asserted by nothing (the reverse mutation
-/// pass, D2): replacing the whole function with `true` or with `false` left the
-/// suite green. Audit run-32 is what the `true` direction costs — a wipe that
-/// reports a range clear it never enumerated, with the trusted display painting
-/// "RS-Key erased" over live credentials.
-///
-/// This pins the honest direction: a wipe that really happened answers `true`.
-/// The refusing direction is the sibling below.
-// `factory_wipe` is a DEFAULT-build entry point; the strict-config image has
-// no management RESET at all.
-#[cfg(not(feature = "strict-config"))]
-#[test]
-fn a_completed_factory_wipe_reports_true_and_leaves_nothing() {
-    let env = Env::new();
-    env.fs
-        .borrow_mut()
-        .put(rsk_fido::consts::EF_CRED, &[0xC0; 32])
-        .unwrap();
-    assert!(env.fs.borrow_mut().has_data(rsk_fido::consts::EF_CRED));
-    let wiped = env.ccid().factory_wipe();
-    assert!(wiped, "a wipe that completed must report it");
-    assert!(
-        !env.fs.borrow_mut().has_data(rsk_fido::consts::EF_CRED),
-        "and must actually have erased the credential it reported clear"
-    );
-}
-
-/// The refusing direction, which no fixture could observe while `Env` was wired to
-/// `RamStorage`. `Fs::factory_wipe` has exactly two ways to say no — a walk it
-/// could not finish, which must not be reported as a range clear, and a backend
-/// `remove` that errored — and `.is_ok()` has to carry both out to the worker,
-/// whose `reboot(1)` is conditioned on this bool. Laundering either one is a
-/// device that comes up looking factory-clean over live credentials.
-#[cfg(not(feature = "strict-config"))]
-#[test]
-fn a_refused_factory_wipe_is_never_reported_as_a_completed_one() {
-    // The walk faulted before yielding anything, so nothing was deleted either.
-    let env = Env::with_storage(TruncatedScan::new());
-    env.fs
-        .borrow_mut()
-        .put(rsk_fido::consts::EF_CRED, &[0xC0; 32])
-        .unwrap();
-    assert!(
-        !env.ccid().factory_wipe(),
-        "a wipe that never enumerated the store must not report the range clear"
-    );
-    assert!(
-        env.fs.borrow_mut().has_data(rsk_fido::consts::EF_CRED),
-        "and the credential it never saw is still live"
-    );
-
-    // The medium refused one removal. `live` reads the medium, not `Fs`'s present
-    // cache, which a delete marks absent whether or not the backend `remove` ran.
-    let (backend, medium) = RemoveStuck::new();
-    let env = Env::with_storage(backend);
-    env.fs
-        .borrow_mut()
-        .put(rsk_fido::consts::EF_CRED, &[0xC0; 32])
-        .unwrap();
-    medium.refuse(Some(rsk_fido::consts::EF_CRED));
-    assert!(
-        !env.ccid().factory_wipe(),
-        "a wipe the medium refused must not report success"
-    );
-    assert!(
-        medium.live(rsk_fido::consts::EF_CRED),
-        "and the credential the medium kept is still live"
-    );
-}
 
 #[test]
 fn every_applet_is_selectable_on_a_fresh_device() {
@@ -186,7 +113,6 @@ fn a_config_write_is_only_seen_after_a_refresh() {
 
 // --- the device-wide wipe's gate set ---------------------------------------
 
-#[cfg(any(not(feature = "strict-config"), feature = "display"))]
 #[test]
 fn the_wipe_defers_every_applets_own_gate_records() {
     // Audit run-36: OATH's `is_oath_lock_fid` was private, so it could not be named
@@ -215,7 +141,6 @@ fn the_wipe_defers_every_applets_own_gate_records() {
     }
 }
 
-#[cfg(any(not(feature = "strict-config"), feature = "display"))]
 #[test]
 fn no_applet_defers_another_applets_record() {
     // The union is an OR, so an applet that takes a record OUT of its own gate set
@@ -242,7 +167,6 @@ fn no_applet_defers_another_applets_record() {
     }
 }
 
-#[cfg(any(not(feature = "strict-config"), feature = "display"))]
 #[test]
 fn the_wipe_defers_nothing_it_was_not_asked_to() {
     // The other direction: everything deferred belongs to one of the four. A wipe

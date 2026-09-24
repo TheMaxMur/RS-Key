@@ -59,7 +59,7 @@ rsk-rsa = { workspace = true, features = ["test-util"] }
 # `crates/rsk-crypto/Cargo.toml`.
 kani-soft = ["rsk-crypto/kani-soft", "rsk-fido/kani-soft"]
 # The strict admin-write profile: see firmware's `strict-config`. It decides
-# whether CTAPHID carries WRITE CONFIG and whether Management RESET wipes.
+# whether CTAPHID carries WRITE CONFIG.
 strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/strict-config", "rsk-vendor/strict-config"]
 # The trusted-display build: adds the on-pad PIN paths the screen drives.
 display = []

@@ -51,7 +51,7 @@ requirement = [
 ]
 threat_clause = "docs/threat-model.md#TM-ZEROIZATION"
 # AND THE CLAUSE DOES NOT SAY WHAT THE PROPERTY IS ABOUT. Read at
-# docs/threat-model.md:398-413, `## Zeroization` makes one rule — key-grade
+# docs/threat-model.md:397-412, `## Zeroization` makes one rule — key-grade
 # material in RAM is wiped WHEN ITS USE ENDS, "on drop", "at end of scope",
 # "as soon as a message completes" — and names session state, PIN/UV tokens,
 # transient key copies, transport buffers, the DEVK and the MKEK. It never names
@@ -271,7 +271,7 @@ registered = "yes — assurance/platform.toml PLAT-TOOLCHAIN-001, whose `covers`
 id = "AS-RAM-5"
 statement = "The invariant is INERT on the shipped tree: it has no falsifying reachable state by construction, so its GREEN carries no information beyond AS-RAM-3's guard."
 kind = "model fidelity"
-discharger = "already measured, and written down rather than re-derived: formal/README.md:822-845 records that dropping SeedReachable's `ram` disjunct leaves the state set IDENTICAL and flips no verdict, and that two of the three `ram' = FALSE` assignments (ResetFinish :1371 and VolatileCleared :1405) are dead. The same page names what would make it bite — the second reset path, `Fs::factory_wipe`, still unmodelled, if its reboot were ever separated from the wipe. This is the row that says what the two GREEN configurations are worth, and a bundle without it publishes two GREENs as if they were two kills"
+discharger = "already measured, and written down rather than re-derived: formal/README.md:828-851 records that dropping SeedReachable's `ram` disjunct leaves the state set IDENTICAL and flips no verdict, and that two of the three `ram' = FALSE` assignments (ResetFinish :1371 and VolatileCleared :1405) are dead. The same page names what would make it bite — the second reset path, `Fs::factory_wipe`, still unmodelled, if its reboot were ever separated from the wipe. This is the row that says what the two GREEN configurations are worth, and a bundle without it publishes two GREENs as if they were two kills"
 expressible = "no — a statement about the reachable state graph, not a constant"
 registered = "yes — assurance/platform.toml PLAT-MODEL-006, pending. There was no non-degeneracy class in that registry at all; SEC-FIDO-001 carries the same obligation as an exit criterion instead"
 

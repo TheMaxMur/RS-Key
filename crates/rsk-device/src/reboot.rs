@@ -43,7 +43,7 @@ impl RebootSlot {
             .ok()
     }
 
-    /// The worker has begun a reset, taken or not: Management RESET's wipe queues none.
+    /// The worker has begun a reset, whether or not it was taken from this slot.
     pub fn begin_reset(&self) {
         self.state.store(RESETTING, Ordering::Relaxed);
     }

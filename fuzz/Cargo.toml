@@ -74,8 +74,7 @@ strong-pin = ["rsk-fido/strong-pin"]
 strict-up = ["rsk-fido/strict-up"]
 always-uv = ["rsk-fido/always-uv"]
 # `rsk-device/display` is on for every config here (the dependency line above), so
-# the two `any(not(strict-config), display)` sites stay compiled where a
-# display-less strict-config image drops them.
+# its display-only paths are fuzzed in every flavour, strict-config included.
 strict-config = [
     "rsk-mgmt/strict-config",
     "rsk-fido/strict-config",

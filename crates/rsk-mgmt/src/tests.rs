@@ -457,45 +457,58 @@ fn bad_cla_and_ins_rejected() {
     assert_eq!(sw, Sw::CLA_NOT_SUPPORTED);
     let (sw, _) = process(&mut app, &mut fs, &[0x00, 0xEE, 0, 0, 0x00]);
     assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
-    // RESET stays unsupported under strict-config; on the default build it is a
-    // (presence-gated) device-wide reset, exercised by its own tests below.
-    #[cfg(feature = "strict-config")]
-    {
-        let (sw, _) = process(&mut app, &mut fs, &[0x00, INS_RESET, 0, 0, 0x00]);
-        assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
-    }
 }
 
-#[cfg(not(feature = "strict-config"))]
+/// INS `1E` and `1F` as a YubiKey 5.8.0 answers them, read twice under class `00`
+/// and `80`: `1E` is `9000` with no body whatever the P1-P2 or data, and changes
+/// nothing; `1F` is `6D00`. Both were a presence-gated factory reset here.
 #[test]
-fn device_reset_denied_without_presence() {
-    // Even ungated everywhere else, a device-wide reset is presence-gated
-    // (irreversible). A declined touch refuses it and queues nothing — and does
-    // not touch the process-global reset flag.
-    let presence = RefCell::new(DenyPresence);
-    let mut app = ManagementApplet::new([0; 8], &presence);
-    let mut fs = fs();
-    for ins in [INS_RESET, 0x1F] {
-        let (sw, _) = process(&mut app, &mut fs, &[0x00, ins, 0, 0, 0x00]);
-        assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
+fn ins_1e_and_1f_answer_as_a_yubikey_does_and_reset_nothing() {
+    struct NeverAsked;
+    impl UserPresence for NeverAsked {
+        fn request(&mut self, _c: Confirm<'_>) -> Presence {
+            panic!("a command that does nothing asked for the operator's touch");
+        }
     }
-}
-
-#[cfg(not(feature = "strict-config"))]
-#[test]
-fn device_reset_signals_the_firmware_on_presence() {
-    // The only test that touches the process-global DEVICE_RESET flag, so it can
-    // drain/observe it without racing a sibling. ykman sends 0x1F; RS-Key's own
-    // 0x1E is honoured too.
-    let _ = take_device_reset(); // clear any stale value
-    let presence = RefCell::new(AlwaysConfirm);
+    let presence = RefCell::new(NeverAsked);
     let mut app = ManagementApplet::new([0; 8], &presence);
     let mut fs = fs();
-    let (sw, _) = process(&mut app, &mut fs, &[0x00, 0x1F, 0, 0, 0x00]);
-    assert_eq!(sw, Sw::OK);
-    assert!(
-        take_device_reset(),
-        "a presence-confirmed RESET queues the wipe"
+    let stored = [TAG_USB_ENABLED, 0x02, 0x02, 0x00];
+    fs.put(EF_DEV_CONF, &stored).unwrap();
+    let before = process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]);
+    for cla in [0x00, 0x80] {
+        for (p1, p2, data) in [
+            (0x00, 0x00, &[][..]),
+            (0x01, 0x00, &[]),
+            (0x00, 0x01, &[]),
+            (0x00, 0x00, &[0x00]),
+            (0x00, 0x00, &[1, 2, 3, 4, 5]),
+        ] {
+            let mut apdu = vec![cla, 0x1E, p1, p2];
+            if !data.is_empty() {
+                apdu.push(data.len() as u8);
+                apdu.extend_from_slice(data);
+            }
+            assert_eq!(
+                process(&mut app, &mut fs, &apdu),
+                (Sw::OK, vec![]),
+                "{apdu:02X?}"
+            );
+            apdu[1] = 0x1F;
+            assert_eq!(
+                process(&mut app, &mut fs, &apdu).0,
+                Sw::INS_NOT_SUPPORTED,
+                "{apdu:02X?}"
+            );
+        }
+    }
+    assert_eq!(
+        process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]),
+        before
     );
-    assert!(!take_device_reset(), "take clears the flag");
+    let mut got = [0u8; 8];
+    let n = fs
+        .read(EF_DEV_CONF, &mut got)
+        .expect("the stored config stays");
+    assert_eq!(&got[..n], &stored);
 }

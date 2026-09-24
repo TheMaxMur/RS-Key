@@ -36,10 +36,7 @@ pub mod presence;
 pub mod reboot;
 
 pub use ccid::CcidApplets;
-// The union is only reachable where a device-wide wipe is: `Management RESET` on
-// the permissive build, and the trusted display's factory reset. The same gate the
-// function itself carries, or a strict non-display build fails to re-export it.
-#[cfg(any(not(feature = "strict-config"), feature = "display"))]
+// The records a device-wide wipe removes last: the trusted display's factory reset.
 pub use ccid::gates_wiped_last;
 pub use ctap::AppletHandler;
 #[cfg(feature = "security-trace")]

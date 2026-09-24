@@ -577,8 +577,6 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
     // keeps it: the MSG applet selection is one global for every channel, so a
     // change of channel has to drop it (audit run-34 #27).
     let mut last_msg_cid: Option<u32> = None;
-    // Raised by a Management RESET's dispatch; its wipe waits until the answer is out.
-    let mut device_reset = false;
     // Whether the last pass answered a job, so what that job queued runs before the next one.
     let mut answered = false;
 
@@ -596,15 +594,11 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
             if let Some(true) = panel_reboot {
                 eprintln!("emu: the panel asked for BOOTSEL; there is no bootloader to fall into");
             }
-            // Only a completed wipe reboots, as on the board: coming up fresh after a failed
-            // one is what makes a half-erased device look factory-clean.
-            let wiped = std::mem::take(&mut device_reset) && ccid.factory_wipe();
             // A warm reboot drops RAM state and leaves the attach clock alone: only a power
             // cycle reopens the §6.6 window, which is the distinction `Job::Replug` carries.
             if reboot_requested.replace(false)
                 || rescue_reboot == Some(false)
                 || panel_reboot == Some(false)
-                || wiped
             {
                 let _ = boot_block();
                 hooks.borrow_mut().warm = true;
@@ -740,8 +734,7 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                 body
             }
             Job::Apdu(data) => {
-                let (body, reset) = dispatch_apdu(&mut ccid, &data, now_ms);
-                device_reset |= reset;
+                let body = ccid.handle_apdu(&data, now_ms).to_vec();
                 ccid.scrub();
                 if cfg.trace {
                     eprintln!(
@@ -859,22 +852,6 @@ fn rescan(fs: &RefCell<Fs<EmuStore>>) -> RefMut<'_, Fs<EmuStore>> {
     let mut store = fs.borrow_mut();
     store.scan();
     store
-}
-
-/// One CCID dispatch, and whether it raised Management's device-reset request. That flag is
-/// process-wide and a test binary runs many devices at once, so its raise and its take share
-/// a lock: otherwise another device's dispatch could take it and wipe that device instead.
-fn dispatch_apdu(
-    ccid: &mut CcidApplets<'_, EmuStore, EmuRng, EmuVendorPlatform>,
-    apdu: &[u8],
-    now_ms: u64,
-) -> (Vec<u8>, bool) {
-    static DEVICE_RESET_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _held = DEVICE_RESET_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let body = ccid.handle_apdu(apdu, now_ms).to_vec();
-    (body, rsk_mgmt::take_device_reset())
 }
 
 /// What the phase-4 replay reads out of a request, taken from the applet's own

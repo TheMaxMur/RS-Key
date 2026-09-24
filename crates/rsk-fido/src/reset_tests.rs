@@ -993,8 +993,8 @@ fn a_torn_reset_never_starts_while_the_seed_is_still_readable() {
     a_torn_reset_keeps_the_seed_ahead_of_the_wipe(EF_KEY_DEV_ENC.get());
 }
 
-/// The device-wide `Fs::factory_wipe` — the Management RESET and the trusted
-/// display's factory reset — bypasses [`reset`] entirely, so the rule has to reach
+/// The device-wide `Fs::factory_wipe` — the trusted display's factory reset —
+/// bypasses [`reset`] entirely, so the rule has to reach
 /// it through an exported predicate. Same shape audit run-36 settled on for OATH's
 /// access code (`rsk_oath::tests::the_exported_lock_predicate_protects_the_device_
 /// wide_wipe`): assert the predicate really buys the ordering on that path.

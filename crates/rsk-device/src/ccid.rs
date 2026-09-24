@@ -144,7 +144,6 @@ pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor
 /// simply left out, and a torn device reset then served every surviving TOTP secret
 /// unauthenticated (audit run-36). A new applet adds its predicate to its own crate
 /// and one line here; `scripts/gate_union.py` fails the gate when it does not.
-#[cfg(any(not(feature = "strict-config"), feature = "display"))]
 pub fn gates_wiped_last(fid: u16) -> bool {
     rsk_fido::is_fido_gate_fid(fid)
         || rsk_piv::files::is_piv_gate_fid(fid)
@@ -298,25 +297,6 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
         self.resp.zeroize();
-    }
-
-    /// Device-wide factory reset: wipe all flash but the org attestation, exactly
-    /// like the trusted-display factory-reset flow (`rsk_fido::survives_factory_reset`).
-    /// The next boot re-provisions a fresh seed. Called by the worker after a
-    /// Management RESET's SW_OK, then a reboot. DEFAULT build only.
-    ///
-    /// Returns whether the wipe actually completed: a truncated enumeration or a
-    /// failed remove must not be laundered into a reboot that looks like success.
-    #[cfg(not(feature = "strict-config"))]
-    pub fn factory_wipe(&mut self) -> bool {
-        self.fs
-            .borrow_mut()
-            .factory_wipe(
-                rsk_fido::survives_factory_reset,
-                rsk_fido::is_fido_seed_fid,
-                gates_wiped_last,
-            )
-            .is_ok()
     }
 
     /// Whether the applet that owns PIN reference `p2` is the one currently SELECTED

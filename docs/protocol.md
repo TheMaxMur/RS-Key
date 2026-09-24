@@ -662,7 +662,7 @@ and writes.
 |---|---|---|---|
 | `1D` | READ CONFIG | — | DeviceInfo TLV (see below) |
 | `1C` | WRITE CONFIG | `data[0]` = inner length `n`, then `n` bytes of enabled-apps TLV (`n ≤ 64`) | — (ungated by default; presence-gated under `strict-config`) |
-| `1E` / `1F` | RESET / DEVICE RESET | — | device-wide factory reset (presence-gated) on the default build; `6D00` under `strict-config` |
+| `1E` | — | anything | `9000` with no body, and nothing is done — as a YubiKey 5.8.0 answers it |
 
 ### 6.1 DeviceInfo TLV (READ CONFIG `0x1D`)
 
@@ -738,11 +738,17 @@ builds.
 > YubiKey with no config-lock code). Building `--features strict-config` restores
 > an **on-device user-presence confirmation** (Approve on the trusted-display
 > build, a BOOTSEL press otherwise), so a hostile host cannot rewrite it
-> unattended (declined/timed-out → `6985`). RESET (`1E`/`1F`) is a device-wide
-> factory reset on the default build — presence-gated even there, since an
-> ungated one-APDU wipe would be a footgun — and `6D00` under `strict-config`.
-> Either way the identity is cosmetic, never an authenticity signal (see
-> docs/threat-model.md §1/§3).
+> unattended (declined/timed-out → `6985`). Either way the identity is cosmetic,
+> never an authenticity signal (see docs/threat-model.md §1/§3).
+>
+> There is no device-wide reset here. `1F`, ykman's `device_reset` (sent only when
+> DeviceInfo reports a blocked reset or a Bio with PIV), is `6D00`, as on a
+> YubiKey 5.8.0; `1E` is acknowledged and does nothing. Both were a presence-gated
+> factory reset before 0x0A01, and the rescue and vendor applets' own `1E`/`1F`,
+> sent while Management was selected, reached it. The trusted display's menu keeps
+> a factory reset, and each applet its own. **A host written for pico-fido, whose
+> Management `1E` resets FIDO, gets `9000` here with nothing erased**: reset FIDO
+> with CTAP `authenticatorReset` instead.
 
 ---
 

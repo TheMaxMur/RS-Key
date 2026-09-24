@@ -45,7 +45,7 @@ CONSTANTS
     \* WRITER rather than in the invariant; widen it to the PIN and the shipped
     \* tree is red for a drop the applet does on purpose.
     BugOathReselectUnrecorded,
-    \* crates/rsk-device/src/ccid.rs:354-369 -- the ICC power transition.
+    \* crates/rsk-device/src/ccid.rs:334-349 -- the ICC power transition.
     BugCardResetKeepsStatus,
     \* e5da38b taken back out: PW3, the admin PIN, standing in for PW1/PW2 on
     \* PSO:CDS, PSO:DECIPHER and INTERNAL AUTHENTICATE.
@@ -110,7 +110,7 @@ CONSTANTS
     \* The same fact one path over: a card reset or a power cycle that rebuilds
     \* the applet with the unlock still standing.
     BugResetKeepsOathUnlock,
-    \* `Fs::factory_wipe` WITHOUT the reboot both callers queue after it: the
+    \* `Fs::factory_wipe` WITHOUT the reboot its caller queues after it: the
     \* flash is defaulted and every in-RAM status stands over the new verifiers.
     \* The model folds wipe and reboot into one step; this is that fold undone.
     BugWipeWithoutItsReboot,
@@ -536,7 +536,7 @@ PivKeyOp ==
 
 \* SCardDisconnect(SCARD_RESET_CARD) / CCID_POWER_OFF / CCID_POWER_ON:
 \* `Dispatcher::reset_card` deselects, which drops the selected applet's
-\* security status (crates/rsk-device/src/ccid.rs:354-369,
+\* security status (crates/rsk-device/src/ccid.rs:334-349,
 \* crates/rsk-sdk/src/applet.rs:227-235). This is the one the `cross_applet`
 \* fuzz target already watches, one layer down.
 \* Its own trailing UNCHANGED named `psig` while the ELSE branch assigned it, so
@@ -582,8 +582,8 @@ FidoReset == UNCHANGED vars
 
 \* `Fs::factory_wipe` (crates/rsk-fs/src/fs.rs:462-513) is FLASH-only: it never
 \* sees an applet, so every in-RAM status here stands over freshly-defaulted
-\* verifiers until the reboot both callers queue immediately after
-\* (crates/rsk-device/src/ccid.rs:310-319, crates/rsk-display/src/pin.rs:713-721).
+\* verifiers until the reboot its one caller queues immediately after
+\* (crates/rsk-display/src/pin.rs:713-721).
 \* Modelled as the wipe AND its reboot in one step, which is what makes the
 \* window unobservable -- and that is exactly the assumption to attack if anyone
 \* ever separates them.

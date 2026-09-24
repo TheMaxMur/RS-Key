@@ -23,8 +23,8 @@ fn a_taken_request_stays_pending_until_the_reset() {
     );
 }
 
-/// Management RESET's wipe reboots with no request queued; beginning that reset is what the
-/// panel parks on.
+/// A reset the worker begins with no request queued still reads pending: the panel parks on
+/// the reset under way, not on the request.
 #[test]
 fn a_reset_begun_without_a_request_reads_pending() {
     let slot = RebootSlot::new();

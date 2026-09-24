@@ -220,8 +220,7 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   full-ykman/YubiKey-compatible admin surface: a hostile USB host can silently
   rewrite the DeviceInfo / enabled-applications / USB identity — over CCID
   Management `WRITE CONFIG`, the FIDO vendor `CONFIG_WRITE`, and the CTAPHID
-  (`0x43`) and OTP-HID (`0x15`) transport writes — with **no** touch or PIN, and
-  can trigger a device-wide factory reset (that one keeps a presence gate). The
+  (`0x43`) and OTP-HID (`0x15`) transport writes — with **no** touch or PIN. The
   USB *identity* (serial, strings) is cosmetic — never proof a device is genuine,
   attestation is (§3). The **enabled-applications mask is enforced**, though: a
   disabled application's applet stops answering (PIV/OpenPGP/OATH/OTP over CCID,

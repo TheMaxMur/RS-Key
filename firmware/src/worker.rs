@@ -388,15 +388,6 @@ impl<'a> Worker<'a> {
                     if let Some(mode) = crate::vendor::take_reboot() {
                         self.reboot(mode).await;
                     }
-                    // A Management factory reset (DEFAULT build) likewise runs after
-                    // its SW_OK: wipe all flash but the attestation, then reboot to
-                    // re-provision a fresh seed.
-                    // Reboot only on a completed wipe: coming up fresh after a failed
-                    // one is what makes a half-erased device look factory-clean.
-                    #[cfg(not(feature = "strict-config"))]
-                    if rsk_mgmt::take_device_reset() && self.ccid.factory_wipe() {
-                        self.reboot(1).await;
-                    }
                 }
                 Either3::Second(_) => self.handle_otp_hid(),
                 Either3::Third(_) => {
@@ -698,8 +689,8 @@ impl<'a> Worker<'a> {
     /// while a pattern written through picoboot read straight back, so the platform
     /// clears it and there is nothing there to reach.
     async fn reboot(&mut self, mode: u8) -> ! {
-        // Before the wait, not after: the wait yields to the display, and a Management RESET's
-        // wipe reaches here with no request queued for its ambient loop to park on.
+        // Before the wait, not after: the wait yields to the display, whose ambient loop parks
+        // on a reset under way.
         crate::vendor::begin_reset();
         embassy_time::Timer::after(Duration::from_millis(200)).await;
         self.ctap.scrub_secrets();

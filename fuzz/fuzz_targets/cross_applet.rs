@@ -32,7 +32,7 @@
 //! | `0xF1` | `reset_card()` — the ICC power transition |
 //! | `0xF2` | `reset_chaining()` — what the out-of-band on-pad VERIFY does first |
 //! | `0xF3` | `refresh_enabled()` — re-read the capability mask from flash |
-//! | `0xF4` | `factory_wipe()` — the device-wide reset |
+//! | `0xF4` | `Fs::factory_wipe` as the trusted display runs it — the device-wide reset |
 //! | `0xF5` | `handle_otp_hid(slot, payload)` — the keyboard interface |
 //! | `0xF6` | WRITE CONFIG `USB_ENABLED = be16(hi, lo)` — the capability mask |
 //! | anything else | a raw APDU, framed by `apdu_frame::next_frame`: one length byte then that many bytes, or `0xFF` for the extended-Lc escape |
@@ -303,11 +303,17 @@ fuzz_target!(|data: &[u8]| {
                 );
             }
             OP_FACTORY_WIPE => {
-                // The device-wide wipe is the default build's: under
-                // `strict-config` rsk-device compiles no such method, and the
-                // firmware's own caller carries this same cfg (worker.rs).
-                #[cfg(not(feature = "strict-config"))]
-                if ccid.factory_wipe() {
+                // The trusted display's device-wide wipe, with its predicates
+                // (rsk-display's pin.rs), run while the CCID applets stay live.
+                let wiped = fs
+                    .borrow_mut()
+                    .factory_wipe(
+                        rsk_fido::survives_factory_reset,
+                        rsk_fido::is_fido_seed_fid,
+                        rsk_device::gates_wiped_last,
+                    )
+                    .is_ok();
+                if wiped {
                     // The wipe is not allowed to spare `EF_DEV_CONF`, or an owner
                     // who disabled every application has no way back.
                     assert_eq!(

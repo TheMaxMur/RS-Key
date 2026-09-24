@@ -155,7 +155,7 @@ largeblob-ext = ["rsk-fido/largeblob-ext"]
 # Restore today's strict admin-write authorization. The DEFAULT build is now the
 # permissive, full-YubiKey/ykman-compatible admin surface: device-config writes
 # (CCID Management WRITE CONFIG, FIDO vendor CONFIG_WRITE, the CTAPHID/OTP-HID
-# transport writes) are UNGATED, and Management RESET + the OTP-HID
+# transport writes) are UNGATED, and the OTP-HID
 # SET_DEVICE_INFO/DEVICE_CONFIG/SCAN_MAP/NDEF slots are served. `--features
 # strict-config` re-imposes the presence/PIN gates and refuses the ungated
 # transport writes (= the historical shipped behaviour). This deliberately

@@ -984,6 +984,46 @@ fn a_factory_reset_on_the_panel_reboots_the_device() {
     let _ = std::fs::remove_file(image);
 }
 
+/// A board builds every applet afresh after the panel's wipe, so PIV lays its default PIN
+/// down again on the next SELECT. The emulator kept the applet that had provisioned its
+/// files, and VERIFY with the default PIN answered `6A88` until the process restarted.
+#[test]
+fn piv_takes_its_default_pin_again_after_a_panel_reset() {
+    use rsk_piv::files::{DEFAULT_PIN, REF_PIN};
+    let image = std::env::temp_dir().join(format!(
+        "rsk-emu-panel-reset-piv-{}.img",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&image);
+    let driven = image.clone();
+    panel_bench_over(Some(image.clone()), move |jobs, taps, _signals| {
+        let sw = |jobs: &Jobs, data: Vec<u8>| {
+            let (reply, answer) = mpsc::channel();
+            jobs.send(Job::Apdu(data), reply)
+                .expect("the device thread is alive");
+            let body = answered(&answer);
+            [body[body.len() - 2], body[body.len() - 1]]
+        };
+        let aid = rsk_piv::PIV_AID;
+        let select = [&[0x00, 0xA4, 0x04, 0x00, aid.len() as u8][..], aid].concat();
+        assert_eq!(
+            sw(&jobs, select.clone()),
+            [0x90, 0x00],
+            "PIV provisions its files"
+        );
+        drive_panel_factory_reset(jobs.clone(), taps, &driven);
+        let mut verify = vec![0x00, 0x20, 0x00, REF_PIN, DEFAULT_PIN.len() as u8];
+        verify.extend_from_slice(&DEFAULT_PIN);
+        assert_eq!(
+            (sw(&jobs, select), sw(&jobs, verify)),
+            ([0x90, 0x00], [0x90, 0x00]),
+            "a factory-reset PIV must take its default PIN"
+        );
+    });
+    let _ = std::fs::remove_file(image.with_extension("probe"));
+    let _ = std::fs::remove_file(image);
+}
+
 // --- the class, not the site -----------------------------------------------
 
 /// `rsk_display`'s source, for the trait's own method list. `tools/emu` is a

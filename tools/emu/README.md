@@ -233,8 +233,8 @@ serial — is recognisable as emulator-made.
 - **The firmware's outer loop**: the applet wiring *is* shared now
   (`crates/rsk-device`), so a routing or gating bug shows up here. What is still
   written twice is the worker's sequencing — refresh the capability set when the
-  dirty latch is up, run a queued reboot or a Management reset's wipe once the
-  response is out or on an idle pass, never ahead of a request already waiting — and
+  dirty latch is up, run a queued reboot once the response is out or on an idle
+  pass, never ahead of a request already waiting — and
   `firmware/src/{main,worker,presence,led}.rs`, which are the board's.
 
 A green run against the emulator is a protocol result, not a device result.

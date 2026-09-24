@@ -349,18 +349,14 @@ fn a_restart_over_the_store_keeps_its_resident_credentials() {
     shut_down(path, jobs, device);
 }
 
-/// ykman's device-wide reset, as `rsk_mgmt`'s crate-private `INS_DEVICE_RESET` names it.
-const INS_DEVICE_RESET: u8 = 0x1F;
-
-/// `firmware/src/worker.rs` answers a Management RESET first, then wipes everything but the
-/// attestation and warm-reboots into a fresh seed. The emulator answered 9000 and stopped
-/// there, with the store left whole.
+/// Management INS `1E` answers `9000` and wipes nothing, and `1F` answers `6D00`, as a
+/// YubiKey 5.8.0 answers them. Both were a device-wide factory reset here, which the
+/// emulator ran once the answer was out.
 #[test]
-fn a_management_reset_wipes_the_store_once_it_has_answered() {
+fn management_1e_and_1f_wipe_nothing() {
     use crate::pin_client::CTAP2_OK;
-    use rsk_fido::consts::EF_KEY_DEV;
 
-    let (path, jobs, _signals, device) = bench("management-reset");
+    let (path, jobs, _signals, device) = bench("management-1e-1f");
     let registered = ask(
         &jobs,
         Job::Cbor {
@@ -368,54 +364,17 @@ fn a_management_reset_wipes_the_store_once_it_has_answered() {
             data: make_resident(1),
         },
     )[0];
-    assert_eq!(registered, CTAP2_OK, "a credential for the reset to wipe");
+    assert_eq!(registered, CTAP2_OK, "a credential a wipe would take");
     let selected = sw(&ask(&jobs, select(rsk_mgmt::MANAGEMENT_AID)));
     assert_eq!(selected, SW_OK, "Management is selected");
-
-    let answered = sw(&ask(&jobs, device_reset()));
-    // The wipe runs after the answer is out, so one more round trip lands it.
+    let acknowledged = sw(&ask(&jobs, Job::Apdu(vec![0x00, 0x1E, 0x00, 0x00])));
+    let unknown = sw(&ask(&jobs, Job::Apdu(vec![0x00, 0x1F, 0x00, 0x00])));
+    // A wipe ran after its answer was out, so one more round trip would have landed it.
     ask(&jobs, Job::OtpStatus);
     assert_eq!(
-        (
-            answered,
-            resident_records(&path),
-            mount(&path).has_key(EF_KEY_DEV)
-        ),
-        (SW_OK, 0, true),
-        "an answered reset must leave no credential, and a seed the reboot provisioned"
-    );
-    shut_down(path, jobs, device);
-}
-
-/// ISO 7816-4 VERIFY, which PIV checks its PIN reference under.
-const INS_VERIFY: u8 = 0x20;
-
-/// A board builds every applet afresh after the wipe, so PIV lays its default PIN down again
-/// on the next SELECT. The emulator kept the applet that had provisioned its files already,
-/// and VERIFY with the default PIN answered `6A88` until the process restarted.
-#[test]
-fn piv_takes_its_default_pin_again_after_a_management_reset() {
-    use rsk_piv::files::{DEFAULT_PIN, REF_PIN};
-
-    let (path, jobs, _signals, device) = bench("management-reset-piv");
-    let piv = sw(&ask(&jobs, select(rsk_piv::PIV_AID)));
-    assert_eq!(piv, SW_OK, "PIV provisions its files");
-    let management = sw(&ask(&jobs, select(rsk_mgmt::MANAGEMENT_AID)));
-    assert_eq!(management, SW_OK, "Management is selected");
-    assert_eq!(
-        sw(&ask(&jobs, device_reset())),
-        SW_OK,
-        "the reset is answered"
-    );
-
-    let piv = sw(&ask(&jobs, select(rsk_piv::PIV_AID)));
-    let mut verify = vec![0x00, INS_VERIFY, 0x00, REF_PIN, DEFAULT_PIN.len() as u8];
-    verify.extend_from_slice(&DEFAULT_PIN);
-    let verified = sw(&ask(&jobs, Job::Apdu(verify)));
-    assert_eq!(
-        (piv, verified),
-        (SW_OK, SW_OK),
-        "a factory-reset PIV must take its default PIN"
+        (acknowledged, unknown, resident_records(&path)),
+        (SW_OK, SW_INS_NOT_SUPPORTED, 1),
+        "neither instruction may reset the device"
     );
     shut_down(path, jobs, device);
 }
@@ -503,11 +462,6 @@ fn select(aid: &[u8]) -> Job {
     let mut apdu = vec![0x00, 0xA4, 0x04, 0x00, aid.len() as u8];
     apdu.extend_from_slice(aid);
     Job::Apdu(apdu)
-}
-
-/// Management's device-wide reset, which only the Management application answers.
-fn device_reset() -> Job {
-    Job::Apdu(vec![0x00, INS_DEVICE_RESET, 0x00, 0x00])
 }
 
 /// The status word that closes a response APDU.

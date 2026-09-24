@@ -283,7 +283,7 @@ production = "`Fs::factory_wipe` (crates/rsk-fs/src/fs.rs) takes the access code
 why = '''
 Not a share of MX-SEAM-009, because the two differ in what they leave standing:
 the wipe is FLASH-only and never sees an applet, so every in-RAM status here
-stands over freshly-defaulted verifiers until the reboot both callers queue. The
+stands over freshly-defaulted verifiers until the reboot its caller queues. The
 model folds the wipe and that reboot into one step, and this clause is what makes
 the folded step agree with the initial one. `BugWipeWithoutItsReboot` separates
 them, and it is the fold itself that the run measures: the wipe alone leaves a

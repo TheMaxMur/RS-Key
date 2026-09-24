@@ -114,7 +114,7 @@ gap = "the operator-presence gate on every privileged command is modelled (Privi
 [crate.rsk-mgmt]
 class = "state-partial"
 model = "RSKeyAdminSurface"
-gap = "what is left after the EF_DEV_CONF codec moved to rsk-devconf: the CCID command surface (INS 0x1C/0x1D/0x1E/0x1F), the strict-config presence gate on WRITE CONFIG, and the process-global DEVICE_RESET latch the firmware drains after the SW_OK. AdminSurfaceAlwaysReachable models this applet as the always-on carve-out; the wipe the latch requests is the firmware's own factory_wipe, which this crate cannot observe, and the applet holds no flash state of its own."
+gap = "what is left after the EF_DEV_CONF codec moved to rsk-devconf: the CCID command surface (INS 0x1C/0x1D, and 0x1E acknowledged with nothing done) and the strict-config presence gate on WRITE CONFIG. AdminSurfaceAlwaysReachable models this applet as the always-on carve-out, and the applet holds no flash state of its own."
 
 [crate.rsk-devconf]
 class = "state-partial"

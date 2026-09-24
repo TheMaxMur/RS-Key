@@ -40,6 +40,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- The Management applet has no device-wide reset any more, as a YubiKey 5.8.0
+  has none: INS `1E` answers `9000` and does nothing, whatever the P1-P2 or
+  data under class `00` or `80`, and INS `1F` (ykman's `device_reset`, which it
+  sends only when DeviceInfo reports a blocked reset or a Bio with PIV) answers
+  `6D00`. Both were a presence-gated factory reset of the whole device. The
+  vendor applet reboots with `00 1F` — and since Management took class `80`
+  (above), the rescue applet's `80 1E` READ and `80 1F` REBOOT reach it too — so
+  any of those sent while another PC/SC client had Management selected asked for
+  a touch, which a BOOTSEL reboot expects, and wiped the device. The trusted
+  display's factory reset and every applet's own reset are unchanged; a board
+  without the display wipes itself only with `rsk-wipe` over BOOTSEL.
+  `bcdDevice` 0x0A00 → 0x0A01.
+
 - A refused OpenPGP RSA import no longer marks the slot as imported. The key
   origin (DO `0xDE`) was recorded before the key was checked, so an import
   refused at the last step — primes the CRT layout could not take — left the
@@ -396,8 +409,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   bar, and a flow that closes on a contact still down left the panel armed, so a
   finger still there could reopen a tab and hold the reset off — and an edit made
   there would write the old `pin_declined` into the wiped store. The reboot slot now
-  reads pending from the request until the reset, taken or begun by a Management
-  RESET's wipe, and a handled tap disarms the panel until the finger lifts. That also
+  reads pending from the request until the reset, and a handled tap disarms the
+  panel until the finger lifts. That also
   stops a contact resting on the panel from counting as a fresh tap every tick, which
   kept the auto-lock from ever arming. A completed reset ends the host's
   pinUvAuthToken before the next CTAPHID command, too: a command already waiting is
@@ -422,22 +435,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
-- **`tools/emu` answered a Management RESET without wiping, and never took the reboot a
-  panel factory reset queues.** `firmware/src/worker.rs` wipes everything but the
-  attestation once RESET's `9000` is out and warm-reboots into a fresh seed, and takes a
-  reboot the trusted display queues after the next transport request or on its idle tick.
-  The emulator left the store whole, with the request raised for the life of the process;
-  the panel's reset did wipe, then parked on its request for good while the host was
-  answered from a store with no seed. One reboot step now runs after each answer and on an
-  idle pass, never ahead of a request already waiting, and builds the CCID applets afresh
-  as well as the CTAP handler: PIV, still holding the applet that had provisioned its
-  files, skipped that after the wipe and answered VERIFY `6A88`. A BOOTSEL the panel asks
-  for is logged and dropped, as the rescue applet's already was. The reset flag is
-  process-wide and a test binary runs many devices, so a dispatch raises and takes it
-  under one lock. `a_management_reset_wipes_the_store_once_it_has_answered` and
-  `a_factory_reset_on_the_panel_reboots_the_device` fail against the old loop,
-  `piv_takes_its_default_pin_again_after_a_management_reset` against a reboot that keeps
-  the applets, and `a_waiting_request_is_answered_before_the_panels_reboot` — its host
+- **`tools/emu` never took the reboot a panel factory reset queues.** `firmware/src/
+  worker.rs` takes a reboot the trusted display queues after the next transport request
+  or on its idle tick. The panel's reset did wipe, then parked on its request for good
+  while the host was answered from a store with no seed. One reboot step now runs after
+  each answer and on an idle pass, never ahead of a request already waiting, and builds
+  the CCID applets afresh as well as the CTAP handler: PIV, still holding the applet that
+  had provisioned its files, skipped that after the wipe and answered VERIFY `6A88`. A
+  BOOTSEL the panel asks for is logged and dropped, as the rescue applet's already was.
+  (The Management reset this also served was removed later in this release.)
+  `a_factory_reset_on_the_panel_reboots_the_device` fails against the old loop,
+  `piv_takes_its_default_pin_again_after_a_panel_reset` against a reboot that keeps the
+  applets, and `a_waiting_request_is_answered_before_the_panels_reboot` — its host
   shares the device loop's thread, so the order is not a race — against a reboot taken
   ahead of a waiting request; between them they also kill the request dropped, the wipe
   without its reboot, the panel's reboot unserved, its request never cleared and a loop

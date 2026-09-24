@@ -103,8 +103,9 @@ Notes on the options:
 - **Access code:** set one with `ykman otp settings <slot> --new-access-code`.
   The firmware then refuses to overwrite, update, delete, **or swap** that slot
   unless the code is presented (`ykman otp --access-code <hex> …`, given *before*
-  the sub-command). Lose the code and the only way out is a factory reset of the
-  OTP applet.
+  the sub-command). Lose the code and no command clears the slot, as on a
+  YubiKey: only a whole-device wipe does — the trusted display's factory reset,
+  or `rsk-wipe` flashed over BOOTSEL.
 
 `ykman otp` reaches the device over the HID frame protocol on the keyboard
 interface (and over CCID). Both work without any PIN. OTP slots are not
@@ -236,8 +237,8 @@ stops the presses.
 - **`ykman otp calculate` returns `CONDITIONS_NOT_SATISFIED` / waits forever** →
   the slot is `--touch`. Press the button.
 - **Overwrite/delete refused** → the slot has an access code. Pass it with
-  `ykman otp --access-code <hex> …` (before the sub-command), or factory-reset
-  the OTP applet.
+  `ykman otp --access-code <hex> …` (before the sub-command); a lost code needs a
+  whole-device wipe (see *Access code* above).
 - **Slots 3/4 don't show in `ykman otp info`** → expected. `ykman otp` only
   enumerates 1 and 2.
 - **A configure / update / swap / `set-scan-map` fails where the same command

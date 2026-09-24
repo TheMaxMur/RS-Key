@@ -233,7 +233,7 @@ mutants nothing catches.
 | Mutation switch | Removes | Target property | Caught in |
 |---|---|---|---|
 | `BugAssertWedgesOnTimeout` | only a confirm completes a getAssertion | `EveryOpQuiesces` | 79 523 states |
-| `BugWaitScopeNotCleared` | `worker.rs:528` `set_wait_scope(SCOPE_NONE)` | `EveryWaitReleases` | 76 446 states |
+| `BugWaitScopeNotCleared` | `worker.rs:519` `set_wait_scope(SCOPE_NONE)` | `EveryWaitReleases` | 76 446 states |
 | `BugWalkNeverExpires` | `state.rs:620-626` `expire_stale_sequences` | `EveryWalkCloses` | 93 607 states |
 
 **Two mutants need a companion, and that is a result — IN THE MODEL.** Read the
@@ -537,6 +537,12 @@ has no management RESET to wipe with. Dropping that gate is caught by the
 `clippy (strict-config host)` row — `no method named factory_wipe` — and not by
 `cargo test -p rsk-device`, which is the row a reader would expect to own it.
 
+The wrapper and both tests are gone since bcdDevice 0x0A01, with the Management
+reset they served: a YubiKey 5.8.0 has no reset on that applet, and the rescue and
+vendor `1E`/`1F`, sent while Management was selected, reached it. The trusted
+display's reset is the one caller of `Fs::factory_wipe` left
+(`crates/rsk-display/src/pin.rs:713-722`), and it carries the same `.is_ok()`.
+
 What stays open is the layer below. `Fs::factory_wipe` is still not a producer in
 the store transition map: `RSKeyStore!Next` offers `Put`, `MetaAdd`,
 `MetaDelete`, `Delete`, `Confirm`, `Scan` and `Reboot`, and a factory wipe is
@@ -781,8 +787,8 @@ the record rather than preventing it.
 
 `HostCancel` required an open wait, so the model could not raise a
 `CTAPHID_CANCEL` at any other moment. The firmware can, and it matters:
-`set_wait_scope` is called around the whole **dispatch** (`worker.rs:434`,
-`:521`), not around the touch wait, so `Arbiter::request_cancel` (`crates/rsk-device/src/presence.rs:118-122`)
+`set_wait_scope` is called around the whole **dispatch** (`worker.rs:425`,
+`:519`), not around the touch wait, so `Arbiter::request_cancel` (`crates/rsk-device/src/presence.rs:118-122`)
 accepts a cancel during a FIDO command that never opens one — getInfo, a
 capability-denied CBOR, a silent `up:false`. **Nothing clears
 `CANCEL_REQUESTED` when that dispatch ends**, and the next dispatch may be CCID
@@ -1344,7 +1350,7 @@ model used to have one value for both, which left the panel unable to own a
 ceremony at all — so a physical hold spent on an on-panel flow was invisible to
 the one-hold-one-ceremony rule, and E45's ruling had nothing to be true of.
 `Panel` is a distinct owner here, `SCOPE_OTP` is a third
-(`firmware/src/worker.rs:661-663`), and `request_cancel`'s single `if`
+(`firmware/src/worker.rs:652-654`), and `request_cancel`'s single `if`
 (`crates/rsk-device/src/presence.rs:118-122`) is what refuses a host cancel
 against any of them. `BugPanelCancelable` loosens exactly the panel half of that
 test — the narrow mistake somebody could make while keeping the CCID half — and
@@ -1419,7 +1425,7 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 
 | Invariant | What it asserts | The Rust that owns it |
 |---|---|---|
-| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:391-407` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:200-204` · `crates/rsk-openpgp/src/pin.rs:81-94` · `crates/rsk-oath/src/lib.rs:1161-1165` · `crates/rsk-device/src/ccid.rs:354-369` (the ICC power transition) |
+| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:391-407` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:200-204` · `crates/rsk-openpgp/src/pin.rs:81-94` · `crates/rsk-oath/src/lib.rs:1161-1165` · `crates/rsk-device/src/ccid.rs:334-349` (the ICC power transition) |
 | `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:184-187` · `crates/rsk-openpgp/src/pin.rs:190-202` · `crates/rsk-oath/src/lib.rs:1097-1098` |
 | `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:87-99` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:57-65`, `:113-117` |
 | `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status but OATH's OTP PIN. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:366-369` · `crates/rsk-openpgp/src/lib.rs:354-357` · `crates/rsk-oath/src/lib.rs:1199` |
@@ -1465,7 +1471,7 @@ it.
 |---|---|---|---|
 | `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:397-401` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
 | `BugReselectResetsStatus` | `637ed98` taken back out: PIV, OpenPGP and OATH's VALIDATE resetting on every select | `ReselectPreservesAccessStatus` | 42 states |
-| `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:354-369` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
+| `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:334-349` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
 | `BugAdminOpensKeyOps` | `e5da38b` taken back out: PW3 standing in for PW1/PW2 | `NoKeyOpOnTheAdminStatus` | 67 states |
 | `BugFailedChangeKeepsStatus` | `aa47867` taken back out: a refused OTP-PIN change that leaves the safe open | `NoStatusAfterARefusedAuth` | 74 states |
 | `BugPinFreshNotSpent` | `crates/rsk-piv/src/auth.rs:113-117` — one VERIFY, one key operation | `NoKeyOpOnTheAdminStatus` | 45 states |
@@ -1832,7 +1838,7 @@ removed defences:
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:208-210`, fed at `crates/rsk-device/src/ccid.rs:243-251`, consulted at `:340`) | `DisabledAppletNeverDispatches` | 10 states |
+| `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:208-210`, fed at `crates/rsk-device/src/ccid.rs:242-250`, consulted at `:320`) | `DisabledAppletNeverDispatches` | 10 states |
 | `BugLockWriteResetsCaps` | **audit run-35, shipped**: a lock-code-only write strips to zero bytes, stored verbatim as an EMPTY record that `read_enabled_caps` reads as `SUPPORTED_CAPS` — every disabled application silently re-enabled (`crates/rsk-devconf/src/lib.rs:265-278`, the merge) | `DisableSetSurvivesLockWrite` | 9 states |
 | `BugAdminGateable` | the `APPLET_CAPS` cap-`0` carve-out removed (`crates/rsk-device/src/ccid.rs:67-74`): management/vendor/rescue gated by the mask, so one disable-everything write is irreversible | `AdminSurfaceAlwaysReachable` | 2 states |
 | `BugPrivilegedOpUngated` | `require_presence` removed (`crates/rsk-rescue/src/lib.rs:141-143`): keydev signing, cert/config writes, BOOTSEL reboot and fuse burns driven by the USB host alone | `PrivilegedOpNeedsPresence` | 10 states |
@@ -2983,7 +2989,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `rsk-fido` | state-modelled | `RSKeySecurityState` | — |
 | `rsk-fs` | state-partial | `RSKeyStore` | the committed store, the delete write-order and the present-cache soundness are modelled (M3 lifted powercut_model.rs to TLA+ and ties R0p to it); phase 6 composes the FIDO reset projection with delete_landed and the real byte-cuttable Fs stack. Values are still two opaque tokens, so a content-corrupting defect is out of reach, and Fs::factory_wipe's two-phase sweep remains the security module's ordering (SeedLeadsTheWipe), not this one's. |
 | `rsk-led` | pure | `crates/rsk-led/src/kani.rs` | — |
-| `rsk-mgmt` | state-partial | `RSKeyAdminSurface` | what is left after the EF_DEV_CONF codec moved to rsk-devconf: the CCID command surface (INS 0x1C/0x1D/0x1E/0x1F), the strict-config presence gate on WRITE CONFIG, and the process-global DEVICE_RESET latch the firmware drains after the SW_OK. AdminSurfaceAlwaysReachable models this applet as the always-on carve-out; the wipe the latch requests is the firmware's own factory_wipe, which this crate cannot observe, and the applet holds no flash state of its own. |
+| `rsk-mgmt` | state-partial | `RSKeyAdminSurface` | what is left after the EF_DEV_CONF codec moved to rsk-devconf: the CCID command surface (INS 0x1C/0x1D, and 0x1E acknowledged with nothing done) and the strict-config presence gate on WRITE CONFIG. AdminSurfaceAlwaysReachable models this applet as the always-on carve-out, and the applet holds no flash state of its own. |
 | `rsk-mldsa` | pure | `crates/rsk-mldsa/src/round_kani.rs`<br>`fuzz/fuzz_targets/mldsa_roundtrip.rs`<br>`fuzz/fuzz_targets/mldsa_verify.rs` | — |
 | `rsk-oath` | state-partial | `RSKeyAppletSeams` | status lifetime and access-code removal are RSKeyAppletSeams; calculation's access-code and touch gates are RSKeyAppletPolicies. The MAC access code has no retry budget, so its byte-level mutual-auth acceptance remains differential-oracle territory rather than a fabricated lattice counter. |
 | `rsk-openpgp` | state-partial | `RSKeyAppletSeams` | status lifetime is RSKeyAppletSeams; PW1/PW3/RC budgets are RSKeyRetryLattice; algorithm-attribute changes invalidating the old key pair are RSKeyAppletPolicies. MSE repointing and the per-slot UIF value space remain below the abstraction. |
@@ -3335,7 +3341,7 @@ than a settled abstraction.
 `Liveness.cfg` checks `EveryOpQuiesces`, `EveryWaitReleases` and
 `EveryWalkCloses` against it. The fairness is the load-bearing part, because an
 assumption the implementation does not honour makes its property meaningless:
-the synchronous worker (`worker.rs:417-430`) never parks a sequence, the
+the synchronous worker (`worker.rs:408-421`) never parks a sequence, the
 presence wait times out on its own budget (`crates/rsk-device/src/presence.rs:215-216`), and
 `expire_stale_sequences` (`state.rs:620-626`) retires an idle cursor. Nothing
 else is fair — not a press, a release, a host cancel, a power cut, a warm reset
@@ -3356,10 +3362,10 @@ All four conjuncts read against the code:
 
 | Conjunct | Shape | What owes it in the firmware | Verdict |
 |---|---|---|---|
-| `WF_vars(OpAdvances)` | **18 actions** | the synchronous worker: one `Exchange` at a time, under a lock, dispatch runs to completion (`worker.rs:417-430`) | sound **because** every disjunct is gated on `op.kind` while `Idle` gates every `*Start` — now asserted, not argued |
+| `WF_vars(OpAdvances)` | **18 actions** | the synchronous worker: one `Exchange` at a time, under a lock, dispatch runs to completion (`worker.rs:408-421`) | sound **because** every disjunct is gated on `op.kind` while `Idle` gates every `*Start` — now asserted, not argued |
 | `WF_vars(TouchTimeout)` | one action | the wait's own timeout (`crates/rsk-device/src/presence.rs:215-216`) | sound |
 | `WF_vars(WalkExpires)` | one action | `expire_stale_sequences` (`state.rs:620-626`) | sound |
-| `WF_vars(LocalCeremonyEnds)` | one action | the ceremony's own dispatch puts `WAIT_SCOPE` back (`worker.rs:526-528`) | sound — the E160 repair |
+| `WF_vars(LocalCeremonyEnds)` | one action | the ceremony's own dispatch puts `WAIT_SCOPE` back (`worker.rs:517-519`) | sound — the E160 repair |
 
 `OpAdvancesIsOneActivity == ENABLED OpAdvances => ~Idle` is the first row's
 argument as an invariant: if no disjunct can be enabled while the device is
