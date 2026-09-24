@@ -275,6 +275,36 @@ fn a_factory_reset_writes_no_edit_into_the_store_it_wiped() {
     );
 }
 
+/// A wipe that cannot prove it emptied the store says so and reboots nothing: coming up
+/// fresh is what would make a half-erased device read as factory-clean. The refused
+/// record is still there, and the reset answers `false`, so the menu stays open.
+#[test]
+fn a_wipe_the_store_refuses_reboots_nothing() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let env = crate::tests::Env::over(backend);
+    let hold = center(rsk_ui::DEL_HOLD_RECT);
+    let polls = 3 * (crate::HOLD_MS / crate::TOUCH_POLL_MS) as usize;
+    let mut script = vec![None, None];
+    script.extend(vec![Some(hold); polls]);
+    // The lift, then the tap that dismisses the failure notice.
+    script.extend([None, Some(hold), None]);
+    let mut ui = env.ui(Pad::script(&script));
+    ui.pin_declined = true;
+    ui.save_display_config();
+    assert!(
+        medium.value(EF_DISPLAY).is_some(),
+        "control: a record to wipe"
+    );
+    medium.refuse_remove(Some(EF_DISPLAY));
+
+    let done = ui.run_factory_reset();
+    assert_eq!(
+        (done, ui.hooks.reboot, medium.value(EF_DISPLAY).is_some()),
+        (false, None, true),
+        "a refused wipe must answer false, reboot nothing, and leave the record"
+    );
+}
+
 /// A firmware update's reboot keeps an edit the user has watched take effect, as every
 /// other exit does: it wipes nothing, and the image is replaced under the store.
 #[test]
