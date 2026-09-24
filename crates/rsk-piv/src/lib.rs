@@ -473,6 +473,9 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                 let mut rng = self.rng.borrow_mut();
                 keygen::import(&self.sess, &dev, fs, &mut *rng, apdu.p1, apdu.p2, apdu.data)
             }
+            // Only ever with no tail owed, which the dispatcher serves first. A
+            // YubiKey 5.8.0's PIV answers it `6A80`, its other applets `6D00`.
+            rsk_sdk::apdu::INS_GET_RESPONSE => Sw::WRONG_DATA,
             _ => Sw::INS_NOT_SUPPORTED,
         }
     }

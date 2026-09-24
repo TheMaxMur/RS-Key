@@ -116,7 +116,9 @@ PIV, OpenPGP and CTAP over CCID answer a success body longer than the request's
 the whole body in one frame, as a YubiKey 5.8.0 answers it. `GET RESPONSE` is cut
 by its own encoding the same way. A certificate object over 256 bytes chains when
 it is read with a short `GET DATA`, so a host that sends a short `GET DATA` without
-an `Le` must still follow `61xx`.
+an `Le` must still follow `61xx`. A `GET RESPONSE` with nothing left to serve is
+`6A80` on PIV and `6D00` on OpenPGP, OATH, management, OTP and FIDO, as on a
+YubiKey 5.8.0.
 
 OATH `LIST` (`0xA1`) and `CALCULATE ALL` (`0xA4`) responses that outgrow the
 command's `Le` chain the YubiKey-OATH way instead: `61 XX` followed by **SEND

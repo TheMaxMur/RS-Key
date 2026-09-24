@@ -650,6 +650,46 @@ fn a_card_reset_drops_the_verified_pin_too() {
     );
 }
 
+#[test]
+fn a_get_response_with_nothing_owed_is_wrong_data_on_piv_alone() {
+    // Every form a YubiKey 5.8.0 was read in, twice, over an applet with no tail
+    // owed: its PIV answers `6A80` to all of them, OpenPGP, management, OATH, OTP
+    // and FIDO `6D00`. Vendor and rescue are this device's own, pinned as they are.
+    let forms: [&[u8]; 8] = [
+        &[0x00, 0xC0, 0x00, 0x00],
+        &[0x00, 0xC0, 0x00, 0x00, 0x00],
+        &[0x00, 0xC0, 0x00, 0x00, 0x10],
+        &[0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00],
+        &[0x00, 0xC0, 0x12, 0x34, 0x00],
+        &[0x00, 0xC0, 0x01, 0x00, 0x00],
+        &[0x00, 0xC0, 0x00, 0x00, 0x01, 0x00],
+        &[0x00, 0xC0, 0x00, 0x00, 0x01, 0x00, 0x00],
+    ];
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    for (name, aid) in AIDS {
+        let want = match name {
+            "piv" => rsk_sdk::Sw::WRONG_DATA,
+            // Rescue refuses any class but `80` before it reads the instruction.
+            "rescue" => rsk_sdk::Sw::CLA_NOT_SUPPORTED,
+            _ => rsk_sdk::Sw::INS_NOT_SUPPORTED,
+        };
+        for gr in forms {
+            assert_eq!(sw(ccid.handle_apdu(&select(aid), 0)), rsk_sdk::Sw::OK);
+            assert_eq!(sw(ccid.handle_apdu(gr, 0)), want, "{name}: {gr:02X?}");
+        }
+    }
+    // PIV judges no class byte of its own, so `80` is `6A80` there too.
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    assert_eq!(
+        sw(ccid.handle_apdu(&[0x80, 0xC0, 0x00, 0x00, 0x00], 0)),
+        rsk_sdk::Sw::WRONG_DATA
+    );
+}
+
 // ── FIDO over CCID ──────────────────────────────────────────────────────────
 
 /// CTAP-over-ISO7816 (CTAP 2.1 §11.2.1): `80 10` carries one CTAP2 command.

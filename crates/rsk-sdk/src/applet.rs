@@ -5,7 +5,7 @@
 
 use zeroize::Zeroize;
 
-use crate::apdu::Apdu;
+use crate::apdu::{Apdu, INS_GET_RESPONSE};
 use crate::sw::Sw;
 
 /// A response buffer an applet writes its RAPDU body into. The status word is
@@ -262,7 +262,7 @@ impl Dispatcher {
 
         // GET RESPONSE (0xC0): hand back the next slice of a chained response
         // before touching the applets — it is a transport command, not theirs.
-        if apdu.ins == 0xC0 && self.pending_off < self.pending_len {
+        if apdu.ins == INS_GET_RESPONSE && self.pending_off < self.pending_len {
             return self.serve_pending(apdu.frame_cap(), res);
         }
         // Any other command abandons a partially-read chained response.

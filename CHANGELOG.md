@@ -40,6 +40,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV answers a GET RESPONSE (`00 C0`) with nothing left to serve `6A80`, as a
+  YubiKey 5.8.0's PIV does in every form it was read in; RS-Key answered
+  `6D00`, and `6A80` only to a one-byte body. OpenPGP, OATH, management, OTP
+  and FIDO keep `6D00`, which is what the YubiKey's answer.
+  `bcdDevice` 0x09F0 → 0x09F1.
+
 - PIV, OpenPGP and CTAP over CCID answer an extended command that carries no
   `Le` with the whole response in one frame, as a YubiKey 5.8.0 does, and an
   extended GET RESPONSE with no `Le` takes the rest of a chained response

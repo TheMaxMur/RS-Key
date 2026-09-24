@@ -8055,7 +8055,7 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
     // `9000` there while `00 A4 04 01 01 A0` is `6A80`. The rule is applet-local
     // on both cards and must not be lifted to the dispatcher (`rsk-oath` takes a
     // legitimate `Lc = 1`).
-    let cmds: [(u8, u8, u8); 18] = [
+    let cmds: [(u8, u8, u8); 19] = [
         (INS_VERIFY, 0x00, 0x80),
         (INS_CHANGE_PIN, 0x00, 0x80),
         (INS_RESET_RETRY, 0x00, 0x80),
@@ -8073,6 +8073,7 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
         (INS_SET_MGMKEY, 0xFF, 0xFF),
         (INS_IMPORT_ASYM, 0x06, 0x9A),
         (INS_SELECT, 0x04, 0x01),
+        (rsk_sdk::apdu::INS_GET_RESPONSE, 0x00, 0x00),
         (0xEE, 0x00, 0x00),
     ];
     for authed in [false, true] {

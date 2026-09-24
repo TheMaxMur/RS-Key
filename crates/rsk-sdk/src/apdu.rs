@@ -9,6 +9,8 @@ use crate::error::{Error, Result};
 pub const NE_SHORT_MAX: usize = 256;
 /// ISO 7816-4: Ne when extended Le is encoded as 0.
 pub const NE_EXT_MAX: usize = 65536;
+/// ISO 7816-4 §7.6.1 GET RESPONSE, which the dispatcher serves while a tail is owed.
+pub const INS_GET_RESPONSE: u8 = 0xC0;
 /// ISO 7816-4 §5.4.1: b4b3 of a first-interindustry class byte carry the
 /// secure-messaging indication (`01` proprietary, `10`/`11` per §6).
 const CLA_SM_MASK: u8 = 0x0C;
