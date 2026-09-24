@@ -40,6 +40,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A refused OpenPGP RSA import no longer marks the slot as imported. The key
+  origin (DO `0xDE`) was recorded before the key was checked, so an import
+  refused at the last step — primes the CRT layout could not take — left the
+  old key in the slot reading `02` (imported) where a YubiKey 5.8.0 keeps `01`.
+  The refusals now read as a YubiKey's: a prime that is not exactly half the
+  modulus attribute's width is `6A80` (was `6700` or `6400`; one sent with a
+  leading zero byte was imported); a pair of the right widths that makes no
+  working key — `p = q`, composite primes a trial signature exposes, a short
+  modulus — is `6581` (was `6400` or `6A80`, or stored as a key that then refused
+  every signature). On those a YubiKey also destroys the slot's key; RS-Key keeps
+  it.
+  `bcdDevice` 0x09FF → 0x0A00.
+
 - PIV RSA IMPORT refuses every key it will not use with `6A80`, as a YubiKey
   5.8.0 does, and keeps the slot's key. It takes each prime at exactly half the
   modulus width (a prime sent with a leading zero byte was taken), and a key

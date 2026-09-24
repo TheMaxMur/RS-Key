@@ -282,7 +282,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 |---|---|---|
 | `9000` | OK | success |
 | `6400` | EXEC_ERROR | execution error (internal) |
-| `6581` | MEMORY_FAILURE | flash access failed — a write, or a read whose answer the command must not guess (`1E/01` READ phy, `1C/01` WRITE phy, WRITE CONFIG's merge); and OpenPGP PSO:DECIPHER's answer to an ECDH peer point that decodes but is unusable (off the field or curve, X25519 small order), or to an RSA cryptogram it cannot decrypt (any width but the modulus's, bad padding, c = 0, n − 1 or n); RSA PSO:CDS and INTERNAL AUTHENTICATE over more than k − 11 bytes; and GENERATE's `P1 = 81` read of a slot with no key — as a YubiKey 5.8.0 answers each |
+| `6581` | MEMORY_FAILURE | flash access failed — a write, or a read whose answer the command must not guess (`1E/01` READ phy, `1C/01` WRITE phy, WRITE CONFIG's merge); and OpenPGP PSO:DECIPHER's answer to an ECDH peer point that decodes but is unusable (off the field or curve, X25519 small order), or to an RSA cryptogram it cannot decrypt (any width but the modulus's, bad padding, c = 0, n − 1 or n); RSA PSO:CDS and INTERNAL AUTHENTICATE over more than k − 11 bytes; GENERATE's `P1 = 81` read of a slot with no key; and an RSA IMPORT whose primes have the right widths and make no working key (`p = q`, composite primes, a short modulus) — as a YubiKey 5.8.0 answers each, though it also deletes the slot's key on that last one and RS-Key keeps it |
 | `6700` | WRONG_LENGTH | bad `Lc`/`Le` for this command |
 | `6883` | LAST_CHAIN_EXPECTED | an APDU arrived that neither continues nor closes the open command chain |
 | `6982` | SECURITY_STATUS_NOT_SATISFIED | auth/precondition missing |

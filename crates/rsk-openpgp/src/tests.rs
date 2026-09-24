@@ -3480,3 +3480,87 @@ fn a_faulted_algo_probe_does_not_generate_the_default_algorithm() {
         "a GENERATE that could not read the algorithm it must honour has to refuse"
     );
 }
+
+/// RSA IMPORT refusals as a YubiKey 5.8.0 answers them, read twice: a prime not
+/// exactly half the modulus width is `6A80`; a well-formed pair that is not a key
+/// is `6581`. Neither moves the slot: its key, public key DO and origin stand.
+#[test]
+fn a_refused_rsa_import_keeps_the_slot_and_its_origin() {
+    use crate::origin::{ORIGIN_GENERATED, ORIGIN_IMPORTED, mark, of};
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    let e = [0x01, 0x00, 0x01];
+    let (p, q) = (hx(RSA_P), hx(RSA_Q));
+    let (_, sw) = run(&mut app, &mut fs, &rsa_import(0xB6, &e, &p, &q));
+    assert_eq!(sw, Sw::OK);
+    // What a key generated on card would read as.
+    mark(&mut fs, consts::EF_PK_SIG, ORIGIN_GENERATED).unwrap();
+    let slot = |fs: &mut Fs<RamStorage>| {
+        let mut key = [0u8; 2048];
+        let kn = fs.read(consts::EF_PK_SIG.get(), &mut key).unwrap_or(0);
+        let mut public = [0u8; 600];
+        let pn = fs.read(consts::EF_PB_SIG, &mut public).unwrap_or(0);
+        (
+            key[..kn].to_vec(),
+            public[..pn].to_vec(),
+            of(fs, consts::EF_PK_SIG),
+        )
+    };
+    let before = slot(&mut fs);
+    let leading_zero = [&[0][..], &p].concat();
+    let composite = hx(rsk_rsa::vectors::N1024_HEX);
+    let junk = |k: u8| [vec![0xFF; 127], vec![0u8.wrapping_sub(k)]].concat();
+    // Assembles and passes the size check, so the old import marked the origin
+    // and only then found it could not lay the pair out.
+    let wide = [vec![0xFF; 254], vec![0xFD]].concat();
+    let pad = |h: &str| [vec![0; 64], hx(h)].concat();
+    use rsk_rsa::vectors::{P1024_HEX, Q1024_HEX};
+    let rows: [(&str, &[u8], &[u8], Sw); 9] = [
+        ("p = 3 beside a 255-byte q", &[3], &wide, Sw::WRONG_DATA),
+        (
+            "primes of 125 and 131 bytes",
+            &p[..125],
+            &[&q[..], &[0x55; 3]].concat(),
+            Sw::WRONG_DATA,
+        ),
+        ("a leading zero byte", &leading_zero, &q, Sw::WRONG_DATA),
+        (
+            "a leading zero byte on q",
+            &p,
+            &[&[0][..], &q].concat(),
+            Sw::WRONG_DATA,
+        ),
+        (
+            "RSA-1024 primes in a 2048 slot",
+            &hx(rsk_rsa::vectors::P1024_HEX),
+            &hx(rsk_rsa::vectors::Q1024_HEX),
+            Sw::WRONG_DATA,
+        ),
+        // Widths right, the modulus short: a YubiKey's `6581`, and it loses the key.
+        (
+            "RSA-1024 primes zero-padded to 128 bytes",
+            &pad(P1024_HEX),
+            &pad(Q1024_HEX),
+            Sw::MEMORY_FAILURE,
+        ),
+        ("p = q", &p, &p, Sw::MEMORY_FAILURE),
+        ("a composite p", &composite, &p, Sw::MEMORY_FAILURE),
+        ("a shared factor 3", &junk(1), &junk(7), Sw::MEMORY_FAILURE),
+    ];
+    for (name, rp, rq, want) in rows {
+        let (_, sw) = run(&mut app, &mut fs, &rsa_import(0xB6, &e, rp, rq));
+        // The slot first, then the status word: the moved origin is the finding.
+        assert!(
+            slot(&mut fs) == before,
+            "{name}: the refusal moved the slot"
+        );
+        assert_eq!(sw, want, "{name}");
+    }
+    // Control: a key it takes is recorded as imported.
+    let (_, sw) = run(&mut app, &mut fs, &rsa_import(0xB6, &e, &p, &q));
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(of(&mut fs, consts::EF_PK_SIG), ORIGIN_IMPORTED);
+}

@@ -163,7 +163,7 @@ fn an_import_that_cannot_record_its_origin_stores_no_key() {
     let mut ehl = vec![0x4D, body.len() as u8];
     ehl.extend_from_slice(&body);
     assert_eq!(
-        crate::importdata::import_data(&d, &mut fs, &sess, 0x3F, 0xFF, &ehl),
+        crate::importdata::import_data(&d, &mut fs, &sess, &mut CountRng(0), 0x3F, 0xFF, &ehl),
         Sw::MEMORY_FAILURE
     );
     assert_eq!(of(&mut fs, EF_PK_SIG), ORIGIN_GENERATED);
@@ -218,7 +218,7 @@ fn a_faulted_origin_probe_does_not_reset_the_other_slots() {
     ehl.extend_from_slice(&body);
 
     medium.stick_once(EF_KEY_ORIGIN);
-    let sw = crate::importdata::import_data(&d, &mut fs, &sess, 0x3F, 0xFF, &ehl);
+    let sw = crate::importdata::import_data(&d, &mut fs, &sess, &mut CountRng(0), 0x3F, 0xFF, &ehl);
     medium.stick(None);
     assert_eq!(
         (of(&mut fs, EF_PK_SIG), of(&mut fs, EF_PK_AUT)),
@@ -234,7 +234,7 @@ fn a_faulted_origin_probe_does_not_reset_the_other_slots() {
     // Control: the same import on a healthy medium records its own slot and leaves
     // the other two alone.
     assert_eq!(
-        crate::importdata::import_data(&d, &mut fs, &sess, 0x3F, 0xFF, &ehl),
+        crate::importdata::import_data(&d, &mut fs, &sess, &mut CountRng(0), 0x3F, 0xFF, &ehl),
         Sw::OK
     );
     assert_eq!(

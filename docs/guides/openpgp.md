@@ -193,8 +193,11 @@ The **size** counts as much as the family: a 2048-bit key offered to a slot
 announcing RSA-4096 is refused, because the attribute is what `gpg
 --card-status` and every other host reads back as the truth about that slot.
 A mismatched algorithm/curve/size returns "Wrong data" / "Function not supported"
-and a missing admin (PW3) session returns "Security status not satisfied". gpg
-surfaces one of these as a card refusal.
+and a missing admin (PW3) session returns "Security status not satisfied". An RSA
+key whose numbers make no working key (`p = q`, composite primes, a modulus
+shorter than the attribute) returns "Memory failure", a YubiKey's answer there.
+gpg surfaces each as a card refusal, and a refused import leaves the slot's key
+and its `0xDE` origin as they were.
 
 Importing keeps an off-card copy in your keyring until you delete it. Your call
 which way the trade-off goes. The usual recoverable setup: generate the master

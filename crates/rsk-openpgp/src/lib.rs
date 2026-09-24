@@ -449,15 +449,18 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
             }
             consts::INS_PUT_DATA => self.handle_put_data(fid, apdu, fs),
             consts::INS_PUT_DATA_ODD => {
-                // IMPORT (extended header list). Public-key derivation is
-                // deterministic, so no RNG is needed here.
+                // IMPORT (extended header list). An RSA key signs one trial block,
+                // blinded like any other, before it replaces the slot's.
                 let mkek = read_fused(self.mkek_source);
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
                     otp_key: mkek.as_deref(),
                 };
-                importdata::import_data(&dev, fs, &self.sess, apdu.p1, apdu.p2, apdu.data)
+                let mut rng = self.rng.borrow_mut();
+                importdata::import_data(
+                    &dev, fs, &self.sess, &mut *rng, apdu.p1, apdu.p2, apdu.data,
+                )
             }
             consts::INS_PSO => {
                 let mkek = read_fused(self.mkek_source);
