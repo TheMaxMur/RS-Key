@@ -602,8 +602,13 @@ interface, so this is reachable over plain USB.
 |---|---|---|
 | Select | `00 A4 04 00 08 A0000006472F0001 00` | `9000` with body `U2F_V2` |
 | CTAP2 | `80 10 00 00 Lc <cmd ‖ CBOR> 00` | `9000` (or `61xx`, below) with `<status ‖ CBOR>` |
-| U2F | any interindustry-class APDU (`00 01/02/03 …`) | the CTAP1 answer |
-| Cancel | `80 11 11 00` | `9000` |
+| U2F | `00 01/02/03 …` | the CTAP1 answer; `6E00` under class `80` |
+| Poll, cancel | `80 11 00 00`, `80 11 11 00` | `9000` with body `2F`, whatever the P1-P2 |
+| Control | `80 12 01 00` | `9000`; any other P1-P2 `6A86` |
+
+The three CTAP2 instructions (`10`, `11`, `12`) are taken under class `00` as
+under `80`, as on a YubiKey 5.8.0. Anything else under `80` is `6D00`, under `00`
+it is U2F's, and any other class is refused `6E00`.
 
 **Chaining runs in both directions and a host needs both.** A CTAP2 command longer
 than 255 bytes arrives in `CLA|0x10` segments; a response longer than the short
@@ -615,8 +620,9 @@ not follow `61xx` sees nothing useful. An extended-length APDU with no `Le`, or
 **No `91 00` keep-alive is ever returned.** A touch wait blocks inside the
 exchange while the CCID transport streams T=1 time extensions, exactly as an OATH
 touch-flagged CALCULATE and an OpenPGP UIF signature already do, so the
-`NFCCTAP_GETRESPONSE` poll loop never runs. The cancel is still answered, because a
-host that gave up on a wait sends it regardless.
+`NFCCTAP_GETRESPONSE` poll loop never runs. A poll or a cancel is still answered,
+since a host that gave up on a wait sends one regardless: `9000` with
+`CTAP2_ERR_USER_ACTION_TIMEOUT` (`2F`), a YubiKey 5.8.0's answer with nothing pending.
 
 **The transport is smaller than CTAPHID.** One CCID frame carries 2038 bytes, so
 that is the ceiling on a command *and* on a response here, against the 4078 that
@@ -627,7 +633,8 @@ ML-DSA credential's attestation does not fit and is CTAPHID-only in practice.
 **Both applications are gated separately.** One AID serves CTAP2 and U2F, and
 `ykman config usb --disable fido2` / `--disable u2f` name them apart, so the
 *commands* are gated rather than the SELECT: disabling one leaves the AID
-selectable for the other and answers the disabled half `6986`. With neither
+selectable for the other and answers the disabled half `6986` — for CTAP2 its MSG,
+since a poll or a control carries nothing to gate. With neither
 enabled the AID is gone (`6A82`).
 
 **⚠️ On the default `0x1209:0x0001` identity most hosts never bind the CCID

@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- FIDO over CCID takes CTAP2's MSG, GETRESPONSE and CONTROL (`10`, `11`, `12`)
+  under class `00` as under `80`, as a YubiKey 5.8.0 does; answers a poll or
+  cancel with nothing pending `9000` with `CTAP2_ERR_USER_ACTION_TIMEOUT`,
+  whatever its P1-P2; answers CONTROL `01 00` `9000` and any other P1-P2
+  `6A86`; and refuses a U2F instruction under `80` with `6E00`. RS-Key answered
+  each of those `6D00`, or a poll `9000` with no body.
+  `bcdDevice` 0x09F9 → 0x09FA.
+
 - PIV GET DATA answers `6A82` to a tag list it cannot read and to a P1-P2 other
   than `3FFF`, the answer for an object it does not hold, as a YubiKey 5.8.0
   does. RS-Key answered a missing or malformed list (no data, `5C 00`, a length

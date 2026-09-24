@@ -1216,7 +1216,7 @@ fn u2f_over_ccid_answers_its_version_command() {
         sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
         rsk_sdk::Sw::OK
     );
-    // U2F VERSION: interindustry class, so it takes the CTAP1 arm.
+    // U2F VERSION, under the interindustry class U2F takes.
     let res = ccid
         .handle_apdu(
             &apdu(0x00, rsk_fido::consts::CTAP_VERSION, 0x00, 0x00, &[]),
@@ -1232,12 +1232,21 @@ fn u2f_over_ccid_answers_its_version_command() {
 /// behind it — the cross-AID bypass in miniature, inside a single applet.
 #[test]
 fn disabling_one_fido_application_does_not_leave_the_other_reachable() {
-    for (name, cap, probe) in [
-        ("fido2", rsk_devconf::CAP_FIDO2, ctap_msg(GET_INFO)),
+    // CTAP2 is taken under `00` too, and must be gated there as under `80`.
+    let get_info_00 = apdu(0x00, 0x10, 0x00, 0x00, GET_INFO);
+    for (name, cap, probe, other) in [
+        ("fido2", rsk_devconf::CAP_FIDO2, ctap_msg(GET_INFO), None),
+        (
+            "fido2 under 00",
+            rsk_devconf::CAP_FIDO2,
+            get_info_00.clone(),
+            None,
+        ),
         (
             "u2f",
             rsk_devconf::CAP_U2F,
             apdu(0x00, rsk_fido::consts::CTAP_VERSION, 0x00, 0x00, &[]),
+            Some(get_info_00.clone()),
         ),
     ] {
         let env = Env::new();
@@ -1258,6 +1267,15 @@ fn disabling_one_fido_application_does_not_leave_the_other_reachable() {
             rsk_sdk::Sw::COMMAND_NOT_ALLOWED,
             "{name} is disabled but its commands still answer"
         );
+        // …and the half still on answers, CTAP2 under `00` included.
+        if let Some(other) = other {
+            let (body, status) = exchange_chained(&mut ccid, &other);
+            assert_eq!(
+                (status, body.first()),
+                (rsk_sdk::Sw::OK, Some(&0x00)),
+                "{name}: CTAP2 under 00 went with it"
+            );
+        }
     }
 }
 
@@ -1381,4 +1399,221 @@ fn a_card_applet_serves_class_80_as_it_serves_00() {
             }
         }
     }
+}
+
+#[test]
+fn fido_over_ccid_answers_each_instruction_as_a_yubikey_does() {
+    // A YubiKey 5.8.0, one command per process because some of its FIDO commands
+    // wait for a touch: CTAP's three instructions are taken under `00` as under
+    // `80`, U2F's only under `00` (`6E00` under `80`), and any other is `6D00`.
+    use rsk_sdk::Sw;
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let timeout = [rsk_fido::error::CtapError::UserActionTimeout as u8];
+    let rows: [(&str, [u8; 4], Sw, &[u8]); 24] = [
+        ("GETRESPONSE", [0x80, 0x11, 0x00, 0x00], Sw::OK, &timeout),
+        (
+            "GETRESPONSE, cancel",
+            [0x80, 0x11, 0x11, 0x00],
+            Sw::OK,
+            &timeout,
+        ),
+        (
+            "GETRESPONSE, P1 03",
+            [0x80, 0x11, 0x03, 0x00],
+            Sw::OK,
+            &timeout,
+        ),
+        (
+            "GETRESPONSE, P2 03",
+            [0x80, 0x11, 0x00, 0x03],
+            Sw::OK,
+            &timeout,
+        ),
+        (
+            "GETRESPONSE under 00",
+            [0x00, 0x11, 0x00, 0x00],
+            Sw::OK,
+            &timeout,
+        ),
+        (
+            "cancel under 00",
+            [0x00, 0x11, 0x11, 0x00],
+            Sw::OK,
+            &timeout,
+        ),
+        ("CONTROL, end", [0x80, 0x12, 0x01, 0x00], Sw::OK, &[]),
+        (
+            "CONTROL, P1 00",
+            [0x80, 0x12, 0x00, 0x00],
+            Sw::INCORRECT_P1P2,
+            &[],
+        ),
+        (
+            "CONTROL, P1 02",
+            [0x80, 0x12, 0x02, 0x00],
+            Sw::INCORRECT_P1P2,
+            &[],
+        ),
+        (
+            "CONTROL, P2 01",
+            [0x80, 0x12, 0x00, 0x01],
+            Sw::INCORRECT_P1P2,
+            &[],
+        ),
+        (
+            "CONTROL, P1 FF",
+            [0x80, 0x12, 0xFF, 0x00],
+            Sw::INCORRECT_P1P2,
+            &[],
+        ),
+        (
+            "CONTROL under 00",
+            [0x00, 0x12, 0x00, 0x00],
+            Sw::INCORRECT_P1P2,
+            &[],
+        ),
+        (
+            "CONTROL, end under 00",
+            [0x00, 0x12, 0x01, 0x00],
+            Sw::OK,
+            &[],
+        ),
+        // No reading reached a class past these two, so another goes to U2F as it did.
+        (
+            "MSG under A0",
+            [0xA0, 0x10, 0x00, 0x00],
+            Sw::CLA_NOT_SUPPORTED,
+            &[],
+        ),
+        (
+            "GETRESPONSE under 01",
+            [0x01, 0x11, 0x00, 0x00],
+            Sw::CLA_NOT_SUPPORTED,
+            &[],
+        ),
+        (
+            "U2F VERSION under 80",
+            [0x80, 0x03, 0x00, 0x00],
+            Sw::CLA_NOT_SUPPORTED,
+            &[],
+        ),
+        (
+            "U2F REGISTER under 80",
+            [0x80, 0x01, 0x00, 0x00],
+            Sw::CLA_NOT_SUPPORTED,
+            &[],
+        ),
+        ("U2F VERSION", [0x00, 0x03, 0x00, 0x00], Sw::OK, b"U2F_V2"),
+        (
+            "U2F VERSION, P1 03",
+            [0x00, 0x03, 0x03, 0x00],
+            Sw::OK,
+            b"U2F_V2",
+        ),
+        (
+            "unknown 04",
+            [0x80, 0x04, 0x00, 0x00],
+            Sw::INS_NOT_SUPPORTED,
+            &[],
+        ),
+        (
+            "unknown 04, P1 03",
+            [0x80, 0x04, 0x03, 0x00],
+            Sw::INS_NOT_SUPPORTED,
+            &[],
+        ),
+        (
+            "unknown C0",
+            [0x80, 0xC0, 0x00, 0x00],
+            Sw::INS_NOT_SUPPORTED,
+            &[],
+        ),
+        (
+            "unknown 04 under 00",
+            [0x00, 0x04, 0x00, 0x00],
+            Sw::INS_NOT_SUPPORTED,
+            &[],
+        ),
+        (
+            "unknown FF under 00",
+            [0x00, 0xFF, 0x00, 0x00],
+            Sw::INS_NOT_SUPPORTED,
+            &[],
+        ),
+    ];
+    for (name, [cla, ins, p1, p2], want, body) in rows {
+        let sel = ccid
+            .handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)
+            .to_vec();
+        assert_eq!(sw(&sel), Sw::OK, "{name}: SELECT");
+        let res = ccid.handle_apdu(&[cla, ins, p1, p2, 0x00], 0).to_vec();
+        assert_eq!((sw(&res), &res[..res.len() - 2]), (want, body), "{name}");
+    }
+    // MSG under `00` is the same CTAP2 command: getInfo answers alike both ways.
+    let get_info = |ccid: &mut Ccid<'_>, cla: u8| {
+        ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0);
+        exchange_chained(ccid, &apdu(cla, 0x10, 0x00, 0x00, GET_INFO))
+    };
+    let (under_80, under_00) = (get_info(&mut ccid, 0x80), get_info(&mut ccid, 0x00));
+    assert_eq!(
+        (under_80.1, under_80.0.first()),
+        (Sw::OK, Some(&0x00)),
+        "control: getInfo succeeds under 80"
+    );
+    assert_eq!(under_00, under_80, "MSG under 00");
+}
+
+/// FIDO takes its MSG under `00` as under `80`, so a vendor write sent under `00`
+/// must run the same post-write side effects: here, the phy write's reboot.
+#[test]
+fn a_vendor_write_under_class_00_reboots_like_one_under_80() {
+    let _phy = crate::tests::PHY_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let env = Env::new();
+    let phy = rsk_phy::PhyData {
+        presence_timeout: Some(45),
+        ..Default::default()
+    };
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+    let blen = phy.serialize(&mut blob).unwrap();
+    let mut write = ctap_msg(&crate::tests::vendor_config_write(
+        rsk_fido::consts::CONFIG_TARGET_PHY,
+        &blob[..blen],
+    ));
+    write[0] = 0x00;
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    assert_eq!(exchange_chained(&mut ccid, &write).1, rsk_sdk::Sw::OK);
+    assert_eq!(
+        env.board.borrow().reboots,
+        1,
+        "a phy write under class 00 did not reboot"
+    );
+}
+
+/// A chain segment is only buffered, so the router must not run a vendor write's
+/// side effects on its `9000`: that would act for a command not yet executed.
+#[test]
+fn a_vendor_write_segment_runs_no_side_effects() {
+    let env = Env::new();
+    let body = crate::tests::vendor_config_write(rsk_fido::consts::CONFIG_TARGET_PHY, &[0; 8]);
+    assert_eq!(
+        body.first(),
+        Some(&rsk_fido::consts::CTAP_VENDOR),
+        "control"
+    );
+    let mut ccid = env.ccid();
+    ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0);
+    let segment = apdu(0x90, 0x10, 0x00, 0x00, &body);
+    assert_eq!(sw(ccid.handle_apdu(&segment, 0)), rsk_sdk::Sw::OK);
+    assert_eq!(
+        env.board.borrow().config_written,
+        0,
+        "the side effects ran on a segment"
+    );
 }
