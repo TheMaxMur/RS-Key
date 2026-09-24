@@ -971,7 +971,7 @@ impl<S: Storage> Applet<Fs<S>> for OtpApplet<'_> {
     }
 
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        if apdu.cla != 0x00 {
+        if !apdu.is_basic_class() {
             return Sw::CLA_NOT_SUPPORTED;
         }
         match apdu.ins {

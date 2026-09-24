@@ -17,9 +17,9 @@ use core::cell::RefCell;
 use rsk_crypto::{Device, FusedKey, read_fused};
 use rsk_fs::{Fs, Storage};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
+// CTAP-over-ISO7816 lives in the proprietary class (CTAP 2.1 §11.2.1).
+use rsk_sdk::apdu::CLA_PROPRIETARY;
 
-/// CTAP-over-ISO7816 lives in the proprietary class (CTAP 2.1 §11.2.1).
-const CLA_PROPRIETARY: u8 = 0x80;
 /// `NFCCTAP_MSG`: one CTAP2 command in the data field, its response in the body.
 const INS_CTAP_MSG: u8 = 0x10;
 /// `NFCCTAP_GETRESPONSE`: the poll a host issues after a `91 00`, and at

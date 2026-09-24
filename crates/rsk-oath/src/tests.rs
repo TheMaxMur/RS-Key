@@ -1852,7 +1852,7 @@ fn calculate_rejects_unknowns() {
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &d));
     assert_eq!(sw, Sw::EXEC_ERROR);
     // Bad CLA and unknown INS.
-    let (sw, _) = run(&mut app, &mut fs, &[0x80, INS_LIST, 0, 0]);
+    let (sw, _) = run(&mut app, &mut fs, &[0x40, INS_LIST, 0, 0]);
     assert_eq!(sw, Sw::CLA_NOT_SUPPORTED);
     let (sw, _) = run(&mut app, &mut fs, &[0x00, 0xEE, 0, 0]);
     assert_eq!(sw, Sw::INS_NOT_SUPPORTED);

@@ -100,11 +100,12 @@ itself. Bit `0x10` marks a **command-chaining** segment and is looked at first, 
 secure-messaging indication (`CLA & 0x0C`: `04`, `0C`, `84`, `8C`, …) answers
 `6E00` — **no applet here implements secure messaging**, and OpenPGP's Extended
 Capabilities says so. Applets that additionally name a class of their own reject
-anything else themselves (OATH, management, OTP and U2F want `00`; rescue wants
-`80`). A chain is reassembled into a single command of at most **2038 bytes**
-(one CCID frame); a segment that would reach or pass that is `6700`, and the
-partial chain is dropped rather than dispatched — so a host that retries the
-segment is starting a **new** chain, not continuing the old one.
+anything else themselves: OATH, management and OTP take `00` and `80` alike,
+both of which a YubiKey 5.8.0 serves there, U2F wants `00` and rescue `80`. A
+chain is reassembled into a single command of at most **2038 bytes** (one CCID
+frame); a segment that would reach or pass that is `6700`, and the partial chain
+is dropped rather than dispatched — so a host that retries the segment is
+starting a **new** chain, not continuing the old one.
 
 ![ISO-7816 short-APDU cases. Every command opens with the four-byte header CLA INS P1 P2. Case 1 is header only; Case 2 appends a one-byte Le (expected response length, 00 meaning up to 256); Case 3 appends Lc then Lc bytes of command data; Case 4 appends Lc, data, and Le. SELECT is a Case 4 command, VERIFY a Case 3 command](images/apdu-cases.svg)
 
@@ -627,7 +628,7 @@ carrying the `ccid-rs-key` overlay, is what makes the interface appear.
 
 ## 6. Management applet (Yubico-compatible) — applet enable/disable
 
-**AID `A0 00 00 05 27 47 11 17`. CLA `00`.** This is what `ykman` / Yubico
+**AID `A0 00 00 05 27 47 11 17`. CLA `00` or `80`.** This is what `ykman` / Yubico
 Authenticator SELECT first to identify the key and to read/write which
 applications are enabled. Source: `crates/rsk-mgmt/src/lib.rs` for the command
 surface, `crates/rsk-devconf/src/lib.rs` for the `EF_DEV_CONF` record it reads

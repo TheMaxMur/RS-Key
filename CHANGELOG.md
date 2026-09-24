@@ -40,6 +40,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OATH, management and OTP serve a command under class `80` as they do under
+  `00`: a known instruction runs, an unknown one is `6D00`. A YubiKey 5.8.0 does
+  that on every card applet; RS-Key refused every class but `00` there with
+  `6E00`, while PIV and OpenPGP already took `80`.
+  `bcdDevice` 0x09F2 → 0x09F3.
+
 - An RSA key generated on the board (PIV GENERATE, OpenPGP GENERATE) is
   answered in frames like every other response: a short command gets at most
   its `Le`, 256 bytes where it carries none, and the rest through GET RESPONSE,

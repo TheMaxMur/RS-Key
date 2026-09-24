@@ -557,7 +557,7 @@ fn calculate_rejections_and_empty_slot() {
     // Unknown INS / CLA.
     let (sw, _) = run(&mut app, &mut fs, &[0x00, 0x02, 0, 0]);
     assert_eq!(sw, Sw::INS_NOT_SUPPORTED);
-    let (sw, _) = run(&mut app, &mut fs, &[0x80, 0x01, 0x10, 0]);
+    let (sw, _) = run(&mut app, &mut fs, &[0x40, 0x01, 0x10, 0]);
     assert_eq!(sw, Sw::CLA_NOT_SUPPORTED);
     // Unknown P1 answers a bare OK.
     let (sw, body) = run(&mut app, &mut fs, &otp_apdu(0x77, 0, &[]));

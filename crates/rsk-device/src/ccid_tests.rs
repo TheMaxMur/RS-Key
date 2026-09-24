@@ -1248,3 +1248,54 @@ fn oath_and_otp_select_by_the_aids_yubikit_and_ykman_send() {
         assert_eq!(sw(&res), want, "{who}");
     }
 }
+
+#[test]
+fn a_card_applet_serves_class_80_as_it_serves_00() {
+    // A YubiKey 5.8.0, read twice: PIV, OpenPGP, OATH, management and OTP run a
+    // known instruction under class 80 exactly as under 00, and answer an unknown
+    // one 6D00 under either. Of the classes probed, macOS 27's PC/SC let only these
+    // two reach it.
+    let known: [(&str, &[u8], [u8; 4]); 5] = [
+        ("piv", rsk_piv::PIV_AID, [0x00, 0xFD, 0x00, 0x00]),
+        (
+            "openpgp",
+            rsk_openpgp::consts::OPENPGP_AID,
+            [0x00, 0xCA, 0x00, 0x6E],
+        ),
+        ("oath", rsk_oath::OATH_AID, [0x00, 0xA1, 0x00, 0x00]),
+        (
+            "management",
+            rsk_mgmt::MANAGEMENT_AID,
+            [0x00, 0x1D, 0x00, 0x00],
+        ),
+        ("otp", rsk_otp::OTP_AID, [0x00, 0x03, 0x00, 0x00]),
+    ];
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    for (name, aid, header) in known {
+        for ins in [header[1], 0x12] {
+            let mut answers = std::vec![];
+            for cla in [0x00, 0x80] {
+                assert_eq!(
+                    sw(ccid.handle_apdu(&select(aid), 0)),
+                    rsk_sdk::Sw::OK,
+                    "{name}"
+                );
+                let res = ccid.handle_apdu(&[cla, ins, header[2], header[3], 0x00], 0);
+                answers.push((sw(res), res.len()));
+            }
+            assert_eq!(
+                answers[0], answers[1],
+                "{name}, INS {ins:02X}: class 80 is not 00"
+            );
+            if ins == 0x12 {
+                assert_eq!(answers[1].0, rsk_sdk::Sw::INS_NOT_SUPPORTED, "{name}");
+            } else {
+                assert!(
+                    matches!(answers[1].0.sw1(), 0x90 | 0x61),
+                    "{name}: {answers:04X?}"
+                );
+            }
+        }
+    }
+}

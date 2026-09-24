@@ -14,6 +14,8 @@ pub const INS_GET_RESPONSE: u8 = 0xC0;
 /// ISO 7816-4 §5.4.1: b4b3 of a first-interindustry class byte carry the
 /// secure-messaging indication (`01` proprietary, `10`/`11` per §6).
 const CLA_SM_MASK: u8 = 0x0C;
+/// ISO 7816-4 §5.4.1: b8 of the class byte set marks the proprietary class.
+pub const CLA_PROPRIETARY: u8 = 0x80;
 
 #[inline]
 fn be16(b: &[u8]) -> u16 {
@@ -126,6 +128,13 @@ impl<'a> Apdu<'a> {
     #[inline]
     pub fn is_secure_messaging(&self) -> bool {
         self.cla & CLA_SM_MASK != 0
+    }
+
+    /// Class `00` or `80`: the basic channel with no other bit set, interindustry
+    /// or proprietary. A YubiKey 5.8.0 serves OATH, management and OTP under both.
+    #[inline]
+    pub fn is_basic_class(&self) -> bool {
+        self.cla & !CLA_PROPRIETARY == 0
     }
 
     /// The most one response frame may carry for this command, as a YubiKey 5.8.0
