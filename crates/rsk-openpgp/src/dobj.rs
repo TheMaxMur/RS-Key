@@ -294,14 +294,7 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     }
 
     fn emit_app_data(&mut self, mode: i32) -> usize {
-        let fids = [
-            5,
-            EF_FULL_AID,
-            EF_HIST_BYTES,
-            EF_EXLEN_INFO,
-            EF_GFM,
-            EF_DISCRETE_DO,
-        ];
+        let fids = [4, EF_FULL_AID, EF_HIST_BYTES, EF_GFM, EF_DISCRETE_DO];
         self.constructed((EF_APP_DATA & 0xff) as u8, &fids, mode)
     }
 
@@ -313,7 +306,7 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     fn emit_discrete_do(&mut self, mode: i32) -> usize {
         // 0xDE (Key Information) is a child of the 0x73 discretionary DOs per the
         // OpenPGP Card spec — where ykman >= 5.2 looks for it — not a bare child of 0x6E.
-        // A YubiKey 5.8.0's order, but for the 7F66 it puts after DE, which ours keeps in 6E.
+        // A YubiKey 5.8.0's order, 7F66 included, after DE.
         let lp = self.open((EF_DISCRETE_DO & 0xff) as u8);
         self.emit_do(
             &[4, EF_EXT_CAP, EF_ALGO_SIG, EF_ALGO_DEC, EF_ALGO_AUT],
@@ -322,12 +315,13 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         // DA is served here and nowhere else: GET DATA DA is `6B00` on a YubiKey.
         self.emit_algo(ALGO_ATT_SUPPORTED[0], EF_ALGO_ATT);
         let fids = [
-            9,
+            10,
             EF_PW_STATUS,
             EF_FP,
             EF_CA_FP,
             EF_TS_ALL,
             EF_KEY_INFO,
+            EF_EXLEN_INFO,
             EF_UIF_SIG,
             EF_UIF_DEC,
             EF_UIF_AUT,

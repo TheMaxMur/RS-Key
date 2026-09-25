@@ -319,9 +319,8 @@ fn exlen_info_announces_the_apdu_the_transport_carries() {
         ],
         "7F66 must announce {max} in both directions"
     );
-    // The same DO inside the application-related data `6E`, which is where a
-    // YubiKey serves it and where `gpg` reads it. Extended `Le`, so the template
-    // arrives whole instead of through `61xx`.
+    // The same DO inside 6E's 73, right after DE, and not at 6E's top: where a
+    // YubiKey 5.8.0 serves it. Extended `Le`, so the template arrives whole.
     let (tpl, sw) = dispatch(
         &mut disp,
         &mut applets,
@@ -329,15 +328,22 @@ fn exlen_info_announces_the_apdu_the_transport_carries() {
         &[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00],
     );
     assert_eq!(sw, Sw::OK);
-    let at = tpl
-        .windows(2)
-        .position(|w| w == [0x7F, 0x66])
-        .expect("7F66 inside 6E");
+    let related = children(&child(&children(&tpl), consts::EF_APP_DATA));
+    let top: Vec<u16> = related.iter().map(|c| c.0).collect();
     assert_eq!(
-        &tpl[at + 3..at + 11],
-        &body[..],
-        "6E carries the same bytes"
+        top,
+        [
+            consts::EF_FULL_AID,
+            consts::EF_HIST_BYTES,
+            consts::EF_GFM,
+            consts::EF_DISCRETE_DO
+        ]
     );
+    let dd = children(&child(&related, consts::EF_DISCRETE_DO));
+    let at = dd.iter().position(|c| c.0 == consts::EF_EXLEN_INFO);
+    let at = at.expect("7F66 inside 73");
+    assert_eq!(dd[at - 1].0, consts::EF_KEY_INFO, "7F66 right after DE");
+    assert_eq!(dd[at].1, body, "73 carries the same bytes");
 }
 
 /// The P1P2 values GET DATA serves: a YubiKey 5.8.0's sweep of pages 00, 01, 5F

@@ -685,8 +685,8 @@ fn the_attestation_dos_answer_as_a_yubikey_does() {
 }
 
 /// 73 carries the attestation key where a YubiKey 5.8.0 does — `DA` after the three
-/// attributes, a fourth entry in C5/C6/CD and pair in DE, `D9` last — and lacks only
-/// the 7F66 a YubiKey puts after DE. `FA` lists the one algorithm `DA` holds.
+/// attributes, a fourth entry in C5/C6/CD and pair in DE, `D9` last — with its 7F66
+/// after DE. `FA` lists the one algorithm `DA` holds.
 #[test]
 fn the_application_data_places_the_attestation_key_as_a_yubikey_does() {
     with_card(|app, fs| {
@@ -703,7 +703,8 @@ fn the_application_data_places_the_attestation_key_as_a_yubikey_does() {
         assert_eq!(
             tags,
             [
-                0xC0, 0xC1, 0xC2, 0xC3, 0xDA, 0xC4, 0xC5, 0xC6, 0xCD, 0xDE, 0xD6, 0xD7, 0xD8, 0xD9
+                0xC0, 0xC1, 0xC2, 0xC3, 0xDA, 0xC4, 0xC5, 0xC6, 0xCD, 0xDE, 0x7F66, 0xD6, 0xD7,
+                0xD8, 0xD9
             ]
         );
         let value = |tag| inner.iter().find(|c| c.0 == tag).unwrap().1.clone();

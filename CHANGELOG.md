@@ -65,6 +65,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP DO `7F66`, the extended-length information, sits inside `73` right
+  after `DE`, where a YubiKey 5.8.0 carries it; RS-Key had it at `6E`'s top
+  level, before `7F74`. `6E` reads `4F`, `5F52`, `7F74`, `73` now, as on the
+  YubiKey, and GET DATA `7F66` still serves it alone. yubikit reads the DO only
+  from `6E`'s top level and uses it for nothing, so it no longer sees one, as
+  with a YubiKey. `bcdDevice` 0x0A0B → 0x0A0C.
+
 - OpenPGP SELECT DATA answers as a YubiKey 5.8.0 does. It judges P1 and P2
   first — an occurrence past the third or a `P2` other than `04` is `6B00` —
   and then takes one body only, `60 04 5C 02 7F 21` byte for byte, answering
