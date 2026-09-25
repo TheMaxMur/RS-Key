@@ -13,8 +13,8 @@ use crate::dobj::DoWriter;
 use crate::files::{DoSource, nested_only, source};
 
 /// Resolve the tag, enforce the read ACL and build the DO into `out`. Returns
-/// `(len, sw)` and records the selected DO in `current_ef` for a following GET
-/// NEXT DATA.
+/// `(len, sw)` and records the tag in `current_ef`, served or refused, for a
+/// following GET NEXT DATA.
 pub fn get_data<S: Storage>(
     fid: u16,
     has_pw2: bool,
@@ -24,6 +24,9 @@ pub fn get_data<S: Storage>(
     current_ef: &mut Option<u16>,
     out: &mut [u8],
 ) -> (usize, Sw) {
+    // Whatever it answers: a YubiKey 5.8.0 ends a 7F21 walk at a GET DATA of any
+    // other DO, the ones it refuses included.
+    *current_ef = Some(fid);
     match source(fid) {
         // A P1P2 this command does not serve is a wrong P1P2, whether it names
         // nothing at all or an internal EF: a YubiKey 5.7.4 answers `6B00` to
@@ -61,7 +64,6 @@ pub fn get_data<S: Storage>(
     if data_len > out.len() {
         return (0, Sw::MEMORY_FAILURE);
     }
-    *current_ef = Some(fid);
     (data_len, Sw::OK)
 }
 

@@ -222,14 +222,10 @@ impl<'a> OpenpgpApplet<'a> {
         // that, and why the announcement was the thing that had to be wrong.
         let room = res.capacity() - res.len();
         if fid == consts::EF_CH_CERT {
-            let sw = self.read_cert_occurrence(fs, res);
-            if sw.is_ok() {
-                // The anchor GET NEXT DATA walks from — set here as well as in
-                // `get_data`, which this arm never reaches, and only on a read
-                // that produced an occurrence.
-                self.current_ef = Some(fid);
-            }
-            return sw;
+            // The anchor GET NEXT DATA walks from, set here as well as in
+            // `get_data`, which this arm never reaches.
+            self.current_ef = Some(fid);
+            return self.read_cert_occurrence(fs, res);
         }
         let (n, sw) = getdata::get_data(
             fid,
@@ -255,6 +251,9 @@ impl<'a> OpenpgpApplet<'a> {
     /// status files and the PW verifiers, and route to their own handlers; every
     /// other DO is a generic write.
     fn handle_put_data<S: Storage>(&mut self, fid: u16, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
+        // A YubiKey 5.8.0 ends a 7F21 walk at a PUT DATA of any other DO, even
+        // one it refuses, and walks on after a write of 7F21 itself.
+        self.current_ef = Some(fid);
         // The password outranks the body's length as well as its tag: a YubiKey
         // 5.7.4 answers `6982` to a PUT DATA it is not authorised for at every
         // tag AND every length (10 to 3000 bytes over ten tags, 3 runs). E81
@@ -371,12 +370,9 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 if apdu.nc > 0 {
                     return Sw::WRONG_DATA;
                 }
-                // OpenPGP 3.4 §7.2.7 gives GET NEXT DATA exactly one use: walking
-                // the 7F21 occurrences after a GET DATA of that DO anchored the
-                // walk. Any other tag, no anchor, or a walk past the last
-                // occurrence is wrong data — measured on a YubiKey 5.7.4, which
-                // answers 6A80 to all three and leaves the occurrence pointer
-                // where the walk ended.
+                // §7.2.7's one use: walking the 7F21 occurrences once a GET or PUT DATA of
+                // that DO, or SELECT DATA, anchored it. Another tag, no anchor or a step past
+                // the last is 6A80, the pointer left where the walk ended (a YubiKey's words).
                 if fid != consts::EF_CH_CERT
                     || self.current_ef != Some(consts::EF_CH_CERT)
                     || self.sess.cert_occ + 1 >= consts::CERT_OCCURRENCES

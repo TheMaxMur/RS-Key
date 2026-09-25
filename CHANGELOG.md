@@ -65,6 +65,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP GET NEXT DATA stops walking the cardholder certificates after a GET
+  DATA or PUT DATA of any other DO, whatever that command answered, as a YubiKey
+  5.8.0 does. A GET DATA RS-Key refused (`6B00`) and any PUT DATA, refused or
+  written, left the walk open, so the next GET NEXT DATA still served the next
+  occurrence where a YubiKey answers `6A80`. A GET DATA or PUT DATA of `7F21`
+  itself, SELECT DATA, IMPORT, VERIFY's status check, GET CHALLENGE, GET
+  RESPONSE, VERSION and an unknown instruction keep it open, on both, and a PUT
+  DATA of `7F21` opens a closed one again. `bcdDevice` 0x0A09 → 0x0A0A.
+
 - OpenPGP GET DATA answers `6B00` to a DO only a template carries, as a YubiKey
   5.8.0 does with keys and a name set: `5B`, `5F2D` and `5F35` (inside `65`),
   `93` (inside `7A`), and `73`, `C0`–`C3`, `C5`, `C6`, `CD` and the `C7`–`D0`

@@ -796,7 +796,7 @@ formal/README.md	crates/rsk-oath/src/lib.rs	1199-1199	self.validated = !code_set
 formal/README.md	crates/rsk-oath/src/lib.rs	1626-1626	if deleted > RESET_MAX_DELETES {	if deleted > RESET_MAX_DELETES {
 formal/README.md	crates/rsk-openpgp/src/internalaut.rs	45-48	// §7.2.13 names PW1 no. 82 and nothing else; PW3 used to stand in, and a	return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
 formal/README.md	crates/rsk-openpgp/src/keys.rs	436-451	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
-formal/README.md	crates/rsk-openpgp/src/lib.rs	356-359	/// valid AID and an ICC power cycle clear them (the dispatcher's `deselect`).	self.reset_session();
+formal/README.md	crates/rsk-openpgp/src/lib.rs	355-358	/// valid AID and an ICC power cycle clear them (the dispatcher's `deselect`).	self.reset_session();
 formal/README.md	crates/rsk-openpgp/src/pin.rs	81-94	pub fn reset(&mut self) {	}
 formal/README.md	crates/rsk-openpgp/src/pin.rs	139-139	pw[idx] -= 1;	pw[idx] -= 1;
 formal/README.md	crates/rsk-openpgp/src/pin.rs	190-202	/// Refines `RSKeyAppletSeams!NoStatusAfterARefusedAuth` — SEC-SEAM-002.	}
@@ -893,7 +893,7 @@ formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1161-1165	/// `select` re
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1196-1200	// A code-less applet is open on every SELECT. With a code, a re-SELECT keeps a	self.otp_pin_verified = false;
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1199-1199	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/keys.rs	436-451	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
-formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/lib.rs	261-263	// moved the tag below the ACL and left this one above it.	return Sw::SECURITY_STATUS_NOT_SATISFIED;
+formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/lib.rs	260-262	// moved the tag below the ACL and left this one above it.	return Sw::SECURITY_STATUS_NOT_SATISFIED;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	19-38	pub struct Session {	session_rc: [u8; 32],
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	81-94	pub fn reset(&mut self) {	}
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	190-202	/// Refines `RSKeyAppletSeams!NoStatusAfterARefusedAuth` — SEC-SEAM-002.	}
@@ -1160,9 +1160,9 @@ formal/comutants.toml	crates/rsk-oath/src/otp_pin_tests.rs	66-66	assert!(!safe_o
 formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	45-45	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	322-322	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/tests.rs	1328-1328	assert_eq!(run(app, fs, &apdu(INS_SET_CODE, 0, 0, &d)).0, Sw::OK);	assert_eq!(run(app, fs, &apdu(INS_SET_CODE, 0, 0, &d)).0, Sw::OK);
-formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	262-264	if !putdata::write_authorized(&self.sess, fid) {	}
-formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	339-341	fn deselect(&mut self, _fs: &mut Fs<S>) {	}
-formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	357-360	fn select(&mut self, reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {	}
+formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	261-263	if !putdata::write_authorized(&self.sess, fid) {	}
+formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	338-340	fn deselect(&mut self, _fs: &mut Fs<S>) {	}
+formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	356-359	fn select(&mut self, reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {	}
 formal/comutants.toml	crates/rsk-openpgp/src/pin.rs	234-238	if idx < n && pw[idx] == 0 {	let mut rec = [0u8; 64];
 formal/comutants.toml	crates/rsk-openpgp/src/pin.rs	901-901	let sw = check_pin(dev, fs, sess, rng, EF_RC, p2, &data[..rc_len]);	let sw = check_pin(dev, fs, sess, rng, EF_RC, p2, &data[..rc_len]);
 formal/comutants.toml	crates/rsk-otp/src/counter_tests.rs	9-9	assert_eq!(next_use_counter(5, 0), (5, 1, false));	assert_eq!(next_use_counter(5, 0), (5, 1, false));

@@ -1978,6 +1978,170 @@ fn select_data_arms_the_walk_and_a_body_is_not_a_length_error() {
     assert_eq!(run(&mut app, &mut fs, &next), (certs[1].to_vec(), Sw::OK));
 }
 
+/// A YubiKey 5.8.0 ends a 7F21 walk at a GET DATA or PUT DATA of any other DO,
+/// whatever it answers, and at nothing else it was sent between the anchor and GET
+/// NEXT DATA; a PUT DATA of 7F21 re-arms a closed walk (measured 2026-09-25).
+#[test]
+fn another_dos_get_or_put_data_ends_the_walk_whatever_it_answers() {
+    let rng = RefCell::new(LcgRng(31));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    let certs: [&[u8]; 2] = [&[0xC0; 8], &[0xC1; 9]];
+    for (occ, cert) in certs.iter().enumerate() {
+        assert_eq!(run(&mut app, &mut fs, &select_cert(occ as u8)).1, Sw::OK);
+        assert_eq!(put(&mut app, &mut fs, 0x7F, 0x21, cert), Sw::OK);
+    }
+    let get = [0x00, consts::INS_GET_DATA, 0x7F, 0x21, 0x00];
+    let next = [0x00, consts::INS_GET_NEXT_DATA, 0x7F, 0x21, 0x00];
+    let ended = (Vec::new(), Sw::WRONG_DATA);
+    let went_on = (certs[1].to_vec(), Sw::OK);
+    // Anchored at occurrence 0 (after the walk was closed by GET DATA 5E when
+    // `closed`), then `between`, then GET NEXT DATA.
+    let walk = |app: &mut OpenpgpApplet,
+                fs: &mut Fs<RamStorage>,
+                between: &[u8],
+                admin: bool,
+                closed: bool| {
+        app.deselect(fs);
+        if admin {
+            verify_pin(app, fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+        }
+        assert_eq!(run(app, fs, &select_cert(0)).1, Sw::OK);
+        assert_eq!(run(app, fs, &get), (certs[0].to_vec(), Sw::OK));
+        if closed {
+            assert_eq!(run(app, fs, &[0x00, 0xCA, 0x00, 0x5E, 0x00]).1, Sw::OK);
+        }
+        let answer = run(app, fs, between).1;
+        (answer, run(app, fs, &next))
+    };
+    let put_7f21 = [&[0x00, 0xDA, 0x7F, 0x21, 0x08][..], certs[0]].concat();
+    // (sent between, PW3 first, walk closed first, its own answer if pinned, then).
+    type Cell<'a> = (&'a [u8], bool, bool, Option<Sw>, &'a (Vec<u8>, Sw));
+    let cells: [Cell; 17] = [
+        (
+            &[0x00, 0xCA, 0x00, 0xC5, 0x00],
+            false,
+            false,
+            Some(Sw::WRONG_P1P2),
+            &ended,
+        ),
+        (
+            &[0x00, 0xCA, 0x42, 0x42, 0x00],
+            false,
+            false,
+            Some(Sw::WRONG_P1P2),
+            &ended,
+        ),
+        (
+            &[0x00, 0xCA, 0x00, 0x4F, 0x00],
+            false,
+            false,
+            Some(Sw::OK),
+            &ended,
+        ),
+        (
+            &[0x00, 0xDA, 0x00, 0x5E, 0x00],
+            false,
+            false,
+            Some(Sw::SECURITY_STATUS_NOT_SATISFIED),
+            &ended,
+        ),
+        (
+            &[0x00, 0xDA, 0x00, 0x5E, 0x03, 0x61, 0x62, 0x63],
+            true,
+            false,
+            Some(Sw::OK),
+            &ended,
+        ),
+        (&get, false, false, Some(Sw::OK), &went_on),
+        (&put_7f21, true, false, Some(Sw::OK), &went_on),
+        (
+            &[0x00, 0x20, 0x00, 0x81, 0x00],
+            false,
+            false,
+            Some(Sw::new(0x63, 0xC3)),
+            &went_on,
+        ),
+        (
+            &[0x00, 0x84, 0x00, 0x00, 0x08],
+            false,
+            false,
+            Some(Sw::OK),
+            &went_on,
+        ),
+        (
+            &[0x00, 0xC0, 0x00, 0x00, 0x00],
+            false,
+            false,
+            Some(Sw::INS_NOT_SUPPORTED),
+            &went_on,
+        ),
+        (
+            &[0x00, 0xF1, 0x00, 0x00, 0x00],
+            false,
+            false,
+            Some(Sw::OK),
+            &went_on,
+        ),
+        (
+            &[0x00, 0xFF, 0xFF, 0x00, 0x00],
+            false,
+            false,
+            Some(Sw::INS_NOT_SUPPORTED),
+            &went_on,
+        ),
+        (&select_cert(0), false, false, Some(Sw::OK), &went_on),
+        // A refused SELECT DATA moves nothing; its own refusal word is not this test's.
+        (
+            &[
+                0x00, 0xA5, 0x00, 0x04, 0x06, 0x60, 0x04, 0x5C, 0x02, 0x7F, 0x22,
+            ],
+            false,
+            false,
+            None,
+            &went_on,
+        ),
+        (
+            &[0x00, 0xDB, 0x3F, 0xFF, 0x00],
+            false,
+            false,
+            Some(Sw::SECURITY_STATUS_NOT_SATISFIED),
+            &went_on,
+        ),
+        // From a closed walk: a PUT DATA of 7F21 re-arms it, a refused SELECT DATA does not.
+        (&put_7f21, true, true, Some(Sw::OK), &went_on),
+        (
+            &[
+                0x00, 0xA5, 0x00, 0x04, 0x06, 0x60, 0x04, 0x5C, 0x02, 0x7F, 0x22,
+            ],
+            false,
+            true,
+            None,
+            &ended,
+        ),
+    ];
+    for (between, admin, closed, answer, then) in cells {
+        let (got, walked) = walk(&mut app, &mut fs, between, admin, closed);
+        if let Some(answer) = answer {
+            assert_eq!(got, answer, "{between:02x?} itself");
+        }
+        assert_eq!(
+            &walked, then,
+            "GET NEXT DATA after {between:02x?}, closed first: {closed}"
+        );
+    }
+    // GET DATA 7F21 anchors on its own, with no SELECT DATA before it.
+    app.deselect(&mut fs);
+    assert_eq!(
+        run(&mut app, &mut fs, &[0x00, 0xCA, 0x00, 0x4F, 0x00]).1,
+        Sw::OK
+    );
+    assert_eq!(run(&mut app, &mut fs, &get), (certs[0].to_vec(), Sw::OK));
+    assert_eq!(run(&mut app, &mut fs, &next), went_on);
+}
+
 // OpenPGP 3.4 §4.4.3.8 gives DO 0xDE three status values per slot: 00 absent,
 // 01 generated on card, 02 imported. Ours collapsed them to a boolean, so an
 // imported key claimed on-card generation — the one direction that misleads a

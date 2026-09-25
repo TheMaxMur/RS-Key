@@ -160,6 +160,7 @@ fn a_do_a_template_carries_is_not_read_on_its_own() {
         let mut cur = None;
         let (n, sw) = get_data(fid, true, true, &mut fs, &a, &mut cur, &mut out);
         assert_eq!((n, sw), (0, Sw::WRONG_P1P2), "{fid:#06x}");
+        assert_eq!(cur, Some(fid), "a refused read is still the current DO");
     }
 
     // The templates still carry every one of them.
