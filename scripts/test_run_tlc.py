@@ -91,6 +91,13 @@ def fake_tlc(tmp_path):
         "if '-Xmx-' in sys.argv:\n"
         "    sys.stderr.write('Error: Could not create the Java Virtual Machine.')\n"
         "    raise SystemExit(1)\n"
+        # A java.io.tmpdir of the run's own, in the test's directory: SANY writes each
+        # standard module there, and TLCs sharing the user's one parsed a half-written file.
+        "tmp = [a.split('=', 1)[1] for a in sys.argv if a.startswith('-Djava.io.tmpdir=')]\n"
+        "own = len(tmp) == 1 and os.path.isdir(tmp[0])\n"
+        f"if not own or os.path.isabs(tmp[0]) and not tmp[0].startswith({str(tmp_path) + os.sep!r}):\n"
+        "    print('stand-in refuses a TLC without a java.io.tmpdir of its own: ' + repr(tmp))\n"
+        "    raise SystemExit(4)\n"
         # The metadir as the pinned jar (2.19) was measured to treat it: named after
         # the second under `states/` or `-metadir`, refused if that name exists, and
         # left behind by a run refuted in its initial state.

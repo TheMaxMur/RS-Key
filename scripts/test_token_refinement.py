@@ -27,6 +27,7 @@ them either. The dispatch is held here; what the two of them compare is not.
 import os
 import pathlib
 import subprocess
+import sys
 
 import pytest
 
@@ -141,6 +142,18 @@ def test_this_checkout_is_green():
     assert result.returncode == 0, result.stdout + result.stderr
     assert "token-export: GREEN" in result.stdout
     assert "token-codegen: GREEN" in result.stdout
+
+
+def test_the_exporter_keeps_a_java_io_tmpdir_of_its_own(tmp_path):
+    """SANY writes each standard module into java.io.tmpdir, so TLCs sharing one
+    parsed each other's half-written Naturals.tla (exit 150). A default nothing can
+    be written to stands in for a shared one, without a race."""
+    poisoned = {**os.environ, "JAVA_TOOL_OPTIONS": f"-Djava.io.tmpdir={tmp_path / 'no-such-tmp'}"}
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / EXPORT), "--check"],
+        cwd=ROOT, capture_output=True, text=True, env=poisoned,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_check_sh_runs_the_row_as_a_check_and_not_a_generation():

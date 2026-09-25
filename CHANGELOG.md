@@ -569,6 +569,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Two gates on one machine made each other's TLC runs fail.** SANY writes each
+  standard module a spec extends into `java.io.tmpdir` under its bare name,
+  truncating and rewriting it on every run and deleting it at exit, and on macOS
+  that directory is the user's one `/var/folders/…/T/` whatever `$TMPDIR` says, so
+  two TLCs at once parsed a half-written `Naturals.tla` and exited 150 — the
+  security-trace row's "TLC exit 150" that only ever came up beside another gate.
+  `formal/run-tlc.sh`, `security_trace.py` and `export_token_relation.py` hand
+  every launch a `java.io.tmpdir` of its own, and a test at each of the three
+  runs them under a default nothing can be written to. The TLC tiers are
+  re-recorded against the new runner.
+
+- **Two gates at once measured one comutant in one worktree.** `comutate.py` put
+  every bug's worktree at `/tmp/rsk-comutant-<bug>` whatever the checkout, and
+  clears what it finds there first, so a second gate on the same bug deleted the
+  first's live tree or died "already exists". The directory is keyed by the
+  checkout now; one checkout keeps one, which the stale-registration case needs.
+
 - **The firmware's tasks kept their state twice** — refactor, 38 KiB of RAM back.
   `ctap_task`, `ccid_task` and `worker_task` took the CTAPHID class, the CCID
   class and the worker by value, and an async function's future holds a by-value

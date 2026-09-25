@@ -3,6 +3,7 @@
 
 import copy
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -932,13 +933,13 @@ class Row:
         assert text.count(old) == count, f"anchor {old!r} appears {text.count(old)}x, not {count}"
         path.write_text(text.replace(old, new))
 
-    def run(self, flag="--check-data"):
+    def run(self, flag="--check-data", env=None):
         """The row's own command, argument for argument."""
         return subprocess.run(
             [sys.executable, str(self.root / "scripts/security_trace.py"), flag,
              str(self.root / "formal/TraceSecurityData.tla"),
              str(self.root / "formal/traces" / TRACE.name)],
-            capture_output=True, text=True, check=False,
+            capture_output=True, text=True, check=False, env=env,
         )
 
 
@@ -1009,6 +1010,16 @@ def test_the_check_sh_row_falls_for_each_shrug_mutant(tmp_path, name, patch, cod
     else:
         assert message not in done.stderr, done.stderr[-800:]
         assert "GREEN commands=40" in done.stdout, done.stdout[-800:]
+
+
+def test_the_row_keeps_a_java_io_tmpdir_of_its_own(tmp_path):
+    """SANY writes each standard module into java.io.tmpdir, so TLCs sharing one
+    parsed each other's half-written Naturals.tla (exit 150). A default nothing can
+    be written to stands in for a shared one, without a race."""
+    absent = tmp_path / "no-such-tmp"
+    poisoned = {**os.environ, "JAVA_TOOL_OPTIONS": f"-Djava.io.tmpdir={absent}"}
+    done = Row(tmp_path).run(env=poisoned)
+    assert done.returncode == 0, done.stderr[-800:]
 
 
 def test_the_unpatched_copy_of_the_row_is_green(tmp_path):
