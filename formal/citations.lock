@@ -826,7 +826,7 @@ formal/README.md	crates/rsk-piv/src/lib.rs	1307-1309	Err(sw) => return sw,	if le
 formal/README.md	crates/rsk-piv/src/lib.rs	1327-1327	if set_retries_left(fs, retry, left - 1).is_err() {	if set_retries_left(fs, retry, left - 1).is_err() {
 formal/README.md	crates/rsk-piv/src/lib.rs	1338-1338	&& ct_eq(	&& ct_eq(
 formal/README.md	crates/rsk-piv/src/lib.rs	1462-1462	puk: &[u8],	puk: &[u8],
-formal/README.md	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
+formal/README.md	crates/rsk-rescue/src/lib.rs	142-144	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/README.md	crates/rsk-sdk/src/applet.rs	208-210	fn selectable(&self, i: usize) -> bool {	}
 formal/README.md	crates/rsk-sdk/src/applet.rs	386-402	let found = applets.iter().enumerate().position(|(i, app)| {	None => Sw::FILE_NOT_FOUND,
 formal/README.md	crates/rsk-sdk/src/applet.rs	391-391	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
@@ -860,7 +860,7 @@ formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	590-590	SUPPORTED_CAP
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	73-80	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	248-256	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	330-330	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
-formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
+formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	142-144	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/RSKeyAdminSurface.tla	crates/rsk-sdk/src/applet.rs	203-205	pub fn set_enabled(&mut self, mask: u32) {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-oath/src/lib.rs	604-636	// gated here, before the HOTP counter burns.	fs,
 formal/RSKeyAppletPolicies.tla	crates/rsk-openpgp/src/keypairgen.rs	123-166	let priv_fid = slot_algo_fid(fid);	// sibling reader `info::slot_algo` has the same `attr.len() >= 3` gate.

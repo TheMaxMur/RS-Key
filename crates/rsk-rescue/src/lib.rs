@@ -7,6 +7,7 @@
 //! REBOOT 0x1F, OTP_LOCK 0x1B (one-way fuse writes: page-58 lock, rollback-required).
 
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 pub mod keydev;
 pub mod otp_lock;

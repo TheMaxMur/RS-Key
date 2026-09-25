@@ -2314,7 +2314,7 @@ dependencies = [
  "rsk-fs",
  "rsk-phy",
  "rsk-sdk",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]

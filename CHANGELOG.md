@@ -682,6 +682,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The device key's scalar is typed** — refactor; nothing a host sees
+  changes. `rsk-rescue`'s keydev unseal hands the scalar out in a
+  `rsk_secret::Secret` instead of a bare array its callers wiped, its seal key
+  and the sealed record's buffers are `Secret`s, and the signing key is built
+  from a reference to the scalar rather than a copy of it. The crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A25 → 0x0A26.
+
 - **The dispatchers' response buffers take the zeroize ban** — refactor;
   nothing a host sees changes. `rsk-device`'s CTAP and CCID handlers keep their
   response buffer for their whole life and wipe it after each hand-off and on
