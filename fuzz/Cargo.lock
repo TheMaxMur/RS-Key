@@ -1532,6 +1532,7 @@ dependencies = [
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
  "rsk-x509",
  "zeroize",
 ]
@@ -1544,6 +1545,7 @@ dependencies = [
  "rsk-devconf",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-secret",
  "zeroize",
 ]
 
@@ -1592,6 +1594,13 @@ dependencies = [
 
 [[package]]
 name = "rsk-sdk"
+version = "0.1.0"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
+name = "rsk-secret"
 version = "0.1.0"
 dependencies = [
  "zeroize",
