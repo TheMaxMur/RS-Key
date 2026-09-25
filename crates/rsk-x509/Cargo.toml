@@ -1,0 +1,23 @@
+[package]
+name = "rsk-x509"
+version = "0.1.0"
+license = "AGPL-3.0-only"
+edition = "2024"
+publish = false
+
+[dependencies]
+# The certificates both card applets sign on the device: PIV's slot and F9
+# certificates and OpenPGP's attestation statements. It sits below them because
+# no applet may name another, the move `rsk-ec` and `rsk-rsa` made before it.
+rsk-sdk = { workspace = true }
+rsk-crypto = { workspace = true }
+rsk-ec = { workspace = true }
+rsk-rsa = { workspace = true }
+
+[dev-dependencies]
+# An independent X.509 parser and verifiers to cross-check the hand-built DER.
+x509-parser = "0.16"
+p256 = { workspace = true }
+p384 = { workspace = true }
+ed25519-dalek = { workspace = true }
+rsk-rsa = { workspace = true, features = ["test-util"] }

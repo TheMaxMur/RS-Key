@@ -85,6 +85,7 @@ TIERS = [
         [
             "rsk-phy",
             "rsk-devconf",
+            "rsk-x509",
             "rsk-store",
             "rsk-led",
             "rsk-ui",

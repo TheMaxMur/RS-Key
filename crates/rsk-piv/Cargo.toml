@@ -24,6 +24,9 @@ rsk-ec = { workspace = true }
 # private op (UMAAL asm on device), PKCS#1 v1.5, the public-key DO.
 rsk-rsa = { workspace = true }
 zeroize = { workspace = true }
+# The certificate builder the slot, F9 and attestation certificates share with
+# OpenPGP's attestation statements.
+rsk-x509 = { workspace = true }
 
 [dev-dependencies]
 rsk-fs = { workspace = true, features = ["test-util"] }

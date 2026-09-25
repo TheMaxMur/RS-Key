@@ -470,6 +470,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The X.509 builder moved out of `rsk-piv` into `rsk-x509`** — refactor, no
+  behaviour change. OpenPGP's attestation statements are X.509 certificates too,
+  and no applet may name another, so the builder PIV's slot, F9 and attestation
+  certificates use now sits below both, as `rsk-ec` and `rsk-rsa` did before it.
+  `rsk_piv::x509` keeps its interface over it. Seven PIV certificates, one of every
+  shape the applet builds, and the ECDSA answer encoding come out byte-identical
+  under a fixed RNG before and after the move. `bcdDevice` 0x0A04 → 0x0A05.
+
 - **`tools/emu` never took the reboot a panel factory reset queues.** `firmware/src/
   worker.rs` takes a reboot the trusted display queues after the next transport request
   or on its idle tick. The panel's reset did wipe, then parked on its request for good

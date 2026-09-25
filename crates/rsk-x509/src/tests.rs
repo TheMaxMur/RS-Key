@@ -1,0 +1,493 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 RS-Key contributors
+
+use super::*;
+use p256::ecdsa::signature::hazmat::PrehashVerifier;
+use x509_parser::certificate::X509Certificate;
+use x509_parser::der_parser::asn1_rs::Tag;
+use x509_parser::extensions::ParsedExtension;
+use x509_parser::public_key::PublicKey;
+
+/// A deterministic byte stream for serials, keys and RSA blinding.
+struct TestRng(u64);
+
+impl TestRng {
+    fn next(&mut self) -> u8 {
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (self.0 >> 33) as u8
+    }
+}
+
+impl Rng for TestRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        buf.iter_mut().for_each(|b| *b = self.next());
+    }
+}
+
+impl rsk_ec::Rng for TestRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        buf.iter_mut().for_each(|b| *b = self.next());
+    }
+}
+
+impl rsk_rsa::Rng for TestRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        buf.iter_mut().for_each(|b| *b = self.next());
+    }
+}
+
+fn key(curve: Curve, seed: u64) -> (PrivKey, Vec<u8>) {
+    let k = PrivKey::generate(curve, &mut TestRng(seed)).unwrap();
+    let mut pt = [0u8; MAX_EC_POINT];
+    let n = k.public_point(&mut pt).unwrap();
+    (k, pt[..n].to_vec())
+}
+
+fn issue(c: &Cert, signer: &Signer) -> Vec<u8> {
+    let mut out = [0u8; MAX_CERT];
+    let n = build(c, signer, &mut TestRng(7), &mut out).unwrap();
+    out[..n].to_vec()
+}
+
+fn parse(der: &[u8]) -> X509Certificate<'_> {
+    let (rest, cert) = x509_parser::parse_x509_certificate(der).unwrap();
+    assert!(rest.is_empty(), "trailing bytes after the certificate");
+    cert
+}
+
+fn oids(cert: &X509Certificate) -> Vec<String> {
+    cert.extensions()
+        .iter()
+        .map(|e| e.oid.to_id_string())
+        .collect()
+}
+
+/// The SPKI's algorithm OID, and the curve OID an EC key carries as its parameter.
+fn spki_oids(cert: &X509Certificate) -> (String, Option<String>) {
+    let alg = &cert.tbs_certificate.subject_pki.algorithm;
+    let curve = alg.parameters.as_ref().and_then(|p| p.as_oid().ok());
+    (
+        alg.algorithm.to_id_string(),
+        curve.map(|o| o.to_id_string()),
+    )
+}
+
+fn ski(cert: &X509Certificate) -> Vec<u8> {
+    cert.extensions()
+        .iter()
+        .find_map(|e| match e.parsed_extension() {
+            ParsedExtension::SubjectKeyIdentifier(id) => Some(id.0.to_vec()),
+            _ => None,
+        })
+        .unwrap()
+}
+
+fn aki(cert: &X509Certificate) -> Vec<u8> {
+    cert.extensions()
+        .iter()
+        .find_map(|e| match e.parsed_extension() {
+            ParsedExtension::AuthorityKeyIdentifier(a) => {
+                Some(a.key_identifier.clone()?.0.to_vec())
+            }
+            _ => None,
+        })
+        .unwrap()
+}
+
+fn ed25519_verifies(public: &[u8], cert: &X509Certificate) {
+    let vk = ed25519_dalek::VerifyingKey::from_bytes(public.try_into().unwrap()).unwrap();
+    let sig = ed25519_dalek::Signature::from_slice(&cert.signature_value.data).unwrap();
+    vk.verify_strict(cert.tbs_certificate.as_ref(), &sig)
+        .unwrap();
+}
+
+/// A self-signed P-256 certificate: v3, a positive 20-byte serial, the profile's
+/// names and validity, the four standard extensions over the key's own SHA-1, and
+/// an ECDSA-SHA256 signature the key verifies.
+#[test]
+fn a_self_signed_ec_certificate_parses_and_verifies() {
+    let (k, pt) = key(Curve::P256, 1);
+    let der = issue(
+        &Cert {
+            subject_cn: b"Test Subject",
+            issuer_cn: b"Test Subject",
+            spki: Spki::Ec {
+                curve: Curve::P256,
+                point: &pt,
+            },
+            sha384: false,
+            ca_pathlen: None,
+            extra: &[],
+        },
+        &Signer::Ec(&k),
+    );
+    let cert = parse(&der);
+    assert_eq!(cert.version().0, 2);
+    assert_eq!(
+        spki_oids(&cert),
+        (
+            "1.2.840.10045.2.1".into(),
+            Some("1.2.840.10045.3.1.7".into())
+        )
+    );
+    let serial = cert.raw_serial();
+    assert_eq!((serial.len(), serial[0] & 0xC0), (20, 0x40));
+    assert_eq!(
+        cert.subject().to_string(),
+        "C=ES, O=RS-Key, CN=Test Subject"
+    );
+    assert_eq!(cert.issuer().to_string(), "C=ES, O=RS-Key, CN=Test Subject");
+    assert_eq!(
+        cert.validity().not_before.to_datetime().unix_timestamp(),
+        1_711_324_800
+    );
+    assert_eq!(
+        cert.validity().not_after.to_datetime().unix_timestamp(),
+        3_313_526_399
+    );
+    assert_eq!(
+        oids(&cert),
+        ["2.5.29.19", "2.5.29.14", "2.5.29.35", "2.5.29.15"]
+    );
+    for e in cert.extensions() {
+        match e.parsed_extension() {
+            ParsedExtension::BasicConstraints(bc) => assert!(!bc.ca && !e.critical),
+            ParsedExtension::KeyUsage(ku) => {
+                assert!(e.critical && ku.digital_signature() && !ku.key_cert_sign())
+            }
+            ParsedExtension::SubjectKeyIdentifier(id) => assert_eq!(id.0, sha1(&pt)),
+            ParsedExtension::AuthorityKeyIdentifier(aki) => {
+                assert_eq!(aki.key_identifier.as_ref().unwrap().0, sha1(&pt))
+            }
+            other => panic!("unexpected extension {other:?}"),
+        }
+    }
+    let vk = p256::ecdsa::VerifyingKey::from_sec1_bytes(&pt).unwrap();
+    let sig = p256::ecdsa::Signature::from_der(&cert.signature_value.data).unwrap();
+    vk.verify_prehash(&sha256(cert.tbs_certificate.as_ref()), &sig)
+        .unwrap();
+}
+
+/// An issuer-signed certificate carries the caller's extensions in the order given,
+/// ahead of the standard four, names its subject's key in the SKI and its issuer's
+/// in the AKI, and an EC issuer asked for SHA-384 signs over it.
+#[test]
+fn an_issued_certificate_carries_the_callers_extensions_in_order() {
+    let (issuer, issuer_pt) = key(Curve::P384, 2);
+    let (_, subject_pt) = key(Curve::P256, 3);
+    let first: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xC4, 0x0A, 0x05, 0x03];
+    let second: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xC4, 0x0A, 0x05, 0x07];
+    let der = issue(
+        &Cert {
+            subject_cn: b"Attested",
+            issuer_cn: b"Attester",
+            spki: Spki::Ec {
+                curve: Curve::P256,
+                point: &subject_pt,
+            },
+            sha384: true,
+            ca_pathlen: None,
+            extra: &[
+                (first, &[0x04, 0x03, 5, 8, 0]),
+                (second, &[0x02, 0x01, 0x07]),
+            ],
+        },
+        &Signer::Ec(&issuer),
+    );
+    let cert = parse(&der);
+    assert_eq!(cert.issuer().to_string(), "C=ES, O=RS-Key, CN=Attester");
+    assert_eq!(
+        oids(&cert),
+        [
+            "1.3.6.1.4.1.41482.5.3",
+            "1.3.6.1.4.1.41482.5.7",
+            "2.5.29.19",
+            "2.5.29.14",
+            "2.5.29.35",
+            "2.5.29.15"
+        ]
+    );
+    let ext = cert.extensions();
+    assert_eq!(
+        (ext[0].value, ext[0].critical),
+        (&[0x04, 0x03, 5, 8, 0][..], false)
+    );
+    assert_eq!(
+        (ext[1].value, ext[1].critical),
+        (&[0x02, 0x01, 0x07][..], false)
+    );
+    assert_eq!(ski(&cert), sha1(&subject_pt));
+    assert_eq!(aki(&cert), sha1(&issuer_pt));
+    assert_eq!(
+        cert.signature_algorithm.algorithm.to_id_string(),
+        "1.2.840.10045.4.3.3"
+    );
+    let vk = p384::ecdsa::VerifyingKey::from_sec1_bytes(&issuer_pt).unwrap();
+    let sig = p384::ecdsa::Signature::from_der(&cert.signature_value.data).unwrap();
+    vk.verify_prehash(&sha384(cert.tbs_certificate.as_ref()), &sig)
+        .unwrap();
+}
+
+/// A CA certificate says so in a critical basicConstraints with its path length,
+/// and only then asserts keyCertSign (RFC 5280 §4.2.1.3).
+#[test]
+fn a_ca_certificate_marks_itself() {
+    let (k, pt) = key(Curve::P384, 4);
+    let der = issue(
+        &Cert {
+            subject_cn: b"Root",
+            issuer_cn: b"Root",
+            spki: Spki::Ec {
+                curve: Curve::P384,
+                point: &pt,
+            },
+            sha384: true,
+            ca_pathlen: Some(1),
+            extra: &[],
+        },
+        &Signer::Ec(&k),
+    );
+    let cert = parse(&der);
+    assert_eq!(
+        spki_oids(&cert),
+        ("1.2.840.10045.2.1".into(), Some("1.3.132.0.34".into()))
+    );
+    let bc = cert.basic_constraints().unwrap().unwrap();
+    assert!(bc.critical && bc.value.ca && bc.value.path_len_constraint == Some(1));
+    let ku = cert.key_usage().unwrap().unwrap();
+    assert!(ku.value.digital_signature() && ku.value.key_cert_sign());
+}
+
+/// An RSA signer signs PKCS#1 v1.5 over SHA-256 even when SHA-384 was asked for;
+/// its public key reads back from the SPKI as `{ n, e }` under NULL parameters, and
+/// both key identifiers are the SHA-1 of those key bits.
+#[test]
+fn an_rsa_signer_signs_sha256_whatever_is_asked() {
+    let rsa = rsk_rsa::generate_rsa(&mut TestRng(5), 1024).unwrap();
+    let (n, e) = (rsa.n_be(), rsa.e_be());
+    let der = issue(
+        &Cert {
+            subject_cn: b"RSA",
+            issuer_cn: b"RSA",
+            spki: Spki::Rsa { n: &n, e: &e },
+            sha384: true,
+            ca_pathlen: None,
+            extra: &[],
+        },
+        &Signer::Rsa(&rsa),
+    );
+    let cert = parse(&der);
+    let spki = &cert.tbs_certificate.subject_pki;
+    assert_eq!(spki_oids(&cert).0, "1.2.840.113549.1.1.1");
+    assert_eq!(
+        spki.algorithm.parameters.as_ref().map(|p| p.tag()),
+        Some(Tag::Null)
+    );
+    let trim = |b: &[u8]| {
+        b.iter()
+            .copied()
+            .skip_while(|&x| x == 0)
+            .collect::<Vec<_>>()
+    };
+    match spki.parsed().unwrap() {
+        PublicKey::RSA(k) => {
+            assert_eq!(trim(k.modulus), trim(&n));
+            assert_eq!(trim(k.exponent), trim(&e));
+        }
+        other => panic!("not an RSA key: {other:?}"),
+    }
+    let key_id = sha1(spki.subject_public_key.data.as_ref());
+    assert_eq!((ski(&cert), aki(&cert)), (key_id.to_vec(), key_id.to_vec()));
+    assert_eq!(
+        cert.signature_algorithm.algorithm.to_id_string(),
+        "1.2.840.113549.1.1.11"
+    );
+    let mut info = vec![
+        0x30, 0x31, 0x30, 0x0D, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01,
+        0x05, 0x00, 0x04, 0x20,
+    ];
+    info.extend_from_slice(&sha256(cert.tbs_certificate.as_ref()));
+    assert!(rsk_rsa::verify::verify_pkcs1v15(
+        &n,
+        &e,
+        &info,
+        &cert.signature_value.data
+    ));
+}
+
+/// RFC 8410 keys carry the bare algorithm OID; a key-agreement key advertises
+/// keyAgreement, not digitalSignature, and an Ed25519 signer names id-Ed25519 with
+/// no parameters and signs the whole TBS.
+#[test]
+fn rfc8410_keys_carry_their_bare_oid() {
+    let (ed, ed_pt) = key(Curve::Ed25519, 6);
+    let (_, x_pt) = key(Curve::X25519, 8);
+    let der = issue(
+        &Cert {
+            subject_cn: b"X25519",
+            issuer_cn: b"Ed25519",
+            spki: Spki::Rfc8410 {
+                curve: Curve::X25519,
+                point: &x_pt,
+            },
+            sha384: false,
+            ca_pathlen: None,
+            extra: &[],
+        },
+        &Signer::Ed25519(&ed),
+    );
+    let cert = parse(&der);
+    let spki = &cert.tbs_certificate.subject_pki;
+    assert_eq!(spki.algorithm.algorithm.to_id_string(), "1.3.101.110");
+    assert!(spki.algorithm.parameters.is_none());
+    assert_eq!(spki.subject_public_key.data.as_ref(), &x_pt[..]);
+    let ku = cert.key_usage().unwrap().unwrap();
+    assert!(ku.value.key_agreement() && !ku.value.digital_signature());
+    assert_eq!(
+        cert.signature_algorithm.algorithm.to_id_string(),
+        "1.3.101.112"
+    );
+    assert!(cert.signature_algorithm.parameters.is_none());
+    ed25519_verifies(&ed_pt, &cert);
+}
+
+/// An Ed25519 key is id-Ed25519 in the SPKI too, a signing key, and its own
+/// self-signature verifies.
+#[test]
+fn an_ed25519_key_is_named_and_signs_for_itself() {
+    let (ed, ed_pt) = key(Curve::Ed25519, 11);
+    let der = issue(
+        &Cert {
+            subject_cn: b"Ed25519",
+            issuer_cn: b"Ed25519",
+            spki: Spki::Rfc8410 {
+                curve: Curve::Ed25519,
+                point: &ed_pt,
+            },
+            sha384: false,
+            ca_pathlen: None,
+            extra: &[],
+        },
+        &Signer::Ed25519(&ed),
+    );
+    let cert = parse(&der);
+    assert_eq!(spki_oids(&cert), ("1.3.101.112".into(), None));
+    assert!(
+        cert.tbs_certificate
+            .subject_pki
+            .algorithm
+            .parameters
+            .is_none()
+    );
+    assert_eq!(
+        cert.tbs_certificate
+            .subject_pki
+            .subject_public_key
+            .data
+            .as_ref(),
+        &ed_pt[..]
+    );
+    let ku = cert.key_usage().unwrap().unwrap();
+    assert!(ku.value.digital_signature() && !ku.value.key_agreement());
+    ed25519_verifies(&ed_pt, &cert);
+}
+
+/// The serial is twenty bytes and positive whatever the randomness says: the top
+/// bit is cleared, and the one below it set so no leading zero is trimmed away.
+#[test]
+fn the_serial_is_twenty_positive_bytes_whatever_the_rng_gives() {
+    struct Fixed(u8);
+    impl Rng for Fixed {
+        fn fill(&mut self, buf: &mut [u8]) {
+            buf.fill(self.0);
+        }
+    }
+    let (k, pt) = key(Curve::P256, 10);
+    for (byte, first) in [(0x00, 0x40), (0xFF, 0x7F)] {
+        let mut out = [0u8; MAX_CERT];
+        let c = Cert {
+            subject_cn: b"S",
+            issuer_cn: b"S",
+            spki: Spki::Ec {
+                curve: Curve::P256,
+                point: &pt,
+            },
+            sha384: false,
+            ca_pathlen: None,
+            extra: &[],
+        };
+        let n = build(&c, &Signer::Ec(&k), &mut Fixed(byte), &mut out).unwrap();
+        let cert = parse(&out[..n]);
+        let serial = cert.raw_serial();
+        assert_eq!(
+            (serial.len(), serial[0]),
+            (20, first),
+            "rng byte {byte:02X}"
+        );
+    }
+}
+
+/// What the profile cannot encode is refused, not written short: a buffer under
+/// `MAX_CERT`, a curve with no OID here, and a curve RFC 8410 does not name.
+#[test]
+fn what_the_profile_cannot_encode_is_refused() {
+    let (k, pt) = key(Curve::P256, 9);
+    let cert = |curve| Cert {
+        subject_cn: b"S",
+        issuer_cn: b"S",
+        spki: Spki::Ec { curve, point: &pt },
+        sha384: false,
+        ca_pathlen: None,
+        extra: &[],
+    };
+    let mut short = [0u8; MAX_CERT - 1];
+    assert_eq!(
+        build(
+            &cert(Curve::P256),
+            &Signer::Ec(&k),
+            &mut TestRng(1),
+            &mut short
+        ),
+        Err(Error::Encoding)
+    );
+    let mut out = [0u8; MAX_CERT];
+    assert_eq!(
+        build(
+            &cert(Curve::K256),
+            &Signer::Ec(&k),
+            &mut TestRng(1),
+            &mut out
+        ),
+        Err(Error::Encoding)
+    );
+    let raw = Cert {
+        spki: Spki::Rfc8410 {
+            curve: Curve::P256,
+            point: &pt,
+        },
+        ..cert(Curve::P256)
+    };
+    assert_eq!(
+        build(&raw, &Signer::Ec(&k), &mut TestRng(1), &mut out),
+        Err(Error::Encoding)
+    );
+}
+
+/// `r ‖ s` becomes two minimal, sign-safe INTEGERs; an odd length is refused.
+#[test]
+fn ecdsa_der_is_minimal_and_sign_safe() {
+    let mut raw = [0u8; 64];
+    raw[0] = 0x80;
+    raw[33] = 0x01;
+    let mut out = [0u8; 80];
+    let n = ecdsa_der(&raw, &mut out).unwrap();
+    let mut want = vec![0x30, 0x44, 0x02, 0x21, 0x00, 0x80];
+    want.extend_from_slice(&[0; 31]);
+    want.extend_from_slice(&[0x02, 0x1F, 0x01]);
+    want.extend_from_slice(&[0; 30]);
+    assert_eq!(&out[..n], &want[..]);
+    assert_eq!(ecdsa_der(&[1, 2, 3], &mut out), Err(Error::Encoding));
+}

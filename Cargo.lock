@@ -2290,6 +2290,7 @@ dependencies = [
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-x509",
  "sha2 0.10.9",
  "x25519-dalek",
  "x509-parser",
@@ -2394,6 +2395,20 @@ dependencies = [
  "embassy-time",
  "panic-halt",
  "smart-leds",
+]
+
+[[package]]
+name = "rsk-x509"
+version = "0.1.0"
+dependencies = [
+ "ed25519-dalek",
+ "p256",
+ "p384",
+ "rsk-crypto",
+ "rsk-ec",
+ "rsk-rsa",
+ "rsk-sdk",
+ "x509-parser",
 ]
 
 [[package]]

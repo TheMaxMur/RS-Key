@@ -1563,6 +1563,7 @@ dependencies = [
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-x509",
  "zeroize",
 ]
 
@@ -1638,6 +1639,16 @@ version = "0.1.0"
 dependencies = [
  "rsk-fs",
  "rsk-led",
+ "rsk-sdk",
+]
+
+[[package]]
+name = "rsk-x509"
+version = "0.1.0"
+dependencies = [
+ "rsk-crypto",
+ "rsk-ec",
+ "rsk-rsa",
  "rsk-sdk",
 ]
 

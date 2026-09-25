@@ -115,8 +115,8 @@ pub fn rsa_sign_crt(
 }
 
 /// PKCS#1 v1.5 over the supplied data with a full [`RsaKey`], on the software
-/// private op. Used by the PIV x509 cert-signing path (`rsk_piv::x509`), whose
-/// key may be any width an IMPORT accepted; the OpenPGP applet's own PSO:CDS /
+/// private op. Used by the on-card certificate signer (`rsk_x509`), whose key may
+/// be any width a PIV IMPORT accepted; the OpenPGP applet's own PSO:CDS /
 /// INTERNAL AUTHENTICATE use [`rsa_sign_crt`] (asm). If it is a DigestInfo (or a
 /// bare hash whose length names the algorithm), sign that digest; otherwise fall
 /// back to the raw private operation.
