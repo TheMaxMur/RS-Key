@@ -1733,6 +1733,26 @@ def test_recording_a_new_matrix_against_a_head_younger_than_the_run(tree, tmp_pa
         run_count_gate.record(tree.root, log)
 
 
+def test_a_run_tlc_timed_past_an_hour_records_and_checks_out(tree, tmp_path):
+    """Past an hour TLC prints `Finished in 01h 12min` and drops the seconds. Read
+    as seconds, a 72-minute Liveness.cfg could not be recorded at all, and a clock
+    TLC truncated trails the runner's by up to 59 s more than the JVM bracket."""
+    tree.stray("formal/out/Liveness.log", tlc_log(900, 44, 9, "01h 12min"))
+    bound = 72 * 60 + 59 + run_count_gate.CLOCK_SLACK
+    for seconds in (bound, bound + 1):
+        log = tmp_path / f"{seconds}.log"
+        log.write_text(
+            MATRIX_SAFETY + "\n" + MATRIX_LIVENESS.replace(" 300s", f" {seconds}s") + "\n"
+        )
+        tree.write("formal/runs.toml", "# nothing here\n")
+        run_count_gate.record(tree.root, log)
+        tree.regenerate()
+        if seconds == bound:
+            assert tree.problems() == []
+        else:
+            assert only(tree.problems(), "Liveness.cfg recorded"), tree.problems()
+
+
 def test_recording_logs_that_disagree_with_each_other(tree, tmp_path):
     """Within one tier, because that is where a run is one run. `liveness` is a
     single row here and a single row cannot disagree with itself — the first

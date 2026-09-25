@@ -701,7 +701,7 @@ TLC_SUMMARY = re.compile(
     r"^(\d+) states generated, (\d+) distinct states found, (\d+) states left on queue\.$", re.M
 )
 TLC_DEPTH = re.compile(r"^The depth of the complete state graph search is (\d+)\.$", re.M)
-TLC_FINISHED = re.compile(r"^Finished in (?:(\d+)h )?(?:(\d+)min )?(\d+)s\b", re.M)
+TLC_FINISHED = re.compile(r"^Finished in (?:\d+h \d+min|(?:\d+min )?\d+s)\b", re.M)
 TLC_STARTED = re.compile(r"^Starting\.\.\. \((\d{4}-\d\d-\d\d)[ T]([\d:]+)\)$", re.M)
 TLC_BANNER = re.compile(r"^Running .*? with (\d+) workers? on (\d+) cores? .*?\(([^,]+),", re.M)
 
@@ -721,7 +721,8 @@ TLC_ROW = re.compile(
     r"(?:\s+(?P<states>\d+) states generated, (?P<distinct>\d+) distinct states found,"
     r" (?P<queue>\d+) states left on queue\.)?"
     r"(?:\s+The depth of the complete state graph search is (?P<depth>\d+)\.)?"
-    r"\s+Finished in (?:(?P<hours>\d+)h )?(?:(?P<minutes>\d+)min )?(?P<seconds>\d+)s$"
+    r"\s+Finished in (?:(?P<hours>\d+)h (?P<hminutes>\d+)min"
+    r"|(?:(?P<minutes>\d+)min )?(?P<seconds>\d+)s)$"
 )
 
 #: Seconds the runner's wall clock may exceed TLC's own `Finished in`. It brackets
@@ -751,12 +752,19 @@ def matrix_rows(text):
 
 
 def elapsed(found, prefix=""):
-    """`Finished in 31min 08s` as seconds."""
+    """`Finished in 31min 08s` as seconds. Past an hour TLC prints `01h 12min` and
+    drops the seconds, so there this is the minute the run finished in."""
     return (
         int(found[prefix + "hours"] or 0) * 3600
-        + int(found[prefix + "minutes"] or 0) * 60
-        + int(found[prefix + "seconds"])
+        + int(found[prefix + "hminutes"] or found[prefix + "minutes"] or 0) * 60
+        + int(found[prefix + "seconds"] or 0)
     )
+
+
+def clock_slack(found):
+    """How far the runner's clock may run past TLC's for one row: the JVM bracket,
+    and the up to 59 s TLC's own clock no longer shows past an hour."""
+    return CLOCK_SLACK + (59 if found["hours"] else 0)
 
 
 def tlc_line(root, cfg):
@@ -866,7 +874,7 @@ def check_tlc(where, run, findings):
             kept[found["cfg"]] = found
         elif line.strip():
             findings.append(f"{where}: {line.strip()[:60]!r} is not a TLC summary line")
-    stamps, gaps = set(), []
+    stamps, gaps, truncated = set(), [], 0
     for row in run["rows"]:
         found = kept.pop(row["cfg"], None)
         if found is None:
@@ -917,13 +925,14 @@ def check_tlc(where, run, findings):
                 )
         gap = int(row["seconds"]) - elapsed(found)
         gaps.append(gap)
-        if not 0 <= gap <= CLOCK_SLACK:
+        truncated += clock_slack(found) - CLOCK_SLACK
+        if not 0 <= gap <= clock_slack(found):
             findings.append(
                 f"{where}: {row['cfg']} recorded {row['seconds']}s and TLC timed itself at"
                 f" {elapsed(found)}s — the runner's clock brackets the JVM, so the gap"
-                f" belongs in 0..{CLOCK_SLACK}s and this one is {gap}s"
+                f" belongs in 0..{clock_slack(found)}s and this one is {gap}s"
             )
-    budget = CLOCK_SLACK + TIER_SLACK * len(gaps)
+    budget = CLOCK_SLACK + TIER_SLACK * len(gaps) + truncated
     if sum(gaps) > budget:
         findings.append(
             f"{where}: the rows are {sum(gaps)}s longer than TLC timed them, over the"

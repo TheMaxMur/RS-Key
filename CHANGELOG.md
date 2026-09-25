@@ -569,6 +569,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **A TLC run past an hour could not be recorded.** TLC prints
+  `Finished in 01h 12min` past an hour and drops the seconds, and
+  `run_count_gate.py` read that line as minutes and seconds only, so `--record`
+  refused a 72-minute `Liveness.cfg` with "TLC never said it finished". It reads
+  the hour form now, and a runner clock may trail TLC's by the up to 59 s TLC no
+  longer prints on top of the JVM bracket.
+
 - **Two gates on one machine made each other's TLC runs fail.** SANY writes each
   standard module a spec extends into `java.io.tmpdir` under its bare name,
   truncating and rewriting it on every run and deleting it at exit, and on macOS
