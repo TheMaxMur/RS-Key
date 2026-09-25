@@ -12,7 +12,7 @@ use rsk_ec::{Curve, PrivKey};
 use rsk_fs::{Fs, KeyFid, Storage};
 use rsk_sdk::Rng;
 use rsk_sdk::Sw;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::seal;
 use crate::x509;
@@ -268,12 +268,12 @@ pub fn put_pin_verifier<S: Storage>(
     fid: u16,
     pin: &[u8],
 ) -> Result<(), Sw> {
-    let mut rec = [0u8; PIN_REC_LEN];
-    rec[0] = pin.len() as u8;
-    rec[1] = 0x01;
-    rec[2..].copy_from_slice(dev.pin_derive_verifier(pin).expose());
-    let r = fs.put(fid, &rec).map_err(|_| Sw::MEMORY_FAILURE);
-    rec.zeroize();
+    let mut rec = Secret::<[u8; PIN_REC_LEN]>::zeroed();
+    rec.expose_mut()[0] = pin.len() as u8;
+    rec.expose_mut()[1] = 0x01;
+    rec.expose_mut()[2..].copy_from_slice(dev.pin_derive_verifier(pin).expose());
+    let r = fs.put(fid, rec.expose()).map_err(|_| Sw::MEMORY_FAILURE);
+    rec.wipe();
     r
 }
 
@@ -302,9 +302,9 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
     }
     let minted_mgm = !provisioned(fs, key_fid(SLOT_CARDMGM).get())?;
     if minted_mgm {
-        let mut key = DEFAULT_MGM;
-        let r = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), &key);
-        key.zeroize();
+        let mut key = Secret::new(DEFAULT_MGM);
+        let r = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), key.expose());
+        key.wipe();
         r?;
     }
     // The key and its meta head are written as a pair but not deleted as one, so
@@ -335,9 +335,9 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
             // `meta[0] != algo`. Its touch policy is not recoverable, so it takes the
             // published default like every other record here (E95): inventing ALWAYS
             // gated management behind a touch whose only exit needs that same touch.
-            let mut key = [0u8; 32];
+            let mut key = Secret::<[u8; 32]>::zeroed();
             let n = seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key);
-            key.zeroize();
+            key.wipe();
             match n {
                 Ok(16) => Some((ALGO_AES128, TOUCHPOLICY_NEVER)),
                 Ok(24) => Some((ALGO_AES192, TOUCHPOLICY_NEVER)),

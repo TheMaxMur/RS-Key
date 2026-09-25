@@ -1676,6 +1676,7 @@ dependencies = [
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
  "rsk-x509",
  "zeroize",
 ]

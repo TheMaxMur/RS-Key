@@ -682,6 +682,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **PIV's keys and sealed plaintext are typed** — refactor; nothing a host
+  sees changes. `rsk-piv`'s unseal writes only into a `rsk_secret::Secret`,
+  and the seal key, the sealing blob, every unsealed key buffer, the
+  management key in GENERAL AUTHENTICATE and its reads, the RSA decipher
+  output, the ECDH secret, the PIN record a PIN change writes and the X25519
+  import buffer are `Secret`s, wiped in place where the hand wipes were and on
+  every other exit — which now includes GENERAL AUTHENTICATE's `?` on a
+  response that does not fit, where the decipher output and the ECDH secret
+  were left. The three loaders and stores that wrapped their body in a
+  closure only so the wipe would run after a `?` are plain code again. The
+  challenge between GENERAL
+  AUTHENTICATE's two halves keeps its bare wipe under an `#[expect]`. The
+  crate takes the zeroize ban at its root. `bcdDevice` 0x0A27 → 0x0A28.
+
 - **SLIP-39's working buffers are typed** — refactor; the shares are the same,
   byte for byte. `rsk-slip39`'s Feistel halves, round outputs, PBKDF2 state,
   the random part, the Shamir base points and the split shares are

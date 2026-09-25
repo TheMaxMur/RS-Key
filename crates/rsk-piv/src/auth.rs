@@ -17,7 +17,7 @@ use rsk_fs::{Fs, Storage};
 use rsk_rsa::crt;
 use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{Presence, ResBuf, Rng, Sw, UserPresence};
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::files::*;
 use crate::keygen;
@@ -266,11 +266,16 @@ impl<S: Storage> GenAuth<'_, S> {
                 if c.len() != crt.modulus_len() {
                     return Err(Sw::WRONG_DATA);
                 }
-                let mut out = [0u8; rsk_rsa::MAX_RSA_BYTES];
-                let n = crt::private_op(&crt, c, &mut crate::RsaRng(&mut *self.rng), &mut out)
-                    .map_err(crate::rsa_sw)?;
-                dyn_auth_resp(res, TAG_AUTH_RESPONSE, &out[..n])?;
-                out.zeroize();
+                let mut out = Secret::<[u8; rsk_rsa::MAX_RSA_BYTES]>::zeroed();
+                let n = crt::private_op(
+                    &crt,
+                    c,
+                    &mut crate::RsaRng(&mut *self.rng),
+                    out.expose_mut(),
+                )
+                .map_err(crate::rsa_sw)?;
+                dyn_auth_resp(res, TAG_AUTH_RESPONSE, &out.expose()[..n])?;
+                out.wipe();
             }
             ALGO_ECCP256 | ALGO_ECCP384 => {
                 check_touch(self.touch_policy, self.presence)?;
@@ -349,10 +354,12 @@ impl<S: Storage> GenAuth<'_, S> {
         // an unusable point still closes every ALWAYS slot, because the request
         // reached the key; what it cannot do is come back as anything but 6A80.
         let key = self.load_ec()?;
-        let mut shared = [0u8; 48];
-        let n = key.ecdh(pp, &mut shared).map_err(|_| Sw::WRONG_DATA)?;
-        dyn_auth_resp(res, TAG_AUTH_RESPONSE, &shared[..n])?;
-        shared.zeroize();
+        let mut shared = Secret::<[u8; 48]>::zeroed();
+        let n = key
+            .ecdh(pp, shared.expose_mut())
+            .map_err(|_| Sw::WRONG_DATA)?;
+        dyn_auth_resp(res, TAG_AUTH_RESPONSE, &shared.expose()[..n])?;
+        shared.wipe();
         Ok(())
     }
 }
@@ -385,7 +392,7 @@ pub(crate) fn general_authenticate<S: Storage>(
     }
 
     // Management-key sanity (algo class + stored length).
-    let mut mgm_key = [0u8; 32];
+    let mut mgm_key = Secret::<[u8; 32]>::zeroed();
     let mut mgm_len = 0usize;
     if key_ref == SLOT_CARDMGM {
         // Same class, same word as every other "this key is not that algorithm"
@@ -399,7 +406,7 @@ pub(crate) fn general_authenticate<S: Storage>(
             Err(_) => return Sw::MEMORY_FAILURE,
         };
         if mgm_len != want {
-            mgm_key.zeroize();
+            mgm_key.wipe();
             return Sw::WRONG_DATA;
         }
     }
@@ -411,7 +418,7 @@ pub(crate) fn general_authenticate<S: Storage>(
     match fs.meta_find(key_fid(key_ref).get(), &mut meta) {
         Some(n) if n >= 3 => {}
         _ => {
-            mgm_key.zeroize();
+            mgm_key.wipe();
             return Sw::REFERENCE_NOT_FOUND;
         }
     }
@@ -422,7 +429,7 @@ pub(crate) fn general_authenticate<S: Storage>(
     // `WRONG_DATA`, the same status the `chal_algo` binding below answers, so
     // one class of "this key is not that algorithm" has one status word.
     if key_ref == SLOT_CARDMGM && meta[0] != algo {
-        mgm_key.zeroize();
+        mgm_key.wipe();
         return Sw::WRONG_DATA;
     }
     // Only a record an OLDER build wrote can still hold an unresolved `0` here — no
@@ -436,7 +443,7 @@ pub(crate) fn general_authenticate<S: Storage>(
         meta[1]
     };
     if is_key(key_ref) && !pin_satisfied(sess, pinpol) {
-        mgm_key.zeroize();
+        mgm_key.wipe();
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }
     // Touch policy of the key being used (slot key, or 9B management key).
@@ -462,7 +469,7 @@ pub(crate) fn general_authenticate<S: Storage>(
         match op {
             Some((Op::Witness, w)) => {
                 let host_chal = find_tag(dyn_auth, TAG_AUTH_CHALLENGE as u16);
-                ga.mutual_auth(&mgm_key[..mgm_len], w, host_chal, res)
+                ga.mutual_auth(&mgm_key.expose()[..mgm_len], w, host_chal, res)
             }
             // Empty at 9B opens the single-auth handshake; at a key slot it is a
             // private-key operation over an empty challenge, which is what the
@@ -471,7 +478,7 @@ pub(crate) fn general_authenticate<S: Storage>(
                 ga.single_challenge(res)
             }
             Some((Op::Challenge, c)) => ga.slot_key_op(c, res),
-            Some((Op::Response, r)) => ga.single_auth_verify(&mgm_key[..mgm_len], r),
+            Some((Op::Response, r)) => ga.single_auth_verify(&mgm_key.expose()[..mgm_len], r),
             Some((Op::Exponentiation, pp)) => ga.ecdh_op(pp, res),
             // No operation tag the card recognises. A YubiKey answers 6A80 to
             // every such body — an unknown tag, a truncated TLV, a lone empty
@@ -479,7 +486,7 @@ pub(crate) fn general_authenticate<S: Storage>(
             None => Err(Sw::WRONG_DATA),
         }
     };
-    mgm_key.zeroize();
+    mgm_key.wipe();
 
     match sw {
         Ok(()) => Sw::OK,

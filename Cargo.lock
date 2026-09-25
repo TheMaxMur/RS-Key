@@ -2298,6 +2298,7 @@ dependencies = [
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
  "rsk-x509",
  "sha2 0.10.9",
  "x25519-dalek",

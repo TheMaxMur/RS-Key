@@ -1257,12 +1257,12 @@ fn pin_protected_mgm_key_roundtrip() {
     let host_key: [u8; 32] = printed[6..38].try_into().unwrap();
 
     // The synthesized key equals the sealed 0x9B auth key (single source).
-    let mut sealed = [0u8; 32];
+    let mut sealed = Secret::<[u8; 32]>::zeroed();
     assert_eq!(
         seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed),
         Ok(32)
     );
-    assert_eq!(host_key, sealed);
+    assert_eq!(host_key, *sealed.expose());
 
     // And the host-read key authenticates via AES-256 mutual auth.
     let (sw, wit) = run(
@@ -1614,9 +1614,9 @@ fn printed_information_round_trips_but_an_escrow_body_is_never_stored() {
             0x20
         ]
     );
-    let mut sealed = [0u8; 32];
+    let mut sealed = Secret::<[u8; 32]>::zeroed();
     let n = seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed).unwrap();
-    assert_eq!(&body[6..6 + n], &sealed[..n]);
+    assert_eq!(&body[6..6 + n], &sealed.expose()[..n]);
     // …so a write of anything else is refused while it is live, rather than
     // acknowledged and hidden under it. (A YubiKey takes the write and loses the
     // escrowed key with it; that is the data loss we do not copy.)
@@ -6409,7 +6409,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_key_slot() {
     let fid = crate::files::key_fid(SLOT_AUTHENTICATION);
     let plain = [0x5Au8; 33];
     let mut rng = TestRng(21);
-    let mut out = [0u8; 64];
+    let mut out = Secret::<[u8; 64]>::zeroed();
 
     // The ORDER, on the one medium that can tell the two orderings apart.
     let (mut fs, medium) = new_cut_fs();
@@ -6633,11 +6633,11 @@ fn pivman_printed_codec_property_fuzz() {
                 &out[..6],
                 &[0x53, 0x24, PROTECTED_TAG, 0x22, PROTECTED_MGM_TAG, 0x20]
             );
-            let mut sealed = [0u8; 32];
+            let mut sealed = Secret::<[u8; 32]>::zeroed();
             let klen = seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed)
                 .expect("sealed mgmt key present");
             assert_eq!(klen, 32);
-            assert_eq!(&out[6..38], &sealed[..]);
+            assert_eq!(&out[6..38], &sealed.expose()[..]);
         } else {
             assert_eq!(sw_pin, Sw::FILE_NOT_FOUND);
         }

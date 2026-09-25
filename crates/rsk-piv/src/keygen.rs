@@ -16,7 +16,7 @@ use rsk_rsa::{
 use rsk_sdk::Rng;
 use rsk_sdk::tlv::find_tag;
 use rsk_sdk::{ResBuf, Sw};
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::files::*;
 use crate::seal;
@@ -667,18 +667,18 @@ fn import_edwards<S: Storage>(
     // the slot's public key disagrees with the key's real identity and ciphertext
     // bound to it can't be decrypted. Ed25519's tag 0x07 is a hash seed, not an
     // integer, so it is imported verbatim.
-    let mut flipped = [0u8; 32];
+    let mut flipped = Secret::<[u8; 32]>::zeroed();
     let scalar = if algo == ALGO_X25519 {
         let n = scalar.len();
         for (i, &b) in scalar.iter().enumerate() {
-            flipped[n - 1 - i] = b;
+            flipped.expose_mut()[n - 1 - i] = b;
         }
-        &flipped[..n]
+        &flipped.expose()[..n]
     } else {
         scalar
     };
     let key = PrivKey::from_scalar(curve, scalar);
-    flipped.zeroize();
+    flipped.wipe();
     let Some(key) = key else {
         return Err(Sw::WRONG_DATA);
     };
@@ -797,7 +797,7 @@ pub(crate) fn attest<S: Storage>(
         serial_le,
         policy: [meta[1], meta[2]],
     };
-    let mut cert = [0u8; x509::MAX_CERT];
+    let mut cert = Secret::<[u8; x509::MAX_CERT]>::zeroed();
     let built = match meta[0] {
         ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
             // The modulus alone, as GET METADATA reads it: rebuilding the private
@@ -820,7 +820,7 @@ pub(crate) fn attest<S: Storage>(
                 },
                 &x509::Signer::Ec(&f9),
                 rng,
-                &mut cert,
+                cert.expose_mut(),
             )
         }
         ALGO_ECCP256 | ALGO_ECCP384 => {
@@ -846,7 +846,7 @@ pub(crate) fn attest<S: Storage>(
                 },
                 &x509::Signer::Ec(&f9),
                 rng,
-                &mut cert,
+                cert.expose_mut(),
             )
         }
         ALGO_ED25519 | ALGO_X25519 => {
@@ -872,7 +872,7 @@ pub(crate) fn attest<S: Storage>(
                 },
                 &x509::Signer::Ec(&f9),
                 rng,
-                &mut cert,
+                cert.expose_mut(),
             )
         }
         _ => return Sw::WRONG_DATA,
@@ -881,8 +881,8 @@ pub(crate) fn attest<S: Storage>(
         Ok(n) => n,
         Err(e) => return e,
     };
-    let ok = res.extend(&cert[..n]);
-    cert.zeroize();
+    let ok = res.extend(&cert.expose()[..n]);
+    cert.wipe();
     if !ok {
         return Sw::WRONG_LENGTH;
     }

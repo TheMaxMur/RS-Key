@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! `rsk-piv` — the PIV card applet: the NIST SP 800-73-4 command subset plus the
 //! Yubico extensions `ykman piv` / `yubico-piv-tool` exercise (metadata, serial,
@@ -33,6 +34,7 @@ use rsk_rsa::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, RsaError, RsaKey, ma
 use rsk_sdk::tlv::{find_tag, format_len};
 pub use rsk_sdk::{AlwaysConfirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
+use rsk_secret::Secret;
 use zeroize::Zeroize;
 
 use files::*;
@@ -192,6 +194,10 @@ impl Session {
         self.has_challenge = false;
         self.chal_kind = ChallengeKind::None;
         self.chal_algo = 0;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the challenge lives in the applet between GENERAL AUTHENTICATE's two halves; this is its wipe point"
+        )]
         self.challenge.zeroize();
     }
 
@@ -785,25 +791,25 @@ impl PivApplet<'_> {
             serial_id: &self.serial_id,
             otp_key: mkek.as_ref().map(|k| k.expose()),
         };
-        let mut key = [0u8; 32];
+        let mut key = Secret::<[u8; 32]>::zeroed();
         let klen = match seal::seal_read(&dev, fs, key_fid(SLOT_CARDMGM), &mut key) {
             Ok(n) => n,
             Err(sw) => return sw,
         };
         // PivmanProtectedData: 88 { 89 <key> }, wrapped in the 53 response object.
-        let mut body = [0u8; 4 + 32];
-        body[0] = PROTECTED_TAG;
-        body[1] = (2 + klen) as u8;
-        body[2] = PROTECTED_MGM_TAG;
-        body[3] = klen as u8;
-        body[4..4 + klen].copy_from_slice(&key[..klen]);
-        key.zeroize();
-        let r = if push_tlv(res, TAG_DATA_OBJECT, &body[..4 + klen]).is_err() {
+        let mut body = Secret::<[u8; 4 + 32]>::zeroed();
+        body.expose_mut()[0] = PROTECTED_TAG;
+        body.expose_mut()[1] = (2 + klen) as u8;
+        body.expose_mut()[2] = PROTECTED_MGM_TAG;
+        body.expose_mut()[3] = klen as u8;
+        body.expose_mut()[4..4 + klen].copy_from_slice(&key.expose()[..klen]);
+        key.wipe();
+        let r = if push_tlv(res, TAG_DATA_OBJECT, &body.expose()[..4 + klen]).is_err() {
             Sw::WRONG_LENGTH
         } else {
             Sw::OK
         };
-        body.zeroize();
+        body.wipe();
         r
     }
 
@@ -926,13 +932,13 @@ impl PivApplet<'_> {
                 if n < 3 {
                     return Sw::REFERENCE_NOT_FOUND;
                 }
-                let mut key = [0u8; 32];
+                let mut key = Secret::<[u8; 32]>::zeroed();
                 let is_default = match seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key) {
-                    Ok(24) => ct_eq(&key[..24], &DEFAULT_MGM),
+                    Ok(24) => ct_eq(&key.expose()[..24], &DEFAULT_MGM),
                     Ok(_) => false,
                     Err(sw) => return sw,
                 };
-                key.zeroize();
+                key.wipe();
                 // Tag `05` answers "is this slot as it left the factory", not
                 // "are these the factory key bytes" — a YubiKey 5.7.4 clears it
                 // when the FACTORY key is written back with `P2 = 0xFE`,
@@ -1136,10 +1142,10 @@ impl PivApplet<'_> {
         // The sealed blob is bound to the device, not the fid, so it moves
         // verbatim. Sized to the largest sealed record (RSA-4096 `P ‖ Q`); a
         // smaller buffer would truncate/overrun-slice a 3072/4096 key's blob.
-        let mut blob = [0u8; seal::MAX_BLOB];
+        let mut blob = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
         // `try_read_key`: the empty-slot answer over a slot the medium merely could
         // not read tells the host the slot is EMPTY, and its next move is to fill it.
-        let blob_n = match fs.try_read_key(key_fid(from), &mut blob) {
+        let blob_n = match fs.try_read_key(key_fid(from), blob.expose_mut()) {
             Ok(Some(n)) => n,
             Ok(None) => return Sw::REFERENCE_NOT_FOUND,
             Err(_) => return Sw::MEMORY_FAILURE,
@@ -1149,14 +1155,14 @@ impl PivApplet<'_> {
             // record goes before its new key, so a tear can never leave the moved
             // key wearing the destination's provenance.
             if let Err(sw) = keygen::drop_slot_meta(fs, key_fid(to).get()) {
-                blob.zeroize();
+                blob.wipe();
                 return sw;
             }
             if fs
-                .put_key(key_fid(to), Sealed::wrap(&blob[..blob_n]))
+                .put_key(key_fid(to), Sealed::wrap(&blob.expose()[..blob_n]))
                 .is_err()
             {
-                blob.zeroize();
+                blob.wipe();
                 return Sw::MEMORY_FAILURE;
             }
             // Sized to read the full source record (head + any cached point).
@@ -1169,14 +1175,14 @@ impl PivApplet<'_> {
             let head = match fs.try_meta_find(key_fid(from).get(), &mut meta) {
                 Ok(n) => n,
                 Err(_) => {
-                    blob.zeroize();
+                    blob.wipe();
                     return Sw::MEMORY_FAILURE;
                 }
             };
             if let Some(n) = head {
                 let n = n.min(meta.len());
                 if let Err(e) = keygen::meta_add_slot(fs, key_fid(to).get(), &meta[..n]) {
-                    blob.zeroize();
+                    blob.wipe();
                     return e;
                 }
             }
@@ -1191,7 +1197,7 @@ impl PivApplet<'_> {
                 let _ = fs.put(pubkey_fid(to), &pk[..pn.min(pk.len())]);
             }
         }
-        blob.zeroize();
+        blob.wipe();
         let dropped = fs.delete_key(key_fid(from));
         let _ = fs.delete(pubkey_fid(from));
         // A head left over a key that is GONE is what GET METADATA, and the
@@ -1640,10 +1646,10 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
         _ => TOUCHPOLICY_NEVER,
     };
 
-    let mut key = [0u8; 32];
-    rng.fill(&mut key);
-    let sealed = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), &key);
-    key.zeroize();
+    let mut key = Secret::<[u8; 32]>::zeroed();
+    rng.fill(key.expose_mut());
+    let sealed = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), key.expose());
+    key.wipe();
     if sealed.is_err() {
         return Sw::MEMORY_FAILURE;
     }
