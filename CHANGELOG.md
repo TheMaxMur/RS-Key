@@ -65,6 +65,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP PSO:DECIPHER left the deciphered secret in the applet's memory. The
+  applet builds every PSO result in a 1 KiB scratch buffer that lives as long
+  as the applet, copies it into the response and never cleared it, so what a
+  decipher returned — the message's session key under `gpg --decrypt` (RSA),
+  the ECDH shared secret, or an AES decipher's plaintext — stayed in RAM
+  across commands; a later command overwrote only the length of its own
+  answer. The scratch is now wiped whenever PSO returns, on every exit.
+  Reading it took a memory read on the live device.
+  **bcdDevice → 0x0A2B.**
+
 - PIV GET METADATA and ATTEST on an RSA slot left the key's primes in freed
   RAM, and neither needs a PIN. GET METADATA multiplies the two stored primes
   for the modulus, and `num-bigint-dig`'s `from_bytes_be` reverses each prime
