@@ -127,7 +127,7 @@ fn slot_sealed_before_otp_burn_survives_the_burn() {
     assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, &cfg));
 
     // The OTP-armed device cannot read it yet (different kbase)…
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
     assert!(
         try_read_slot(&otp, &mut fs, EF_OTP_SLOT1, &mut buf)
             .unwrap()
@@ -141,7 +141,7 @@ fn slot_sealed_before_otp_burn_survives_the_burn() {
             .unwrap()
             .is_some()
     );
-    assert_eq!(&buf[..CONFIG_SIZE], &cfg[..]);
+    assert_eq!(&buf.expose()[..CONFIG_SIZE], &cfg[..]);
 
     // Idempotent: a second pass is a no-op and the slot still reads.
     migrate_seal(&otp, &mut fs, &mut rng);
@@ -171,7 +171,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_slot() {
     let cfg = chalresp_config(&[0xAB; 20], &[0; 6], 0);
     let fid = KeyFid::new(EF_OTP_SLOT1);
     let mut rng = CountRng(7);
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
 
     // The ORDER, on the one medium that can tell the two orderings apart.
     let (cut, medium) = Cut::new();
@@ -675,10 +675,10 @@ fn update_validates_slot_bounds_crc_and_rfu() {
     let upd = build_config(b"public", &[3; 6], &[4; 16], &[0; 6], 0, 0x02, 0);
     let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 1, &with_acc(&upd)));
     assert_eq!(sw, Sw::OK);
-    let mut stored = [0u8; SLOT_SIZE];
+    let mut stored = Secret::<[u8; SLOT_SIZE]>::zeroed();
     app.read_slot_m(&mut fs, EF_OTP_SLOT1 + 1, &mut stored)
         .expect("the update must land on the slot its P2 names");
-    assert_eq!(stored[OFF_TKT_FLAGS], 0x02);
+    assert_eq!(stored.expose()[OFF_TKT_FLAGS], 0x02);
 }
 
 #[test]
@@ -747,16 +747,17 @@ fn update_replaces_the_whole_ext_flag_byte() {
     let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 0, &d));
     assert_eq!(sw, Sw::OK);
 
-    let mut stored = [0u8; SLOT_SIZE];
+    let mut stored = Secret::<[u8; SLOT_SIZE]>::zeroed();
     app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut stored)
         .expect("the slot is configured");
     assert_eq!(
-        stored[OFF_EXT_FLAGS], 0x5A,
+        stored.expose()[OFF_EXT_FLAGS],
+        0x5A,
         "every ext bit is updateable, so the update's byte must stand alone — \
          not ORed with what was there, and not masked to nothing"
     );
     // The neighbours the same merge must NOT have touched.
-    assert_eq!(&stored[..OFF_ACC_CODE.min(6)], b"public");
+    assert_eq!(&stored.expose()[..OFF_ACC_CODE.min(6)], b"public");
 }
 
 #[test]
@@ -787,12 +788,12 @@ fn update_preserves_use_counter_tail() {
     for _ in 0..3 {
         power_up_bump(&dev, &mut fs, &mut bump_rng);
     }
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
     let n = try_read_slot(&dev, &mut fs, EF_OTP_SLOT1, &mut buf)
         .unwrap()
         .unwrap();
     assert_eq!(n, SLOT_SIZE);
-    let before = u16::from_be_bytes([buf[CONFIG_SIZE], buf[CONFIG_SIZE + 1]]);
+    let before = u16::from_be_bytes([buf.expose()[CONFIG_SIZE], buf.expose()[CONFIG_SIZE + 1]]);
     assert_eq!(before, 3);
 
     // A routine SLOT_UPDATE (e.g. changing pacing bits) must not touch the counter.
@@ -805,7 +806,7 @@ fn update_preserves_use_counter_tail() {
         .unwrap()
         .unwrap();
     assert_eq!(n, SLOT_SIZE, "update truncated the slot record");
-    let after = u16::from_be_bytes([buf[CONFIG_SIZE], buf[CONFIG_SIZE + 1]]);
+    let after = u16::from_be_bytes([buf.expose()[CONFIG_SIZE], buf.expose()[CONFIG_SIZE + 1]]);
     assert_eq!(after, before, "update rolled the use counter back");
 }
 
@@ -967,18 +968,19 @@ fn hid_frame_device_info_read() {
     let payload = [0u8; hid::PAYLOAD_SIZE];
     let reports = hid::split_frame(&payload, 0x13);
     let mut rx = hid::FrameRx::new();
+    let mut payload = Secret::<[u8; hid::PAYLOAD_SIZE]>::zeroed();
     let mut frame = None;
     for r in &reports {
-        if let hid::RxOutcome::Frame { slot, payload } = rx.feed(r) {
-            frame = Some((slot, payload));
+        if let hid::RxOutcome::Frame { slot } = rx.feed(r, &mut payload) {
+            frame = Some(slot);
         }
     }
-    let (slot, payload) = frame.expect("frame did not reassemble");
+    let slot = frame.expect("frame did not reassemble");
     assert_eq!(slot, 0x13);
 
     let mut out = [0u8; 64];
     let mut res = ResBuf::new(&mut out);
-    let sw = app.process_hid(slot, &payload, &mut fs, &mut res);
+    let sw = app.process_hid(slot, payload.expose(), &mut fs, &mut res);
     assert_eq!(sw, Sw::OK);
     let body = res.as_slice().to_vec();
     assert!(!body.is_empty(), "a read command must stream a body");
@@ -1557,11 +1559,11 @@ fn configure_f<S: Storage>(
 /// observation reads the RECORD and not a status bit: `status()` is recomputed
 /// off the same flash the command could not read.
 fn slot_fixed<S: Storage>(app: &OtpApplet, fs: &mut Fs<S>, fid: u16) -> Option<[u8; 6]> {
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
     let n = app.read_slot_m(fs, fid, &mut buf)?;
     assert!(n >= CONFIG_SIZE);
     let mut pid = [0u8; 6];
-    pid.copy_from_slice(&buf[..6]);
+    pid.copy_from_slice(&buf.expose()[..6]);
     Some(pid)
 }
 
@@ -1739,10 +1741,11 @@ fn update_reports_a_slot_it_could_not_read() {
     let sw = run_f(&mut app, &mut fs, &otp_apdu(0x04, 0, &d));
     medium.stick(None);
 
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
     app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut buf).unwrap();
     assert_eq!(
-        buf[OFF_TKT_FLAGS], 0,
+        buf.expose()[OFF_TKT_FLAGS],
+        0,
         "the fixture let the update through — this case would test nothing"
     );
     assert_eq!(
@@ -1753,7 +1756,7 @@ fn update_reports_a_slot_it_could_not_read() {
     // The control: over a medium that answers, the same frame updates the flags.
     assert_eq!(run_f(&mut app, &mut fs, &otp_apdu(0x04, 0, &d)), Sw::OK);
     app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut buf).unwrap();
-    assert_eq!(buf[OFF_TKT_FLAGS], TKT_APPEND_CR);
+    assert_eq!(buf.expose()[OFF_TKT_FLAGS], TKT_APPEND_CR);
 }
 
 #[test]
@@ -1945,12 +1948,12 @@ fn scan_map_refuses_a_slot_it_could_not_read() {
 
 /// The stored use counter of slot 1, read with the fault disarmed.
 fn stored_use_counter(dev: &Device, fs: &mut Fs<ProbeStuck>) -> u16 {
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
     let n = try_read_slot(dev, fs, EF_OTP_SLOT1, &mut buf)
         .unwrap()
         .unwrap();
     assert_eq!(n, SLOT_SIZE, "the slot lost its counter tail");
-    u16::from_be_bytes([buf[CONFIG_SIZE], buf[CONFIG_SIZE + 1]])
+    u16::from_be_bytes([buf.expose()[CONFIG_SIZE], buf.expose()[CONFIG_SIZE + 1]])
 }
 
 #[test]
@@ -2001,12 +2004,12 @@ fn power_up_bump_retries_a_slot_the_medium_refused() {
     medium.stick_once(EF_OTP_SLOT2);
     power_up_bump(&dev, &mut fs, &mut bump_rng);
     medium.stick(None);
-    let mut buf = [0u8; SLOT_SIZE];
+    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
     try_read_slot(&dev, &mut fs, EF_OTP_SLOT2, &mut buf)
         .unwrap()
         .unwrap();
     assert_eq!(
-        u16::from_be_bytes([buf[CONFIG_SIZE], buf[CONFIG_SIZE + 1]]),
+        u16::from_be_bytes([buf.expose()[CONFIG_SIZE], buf.expose()[CONFIG_SIZE + 1]]),
         0,
         "the retry advanced an OATH-HOTP slot's moving factor"
     );

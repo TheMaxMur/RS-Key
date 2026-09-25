@@ -6,6 +6,7 @@
 //! OATH-HOTP 6/8-digit code, or a static password of raw scancodes. [`build`] is pure.
 
 use rsk_crypto::{aes128_encrypt_block, hmac_sha1};
+use rsk_secret::Secret;
 
 use crate::{
     CFG_OATH_HOTP8, CFG_SHORT_TICKET, CFG_STATIC_TICKET, CONFIG_SIZE, FIXED_SIZE, KEY_SIZE,
@@ -87,9 +88,9 @@ pub fn build(
     if tkt & TKT_OATH_HOTP != 0 {
         // OATH-HOTP: the 20-byte key ykman packs = AES field ‖ first 4 UID
         // bytes. HMAC zero-padding makes shorter keys equivalent.
-        let mut key = [0u8; KEY_SIZE + 4];
-        key[..KEY_SIZE].copy_from_slice(&cfg[OFF_AES_KEY..OFF_AES_KEY + KEY_SIZE]);
-        key[KEY_SIZE..].copy_from_slice(&cfg[OFF_UID..OFF_UID + 4]);
+        let mut key = Secret::<[u8; KEY_SIZE + 4]>::zeroed();
+        key.expose_mut()[..KEY_SIZE].copy_from_slice(&cfg[OFF_AES_KEY..OFF_AES_KEY + KEY_SIZE]);
+        key.expose_mut()[KEY_SIZE..].copy_from_slice(&cfg[OFF_UID..OFF_UID + 4]);
         // Moving factor: the 64-bit tail, or the programmed initial IMF in the
         // last two UID bytes when the tail is still zero.
         let mut imf = u64::from_be_bytes(tail.try_into().ok()?);
@@ -97,7 +98,7 @@ pub fn build(
             imf = u16::from_be_bytes([cfg[OFF_UID + 4], cfg[OFF_UID + 5]]) as u64;
         }
         let digits = if cfgf & CFG_OATH_HOTP8 != 0 { 8 } else { 6 };
-        let mut len = hotp(&key, imf, digits, out);
+        let mut len = hotp(key.expose(), imf, digits, out);
         if append_cr {
             out[len] = b'\r';
             len += 1;
@@ -151,11 +152,12 @@ pub fn build(
     otpk[18..20].copy_from_slice(&rnd);
     let crc = !crc16(&otpk[6..20]);
     otpk[20..22].copy_from_slice(&crc.to_le_bytes());
-    let mut key = [0u8; KEY_SIZE];
-    key.copy_from_slice(&cfg[OFF_AES_KEY..OFF_AES_KEY + KEY_SIZE]);
+    let mut key = Secret::<[u8; KEY_SIZE]>::zeroed();
+    key.expose_mut()
+        .copy_from_slice(&cfg[OFF_AES_KEY..OFF_AES_KEY + KEY_SIZE]);
     let mut block = [0u8; 16];
     block.copy_from_slice(&otpk[6..22]);
-    aes128_encrypt_block(&key, &mut block);
+    aes128_encrypt_block(key.expose(), &mut block);
     otpk[6..22].copy_from_slice(&block);
     let mut len = encode_modhex(&otpk, out);
     if append_cr {

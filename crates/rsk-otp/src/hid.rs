@@ -40,11 +40,9 @@ pub enum RxOutcome {
     None,
     /// The host asked to reset the transfer (clear any pending response).
     Reset,
-    /// A complete, CRC-valid frame: run `slot_id` with `payload` as the APDU.
-    Frame {
-        slot: u8,
-        payload: [u8; PAYLOAD_SIZE],
-    },
+    /// A complete, CRC-valid frame for `slot`; its payload went into the
+    /// caller's buffer.
+    Frame { slot: u8 },
     /// A complete frame whose CRC did not match — dropped.
     BadCrc,
 }
@@ -72,8 +70,14 @@ impl FrameRx {
         }
     }
 
-    /// Consume one 8-byte feature report.
-    pub fn feed(&mut self, report: &[u8; REPORT_SIZE]) -> RxOutcome {
+    /// Consume one 8-byte feature report. A frame that completes with a good CRC
+    /// is copied straight into `into`, a buffer that wipes itself, and the
+    /// reassembly buffer is wiped at once; `into` is left alone otherwise.
+    pub fn feed(
+        &mut self,
+        report: &[u8; REPORT_SIZE],
+        into: &mut Secret<[u8; PAYLOAD_SIZE]>,
+    ) -> RxOutcome {
         let flag = report[REPORT_DATA];
         if flag == FLAG_RESET {
             self.scrub();
@@ -105,14 +109,13 @@ impl FrameRx {
             self.scrub();
             return RxOutcome::BadCrc;
         }
-        let mut payload = [0u8; PAYLOAD_SIZE];
-        payload.copy_from_slice(&buf[..PAYLOAD_SIZE]);
+        into.expose_mut().copy_from_slice(&buf[..PAYLOAD_SIZE]);
         let slot = buf[PAYLOAD_SIZE];
         // The caller owns the bytes now. A slot-configure frame holds the AES key,
         // the private UID and the presented access code, and nothing else clears
         // this buffer until some later frame happens to reuse it — so wipe it here.
         self.scrub();
-        RxOutcome::Frame { slot, payload }
+        RxOutcome::Frame { slot }
     }
 
     /// Wipe the reassembly buffer. Called after a frame is handed off, on an abort,
@@ -326,10 +329,9 @@ impl OtpHid {
         let mut report = [0u8; REPORT_SIZE];
         let n = data.len().min(REPORT_SIZE);
         report[..n].copy_from_slice(&data[..n]);
-        match self.rx.feed(&report) {
-            RxOutcome::Frame { slot, payload } => {
+        match self.rx.feed(&report, &mut self.req_payload) {
+            RxOutcome::Frame { slot } => {
                 self.req_slot = slot;
-                *self.req_payload.expose_mut() = payload;
                 self.req_ready = true;
                 self.processing.reset();
                 self.state = State::Processing;

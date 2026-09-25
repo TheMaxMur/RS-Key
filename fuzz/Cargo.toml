@@ -27,6 +27,9 @@ rsk-devconf = { path = "../crates/rsk-devconf", features = ["test-util"] }
 rsk-mgmt = { path = "../crates/rsk-mgmt" }
 rsk-oath = { path = "../crates/rsk-oath" }
 rsk-otp = { path = "../crates/rsk-otp" }
+# otp_slot_seal reads a slot back through rsk-otp's seal, which unseals only
+# into a Secret.
+rsk-secret = { path = "../crates/rsk-secret" }
 rsk-phy = { path = "../crates/rsk-phy" }
 rsk-piv = { path = "../crates/rsk-piv" }
 rsk-rescue = { path = "../crates/rsk-rescue" }

@@ -11,13 +11,14 @@ fn reassembles_a_full_frame() {
     }
     let reports = split_frame(&payload, 0x30);
     let mut rx = FrameRx::new();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
     for r in &reports[..9] {
-        assert_eq!(rx.feed(r), RxOutcome::None);
+        assert_eq!(rx.feed(r, &mut out), RxOutcome::None);
     }
-    match rx.feed(&reports[9]) {
-        RxOutcome::Frame { slot, payload: p } => {
+    match rx.feed(&reports[9], &mut out) {
+        RxOutcome::Frame { slot } => {
             assert_eq!(slot, 0x30);
-            assert_eq!(p, payload);
+            assert_eq!(*out.expose(), payload);
         }
         other => panic!("expected Frame, got {other:?}"),
     }
@@ -29,18 +30,20 @@ fn rejects_corrupted_crc() {
     let mut reports = split_frame(&payload, 1);
     reports[9][0] ^= 0xFF; // corrupt the last payload slice
     let mut rx = FrameRx::new();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
     for r in &reports[..9] {
-        rx.feed(r);
+        rx.feed(r, &mut out);
     }
-    assert_eq!(rx.feed(&reports[9]), RxOutcome::BadCrc);
+    assert_eq!(rx.feed(&reports[9], &mut out), RxOutcome::BadCrc);
 }
 
 #[test]
 fn reset_byte_clears_state() {
     let mut rx = FrameRx::new();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
     let mut reset = [0u8; REPORT_SIZE];
     reset[REPORT_DATA] = FLAG_RESET;
-    assert_eq!(rx.feed(&reset), RxOutcome::Reset);
+    assert_eq!(rx.feed(&reset, &mut out), RxOutcome::Reset);
 }
 
 #[test]
@@ -49,9 +52,10 @@ fn dummy_write_aborts_like_a_reset() {
     // "force update or abort" (ykpers sends it to cancel a challenge waiting for a
     // touch, and again to reset the read mode after collecting a response).
     let mut rx = FrameRx::new();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
     let mut dummy = [0u8; REPORT_SIZE];
     dummy[REPORT_DATA] = FLAG_WRITE | 0x0F;
-    assert_eq!(rx.feed(&dummy), RxOutcome::Reset);
+    assert_eq!(rx.feed(&dummy, &mut out), RxOutcome::Reset);
 }
 
 #[test]
@@ -61,19 +65,20 @@ fn a_frame_interrupted_by_a_dummy_write_is_abandoned() {
     let payload = [0x5Au8; PAYLOAD_SIZE];
     let reports = split_frame(&payload, 0x30);
     let mut rx = FrameRx::new();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
     for r in &reports[..5] {
-        rx.feed(r);
+        rx.feed(r, &mut out);
     }
     let mut dummy = [0u8; REPORT_SIZE];
     dummy[REPORT_DATA] = FLAG_WRITE | 0x0F;
-    assert_eq!(rx.feed(&dummy), RxOutcome::Reset);
+    assert_eq!(rx.feed(&dummy, &mut out), RxOutcome::Reset);
     // Resuming mid-frame yields nothing; a frame sent from its start still lands.
-    assert_eq!(rx.feed(&reports[9]), RxOutcome::BadCrc);
+    assert_eq!(rx.feed(&reports[9], &mut out), RxOutcome::BadCrc);
     for r in &reports[..9] {
-        assert_eq!(rx.feed(r), RxOutcome::None);
+        assert_eq!(rx.feed(r, &mut out), RxOutcome::None);
     }
     assert!(matches!(
-        rx.feed(&reports[9]),
+        rx.feed(&reports[9], &mut out),
         RxOutcome::Frame { slot: 0x30, .. }
     ));
 }

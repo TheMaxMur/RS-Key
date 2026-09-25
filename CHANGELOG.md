@@ -65,6 +65,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- Yubico OTP left a slot's secrets in RAM after most commands. Every command
+  that reads a slot — the keyboard ticket, CALCULATE (challenge-response),
+  SWAP, UPDATE, CONFIGURE, the status reads and the boot counter bump — unseals
+  the record, with its AES or HMAC key, private UID and access code, into a
+  buffer in its own frame and returned without wiping it; CALCULATE and the
+  keyboard ticket also copied the key out into bare arrays, three handlers held
+  the presented access code in one, and a keyboard slot write passed the whole
+  frame through two more copies on its way to the applet. `rsk-otp`'s unseal
+  now writes only into a `rsk_secret::Secret`, which the compiler holds every
+  reader to, the key, code and request copies are `Secret`s, and the keyboard
+  frame is copied straight into the request buffer that wipes itself. The
+  `hmac` and `aes` crates still leave the key in their own dead frames, as a
+  padded block or a key schedule; the dead-stack sweep planned for this work
+  closes that. Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A23.**
+
 - OATH left a credential's secret in RAM after most commands. PUT, DELETE,
   RENAME, CALCULATE, CALCULATE ALL, LIST (and its SEND REMAINING pages),
   VERIFY CODE and GET CREDENTIAL unseal a credential — its name, HMAC key and

@@ -73,6 +73,11 @@ embassy-futures = { git = "https://github.com/embassy-rs/embassy", branch = "mai
 # `rsk-usb`; naming it here is what lets `usbip_driver` implement its `Driver`.
 embassy-usb = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 
+[dev-dependencies]
+# device_tests.rs reads a slot back through rsk-otp's seal, which unseals only
+# into a Secret.
+rsk-secret = { path = "../../crates/rsk-secret" }
+
 [workspace]
 
 # Same vendored sequential-storage patch as the root workspace and `fuzz/`. Without

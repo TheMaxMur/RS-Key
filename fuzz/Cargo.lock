@@ -1484,6 +1484,7 @@ dependencies = [
  "rsk-rescue",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
  "rsk-sha512",
  "rsk-store",
  "rsk-ui",

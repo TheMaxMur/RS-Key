@@ -310,28 +310,28 @@ put_slot	crates/rsk-otp/src/lib.rs:289	11	decides	D3	seals and writes the slot r
 button_ticket	crates/rsk-otp/src/lib.rs:301	62	decides	D2	hands out the typed OTP and persists the advanced counter before handing it out	SEC-POL-006
 status	crates/rsk-otp/src/lib.rs:401	8	marshals	M	puts 6 of the 7 bytes of the status record into the response	-
 process_hid	crates/rsk-otp/src/lib.rs:418	19	marshals	M	repacks the 64-byte HID frame into an APDU and calls process	-
-cmd_configure	crates/rsk-otp/src/lib.rs:438	57	decides	D1	ct_eq against the stored access code, then a write or a deletion of the slot record	SEC-POL-005
-cmd_update	crates/rsk-otp/src/lib.rs:496	68	decides	D1	the access-code gate, a flag merge and carrying the 8-byte counter tail forward	SEC-POL-005,SEC-POL-006
-cmd_swap	crates/rsk-otp/src/lib.rs:565	89	decides	D1	the code must match BOTH slots; moves the records and the RAM half of the replay position	SEC-POL-005,SEC-POL-006
-cmd_status_ext	crates/rsk-otp/src/lib.rs:655	27	marshals	M	prints the flags TLV and the public id — formatting of the slot report	-
-cmd_calculate	crates/rsk-otp/src/lib.rs:683	83	decides	D2	a presence and mode-mask gate, then HMAC-SHA1/AES under the slot key out to the host	SEC-POL-006
-cmd_otp	crates/rsk-otp/src/lib.rs:767	30	marshals	M	a routing table by P1 with no permission in it; an unknown P1 gets a silent OK	-
-cmd_set_device_info	crates/rsk-otp/src/lib.rs:798	35	decides	D4	persists DeviceConfig, i.e. the set of enabled applications, without a single gate	SEC-ADM-003,SEC-ADM-004
-cmd_device_config	crates/rsk-otp/src/lib.rs:834	12	decides	D3	an ungated fs.put to EF_OTP_DEVCFG — a write of persistent state that nobody reads	-
-cmd_ndef	crates/rsk-otp/src/lib.rs:847	25	decides	D1	code_clears_every_slot as the gate, then a write of the NDEF record and a pgmSeq bump	SEC-POL-005
-cmd_scan_map	crates/rsk-otp/src/lib.rs:873	25	decides	D1	the same gate, and the map write decides what exactly a protected slot types	SEC-POL-005
-code_clears_every_slot	crates/rsk-otp/src/lib.rs:899	26	decides	D1	the gate of a global write: the code must match EVERY programmed slot, unreadable = did not match	SEC-POL-005
-apply_scanmap	crates/rsk-otp/src/lib.rs:926	21	marshals	M	re-encodes ASCII into scancodes by the table, all-or-nothing	-
-scanmap_scancode	crates/rsk-otp/src/lib.rs:949	9	marshals	M	the character's position in the 45-character set — a table lookup	-
-aid	crates/rsk-otp/src/lib.rs:960	3	marshals	M	returns the AID constant	-
-select	crates/rsk-otp/src/lib.rs:964	5	marshals	M	latches config_seq by the presence of slots; OTP has no access status that SELECT could clear	-
-process	crates/rsk-otp/src/lib.rs:970	9	marshals	M	a CLA check against a literal and a dispatcher by INS	-
-slot_still_live	crates/rsk-otp/src/lib.rs:981	12	decides	D5	decides whether to report 6581 after a refused delete, i.e. whether the host sees a surviving slot	SEC-STORE-006
-try_read_slot	crates/rsk-otp/src/lib.rs:994	12	decides	D5	filter(n >= CONFIG_SIZE) makes a short record "unprogrammed" for every gate	SEC-STORE-002
-migrate_seal	crates/rsk-otp/src/lib.rs:1007	52	decides	D3	re-seals the slots under the current kbase; the write is gated by request_rescrub	SEC-POL-005
-power_up_bump	crates/rsk-otp/src/lib.rs:1079	50	decides	D3	bumps the non-persistent counter of every typed slot at startup and writes it to flash	SEC-POL-006
-crc16	crates/rsk-otp/src/lib.rs:1130	15	marshals	M	pure CRC16 X.25 arithmetic	-
-check_crc	crates/rsk-otp/src/lib.rs:1146	5	marshals	M	comparison of the computed CRC against the literal residue 0xF0B8	-
+cmd_configure	crates/rsk-otp/src/lib.rs:444	57	decides	D1	ct_eq against the stored access code, then a write or a deletion of the slot record	SEC-POL-005
+cmd_update	crates/rsk-otp/src/lib.rs:502	68	decides	D1	the access-code gate, a flag merge and carrying the 8-byte counter tail forward	SEC-POL-005,SEC-POL-006
+cmd_swap	crates/rsk-otp/src/lib.rs:574	89	decides	D1	the code must match BOTH slots; moves the records and the RAM half of the replay position	SEC-POL-005,SEC-POL-006
+cmd_status_ext	crates/rsk-otp/src/lib.rs:667	27	marshals	M	prints the flags TLV and the public id — formatting of the slot report	-
+cmd_calculate	crates/rsk-otp/src/lib.rs:695	83	decides	D2	a presence and mode-mask gate, then HMAC-SHA1/AES under the slot key out to the host	SEC-POL-006
+cmd_otp	crates/rsk-otp/src/lib.rs:782	30	marshals	M	a routing table by P1 with no permission in it; an unknown P1 gets a silent OK	-
+cmd_set_device_info	crates/rsk-otp/src/lib.rs:813	35	decides	D4	persists DeviceConfig, i.e. the set of enabled applications, without a single gate	SEC-ADM-003,SEC-ADM-004
+cmd_device_config	crates/rsk-otp/src/lib.rs:849	12	decides	D3	an ungated fs.put to EF_OTP_DEVCFG — a write of persistent state that nobody reads	-
+cmd_ndef	crates/rsk-otp/src/lib.rs:862	25	decides	D1	code_clears_every_slot as the gate, then a write of the NDEF record and a pgmSeq bump	SEC-POL-005
+cmd_scan_map	crates/rsk-otp/src/lib.rs:889	25	decides	D1	the same gate, and the map write decides what exactly a protected slot types	SEC-POL-005
+code_clears_every_slot	crates/rsk-otp/src/lib.rs:916	26	decides	D1	the gate of a global write: the code must match EVERY programmed slot, unreadable = did not match	SEC-POL-005
+apply_scanmap	crates/rsk-otp/src/lib.rs:946	21	marshals	M	re-encodes ASCII into scancodes by the table, all-or-nothing	-
+scanmap_scancode	crates/rsk-otp/src/lib.rs:969	9	marshals	M	the character's position in the 45-character set — a table lookup	-
+aid	crates/rsk-otp/src/lib.rs:980	3	marshals	M	returns the AID constant	-
+select	crates/rsk-otp/src/lib.rs:984	5	marshals	M	latches config_seq by the presence of slots; OTP has no access status that SELECT could clear	-
+process	crates/rsk-otp/src/lib.rs:990	9	marshals	M	a CLA check against a literal and a dispatcher by INS	-
+slot_still_live	crates/rsk-otp/src/lib.rs:1001	12	decides	D5	decides whether to report 6581 after a refused delete, i.e. whether the host sees a surviving slot	SEC-STORE-006
+try_read_slot	crates/rsk-otp/src/lib.rs:1014	12	decides	D5	filter(n >= CONFIG_SIZE) makes a short record "unprogrammed" for every gate	SEC-STORE-002
+migrate_seal	crates/rsk-otp/src/lib.rs:1027	52	decides	D3	re-seals the slots under the current kbase; the write is gated by request_rescrub	SEC-POL-005
+power_up_bump	crates/rsk-otp/src/lib.rs:1099	50	decides	D3	bumps the non-persistent counter of every typed slot at startup and writes it to flash	SEC-POL-006
+crc16	crates/rsk-otp/src/lib.rs:1150	15	marshals	M	pure CRC16 X.25 arithmetic	-
+check_crc	crates/rsk-otp/src/lib.rs:1166	5	marshals	M	comparison of the computed CRC against the literal residue 0xF0B8	-
 check_touch	crates/rsk-piv/src/auth.rs:33	20	decides	D1	everything except TOUCHPOLICY_NEVER requires a confirmed touch; a refusal drops the operation	SEC-POL-001
 pin_satisfied	crates/rsk-piv/src/auth.rs:54	13	decides	D1	ALWAYS requires has_pin AND pin_fresh; an unknown byte falls into the closed branch	SEC-POL-001,SEC-SEAM-003
 mgm_crypt	crates/rsk-piv/src/auth.rs:68	22	decides	D5	computes the very block under the mgm key against which ct_eq checks the witness and the 9B response	-

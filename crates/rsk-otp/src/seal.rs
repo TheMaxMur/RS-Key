@@ -93,11 +93,27 @@ pub fn seal_put<S: Storage>(
 ///
 /// A read the medium REFUSED folds into that same `None`; [`try_seal_read`] is
 /// the twin for the callers where it may not.
-pub fn seal_read<S: Storage>(
+///
+/// The plaintext is a slot's secrets, so it goes only into a buffer that wipes
+/// itself; a bare array is refused at compile time:
+///
+/// ```compile_fail,E0308
+/// # fn read<S: rsk_fs::Storage>(dev: &rsk_crypto::Device, fs: &mut rsk_fs::Fs<S>) {
+/// let mut out = [0u8; 64];
+/// rsk_otp::seal::seal_read(dev, fs, rsk_fs::KeyFid::new(0xC100), &mut out);
+/// # }
+/// ```
+/// ```
+/// # fn read<S: rsk_fs::Storage>(dev: &rsk_crypto::Device, fs: &mut rsk_fs::Fs<S>) {
+/// let mut out = rsk_secret::Secret::<[u8; 64]>::zeroed();
+/// rsk_otp::seal::seal_read(dev, fs, rsk_fs::KeyFid::new(0xC100), &mut out);
+/// # }
+/// ```
+pub fn seal_read<S: Storage, const N: usize>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: KeyFid,
-    out: &mut [u8],
+    out: &mut Secret<[u8; N]>,
 ) -> Option<usize> {
     try_seal_read(dev, fs, fid, out).ok().flatten()
 }
@@ -105,12 +121,13 @@ pub fn seal_read<S: Storage>(
 /// [`seal_read`], fallible: `Err` is "the medium could not answer", `Ok(None)` a
 /// slot that is genuinely absent, malformed, or unauthenticated. The fold the
 /// plain one does is what lets a faulted read spell *unprogrammed* at a gate.
-pub fn try_seal_read<S: Storage>(
+pub fn try_seal_read<S: Storage, const N: usize>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: KeyFid,
-    out: &mut [u8],
+    out: &mut Secret<[u8; N]>,
 ) -> Result<Option<usize>> {
+    let out = out.expose_mut();
     let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
     let Some(n) = fs.try_read_key(fid, blob.expose_mut())? else {
         return Ok(None);
