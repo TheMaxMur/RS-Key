@@ -986,7 +986,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:235-239) is the same switch's other half and is not in this entry — one entry, one file."
+note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:259-263) is the same switch's other half and is not in this entry — one entry, one file."
 
 [comutant.BugWrongDoesNotSpend]
 status = "patch"
@@ -1016,7 +1016,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:904."
+note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:946."
 
 # ---- RSKeyAppletPolicies: slot policy, attributes, gates, counter ----------
 
@@ -1234,7 +1234,7 @@ note = "selecting a different AID no longer deselects the applet that was curren
 status = "patch"
 slice = ["cargo", "test", "-p", "rsk-piv", "-p", "rsk-oath"]
 expect = "killed"
-note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:356-359. The OATH site joined with bcdDevice 0x09ED, when a YubiKey 5.8.0 was measured keeping an OATH VALIDATE through a re-SELECT too: reverting it is killed by crates/rsk-oath/src/reselect_tests.rs."
+note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:357-360. The OATH site joined with bcdDevice 0x09ED, when a YubiKey 5.8.0 was measured keeping an OATH VALIDATE through a re-SELECT too: reverting it is killed by crates/rsk-oath/src/reselect_tests.rs."
 
 [[comutant.BugReselectResetsStatus.site]]
 file = "crates/rsk-piv/src/lib.rs"
@@ -1277,7 +1277,7 @@ status = "unreachable"
 evidence = """the applets' deselect is redundant with their own fresh SELECT, so
 removing it from the ICC power transition changes nothing observable. Three
 applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:398-400
-(sess.reset), crates/rsk-openpgp/src/lib.rs:338-340 (reset_session), crates/rsk-oath/src/lib.rs:1166-1173
+(sess.reset), crates/rsk-openpgp/src/lib.rs:339-341 (reset_session), crates/rsk-oath/src/lib.rs:1166-1173
 (validated + otp_pin_verified) — and all three ALSO re-lock in select on a
 select that is not a re-SELECT: piv and openpgp on `if !reselect`, oath by
 recomputing `validated = !code_set` there and clearing otp_pin_verified on every
@@ -1495,7 +1495,7 @@ pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) ->
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "PUT DATA C4 taken off PW3: a user status clears the one-shot flag and then signs for ever on a single PW1 VERIFY — BugSigPinNotSpent's requirement removed from underneath rather than through the door it watches. BOTH layers, because C4 is double-gated: the model's own comment names `write_authorized` (called at crates/rsk-openpgp/src/lib.rs:261-263) as the guard, and widening only put_pw_status's inner restatement left the wire command still answering 6982 — a kill that measured a defence in depth rather than the modelled defect. Its sibling BugUserStatusOpensAdmin widens the same function's whole else-arm; this one widens the C4 case alone, which is the door PgpSetPwStatus watches."
+note = "PUT DATA C4 taken off PW3: a user status clears the one-shot flag and then signs for ever on a single PW1 VERIFY — BugSigPinNotSpent's requirement removed from underneath rather than through the door it watches. BOTH layers, because C4 is double-gated: the model's own comment names `write_authorized` (called at crates/rsk-openpgp/src/lib.rs:262-264) as the guard, and widening only put_pw_status's inner restatement left the wire command still answering 6982 — a kill that measured a defence in depth rather than the modelled defect. Its sibling BugUserStatusOpensAdmin widens the same function's whole else-arm; this one widens the C4 case alone, which is the door PgpSetPwStatus watches."
 
 [comutant.BugPivChangeResetsStatus]
 status = "patch"

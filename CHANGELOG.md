@@ -682,6 +682,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **OpenPGP's DEK and sealed keys are typed** — refactor; nothing a host sees
+  changes. `rsk-openpgp`'s DEK load and its unseal write only into a
+  `rsk_secret::Secret`, the DEK's split keys and the AES key are handed out in
+  `Secret`s, and every DEK, staged DEK record, key-data and sealed-blob buffer
+  it wiped by hand is one, wiped in place where the hand wipes were and on
+  every other exit — which now includes a failed DEK load in six callers and
+  a staged DEK's early return after an unauthenticated decrypt. Six functions
+  that wrapped their body in a closure only so the wipe would run after a `?`
+  are plain code again. The `Session`'s PIN-derived keys keep their bare
+  wipes in `reset` and `Drop` under an `#[expect]`. The crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A28 → 0x0A29.
+
 - **PIV's keys and sealed plaintext are typed** — refactor; nothing a host
   sees changes. `rsk-piv`'s unseal writes only into a `rsk_secret::Secret`,
   and the seal key, the sealing blob, every unsealed key buffer, the

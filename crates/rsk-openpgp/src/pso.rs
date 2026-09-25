@@ -10,7 +10,6 @@ use rsk_fs::{Fs, Storage};
 use rsk_sdk::{Apdu, Sw};
 
 use rsk_crypto::aes::{Mode, aes_decrypt, aes_encrypt};
-use zeroize::Zeroize;
 
 use crate::consts::*;
 use crate::importdata::tag_len;
@@ -160,34 +159,29 @@ fn aes_pso<S: Storage>(
     data: &[u8],
     out: &mut [u8],
 ) -> Result<usize, Sw> {
-    let (mut key, klen) = load_aes_key(dev, fs, sess)?;
+    let (key, klen) = load_aes_key(dev, fs, sess)?;
+    let key = &key.expose()[..klen];
     let iv = [0u8; 16];
-    let r = (|| {
-        if encipher {
-            // Input = plaintext (the whole body, block-aligned — the card pads
-            // nothing). Output = 0x02 || AES-CBC(plaintext).
-            if data.is_empty() || !data.len().is_multiple_of(16) || out.len() < data.len() + 1 {
-                return Err(Sw::WRONG_LENGTH);
-            }
-            out[0] = 0x02;
-            out[1..=data.len()].copy_from_slice(data);
-            aes_encrypt(&key[..klen], &iv, Mode::Cbc, &mut out[1..=data.len()])
-                .map_err(|_| Sw::EXEC_ERROR)?;
-            Ok(data.len() + 1)
-        } else {
-            // Input = 0x02 || ciphertext (block-aligned). Output = plaintext.
-            let ct = &data[1..];
-            if ct.is_empty() || !ct.len().is_multiple_of(16) || out.len() < ct.len() {
-                return Err(Sw::WRONG_LENGTH);
-            }
-            out[..ct.len()].copy_from_slice(ct);
-            aes_decrypt(&key[..klen], &iv, Mode::Cbc, &mut out[..ct.len()])
-                .map_err(|_| Sw::EXEC_ERROR)?;
-            Ok(ct.len())
+    if encipher {
+        // Input = plaintext (the whole body, block-aligned — the card pads
+        // nothing). Output = 0x02 || AES-CBC(plaintext).
+        if data.is_empty() || !data.len().is_multiple_of(16) || out.len() < data.len() + 1 {
+            return Err(Sw::WRONG_LENGTH);
         }
-    })();
-    key.zeroize();
-    r
+        out[0] = 0x02;
+        out[1..=data.len()].copy_from_slice(data);
+        aes_encrypt(key, &iv, Mode::Cbc, &mut out[1..=data.len()]).map_err(|_| Sw::EXEC_ERROR)?;
+        Ok(data.len() + 1)
+    } else {
+        // Input = 0x02 || ciphertext (block-aligned). Output = plaintext.
+        let ct = &data[1..];
+        if ct.is_empty() || !ct.len().is_multiple_of(16) || out.len() < ct.len() {
+            return Err(Sw::WRONG_LENGTH);
+        }
+        out[..ct.len()].copy_from_slice(ct);
+        aes_decrypt(key, &iv, Mode::Cbc, &mut out[..ct.len()]).map_err(|_| Sw::EXEC_ERROR)?;
+        Ok(ct.len())
+    }
 }
 
 /// Parse `A6 { 7F49 { 86 <point> } }` and return the `0x86` value (the peer's

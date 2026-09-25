@@ -11,7 +11,7 @@
 //! passwords for exactly that purpose. A card that stored the DO and nothing else
 //! answered `63Cx` to both references until they blocked (#104).
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::Device;
 use rsk_fs::{Fs, Storage};
@@ -161,11 +161,11 @@ pub fn put_kdf<S: Storage>(
         Setting::On { pw1, pw3 } => (pw1, pw3),
     };
     // One open for both copies: `EF_DEK_PW1` and `EF_DEK_PW3` hold the same key.
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     if let Err(sw) = pin::load_dek(dev, fs, sess, &mut dek) {
         // `decrypt_with_aad` writes the plaintext before it checks the tag, so a
         // refused open can still have left the DEK in this buffer.
-        dek.zeroize();
+        dek.wipe();
         return sw;
     }
     let result = (|| {
@@ -175,15 +175,15 @@ pub fn put_kdf<S: Storage>(
         // references so that window is one append wide: once the DO and PW3 agree,
         // the admin can simply re-run the command and the rest heals.
         fs.put(EF_KDF, data).map_err(|_| Sw::MEMORY_FAILURE)?;
-        let pw3_session = pin::reseed_pin(dev, fs, rng, EF_PW3, pw3, &dek)?;
-        let pw1_session = pin::reseed_pin(dev, fs, rng, EF_PW1, pw1, &dek)?;
+        let pw3_session = pin::reseed_pin(dev, fs, rng, EF_PW3, pw3, dek.expose())?;
+        let pw1_session = pin::reseed_pin(dev, fs, rng, EF_PW1, pw1, dek.expose())?;
         // The DO carries a salt for the resetting code (tag `85`) but no initial
         // hash for it, so an RC set under the old regime can only be deactivated —
         // `gpg` would send its KDF output to a verifier holding the raw value.
         pin::clear_reset_code(fs, sess)?;
         Ok((pw1_session, pw3_session))
     })();
-    dek.zeroize();
+    dek.wipe();
     match &result {
         // The access statuses stand, as they do on a YubiKey; only the session
         // keys they carry are replaced. See `Session::adopt_reseeded`.

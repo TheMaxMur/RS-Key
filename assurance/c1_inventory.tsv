@@ -142,9 +142,9 @@ open_channel_key	crates/rsk-fido/src/vendor.rs:531	30	decides	D2	checks the Poly
 serial_name	crates/rsk-oath/src/lib.rs:232	12	decides	D2	the 8-byte id goes out in the UNauthenticated SELECT (lib.rs:1242) and serves as ykman's PBKDF2 salt: a one-way sha256 of serial_hash, which, handed out directly, would reveal the root identifier	-
 otp_pin_record_v1	crates/rsk-oath/src/lib.rs:1031	9	decides	D4	builds the gate record itself — the PIN verifier and the full MAX_OTP_COUNTER budget; the three sites (set/change/unblock) raise the budget with exactly this record	SEC-LAT-003
 parse_exact	crates/rsk-oath/src/lib.rs:1884	18	decides	D5	strict positional grammar is the only thing that separates "73 00" = clear the access code (lib.rs:337) from a body with a key and no proof: an extra byte after the tag is 6A80 here, not a deletion of the code	SEC-SEAM-006,SEC-POL-004
-stage_dek	crates/rsk-openpgp/src/pin.rs:500	37	decides	D2	derives the session key from the new PIN and re-seals the DEK under it into the stage slot; the rescrub re-arm (pin.rs:518) is also here, on the FIRST append of the sequence, otherwise a reset has time to pass over unwiped copies	-
-reseed_pin	crates/rsk-openpgp/src/pin.rs:566	30	decides	D4	makes new the reference value of PW1/PW3 and gives back the attempt budget (pin_reset_retries) without comparing A SINGLE old value — the authority rests entirely with the caller	SEC-LAT-003
-rewrap_dek	crates/rsk-openpgp/src/pin.rs:785	23	decides	D2	derives the session key from the PIN and re-seals the DEK under it: after it, the DEK opens with the new PIN and stops opening with the old one	-
+stage_dek	crates/rsk-openpgp/src/pin.rs:530	37	decides	D2	derives the session key from the new PIN and re-seals the DEK under it into the stage slot; the rescrub re-arm (pin.rs:518) is also here, on the FIRST append of the sequence, otherwise a reset has time to pass over unwiped copies	-
+reseed_pin	crates/rsk-openpgp/src/pin.rs:602	30	decides	D4	makes new the reference value of PW1/PW3 and gives back the attempt budget (pin_reset_retries) without comparing A SINGLE old value — the authority rests entirely with the caller	SEC-LAT-003
+rewrap_dek	crates/rsk-openpgp/src/pin.rs:821	23	decides	D2	derives the session key from the PIN and re-seals the DEK under it: after it, the DEK opens with the new PIN and stops opening with the old one	-
 serial_str10	crates/rsk-otp/src/lib.rs:364	11	marshals	M	hex expansion of the public serial into the 10 bytes of the challenge block	-
 status_bytes	crates/rsk-otp/src/lib.rs:376	24	marshals	M	projection of the stored slot state into the report (valid/touch/seq); reads through the COLLAPSING read_slot_m, and that is correct — no gate hangs on this report, the touch itself is spent on the ticket path	-
 hid_status_frame	crates/rsk-otp/src/lib.rs:410	7	marshals	M	wraps status_bytes in the 8-byte frame of a keyboard GET_REPORT	-
@@ -452,30 +452,30 @@ default	crates/rsk-openpgp/src/pin.rs:43	3	marshals	M	Self::new(), one expressio
 new	crates/rsk-openpgp/src/pin.rs:49	16	decides	D4	initial access: every has_pw* cleared, the MSE slots at DEC/AUT, the session keys zeroed	SEC-SEAM-002
 adopt_reseeded	crates/rsk-openpgp/src/pin.rs:66	13	decides	D2	replaces the session keys under the standing status — changes which DEK opens, without touching the gate	-
 reset	crates/rsk-openpgp/src/pin.rs:80	16	decides	D4	deselect clears all four access statuses and zeroes the session keys	SEC-SEAM-002
-drop	crates/rsk-openpgp/src/pin.rs:99	5	decides	D2	zeroes the three session keys — the only thing that removes the DEK opener from RAM	-
-ct_eq	crates/rsk-openpgp/src/pin.rs:106	4	decides	D5	constant-time comparison of the verifier is the very non-literal predicate the gate rests on	-
-spend_pin_retry	crates/rsk-openpgp/src/pin.rs:111	39	decides	D4	spends an attempt BEFORE the comparison and re-reads the counter: without the re-read, a write that did not land yielded guesses at one per power cycle	SEC-LAT-001,SEC-LAT-002
-pin_reset_retries	crates/rsk-openpgp/src/pin.rs:151	23	decides	D4	raises the budget to the maximum; force raises a blocked counter too	SEC-LAT-003,SEC-LAT-001
-set_pin_retry_counter	crates/rsk-openpgp/src/pin.rs:175	15	decides	D4	sets the counter to an explicit value, with zero deactivating the reset code	SEC-LAT-003
-clear_access_status	crates/rsk-openpgp/src/pin.rs:191	14	decides	D4	clears the status of the compared reference by fid, not by p2, otherwise a wrong RC would drop PW1.81	SEC-SEAM-002
-check_pin	crates/rsk-openpgp/src/pin.rs:206	98	decides	D1	the whole gate: the lockout floor, the spend, the comparison, the kbase fallback and the raising of exactly its own latch	SEC-LAT-001,SEC-LAT-002,SEC-SEAM-002
-migrate_pin_kbase	crates/rsk-openpgp/src/pin.rs:307	64	decides	D3	re-seals the DEK and the verifier under the OTP generation, gating both writes on Ok from the re-arm	SEC-BOOT-001
-load_dek	crates/rsk-openpgp/src/pin.rs:372	61	decides	D2	selects the DEK copy by the standing status and decrypts it into the caller's buffer	-
-stage_fid	crates/rsk-openpgp/src/pin.rs:434	9	marshals	M	the address table of the stage slot, carries no permission	-
-staged_is_for	crates/rsk-openpgp/src/pin.rs:444	7	decides	D5	one guard for the commit and for the recovery: its refusal is the only thing that keeps a short blob from being written over the live copy	-
-recover_staged_dek	crates/rsk-openpgp/src/pin.rs:452	47	decides	D3	completes a torn PIN update: decides whether to commit the stage, and zeroes the out buffer on refusal	SEC-STORE-006
-commit_staged_dek	crates/rsk-openpgp/src/pin.rs:538	21	decides	D3	moves the stage onto the target slot and clears the stage, having checked the record with the same guard	-
-pw_fid	crates/rsk-openpgp/src/pin.rs:560	5	marshals	M	0x1000|p2, pure address arithmetic; the mode enumeration sits in the callers	-
-clear_reset_code	crates/rsk-openpgp/src/pin.rs:597	37	decides	D3	tears down the four RC records (verifier, DEK, stage, counter) and answers Ok only if all four went through	SEC-LAT-003
-verify	crates/rsk-openpgp/src/pin.rs:635	66	decides	D1	P1=FF clears status only for a defined P2, the mode enumeration closes off cross-applet FIDs, the status query reads the latch before the counter	SEC-LAT-001,SEC-SEAM-002
-check_pin_len	crates/rsk-openpgp/src/pin.rs:702	19	decides	D5	length policy for the new value; its refusal is a refusal of the whole command before any write	-
-offered_len_impossible	crates/rsk-openpgp/src/pin.rs:722	21	decides	D5	decides whether to spend an attempt: an impossible length means 6A80, with no spend and before the lockout floor	SEC-LAT-002
-verifier_unusable	crates/rsk-openpgp/src/pin.rs:744	7	decides	D5	declares an unusable verifier blocked and thereby opens TERMINATE DF	SEC-LAT-001
-put_verifier	crates/rsk-openpgp/src/pin.rs:752	14	decides	D3	checks the length and only then writes the reference value	-
-store_verifier	crates/rsk-openpgp/src/pin.rs:767	17	decides	D3	stores the record [len,0x01,verifier] to flash — the reference value itself, with no length check	-
-change_pin	crates/rsk-openpgp/src/pin.rs:809	67	decides	D1	checks the old PIN, opens the DEK and writes stage/verifier/commit; an unsupported P2 is rejected before any write	SEC-LAT-002
-reset_retry	crates/rsk-openpgp/src/pin.rs:877	81	decides	D1	two doors to a new PW1 — reset code and PW3 — both raise the PW1 budget after their own secret is presented	SEC-LAT-003,SEC-LAT-001
-put_reset_code	crates/rsk-openpgp/src/pin.rs:960	45	decides	D1	requires PW3, seals the DEK under the new RC and enables its counter; empty data goes to clear_reset_code	SEC-LAT-003
+drop	crates/rsk-openpgp/src/pin.rs:111	5	decides	D2	zeroes the three session keys — the only thing that removes the DEK opener from RAM	-
+ct_eq	crates/rsk-openpgp/src/pin.rs:130	4	decides	D5	constant-time comparison of the verifier is the very non-literal predicate the gate rests on	-
+spend_pin_retry	crates/rsk-openpgp/src/pin.rs:135	39	decides	D4	spends an attempt BEFORE the comparison and re-reads the counter: without the re-read, a write that did not land yielded guesses at one per power cycle	SEC-LAT-001,SEC-LAT-002
+pin_reset_retries	crates/rsk-openpgp/src/pin.rs:175	23	decides	D4	raises the budget to the maximum; force raises a blocked counter too	SEC-LAT-003,SEC-LAT-001
+set_pin_retry_counter	crates/rsk-openpgp/src/pin.rs:199	15	decides	D4	sets the counter to an explicit value, with zero deactivating the reset code	SEC-LAT-003
+clear_access_status	crates/rsk-openpgp/src/pin.rs:215	14	decides	D4	clears the status of the compared reference by fid, not by p2, otherwise a wrong RC would drop PW1.81	SEC-SEAM-002
+check_pin	crates/rsk-openpgp/src/pin.rs:230	98	decides	D1	the whole gate: the lockout floor, the spend, the comparison, the kbase fallback and the raising of exactly its own latch	SEC-LAT-001,SEC-LAT-002,SEC-SEAM-002
+migrate_pin_kbase	crates/rsk-openpgp/src/pin.rs:331	64	decides	D3	re-seals the DEK and the verifier under the OTP generation, gating both writes on Ok from the re-arm	SEC-BOOT-001
+load_dek	crates/rsk-openpgp/src/pin.rs:402	61	decides	D2	selects the DEK copy by the standing status and decrypts it into the caller's buffer	-
+stage_fid	crates/rsk-openpgp/src/pin.rs:464	9	marshals	M	the address table of the stage slot, carries no permission	-
+staged_is_for	crates/rsk-openpgp/src/pin.rs:474	7	decides	D5	one guard for the commit and for the recovery: its refusal is the only thing that keeps a short blob from being written over the live copy	-
+recover_staged_dek	crates/rsk-openpgp/src/pin.rs:482	47	decides	D3	completes a torn PIN update: decides whether to commit the stage, and zeroes the out buffer on refusal	SEC-STORE-006
+commit_staged_dek	crates/rsk-openpgp/src/pin.rs:574	21	decides	D3	moves the stage onto the target slot and clears the stage, having checked the record with the same guard	-
+pw_fid	crates/rsk-openpgp/src/pin.rs:596	5	marshals	M	0x1000|p2, pure address arithmetic; the mode enumeration sits in the callers	-
+clear_reset_code	crates/rsk-openpgp/src/pin.rs:633	37	decides	D3	tears down the four RC records (verifier, DEK, stage, counter) and answers Ok only if all four went through	SEC-LAT-003
+verify	crates/rsk-openpgp/src/pin.rs:671	66	decides	D1	P1=FF clears status only for a defined P2, the mode enumeration closes off cross-applet FIDs, the status query reads the latch before the counter	SEC-LAT-001,SEC-SEAM-002
+check_pin_len	crates/rsk-openpgp/src/pin.rs:738	19	decides	D5	length policy for the new value; its refusal is a refusal of the whole command before any write	-
+offered_len_impossible	crates/rsk-openpgp/src/pin.rs:758	21	decides	D5	decides whether to spend an attempt: an impossible length means 6A80, with no spend and before the lockout floor	SEC-LAT-002
+verifier_unusable	crates/rsk-openpgp/src/pin.rs:780	7	decides	D5	declares an unusable verifier blocked and thereby opens TERMINATE DF	SEC-LAT-001
+put_verifier	crates/rsk-openpgp/src/pin.rs:788	14	decides	D3	checks the length and only then writes the reference value	-
+store_verifier	crates/rsk-openpgp/src/pin.rs:803	17	decides	D3	stores the record [len,0x01,verifier] to flash — the reference value itself, with no length check	-
+change_pin	crates/rsk-openpgp/src/pin.rs:851	67	decides	D1	checks the old PIN, opens the DEK and writes stage/verifier/commit; an unsupported P2 is rejected before any write	SEC-LAT-002
+reset_retry	crates/rsk-openpgp/src/pin.rs:919	81	decides	D1	two doors to a new PW1 — reset code and PW3 — both raise the PW1 budget after their own secret is presented	SEC-LAT-003,SEC-LAT-001
+put_reset_code	crates/rsk-openpgp/src/pin.rs:1002	45	decides	D1	requires PW3, seals the DEK under the new RC and enables its counter; empty data goes to clear_reset_code	SEC-LAT-003
 truncate_utf8	crates/rsk-fido/src/credential.rs:108	11	marshals	M	cuts the string at a UTF-8 boundary — length arithmetic and nothing more	-
 cred_blob_ok	crates/rsk-fido/src/credential.rs:157	7	marshals	M	length comparison against MAX_CREDBLOB_LENGTH; the record is written in both cases, the blob simply does not get into the box	-
 box_entries	crates/rsk-fido/src/credential.rs:165	8	marshals	M	counts the entries of the 0x07 sub-map for the CBOR header	-

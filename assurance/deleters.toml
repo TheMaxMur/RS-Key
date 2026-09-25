@@ -335,7 +335,7 @@ why = "wipe_oath's sweep, credentials first then the unlock records; OATH fids c
 
 [[site]]
 file = "crates/rsk-openpgp/src/init.rs"
-line = 206
+line = 204
 call = "let _ = fs.delete(EF_RC);"
 verb = "delete"
 answer = "discarded"
@@ -346,7 +346,7 @@ why = "scan_files runs neutralize_default_reset_code and it is idempotent, so a 
 
 [[site]]
 file = "crates/rsk-openpgp/src/init.rs"
-line = 207
+line = 205
 call = "let _ = fs.delete_key(EF_DEK_RC);"
 verb = "delete_key"
 answer = "discarded"
@@ -357,7 +357,7 @@ why = "the DEK half of the same idempotent repair, retried on the next boot rath
 
 [[site]]
 file = "crates/rsk-openpgp/src/lib.rs"
-line = 288
+line = 289
 call = "let _ = fs.delete(stor);"
 verb = "delete"
 answer = "discarded"
@@ -368,7 +368,7 @@ why = "one instance of the cardholder certificate: a public data object the host
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 423
+line = 453
 call = "let _ = fs.delete_key(stage);"
 verb = "delete_key"
 answer = "discarded"
@@ -379,7 +379,7 @@ why = "load_dek re-runs this retirement on every PIN use, so a failed one is ret
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 496
+line = 526
 call = "let _ = fs.delete_key(stage);"
 verb = "delete_key"
 answer = "discarded"
@@ -390,7 +390,7 @@ why = "the same retirement after a recovered update commits; the same next-load_
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 556
+line = 592
 call = "let _ = fs.delete_key(stage);"
 verb = "delete_key"
 answer = "discarded"
@@ -401,7 +401,7 @@ why = "and after an ordinary staged commit. All three are the one record load_de
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 624
+line = 660
 call = "let verifier = fs.delete(EF_RC).is_ok();"
 verb = "delete"
 answer = "read"
@@ -412,7 +412,7 @@ why = "the RC verifier is what RESET RETRY P1=0 walks in through, and init's rep
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 625
+line = 661
 call = "let dek = fs.delete_key(EF_DEK_RC).is_ok();"
 verb = "delete_key"
 answer = "read"
@@ -423,7 +423,7 @@ why = "the DEK sealed under that reset code. A survivor of any of the three leav
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 626
+line = 662
 call = "let staged = fs.delete_key(EF_DEK_STAGE_RC).is_ok();"
 verb = "delete_key"
 answer = "read"
