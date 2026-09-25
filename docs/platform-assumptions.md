@@ -153,7 +153,7 @@ That price is worth stating for the `unsafe` rows, because the input is a whole 
 | `PLAT-TIMER-001` | `4f2b659` | **stale** | `Cargo.lock`, `firmware/Cargo.toml`, `firmware/src/main.rs` | `PLAT-TIMER-003` |
 | `PLAT-TRNG-001` | `578a924` | **stale** | `Cargo.lock`, `firmware/src/handler.rs`, `firmware/src/main.rs` | `PLAT-TRNG-002` |
 | `PLAT-UNSAFE-001` | `709cb52` | **stale** | `firmware/src/main.rs` | — |
-| `PLAT-UNSAFE-009` | `709cb52` | **stale** | `firmware/Cargo.toml`, `firmware/build.rs` | — |
+| `PLAT-UNSAFE-009` | `709cb52` | **stale** | `crates/rsk-rsa/Cargo.toml`, `firmware/Cargo.toml`, `firmware/build.rs` | — |
 
 ## Where the accepted risks are published
 

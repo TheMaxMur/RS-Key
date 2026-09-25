@@ -32,7 +32,8 @@ project — see [README.md](README.md) and
   "Firmware changes bump bcdDevice".)
 - **`no_std`, no alloc.** If a firmware change needs a heap, it's the wrong
   change. Clippy runs `-D warnings`; justify any `#[allow]` inline at the
-  smallest scope.
+  smallest scope. The lint policy is `[workspace.lints]` in the root
+  `Cargo.toml`; a new crate opts in with `[lints] workspace = true`.
 - **`unsafe` and new dependencies are not free.** A new `unsafe` site needs an
   entry in [docs/unsafe.md](docs/unsafe.md); a new dependency needs a stated
   reason — it's joining an authenticator's trust base.

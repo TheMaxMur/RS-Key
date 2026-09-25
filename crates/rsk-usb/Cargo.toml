@@ -8,9 +8,8 @@ publish = false
 # Hardware-agnostic USB transport: CTAPHID and CCID. Generic over any
 # embassy-usb driver, so it builds without a HAL and stays host-testable.
 
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 [features]
 # `scripts/kani.sh` only, and empty here — this crate pulls no hashing

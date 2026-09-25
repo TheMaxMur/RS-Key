@@ -8,9 +8,8 @@ publish = false
 # The FIDO2 (CTAP2) + U2F (CTAP1) applet. Pure and host-testable: device seed /
 # serial / RNG and flash come from the caller.
 
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 [dependencies]
 minicbor = { workspace = true }

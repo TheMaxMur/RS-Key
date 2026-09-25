@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 # The certificates both card applets sign on the device: PIV's slot and F9
 # certificates and OpenPGP's attestation statements. It sits below them because

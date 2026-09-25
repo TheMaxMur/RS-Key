@@ -75,7 +75,8 @@ change is wrong.
 
 Clippy runs with `-D warnings` on both profiles. Don't silence a lint without
 saying why on the `#[allow]` line — and silence it at the smallest scope that
-works.
+works. The policy itself lives once, in `[workspace.lints]` of the root
+`Cargo.toml`; a new crate opts in with `[lints] workspace = true`.
 
 `unsafe` is the expensive keyword. There are currently two audited exception
 areas, both documented in [docs/unsafe.md](docs/unsafe.md); a new `unsafe`

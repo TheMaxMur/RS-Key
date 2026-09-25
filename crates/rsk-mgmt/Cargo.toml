@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 [features]
 # Restore the strict config-write authorization (today's shipped behaviour):
 # WRITE CONFIG 0x1C requires operator presence and RESET 0x1E stays unsupported.

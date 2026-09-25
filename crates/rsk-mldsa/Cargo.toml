@@ -13,8 +13,8 @@ publish = false
 # by-value `fips204` crate (~290 KiB) overflows it. `no_std`, no alloc, no unsafe.
 # The leaf math is byte-for-byte checked against NIST ACVP KATs (both parameter
 # sets, keygen/sign/verify) and by Kani proofs over the reductions and rounding.
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 [features]
 # `scripts/kani.sh` only, and empty here — this crate pulls no hashing

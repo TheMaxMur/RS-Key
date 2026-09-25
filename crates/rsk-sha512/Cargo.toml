@@ -14,9 +14,9 @@ publish = false
 # key-derivation ratchet, whose output IS every credential key, is unchanged).
 # NOTE: the speedup depends on staying SMALL — keep this crate at `opt-level = "s"`
 # (pinned in the workspace profile); `opt-level = 3` would unroll the compression
-# and reintroduce the cache thrash. `cfg(kani)` guards the proof harnesses.
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+# and reintroduce the cache thrash.
+[lints]
+workspace = true
 
 [dependencies]
 # digest 0.10 core_api: the block-buffer + trait surface `hmac`/`hkdf` build on.

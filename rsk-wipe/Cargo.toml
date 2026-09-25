@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 # RAM-only flash-erase utility — a Rust/embassy port of upstream
 # polhenarejos/pico-nuke (itself the pico-sdk flash_nuke example). Wipes all of
 # flash, leaves a "NUKE" eyecatcher, blinks the LED, and drops back to BOOTSEL.

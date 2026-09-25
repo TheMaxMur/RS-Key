@@ -16,8 +16,8 @@ build = "build.rs"
 # `d·G` (public-key derivation) both run through a width-4 comb — several× faster
 # than the crate's generic `mul_by_generator` on the in-order Cortex-M33, and
 # bit-identical to it (KAT-checked). ECDH stays on the crate (variable base).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 [dependencies]
 p256 = { workspace = true }

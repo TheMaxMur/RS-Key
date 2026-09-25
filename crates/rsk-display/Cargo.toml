@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 # The trusted display's *flow* — which screen is shown when, the PIN pad's state
 # machine, the browse modals, the Approve/Deny wait. `rsk-ui` already held the
 # *rendering* (host-tested + Kani); this held everything that decides what to

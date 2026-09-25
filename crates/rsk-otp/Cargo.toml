@@ -5,9 +5,8 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 # Yubico OTP applet: the CCID side (slot configure/update/swap/delete, status,
 # HMAC-SHA1 / Yubico-mode challenge-response) plus the keyboard HID interface —

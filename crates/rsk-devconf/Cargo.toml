@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 [features]
 # Exposes the record's raw vocabulary (`raw`) to other crates' tests and to the
 # fuzz targets, which seed records no accepted write can produce. Only

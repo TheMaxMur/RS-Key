@@ -547,6 +547,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **One lint policy for the workspace** — build, no behaviour change. Twenty
+  crates each carried the same `[lints.rust]` table (the `cfg(kani)` check-cfg)
+  and nine carried none; the table now lives once, as `[workspace.lints]` in the
+  root `Cargo.toml`, and all 29 members inherit it. It is where the lints the
+  crates must share will go. `bcdDevice` 0x0A0E → 0x0A0F.
+
 - **The firmware's tasks kept their state twice** — refactor, 38 KiB of RAM back.
   `ctap_task`, `ccid_task` and `worker_task` took the CTAPHID class, the CCID
   class and the worker by value, and an async function's future holds a by-value

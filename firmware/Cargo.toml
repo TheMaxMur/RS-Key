@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 # `executor-interrupt`: the high-priority InterruptExecutor that runs USB + the
 # transports so they stay responsive (streaming keepalives) while the worker on
