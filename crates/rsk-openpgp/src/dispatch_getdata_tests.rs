@@ -16,6 +16,7 @@
 //! (macOS CCID) artifact, not a firmware bug.
 
 use super::*;
+use crate::test_tlv::{child, children};
 use rsk_fs::storage::ram::RamStorage;
 use rsk_sdk::Dispatcher;
 
@@ -189,14 +190,18 @@ fn a_do_the_card_announces_room_for_reads_back_whole() {
         Sw::OK
     );
 
-    // C0 bytes 5-6 (certificate) and 7-8 (special DOs) are the announcement.
-    let (c0, sw) = dispatch(
+    // C0 bytes 5-6 (certificate) and 7-8 (special DOs) are the announcement, read
+    // where a host reads C0: inside 6E's 73, whole under an extended Le.
+    let (app_data, sw) = dispatch(
         &mut disp,
         &mut applets,
         &mut fs,
-        &[0x00, 0xCA, 0x00, 0xC0, 0x00],
+        &[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00],
     );
     assert_eq!(sw, Sw::OK);
+    let related = child(&children(&app_data), consts::EF_APP_DATA);
+    let discrete = child(&children(&related), consts::EF_DISCRETE_DO);
+    let c0 = child(&children(&discrete), consts::EF_EXT_CAP);
     let announced = u16::from_be_bytes([c0[4], c0[5]]) as usize;
     assert_eq!(announced, crate::files::MAX_DO_BYTES);
     assert_eq!(u16::from_be_bytes([c0[6], c0[7]]) as usize, announced);
@@ -335,14 +340,20 @@ fn exlen_info_announces_the_apdu_the_transport_carries() {
     );
 }
 
-/// The P1P2 values GET DATA serves. Everything else in the 16-bit space answers
+/// The P1P2 values GET DATA serves: a YubiKey 5.8.0's sweep of pages 00, 01, 5F
+/// and 7F, cell for cell (measured 2026-09-25). Everything else in the 16-bit space answers
 /// one status word — including the internal storage FIDs, which are addressable
 /// through P1P2 and used to answer `6982` where an absent tag answered `6A88`.
 const SERVED: &[u16] = &[
-    0x004F, 0x005B, 0x005E, 0x0065, 0x006E, 0x0073, 0x007A, 0x0093, 0x00C0, 0x00C1, 0x00C2, 0x00C3,
-    0x00C4, 0x00C5, 0x00C6, 0x00C7, 0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CD, 0x00CE, 0x00CF,
-    0x00D0, 0x00D6, 0x00D7, 0x00D8, 0x00D9, 0x00DE, 0x00F9, 0x00FA, 0x00FC, 0x0101, 0x0102, 0x0103,
-    0x0104, 0x5F2D, 0x5F35, 0x5F50, 0x5F52, 0x7F21, 0x7F66, 0x7F74,
+    0x004F, 0x005E, 0x0065, 0x006E, 0x007A, 0x00C4, 0x00D6, 0x00D7, 0x00D8, 0x00D9, 0x00DE, 0x00F9,
+    0x00FA, 0x00FC, 0x0101, 0x0102, 0x0103, 0x0104, 0x5F50, 0x5F52, 0x7F21, 0x7F66, 0x7F74,
+];
+
+/// The DOs only 65, 6E and 7A carry: GET DATA answers `6B00` to them, as the
+/// YubiKey does, and in-application SELECT still finds them.
+const NESTED: &[u16] = &[
+    0x005B, 0x0073, 0x0093, 0x00C0, 0x00C1, 0x00C2, 0x00C3, 0x00C5, 0x00C6, 0x00C7, 0x00C8, 0x00C9,
+    0x00CA, 0x00CB, 0x00CC, 0x00CD, 0x00CE, 0x00CF, 0x00D0, 0x5F2D, 0x5F35,
 ];
 
 /// The pages the sweep walks end to end: every page carrying a served DO, plus
@@ -424,7 +435,7 @@ fn get_data_answers_one_status_word_for_every_do_it_does_not_serve() {
             // ungated for SELECT on both sides — it selects, it does not read.
             let sel = [0x00, 0xA4, 0x00, 0x00, 0x02, (tag >> 8) as u8, tag as u8];
             let sw = dispatch(disp, applets, fs, &sel).1;
-            let want = if SERVED.contains(&tag) {
+            let want = if SERVED.contains(&tag) || NESTED.contains(&tag) {
                 Sw::OK
             } else {
                 Sw::REFERENCE_NOT_FOUND

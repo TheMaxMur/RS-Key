@@ -23,7 +23,7 @@ fn algo_default_is_rsa2k() {
         w.build(EF_ALGO_SIG)
     };
     // emit_algo always self-writes the tag + length (C1 06) ahead of the
-    // value; GET DATA strips the outer tag for FUNC DOs. A reset YubiKey 5.8.0
+    // value, the child 73 carries. A reset YubiKey 5.8.0
     // reports 01 0800 0011 00: e is 17 bits long.
     assert_eq!(
         &out[..n],

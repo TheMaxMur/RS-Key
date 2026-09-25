@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+use crate::test_tlv::{child, children};
 use rsk_fs::storage::ram::RamStorage;
 
 struct CountRng(u8);
@@ -44,6 +45,24 @@ fn run<S: Storage>(app: &mut OpenpgpApplet, fs: &mut Fs<S>, raw: &[u8]) -> (Vec<
     let mut res = ResBuf::new(&mut buf);
     let sw = app.process(&apdu, fs, &mut res);
     (res.as_slice().to_vec(), sw)
+}
+
+/// `tag` read the only way GET DATA serves it, inside its template: 65, 7A, or
+/// 6E's 73.
+fn nested<S: Storage>(app: &mut OpenpgpApplet, fs: &mut Fs<S>, tag: u16) -> Vec<u8> {
+    let template = match tag {
+        consts::EF_CH_NAME | consts::EF_LANG_PREF | consts::EF_SEX => consts::EF_CH_DATA,
+        consts::EF_SIG_COUNT => consts::EF_SEC_TPL,
+        _ => consts::EF_APP_DATA,
+    };
+    let get = [0x00, consts::INS_GET_DATA, 0x00, template as u8, 0x00];
+    let (raw, sw) = run(app, fs, &get);
+    assert_eq!(sw, Sw::OK);
+    let mut kids = children(&child(&children(&raw), template));
+    if template == consts::EF_APP_DATA {
+        kids = children(&child(&kids, consts::EF_DISCRETE_DO));
+    }
+    child(&kids, tag)
 }
 
 /// [`run`] with a response buffer that can hold `MAX_DO_BYTES` — `SCRATCH` is
@@ -194,8 +213,7 @@ fn get_challenge_serves_exactly_what_do_c0_announces() {
     let presence = RefCell::new(crate::AlwaysConfirm);
     let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
 
-    let (c0, sw) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC0]);
-    assert_eq!(sw, Sw::OK);
+    let c0 = nested(&mut app, &mut fs, consts::EF_EXT_CAP);
     let announced = ((c0[2] as usize) << 8) | c0[3] as usize;
     assert_eq!(announced, files::MAX_CHALLENGE_BYTES);
 
@@ -2077,12 +2095,7 @@ fn put_data_caps_the_cardholder_dos() {
                 Sw::WRONG_DATA,
                 "PUT {p1:02X}{p2:02X} len {n}"
             );
-            let (body, sw) = run(
-                &mut app,
-                &mut fs,
-                &[0x00, consts::INS_GET_DATA, p1, p2, 0x00],
-            );
-            assert_eq!(sw, Sw::OK);
+            let body = nested(&mut app, &mut fs, u16::from_be_bytes([p1, p2]));
             assert_eq!(body, good, "PUT {p1:02X}{p2:02X} len {n} altered the DO");
         }
         // Clearing the DO is still allowed — this is a cap, not a fixed width.
@@ -2126,9 +2139,15 @@ fn put_data_polices_the_fixed_length_dos() {
                     Sw::WRONG_DATA,
                     "PUT {tag:#04X} len {n}"
                 );
-                // …and the refusal changed nothing.
-                let (body, sw) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, tag]);
-                assert_eq!(sw, Sw::OK);
+                // …and the refusal changed nothing: its slice of C5/C6/CD, the
+                // only place it reads.
+                let (all, i) = match tag {
+                    0xC7..=0xC9 => (consts::EF_FP, tag - 0xC7),
+                    0xCA..=0xCC => (consts::EF_CA_FP, tag - 0xCA),
+                    _ => (consts::EF_TS_ALL, tag - 0xCE),
+                };
+                let at = i as usize * want;
+                let body = nested(&mut app, &mut fs, all)[at..at + want].to_vec();
                 assert_eq!(body, good, "PUT {tag:#04X} len {n} altered the DO");
             }
         }
@@ -2148,11 +2167,11 @@ fn put_data_polices_the_fixed_length_dos() {
     // What was written lands in the right slice of each aggregate, and the
     // attestation key's slice, not written here, reads as zeroes.
     let slices = |n| [vec![0xB0u8; consts::KEY_SLOTS * n], vec![0; n]].concat();
-    let (c5, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC5]);
+    let c5 = nested(&mut app, &mut fs, consts::EF_FP);
     assert_eq!(c5, slices(consts::FP_LEN));
-    let (c6, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC6]);
+    let c6 = nested(&mut app, &mut fs, consts::EF_CA_FP);
     assert_eq!(c6, slices(consts::FP_LEN));
-    let (cd, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xCD]);
+    let cd = nested(&mut app, &mut fs, consts::EF_TS_ALL);
     assert_eq!(cd, slices(consts::TS_LEN));
 }
 

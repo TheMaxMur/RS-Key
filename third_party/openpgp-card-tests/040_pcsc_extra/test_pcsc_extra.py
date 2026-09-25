@@ -182,6 +182,36 @@ def tlv(tag, value):
     return bytes([tag]) + ber_len(len(value)) + value
 
 
+def ber_children(data):
+    """Each `tag: value` of a BER-TLV run, two-byte tags (5F52, 7F66) included."""
+    out, i = {}, 0
+    data = bytes(data)
+    while i < len(data):
+        tag = data[i]
+        i += 1
+        if tag & 0x1F == 0x1F:
+            tag = (tag << 8) | data[i]
+            i += 1
+        ln = data[i]
+        i += 1
+        if ln == 0x81:
+            ln = data[i]
+            i += 1
+        elif ln == 0x82:
+            ln = (data[i] << 8) | data[i + 1]
+            i += 2
+        out[tag] = data[i:i + ln]
+        i += ln
+    return out
+
+
+def discrete_dos(card):
+    """73's DOs, read where a host reads C5/C6/CD: inside 6E. GET DATA of any of
+    them alone is 6B00, as on a YubiKey 5.8.0."""
+    app = expect(card, INS_GET_DATA, 0x00, 0x6E, le=0)
+    return ber_children(ber_children(ber_children(app)[0x6E])[0x73])
+
+
 def authenticate_piv_management(card):
     pytest.importorskip("cryptography")
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -256,12 +286,12 @@ def test_openpgp_status_objects(card):
 
 def test_openpgp_fixed_width_status_dos_are_zero_padded(card):
     verify_pw3(card)
-    # C5/C6/CD republish C7..C9, CA..CC and CE..D0 as fixed-width slices, so a
-    # value of any other length would read back as two different things: itself
-    # standalone, and a truncation inside the aggregate. The card refuses the
-    # write instead and leaves the DO untouched — a YubiKey 5.7.4 does the same
-    # at every length, including the empty one, which is why this asserts the
-    # refusal rather than a zero-pad the card never performs.
+    # C5/C6/CD republish C7..C9, CA..CC and CE..D0 as fixed-width slices, the
+    # only place they read, so a value of any other length could only come back
+    # cut or padded. The card refuses the write instead and leaves the DO
+    # untouched — a YubiKey 5.7.4 does the same at every length, including the
+    # empty one, which is why this asserts the refusal rather than a zero-pad the
+    # card never performs.
     for tag in (0xC7, 0xC8, 0xC9, 0xCA, 0xCB, 0xCC):
         for short in (b"\xAA", b"\xBB\xCC", b""):
             _, sw = raw(card, INS_PUT_DATA, 0x00, tag, short)
@@ -277,7 +307,7 @@ def test_openpgp_fixed_width_status_dos_are_zero_padded(card):
     fp1, fp3 = bytes(range(1, 21)), bytes(range(101, 121))
     assert card.cmd_put_data(0x00, 0xC7, fp1)
     assert card.cmd_put_data(0x00, 0xC9, fp3)
-    fp = card.cmd_get_data(0x00, 0xC5)
+    fp = discrete_dos(card)[0xC5]
     assert len(fp) == 80
     assert fp[:20] == fp1
     assert fp[40:60] == fp3
@@ -285,7 +315,7 @@ def test_openpgp_fixed_width_status_dos_are_zero_padded(card):
     ca1, ca3 = bytes(range(21, 41)), bytes(range(121, 141))
     assert card.cmd_put_data(0x00, 0xCA, ca1)
     assert card.cmd_put_data(0x00, 0xCC, ca3)
-    cafp = card.cmd_get_data(0x00, 0xC6)
+    cafp = discrete_dos(card)[0xC6]
     assert len(cafp) == 80
     assert cafp[:20] == ca1
     assert cafp[40:60] == ca3
@@ -293,7 +323,7 @@ def test_openpgp_fixed_width_status_dos_are_zero_padded(card):
     ts1, ts3 = b"\x00\x00\x00\x11", b"\x00\x00\x00\x33"
     assert card.cmd_put_data(0x00, 0xCE, ts1)
     assert card.cmd_put_data(0x00, 0xD0, ts3)
-    ts = card.cmd_get_data(0x00, 0xCD)
+    ts = discrete_dos(card)[0xCD]
     assert len(ts) == 16
     assert ts[:4] == ts1
     assert ts[8:12] == ts3

@@ -75,7 +75,7 @@ only record that it is broken.
 | File | Change |
 |---|---|
 | `pico-fido-tests/conftest.py` | filters the relying-party's allowed algorithms to those the installed python-fido2 can actually verify (the firmware can lead with ML-DSA-44, which older fido2 libraries parse but cannot check) |
-| `openpgp-card-tests/card_test_empty_card.py` | `test_key_attributes_1..3` save the attribute they read before asserting on it, not after. With the assertion a listed divergence the save never ran, and `test_091_reset_attr`'s three tests then PUT `None` and raised `TypeError` before a byte reached the card |
+| `openpgp-card-tests/card_test_empty_card.py` | `test_key_attributes_1..3` save the default attribute before their GET DATA and the attribute they read before asserting on it, not after. With the assertion or the read a listed divergence (a card answering `6B00` to C1 alone, as a YubiKey 5.8.0 does) the save never ran, and `test_091_reset_attr`'s three tests then PUT `None` and raised `TypeError` before a byte reached the card |
 | `pico-fido-tests/pico-fido/test_021_authenticate.py` | `test_option_up` / `test_option_uv` called `doGA(options=…)`; that helper is the WebAuthn-level one and takes no such argument, so both raised `TypeError`. They call `GA()` — the raw CTAP2 helper their neighbours use — with the credential named. Unreachable upstream, whose own getInfo omits `"up"` |
 
 ## Running them

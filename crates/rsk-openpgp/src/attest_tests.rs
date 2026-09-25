@@ -15,6 +15,7 @@ use x509_parser::public_key::PublicKey;
 
 use super::*;
 use crate::OpenpgpApplet;
+use crate::test_tlv::children;
 
 const SERIAL_ID: [u8; 8] = [0xAA, 0xBB, 0xCC, 0xDD, 5, 6, 7, 8];
 const P256: &[u8] = &[ALGO_ECDSA, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
@@ -218,22 +219,6 @@ fn yubico(n: u8) -> String {
 }
 
 const STANDARD_FOUR: [&str; 4] = ["2.5.29.19", "2.5.29.14", "2.5.29.35", "2.5.29.15"];
-
-/// Each child of a BER-TLV run, as `(tag, value)`.
-fn children(mut b: &[u8]) -> Vec<(u16, Vec<u8>)> {
-    let mut out = Vec::new();
-    while !b.is_empty() {
-        let (tag, mut pos) = if b[0] & 0x1F == 0x1F {
-            (u16::from_be_bytes([b[0], b[1]]), 2)
-        } else {
-            (b[0] as u16, 1)
-        };
-        let n = crate::importdata::tag_len(b, &mut pos).unwrap();
-        out.push((tag, b[pos..pos + n].to_vec()));
-        b = &b[pos + n..];
-    }
-    out
-}
 
 #[test]
 fn every_card_holds_an_attestation_key_and_its_root_from_the_first_boot() {
@@ -674,7 +659,15 @@ fn the_attestation_dos_answer_as_a_yubikey_does() {
                 Sw::WRONG_DATA,
                 "{tag:02X} short"
             );
-            let (all, _) = get(app, fs, aggregate);
+            let (app_data, sw) = get(app, fs, EF_APP_DATA);
+            assert_eq!(sw, Sw::OK);
+            let related = children(&children(&app_data)[0].1);
+            let dd = related.into_iter().find(|c| c.0 == EF_DISCRETE_DO).unwrap();
+            let all = children(&dd.1)
+                .into_iter()
+                .find(|c| c.0 == aggregate)
+                .unwrap()
+                .1;
             assert_eq!(all.len(), 4 * len);
             assert_eq!(all[3 * len..], value[..], "{tag:02X} in its aggregate");
             assert_eq!(get(app, fs, tag).1, Sw::WRONG_P1P2, "{tag:02X} read alone");

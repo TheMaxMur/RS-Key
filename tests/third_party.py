@@ -218,13 +218,12 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "::test_private_do_0103_read_fail_with_pw1_81": "a replaced PW1 does not drop the old PW1.82 latch; a YubiKey 5.7.4 keeps it too",
         "::test_private_do_0104_read_fail_without_auth": "a replaced PW1 does not drop the old PW3 latch; a YubiKey 5.7.4 keeps it too",
         "::test_private_do_0104_read_fail_with_pw1": "a replaced PW1 does not drop the old PW3 latch; a YubiKey 5.7.4 keeps it too",
-        # Gnuk's own capability bits. The pattern pins byte 1 to one of Gnuk's
-        # four values and the DO's shape to Gnuk's build; RS-Key advertises a
-        # different set (it has no secure messaging, a different maximum
-        # challenge, and its own DO lengths), so the string cannot match and
-        # nothing about the mismatch is a defect. The capabilities RS-Key does
-        # claim are pinned by its own tests, not by this one.
-        "test_000_initial_card.py::test_extended_capabilities": "the pattern pins Gnuk's own capability bits, which RS-Key does not claim",
+        # C0 read alone is 6B00, as on a YubiKey 5.8.0, where the suite skips this.
+        # Past that, the pattern pins byte 1 to one of Gnuk's four values and the
+        # DO's shape to Gnuk's build; RS-Key advertises a different set (no secure
+        # messaging, a different maximum challenge, its own DO lengths), so the
+        # string could not match either, and nothing about that is a defect.
+        "test_000_initial_card.py::test_extended_capabilities": "C0 is 6B00 read alone, as on a YubiKey 5.8.0, where the suite skips this; past it the pattern pins Gnuk's own capability bits",
         # The three `_ok_with_pw3` cells are NOT listed: they pass, but not
         # because PW3 has any authority over `0101`/`0103` — it does not, on this
         # card or on a YubiKey 5.7.4 (VERIFY 83 alone answers 6982 to both, each
@@ -264,17 +263,14 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_000_initial_card.py::test_public_key_1": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
         "test_000_initial_card.py::test_public_key_2": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
         "test_000_initial_card.py::test_public_key_3": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
-        # C5/C6/CD carry a fourth entry, the attestation key's, as inside a YubiKey
-        # 5.8.0's 6E. On a card it knows is a YubiKey the suite skips these three:
-        # there GET DATA C5/C6/CD alone is 6B00.
-        "test_000_initial_card.py::test_fingerprint_all": "C5 is four fingerprints, the attestation key's last, as in a YubiKey 5.8.0's 6E; the suite wants Gnuk's three",
-        "test_000_initial_card.py::test_ca_fingerprint_all": "C6 is four CA fingerprints, the attestation key's last, as in a YubiKey 5.8.0's 6E; the suite wants Gnuk's three",
-        "test_000_initial_card.py::test_timestamp_all": "CD is four generation times, the attestation key's last, as in a YubiKey 5.8.0's 6E; the suite wants Gnuk's three",
-        # RSA attributes carry a 17-bit exponent length, as a YubiKey's do; the suite
-        # takes Gnuk's 32 from a card it does not know is one.
-        "test_000_initial_card.py::test_key_attributes_1": "RSA-2048 reads 01 0800 0011 00, as on a YubiKey 5.8.0; the suite wants Gnuk's 0020 from a card it does not know is one",
-        "test_000_initial_card.py::test_key_attributes_2": "RSA-2048 reads 01 0800 0011 00, as on a YubiKey 5.8.0; the suite wants Gnuk's 0020 from a card it does not know is one",
-        "test_000_initial_card.py::test_key_attributes_3": "RSA-2048 reads 01 0800 0011 00, as on a YubiKey 5.8.0; the suite wants Gnuk's 0020 from a card it does not know is one",
+        # A DO nested in 6E answers GET DATA 6B00 on its own, as on a YubiKey 5.8.0,
+        # key or no key; the suite reads these one by one and skips each on a card
+        # it knows is a YubiKey. Each reason also names what fails past the read.
+        "test_000_initial_card.py::test_fingerprint_": "C5 and C7-C9 are 6B00 read alone, as on a YubiKey 5.8.0, where the suite skips this; past it `_all` wants Gnuk's three entries, C5 has four",
+        "test_000_initial_card.py::test_ca_fingerprint_": "C6 and CA-CC are 6B00 read alone, as on a YubiKey 5.8.0, where the suite skips this; past it `_all` wants Gnuk's three entries, C6 has four",
+        "test_000_initial_card.py::test_timestamp_": "CD and CE-D0 are 6B00 read alone, as on a YubiKey 5.8.0, where the suite skips this; past it `_all` wants Gnuk's three entries, CD has four",
+        "test_000_initial_card.py::test_key_attributes_": "C1-C3 are 6B00 read alone, as on a YubiKey 5.8.0, where the suite skips this; past it RSA-2048 reads 01 0800 0011 00, the suite wants Gnuk's 0020",
+        "test_091_reset_attr.py::Test_Reset_ATTRS::test_keyattr_reset_": "the PUT restores the attribute; C1-C3 read alone after it are 6B00, as on a YubiKey 5.8.0, where the suite skips the read; past it the card stores 0011 for the 0020 it was sent",
     },
     "ykman": {
         # OpenPGP 3.4 §7.2.2 answers a wrong password 63Cx, as RS-Key does; a YubiKey

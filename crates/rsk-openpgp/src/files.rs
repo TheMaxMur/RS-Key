@@ -187,6 +187,36 @@ pub fn source(fid: u16) -> DoSource {
     }
 }
 
+/// A DO that GET DATA does not read on its own: OpenPGP 3.4 §4.4.1 lists it only
+/// inside 65, 6E or 7A, or not at all (`C7`..`D0`, slices of `C5`/`C6`/`CD`), and a
+/// YubiKey 5.8.0 answers `6B00` to each, key or no key. The templates carry them.
+pub fn nested_only(fid: u16) -> bool {
+    matches!(
+        fid,
+        EF_CH_NAME
+            | EF_LANG_PREF
+            | EF_SEX
+            | EF_SIG_COUNT
+            | EF_DISCRETE_DO
+            | EF_EXT_CAP
+            | EF_ALGO_SIG
+            | EF_ALGO_DEC
+            | EF_ALGO_AUT
+            | EF_FP
+            | EF_CA_FP
+            | EF_TS_ALL
+            | EF_FP_SIG
+            | EF_FP_DEC
+            | EF_FP_AUT
+            | EF_FP_CA1
+            | EF_FP_CA2
+            | EF_FP_CA3
+            | EF_TS_SIG
+            | EF_TS_DEC
+            | EF_TS_AUT
+    )
+}
+
 /// The 8-digit device serial as 4 packed-BCD bytes, matching how a real YubiKey
 /// carries the serial in its OpenPGP AID (empirically `37 36 50 93` for device
 /// 37365093). Hosts render the OpenPGP card serial as raw hex, so BCD makes it

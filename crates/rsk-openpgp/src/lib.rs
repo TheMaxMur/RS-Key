@@ -636,6 +636,10 @@ mod serial_identity_tests;
 mod dying_storage;
 
 #[cfg(test)]
+#[path = "test_tlv.rs"]
+mod test_tlv;
+
+#[cfg(test)]
 #[path = "dispatch_getdata_tests.rs"]
 mod dispatch_getdata_tests;
 

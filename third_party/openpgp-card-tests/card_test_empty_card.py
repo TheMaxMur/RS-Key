@@ -207,8 +207,10 @@ def test_key_attributes_1(card):
     if card.is_yubikey:
         a = None
     else:
+        # RS-Key: saved before the read and again before the assertion, so
+        # test_091_reset_attr restores it either way — a 6B00 here raises in between
+        card.save_algo_attribute(1, KEY_ATTRIBUTES_RSA2K)
         a = get_data_object(card, 0xc1)
-        # RS-Key: saved before the assertion, so test_091_reset_attr restores it either way
         card.save_algo_attribute(1, a or KEY_ATTRIBUTES_RSA2K)
         assert a == None or a == b'\x01\x08\x00\x00\x20\x00' or a == b'\x16\x2b\x06\x01\x04\x01\xda\x47\x0f\x01'
     if not a:
@@ -221,8 +223,10 @@ def test_key_attributes_2(card):
     if card.is_yubikey:
         a = None
     else:
+        # RS-Key: saved before the read and again before the assertion, so
+        # test_091_reset_attr restores it either way — a 6B00 here raises in between
+        card.save_algo_attribute(2, KEY_ATTRIBUTES_RSA2K)
         a = get_data_object(card, 0xc2)
-        # RS-Key: saved before the assertion, so test_091_reset_attr restores it either way
         card.save_algo_attribute(2, a or KEY_ATTRIBUTES_RSA2K)
         assert a == None or a == b'\x01\x08\x00\x00\x20\x00' or a == b'\x12\x2b\x06\x01\x04\x01\x97\x55\x01\x05\x01'
     if not a:
@@ -235,8 +239,10 @@ def test_key_attributes_3(card):
     if card.is_yubikey:
         a = None
     else:
+        # RS-Key: saved before the read and again before the assertion, so
+        # test_091_reset_attr restores it either way — a 6B00 here raises in between
+        card.save_algo_attribute(3, KEY_ATTRIBUTES_RSA2K)
         a = get_data_object(card, 0xc3)
-        # RS-Key: saved before the assertion, so test_091_reset_attr restores it either way
         card.save_algo_attribute(3, a or KEY_ATTRIBUTES_RSA2K)
         assert a == None or a == b'\x01\x08\x00\x00\x20\x00' or a == b'\x16\x2b\x06\x01\x04\x01\xda\x47\x0f\x01'
     if not a:

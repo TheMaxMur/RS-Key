@@ -56,6 +56,8 @@ MODE_PW3 = 0x83
 
 DO_KDF = 0x00F9
 DO_KEY_INFO = 0x00DE
+DO_APP_DATA = 0x006E
+DO_DISCRETE = 0x0073
 DO_EXT_CAP = 0x00C0
 
 # `gpg`'s KDF_DATA_LENGTH_MIN / _MAX, and the KDF-off body it sends verbatim.
@@ -121,6 +123,26 @@ def fail(msg):
     sys.exit(1)
 
 
+def tlvs(b):
+    """Each `tag: value` of a BER-TLV run."""
+    out, i = {}, 0
+    while i < len(b):
+        tag = b[i]
+        i += 1
+        if tag & 0x1F == 0x1F:
+            tag = (tag << 8) | b[i]
+            i += 1
+        n = b[i]
+        i += 1
+        if n > 0x80:
+            k = n & 0x7F
+            n = int.from_bytes(bytes(b[i:i + k]), "big")
+            i += k
+        out[tag] = b[i:i + n]
+        i += n
+    return out
+
+
 def main():
     target = find_reader()
     if not target:
@@ -143,8 +165,15 @@ def main():
 
     # The DO is only offered because C0 byte 1 bit 1 says the card has it; if that
     # bit is ever cleared, `gpg` prints "not supported by this card" and every
-    # assertion below is about a command no host would send.
-    cap, _, _ = tx(get_data(DO_EXT_CAP), "GET extended capabilities (C0)")
+    # assertion below is about a command no host would send. C0 is read where gpg
+    # reads it, inside 6E's 73: GET DATA C0 alone is 6B00, as on a YubiKey 5.8.0.
+    app, sw1, sw2 = tx(get_data(DO_APP_DATA), "GET application related data (6E)", None)
+    while sw1 == 0x61:
+        more, sw1, sw2 = conn.transmit([0x00, 0xC0, 0x00, 0x00, sw2])
+        app += more
+    if (sw1, sw2) != (0x90, 0x00):
+        fail(f"6E: {sw1:02X}{sw2:02X}")
+    cap = tlvs(tlvs(tlvs(app)[DO_APP_DATA])[DO_DISCRETE])[DO_EXT_CAP]
     if not cap or not cap[0] & 0x01:
         fail(f"C0 byte 1 does not announce KDF-DO support: {toHexString(cap)}")
 

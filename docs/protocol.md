@@ -558,9 +558,9 @@ The only RS-Key-specific bytes a config tool needs are §6 (Management config),
 
 ### 5.1 Where a standard command answers differently
 
-Three places where a host that works against other authenticators sees a status
+Four places where a host that works against other authenticators sees a status
 byte it may not expect. All are spec-permitted strictness, not extensions, and
-the third matches the reference this project is measured against.
+the second and the last match the reference this project is measured against.
 
 **`authenticatorReset` has a power-up window.** CTAP 2.1 §6.6 lets an
 authenticator with no display refuse a reset that does not follow a fresh
@@ -606,6 +606,15 @@ three control bytes; RS-Key accepts exactly those and answers `6A86`
 | `03` | enforce-user-presence-and-sign | touch required; TUP flag set in the response |
 | `07` | check-only | valid handle → `6985`, unknown handle → `6A80`; never touches |
 | `08` | don't-enforce-user-presence-and-sign | signs with no touch, TUP flag clear; **rejected with `6A86` under `--features strict-up`**, which promises a touch on every assertion |
+
+**OpenPGP GET DATA reads a nested DO only through its template.** OpenPGP 3.4
+§4.4.1 lists `5B`, `5F2D` and `5F35` only inside `65`, `93` only inside `7A`, and
+`73` — with the `C0`–`C3`, `C5`, `C6` and `CD` it carries — only inside `6E`; the
+fixed-width `C7`–`D0` are readable only as the slices of `C5`/`C6`/`CD`. Each of
+those 21 answers `6B00` to a GET DATA of its own, and PUT DATA still takes the
+writable ones. A YubiKey 5.8.0 answers the same, with keys and a name set. The
+Gnuk-derived suite in `third_party/openpgp-card-tests` reads them one by one; a
+host written that way has to read the template instead.
 
 ---
 

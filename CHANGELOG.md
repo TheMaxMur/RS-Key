@@ -65,6 +65,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP GET DATA answers `6B00` to a DO only a template carries, as a YubiKey
+  5.8.0 does with keys and a name set: `5B`, `5F2D` and `5F35` (inside `65`),
+  `93` (inside `7A`), and `73`, `C0`–`C3`, `C5`, `C6`, `CD` and the `C7`–`D0`
+  slices (inside `6E`). RS-Key served all 21 on their own. The templates carry
+  them as before and PUT DATA still takes the writable ones; a host that read,
+  say, `C5` by itself must read `6E` instead ([protocol](docs/protocol.md)).
+  `bcdDevice` 0x0A07 → 0x0A08.
+
 - OpenPGP GENERATE and IMPORT read the whole control-reference template, as a
   YubiKey 5.8.0 does. They read its first byte only, so the template ykman uses
   for the attestation key, `B6 { 84 01 81 }`, named the signature slot: an IMPORT

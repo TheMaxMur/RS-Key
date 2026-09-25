@@ -4,7 +4,7 @@
 //! GET DATA / GET NEXT DATA: build the DO ([`DoWriter`]) and, for a PRIMITIVE
 //! non-flash DO whose whole response is a single TLV, strip the outer
 //! tag+length — returning the bare value, as `gpg`/`opensc` expect. A
-//! CONSTRUCTED template DO (6E/65/73/7A/FA) keeps its tag+length: real
+//! CONSTRUCTED template DO (6E/65/7A/FA) keeps its tag+length: real
 //! OpenPGP cards return it wrapped, `gpg` tolerates it, and ykman/yubikit
 //! REQUIRE it (`ApplicationRelatedData.parse` does `Tlv.unpack(0x6E, …)`).
 
@@ -13,7 +13,7 @@ use rsk_sdk::Sw;
 
 use crate::consts::*;
 use crate::dobj::DoWriter;
-use crate::files::{DoSource, source};
+use crate::files::{DoSource, nested_only, source};
 
 /// If `buf` is exactly one BER-TLV, return its header length (tag + length
 /// bytes); otherwise 0.
@@ -67,6 +67,7 @@ pub fn get_data<S: Storage>(
         // does serve. Telling the two apart located every internal EF for a
         // caller holding no credential.
         DoSource::None | DoSource::Internal => return (0, Sw::WRONG_P1P2),
+        _ if nested_only(fid) => return (0, Sw::WRONG_P1P2),
         _ => {}
     }
     // §5's access table gives the private DOs two different owners and no admin
@@ -88,8 +89,7 @@ pub fn get_data<S: Storage>(
         w.build(fid)
     };
     // `build` reports a DO's full stored length, which can exceed `out` when an
-    // over-long object was stored (Fs::read returns the value's full length, the
-    // Func(AlgoInfo) C1/C2/C3 arm returns fs.size() directly). PUT DATA bounds
+    // over-long object was stored (a Flash DO reports its fs.size()). PUT DATA bounds
     // every write at MAX_DO_BYTES = out.len(), so reaching here means a value an
     // older build wrote through the wider chaining buffer. Refuse rather than
     // slice: a short body under `9000` is indistinguishable from a complete one,
@@ -100,7 +100,7 @@ pub fn get_data<S: Storage>(
     // GET DATA returns a PRIMITIVE DO's bare value (gpg/opensc want the value,
     // not its tag+length), but a CONSTRUCTED template DO keeps its outer
     // tag+length. The BER constructed bit (0x20 on the first tag byte) is the
-    // discriminator: 6E/65/73/7A/FA all carry it, the primitives (4F/C1/C4/DE…)
+    // discriminator: 6E/65/7A/FA all carry it, the primitives (4F/C4/DE…)
     // do not. Real cards wrap the templates, gpg tolerates either, but ykman's
     // `ApplicationRelatedData.parse` does `Tlv.unpack(0x6E, response)` and an
     // unwrapped `4F …` makes `ykman openpgp info` fail (`Incorrect TLV
