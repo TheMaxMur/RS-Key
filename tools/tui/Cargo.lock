@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "rsk-tui"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "aes",
  "bip39",

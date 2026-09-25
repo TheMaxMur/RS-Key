@@ -767,7 +767,14 @@ fn ber_find(mut d: &[u8], tag: u16) -> Option<&[u8]> {
 /// (`C5`). Every field is optional — a card that omits one just leaves it unset.
 fn read_pgp_info(c: &mut Ccid) -> Option<PgpInfo> {
     let d = c.get_data_full(0x00, 0x6E).ok()?;
-    let inner = ber_find(&d, 0x6E).unwrap_or(&d);
+    Some(pgp_info(&d))
+}
+
+/// [`read_pgp_info`]'s parse. `4F` sits in `6E` itself and `C4`/`C5` in its `73`,
+/// the discretionary data objects, where a YubiKey and RS-Key both put them.
+fn pgp_info(d: &[u8]) -> PgpInfo {
+    let inner = ber_find(d, 0x6E).unwrap_or(d);
+    let discretionary = ber_find(inner, 0x73).unwrap_or_default();
     let mut info = PgpInfo::default();
     // 4F AID: D276 0001 2401 vvvv mmmm ssssssss 0000 — serial is bytes 10..14.
     if let Some(aid) = ber_find(inner, 0x4F)
@@ -776,20 +783,20 @@ fn read_pgp_info(c: &mut Ccid) -> Option<PgpInfo> {
         info.serial = Some(hex(&aid[10..14]));
     }
     // C4 PW status: [validity, pw1max, rcmax, pw3max, pw1tries, rctries, pw3tries].
-    if let Some(c4) = ber_find(inner, 0xC4)
+    if let Some(c4) = ber_find(discretionary, 0xC4)
         && c4.len() >= 7
     {
         info.pin_retries = Some([c4[4], c4[5], c4[6]]);
     }
     // C5 fingerprints: 3 x 20 bytes (sig/dec/auth); an all-zero block = no key.
-    if let Some(c5) = ber_find(inner, 0xC5)
+    if let Some(c5) = ber_find(discretionary, 0xC5)
         && c5.len() >= 60
     {
         info.keys_present = (0..3)
             .filter(|k| c5[k * 20..k * 20 + 20].iter().any(|&b| b != 0))
             .count() as u8;
     }
-    Some(info)
+    info
 }
 
 /// PIV PIN metadata (GET METADATA, INS 0xF7 / P2 0x80): retry counters + whether

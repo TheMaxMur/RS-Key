@@ -65,6 +65,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- `rsk-tui` shows the OpenPGP PIN retry counters and how many keys the card holds.
+  It looked for `C4` and `C5` at the top of `6E`, where neither a YubiKey 5.8.0
+  nor RS-Key sends them — both carry them inside `73` — so the counters stayed
+  blank and the key count read 0. `rsk-tui` 0.3.13.
+
 - PIV stores a data object of up to 3063 bytes, as a YubiKey 5.8.0 does; RS-Key
   took 2029. The CCID class descriptor's `dwMaxCCIDMessageLength` is the
   YubiKey's 3072, up from 2048, so a host sends one extended APDU of up to 3062
