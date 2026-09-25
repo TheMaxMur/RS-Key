@@ -1516,10 +1516,10 @@ dependencies = [
  "rsk-phy",
  "rsk-piv",
  "rsk-sdk",
+ "rsk-secret",
  "rsk-slip39",
  "rsk-ui",
  "rsk-vendor",
- "zeroize",
 ]
 
 [[package]]

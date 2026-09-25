@@ -541,7 +541,7 @@ The wrapper and both tests are gone since bcdDevice 0x0A01, with the Management
 reset they served: a YubiKey 5.8.0 has no reset on that applet, and the rescue and
 vendor `1E`/`1F`, sent while Management was selected, reached it. The trusted
 display's reset is the one caller of `Fs::factory_wipe` left
-(`crates/rsk-display/src/pin.rs:713-722`), and it carries the same `.is_ok()`.
+(`crates/rsk-display/src/pin.rs:716-725`), and it carries the same `.is_ok()`.
 
 What stays open is the layer below. `Fs::factory_wipe` is still not a producer in
 the store transition map: `RSKeyStore!Next` offers `Put`, `MetaAdd`,

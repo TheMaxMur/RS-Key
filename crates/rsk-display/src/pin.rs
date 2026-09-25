@@ -276,8 +276,11 @@ where
     /// once at boot, stepped per pad. The layout only has to be unpredictable to someone
     /// watching the screen, and the cell this would otherwise borrow is held by the CTAP
     /// dispatch that raised the pad (issue #107).
-    fn shuffle_entropy(&mut self) -> [u8; rsk_ui::PIN_SHUFFLE_ENTROPY] {
-        let out = rsk_crypto::hmac_sha256(&self.shuffle_seed, &self.shuffle_ctr.to_le_bytes());
+    fn shuffle_entropy(&mut self) -> Secret<[u8; rsk_ui::PIN_SHUFFLE_ENTROPY]> {
+        let out = Secret::new(rsk_crypto::hmac_sha256(
+            &self.shuffle_seed,
+            &self.shuffle_ctr.to_le_bytes(),
+        ));
         self.shuffle_ctr = self.shuffle_ctr.wrapping_add(1);
         out
     }
@@ -331,8 +334,8 @@ where
         // Settings -> Security; each entry (and so each of "New" / "Confirm") gets its own.
         let layout = if self.scramble_pin {
             let mut entropy = self.shuffle_entropy();
-            let laid = rsk_ui::PinLayout::shuffled(&entropy);
-            entropy.zeroize();
+            let laid = rsk_ui::PinLayout::shuffled(entropy.expose());
+            entropy.wipe();
             laid
         } else {
             rsk_ui::PinLayout::identity()
@@ -774,24 +777,25 @@ where
         // Size the pad buffers to the host-representable maximum so the pad can't accept a
         // digit beyond it (`collect_pin` caps at `out.len()`); a PIN chosen here is then
         // always one the store path can verify, and the store re-checks.
-        let mut new = [0u8; rsk_fido::passkeys::MAX_PIN_LENGTH];
-        let mut confirm = [0u8; rsk_fido::passkeys::MAX_PIN_LENGTH];
+        let mut new = Secret::<[u8; rsk_fido::passkeys::MAX_PIN_LENGTH]>::zeroed();
+        let mut confirm = Secret::<[u8; rsk_fido::passkeys::MAX_PIN_LENGTH]>::zeroed();
         // The header names the scope ("Device PIN" / "FIDO PIN"); the step rides in the
         // caption — a muted "Choose a PIN" on the first entry, "Re-enter to confirm" on the
         // second, or the danger-coloured "PINs don't match" after a mismatch.
         let title = target.pin_title();
         let mut new_caption = Some(PinCaption::ChoosePin);
         loop {
-            new.zeroize();
-            confirm.zeroize();
+            new.wipe();
+            confirm.wipe();
             let expected = min.min(u8::MAX as usize) as u8;
-            let n1 = match self.collect_pin(title, new_caption, min, expected, &mut new, true) {
-                rsk_sdk::PinEntry::Entered(n) => n.min(new.len()),
-                _ => break, // declined / timeout / host yield — nothing set
-            };
+            let n1 =
+                match self.collect_pin(title, new_caption, min, expected, new.expose_mut(), true) {
+                    rsk_sdk::PinEntry::Entered(n) => n.min(new.expose().len()),
+                    _ => break, // declined / timeout / host yield — nothing set
+                };
             // Refuse a guessable PIN before the confirm step, matching the host set path.
             #[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
-            if rsk_fido::passkeys::pin_is_trivial(&new[..n1]) {
+            if rsk_fido::passkeys::pin_is_trivial(&new.expose()[..n1]) {
                 new_caption = Some(PinCaption::TooWeak);
                 continue;
             }
@@ -800,13 +804,13 @@ where
                 Some(PinCaption::Reenter),
                 min,
                 expected,
-                &mut confirm,
+                confirm.expose_mut(),
                 true,
             ) {
-                rsk_sdk::PinEntry::Entered(n) => n.min(confirm.len()),
+                rsk_sdk::PinEntry::Entered(n) => n.min(confirm.expose().len()),
                 _ => break, // confirm declined / timeout / host yield
             };
-            if n1 == n2 && rsk_crypto::ct_eq(&new[..n1], &confirm[..n2]) {
+            if n1 == n2 && rsk_crypto::ct_eq(&new.expose()[..n1], &confirm.expose()[..n2]) {
                 let mkek = read_fused(self.keys.mkek_source);
                 let dev = self.keys.device(&mkek);
                 // The pad already enforced the length floor; a flash error is the only
@@ -817,7 +821,7 @@ where
                         let _ = rsk_fido::passkeys::store_device_pin(
                             &dev,
                             &mut self.fs.borrow_mut(),
-                            &new[..n1],
+                            &new.expose()[..n1],
                         );
                         // Keep the cached lock-proxy fresh: a host ceremony sleeping right
                         // after this set reads `home_pin_set` (fs is borrowed there), so a
@@ -830,7 +834,7 @@ where
                         if rsk_fido::passkeys::store_local_pin(
                             &dev,
                             &mut self.fs.borrow_mut(),
-                            &new[..n1],
+                            &new.expose()[..n1],
                         )
                         .is_ok()
                         {
@@ -851,8 +855,8 @@ where
             // Mismatch: re-prompt from "New PIN" with the reason; the loop clears both.
             new_caption = Some(PinCaption::Mismatch);
         }
-        new.zeroize();
-        confirm.zeroize();
+        new.wipe();
+        confirm.wipe();
         self.end_modal();
     }
 
@@ -925,7 +929,7 @@ where
     /// CHANGE / RESET RETRY COUNTER, which a YubiKey lets a host's standing PIN
     /// status outlive — blocking the reference here included (`rsk-piv`'s
     /// `only_a_failed_verify_revokes_the_standing_one`).
-    fn gate_piv_ref(&mut self, which: rsk_piv::PinRef, buf: &mut [u8]) -> Option<[u8; 8]> {
+    fn gate_piv_ref(&mut self, which: rsk_piv::PinRef, buf: &mut [u8]) -> Option<Secret<[u8; 8]>> {
         let title = piv_ref_title(which);
         let mut caption = rsk_piv::reference_retries_left(&mut self.fs.borrow_mut(), which)
             .map(|left| PinCaption::TriesRemaining { left });
@@ -936,28 +940,26 @@ where
                     _ => return None,
                 };
             // `n <= buf.len() == 8`, so `pad_pin` only returns `None` defensively. The padded
-            // copy is the cleartext current secret — zeroize it on every path (the PUK is the
-            // recovery secret), matching `run_set_pin` / `collect_new_piv_pin` hygiene.
+            // copy is the cleartext current secret (the PUK is the recovery one), so it comes in
+            // a `Secret`: wiped on every path here, or handed on to the caller on success.
             let mut pad = rsk_piv::pad_pin(&buf[..n])?;
             let sw = {
                 let mkek = read_fused(self.keys.mkek_source);
                 let dev = self.keys.device(&mkek);
-                rsk_piv::verify_reference(&dev, &mut self.fs.borrow_mut(), which, &pad)
+                rsk_piv::verify_reference(&dev, &mut self.fs.borrow_mut(), which, pad.expose())
             };
             if sw == rsk_sdk::Sw::OK {
-                let out = pad;
-                pad.zeroize();
-                return Some(out);
+                return Some(pad);
             }
             if sw == rsk_sdk::Sw::PIN_BLOCKED {
-                pad.zeroize();
+                pad.wipe();
                 self.show_pin_blocked();
                 return None;
             }
             let left =
                 rsk_piv::reference_retries_left(&mut self.fs.borrow_mut(), which).unwrap_or(0);
             caption = Some(PinCaption::WrongPin { retries_left: left });
-            pad.zeroize();
+            pad.wipe();
         }
     }
 
@@ -966,22 +968,22 @@ where
     /// "PIV PUK"); the New vs Confirm step rides in the caption (a muted "Choose a PIN" then
     /// "Re-enter to confirm"). A New ≠ Confirm mismatch re-prompts in place; both pad buffers
     /// are zeroized on every iteration and at exit.
-    fn collect_new_piv_pin(&mut self, title: &'static str) -> Option<[u8; 8]> {
-        let mut new = [0u8; 8];
-        let mut confirm = [0u8; 8];
+    fn collect_new_piv_pin(&mut self, title: &'static str) -> Option<Secret<[u8; 8]>> {
+        let mut new = Secret::<[u8; 8]>::zeroed();
+        let mut confirm = Secret::<[u8; 8]>::zeroed();
         let mut new_caption = Some(PinCaption::ChoosePin);
         let out = loop {
-            new.zeroize();
-            confirm.zeroize();
+            new.wipe();
+            confirm.wipe();
             let n1 = match self.collect_pin(
                 title,
                 new_caption,
                 PIV_PIN_MIN,
                 PIV_PIN_MIN as u8,
-                &mut new,
+                new.expose_mut(),
                 true,
             ) {
-                rsk_sdk::PinEntry::Entered(n) => n.min(new.len()),
+                rsk_sdk::PinEntry::Entered(n) => n.min(new.expose().len()),
                 _ => break None,
             };
             let n2 = match self.collect_pin(
@@ -989,19 +991,19 @@ where
                 Some(PinCaption::Reenter),
                 PIV_PIN_MIN,
                 PIV_PIN_MIN as u8,
-                &mut confirm,
+                confirm.expose_mut(),
                 true,
             ) {
-                rsk_sdk::PinEntry::Entered(n) => n.min(confirm.len()),
+                rsk_sdk::PinEntry::Entered(n) => n.min(confirm.expose().len()),
                 _ => break None,
             };
-            if n1 == n2 && rsk_crypto::ct_eq(&new[..n1], &confirm[..n2]) {
-                break rsk_piv::pad_pin(&new[..n1]);
+            if n1 == n2 && rsk_crypto::ct_eq(&new.expose()[..n1], &confirm.expose()[..n2]) {
+                break rsk_piv::pad_pin(&new.expose()[..n1]);
             }
             new_caption = Some(PinCaption::Mismatch);
         };
-        new.zeroize();
-        confirm.zeroize();
+        new.wipe();
+        confirm.wipe();
         out
     }
 
@@ -1012,9 +1014,9 @@ where
     fn run_change_piv_ref(&mut self, which: rsk_piv::PinRef) {
         self.touch
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
-        let mut cur = [0u8; 8];
-        let gated = self.gate_piv_ref(which, &mut cur);
-        cur.zeroize();
+        let mut cur = Secret::<[u8; 8]>::zeroed();
+        let gated = self.gate_piv_ref(which, cur.expose_mut());
+        cur.wipe();
         let mut cur_pad = match gated {
             Some(p) => p,
             None => {
@@ -1031,16 +1033,16 @@ where
                         &dev,
                         &mut self.fs.borrow_mut(),
                         which,
-                        &cur_pad,
-                        &new_pad,
+                        cur_pad.expose(),
+                        new_pad.expose(),
                     )
                 };
-                new_pad.zeroize();
+                new_pad.wipe();
                 sw == rsk_sdk::Sw::OK
             }
             None => false,
         };
-        cur_pad.zeroize();
+        cur_pad.wipe();
         if applied {
             self.show_success(SuccessKind::Approved, Some(SUCCESS_POP_MS));
         } else {
@@ -1054,9 +1056,9 @@ where
     fn run_unblock_piv_pin(&mut self) {
         self.touch
             .wait_release(Instant::now(), Duration::from_millis(MENU_INACTIVITY_MS));
-        let mut puk = [0u8; 8];
-        let gated = self.gate_piv_ref(rsk_piv::PinRef::Puk, &mut puk);
-        puk.zeroize();
+        let mut puk = Secret::<[u8; 8]>::zeroed();
+        let gated = self.gate_piv_ref(rsk_piv::PinRef::Puk, puk.expose_mut());
+        puk.wipe();
         let mut puk_pad = match gated {
             Some(p) => p,
             None => {
@@ -1072,16 +1074,16 @@ where
                     rsk_piv::unblock_pin_with_puk(
                         &dev,
                         &mut self.fs.borrow_mut(),
-                        &puk_pad,
-                        &new_pad,
+                        puk_pad.expose(),
+                        new_pad.expose(),
                     )
                 };
-                new_pad.zeroize();
+                new_pad.wipe();
                 sw == rsk_sdk::Sw::OK
             }
             None => false,
         };
-        puk_pad.zeroize();
+        puk_pad.wipe();
         if applied {
             self.show_success(SuccessKind::Approved, Some(SUCCESS_POP_MS));
         } else {

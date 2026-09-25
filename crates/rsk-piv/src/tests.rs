@@ -1145,14 +1145,14 @@ fn panel_pin_ops_match_host_wire() {
     };
 
     // pad_pin builds the 8-byte PIV wire form (matches the stored defaults).
-    assert_eq!(pad_pin(b"123456"), Some(DEFAULT_PIN));
-    assert_eq!(pad_pin(b"12345678"), Some(DEFAULT_PUK));
-    assert_eq!(pad_pin(b""), None);
-    assert_eq!(pad_pin(b"123456789"), None);
+    assert_eq!(pad_pin(b"123456").map(|p| *p.expose()), Some(DEFAULT_PIN));
+    assert_eq!(pad_pin(b"12345678").map(|p| *p.expose()), Some(DEFAULT_PUK));
+    assert!(pad_pin(b"").is_none());
+    assert!(pad_pin(b"123456789").is_none());
 
     // Panel change-PIN: "123456" -> "654321", both padded as the panel will.
-    let old = pad_pin(b"123456").unwrap();
-    let new = pad_pin(b"654321").unwrap();
+    let old = *pad_pin(b"123456").unwrap().expose();
+    let new = *pad_pin(b"654321").unwrap().expose();
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Pin, &old, &new),
         Sw::OK
@@ -1169,7 +1169,7 @@ fn panel_pin_ops_match_host_wire() {
     assert_eq!(sw, Sw::OK);
 
     // Wrong old PIN burns a retry and leaves the PIN unchanged.
-    let wrong = pad_pin(b"000000").unwrap();
+    let wrong = *pad_pin(b"000000").unwrap().expose();
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Pin, &wrong, &old),
         Sw::new(0x63, 0xC2)
@@ -1179,7 +1179,7 @@ fn panel_pin_ops_match_host_wire() {
     assert_eq!(sw, Sw::OK);
 
     // Panel change-PUK.
-    let newpuk = pad_pin(b"87654321").unwrap();
+    let newpuk = *pad_pin(b"87654321").unwrap().expose();
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Puk, &DEFAULT_PUK, &newpuk),
         Sw::OK
@@ -1191,12 +1191,12 @@ fn panel_pin_ops_match_host_wire() {
     }
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &new);
     assert_eq!(sw, Sw::PIN_BLOCKED);
-    let fresh = pad_pin(b"111111").unwrap();
+    let fresh = *pad_pin(b"111111").unwrap().expose();
     assert_eq!(unblock_pin_with_puk(&dev, &mut fs, &newpuk, &fresh), Sw::OK);
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &fresh);
     assert_eq!(sw, Sw::OK);
     // Wrong PUK on unblock burns a PUK retry.
-    let badpuk = pad_pin(b"00000000").unwrap();
+    let badpuk = *pad_pin(b"00000000").unwrap().expose();
     assert_eq!(
         unblock_pin_with_puk(&dev, &mut fs, &badpuk, &fresh),
         Sw::new(0x63, 0xC2)
@@ -7809,9 +7809,9 @@ fn only_a_failed_verify_revokes_the_standing_one() {
         "the control: it signs"
     );
 
-    let wrong = pad_pin(b"999999").unwrap();
-    let wrong_puk = pad_pin(b"99999999").unwrap();
-    let new = pad_pin(b"654321").unwrap();
+    let wrong = *pad_pin(b"999999").unwrap().expose();
+    let wrong_puk = *pad_pin(b"99999999").unwrap().expose();
+    let new = *pad_pin(b"654321").unwrap().expose();
 
     // The panel's gate (`rsk-display`'s `gate_piv_ref`) is this call: the old-secret
     // check of a CHANGE, never a VERIFY. It cannot go red — E45's fix has to add a

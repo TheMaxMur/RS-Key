@@ -1396,12 +1396,12 @@ impl PinRef {
 /// (trailing `0xFF`), matching ykman / yubico-piv-tool. On-device (panel) entry
 /// MUST store the verifier over this padded form, or a host `VERIFY` — which
 /// always pads — will not match. `None` for empty / over-long input.
-pub fn pad_pin(entered: &[u8]) -> Option<[u8; PIN_WIRE_LEN]> {
+pub fn pad_pin(entered: &[u8]) -> Option<Secret<[u8; PIN_WIRE_LEN]>> {
     if entered.is_empty() || entered.len() > PIN_WIRE_LEN {
         return None;
     }
-    let mut out = [0xFFu8; PIN_WIRE_LEN];
-    out[..entered.len()].copy_from_slice(entered);
+    let mut out = Secret::new([0xFFu8; PIN_WIRE_LEN]);
+    out.expose_mut()[..entered.len()].copy_from_slice(entered);
     Some(out)
 }
 

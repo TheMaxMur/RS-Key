@@ -692,6 +692,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The panel's PINs and backup words are typed** — refactor; nothing on the
+  panel or the wire changes. `rsk-display`'s PIN buffers (the device, FIDO and
+  PIV PIN and PUK flows), the pad-scramble entropy and the SLIP-39 share
+  indices are `rsk_secret::Secret`s, wiped where the hand wipes were and
+  again when dropped, and `rsk_piv::pad_pin` hands the padded PIN out in one.
+  The crate takes the zeroize ban at its root. `bcdDevice` 0x0A2C → 0x0A2D.
+
 - **The recovery phrase's word indices are typed** — refactor; the phrase is
   the same, word for word. `rsk-bip39` builds the 24 indices, which
   reconstruct the seed, in a `rsk_secret::Secret` and hands them out in it,

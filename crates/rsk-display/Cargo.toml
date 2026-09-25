@@ -44,7 +44,9 @@ embedded-graphics = { workspace = true }
 # Deadlines, debounce windows and the busy-wait polls the flow is built from.
 # Host builds supply the `std` driver; the firmware's comes from embassy-rp.
 embassy-time = { workspace = true }
-zeroize = { workspace = true }
+# The panel's PINs, the scramble entropy and the seed's words held in a type
+# that wipes itself.
+rsk-secret = { workspace = true }
 
 [dev-dependencies]
 # The tests drive the flow's real deadlines, debounces and busy-waits, so the

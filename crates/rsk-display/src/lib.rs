@@ -34,6 +34,7 @@
 // borrow from — `rsk-fs`'s RAM storage, `embassy-time`'s `std` driver — are std
 // too. The firmware build is untouched, and no test code reaches the image.
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 extern crate alloc;
 
@@ -49,7 +50,7 @@ use embedded_graphics::{
     prelude::RgbColor,
     primitives::Rectangle,
 };
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, read_fused};
 use rsk_fs::Fs;

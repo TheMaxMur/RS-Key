@@ -389,8 +389,8 @@ assurance/bundle/SEC-FIDO-007.toml	formal/gen-configs.sh	109-114	# Structural fa
 assurance/bundle/SEC-FIDO-007.toml	scripts/comutate.py	337-365	def solo_index(root: pathlib.Path) -> dict[str, list[str]]:	return out
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-device/src/ctap.rs	229-229	keydev_ram_raw: st.keydev_dec.is_some(),	keydev_ram_raw: st.keydev_dec.is_some(),
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-display/src/gates.rs	11-11	/// shared; the backing record (`EF_DEVICE_PIN` vs `EF_PIN`) and the floor differ, and so	/// shared; the backing record (`EF_DEVICE_PIN` vs `EF_PIN`) and the floor differ, and so
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-display/src/pin.rs	717-717	.factory_wipe(	.factory_wipe(
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-display/src/pin.rs	752-752	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-display/src/pin.rs	720-720	.factory_wipe(	.factory_wipe(
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-display/src/pin.rs	755-755	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/clientpin.rs	346-346	pin_set_and_unblocked(ctx)?;	pin_set_and_unblocked(ctx)?;
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/clientpin.rs	412-412	/// Refines `RSKeySecurityState!NoLiveTokenWithoutPinRecord` — SEC-FIDO-008.	/// Refines `RSKeySecurityState!NoLiveTokenWithoutPinRecord` — SEC-FIDO-008.
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/clientpin.rs	433-433	ctx.state.begin_using_token(false, ctx.now_ms);	ctx.state.begin_using_token(false, ctx.now_ms);
@@ -462,10 +462,10 @@ assurance/platform.toml	crates/rsk-device/src/presence.rs	215-215	if board.now_u
 assurance/platform.toml	crates/rsk-device/src/presence_kani.rs	158-158	arb.set_cancel_requested(true);	arb.set_cancel_requested(true);
 assurance/platform.toml	crates/rsk-display/src/backup.rs	47-47	can_reveal: st.has_seed && st.exportable && !st.sealed && !st.locked && device_pin_set,	can_reveal: st.has_seed && st.exportable && !st.sealed && !st.locked && device_pin_set,
 assurance/platform.toml	crates/rsk-display/src/gates.rs	11-11	/// shared; the backing record (`EF_DEVICE_PIN` vs `EF_PIN`) and the floor differ, and so	/// shared; the backing record (`EF_DEVICE_PIN` vs `EF_PIN`) and the floor differ, and so
-assurance/platform.toml	crates/rsk-display/src/lib.rs	131-134	fn set_up_pending(&mut self, _pending: bool) {}	false
-assurance/platform.toml	crates/rsk-display/src/pin.rs	317-317	self.hooks.set_cancel_requested(false);	self.hooks.set_cancel_requested(false);
-assurance/platform.toml	crates/rsk-display/src/pin.rs	717-717	.factory_wipe(	.factory_wipe(
-assurance/platform.toml	crates/rsk-display/src/pin.rs	752-752	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host
+assurance/platform.toml	crates/rsk-display/src/lib.rs	132-135	fn set_up_pending(&mut self, _pending: bool) {}	false
+assurance/platform.toml	crates/rsk-display/src/pin.rs	320-320	self.hooks.set_cancel_requested(false);	self.hooks.set_cancel_requested(false);
+assurance/platform.toml	crates/rsk-display/src/pin.rs	720-720	.factory_wipe(	.factory_wipe(
+assurance/platform.toml	crates/rsk-display/src/pin.rs	755-755	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host
 assurance/platform.toml	crates/rsk-display/src/presence.rs	45-48	let saved = self.hooks.led_status();	self.hooks.set_up_pending(true);
 assurance/platform.toml	crates/rsk-display/src/presence.rs	47-47	self.hooks.set_cancel_requested(false);	self.hooks.set_cancel_requested(false);
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	294-304	if force_change_pending(ctx) {	}
@@ -678,8 +678,8 @@ formal/README.md	crates/rsk-device/src/presence.rs	215-216	if board.now_us().wra
 formal/README.md	crates/rsk-device/src/presence.rs	230-230	arb.set_up_pending(false);	arb.set_up_pending(false);
 formal/README.md	crates/rsk-display/src/gates.rs	117-203	pub(super) fn local_pin_gate(&mut self, scope: PinScope) -> bool {	}
 formal/README.md	crates/rsk-display/src/gates.rs	129-131	PinScope::Device => rsk_fido::passkeys::device_pin_retries_left(&mut fs),	};
-formal/README.md	crates/rsk-display/src/gates.rs	142-149	let mut pin = [0u8; 64];	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
-formal/README.md	crates/rsk-display/src/pin.rs	713-722	let _ = rsk_ui::render_erasing(&mut self.frame());	.is_ok();
+formal/README.md	crates/rsk-display/src/gates.rs	142-149	let mut pin = Secret::<[u8; 64]>::zeroed();	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
+formal/README.md	crates/rsk-display/src/pin.rs	716-725	let _ = rsk_ui::render_erasing(&mut self.frame());	.is_ok();
 formal/README.md	crates/rsk-display/src/power.rs	55-65	pub(super) fn armed_touch(&mut self) -> Option<rsk_ui::Point> {	}
 formal/README.md	crates/rsk-display/src/presence.rs	45-48	let saved = self.hooks.led_status();	self.hooks.set_up_pending(true);
 formal/README.md	crates/rsk-display/src/presence.rs	120-124	let mut last_num: u16 = 0;	// no signature is ever produced without the deliberate on-screen hold.
@@ -879,7 +879,7 @@ formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	114-118	/// Refines `R
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	97-115	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	344-359	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ctap.rs	185-189	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
-formal/RSKeyAppletSeams.tla	crates/rsk-display/src/pin.rs	713-721	let _ = rsk_ui::render_erasing(&mut self.frame());	)
+formal/RSKeyAppletSeams.tla	crates/rsk-display/src/pin.rs	716-724	let _ = rsk_ui::render_erasing(&mut self.frame());	)
 formal/RSKeyAppletSeams.tla	crates/rsk-fido/src/reset.rs	263-305	/// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus	}
 formal/RSKeyAppletSeams.tla	crates/rsk-fs/src/fs.rs	462-513	/// that is still live and, for PIV, not PIN-bound at rest — or, for OATH, leaves	return Err(Error::MemoryFatal);
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	193-201	/// allowed); with a code set, a new SELECT resets it, a re-SELECT keeps it,	otp_pin_verified: bool,
@@ -961,9 +961,9 @@ formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	215-217	if board
 formal/RSKeySecurityState.tla	crates/rsk-device/src/presence.rs	226-226	}	}
 formal/RSKeySecurityState.tla	crates/rsk-display/src/gates.rs	117-203	pub(super) fn local_pin_gate(&mut self, scope: PinScope) -> bool {	}
 formal/RSKeySecurityState.tla	crates/rsk-display/src/gates.rs	129-131	PinScope::Device => rsk_fido::passkeys::device_pin_retries_left(&mut fs),	};
-formal/RSKeySecurityState.tla	crates/rsk-display/src/gates.rs	142-149	let mut pin = [0u8; 64];	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
+formal/RSKeySecurityState.tla	crates/rsk-display/src/gates.rs	142-149	let mut pin = Secret::<[u8; 64]>::zeroed();	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
 formal/RSKeySecurityState.tla	crates/rsk-display/src/gates.rs	149-149	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
-formal/RSKeySecurityState.tla	crates/rsk-display/src/lib.rs	193-199	/// Minimum time an on-device modal that yields to the host stays open before a queued	pub const UI_YIELD_FLOOR_MS: u64 = 2_500;
+formal/RSKeySecurityState.tla	crates/rsk-display/src/lib.rs	194-200	/// Minimum time an on-device modal that yields to the host stays open before a queued	pub const UI_YIELD_FLOOR_MS: u64 = 2_500;
 formal/RSKeySecurityState.tla	crates/rsk-display/src/presence.rs	45-48	let saved = self.hooks.led_status();	self.hooks.set_up_pending(true);
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	35-35	pub(crate) const PIN_FILE_LEN: usize = 35; // retries(1) + len(1) + format(1) + verifier(32)	pub(crate) const PIN_FILE_LEN: usize = 35; // retries(1) + len(1) + format(1) + verifier(32)
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	188-190	if ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)? {	}

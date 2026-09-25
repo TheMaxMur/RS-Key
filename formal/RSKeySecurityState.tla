@@ -325,7 +325,7 @@ WaitOpen == pres.scope # NoOwner /\ pres.granted = "none"
 
 \* ONE BUTTON, ONE CEREMONY: a host command may not open a wait over one that is
 \* already running. The worker is synchronous and the panel yields to a queued
-\* host command only outside a hold (crates/rsk-display/src/lib.rs:193-199), so
+\* host command only outside a hold (crates/rsk-display/src/lib.rs:194-200), so
 \* the firmware never reassigns WAIT_SCOPE out from under a live ceremony.
 \*
 \* FOUR sites carry it: RegisterStart, AssertStart, ResetStart and

@@ -563,5 +563,9 @@ fn the_pad_shuffle_does_not_repeat() {
     let mut ui = env.ui(Pad::taps(&[]));
     let first = ui.shuffle_entropy();
     let second = ui.shuffle_entropy();
-    assert_ne!(first, second, "consecutive pads share a layout");
+    assert_ne!(
+        first.expose(),
+        second.expose(),
+        "consecutive pads share a layout"
+    );
 }

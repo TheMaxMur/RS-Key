@@ -271,7 +271,7 @@ where
         // shares, then its `Secret` is wiped as the block that holds it ends.
         let mkek = read_fused(self.keys.mkek_source);
         let dev = self.keys.device(&mkek);
-        let mut shares = [[0u16; rsk_slip39::WORDS_PER_SHARE]; rsk_slip39::MAX_SHARES];
+        let mut shares = Secret::new([[0u16; rsk_slip39::WORDS_PER_SHARE]; rsk_slip39::MAX_SHARES]);
         let ok = {
             // A `Secret`: the end of this block wipes it, the moment the shares exist.
             let seed = {
@@ -282,17 +282,23 @@ where
                 Some(seed) => {
                     let mut rng = self.rng.borrow_mut();
                     let mut fill = |b: &mut [u8]| rsk_sdk::Rng::fill(&mut *rng, b);
-                    rsk_slip39::generate(seed.expose(), threshold, total, &mut fill, &mut shares)
-                        .is_ok()
+                    rsk_slip39::generate(
+                        seed.expose(),
+                        threshold,
+                        total,
+                        &mut fill,
+                        shares.expose_mut(),
+                    )
+                    .is_ok()
                 }
                 None => false, // no seed / soft-locked — nothing to show
             }
         };
         if ok {
             self.journal_local(rsk_fido::journal::EV_BACKUP_EXPORT);
-            self.show_shares(&shares, total);
+            self.show_shares(shares.expose(), total);
         }
-        shares.zeroize();
+        shares.wipe();
         note_activity();
         self.end_modal();
     }

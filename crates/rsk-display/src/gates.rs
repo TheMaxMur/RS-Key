@@ -139,7 +139,7 @@ where
             };
             (retries, expected)
         };
-        let mut pin = [0u8; 64];
+        let mut pin = Secret::<[u8; 64]>::zeroed();
         // A clientPIN refused here is `changePIN`'s failed old-PIN check performed
         // at the pad, and over USB that check ends the host's outstanding
         // pinUvAuthToken. Only this scope: the device PIN is no CTAP credential.
@@ -155,7 +155,7 @@ where
             // CTAP's 4-digit floor; the verify checks the exact PIN regardless, so a higher
             // `minPINLength` policy is still satisfied by typing it in full. (A PIN set
             // before the policy was raised may be shorter than `expected`.)
-            match self.collect_pin(title, caption, 4, expected, &mut pin, true) {
+            match self.collect_pin(title, caption, 4, expected, pin.expose_mut(), true) {
                 rsk_sdk::PinEntry::Entered(len) => {
                     let mkek = read_fused(self.keys.mkek_source);
                     let dev = self.keys.device(&mkek);
@@ -163,12 +163,12 @@ where
                         PinScope::Device => rsk_fido::passkeys::spend_and_verify_device_pin(
                             &dev,
                             &mut self.fs.borrow_mut(),
-                            &pin[..len.min(pin.len())],
+                            &pin.expose()[..len.min(pin.expose().len())],
                         ),
                         PinScope::Fido => rsk_fido::passkeys::spend_and_verify_local_pin(
                             &dev,
                             &mut self.fs.borrow_mut(),
-                            &pin[..len.min(pin.len())],
+                            &pin.expose()[..len.min(pin.expose().len())],
                         ),
                     };
                     match verdict {
@@ -195,7 +195,7 @@ where
                 _ => break false,
             }
         };
-        pin.zeroize();
+        pin.wipe();
         if blocked {
             self.show_pin_blocked();
         }
