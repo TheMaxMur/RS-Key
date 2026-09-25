@@ -297,6 +297,10 @@ const _: () = {
     }
 
     if BUILD_WAKE_ENABLED {
+        assert!(
+            !contains(HW_PINS, BUILD_WAKE_PIN),
+            "WAKE_PIN overlaps hard-wired PIO/I2C1 pin 6/7/10/11"
+        );
         let mut i = 0;
         while i < DISPLAY_CTLS.len() {
             assert!(
@@ -720,7 +724,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A0F;
+    let device_release: u16 = 0x0A10;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1075,8 +1079,8 @@ async fn main(spawner: Spawner) {
         // Display-sleep wake button (default the BAT_PWR / KEY_BAT button on GPIO25).
         // Active-low with an internal pull-up by default (`WAKE_ACTIVE_HIGH` flips it);
         // `WAKE_PIN=none` leaves it unwired so only a touch wakes. Stealing the pin is
-        // sound: it is never handed to another driver, and a compile-time assert rejects
-        // a `WAKE_PIN` in the LCD/touch range.
+        // sound: it is never handed to another driver — the const asserts above keep it
+        // off the LCD range, the hard-wired PIO/I2C1 pins and the panel control lines.
         let wake_btn = if BUILD_WAKE_ENABLED {
             use embassy_rp::gpio::{Input, Pull};
             let pull = if BUILD_WAKE_ACTIVE_HIGH {

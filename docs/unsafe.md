@@ -116,7 +116,8 @@ build default — so a host cannot aim the data pin at a pad another driver owns
 On top of that, compile-time `assert!`s reject a
 build that collides `LED_POWER_PIN` or `USR_LED_PIN` with the LED data pin or a GPIO
 `PRESENCE_PIN` (and refuse `USR_LED_PIN` outright on a display build, whose panel
-owns those pads), rejects a `WAKE_PIN` in the LCD/touch range (`10..=18`),
+owns those pads), rejects a `WAKE_PIN` in the LCD range (`10..=18`) or on the
+hard-wired touch I2C1 pair (PIN_6/7) — which a `WAKE_PIN=6` build did not, until 0x0A10 —
 **and rejects any of CS/DC/RST/TP_RST/BL colliding with each other, with the
 hard-wired PIO serial output (PIN_10/11) or I2C1 (PIN_6/7) lines, an enabled `WAKE_PIN`,
 or `LED_PIN`/`LED_POWER_PIN` when their LED driver is built** — a collision

@@ -65,6 +65,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A display build with `WAKE_PIN=6` or `WAKE_PIN=7` compiled, and handed the
+  touch controller's I2C1 data or clock pad to the wake button as well: the
+  firmware stole that GPIO for a second driver while I2C1 still owned it. The
+  build checked the wake pin against the LCD range (`10..=18`) and the panel's
+  control lines but not against the hard-wired pins beside them; it now refuses
+  6, 7, 10 and 11 like every other panel pin. No board preset uses either
+  value (the Touch-LCD board wakes on GPIO25). **bcdDevice → 0x0A10.**
+
 - OpenPGP templates give their length in BER's shortest form, as a YubiKey
   5.8.0 does: a reset card's `65` reads `65 09 5B 00 5F 2D 00 5F 35 01 39`, byte
   for byte the YubiKey's, where RS-Key wrote `65 82 00 09`. `73` and `6E` are
