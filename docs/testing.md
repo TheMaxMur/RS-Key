@@ -343,12 +343,14 @@ crypto-critical helpers, where a proof genuinely beats a sample:
 Some of that production source means something different under Kani than in the
 shipped build: an array cut to 16 so CBMC does not bit-blast 2 KiB, a file id
 aliased into a 24-bit map. Each such shrink narrows every proof over it, so each
-one says beside itself what it stops proving — and three `cfg(not(kani))`
+one says beside itself what it stops proving — and five `cfg(not(kani))`
 compile-time assertions carry the part of that shape a shrunk proof no longer
 can, about the width that ships.
 
 | Crate | Source | Kani-only item |
 |---|---|---|
+| `rsk-device` | `ccid.rs` | `const _` |
+| `rsk-device` | `ccid.rs` | `const _` |
 | `rsk-device` | `ctap.rs` | `const _` |
 | `rsk-fs` | `fs.rs` | `FID_PRESENT_BYTES` |
 | `rsk-fs` | `fs.rs` | `const _` |

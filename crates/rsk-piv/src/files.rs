@@ -4,7 +4,8 @@
 //! PIV file ids, the wire-object map and first-boot defaults. One `Fs` is
 //! shared across all applets, so PIV owns its own disjoint fid ranges:
 //! keys/PINs at `0xD1xx` (low byte = wire slot), data objects at `0xD2xx` (low
-//! byte of the `5FC1xx` object id) — the wire slot is the fid low byte everywhere.
+//! byte of the `5FC1xx` object id), cached points at `0xD4xx`, and the pool of
+//! every other object at `0xD6xx` — the wire slot is the fid low byte everywhere.
 
 use rsk_crypto::Device;
 use rsk_ec::{Curve, PrivKey};
@@ -385,10 +386,12 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
 }
 
 /// The fids a PIV factory reset owns: keys/PINs + data objects
-/// (`0xD100..=0xD2FF`) and the per-slot pubkey cache (`0xD4xx`). `0xD3xx` is
-/// FIDO's, so it is deliberately not in the range.
+/// (`0xD100..=0xD2FF`), the per-slot pubkey cache (`0xD4xx`) and the object pool
+/// (`0xD6xx`). `0xD3xx` and `0xD5xx` are FIDO's, so they are deliberately not in it.
 pub(crate) fn is_piv_fid(fid: u16) -> bool {
-    (0xD100..=0xD2FF).contains(&fid) || (0xD400..=0xD4FF).contains(&fid)
+    (0xD100..=0xD2FF).contains(&fid)
+        || (0xD400..=0xD4FF).contains(&fid)
+        || crate::objects::POOL.contains(&fid)
 }
 
 /// The records that *gate* the applet: the PIN and PUK verifiers, their retry
@@ -412,10 +415,10 @@ fn is_piv_secret_fid(fid: u16) -> bool {
 }
 
 /// Progress backstop for one [`sweep`] phase: every batched `force_delete` clears
-/// one *distinct* live fid and [`is_piv_fid`] spans 768 of them, so needing more
+/// one *distinct* live fid and [`is_piv_fid`] spans 1024 of them, so needing more
 /// deletes than that means the backend keeps re-yielding what it removed. Bounds
 /// each phase separately, which is strictly tighter than the old single sweep.
-const RESET_MAX_DELETES: u32 = 768;
+const RESET_MAX_DELETES: u32 = 1024;
 
 /// Fids one [`sweep`] pass collects before deleting them. Named because the wrap
 /// to a second pass is a code path, and the test that crosses it has to size its

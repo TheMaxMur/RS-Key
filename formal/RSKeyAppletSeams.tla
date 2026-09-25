@@ -12,7 +12,7 @@
 (* RSKeySecurityState.tla. Those two state machines share no variable, and   *)
 (* that is a measured claim rather than a convenience: the CCID side owns a  *)
 (* Dispatcher and the only instances of openpgp / oath / piv / otp /         *)
-(* management / rescue / vendor (crates/rsk-device/src/ccid.rs:91-109),      *)
+(* management / rescue / vendor (crates/rsk-device/src/ccid.rs:97-115),      *)
 (* while the CTAPHID side owns a SEPARATE Dispatcher whose applet array is   *)
 (* literally one element, its own VendorApplet                               *)
 (* (crates/rsk-device/src/ctap.rs:177-181). PIV, OpenPGP and OATH are not    *)
@@ -34,7 +34,7 @@ EXTENDS Naturals
 
 (* Mutation switches. All FALSE is the shipped tree. *)
 CONSTANTS
-    \* crates/rsk-sdk/src/applet.rs:397-401 -- a SELECT of a DIFFERENT AID deselects the
+    \* crates/rsk-sdk/src/applet.rs:396-400 -- a SELECT of a DIFFERENT AID deselects the
     \* applet that was current, and the deselect is what resets its session.
     BugSelectKeepsOtherApplet,
     \* 637ed98 taken back out: PIV, OpenPGP and OATH's VALIDATE reset on EVERY
@@ -45,7 +45,7 @@ CONSTANTS
     \* WRITER rather than in the invariant; widen it to the PIN and the shipped
     \* tree is red for a drop the applet does on purpose.
     BugOathReselectUnrecorded,
-    \* crates/rsk-device/src/ccid.rs:334-349 -- the ICC power transition.
+    \* crates/rsk-device/src/ccid.rs:340-355 -- the ICC power transition.
     BugCardResetKeepsStatus,
     \* e5da38b taken back out: PW3, the admin PIN, standing in for PW1/PW2 on
     \* PSO:CDS, PSO:DECIPHER and INTERNAL AUTHENTICATE.
@@ -120,7 +120,7 @@ CONSTANTS
     BugCodelessOathIsAStatus
 
 \* The three CCID applets that carry an in-RAM security status. `NoApplet` is
-\* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:149): nothing
+\* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:148): nothing
 \* selected, which is where a card reset leaves the dispatcher.
 Piv      == "piv"
 Pgp      == "pgp"
@@ -145,10 +145,10 @@ InvNames == { "NoKeyOpOnTheAdminStatus", "NoStatusAfterARefusedAuth",
               "AccessCodeRemovalNeedsTheCode" }
 
 VARIABLES
-    sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:149)
+    sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:148)
     held,   \* [Refs -> BOOLEAN]: the in-RAM security statuses
     \* PIV's `pin_fresh` -- the UNSPENT half of `has_pin`, which a PIN-policy
-    \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:166-180). The
+    \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:167-181). The
     \* only status here that is a two-part thing.
     fresh,
     \* Whether OATH has an access code provisioned. It decides what a new SELECT
@@ -208,7 +208,7 @@ Init ==
     /\ viol  = {}
 
 \* Every status an applet owns, gone. This is `Session::reset`
-\* (crates/rsk-piv/src/lib.rs:200-204), `pin::Session::reset`
+\* (crates/rsk-piv/src/lib.rs:201-205), `pin::Session::reset`
 \* (crates/rsk-openpgp/src/pin.rs:81-94) and OATH's `deselect`
 \* (crates/rsk-oath/src/lib.rs:1161-1165) -- three functions, one meaning.
 ClearedFor(h, a) ==
@@ -221,7 +221,7 @@ AllCleared ==
     [r \in Refs |-> r = "oathCode" /\ (~oathCodeSet \/ BugResetKeepsOathUnlock)]
 
 (***************************************************************************)
-(* SELECT. crates/rsk-sdk/src/applet.rs:391-407 -- the ONE place that       *)
+(* SELECT. crates/rsk-sdk/src/applet.rs:390-406 -- the ONE place that       *)
 (* decides what a selection does to the applet that was current.           *)
 (***************************************************************************)
 
@@ -284,9 +284,9 @@ SelectOther(a) ==
 (* disagree about what a refusal costs -- see the invariant's comment.      *)
 (***************************************************************************)
 
-\* PIV VERIFY (crates/rsk-piv/src/lib.rs:525-539): success sets has_pin AND
+\* PIV VERIFY (crates/rsk-piv/src/lib.rs:526-540): success sets has_pin AND
 \* pin_fresh, refusal clears both, through `Session::set_pin`
-\* (crates/rsk-piv/src/lib.rs:184-187) which is the only writer of either.
+\* (crates/rsk-piv/src/lib.rs:185-188) which is the only writer of either.
 PivVerify(ok) ==
     /\ sel = Piv
     /\ held' = [held EXCEPT !["pivPin"] = ok]
@@ -297,7 +297,7 @@ PivVerify(ok) ==
     /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, viol >>
 
 \* PIV CHANGE REFERENCE DATA / RESET RETRY COUNTER take no `&mut Session` at all
-\* (crates/rsk-piv/src/lib.rs:547-581), so a refused change costs the standing
+\* (crates/rsk-piv/src/lib.rs:548-582), so a refused change costs the standing
 \* status NOTHING. Deliberate, and settled by measurement rather than taste:
 \* SP 800-73-4 pt2 3.2.2/3.2.3 say the security status is unchanged and a real
 \* YubiKey keeps it.
@@ -536,8 +536,8 @@ PivKeyOp ==
 
 \* SCardDisconnect(SCARD_RESET_CARD) / CCID_POWER_OFF / CCID_POWER_ON:
 \* `Dispatcher::reset_card` deselects, which drops the selected applet's
-\* security status (crates/rsk-device/src/ccid.rs:334-349,
-\* crates/rsk-sdk/src/applet.rs:227-235). This is the one the `cross_applet`
+\* security status (crates/rsk-device/src/ccid.rs:340-355,
+\* crates/rsk-sdk/src/applet.rs:226-234). This is the one the `cross_applet`
 \* fuzz target already watches, one layer down.
 \* Its own trailing UNCHANGED named `psig` while the ELSE branch assigned it, so
 \* `psig' = FALSE /\ psig' = psig` pinned the whole action to a no-op wherever
@@ -669,7 +669,7 @@ NoKeyOpOnTheAdminStatus ==
 \* THE OTHER HALF OF THE REFUSAL RULE, and it points the opposite way: two
 \* refusals must cost NOTHING, and each is settled by its own authority rather
 \* than by a cross-applet principle. PIV's CHANGE REFERENCE DATA takes no
-\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:547-581) -- SP 800-73-4 pt2
+\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:548-582) -- SP 800-73-4 pt2
 \* 3.2.2/3.2.3, plus a measured YubiKey 5.7.4. OATH's access-code VALIDATE keeps
 \* the standing unlock (crates/rsk-oath/src/lib.rs:558-560), because a MAC
 \* challenge-response has no retry counter for a refusal to protect.

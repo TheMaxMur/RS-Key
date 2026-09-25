@@ -511,7 +511,7 @@ why = "and its second. Both slots' valid bits come off flash in the response tha
 
 [[site]]
 file = "crates/rsk-piv/src/files.rs"
-line = 521
+line = 524
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -521,8 +521,19 @@ disposition = "must-read"
 why = "the site this audit was about: PIV key fids carry EF_META heads, so the record half is NOT vacuous here, and force_delete hid a faulted drop until 0x0987. GET METADATA answers from that head with no has_key probe. The head is reported at the end of the sweep rather than propagated out of it, so an orphan the medium forces is answered for without the rest of the range surviving with it."
 
 [[site]]
+file = "crates/rsk-piv/src/objects.rs"
+line = 118
+call = "Some((fid, _)) => fs.delete(fid).map_err(|_| Sw::MEMORY_FAILURE),"
+verb = "delete"
+answer = "read"
+class = "bookkeeping"
+metadata = "none"
+disposition = "must-read"
+why = "PUT DATA with an empty body deletes a pooled object, so the removal is the whole command, as for a fixed object: a failure answers 6581 over the object still held."
+
+[[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 857
+line = 861
 call = "return match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
@@ -533,7 +544,7 @@ why = "PUT DATA with an empty body IS the object delete, so the removal is the w
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1188
+line = 1192
 call = "let dropped = fs.delete_key(key_fid(from));"
 verb = "delete_key"
 answer = "read"
@@ -544,7 +555,7 @@ why = "MOVE with to = 0xFF, the slot delete. The head earns a retry because one 
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1189
+line = 1193
 call = "let _ = fs.delete(pubkey_fid(from));"
 verb = "delete"
 answer = "discarded"

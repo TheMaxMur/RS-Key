@@ -253,7 +253,7 @@ and no meta-only file. It is reachable on hardware — `rsk-store`'s `read` and
 `size` set `last_err` straight from `sequential-storage`'s `fetch_item`, so
 `last_error()` is a flash read error and not a modelling device. And the tree
 already treats the consequence as a defect **in one place**: `rsk-piv`'s
-`files.rs:309-318` rewrites the management key's head unconditionally, because
+`files.rs:310-319` rewrites the management key's head unconditionally, because
 after a `force_delete` "a stale AES-256 head left over a re-minted 24-byte
 DEFAULT_MGM wedges the slot on the length compare". PIV's other `meta_add_slot`
 sites have no such repair.

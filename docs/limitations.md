@@ -185,7 +185,7 @@ covers the security boundary. This page covers feature and hardware gaps.
   It does not back them at rest: the seal rule covers key material, so a flash
   dump of a provisioned device yields whatever a host put in them. Their names
   are the standard's, not a capability of this firmware — there is no sensor, no
-  enrolment and no matching here, and the 1900-byte object ceiling is far under a
+  enrolment and no matching here, and the 2029-byte object ceiling is far under a
   real FIPS 201 biometric template, so what they hold is whatever the owner chose
   to store. *Status: won't fix. The read condition is an access rule, not a
   confidentiality promise, and the device cannot produce the content a seal here

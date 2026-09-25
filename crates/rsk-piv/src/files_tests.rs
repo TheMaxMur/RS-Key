@@ -15,7 +15,7 @@ use rsk_fs::storage::faults::{RemoveStuck, Undead};
 ///
 /// `deleted` rises a whole batch at a time, so `==` lets it step PAST the budget
 /// without ever equalling it and the valve stops guarding. Five undead records
-/// instead — 5 divides none of the four applets' budgets (768 · 257 · 512 · 1039).
+/// instead — 5 divides none of the four applets' budgets (1024 · 257 · 512 · 1039).
 /// The fixture's ceiling is what makes that failure READABLE: without it the
 /// mutation hangs the suite rather than failing it.
 #[test]

@@ -40,6 +40,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV stores any `5Fxxxx` data object a YubiKey 5.8.0 stores, except the
+  attestation certificate `5FFF01`: the Yubico minidriver's `5FFF10`–`5FFF15`,
+  `5FC1F0`–`5FC1FF`, `5FFF02`–`5FFFFF` and every other id, where RS-Key refused
+  all but `5FC100`–`5FC1EF` and `5FFF00` with `6A80`. The ids outside the
+  standard set share room for 256 objects and 32 KiB of bodies; the next one
+  answers `6A84`, as a full YubiKey does, and so does a PUT DATA past the
+  device's shared file budget, which answered `6581`. An object is up to 2029
+  bytes, from 1900: what a command chain reassembles, 2022 through ykman's single
+  extended APDU; a YubiKey reassembles 3072 bytes and takes 3063. A PIV reset
+  takes the pool with the rest of the applet.
+  `bcdDevice` 0x0A03 → 0x0A04.
+
 - A vendor `CONFIG_WRITE` of the LED block or the phy record sent over CCID as a
   command chain took effect only at the next reboot: the LED block did not reload
   and a changed USB identity did not re-enumerate. The router looked for the

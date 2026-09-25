@@ -2412,8 +2412,8 @@ fn get_data_clamps_oversized_stored_object() {
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     let mut fs = new_fs();
     select(&mut app, &mut fs);
-    // Plant a 2000-byte value at the 5FC100 object fid (0xD200), bypassing put_data.
-    let big = [0xABu8; 2000];
+    // Plant a value past MAX_OBJECT at the 5FC100 object fid (0xD200), bypassing put_data.
+    let big = [0xABu8; MAX_OBJECT + 100];
     fs.put(object_fid(0x5F_C1_00).unwrap(), &big).unwrap();
     let (sw, resp) = run(
         &mut app,
@@ -2425,7 +2425,7 @@ fn get_data_clamps_oversized_stored_object() {
     );
     assert_eq!(sw, Sw::OK, "oversized object must not panic");
     // 0x53 wrapper (tag + 3-byte long-form length) around exactly MAX_OBJECT
-    // bytes, not the planted 2000.
+    // bytes, not the planted value.
     assert_eq!(resp[0], 0x53);
     assert_eq!(resp.len(), 4 + MAX_OBJECT, "payload clamped to MAX_OBJECT");
 }
@@ -5415,12 +5415,17 @@ fn an_object_id_is_its_whole_value() {
     assert_eq!(data_object_fid(0xEF), Some(0xD2EF));
     assert_eq!(data_object_fid(0xF0), None);
     assert_eq!(data_object_fid(0xF1), None);
+    // 5FC1F1 is an object of its own, stored in the pool as a YubiKey stores it, and
+    // never a second door to the attestation certificate.
     let mut over = vec![TAG_DATA_PATH, 0x03, 0x5F, 0xC1, 0xF1, TAG_DATA_OBJECT, 0x03];
     over.extend_from_slice(b"XXX");
     assert_eq!(
         run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &over).0,
-        Sw::WRONG_DATA,
-        "5FC1F1 must not be a second door to the attestation certificate"
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &over[..5]),
+        (Sw::OK, vec![TAG_DATA_OBJECT, 0x03, b'X', b'X', b'X'])
     );
     let (sw, still) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &exact);
     assert_eq!(sw, Sw::OK);
@@ -10325,6 +10330,414 @@ fn a_faulted_key_or_head_probe_refuses_generate_before_it_writes() {
             (medium.value(cert), medium.value(key)),
             before,
             "{name}: the refused GENERATE wrote"
+        );
+    }
+}
+
+/// A PUT DATA body `5C 03 id 53 <len> body`, the length in its shortest form.
+fn object_body(id: [u8; 3], body: &[u8]) -> Vec<u8> {
+    let mut d = vec![TAG_DATA_PATH, 0x03];
+    d.extend_from_slice(&id);
+    d.push(TAG_DATA_OBJECT);
+    match body.len() {
+        n @ 0..=0x7F => d.push(n as u8),
+        n @ 0x80..=0xFF => d.extend_from_slice(&[0x81, n as u8]),
+        n => d.extend_from_slice(&[0x82, (n >> 8) as u8, n as u8]),
+    }
+    d.extend_from_slice(body);
+    d
+}
+
+/// The pool's live files, read off the store rather than through `is_piv_fid`, the
+/// predicate the reset test holds to them.
+fn pooled<S: Storage>(fs: &mut Fs<S>) -> usize {
+    let mut fids = Vec::new();
+    fs.for_each_key(&mut |fid| {
+        if crate::objects::POOL.contains(&fid) && !fids.contains(&fid) {
+            fids.push(fid);
+        }
+    });
+    fids.len()
+}
+
+fn put_object<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, n: u16, body: &[u8]) -> Sw {
+    let id = [0x5F, (n >> 8) as u8, n as u8];
+    run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &object_body(id, body)).0
+}
+
+fn get_object<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, n: u16) -> (Sw, Vec<u8>) {
+    let id = [0x5F, (n >> 8) as u8, n as u8];
+    run(
+        app,
+        fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &object_body(id, &[])[..5],
+    )
+}
+
+/// Any `5Fxxxx` outside the fixed map is an object of its own, stored, read back,
+/// rewritten in place and deleted as a YubiKey 5.8.0 does — the Yubico minidriver's
+/// `5FFF10`–`5FFF15` among them. `5FFF01` and ids that are not `5F` stay refused.
+#[test]
+fn the_pool_keeps_any_5f_object_a_yubikey_keeps() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, id: [u8; 3], body: &[u8]| {
+        run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &object_body(id, body)).0
+    };
+    let get = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, id: [u8; 3]| {
+        run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &object_body(id, &[])[..5],
+        )
+    };
+    let ids = [
+        [0x5F, 0x00, 0x00],
+        [0x5F, 0x12, 0x34],
+        [0x5F, 0xFF, 0xFF],
+        [0x5F, 0xFF, 0x10],
+        [0x5F, 0xFF, 0x15],
+        [0x5F, 0xFF, 0x02],
+        [0x5F, 0xC1, 0xF0],
+        [0x5F, 0xC1, 0xFF],
+    ];
+    for (i, id) in ids.iter().enumerate() {
+        assert_eq!(
+            put(&mut app, &mut fs, *id, &[i as u8; 3]),
+            Sw::OK,
+            "{id:02X?}"
+        );
+    }
+    for (i, id) in ids.iter().enumerate() {
+        let want = vec![TAG_DATA_OBJECT, 3, i as u8, i as u8, i as u8];
+        assert_eq!(get(&mut app, &mut fs, *id), (Sw::OK, want), "{id:02X?}");
+    }
+    assert_eq!(pooled(&mut fs), ids.len(), "control: one file each");
+    assert_eq!(put(&mut app, &mut fs, ids[3], b"new"), Sw::OK);
+    let want = [&[TAG_DATA_OBJECT, 3][..], b"new"].concat();
+    assert_eq!(get(&mut app, &mut fs, ids[3]), (Sw::OK, want));
+    assert_eq!(pooled(&mut fs), ids.len(), "a rewrite stored a second copy");
+    // Deleted, then deleted again: `9000` both times, as on a YubiKey.
+    for _ in 0..2 {
+        assert_eq!(put(&mut app, &mut fs, ids[3], &[]), Sw::OK);
+    }
+    assert_eq!(get(&mut app, &mut fs, ids[3]).0, Sw::FILE_NOT_FOUND);
+    assert_eq!(pooled(&mut fs), ids.len() - 1);
+    for id in [[0x5F, 0xFF, 0x01], [0xDF, 0x00, 0x00], [0x12, 0x34, 0x56]] {
+        assert_eq!(
+            put(&mut app, &mut fs, id, b"x"),
+            Sw::WRONG_DATA,
+            "{id:02X?}"
+        );
+    }
+}
+
+/// The pool takes a body up to `MAX_OBJECT` and `6700` past it, as a YubiKey answers
+/// past its own limit, and 256 objects, then `6A84` as a full YubiKey does; an object
+/// it holds can still be rewritten, and a deleted one's file is taken again.
+#[test]
+fn the_pool_takes_max_object_and_answers_6a84_when_full() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, n: u16, body: &[u8]| {
+        let id = [0x5F, (n >> 8) as u8, n as u8];
+        run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &object_body(id, body)).0
+    };
+    let big = vec![0xA5; MAX_OBJECT];
+    assert_eq!(put(&mut app, &mut fs, 0, &big), Sw::OK);
+    let (sw, back) = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &[TAG_DATA_PATH, 0x03, 0x5F, 0x00, 0x00],
+    );
+    assert_eq!((sw, &back[4..]), (Sw::OK, &big[..]));
+    assert_eq!(
+        put(&mut app, &mut fs, 1, &[0xA5; MAX_OBJECT + 1]),
+        Sw::WRONG_LENGTH
+    );
+    for n in 1..256 {
+        assert_eq!(put(&mut app, &mut fs, n, &[n as u8]), Sw::OK, "object {n}");
+    }
+    assert_eq!(pooled(&mut fs), 256, "control: the pool is full");
+    assert_eq!(put(&mut app, &mut fs, 256, b"x"), Sw::FILE_FULL);
+    assert_eq!(put(&mut app, &mut fs, 7, b"again"), Sw::OK, "a held object");
+    assert_eq!(put(&mut app, &mut fs, 5, &[]), Sw::OK);
+    assert_eq!(put(&mut app, &mut fs, 256, b"x"), Sw::OK, "a freed file");
+}
+
+/// The pool holds 32 KiB of bodies in all, then answers `6A84` as a full YubiKey
+/// does; a rewrite is judged by what it adds, and a delete makes room again.
+#[test]
+fn the_pool_holds_its_byte_budget_and_no_more() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let full = crate::objects::POOL_BYTES / MAX_OBJECT;
+    let rest = crate::objects::POOL_BYTES - full * MAX_OBJECT;
+    for n in 0..full as u16 {
+        assert_eq!(
+            put_object(&mut app, &mut fs, n, &vec![0x11; MAX_OBJECT]),
+            Sw::OK
+        );
+    }
+    let next = full as u16;
+    let big = vec![0x22; MAX_OBJECT];
+    assert_eq!(put_object(&mut app, &mut fs, next, &big), Sw::FILE_FULL);
+    assert_eq!(
+        put_object(&mut app, &mut fs, next, &vec![0x33; rest]),
+        Sw::OK
+    );
+    assert_eq!(put_object(&mut app, &mut fs, next + 1, b"x"), Sw::FILE_FULL);
+    assert_eq!(
+        put_object(&mut app, &mut fs, 0, &big),
+        Sw::OK,
+        "a same-size rewrite"
+    );
+    assert_eq!(put_object(&mut app, &mut fs, next, &[]), Sw::OK);
+    assert_eq!(
+        put_object(&mut app, &mut fs, next + 1, &vec![0x44; rest]),
+        Sw::OK
+    );
+    // A held object growing in place is charged its growth: one byte past the budget.
+    assert_eq!(put_object(&mut app, &mut fs, 0, &[]), Sw::OK);
+    let grown = 0x100;
+    assert_eq!(
+        put_object(&mut app, &mut fs, grown, &vec![0x55; MAX_OBJECT - 1]),
+        Sw::OK
+    );
+    assert_eq!(put_object(&mut app, &mut fs, 0, b"x"), Sw::OK);
+    assert_eq!(
+        put_object(&mut app, &mut fs, grown, &vec![0x55; MAX_OBJECT]),
+        Sw::FILE_FULL,
+        "a held object grew past the budget"
+    );
+}
+
+/// A rewrite lands in its object's own file even when a file before it is free:
+/// written into the free one it would leave the old copy behind as a second.
+#[test]
+fn a_rewrite_behind_a_freed_file_stays_in_its_own() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    assert_eq!(put_object(&mut app, &mut fs, 1, b"one"), Sw::OK);
+    assert_eq!(put_object(&mut app, &mut fs, 2, b"two"), Sw::OK);
+    assert_eq!(put_object(&mut app, &mut fs, 1, &[]), Sw::OK);
+    assert_eq!(put_object(&mut app, &mut fs, 2, b"TWO"), Sw::OK);
+    assert_eq!(pooled(&mut fs), 1, "the rewrite stored a second copy");
+    let want = [&[TAG_DATA_OBJECT, 3][..], b"TWO"].concat();
+    assert_eq!(get_object(&mut app, &mut fs, 2), (Sw::OK, want));
+    assert_eq!(get_object(&mut app, &mut fs, 1).0, Sw::FILE_NOT_FOUND);
+}
+
+/// A fixed object takes the same `MAX_OBJECT` a pooled one does.
+#[test]
+fn a_fixed_object_takes_max_object_and_no_more() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let id = [0x5F, 0xC1, 0x05];
+    let put = |app: &mut PivApplet, fs: &mut Fs<RamStorage>, n: usize| {
+        run(
+            app,
+            fs,
+            INS_PUT_DATA,
+            0x3F,
+            0xFF,
+            &object_body(id, &vec![0x5A; n]),
+        )
+        .0
+    };
+    assert_eq!(put(&mut app, &mut fs, MAX_OBJECT), Sw::OK);
+    assert_eq!(put(&mut app, &mut fs, MAX_OBJECT + 1), Sw::WRONG_LENGTH);
+}
+
+/// A write or delete the medium refuses is `6581`, not the `6A84` of a store with no
+/// room — for a pooled object as for a fixed one.
+#[test]
+fn a_refused_pool_write_or_delete_answers_6581() {
+    let rng: &'static _ = Box::leak(Box::new(RefCell::new(TestRng(7))));
+    let pres: &'static _ = Box::leak(Box::new(RefCell::new(AlwaysConfirm)));
+    let (backend, medium) = Cut::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let mut app = PivApplet::new(SERIAL, HASH, None, rng, pres);
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    medium.arm(0);
+    assert_eq!(put_object(&mut app, &mut fs, 7, b"x"), Sw::MEMORY_FAILURE);
+    let fixed = object_body([0x5F, 0xC1, 0x05], b"x");
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &fixed).0,
+        Sw::MEMORY_FAILURE
+    );
+    medium.arm(u32::MAX);
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    assert_eq!(put_object(&mut app, &mut fs, 7, b"x"), Sw::OK);
+    let first = *crate::objects::POOL.start();
+    medium.refuse_remove(Some(first));
+    assert_eq!(put_object(&mut app, &mut fs, 7, &[]), Sw::MEMORY_FAILURE);
+    medium.refuse_remove(None);
+    assert!(
+        medium.value(first).is_some(),
+        "control: the object is still held"
+    );
+}
+
+/// A fault on the body read, after the walk found the object, is `6581` rather than
+/// the `6A82` of an object never stored.
+#[test]
+fn a_faulted_pool_body_read_is_6581() {
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    assert_eq!(put_object(&mut app, &mut fs, 7, b"x"), Sw::OK);
+    medium.stick_after(*crate::objects::POOL.start(), 1);
+    assert_eq!(get_object(&mut app, &mut fs, 7).0, Sw::MEMORY_FAILURE);
+}
+
+/// A pooled record is the object id's low two bytes, then its body; one shorter
+/// than that tag names no object, and no write takes its file.
+#[test]
+fn a_pool_record_is_its_id_tag_and_body() {
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    let first = *crate::objects::POOL.start();
+    fs.put(first, &[0x5F]).unwrap();
+    assert_eq!(get_object(&mut app, &mut fs, 0x5F00).0, Sw::FILE_NOT_FOUND);
+    assert_eq!(put_object(&mut app, &mut fs, 0x1234, b"xyz"), Sw::OK);
+    assert_eq!(
+        medium.value(first),
+        Some(vec![0x5F]),
+        "a short record was taken"
+    );
+    assert_eq!(
+        medium.value(first + 1),
+        Some(vec![0x12, 0x34, b'x', b'y', b'z'])
+    );
+}
+
+/// A PIV reset takes the pool with the rest of the applet's files, and its delete
+/// budget covers them: every data object, cached point and pool file held at once
+/// is more than the 768 the budget was before the pool.
+#[test]
+fn a_piv_reset_takes_the_pool() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let mut fs = new_fs();
+    for fid in (0xD100..=0xD17F)
+        .chain(0xD200..=0xD2EF)
+        .chain(0xD400..=0xD4FF)
+    {
+        fs.put(fid, &[0x41]).unwrap();
+    }
+    for n in 0..256 {
+        crate::objects::write(&mut fs, 0x5F_00_00 + n, b"minidriver").unwrap();
+    }
+    // Counted off the ranges planted, not through `is_piv_fid`, the predicate under test.
+    let planted = 0x80 + 0xF0 + 0x100 + pooled(&mut fs);
+    assert!(
+        planted > 768 + 32,
+        "control: past the old budget by more than a sweep batch"
+    );
+    assert_eq!(reset_files(&dev, &mut fs, &mut TestRng(3)), Ok(()));
+    assert_eq!(pooled(&mut fs), 0, "the reset left pool objects");
+}
+
+/// A pool probe the medium cannot serve refuses. Read as absent it would store a
+/// second copy beside the one it missed, or answer `6A82` over an object it holds.
+#[test]
+fn a_faulted_pool_probe_refuses_and_stores_no_second_copy() {
+    let (mut app, mut fs, medium, _rng, _pres) = moved_card();
+    let id = [0x5F, 0xFF, 0x10];
+    let first = *crate::objects::POOL.start();
+    let put = |app: &mut PivApplet, fs: &mut Fs<ProbeStuck>, body: &[u8]| {
+        run(app, fs, INS_PUT_DATA, 0x3F, 0xFF, &object_body(id, body)).0
+    };
+    assert_eq!(put(&mut app, &mut fs, b"one"), Sw::OK);
+    assert!(
+        medium.value(first).is_some(),
+        "control: the pool's first file"
+    );
+    medium.stick_once(first);
+    assert_eq!(put(&mut app, &mut fs, b"two"), Sw::MEMORY_FAILURE);
+    assert_eq!(pooled(&mut fs), 1, "a faulted probe stored a second copy");
+    medium.stick_once(first);
+    let get = run(
+        &mut app,
+        &mut fs,
+        INS_GET_DATA,
+        0x3F,
+        0xFF,
+        &object_body(id, &[])[..5],
+    );
+    assert_eq!(get.0, Sw::MEMORY_FAILURE, "a faulted probe read as absent");
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &object_body(id, &[])[..5]
+        ),
+        (Sw::OK, vec![TAG_DATA_OBJECT, 3, b'o', b'n', b'e'])
+    );
+}
+
+/// A store with no room answers PUT DATA `6A84`, as a full YubiKey does, not the `6581`
+/// of a medium that failed: for a fixed object as for a pooled one.
+#[test]
+fn a_full_store_answers_put_data_6a84() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    // Spend the shared file budget on records outside every applet's range.
+    for n in 0..fs.free_dynamic() {
+        fs.put(0x3000 + n as u16, &[1]).unwrap();
+    }
+    for id in [[0x5F, 0xC1, 0x05], [0x5F, 0x00, 0x00]] {
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_PUT_DATA,
+                0x3F,
+                0xFF,
+                &object_body(id, b"x")
+            )
+            .0,
+            Sw::FILE_FULL,
+            "{id:02X?}"
         );
     }
 }

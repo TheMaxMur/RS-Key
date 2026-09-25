@@ -37,6 +37,12 @@ const _: () = assert!(RESP_CAP == rsk_usb::ccid::MAX_CCID_MSG - rsk_usb::ccid::H
 // reader answers with an error before any applet sees them. Only this crate sees
 // both constants.
 const _: () = assert!(rsk_openpgp::files::MAX_APDU_BYTES == RESP_CAP);
+// A command chain reassembles one frame's worth, and PIV's largest object is that
+// less the `5C 03 id 53 82 LL LL` header. Kani shrinks the chain buffer, so not there.
+#[cfg(not(kani))]
+const _: () = assert!(rsk_sdk::applet::CHAIN_BUF_SIZE == RESP_CAP);
+#[cfg(not(kani))]
+const _: () = assert!(rsk_piv::MAX_OBJECT + 9 == rsk_sdk::applet::CHAIN_BUF_SIZE);
 
 // OpenPGP announces a maximum DO length in its own crate, which cannot see this
 // one; this is the only place both are visible. A DO longer than the body an

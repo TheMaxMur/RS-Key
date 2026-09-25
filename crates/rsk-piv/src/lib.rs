@@ -17,6 +17,7 @@ mod chuid;
 pub mod files;
 pub mod info;
 mod keygen;
+mod objects;
 mod seal;
 mod x509;
 
@@ -738,26 +739,30 @@ impl PivApplet<'_> {
         if id == PRINTED_ID && mgm_is_protected(fs) {
             return self.get_protected_mgm(fs, res);
         }
-        let Some(fid) = object_fid(id) else {
-            return Sw::FILE_NOT_FOUND;
-        };
-        let mut obj = [0u8; MAX_OBJECT];
-        // `Storage::read` returns the value's FULL stored length; clamp to the
-        // bytes we actually hold. Host writers cap at MAX_OBJECT (put_data), so
-        // this only bites a flash-corrupted over-length record — returning its
-        // prefix instead of panicking on the slice.
-        let n = match fs.read(fid, &mut obj) {
-            Some(n) if n > 0 => n.min(obj.len()),
-            // No host-provisioned CHUID: synthesize a default so Windows' PIV
-            // minidriver has the card GUID it needs to enumerate the slots (a
-            // 6A82 here leaves RSA/EC auth "pending" under CAPI). A real PUT DATA
-            // persists at this same fid and wins the read above.
-            _ if id == CHUID_ID => {
-                let synth = chuid::default_chuid(&self.serial_hash);
-                obj[..synth.len()].copy_from_slice(&synth);
-                synth.len()
-            }
-            _ => return Sw::FILE_NOT_FOUND,
+        let mut obj = [0u8; objects::RECORD_MAX];
+        let n = match object_fid(id) {
+            // `Storage::read` returns the value's FULL stored length; clamp to the
+            // bytes we actually hold. Host writers cap at MAX_OBJECT (put_data), so
+            // this only bites a flash-corrupted over-length record.
+            Some(fid) => match fs.read(fid, &mut obj[..MAX_OBJECT]) {
+                Some(n) if n > 0 => n.min(MAX_OBJECT),
+                // No host-provisioned CHUID: synthesize a default so Windows' PIV
+                // minidriver has the card GUID it needs to enumerate the slots (a
+                // 6A82 here leaves RSA/EC auth "pending" under CAPI). A real PUT DATA
+                // persists at this same fid and wins the read above.
+                _ if id == CHUID_ID => {
+                    let synth = chuid::default_chuid(&self.serial_hash);
+                    obj[..synth.len()].copy_from_slice(&synth);
+                    synth.len()
+                }
+                _ => return Sw::FILE_NOT_FOUND,
+            },
+            None if objects::in_pool(id) => match objects::read(fs, id, &mut obj) {
+                Ok(Some(n)) => n,
+                Ok(None) => return Sw::FILE_NOT_FOUND,
+                Err(sw) => return sw,
+            },
+            None => return Sw::FILE_NOT_FOUND,
         };
         if push_tlv(res, TAG_DATA_OBJECT, &obj[..n]).is_err() {
             return Sw::WRONG_LENGTH;
@@ -816,6 +821,7 @@ impl PivApplet<'_> {
         let Some((path, obj)) = put_data_parts(apdu.data) else {
             return Sw::WRONG_DATA;
         };
+        let id = u32::from_be_bytes([0, path[0], path[1], path[2]]);
         let fid = match (path[0], path[1], path[2]) {
             // ADMIN DATA (5FFF00): the protection flags. Plaintext (non-secret).
             (0x5F, 0xFF, 0x00) => EF_PIVMAN_DATA,
@@ -843,14 +849,12 @@ impl PivApplet<'_> {
             },
             (0x5F, 0xC1, b) => match data_object_fid(b) {
                 Some(fid) => fid,
-                None => return Sw::WRONG_DATA,
+                None => return put_pooled(fs, id, obj),
             },
-            // Everything else, and `5FFF01` in particular: the attestation
-            // certificate is not host-writable. A YubiKey takes that write — one
-            // probe pass in this project destroyed a real YubiKey's factory chain
-            // with it, unrecoverably — and pairing it with a host-loaded F9 key
-            // would let the management key alone replace the device's attestation
-            // identity. Deliberate; pinned by a test and docs/limitations.md.
+            _ if objects::in_pool(id) => return put_pooled(fs, id, obj),
+            // An id not `5Fxxxx`, and `5FFF01`: no host replaces the attestation
+            // certificate, which a YubiKey allows (a probe here once destroyed a real
+            // YubiKey's factory chain with it). Deliberate; docs/limitations.md.
             _ => return Sw::WRONG_DATA,
         };
         if obj.is_empty() {
@@ -862,10 +866,10 @@ impl PivApplet<'_> {
         if obj.len() > MAX_OBJECT {
             return Sw::WRONG_LENGTH;
         }
-        if fs.put(fid, obj).is_err() {
-            return Sw::MEMORY_FAILURE;
+        match fs.put(fid, obj) {
+            Ok(()) => Sw::OK,
+            Err(e) => objects::put_sw(e),
         }
-        Sw::OK
     }
 
     /// GET METADATA (INS 0xF7, Yubico).
@@ -1205,9 +1209,24 @@ impl PivApplet<'_> {
     }
 }
 
-/// Largest stored data-object body (certificate objects included); bounded so
-/// the `53`-wrapped response fits the 2 KiB CCID response buffer.
-pub(crate) const MAX_OBJECT: usize = 1900;
+/// Largest stored data-object body (certificate objects included): the 2038 bytes a
+/// command chain reassembles less the `5C 03 id 53 82 LL LL` header (one extended
+/// APDU carries 2022). A YubiKey reassembles 3072, and takes 3063.
+pub const MAX_OBJECT: usize = 2038 - 9;
+
+/// PUT DATA for an object in the pool: an empty body deletes it, anything else is
+/// stored.
+fn put_pooled<S: Storage>(fs: &mut Fs<S>, id: u32, obj: &[u8]) -> Sw {
+    let stored = if obj.is_empty() {
+        objects::delete(fs, id)
+    } else {
+        objects::write(fs, id, obj)
+    };
+    match stored {
+        Ok(()) => Sw::OK,
+        Err(sw) => sw,
+    }
+}
 
 /// The `5C` path and the `53` object of a PUT DATA body, read as a YubiKey 5.8.0
 /// reads them: `5C 03` first, `53` straight after in its shortest length form, and

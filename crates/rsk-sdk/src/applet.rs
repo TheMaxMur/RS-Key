@@ -110,11 +110,10 @@ pub trait Applet<C> {
 
 /// Holds a command chain's accumulated segments. It is the CCID handler's
 /// body cap — one frame — and `docs/protocol.md` publishes that number to
-/// third-party hosts. `rsk-sdk` cannot see `rsk-usb`, so nothing but this
-/// sentence ties the two together; `rsk-device` holds the compile-time
-/// assertions for the constants it can reach.
+/// third-party hosts. `rsk-sdk` cannot see `rsk-usb`, so `rsk-device` asserts the
+/// two equal, and PIV's largest data object against it.
 #[cfg(not(kani))]
-const CHAIN_BUF_SIZE: usize = 2038;
+pub const CHAIN_BUF_SIZE: usize = 2038;
 /// Holds the unsent tail of a response while the host fetches it with GET
 /// RESPONSE. Sized to the largest response buffer a caller passes (the CCID
 /// handler's 2038-byte body cap).
@@ -125,7 +124,7 @@ const RESP_CHAIN_CAP: usize = 2048;
 // 17.5 GiB at the real sizes. Sound because of the harness's window rather than
 // the size (`Nc <= 1` per command ⇒ `chain_len <= 2`) — see `applet_kani.rs`.
 #[cfg(kani)]
-const CHAIN_BUF_SIZE: usize = 16;
+pub const CHAIN_BUF_SIZE: usize = 16;
 #[cfg(kani)]
 const RESP_CHAIN_CAP: usize = 16;
 

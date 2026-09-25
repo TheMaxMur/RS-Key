@@ -135,7 +135,7 @@ Two KV partitions at fixed offsets (`firmware/memory.x`): the main store, and
 a small separate partition for the per-operation counters so their churn
 never forces compaction of long-lived records. Files are 16-bit ids. Each
 applet owns disjoint ranges (FIDO `0x10xx/0xCxxx/0xCFxx/0xD0xx`, OpenPGP DO
-mirrors, PIV `0xD1xx/0xD2xx`, OTP slots `0xBBxx`, phy/rescue `0xE0xx`) and a
+mirrors, PIV `0xD1xx/0xD2xx/0xD4xx/0xD6xx`, OTP slots `0xBBxx`, phy/rescue `0xE0xx`) and a
 reset wipes exactly its own predicate, never a range shared with another
 applet.
 
