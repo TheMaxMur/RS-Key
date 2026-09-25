@@ -38,6 +38,31 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- OpenPGP key attestation, as a YubiKey 5.8.0 does it. `ATTEST`
+  (`80 FB <key> 00`, what `ykman openpgp keys attest` sends) writes an X.509
+  certificate for a key the card generated into that key's cardholder-certificate
+  occurrence, signed by an attestation key the card mints for itself: P-384,
+  sealed under the DEK like every OpenPGP key, at the first boot and again at
+  every reset. `GET DATA FC` returns its self-signed certificate: the root a
+  verifier pins, where a YubiKey's chains to Yubico's CA. Each statement carries
+  Yubico's extensions in a YubiKey's order: firmware version, serial, the key's
+  touch policy, form factor, cardholder name, fingerprint, generation time, the
+  signature counter (the signing key's only) and the key source. The refusals come
+  in a YubiKey's order: `6982` without PW1 in mode 81, whatever else is wrong;
+  `6E00` for class `00`; `6A80` for a bad P2 or a body; the touch its flag `D9`
+  asks for (`6600` without it); `6A80` for a bad P1; `6985` for an empty slot or an
+  imported key. Past the touch an ATTEST spends a one-shot PW1 whatever it answers,
+  as a signature does. The attestation key shows where a
+  YubiKey's does: DO `DE`'s `81` pair, `DA` inside `73` and in `FA`, a fourth
+  entry in `C5`/`C6`/`CD` (PUT DATA `DB`/`DC`/`DD`), its touch flag `D9` (off by
+  default; ATTEST asks for the touch it sets), and GENERATE's `P1 = 81` read under
+  `B6 { 84 01 81 }`. A card an older build provisioned mints its attestation key
+  at its first ATTEST. No host can replace the key or its certificate
+  ([limitations](docs/limitations.md)).
+  `bcdDevice` 0x0A06 → 0x0A07.
+
 ### Fixed
 
 - OpenPGP GENERATE and IMPORT read the whole control-reference template, as a

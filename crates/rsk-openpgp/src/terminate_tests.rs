@@ -96,6 +96,11 @@ fn every_record_scan_files_reseeds_is_swept_last_and_openpgp_owned() {
         if fid == EF_DEK_PW1.get() || fid == EF_DEK_PW3.get() {
             continue;
         }
+        // The attestation key, its public-key DO and FC are secrets like the DEK copies
+        // and go first with them; any a torn sweep leaves is minted again by an ATTEST.
+        if fid == EF_PK_ATT.get() || fid == EF_PB_ATT || fid == EF_ATT_CERT {
+            continue;
+        }
         assert!(
             is_openpgp_gate_fid(fid),
             "{fid:#06x} is re-seeded by scan_files yet swept in phase 1"

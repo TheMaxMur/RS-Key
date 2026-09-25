@@ -254,7 +254,7 @@ answer = "read"
 class = "secret-or-gate"
 metadata = "none"
 disposition = "must-read"
-why = "resetPersistentPinUvAuthToken revokes a capability (SEC-FIDO-003); all four callers map the error to CTAP2_ERR_OTHER rather than report a token cleared. The folded answer is kept deliberately (reviewed 0x0989): the record half here is only ever the shared blob being unreadable, but that is equally true of vendor.rs:414/416 and crates/rsk-openpgp/src/putdata.rs:163/169, and splitting the halves for this caller alone would re-open the swallowed drop 0x0987 closed. One-shot commands lose the command, not a sweep's range."
+why = "resetPersistentPinUvAuthToken revokes a capability (SEC-FIDO-003); all four callers map the error to CTAP2_ERR_OTHER rather than report a token cleared. The folded answer is kept deliberately (reviewed 0x0989): the record half here is only ever the shared blob being unreadable, but that is equally true of vendor.rs:414/416 and crates/rsk-openpgp/src/putdata.rs:176/182, and splitting the halves for this caller alone would re-open the swallowed drop 0x0987 closed. One-shot commands lose the command, not a sweep's range."
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
@@ -335,7 +335,7 @@ why = "wipe_oath's sweep, credentials first then the unlock records; OATH fids c
 
 [[site]]
 file = "crates/rsk-openpgp/src/init.rs"
-line = 186
+line = 191
 call = "let _ = fs.delete(EF_RC);"
 verb = "delete"
 answer = "discarded"
@@ -346,7 +346,7 @@ why = "scan_files runs neutralize_default_reset_code and it is idempotent, so a 
 
 [[site]]
 file = "crates/rsk-openpgp/src/init.rs"
-line = 187
+line = 192
 call = "let _ = fs.delete_key(EF_DEK_RC);"
 verb = "delete_key"
 answer = "discarded"
@@ -357,7 +357,7 @@ why = "the DEK half of the same idempotent repair, retried on the next boot rath
 
 [[site]]
 file = "crates/rsk-openpgp/src/lib.rs"
-line = 287
+line = 289
 call = "let _ = fs.delete(stor);"
 verb = "delete"
 answer = "discarded"
@@ -434,7 +434,7 @@ why = "the same DEK again, staged by a PUT DATA 0xD3 that tore or was refused. I
 
 [[site]]
 file = "crates/rsk-openpgp/src/putdata.rs"
-line = 163
+line = 176
 call = "Ok(true) if fs.force_delete(slot.get()).is_err() => return Sw::MEMORY_FAILURE,"
 verb = "force_delete"
 answer = "read"
@@ -445,7 +445,7 @@ why = "SEC-POL-003: changing a slot's algorithm attribute invalidates its key, a
 
 [[site]]
 file = "crates/rsk-openpgp/src/putdata.rs"
-line = 169
+line = 182
 call = "Ok(true) if fs.force_delete(public).is_err() => return Sw::MEMORY_FAILURE,"
 verb = "force_delete"
 answer = "read"
@@ -456,7 +456,7 @@ why = "the public half of the same invalidation — a point still served for a k
 
 [[site]]
 file = "crates/rsk-openpgp/src/putdata.rs"
-line = 219
+line = 231
 call = "let _ = fs.delete(target);"
 verb = "delete"
 answer = "discarded"
@@ -467,7 +467,7 @@ why = "the generic DO writer's empty-body clear. The host reads every one of the
 
 [[site]]
 file = "crates/rsk-openpgp/src/terminate.rs"
-line = 218
+line = 221
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"

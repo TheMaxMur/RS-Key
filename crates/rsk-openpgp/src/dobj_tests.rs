@@ -118,8 +118,8 @@ fn discretionary_contains_key_information() {
     };
     assert!(
         out[..n]
-            .windows(8)
-            .any(|w| w == [0xDE, 0x06, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00]),
+            .windows(10)
+            .any(|w| w == [0xDE, 0x08, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x81, 0x00]),
         "0x73 discretionary must contain the 0xDE key-info DO with spec key-refs"
     );
 }
@@ -154,7 +154,8 @@ fn algo_info_dec_list_uses_ecdh_for_nist() {
 #[test]
 fn key_information_uses_spec_key_refs() {
     // OpenPGP Card 3.4 §4.4.3.8: (key-ref, status) pairs with refs 01/02/03 for
-    // SIG/DEC/AUT. ykman >= 5.2 keys its parse on these; 0-indexed refs crash it.
+    // SIG/DEC/AUT, and Yubico's 81 for the attestation key after them. ykman >= 5.2
+    // keys its parse on these; 0-indexed refs crash it.
     let mut fs = fs();
     let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
     let mut out = [0u8; 64];
@@ -162,8 +163,8 @@ fn key_information_uses_spec_key_refs() {
         let mut w = DoWriter::new(&mut out, &mut fs, &aid);
         w.build(EF_KEY_INFO)
     };
-    assert_eq!(n, 6);
-    assert_eq!(&out[..6], &[0x01, 0x00, 0x02, 0x00, 0x03, 0x00]);
+    assert_eq!(n, 8);
+    assert_eq!(&out[..8], &[0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x81, 0x00]);
 }
 
 #[test]
@@ -228,7 +229,7 @@ fn discrete_do_nests_algo_pw_fp() {
 #[test]
 fn short_fingerprint_slot_does_not_leak_scratch_tail() {
     // Regression: PUT DATA is uncapped, so a present-but-short fingerprint slot used
-    // to make the C5 DO declare 60 bytes while only writing a few — the tail slicing
+    // to make the C5 DO declare its width while only writing a few bytes — the tail slicing
     // stale scratch from a prior command. Each slot must be zero-padded to its fixed
     // 20-byte width so the declared length equals what was written.
     let mut fs = fs();
@@ -241,13 +242,13 @@ fn short_fingerprint_slot_does_not_leak_scratch_tail() {
         let mut w = DoWriter::new(&mut out, &mut fs, &aid);
         w.build(EF_FP)
     };
-    // C5 60 || sig(20) || dec(20 zeros) || aut(20 zeros) = 62 bytes, fully accounted.
+    // C5 80 || sig(20) || dec, aut, att (20 zeros each) = 82 bytes, fully accounted.
     assert_eq!(out[0], (EF_FP & 0xff) as u8);
-    assert_eq!(out[1], 60);
-    assert_eq!(n, 62);
+    assert_eq!(out[1], 80);
+    assert_eq!(n, 82);
     assert_eq!(out[2], 0xAA); // the one real fingerprint byte
     assert!(
-        out[3..62].iter().all(|&b| b == 0),
+        out[3..82].iter().all(|&b| b == 0),
         "short/absent slots must be zero-padded — no sentinel/scratch leak"
     );
 }

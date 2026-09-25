@@ -165,6 +165,7 @@ fn key_info(app: &mut crate::OpenpgpApplet, fs: &mut Fs<RamStorage>) -> Vec<u8> 
 fn a_template_is_read_as_a_yubikey_reads_it() {
     let absent = Sw::MEMORY_FAILURE;
     let refused = Sw::WRONG_DATA;
+    let held = Sw::OK;
     let table: &[(&[u8], Sw)] = &[
         (&[], refused),
         (&[0xB6], refused),
@@ -202,12 +203,12 @@ fn a_template_is_read_as_a_yubikey_reads_it() {
         (&[0xB8, 0x04, 0x84, 0x02, 0x02, 0x02], refused),
         (&[0xA4, 0x03, 0x84, 0x01, 0x03], absent),
         (&[0xA4, 0x03, 0x84, 0x01, 0x81], refused),
-        // The attestation key's own template: a YubiKey answers with its key. This
-        // card holds none, so it reads as an empty slot.
-        (&[0xB6, 0x03, 0x84, 0x01, 0x81], absent),
-        (&[0xB6, 0x03, 0x84, 0x01, 0x81, 0xFF], absent),
-        (&[0xB6, 0x06, 0x84, 0x01, 0x81, 0x84, 0x01, 0x01], absent),
-        (&[0xB6, 0x06, 0x84, 0x01, 0x01, 0x84, 0x01, 0x81], absent),
+        // The attestation key's template, alone or beside a SIG reference: a YubiKey
+        // answers with its key, as this card does from its first boot.
+        (&[0xB6, 0x03, 0x84, 0x01, 0x81], held),
+        (&[0xB6, 0x03, 0x84, 0x01, 0x81, 0xFF], held),
+        (&[0xB6, 0x06, 0x84, 0x01, 0x81, 0x84, 0x01, 0x01], held),
+        (&[0xB6, 0x06, 0x84, 0x01, 0x01, 0x84, 0x01, 0x81], held),
     ];
     with_card(|app, fs| {
         for (crt, want) in table {
@@ -251,12 +252,18 @@ fn the_attestation_template_never_reaches_the_signature_slot() {
         }
         assert_eq!(
             run(app, fs, &read_sig),
-            (sig_key, Sw::OK),
+            (sig_key.clone(), Sw::OK),
             "the SIG key moved"
         );
         assert_eq!(key_info(app, fs), before, "DO DE moved");
-        let read_att = apdu(INS_KEYPAIR_GEN, 0x81, 0x00, ATT);
-        assert_eq!(run(app, fs, &read_att).1, Sw::MEMORY_FAILURE, "read as SIG");
+        let (att_key, sw) = run(app, fs, &apdu(INS_KEYPAIR_GEN, 0x81, 0x00, ATT));
+        assert_eq!(sw, Sw::OK);
+        assert_ne!(att_key, sig_key, "the attestation key read as SIG's");
+        assert_eq!(
+            att_key[..5],
+            [0x7F, 0x49, 0x63, 0x86, 0x61],
+            "a P-384 point"
+        );
     });
 }
 
@@ -307,7 +314,10 @@ fn a_key_reference_to_the_templates_own_slot_is_that_slot() {
         assert_eq!(run(app, fs, &sig).1, Sw::OK);
         let aut = apdu(INS_KEYPAIR_GEN, 0x80, 0x00, &[0xA4, 0x03, 0x84, 0x01, 0x03]);
         assert_eq!(run(app, fs, &aut).1, Sw::OK);
-        assert_eq!(key_info(app, fs), [0x01, 0x02, 0x02, 0x02, 0x03, 0x01]);
+        assert_eq!(
+            key_info(app, fs),
+            [0x01, 0x02, 0x02, 0x02, 0x03, 0x01, 0x81, 0x01]
+        );
     });
 }
 

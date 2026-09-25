@@ -124,6 +124,7 @@ pub fn source(fid: u16) -> DoSource {
     if fid == EF_PK_SIG.get()
         || fid == EF_PK_DEC.get()
         || fid == EF_PK_AUT.get()
+        || fid == EF_PK_ATT.get()
         || fid == EF_DEK_PW1.get()
         || fid == EF_DEK_RC.get()
         || fid == EF_DEK_PW3.get()
@@ -141,6 +142,10 @@ pub fn source(fid: u16) -> DoSource {
         // here and the `Flash` arm served the DO as an empty object under
         // `9000`, which is a reset code reading as "set to nothing".
         || fid == EF_RESET_CODE
+        // The attestation key's fingerprint, CA fingerprint and generation time:
+        // PUT DATA takes them and a YubiKey 5.8.0 answers GET DATA `6B00`, serving
+        // them in C5/C6/CD alone.
+        || matches!(fid, EF_FP_ATT | EF_FP_CA4 | EF_TS_ATT)
     {
         return DoSource::Internal;
     }
@@ -166,15 +171,17 @@ pub fn source(fid: u16) -> DoSource {
         // Flash-backed working DOs.
         EF_CH_NAME | EF_LOGIN_DATA | EF_LANG_PREF | EF_SEX | EF_URI_URL | EF_SIG_COUNT
         | EF_FP_SIG | EF_FP_DEC | EF_FP_AUT | EF_FP_CA1 | EF_FP_CA2 | EF_FP_CA3 | EF_TS_SIG
-        | EF_TS_DEC | EF_TS_AUT | EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT | EF_KDF | EF_PRIV_DO_1
-        | EF_PRIV_DO_2 | EF_PRIV_DO_3 | EF_PRIV_DO_4 => DoSource::Flash,
+        | EF_TS_DEC | EF_TS_AUT | EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT | EF_UIF_ATT | EF_KDF
+        | EF_ATT_CERT | EF_PRIV_DO_1 | EF_PRIV_DO_2 | EF_PRIV_DO_3 | EF_PRIV_DO_4 => {
+            DoSource::Flash
+        }
 
         // Internal EFs (PINs, public-key DOs, base/PWPIV DEK, algo-priv,
         // chaining): not GET-DATA-able. The private-key + PW-DEK slots are
         // handled by the KeyFid guard above.
         EF_PW1 | EF_RC | EF_PW3 | EF_ALGO_PRIV1 | EF_ALGO_PRIV2 | EF_ALGO_PRIV3 | EF_PW_PRIV
-        | EF_PW_RETRIES | EF_PB_SIG | EF_PB_DEC | EF_PB_AUT | EF_KEY_ORIGIN | EF_DEK
-        | EF_DEK_PWPIV | EF_CH_1 | EF_CH_2 | EF_CH_3 => DoSource::Internal,
+        | EF_PW_RETRIES | EF_PB_SIG | EF_PB_DEC | EF_PB_AUT | EF_PB_ATT | EF_KEY_ORIGIN
+        | EF_DEK | EF_DEK_PWPIV | EF_CH_1 | EF_CH_2 | EF_CH_3 => DoSource::Internal,
 
         _ => DoSource::None,
     }

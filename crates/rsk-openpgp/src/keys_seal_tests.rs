@@ -58,3 +58,39 @@ fn legacy_cfb_blob_still_unseals_and_is_flagged() {
     );
     assert_eq!(&out[..pn], &pt, "legacy CFB record must still decrypt");
 }
+
+/// A key sealed under a DEK the caller holds opens with that DEK's GCM half alone,
+/// under the nonce its PRF half derives: the split `load_dek_keys` makes, re-done by
+/// hand rather than through the helper the seal itself calls.
+#[test]
+fn a_key_sealed_under_a_held_dek_opens_with_its_gcm_half() {
+    use rsk_fs::storage::ram::RamStorage;
+    let dek: [u8; DEK_SIZE] = core::array::from_fn(|i| i as u8);
+    let dev = Device {
+        serial_hash: &[0x33; 32],
+        serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
+        otp_key: None,
+    };
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    let key = PrivKey::from_scalar(Curve::P256, &[0x11; 32]).unwrap();
+    store_ec_key_under(&dev, &mut fs, &dek, EF_PK_ATT, &key).unwrap();
+
+    let mut blob = [0u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD];
+    let n = fs.read_key(EF_PK_ATT, &mut blob).unwrap();
+    let (nonce, rest) = blob[..n].split_at(DEK_NONCE_LEN);
+    let (ct, tag) = rest.split_at(rest.len() - DEK_TAG_LEN);
+    let mut pt = ct.to_vec();
+    let gcm: [u8; 32] = dek[IV_SIZE..].try_into().unwrap();
+    aes256gcm_decrypt(
+        &gcm,
+        nonce.try_into().unwrap(),
+        dev.serial_hash,
+        &mut pt,
+        tag.try_into().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(pt, [&[Curve::P256.id()][..], &[0x11; 32]].concat());
+    let prf: [u8; IV_SIZE] = dek[..IV_SIZE].try_into().unwrap();
+    assert_eq!(nonce, synth_nonce(&prf, EF_PK_ATT, &pt));
+}

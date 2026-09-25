@@ -32,6 +32,9 @@ rsk-rsa = { workspace = true }
 # come back under [dev-dependencies] as the tests' independent oracle, and the
 # applet names none of them in code it ships.
 rsk-ec = { workspace = true }
+# The X.509 builder the attestation statements (ATTEST, DO FC) are signed with,
+# below both card applets so that neither names the other.
+rsk-x509 = { workspace = true }
 
 [dev-dependencies]
 rsk-fs = { workspace = true, features = ["test-util"] }
@@ -42,3 +45,7 @@ ed25519-dalek = { workspace = true }
 # The KAT vectors and the PKCS#1 v1.5 verifier the RSA tests check a
 # card-produced signature against — the oracle the `rsa` crate used to be.
 rsk-rsa = { workspace = true, features = ["test-util"] }
+# The attestation tests parse every certificate the card writes and check its
+# P-384 signature independently.
+x509-parser = "0.16"
+p384 = { workspace = true }

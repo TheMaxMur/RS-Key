@@ -286,6 +286,31 @@ by any command — `PUT DATA` answers `6985` — so a host that learns PW3 still
 cannot turn your signatures touchless. Clearing it takes `TERMINATE DF` +
 `ACTIVATE FILE`, which wipes the applet. Set it only when you mean it.
 
+## Key attestation
+
+The card can vouch that a key was generated on it, the way a YubiKey does. It
+signs an X.509 statement about the key with its own attestation key, which it
+minted at first boot and never lets out (a card an older firmware set up mints it
+at its first ATTEST). Only keys generated on the card are attested; an imported
+key is refused.
+
+```sh
+ykman openpgp keys attest sig sig-att.pem          # PW1; sig · dec · aut
+ykman openpgp certificates export att card-att.pem # the card's attestation root
+openssl verify -CAfile card-att.pem sig-att.pem
+```
+
+The statement lands in the key's certificate slot (the one `gpg` shows as the
+cardholder certificate) and carries Yubico's extensions: firmware version,
+serial, touch policy, form factor, cardholder name, fingerprint and generation
+time, the signature counter for the signing key, and the key source. With
+`forcesig` on, each ATTEST spends the PIN as a signature does. A YubiKey's chain ends
+at Yubico's CA; this card's attestation certificate is self-signed, so pin the
+`card-att.pem` you read off your own device. A factory reset mints a new
+attestation key, and no host can replace it or its certificate
+([limitations](../limitations.md)). The `att` touch policy gates ATTEST like the
+others gate their keys: `ykman openpgp keys set-touch att on`.
+
 ## AES encryption (PSO)
 
 The card carries one **AES** key, in DO `D5`. It belongs to the card, not to a key

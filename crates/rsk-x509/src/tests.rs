@@ -430,6 +430,47 @@ fn the_serial_is_twenty_positive_bytes_whatever_the_rng_gives() {
     }
 }
 
+/// Every short-Weierstrass curve an OpenPGP slot can hold names its own OID.
+#[test]
+fn each_curve_names_its_oid() {
+    let (signer, _) = key(Curve::P256, 12);
+    for (curve, oid) in [
+        (Curve::P256, "1.2.840.10045.3.1.7"),
+        (Curve::P384, "1.3.132.0.34"),
+        (Curve::P521, "1.3.132.0.35"),
+        (Curve::K256, "1.3.132.0.10"),
+        (Curve::Bp256, "1.3.36.3.3.2.8.1.1.7"),
+        (Curve::Bp384, "1.3.36.3.3.2.8.1.1.11"),
+    ] {
+        let (_, pt) = key(curve, 13);
+        let der = issue(
+            &Cert {
+                subject_cn: b"S",
+                issuer_cn: b"I",
+                spki: Spki::Ec { curve, point: &pt },
+                sha384: false,
+                ca_pathlen: None,
+                extra: &[],
+            },
+            &Signer::Ec(&signer),
+        );
+        let cert = parse(&der);
+        assert_eq!(
+            spki_oids(&cert),
+            ("1.2.840.10045.2.1".into(), Some(oid.into())),
+            "{curve:?}"
+        );
+        assert_eq!(
+            cert.tbs_certificate
+                .subject_pki
+                .subject_public_key
+                .data
+                .as_ref(),
+            &pt[..]
+        );
+    }
+}
+
 /// What the profile cannot encode is refused, not written short: a buffer under
 /// `MAX_CERT`, a curve with no OID here, and a curve RFC 8410 does not name.
 #[test]
@@ -456,7 +497,7 @@ fn what_the_profile_cannot_encode_is_refused() {
     let mut out = [0u8; MAX_CERT];
     assert_eq!(
         build(
-            &cert(Curve::K256),
+            &cert(Curve::Ed25519),
             &Signer::Ec(&k),
             &mut TestRng(1),
             &mut out
@@ -473,6 +514,44 @@ fn what_the_profile_cannot_encode_is_refused() {
     assert_eq!(
         build(&raw, &Signer::Ec(&k), &mut TestRng(1), &mut out),
         Err(Error::Encoding)
+    );
+}
+
+/// An INTEGER is minimal and sign-safe: leading zeros go, one zero stays, and a top
+/// bit set gets a pad; a buffer too short for it is refused.
+#[test]
+fn der_uint_is_minimal_and_sign_safe() {
+    let mut out = [0u8; 8];
+    for (value, want) in [
+        (&[][..], &[0x02, 0x01, 0x00][..]),
+        (&[0x00, 0x00, 0x00], &[0x02, 0x01, 0x00]),
+        (&[0x00, 0x00, 0x01], &[0x02, 0x01, 0x01]),
+        (&[0x00, 0x00, 0x80], &[0x02, 0x02, 0x00, 0x80]),
+        (
+            &[0x02, 0xBB, 0xCC, 0xDD],
+            &[0x02, 0x04, 0x02, 0xBB, 0xCC, 0xDD],
+        ),
+        (
+            &[0x80, 0x00, 0x00, 0x01],
+            &[0x02, 0x05, 0x00, 0x80, 0x00, 0x00, 0x01],
+        ),
+    ] {
+        let n = der_uint(value, &mut out).unwrap();
+        assert_eq!(&out[..n], want, "{value:02X?}");
+    }
+    assert_eq!(der_uint(&[0x80], &mut [0u8; 3]), Err(Error::Encoding));
+}
+
+/// Each refusal reaches the caller's own status word, the encoder's included.
+#[test]
+fn a_refusal_maps_to_the_callers_status_word() {
+    let ec = |_| Sw::new(0x6E, 0xC0);
+    let rsa = |_| Sw::new(0x6E, 0x5A);
+    assert_eq!(Error::Encoding.sw(ec, rsa), Sw::EXEC_ERROR);
+    assert_eq!(Error::Ec(EcError::Failed).sw(ec, rsa), Sw::new(0x6E, 0xC0));
+    assert_eq!(
+        Error::Rsa(RsaError::Failed).sw(ec, rsa),
+        Sw::new(0x6E, 0x5A)
     );
 }
 

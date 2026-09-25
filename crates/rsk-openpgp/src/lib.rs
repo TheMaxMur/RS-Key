@@ -11,6 +11,7 @@
 // the firmware provides a heap. Only the RSA path allocates, the rest does not.
 extern crate alloc;
 
+pub mod attest;
 pub mod consts;
 pub mod dobj;
 pub mod files;
@@ -43,7 +44,7 @@ use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 pub use init::{Error, scan_files};
 pub use pin::Session;
 
-/// If the UIF DO `fid` (`0xD6/D7/D8`) is present with a non-zero first byte,
+/// If the UIF DO `fid` (`0xD6`–`0xD9`) is present with a non-zero first byte,
 /// require a touch; a non-confirmation maps to `SECURE_MESSAGE_EXEC_ERROR`
 /// (0x6600). With UIF off (or no button) this is a no-op.
 ///
@@ -68,6 +69,7 @@ pub(crate) fn check_uif<S: Storage>(
             consts::EF_UIF_SIG => "Sign data?",
             consts::EF_UIF_DEC => "Decrypt data?",
             consts::EF_UIF_AUT => "Authenticate?",
+            consts::EF_UIF_ATT => "Attest key?",
             _ => "Confirm?",
         };
         if presence.request(Confirm::titled(title)) != Presence::Confirmed {
@@ -544,6 +546,25 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 Sw::OK
             }
             consts::INS_MSE => mse::mse(&mut self.sess, apdu),
+            consts::INS_ATTEST => {
+                let mkek = read_fused(self.mkek_source);
+                let dev = Device {
+                    serial_hash: &self.serial_hash,
+                    serial_id: &self.serial_id,
+                    otp_key: mkek.as_deref(),
+                };
+                let mut rng = self.rng.borrow_mut();
+                let mut presence = self.presence.borrow_mut();
+                attest::attest(
+                    &dev,
+                    fs,
+                    &mut self.sess,
+                    &mut *rng,
+                    &mut *presence,
+                    apdu,
+                    rsk_sdk::serial4(self.serial_id),
+                )
+            }
             consts::INS_CHALLENGE => {
                 // §7.2.15 fixes P1 = P2 = 00. Stricter than a YubiKey 5.7.4, which
                 // refuses only when BOTH are non-zero — so this refuses everything

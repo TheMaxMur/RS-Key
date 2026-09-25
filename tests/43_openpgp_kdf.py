@@ -154,7 +154,10 @@ def main():
     # whole of the observable behaviour, so assert it and stop — the alternative is
     # a suite that resets a provisioned owner's PINs to `123456`.
     info, _, _ = tx(get_data(DO_KEY_INFO), "GET key information (DE)")
-    if any(info[i] != 0x00 for i in range(1, len(info), 2)):
+    # The attestation key's pair (`81`) is the card's own and always there; only the
+    # three slots an owner fills are keys a KDF change could strand.
+    owner = [info[i + 1] for i in range(0, len(info) - 1, 2) if info[i] in (0x01, 0x02, 0x03)]
+    if any(status != 0x00 for status in owner):
         tx(
             apdu(INS_PUT_DATA, 0x00, 0xF9, kdf_do(single_salt=False)),
             "PUT KDF on a card holding a key (refused)",

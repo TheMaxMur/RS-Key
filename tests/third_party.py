@@ -264,6 +264,12 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_000_initial_card.py::test_public_key_1": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
         "test_000_initial_card.py::test_public_key_2": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
         "test_000_initial_card.py::test_public_key_3": "6581 for an empty slot, as a YubiKey 5.8.0 answers; the suite wants 6A88 from a card it does not know is one",
+        # C5/C6/CD carry a fourth entry, the attestation key's, as inside a YubiKey
+        # 5.8.0's 6E. On a card it knows is a YubiKey the suite skips these three:
+        # there GET DATA C5/C6/CD alone is 6B00.
+        "test_000_initial_card.py::test_fingerprint_all": "C5 is four fingerprints, the attestation key's last, as in a YubiKey 5.8.0's 6E; the suite wants Gnuk's three",
+        "test_000_initial_card.py::test_ca_fingerprint_all": "C6 is four CA fingerprints, the attestation key's last, as in a YubiKey 5.8.0's 6E; the suite wants Gnuk's three",
+        "test_000_initial_card.py::test_timestamp_all": "CD is four generation times, the attestation key's last, as in a YubiKey 5.8.0's 6E; the suite wants Gnuk's three",
         # RSA attributes carry a 17-bit exponent length, as a YubiKey's do; the suite
         # takes Gnuk's 32 from a card it does not know is one.
         "test_000_initial_card.py::test_key_attributes_1": "RSA-2048 reads 01 0800 0011 00, as on a YubiKey 5.8.0; the suite wants Gnuk's 0020 from a card it does not know is one",
@@ -278,7 +284,6 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # Yubico extensions RS-Key does not implement, xfailed rather than removed so
         # an implementation shows up as a strict XPASS.
         "test_openpgp.py::test_change_pin_retries": "Yubico's SET PIN RETRIES (INS F2) is not implemented (6D00); past it the test also wants 6982 for a wrong PIN, where RS-Key answers 63Cx",
-        "test_openpgp.py::test_attestation": "Yubico's OpenPGP attestation key and certificate are not implemented",
         "cli/piv/test_read_write_object.py::TestReadWriteObject::test_write_read_preserves_ansi_escapes": "PIV objects outside SP 800-73's table (5F0001 here) are 6A80 where a YubiKey 5.8.0 stores any 5Fxxxx: open, the maintainer's call",
         "cli/test_config.py::TestConfigLockCode::test_set_lock_code": "the configuration lock is not implemented: its codes are stripped, never stored (docs/protocol.md)",
         # A capacity RS-Key keeps on purpose: more accounts than a YubiKey holds.

@@ -268,11 +268,16 @@ covers the security boundary. This page covers feature and hardware gaps.
   `PUT DATA 5FFF01`, and no reset brings it back. `ATTEST` and `GET METADATA` at
   `f9` work normally, and a factory reset regenerates the identity.
   *Status: never — deliberate.*
-- **OpenPGP takes no attestation key from a host.** A YubiKey does, and
+- **The OpenPGP attestation identity cannot be replaced by a host either.** A
+  YubiKey takes an attestation key and its certificate from a host:
   `ykman openpgp keys import ATT` loads one under the template
-  `B6 { 84 01 81 }`. RS-Key has no OpenPGP attestation, and refuses that template
-  in IMPORT and in GENERATE `P1 = 80` with `6A80`: a key a host chose could vouch
-  for keys that were never on the card. *Status: never — deliberate.*
+  `B6 { 84 01 81 }`, and `ykman openpgp certificates import ATT` writes DO `FC`.
+  RS-Key mints its attestation key on the card and takes neither: PUT DATA refuses
+  its attributes `DA` and its certificate `FC` (`6B00`), and IMPORT or GENERATE
+  `P1 = 80` under that template answers `6A80`, for the reason the PIV identity
+  above is closed. Its certificate is self-signed, so a
+  verifier pins the device's `FC` where a YubiKey's chains to Yubico's CA, and a
+  reset mints a new identity. *Status: never — deliberate.*
 - **`SET RETRIES` will not set a zero budget.** `00 FA 00 00` on a YubiKey
   answers `9000` and leaves the card at `0/0` tries, permanently blocked, with
   only a factory reset — which destroys every key — to recover. RS-Key answers

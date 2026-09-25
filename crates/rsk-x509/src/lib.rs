@@ -19,7 +19,7 @@ use rsk_crypto::{sha1, sha256, sha384};
 use rsk_ec::{Curve, EcError, MAX_EC_POINT, MAX_EC_SIG, PrivKey};
 use rsk_rsa::pkcs1v15::rsa_sign;
 use rsk_rsa::{RsaError, RsaKey};
-use rsk_sdk::Rng;
+use rsk_sdk::{Rng, Sw};
 
 /// Largest certificate the builder emits (RSA-4096 SPKI + a 512-byte signature
 /// + extensions ≈ 1.4 KB, with margin).
@@ -29,6 +29,10 @@ pub const MAX_CERT: usize = 1536;
 const OID_EC_PUBKEY: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
 const OID_P256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
 const OID_P384: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x22];
+const OID_P521: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x23];
+const OID_SECP256K1: &[u8] = &[0x2B, 0x81, 0x04, 0x00, 0x0A];
+const OID_BP256R1: &[u8] = &[0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x07];
+const OID_BP384R1: &[u8] = &[0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x0B];
 const OID_ECDSA_SHA256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02];
 const OID_ECDSA_SHA384: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03];
 const OID_RSA_ENC: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01];
@@ -53,6 +57,18 @@ pub enum Error {
     Encoding,
     Ec(EcError),
     Rsa(RsaError),
+}
+
+impl Error {
+    /// What a card applet answers: `EXEC_ERROR` for what the profile cannot encode,
+    /// else its own status word for its signer's refusal.
+    pub fn sw(self, ec: fn(EcError) -> Sw, rsa: fn(RsaError) -> Sw) -> Sw {
+        match self {
+            Error::Encoding => Sw::EXEC_ERROR,
+            Error::Ec(e) => ec(e),
+            Error::Rsa(e) => rsa(e),
+        }
+    }
 }
 
 /// Backward DER writer: content grows from the end of the buffer toward the
@@ -229,10 +245,15 @@ fn spki(w: &mut DerRev, key: &Spki) -> Result<(), Error> {
     w.close(0x30, m)
 }
 
+/// Every short-Weierstrass curve an OpenPGP slot holds; PIV's two are the first.
 fn curve_oid(c: Curve) -> Result<&'static [u8], Error> {
     match c {
         Curve::P256 => Ok(OID_P256),
         Curve::P384 => Ok(OID_P384),
+        Curve::P521 => Ok(OID_P521),
+        Curve::K256 => Ok(OID_SECP256K1),
+        Curve::Bp256 => Ok(OID_BP256R1),
+        Curve::Bp384 => Ok(OID_BP384R1),
         _ => Err(Error::Encoding),
     }
 }
@@ -463,6 +484,18 @@ pub fn build(c: &Cert, signer: &Signer, rng: &mut dyn Rng, out: &mut [u8]) -> Re
         sigalg(&mut w, signer, sha384sig)?;
         w.raw(tbs_bytes)?;
         w.close(0x30, m)?;
+        (w.p, w.buf.len())
+    };
+    out.copy_within(start..end, 0);
+    Ok(end - start)
+}
+
+/// `value`, unsigned big-endian, as a minimal DER INTEGER at the front of `out`;
+/// returns its length. Attestation statements carry a few as extension values.
+pub fn der_uint(value: &[u8], out: &mut [u8]) -> Result<usize, Error> {
+    let (start, end) = {
+        let mut w = DerRev::new(out);
+        w.uint(value)?;
         (w.p, w.buf.len())
     };
     out.copy_within(start..end, 0);

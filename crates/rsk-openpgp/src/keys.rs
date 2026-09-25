@@ -195,8 +195,17 @@ fn legacy_rsa_len(n: usize) -> bool {
     (n.is_multiple_of(2) && half_ok(n / 2)) || (n.is_multiple_of(5) && half_ok(n / 5))
 }
 
-/// Load the DEK and split it into the GCM key (`dek[16..48]`) and the nonce-PRF
-/// key (`dek[0..16]`, also the legacy CFB IV) — disjoint bytes of one random DEK.
+/// Split the DEK into the GCM key (`dek[16..48]`) and the nonce-PRF key
+/// (`dek[0..16]`, also the legacy CFB IV) — disjoint bytes of one random DEK.
+fn split_dek(dek: &[u8; DEK_SIZE]) -> ([u8; 32], [u8; IV_SIZE]) {
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&dek[IV_SIZE..IV_SIZE + 32]);
+    let mut nk = [0u8; IV_SIZE];
+    nk.copy_from_slice(&dek[..IV_SIZE]);
+    (key, nk)
+}
+
+/// Load the DEK and [`split_dek`] it.
 fn load_dek_keys<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -204,12 +213,9 @@ fn load_dek_keys<S: Storage>(
 ) -> Result<([u8; 32], [u8; IV_SIZE]), Sw> {
     let mut dek = [0u8; DEK_SIZE];
     load_dek(dev, fs, sess, &mut dek)?;
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&dek[IV_SIZE..IV_SIZE + 32]);
-    let mut nk = [0u8; IV_SIZE];
-    nk.copy_from_slice(&dek[..IV_SIZE]);
+    let keys = split_dek(&dek);
     dek.zeroize();
-    Ok((key, nk))
+    Ok(keys)
 }
 
 /// Seal `plain` under the DEK into `out` (`nonce ‖ ct ‖ tag`); returns its length.
@@ -281,11 +287,27 @@ pub fn curve_from_attr(attr: &[u8]) -> Option<Curve> {
 // -------------------------------------------------------- store / load / DO --
 
 /// Seal the EC private key under the DEK and write it to `fid`
-/// (`EF_PK_SIG`/`DEC`/`AUT`). Blob = `dek_encrypt([curve_id] ‖ scalar)`.
+/// (`EF_PK_SIG`/`DEC`/`AUT`/`ATT`). Blob = `dek_encrypt([curve_id] ‖ scalar)`.
 pub fn store_ec_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
+    fid: KeyFid,
+    key: &PrivKey,
+) -> Result<(), Sw> {
+    let mut dek = [0u8; DEK_SIZE];
+    load_dek(dev, fs, sess, &mut dek)?;
+    let r = store_ec_key_under(dev, fs, &dek, fid, key);
+    dek.zeroize();
+    r
+}
+
+/// [`store_ec_key`] under a DEK the caller holds: the first boot seals the
+/// attestation key with the DEK it has just minted, before any PIN is verified.
+pub(crate) fn store_ec_key_under<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    dek: &[u8; DEK_SIZE],
     fid: KeyFid,
     key: &PrivKey,
 ) -> Result<(), Sw> {
@@ -295,13 +317,16 @@ pub fn store_ec_key<S: Storage>(
     kdata[0] = key.curve().id();
     kdata[1..n].copy_from_slice(scalar);
     let mut blob = [0u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD];
+    let (mut gcm, mut nk) = split_dek(dek);
     let r = (|| {
-        let bn = dek_seal(dev, fs, sess, fid, &kdata[..n], &mut blob)?;
+        let bn = seal_with(&gcm, &nk, dev.serial_hash, fid, &kdata[..n], &mut blob)?;
         fs.put_key(fid, Sealed::wrap(&blob[..bn]))
             .map_err(|_| Sw::MEMORY_FAILURE)
     })();
     kdata.zeroize();
     blob.zeroize();
+    gcm.zeroize();
+    nk.zeroize();
     r
 }
 
@@ -409,7 +434,8 @@ pub fn reset_sig_count<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 }
 
 /// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set
-/// (`EF_PW_PRIV[0] == 0`): PSO:CDS runs this after every attempt past its PIN check.
+/// (`EF_PW_PRIV[0] == 0`): PSO:CDS runs this after every attempt past its PIN check,
+/// ATTEST after every one past its touch.
 pub fn spend_one_shot_pw1<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) {
     let mut pw = [0u8; 8];
     // A probe that FAILED is not a status byte reading "valid for several": the

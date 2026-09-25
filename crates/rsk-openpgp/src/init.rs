@@ -113,6 +113,11 @@ pub fn scan_files<S: Storage>(
         fs.put_key(EF_DEK_PW3, Sealed::wrap(&def))
             .map_err(|_| Error::Storage)?;
 
+        // The attestation key is sealed under this DEK, so now is the one moment
+        // before a PIN that can mint it. Best effort: what a failure leaves out,
+        // the first ATTEST mints under the verified PIN's DEK.
+        let _ = crate::attest::provision(dev, fs, rng, &random_dek);
+
         random_dek.zeroize();
         session_pw1.zeroize();
         session_pw3.zeroize();
@@ -136,7 +141,7 @@ pub fn scan_files<S: Storage>(
     if !provisioned(fs, EF_PW_PRIV)? {
         put(fs, EF_PW_PRIV, PW_STATUS_DEFAULT)?;
     }
-    for fid in [EF_UIF_SIG, EF_UIF_DEC, EF_UIF_AUT] {
+    for fid in [EF_UIF_SIG, EF_UIF_DEC, EF_UIF_AUT, EF_UIF_ATT] {
         if !provisioned(fs, fid)? {
             put(fs, fid, UIF_DEFAULT)?;
         }

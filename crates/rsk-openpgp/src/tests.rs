@@ -1976,7 +1976,9 @@ fn key_info_reports_generated_and_imported_apart() {
     fn key_info(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>) -> Vec<u8> {
         let (b, sw) = run(app, fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xDE]);
         assert_eq!(sw, Sw::OK);
-        b
+        // The attestation key's pair closes it: generated, from the first boot on.
+        assert_eq!(b[6..], [0x81, 0x01]);
+        b[..6].to_vec()
     }
     fn generate(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, crt: u8) {
         let a = [0x00, consts::INS_KEYPAIR_GEN, 0x80, 0x00, 0x02, crt, 0x00];
@@ -2143,13 +2145,15 @@ fn put_data_polices_the_fixed_length_dos() {
         }
     }
 
-    // What was written lands in the right slice of each aggregate.
+    // What was written lands in the right slice of each aggregate, and the
+    // attestation key's slice, not written here, reads as zeroes.
+    let slices = |n| [vec![0xB0u8; consts::KEY_SLOTS * n], vec![0; n]].concat();
     let (c5, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC5]);
-    assert_eq!(c5, vec![0xB0u8; consts::KEY_SLOTS * consts::FP_LEN]);
+    assert_eq!(c5, slices(consts::FP_LEN));
     let (c6, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xC6]);
-    assert_eq!(c6, vec![0xB0u8; consts::KEY_SLOTS * consts::FP_LEN]);
+    assert_eq!(c6, slices(consts::FP_LEN));
     let (cd, _) = run(&mut app, &mut fs, &[0x00, consts::INS_GET_DATA, 0x00, 0xCD]);
-    assert_eq!(cd, vec![0xB0u8; consts::KEY_SLOTS * consts::TS_LEN]);
+    assert_eq!(cd, slices(consts::TS_LEN));
 }
 
 // OpenPGP 3.4 §7.2.7 gives GET NEXT DATA exactly one job — walk the three 7F21
@@ -3119,7 +3123,8 @@ fn put_data_judges_the_tag_before_the_body_length() {
         std::vec![
             0x0101, 0x0102, 0x0103, 0x0104, 0x005B, 0x005E, 0x0093, 0x00C1, 0x00C2, 0x00C3, 0x00C4,
             0x00C7, 0x00C8, 0x00C9, 0x00CA, 0x00CB, 0x00CC, 0x00CE, 0x00CF, 0x00D0, 0x00D3, 0x00D5,
-            0x00D6, 0x00D7, 0x00D8, 0x00F9, 0x5F2D, 0x5F35, 0x5F50, 0x7F21,
+            0x00D6, 0x00D7, 0x00D8, 0x00D9, 0x00DB, 0x00DC, 0x00DD, 0x00F9, 0x5F2D, 0x5F35, 0x5F50,
+            0x7F21,
         ]
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>()

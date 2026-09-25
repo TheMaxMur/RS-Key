@@ -25,6 +25,7 @@ pub fn is_openpgp_fid(fid: u16) -> bool {
     if fid == EF_PK_SIG.get()
         || fid == EF_PK_DEC.get()
         || fid == EF_PK_AUT.get()
+        || fid == EF_PK_ATT.get()
         || fid == EF_DEK_PW1.get()
         || fid == EF_DEK_RC.get()
         || fid == EF_DEK_PW3.get()
@@ -50,6 +51,7 @@ pub fn is_openpgp_fid(fid: u16) -> bool {
                 | EF_PB_SIG
                 | EF_PB_DEC
                 | EF_PB_AUT
+                | EF_PB_ATT
                 | EF_KEY_ORIGIN
                 | EF_DEK
                 | EF_DEK_PWPIV
@@ -100,7 +102,7 @@ pub fn terminate_df<S: Storage>(
 }
 
 /// The records every wipe removes LAST: the three PW verifiers, the retry/status
-/// records they share, the three UIF (touch) flags, and the working DOs
+/// records they share, the four UIF (touch) flags, and the working DOs
 /// [`scan_files`] re-seeds. Exists for the device-wide `Fs::factory_wipe`, which
 /// must remove them only after everything else is provably gone; the applet-local
 /// sweep inherits the same set. It lives here rather than open-coded in the
@@ -126,6 +128,7 @@ pub fn is_openpgp_gate_fid(fid: u16) -> bool {
             | EF_UIF_SIG
             | EF_UIF_DEC
             | EF_UIF_AUT
+            | EF_UIF_ATT
             | EF_KDF
             | EF_SIG_COUNT
             | EF_SEX

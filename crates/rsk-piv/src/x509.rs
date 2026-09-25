@@ -57,13 +57,8 @@ fn slot_label(attestation: bool, slot: u8) -> ([u8; 40], usize) {
     (buf, n + 1)
 }
 
-/// The status word a certificate the builder refused answers with.
 fn x509_sw(e: rsk_x509::Error) -> Sw {
-    match e {
-        rsk_x509::Error::Encoding => Sw::EXEC_ERROR,
-        rsk_x509::Error::Ec(e) => crate::ec_sw(e),
-        rsk_x509::Error::Rsa(e) => crate::rsa_sw(e),
-    }
+    e.sw(crate::ec_sw, crate::rsa_sw)
 }
 
 /// Build and sign the certificate into `out` (front-aligned); returns its
@@ -87,7 +82,7 @@ pub fn build_cert(
                 (OID_YK_FIRMWARE, &att.firmware),
                 (OID_YK_SERIAL, &att.serial_le),
                 (OID_YK_POLICY, &att.policy),
-                (OID_YK_FORMFACTOR, &[0x01]),
+                (OID_YK_FORMFACTOR, &[rsk_sdk::FORM_FACTOR]),
             ];
             &yubico
         }

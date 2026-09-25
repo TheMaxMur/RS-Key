@@ -24,7 +24,7 @@ use rsk_rsa::{MAX_RSA_PUBDO, RsaKey, generate_rsa, make_rsa_response};
 pub enum CrtKey {
     /// The SIG, DEC or AUT slot.
     Slot(KeyFid),
-    /// `B6 { 84 01 81 }`, ykman's name for Yubico's attestation key.
+    /// `B6 { 84 01 81 }`, ykman's name for the attestation key.
     Attestation,
 }
 
@@ -92,10 +92,9 @@ pub fn keypair_gen<S: Storage>(
     let r = match (p1, key) {
         (0x80, CrtKey::Slot(fid)) => generate(dev, fs, sess, rng, fid, out),
         (_, CrtKey::Slot(fid)) => read_public(fs, fid, out),
-        // This card has no attestation key: a read answers as for an empty slot, and
-        // no GENERATE makes one.
+        // The card mints the attestation key itself and no GENERATE replaces it.
         (0x80, CrtKey::Attestation) => Err(Sw::WRONG_DATA),
-        (_, CrtKey::Attestation) => Err(Sw::MEMORY_FAILURE),
+        (_, CrtKey::Attestation) => read_public(fs, EF_PK_ATT, out),
     };
     match r {
         Ok(n) => (n, Sw::OK),

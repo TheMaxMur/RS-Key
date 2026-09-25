@@ -282,18 +282,18 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 |---|---|---|
 | `9000` | OK | success |
 | `6400` | EXEC_ERROR | execution error (internal) |
-| `6581` | MEMORY_FAILURE | flash access failed — a write, or a read whose answer the command must not guess (`1E/01` READ phy, `1C/01` WRITE phy, WRITE CONFIG's merge); and OpenPGP PSO:DECIPHER's answer to an ECDH peer point that decodes but is unusable (off the field or curve, X25519 small order), or to an RSA cryptogram it cannot decrypt (any width but the modulus's, bad padding, c = 0, n − 1 or n); RSA PSO:CDS and INTERNAL AUTHENTICATE over more than k − 11 bytes; GENERATE's `P1 = 81` read of a slot with no key, the attestation-key template `B6 { 84 01 81 }` included; and an RSA IMPORT whose primes have the right widths and make no working key (`p = q`, composite primes, a short modulus) — as a YubiKey 5.8.0 answers each, though it also deletes the slot's key on that last one and RS-Key keeps it |
+| `6581` | MEMORY_FAILURE | flash access failed — a write, or a read whose answer the command must not guess (`1E/01` READ phy, `1C/01` WRITE phy, WRITE CONFIG's merge); and OpenPGP PSO:DECIPHER's answer to an ECDH peer point that decodes but is unusable (off the field or curve, X25519 small order), or to an RSA cryptogram it cannot decrypt (any width but the modulus's, bad padding, c = 0, n − 1 or n); RSA PSO:CDS and INTERNAL AUTHENTICATE over more than k − 11 bytes; GENERATE's `P1 = 81` read of a slot with no key; and an RSA IMPORT whose primes have the right widths and make no working key (`p = q`, composite primes, a short modulus) — as a YubiKey 5.8.0 answers each, though it also deletes the slot's key on that last one and RS-Key keeps it |
 | `6700` | WRONG_LENGTH | bad `Lc`/`Le` for this command |
 | `6883` | LAST_CHAIN_EXPECTED | an APDU arrived that neither continues nor closes the open command chain |
 | `6982` | SECURITY_STATUS_NOT_SATISFIED | auth/precondition missing |
 | `6984` | DATA_INVALID | malformed payload (e.g. bad guard magic) |
-| `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset); OpenPGP PSO:CDS, the RSA and ECDH arms of PSO:DECIPHER and INTERNAL AUTHENTICATE with no key in the slot, as a YubiKey 5.8.0 answers them |
-| `6A80` | WRONG_DATA | bad data field; PIV `MOVE KEY` onto a slot that holds a key or takes none, or onto itself; PIV `PUT DATA` with a P1-P2 other than `3FFF`; OpenPGP GENERATE and IMPORT with a control-reference template they cannot read or whose key reference `84 01 xx` names another slot, and GENERATE `P1 = 80` and IMPORT under Yubico's attestation-key template `B6 { 84 01 81 }` |
+| `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset); OpenPGP PSO:CDS, the RSA and ECDH arms of PSO:DECIPHER and INTERNAL AUTHENTICATE with no key in the slot, and ATTEST of an empty slot or an imported key, as a YubiKey 5.8.0 answers them |
+| `6A80` | WRONG_DATA | bad data field; PIV `MOVE KEY` onto a slot that holds a key or takes none, or onto itself; PIV `PUT DATA` with a P1-P2 other than `3FFF`; OpenPGP GENERATE and IMPORT with a control-reference template they cannot read or whose key reference `84 01 xx` names another slot, and GENERATE `P1 = 80` and IMPORT under Yubico's attestation-key template `B6 { 84 01 81 }`; OpenPGP ATTEST with a P1-P2 or a body it does not take |
 | `6A86` | INCORRECT_P1P2 | unsupported P1/P2 |
 | `6A88` | REFERENCE_NOT_FOUND | the object, key or PIN the request names is absent (PIV `GET METADATA`, `MOVE KEY`, the PIN commands' key reference; OpenPGP `SELECT DATA` and in-application `SELECT`) |
 | `6B00` | WRONG_P1P2 | P1/P2 outside what this command takes — including a DO that `P1P2` addresses and the command does not serve (OpenPGP `GET DATA`, `PUT DATA`) |
 | `6D00` | INS_NOT_SUPPORTED | unknown INS for this applet |
-| `6E00` | CLA_NOT_SUPPORTED | wrong CLA for this applet |
+| `6E00` | CLA_NOT_SUPPORTED | wrong CLA for this applet (OpenPGP ATTEST takes class `80` only) |
 
 ### 2.2 CTAP2 errors
 
@@ -544,7 +544,14 @@ needs only the identifiers above. RS-Key implements:
   idempotent same-value write preserves the pair. RSA attributes carry a 17-bit
   exponent length, as a YubiKey's do: DO `0xFA` lists `01 nnnn 0011 00`, PUT
   DATA takes any length from 17 bits and stores 17, and two attributes that
-  differ only there are the same value.
+  differ only there are the same value. Yubico's attestation is there too:
+  ATTEST (`80 FB <key ref> 00`, PW1 in mode 81, the touch `D9` sets; past the
+  touch it spends a one-shot PW1 as PSO:CDS does) writes an X.509 statement for a
+  key the card generated into its `7F21` occurrence, signed by a P-384
+  attestation key (reference `81`) whose self-signed certificate is DO `FC`. The
+  key reads through GENERATE `P1 = 81` under `B6 { 84 01 81 }` and is listed in
+  `DE`, `DA` (inside `73` and in `FA`), `C5`/`C6`/`CD` and `D9`, where a YubiKey
+  lists its own; no host can import it, generate it or write `FC`.
 
 The only RS-Key-specific bytes a config tool needs are §6 (Management config),
 §7 (Rescue), §8 (Vendor/LED) and §9 (CTAPHID `0x41`).

@@ -78,6 +78,8 @@ pub(crate) const ALGO_DEC_SUPPORTED: &[&[u8]] = &[
     ATTR_CV25519,
 ];
 pub(crate) const ALGO_AUT_SUPPORTED: &[&[u8]] = ALGO_SIG_SUPPORTED;
+/// The attestation key's one algorithm: the card mints it, and `DA` takes no write.
+pub(crate) const ALGO_ATT_SUPPORTED: &[&[u8]] = &[ATTR_P384R1];
 
 /// Whether `data`, a C1/C2/C3 value, is an attribute DO `0xFA` advertises for `fid`:
 /// matched against `attr[1..]` after [`DoWriter::emit_algo`]'s ECDSA→ECDH rewrite, and
@@ -270,11 +272,21 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     /// A constructed DO: outer tag (1 byte) + `82 HH LL` + nested, length
     /// back-patched.
     fn constructed(&mut self, tag: u8, fids: &[u16], mode: i32) -> usize {
+        let lp = self.open(tag);
+        self.emit_do(fids, mode);
+        self.close(lp)
+    }
+
+    /// Open a constructed DO: its tag and a two-byte length [`Self::close`] fills.
+    fn open(&mut self, tag: u8) -> usize {
         self.push(tag);
         self.push(0x82);
         let lp = self.pos;
         self.pos += 2;
-        self.emit_do(fids, mode);
+        lp
+    }
+
+    fn close(&mut self, lp: usize) -> usize {
         let lpdif = self.pos - lp - 2;
         self.out[lp] = (lpdif >> 8) as u8;
         self.out[lp + 1] = (lpdif & 0xff) as u8;
@@ -300,14 +312,17 @@ impl<'a, S: Storage> DoWriter<'a, S> {
 
     fn emit_discrete_do(&mut self, mode: i32) -> usize {
         // 0xDE (Key Information) is a child of the 0x73 discretionary DOs per the
-        // OpenPGP Card spec — where ykman >= 5.2 looks for it — not a bare child of
-        // 0x6E. Placed after the generation times, before the UIF DOs, as YubiKey does.
+        // OpenPGP Card spec — where ykman >= 5.2 looks for it — not a bare child of 0x6E.
+        // A YubiKey 5.8.0's order, but for the 7F66 it puts after DE, which ours keeps in 6E.
+        let lp = self.open((EF_DISCRETE_DO & 0xff) as u8);
+        self.emit_do(
+            &[4, EF_EXT_CAP, EF_ALGO_SIG, EF_ALGO_DEC, EF_ALGO_AUT],
+            mode,
+        );
+        // DA is served here and nowhere else: GET DATA DA is `6B00` on a YubiKey.
+        self.emit_algo(ALGO_ATT_SUPPORTED[0], EF_ALGO_ATT);
         let fids = [
-            12,
-            EF_EXT_CAP,
-            EF_ALGO_SIG,
-            EF_ALGO_DEC,
-            EF_ALGO_AUT,
+            9,
             EF_PW_STATUS,
             EF_FP,
             EF_CA_FP,
@@ -316,8 +331,10 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             EF_UIF_SIG,
             EF_UIF_DEC,
             EF_UIF_AUT,
+            EF_UIF_ATT,
         ];
-        self.constructed((EF_DISCRETE_DO & 0xff) as u8, &fids, mode)
+        self.emit_do(&fids, mode);
+        self.close(lp)
     }
 
     fn emit_sec_tpl(&mut self) -> usize {
@@ -335,14 +352,11 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         self.pos - start
     }
 
-    /// `num` consecutive fids, each written as exactly `size` bytes. A short or
-    /// absent slot is zero-padded and an over-long stored value is truncated to
-    /// `size`, so the caller's fixed DO length byte stays honest and the response
-    /// never exposes the scratch tail past what was written (a present-but-short slot
-    /// would otherwise leak stale bytes from a prior command — cf. `emit_sec_tpl`).
-    fn emit_trium(&mut self, fid: u16, num: usize, size: usize) -> usize {
-        for i in 0..num {
-            let f = fid + i as u16;
+    /// `fids`, each written as exactly `size` bytes: zero-padded when short or absent,
+    /// cut when over-long, so the aggregate's fixed length byte stays honest and no
+    /// stale scratch from a prior command leaks past what was written.
+    fn emit_fixed(&mut self, fids: &[u16], size: usize) -> usize {
+        for &f in fids {
             let before = self.pos;
             if self.fs.has_data(f) {
                 self.read_flash(f);
@@ -356,32 +370,32 @@ impl<'a, S: Storage> DoWriter<'a, S> {
                 self.pos = before + size;
             }
         }
-        num * size
+        fids.len() * size
     }
 
     fn emit_fp(&mut self) -> usize {
         self.push((EF_FP & 0xff) as u8);
-        self.push((KEY_SLOTS * FP_LEN) as u8);
-        self.emit_trium(EF_FP_SIG, KEY_SLOTS, FP_LEN) + 2
+        self.push((FP_DOS.len() * FP_LEN) as u8);
+        self.emit_fixed(&FP_DOS, FP_LEN) + 2
     }
 
     fn emit_cafp(&mut self) -> usize {
         self.push((EF_CA_FP & 0xff) as u8);
-        self.push((KEY_SLOTS * FP_LEN) as u8);
-        self.emit_trium(EF_FP_CA1, KEY_SLOTS, FP_LEN) + 2
+        self.push((CA_FP_DOS.len() * FP_LEN) as u8);
+        self.emit_fixed(&CA_FP_DOS, FP_LEN) + 2
     }
 
     fn emit_ts(&mut self) -> usize {
         self.push((EF_TS_ALL & 0xff) as u8);
-        self.push((KEY_SLOTS * TS_LEN) as u8);
-        self.emit_trium(EF_TS_SIG, KEY_SLOTS, TS_LEN) + 2
+        self.push((TS_DOS.len() * TS_LEN) as u8);
+        self.emit_fixed(&TS_DOS, TS_LEN) + 2
     }
 
     fn emit_keyinfo(&mut self) -> usize {
         let init = self.pos;
         if self.pos > 0 {
             self.push((EF_KEY_INFO & 0xff) as u8);
-            self.push(6);
+            self.push(2 * (KEY_SLOTS + 1) as u8);
         }
         // OpenPGP Card 3.4 §4.4.3.8: key-ref 01=SIG, 02=DEC, 03=AUT, then a status
         // byte — 00 not present, 01 generated on card, 02 imported. ykman >= 5.2
@@ -400,6 +414,14 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             };
             self.push(status);
         }
+        // Yubico's attestation key, which only the card generates.
+        self.push(KEY_REF_ATT);
+        let att = if self.fs.has_key(EF_PK_ATT) {
+            crate::origin::ORIGIN_GENERATED
+        } else {
+            0x00
+        };
+        self.push(att);
         self.pos - init
     }
 
@@ -445,6 +467,9 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             }
             for a in ALGO_AUT_SUPPORTED {
                 self.emit_algo(a, EF_ALGO_AUT);
+            }
+            for a in ALGO_ATT_SUPPORTED {
+                self.emit_algo(a, EF_ALGO_ATT);
             }
             let lpdif = self.pos - lp - 2;
             self.out[lp] = (lpdif >> 8) as u8;

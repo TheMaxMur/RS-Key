@@ -26,8 +26,9 @@ use crate::pin::Session;
 /// every length, leaving the DO untouched.
 fn fixed_do_len(fid: u16) -> Option<usize> {
     match fid {
-        EF_FP_SIG | EF_FP_DEC | EF_FP_AUT | EF_FP_CA1 | EF_FP_CA2 | EF_FP_CA3 => Some(FP_LEN),
-        EF_TS_SIG | EF_TS_DEC | EF_TS_AUT => Some(TS_LEN),
+        EF_FP_SIG | EF_FP_DEC | EF_FP_AUT | EF_FP_ATT | EF_FP_CA1 | EF_FP_CA2 | EF_FP_CA3
+        | EF_FP_CA4 => Some(FP_LEN),
+        EF_TS_SIG | EF_TS_DEC | EF_TS_AUT | EF_TS_ATT => Some(TS_LEN),
         _ => None,
     }
 }
@@ -78,9 +79,17 @@ pub fn writable(fid: u16) -> bool {
     fid == EF_AES_KEY.get()
         || matches!(
             fid,
-            EF_CH_CERT | EF_RESET_CODE | EF_PW_STATUS | EF_ALGO_SIG | EF_ALGO_DEC | EF_ALGO_AUT
+            EF_CH_CERT
+                | EF_RESET_CODE
+                | EF_PW_STATUS
+                | EF_ALGO_SIG
+                | EF_ALGO_DEC
+                | EF_ALGO_AUT
+                | EF_FP_ATT
+                | EF_FP_CA4
+                | EF_TS_ATT
         )
-        || matches!(source(fid), DoSource::Flash)
+        || (matches!(source(fid), DoSource::Flash) && fid != EF_ATT_CERT)
 }
 
 fn algorithm_slot(fid: u16) -> Option<KeyFid> {
@@ -119,6 +128,10 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         EF_SIG_COUNT => return Sw::CONDITIONS_NOT_SATISFIED,
         // Algorithm attributes write to the private storage read back by `dobj`.
         EF_ALGO_SIG | EF_ALGO_DEC | EF_ALGO_AUT => algo_tag_to_priv(fid),
+        // A YubiKey takes a host's certificate for its attestation key. This card's
+        // is the self-signed root of every statement it makes, and stays so.
+        EF_ATT_CERT => return Sw::WRONG_P1P2,
+        EF_FP_ATT | EF_FP_CA4 | EF_TS_ATT => fid,
         f if matches!(source(f), DoSource::Flash) => f,
         // PUT DATA carries its target in P1P2, so a tag this command cannot write
         // is a wrong P1P2 and not a missing object: a YubiKey 5.7.4 answers `6B00`
@@ -189,11 +202,10 @@ pub fn put_data<S: Storage>(fs: &mut Fs<S>, sess: &Session, fid: u16, data: &[u8
         return Sw::WRONG_DATA;
     }
 
-    // OpenPGP 3.4 §4.4.3.6 and the D6/D7/D8 DO table: UIF value 02 is "permanently
-    // enabled … not changeable with PUT DATA", clearable only by a factory reset
-    // (TERMINATE DF re-seeds UIF_DEFAULT). It is the one touch setting that is meant
-    // to survive an admin-PIN compromise, so the generic writer must not lower it.
-    if matches!(fid, EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT) {
+    // OpenPGP 3.4 §4.4.3.6, the D6–D8 table, and Yubico's D9: UIF 02 is "permanently
+    // enabled … not changeable with PUT DATA", cleared only by TERMINATE DF — the one
+    // touch setting meant to survive an admin-PIN compromise, so no writer lowers it.
+    if matches!(fid, EF_UIF_SIG | EF_UIF_DEC | EF_UIF_AUT | EF_UIF_ATT) {
         // `try_read`: the guard fires only on the value it managed to read, so an
         // unreadable record skipped it entirely — and `02` is clearable ONLY by a
         // factory reset, which makes the lowering irreversible.

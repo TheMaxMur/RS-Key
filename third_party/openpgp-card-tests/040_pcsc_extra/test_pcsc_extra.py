@@ -272,30 +272,31 @@ def test_openpgp_fixed_width_status_dos_are_zero_padded(card):
             assert sw == b"\x6A\x80", f"PUT {tag:02X} of {len(short)} bytes"
 
     # Full width is accepted, and the aggregate is the slices in order at their
-    # fixed offsets — which is the property the fixed width exists to give.
+    # fixed offsets — which is the property the fixed width exists to give. The
+    # fourth slice is the attestation key's (DB), as in a YubiKey 5.8.0's 6E.
     fp1, fp3 = bytes(range(1, 21)), bytes(range(101, 121))
     assert card.cmd_put_data(0x00, 0xC7, fp1)
     assert card.cmd_put_data(0x00, 0xC9, fp3)
     fp = card.cmd_get_data(0x00, 0xC5)
-    assert len(fp) == 60
+    assert len(fp) == 80
     assert fp[:20] == fp1
-    assert fp[40:] == fp3
+    assert fp[40:60] == fp3
 
     ca1, ca3 = bytes(range(21, 41)), bytes(range(121, 141))
     assert card.cmd_put_data(0x00, 0xCA, ca1)
     assert card.cmd_put_data(0x00, 0xCC, ca3)
     cafp = card.cmd_get_data(0x00, 0xC6)
-    assert len(cafp) == 60
+    assert len(cafp) == 80
     assert cafp[:20] == ca1
-    assert cafp[40:] == ca3
+    assert cafp[40:60] == ca3
 
     ts1, ts3 = b"\x00\x00\x00\x11", b"\x00\x00\x00\x33"
     assert card.cmd_put_data(0x00, 0xCE, ts1)
     assert card.cmd_put_data(0x00, 0xD0, ts3)
     ts = card.cmd_get_data(0x00, 0xCD)
-    assert len(ts) == 12
+    assert len(ts) == 16
     assert ts[:4] == ts1
-    assert ts[8:] == ts3
+    assert ts[8:12] == ts3
 
 
 def test_openpgp_rejects_invalid_algorithm_attributes(card):

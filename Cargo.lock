@@ -2250,11 +2250,14 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "p256",
+ "p384",
  "rsk-crypto",
  "rsk-ec",
  "rsk-fs",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-x509",
+ "x509-parser",
  "zeroize",
 ]
 

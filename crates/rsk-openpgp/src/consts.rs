@@ -67,6 +67,8 @@ pub const INS_PUT_DATA: u8 = 0xDA;
 pub const INS_PUT_DATA_ODD: u8 = 0xDB; // IMPORT (extended header list)
 pub const INS_MSE: u8 = 0x22;
 pub const INS_VERSION: u8 = 0xF1;
+/// Yubico's ATTEST, class `80` only.
+pub const INS_ATTEST: u8 = 0xFB;
 
 // ---------------- Internal EF FIDs (flash-backed) ----------------
 pub const EF_PW1: u16 = 0x1081;
@@ -83,11 +85,16 @@ pub const EF_PK_AUT: KeyFid = KeyFid::new(0x10d3); // private AUT key, DEK-seale
 pub const EF_PB_SIG: u16 = 0x10d4; // public-key DO = EF_PK_SIG + 3 (not secret)
 pub const EF_PB_DEC: u16 = 0x10d5;
 pub const EF_PB_AUT: u16 = 0x10d6;
+/// Yubico's attestation key (key reference `81`): minted on the card with its
+/// DEK, never generated or imported by a host, and its public-key DO beside it.
+pub const EF_PK_ATT: KeyFid = KeyFid::new(0x10d7);
+pub const EF_PB_ATT: u16 = 0x10da;
 /// Per-slot key origin backing DO `0xDE`'s status byte — `0x1000 | tag`, the
 /// same private-companion convention `algo_tag_to_priv` uses for C1/C2/C3.
 pub const EF_KEY_ORIGIN: u16 = 0x10de;
-/// Asymmetric key slots (SIG, DEC, AUT) — the pairs DO `0xDE` reports and the
-/// length of the `EF_KEY_ORIGIN` record.
+/// Asymmetric key slots (SIG, DEC, AUT) — the length of the `EF_KEY_ORIGIN` record.
+/// DO `0xDE` reports one pair more, and `C5`/`C6`/`CD` one entry more: the
+/// attestation key's, which is always generated on the card.
 pub const KEY_SLOTS: usize = 3;
 pub const EF_DEK: u16 = 0x1099;
 pub const EF_DEK_PW1: KeyFid = KeyFid::new(0x109a); // DEK wrapped under PW1
@@ -134,13 +141,18 @@ pub const EF_ALGO_SIG: u16 = 0x00c1; // S — algorithm attributes (SIG)
 pub const EF_ALGO_DEC: u16 = 0x00c2; // S
 pub const EF_ALGO_AUT: u16 = 0x00c3; // S
 pub const EF_PW_STATUS: u16 = 0x00c4; // S — PW status bytes (7)
-pub const EF_FP: u16 = 0x00c5; // S — fingerprints (3×20)
-pub const EF_CA_FP: u16 = 0x00c6; // S — CA fingerprints (3×20)
+pub const EF_FP: u16 = 0x00c5; // S — fingerprints (4×20)
+pub const EF_CA_FP: u16 = 0x00c6; // S — CA fingerprints (4×20)
 /// OpenPGP 3.4 §4.4.1 fixes a fingerprint at 20 bytes and a key-generation
-/// timestamp at 4; `C5`/`C6`/`CD` are read-only concatenations of `KEY_SLOTS` of
-/// them, so the writer's length gate and the reader's stride are one value.
+/// timestamp at 4; `C5`/`C6`/`CD` are read-only concatenations of them, so the
+/// writer's length gate and the reader's stride are one value.
 pub const FP_LEN: usize = 20;
 pub const TS_LEN: usize = 4;
+/// What `C5`, `C6` and `CD` concatenate, in key order: SIG, DEC, AUT and then the
+/// attestation key, whose `DB`/`DC`/`DD` a YubiKey takes by PUT DATA only.
+pub const FP_DOS: [u16; 4] = [EF_FP_SIG, EF_FP_DEC, EF_FP_AUT, EF_FP_ATT];
+pub const CA_FP_DOS: [u16; 4] = [EF_FP_CA1, EF_FP_CA2, EF_FP_CA3, EF_FP_CA4];
+pub const TS_DOS: [u16; 4] = [EF_TS_SIG, EF_TS_DEC, EF_TS_AUT, EF_TS_ATT];
 
 /// The maxima OpenPGP 3.4 §4.4.1 gives the cardholder DOs it caps: the name `5B`
 /// at 39 bytes, the language preference `5F2D` at 8 (four two-letter codes). The
@@ -159,7 +171,7 @@ pub const EF_FP_AUT: u16 = 0x00c9; // S
 pub const EF_FP_CA1: u16 = 0x00ca; // S
 pub const EF_FP_CA2: u16 = 0x00cb; // S
 pub const EF_FP_CA3: u16 = 0x00cc; // S
-pub const EF_TS_ALL: u16 = 0x00cd; // S — generation timestamps (3×4)
+pub const EF_TS_ALL: u16 = 0x00cd; // S — generation timestamps (4×4)
 pub const EF_TS_SIG: u16 = 0x00ce; // S
 pub const EF_TS_DEC: u16 = 0x00cf; // S
 pub const EF_TS_AUT: u16 = 0x00d0; // S
@@ -179,6 +191,12 @@ pub const AES_KEY_LENS: [usize; 2] = [16, 32];
 pub const EF_UIF_SIG: u16 = 0x00d6; // S — user-interaction flag (touch)
 pub const EF_UIF_DEC: u16 = 0x00d7; // S
 pub const EF_UIF_AUT: u16 = 0x00d8; // S
+pub const EF_UIF_ATT: u16 = 0x00d9; // S — ATTEST's touch
+pub const EF_ALGO_ATT: u16 = 0x00da; // C — the attestation key's attributes, in 73 only
+pub const EF_FP_ATT: u16 = 0x00db; // S — write-only, read through C5
+pub const EF_FP_CA4: u16 = 0x00dc; // S — write-only, read through C6
+pub const EF_TS_ATT: u16 = 0x00dd; // S — write-only, read through CD
+pub const EF_ATT_CERT: u16 = 0x00fc; // S — the attestation key's certificate
 
 /// UIF flag byte "permanently enabled" (OpenPGP 3.4, D6/D7/D8 DO table): once
 /// stored, PUT DATA may not change it — only a factory reset (TERMINATE DF, which
@@ -208,6 +226,8 @@ pub(crate) fn slot_pub_fid(pk: KeyFid) -> u16 {
         EF_PB_SIG
     } else if pk == EF_PK_AUT {
         EF_PB_AUT
+    } else if pk == EF_PK_ATT {
+        EF_PB_ATT
     } else {
         EF_PB_DEC
     }

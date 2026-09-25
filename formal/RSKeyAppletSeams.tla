@@ -60,7 +60,7 @@ CONSTANTS
     \* The selection clamp removed: `pin_fresh` outlives the `has_pin` status it
     \* refines. `pfresh` remains the requirement-side copy that exposes the split.
     BugPinFreshOutlivesPin,
-    \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:411-425,
+    \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:436-451,
     \* `spend_one_shot_pw1` clearing has_pw1 under the one-shot PW status.
     BugSigPinNotSpent,
     \* The REQUIREMENT half of the one-shot spend, widened off the reference it
@@ -75,7 +75,7 @@ CONSTANTS
     \* rule exempts that action entirely, so nothing could tell the two apart.
     BugRefusedValidateGrants,
     \* A USER status writing the PW status byte -- PUT DATA C4 is PW3's
-    \* (crates/rsk-openpgp/src/putdata.rs:59-65). Its own switch rather than a
+    \* (crates/rsk-openpgp/src/putdata.rs:60-66). Its own switch rather than a
     \* share of BugUserStatusOpensAdmin, for the reason BugUnscopedOtpCancel has
     \* its own: a second gate on the same requirement, in a different function.
     BugPwStatusIgnoresAdmin,
@@ -157,7 +157,7 @@ VARIABLES
     \* status a SELECT elsewhere can take away.
     oathCodeSet,
     \* Whether PW1 is the one-shot kind: EF_PW_PRIV[0] = 0 makes PW1.81 valid for
-    \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:411-425), which is
+    \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:436-451), which is
     \* `pin_fresh` on the other applet. Host-writable through PUT DATA C4.
     oneShotSig,
     \* Ghost: the PW1.81 freshness the requirement leaves behind, spent by every
@@ -469,8 +469,8 @@ PgpKeyOp(r) ==
 
 \* PUT DATA C4 -- the PW status byte that makes PW1.81 one-shot -- is an
 \* ADMINISTRATIVE write, gated on PW3 by `write_authorized`
-\* (crates/rsk-openpgp/src/putdata.rs:59-65, called at
-\* crates/rsk-openpgp/src/lib.rs:259-261), and it is the only writer of that
+\* (crates/rsk-openpgp/src/putdata.rs:60-66, called at
+\* crates/rsk-openpgp/src/lib.rs:261-263), and it is the only writer of that
 \* status. The gate was `held["pw3"]` and nothing else: an enabling conjunct with
 \* no Policy, in the family this module's sibling README spends four sections on.
 \* Removing it left the reachable space BIT-IDENTICAL at 666 distinct states,

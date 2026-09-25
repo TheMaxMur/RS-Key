@@ -69,7 +69,6 @@ fn writable_tag(tag: u8) -> bool {
 }
 
 const DEVICE_FLAGS_FACTORY: u8 = 0x00; // a factory YubiKey's: no touch-eject (80), no wakeup (40)
-const FORM_FACTOR_USB_A_KEYCHAIN: u8 = 0x01;
 
 /// EF holding the persisted enabled-applications TLV. Outside both the FIDO and
 /// OpenPGP reset scopes, so the capability config is sticky.
@@ -133,12 +132,7 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
         &SUPPORTED_CAPS.to_be_bytes(),
     );
     push_tlv(&mut buf, &mut n, TAG_SERIAL, serial);
-    push_tlv(
-        &mut buf,
-        &mut n,
-        TAG_FORM_FACTOR,
-        &[FORM_FACTOR_USB_A_KEYCHAIN],
-    );
+    push_tlv(&mut buf, &mut n, TAG_FORM_FACTOR, &[rsk_sdk::FORM_FACTOR]);
     let (maj, min, patch) = FIRMWARE_VERSION;
     push_tlv(&mut buf, &mut n, TAG_VERSION, &[maj, min, patch]);
 
