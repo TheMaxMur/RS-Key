@@ -102,7 +102,7 @@ impl<'a, R: rsk_sdk::Rng + 'static> FidoCcidApplet<'a, R> {
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         let mut rngb = self.rng.borrow_mut();
         let mut presence = self.presence.borrow_mut();

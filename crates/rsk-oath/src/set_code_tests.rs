@@ -430,7 +430,7 @@ fn set_code_dropping_a_pre_otp_pin_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
     assert_eq!(
         &rec[2..],
-        &nootp.pin_derive_verifier(b"1234")[..],
+        &nootp.pin_derive_verifier(b"1234").expose()[..],
         "fixture: the record SET CODE is about to drop is chip-serial-rooted",
     );
 

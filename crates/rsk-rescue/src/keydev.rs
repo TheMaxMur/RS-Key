@@ -44,8 +44,9 @@ const INFO_KEYDEV: &[u8] = b"KEYDEV/SEAL";
 fn kenc(arm: &Device) -> [u8; 32] {
     let mut kbase = arm.derive_kbase();
     let mut out = [0u8; 32];
-    hkdf_sha256(arm.serial_hash, &kbase, INFO_KEYDEV, &mut out).expect("32-byte HKDF output");
-    kbase.zeroize();
+    hkdf_sha256(arm.serial_hash, kbase.expose(), INFO_KEYDEV, &mut out)
+        .expect("32-byte HKDF output");
+    kbase.wipe();
     out
 }
 
@@ -109,8 +110,8 @@ fn cbc_open(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
         }
         _ => return None,
     };
-    let r = aes_decrypt(&kbase, &iv, Mode::Cbc, &mut scalar);
-    kbase.zeroize();
+    let r = aes_decrypt(kbase.expose(), &iv, Mode::Cbc, &mut scalar);
+    kbase.wipe();
     if r.is_ok() {
         Some(scalar)
     } else {

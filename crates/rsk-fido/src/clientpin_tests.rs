@@ -1855,7 +1855,7 @@ fn a_faulted_seed_probe_leaves_the_verifier_migrated_and_the_seed_behind() {
     assert_eq!(fs.read(EF_PIN, &mut pin_rec), Some(PIN_FILE_LEN));
     assert_eq!(
         &pin_rec[3..PIN_FILE_LEN],
-        &otp_dev().pin_derive_verifier(&pin_hash[..16])[..PIN_FILE_LEN - 3],
+        &otp_dev().pin_derive_verifier(&pin_hash[..16]).expose()[..PIN_FILE_LEN - 3],
         "…while the same verify persisted an OTP-rooted verifier, so no later \
          verify will set `migrated` again",
     );

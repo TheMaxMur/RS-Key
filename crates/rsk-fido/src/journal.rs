@@ -515,12 +515,11 @@ pub fn vendor_checkpoint<S: Storage, R: Rng>(
         return Err(CtapError::InvalidParameter);
     }
     // Fetched here rather than held: the DEVK is unrotatable, and this is the one
-    // command that wants it. Zeroize before the `?` so a failed derivation still
-    // wipes the copy.
-    let mut devk =
-        ctx.state.devk_source.ok_or(CtapError::NotAllowed)?().ok_or(CtapError::NotAllowed)?;
-    let key = attestation_key(&devk, ctx.dev.serial_hash);
-    devk.zeroize();
+    // command that wants it. Dropped as soon as the key is derived, not at the end
+    // of the command.
+    let mut devk = rsk_crypto::read_fused(ctx.state.devk_source).ok_or(CtapError::NotAllowed)?;
+    let key = attestation_key(devk.expose(), ctx.dev.serial_hash);
+    devk.wipe();
     let key = key.ok_or(CtapError::Other)?;
     let (head, m) = chain_head(&ctx.dev, ctx.fs).map_err(|_| CtapError::Other)?;
 

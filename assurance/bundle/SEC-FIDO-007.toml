@@ -68,7 +68,7 @@ threat_clause_reading = "the anchor is topical and not the claim: TM-ZEROIZATION
 # file and returns FILE NAMES, so the column counts files that MENTION it, not
 # sites that own it — and a second tag in an already-counted file adds nothing.
 # The `Refines` regex belongs to a different function, which only validates.
-owners_tagged = ["crates/rsk-fido/src/seed.rs:616 seed::ensure_seed", "crates/rsk-fido/src/vendor.rs::unlock — the producer, tagged after this bundle measured that it was not"]
+owners_tagged = ["crates/rsk-fido/src/seed.rs:623 seed::ensure_seed", "crates/rsk-fido/src/vendor.rs::unlock — the producer, tagged after this bundle measured that it was not"]
 # AND THE TAG IS ON THE CONSEQUENT. `grep -c keydev_dec crates/rsk-fido/src/seed.rs`
 # is 0, and `ensure_seed` takes no `FidoState` at all, so it structurally cannot
 # touch the antecedent: it writes `EF_KEY_DEV`, which is `store.seed`. It can
@@ -91,7 +91,7 @@ owners_readers = [
   "crates/rsk-fido/src/lib.rs:106 — `Ctx::load_keydev`, RAM first then flash: the concrete SeedReachable, and the chokepoint nine call sites reach it through",
   "crates/rsk-fido/src/config.rs:415 — AUT_DISABLE's authorization gate",
   "crates/rsk-fido/src/config.rs:421 — the take that re-seals it",
-  "crates/rsk-fido/src/vendor.rs:955 — BACKUP_STATE's ungated `unlocked` bit",
+  "crates/rsk-fido/src/vendor.rs:962 — BACKUP_STATE's ungated `unlocked` bit",
   "crates/rsk-device/src/ctap.rs:221 — the trace projection, cfg-gated",
   "crates/rsk-fido/src/reset_assurance.rs:49 — the verification projection, cfg-gated",
 ]
@@ -200,7 +200,7 @@ bound_files_in_argument = 6
 stops_files_in_argument = "anything in a seventh file — and the measurement is the point: the slice page estimated three files, named the tag's file, and missed both writers and the ordering site"
 bound_crates = 2
 stops_crates = "a site outside the two crates. A holder of the RAM copy in a third would be outside the argument"
-shipped_relation = "the four writers are one producer (vendor.rs:580) and three destroyers (vendor.rs:579, config.rs:428, and reset.rs:104 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:106, config.rs:415, config.rs:421 and vendor.rs:955; the two projection sites are crates/rsk-device/src/ctap.rs:221 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit"
+shipped_relation = "the four writers are one producer (vendor.rs:580) and three destroyers (vendor.rs:579, config.rs:428, and reset.rs:104 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:106, config.rs:415, config.rs:421 and vendor.rs:962; the two projection sites are crates/rsk-device/src/ctap.rs:221 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit"
 cfg = "none — every writer and reader above is unconditional production code; the two projection sites are not, and the bound counts them apart for that reason"
 features = "none"
 

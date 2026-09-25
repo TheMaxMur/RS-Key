@@ -237,7 +237,7 @@ impl<'a> OathApplet<'a> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         }
     }
 
@@ -943,7 +943,7 @@ impl<'a> OathApplet<'a> {
         match rec.len() {
             OTP_PIN_REC_V1 if rec[1] == OTP_PIN_FMT_V1 => {
                 let stored = &rec[2..OTP_PIN_REC_V1];
-                ct_eq(&dev.pin_derive_verifier(pw), stored)
+                ct_eq(dev.pin_derive_verifier(pw).expose(), stored)
                     // kbase-migration fallback: a v1 verifier stored before the
                     // OTP key was provisioned. On a match the caller re-stores it
                     // under the OTP arm (verify/change rewrite v1 on success), so
@@ -951,9 +951,12 @@ impl<'a> OathApplet<'a> {
                     // PIN checks. Without this the legacy double_hash_pin was
                     // serial-only and burn-immune; v1 must not regress that.
                     || (dev.otp_key.is_some()
-                        && ct_eq(&dev.without_otp().pin_derive_verifier(pw), stored))
+                        && ct_eq(dev.without_otp().pin_derive_verifier(pw).expose(), stored))
             }
-            OTP_PIN_REC_LEGACY => ct_eq(&dev.double_hash_pin(pw), &rec[1..OTP_PIN_REC_LEGACY]),
+            OTP_PIN_REC_LEGACY => ct_eq(
+                dev.double_hash_pin(pw).expose(),
+                &rec[1..OTP_PIN_REC_LEGACY],
+            ),
             _ => false,
         }
     }
@@ -964,7 +967,7 @@ impl<'a> OathApplet<'a> {
         rec[0] = MAX_OTP_COUNTER;
         rec[1] = OTP_PIN_FMT_V1;
         let mkek = read_fused(self.mkek_source);
-        rec[2..].copy_from_slice(&self.device(&mkek).pin_derive_verifier(pw));
+        rec[2..].copy_from_slice(self.device(&mkek).pin_derive_verifier(pw).expose());
         rec
     }
 

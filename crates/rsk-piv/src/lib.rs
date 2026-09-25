@@ -314,7 +314,7 @@ impl<'a> PivApplet<'a> {
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         let mut res = ResBuf::new(resp);
         let sw = keygen::finish_rsa(&dev, fs, rng, slot, algo, pol, key, &mut res);
@@ -378,7 +378,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
             let dev = Device {
                 serial_hash: &serial_hash,
                 serial_id: &serial_id,
-                otp_key: mkek.as_deref(),
+                otp_key: mkek.as_ref().map(|k| k.expose()),
             };
             let mut rng = self.rng.borrow_mut();
             if files::scan_files(&dev, fs, &mut *rng).is_err() {
@@ -409,7 +409,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         let dev = Device {
             serial_hash: &serial_hash,
             serial_id: &serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         match apdu.ins {
             INS_VERSION => {
@@ -783,7 +783,7 @@ impl PivApplet<'_> {
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         let mut key = [0u8; 32];
         let klen = match seal::seal_read(&dev, fs, key_fid(SLOT_CARDMGM), &mut key) {
@@ -903,7 +903,10 @@ impl PivApplet<'_> {
                 let Some(PIN_REC_LEN) = fs.read(fid, &mut rec) else {
                     return Sw::REFERENCE_NOT_FOUND;
                 };
-                let is_default = ct_eq(&rec[2..PIN_REC_LEN], &dev.pin_derive_verifier(default));
+                let is_default = ct_eq(
+                    &rec[2..PIN_REC_LEN],
+                    dev.pin_derive_verifier(default).expose(),
+                );
                 let (total, left) = match retries(fs, retry) {
                     Ok(t) => t,
                     Err(sw) => return sw,
@@ -1329,11 +1332,11 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
         _ => return Sw::MEMORY_FAILURE,
     }
     let ver = dev.pin_derive_verifier(pin);
-    let mut matched = ct_eq(&ver, &rec[2..PIN_REC_LEN]);
+    let mut matched = ct_eq(ver.expose(), &rec[2..PIN_REC_LEN]);
     if !matched
         && dev.otp_key.is_some()
         && ct_eq(
-            &dev.without_otp().pin_derive_verifier(pin),
+            dev.without_otp().pin_derive_verifier(pin).expose(),
             &rec[2..PIN_REC_LEN],
         )
     {

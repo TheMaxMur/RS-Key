@@ -869,23 +869,23 @@ fn a_reset_code_set_before_the_burn_stays_on_the_chip_serial_root() {
     let mut rec = [0u8; 64];
     fs.read(EF_PW1, &mut rec).unwrap();
     assert!(
-        ct_eq(&rec[2..34], &d.pin_derive_verifier(PW1_DEFAULT)),
+        ct_eq(&rec[2..34], d.pin_derive_verifier(PW1_DEFAULT).expose()),
         "fixture: PW1 moved to the fused root at its first verify"
     );
     assert!(
-        !ct_eq(&rec[2..34], &pre.pin_derive_verifier(PW1_DEFAULT)),
+        !ct_eq(&rec[2..34], pre.pin_derive_verifier(PW1_DEFAULT).expose()),
         "fixture: the two arms really do derive different verifiers"
     );
     fs.read(EF_RC, &mut rec).unwrap();
     assert!(
-        ct_eq(&rec[2..34], &pre.pin_derive_verifier(b"resetme0")),
+        ct_eq(&rec[2..34], pre.pin_derive_verifier(b"resetme0").expose()),
         "the resetting code is still rooted in the public chip serial"
     );
     // And PW3 with it — the likelier member of the same class, since ordinary use
     // presents PW1 and the admin surface may not be touched again after the burn.
     fs.read(EF_PW3, &mut rec).unwrap();
     assert!(
-        ct_eq(&rec[2..34], &pre.pin_derive_verifier(PW3_DEFAULT)),
+        ct_eq(&rec[2..34], pre.pin_derive_verifier(PW3_DEFAULT).expose()),
         "PW3 has not been presented since the burn, so it has not moved either"
     );
 
@@ -895,7 +895,7 @@ fn a_reset_code_set_before_the_burn_stays_on_the_chip_serial_root() {
     let n = fs.read_key(EF_DEK_RC, &mut blob).unwrap().min(blob.len());
     let session = pre.pin_derive_session(b"resetme0");
     let mut from_flash = [0u8; DEK_SIZE];
-    pre.decrypt_with_aad(&session, &blob[1..n], PinKdf::V2, &mut from_flash)
+    pre.decrypt_with_aad(session.expose(), &blob[1..n], PinKdf::V2, &mut from_flash)
         .expect("the DEK copy behind the resetting code is on the pre-burn root");
     let mut sess_pw1 = Session::new();
     assert_eq!(
@@ -925,7 +925,7 @@ fn a_reset_code_set_before_the_burn_stays_on_the_chip_serial_root() {
     );
     fs.read(EF_RC, &mut rec).unwrap();
     assert!(
-        ct_eq(&rec[2..34], &d.pin_derive_verifier(b"resetme0")),
+        ct_eq(&rec[2..34], d.pin_derive_verifier(b"resetme0").expose()),
         "the RESET RETRY that presented the code is what moves it to the fused root"
     );
 }
@@ -1947,7 +1947,7 @@ fn neutralizing_a_pre_otp_default_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
     assert_eq!(
         &rc_rec[2..],
-        &d_pre.pin_derive_verifier(PW3_DEFAULT)[..],
+        &d_pre.pin_derive_verifier(PW3_DEFAULT).expose()[..],
         "fixture: the record about to be tombstoned is chip-serial-rooted",
     );
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2049,7 +2049,7 @@ fn clearing_a_pre_otp_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
     assert_eq!(
         &rc_rec[2..],
-        &d_pre.pin_derive_verifier(RC)[..],
+        &d_pre.pin_derive_verifier(RC).expose()[..],
         "fixture: EF_RC is rooted in the public chip serial",
     );
 
@@ -2063,7 +2063,7 @@ fn clearing_a_pre_otp_reset_code_re_arms_the_at_rest_lap() {
     let mut dek_from_rc = [0u8; DEK_SIZE];
     d_pre
         .decrypt_with_aad(
-            &d_pre.pin_derive_session(RC),
+            d_pre.pin_derive_session(RC).expose(),
             &blob[1..n],
             PinKdf::V2,
             &mut dek_from_rc,
@@ -2098,7 +2098,7 @@ fn clearing_a_pre_otp_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
     assert_eq!(
         &rc_rec[2..],
-        &d_pre.pin_derive_verifier(RC)[..],
+        &d_pre.pin_derive_verifier(RC).expose()[..],
         "fixture: the PW3 migration did not touch EF_RC",
     );
     assert!(fs.has_key(EF_DEK_RC), "fixture: EF_DEK_RC is still there");
@@ -2168,7 +2168,7 @@ fn reset_retry_via_the_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PW1, &mut rec), Some(34));
     assert_eq!(
         &rec[2..],
-        &dev().pin_derive_verifier(PW1_DEFAULT)[..],
+        &dev().pin_derive_verifier(PW1_DEFAULT).expose()[..],
         "fixture: EF_PW1 is rooted in the public chip serial",
     );
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2188,7 +2188,7 @@ fn reset_retry_via_the_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PW1, &mut rec), Some(34));
     assert_eq!(
         &rec[2..],
-        &d_otp.pin_derive_verifier(b"222222")[..],
+        &d_otp.pin_derive_verifier(b"222222").expose()[..],
         "fixture: the reset re-keyed EF_PW1 under the OTP arm",
     );
     assert!(!fs.has_data(rsk_fs::EF_HARDENED));
@@ -2226,7 +2226,7 @@ fn setting_a_new_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
     assert_eq!(
         &rc_rec[2..],
-        &d_pre.pin_derive_verifier(b"resetme0")[..],
+        &d_pre.pin_derive_verifier(b"resetme0").expose()[..],
         "fixture: the RC the SET below supersedes is chip-serial-rooted",
     );
 
@@ -2247,7 +2247,7 @@ fn setting_a_new_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
     assert_eq!(
         &rc_rec[2..],
-        &d_pre.pin_derive_verifier(b"resetme0")[..],
+        &d_pre.pin_derive_verifier(b"resetme0").expose()[..],
         "fixture: the PW3 migration did not touch EF_RC",
     );
 
@@ -2336,7 +2336,7 @@ fn reset_retry_via_pw3_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PW1, &mut rec), Some(34));
     assert_eq!(
         &rec[2..],
-        &dev().pin_derive_verifier(PW1_DEFAULT)[..],
+        &dev().pin_derive_verifier(PW1_DEFAULT).expose()[..],
         "fixture: EF_PW1 is rooted in the public chip serial",
     );
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2360,7 +2360,7 @@ fn reset_retry_via_pw3_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PW1, &mut rec), Some(34));
     assert_eq!(
         &rec[2..],
-        &d_otp.pin_derive_verifier(b"222222")[..],
+        &d_otp.pin_derive_verifier(b"222222").expose()[..],
         "fixture: the reset re-keyed EF_PW1 under the OTP arm",
     );
     assert!(

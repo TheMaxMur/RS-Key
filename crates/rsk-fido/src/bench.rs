@@ -48,15 +48,12 @@ const FIXED_MSG: [u8; 32] = [0x3c; 32];
 /// Unknown selectors return 0.
 pub fn run(sel: u8) -> u32 {
     match sel {
-        0 => {
-            let z = rsk_crypto::pinproto::ecdh_raw(
-                black_box(&FIXED_SCALAR),
-                black_box(&G_X),
-                black_box(&G_Y),
-            )
-            .unwrap_or([0u8; 32]);
-            checksum(&z)
-        }
+        0 => rsk_crypto::pinproto::ecdh_raw(
+            black_box(&FIXED_SCALAR),
+            black_box(&G_X),
+            black_box(&G_Y),
+        )
+        .map_or(0, |z| checksum(z.expose())),
         1 => {
             use p256::elliptic_curve::PrimeField;
             let d = Option::<p256::Scalar>::from(p256::Scalar::from_repr(p256::FieldBytes::from(

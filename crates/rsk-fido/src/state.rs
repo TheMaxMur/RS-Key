@@ -344,7 +344,7 @@ pub struct FidoState {
     /// an unprovisioned device and in most tests. A bare `fn` because there is no
     /// state to carry — the same shape the transport's touch/cancel hooks use.
     /// Device identity, not session state — it survives [`Self::reset`].
-    pub devk_source: Option<fn() -> Option<[u8; 32]>>,
+    pub devk_source: Option<rsk_crypto::FusedKey>,
     /// Whether this power cycle's `EV_BOOT` journal entry has been written
     /// ([`crate::journal`]). Survives [`Self::reset`] — the cycle did not end.
     pub audit_boot_logged: bool,

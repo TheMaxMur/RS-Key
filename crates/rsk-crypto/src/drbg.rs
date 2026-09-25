@@ -8,8 +8,8 @@
 //! cost is a few HMAC-SHA256 ops — microseconds, uniform.
 
 use hmac::{Hmac, Mac};
+use rsk_secret::Secret;
 use sha2::Sha256;
-use zeroize::Zeroize;
 
 /// HMAC-SHA256 output / DRBG state size.
 const SEEDLEN: usize = 32;
@@ -17,8 +17,8 @@ const SEEDLEN: usize = 32;
 /// HMAC-DRBG over HMAC-SHA256. Instantiate with [`HmacDrbg::new`], draw with
 /// [`HmacDrbg::fill`], refresh entropy with [`HmacDrbg::reseed`].
 pub struct HmacDrbg {
-    k: [u8; SEEDLEN],
-    v: [u8; SEEDLEN],
+    k: Secret<[u8; SEEDLEN]>,
+    v: Secret<[u8; SEEDLEN]>,
 }
 
 impl HmacDrbg {
@@ -26,8 +26,8 @@ impl HmacDrbg {
     /// personalization (SP 800-90A 10.1.2.3).
     pub fn new(seed: &[u8]) -> Self {
         let mut d = Self {
-            k: [0x00; SEEDLEN],
-            v: [0x01; SEEDLEN],
+            k: Secret::new([0x00; SEEDLEN]),
+            v: Secret::new([0x01; SEEDLEN]),
         };
         d.update(seed);
         d
@@ -47,12 +47,12 @@ impl HmacDrbg {
     /// SP 800-90A 10.1.2.2 Update; an empty `provided` is the no-data form.
     fn update(&mut self, provided: &[u8]) {
         // K = HMAC(K, V ‖ 0x00 ‖ provided); V = HMAC(K, V)
-        self.k = Self::hmac(&self.k, &self.v, &[0x00], provided);
-        self.v = Self::hmac(&self.k, &self.v, &[], &[]);
+        *self.k.expose_mut() = Self::hmac(self.k.expose(), self.v.expose(), &[0x00], provided);
+        *self.v.expose_mut() = Self::hmac(self.k.expose(), self.v.expose(), &[], &[]);
         if !provided.is_empty() {
             // K = HMAC(K, V ‖ 0x01 ‖ provided); V = HMAC(K, V)
-            self.k = Self::hmac(&self.k, &self.v, &[0x01], provided);
-            self.v = Self::hmac(&self.k, &self.v, &[], &[]);
+            *self.k.expose_mut() = Self::hmac(self.k.expose(), self.v.expose(), &[0x01], provided);
+            *self.v.expose_mut() = Self::hmac(self.k.expose(), self.v.expose(), &[], &[]);
         }
     }
 
@@ -62,9 +62,9 @@ impl HmacDrbg {
     pub fn fill(&mut self, out: &mut [u8]) {
         let mut i = 0;
         while i < out.len() {
-            self.v = Self::hmac(&self.k, &self.v, &[], &[]);
+            *self.v.expose_mut() = Self::hmac(self.k.expose(), self.v.expose(), &[], &[]);
             let n = (out.len() - i).min(SEEDLEN);
-            out[i..i + n].copy_from_slice(&self.v[..n]);
+            out[i..i + n].copy_from_slice(&self.v.expose()[..n]);
             i += n;
         }
         self.update(&[]);
@@ -78,15 +78,9 @@ impl HmacDrbg {
     /// Wipe the internal state — for a secure reboot, destroy the live keystream
     /// before handing control to the bootloader. Unusable until re-seeded.
     pub fn scrub(&mut self) {
-        self.k.zeroize();
-        self.v.zeroize();
-    }
-}
-
-impl Drop for HmacDrbg {
-    fn drop(&mut self) {
-        self.k.zeroize();
-        self.v.zeroize();
+        // Assigning drops the old state, which wipes it; the fresh one is zeros.
+        self.k = Secret::zeroed();
+        self.v = Secret::zeroed();
     }
 }
 

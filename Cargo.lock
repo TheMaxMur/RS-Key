@@ -2104,10 +2104,10 @@ dependencies = [
  "ml-kem",
  "p256",
  "rsk-mldsa",
+ "rsk-secret",
  "rsk-sha512",
  "sha1",
  "sha2 0.10.9",
- "zeroize",
 ]
 
 [[package]]

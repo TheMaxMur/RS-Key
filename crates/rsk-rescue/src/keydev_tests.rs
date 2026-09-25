@@ -48,8 +48,8 @@ fn write_legacy_cbc(dev: &Device, fs: &mut Fs<RamStorage>, scalar: &[u8; 32]) {
     iv.copy_from_slice(&dev.serial_hash[..16]);
     let mut ct = *scalar;
     let mut kbase = dev.without_otp().derive_kbase();
-    aes_encrypt(&kbase, &iv, Mode::Cbc, &mut ct).unwrap();
-    kbase.zeroize();
+    aes_encrypt(kbase.expose(), &iv, Mode::Cbc, &mut ct).unwrap();
+    kbase.wipe();
     fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&ct)).unwrap();
 }
 

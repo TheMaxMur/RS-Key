@@ -252,7 +252,7 @@ pub fn check_pin<S: Storage>(
         Ok(left) => left,
         Err(sw) => return sw,
     };
-    let verifier = Secret::new(dev.pin_derive_verifier(data));
+    let verifier = dev.pin_derive_verifier(data);
     if !ct_eq(&rec[off..off + 32], verifier.expose()) {
         // kbase-migration fallback: a verifier stored before the OTP key was
         // provisioned. A match under the pre-OTP arm is the correct PIN — re-wrap
@@ -261,7 +261,7 @@ pub fn check_pin<S: Storage>(
         let migrated = dev.otp_key.is_some()
             && ct_eq(
                 &rec[off..off + 32],
-                Secret::new(dev.without_otp().pin_derive_verifier(data)).expose(),
+                dev.without_otp().pin_derive_verifier(data).expose(),
             );
         if !migrated {
             // §4.2's list of what invalidates an access status omits a failed
@@ -294,10 +294,12 @@ pub fn check_pin<S: Storage>(
         } else {
             sess.has_pw2 = true;
         }
-        sess.session_pw1 = dev.pin_derive_session(data);
+        sess.session_pw1
+            .copy_from_slice(dev.pin_derive_session(data).expose());
     } else if fid == EF_PW3 {
         sess.has_pw3 = true;
-        sess.session_pw3 = dev.pin_derive_session(data);
+        sess.session_pw3
+            .copy_from_slice(dev.pin_derive_session(data).expose());
     }
     Sw::OK
 }
@@ -345,9 +347,9 @@ fn migrate_pin_kbase<S: Storage>(
         let mut old_session = old.pin_derive_session(pin);
         let mut dek = [0u8; DEK_SIZE];
         let opened_old = old
-            .decrypt_with_aad(&old_session, &blob[1..n], PinKdf::V2, &mut dek)
+            .decrypt_with_aad(old_session.expose(), &blob[1..n], PinKdf::V2, &mut dek)
             .is_ok();
-        old_session.zeroize();
+        old_session.wipe();
         if opened_old {
             let r = rewrap_dek(dev, fs, rng, dek_fid, pin, &dek);
             dek.zeroize();
@@ -357,8 +359,8 @@ fn migrate_pin_kbase<S: Storage>(
             // before the verifier write — the copy must open under the OTP
             // generation, else the blob is corrupt and we fail closed.
             let mut session = dev.pin_derive_session(pin);
-            let r = dev.decrypt_with_aad(&session, &blob[1..n], PinKdf::V2, &mut dek);
-            session.zeroize();
+            let r = dev.decrypt_with_aad(session.expose(), &blob[1..n], PinKdf::V2, &mut dek);
+            session.wipe();
             dek.zeroize();
             r.map_err(|_| Sw::EXEC_ERROR)?;
         }
@@ -517,7 +519,7 @@ fn stage_dek<S: Storage>(
     // its own append, so a re-arm at the end is one a reset can take while the
     // superseded copies stand. Make it conditional and all four open silently.
     rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;
-    let session = Secret::new(dev.pin_derive_session(pin));
+    let session = dev.pin_derive_session(pin);
     let mut rec = [0u8; 1 + DEK_FILE_SIZE];
     rec[0] = dek_fid.get() as u8;
     rec[1] = DEK_FORMAT_V3;
@@ -774,7 +776,7 @@ fn store_verifier<S: Storage>(
     let mut rec = [0u8; 34];
     rec[0] = pin.len() as u8;
     rec[1] = PIN_FORMAT_V1;
-    rec[2..].copy_from_slice(&dev.pin_derive_verifier(pin));
+    rec[2..].copy_from_slice(dev.pin_derive_verifier(pin).expose());
     let r = fs.put(fid, &rec).map_err(|_| Sw::MEMORY_FAILURE);
     rec.zeroize();
     r
@@ -790,7 +792,7 @@ fn rewrap_dek<S: Storage>(
     pin: &[u8],
     dek: &[u8; DEK_SIZE],
 ) -> Result<Secret<[u8; 32]>, Sw> {
-    let session = Secret::new(dev.pin_derive_session(pin));
+    let session = dev.pin_derive_session(pin);
     let mut def = [0u8; DEK_FILE_SIZE];
     def[0] = DEK_FORMAT_V3;
     let mut nonce = [0u8; 12];
@@ -908,7 +910,8 @@ pub fn reset_retry<S: Storage>(
         sess.has_pw2 = false;
         sess.has_pw3 = false;
         sess.has_rc = true;
-        sess.session_rc = dev.pin_derive_session(&data[..rc_len]);
+        sess.session_rc
+            .copy_from_slice(dev.pin_derive_session(&data[..rc_len]).expose());
         let new_pin = &data[rc_len..];
         let mut dek = [0u8; DEK_SIZE];
         if let Err(sw) = load_dek(dev, fs, sess, &mut dek) {

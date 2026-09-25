@@ -14,6 +14,7 @@
 //! What a type cannot reach: a move is a `memcpy` and its source is not wiped, so
 //! a secret is best built in place — [`Secret::zeroed`], then filled through
 //! [`Secret::expose_mut`] — and handed on by reference rather than by value.
+//! `drop(secret)` is such a move: it wipes the copy. [`Secret::wipe`] does not.
 //!
 //! None of these compile:
 //!
@@ -68,6 +69,13 @@ impl<T: Zeroize> Secret<T> {
 
     pub fn expose_mut(&mut self) -> &mut T {
         &mut self.0
+    }
+
+    /// Zeroize the value now, in place, for a wipe point before the scope's end;
+    /// the drop wipes it again.
+    #[expect(clippy::disallowed_methods, reason = "the in-place early wipe")]
+    pub fn wipe(&mut self) {
+        self.0.zeroize();
     }
 }
 

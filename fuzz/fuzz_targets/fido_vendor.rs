@@ -21,8 +21,9 @@ use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
 /// The OTP DEVK as `FidoState` takes it — a reader, not the key.
-fn devk() -> Option<[u8; 32]> {
-    Some([0x42; 32])
+fn devk(out: &mut [u8; 32]) -> bool {
+    *out = [0x42; 32];
+    true
 }
 
 struct SeqRng(u64);

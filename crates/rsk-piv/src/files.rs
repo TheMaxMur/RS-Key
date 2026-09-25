@@ -271,7 +271,7 @@ pub fn put_pin_verifier<S: Storage>(
     let mut rec = [0u8; PIN_REC_LEN];
     rec[0] = pin.len() as u8;
     rec[1] = 0x01;
-    rec[2..].copy_from_slice(&dev.pin_derive_verifier(pin));
+    rec[2..].copy_from_slice(dev.pin_derive_verifier(pin).expose());
     let r = fs.put(fid, &rec).map_err(|_| Sw::MEMORY_FAILURE);
     rec.zeroize();
     r

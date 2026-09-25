@@ -77,8 +77,9 @@ const SERIAL: [u8; 8] = [0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0];
 /// the key, so a test source has to be a plain `fn` — a closure over a local could
 /// not coerce to one.
 const TEST_MKEK: [u8; 32] = [0x55; 32];
-fn test_mkek() -> Option<[u8; 32]> {
-    Some(TEST_MKEK)
+fn test_mkek(out: &mut [u8; 32]) -> bool {
+    *out = TEST_MKEK;
+    true
 }
 
 fn new_fs() -> Fs<RamStorage> {
@@ -1298,7 +1299,7 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
     assert_eq!(rec[1], OTP_PIN_FMT_V1);
     assert_eq!(
         &rec[2..],
-        &otp_dev.pin_derive_verifier(b"1234")[..],
+        &otp_dev.pin_derive_verifier(b"1234").expose()[..],
         "verifier re-stored under the OTP arm"
     );
     assert!(
@@ -1505,7 +1506,7 @@ fn legacy_otp_pin_verifies_and_upgrades_to_otp_rooted() {
     // Legacy record straight to flash (what old firmware wrote).
     let mut legacy = [0u8; 33];
     legacy[0] = MAX_OTP_COUNTER;
-    legacy[1..].copy_from_slice(&dev.double_hash_pin(b"1234"));
+    legacy[1..].copy_from_slice(dev.double_hash_pin(b"1234").expose());
     fs.put(EF_OTP_PIN, &legacy).unwrap();
 
     // The legacy PIN still verifies…
@@ -1520,10 +1521,10 @@ fn legacy_otp_pin_verifies_and_upgrades_to_otp_rooted() {
     let mut rec = [0u8; 34];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(34));
     assert_eq!(rec[1], OTP_PIN_FMT_V1);
-    assert_eq!(&rec[2..], &dev.pin_derive_verifier(b"1234")[..]);
+    assert_eq!(&rec[2..], &dev.pin_derive_verifier(b"1234").expose()[..]);
     assert_ne!(
         &rec[2..],
-        &dev.double_hash_pin(b"1234")[..],
+        &dev.double_hash_pin(b"1234").expose()[..],
         "must not store the legacy hash after upgrade"
     );
 

@@ -28,8 +28,9 @@ const TAG_NEW_PASSWORD: u8 = 0x81;
 
 /// The OTP-fused MKEK, as the applet takes it: a reader, not the key. Matches how
 /// the firmware supplies one — the fuse is read on demand, never held in RAM.
-fn fused_mkek() -> Option<[u8; 32]> {
-    Some([0x5A; 32])
+fn fused_mkek(out: &mut [u8; 32]) -> bool {
+    *out = [0x5A; 32];
+    true
 }
 
 struct CountRng(u8);

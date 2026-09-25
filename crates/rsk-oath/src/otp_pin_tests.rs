@@ -252,7 +252,7 @@ fn a_change_after_the_otp_burn_rearms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
     assert_eq!(
         &rec[2..],
-        &nootp.pin_derive_verifier(b"1234")[..],
+        &nootp.pin_derive_verifier(b"1234").expose()[..],
         "the record CHANGE is about to supersede is chip-serial-rooted",
     );
 
@@ -291,7 +291,7 @@ fn a_change_after_the_otp_burn_rearms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
     assert_eq!(
         &rec[2..],
-        &otp.pin_derive_verifier(b"5678")[..],
+        &otp.pin_derive_verifier(b"5678").expose()[..],
         "the new verifier is stored under the OTP arm",
     );
 }
@@ -331,7 +331,7 @@ fn a_change_whose_re_arm_the_medium_refuses_does_not_re_key() {
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
     assert_eq!(
         &rec[2..],
-        &nootp.pin_derive_verifier(b"1234")[..],
+        &nootp.pin_derive_verifier(b"1234").expose()[..],
         "fixture: the record CHANGE would supersede is chip-serial-rooted",
     );
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -357,7 +357,7 @@ fn a_change_whose_re_arm_the_medium_refuses_does_not_re_key() {
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
     assert_eq!(
         &rec[2..],
-        &nootp.pin_derive_verifier(b"1234")[..],
+        &nootp.pin_derive_verifier(b"1234").expose()[..],
         "the refused re-arm must leave the pre-existing verifier in force, not a \
          re-keyed one the lap can no longer reach",
     );
@@ -372,7 +372,7 @@ fn a_change_whose_re_arm_the_medium_refuses_does_not_re_key() {
         ..nootp
     };
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
-    assert_eq!(&rec[2..], &otp.pin_derive_verifier(b"5678")[..]);
+    assert_eq!(&rec[2..], &otp.pin_derive_verifier(b"5678").expose()[..]);
 }
 
 /// The OTP-PIN gate is `has_data(EF_OTP_PIN)`, and `Fs::has_data` answers the same

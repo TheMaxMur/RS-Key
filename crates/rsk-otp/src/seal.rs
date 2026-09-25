@@ -44,9 +44,9 @@ const INFO_OTP_SLOT: &[u8] = b"OTP/SLOT";
 fn kenc(dev: &Device) -> [u8; 32] {
     let mut kbase = dev.derive_kbase();
     let mut out = [0u8; 32];
-    hkdf_sha256(dev.serial_hash, &kbase, INFO_OTP_SLOT, &mut out)
+    hkdf_sha256(dev.serial_hash, kbase.expose(), INFO_OTP_SLOT, &mut out)
         .expect("32-byte HKDF output is in range");
-    kbase.zeroize();
+    kbase.wipe();
     out
 }
 

@@ -247,7 +247,7 @@ why = "the sweep. Best-effort in the sense that a torn wipe is a state the desig
 
 [[site]]
 file = "crates/rsk-fido/src/seed.rs"
-line = 338
+line = 340
 call = "fs.force_delete(EF_PAUTHTOKEN.get())"
 verb = "force_delete"
 answer = "read"
@@ -280,7 +280,7 @@ why = "the chain half of the same erase, ordered after the key so the surviving 
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 912
+line = 919
 call = "if ctx.fs.delete(EF_EE_DEV).is_err() {"
 verb = "delete"
 answer = "read"
@@ -324,7 +324,7 @@ why = "VERIFY PIN raises the same validated flag VALIDATE does, so an OTP-PIN th
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 1630
+line = 1633
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -335,7 +335,7 @@ why = "wipe_oath's sweep, credentials first then the unlock records; OATH fids c
 
 [[site]]
 file = "crates/rsk-openpgp/src/init.rs"
-line = 191
+line = 206
 call = "let _ = fs.delete(EF_RC);"
 verb = "delete"
 answer = "discarded"
@@ -346,7 +346,7 @@ why = "scan_files runs neutralize_default_reset_code and it is idempotent, so a 
 
 [[site]]
 file = "crates/rsk-openpgp/src/init.rs"
-line = 192
+line = 207
 call = "let _ = fs.delete_key(EF_DEK_RC);"
 verb = "delete_key"
 answer = "discarded"
@@ -368,7 +368,7 @@ why = "one instance of the cardholder certificate: a public data object the host
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 421
+line = 423
 call = "let _ = fs.delete_key(stage);"
 verb = "delete_key"
 answer = "discarded"
@@ -379,7 +379,7 @@ why = "load_dek re-runs this retirement on every PIN use, so a failed one is ret
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 494
+line = 496
 call = "let _ = fs.delete_key(stage);"
 verb = "delete_key"
 answer = "discarded"
@@ -390,7 +390,7 @@ why = "the same retirement after a recovered update commits; the same next-load_
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 554
+line = 556
 call = "let _ = fs.delete_key(stage);"
 verb = "delete_key"
 answer = "discarded"
@@ -401,7 +401,7 @@ why = "and after an ordinary staged commit. All three are the one record load_de
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 622
+line = 624
 call = "let verifier = fs.delete(EF_RC).is_ok();"
 verb = "delete"
 answer = "read"
@@ -412,7 +412,7 @@ why = "the RC verifier is what RESET RETRY P1=0 walks in through, and init's rep
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 623
+line = 625
 call = "let dek = fs.delete_key(EF_DEK_RC).is_ok();"
 verb = "delete_key"
 answer = "read"
@@ -423,7 +423,7 @@ why = "the DEK sealed under that reset code. A survivor of any of the three leav
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 624
+line = 626
 call = "let staged = fs.delete_key(EF_DEK_STAGE_RC).is_ok();"
 verb = "delete_key"
 answer = "read"
@@ -544,7 +544,7 @@ why = "PUT DATA with an empty body IS the object delete, so the removal is the w
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1192
+line = 1195
 call = "let dropped = fs.delete_key(key_fid(from));"
 verb = "delete_key"
 answer = "read"
@@ -555,7 +555,7 @@ why = "MOVE with to = 0xFF, the slot delete. The head earns a retry because one 
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1193
+line = 1196
 call = "let _ = fs.delete(pubkey_fid(from));"
 verb = "delete"
 answer = "discarded"

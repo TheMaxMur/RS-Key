@@ -149,7 +149,7 @@ fn handshake<S: Storage>(fs: &mut Fs<S>, rng: &mut SeqRng, state: &mut FidoState
     aad[1..33].copy_from_slice(&dx);
     aad[33..].copy_from_slice(&dy);
     let mut key = [0u8; 32];
-    hkdf_sha256(&[], &z, &aad, &mut key).unwrap();
+    hkdf_sha256(&[], z.expose(), &aad, &mut key).unwrap();
     Host { key, aad }
 }
 
@@ -241,7 +241,7 @@ fn handshake_pq(fs: &mut Fs<RamStorage>, rng: &mut SeqRng, state: &mut FidoState
     aad[33..].copy_from_slice(&dy);
 
     let mut ikm = [0u8; 64];
-    ikm[..32].copy_from_slice(&z);
+    ikm[..32].copy_from_slice(z.expose());
     ikm[32..].copy_from_slice(&ss);
     let mut info = [0u8; 65 + MLKEM768_CT_LEN];
     info[..65].copy_from_slice(&aad);
@@ -3228,7 +3228,10 @@ fn a_gated_read_with_a_pin_takes_only_a_valid_acfg_token() {
 fn audit_checkpoint_without_touch_signs_nothing() {
     let (mut fs, mut rng, mut st) = setup();
     fs.put(crate::consts::EF_AUDIT_ENABLED, &[1]).unwrap();
-    st.devk_source = Some(|| Some([7; 32]));
+    st.devk_source = Some(|out: &mut [u8; 32]| {
+        *out = [7; 32];
+        true
+    });
     let mut req = [0u8; 64];
     let n = {
         let mut e = Encoder::new(Cursor::new(&mut req[..]));

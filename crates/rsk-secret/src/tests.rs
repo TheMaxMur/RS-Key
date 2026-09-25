@@ -70,3 +70,12 @@ fn a_static_can_hold_one() {
     static HELD: Secret<[u32; 2]> = Secret::new([1, 2]);
     assert_eq!(HELD.expose(), &[1, 2]);
 }
+
+#[test]
+fn wipe_zeroes_in_place_and_the_secret_stays_usable() {
+    let mut s = Secret::new([7u8; 4]);
+    s.wipe();
+    assert_eq!(s.expose(), &[0; 4]);
+    s.expose_mut()[1] = 9;
+    assert_eq!(s.expose(), &[0, 9, 0, 0]);
+}

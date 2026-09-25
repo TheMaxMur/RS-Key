@@ -39,9 +39,9 @@ const INFO_PIV_KEYS: &[u8] = b"PIV/KEYS";
 fn kenc(dev: &Device) -> [u8; 32] {
     let mut kbase = dev.derive_kbase();
     let mut out = [0u8; 32];
-    hkdf_sha256(dev.serial_hash, &kbase, INFO_PIV_KEYS, &mut out)
+    hkdf_sha256(dev.serial_hash, kbase.expose(), INFO_PIV_KEYS, &mut out)
         .expect("32-byte HKDF output is in range");
-    kbase.zeroize();
+    kbase.wipe();
     out
 }
 

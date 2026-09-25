@@ -181,7 +181,7 @@ impl<'a> OpenpgpApplet<'a> {
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         keypairgen::rsa_generate_finish(&dev, fs, &self.sess, rng, fid, key, out)
     }
@@ -297,7 +297,7 @@ impl<'a> OpenpgpApplet<'a> {
             let dev = Device {
                 serial_hash: &self.serial_hash,
                 serial_id: &self.serial_id,
-                otp_key: mkek.as_deref(),
+                otp_key: mkek.as_ref().map(|k| k.expose()),
             };
             let mut rng = self.rng.borrow_mut();
             pin::put_reset_code(&dev, fs, &mut self.sess, &mut *rng, apdu.data)
@@ -306,7 +306,7 @@ impl<'a> OpenpgpApplet<'a> {
             let dev = Device {
                 serial_hash: &self.serial_hash,
                 serial_id: &self.serial_id,
-                otp_key: mkek.as_deref(),
+                otp_key: mkek.as_ref().map(|k| k.expose()),
             };
             putdata::put_aes_key(&dev, fs, &self.sess, apdu.data)
         } else if fid == consts::EF_PW_STATUS {
@@ -316,7 +316,7 @@ impl<'a> OpenpgpApplet<'a> {
             let dev = Device {
                 serial_hash: &self.serial_hash,
                 serial_id: &self.serial_id,
-                otp_key: mkek.as_deref(),
+                otp_key: mkek.as_ref().map(|k| k.expose()),
             };
             let mut rng = self.rng.borrow_mut();
             kdf::put_kdf(&dev, fs, &mut self.sess, &mut *rng, apdu.data)
@@ -396,7 +396,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let mut rng = self.rng.borrow_mut();
                 pin::verify(
@@ -414,7 +414,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let mut rng = self.rng.borrow_mut();
                 pin::change_pin(
@@ -432,7 +432,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let mut rng = self.rng.borrow_mut();
                 pin::reset_retry(
@@ -453,7 +453,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let mut rng = self.rng.borrow_mut();
                 importdata::import_data(
@@ -465,7 +465,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let mut rng = self.rng.borrow_mut();
                 let mut presence = self.presence.borrow_mut();
@@ -490,7 +490,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let mut rng = self.rng.borrow_mut();
                 let mut presence = self.presence.borrow_mut();
@@ -515,7 +515,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let mut rng = self.rng.borrow_mut();
                 let (n, sw) = keypairgen::keypair_gen(
@@ -547,7 +547,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let mut rng = self.rng.borrow_mut();
                 let mut presence = self.presence.borrow_mut();
@@ -596,7 +596,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let mut rng = self.rng.borrow_mut();
                 terminate::terminate_df(&dev, fs, &mut *rng, self.sess.has_pw3, apdu)

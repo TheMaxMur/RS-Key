@@ -164,8 +164,9 @@ fn gcm_arm<'a>(dev: &Device<'a>, tag: u8) -> Option<Device<'a>> {
 fn seed_enc_key(arm: &Device) -> [u8; 32] {
     let mut kbase = arm.derive_kbase();
     let mut enc = [0u8; 32];
-    hkdf_sha256(arm.serial_hash, &kbase, INFO_SEED_ENC, &mut enc).expect("32-byte HKDF output");
-    kbase.zeroize();
+    hkdf_sha256(arm.serial_hash, kbase.expose(), INFO_SEED_ENC, &mut enc)
+        .expect("32-byte HKDF output");
+    kbase.wipe();
     enc
 }
 
@@ -173,8 +174,9 @@ fn seed_enc_key(arm: &Device) -> [u8; 32] {
 fn seed_nonce_key(arm: &Device) -> [u8; 32] {
     let mut kbase = arm.derive_kbase();
     let mut nk = [0u8; 32];
-    hkdf_sha256(arm.serial_hash, &kbase, INFO_SEED_NONCE, &mut nk).expect("32-byte HKDF output");
-    kbase.zeroize();
+    hkdf_sha256(arm.serial_hash, kbase.expose(), INFO_SEED_NONCE, &mut nk)
+        .expect("32-byte HKDF output");
+    kbase.wipe();
     nk
 }
 
@@ -257,8 +259,8 @@ fn cbc_open(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
     let mut kbase = arm.derive_kbase();
     let mut iv = [0u8; 16];
     iv.copy_from_slice(&dev.serial_hash[..16]);
-    let r = aes_decrypt(&kbase, &iv, Mode::Cbc, &mut value);
-    kbase.zeroize();
+    let r = aes_decrypt(kbase.expose(), &iv, Mode::Cbc, &mut value);
+    kbase.wipe();
     match r {
         Ok(()) => Some(value),
         Err(_) => {
@@ -577,8 +579,13 @@ pub fn migrate_keydev_pin<S: Storage>(dev: &Device, fs: &mut Fs<S>, pin_hash: &[
     let mut session = seal_dev.pin_derive_session(pin_hash);
     let mut cbc = [0u8; KEYDEV_F1_LEN];
     cbc[0] = cbc_tag;
-    let r = seal_dev.decrypt_with_aad(&session, &buf[1..KEYDEV_F3_LEN], PinKdf::V2, &mut cbc[1..]);
-    session.zeroize();
+    let r = seal_dev.decrypt_with_aad(
+        session.expose(),
+        &buf[1..KEYDEV_F3_LEN],
+        PinKdf::V2,
+        &mut cbc[1..],
+    );
+    session.wipe();
     buf.zeroize();
     if r.is_err() {
         cbc.zeroize();
@@ -818,8 +825,8 @@ pub(crate) fn wrap_keydev_legacy<S: Storage>(
     let mut kbase = dev.derive_kbase();
     let mut iv = [0u8; 16];
     iv.copy_from_slice(&dev.serial_hash[..16]);
-    aes_encrypt(&kbase, &iv, Mode::Cbc, &mut inner).unwrap();
-    kbase.zeroize();
+    aes_encrypt(kbase.expose(), &iv, Mode::Cbc, &mut inner).unwrap();
+    kbase.wipe();
     let mut out = [0u8; KEYDEV_F3_LEN];
     out[0] = if dev.otp_key.is_some() {
         FORMAT_F3_OTP
@@ -827,8 +834,14 @@ pub(crate) fn wrap_keydev_legacy<S: Storage>(
         FORMAT_F3
     };
     let session = dev.pin_derive_session(pin_hash);
-    dev.encrypt_with_aad(&session, &inner, PinKdf::V2, &[0x24; 12], &mut out[1..])
-        .unwrap();
+    dev.encrypt_with_aad(
+        session.expose(),
+        &inner,
+        PinKdf::V2,
+        &[0x24; 12],
+        &mut out[1..],
+    )
+    .unwrap();
     inner.zeroize();
     fs.put(EF_KEY_DEV.get(), &out).unwrap();
 }

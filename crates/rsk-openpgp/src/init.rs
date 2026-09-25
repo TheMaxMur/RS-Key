@@ -99,8 +99,14 @@ pub fn scan_files<S: Storage>(
         let mut nonce = [0u8; 12];
 
         rng.fill(&mut nonce);
-        dev.encrypt_with_aad(&session_pw1, &random_dek, PinKdf::V2, &nonce, &mut def[1..])
-            .map_err(|_| Error::Crypto)?;
+        dev.encrypt_with_aad(
+            session_pw1.expose(),
+            &random_dek,
+            PinKdf::V2,
+            &nonce,
+            &mut def[1..],
+        )
+        .map_err(|_| Error::Crypto)?;
         fs.put_key(EF_DEK_PW1, Sealed::wrap(&def))
             .map_err(|_| Error::Storage)?;
 
@@ -108,8 +114,14 @@ pub fn scan_files<S: Storage>(
         // the resetting code is deactivated until `PUT DATA 0xD3` (put_reset_code)
         // seals its own copy under the admin-chosen RC.
         rng.fill(&mut nonce);
-        dev.encrypt_with_aad(&session_pw3, &random_dek, PinKdf::V2, &nonce, &mut def[1..])
-            .map_err(|_| Error::Crypto)?;
+        dev.encrypt_with_aad(
+            session_pw3.expose(),
+            &random_dek,
+            PinKdf::V2,
+            &nonce,
+            &mut def[1..],
+        )
+        .map_err(|_| Error::Crypto)?;
         fs.put_key(EF_DEK_PW3, Sealed::wrap(&def))
             .map_err(|_| Error::Storage)?;
 
@@ -119,8 +131,8 @@ pub fn scan_files<S: Storage>(
         let _ = crate::attest::provision(dev, fs, rng, &random_dek);
 
         random_dek.zeroize();
-        session_pw1.zeroize();
-        session_pw3.zeroize();
+        session_pw1.wipe();
+        session_pw3.wipe();
         def.zeroize();
         reset_dek = true;
     }
@@ -174,9 +186,12 @@ fn neutralize_default_reset_code<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Re
         Some(n) if n >= 34 && rec[0] != 0 => &rec[2..34],
         _ => return Ok(()),
     };
-    let is_default = rsk_crypto::ct_eq(stored, &dev.pin_derive_verifier(PW3_DEFAULT))
+    let is_default = rsk_crypto::ct_eq(stored, dev.pin_derive_verifier(PW3_DEFAULT).expose())
         || (dev.otp_key.is_some()
-            && rsk_crypto::ct_eq(stored, &dev.without_otp().pin_derive_verifier(PW3_DEFAULT)));
+            && rsk_crypto::ct_eq(
+                stored,
+                dev.without_otp().pin_derive_verifier(PW3_DEFAULT).expose(),
+            ));
     if !is_default {
         return Ok(());
     }

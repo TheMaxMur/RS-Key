@@ -645,11 +645,18 @@ fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> Ct
     let mut ct = [0u8; MLKEM768_CT_LEN];
     let mut key = [0u8; 32];
     let derived = if hybrid {
-        mlkem_leg(ctx.rng, req.mlkem_ek, &z, &dev_pub, &mut ct, &mut key)
+        mlkem_leg(
+            ctx.rng,
+            req.mlkem_ek,
+            z.expose(),
+            &dev_pub,
+            &mut ct,
+            &mut key,
+        )
     } else {
-        hkdf_sha256(&[], &z, &dev_pub, &mut key).map_err(|_| CtapError::Other)
+        hkdf_sha256(&[], z.expose(), &dev_pub, &mut key).map_err(|_| CtapError::Other)
     };
-    z.zeroize();
+    z.wipe();
     if let Err(e) = derived {
         key.zeroize();
         return Err(e);

@@ -635,7 +635,7 @@ async fn main(spawner: Spawner) {
         let dev = Device {
             serial_hash: &serial_hash,
             serial_id: &serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         let _ = rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs);
         rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng);
@@ -698,7 +698,7 @@ async fn main(spawner: Spawner) {
         let dev = Device {
             serial_hash: &serial_hash,
             serial_id: &serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         rsk_otp::power_up_bump(&dev, &mut fs, &mut rng);
     }
@@ -731,7 +731,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A16;
+    let device_release: u16 = 0x0A17;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

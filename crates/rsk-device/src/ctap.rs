@@ -111,7 +111,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         mkek_source: Option<FusedKey>,
-        devk: Option<fn() -> Option<[u8; 32]>>,
+        devk: Option<FusedKey>,
     ) -> Self {
         // The OTP DEVK signs audit-journal checkpoints (rsk_fido::journal); it
         // rides in FidoState so the pure FIDO logic stays caller-supplied.
@@ -271,7 +271,7 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let (sw, n) = {
                     let mut fsb = self.fs.borrow_mut();
@@ -322,7 +322,7 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         // Which CTAPHID channel is asking. Cross-message state a second process on
         // its own channel must not be able to ride — the seed-backup MSE key —

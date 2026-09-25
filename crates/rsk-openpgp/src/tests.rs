@@ -28,8 +28,9 @@ const SERIAL_HASH: [u8; 32] = [0x22; 32];
 
 /// A provisioned MKEK for the tests. The applet holds a way to READ the fuses, not
 /// the key, so a test source has to be a plain `fn`.
-fn test_mkek() -> Option<[u8; 32]> {
-    Some([0x66; 32])
+fn test_mkek(out: &mut [u8; 32]) -> bool {
+    *out = [0x66; 32];
+    true
 }
 
 fn make_fs() -> Fs<RamStorage> {

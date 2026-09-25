@@ -237,7 +237,7 @@ impl<'a> OtpApplet<'a> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         }
     }
 

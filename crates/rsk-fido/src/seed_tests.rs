@@ -19,8 +19,8 @@ pub(crate) fn write_legacy_cbc<S: Storage>(
     let mut kbase = dev.derive_kbase();
     let mut iv = [0u8; 16];
     iv.copy_from_slice(&dev.serial_hash[..16]);
-    aes_encrypt(&kbase, &iv, Mode::Cbc, &mut ct).unwrap();
-    kbase.zeroize();
+    aes_encrypt(kbase.expose(), &iv, Mode::Cbc, &mut ct).unwrap();
+    kbase.wipe();
     let mut out = [0u8; KEYDEV_F1_LEN];
     out[0] = if dev.otp_key.is_some() {
         FORMAT_F1_OTP

@@ -442,8 +442,9 @@ fn a_wrong_pin_is_refused_on_the_kbase_fallback_path() {
     // shape: there the `ct_eq` sits inside the block, so a widened guard still
     // cannot write.
     const OTP: [u8; 32] = [0x44; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -5834,8 +5835,9 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
     const OTP: [u8; 32] = [0x44; 32];
     // The applet holds a way to READ the fuses, not the key, so its test source has
     // to be a plain `fn` — a closure over `OTP` could not coerce to one.
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     // Provision under a pre-OTP device: defaults + a generated 9A key.
     let rng = RefCell::new(TestRng(7));
@@ -5917,8 +5919,9 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
 #[test]
 fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     const OTP: [u8; 32] = [0x55; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     const NEW_PIN: [u8; PIN_WIRE_LEN] = [0x39, 0x39, 0x39, 0x39, 0x39, 0x39, PIN_PAD, PIN_PAD];
     let dev_pre = Device {
@@ -5942,7 +5945,7 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PIN)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PIN).expose()[..],
         "fixture: EF_PIN starts rooted in the public chip serial"
     );
 
@@ -5981,7 +5984,7 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PIN)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PIN).expose()[..],
         "fixture: a blocked PIN never migrated"
     );
 
@@ -5994,7 +5997,7 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_otp.pin_derive_verifier(&NEW_PIN)[..],
+        &dev_otp.pin_derive_verifier(&NEW_PIN).expose()[..],
         "the unblock re-keyed EF_PIN under the OTP arm"
     );
     assert!(
@@ -6010,8 +6013,9 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
 #[test]
 fn set_retries_re_arms_the_at_rest_lap() {
     const OTP: [u8; 32] = [0x66; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     let dev_pre = Device {
         serial_hash: &HASH,
@@ -6046,7 +6050,7 @@ fn set_retries_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PUK, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PUK)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PUK).expose()[..],
         "fixture: EF_PUK is still rooted in the public chip serial"
     );
 
@@ -6057,7 +6061,7 @@ fn set_retries_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PUK, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_otp.pin_derive_verifier(&DEFAULT_PUK)[..],
+        &dev_otp.pin_derive_verifier(&DEFAULT_PUK).expose()[..],
         "SET RETRIES re-keyed EF_PUK under the OTP arm"
     );
     assert!(
@@ -6074,8 +6078,9 @@ fn set_retries_re_arms_the_at_rest_lap() {
 #[test]
 fn a_set_retries_whose_re_arm_the_medium_refuses_resets_neither_reference() {
     const OTP: [u8; 32] = [0x66; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     let dev_pre = Device {
         serial_hash: &HASH,
@@ -6109,7 +6114,7 @@ fn a_set_retries_whose_re_arm_the_medium_refuses_resets_neither_reference() {
     assert_eq!(fs.read(EF_PUK, &mut before), Some(PIN_REC_LEN));
     assert_eq!(
         &before[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PUK)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PUK).expose()[..],
         "fixture: EF_PUK is still rooted in the public chip serial"
     );
 

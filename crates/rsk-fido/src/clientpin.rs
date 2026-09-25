@@ -759,7 +759,7 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
     let retries = pin_data[0];
 
     let cand = ctx.dev.pin_derive_verifier(pin_hash);
-    let mut matched = pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN]);
+    let mut matched = pinproto_ct_eq(cand.expose(), &pin_data[3..PIN_FILE_LEN]);
     let mut migrated = false;
     if !matched && ctx.dev.otp_key.is_some() {
         // Kbase-migration fallback: a verifier stored before the OTP key was
@@ -767,8 +767,8 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
         // seed migrates below before the verifier is rewritten, so a crash
         // between the two re-runs this path on the next verify.
         let cand_old = ctx.dev.without_otp().pin_derive_verifier(pin_hash);
-        if pinproto_ct_eq(&cand_old, &pin_data[3..PIN_FILE_LEN]) {
-            pin_data[3..PIN_FILE_LEN].copy_from_slice(&cand);
+        if pinproto_ct_eq(cand_old.expose(), &pin_data[3..PIN_FILE_LEN]) {
+            pin_data[3..PIN_FILE_LEN].copy_from_slice(cand.expose());
             matched = true;
             migrated = true;
         }
@@ -852,7 +852,7 @@ fn write_pin_verifier<S: Storage>(
     // against, so it must be code points like the floor itself.
     pin_data[1] = code_points as u8;
     pin_data[2] = 1; // verifier format 1
-    pin_data[3..].copy_from_slice(&dev.pin_derive_verifier(&dhash[..16]));
+    pin_data[3..].copy_from_slice(dev.pin_derive_verifier(&dhash[..16]).expose());
     dhash.zeroize();
     fs.put(fid, &pin_data).map_err(|_| CtapError::Other)
 }
@@ -869,7 +869,7 @@ fn pin_verifier_matches<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pin: &[u8]) -> 
     let mut dhash = sha256(pin);
     let cand = ctx.dev.pin_derive_verifier(&dhash[..16]);
     dhash.zeroize();
-    pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN])
+    pinproto_ct_eq(cand.expose(), &pin_data[3..PIN_FILE_LEN])
 }
 
 /// The PIN's length in Unicode code points — the unit `minPINLength` (getInfo 0x0D)
@@ -1181,13 +1181,13 @@ fn spend_and_verify_pin_at<S: Storage>(
 
     let mut pin_hash = sha256(pin);
     let cand = dev.pin_derive_verifier(&pin_hash[..16]);
-    let mut matched = pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN]);
+    let mut matched = pinproto_ct_eq(cand.expose(), &pin_data[3..PIN_FILE_LEN]);
     let mut migrated = false;
     if !matched && dev.otp_key.is_some() {
         // Pre-OTP verifier fallback, identical to `spend_and_verify_pin_hash`.
         let cand_old = dev.without_otp().pin_derive_verifier(&pin_hash[..16]);
-        if pinproto_ct_eq(&cand_old, &pin_data[3..PIN_FILE_LEN]) {
-            pin_data[3..PIN_FILE_LEN].copy_from_slice(&cand);
+        if pinproto_ct_eq(cand_old.expose(), &pin_data[3..PIN_FILE_LEN]) {
+            pin_data[3..PIN_FILE_LEN].copy_from_slice(cand.expose());
             matched = true;
             migrated = true;
         }

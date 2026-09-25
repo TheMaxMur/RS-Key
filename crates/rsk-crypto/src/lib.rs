@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! `rsk-crypto` — the firmware's crypto surface over RustCrypto: hashes,
 //! HMAC/HKDF, CRC-32, base64url, AES + AEADs, the PIN KDF, the CTAP2 PIN/UV-auth

@@ -65,6 +65,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP's first boot left both PIN session keys in RAM when a write failed.
+  `scan_files` derives the PW1 and PW3 session keys to seal the new DEK and
+  wiped them only after its last write, so a failed flash write before that
+  returned past the wipe. A fused-key read that
+  failed part-way — an OTP ECC error while reading the MKEK or DEVK — likewise
+  left the bytes read so far in the reader's frame. Both are wiped on every
+  exit now: key derivation hands out `rsk_secret::Secret`s and the fused read
+  writes straight into one (see Internal). A session key opens the DEK only
+  together with the device root key. **bcdDevice → 0x0A17.**
+
 - A Yubico OTP slot write over the keyboard interface left the slot's secrets in
   RAM. The firmware took its own copy of the request — for a slot configure,
   the AES key, the private UID and the access code — and never wiped it, and
@@ -576,6 +586,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `BugWipeWithoutItsReboot`. **bcdDevice → 0x09DB.**
 
 ### Internal
+
+- **Derived keys leave `rsk-crypto` as `Secret`s** — refactor; nothing a host
+  sees changes. The PIN KDF (`derive_kbase`, `derive_kver`,
+  `pin_derive_verifier`, `pin_derive_session`, `pin_derive_kenc`,
+  `pin_derive_kenc2`, `double_hash_pin`), the pinUvAuth ECDH shared secret and
+  the HMAC-DRBG's state are `rsk_secret::Secret` now, so a caller's copy is
+  wiped when it goes out of scope. Of the 31 hand wipes that followed them at
+  call sites, the 16 that sat before a scope's end are `Secret::wipe()`, which
+  zeroizes in place: `drop(secret)` would move the value and wipe only the
+  copy. The PIN verifiers that clientPIN, OATH, OpenPGP and PIV
+  derive to check a PIN were never wiped; they are now. A `FusedKey` fills the
+  caller's buffer instead of returning the key, so the OTP read lands in a
+  `Secret`. `rsk-crypto` takes the zeroize ban at its root and no longer
+  depends on `zeroize` itself. `bcdDevice` 0x0A16 → 0x0A17.
 
 - **The reboot's scrubs are held by the compiler** — refactor, no behaviour
   change. `Worker::reboot` destructures the worker exhaustively before it wipes,

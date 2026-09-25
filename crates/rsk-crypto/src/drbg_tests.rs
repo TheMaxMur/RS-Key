@@ -88,9 +88,15 @@ fn scrub_wipes_both_halves_of_the_state() {
     // under — leave either behind and the hand-off keeps half the keystream.
     let mut d = HmacDrbg::new(b"seed material xyz");
     stream::<32>(&mut d);
-    assert!(d.k.iter().any(|&x| x != 0), "K is live before the scrub");
-    assert!(d.v.iter().any(|&x| x != 0), "V is live before the scrub");
+    assert!(
+        d.k.expose().iter().any(|&x| x != 0),
+        "K is live before the scrub"
+    );
+    assert!(
+        d.v.expose().iter().any(|&x| x != 0),
+        "V is live before the scrub"
+    );
     d.scrub();
-    assert!(d.k.iter().all(|&x| x == 0), "K survived the scrub");
-    assert!(d.v.iter().all(|&x| x == 0), "V survived the scrub");
+    assert!(d.k.expose().iter().all(|&x| x == 0), "K survived the scrub");
+    assert!(d.v.expose().iter().all(|&x| x == 0), "V survived the scrub");
 }

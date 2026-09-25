@@ -25,7 +25,10 @@ fuzz_target!(|data: &[u8]| {
     // Domain separation: the at-rest verifier and the bearer session token expand
     // the same kver and must never coincide for any PIN — a collapsed `info` would
     // publish the token in the PIN record.
-    assert_ne!(dev.pin_derive_verifier(data), dev.pin_derive_session(data));
+    assert_ne!(
+        dev.pin_derive_verifier(data).expose(),
+        dev.pin_derive_session(data).expose()
+    );
 
     // Device-key AEAD round-trip on a bounded plaintext.
     let token = [0x33u8; 32];
