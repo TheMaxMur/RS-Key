@@ -24,8 +24,8 @@
 //!   critical-section-guarded (a cross-core hardware spinlock), so
 //!   allocations serialize.
 //! - **Secrets**: the DRBG seed and every prime in transit are zeroized in the
-//!   mailbox at each hand-off (not the stack copies a move leaves), and `BUSY`
-//!   is raised in the same critical section that takes the job —
+//!   mailbox at each hand-off and copied, never moved, into the slot that takes
+//!   them, and `BUSY` is raised in the same critical section that takes the job —
 //!   `run_rsa_search`'s wind-down ("job gone ∧ ¬BUSY ⇒ core1 is out, nothing
 //!   more will be posted") has no window for a late find.
 
@@ -167,28 +167,29 @@ fn scrub_job(mb: &mut Mailbox) {
     mb.job = None;
 }
 
-/// Move the posted job out, wiping the copy the slot keeps: copy the fields
-/// first, *then* drop the slot's job in place — a `take()` would move the seed
-/// out and leave its bytes in the static.
-fn take_job(mb: &mut Mailbox) -> Option<Job> {
-    let j = mb.job.as_ref()?;
-    let out = Job {
-        half_bytes: j.half_bytes,
-        seed: Secret::new(*j.seed.expose()),
+/// Copy the posted job into `into`, then drop the slot's job in place (a `take()`
+/// would leave the seed in the static). Into the caller's slot, not by return: a
+/// returned `Job` is a move, and every frame it passes through keeps the seed.
+fn take_job(mb: &mut Mailbox, into: &mut Job) -> bool {
+    let Some(j) = mb.job.as_ref() else {
+        return false;
     };
+    into.half_bytes = j.half_bytes;
+    into.seed.expose_mut().copy_from_slice(j.seed.expose());
     mb.job = None;
-    Some(out)
+    true
 }
 
-/// Move one found prime out, wiping the copy the slot keeps (see [`take_job`]).
-fn take_found(slot: &mut Option<Found>) -> Option<Found> {
-    let f = slot.as_ref()?;
-    let out = Found {
-        le: Secret::new(*f.le.expose()),
-        len: f.len,
+/// Copy one found prime into `into` and drop the slot's copy in place (see
+/// [`take_job`]); `false` when the slot is empty.
+fn take_found(slot: &mut Option<Found>, into: &mut Found) -> bool {
+    let Some(f) = slot.as_ref() else {
+        return false;
     };
+    into.le.expose_mut().copy_from_slice(f.le.expose());
+    into.len = f.len;
     *slot = None;
-    Some(out)
+    true
 }
 
 /// Wipe the primes in transit and the keygen DRBG seed from the mailbox, before
@@ -247,6 +248,11 @@ fn core1_main(stack_floor: u32) -> ! {
 
     // Whether the late-find scrub already ran for the current STOP edge.
     let mut stop_scrubbed = false;
+    // The one slot every job is copied into (see `take_job`), wiped after each.
+    let mut job = Job {
+        half_bytes: 0,
+        seed: Secret::zeroed(),
+    };
     loop {
         // The cheap idle gate: one SRAM atomic, no lock (see JOB_PENDING).
         if !JOB_PENDING.load(Ordering::Acquire) {
@@ -269,19 +275,19 @@ fn core1_main(stack_floor: u32) -> ! {
         // Take the job and raise BUSY in ONE critical section — the wind-down
         // in `run_rsa_search` relies on never observing "job taken, BUSY not
         // yet visible".
-        let job = MAILBOX.lock(|mb| {
-            let job = take_job(&mut mb.borrow_mut());
-            if job.is_some() {
+        let taken = MAILBOX.lock(|mb| {
+            let taken = take_job(&mut mb.borrow_mut(), &mut job);
+            if taken {
                 BUSY.store(true, Ordering::Relaxed);
                 JOB_PENDING.store(false, Ordering::Relaxed);
             }
-            job
+            taken
         });
-        let Some(mut job) = job else {
+        if !taken {
             // Raced with the wind-down's un-post: nothing to do after all.
             cortex_m::asm::wfe();
             continue;
-        };
+        }
         JOBS.fetch_add(1, Ordering::Relaxed);
         search(&job);
         job.seed.wipe();
@@ -332,10 +338,12 @@ fn search(job: &Job) {
         let pool_full = MAILBOX.lock(|mb| {
             let mut mb = mb.borrow_mut();
             if let Some(slot) = mb.found.iter_mut().find(|s| s.is_none()) {
-                *slot = Some(Found {
-                    le: Secret::new(*le.expose()),
+                // Built zeroed in the slot, then filled: the prime is never moved.
+                let f = slot.insert(Found {
+                    le: Secret::zeroed(),
                     len,
                 });
+                f.le.expose_mut().copy_from_slice(le.expose());
             }
             mb.found.iter().all(|s| s.is_some())
         });
@@ -410,18 +418,20 @@ pub fn run_rsa_search_progress(
     };
 
     if engaged {
-        // Post the job: stale finds scrubbed, fresh DRBG seed for core1.
-        let mut job = Job {
-            half_bytes: kg.half_bytes(),
-            seed: Secret::zeroed(),
-        };
-        rng.fill(&mut job.seed.expose_mut()[..SEED_LEN - SEED_TAG.len()]);
-        job.seed.expose_mut()[SEED_LEN - SEED_TAG.len()..].copy_from_slice(SEED_TAG);
+        // Post the job: stale finds scrubbed, fresh DRBG seed for core1 — drawn
+        // here and copied into the slot, so no move carries it through a frame.
+        let mut seed = Secret::<[u8; SEED_LEN]>::zeroed();
+        rng.fill(&mut seed.expose_mut()[..SEED_LEN - SEED_TAG.len()]);
+        seed.expose_mut()[SEED_LEN - SEED_TAG.len()..].copy_from_slice(SEED_TAG);
         STOP.store(false, Ordering::Release);
         MAILBOX.lock(|mb| {
             let mut mb = mb.borrow_mut();
             scrub_found(&mut mb);
-            mb.job = Some(job);
+            let job = mb.job.insert(Job {
+                half_bytes: kg.half_bytes(),
+                seed: Secret::zeroed(),
+            });
+            job.seed.expose_mut().copy_from_slice(seed.expose());
         });
         JOB_PENDING.store(true, Ordering::Release);
         cortex_m::asm::sev();
@@ -432,6 +442,17 @@ pub fn run_rsa_search_progress(
     let sieve = unsafe { &mut *core::ptr::addr_of_mut!(CORE0_SIEVE) };
     sieve.scrub();
 
+    // The slots core1's finds are copied into (see `take_found`), wiped as used.
+    let mut batch = [
+        Found {
+            le: Secret::zeroed(),
+            len: 0,
+        },
+        Found {
+            le: Secret::zeroed(),
+            len: 0,
+        },
+    ];
     // `Some(Some(key))` = assembled, `Some(None)` = the old `Failed`.
     let mut outcome: Option<Option<Box<RsaKey>>> = None;
     while outcome.is_none() {
@@ -442,26 +463,28 @@ pub fn run_rsa_search_progress(
         // core1 is still on the PRIOR job, so anything in `found` is a stale
         // prime for a different (possibly different-size) key; feeding it to this
         // keygen would corrupt the modulus. Leave it for the wind-down scrub.
-        let mut batch = if engaged {
+        let taken = if engaged {
             MAILBOX.lock(|mb| {
                 let mb = &mut mb.borrow_mut();
                 let [a, b] = &mut mb.found;
-                [take_found(a), take_found(b)]
+                let [x, y] = &mut batch;
+                [take_found(a, x), take_found(b, y)]
             })
         } else {
-            [None, None]
+            [false, false]
         };
         let mut had_finds = false;
-        for f in batch.iter_mut().filter_map(Option::as_mut) {
+        for (f, _) in batch.iter_mut().zip(taken).filter(|&(_, t)| t) {
             had_finds = true;
-            // A find that arrived after the verdict is not used; `batch` wipes it
-            // when it drops, at the end of this iteration.
             if outcome.is_none() {
                 match kg.offer_le(&mut f.le.expose_mut()[..f.len]) {
                     RsaStep::More => {}
                     RsaStep::Done(k) => outcome = Some(Some(k)),
                     RsaStep::Failed => outcome = Some(None),
                 }
+            } else {
+                // A find that arrived after the verdict — scrub, don't use.
+                f.le.wipe();
             }
         }
         if had_finds {

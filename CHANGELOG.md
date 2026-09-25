@@ -65,6 +65,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- An RSA key generation could leave the key's primes on core0's stack. A prime
+  core1 found was handed back by value on its way to the key, and each frame it
+  passed through kept a copy nothing wiped, so with core1 engaged one factor of
+  the new modulus, or both when core1 posted both before core0 polled, could
+  stay in core0's dead stack after the key was built. Core1's copy of the job's DRBG seed, which replays every candidate it
+  tried, stayed on its own stack until the next job the same way, and posting
+  the job left two short-lived copies on core0's. Primes and seed are now copied
+  into zeroed slots inside the mailbox lock and never moved; checked in the
+  release image, where the search's frame shrank from 1180 to 900 bytes.
+  Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A19.**
+
 - OpenPGP's first boot left both PIN session keys in RAM when a write failed.
   `scan_files` derives the PW1 and PW3 session keys to seal the new DEK and
   wiped them only after its last write, so a failed flash write before that
