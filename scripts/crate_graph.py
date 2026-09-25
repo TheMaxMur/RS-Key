@@ -297,10 +297,37 @@ def band_svg(y, label, sub, colour, crates, gated):
 NOTE_BUDGET = 108
 
 
+def break_at_commas(plain, markup):
+    """One `crates ← a, b, …` note too long for a line, broken after its commas.
+
+    Only the allowlist grows with the workspace: every crate that takes a secret
+    joins the bottom tier's parent list, so that list outruns the card first.
+    """
+    head_plain, _, rest = plain.partition(" ← ")
+    head_markup = markup.partition(" ← ")[0]
+    items = rest.split(", ")
+    lines, cur_plain, cur = [], head_plain + " ←", head_markup + " ←"
+    for i, item in enumerate(items):
+        piece = item + ("," if i + 1 < len(items) else "")
+        if len(cur_plain) + 1 + len(piece) > NOTE_BUDGET:
+            lines.append(cur)
+            cur_plain, cur = "  " + piece, "  " + piece
+        else:
+            cur_plain, cur = cur_plain + " " + piece, cur + " " + piece
+    lines.append(cur)
+    return lines
+
+
 def wrap(chunks, sep):
     """Greedily pack (plain, markup) chunks into lines that fit the card."""
     lines, plain, markup = [], "", []
     for chunk_plain, chunk_markup in chunks:
+        if len(chunk_plain) > NOTE_BUDGET and " ← " in chunk_plain:
+            if markup:
+                lines.append(sep.join(markup))
+                plain, markup = "", []
+            lines += break_at_commas(chunk_plain, chunk_markup)
+            continue
         joined = chunk_plain if not markup else plain + sep + chunk_plain
         if markup and len(joined) > NOTE_BUDGET:
             lines.append(sep.join(markup))
