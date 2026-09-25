@@ -21,6 +21,7 @@
 // Host test builds link `std`: the RAM `Fs` the wiring is exercised over wants a
 // heap, and no test code reaches the firmware image.
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 extern crate alloc;
 

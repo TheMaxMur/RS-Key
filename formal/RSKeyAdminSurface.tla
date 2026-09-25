@@ -74,7 +74,7 @@ CONSTANTS
     \* consulted it, so `ykman config usb --disable PIV` disabled nothing. The
     \* enforcement is Dispatcher::set_enabled (crates/rsk-sdk/src/applet.rs:203-205)
     \* fed from the mask (crates/rsk-device/src/ccid.rs:248-256) and consulted at
-    \* select AND dispatch-to-current (crates/rsk-device/src/ccid.rs:326). The
+    \* select AND dispatch-to-current (crates/rsk-device/src/ccid.rs:330). The
     \* switch removes exactly that consultation.
     BugMaskIsCosmetic
 

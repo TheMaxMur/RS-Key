@@ -682,6 +682,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The dispatchers' response buffers take the zeroize ban** — refactor;
+  nothing a host sees changes. `rsk-device`'s CTAP and CCID handlers keep their
+  response buffer for their whole life and wipe it after each hand-off and on
+  a secure reboot, so those three wipes stay bare under an `#[expect]` that
+  names the wipe point; the crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A24 → 0x0A25.
+
 - **Yubico OTP's seal and frame buffers are typed** — refactor; nothing a host
   sees changes. `rsk-otp`'s seal key, the sealing and unsealing blob, the
   reseal pass's two buffers, the keyboard frame's reassembly buffer and the

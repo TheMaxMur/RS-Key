@@ -47,7 +47,7 @@ statement = "No prefix of an authenticatorReset — torn or complete — leaves 
 subjects = ["requirement", "abstract model", "Rust source"]
 subjects_absent = ["FFI", "binary", "hardware", "integration"]
 requirement = [
-  "CTAP 2.3 §6.6 authenticatorReset — the END state and its authorization, and nothing about a PREFIX of it: every §6.6 citation in this tree is the power-up window, the touch, or the two ways the gesture can fail (crates/rsk-fido/src/reset.rs:40-42 and :255-261, crates/rsk-device/src/lib.rs:52, crates/rsk-sdk/src/presence.rs:81). None attributes an ordering or atomicity obligation to it, because the specification states none",
+  "CTAP 2.3 §6.6 authenticatorReset — the END state and its authorization, and nothing about a PREFIX of it: every §6.6 citation in this tree is the power-up window, the touch, or the two ways the gesture can fail (crates/rsk-fido/src/reset.rs:40-42 and :255-261, crates/rsk-device/src/lib.rs:53, crates/rsk-sdk/src/presence.rs:81). None attributes an ordering or atomicity obligation to it, because the specification states none",
   "docs/threat-model.md#TM-HOST-POWER-CUT — the clause that DOES state this property, in its own words: `no gate comes up softer on the next boot than it went down — a torn authenticatorReset may not drop the PIN or alwaysUv record while leaving a credential usable`. That sentence is clauses A and B",
   "docs/threat-model.md#TM-SEED-BACKUP — clause C's root, and it is a real one: `after an explicit finalize, export is refused until a full reset regenerates a new seed`. A torn reset that clears EF_BACKUP_SEALED over a seed it did not regenerate is that sentence made false",
 ]

@@ -152,6 +152,10 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// Wipe the response buffer — it can hold a PIN token or other secrets after
     /// a dispatch. Called by the worker once the response has been handed off.
     pub fn scrub(&mut self) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the response buffer outlives every dispatch; the worker wipes it after each hand-off"
+        )]
         self.resp.zeroize();
     }
 
@@ -159,6 +163,10 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// auth state — `reset` zeroizes the PIN/UV token, session key and ephemeral
     /// ECDH scalar via their `Drop` impls.
     pub fn scrub_secrets(&mut self) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the response buffer outlives every dispatch; the secure reboot wipes it with the FIDO auth state"
+        )]
         self.resp.zeroize();
         self.fido_state.borrow_mut().reset();
     }
