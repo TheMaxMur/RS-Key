@@ -547,6 +547,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The firmware's tasks kept their state twice** — refactor, 38 KiB of RAM back.
+  `ctap_task`, `ccid_task` and `worker_task` took the CTAPHID class, the CCID
+  class and the worker by value, and an async function's future holds a by-value
+  argument twice: the argument and the local it is moved into. They take a
+  `&'static mut` into a `StaticCell` now, as the other long-lived state does, and
+  the stack the linker leaves grows from 174 to 212 KiB (171 to 209 KiB on the
+  display build). No behaviour changes. `bcdDevice` 0x0A0D → 0x0A0E.
+
 - **OpenPGP GET DATA no longer sniffs its answer for a header to strip** —
   refactor. Since a DO only a template carries answers `6B00` on its own
   (0x0A08), no primitive DO GET DATA serves alone opens with a header spanning

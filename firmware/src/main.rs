@@ -478,23 +478,29 @@ async fn usb_task(mut device: SendUsb) {
     device.0.run().await;
 }
 
+// The tasks take their state by reference: an async fn keeps a by-value argument
+// twice in its future, the argument and the local it is moved into.
+static CTAP_STATE: StaticCell<CtapHid<'static, Drv, ClientCtap>> = StaticCell::new();
+static CCID_STATE: StaticCell<Ccid<'static, Drv, ClientCcid>> = StaticCell::new();
+static WORKER_STATE: StaticCell<Worker<'static>> = StaticCell::new();
+
 #[embassy_executor::task]
-async fn ctap_task(mut ctap: CtapHid<'static, Drv, ClientCtap>) {
+async fn ctap_task(ctap: &'static mut CtapHid<'static, Drv, ClientCtap>) {
     ctap.run().await;
 }
 
 #[embassy_executor::task]
-async fn ccid_task(mut ccid: Ccid<'static, Drv, ClientCcid>) {
+async fn ccid_task(ccid: &'static mut Ccid<'static, Drv, ClientCcid>) {
     ccid.run().await;
 }
 
 // The worker is spawned, not awaited at the tail of `main`, so `main` returns and
-// its ~95 KiB one-time init stack frame is reclaimed off the shared MSP before any
+// its ~100 KiB one-time init stack frame is reclaimed off the shared MSP before any
 // crypto runs. Awaiting it inline kept that frame live under every dispatch, which
 // left ML-DSA-65 keygen flush against the stack ceiling (it halted on the next
 // interrupt). Must stay on the thread executor, never `hp`, so keepalives keep flowing.
 #[embassy_executor::task]
-async fn worker_task(mut worker: Worker<'static>) {
+async fn worker_task(worker: &'static mut Worker<'static>) {
     worker.run().await;
 }
 
@@ -714,7 +720,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A0D;
+    let device_release: u16 = 0x0A0E;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -814,10 +820,10 @@ async fn main(spawner: Spawner) {
     let hp = EXECUTOR_HIGH.start(interrupt::SWI_IRQ_1);
     hp.spawn(usb_task(SendUsb(usb)).unwrap());
     if let Some(ctap) = ctap {
-        hp.spawn(ctap_task(ctap).unwrap());
+        hp.spawn(ctap_task(CTAP_STATE.init(ctap)).unwrap());
     }
     if let Some(ccid) = ccid {
-        hp.spawn(ccid_task(ccid).unwrap());
+        hp.spawn(ccid_task(CCID_STATE.init(ccid)).unwrap());
     }
     if let Some(kbd) = kbd {
         hp.spawn(otp_kbd::kbd_task(kbd).unwrap());
@@ -1165,19 +1171,22 @@ async fn main(spawner: Spawner) {
     let (kvm, kvc) = (kvmain_range(), kvcnt_range());
     let kv_total = (kvm.end - kvm.start) + (kvc.end - kvc.start);
     let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
-    let worker = Worker::new(
-        fs_ref,
-        rng_ref,
-        presence_ref,
-        platform_ref,
-        hooks_ref,
-        fido_state_ref,
-        serial_id,
-        serial_hash,
-        mkek_source,
-        devk_source,
-        kv_total,
-        openpgp_mfr,
-    );
+    // Built in its cell: `init` of a value built here kept a second copy in this frame.
+    let worker = WORKER_STATE.init_with(|| {
+        Worker::new(
+            fs_ref,
+            rng_ref,
+            presence_ref,
+            platform_ref,
+            hooks_ref,
+            fido_state_ref,
+            serial_id,
+            serial_hash,
+            mkek_source,
+            devk_source,
+            kv_total,
+            openpgp_mfr,
+        )
+    });
     spawner.spawn(worker_task(worker).unwrap());
 }
