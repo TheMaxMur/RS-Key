@@ -65,6 +65,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP SELECT DATA answers as a YubiKey 5.8.0 does. It judges P1 and P2
+  first — an occurrence past the third or a `P2` other than `04` is `6B00` —
+  and then takes one body only, `60 04 5C 02 7F 21` byte for byte, answering
+  `6A80` to anything else. RS-Key answered `6A86` to a wrong `P2`, `6700` to a
+  body of the wrong shape and `6A88` to another tag, and judged the tag before
+  the occurrence. A refused SELECT DATA moves neither the occurrence nor the
+  walk. `bcdDevice` 0x0A0A → 0x0A0B.
+
 - OpenPGP GET NEXT DATA stops walking the cardholder certificates after a GET
   DATA or PUT DATA of any other DO, whatever that command answered, as a YubiKey
   5.8.0 does. A GET DATA RS-Key refused (`6B00`) and any PUT DATA, refused or

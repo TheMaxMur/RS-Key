@@ -6,7 +6,7 @@
 
 use rsk_sdk::{Apdu, Sw};
 
-use crate::consts::{CERT_OCCURRENCES, EF_CH_CERT, OPENPGP_AID};
+use crate::consts::{CERT_OCCURRENCES, OPENPGP_AID, SELECT_DATA_CH_CERT};
 use crate::files::{DoSource, source};
 use crate::pin::Session;
 
@@ -97,37 +97,18 @@ pub fn cmd_select(apdu: &Apdu, out: &mut [u8]) -> (usize, Sw) {
 /// several instances — here only the cardholder certificate (7F21, occurrences
 /// `EF_CH_1/2/3`); the choice is recorded in the session for GET / PUT DATA.
 ///
-/// Command data is `60 <Lc> 5C <taglen> <tag>` with `P2 = 0x04`. Occurrence
+/// Command data is exactly `60 04 5C 02 7F 21` with `P2 = 0x04`. Occurrence
 /// selection is deliberately not PW3-gated: it is not itself a security
 /// operation (the PUT DATA write stays PW3-gated), and it lets a non-admin
 /// host read occurrences 1/2.
 pub fn select_data(apdu: &Apdu, sess: &mut Session) -> Sw {
-    if apdu.p2 != 0x04 {
-        return Sw::INCORRECT_P1P2;
-    }
-    let d = apdu.data;
-    // 60 <Lc> 5C <taglen> <tag…> — Lc counts everything after the length byte.
-    if d.len() < 4 || d[0] != 0x60 || d.len() != d[1] as usize + 2 {
-        return Sw::WRONG_LENGTH;
-    }
-    let taglen = d[3] as usize;
-    if d[2] != 0x5C || taglen == 0 || taglen > 2 || d.len() < 4 + taglen {
-        return Sw::WRONG_DATA;
-    }
-    let tag = if taglen == 2 {
-        ((d[4] as u16) << 8) | d[5] as u16
-    } else {
-        d[4] as u16
-    };
-    // Only the cardholder certificate has occurrences; three of them (EF_CH_1/2/3).
-    // The two failures are different bytes: an occurrence past the last one is P1
-    // (a YubiKey 5.7.4 answers `6B00` to 3 and 4, measured 3/3, where 0-2 are
-    // `9000`), while a tag with no occurrences at all is named in the data field.
-    if tag != EF_CH_CERT {
-        return Sw::REFERENCE_NOT_FOUND;
-    }
-    if apdu.p1 >= CERT_OCCURRENCES {
+    // A YubiKey 5.8.0 judges P1 and P2 first, `6B00` for an occurrence past the
+    // last or a P2 but 04, then takes one body only, byte for byte (measured).
+    if apdu.p2 != 0x04 || apdu.p1 >= CERT_OCCURRENCES {
         return Sw::WRONG_P1P2;
+    }
+    if apdu.data != SELECT_DATA_CH_CERT {
+        return Sw::WRONG_DATA;
     }
     sess.cert_occ = apdu.p1;
     Sw::OK

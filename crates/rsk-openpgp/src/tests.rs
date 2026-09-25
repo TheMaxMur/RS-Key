@@ -1878,7 +1878,7 @@ fn cardholder_cert_write_read_per_occurrence() {
 }
 
 #[test]
-fn cardholder_cert_write_needs_pw3_and_select_validates() {
+fn cardholder_cert_write_needs_pw3() {
     let rng = RefCell::new(LcgRng(12));
     let mut fs = make_fs();
     let presence = RefCell::new(crate::AlwaysConfirm);
@@ -1890,18 +1890,92 @@ fn cardholder_cert_write_needs_pw3_and_select_validates() {
         run(&mut app, &mut fs, &p).1,
         Sw::SECURITY_STATUS_NOT_SATISFIED
     );
+}
 
-    // SELECT DATA validation: unknown tag / out-of-range occurrence / bad P2.
-    let mut bad_tag = select_cert(0);
-    (bad_tag[9], bad_tag[10]) = (0x00, 0x65); // tag 0x0065 (cardholder data)
-    assert_eq!(run(&mut app, &mut fs, &bad_tag).1, Sw::REFERENCE_NOT_FOUND);
-    // An occurrence past the last one is a wrong P1 — a YubiKey answers `6B00` to
-    // 3 and 4 where 0-2 are `9000`; the unknown TAG above stays `6A88` because it
-    // is named in the data field, not in P1P2.
-    assert_eq!(run(&mut app, &mut fs, &select_cert(3)).1, Sw::WRONG_P1P2);
-    let mut bad_p2 = select_cert(0);
-    bad_p2[3] = 0x00;
-    assert_eq!(run(&mut app, &mut fs, &bad_p2).1, Sw::INCORRECT_P1P2);
+/// SELECT DATA as a YubiKey 5.8.0 answers it (measured 2026-09-25): P1 and P2
+/// first, `6B00` for an occurrence past the last or a P2 but 04, then `6A80` for
+/// any body but the one naming 7F21, byte for byte. A refusal moves nothing.
+#[test]
+fn select_data_answers_as_a_yubikey_does() {
+    let rng = RefCell::new(LcgRng(37));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let ok: &[u8] = &[0x60, 0x04, 0x5C, 0x02, 0x7F, 0x21];
+    for (p1, p2, body, want) in [
+        (0u8, 0x04u8, ok, Sw::OK),
+        (2, 0x04, ok, Sw::OK),
+        (3, 0x04, ok, Sw::WRONG_P1P2),
+        (0xFF, 0x04, ok, Sw::WRONG_P1P2),
+        (0, 0x00, ok, Sw::WRONG_P1P2),
+        (0, 0x05, ok, Sw::WRONG_P1P2),
+        (0, 0x00, &[], Sw::WRONG_P1P2),
+        (3, 0x04, &[], Sw::WRONG_P1P2),
+        (
+            3,
+            0x04,
+            &[0x60, 0x04, 0x5C, 0x02, 0x7F, 0x22],
+            Sw::WRONG_P1P2,
+        ),
+        (
+            0,
+            0x04,
+            &[0x60, 0x04, 0x5C, 0x02, 0x7F, 0x22],
+            Sw::WRONG_DATA,
+        ),
+        (0, 0x04, &[0x60, 0x03, 0x5C, 0x01, 0x5E], Sw::WRONG_DATA),
+        (0, 0x04, &[], Sw::WRONG_DATA),
+        (0, 0x04, &[0x60, 0x00], Sw::WRONG_DATA),
+        (0, 0x04, &[0x5C, 0x02, 0x7F, 0x21], Sw::WRONG_DATA),
+        (
+            0,
+            0x04,
+            &[0x60, 0x05, 0x5C, 0x03, 0x7F, 0x21, 0x00],
+            Sw::WRONG_DATA,
+        ),
+        (
+            0,
+            0x04,
+            &[0x60, 0x04, 0x5C, 0x02, 0x7F, 0x21, 0x00],
+            Sw::WRONG_DATA,
+        ),
+        (
+            0,
+            0x04,
+            &[0x61, 0x04, 0x5C, 0x02, 0x7F, 0x21],
+            Sw::WRONG_DATA,
+        ),
+        (
+            0,
+            0x04,
+            &[0x60, 0x81, 0x04, 0x5C, 0x02, 0x7F, 0x21],
+            Sw::WRONG_DATA,
+        ),
+        (
+            0,
+            0x04,
+            &[0x60, 0x05, 0x5C, 0x81, 0x02, 0x7F, 0x21],
+            Sw::WRONG_DATA,
+        ),
+    ] {
+        // Occurrence 1 selected before each cell: a refusal must leave it there.
+        assert_eq!(run(&mut app, &mut fs, &select_cert(1)).1, Sw::OK);
+        let mut apdu = vec![0x00, consts::INS_SELECT_DATA, p1, p2];
+        if !body.is_empty() {
+            apdu.push(body.len() as u8);
+            apdu.extend_from_slice(body);
+        }
+        assert_eq!(
+            run(&mut app, &mut fs, &apdu).1,
+            want,
+            "{p1:02X} {p2:02X} {body:02x?}"
+        );
+        let at = if want.is_ok() { p1 } else { 1 };
+        assert_eq!(
+            app.sess.cert_occ, at,
+            "{p1:02X} {p2:02X} {body:02x?} moved the pointer"
+        );
+    }
 }
 
 // SELECT DATA is the walk's other starting gun — measured on a YubiKey 5.7.4,

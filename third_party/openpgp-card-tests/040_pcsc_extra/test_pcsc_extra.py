@@ -582,11 +582,10 @@ def test_openpgp_cardholder_certificate_occurrences(card):
         expect(card, INS_SELECT_DATA, occ, 0x04, b"\x60\x04\x5C\x02\x7F\x21")
         assert card.cmd_get_data(0x7F, 0x21) == cert
     _, sw = raw(card, INS_SELECT_DATA, 0, 0x04, b"\x60\x04\x5C\x02\x00\x65")
-    assert sw == b"\x6A\x88"
-    # An occurrence past the last one is a P1 error, not an absent object: a
-    # YubiKey 5.7.4 answers 6B00 to 3 and 4 where 0-2 are 9000, measured 3/3, and
-    # `select.rs` follows it. 6A88 above is the other failure — a tag that has no
-    # occurrences at all, which is named in the data field.
+    assert sw == b"\x6A\x80"
+    # P1 and P2 are judged first: an occurrence past the last one is 6B00, and any
+    # body but the one naming 7F21 is 6A80 after that, as a YubiKey 5.8.0 answers
+    # other tags (7F22, 5E, measured), where occurrences 0-2 are 9000.
     _, sw = raw(card, INS_SELECT_DATA, 3, 0x04, b"\x60\x04\x5C\x02\x7F\x21")
     assert sw == b"\x6B\x00"
     for occ in range(3):

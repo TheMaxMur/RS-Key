@@ -124,6 +124,16 @@ pub const CERT_OCCURRENCES: u8 = 3;
 // 0x1f24, which `files::source` classifies as no DO at all and TERMINATE DF does
 // not wipe. The occurrences are a contiguous range and this is what says so.
 const _: () = assert!(EF_CH_1 + CERT_OCCURRENCES as u16 - 1 == EF_CH_3);
+/// SELECT DATA's one body: the tag list naming 7F21 (OpenPGP 3.4 §7.2.5), the
+/// only DO with occurrences.
+pub const SELECT_DATA_CH_CERT: [u8; 6] = [
+    0x60,
+    0x04,
+    0x5C,
+    0x02,
+    (EF_CH_CERT >> 8) as u8,
+    EF_CH_CERT as u8,
+];
 
 // ---------------- Data-object FIDs / tags (tag == FID) ----------------
 // `//C` = computed/composite DO, `//S` = stored DO.
