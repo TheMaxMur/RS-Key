@@ -29,6 +29,8 @@ READ_CONFIG = [0x00, 0x1D, 0x00, 0x00, 0x00]  # case 2 (Le = 0 → 256)
 # Expected reported version (matches getInfo 0x0E): FW_VERSION, through `fw_version()`.
 WANT_VERSION = list(fw_version())
 WANT_VERSION_STR = ".".join(map(str, WANT_VERSION))
+# SELECT answers it in a YubiKey 5.8.0's words.
+WANT_SELECT = "Virtual mgr - FW version " + WANT_VERSION_STR
 
 # Management config tags / capability bits.
 TAG_USB_SUPPORTED, TAG_SERIAL, TAG_FORM_FACTOR, TAG_VERSION = 0x01, 0x02, 0x04, 0x05
@@ -64,8 +66,8 @@ def main():
     print("SELECT mgmt AID -> %r %02X%02X" % (ver_str, sw1, sw2))
     if (sw1, sw2) != (0x90, 0x00):
         fail(f"SELECT not 9000 (got {sw1:02X}{sw2:02X})")
-    if ver_str != WANT_VERSION_STR:
-        fail(f"SELECT version string {ver_str!r} != {WANT_VERSION_STR!r} {FW_VERSION_HINT}")
+    if ver_str != WANT_SELECT:
+        fail(f"SELECT version string {ver_str!r} != {WANT_SELECT!r} {FW_VERSION_HINT}")
 
     data, sw1, sw2 = conn.transmit(READ_CONFIG)
     print("READ CONFIG -> %s %02X%02X" % (toHexString(data), sw1, sw2))

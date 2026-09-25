@@ -62,7 +62,7 @@ fn select_returns_version_string() {
     let mut fs = fs();
     let (sw, body) = select(&mut app, &mut fs);
     assert_eq!(sw, Sw::OK);
-    assert_eq!(&body, b"5.8.0");
+    assert_eq!(&body, b"Virtual mgr - FW version 5.8.0");
 }
 
 #[test]

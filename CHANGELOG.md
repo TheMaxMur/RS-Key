@@ -65,6 +65,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- The management applet answers its SELECT with a YubiKey 5.8.0's words,
+  `Virtual mgr - FW version 5.8.0`, where RS-Key sent the bare `5.8.0`. yubikit
+  and ykman read the version out of either. A host that compared the whole
+  answer to `5.8.0`, as `docs/protocol.md` once described it, needs to take the
+  last word instead, or DeviceInfo tag `05`. `bcdDevice` 0x0A11 → 0x0A12.
+
 - PIV answers its SELECT with a YubiKey 5.8.0's application property template,
   byte for byte: the PIX in `4F` and the NIST RID in `79`, 19 bytes. RS-Key added
   a `50` label and an `AC` algorithm list, 45 bytes in all; SP 800-73-4 makes the

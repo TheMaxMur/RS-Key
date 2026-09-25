@@ -22,6 +22,9 @@ pub const MANAGEMENT_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x47, 0x11, 0x
 /// all agree.
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
 
+/// What a YubiKey 5.8.0's SELECT answers ahead of its version, byte for byte.
+const SELECT_PREFIX: &[u8] = b"Virtual mgr - FW version ";
+
 const INS_WRITE_CONFIG: u8 = 0x1C;
 const INS_READ_CONFIG: u8 = 0x1D;
 /// Answered `9000` with nothing done, whatever the P1-P2 or body, as a YubiKey 5.8.0
@@ -94,9 +97,11 @@ impl<S: Storage> Applet<Fs<S>> for ManagementApplet<'_> {
         MANAGEMENT_AID
     }
 
-    /// SELECT returns the firmware version as an ASCII string.
+    /// SELECT answers `Virtual mgr - FW version X.Y.Z` in ASCII, as a YubiKey 5.8.0
+    /// does; yubikit reads the version out of the words around it.
     fn select(&mut self, _reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let (maj, min, patch) = VERSION;
+        res.extend(SELECT_PREFIX);
         push_dec(res, maj);
         res.push(b'.');
         push_dec(res, min);

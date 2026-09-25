@@ -359,7 +359,7 @@ YubiKey's reader name. Reference: `RSK_READER_TOKENS` in
 
 | Field | Value | Where |
 |---|---|---|
-| firmwareVersion | `5.8.0` → `0x00050800` | CTAP getInfo `0x0E`; Management/OTP DeviceInfo `TAG_VERSION`; Management SELECT (`"5.8.0"` ASCII) |
+| firmwareVersion | `5.8.0` → `0x00050800` | CTAP getInfo `0x0E`; Management/OTP DeviceInfo `TAG_VERSION`; Management SELECT (`"Virtual mgr - FW version 5.8.0"` ASCII, a YubiKey 5.8.0's words) |
 | `bcdDevice` | `0x0780` (build counter, increments per firmware change) | USB device descriptor (`firmware/src/main.rs` `device_release`) |
 | AAGUID | `2479c7bf-6b30-5683-9ec8-0e8171a918b7` | CTAP getInfo `0x03`; one value across every VID/PID flavor of a build, overridable at build time with `AAGUID=<uuid>` |
 
@@ -681,8 +681,8 @@ applications are enabled. Source: `crates/rsk-mgmt/src/lib.rs` for the command
 surface, `crates/rsk-devconf/src/lib.rs` for the `EF_DEV_CONF` record it reads
 and writes.
 
-**SELECT** returns the firmware version as an ASCII string, e.g. `35 2E 38 2E 30`
-(`"5.8.0"`).
+**SELECT** returns the firmware version in a YubiKey 5.8.0's ASCII words,
+`"Virtual mgr - FW version 5.8.0"`; take the version from its last word.
 
 | INS | Name | Request | Response |
 |---|---|---|---|
@@ -1335,8 +1335,8 @@ SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x
    identical to how you'd configure a YubiKey's USB applications — and enforced:
    a disabled application's applet stops answering (see §6, `USB_ENABLED`).
 4. **Version-gate** on the Rescue SELECT identity (`01 02 08 06 …`, §7) and the
-   Management SELECT version string. Treat unknown phy tags / `0x41` subcommands as
-   skippable, not errors.
+   Management version: DeviceInfo tag `05`, or the last word of its SELECT answer
+   (§6). Treat unknown phy tags / `0x41` subcommands as skippable, not errors.
 5. **Keep the dangerous surface behind explicit confirmation**: the OTP fuse
    burns (§7), BOOTSEL reboot (§7/§8), and seed export (§9). Consider not exposing
    the fuse burns at all in a general management UI.
