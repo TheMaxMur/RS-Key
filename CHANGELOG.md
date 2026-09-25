@@ -65,6 +65,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV stores a data object of up to 3063 bytes, as a YubiKey 5.8.0 does; RS-Key
+  took 2029. The CCID class descriptor's `dwMaxCCIDMessageLength` is the
+  YubiKey's 3072, up from 2048, so a host sends one extended APDU of up to 3062
+  bytes, and a command chain reassembles 3072: the object and its
+  `5C 03 id 53 82 LL LL` header. A response is built whole and leaves in frames of
+  up to 3060 bytes of body; a longer one chains through `61xx` whatever its `Le`,
+  where a YubiKey cuts a PIV read past 3060 bytes and loses its status word. With
+  the frame, OpenPGP's DO `7F66` announces 3062 each way, what one frame carries
+  (a YubiKey says 3070), and DO `C0` announces 2048 for the cardholder
+  certificate, as the YubiKey does, and for the special DOs, where it says 255 and
+  keeps a longer one modulo 256; RS-Key said 2036 for both. The certificate
+  stores 2048 bytes and refuses 2049 with `6A80`, keeping what it held, as on the
+  YubiKey. FIDO over CCID takes a command and builds a response of up to 3072
+  bytes, and OATH, management and OTP answer up to 3060 in a frame. The larger
+  buffers cost 7 KiB of RAM: the stack the linker leaves is 205 KiB, 202 on the
+  display build. `bcdDevice` 0x0A0E → 0x0A0F.
+
 - OpenPGP templates give their length in BER's shortest form, as a YubiKey
   5.8.0 does: a reset card's `65` reads `65 09 5B 00 5F 2D 00 5F 35 01 39`, byte
   for byte the YubiKey's, where RS-Key wrote `65 82 00 09`. `73` and `6E` are
@@ -125,8 +142,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   answers `6A84`, as a full YubiKey does, and so does a PUT DATA past the
   device's shared file budget, which answered `6581`. An object is up to 2029
   bytes, from 1900: what a command chain reassembles, 2022 through ykman's single
-  extended APDU; a YubiKey reassembles 3072 bytes and takes 3063. A PIV reset
-  takes the pool with the rest of the applet.
+  extended APDU; a YubiKey reassembles 3072 bytes and takes 3063, as RS-Key does
+  from 0x0A0F. A PIV reset takes the pool with the rest of the applet.
   `bcdDevice` 0x0A03 → 0x0A04.
 
 - A vendor `CONFIG_WRITE` of the LED block or the phy record sent over CCID as a

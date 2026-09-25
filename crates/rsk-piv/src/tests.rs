@@ -78,7 +78,7 @@ fn run<S: Storage>(
 ) -> (Sw, Vec<u8>) {
     let raw = apdu_bytes(ins, p1, p2, data);
     let apdu = Apdu::parse(&raw).unwrap();
-    let mut out = [0u8; 2048];
+    let mut out = [0u8; rsk_sdk::applet::RESP_BUILD];
     let mut res = ResBuf::new(&mut out);
     let sw = Applet::process(app, &apdu, fs, &mut res);
     (sw, res.as_slice().to_vec())

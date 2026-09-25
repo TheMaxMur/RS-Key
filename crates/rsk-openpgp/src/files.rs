@@ -17,19 +17,17 @@ pub const HISTORICAL_BYTES: &[u8] = &[0x00, 0x31, 0x84, 0x73, 0x80, 0x01, 0xC0, 
 /// included, so this is exactly the number to announce there. `rsk-device` holds
 /// the compile-time assertion tying it to `rsk-usb`'s own constants; neither
 /// crate can see the other's.
-pub const MAX_APDU_BYTES: usize = 2038;
+pub const MAX_APDU_BYTES: usize = 3062;
 
 /// The largest value PUT DATA accepts and GET DATA returns whole, for both DO
 /// classes DO C0 sizes: the cardholder certificate (bytes 5-6) and the special
-/// DOs (bytes 7-8). One owner — C0 is built from it below and `SCRATCH` is it, so
-/// the announcement cannot drift from what the card can actually serve.
+/// DOs (bytes 7-8). One owner — C0 is built from it below, so the announcement
+/// cannot drift from what the card can actually serve.
 ///
-/// The value is the CCID transport's real body ceiling: the applet is handed one
-/// frame minus the two status bytes. Announcing the rounder 2048 a YubiKey does
-/// would put the cliff back, twelve bytes further out — `ResBuf::extend` writes
-/// *nothing* when the body does not fit and its `false` is discarded, so an
-/// over-long DO would read as empty with `9000`.
-pub const MAX_DO_BYTES: usize = MAX_APDU_BYTES - 2;
+/// A YubiKey 5.8.0's 2048 for the certificate, which it stores whole and refuses
+/// one byte past with `6A80`. For the special DOs it announces 255 and keeps a
+/// longer one modulo 256, which is data loss and not copied.
+pub const MAX_DO_BYTES: usize = 2048;
 
 /// The most random bytes GET CHALLENGE serves, and DO C0 bytes 3-4. One owner,
 /// for the same reason [`MAX_DO_BYTES`] is: C0 announced 128 while the command

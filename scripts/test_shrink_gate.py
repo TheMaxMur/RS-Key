@@ -146,7 +146,7 @@ def test_this_checkout_is_green():
     assert shrink_gate.audit()[0] == []
 
 
-def test_this_checkout_rosters_the_five_names_and_five_assertions():
+def test_this_checkout_rosters_the_seven_names_and_seven_assertions():
     """The measurement the page's hand-written 'four' was wrong about."""
     derived = shrink_gate.audit()[1]
     named = sorted(key[2] for key in derived if key[2] != shrink_gate.ANONYMOUS)
@@ -155,9 +155,11 @@ def test_this_checkout_rosters_the_five_names_and_five_assertions():
         "CTAP_MAX_MESSAGE",
         "EF_META",
         "FID_PRESENT_BYTES",
+        "FRAME_BODY",
+        "RESP_BUILD",
         "RESP_CHAIN_CAP",
     ]
-    assert sum(v for k, v in derived.items() if k[2] == shrink_gate.ANONYMOUS) == 5
+    assert sum(v for k, v in derived.items() if k[2] == shrink_gate.ANONYMOUS) == 7
 
 
 def test_check_sh_runs_this_guard():

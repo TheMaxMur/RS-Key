@@ -233,8 +233,8 @@ management key's own policy with `ykman piv access change-management-key
 stores — the standard `5FC1xx` set, `5FFF00`, and any other id, such as the
 `5FFF10`–`5FFF15` the Yubico minidriver keeps its container map in — except the
 attestation certificate `5FFF01`, which no host may replace. An object is up to
-2029 bytes (`6700` past that; a YubiKey takes 3063). ykman sends one in a single
-extended APDU, which carries 2022; a larger one does not fit one CCID frame, so
+3063 bytes, `6700` past that, as on a YubiKey. ykman sends one in a single
+extended APDU, which carries 3046; a larger one does not fit one CCID frame, so
 store it with a tool that chains its command. Ids outside the standard set share room for 256 objects and 32 KiB;
 the next one answers `6A84`, as a full YubiKey does, until one is deleted.
 `ykman piv objects export` reads any of them back.

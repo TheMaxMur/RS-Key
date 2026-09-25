@@ -76,8 +76,9 @@ use crate::TX_TIMEOUT_MS;
 const RX_TIMEOUT_MS: u64 = 500;
 
 pub const HEADER: usize = 10;
-/// `dwMaxCCIDMessageLength` from the class descriptor.
-pub const MAX_CCID_MSG: usize = 2048;
+/// `dwMaxCCIDMessageLength` from the class descriptor: a YubiKey 5.8.0's 3072, so a
+/// host sends one extended APDU of up to 3062 bytes, as it does to one.
+pub const MAX_CCID_MSG: usize = 3072;
 /// `wMaxPacketSize` of the three CCID endpoints (full-speed USB). A bulk-IN
 /// transfer whose length is an exact multiple needs a terminating ZLP — keep
 /// the `is_multiple_of` modulus and the endpoint allocations in lockstep.
@@ -110,7 +111,7 @@ const T1_PARAMS: [u8; 7] = [0x11, 0x10, 0xFE, 0x95, 0x03, 0xFE, 0x00];
 
 /// CCID functional (class) descriptor, type `0x21`, body only — embassy prepends
 /// the `bLength`/`bDescriptorType` bytes. 5 V, T=0/T=1, auto params, single slot,
-/// `dwMaxCCIDMessageLength = 2048`.
+/// `dwMaxCCIDMessageLength = 3072`.
 const CCID_FUNCTIONAL_DESC: &[u8] = &[
     0x10, 0x01, // bcdCCID 1.10
     0x00, // bMaxSlotIndex (one slot)
@@ -125,14 +126,18 @@ const CCID_FUNCTIONAL_DESC: &[u8] = &[
     0xFE, 0x00, 0x00, 0x00, // dwMaxIFSD 254
     0x00, 0x00, 0x00, 0x00, // dwSynchProtocols
     0x00, 0x00, 0x00, 0x00, // dwMechanical
-    0x40, 0x08, 0x04, 0x00, // dwFeatures (auto params/clock, short APDU exchange)
-    0x00, 0x08, 0x00, 0x00, // dwMaxCCIDMessageLength 2048
+    0x40, 0x08, 0x04, 0x00, // dwFeatures (auto params/clock, extended APDU level)
+    0x00, 0x0C, 0x00, 0x00, // dwMaxCCIDMessageLength 3072
     0xFF, // bClassGetResponse (echo)
     0xFF, // bClassEnvelope (echo)
     0x00, 0x00, // wLcdLayout (none)
     0x00, // bPINSupport (none)
     0x01, // bMaxCCIDBusySlots
 ];
+const _: () = {
+    let d = CCID_FUNCTIONAL_DESC;
+    assert!(u32::from_le_bytes([d[42], d[43], d[44], d[45]]) as usize == MAX_CCID_MSG);
+};
 const CCID_DESC_TYPE: u8 = 0x21;
 
 /// USB class for smart-card / CCID devices.
@@ -503,7 +508,7 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
             // An in-progress message is bounded; an idle transport is not. Without
             // the bound, an interrupted multi-packet write (a bus reset inside a key
             // or certificate import — this class advertises extended APDUs and a
-            // 2048-byte message, so those are up to 32 packets) left its prefix here
+            // 3072-byte message, so those are up to 48 packets) left its prefix here
             // forever, and the next host's first packet was appended to it and
             // misparsed: one stale `0x6F` in front of an `IccPowerOn` makes the
             // transport wait for 98 bytes nobody will send while the host waits for

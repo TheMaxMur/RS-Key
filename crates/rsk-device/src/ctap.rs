@@ -293,7 +293,7 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
             }
         }
 
-        // Body fills resp[..cap-2]; the status word is appended after it.
+        // The body, one CCID frame's at most (the dispatcher's limit), then the status word.
         let (sw, n) = {
             let mut res = ResBuf::new(&mut self.resp[..RESP_CAP - 2]);
             let mut applets: [&mut dyn Applet<Fs<S>>; 1] = [&mut self.vendor];

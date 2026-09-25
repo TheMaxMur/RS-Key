@@ -24,6 +24,7 @@ use rsk_openpgp::consts::{
 };
 use rsk_openpgp::files::MAX_DO_BYTES;
 use rsk_openpgp::{OpenpgpApplet, Rng, scan_files};
+use rsk_sdk::applet::RESP_BUILD;
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 
 mod apdu_frame;
@@ -52,7 +53,7 @@ fn dev() -> Device<'static> {
 
 fn run(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> Sw {
     if let Ok(apdu) = Apdu::parse(raw) {
-        let mut buf = [0u8; 2048];
+        let mut buf = [0u8; RESP_BUILD];
         let mut res = ResBuf::new(&mut buf);
         return app.process(&apdu, fs, &mut res);
     }
@@ -89,7 +90,7 @@ fn put_data(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, fid: u16, n: usize
 fn get_data_len(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, fid: u16) -> (Sw, usize) {
     let raw = [0x00, INS_GET_DATA, (fid >> 8) as u8, fid as u8, 0x00];
     let apdu = Apdu::parse(&raw).expect("a case-2 GET DATA is well formed");
-    let mut buf = [0u8; 2048];
+    let mut buf = [0u8; RESP_BUILD];
     let mut res = ResBuf::new(&mut buf);
     let sw = app.process(&apdu, fs, &mut res);
     (sw, res.len())
@@ -125,7 +126,7 @@ fuzz_target!(|data: &[u8]| {
     // Replay a sequence of length-prefixed APDUs (so the fuzzer can chain e.g.
     // PUT DATA then GET DATA, or IMPORT then PSO) against the live applet. The
     // 0xFF prefix is the extended-Lc escape — see `apdu_frame`; PUT DATA up to
-    // MAX_DO_BYTES (2036) is only reachable through it.
+    // MAX_DO_BYTES is only reachable through it.
     let mut rest = data;
     while let Some((frame, tail)) = next_frame(rest) {
         rest = tail;

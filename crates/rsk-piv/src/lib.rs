@@ -1209,10 +1209,10 @@ impl PivApplet<'_> {
     }
 }
 
-/// Largest stored data-object body (certificate objects included): the 2038 bytes a
-/// command chain reassembles less the `5C 03 id 53 82 LL LL` header (one extended
-/// APDU carries 2022). A YubiKey reassembles 3072, and takes 3063.
-pub const MAX_OBJECT: usize = 2038 - 9;
+/// Largest stored data-object body (certificate objects included): the 3072 bytes a
+/// command chain reassembles less the `5C 03 id 53 82 LL LL` header, 3063 as on a
+/// YubiKey 5.8.0 (one extended APDU carries 3046).
+pub const MAX_OBJECT: usize = 3072 - 9;
 
 /// PUT DATA for an object in the pool: an empty body deletes it, anything else is
 /// stored.

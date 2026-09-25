@@ -193,12 +193,9 @@ impl<'a> OpenpgpApplet<'a> {
         let room = res.capacity() - res.len();
         let stor = consts::EF_CH_1 + self.sess.cert_occ as u16;
         if let Some(n) = fs.read(stor, res.spare_mut()) {
-            // `fs.read` reports the value's FULL stored length while the
-            // backend copies only what fit. PUT DATA now bounds every write
-            // at MAX_DO_BYTES, so this can only be a value an older build
-            // wrote through the chaining path, which delivers one byte more
-            // than fits. Say so instead of handing back a short body with
-            // `9000`, which is the whole defect this rule exists to end.
+            // `fs.read` reports the FULL stored length and copies what fit; no PUT
+            // DATA of any build wrote past this room, so only a damaged or restored
+            // record gets here. A short body under `9000` would read as a whole one.
             if n > room {
                 return Sw::MEMORY_FAILURE;
             }

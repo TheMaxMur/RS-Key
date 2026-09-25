@@ -129,11 +129,11 @@ Every one of the 17 is a `p0-launch` row of `assurance/configurations.toml`, all
 | Bound | Value | What stops being proved |
 |---|---|---|
 | `bound_ctap_max_message` | `3` | a pinUvAuthParam arriving across more than two continuation frames. Shipped is one INIT plus 128 continuations; rsk-device's RESP_CAP IS this constant, so every harness in rsk-device — including the seven in presence_kani.rs — proves over a transport two frames wide |
-| `bound_chain_buf_size` | `16` | any chained APDU over 16 bytes. Shipped is 2038, and rsk-device's FidoCcidApplet is an rsk_sdk::Applet, so the FIDO applet's CCID chaining is proved at 16 |
-| `bound_resp_chain_cap` | `16` | any chained response over 16 bytes; shipped is 2048 |
+| `bound_chain_buf_size` | `16` | any chained APDU over 16 bytes. Shipped is 3072, and rsk-device's FidoCcidApplet is an rsk_sdk::Applet, so the FIDO applet's CCID chaining is proved at 16 |
+| `bound_resp_chain_cap` | `16` | any chained response over 16 bytes; shipped is 3072 |
 | `bound_cfg_not_kani_assertions` | `2` | the equality of the two widths the getInfo response and the transport publish. crates/rsk-device/src/ctap.rs gates MAX_MSG_SIZE == RESP_CAP behind cfg(not(kani)), and rsk-usb does the same for the frame-multiple assertion; neither is a proof obligation and both are about the SHIPPED width, so under Kani the two constants are not held equal to each other |
 
-> **Row note (`shipped_relation`).** CTAP_MAX_MESSAGE is 129 frames shipped and 3 under cfg(kani), and rsk-device's RESP_CAP IS that constant, so all seven presence_kani.rs harnesses prove over a two-continuation transport; rsk-sdk's CHAIN_BUF_SIZE/RESP_CHAIN_CAP are 2038/2048 shipped and 16 here. What stops being proved: a pinUvAuthParam arriving across more than two continuation frames, and any chained APDU over 16 bytes
+> **Row note (`shipped_relation`).** CTAP_MAX_MESSAGE is 129 frames shipped and 3 under cfg(kani), and rsk-device's RESP_CAP IS that constant, so all seven presence_kani.rs harnesses prove over a two-continuation transport; rsk-sdk's CHAIN_BUF_SIZE/RESP_CHAIN_CAP are 3072/3072 shipped and 16 here. What stops being proved: a pinUvAuthParam arriving across more than two continuation frames, and any chained APDU over 16 bytes
 
 #### Method 8 — the ghost's completeness
 

@@ -171,7 +171,7 @@ firmware_stack_floor() {
 # neither: the same ML-DSA-65 keygen peak as above, and one retained display frame
 # — `rsk_ui::scene::RETAINED_FRAME_STACK_BYTES`, 32 KiB, held there by a const
 # assert over `size_of::<Scene>()` plus the DMA bands. 114 + 32 = 146 KiB if they
-# ever nest, against the 209 KiB this build has.
+# ever nest, against the 202 KiB this build has.
 #
 # It needs its own row because the plain floor above CANNOT see the regression that
 # matters here: the retained compositor deleted a 4 KiB static pixel buffer and put

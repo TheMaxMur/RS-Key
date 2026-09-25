@@ -375,7 +375,7 @@ those are where a hole costs the most:
 
 | Mutation | Verdict | Owned by |
 |---|---|---|
-| `crates/rsk-sdk/src/applet.rs:395` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
+| `crates/rsk-sdk/src/applet.rs:422` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
 | `clientpin.rs:241` `+` → `*` — the padded-length bound | **model-blind, real** | `change_pin_over_protocol_one` |
 | `clientpin.rs:330` `\|\|` → `&&` — the legacy token's argument check | **model-blind, real** | `the_legacy_get_pin_token_refuses_an_rp_id` |
 | `clientpin.rs:391` `\|` → `^` on `PERM_MC \| PERM_GA` | equivalent — `0x01` and `0x02` are disjoint | — |
@@ -1412,7 +1412,7 @@ command sets is in it, because the defects have not been in the command sets.
 Because the two state machines share no variable, and that is measured rather
 than assumed. The CCID side owns a `Dispatcher` and the only instances of
 openpgp / oath / piv / otp / management / rescue / vendor
-(`crates/rsk-device/src/ccid.rs:97-115`); the CTAPHID side owns a **separate**
+(`crates/rsk-device/src/ccid.rs:103-121`); the CTAPHID side owns a **separate**
 `Dispatcher` whose applet array is literally one element, its own `VendorApplet`
 (`crates/rsk-device/src/ctap.rs:177-181`). PIV, OpenPGP and OATH are not
 reachable over CTAPHID at all, so no status can be established on one transport
@@ -1425,10 +1425,10 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 
 | Invariant | What it asserts | The Rust that owns it |
 |---|---|---|
-| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:390-406` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:201-205` · `crates/rsk-openpgp/src/pin.rs:81-94` · `crates/rsk-oath/src/lib.rs:1161-1165` · `crates/rsk-device/src/ccid.rs:340-355` (the ICC power transition) |
+| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:417-434` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:201-205` · `crates/rsk-openpgp/src/pin.rs:81-94` · `crates/rsk-oath/src/lib.rs:1161-1165` · `crates/rsk-device/src/ccid.rs:346-361` (the ICC power transition) |
 | `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:185-188` · `crates/rsk-openpgp/src/pin.rs:190-202` · `crates/rsk-oath/src/lib.rs:1097-1098` |
 | `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:87-99` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:57-65`, `:113-117` |
-| `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status but OATH's OTP PIN. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:367-370` · `crates/rsk-openpgp/src/lib.rs:355-358` · `crates/rsk-oath/src/lib.rs:1199` |
+| `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status but OATH's OTP PIN. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:367-370` · `crates/rsk-openpgp/src/lib.rs:352-355` · `crates/rsk-oath/src/lib.rs:1199` |
 | `AccessCodeRemovalNeedsTheCode` | Removing the OATH access code needs the validated status the code bought. **A step rule — its violation produces exactly the exempt code-less state, so no state predicate can see it** | `crates/rsk-oath/src/lib.rs:343-345` (the shared gate) · `:350-362` (the removal path) |
 
 The fourth one points the other way from the first three and that is why it is
@@ -1469,9 +1469,9 @@ it.
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:396-400` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
+| `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:423-427` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
 | `BugReselectResetsStatus` | `637ed98` taken back out: PIV, OpenPGP and OATH's VALIDATE resetting on every select | `ReselectPreservesAccessStatus` | 42 states |
-| `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:340-355` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
+| `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:346-361` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
 | `BugAdminOpensKeyOps` | `e5da38b` taken back out: PW3 standing in for PW1/PW2 | `NoKeyOpOnTheAdminStatus` | 67 states |
 | `BugFailedChangeKeepsStatus` | `aa47867` taken back out: a refused OTP-PIN change that leaves the safe open | `NoStatusAfterARefusedAuth` | 74 states |
 | `BugPinFreshNotSpent` | `crates/rsk-piv/src/auth.rs:113-117` — one VERIFY, one key operation | `NoKeyOpOnTheAdminStatus` | 45 states |
@@ -1838,9 +1838,9 @@ removed defences:
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:207-209`, fed at `crates/rsk-device/src/ccid.rs:248-256`, consulted at `:326`) | `DisabledAppletNeverDispatches` | 10 states |
+| `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:233-235`, fed at `crates/rsk-device/src/ccid.rs:254-262`, consulted at `:332`) | `DisabledAppletNeverDispatches` | 10 states |
 | `BugLockWriteResetsCaps` | **audit run-35, shipped**: a lock-code-only write strips to zero bytes, stored verbatim as an EMPTY record that `read_enabled_caps` reads as `SUPPORTED_CAPS` — every disabled application silently re-enabled (`crates/rsk-devconf/src/lib.rs:259-272`, the merge) | `DisableSetSurvivesLockWrite` | 9 states |
-| `BugAdminGateable` | the `APPLET_CAPS` cap-`0` carve-out removed (`crates/rsk-device/src/ccid.rs:73-80`): management/vendor/rescue gated by the mask, so one disable-everything write is irreversible | `AdminSurfaceAlwaysReachable` | 2 states |
+| `BugAdminGateable` | the `APPLET_CAPS` cap-`0` carve-out removed (`crates/rsk-device/src/ccid.rs:79-86`): management/vendor/rescue gated by the mask, so one disable-everything write is irreversible | `AdminSurfaceAlwaysReachable` | 2 states |
 | `BugPrivilegedOpUngated` | `require_presence` removed (`crates/rsk-rescue/src/lib.rs:141-143`): keydev signing, cert/config writes, BOOTSEL reboot and fuse burns driven by the USB host alone | `PrivilegedOpNeedsPresence` | 10 states |
 
 `Admin.cfg` is **GREEN, exhaustive over 8 distinct states** — honestly tiny,

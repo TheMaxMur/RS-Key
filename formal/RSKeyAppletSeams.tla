@@ -12,7 +12,7 @@
 (* RSKeySecurityState.tla. Those two state machines share no variable, and   *)
 (* that is a measured claim rather than a convenience: the CCID side owns a  *)
 (* Dispatcher and the only instances of openpgp / oath / piv / otp /         *)
-(* management / rescue / vendor (crates/rsk-device/src/ccid.rs:97-115),      *)
+(* management / rescue / vendor (crates/rsk-device/src/ccid.rs:103-121),      *)
 (* while the CTAPHID side owns a SEPARATE Dispatcher whose applet array is   *)
 (* literally one element, its own VendorApplet                               *)
 (* (crates/rsk-device/src/ctap.rs:177-181). PIV, OpenPGP and OATH are not    *)
@@ -34,7 +34,7 @@ EXTENDS Naturals
 
 (* Mutation switches. All FALSE is the shipped tree. *)
 CONSTANTS
-    \* crates/rsk-sdk/src/applet.rs:396-400 -- a SELECT of a DIFFERENT AID deselects the
+    \* crates/rsk-sdk/src/applet.rs:423-427 -- a SELECT of a DIFFERENT AID deselects the
     \* applet that was current, and the deselect is what resets its session.
     BugSelectKeepsOtherApplet,
     \* 637ed98 taken back out: PIV, OpenPGP and OATH's VALIDATE reset on EVERY
@@ -45,7 +45,7 @@ CONSTANTS
     \* WRITER rather than in the invariant; widen it to the PIN and the shipped
     \* tree is red for a drop the applet does on purpose.
     BugOathReselectUnrecorded,
-    \* crates/rsk-device/src/ccid.rs:340-355 -- the ICC power transition.
+    \* crates/rsk-device/src/ccid.rs:346-361 -- the ICC power transition.
     BugCardResetKeepsStatus,
     \* e5da38b taken back out: PW3, the admin PIN, standing in for PW1/PW2 on
     \* PSO:CDS, PSO:DECIPHER and INTERNAL AUTHENTICATE.
@@ -120,7 +120,7 @@ CONSTANTS
     BugCodelessOathIsAStatus
 
 \* The three CCID applets that carry an in-RAM security status. `NoApplet` is
-\* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:148): nothing
+\* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:174): nothing
 \* selected, which is where a card reset leaves the dispatcher.
 Piv      == "piv"
 Pgp      == "pgp"
@@ -145,7 +145,7 @@ InvNames == { "NoKeyOpOnTheAdminStatus", "NoStatusAfterARefusedAuth",
               "AccessCodeRemovalNeedsTheCode" }
 
 VARIABLES
-    sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:148)
+    sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:174)
     held,   \* [Refs -> BOOLEAN]: the in-RAM security statuses
     \* PIV's `pin_fresh` -- the UNSPENT half of `has_pin`, which a PIN-policy
     \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:167-181). The
@@ -221,7 +221,7 @@ AllCleared ==
     [r \in Refs |-> r = "oathCode" /\ (~oathCodeSet \/ BugResetKeepsOathUnlock)]
 
 (***************************************************************************)
-(* SELECT. crates/rsk-sdk/src/applet.rs:390-406 -- the ONE place that       *)
+(* SELECT. crates/rsk-sdk/src/applet.rs:417-434 -- the ONE place that       *)
 (* decides what a selection does to the applet that was current.           *)
 (***************************************************************************)
 
@@ -470,7 +470,7 @@ PgpKeyOp(r) ==
 \* PUT DATA C4 -- the PW status byte that makes PW1.81 one-shot -- is an
 \* ADMINISTRATIVE write, gated on PW3 by `write_authorized`
 \* (crates/rsk-openpgp/src/putdata.rs:60-66, called at
-\* crates/rsk-openpgp/src/lib.rs:260-262), and it is the only writer of that
+\* crates/rsk-openpgp/src/lib.rs:257-259), and it is the only writer of that
 \* status. The gate was `held["pw3"]` and nothing else: an enabling conjunct with
 \* no Policy, in the family this module's sibling README spends four sections on.
 \* Removing it left the reachable space BIT-IDENTICAL at 666 distinct states,
@@ -536,8 +536,8 @@ PivKeyOp ==
 
 \* SCardDisconnect(SCARD_RESET_CARD) / CCID_POWER_OFF / CCID_POWER_ON:
 \* `Dispatcher::reset_card` deselects, which drops the selected applet's
-\* security status (crates/rsk-device/src/ccid.rs:340-355,
-\* crates/rsk-sdk/src/applet.rs:226-234). This is the one the `cross_applet`
+\* security status (crates/rsk-device/src/ccid.rs:346-361,
+\* crates/rsk-sdk/src/applet.rs:252-260). This is the one the `cross_applet`
 \* fuzz target already watches, one layer down.
 \* Its own trailing UNCHANGED named `psig` while the ELSE branch assigned it, so
 \* `psig' = FALSE /\ psig' = psig` pinned the whole action to a no-op wherever

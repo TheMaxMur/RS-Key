@@ -13,14 +13,24 @@ use crate::sw::Sw;
 pub struct ResBuf<'a> {
     buf: &'a mut [u8],
     len: usize,
+    /// How much of `buf` the producer may fill; see [`Self::limit`].
+    cap: usize,
 }
 
 impl<'a> ResBuf<'a> {
     pub fn new(buf: &'a mut [u8]) -> Self {
-        ResBuf { buf, len: 0 }
+        let cap = buf.len();
+        ResBuf { buf, len: 0, cap }
     }
+    /// Let the producer fill at most `cap` bytes, never more than the buffer holds:
+    /// the dispatcher hands an applet it cannot chain one frame's body.
+    pub fn limit(&mut self, cap: usize) {
+        self.cap = cap.min(self.buf.len());
+    }
+    /// Empty the buffer and lift any [`Self::limit`].
     pub fn clear(&mut self) {
         self.len = 0;
+        self.cap = self.buf.len();
     }
     pub fn len(&self) -> usize {
         self.len
@@ -29,11 +39,11 @@ impl<'a> ResBuf<'a> {
         self.len == 0
     }
     pub fn capacity(&self) -> usize {
-        self.buf.len()
+        self.cap
     }
     /// Append one byte; returns false if the buffer is full.
     pub fn push(&mut self, b: u8) -> bool {
-        if self.len < self.buf.len() {
+        if self.len < self.cap {
             self.buf[self.len] = b;
             self.len += 1;
             true
@@ -43,7 +53,7 @@ impl<'a> ResBuf<'a> {
     }
     /// Append a slice; returns false (and writes nothing) if it would overflow.
     pub fn extend(&mut self, data: &[u8]) -> bool {
-        if self.len + data.len() <= self.buf.len() {
+        if self.len + data.len() <= self.cap {
             self.buf[self.len..self.len + data.len()].copy_from_slice(data);
             self.len += data.len();
             true
@@ -57,7 +67,7 @@ impl<'a> ResBuf<'a> {
     /// it may return, which on a 520 KiB part is the difference between serving
     /// a 2 KiB data object and not. Commit what was written with [`Self::commit`].
     pub fn spare_mut(&mut self) -> &mut [u8] {
-        &mut self.buf[self.len..]
+        &mut self.buf[self.len..self.cap]
     }
     /// Take `n` bytes written through [`Self::spare_mut`] into the body.
     ///
@@ -67,7 +77,7 @@ impl<'a> ResBuf<'a> {
     /// reused across commands, so the bytes would be the tail of the PREVIOUS
     /// response. Every caller must pass exactly what it wrote.
     pub fn commit(&mut self, n: usize) {
-        self.len = self.buf.len().min(self.len + n);
+        self.len = self.cap.min(self.len + n);
     }
     pub fn as_slice(&self) -> &[u8] {
         &self.buf[..self.len]
@@ -108,17 +118,23 @@ pub trait Applet<C> {
     }
 }
 
-/// Holds a command chain's accumulated segments. It is the CCID handler's
-/// body cap — one frame — and `docs/protocol.md` publishes that number to
-/// third-party hosts. `rsk-sdk` cannot see `rsk-usb`, so `rsk-device` asserts the
-/// two equal, and PIV's largest data object against it.
+/// Holds a command chain's accumulated segments: the 3072 bytes a YubiKey 5.8.0
+/// reassembles, and `docs/protocol.md` publishes that number. `rsk-sdk` cannot see
+/// `rsk-usb`, so `rsk-device` asserts it against the frame, and PIV's largest object.
 #[cfg(not(kani))]
-pub const CHAIN_BUF_SIZE: usize = 2038;
-/// Holds the unsent tail of a response while the host fetches it with GET
-/// RESPONSE. Sized to the largest response buffer a caller passes (the CCID
-/// handler's 2038-byte body cap).
+pub const CHAIN_BUF_SIZE: usize = 3072;
+/// The most a transport frame carries back, status word excluded: one CCID
+/// frame's payload less two. A longer body leaves through `61xx` whatever its `Le`.
 #[cfg(not(kani))]
-const RESP_CHAIN_CAP: usize = 2048;
+pub const FRAME_BODY: usize = 3060;
+/// The response buffer the CCID transport hands [`Dispatcher::process`]: an applet
+/// builds its answer whole in it before the dispatcher cuts it into frames, so it
+/// holds the largest a command can ask back. `rsk-device` asserts PIV's object fits.
+#[cfg(not(kani))]
+pub const RESP_BUILD: usize = 3072;
+/// Holds the unsent tail of a response while the host fetches it with GET RESPONSE.
+#[cfg(not(kani))]
+const RESP_CHAIN_CAP: usize = RESP_BUILD;
 
 // Proof-only: CBMC bit-blasts both arrays whole, and the sequence harness needs
 // 17.5 GiB at the real sizes. Sound because of the harness's window rather than
@@ -126,7 +142,17 @@ const RESP_CHAIN_CAP: usize = 2048;
 #[cfg(kani)]
 pub const CHAIN_BUF_SIZE: usize = 16;
 #[cfg(kani)]
+pub const FRAME_BODY: usize = 16;
+#[cfg(kani)]
+pub const RESP_BUILD: usize = 16;
+#[cfg(kani)]
 const RESP_CHAIN_CAP: usize = 16;
+
+/// How much of the response buffer an applet may fill: all of it when the
+/// dispatcher can chain what passes one frame, else one frame's body.
+fn frame_room(chaining_ok: bool) -> usize {
+    if chaining_ok { usize::MAX } else { FRAME_BODY }
+}
 
 /// `61 XX` bytes-remaining; SW2 saturates to `00` (= 256+ left) per ISO 7816-4.
 pub const fn bytes_remaining(left: usize) -> Sw {
@@ -366,6 +392,7 @@ impl Dispatcher {
             // A disabled current applet is unreachable, like a dropped selection.
             let cur = self.current.filter(|&i| self.selectable(i));
             let chain_ok = cur.map(|i| applets[i].response_chaining()).unwrap_or(false);
+            res.limit(frame_room(chain_ok));
             let sw = match cur {
                 Some(i) => applets[i].process(&combined, ctx, res),
                 None => Sw::FILE_NOT_FOUND,
@@ -400,6 +427,7 @@ impl Dispatcher {
                     }
                     self.current = Some(i);
                     let chain_ok = applets[i].response_chaining();
+                    res.limit(frame_room(chain_ok));
                     let sw = applets[i].select(reselect, ctx, res);
                     self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res)
                 }
@@ -420,6 +448,7 @@ impl Dispatcher {
         match self.current {
             Some(i) if self.selectable(i) => {
                 let chain_ok = applets[i].response_chaining();
+                res.limit(frame_room(chain_ok));
                 let sw = applets[i].process(&apdu, ctx, res);
                 self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res)
             }
@@ -460,8 +489,9 @@ impl Dispatcher {
     /// The answer half of [`Self::process`], for a response an applet made outside
     /// it (the RSA-keygen fast path): drop the held tail, then, for an applet whose
     /// `response_chaining` is `chaining_ok`, cut the body at `cap` (the command's
-    /// [`Apdu::frame_cap`]) and hold the rest for GET RESPONSE. Never with a chain
-    /// open: a command then is the dispatcher's, to join to it or refuse `6883`.
+    /// [`Apdu::frame_cap`], one frame at most) and hold the rest for GET RESPONSE.
+    /// Never with a chain open: a command then is the dispatcher's, to join to it or
+    /// refuse `6883`.
     pub fn chain_response(
         &mut self,
         sw: Sw,
@@ -475,11 +505,14 @@ impl Dispatcher {
     }
 
     /// Serve the next chunk of a chained response to a GET RESPONSE (`0xC0`): as
-    /// much as its own [`Apdu::frame_cap`] allows and `res` holds. Returns `61xx`
-    /// while bytes remain, then the original status word.
+    /// much as its own [`Apdu::frame_cap`] allows, one frame at most, and `res`
+    /// holds. Returns `61xx` while bytes remain, then the original status word.
     fn serve_pending(&mut self, cap: usize, res: &mut ResBuf) -> Sw {
         let remaining = self.pending_len - self.pending_off;
-        let take = cap.min(remaining).min(res.capacity() - res.len());
+        let take = cap
+            .min(FRAME_BODY)
+            .min(remaining)
+            .min(res.capacity() - res.len());
         res.extend(&self.pending[self.pending_off..self.pending_off + take]);
         self.pending_off += take;
         let left = self.pending_len - self.pending_off;
@@ -493,28 +526,31 @@ impl Dispatcher {
     }
 
     /// If an opted-in applet's success body overruns the command's `cap` (its
-    /// [`Apdu::frame_cap`]), hold the tail for GET RESPONSE and ship the first `cap`
-    /// bytes with `61xx`. Otherwise the response (and status) pass through
-    /// unchanged, as they always do for an applet that does not chain.
+    /// [`Apdu::frame_cap`], one frame at most), hold the tail for GET RESPONSE and
+    /// ship the first `cap` bytes with `61xx`. Otherwise the response (and status)
+    /// pass through unchanged, as they always do for an applet that does not chain,
+    /// unless the body is longer than a frame: that is refused whole, never cut.
     ///
     /// A short case-3 command (data, no `Le`) is capped at 256, so a larger body
     /// chains via `61xx` too: yubikey.rs / age-plugin read slot certs this way and
     /// drop any slot whose cert overruns 256 bytes if we dump it whole instead.
     fn maybe_chain(&mut self, sw: Sw, cap: usize, chaining_ok: bool, res: &mut ResBuf) -> Sw {
-        if !chaining_ok || !sw.is_ok() || res.len() <= cap {
-            return sw;
+        let cap = cap.min(FRAME_BODY);
+        let tail_len = res.len().saturating_sub(cap);
+        if chaining_ok && sw.is_ok() && tail_len > 0 && tail_len <= self.pending.len() {
+            self.pending[..tail_len].copy_from_slice(&res.as_slice()[cap..]);
+            self.pending_len = tail_len;
+            self.pending_off = 0;
+            self.pending_sw = sw;
+            res.truncate(cap);
+            return bytes_remaining(tail_len);
         }
-        let tail_len = res.len() - cap;
-        if tail_len > self.pending.len() {
-            // Cannot buffer the remainder; leave the response intact (legacy).
-            return sw;
+        // A transport sends a longer body without its status word, or not at all.
+        if res.len() > FRAME_BODY {
+            res.clear();
+            return Sw::EXEC_ERROR;
         }
-        self.pending[..tail_len].copy_from_slice(&res.as_slice()[cap..]);
-        self.pending_len = tail_len;
-        self.pending_off = 0;
-        self.pending_sw = sw;
-        res.truncate(cap);
-        bytes_remaining(tail_len)
+        sw
     }
 }
 

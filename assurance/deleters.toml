@@ -357,7 +357,7 @@ why = "the DEK half of the same idempotent repair, retried on the next boot rath
 
 [[site]]
 file = "crates/rsk-openpgp/src/lib.rs"
-line = 288
+line = 285
 call = "let _ = fs.delete(stor);"
 verb = "delete"
 answer = "discarded"

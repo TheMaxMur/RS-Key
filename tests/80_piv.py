@@ -61,6 +61,7 @@ SLOT_9A, SLOT_9C, SLOT_9D, SLOT_9E = 0x9A, 0x9C, 0x9D, 0x9E
 OBJ_9A = [0x5F, 0xC1, 0x05]   # 5FC105 cert object for slot 9A
 OBJ_CHUID = [0x5F, 0xC1, 0x02]
 OBJ_ATTEST = [0x5F, 0xFF, 0x01]
+OBJ_POOL = [0x5F, 0x00, 0x77]  # any id outside the standard set, as a YubiKey takes
 
 
 def fail(msg):
@@ -255,6 +256,40 @@ def test_objects(piv):
     if parse_tlv(got)[0x53] != chuid:
         fail("CHUID object round-trip mismatch")
     print("  PUT/GET DATA object: round-trip OK")
+    test_frame_sized_objects(piv)
+
+
+def test_frame_sized_objects(piv):
+    """A YubiKey 5.8.0's 3072-byte CCID message each way: a 3062-byte APDU stores
+    3046 bytes (48 full packets in), and 3056 read back under an extended Le make a
+    3062-byte answer, which ends in a zero-length packet. A longer write chains."""
+    head = [0x00, INS_GET_DATA, 0x3F, 0xFF, 0x00, 0x00, 0x05, 0x5C, 0x03] + OBJ_POOL + [0, 0]
+    for size in (3046, 3056):
+        want = bytes((i * 7 + 3) & 0xFF for i in range(size))
+        data = tlv(0x5C, OBJ_POOL) + tlv(0x53, want)
+        if size == 3046:
+            cmd = [0x00, INS_PUT_DATA, 0x3F, 0xFF, 0x00, len(data) >> 8, len(data) & 0xFF]
+            if len(cmd) + len(data) != 3062:
+                fail(f"the {size}-byte write is not one 3062-byte APDU")
+            _, sw1, sw2 = piv.conn.transmit(cmd + list(data))
+            sw = (sw1 << 8) | sw2
+        else:
+            for off in range(0, len(data) - 255, 255):
+                cmd = [0x10, INS_PUT_DATA, 0x3F, 0xFF, 255] + list(data[off:off + 255])
+                _, sw1, sw2 = piv.conn.transmit(cmd)
+                if (sw1, sw2) != (0x90, 0x00):
+                    fail(f"chained PUT DATA segment at {off}: SW {sw1:02X}{sw2:02X}")
+            last = data[(len(data) - 1) // 255 * 255:]
+            cmd = [0x00, INS_PUT_DATA, 0x3F, 0xFF, len(last)] + list(last)
+            _, sw1, sw2 = piv.conn.transmit(cmd)
+            sw = (sw1 << 8) | sw2
+        if sw != 0x9000:
+            fail(f"PUT DATA of a {size}-byte object: SW {sw:04X}")
+        resp, sw1, sw2 = piv.conn.transmit(head)
+        if (sw1, sw2) != (0x90, 0x00) or bytes(resp) != tlv(0x53, want):
+            fail(f"a {size}-byte object read back {len(resp)} bytes, SW {sw1:02X}{sw2:02X}")
+    piv.apdu(INS_PUT_DATA, 0x3F, 0xFF, tlv(0x5C, OBJ_POOL) + tlv(0x53, b""))
+    print("  3072-byte CCID messages: a 3046-byte object in one APDU, 3056 back in one answer")
 
 
 def test_rsa(piv):

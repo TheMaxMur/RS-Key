@@ -376,16 +376,21 @@ impl Applet<()> for Chunky {
         self.chain
     }
     fn process(&mut self, apdu: &Apdu, _ctx: &mut (), res: &mut ResBuf) -> Sw {
-        if apdu.ins == 0xCA {
+        if apdu.ins == 0xCA || apdu.ins == INS_WARNED {
             for i in 0..self.body_len {
                 res.push((i & 0xFF) as u8);
             }
-            Sw::OK
-        } else {
-            Sw::INS_NOT_SUPPORTED
+        }
+        match apdu.ins {
+            0xCA => Sw::OK,
+            // A body under a warning, which ISO 7816-4 allows and nothing chains.
+            INS_WARNED => Sw::new(0x62, 0x82),
+            _ => Sw::INS_NOT_SUPPORTED,
         }
     }
 }
+
+const INS_WARNED: u8 = 0xB0;
 
 fn select_chunky(disp: &mut Dispatcher, applets: &mut [&mut dyn Applet<()>], res: &mut ResBuf) {
     let sel = [
@@ -562,6 +567,210 @@ fn extended_le_response_is_not_chained() {
     );
     assert_eq!(sw, Sw::OK);
     assert_eq!(res.len(), 269);
+}
+
+/// An extended `Le` asks for more than one CCID frame carries back: past
+/// [`FRAME_BODY`] the answer leaves through `61xx` too, the rest by GET RESPONSE.
+#[test]
+fn extended_le_past_a_frame_is_chained() {
+    let body_len = FRAME_BODY + 7;
+    let mut c = Chunky {
+        body_len,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let get = [0x00, 0xCA, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(
+        disp.process(&get, &mut applets, &mut (), &mut res),
+        bytes_remaining(7)
+    );
+    assert_eq!(res.len(), FRAME_BODY);
+    let first = res.as_slice().to_vec();
+    let rest = [0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(disp.process(&rest, &mut applets, &mut (), &mut res), Sw::OK);
+    let whole = [first, res.as_slice().to_vec()].concat();
+    let want: Vec<u8> = (0..body_len).map(|i| (i & 0xFF) as u8).collect();
+    assert_eq!(whole, want);
+}
+
+/// An applet the dispatcher cannot chain is handed one frame's body however large
+/// the buffer, so its answer always leaves in one frame.
+#[test]
+fn an_unchained_applet_fills_one_frame_at_most() {
+    let mut c = Chunky {
+        body_len: RESP_BUILD,
+        chain: false,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let get = [0x00, 0xCA, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(disp.process(&get, &mut applets, &mut (), &mut res), Sw::OK);
+    assert_eq!(res.len(), FRAME_BODY);
+}
+
+/// A tail left by a one-byte first read is longer than a frame, and a GET RESPONSE
+/// asking for all of it still gets one frame's body and `61xx` for the rest.
+#[test]
+fn a_get_response_serves_one_frame_at_most() {
+    let mut c = Chunky {
+        body_len: RESP_BUILD,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let get = [0x00, 0xCA, 0x00, 0x00, 0x01];
+    assert_eq!(
+        disp.process(&get, &mut applets, &mut (), &mut res),
+        bytes_remaining(RESP_BUILD - 1)
+    );
+    let mut whole = res.as_slice().to_vec();
+    let rest = [0x00, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let left = RESP_BUILD - 1 - FRAME_BODY;
+    assert_eq!(
+        disp.process(&rest, &mut applets, &mut (), &mut res),
+        bytes_remaining(left)
+    );
+    assert_eq!(res.len(), FRAME_BODY);
+    whole.extend_from_slice(res.as_slice());
+    assert_eq!(disp.process(&rest, &mut applets, &mut (), &mut res), Sw::OK);
+    assert_eq!(res.len(), left);
+    whole.extend_from_slice(res.as_slice());
+    let want: Vec<u8> = (0..RESP_BUILD).map(|i| (i & 0xFF) as u8).collect();
+    assert_eq!(whole, want);
+}
+
+/// Answers its SELECT with as much as the dispatcher lets it write.
+struct Loud;
+impl Applet<()> for Loud {
+    fn aid(&self) -> &'static [u8] {
+        &[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x02]
+    }
+    fn select(&mut self, _reselect: bool, _ctx: &mut (), res: &mut ResBuf) -> Sw {
+        while res.push(0x5A) {}
+        Sw::OK
+    }
+    fn process(&mut self, _apdu: &Apdu, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
+        Sw::INS_NOT_SUPPORTED
+    }
+}
+
+/// A SELECT hands an applet it cannot chain one frame's body as well.
+#[test]
+fn a_select_hands_an_unchained_applet_one_frame() {
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut Loud];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    assert_eq!(res.len(), FRAME_BODY);
+}
+
+/// The end of a command chain hands an applet it cannot chain one frame's body too.
+#[test]
+fn a_chained_command_to_an_unchained_applet_fills_one_frame_at_most() {
+    let mut c = Chunky {
+        body_len: RESP_BUILD,
+        chain: false,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let segment = [0x10, 0xCA, 0x00, 0x00, 0x01, 0xAA];
+    assert_eq!(
+        disp.process(&segment, &mut applets, &mut (), &mut res),
+        Sw::OK
+    );
+    let last = [0x00, 0xCA, 0x00, 0x00, 0x01, 0xBB];
+    assert_eq!(disp.process(&last, &mut applets, &mut (), &mut res), Sw::OK);
+    assert_eq!(res.len(), FRAME_BODY);
+}
+
+/// Past one frame a body the dispatcher cannot chain is refused whole: a transport
+/// would send it without its status word, or not at all.
+#[test]
+fn a_body_past_a_frame_that_cannot_chain_is_refused_whole() {
+    let mut c = Chunky {
+        body_len: FRAME_BODY + 1,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; RESP_BUILD];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let warned = [0x00, INS_WARNED, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(
+        disp.process(&warned, &mut applets, &mut (), &mut res),
+        Sw::EXEC_ERROR
+    );
+    assert!(res.is_empty());
+    let mut c = Chunky {
+        body_len: FRAME_BODY,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    assert_eq!(
+        disp.process(&warned, &mut applets, &mut (), &mut res),
+        Sw::new(0x62, 0x82)
+    );
+    assert_eq!(res.len(), FRAME_BODY);
+}
+
+/// A caller's buffer can hold more than the tail can: past it the answer is refused
+/// whole rather than cut, the transport being unable to send it either way.
+#[test]
+fn a_tail_past_the_held_buffer_is_refused_whole() {
+    let mut c = Chunky {
+        body_len: FRAME_BODY + RESP_BUILD + 1,
+        chain: true,
+    };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut c];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; FRAME_BODY + RESP_BUILD + 1];
+    let mut res = ResBuf::new(&mut out);
+    select_chunky(&mut disp, &mut applets, &mut res);
+    let get = [0x00, 0xCA, 0x00, 0x00, 0x00, 0x00, 0x00];
+    assert_eq!(
+        disp.process(&get, &mut applets, &mut (), &mut res),
+        Sw::EXEC_ERROR
+    );
+    assert!(res.is_empty());
+}
+
+/// A limit bounds every way a producer writes, and never reaches past the buffer.
+#[test]
+fn a_limit_bounds_every_way_into_the_buffer() {
+    let mut out = [0u8; 8];
+    let mut res = ResBuf::new(&mut out);
+    res.limit(4);
+    assert_eq!(res.capacity(), 4);
+    assert!(res.extend(&[1, 2, 3]));
+    assert_eq!(res.spare_mut().len(), 1);
+    assert!(!res.extend(&[4, 5]));
+    assert!(res.push(4));
+    assert!(!res.push(5));
+    res.clear();
+    res.limit(4);
+    res.commit(6);
+    assert_eq!(res.len(), 4);
+    res.limit(usize::MAX);
+    assert_eq!(res.capacity(), 8);
+    assert_eq!(res.spare_mut().len(), 4);
+    res.limit(2);
+    res.clear();
+    assert_eq!(res.capacity(), 8, "a cleared buffer is a whole one");
 }
 
 #[test]

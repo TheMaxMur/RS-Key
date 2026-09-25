@@ -53,7 +53,7 @@ fn dispatch(
     fs: &mut Fs<RamStorage>,
     raw: &[u8],
 ) -> (Vec<u8>, Sw) {
-    let mut buf = [0u8; 2048];
+    let mut buf = [0u8; rsk_sdk::applet::RESP_BUILD];
     let mut res = ResBuf::new(&mut buf);
     let sw = disp.process(raw, applets, fs, &mut res);
     (res.as_slice().to_vec(), sw)
@@ -164,7 +164,8 @@ fn verify_default_pw1_via_dispatcher_is_ok() {
 /// lived in the applet's own scratch, not in `put_data` or `get_data`: a 1500-byte
 /// certificate — an ordinary X.509 size, and §9.7's named use — used to write OK,
 /// read back 1024 bytes and report success, losing 476 with nothing to tell the
-/// host. A YubiKey 5.7.4 announces the same 2048 and holds to it exactly.
+/// host. A YubiKey 5.8.0 announces 2048, stores that whole and refuses 2049 with
+/// `6A80`, keeping what it held.
 #[test]
 fn a_do_the_card_announces_room_for_reads_back_whole() {
     let mut fs = setup();
@@ -203,6 +204,7 @@ fn a_do_the_card_announces_room_for_reads_back_whole() {
     let discrete = child(&children(&related), consts::EF_DISCRETE_DO);
     let c0 = child(&children(&discrete), consts::EF_EXT_CAP);
     let announced = u16::from_be_bytes([c0[4], c0[5]]) as usize;
+    assert_eq!(announced, 2048, "a YubiKey 5.8.0's C0 announces 2048");
     assert_eq!(announced, crate::files::MAX_DO_BYTES);
     assert_eq!(u16::from_be_bytes([c0[6], c0[7]]) as usize, announced);
 
@@ -273,8 +275,11 @@ fn a_do_the_card_announces_room_for_reads_back_whole() {
     // applet sees a thing, with the `WRONG_LENGTH` its own test pins from both
     // ends of that check; what matters here is that it is not a success and the
     // stored certificate is untouched.
-    let way_over = std::vec![0x5Au8; announced + 512];
-    assert_ne!(write(&mut disp, &mut applets, &mut fs, &way_over), Sw::OK);
+    let way_over = std::vec![0x5Au8; rsk_sdk::applet::CHAIN_BUF_SIZE + 1];
+    assert_eq!(
+        write(&mut disp, &mut applets, &mut fs, &way_over),
+        Sw::WRONG_LENGTH
+    );
     let (survived, _) = read_cert(&mut disp, &mut applets, &mut fs);
     assert_eq!(survived, value);
 }

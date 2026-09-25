@@ -1888,15 +1888,15 @@ fn slots_fill_and_report_full() {
 
 /// The response slice the CCID layer hands an applet: one frame, less its
 /// header, less the two status bytes appended after. The generic `run()` above
-/// uses 2048, which truncates at a slightly different count, so the enumeration
-/// cap has to be measured against this one instead.
+/// uses 2048, which truncates at a different count, so the enumeration cap has to
+/// be measured against this one instead.
 ///
-/// Derived from the transport rather than written out, because 2036 is the same
-/// number `rsk-device`'s `RESP_CAP - 2` and `rsk-openpgp`'s `MAX_DO_BYTES` are,
-/// and a fourth copy of it is what drifts (E72). `rsk-oath` cannot see
-/// `rsk-device`, but both of them can see where the frame size comes from.
+/// Derived from the transport rather than written out, because 3060 is the same
+/// number `rsk-device`'s `RESP_CAP - 2` and `rsk-sdk`'s `FRAME_BODY` are, and
+/// another copy of it is what drifts (E72). `rsk-oath` cannot see `rsk-device`,
+/// but both of them can see where the frame size comes from.
 const FW_RESP_CAP: usize = rsk_usb::ccid::MAX_CCID_MSG - rsk_usb::ccid::HEADER - 2;
-const _: () = assert!(FW_RESP_CAP == 2036);
+const _: () = assert!(FW_RESP_CAP == 3060);
 
 fn run_fw(app: &mut OathApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> (Sw, Vec<u8>) {
     let mut out = [0u8; FW_RESP_CAP];
@@ -1946,7 +1946,7 @@ fn enumerate_all(app: &mut OathApplet, fs: &mut Fs<RamStorage>, first: &[u8]) ->
 }
 
 /// Regression for the OATH enumeration cap (HW-found 2026-07-15): a full store
-/// (255 credentials) exceeds the single 2036-byte response frame, so LIST and
+/// (255 credentials) exceeds a single response frame, so LIST and
 /// CALCULATE ALL used to silently `break` and return `Sw::OK` — a host saw only
 /// ~135 / ~94 of them. With YKOATH `61xx` + SEND REMAINING pagination every
 /// credential now surfaces across pages, the way ykman / Yubico Authenticator
@@ -1972,7 +1972,10 @@ fn list_and_calc_all_paginate_the_full_store() {
     // LIST spans multiple frames and enumerates all 255 — including the late
     // account the pre-fix single frame truncated out.
     let (pages, body) = enumerate_all(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
-    assert!(pages >= 2, "255 names cannot fit one 2036-byte frame");
+    assert!(
+        pages >= 2,
+        "255 names cannot fit one {FW_RESP_CAP}-byte frame"
+    );
     assert_eq!(count_tag(&body, TAG_NAME_LIST), MAX_OATH_CRED as usize);
     let late = acct_name(MAX_OATH_CRED - 1);
     assert!(

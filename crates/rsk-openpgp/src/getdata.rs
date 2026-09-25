@@ -55,12 +55,9 @@ pub fn get_data<S: Storage>(
         let mut w = DoWriter::new(out, fs, full_aid);
         w.build(fid)
     };
-    // `build` reports a DO's full stored length, which can exceed `out` when an
-    // over-long object was stored (a Flash DO reports its fs.size()). PUT DATA bounds
-    // every write at MAX_DO_BYTES = out.len(), so reaching here means a value an
-    // older build wrote through the wider chaining buffer. Refuse rather than
-    // slice: a short body under `9000` is indistinguishable from a complete one,
-    // and the caller would panic on `&out[..data_len]` if we did not.
+    // `build` reports a stored DO's full length, and no PUT DATA of any build wrote
+    // one past `out`: only a damaged or restored record gets here. Refuse, since a
+    // short body under `9000` reads as whole and `&out[..data_len]` would panic.
     if data_len > out.len() {
         return (0, Sw::MEMORY_FAILURE);
     }

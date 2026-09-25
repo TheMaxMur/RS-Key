@@ -359,8 +359,8 @@ fuzz_target!(|data: &[u8]| {
             // 6-byte APDU — case 1 and case 2 — unreachable.
             _ => {
                 // `next_frame`, not `chunk`: this is the only target that reaches
-                // the dispatcher's 2038-byte chaining buffer and its GET RESPONSE
-                // tail, and neither is reachable from a one-byte length.
+                // the dispatcher's chaining buffer and its GET RESPONSE tail, and
+                // neither is reachable from a one-byte length.
                 let Some((frame, tail)) = next_frame(&data[i..]) else {
                     break;
                 };

@@ -6,11 +6,11 @@
 //!
 //! **Why the shrink is sound.** Not because the sizes are "only read through
 //! overflow guards": source coverage shows both guard branches UNCOVERED at 16
-//! and at 2038 alike. It is the *window*. A raw APDU of at most 6 bytes with a
-//! short `Lc` needs `5 + Nc <= 6`, so `Nc <= 1` per command and `chain_len <= 2`
-//! over the pair — as far under 16 as under 2038, reaching the same branches by
-//! the same route. The shrink therefore cannot change which paths are proven; it
-//! changes only how many bits CBMC blasts to get there.
+//! and at 2038, then shipped, alike. It is the *window*. A raw APDU of at most 6
+//! bytes with a short `Lc` needs `5 + Nc <= 6`, so `Nc <= 1` per command and
+//! `chain_len <= 2` over the pair — as far under 16 as under 3072, reaching the
+//! same branches by the same route. The shrink therefore cannot change which
+//! paths are proven; it changes only how many bits CBMC blasts to get there.
 //!
 //! **Why it is not optional.** At the real sizes the harness peaks at 17.5 GiB
 //! and then spends 656 s in propositional reduction before CBMC's allocator

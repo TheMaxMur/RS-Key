@@ -59,7 +59,7 @@ block. It is keyword-matching in both directions — `// kani` satisfies it and
 
 ## What this is not
 
-It does not read values. That `CHAIN_BUF_SIZE` is 16 under Kani and 2038 shipped
+It does not read values. What `CHAIN_BUF_SIZE` is under Kani and what it ships at
 is in the code and in the comment beside it; copying either into the docs would
 make the page a third place for them to rot, which is the failure this file
 exists to end. The roster is names.

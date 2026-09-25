@@ -18,39 +18,45 @@ use rsk_openpgp::consts::INS_KEYPAIR_GEN;
 use rsk_otp::OtpApplet;
 use rsk_piv::PivApplet;
 use rsk_rescue::RescueApplet;
+use rsk_sdk::applet::RESP_BUILD;
 use rsk_sdk::{Apdu, Applet, Dispatcher, ResBuf, Sw};
 
 use rsk_vendor::VendorApplet;
 
 use crate::Hooks;
 
-// A CCID XfrBlock frame carries MAX_CCID_MSG (2048) minus the 10-byte CCID
-// header = 2038 payload bytes. The applet response (body + 2-byte SW) must fit
+// A CCID XfrBlock frame carries MAX_CCID_MSG (3072) minus the 10-byte CCID
+// header = 3062 payload bytes. The applet response (body + 2-byte SW) must fit
 // one frame; sizing this to the full message let a large response (e.g. a long
 // OATH LIST) overrun the frame, and `run_xfr` silently dropped the tail incl. SW.
-const RESP_CAP: usize = 2038;
+const RESP_CAP: usize = 3062;
 const _: () = assert!(RESP_CAP == rsk_usb::ccid::MAX_CCID_MSG - rsk_usb::ccid::HEADER);
-
-// The frame is also the largest command APDU that ever reaches an applet, and
-// OpenPGP announces that number to the host in DO 7F66. It announced 2047 and
-// 2048 against a transport carrying 2038, so §7.7 licensed nine byte-lengths the
-// reader answers with an error before any applet sees them. Only this crate sees
-// both constants.
-const _: () = assert!(rsk_openpgp::files::MAX_APDU_BYTES == RESP_CAP);
-// A command chain reassembles one frame's worth, and PIV's largest object is that
-// less the `5C 03 id 53 82 LL LL` header. Kani shrinks the chain buffer, so not there.
+// One frame's body is what the dispatcher cuts a chained answer at and caps an
+// unchained one to. Kani shrinks it with the chain buffer, so a proof sees 16 and
+// this holds the width that ships.
 #[cfg(not(kani))]
-const _: () = assert!(rsk_sdk::applet::CHAIN_BUF_SIZE == RESP_CAP);
+const _: () = assert!(rsk_sdk::applet::FRAME_BODY == RESP_CAP - 2);
+// The largest answer a command can ask back, PIV's object in its `53`, is built
+// whole before the dispatcher cuts it into frames. Kani shrinks the build buffer,
+// so a proof never builds one; this holds it for the width that ships.
+#[cfg(not(kani))]
+const _: () = assert!(rsk_piv::MAX_OBJECT + 4 <= RESP_BUILD);
+
+// The frame is the largest APDU a host can send or be sent. OpenPGP announces it in
+// DO 7F66, which §7.7 lets a host take at its word; it said 2047 and 2048 over a
+// 2038-byte frame once. Only this crate sees both constants.
+const _: () = assert!(rsk_openpgp::files::MAX_APDU_BYTES == RESP_CAP);
+// A command chain reassembles a whole CCID message's worth, as a YubiKey 5.8.0 does,
+// and PIV's largest object is that less the `5C 03 id 53 82 LL LL` header. Kani
+// shrinks the chain buffer, so not there.
+#[cfg(not(kani))]
+const _: () = assert!(rsk_sdk::applet::CHAIN_BUF_SIZE == rsk_usb::ccid::MAX_CCID_MSG);
 #[cfg(not(kani))]
 const _: () = assert!(rsk_piv::MAX_OBJECT + 9 == rsk_sdk::applet::CHAIN_BUF_SIZE);
 
-// OpenPGP announces a maximum DO length in its own crate, which cannot see this
-// one; this is the only place both are visible. A DO longer than the body an
-// applet is handed (`RESP_CAP - 2`, the status bytes being appended after) does
-// not truncate on the way out — `ResBuf::extend` writes nothing at all and its
-// `false` is discarded — so an announcement above this ceiling would make GET
-// DATA answer `9000` with an empty body. E3's class: two owners of one meaning,
-// no compiler between them.
+// OpenPGP announces a maximum DO length in its own crate, which cannot see this one.
+// Every applet is handed at least one frame's body, so a DO of the announced length
+// always fits the buffer GET DATA builds it in (E3's class).
 const _: () = assert!(rsk_openpgp::files::MAX_DO_BYTES <= RESP_CAP - 2);
 // Same cliff, same reason, for the other number DO C0 announces: GET CHALLENGE
 // serves `Le` bytes up to this maximum, and one byte over the body an applet is
@@ -113,7 +119,7 @@ pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor
     /// write sets the dirty latch. Gates CCID SELECT, the OTP keyboard interface
     /// and (via the worker) the FIDO2/U2F transports.
     enabled_caps: u16,
-    resp: [u8; RESP_CAP],
+    resp: [u8; RESP_BUILD + 2],
 }
 
 /// The records that *gate* each applet, passed to [`rsk_fs::Fs::factory_wipe`] so
@@ -226,7 +232,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
                 mkek_source,
             ),
             enabled_caps: rsk_devconf::read_enabled_caps(&mut fs.borrow_mut()),
-            resp: [0; RESP_CAP],
+            resp: [0; RESP_BUILD + 2],
         }
     }
 
@@ -406,7 +412,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         // Refines `RSKeyAdminSurface!DisabledAppletNeverDispatches` — SEC-ADM-004.
         self.disp.set_enabled(self.applet_enable_mask());
         let (sw, n) = {
-            let mut res = ResBuf::new(&mut self.resp[..RESP_CAP - 2]);
+            let mut res = ResBuf::new(&mut self.resp[..RESP_BUILD]);
             let mut applets: [&mut dyn Applet<Fs<S>>; 8] = [
                 &mut self.vendor,
                 &mut self.openpgp,

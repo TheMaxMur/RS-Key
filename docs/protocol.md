@@ -103,8 +103,8 @@ secure-messaging indication (`CLA & 0x0C`: `04`, `0C`, `84`, `8C`, …) answers
 Capabilities says so. Applets that additionally name a class of their own reject
 anything else themselves: OATH, management and OTP take `00` and `80` alike,
 both of which a YubiKey 5.8.0 serves there, U2F wants `00` and rescue `80`. A
-chain is reassembled into a single command of at most **2038 bytes** (one CCID
-frame); a segment that would reach or pass that is `6700`, and the partial chain
+chain is reassembled into a single command of at most **3072 bytes**, as on a
+YubiKey 5.8.0; a segment that would reach or pass that is `6700`, and the partial chain
 is dropped rather than dispatched — so a host that retries the segment is
 starting a **new** chain, not continuing the old one.
 
@@ -115,8 +115,10 @@ PIV, OpenPGP and CTAP over CCID answer a success body longer than the request's
 `61 XX` (`XX` = further bytes available, `00` = 256+), and the host issues
 `GET RESPONSE` (`00 C0 00 00 <Le>`) until `9000`. A short command with no `Le`
 (Case 1 or Case 3) is capped at 256; an extended one with no `Le` is not, and gets
-the whole body in one frame, as a YubiKey 5.8.0 answers it. `GET RESPONSE` is cut
-by its own encoding the same way. A certificate object over 256 bytes chains when
+the whole body in one frame, as a YubiKey 5.8.0 answers it. One frame carries 3060
+bytes of body; a longer one chains from there whatever the `Le`, where a YubiKey's
+PIV cuts the frame and loses its status word. `GET RESPONSE` is cut by its own
+encoding the same way. A certificate object over 256 bytes chains when
 it is read with a short `GET DATA`, so a host that sends a short `GET DATA` without
 an `Le` must still follow `61xx`. A `00 C0` with nothing left to serve is `6A80`
 on PIV and `6D00` on OpenPGP, OATH, management, OTP and FIDO. While a tail is
@@ -528,11 +530,10 @@ needs only the identifiers above. RS-Key implements:
   may write), as a YubiKey does: `5FC100`–`5FC1EF` and `5FFF00` each in its own
   file, every other id in a pool of 256 objects and 32 KiB of bodies, whose next
   write answers `6A84` once either is spent, as a full YubiKey does; an empty `53`
-  deletes the object, answering `9000` for one not held. An object is up to 2029
-  bytes, `6700` past it: the 2038 bytes a command chain reassembles less the
-  `5C 03 id 53 82 LL LL` header, and one extended APDU carries 2022. A YubiKey
-  reassembles 3072 bytes and takes 3063 (ykman, sending one extended APDU, gets
-  about 3046 onto it).
+  deletes the object, answering `9000` for one not held. An object is up to 3063
+  bytes, `6700` past it, as on a YubiKey 5.8.0: the 3072 bytes a command chain
+  reassembles less the `5C 03 id 53 82 LL LL` header. One extended APDU carries
+  3046, what ykman, sending one, gets onto either card.
   `GET DATA` for the CHUID (`5FC102`) returns a synthesized default (non-federal FASC-N + a
   device-stable GUID = `sha256(serial)[..16]`) when the host has not written one,
   so the Windows minidriver can enumerate the card; a host-written CHUID overrides it.
@@ -643,7 +644,8 @@ than 255 bytes arrives in `CLA|0x10` segments; a response longer than the short
 `Le` ships its first chunk with `61xx` and the rest through GET RESPONSE
 (`00 C0 00 00 <Le>`). A bare getInfo is already ~520 bytes, so a client that does
 not follow `61xx` sees nothing useful. An extended-length APDU with no `Le`, or
-`Le` 0000, gets the whole response in one exchange.
+`Le` 0000, gets up to 3060 bytes in one exchange, and a longer response chains
+from there.
 
 **No `91 00` keep-alive is ever returned.** A touch wait blocks inside the
 exchange while the CCID transport streams T=1 time extensions, exactly as an OATH
@@ -652,11 +654,12 @@ touch-flagged CALCULATE and an OpenPGP UIF signature already do, so the
 since a host that gave up on a wait sends one regardless: `9000` with
 `CTAP2_ERR_USER_ACTION_TIMEOUT` (`2F`), a YubiKey 5.8.0's answer with nothing pending.
 
-**The transport is smaller than CTAPHID.** One CCID frame carries 2038 bytes, so
-that is the ceiling on a command *and* on a response here, against the 4078 that
-getInfo's `maxMsgSize` reports for CTAPHID. Commands stay well inside it; a
-response that does not fit comes back as a CTAP error rather than truncated. An
-ML-DSA credential's attestation does not fit and is CTAPHID-only in practice.
+**The transport is smaller than CTAPHID.** A command chain reassembles 3072 bytes
+and a response is built in as many, so that is the ceiling on a command *and* on a
+response here, against the 7609 that getInfo's `maxMsgSize` reports for CTAPHID.
+Commands stay well inside it; a response that does not fit comes back as a CTAP
+error rather than truncated. An ML-DSA credential's attestation does not fit and
+is CTAPHID-only in practice.
 
 **Both applications are gated separately.** One AID serves CTAP2 and U2F, and
 `ykman config usb --disable fido2` / `--disable u2f` name them apart, so the

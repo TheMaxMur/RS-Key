@@ -35,6 +35,7 @@ use rsk_phy::{PHY_MAX_SIZE, PhyData};
 use rsk_rsa::MAX_RSA_DIGESTINFO;
 use rsk_rsa::pkcs1v15::rsa_sign_em;
 use rsk_sdk::apdu::Apdu;
+use rsk_sdk::applet::RESP_BUILD;
 use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{Applet, ResBuf, Sw};
 use rsk_usb::ccid::process_message;
@@ -680,7 +681,7 @@ fn miri_openpgp_apdu() {
 
     fn run(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) {
         if let Ok(apdu) = Apdu::parse(raw) {
-            let mut buf = [0u8; 2048];
+            let mut buf = [0u8; RESP_BUILD];
             let mut res = ResBuf::new(&mut buf);
             let _ = app.process(&apdu, fs, &mut res);
         }

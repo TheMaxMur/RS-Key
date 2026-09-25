@@ -437,6 +437,67 @@ fn piv_as_admin(ccid: &mut Ccid<'_>) {
     );
 }
 
+/// A YubiKey 5.8.0 stores a PIV data object of up to 3063 bytes, the 3072 it
+/// reassembles less the `5C 03 id 53 82 LL LL` header, and refuses 3064 with `6700`
+/// (measured 2026-09-25). The 3067-byte answer outgrows one CCID frame: through a
+/// short `Le` it leaves in 256-byte `61xx` pieces, through an extended one as the
+/// frame's 3060 bytes and `61 07`, where the YubiKey cuts it and loses its status.
+#[test]
+fn a_piv_object_as_large_as_a_yubikeys_is_stored_and_read_back_in_frames() {
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    piv_as_admin(&mut ccid);
+    let put = |ccid: &mut Ccid<'_>, size: usize| {
+        let mut data = std::vec![0x5C, 0x03, 0x5F, 0x00, 0x77, 0x53, 0x82];
+        data.extend_from_slice(&(size as u16).to_be_bytes());
+        data.extend((0..size).map(|i| (i * 7 + 3) as u8));
+        let segments: Vec<&[u8]> = data.chunks(255).collect();
+        for seg in &segments[..segments.len() - 1] {
+            let chained = apdu(0x10, 0xDB, 0x3F, 0xFF, seg);
+            assert_eq!(sw(ccid.handle_apdu(&chained, 0)), rsk_sdk::Sw::OK);
+        }
+        let last = apdu(0x00, 0xDB, 0x3F, 0xFF, segments[segments.len() - 1]);
+        (sw(ccid.handle_apdu(&last, 0)), data[5..].to_vec())
+    };
+    let (answer, object) = put(&mut ccid, 3063);
+    assert_eq!(answer, rsk_sdk::Sw::OK);
+
+    let read_extended = |ccid: &mut Ccid<'_>| {
+        let extended = [
+            0x00, 0xCB, 0x3F, 0xFF, 0x00, 0x00, 0x05, 0x5C, 0x03, 0x5F, 0x00, 0x77, 0x00, 0x00,
+        ];
+        let first = ccid.handle_apdu(&extended, 0).to_vec();
+        assert_eq!(first.len(), RESP_CAP, "one full frame");
+        assert_eq!(first[RESP_CAP - 2..], [0x61, 0x07]);
+        let rest = ccid
+            .handle_apdu(&[0x00, 0xC0, 0x00, 0x00, 0x07], 0)
+            .to_vec();
+        assert_eq!(sw(&rest), rsk_sdk::Sw::OK);
+        [&first[..RESP_CAP - 2], &rest[..rest.len() - 2]].concat()
+    };
+    assert_eq!(read_extended(&mut ccid), object, "extended Le");
+
+    let short = [
+        0x00, 0xCB, 0x3F, 0xFF, 0x05, 0x5C, 0x03, 0x5F, 0x00, 0x77, 0x00,
+    ];
+    let mut frame = ccid.handle_apdu(&short, 0).to_vec();
+    let mut read = Vec::new();
+    while frame[frame.len() - 2] == 0x61 {
+        assert_eq!(frame.len(), 258, "a 256-byte piece");
+        read.extend_from_slice(&frame[..256]);
+        let more = frame[frame.len() - 1];
+        frame = ccid
+            .handle_apdu(&[0x00, 0xC0, 0x00, 0x00, more], 0)
+            .to_vec();
+    }
+    assert_eq!(sw(&frame), rsk_sdk::Sw::OK);
+    read.extend_from_slice(&frame[..frame.len() - 2]);
+    assert_eq!(read, object, "short Le");
+
+    assert_eq!(put(&mut ccid, 3064).0, rsk_sdk::Sw::WRONG_LENGTH);
+    assert_eq!(read_extended(&mut ccid), object, "kept past the refusal");
+}
+
 #[test]
 fn a_keygen_fast_path_judges_the_class_byte_too() {
     // Both fast paths run BEFORE `Dispatcher::process`, so its class-byte rule has
