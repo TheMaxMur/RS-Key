@@ -65,6 +65,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A Yubico OTP slot write over the keyboard interface left the slot's secrets in
+  RAM. The firmware took its own copy of the request — for a slot configure,
+  the AES key, the private UID and the access code — and never wiped it, and
+  the response body (for a challenge-response, the HMAC under the slot secret)
+  likewise; only the transport's buffer was cleared. `rsk-otp` now hands the
+  request over as a `rsk_secret::Secret`, copied straight into it, and the
+  worker wipes the response in place. **bcdDevice → 0x0A14.**
+
 - OpenPGP left PIN-derived session keys in RAM unwiped. The session key a new
   PW1, PW3 or resetting code derives — the key that, with the device root key,
   opens the DEK every private key is sealed under — was returned as a bare

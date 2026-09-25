@@ -24,6 +24,7 @@ strict-config = []
 
 [dependencies]
 rsk-sdk = { workspace = true }
+rsk-secret = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
 rsk-devconf = { workspace = true }

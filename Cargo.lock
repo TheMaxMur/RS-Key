@@ -1089,6 +1089,7 @@ dependencies = [
  "rsk-rescue",
  "rsk-rsa",
  "rsk-sdk",
+ "rsk-secret",
  "rsk-slip39",
  "rsk-store",
  "rsk-ui",
@@ -2271,6 +2272,7 @@ dependencies = [
  "rsk-devconf",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-secret",
  "zeroize",
 ]
 

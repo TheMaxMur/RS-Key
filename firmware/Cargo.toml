@@ -24,6 +24,7 @@ embassy-sync = { workspace = true }
 static_cell = "2"
 rsk-usb = { workspace = true }
 rsk-sdk = { workspace = true }
+rsk-secret = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-fido = { workspace = true }
 rsk-openpgp = { workspace = true }

@@ -652,7 +652,9 @@ impl<'a> Worker<'a> {
         // Scope any touch wait this command starts to the OTP transport, so a host
         // that aborts it cannot also abandon a FIDO ceremony on the same button.
         crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
-        let (body, n, status) = self.ccid.handle_otp_hid(slot, &payload);
+        let (mut body, n, status) = self.ccid.handle_otp_hid(slot, payload.expose());
+        // A challenge-response body is the slot secret's HMAC: wiped in place here.
+        let body = rsk_secret::WipeGuard::new(&mut body);
         crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
         otp_kbd::finish_response(status, &body[..n]);
         self.ccid.scrub();

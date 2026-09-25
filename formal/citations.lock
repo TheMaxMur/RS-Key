@@ -1077,7 +1077,7 @@ formal/RSKeySecurityState.tla	firmware/src/presence.rs	99-106	/// User presence 
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	425-425	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	517-519	// Nothing is in flight again: a wait started from here on is an on-panel	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	519-519	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
-formal/RSKeySecurityState.tla	firmware/src/worker.rs	637-660	/// dirty latch, so the CCID / FIDO2 / U2F / OTP gates all act on the new set	// confirms on an already-held button — so without this the release edge of
+formal/RSKeySecurityState.tla	firmware/src/worker.rs	637-662	/// dirty latch, so the CCID / FIDO2 / U2F / OTP gates all act on the new set	// confirms on an already-held button — so without this the release edge of
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	652-654	// Scope any touch wait this command starts to the OTP transport, so a host	crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
 formal/RSKeySecurityState.tla	tools/emu/src/device.rs	507-507	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	105-105	present: [u8; FID_PRESENT_BYTES],	present: [u8; FID_PRESENT_BYTES],

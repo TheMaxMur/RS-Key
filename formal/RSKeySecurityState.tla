@@ -1633,7 +1633,7 @@ TokenOutcomeActions ==
 \* strong fairness would buy nothing and would assert more than the code does.
 \*
 \* The worker is synchronous -- one `Exchange` at a time, under a lock, and the
-\* dispatch runs to completion before the next is accepted (worker.rs:637-660).
+\* dispatch runs to completion before the next is accepted (worker.rs:637-662).
 \* So every step that ADVANCES an in-flight sequence eventually happens: nothing
 \* in the firmware can park one. What it cannot survive is a power cut, and
 \* PowerCut is not fair, so "eventually" here still admits the cut.

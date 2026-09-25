@@ -201,8 +201,9 @@ fn a_complete_frame_is_taken_once() {
     let mut payload = [0u8; PAYLOAD_SIZE];
     payload[..4].copy_from_slice(b"ping");
     assert_eq!(write_frame(&mut hid, 0x38, &payload), SetOutcome::Frame);
-    assert_eq!(hid.take_request(), Some((0x38, payload)));
-    assert_eq!(hid.take_request(), None);
+    let (slot, taken) = hid.take_request().unwrap();
+    assert_eq!((slot, taken.expose()), (0x38, &payload));
+    assert!(hid.take_request().is_none());
 }
 
 /// The payload copy left behind is wiped: a slot-configure frame carries the AES
@@ -214,6 +215,18 @@ fn taking_a_request_leaves_no_copy_of_its_payload() {
     write_frame(&mut hid, 1, &payload);
     hid.take_request().unwrap();
     assert!(hid.req_payload.iter().all(|&b| b == 0));
+}
+
+/// The copy the caller takes wipes itself, on whatever exit it leaves by: the
+/// firmware held a bare array of the slot's AES key, UID and access code in the
+/// worker's frame and never wiped it.
+#[test]
+fn the_payload_a_caller_takes_wipes_itself() {
+    fn wipes_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+    let mut hid = OtpHid::new();
+    write_frame(&mut hid, 1, &[0xA5u8; PAYLOAD_SIZE]);
+    let (_, payload) = hid.take_request().unwrap();
+    wipes_on_drop(&payload);
 }
 
 /// While the command runs the host is told "working", and once a touch is

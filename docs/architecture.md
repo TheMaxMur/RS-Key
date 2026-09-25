@@ -87,7 +87,7 @@ The workspace splits along a strict dependency gradient: the `firmware` binary
 is thin glue over the applet crates, which build on a handful of host-tested
 platform libraries. The per-crate detail is in the table. The shape is:
 
-![Crate dependency layers: 30 crates in 10 tiers, from the 2 flashable binaries at the top, down through the 8 applets, to the 1 secrets crate at the bottom. All 107 in-workspace dependencies point strictly downward, and applet-to-applet edges number 0.](images/crate-graph.svg)
+![Crate dependency layers: 30 crates in 10 tiers, from the 2 flashable binaries at the top, down through the 8 applets, to the 1 secrets crate at the bottom. All 109 in-workspace dependencies point strictly downward, and applet-to-applet edges number 0.](images/crate-graph.svg)
 
 **No applet names another applet — the count is zero, in code and in the manifests.** This page used to name three cross-edges (`piv→openpgp`, `openpgp→rsa`, `piv→rsa`), only the first of which was one applet reaching sideways; the manifests carried **six** — `fido→mgmt`, `fido→rescue`, `openpgp→mgmt`, `piv→mgmt`, `piv→openpgp`, `otp→mgmt`. The machinery under each moved *down* instead: the phy record into `rsk-phy`, the DeviceInfo record into `rsk-devconf`, RSA into `rsk-rsa`, and the EC key type both card applets seal (`PrivKey` over `Curve`, the `[curve_id] ‖ scalar` blob) into `rsk-ec`. Six `rsk_<applet>::` mentions do survive across the applet tier, every one inside a comment where one applet explains its ordering by pointing at a sibling — a cross-reference, not a dependency.
 

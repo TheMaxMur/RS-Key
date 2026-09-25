@@ -25,6 +25,7 @@ use zeroize::Zeroize;
 use rsk_usb::kbd::keystroke;
 
 use rsk_otp::hid::{OtpHid, PAYLOAD_SIZE, REPORT_SIZE, status_frame};
+use rsk_secret::Secret;
 
 use crate::Drv;
 use crate::presence::otp_up_pending;
@@ -72,7 +73,7 @@ impl RequestHandler for OtpHidHandler {
 }
 
 /// Take a pending frame request, if any (called by the worker after [`OTP_REQ`]).
-pub fn take_request() -> Option<(u8, [u8; PAYLOAD_SIZE])> {
+pub fn take_request() -> Option<(u8, Secret<[u8; PAYLOAD_SIZE]>)> {
     OTP_HID.lock(|c| c.borrow_mut().take_request())
 }
 

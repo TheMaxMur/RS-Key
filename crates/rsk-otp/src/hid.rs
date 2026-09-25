@@ -5,6 +5,7 @@
 //! ‖ slot ‖ CRC ‖ pad) carried 7 payload bytes per 8-byte FEATURE report, written
 //! via SET_REPORT and polled via GET_REPORT — the transport `ykman otp` speaks.
 
+use rsk_secret::Secret;
 use zeroize::Zeroize;
 
 use crate::{VERSION, crc16};
@@ -364,17 +365,17 @@ impl OtpHid {
     }
 
     /// Take the frame waiting to be run, if any.
-    pub fn take_request(&mut self) -> Option<(u8, [u8; PAYLOAD_SIZE])> {
+    pub fn take_request(&mut self) -> Option<(u8, Secret<[u8; PAYLOAD_SIZE]>)> {
         if !self.req_ready {
             return None;
         }
         self.req_ready = false;
-        let req = (self.req_slot, self.req_payload);
         // A slot-configure frame carries the AES key, the private UID and the
-        // presented access code; don't leave them here once the caller holds its
-        // own copy. Same rule the CTAP/CCID exchange buffers follow.
+        // presented access code: the caller's copy wipes itself, and none stays here.
+        let mut payload = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
+        payload.expose_mut().copy_from_slice(&self.req_payload);
         self.req_payload.zeroize();
-        Some(req)
+        Some((self.req_slot, payload))
     }
 
     /// Store a command's result: refresh the cached status frame and, if `body` is
