@@ -518,6 +518,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **OpenPGP GET DATA no longer sniffs its answer for a header to strip** —
+  refactor. Since a DO only a template carries answers `6B00` on its own
+  (0x0A08), no primitive DO GET DATA serves alone opens with a header spanning
+  it, so the strip never fired: armed with a panic, it was not reached by the
+  crate's tests or by the on-device, ykman and OpenPGP card suites against
+  `tools/emu`, and a C4 made to carry its header reached it at once. One stored
+  state still differed: a `C4` an old build wrote over its maximum lengths
+  (`01 05 7F 7F …`), which boot's repair puts back unless that write fails, read
+  cut to its last five bytes and now reads whole. `bcdDevice` 0x0A08 → 0x0A09.
+
 - **The X.509 builder moved out of `rsk-piv` into `rsk-x509`** — refactor, no
   behaviour change. OpenPGP's attestation statements are X.509 certificates too,
   and no applet may name another, so the builder PIV's slot, F9 and attestation
