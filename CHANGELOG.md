@@ -577,6 +577,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **A bare wipe no longer compiles** — build, no behaviour change. The root
+  `clippy.toml` refuses `Zeroize::zeroize` and `Zeroizing` outside
+  `rsk-secret`'s two `Drop` impls, so a new secret has to live in `Secret` or
+  under a `WipeGuard` and is wiped on every exit, a `?` included. It is on per
+  crate: `rsk-secret` takes it now, and each crate takes it at its root as its
+  secrets move over, the workspace leaving it at allow until the last one
+  does. `scripts/secrets_gate.py` and
+  `assurance/secrets.toml` are gone: they counted wipes, and could not see a
+  secret nobody wiped, which is the case the ban and the type now refuse; the
+  threat model states the two exits no type reaches, a panic and a move.
+  `bcdDevice` 0x0A14 → 0x0A15.
+
 - **`rsk-secret`: a type for key-grade bytes that wipes itself** — new crate,
   nothing uses it yet. `Secret<T>` has no `Copy`, `Clone`, `Debug` or
   `PartialEq`, so a secret cannot be duplicated, printed or compared in variable

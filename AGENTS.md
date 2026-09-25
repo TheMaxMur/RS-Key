@@ -40,6 +40,13 @@ project — see [README.md](README.md) and
   block or `unsafe impl` a `// SAFETY:` comment (clippy refuses it otherwise). A
   new dependency needs a stated reason — it's joining an authenticator's trust
   base.
+- **Secrets live in `rsk_secret::Secret`.** Key-grade bytes go in a `Secret`,
+  or under a `WipeGuard` when the buffer outlives the scope: both wipe on every
+  exit, a `?` included. The root `clippy.toml` refuses a bare
+  `Zeroize::zeroize` or a `Zeroizing`; an exception is an `#[expect]` with its
+  reason. A crate is under that ban once its root carries
+  `#![deny(clippy::disallowed_methods, clippy::disallowed_types)]`; one that
+  does not yet still wipes by hand — move it over, don't add to it.
 - **Every new file starts with the SPDX header** (`AGPL-3.0-only` — copy it from
   any neighbouring source file).
 - **Don't commit, push, flash, sign, or write OTP fuses unless asked.** The

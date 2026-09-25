@@ -548,6 +548,20 @@ of its own — every value `rsk-rsa` owns rides in a `Zeroizing`, but a temporar
 the library allocates internally does not). Short-lived, library-internal, not
 wipeable without forking the crates.
 
+What holds the first sentence is a type, not a habit. Key-grade bytes live in
+`rsk_secret::Secret` — or, for a buffer that outlives the scope, under a
+`WipeGuard` — whose `Drop` runs on every exit a scope has, a `?` included, and
+the root `clippy.toml` refuses a bare `Zeroize::zeroize` or a `Zeroizing`
+anywhere else. The migration onto it is not finished: a crate whose root does not
+yet deny those lints still wipes by hand, and a hand-written wipe below an early
+return is skipped when that return fires. Two exits no type reaches. A panic runs
+nothing — `panic-halt` spins with no unwinding and no `Drop`, so a panic reached
+with a key unsealed leaves it in SRAM until power is cut; what bounds that is
+keeping a panic unreachable from host input, which is what the fuzz targets are
+for. And a move is a `memcpy` whose source nothing wipes: a secret is built in
+place and handed on by reference, and the compiler's own copies stay the
+residual named above.
+
 A WebAuthn **large-blob key is obtainable without user interaction**. CTAP 2.1
 §12.3 puts no UP/UV precondition on the `largeBlobKey` extension output — unlike
 §12.5, which mandates refusing `hmac-secret` on a silent `up:false` probe — and

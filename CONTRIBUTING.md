@@ -86,6 +86,12 @@ and a new `unsafe` block or `unsafe impl` a `// SAFETY:` comment, which clippy
 refuses to build without. PRs that add undocumented `unsafe` don't get merged,
 full stop.
 
+Key-grade bytes live in `rsk_secret::Secret` (or under a `WipeGuard` when the
+buffer outlives the scope), which wipes on every exit, a `?` included; the root
+`clippy.toml` refuses a bare `Zeroize::zeroize` or a `Zeroizing`, in every crate
+whose root denies those lints. A wipe written by hand at the end of a function
+is the bug that type exists to remove.
+
 Every file starts with the SPDX header:
 
 ```rust

@@ -1,0 +1,7 @@
+# Contracts clippy holds for every crate in the repository. See AGENTS.md.
+disallowed-methods = [
+    { path = "zeroize::Zeroize::zeroize", reason = "hold key-grade bytes in rsk_secret::Secret, or a buffer that outlives the scope in a WipeGuard: a bare wipe is skipped by any `?` above it" },
+]
+disallowed-types = [
+    { path = "zeroize::Zeroizing", reason = "use rsk_secret::Secret: Zeroizing derives Debug and PartialEq, so it prints a secret and compares it in variable time" },
+]

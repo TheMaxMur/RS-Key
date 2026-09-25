@@ -392,15 +392,10 @@ where = "## Seed backup (the deliberate exception)"
 id = "TM-ZEROIZATION"
 kind = "defence"
 where = "## Zeroization"
-# Three sentences `assurance/secrets.toml` argues from, pinned because that
-# register is the only reader this clause has ever had and every one of them is
-# BELOW the locked first line. The first is the claim the register answers per
-# source and per exit; the second names three residuals it re-registers against
-# rows rather than re-litigating; the third is a measurement with a stated
-# revalidation trigger, and 47 rows' reboot answer is that measurement. What is
-# NOT pinned, deliberately: the panic exit, because the clause does not mention
-# it. That silence is the register's own finding and `RES-PANIC-HALT` is where
-# it is written down; a sentence added here would be the thing to pin next.
+# Three sentences the zeroization contract rests on, pinned because every one of
+# them is BELOW the locked first line: the claim `rsk_secret::Secret` and the
+# clippy.toml ban now hold by construction, the residuals no type reaches, and a
+# measurement with a stated revalidation trigger that covers the reboot exit.
 #
 # The fourth is owed rather than chosen: the body hands the SRAM half of its
 # claim to `PLAT-MEM-001`, and `check_rests_on` demands a pin on the sentence

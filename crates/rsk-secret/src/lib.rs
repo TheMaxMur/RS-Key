@@ -46,6 +46,7 @@
 //! ```
 
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use core::ops::{Deref, DerefMut};
 
@@ -77,6 +78,7 @@ impl<const N: usize> Secret<[u8; N]> {
 }
 
 impl<T: Zeroize> Drop for Secret<T> {
+    #[expect(clippy::disallowed_methods, reason = "the one wipe every Secret runs")]
     fn drop(&mut self) {
         self.0.zeroize();
     }
@@ -109,6 +111,10 @@ impl DerefMut for WipeGuard<'_> {
 }
 
 impl Drop for WipeGuard<'_> {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one wipe every WipeGuard runs"
+    )]
     fn drop(&mut self) {
         self.0.zeroize();
     }

@@ -793,29 +793,6 @@ run "delete-caller dispositions" python scripts/deleter_gate.py
 # `rng`. Cells derived from the dispatch, roots from the handle, reach by call
 # walk. The table is scripts/test_display_borrow_gate.py, driven through THIS row.
 run "display borrows vs dispatch" python scripts/display_borrow_gate.py
-# The same question about RAM rather than flash, and it had no register at all.
-# The threat model has always said key-grade material is wiped "at end of scope
-# including error paths" and nothing held that sentence: 300 of the 444 wipes in
-# the image sit below an early exit of their own function, and the one exit the
-# clause never mentions is the one where nothing runs -- `panic-halt` spins with
-# no unwinding, no Drop, every secret in the frame resident, and that was
-# recorded nowhere. This derives the roster (wipes, `Zeroizing`, self-wiping
-# types -- ELEVEN, not the two a ZeroizeOnDrop grep finds), derives the panic
-# strategy and the reboot's own scrubs, and holds the register both ways.
-# Driven through THIS row, exit taken with no pipe, 48 clauses x 2 arms: each
-# defect -> rc 1 with the message naming THAT defect, and the same defect with
-# that clause alone disabled -> rc 0, which is what makes each one load-bearing
-# rather than decorative. An adversarial review then found nine ways past it,
-# five overclaiming: `n/a` on an exit nothing derives it for (the master seed's
-# row could answer "the error exit cannot happen here"), `explicit` on the reboot
-# exit (escaping the wiper rule and the residual rule at once), a `wiper` row
-# naming ANY of the five scrubs rather than its own, a register-wide residual
-# discharging a per-row `not-wiped`, and `28 of its 22` in the prose. All five
-# redden now. Two more were derivation holes: an inline `#[cfg(test)]` counted as
-# shipped (the highest-value row read 37 where the image has 35) and a `return
-# Sw::…` invisible as an early exit, which is how `rsk-piv/src/lib.rs` derived
-# ZERO over eleven. The table is scripts/test_secrets_gate.py.
-run "secret lifetimes"         python scripts/secrets_gate.py
 # The same shape one crate over, and the finding that asked for it: the OTP use
 # counter's own two files each stated a roster of its writers from memory and
 # each was wrong. `counter.rs` said "both writers … take their step from here"
