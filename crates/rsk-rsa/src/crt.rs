@@ -240,8 +240,8 @@ pub fn private_op(
         return Err(RsaError::BadBlock);
     }
     // num-bigint-dig's BigUint has no zeroizing Drop (its heap limbs are freed
-    // un-wiped), so the key's halves and the blinding values ride in a `Secret`
-    // that scrubs them on drop — on the success path and every `?` alike.
+    // un-wiped), so the key's halves, the blinding values and the result — for a
+    // decipher, the plaintext — ride in a `Secret`; the library's own copies do not.
     let p = Secret::new(BigUint::from_bytes_be(crt.p()));
     let q = Secret::new(BigUint::from_bytes_be(crt.q()));
     let n = p.expose() * q.expose();
@@ -255,8 +255,8 @@ pub fn private_op(
     n_le[..nb.len()].copy_from_slice(&nb);
     let pub_pow = |base: &BigUint| -> Option<BigUint> {
         let mut b_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
-        let bb = base.to_bytes_le();
-        b_le.expose_mut()[..bb.len()].copy_from_slice(&bb);
+        let bb = Secret::new(base.to_bytes_le());
+        b_le.expose_mut()[..bb.expose().len()].copy_from_slice(bb.expose());
         let mut o_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
         let ok = crate::modexp_pub(
             &b_le.expose()[..mlen],
@@ -271,7 +271,9 @@ pub fn private_op(
     };
 
     let (r, r_inv) = blind_pair(&n, mlen, rng);
-    let blinded = Secret::new((&m * pub_pow(r.expose()).ok_or(RsaError::Failed)?) % &n);
+    let re = Secret::new(pub_pow(r.expose()).ok_or(RsaError::Failed)?);
+    let mre = Secret::new(&m * re.expose());
+    let blinded = Secret::new(mre.expose() % &n);
 
     // CRT private op on the blinded message, then unblind.
     let mut base_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
@@ -289,21 +291,22 @@ pub fn private_op(
         &mut sig_le.expose_mut()[..mlen],
     );
     let s_blind = Secret::new(BigUint::from_bytes_le(&sig_le.expose()[..mlen]));
-    let s = (s_blind.expose() * r_inv.expose()) % &n;
+    let prod = Secret::new(s_blind.expose() * r_inv.expose());
+    let s = Secret::new(prod.expose() % &n);
     base_le.wipe();
     sig_le.wipe();
 
     // Bellcore fault check: a correct signature satisfies sigᵉ ≡ c (mod n).
-    if pub_pow(&s).ok_or(RsaError::Failed)? != m {
+    if pub_pow(s.expose()).ok_or(RsaError::Failed)? != m {
         return Err(RsaError::Failed);
     }
-    let sb = s.to_bytes_be();
-    if sb.len() > mlen {
+    let sb = Secret::new(s.expose().to_bytes_be());
+    if sb.expose().len() > mlen {
         return Err(RsaError::Failed);
     }
-    let off = mlen - sb.len();
+    let off = mlen - sb.expose().len();
     out[..off].fill(0);
-    out[off..mlen].copy_from_slice(&sb);
+    out[off..mlen].copy_from_slice(sb.expose());
     Ok(mlen)
 }
 

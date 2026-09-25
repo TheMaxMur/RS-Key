@@ -65,6 +65,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- An RSA decipher left the deciphered block in freed RAM. OpenPGP's
+  PSO:DECIPHER and PIV's GENERAL AUTHENTICATE both run
+  `rsk_rsa::crt::private_op`, whose unblinded result — for a decipher, the
+  PKCS#1 block that carries the session key — was a plain bignum, reduced from
+  a product equal to it modulo the public n and copied into two byte vectors on
+  its way out, one for the fault check and one for the answer. All four were
+  freed unwiped, and the heap does not clear what it frees. The software path,
+  `RsaKey::private_op` (the legacy decipher, and the signature on the PIV
+  key-generation certificate), freed its product the same way and every step
+  of its CRT recombination too — a CRT half, which with the blinded input
+  factors the key — and both paths their blinding temporaries. All of them are
+  `rsk_secret::Secret`s now, wiped before they are freed. What is left is
+  `num-bigint-dig`'s own working buffers — the reduction's, and on the
+  software path the fault check's — each freed holding the result, less the
+  eight bytes the allocator's free-list header takes. The heap wipe planned for
+  this work closes those. Reading any of it takes a memory read on the live
+  device. **bcdDevice → 0x0A1F.**
+
 - An ML-DSA credential key was copied into its box through the stack, leaving
   the whole expanded key behind each time it was derived. `rsk-fido` boxed
   `MlDsa*::from_seed(&xi)`, which built the key — the NTT-domain s1, s2 and

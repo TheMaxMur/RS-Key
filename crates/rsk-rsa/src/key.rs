@@ -178,22 +178,29 @@ impl RsaKey {
             return Err(RsaError::BadBlock);
         }
         let (r, r_inv) = blind_pair(&self.n, k, rng);
-        let blinded = Secret::new((&c * r.expose().modpow(&self.e, &self.n)) % &self.n);
+        let re = Secret::new(r.expose().modpow(&self.e, &self.n));
+        let cre = Secret::new(&c * re.expose());
+        let blinded = Secret::new(cre.expose() % &self.n);
         let m = match &self.crt {
             Some(crt) => {
                 let m1 = Secret::new(blinded.expose().modpow(&crt.dp, &self.p));
                 let m2 = Secret::new(blinded.expose().modpow(&crt.dq, &self.q));
-                // Garner's recombination, in unsigned arithmetic where the
-                // `rsa` crate used signed. `m1 < p` and `m2 % p < p` by
-                // construction, so `m1 + p - (m2 % p)` cannot underflow — for
-                // any `p` and `q`, not only a balanced pair.
-                let diff = Secret::new((m1.expose() + &self.p - (m2.expose() % &self.p)) % &self.p);
-                let h = Secret::new((&crt.qinv * diff.expose()) % &self.p);
-                Secret::new(m2.expose() + h.expose() * &self.q)
+                // Garner, unsigned where the `rsa` crate was signed: `m1 < p` and
+                // `m2 % p < p`, so `m1 + p - m2 % p` cannot underflow for any `p`, `q`.
+                // Each step is a CRT half or follows from one, so each is a `Secret`.
+                let m2p = Secret::new(m2.expose() % &self.p);
+                let sum = Secret::new(m1.expose() + &self.p);
+                let dif = Secret::new(sum.expose() - m2p.expose());
+                let diff = Secret::new(dif.expose() % &self.p);
+                let hq = Secret::new(&crt.qinv * diff.expose());
+                let h = Secret::new(hq.expose() % &self.p);
+                let hqq = Secret::new(h.expose() * &self.q);
+                Secret::new(m2.expose() + hqq.expose())
             }
             None => Secret::new(blinded.expose().modpow(&self.d, &self.n)),
         };
-        let m = Secret::new((m.expose() * r_inv.expose()) % &self.n);
+        let prod = Secret::new(m.expose() * r_inv.expose());
+        let m = Secret::new(prod.expose() % &self.n);
         if m.expose().modpow(&self.e, &self.n) != c {
             return Err(RsaError::Failed);
         }
