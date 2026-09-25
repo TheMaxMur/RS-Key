@@ -631,6 +631,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **OATH's seal buffers are typed** — refactor; nothing a host sees changes.
+  `rsk-oath`'s seal key, the sealing and unsealing blob, the credential walk's
+  scratch and the reseal pass's two buffers are `rsk_secret::Secret`s, wiped in
+  place where the hand wipes were and on every other exit. The crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A1F → 0x0A20.
+
 - **RSA's working buffers and bignums are typed** — refactor; nothing a host
   sees changes. `rsk-rsa`'s modexp and CRT buffers (the assembly's limb arrays,
   a prime candidate among them), the CRT field bytes, the blinding factor, the

@@ -6,6 +6,7 @@
 //! optional access code, and the Nitrokey OTP-PIN / password-safe extensions.
 
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 mod seal;
 
@@ -18,7 +19,7 @@ use rsk_fs::{Fs, KeyFid, Storage};
 use rsk_sdk::tlv::{find_tag, format_len};
 pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 /// YKOATH instance AID, all 8 bytes: YubiKit selects by the whole of it, ykman by 7.
 pub const OATH_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x21, 0x01, 0x01];
@@ -1698,13 +1699,13 @@ pub fn for_each_cred<S: Storage>(
 ) -> usize {
     let mut fids = [0u16; MAX_OATH_CRED as usize];
     let nfids = present_creds(fs, &mut fids);
-    let mut scratch = [0u8; CRED_MAX];
+    let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
     let mut count = 0;
     for &fid in &fids[..nfids] {
-        let Some(n) = seal::seal_read(dev, fs, KeyFid::new(fid), &mut scratch) else {
+        let Some(n) = seal::seal_read(dev, fs, KeyFid::new(fid), scratch.expose_mut()) else {
             continue;
         };
-        let blob = &scratch[..n.min(CRED_MAX)];
+        let blob = &scratch.expose()[..n.min(CRED_MAX)];
         let (Some(name), Some(key)) = (
             find_tag(blob, TAG_NAME as u16),
             find_tag(blob, TAG_KEY as u16),
@@ -1730,7 +1731,7 @@ pub fn for_each_cred<S: Storage>(
         });
         count += 1;
     }
-    scratch.zeroize();
+    scratch.wipe();
     count
 }
 
@@ -1765,17 +1766,31 @@ fn find_cred<S: Storage>(
 pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
     let mut fids = [0u16; MAX_OATH_CRED as usize];
     let n = present_creds(fs, &mut fids);
-    let mut out = [0u8; CRED_MAX];
+    let mut out = Secret::<[u8; CRED_MAX]>::zeroed();
     // Sized to hold a full sealed blob so a sealed-but-unauthenticating record
     // reads back at its true length and is skipped rather than truncated and
     // mis-resealed (mirrors `rsk_otp::migrate_seal`).
-    let mut raw = [0u8; seal::MAX_BLOB];
+    let mut raw = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
     for &fid in &fids[..n] {
-        reseal_if_plaintext(dev, fs, rng, KeyFid::new(fid), &mut out, &mut raw);
+        reseal_if_plaintext(
+            dev,
+            fs,
+            rng,
+            KeyFid::new(fid),
+            out.expose_mut(),
+            raw.expose_mut(),
+        );
     }
-    reseal_if_plaintext(dev, fs, rng, EF_OATH_CODE, &mut out, &mut raw);
-    out.zeroize();
-    raw.zeroize();
+    reseal_if_plaintext(
+        dev,
+        fs,
+        rng,
+        EF_OATH_CODE,
+        out.expose_mut(),
+        raw.expose_mut(),
+    );
+    out.wipe();
+    raw.wipe();
 }
 
 /// Bring `fid` to a seal under the current kbase arm. No-op if it already

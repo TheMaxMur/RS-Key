@@ -1630,7 +1630,7 @@ dependencies = [
  "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]

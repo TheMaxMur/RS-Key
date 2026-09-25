@@ -2243,8 +2243,8 @@ dependencies = [
  "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-secret",
  "rsk-usb",
- "zeroize",
 ]
 
 [[package]]

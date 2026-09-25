@@ -21,7 +21,7 @@ kani-soft = ["rsk-crypto/kani-soft"]
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
-zeroize = { workspace = true }
+rsk-secret = { workspace = true }
 
 [dev-dependencies]
 # RamStorage for the host tests (the same backend rsk-fido/rsk-openpgp use).

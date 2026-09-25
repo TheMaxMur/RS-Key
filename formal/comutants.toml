@@ -1277,11 +1277,11 @@ status = "unreachable"
 evidence = """the applets' deselect is redundant with their own fresh SELECT, so
 removing it from the ICC power transition changes nothing observable. Three
 applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:392-394
-(sess.reset), crates/rsk-openpgp/src/lib.rs:338-340 (reset_session), crates/rsk-oath/src/lib.rs:1162-1169
+(sess.reset), crates/rsk-openpgp/src/lib.rs:338-340 (reset_session), crates/rsk-oath/src/lib.rs:1163-1170
 (validated + otp_pin_verified) — and all three ALSO re-lock in select on a
 select that is not a re-SELECT: piv and openpgp on `if !reselect`, oath by
 recomputing `validated = !code_set` there and clearing otp_pin_verified on every
-SELECT (crates/rsk-oath/src/lib.rs:1202-1203). After Dispatcher::reset_card
+SELECT (crates/rsk-oath/src/lib.rs:1203-1204). After Dispatcher::reset_card
 takes `self.current` (crates/rsk-sdk/src/applet.rs:228) every route back to an applet is a
 `select(reselect = false)`, so no reachable command sees an inherited status.
 The first patch here neutered the WHOLE reset_card call and scored a false kill:
