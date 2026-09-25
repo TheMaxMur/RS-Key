@@ -21,6 +21,7 @@ use embassy_futures::select::{Either, select};
 use embassy_time::Timer;
 use embassy_usb::Builder;
 use embassy_usb::driver::{Driver, Endpoint, EndpointError, EndpointIn, EndpointOut};
+use rsk_secret::WipeGuard;
 
 // CCID bulk-OUT message types (Bulk-OUT, PC → reader). The message vocabulary
 // and the framing helpers below are public for the same reason CTAPHID's are:
@@ -403,7 +404,10 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         } = self;
         let seq = rx[6];
         let n = {
-            let mut fut = core::pin::pin!(handler.handle_apdu(&rx[a..b], &mut tx[HEADER..]));
+            // The APDU can carry an imported private key: wiped once the handler is
+            // done with it, before the reply goes out.
+            let req = WipeGuard::new(&mut rx[a..b]);
+            let mut fut = core::pin::pin!(handler.handle_apdu(&req, &mut tx[HEADER..]));
             loop {
                 match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
                     Either::First(n) => break n,
@@ -424,16 +428,13 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         put_header(tx, CCID_DATA_BLOCK_RET, n as u32, seq, *status);
         let total = HEADER + n;
         let zlp = total.is_multiple_of(EP_PACKET_SIZE);
+        // The reply (a deciphered session key, a card status) is wiped once sent.
+        let resp = WipeGuard::new(&mut tx[..total]);
         let _ = select(
-            write_ep.write_transfer(&tx[..total], zlp),
+            write_ep.write_transfer(&resp, zlp),
             Timer::after_millis(TX_TIMEOUT_MS),
         )
         .await;
-        // The APDU can carry an imported private key; the response a deciphered
-        // session key. Wipe both once the transfer is on the wire.
-        use zeroize::Zeroize;
-        rx[a..b].zeroize();
-        tx[..total].zeroize();
     }
 
     /// Run a `PC_to_RDR_Secure` (`self.rx[a..b]` = the `abPINDataStructure`) via the
@@ -454,7 +455,9 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         } = self;
         let seq = rx[6];
         let result = {
-            let mut fut = core::pin::pin!(handler.handle_secure(&rx[a..b], &mut tx[HEADER..]));
+            // No PIN in here (the pad collects it on-device); wiped as `run_xfr`'s is.
+            let req = WipeGuard::new(&mut rx[a..b]);
+            let mut fut = core::pin::pin!(handler.handle_secure(&req, &mut tx[HEADER..]));
             loop {
                 match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
                     Either::First(r) => break r,
@@ -482,16 +485,13 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         tx[8] = result.error; // bError (put_header clears it; set the pad cancel/timeout code)
         let total = HEADER + n;
         let zlp = total.is_multiple_of(EP_PACKET_SIZE);
+        // The reply (a deciphered session key, a card status) is wiped once sent.
+        let resp = WipeGuard::new(&mut tx[..total]);
         let _ = select(
-            write_ep.write_transfer(&tx[..total], zlp),
+            write_ep.write_transfer(&resp, zlp),
             Timer::after_millis(TX_TIMEOUT_MS),
         )
         .await;
-        // The request carries no PIN (collected on-device), but the response holds
-        // the card status; wipe both buffers once the reply is on the wire.
-        use zeroize::Zeroize;
-        rx[a..b].zeroize();
-        tx[..total].zeroize();
     }
 
     /// Accumulate bulk OUT packets into `self.rx` until a full CCID message is

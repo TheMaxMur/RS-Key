@@ -612,39 +612,39 @@ rsk_slip39_max	crates/rsk-ui/src/lib.rs:1582	5	marshals	M	the constant 16 for a 
 hit_share_picker	crates/rsk-ui/src/lib.rs:1588	17	marshals	M	five stepper rectangles; Continue only leads to the warning screen with a hold	-
 step_share_params	crates/rsk-ui/src/lib.rs:1606	25	decides	D5	keeps SHARE_MIN <= T <= N <= SHARE_MAX: the threshold T is exactly how many shares recover the seed	-
 hit_apps	crates/rsk-ui/src/lib.rs:1681	9	marshals	M	three applet selection rows	-
-keepalive_status	crates/rsk-usb/src/ctaphid.rs:63	16	marshals	M	choice of the keepalive status byte, the CANCEL window is opened not by it but by up_pending in run_with_keepalive	-
-is_cancel_frame	crates/rsk-usb/src/ctaphid.rs:80	13	decides	D5	decides that the frame is a CANCEL for the ACTIVE channel; this is where the touch wait is cut off	SEC-TRANS-001,SEC-FIDO-002
-default	crates/rsk-usb/src/ctaphid.rs:129	3	marshals	M	delegates to new	-
-new	crates/rsk-usb/src/ctaphid.rs:135	3	marshals	M	counter starting at FIRST_CID, the policy is in allocate	-
-allocate	crates/rsk-usb/src/ctaphid.rs:139	10	decides	D5	issues a unique CID, skipping 0 and broadcast: a shared id grants a foreign application a channel resync	SEC-TRANS-001
-arm	crates/rsk-usb/src/ctaphid.rs:165	12	decides	D4	takes and releases CTAPHID_LOCK; a release by a non-owner is ignored	-
-refuses	crates/rsk-usb/src/ctaphid.rs:178	17	decides	D5	permission predicate: a foreign channel is rejected, and the only carve-out is INIT on broadcast	SEC-TRANS-001
-blocks	crates/rsk-usb/src/ctaphid.rs:196	4	decides	D5	lock ownership and expiry are the second half of the same permission	SEC-TRANS-001
-handle_vendor	crates/rsk-usb/src/ctaphid.rs:267	9	marshals	M	default trait body, overridden by firmware/src/worker.rs:219 — does not reach the image	-
-reset_app_selection	crates/rsk-usb/src/ctaphid.rs:277	6	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:216	-
-can_wink	crates/rsk-usb/src/ctaphid.rs:284	8	marshals	M	the same: default false, overridden by firmware/src/worker.rs:225	-
-wink	crates/rsk-usb/src/ctaphid.rs:293	4	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:230	-
-init_capabilities	crates/rsk-usb/src/ctaphid.rs:299	11	marshals	M	assembles the capabilities byte for the INIT response	-
-perform_wink	crates/rsk-usb/src/ctaphid.rs:311	12	marshals	M	blinking the indicator: no gate, no secret, no write	-
-default	crates/rsk-usb/src/ctaphid.rs:352	3	marshals	M	delegates to new	-
-new	crates/rsk-usb/src/ctaphid.rs:358	11	marshals	M	zero initialization of the buffer and the transaction fields	-
-message	crates/rsk-usb/src/ctaphid.rs:370	5	decides	M	slice of the assembled message	-
-in_progress	crates/rsk-usb/src/ctaphid.rs:376	4	marshals	M	a read of the in_tx flag	-
-current_cid	crates/rsk-usb/src/ctaphid.rs:381	4	marshals	M	a read of the transaction channel	-
-abort	crates/rsk-usb/src/ctaphid.rs:386	4	marshals	M	clearing in_tx; the abort decision is made by run on timeout	-
-scrub	crates/rsk-usb/src/ctaphid.rs:391	7	decides	D2	zeroes the message buffer, otherwise the PIN and key material stay in RAM until the next message	-
-feed	crates/rsk-usb/src/ctaphid.rs:403	73	decides	D5	all three transport refusals: a foreign channel, a seq gap and a length larger than the buffer	SEC-TRANS-001,SEC-TRANS-002,SEC-TRANS-003
-new	crates/rsk-usb/src/ctaphid.rs:491	10	marshals	M	frame iterator constructor	-
-next	crates/rsk-usb/src/ctaphid.rs:506	27	marshals	M	slicing the response into INIT and CONT frames	-
-new	crates/rsk-usb/src/ctaphid.rs:560	19	marshals	M	assembly of the transport from the reader, writer and hooks	-
-run	crates/rsk-usb/src/ctaphid.rs:580	34	decides	D5	drops short reads, otherwise feed would parse the buffer tail as payload, and breaks off the transaction on RX timeout	SEC-TRANS-003
-on_frame	crates/rsk-usb/src/ctaphid.rs:621	14	decides	D5	the only place in the image where Outcome turns into a response and where lock.refuses is applied	SEC-TRANS-001
-dispatch	crates/rsk-usb/src/ctaphid.rs:640	89	decides	D4	the table carries not only an address: INIT resets the selected applet, LOCK arms the lock, an empty CBOR is rejected	SEC-TRANS-001,SEC-TRANS-002
-run_with_keepalive	crates/rsk-usb/src/ctaphid.rs:730	84	decides	D1	opens the CANCEL watch window only while a touch is awaited, and zeroes the request together with the response	SEC-FIDO-002
-run_vendor	crates/rsk-usb/src/ctaphid.rs:815	28	decides	D2	zeroes scratch and the message buffer after a vendor command	-
-write_frame	crates/rsk-usb/src/ctaphid.rs:856	5	marshals	M	one write of a report to the endpoint	-
-write_frames	crates/rsk-usb/src/ctaphid.rs:863	25	marshals	M	slicing and writing, abandoning the response on a host timeout	-
-write_message	crates/rsk-usb/src/ctaphid.rs:889	13	marshals	M	write_frames with the production timeout	-
+keepalive_status	crates/rsk-usb/src/ctaphid.rs:64	16	marshals	M	choice of the keepalive status byte, the CANCEL window is opened not by it but by up_pending in run_with_keepalive	-
+is_cancel_frame	crates/rsk-usb/src/ctaphid.rs:81	13	decides	D5	decides that the frame is a CANCEL for the ACTIVE channel; this is where the touch wait is cut off	SEC-TRANS-001,SEC-FIDO-002
+default	crates/rsk-usb/src/ctaphid.rs:130	3	marshals	M	delegates to new	-
+new	crates/rsk-usb/src/ctaphid.rs:136	3	marshals	M	counter starting at FIRST_CID, the policy is in allocate	-
+allocate	crates/rsk-usb/src/ctaphid.rs:140	10	decides	D5	issues a unique CID, skipping 0 and broadcast: a shared id grants a foreign application a channel resync	SEC-TRANS-001
+arm	crates/rsk-usb/src/ctaphid.rs:166	12	decides	D4	takes and releases CTAPHID_LOCK; a release by a non-owner is ignored	-
+refuses	crates/rsk-usb/src/ctaphid.rs:179	17	decides	D5	permission predicate: a foreign channel is rejected, and the only carve-out is INIT on broadcast	SEC-TRANS-001
+blocks	crates/rsk-usb/src/ctaphid.rs:197	4	decides	D5	lock ownership and expiry are the second half of the same permission	SEC-TRANS-001
+handle_vendor	crates/rsk-usb/src/ctaphid.rs:268	9	marshals	M	default trait body, overridden by firmware/src/worker.rs:219 — does not reach the image	-
+reset_app_selection	crates/rsk-usb/src/ctaphid.rs:278	6	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:216	-
+can_wink	crates/rsk-usb/src/ctaphid.rs:285	8	marshals	M	the same: default false, overridden by firmware/src/worker.rs:225	-
+wink	crates/rsk-usb/src/ctaphid.rs:294	4	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:230	-
+init_capabilities	crates/rsk-usb/src/ctaphid.rs:300	11	marshals	M	assembles the capabilities byte for the INIT response	-
+perform_wink	crates/rsk-usb/src/ctaphid.rs:312	12	marshals	M	blinking the indicator: no gate, no secret, no write	-
+default	crates/rsk-usb/src/ctaphid.rs:353	3	marshals	M	delegates to new	-
+new	crates/rsk-usb/src/ctaphid.rs:359	11	marshals	M	zero initialization of the buffer and the transaction fields	-
+message	crates/rsk-usb/src/ctaphid.rs:371	5	decides	M	slice of the assembled message	-
+in_progress	crates/rsk-usb/src/ctaphid.rs:377	4	marshals	M	a read of the in_tx flag	-
+current_cid	crates/rsk-usb/src/ctaphid.rs:382	4	marshals	M	a read of the transaction channel	-
+abort	crates/rsk-usb/src/ctaphid.rs:387	4	marshals	M	clearing in_tx; the abort decision is made by run on timeout	-
+scrub	crates/rsk-usb/src/ctaphid.rs:392	7	decides	D2	zeroes the message buffer, otherwise the PIN and key material stay in RAM until the next message	-
+feed	crates/rsk-usb/src/ctaphid.rs:409	73	decides	D5	all three transport refusals: a foreign channel, a seq gap and a length larger than the buffer	SEC-TRANS-001,SEC-TRANS-002,SEC-TRANS-003
+new	crates/rsk-usb/src/ctaphid.rs:497	10	marshals	M	frame iterator constructor	-
+next	crates/rsk-usb/src/ctaphid.rs:512	27	marshals	M	slicing the response into INIT and CONT frames	-
+new	crates/rsk-usb/src/ctaphid.rs:566	19	marshals	M	assembly of the transport from the reader, writer and hooks	-
+run	crates/rsk-usb/src/ctaphid.rs:586	34	decides	D5	drops short reads, otherwise feed would parse the buffer tail as payload, and breaks off the transaction on RX timeout	SEC-TRANS-003
+on_frame	crates/rsk-usb/src/ctaphid.rs:627	14	decides	D5	the only place in the image where Outcome turns into a response and where lock.refuses is applied	SEC-TRANS-001
+dispatch	crates/rsk-usb/src/ctaphid.rs:646	89	decides	D4	the table carries not only an address: INIT resets the selected applet, LOCK arms the lock, an empty CBOR is rejected	SEC-TRANS-001,SEC-TRANS-002
+run_with_keepalive	crates/rsk-usb/src/ctaphid.rs:736	84	decides	D1	opens the CANCEL watch window only while a touch is awaited, and zeroes the request together with the response	SEC-FIDO-002
+run_vendor	crates/rsk-usb/src/ctaphid.rs:820	28	decides	D2	zeroes scratch and the message buffer after a vendor command	-
+write_frame	crates/rsk-usb/src/ctaphid.rs:860	5	marshals	M	one write of a report to the endpoint	-
+write_frames	crates/rsk-usb/src/ctaphid.rs:867	25	marshals	M	slicing and writing, abandoning the response on a host timeout	-
+write_message	crates/rsk-usb/src/ctaphid.rs:893	13	marshals	M	write_frames with the production timeout	-
 set	firmware/src/pin_lock.rs:51	5	decides	D4	stores the soft lock in scratch2 so that it survives a warm reboot	SEC-BOOT-002
 was_warm_boot	firmware/src/pin_lock.rs:57	6	decides	D5	tells a warm reset from a cold one without consuming the tag — the §6.6 window rests on this	SEC-BOOT-002
 restore_and_arm	firmware/src/pin_lock.rs:64	8	decides	D4	brings the lock back into this power cycle and re-arms the tag exactly once	SEC-BOOT-002
@@ -704,30 +704,30 @@ fs_usage	crates/rsk-rescue/src/lib.rs:501	17	marshals	M	FID enumeration and a su
 days_from_civil	crates/rsk-rescue/src/lib.rs:530	9	marshals	M	Hinnant's calendar arithmetic, stateless	-
 epoch_from_civil	crates/rsk-rescue/src/lib.rs:540	9	marshals	M	a range check against literals plus a conversion to epoch; no gate is spent here	-
 civil_from_epoch	crates/rsk-rescue/src/lib.rs:550	24	marshals	M	the reverse conversion from epoch to calendar for the READ P1=04 report	-
-new	crates/rsk-sdk/src/applet.rs:19	3	marshals	M	wraps the slice in a ResBuf with len=0	-
-clear	crates/rsk-sdk/src/applet.rs:22	3	marshals	M	resets only the length; zeroing is the job of clear_pending/scrub	-
-len	crates/rsk-sdk/src/applet.rs:25	3	marshals	M	getter for the response body length	-
-is_empty	crates/rsk-sdk/src/applet.rs:28	3	marshals	M	getter: the length equals zero	-
-capacity	crates/rsk-sdk/src/applet.rs:31	3	marshals	M	getter for the size of the backing buffer, with which config_tlv bounds the echo	-
-push	crates/rsk-sdk/src/applet.rs:34	10	marshals	M	appends the caller's byte and returns false on overflow	-
-extend	crates/rsk-sdk/src/applet.rs:44	10	marshals	M	copies the caller's slice whole or writes nothing	-
-spare_mut	crates/rsk-sdk/src/applet.rs:54	8	marshals	M	hands out the unwritten tail for in-place filling; the caller decides what goes there	-
-commit	crates/rsk-sdk/src/applet.rs:62	10	marshals	M	length arithmetic with a clamp to capacity; the "how much was actually written" discipline belongs to the caller	-
-as_slice	crates/rsk-sdk/src/applet.rs:72	3	marshals	M	a slice of the written body	-
-truncate	crates/rsk-sdk/src/applet.rs:75	6	marshals	M	shortens the body to n bytes for slicing by Le	-
-deselect	crates/rsk-sdk/src/applet.rs:98	2	decides	D4	the EMPTY trait default: an applet that has not overridden deselect keeps its status on deselection — that is exactly the SEC-SEAM-001 seam	SEC-SEAM-001
-response_chaining	crates/rsk-sdk/src/applet.rs:100	9	marshals	M	the default false is a per-applet 61xx transport option, not a permission	-
-bytes_remaining	crates/rsk-sdk/src/applet.rs:132	4	marshals	M	builds the 61XX status with SW2 saturating to 00	-
-is_select	crates/rsk-sdk/src/applet.rs:137	10	decides	D5	its true is the carve-out that drops a live chain instead of absorbing it; a bug here left the previous applet selected and PIN-verified	SEC-SEAM-001,SEC-SEAM-004
-default	crates/rsk-sdk/src/applet.rs:171	3	marshals	M	delegates to Dispatcher::new	-
-new	crates/rsk-sdk/src/applet.rs:177	14	decides	D4	enabled: u32::MAX (applet.rs:188) — the routing table starts fully permissive	SEC-ADM-004
-current	crates/rsk-sdk/src/applet.rs:192	4	marshals	M	getter for the index of the selected applet; the callers at ccid.rs:340,506,556 make it a condition	-
-set_enabled	crates/rsk-sdk/src/applet.rs:197	9	decides	D4	this is exactly where the routing table gets its PERMISSION column (applet.rs:204)	SEC-ADM-001,SEC-ADM-004
-selectable	crates/rsk-sdk/src/applet.rs:207	4	decides	D5	the permission test that process consults at three points (applet.rs:359,383,413); a cleared bit yields FILE_NOT_FOUND	SEC-ADM-001,SEC-ADM-004
-clear_selection	crates/rsk-sdk/src/applet.rs:212	6	decides	D4	drops the selection on CTAPHID_INIT so that U2F does not inherit the previous session's vendor-AID	SEC-SEAM-001
-reset_card	crates/rsk-sdk/src/applet.rs:219	17	decides	D4	deselect drops the applet's security status, which clear_selection does not do, plus resets the chain and pending	SEC-SEAM-001,SEC-SEAM-004
-process	crates/rsk-sdk/src/applet.rs:237	184	decides	D4	the table carries permission: selectable is consulted at applet.rs:359,383,413, and the selection changes at applet.rs:391,393; plus the binding of a chain to its opener	SEC-SEAM-001,SEC-SEAM-004,SEC-ADM-004
-clear_pending	crates/rsk-sdk/src/applet.rs:422	11	decides	D2	zeroes the held response tail, which may be PSO output	SEC-SEAM-001
-clear_chaining	crates/rsk-sdk/src/applet.rs:434	12	decides	D2	zeroes the accumulated chain holding private-key IMPORT data and clears the latch the next command could stick to	SEC-SEAM-001
+new	crates/rsk-sdk/src/applet.rs:20	3	marshals	M	wraps the slice in a ResBuf with len=0	-
+clear	crates/rsk-sdk/src/applet.rs:23	3	marshals	M	resets only the length; zeroing is the job of clear_pending/scrub	-
+len	crates/rsk-sdk/src/applet.rs:26	3	marshals	M	getter for the response body length	-
+is_empty	crates/rsk-sdk/src/applet.rs:29	3	marshals	M	getter: the length equals zero	-
+capacity	crates/rsk-sdk/src/applet.rs:32	3	marshals	M	getter for the size of the backing buffer, with which config_tlv bounds the echo	-
+push	crates/rsk-sdk/src/applet.rs:35	10	marshals	M	appends the caller's byte and returns false on overflow	-
+extend	crates/rsk-sdk/src/applet.rs:45	10	marshals	M	copies the caller's slice whole or writes nothing	-
+spare_mut	crates/rsk-sdk/src/applet.rs:55	8	marshals	M	hands out the unwritten tail for in-place filling; the caller decides what goes there	-
+commit	crates/rsk-sdk/src/applet.rs:63	10	marshals	M	length arithmetic with a clamp to capacity; the "how much was actually written" discipline belongs to the caller	-
+as_slice	crates/rsk-sdk/src/applet.rs:73	3	marshals	M	a slice of the written body	-
+truncate	crates/rsk-sdk/src/applet.rs:76	6	marshals	M	shortens the body to n bytes for slicing by Le	-
+deselect	crates/rsk-sdk/src/applet.rs:99	2	decides	D4	the EMPTY trait default: an applet that has not overridden deselect keeps its status on deselection — that is exactly the SEC-SEAM-001 seam	SEC-SEAM-001
+response_chaining	crates/rsk-sdk/src/applet.rs:101	9	marshals	M	the default false is a per-applet 61xx transport option, not a permission	-
+bytes_remaining	crates/rsk-sdk/src/applet.rs:133	4	marshals	M	builds the 61XX status with SW2 saturating to 00	-
+is_select	crates/rsk-sdk/src/applet.rs:138	10	decides	D5	its true is the carve-out that drops a live chain instead of absorbing it; a bug here left the previous applet selected and PIN-verified	SEC-SEAM-001,SEC-SEAM-004
+default	crates/rsk-sdk/src/applet.rs:172	3	marshals	M	delegates to Dispatcher::new	-
+new	crates/rsk-sdk/src/applet.rs:178	14	decides	D4	enabled: u32::MAX (applet.rs:188) — the routing table starts fully permissive	SEC-ADM-004
+current	crates/rsk-sdk/src/applet.rs:193	4	marshals	M	getter for the index of the selected applet; the callers at ccid.rs:340,506,556 make it a condition	-
+set_enabled	crates/rsk-sdk/src/applet.rs:198	9	decides	D4	this is exactly where the routing table gets its PERMISSION column (applet.rs:204)	SEC-ADM-001,SEC-ADM-004
+selectable	crates/rsk-sdk/src/applet.rs:208	4	decides	D5	the permission test that process consults at three points (applet.rs:359,383,413); a cleared bit yields FILE_NOT_FOUND	SEC-ADM-001,SEC-ADM-004
+clear_selection	crates/rsk-sdk/src/applet.rs:213	6	decides	D4	drops the selection on CTAPHID_INIT so that U2F does not inherit the previous session's vendor-AID	SEC-SEAM-001
+reset_card	crates/rsk-sdk/src/applet.rs:220	17	decides	D4	deselect drops the applet's security status, which clear_selection does not do, plus resets the chain and pending	SEC-SEAM-001,SEC-SEAM-004
+process	crates/rsk-sdk/src/applet.rs:238	184	decides	D4	the table carries permission: selectable is consulted at applet.rs:359,383,413, and the selection changes at applet.rs:391,393; plus the binding of a chain to its opener	SEC-SEAM-001,SEC-SEAM-004,SEC-ADM-004
+clear_pending	crates/rsk-sdk/src/applet.rs:418	11	decides	D2	zeroes the held response tail, which may be PSO output	SEC-SEAM-001
+clear_chaining	crates/rsk-sdk/src/applet.rs:430	12	decides	D2	zeroes the accumulated chain holding private-key IMPORT data and clears the latch the next command could stick to	SEC-SEAM-001
 serve_pending	crates/rsk-sdk/src/applet.rs:447	17	decides	D2	hands out the held tail on 0xC0 ahead of any applet and without consulting the selection (a short-circuit in process before the SELECT parse)	SEC-SEAM-001
-maybe_chain	crates/rsk-sdk/src/applet.rs:465	27	decides	D2	copies the response tail into pending, which outlives the command — it is exactly this that creates the state clear_pending exists for	SEC-SEAM-001
+maybe_chain	crates/rsk-sdk/src/applet.rs:469	27	decides	D2	copies the response tail into pending, which outlives the command — it is exactly this that creates the state clear_pending exists for	SEC-SEAM-001

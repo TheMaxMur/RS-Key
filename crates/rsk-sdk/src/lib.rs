@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! `rsk-sdk` — core smartcard machinery: ISO-7816 APDU parsing ([`apdu`]),
 //! status words ([`sw`]), BER-TLV ([`tlv`]), the `Applet` trait with AID

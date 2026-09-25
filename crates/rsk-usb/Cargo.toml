@@ -24,8 +24,10 @@ embassy-usb = { workspace = true }
 # don't pull in a time driver.
 embassy-time = { workspace = true }
 embassy-futures = { workspace = true }
-# Message/response buffers carry PINs and key material; wiped after dispatch.
+# The CTAPHID reassembly buffer is wiped by hand under an `#[expect]` (`scrub`).
 zeroize = { workspace = true }
+# CCID's request/response and CTAPHID's response buffers, under WipeGuards.
+rsk-secret = { workspace = true }
 # Shared firmware-version const for the CTAPHID INIT device-version bytes, which
 # ykman/yubikit read to gate the Management-over-FIDO DeviceInfo read.
 rsk-sdk = { workspace = true }

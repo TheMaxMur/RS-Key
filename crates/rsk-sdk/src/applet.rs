@@ -3,6 +3,7 @@
 
 //! The `Applet` trait plus AID-based SELECT and APDU dispatch.
 
+use rsk_secret::WipeGuard;
 use zeroize::Zeroize;
 
 use crate::apdu::{Apdu, INS_GET_RESPONSE};
@@ -288,16 +289,12 @@ impl Dispatcher {
                 // Only the terminator was ever bound to the opener, so a second
                 // process could splice its own segments into a live chain and have
                 // the opener's own final APDU dispatch them (audit run-37).
-                self.chain[..self.chain_len].zeroize();
-                self.chain_len = 0;
-                self.chaining = false;
+                self.clear_chaining();
                 return Sw::LAST_CHAIN_EXPECTED;
             }
             if self.chain_len + apdu.nc >= self.chain.len() {
                 // The accumulated segments may already hold key material.
-                self.chain[..self.chain_len].zeroize();
-                self.chain_len = 0;
-                self.chaining = false;
+                self.clear_chaining();
                 // The same length error the final segment's overflow gives
                 // below: the command is too long, and the class byte that
                 // carried it was right. A YubiKey 5.7.4 answers `6700` here too.
@@ -328,9 +325,7 @@ impl Dispatcher {
         if self.chaining
             && (select || (apdu.cla & !0x10, apdu.ins, apdu.p1, apdu.p2) != self.chain_hdr)
         {
-            self.chain[..self.chain_len].zeroize();
-            self.chain_len = 0;
-            self.chaining = false;
+            self.clear_chaining();
             // Dropping the chain and letting the SELECT run is the carve-out from
             // audit run-34 #26; everything else is refused, because absorbing it is
             // what let one process prefix another's command.
@@ -344,34 +339,35 @@ impl Dispatcher {
         // whose extended header list exceeds 255 bytes).
         if self.chaining {
             if self.chain_len + apdu.nc > self.chain.len() {
-                self.chain[..self.chain_len].zeroize();
-                self.chain_len = 0;
-                self.chaining = false;
+                self.clear_chaining();
                 return Sw::WRONG_LENGTH;
             }
             self.chain[self.chain_len..self.chain_len + apdu.nc].copy_from_slice(apdu.data);
             let total = self.chain_len + apdu.nc;
             self.chaining = false;
             self.chain_len = 0;
-            let combined = Apdu {
-                cla: apdu.cla,
-                ins: apdu.ins,
-                p1: apdu.p1,
-                p2: apdu.p2,
-                nc: total,
-                ne: apdu.ne,
-                data: &self.chain[..total],
-                extended: apdu.extended,
-            };
             // A disabled current applet is unreachable, like a dropped selection.
             let cur = self.current.filter(|&i| self.selectable(i));
             let chain_ok = cur.map(|i| applets[i].response_chaining()).unwrap_or(false);
-            let sw = match cur {
-                Some(i) => applets[i].process(&combined, ctx, res),
-                None => Sw::FILE_NOT_FOUND,
+            let sw = {
+                // A chained command can carry private-key IMPORT data: wiped when
+                // this block is left, however it is left.
+                let data = WipeGuard::new(&mut self.chain[..total]);
+                let combined = Apdu {
+                    cla: apdu.cla,
+                    ins: apdu.ins,
+                    p1: apdu.p1,
+                    p2: apdu.p2,
+                    nc: total,
+                    ne: apdu.ne,
+                    data: &data,
+                    extended: apdu.extended,
+                };
+                match cur {
+                    Some(i) => applets[i].process(&combined, ctx, res),
+                    None => Sw::FILE_NOT_FOUND,
+                }
             };
-            // A chained command can carry private-key IMPORT data.
-            self.chain[..total].zeroize();
             return self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res);
         }
 
@@ -433,6 +429,10 @@ impl Dispatcher {
     /// a normal dispatch would.
     pub fn clear_pending(&mut self) {
         if self.pending_len > 0 {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dispatcher's held GET RESPONSE tail: dropping it is its wipe point"
+            )]
             self.pending[..self.pending_len].zeroize();
         }
         self.pending_len = 0;
@@ -446,6 +446,10 @@ impl Dispatcher {
     /// concatenate onto a later command.
     pub fn clear_chaining(&mut self) {
         if self.chain_len > 0 {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dispatcher's own chain buffer: dropping a chain is its wipe point"
+            )]
             self.chain[..self.chain_len].zeroize();
         }
         self.chain_len = 0;

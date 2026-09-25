@@ -300,8 +300,8 @@ split three ways, and the split is the point.
 
 | | |
 |---|---|
-| **Equivalent, not a defect** | `ctaphid.rs:435` `\|` → `^` on `(f[5] << 8) \| f[6]` — disjoint bits, the two operators agree |
-| **Fail-safe direction** | `ctaphid.rs:436` `>` → `>=` refuses an exactly-maximum message: stricter, so `NoBufferOverrun` still holds. `fs.rs:233` and `fs.rs:281` `\|=` → `&=` clear *decided* bits, which sends more reads to the reliable backend |
+| **Equivalent, not a defect** | `ctaphid.rs:441` `\|` → `^` on `(f[5] << 8) \| f[6]` — disjoint bits, the two operators agree |
+| **Fail-safe direction** | `ctaphid.rs:442` `>` → `>=` refuses an exactly-maximum message: stricter, so `NoBufferOverrun` still holds. `fs.rs:233` and `fs.rs:281` `\|=` → `&=` clear *decided* bits, which sends more reads to the reliable backend |
 | **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:286` and `fs.rs:289`, three mutants), `try_has_data`'s zero-length test (`fs.rs:377`), `factory_wipe`'s 64-key batch bound (`fs.rs:503`), the registry retain in `delete` (`fs.rs:603`), and **`meta_delete`'s fault guard (`fs.rs:806`)** |
 
 The last one was worth the exercise on its own. `Fs::meta_add_reserve` refuses a
@@ -375,7 +375,7 @@ those are where a hole costs the most:
 
 | Mutation | Verdict | Owned by |
 |---|---|---|
-| `crates/rsk-sdk/src/applet.rs:395` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
+| `crates/rsk-sdk/src/applet.rs:391` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
 | `clientpin.rs:241` `+` → `*` — the padded-length bound | **model-blind, real** | `change_pin_over_protocol_one` |
 | `clientpin.rs:330` `\|\|` → `&&` — the legacy token's argument check | **model-blind, real** | `the_legacy_get_pin_token_refuses_an_rp_id` |
 | `clientpin.rs:391` `\|` → `^` on `PERM_MC \| PERM_GA` | equivalent — `0x01` and `0x02` are disjoint | — |
@@ -1425,7 +1425,7 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 
 | Invariant | What it asserts | The Rust that owns it |
 |---|---|---|
-| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:390-406` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:201-205` · `crates/rsk-openpgp/src/pin.rs:82-95` · `crates/rsk-oath/src/lib.rs:1164-1168` · `crates/rsk-device/src/ccid.rs:340-355` (the ICC power transition) |
+| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:386-402` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:201-205` · `crates/rsk-openpgp/src/pin.rs:82-95` · `crates/rsk-oath/src/lib.rs:1164-1168` · `crates/rsk-device/src/ccid.rs:340-355` (the ICC power transition) |
 | `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:185-188` · `crates/rsk-openpgp/src/pin.rs:191-203` · `crates/rsk-oath/src/lib.rs:1100-1101` |
 | `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:87-99` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:57-65`, `:113-117` |
 | `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status but OATH's OTP PIN. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:367-370` · `crates/rsk-openpgp/src/lib.rs:355-358` · `crates/rsk-oath/src/lib.rs:1202` |
@@ -1469,7 +1469,7 @@ it.
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:396-400` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
+| `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:392-396` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
 | `BugReselectResetsStatus` | `637ed98` taken back out: PIV, OpenPGP and OATH's VALIDATE resetting on every select | `ReselectPreservesAccessStatus` | 42 states |
 | `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:340-355` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
 | `BugAdminOpensKeyOps` | `e5da38b` taken back out: PW3 standing in for PW1/PW2 | `NoKeyOpOnTheAdminStatus` | 67 states |
@@ -1838,7 +1838,7 @@ removed defences:
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:207-209`, fed at `crates/rsk-device/src/ccid.rs:248-256`, consulted at `:326`) | `DisabledAppletNeverDispatches` | 10 states |
+| `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:208-210`, fed at `crates/rsk-device/src/ccid.rs:248-256`, consulted at `:326`) | `DisabledAppletNeverDispatches` | 10 states |
 | `BugLockWriteResetsCaps` | **audit run-35, shipped**: a lock-code-only write strips to zero bytes, stored verbatim as an EMPTY record that `read_enabled_caps` reads as `SUPPORTED_CAPS` — every disabled application silently re-enabled (`crates/rsk-devconf/src/lib.rs:259-272`, the merge) | `DisableSetSurvivesLockWrite` | 9 states |
 | `BugAdminGateable` | the `APPLET_CAPS` cap-`0` carve-out removed (`crates/rsk-device/src/ccid.rs:73-80`): management/vendor/rescue gated by the mask, so one disable-everything write is irreversible | `AdminSurfaceAlwaysReachable` | 2 states |
 | `BugPrivilegedOpUngated` | `require_presence` removed (`crates/rsk-rescue/src/lib.rs:141-143`): keydev signing, cert/config writes, BOOTSEL reboot and fuse burns driven by the USB host alone | `PrivilegedOpNeedsPresence` | 10 states |
@@ -2095,7 +2095,7 @@ bring-up order are M8's transport territory.
 ## The ninth module — `RSKeyTransport.tla`
 
 `rsk-usb` was the last workspace member no module covered, and the CTAPHID
-frame reassembler (`crates/rsk-usb/src/ctaphid.rs:405-475`) is a genuine
+frame reassembler (`crates/rsk-usb/src/ctaphid.rs:411-481`) is a genuine
 sequence machine — `in_tx` carries across the frames of a multi-frame message.
 It is already unit-tested and fuzzed, and that is exactly the point of also
 modelling it: every one of those exercises a *single* `feed`, or a fuzzer's
@@ -2106,13 +2106,13 @@ assert and a sampling fuzzer does not prove.
 
 - `NoCrossChannelSplice` — a continuation on a channel other than the
   in-progress transaction's is `CHANNEL_BUSY`, the owner's transaction left
-  intact (`crates/rsk-usb/src/ctaphid.rs:452-454`); one host application's bytes
+  intact (`crates/rsk-usb/src/ctaphid.rs:458-460`); one host application's bytes
   must never assemble into another's message;
 - `NoSequenceGap` — an out-of-order continuation aborts rather than filling the
-  gap (`:456-459`); the reassembler never completes a message the host did not
+  gap (`:462-465`); the reassembler never completes a message the host did not
   send in that order;
 - `NoBufferOverrun` — an INIT declaring more than `CTAP_MAX_MESSAGE` is refused
-  (`:436-438`), and the chunk count never passes the ceiling; in a `no_std`
+  (`:442-444`), and the chunk count never passes the ceiling; in a `no_std`
   image passing it is an out-of-bounds write, so this one is **structural** (the
   other two are ghosts — a splice and a desync leave no trace in the completed
   message, they are steps).
@@ -2135,10 +2135,10 @@ mid-transaction is a legal resync (a takeover, not a splice: B's fresh buffer
 holds B's chunks). The bounded IN-endpoint write that fixed the runtime
 interface wedge (0x075D, `TX_TIMEOUT_MS`) is a liveness property, and **no
 liveness proof is claimed from CTAPHID evidence**. It lives on `write_frames`
-(`crates/rsk-usb/src/ctaphid.rs:875-887`), the response path, where two host
+(`crates/rsk-usb/src/ctaphid.rs:879-891`), the response path, where two host
 regressions pin the abandon and the drain
 (`crates/rsk-usb/src/ctaphid_tests.rs:449,471`) — not on the async `run` loop
-(`crates/rsk-usb/src/ctaphid.rs:584`), which neither of them enters. No mutation
+(`crates/rsk-usb/src/ctaphid.rs:590`), which neither of them enters. No mutation
 record stands behind either: `write_frames`, `FrameSink` and `TX_TIMEOUT` appear
 in none of `formal/comutants.toml`, `formal/floors.txt` or `formal/runs.toml`,
 and `scripts/comutate.py` excludes liveness switches from the roster by design.

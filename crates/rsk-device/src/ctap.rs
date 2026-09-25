@@ -26,7 +26,7 @@ const RESP_CAP: usize = rsk_usb::ctaphid::CTAP_MAX_MESSAGE;
 // largeBlobs ceiling) is derived from the same literal and rides on this too.
 // `cfg(not(kani))` for the reason its sibling in `rsk-usb` carries: this is about
 // the SHIPPED width, and `CTAP_MAX_MESSAGE` deliberately shrinks to two
-// continuation frames under Kani (ctaphid.rs:218), where CBMC runs out of memory
+// continuation frames under Kani (ctaphid.rs:219), where CBMC runs out of memory
 // at the real one. Unguarded it does not fail a proof — it stops `rsk-device`
 // COMPILING, so every harness in the crate goes with it.
 #[cfg(not(kani))]

@@ -16,6 +16,7 @@ use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_time::{Instant, Timer};
 use embassy_usb::class::hid::{HidReader, HidWriter};
 use embassy_usb::driver::Driver;
+use rsk_secret::WipeGuard;
 
 pub const HID_RPT_SIZE: usize = 64;
 const INIT_DATA: usize = HID_RPT_SIZE - 7; // 57
@@ -392,6 +393,11 @@ impl Reassembler {
     /// material, and the buffer otherwise holds them until the next message.
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the reassembly buffer lives as long as the transport: `scrub` is \
+                      its wipe point, after each MSG/CBOR/vendor dispatch"
+        )]
         self.msg[..self.bcnt].zeroize();
         self.bcnt = 0;
     }
@@ -805,10 +811,9 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             }
         };
         let cmd = if is_cbor { CTAPHID_CBOR } else { CTAPHID_MSG };
-        write_message(writer, cid, cmd, &scratch[..n]).await;
         // Request and response both carried secrets (PINs, tokens, key blobs).
-        use zeroize::Zeroize;
-        scratch[..n].zeroize();
+        let resp = WipeGuard::new(&mut scratch[..n]);
+        write_message(writer, cid, cmd, &resp).await;
         asm.scrub();
     }
 
@@ -830,11 +835,10 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         let data = asm.message();
         match handler.handle_vendor(cmd & !TYPE_INIT, data, scratch).await {
             Some(n) => {
-                write_message(writer, cid, cmd, &scratch[..n]).await;
                 // Same discipline as `run_with_keepalive`: neither the request nor
                 // the response stays resident past the frame that carried it.
-                use zeroize::Zeroize;
-                scratch[..n].zeroize();
+                let resp = WipeGuard::new(&mut scratch[..n]);
+                write_message(writer, cid, cmd, &resp).await;
             }
             None => write_message(writer, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]).await,
         }

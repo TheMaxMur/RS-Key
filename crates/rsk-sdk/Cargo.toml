@@ -18,5 +18,8 @@ workspace = true
 kani-soft = []
 
 [dependencies]
-# The dispatcher's chaining buffer can hold private-key import data.
+# The dispatcher's long-lived buffers (a held chain, a GET RESPONSE tail) are
+# wiped by hand, each under an `#[expect]`.
 zeroize = { workspace = true }
+# A dispatched chain, which can hold private-key IMPORT data, under a WipeGuard.
+rsk-secret = { workspace = true }

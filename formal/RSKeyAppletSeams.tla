@@ -34,7 +34,7 @@ EXTENDS Naturals
 
 (* Mutation switches. All FALSE is the shipped tree. *)
 CONSTANTS
-    \* crates/rsk-sdk/src/applet.rs:396-400 -- a SELECT of a DIFFERENT AID deselects the
+    \* crates/rsk-sdk/src/applet.rs:392-396 -- a SELECT of a DIFFERENT AID deselects the
     \* applet that was current, and the deselect is what resets its session.
     BugSelectKeepsOtherApplet,
     \* 637ed98 taken back out: PIV, OpenPGP and OATH's VALIDATE reset on EVERY
@@ -120,7 +120,7 @@ CONSTANTS
     BugCodelessOathIsAStatus
 
 \* The three CCID applets that carry an in-RAM security status. `NoApplet` is
-\* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:148): nothing
+\* `Dispatcher::current = None` (crates/rsk-sdk/src/applet.rs:149): nothing
 \* selected, which is where a card reset leaves the dispatcher.
 Piv      == "piv"
 Pgp      == "pgp"
@@ -145,7 +145,7 @@ InvNames == { "NoKeyOpOnTheAdminStatus", "NoStatusAfterARefusedAuth",
               "AccessCodeRemovalNeedsTheCode" }
 
 VARIABLES
-    sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:148)
+    sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:149)
     held,   \* [Refs -> BOOLEAN]: the in-RAM security statuses
     \* PIV's `pin_fresh` -- the UNSPENT half of `has_pin`, which a PIN-policy
     \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:167-181). The
@@ -221,7 +221,7 @@ AllCleared ==
     [r \in Refs |-> r = "oathCode" /\ (~oathCodeSet \/ BugResetKeepsOathUnlock)]
 
 (***************************************************************************)
-(* SELECT. crates/rsk-sdk/src/applet.rs:390-406 -- the ONE place that       *)
+(* SELECT. crates/rsk-sdk/src/applet.rs:386-402 -- the ONE place that       *)
 (* decides what a selection does to the applet that was current.           *)
 (***************************************************************************)
 
@@ -537,7 +537,7 @@ PivKeyOp ==
 \* SCardDisconnect(SCARD_RESET_CARD) / CCID_POWER_OFF / CCID_POWER_ON:
 \* `Dispatcher::reset_card` deselects, which drops the selected applet's
 \* security status (crates/rsk-device/src/ccid.rs:340-355,
-\* crates/rsk-sdk/src/applet.rs:226-234). This is the one the `cross_applet`
+\* crates/rsk-sdk/src/applet.rs:227-235). This is the one the `cross_applet`
 \* fuzz target already watches, one layer down.
 \* Its own trailing UNCHANGED named `psig` while the ELSE branch assigned it, so
 \* `psig' = FALSE /\ psig' = psig` pinned the whole action to a no-op wherever

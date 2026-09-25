@@ -2329,6 +2329,7 @@ dependencies = [
 name = "rsk-sdk"
 version = "0.1.0"
 dependencies = [
+ "rsk-secret",
  "zeroize",
 ]
 
@@ -2384,6 +2385,7 @@ dependencies = [
  "embassy-time",
  "embassy-usb",
  "rsk-sdk",
+ "rsk-secret",
  "zeroize",
 ]
 

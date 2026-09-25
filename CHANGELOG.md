@@ -599,6 +599,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The transports and the dispatcher wipe through guards** — refactor; nothing
+  a host sees changes. CCID's request is wiped by a `WipeGuard` as soon as the
+  handler is done with it, before the reply goes out rather than after, and its
+  reply, like CTAPHID's response scratch, once sent; a guard would also cover a
+  future dropped mid-transfer, which nothing in the tree does today. The APDU
+  dispatcher wipes a reassembled chained command under a guard across its
+  dispatch, and its four inline chain drops call `clear_chaining`. What stays
+  bare, under `#[expect(clippy::disallowed_methods)]` with the reason, are wipes
+  of buffers that outlive a call: the dispatcher's held chain and GET RESPONSE
+  tail, and CTAPHID's reassembly buffer. `rsk-usb` and `rsk-sdk` take the
+  zeroize ban at their roots. `bcdDevice` 0x0A19 → 0x0A1A.
+
 - **The firmware's own secrets are typed too** — refactor; nothing a host sees
   changes. The core1 mailbox holds the keygen's DRBG seed and each prime in
   transit as `rsk_secret::Secret`, so assigning a slot wipes the static in
