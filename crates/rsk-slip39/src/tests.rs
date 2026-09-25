@@ -180,7 +180,7 @@ fn cipher_decrypt(ct: &[u8; 32], identifier: u16) -> [u8; 32] {
     for i in (0..ROUNDS as u8).rev() {
         let f = round_function(i, &salt, &r);
         let mut new_r = l;
-        for (a, b) in new_r.iter_mut().zip(f.iter()) {
+        for (a, b) in new_r.iter_mut().zip(f.expose().iter()) {
             *a ^= *b;
         }
         l = r;
@@ -210,7 +210,7 @@ fn recover_secret(threshold: u8, shares: &[Point]) -> [u8; 32] {
 fn cipher_round_trips() {
     let s = seq_secret();
     for id in [0u16, 1, 0x1234, 0x7fff] {
-        assert_eq!(cipher_decrypt(&cipher_encrypt(&s, id), id), s);
+        assert_eq!(cipher_decrypt(cipher_encrypt(&s, id).expose(), id), s);
     }
 }
 
@@ -225,12 +225,16 @@ fn shamir_round_trips_any_threshold_subset() {
     let identifier = (((idb[0] as u16) << 8) | idb[1] as u16) & 0x7fff;
     let ems = cipher_encrypt(&secret, identifier);
     let mut data = [[0u8; 32]; MAX_SHARES];
-    split_secret(3, 5, &ems, &mut rng, &mut data);
+    split_secret(3, 5, ems.expose(), &mut rng, &mut data);
 
     for subset in [[0usize, 1, 2], [0, 2, 4], [1, 3, 4]] {
         let shares: Vec<Point> = subset.iter().map(|&i| (i as u8, data[i])).collect();
         let rec_ems = recover_secret(3, &shares);
-        assert_eq!(rec_ems, ems, "subset {subset:?} ciphertext mismatch");
+        assert_eq!(
+            &rec_ems,
+            ems.expose(),
+            "subset {subset:?} ciphertext mismatch"
+        );
         assert_eq!(
             cipher_decrypt(&rec_ems, identifier),
             secret,
@@ -248,7 +252,7 @@ fn one_of_one_round_trips() {
     let identifier = (((idb[0] as u16) << 8) | idb[1] as u16) & 0x7fff;
     let ems = cipher_encrypt(&secret, identifier);
     let mut data = [[0u8; 32]; MAX_SHARES];
-    split_secret(1, 1, &ems, &mut rng, &mut data);
+    split_secret(1, 1, ems.expose(), &mut rng, &mut data);
     let shares = [(0u8, data[0])];
     assert_eq!(
         cipher_decrypt(&recover_secret(1, &shares), identifier),

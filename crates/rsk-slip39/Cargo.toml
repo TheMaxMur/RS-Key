@@ -19,4 +19,6 @@ kani-soft = ["rsk-crypto/kani-soft"]
 # SHA-256 (share digest, wordlist pin) and HMAC-SHA256 (PBKDF2 round function, digest)
 # — reuse the in-tree wrapper rather than add `pbkdf2`/`hmac` crates to the trust base.
 rsk-crypto = { workspace = true }
-zeroize = { workspace = true }
+# The seed's working halves, the round outputs and the shares held in a type
+# that wipes itself.
+rsk-secret = { workspace = true }

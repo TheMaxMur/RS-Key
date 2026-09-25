@@ -682,6 +682,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **SLIP-39's working buffers are typed** — refactor; the shares are the same,
+  byte for byte. `rsk-slip39`'s Feistel halves, round outputs, PBKDF2 state,
+  the random part, the Shamir base points and the split shares are
+  `rsk_secret::Secret`s, wiped where the hand wipes were and again when
+  dropped; the Feistel swap copies bytes into the halves rather than moving
+  arrays between them. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A26 → 0x0A27.
+
 - **The device key's scalar is typed** — refactor; nothing a host sees
   changes. `rsk-rescue`'s keydev unseal hands the scalar out in a
   `rsk_secret::Secret` instead of a bare array its callers wiped, its seal key
