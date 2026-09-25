@@ -19,6 +19,7 @@ use zeroize::Zeroize;
 
 use rsk_crypto::FusedKey;
 use rsk_device::click::Clicks;
+use rsk_secret::WipeGuard;
 use rsk_usb::ccid::{ApduHandler, SecureResult};
 use rsk_usb::ctaphid::{CTAP_MAX_MESSAGE, MsgHandler};
 
@@ -141,14 +142,16 @@ async fn roundtrip(kind: Kind, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
     }
     REQ.signal(());
     DONE.wait().await;
-    let mut ex = EXCHANGE.lock().await;
-    let n = ex.resp_len.min(out.len());
-    out[..n].copy_from_slice(&ex.resp[..n]);
-    // The response can carry secrets (PIN tokens, deciphered session keys);
-    // don't leave them in the static exchange buffer.
-    let m = ex.resp_len;
-    ex.resp[..m].zeroize();
-    ex.resp_len = 0;
+    drain_resp(&mut *EXCHANGE.lock().await, out)
+}
+
+/// Copy the worker's response into `out` and wipe the static copy: a response can
+/// carry secrets (PIN tokens, deciphered session keys).
+fn drain_resp(ex: &mut Exchange, out: &mut [u8]) -> usize {
+    let m = core::mem::take(&mut ex.resp_len);
+    let resp = WipeGuard::new(&mut ex.resp[..m]);
+    let n = m.min(out.len());
+    out[..n].copy_from_slice(&resp[..n]);
     n
 }
 
@@ -173,12 +176,7 @@ async fn roundtrip_vendor(cmd: u8, data: &[u8], out: &mut [u8]) -> Option<usize>
         ex.resp_len = 0;
         return None;
     }
-    let n = ex.resp_len.min(out.len());
-    out[..n].copy_from_slice(&ex.resp[..n]);
-    let m = ex.resp_len;
-    ex.resp[..m].zeroize();
-    ex.resp_len = 0;
-    Some(n)
+    Some(drain_resp(&mut ex, out))
 }
 
 /// Hand a CCID `PC_to_RDR_Secure` payload to the worker and await its response.
@@ -196,16 +194,9 @@ async fn roundtrip_secure(data: &[u8], out: &mut [u8]) -> SecureResult {
     REQ.signal(());
     DONE.wait().await;
     let mut ex = EXCHANGE.lock().await;
-    let n = ex.resp_len.min(out.len());
-    out[..n].copy_from_slice(&ex.resp[..n]);
     let (status, error) = (ex.sec_status, ex.sec_error);
-    // The response holds only a status word, but wipe it from the static buffer
-    // along with the rest of the roundtrip discipline.
-    let m = ex.resp_len;
-    ex.resp[..m].zeroize();
-    ex.resp_len = 0;
     SecureResult {
-        len: n,
+        len: drain_resp(&mut ex, out),
         status,
         error,
     }
@@ -509,6 +500,11 @@ impl<'a> Worker<'a> {
             // private key); wipe it as soon as the dispatch is done. The
             // handlers' own response buffers held the same bytes as `resp`.
             let rl = ex.req_len;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "a static transport buffer: the Secure arm lends the whole \
+                          Exchange out, so no guard over `req` can span the dispatch"
+            )]
             ex.req[..rl].zeroize();
             ex.req_len = 0;
             self.ctap.scrub();
@@ -548,6 +544,7 @@ impl<'a> Worker<'a> {
     #[cfg(feature = "display")]
     fn handle_secure_req(&mut self, ex: &mut Exchange) {
         use rsk_sdk::UserPresence as _;
+        use rsk_secret::Secret;
         use rsk_usb::ccid::{SECURE_ERR_CANCELLED, SECURE_ERR_TIMEOUT, SECURE_STATUS_FAILED};
         let failed = |ex: &mut Exchange, err: u8| {
             ex.resp_len = 0;
@@ -585,23 +582,25 @@ impl<'a> Worker<'a> {
         ) {
             return failed(ex, SECURE_ERR_CANCELLED);
         }
-        let mut pin = [0u8; rsk_usb::secure_pin::MAX_PIN];
+        let mut pin = Secret::<[u8; rsk_usb::secure_pin::MAX_PIN]>::zeroed();
         let entry = self
             .presence
             .borrow_mut()
-            .collect_pin_titled(title, min_len, &mut pin);
+            .collect_pin_titled(title, min_len, pin.expose_mut());
         match entry {
             rsk_sdk::PinEntry::Entered(n) => {
-                let mut apdu = [0u8; 5 + rsk_usb::secure_pin::MAX_PIN];
-                if let Some(len) =
-                    rsk_usb::secure_pin::assemble_verify(req.apdu_template, &pin[..n], &mut apdu)
-                {
+                let mut apdu = Secret::<[u8; 5 + rsk_usb::secure_pin::MAX_PIN]>::zeroed();
+                if let Some(len) = rsk_usb::secure_pin::assemble_verify(
+                    req.apdu_template,
+                    &pin.expose()[..n],
+                    apdu.expose_mut(),
+                ) {
                     // Ensure the pad VERIFY dispatches as a standalone command — a prior
                     // host chaining segment must not concatenate the PIN onto itself.
                     self.ccid.reset_chaining();
                     let body = self
                         .ccid
-                        .handle_apdu(&apdu[..len], crate::usb_attach::elapsed_ms());
+                        .handle_apdu(&apdu.expose()[..len], crate::usb_attach::elapsed_ms());
                     let m = body.len().min(ex.resp.len());
                     ex.resp[..m].copy_from_slice(&body[..m]);
                     ex.resp_len = m;
@@ -610,7 +609,7 @@ impl<'a> Worker<'a> {
                 } else {
                     failed(ex, 0);
                 }
-                apdu.zeroize();
+                apdu.wipe();
             }
             rsk_sdk::PinEntry::Cancelled | rsk_sdk::PinEntry::Declined => {
                 failed(ex, SECURE_ERR_CANCELLED)
@@ -618,7 +617,7 @@ impl<'a> Worker<'a> {
             rsk_sdk::PinEntry::Timeout => failed(ex, SECURE_ERR_TIMEOUT),
             rsk_sdk::PinEntry::Unsupported => failed(ex, 0),
         }
-        pin.zeroize();
+        pin.wipe();
     }
 
     /// No on-device pad on a button build — `bPINSupport` is 0, so the host never
@@ -654,7 +653,7 @@ impl<'a> Worker<'a> {
         crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
         let (mut body, n, status) = self.ccid.handle_otp_hid(slot, payload.expose());
         // A challenge-response body is the slot secret's HMAC: wiped in place here.
-        let body = rsk_secret::WipeGuard::new(&mut body);
+        let body = WipeGuard::new(&mut body);
         crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
         otp_kbd::finish_response(status, &body[..n]);
         self.ccid.scrub();

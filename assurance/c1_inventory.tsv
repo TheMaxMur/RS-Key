@@ -620,10 +620,10 @@ allocate	crates/rsk-usb/src/ctaphid.rs:139	10	decides	D5	issues a unique CID, sk
 arm	crates/rsk-usb/src/ctaphid.rs:165	12	decides	D4	takes and releases CTAPHID_LOCK; a release by a non-owner is ignored	-
 refuses	crates/rsk-usb/src/ctaphid.rs:178	17	decides	D5	permission predicate: a foreign channel is rejected, and the only carve-out is INIT on broadcast	SEC-TRANS-001
 blocks	crates/rsk-usb/src/ctaphid.rs:196	4	decides	D5	lock ownership and expiry are the second half of the same permission	SEC-TRANS-001
-handle_vendor	crates/rsk-usb/src/ctaphid.rs:267	9	marshals	M	default trait body, overridden by firmware/src/worker.rs:228 — does not reach the image	-
-reset_app_selection	crates/rsk-usb/src/ctaphid.rs:277	6	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:225	-
-can_wink	crates/rsk-usb/src/ctaphid.rs:284	8	marshals	M	the same: default false, overridden by firmware/src/worker.rs:234	-
-wink	crates/rsk-usb/src/ctaphid.rs:293	4	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:239	-
+handle_vendor	crates/rsk-usb/src/ctaphid.rs:267	9	marshals	M	default trait body, overridden by firmware/src/worker.rs:219 — does not reach the image	-
+reset_app_selection	crates/rsk-usb/src/ctaphid.rs:277	6	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:216	-
+can_wink	crates/rsk-usb/src/ctaphid.rs:284	8	marshals	M	the same: default false, overridden by firmware/src/worker.rs:225	-
+wink	crates/rsk-usb/src/ctaphid.rs:293	4	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:230	-
 init_capabilities	crates/rsk-usb/src/ctaphid.rs:299	11	marshals	M	assembles the capabilities byte for the INIT response	-
 perform_wink	crates/rsk-usb/src/ctaphid.rs:311	12	marshals	M	blinking the indicator: no gate, no secret, no write	-
 default	crates/rsk-usb/src/ctaphid.rs:352	3	marshals	M	delegates to new	-

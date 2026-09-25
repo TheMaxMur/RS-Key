@@ -67,8 +67,8 @@ rsk-rsa = { workspace = true }
 # Robust summary stats for the `bench` latency-harness vendor command. Optional —
 # pulled in only by `--features bench`, never the shipped image.
 rsk-bench = { workspace = true, optional = true }
-# Zeroize the transient TRNG seed/reseed buffers in `FidoRng` (workspace dep, already
-# pulled by rsk-crypto — no new version).
+# The two bare wipes left, each under an `#[expect]`: the transport request after
+# dispatch and the keyboard queue at reboot (workspace dep, already pulled by rsk-secret).
 zeroize = { workspace = true }
 
 cortex-m-rt = "0.7"

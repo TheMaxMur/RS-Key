@@ -587,6 +587,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The firmware's own secrets are typed too** — refactor; nothing a host sees
+  changes. The core1 mailbox holds the keygen's DRBG seed and each prime in
+  transit as `rsk_secret::Secret`, so assigning a slot wipes the static in
+  place; the TRNG seed and reseed buffers, and the pinpad's PIN and assembled
+  VERIFY, are `Secret`s wiped in place where the hand wipes were; the three
+  transport round trips copy the response out through one `WipeGuard`. The two
+  wipes whose point no scope spans — the request buffer after dispatch and the
+  keyboard queue at reboot — carry `#[expect(clippy::disallowed_methods)]` and
+  the reason, so a stale one fails the build. The firmware crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A17 → 0x0A18.
+
 - **Derived keys leave `rsk-crypto` as `Secret`s** — refactor; nothing a host
   sees changes. The PIN KDF (`derive_kbase`, `derive_kver`,
   `pin_derive_verifier`, `pin_derive_session`, `pin_derive_kenc`,

@@ -23,10 +23,11 @@
 //! - **Heap**: both cores allocate bignums; the global allocator is
 //!   critical-section-guarded (a cross-core hardware spinlock), so
 //!   allocations serialize.
-//! - **Secrets**: the DRBG seed and every prime in transit are zeroized at
-//!   each hand-off, and `BUSY` is raised in the same critical section that
-//!   takes the job — `run_rsa_search`'s wind-down ("job gone ∧ ¬BUSY ⇒ core1
-//!   is out, nothing more will be posted") has no window for a late find.
+//! - **Secrets**: the DRBG seed and every prime in transit are zeroized in the
+//!   mailbox at each hand-off (not the stack copies a move leaves), and `BUSY`
+//!   is raised in the same critical section that takes the job —
+//!   `run_rsa_search`'s wind-down ("job gone ∧ ¬BUSY ⇒ core1 is out, nothing
+//!   more will be posted") has no window for a late find.
 
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -38,8 +39,8 @@ use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use rsk_crypto::HmacDrbg;
 use rsk_rsa::{IncrementalSieve, Rng, RsaKey, RsaKeygen, RsaStep};
+use rsk_secret::Secret;
 use static_cell::StaticCell;
-use zeroize::Zeroize;
 
 extern crate alloc;
 use alloc::boxed::Box;
@@ -55,12 +56,12 @@ const SEED_TAG: &[u8; 8] = b"rsk-rsa2";
 
 struct Job {
     half_bytes: usize,
-    seed: [u8; SEED_LEN],
+    seed: Secret<[u8; SEED_LEN]>,
 }
 
 /// A found prime in transit from core1 to core0.
 struct Found {
-    le: [u8; MAX_HALF],
+    le: Secret<[u8; MAX_HALF]>,
     len: usize,
 }
 
@@ -150,50 +151,42 @@ pub fn spawn(core1: Peri<'static, CORE1>) {
 
 /// Scrub and drop any primes still sitting in the mailbox.
 ///
-/// Zeroize *through* the slot, never after moving out of it: `Option::take()`
+/// Drop *in* the slot, never after moving out of it: `Option::take()`
 /// copies the payload to a local and writes back only the `None` discriminant, so
 /// wiping the local leaves a full RSA prime resident in this static — which
 /// `worker::reboot`'s BOOTSEL drop does not clear either (audit run-33).
 fn scrub_found(mb: &mut Mailbox) {
     for slot in &mut mb.found {
-        if let Some(f) = slot.as_mut() {
-            f.le.zeroize();
-        }
         *slot = None;
     }
 }
 
-/// Zeroize the job's DRBG seed through the slot, then drop it. Same hazard as
+/// Drop the job, DRBG seed and all, in its slot. Same hazard as
 /// [`scrub_found`]: the seed replays core1's entire candidate stream.
 fn scrub_job(mb: &mut Mailbox) {
-    if let Some(j) = mb.job.as_mut() {
-        j.seed.zeroize();
-    }
     mb.job = None;
 }
 
-/// Move the posted job out, wiping the copy the slot keeps. Copy the fields by
-/// value first, *then* zeroize through the `&mut` — a `take()` followed by a
-/// zeroed write-back would be a dead store the optimiser is free to drop.
+/// Move the posted job out, wiping the copy the slot keeps: copy the fields
+/// first, *then* drop the slot's job in place — a `take()` would move the seed
+/// out and leave its bytes in the static.
 fn take_job(mb: &mut Mailbox) -> Option<Job> {
-    let j = mb.job.as_mut()?;
+    let j = mb.job.as_ref()?;
     let out = Job {
         half_bytes: j.half_bytes,
-        seed: j.seed,
+        seed: Secret::new(*j.seed.expose()),
     };
-    j.seed.zeroize();
     mb.job = None;
     Some(out)
 }
 
 /// Move one found prime out, wiping the copy the slot keeps (see [`take_job`]).
 fn take_found(slot: &mut Option<Found>) -> Option<Found> {
-    let f = slot.as_mut()?;
+    let f = slot.as_ref()?;
     let out = Found {
-        le: f.le,
+        le: Secret::new(*f.le.expose()),
         len: f.len,
     };
-    f.le.zeroize();
     *slot = None;
     Some(out)
 }
@@ -291,7 +284,7 @@ fn core1_main(stack_floor: u32) -> ! {
         };
         JOBS.fetch_add(1, Ordering::Relaxed);
         search(&job);
-        job.seed.zeroize();
+        job.seed.wipe();
         BUSY.store(false, Ordering::Release);
         cortex_m::asm::sev();
     }
@@ -322,15 +315,16 @@ fn search(job: &Job) {
     if !RsaKeygen::new(job.half_bytes * 16).usable() {
         return;
     }
-    let mut rng = DrbgRng(HmacDrbg::new(&job.seed));
+    let mut rng = DrbgRng(HmacDrbg::new(job.seed.expose()));
     // SAFETY: CORE1_SIEVE is touched only here, on core1. Scrub forces a fresh
     // window (new job → new size/RNG) and wipes any prime left from the last.
     let sieve = unsafe { &mut *core::ptr::addr_of_mut!(CORE1_SIEVE) };
     sieve.scrub();
     while !STOP.load(Ordering::Acquire) {
         C1_TRIES.fetch_add(1, Ordering::Relaxed);
-        let mut le = [0u8; MAX_HALF];
-        let Some(len) = RsaKeygen::try_candidate_le(sieve, &mut rng, job.half_bytes, &mut le)
+        let mut le = Secret::<[u8; MAX_HALF]>::zeroed();
+        let Some(len) =
+            RsaKeygen::try_candidate_le(sieve, &mut rng, job.half_bytes, le.expose_mut())
         else {
             continue;
         };
@@ -338,11 +332,14 @@ fn search(job: &Job) {
         let pool_full = MAILBOX.lock(|mb| {
             let mut mb = mb.borrow_mut();
             if let Some(slot) = mb.found.iter_mut().find(|s| s.is_none()) {
-                *slot = Some(Found { le, len });
+                *slot = Some(Found {
+                    le: Secret::new(*le.expose()),
+                    len,
+                });
             }
             mb.found.iter().all(|s| s.is_some())
         });
-        le.zeroize();
+        le.wipe();
         if pool_full {
             // Two primes delivered from this side alone — the pool is complete
             // whatever core0 found; stop burning cycles and wait for the next job.
@@ -416,10 +413,10 @@ pub fn run_rsa_search_progress(
         // Post the job: stale finds scrubbed, fresh DRBG seed for core1.
         let mut job = Job {
             half_bytes: kg.half_bytes(),
-            seed: [0u8; SEED_LEN],
+            seed: Secret::zeroed(),
         };
-        rng.fill(&mut job.seed[..SEED_LEN - SEED_TAG.len()]);
-        job.seed[SEED_LEN - SEED_TAG.len()..].copy_from_slice(SEED_TAG);
+        rng.fill(&mut job.seed.expose_mut()[..SEED_LEN - SEED_TAG.len()]);
+        job.seed.expose_mut()[SEED_LEN - SEED_TAG.len()..].copy_from_slice(SEED_TAG);
         STOP.store(false, Ordering::Release);
         MAILBOX.lock(|mb| {
             let mut mb = mb.borrow_mut();
@@ -457,15 +454,14 @@ pub fn run_rsa_search_progress(
         let mut had_finds = false;
         for f in batch.iter_mut().filter_map(Option::as_mut) {
             had_finds = true;
+            // A find that arrived after the verdict is not used; `batch` wipes it
+            // when it drops, at the end of this iteration.
             if outcome.is_none() {
-                match kg.offer_le(&mut f.le[..f.len]) {
+                match kg.offer_le(&mut f.le.expose_mut()[..f.len]) {
                     RsaStep::More => {}
                     RsaStep::Done(k) => outcome = Some(Some(k)),
                     RsaStep::Failed => outcome = Some(None),
                 }
-            } else {
-                // A find that arrived after the verdict — scrub, don't use.
-                f.le.zeroize();
             }
         }
         if had_finds {
@@ -473,16 +469,16 @@ pub fn run_rsa_search_progress(
         }
         // …then one own candidate (the slow part, one Baillie-PSW).
         C0_TRIES.fetch_add(1, Ordering::Relaxed);
-        let mut le = [0u8; MAX_HALF];
-        if let Some(len) = RsaKeygen::try_candidate_le(sieve, rng, kg.half_bytes(), &mut le) {
+        let mut le = Secret::<[u8; MAX_HALF]>::zeroed();
+        if let Some(len) = RsaKeygen::try_candidate_le(sieve, rng, kg.half_bytes(), le.expose_mut())
+        {
             C0_FINDS.fetch_add(1, Ordering::Relaxed);
-            match kg.offer_le(&mut le[..len]) {
+            match kg.offer_le(&mut le.expose_mut()[..len]) {
                 RsaStep::More => {}
                 RsaStep::Done(k) => outcome = Some(Some(k)),
                 RsaStep::Failed => outcome = Some(None),
             }
         }
-        le.zeroize();
     }
 
     // Wind down — OFF the critical path: un-post the job if core1 never took
