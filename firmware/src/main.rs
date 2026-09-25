@@ -9,6 +9,7 @@
 //! search while the transports keep the host alive.
 #![no_std]
 #![no_main]
+#![expect(unsafe_code, reason = "board glue; docs/unsafe.md lists every site")]
 
 use core::cell::RefCell;
 
@@ -399,6 +400,8 @@ static EXECUTOR_HIGH: InterruptExecutor = InterruptExecutor::new();
 
 #[interrupt]
 unsafe fn SWI_IRQ_1() {
+    // SAFETY: SWI_IRQ_1 is the interrupt `EXECUTOR_HIGH.start` was given, and this
+    // handler is its only caller.
     unsafe { EXECUTOR_HIGH.on_interrupt() }
 }
 
@@ -456,6 +459,8 @@ static PHY_MANUFACTURER: StaticCell<[u8; 64]> = StaticCell::new();
 static UI: StaticCell<RefCell<display::Ui>> = StaticCell::new();
 
 struct SendUsb(UsbDevice<'static, Drv>);
+// SAFETY: moved once into `usb_task` and never touched elsewhere; the handlers it
+// carries reach only critical-section and atomic statics (docs/unsafe.md §3).
 unsafe impl Send for SendUsb {}
 
 /// Hold core0's stack to the floor the linker gave it.
@@ -545,6 +550,8 @@ async fn main(spawner: Spawner) {
     {
         use core::mem::MaybeUninit;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
+        // SAFETY: runs once, before any allocation, over memory declared in this
+        // block and so nameable by nothing else.
         unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
     }
 
@@ -724,7 +731,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A10;
+    let device_release: u16 = 0x0A11;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1065,14 +1072,17 @@ async fn main(spawner: Spawner) {
         let i2c = I2c::new_blocking(p.I2C1, p.PIN_7, p.PIN_6, i2c_cfg);
 
         let cs = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_CS) },
             Level::High,
         );
         let dc = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_DC) },
             Level::Low,
         );
         let rst = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_RST) },
             Level::High,
         );
@@ -1090,6 +1100,7 @@ async fn main(spawner: Spawner) {
             };
             Some((
                 Input::new(
+                    // SAFETY: sound for the reason given above — no other driver gets it.
                     unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_WAKE_PIN) },
                     pull,
                 ),
@@ -1120,6 +1131,7 @@ async fn main(spawner: Spawner) {
             }
         };
         let tp_rst = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_TP_RST) },
             Level::High,
         );

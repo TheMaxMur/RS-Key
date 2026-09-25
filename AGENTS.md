@@ -34,9 +34,12 @@ project — see [README.md](README.md) and
   change. Clippy runs `-D warnings`; justify any `#[allow]` inline at the
   smallest scope. The lint policy is `[workspace.lints]` in the root
   `Cargo.toml`; a new crate opts in with `[lints] workspace = true`.
-- **`unsafe` and new dependencies are not free.** A new `unsafe` site needs an
-  entry in [docs/unsafe.md](docs/unsafe.md); a new dependency needs a stated
-  reason — it's joining an authenticator's trust base.
+- **`unsafe` and new dependencies are not free.** `unsafe` compiles only in
+  `firmware`, `rsk-wipe` and — on the device target — `rsk-rsa`; a new site
+  there needs an entry in [docs/unsafe.md](docs/unsafe.md), and a new `unsafe`
+  block or `unsafe impl` a `// SAFETY:` comment (clippy refuses it otherwise). A
+  new dependency needs a stated reason — it's joining an authenticator's trust
+  base.
 - **Every new file starts with the SPDX header** (`AGPL-3.0-only` — copy it from
   any neighbouring source file).
 - **Don't commit, push, flash, sign, or write OTP fuses unless asked.** The

@@ -78,10 +78,13 @@ saying why on the `#[allow]` line — and silence it at the smallest scope that
 works. The policy itself lives once, in `[workspace.lints]` of the root
 `Cargo.toml`; a new crate opts in with `[lints] workspace = true`.
 
-`unsafe` is the expensive keyword. There are currently two audited exception
-areas, both documented in [docs/unsafe.md](docs/unsafe.md); a new `unsafe`
-site needs an entry there explaining why safe Rust can't do the job. PRs that
-add undocumented `unsafe` don't get merged, full stop.
+`unsafe` is the expensive keyword. The workspace denies it everywhere but the
+three crates that need it — `firmware`, `rsk-wipe` and `rsk-rsa` — and each
+of their sites is documented in [docs/unsafe.md](docs/unsafe.md); a new
+`unsafe` site needs an entry there explaining why safe Rust can't do the job,
+and a new `unsafe` block or `unsafe impl` a `// SAFETY:` comment, which clippy
+refuses to build without. PRs that add undocumented `unsafe` don't get merged,
+full stop.
 
 Every file starts with the SPDX header:
 

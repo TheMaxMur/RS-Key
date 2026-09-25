@@ -555,6 +555,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **`unsafe` compiles only in the three crates docs/unsafe.md names** — build, no
+  behaviour change. The workspace denies `unsafe_code`; `firmware`, `rsk-wipe`
+  and `rsk-rsa` (on the device target, where it links the assembly) lift it at
+  their crate root, the two build scripts at their one `set_var`. In the other
+  twenty-six crates a new `unsafe` now fails to compile instead of failing
+  `platform_gate.py`'s census afterwards. `clippy::undocumented_unsafe_blocks`
+  refuses a block or `unsafe impl` without its `// SAFETY:` comment; eleven sites
+  lacked one, five of them compiled into the display build only, and writing
+  them found the `WAKE_PIN` gap fixed above. `bcdDevice` 0x0A10 → 0x0A11.
+
 - **One lint policy for the workspace** — build, no behaviour change. Twenty
   crates each carried the same `[lints.rust]` table (the `cfg(kani)` check-cfg)
   and nine carried none; the table now lives once, as `[workspace.lints]` in the

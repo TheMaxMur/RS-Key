@@ -6,6 +6,11 @@ members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rs
 # `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+# Lifted only at the roots of `firmware`, `rsk-wipe` and `rsk-rsa` (docs/unsafe.md).
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
 
 # Embassy crates are versioned together; pin them all to the same git source so
 # they stay mutually compatible. We track `branch = "main"`, not a crates.io

@@ -2,6 +2,14 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
+// Only the device build links the bignum assembly, so a host build stays unsafe-free.
+#![cfg_attr(
+    target_os = "none",
+    expect(
+        unsafe_code,
+        reason = "the bignum asm FFI and its .data placement; docs/unsafe.md"
+    )
+)]
 
 //! The RSA algorithm family: key generation, the CRT parameter layout and its
 //! blinded private operation, PKCS#1 v1.5, and the public-key DO both card

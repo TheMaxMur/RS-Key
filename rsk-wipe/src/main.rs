@@ -18,6 +18,10 @@
 //! flashed firmware's pattern); solid blue = erasing; green ×3 = sequence done.
 #![no_std]
 #![no_main]
+#![expect(
+    unsafe_code,
+    reason = "drives the bootrom's flash calls; docs/unsafe.md"
+)]
 
 use embassy_executor::Spawner;
 use embassy_rp::bind_interrupts;
@@ -179,6 +183,9 @@ async fn main(_spawner: Spawner) {
 
 /// Erase all of flash via the bootrom, with interrupts off for the duration.
 fn flash_erase_all() {
+    // SAFETY: this image runs from SRAM with interrupts off and core1 never started,
+    // so nothing fetches from flash while XIP is down; build.rs holds FLASH_SIZE to
+    // whole 4 KiB sectors, the erase's only alignment demand.
     critical_section::with(|_| unsafe {
         rom_data::connect_internal_flash();
         rom_data::flash_exit_xip();
@@ -190,6 +197,8 @@ fn flash_erase_all() {
 
 /// Program one or more pages at `off` (offset + length must be page-multiples).
 fn flash_program(off: u32, data: &[u8]) {
+    // SAFETY: as in `flash_erase_all`, with `data` in SRAM. The ROM checks nothing,
+    // so page alignment rests on the one caller, which passes a whole page at 0.
     critical_section::with(|_| unsafe {
         rom_data::connect_internal_flash();
         rom_data::flash_exit_xip();

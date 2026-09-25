@@ -39,6 +39,15 @@ flowchart TB
 The `unsafe` lives only in plumbing. None of it is in a parser, applet, crypto
 wrapper, or the filesystem.
 
+The compiler holds the crate boundary: the workspace denies `unsafe_code`, and
+only `firmware`, `rsk-wipe` and — on the device target, where it links the
+assembly — `rsk-rsa` lift the denial at their crate root; the two build scripts
+lift it at their one `set_var` statement. Which file and site inside those
+crates is this page's business, held against the tree by
+`scripts/platform_gate.py`. Every `unsafe` block and `unsafe impl` also carries a
+`// SAFETY:` comment, which `clippy::undocumented_unsafe_blocks` refuses to build
+without.
+
 ## Firmware (`firmware/src/main.rs`, `firmware/src/presence.rs`)
 
 ### 1–2. The high-priority interrupt executor — `PLAT-UNSAFE-001`
