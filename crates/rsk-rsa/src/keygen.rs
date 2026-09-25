@@ -20,8 +20,8 @@ use crate::{
 /// 0x91/0x92/0x93, PIV's `01`/`02` import template).
 pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaKey> {
     RsaKey::from_p_q(
-        BigUint::from_bytes_be(p),
-        BigUint::from_bytes_be(q),
+        crate::key::from_secret_be(p),
+        crate::key::from_secret_be(q),
         BigUint::from_bytes_be(e),
     )
 }

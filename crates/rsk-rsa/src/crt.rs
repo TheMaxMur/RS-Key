@@ -17,7 +17,7 @@ use num_bigint_dig::BigUint;
 use rsk_secret::Secret;
 use zeroize::Zeroize;
 
-use crate::key::blind_pair;
+use crate::key::{blind_pair, from_secret_be};
 use crate::{MAX_RSA_BYTES, Rng, RsaError, RsaKey};
 
 /// A single fixed-width CRT field buffer (a prime's max width, RSA-4096 = 256 B).
@@ -78,12 +78,12 @@ pub fn parse_rsa_blob(plain: &[u8]) -> Result<(usize, bool), RsaError> {
 /// A `P‖Q` blob mis-sliced into five fields fails this with overwhelming
 /// probability, so it disambiguates a colliding length.
 fn five_field_consistent(plain: &[u8], half: usize) -> bool {
-    let p = Secret::new(BigUint::from_bytes_be(&plain[..half]));
+    let p = Secret::new(from_secret_be(&plain[..half]));
     if *p.expose() < BigUint::from(2u8) {
         return false;
     }
-    let q = Secret::new(BigUint::from_bytes_be(&plain[half..2 * half]));
-    let qinv = Secret::new(BigUint::from_bytes_be(&plain[4 * half..5 * half]));
+    let q = Secret::new(from_secret_be(&plain[half..2 * half]));
+    let qinv = Secret::new(from_secret_be(&plain[4 * half..5 * half]));
     let mul = Secret::new(qinv.expose() * q.expose());
     let prod = Secret::new(mul.expose() % p.expose());
     *prod.expose() == BigUint::from(1u8)
@@ -202,8 +202,8 @@ pub fn crt_from_plain(plain: &[u8]) -> Result<RsaCrt, RsaError> {
         crt.dq[..half].copy_from_slice(&plain[3 * half..4 * half]);
         crt.qinv[..half].copy_from_slice(&plain[4 * half..5 * half]);
     } else {
-        let p = BigUint::from_bytes_be(&plain[..half]);
-        let q = BigUint::from_bytes_be(&plain[half..2 * half]);
+        let p = from_secret_be(&plain[..half]);
+        let q = from_secret_be(&plain[half..2 * half]);
         let k = RsaKey::from_p_q(p, q, rsa_e()).ok_or(RsaError::BadBlob)?;
         let (dp, dq, qinv) = k.crt().ok_or(RsaError::Failed)?;
         let mut dpb = Secret::new(dp.to_bytes_be());
@@ -242,8 +242,8 @@ pub fn private_op(
     // num-bigint-dig's BigUint has no zeroizing Drop (its heap limbs are freed
     // un-wiped), so the key's halves, the blinding values and the result — for a
     // decipher, the plaintext — ride in a `Secret`; the library's own copies do not.
-    let p = Secret::new(BigUint::from_bytes_be(crt.p()));
-    let q = Secret::new(BigUint::from_bytes_be(crt.q()));
+    let p = Secret::new(from_secret_be(crt.p()));
+    let q = Secret::new(from_secret_be(crt.q()));
     let n = p.expose() * q.expose();
     let m = BigUint::from_bytes_be(c);
 

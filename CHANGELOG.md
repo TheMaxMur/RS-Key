@@ -65,6 +65,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV GET METADATA and ATTEST on an RSA slot left the key's primes in freed
+  RAM, and neither needs a PIN. GET METADATA multiplies the two stored primes
+  for the modulus, and `num-bigint-dig`'s `from_bytes_be` reverses each prime
+  in a buffer it frees without wiping: in a host replay of the device's
+  allocator the second prime stayed in freed heap after every call, all but the
+  eight bytes the allocator's header overwrites, which is enough of a prime to
+  factor the modulus. ATTEST rebuilt the whole private key only to certify its
+  modulus, and that arithmetic's working buffers kept both primes and `dQ`.
+  `rsk-rsa` now reads a secret big-endian value through a reversed copy it
+  holds in a `rsk_secret::Secret`, which the library reads little-endian
+  without a copy of its own — every private operation, key load and import
+  reads its primes that way — and PIV ATTEST reads the modulus alone, as GET
+  METADATA does. The replay finds no prime after either command now. A key
+  rebuild's own arithmetic (import, OpenPGP ATTEST, key generation) still
+  frees working copies unwiped; the heap wipe planned for this work closes
+  those. Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A24.**
+
 - Yubico OTP left a slot's secrets in RAM after most commands. Every command
   that reads a slot — the keyboard ticket, CALCULATE (challenge-response),
   SWAP, UPDATE, CONFIGURE, the status reads and the boot counter bump — unseals

@@ -215,6 +215,15 @@ impl RsaKey {
     }
 }
 
+/// `BigUint::from_bytes_be` for a secret: that one reverses its input in a `Vec`
+/// it frees unwiped. This reverses it in a `Secret` and reads it little-endian,
+/// which copies nothing more.
+pub(crate) fn from_secret_be(be: &[u8]) -> BigUint {
+    let mut le = Secret::new(be.to_vec());
+    le.expose_mut().reverse();
+    BigUint::from_bytes_le(le.expose())
+}
+
 /// A fresh blinding pair `(r, r⁻¹ mod n)`, `width` random bytes drawn per
 /// attempt. A candidate with no inverse shares a factor with `n` — so it is a
 /// multiple of a prime factor — and is wiped rather than freed intact.
@@ -226,7 +235,8 @@ pub(crate) fn blind_pair(
     loop {
         let mut rb = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
         rng.fill(&mut rb.expose_mut()[..width]);
-        let mut cand = Secret::new(BigUint::from_bytes_be(&rb.expose()[..width]) % n);
+        let raw = Secret::new(from_secret_be(&rb.expose()[..width]));
+        let mut cand = Secret::new(raw.expose() % n);
         rb.wipe();
         match cand
             .expose()
@@ -245,8 +255,8 @@ pub(crate) fn blind_pair(
 /// the key assembly — `dP`/`dQ`/`qInv` are two modular inversions, ~50 ms on
 /// RSA-4096 — and is byte-identical to `rsa_from_pqe(..)?.n_be()`.
 pub fn modulus_be(p: &[u8], q: &[u8], out: &mut [u8]) -> Result<usize, RsaError> {
-    let p = Secret::new(BigUint::from_bytes_be(p));
-    let q = Secret::new(BigUint::from_bytes_be(q));
+    let p = Secret::new(from_secret_be(p));
+    let q = Secret::new(from_secret_be(q));
     let nb = (p.expose() * q.expose()).to_bytes_be();
     if nb.len() > out.len() {
         return Err(RsaError::BadWidth);

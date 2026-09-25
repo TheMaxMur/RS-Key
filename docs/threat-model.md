@@ -544,13 +544,13 @@ runs before any store access, so at that moment neither key is anywhere in
 memory. It buys nothing against code execution, which can drive the same reads.
 Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
 internals, and the working buffers `num-bigint-dig` allocates inside its own
-conversions and arithmetic — a big-endian read's, a division's, a modular
-exponentiation's — which it frees unwiped. `rsk-rsa` holds a key's values, its
-blinding values and a private operation's result and intermediates in a
-`Secret` or a key type whose `Drop` wipes them, except the primes and `d` of a
-key `RsaKey::from_p_q` refuses; but the heap does not clear what it frees, so a
-library buffer's bytes stay in RAM until an allocation reuses them, past the
-end of the command. A heap that wipes on free would close them.
+arithmetic — a division's, a modular inverse's, a modular exponentiation's —
+which it frees unwiped. `rsk-rsa` holds a key's values, its blinding values and
+a private operation's result and intermediates in a `Secret` or a key type whose
+`Drop` wipes them, except the primes and `d` of a key `RsaKey::from_p_q`
+refuses; but the heap does not clear what it frees, so a library buffer's bytes
+stay in RAM until an allocation reuses them, past the end of the command. A heap
+that wipes on free would close them.
 
 What holds the first sentence is a type, not a habit. Key-grade bytes live in
 `rsk_secret::Secret` — or, for a buffer that outlives the scope, under a

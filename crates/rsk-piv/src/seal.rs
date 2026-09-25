@@ -11,7 +11,7 @@
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
 use rsk_ec::{Curve, PrivKey};
 use rsk_fs::{Fs, KeyFid, Sealed, Storage};
-use rsk_rsa::{RSA_PUB_EXP_BE, RsaKey, crt};
+use rsk_rsa::{RsaKey, crt};
 use rsk_sdk::Rng;
 use rsk_sdk::Sw;
 use zeroize::Zeroize;
@@ -214,8 +214,10 @@ pub fn store_rsa_key<S: Storage>(
 /// Load a sealed RSA key and return ONLY its public modulus `N = p·q`, big-endian
 /// into `out`, returning `N`'s length. Skips the CRT precompute a key rebuild
 /// pays — the `dP/dQ/qInv` modular inverses cost ~50 ms on RSA-4096 — because GET
-/// METADATA needs only `N` and the fixed 65537 exponent, never the private key.
-/// Byte-identical to `load_rsa_key(..)?.n_be()`, just without the key rebuild.
+/// METADATA and ATTEST need only `N` and the fixed 65537 exponent, never the
+/// private key.
+/// Byte-identical to `rsa_from_pqe(..)?.n_be()`, just without the key rebuild,
+/// which is also what leaves the primes' working copies in freed heap.
 pub fn load_rsa_modulus<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -229,22 +231,6 @@ pub fn load_rsa_modulus<S: Storage>(
         // length classification (the `_` bool) cannot change `N` — collision-immune.
         let (half, _) = crt::parse_rsa_blob(&plain[..n]).map_err(rsa_sw)?;
         rsk_rsa::modulus_be(&plain[..half], &plain[half..2 * half], out).map_err(rsa_sw)
-    })();
-    plain.zeroize();
-    r
-}
-
-/// Load an RSA key sealed by [`store_rsa_key`] (either layout) into an
-/// [`RsaKey`] (`E` fixed at 65537). Used by the cert-build path (the retired
-/// on-device RSA finish); signing uses [`load_rsa_crt`] and GET METADATA uses
-/// [`load_rsa_modulus`], both of which skip the full key rebuild.
-pub fn load_rsa_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<RsaKey, Sw> {
-    let mut plain = [0u8; MAX_PLAIN];
-    let n = seal_read(dev, fs, fid, &mut plain)?;
-    let r = (|| {
-        let (half, _) = crt::parse_rsa_blob(&plain[..n]).map_err(rsa_sw)?;
-        rsk_rsa::rsa_from_pqe(RSA_PUB_EXP_BE, &plain[..half], &plain[half..2 * half])
-            .ok_or(Sw::MEMORY_FAILURE)
     })();
     plain.zeroize();
     r

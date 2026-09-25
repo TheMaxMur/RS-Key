@@ -800,17 +800,21 @@ pub(crate) fn attest<S: Storage>(
     let mut cert = [0u8; x509::MAX_CERT];
     let built = match meta[0] {
         ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
-            let key = match seal::load_rsa_key(dev, fs, key_fid(slot)) {
-                Ok(k) => k,
+            // The modulus alone, as GET METADATA reads it: rebuilding the private
+            // key to certify it left the primes in freed heap, on a command no PIN gates.
+            let mut n = [0u8; MAX_RSA_BYTES];
+            let nl = match seal::load_rsa_modulus(dev, fs, key_fid(slot), &mut n) {
+                Ok(l) => l,
                 Err(e) => return e,
             };
-            let n = key.n_be();
-            let e = key.e_be();
             x509::build_cert(
                 &x509::CertParams {
                     subject_slot: slot,
                     algo: meta[0],
-                    spki: x509::Spki::Rsa { n: &n, e: &e },
+                    spki: x509::Spki::Rsa {
+                        n: &n[..nl],
+                        e: rsk_rsa::RSA_PUB_EXP_BE,
+                    },
                     attestation: Some(att),
                     ca_pathlen: None,
                 },
