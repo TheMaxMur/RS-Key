@@ -100,6 +100,8 @@ TIERS = [
     ("CRYPTO FACADE", "the one crate that names a primitive", "#37877E", ["rsk-crypto"]),
     ("ALGORITHMS", "reached by an allowlist, never by every applet", "#4C9086",
      ["rsk-rsa", "rsk-ec", "rsk-sha512", "rsk-mldsa"]),
+    ("SECRETS", "key-grade bytes that wipe themselves on every exit", "#5E9A92",
+     ["rsk-secret"]),
 ]
 
 APPLET_LABEL = "APPLETS"
@@ -313,12 +315,14 @@ def wrap(chunks, sep):
 def render(members, edges, firm):
     gated = members - firm
     sideways, head, allow, mark = notes(members, edges, gated)
+    bottom, n = TIERS[-1][0].lower(), len(TIERS[-1][3])
     desc = (
         f"Crate dependency layers: {len(members)} crates in {len(TIERS)} tiers, from the "
         f"{len(TIERS[0][3])} flashable binaries at the top, down through the "
-        f"{len(TIERS[applet_tier()][3])} applets, to the {len(TIERS[-1][3])} algorithm "
-        f"crates. All {len(edges)} in-workspace dependencies point strictly downward, and "
-        f"applet-to-applet edges number {sideways}."
+        f"{len(TIERS[applet_tier()][3])} applets, to the {n} {bottom} "
+        f"crate{'s' if n != 1 else ''} at the bottom. All {len(edges)} in-workspace "
+        f"dependencies point strictly downward, and applet-to-applet edges number "
+        f"{sideways}."
     )
     body, y = [], 118
     for i, (label, sub, colour, crates) in enumerate(TIERS):

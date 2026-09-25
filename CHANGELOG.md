@@ -555,6 +555,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **`rsk-secret`: a type for key-grade bytes that wipes itself** — new crate,
+  nothing uses it yet. `Secret<T>` has no `Copy`, `Clone`, `Debug` or
+  `PartialEq`, so a secret cannot be duplicated, printed or compared in variable
+  time by accident, and its `Drop` zeroizes it on every exit — a `?` included,
+  which the explicit `.zeroize()` at the end of a function the tree relies on
+  today does not cover. `WipeGuard` does the same for a borrowed buffer that
+  outlives the scope. It sits in a new bottom tier of the crate graph, below the
+  algorithm crates, so every crate that holds a secret can name it.
+  `bcdDevice` 0x0A11 → 0x0A12.
+
 - **`unsafe` compiles only in the three crates docs/unsafe.md names** — build, no
   behaviour change. The workspace denies `unsafe_code`; `firmware`, `rsk-wipe`
   and `rsk-rsa` (on the device target, where it links the assembly) lift it at

@@ -2330,6 +2330,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rsk-secret"
+version = "0.1.0"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
 name = "rsk-sha512"
 version = "0.1.0"
 dependencies = [

@@ -829,13 +829,14 @@ def test_a_caller_outside_the_writer_axes_three_directories_is_still_a_caller():
 
 def test_the_default_images_closure_is_walked_and_leaves_the_optional_crates_out():
     """`unlinked-crate` rests on this walk. Cross-checked against
-    `cargo tree -p firmware -e normal`: the same 22 crates, and the five it
-    leaves out are the `display`/`bench` optionals nothing turns on."""
+    `cargo tree -p firmware -e normal`: the same 22 crates, and the six it
+    leaves out are the `display`/`bench` optionals nothing turns on and
+    `rsk-secret`, which nothing uses yet."""
     linked = gate.linked_crates(ROOT)
     assert "firmware" in linked and "crates/rsk-fido" in linked
     assert set(gate.crates(ROOT).values()) - linked == {
         "crates/rsk-bench", "crates/rsk-bip39", "crates/rsk-display",
-        "crates/rsk-slip39", "crates/rsk-ui"}
+        "crates/rsk-secret", "crates/rsk-slip39", "crates/rsk-ui"}
 
 
 def test_an_optional_dependency_a_default_feature_turns_on_is_linked(tmp_path):

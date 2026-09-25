@@ -170,3 +170,8 @@ evidence = ["crates/rsk-slip39/src/kani.rs", "crates/rsk-slip39/src/tests.rs"]
 [crate.rsk-bench]
 class = "out-of-scope"
 reason = "latency statistics for the on-device harness; not part of the security argument."
+
+[crate.rsk-secret]
+class = "pure"
+evidence = ["crates/rsk-secret/src/tests.rs"]
+note = "the secret-holding type every crate that keeps key-grade bytes wraps them in: no Copy, Clone, Debug or PartialEq, and a Drop that zeroizes on every exit. Pure, no flash; its contract is held by compile_fail doctests (clone, ==, Debug, use after move) and by tests that watch Drop reach zeroize on an early return."
