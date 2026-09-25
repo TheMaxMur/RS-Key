@@ -10,9 +10,12 @@
 //!
 //! `no_std`, no alloc, no secret intermediate buffer kept: [`entropy_to_indices`] reads
 //! the 264 bits (256 entropy + 8 checksum) straight out of the inputs. The 24 returned
-//! indices encode the seed, so the **caller zeroizes them** after rendering.
+//! indices encode the seed, so they come in a `rsk_secret::Secret` that wipes itself.
 
 #![no_std]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
+
+use rsk_secret::Secret;
 
 mod wordlist;
 pub use wordlist::WORDS;
@@ -24,23 +27,24 @@ pub const WORD_COUNT: usize = 24;
 /// 11-bit value, so it always indexes [`WORDS`] in bounds (proven by `indices_in_range`).
 ///
 /// The checksum is the first 8 bits of `SHA-256(entropy)`, appended to the 256 entropy
-/// bits; the 264-bit string is then read big-endian in 11-bit groups. The returned array
-/// is secret (it reconstructs the seed) — zeroize it once the phrase is shown.
-pub fn entropy_to_indices(entropy: &[u8; 32]) -> [u16; WORD_COUNT] {
-    pack_indices(entropy, rsk_crypto::sha256(entropy)[0])
+/// bits; the 264-bit string is then read big-endian in 11-bit groups. The indices are
+/// secret (they reconstruct the seed), so they are built in, and handed out in, a `Secret`.
+pub fn entropy_to_indices(entropy: &[u8; 32]) -> Secret<[u16; WORD_COUNT]> {
+    let mut idx = Secret::new([0u16; WORD_COUNT]);
+    pack_indices(entropy, rsk_crypto::sha256(entropy)[0], idx.expose_mut());
+    idx
 }
 
 /// The packing half of [`entropy_to_indices`], with the checksum byte passed in.
 /// Split out so `indices_in_range` proves the real loop over a symbolic checksum
 /// instead of dragging SHA-256 into the solver for no added assurance.
-fn pack_indices(entropy: &[u8; 32], checksum: u8) -> [u16; WORD_COUNT] {
+fn pack_indices(entropy: &[u8; 32], checksum: u8, idx: &mut [u16; WORD_COUNT]) {
     // Bit `b` of the 264-bit string: the first 256 come from `entropy` (MSB-first per
     // byte), the last 8 from `checksum`. No copy of the seed is made.
     let bit = |b: usize| -> u16 {
         let byte = if b < 256 { entropy[b / 8] } else { checksum };
         ((byte >> (7 - (b % 8))) & 1) as u16
     };
-    let mut idx = [0u16; WORD_COUNT];
     let mut i = 0;
     while i < WORD_COUNT {
         let mut v = 0u16;
@@ -52,7 +56,6 @@ fn pack_indices(entropy: &[u8; 32], checksum: u8) -> [u16; WORD_COUNT] {
         idx[i] = v;
         i += 1;
     }
-    idx
 }
 
 /// The BIP-39 word for `index` (`0..2048`). Indices from [`entropy_to_indices`] are

@@ -19,3 +19,5 @@ kani-soft = ["rsk-crypto/kani-soft"]
 # Only for the SHA-256 of the entropy (the BIP-39 checksum) — reuse the in-tree wrapper
 # rather than add a new external crate to the trust base.
 rsk-crypto = { workspace = true }
+# The 24 indices, which reconstruct the seed, handed out in a type that wipes itself.
+rsk-secret = { workspace = true }

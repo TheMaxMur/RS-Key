@@ -692,6 +692,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The recovery phrase's word indices are typed** — refactor; the phrase is
+  the same, word for word. `rsk-bip39` builds the 24 indices, which
+  reconstruct the seed, in a `rsk_secret::Secret` and hands them out in it,
+  so the display's seed-phrase screen can only hold them in a type that wipes
+  itself. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A2B → 0x0A2C.
+
 - **FIDO's seed and the keys derived from it are typed** — refactor; nothing a
   host sees changes. `rsk-fido`'s seed loaders, the credential, hmac-secret and
   key-handle derivations, the ratchet, the persistent token and the vendor

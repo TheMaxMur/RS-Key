@@ -171,7 +171,7 @@ where
         // the host can attest that it happened (audit run-34 #17).
         self.journal_local(rsk_fido::journal::EV_BACKUP_EXPORT);
         let mut words: [&str; rsk_bip39::WORD_COUNT] = [""; rsk_bip39::WORD_COUNT];
-        for (w, &i) in words.iter_mut().zip(indices.iter()) {
+        for (w, &i) in words.iter_mut().zip(indices.expose().iter()) {
             *w = rsk_bip39::word(i);
         }
         let pages: u16 = rsk_bip39::WORD_COUNT.div_ceil(rsk_ui::SEED_WORDS_PER_PAGE) as u16;
@@ -209,9 +209,9 @@ where
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
         }
-        // Wipe both secrets from RAM: the indices (the canonical secret) via `Zeroize`, and the
-        // word slots (which also encode the order) via a black-boxed fill so it isn't elided.
-        indices.zeroize();
+        // Wipe both secrets from RAM: the indices (the canonical secret) in their `Secret`, and
+        // the word slots (which also encode the order) via a black-boxed fill so it isn't elided.
+        indices.wipe();
         words.fill("");
         let _ = core::hint::black_box(&words);
         note_activity();
