@@ -695,9 +695,19 @@ impl<'a> Worker<'a> {
         // on a reset under way.
         crate::vendor::begin_reset();
         embassy_time::Timer::after(Duration::from_millis(200)).await;
-        self.ctap.scrub_secrets();
-        self.ccid.scrub();
-        self.rng.borrow_mut().scrub();
+        // Every field is named: a new one cannot join the worker without a decision here,
+        // and a scrub deleted below leaves its binding unused, which the build refuses.
+        let Worker {
+            ctap,
+            ccid,
+            rng,
+            presence: _,
+            clicks: _,
+            last_msg_cid: _,
+        } = self;
+        ctap.scrub_secrets();
+        ccid.scrub();
+        rng.borrow_mut().scrub();
         // The keyboard transport's statics are outside the per-dispatch buffers: the
         // frame reassembly buffer, the taken request and a queued ticket can each hold
         // a slot's AES key, private UID, access code or static password.

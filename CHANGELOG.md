@@ -577,6 +577,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The reboot's scrubs are held by the compiler** — refactor, no behaviour
+  change. `Worker::reboot` destructures the worker exhaustively before it wipes,
+  so a new field cannot join it without a decision about the secrets it holds,
+  and deleting one of the three scrubs leaves its binding unused, which the
+  build refuses. The register that used to derive that list went with
+  `secrets_gate.py`. `bcdDevice` 0x0A15 → 0x0A16.
+
 - **A bare wipe no longer compiles** — build, no behaviour change. The root
   `clippy.toml` refuses `Zeroize::zeroize` and `Zeroizing` outside
   `rsk-secret`'s two `Drop` impls, so a new secret has to live in `Secret` or
