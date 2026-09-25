@@ -69,17 +69,17 @@ fn app_data_keeps_6e_wrapper_for_ykman() {
 fn cardholder_data_keeps_65_wrapper() {
     // 0x65 is another constructed template ykman unpacks by tag
     // (`Tlv.unpack(0x65, …)`); it must keep its wrapper even when the nested
-    // name/lang/sex DOs are empty.
+    // name/lang/sex DOs are empty, in the length form a YubiKey 5.8.0 writes.
     let mut fs = fs();
     let a = aid();
     let mut out = [0u8; 128];
     let mut cur = None;
     let (n, sw) = get_data(EF_CH_DATA, false, false, &mut fs, &a, &mut cur, &mut out);
     assert_eq!(sw, Sw::OK);
-    assert_eq!(out[0], 0x65);
-    assert_eq!(out[1], 0x82);
-    let nested = ((out[2] as usize) << 8) | out[3] as usize;
-    assert_eq!(n, nested + 4);
+    assert_eq!(
+        out[..n],
+        [0x65, 0x08, 0x5B, 0x00, 0x5F, 0x2D, 0x00, 0x5F, 0x35, 0x00]
+    );
 }
 
 #[test]

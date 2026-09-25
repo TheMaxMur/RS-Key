@@ -269,15 +269,16 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         }
     }
 
-    /// A constructed DO: outer tag (1 byte) + `82 HH LL` + nested, length
-    /// back-patched.
+    /// A constructed DO: outer tag (1 byte), its length and the nested DOs, the
+    /// length filled in once they are written.
     fn constructed(&mut self, tag: u8, fids: &[u16], mode: i32) -> usize {
         let lp = self.open(tag);
         self.emit_do(fids, mode);
         self.close(lp)
     }
 
-    /// Open a constructed DO: its tag and a two-byte length [`Self::close`] fills.
+    /// Open a constructed DO: its tag and room for the longest length form, which
+    /// [`Self::close`] fills.
     fn open(&mut self, tag: u8) -> usize {
         self.push(tag);
         self.push(0x82);
@@ -286,11 +287,18 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         lp
     }
 
+    /// Close what [`Self::open`] began and return its size, tag included. The length
+    /// takes BER's shortest form, as a YubiKey 5.8.0 writes `65 09`, the body moving
+    /// back over what the long form had reserved.
     fn close(&mut self, lp: usize) -> usize {
-        let lpdif = self.pos - lp - 2;
-        self.out[lp] = (lpdif >> 8) as u8;
-        self.out[lp + 1] = (lpdif & 0xff) as u8;
-        lpdif + 4
+        let body = self.pos - lp - 2;
+        let mut head = [0u8; 3];
+        let n = rsk_sdk::tlv::format_len(body as u16, &mut head);
+        let at = lp - 1;
+        self.out.copy_within(lp + 2..self.pos, at + n);
+        self.out[at..at + n].copy_from_slice(&head[..n]);
+        self.pos = at + n + body;
+        1 + n + body
     }
 
     fn emit_app_data(&mut self, mode: i32) -> usize {

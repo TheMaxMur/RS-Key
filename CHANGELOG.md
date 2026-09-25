@@ -65,6 +65,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP templates give their length in BER's shortest form, as a YubiKey
+  5.8.0 does: a reset card's `65` reads `65 09 5B 00 5F 2D 00 5F 35 01 39`, byte
+  for byte the YubiKey's, where RS-Key wrote `65 82 00 09`. `73` and `6E` are
+  always past 255 bytes and keep their `82` form. `bcdDevice` 0x0A0C → 0x0A0D.
+
 - OpenPGP DO `7F66`, the extended-length information, sits inside `73` right
   after `DE`, where a YubiKey 5.8.0 carries it; RS-Key had it at `6E`'s top
   level, before `7F74`. `6E` reads `4F`, `5F52`, `7F74`, `73` now, as on the

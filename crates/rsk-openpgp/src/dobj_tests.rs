@@ -13,6 +13,37 @@ fn fs() -> Fs<RamStorage> {
     fs
 }
 
+/// A template's length goes in BER's shortest form, as a YubiKey 5.8.0 writes `65 09`:
+/// one byte under 128, `81 LL` under 256, `82 HH LL` from there.
+#[test]
+fn a_template_length_takes_the_shortest_form() {
+    for (body, head) in [
+        (0usize, &[0x65, 0x00][..]),
+        (127, &[0x65, 0x7F]),
+        (128, &[0x65, 0x81, 0x80]),
+        (255, &[0x65, 0x81, 0xFF]),
+        (256, &[0x65, 0x82, 0x01, 0x00]),
+    ] {
+        let mut fs = fs();
+        let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+        let mut out = [0u8; 512];
+        let n = {
+            let mut w = DoWriter::new(&mut out, &mut fs, &aid);
+            let lp = w.open(0x65);
+            w.extend(&vec![0xAB; body]);
+            let n = w.close(lp);
+            assert_eq!(w.len(), n, "{body} bytes: the cursor after the shrink");
+            n
+        };
+        assert_eq!(&out[..head.len()], head, "{body} bytes");
+        assert_eq!(n, head.len() + body, "{body} bytes");
+        assert!(
+            out[head.len()..n].iter().all(|&b| b == 0xAB),
+            "{body} bytes"
+        );
+    }
+}
+
 #[test]
 fn algo_default_is_rsa2k() {
     let mut fs = fs();

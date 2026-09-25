@@ -2216,6 +2216,21 @@ fn another_dos_get_or_put_data_ends_the_walk_whatever_it_answers() {
     assert_eq!(run(&mut app, &mut fs, &next), went_on);
 }
 
+/// A reset card's 65 reads byte for byte as a reset YubiKey 5.8.0's (measured
+/// 2026-09-25): name and language empty, sex `9`, the length in its one-byte form.
+#[test]
+fn a_reset_cards_cardholder_data_reads_as_a_yubikeys() {
+    let rng = RefCell::new(LcgRng(41));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let get = [0x00, consts::INS_GET_DATA, 0x00, 0x65, 0x00];
+    let yubikey = [
+        0x65, 0x09, 0x5B, 0x00, 0x5F, 0x2D, 0x00, 0x5F, 0x35, 0x01, 0x39,
+    ];
+    assert_eq!(run(&mut app, &mut fs, &get), (yubikey.to_vec(), Sw::OK));
+}
+
 // OpenPGP 3.4 §4.4.3.8 gives DO 0xDE three status values per slot: 00 absent,
 // 01 generated on card, 02 imported. Ours collapsed them to a boolean, so an
 // imported key claimed on-card generation — the one direction that misleads a
