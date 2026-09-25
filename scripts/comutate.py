@@ -110,6 +110,7 @@ sequence proofs' own falsifiability is measured by their own table).
 """
 
 import functools
+import hashlib
 import pathlib
 import re
 import shutil
@@ -988,19 +989,22 @@ def host_triple() -> str:
     return re.search(r"^host: (\S+)$", out.stdout, re.M).group(1)
 
 
-def worktree_path(bug: str) -> pathlib.Path:
-    """Where one comutant is measured.
+def worktree_path(root: pathlib.Path, bug: str) -> pathlib.Path:
+    """Where one comutant is measured: a directory per checkout and bug. Keyed by
+    the bug alone, two gates measuring one bug at once shared it: each removed the
+    other's live worktree or died adding its own ("already exists").
 
     A function rather than a literal because `test_comutate.py` has to arrange a
     stale registration at this exact path; a second typing of it leaves that case
     green over the defect the moment the path moves, which was measured.
     """
-    return pathlib.Path("/tmp") / f"rsk-comutant-{bug}"
+    checkout = hashlib.sha256(str(root.resolve()).encode()).hexdigest()[:12]
+    return pathlib.Path("/tmp") / f"rsk-comutant-{checkout}-{bug}"
 
 
 def run_one(root: pathlib.Path, bug: str, entry: dict, host: str) -> tuple[str, str]:
     """(verdict, detail) for one comutant, measured in a throwaway worktree."""
-    wt = worktree_path(bug)
+    wt = worktree_path(root, bug)
     if wt.exists():
         subprocess.run(
             ["git", "worktree", "remove", "--force", str(wt)], cwd=root, check=False

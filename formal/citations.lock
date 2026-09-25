@@ -83,7 +83,7 @@ assurance/bundle/SEC-FIDO-002.toml	formal/gen-configs.sh	105-107	ALL_INV=(NoAuth
 assurance/bundle/SEC-FIDO-002.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-002.toml	scripts/assurance_gate.py	103-103	TAG = re.compile(r"Refines\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)")	TAG = re.compile(r"Refines\s+`([A-Za-z0-9]+)!([A-Za-z0-9]+)`\s+—\s+(SEC-[A-Z]+-[0-9A-Z]+)")
 assurance/bundle/SEC-FIDO-002.toml	scripts/assurance_gate.py	220-222	def grep_word(files: list[pathlib.Path], word: str) -> list[str]:	return [f.name for f in files if pat.search(f.read_text(errors="ignore"))]
-assurance/bundle/SEC-FIDO-002.toml	scripts/comutate.py	903-905	# Sequential runs share the main build cache: only the patched	"CARGO_TARGET_DIR": str(root / "target"),
+assurance/bundle/SEC-FIDO-002.toml	scripts/comutate.py	904-906	# Sequential runs share the main build cache: only the patched	"CARGO_TARGET_DIR": str(root / "target"),
 assurance/bundle/SEC-FIDO-002.toml	scripts/evidence_gate.py	468-474	for path in assurance_gate.production_rust(root):	out.add(str(path.relative_to(root)))
 assurance/bundle/SEC-FIDO-002.toml	scripts/ghost_gate.py	62-64	#: The invariant whose ghost this is. One name, because a second ghost would want	INVARIANT = "NoAuthorizationBypass"
 assurance/bundle/SEC-FIDO-002.toml	scripts/kani.sh	307-307	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"	export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg sha2_backend=\"soft\" --cfg poly1305_force_soft --cfg sha1_force_soft"
@@ -167,7 +167,7 @@ assurance/bundle/SEC-FIDO-004.toml	formal/run-tlc.sh	245-247	"$JAVA" -XX:+UsePar
 assurance/bundle/SEC-FIDO-004.toml	scripts/assurance_gate.py	220-222	def grep_word(files: list[pathlib.Path], word: str) -> list[str]:	return [f.name for f in files if pat.search(f.read_text(errors="ignore"))]
 assurance/bundle/SEC-FIDO-004.toml	scripts/assurance_gate.py	1053-1062	for cfg_name in OWNER_CFGS:	)
 assurance/bundle/SEC-FIDO-004.toml	scripts/citation_gate.py	368-374	def bundle_pages(root):	)
-assurance/bundle/SEC-FIDO-004.toml	scripts/comutate.py	910-914	"RUSTFLAGS": (	).strip(),
+assurance/bundle/SEC-FIDO-004.toml	scripts/comutate.py	911-915	"RUSTFLAGS": (	).strip(),
 assurance/bundle/SEC-FIDO-004.toml	scripts/evidence_gate.py	515-546	def freshness(root, commit, inputs):	return ("fresh" if not behind else "stale"), behind
 assurance/bundle/SEC-FIDO-004.toml	scripts/ghost_gate.py	64-64	INVARIANT = "NoAuthorizationBypass"	INVARIANT = "NoAuthorizationBypass"
 assurance/bundle/SEC-FIDO-004.toml	scripts/platform_gate.py	1890-1918	def check_bundles(root, ids, findings):	)
@@ -201,8 +201,8 @@ assurance/bundle/SEC-FIDO-005.toml	formal/gen-configs.sh	322-322	emit Historical
 assurance/bundle/SEC-FIDO-005.toml	formal/gen-configs.sh	329-329	for b in "${BUGS[@]}"; do emit "Mut_$b.cfg" "$b" FALSE TRUE; done	for b in "${BUGS[@]}"; do emit "Mut_$b.cfg" "$b" FALSE TRUE; done
 assurance/bundle/SEC-FIDO-005.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-005.toml	scripts/bundle_gate.py	1456-1456	verdicts = len(named) - inverse	verdicts = len(named) - inverse
-assurance/bundle/SEC-FIDO-005.toml	scripts/comutate.py	337-365	def solo_index(root: pathlib.Path) -> dict[str, list[str]]:	return out
-assurance/bundle/SEC-FIDO-005.toml	scripts/comutate.py	903-905	# Sequential runs share the main build cache: only the patched	"CARGO_TARGET_DIR": str(root / "target"),
+assurance/bundle/SEC-FIDO-005.toml	scripts/comutate.py	338-366	def solo_index(root: pathlib.Path) -> dict[str, list[str]]:	return out
+assurance/bundle/SEC-FIDO-005.toml	scripts/comutate.py	904-906	# Sequential runs share the main build cache: only the patched	"CARGO_TARGET_DIR": str(root / "target"),
 assurance/bundle/SEC-FIDO-005.toml	scripts/platform_gate.py	1890-1918	def check_bundles(root, ids, findings):	)
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-device/src/lib.rs	52-52	/// power-cycled, and §6.6 opens the `authenticatorReset` window only just after a	/// power-cycled, and §6.6 opens the `authenticatorReset` window only just after a
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/consts.rs	368-368	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
@@ -349,7 +349,7 @@ assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	194-204	fn re
 assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	229-232	fs.put(EF_CRED, &[0x5a; 96]).unwrap();	fs.put(EF_BACKUP_SEALED, &[1]).unwrap();
 assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	236-241	let budget = u32::from_be_bytes([	]);
 assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	244-246	let mut state = rsk_fido::FidoState::new();	state.keydev_dec = rsk_fido::seed::load_keydev(&identity, &mut fs);
-assurance/bundle/SEC-FIDO-006C.toml	scripts/comutate.py	310-334	def armed_subject(config, companion: dict[str, str]) -> str | None:	return None
+assurance/bundle/SEC-FIDO-006C.toml	scripts/comutate.py	311-335	def armed_subject(config, companion: dict[str, str]) -> str | None:	return None
 assurance/bundle/SEC-FIDO-006C.toml	tests/29_reset_power_cut.py	526-527	assertion_status = old_credential_without_gates(dev, cid, credential_id)	assert assertion_status != 0, (
 assurance/bundle/SEC-FIDO-006C.toml	tests/29_reset_power_cut.py	537-537	assert current != owner_seed, "owner seed survived after its backup seal disappeared"	assert current != owner_seed, "owner seed survived after its backup seal disappeared"
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-device/src/ctap.rs	221-221	keydev_ram_raw: st.keydev_dec.is_some(),	keydev_ram_raw: st.keydev_dec.is_some(),
@@ -385,7 +385,7 @@ assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/vendor.rs	579-579	ctx.sta
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/vendor.rs	580-580	ctx.state.keydev_dec = Some(seed);	ctx.state.keydev_dec = Some(seed);
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/vendor.rs	955-955	let unlocked = ctx.state.keydev_dec.is_some();	let unlocked = ctx.state.keydev_dec.is_some();
 assurance/bundle/SEC-FIDO-007.toml	formal/gen-configs.sh	109-114	# Structural facts the model's own arguments rest on, asserted on the baseline	EXTRA_INV=(RamNeverOutlivesFlashSeed NoLiveTokenWithoutPinRecord)
-assurance/bundle/SEC-FIDO-007.toml	scripts/comutate.py	337-365	def solo_index(root: pathlib.Path) -> dict[str, list[str]]:	return out
+assurance/bundle/SEC-FIDO-007.toml	scripts/comutate.py	338-366	def solo_index(root: pathlib.Path) -> dict[str, list[str]]:	return out
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-device/src/ctap.rs	221-221	keydev_ram_raw: st.keydev_dec.is_some(),	keydev_ram_raw: st.keydev_dec.is_some(),
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-display/src/gates.rs	11-11	/// shared; the backing record (`EF_DEVICE_PIN` vs `EF_PIN`) and the floor differ, and so	/// shared; the backing record (`EF_DEVICE_PIN` vs `EF_PIN`) and the floor differ, and so
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-display/src/pin.rs	717-717	.factory_wipe(	.factory_wipe(

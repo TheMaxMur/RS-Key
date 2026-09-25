@@ -269,7 +269,7 @@ bound_driven_here = 1
 stops_driven_here = "the other two verdicts as OBSERVATIONS. One of the three was re-driven for this bundle; the other two are transcribed from the register, so their kills are recorded rather than re-measured"
 bound_credited_configurations = 3
 stops_credited_configurations = "what the killing tests are ABOUT. The credit is three because the index reads solo configurations by invariant name; the tests that fall are named for this property's shape and not for the property, and no derived column counts them"
-shipped_relation = "three twins are registered — one per model switch, at formal/comutants.toml:96, :125 and :343 — and all three carry `expect = \"killed\"`, which is a RECORDED verdict per that file's own status vocabulary (:19-21) and not a plan. ONE of the three was re-driven for this bundle, BugCredBeforeRp, whose two hunks defer `bump_rp` past the EF_CRED write in the shipped file; the other two are transcribed from the register and are marked as such in the mutation table. The credit is three because `comutate.solo_index` reads the Solo_ configuration BY INVARIANT NAME (scripts/comutate.py:337-365) and all three switches target this invariant. What the column does NOT say, and the source does: the killing tests are named for this property's shape but not for the property, and no derived column counts them"
+shipped_relation = "three twins are registered — one per model switch, at formal/comutants.toml:96, :125 and :343 — and all three carry `expect = \"killed\"`, which is a RECORDED verdict per that file's own status vocabulary (:19-21) and not a plan. ONE of the three was re-driven for this bundle, BugCredBeforeRp, whose two hunks defer `bump_rp` past the EF_CRED write in the shipped file; the other two are transcribed from the register and are marked as such in the mutation table. The credit is three because `comutate.solo_index` reads the Solo_ configuration BY INVARIANT NAME (scripts/comutate.py:338-366) and all three switches target this invariant. What the column does NOT say, and the source does: the killing tests are named for this property's shape but not for the property, and no derived column counts them"
 cfg = "none"
 features = "none — the slice is `cargo test -p rsk-fido --lib` on the default feature set, with `--target aarch64-apple-darwin` because the workspace default target is the firmware's"
 
@@ -299,7 +299,7 @@ name = "rustc"
 version = "1.96.0 (ac68faa20 2026-05-25)"
 provenance = "flake.lock"
 invocation = "cargo test -p rsk-fido --lib --target aarch64-apple-darwin, in a detached worktree at this commit with the comutant's two hunks applied"
-environment = "nix develop; CARGO_TARGET_DIR pointed at the main tree's cache, which is what scripts/comutate.py:903-905 does for the same reason — only the patched crate recompiles"
+environment = "nix develop; CARGO_TARGET_DIR pointed at the main tree's cache, which is what scripts/comutate.py:904-906 does for the same reason — only the patched crate recompiles"
 
 [[tool]]
 name = "cargo"
