@@ -127,7 +127,7 @@ pub enum CredKey {
     P521(p521::NonZeroScalar),
     K256(k256::NonZeroScalar),
     Ed25519(ed25519_dalek::SigningKey),
-    // ML-DSA-44's ~13 KB expanded key (the in-tree `rsk-mldsa`, which streams the
+    // ML-DSA-44's ~16.5 KB expanded key (the in-tree `rsk-mldsa`, which streams the
     // matrix A so signing fits the RP2350 stack). HEAP-BOXED, not inline: signing
     // (`getAssertion`) nearly fills the RP2350's ~222 KiB worker stack on its own,
     // so the key inline on that frame tipped it into overflow → a hard wedge
@@ -156,15 +156,16 @@ impl Drop for CredKey {
 }
 
 /// Build a boxed ML-DSA-44 credential key from the ratchet seed. `#[inline(never)]`
-/// is load-bearing: `MlDsa44::from_seed` has a ~100 KiB matrix-expansion frame, and
+/// is load-bearing: `MlDsa44::expand` has a 31-52 KiB matrix-expansion frame, and
 /// folding it into [`CredKey::from_raw`] would size that function's frame for the
 /// lattice worst case on EVERY curve — a P-256 getAssertion would then reserve
-/// ~100 KiB it never uses and overflow the worker stack (a hard, replug-only wedge).
+/// that much for nothing (at ~100 KiB it overflowed the worker stack: a replug wedge).
 #[inline(never)]
 fn mldsa44_from_raw(raw: &[u8]) -> Option<CredKey> {
     let mut xi = [0u8; 32];
     xi.copy_from_slice(raw.get(..32)?);
-    let key = Box::new(rsk_crypto::MlDsa44::from_seed(&xi));
+    let mut key = Box::new(rsk_crypto::MlDsa44::zeroed());
+    key.expand(&xi);
     xi.zeroize();
     Some(CredKey::MlDsa44(key))
 }
@@ -175,7 +176,8 @@ fn mldsa44_from_raw(raw: &[u8]) -> Option<CredKey> {
 fn mldsa65_from_raw(raw: &[u8]) -> Option<CredKey> {
     let mut xi = [0u8; 32];
     xi.copy_from_slice(raw.get(..32)?);
-    let key = Box::new(rsk_crypto::MlDsa65::from_seed(&xi));
+    let mut key = Box::new(rsk_crypto::MlDsa65::zeroed());
+    key.expand(&xi);
     xi.zeroize();
     Some(CredKey::MlDsa65(key))
 }
@@ -186,7 +188,8 @@ fn mldsa65_from_raw(raw: &[u8]) -> Option<CredKey> {
 fn mldsa87_from_raw(raw: &[u8]) -> Option<CredKey> {
     let mut xi = [0u8; 32];
     xi.copy_from_slice(raw.get(..32)?);
-    let key = Box::new(rsk_crypto::MlDsa87::from_seed(&xi));
+    let mut key = Box::new(rsk_crypto::MlDsa87::zeroed());
+    key.expand(&xi);
     xi.zeroize();
     Some(CredKey::MlDsa87(key))
 }
@@ -274,10 +277,10 @@ impl CredKey {
                 seed.zeroize();
                 Some(Self::Ed25519(key))
             }
-            // The lattice keygen (`from_seed`) has a ~100 KiB matrix-expansion
+            // The lattice keygen (`expand`) has a 31-52 KiB matrix-expansion
             // frame; keep it behind an `#[inline(never)]` call so it is NOT folded
             // into `from_raw`'s own frame, which would otherwise reserve that
-            // ~100 KiB on EVERY credential — even a P-256 getAssertion — and
+            // much on EVERY credential — even a P-256 getAssertion — and
             // overflow the worker stack. See [`mldsa44_from_raw`].
             c if c == CURVE_MLDSA44 as i64 => mldsa44_from_raw(raw),
             c if c == CURVE_MLDSA65 as i64 => mldsa65_from_raw(raw),

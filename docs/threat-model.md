@@ -622,8 +622,8 @@ ML-DSA-44 (COSE −48), ML-DSA-65 (−49) and ML-DSA-87 (−50) FIDO2 credential
 (all three the in-tree `rsk-mldsa` crate) with hedged signing (32 fresh DRBG
 bytes per signature; the hedge and expanded keys are zeroized). `rsk-mldsa`
 streams the FIPS 204 matrix A on the fly so even ML-DSA-87's keygen+sign fit
-the RP2350 stack — measured, its keygen frame is the largest in the image at
-123 KiB against a 205 KiB ceiling. It is hand-written, so its constant-time posture is a source-level
+the RP2350 stack — measured, ML-DSA-87's keygen runs 69 KiB deep and its
+signing frame is 65 KiB, against a 205 KiB ceiling. It is hand-written, so its constant-time posture is a source-level
 claim (branch-free reductions, masked norm checks, no secret division), not
 proven at machine code. It is checked byte-for-byte against NIST ACVP KATs,
 with Kani proofs over the reductions and rounding. ML-KEM-768 is compiled in as

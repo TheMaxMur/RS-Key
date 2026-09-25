@@ -61,6 +61,13 @@ pub(crate) fn to_mont(a: &Poly) -> Poly {
     out
 }
 
+/// [`to_mont`] in place, for a polynomial that already sits where it is kept.
+pub(crate) fn to_mont_inplace(a: &mut Poly) {
+    for c in a.0.iter_mut() {
+        *c = partial_reduce64(i64::from(*c) << 32);
+    }
+}
+
 #[cfg(test)]
 #[path = "reduce_tests.rs"]
 mod tests;

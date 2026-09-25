@@ -65,6 +65,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- An ML-DSA credential key was copied into its box through the stack, leaving
+  the whole expanded key behind each time it was derived. `rsk-fido` boxed
+  `MlDsa*::from_seed(&xi)`, which built the key — the NTT-domain s1, s2 and
+  t0, the signing seed K — on the stack; the copy into the box left that stack
+  image unwiped. The key is now expanded field by field into a zeroed box
+  (`zeroed()` + `expand()`), and a zeroed key refuses to sign until then.
+  Measured in an emulator on the release image, the secret bytes a derivation
+  leaves in dead stack fall from 36.0 / 49.4 / 65.7 KB to 8.3 / 10.4 / 14.5 KB
+  (ML-DSA-44 / -65 / -87), and its stack depth from 77.6 / 105.3 / 140.1 KB to
+  42.6 / 53.8 / 70.2 KB. What remains still rebuilds the key: ρ′ and K sit in
+  the SHAKE256 reader's state, which `sha3` never wipes; the dead-stack sweep
+  planned for the zeroize work is what closes that. Reading any of it takes a
+  memory read on the live device. **bcdDevice → 0x0A1C.**
+
 - An RSA key generation could leave the key's primes on core0's stack. A prime
   core1 found was handed back by value on its way to the key, and each frame it
   passed through kept a copy nothing wiped, so with core1 engaged one factor of

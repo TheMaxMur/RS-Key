@@ -19,7 +19,9 @@ use crate::encode::{pk_decode, pk_encode, sig_decode, sig_encode, w1_encode};
 use crate::ntt::{inv_ntt_inplace, ntt_inplace};
 use crate::params::{D, Params, Q, SEED_LEN};
 use crate::poly::{Poly, pointwise_mont, zero_vec};
-use crate::reduce::{center_mod, full_reduce32, mont_reduce, partial_reduce32, to_mont};
+use crate::reduce::{
+    center_mod, full_reduce32, mont_reduce, partial_reduce32, to_mont, to_mont_inplace,
+};
 use crate::round::{high_bits, low_bits, make_hint, power2round, use_hint};
 use crate::sample::{expand_mask, expand_s, matrix_mul_streaming, sample_in_ball, shake256};
 
@@ -44,6 +46,9 @@ pub struct ExpandedKey<const K: usize, const L: usize> {
     s1_hat_mont: [Poly; L],
     s2_hat_mont: [Poly; K],
     t0_hat_mont: [Poly; K],
+    /// Set by [`Self::expand`]: a [`Self::zeroed`] key has a known all-zero
+    /// secret, and signing with one would hand out forgeable signatures.
+    expanded: bool,
 }
 
 impl<const K: usize, const L: usize> Drop for ExpandedKey<K, L> {
@@ -103,24 +108,52 @@ fn reduce_vec<const M: usize>(v: &mut [Poly; M]) {
 }
 
 impl<const K: usize, const L: usize> ExpandedKey<K, L> {
+    /// An all-zero key, for [`Self::expand`] to fill where it already lives.
+    pub fn zeroed() -> Self {
+        ExpandedKey {
+            rho: [0; 32],
+            cap_k: [0; 32],
+            tr: [0; 64],
+            t1: zero_vec(),
+            s1_hat_mont: zero_vec(),
+            s2_hat_mont: zero_vec(),
+            t0_hat_mont: zero_vec(),
+            expanded: false,
+        }
+    }
+
+    /// Whether [`Self::expand`] has filled this key.
+    pub fn is_expanded(&self) -> bool {
+        self.expanded
+    }
+
     /// Deterministically expand the keypair from the 32-byte seed ξ (Alg 6).
+    /// Test and host paths only: the result is a move, and every frame it
+    /// crosses keeps the whole secret key. The firmware uses [`Self::expand`].
     pub fn from_seed(p: &Params, xi: &[u8; SEED_LEN]) -> Self {
+        let mut key = Self::zeroed();
+        key.expand(p, xi);
+        key
+    }
+
+    /// Expand the keypair from ξ into `self` (Alg 6), field by field, so the
+    /// expanded key never exists as a value on the stack: a caller that boxes a
+    /// [`Self::zeroed`] key and expands it in place leaves no copy behind.
+    pub fn expand(&mut self, p: &Params, xi: &[u8; SEED_LEN]) {
         debug_assert!(K == p.k && L == p.l, "params/dimension mismatch");
 
         // (ρ, ρ′, K) ← H(ξ || IntegerToBytes(k,1) || IntegerToBytes(l,1))
         let mut h = shake256(&[xi, &[K as u8], &[L as u8]]);
-        let mut rho = [0u8; 32];
         let mut rho_prime = Secret::<[u8; 64]>::zeroed();
-        let mut cap_k = [0u8; 32];
-        h.read(&mut rho);
+        h.read(&mut self.rho);
         h.read(rho_prime.expose_mut());
-        h.read(&mut cap_k);
+        h.read(&mut self.cap_k);
 
         // (s1, s2) ← ExpandS(ρ′); t ← invNTT(Â ∘ NTT(s1)) + s2
         let (s1, s2) = expand_s::<K, L>(p.eta, rho_prime.expose());
-        rho_prime.wipe(); // ExpandS seed → whole SK; not held past this point
+        rho_prime.wipe(); // ExpandS seed → whole SK; the XOF state `h` still holds it
         let s1_hat = ntt_vec(&s1);
-        let mut t = matrix_mul_streaming::<K, L>(&rho, &s1_hat);
+        let mut t = matrix_mul_streaming::<K, L>(&self.rho, &s1_hat);
         reduce_vec(&mut t);
         for k in 0..K {
             inv_ntt_inplace(&mut t[k]);
@@ -130,35 +163,35 @@ impl<const K: usize, const L: usize> ExpandedKey<K, L> {
         }
 
         // (t1, t0) ← Power2Round(t)
-        let mut t1: [Poly; K] = zero_vec();
         let mut t0: [Poly; K] = zero_vec();
         for k in 0..K {
             let (hi, lo) = power2round(&t[k]);
-            t1[k] = hi;
+            self.t1[k] = hi;
             t0[k] = lo;
         }
 
         // tr ← H(pkEncode(ρ, t1))
         let pk_len = 32 + 32 * K * 10;
         let mut pk = [0u8; MAX_PK_LEN];
-        pk_encode::<K>(&rho, &t1, &mut pk[..pk_len]);
-        let mut tr = [0u8; 64];
-        shake256(&[&pk[..pk_len]]).read(&mut tr);
+        pk_encode::<K>(&self.rho, &self.t1, &mut pk[..pk_len]);
+        shake256(&[&pk[..pk_len]]).read(&mut self.tr);
 
-        // Montgomery-domain NTT precomputes for signing.
-        let s1_hat_mont = to_mont_vec(&s1_hat);
-        let s2_hat_mont = to_mont_vec(&ntt_vec(&s2));
-        let t0_hat_mont = to_mont_vec(&ntt_vec(&t0));
-
-        ExpandedKey {
-            rho,
-            cap_k,
-            tr,
-            t1,
-            s1_hat_mont,
-            s2_hat_mont,
-            t0_hat_mont,
+        // Montgomery-domain NTT precomputes for signing, each built in its field.
+        for (dst, src) in self.s1_hat_mont.iter_mut().zip(&s1_hat) {
+            dst.0 = src.0;
+            to_mont_inplace(dst);
         }
+        for (dst, src) in self.s2_hat_mont.iter_mut().zip(&s2) {
+            dst.0 = src.0;
+            ntt_inplace(dst);
+            to_mont_inplace(dst);
+        }
+        for (dst, src) in self.t0_hat_mont.iter_mut().zip(&t0) {
+            dst.0 = src.0;
+            ntt_inplace(dst);
+            to_mont_inplace(dst);
+        }
+        self.expanded = true;
     }
 
     /// Reconstruct an expanded key from encoded `sk` bytes (Alg 25 + the sign
@@ -178,6 +211,7 @@ impl<const K: usize, const L: usize> ExpandedKey<K, L> {
             s1_hat_mont,
             s2_hat_mont,
             t0_hat_mont,
+            expanded: true,
         }
     }
 
