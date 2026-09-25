@@ -65,6 +65,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV answers its SELECT with a YubiKey 5.8.0's application property template,
+  byte for byte: the PIX in `4F` and the NIST RID in `79`, 19 bytes. RS-Key added
+  a `50` label and an `AC` algorithm list, 45 bytes in all; SP 800-73-4 makes the
+  label optional and the list a condition of secure messaging, which RS-Key's PIV
+  does not do, and no host needs either from a YubiKey. The application has no
+  SELECT of its own either: every other form that reaches it is `6D00`, as on the
+  YubiKey, where RS-Key answered a `P2` of `01` with the template (a bare `9000`
+  for a body that was no AID prefix) and anything else with `6B00`.
+  `bcdDevice` 0x0A10 → 0x0A11.
+
 - OpenPGP answers its SELECT with no FCI, as a YubiKey 5.8.0 does, where RS-Key
   sent a 34-byte `6F` template; a truncated AID selects the same way. The
   application has no SELECT of its own either: every other form that reaches it,

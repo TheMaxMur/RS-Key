@@ -512,6 +512,12 @@ fn select_returns_apt() {
     let apt = select(&mut app, &mut fs);
     assert_eq!(apt[0], 0x61);
     assert_eq!(apt[1] as usize, apt.len() - 2, "APT length backpatched");
+    // A YubiKey 5.8.0's, byte for byte (measured 2026-09-25).
+    let yubikey: &[u8] = &[
+        0x61, 0x11, 0x4F, 0x06, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00, 0x79, 0x07, 0x4F, 0x05, 0xA0,
+        0x00, 0x00, 0x03, 0x08,
+    ];
+    assert_eq!(apt, yubikey);
     let body = &apt[2..];
     // NIST SP 800-73-4 §3.1.1: outer 4F is the PIV AID/PIX, and 79 (coexistent
     // tag allocation authority) MUST wrap a nested 4F with the NIST RID — OpenSC's
@@ -525,8 +531,45 @@ fn select_returns_apt() {
         find_tag(taa, 0x4F).expect("nested 4F with NIST RID"),
         &[0xA0, 0x00, 0x00, 0x03, 0x08]
     );
-    assert_eq!(find_tag(body, 0x50).unwrap(), b"RS-Key PIV");
-    assert!(find_tag(body, 0xAC).is_some());
+}
+
+const INS_SELECT: u8 = 0xA4;
+
+/// A YubiKey 5.8.0's PIV has no SELECT of its own: every form the dispatcher hands
+/// it, by AID with a `P2` but `00` or `04`, by file id or by path, is `6D00`.
+#[test]
+fn a_select_inside_the_application_is_not_an_instruction() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let aid = &PIV_AID[..5];
+    let forms: [(u8, u8, &[u8]); 8] = [
+        (0x04, 0x01, aid),
+        (0x04, 0x01, &aid[..4]),
+        (0x04, 0x02, aid),
+        (0x04, 0x0C, aid),
+        (0x04, 0x01, &[]),
+        (0x00, 0x00, &[]),
+        (0x00, 0x00, &[0x3F, 0x00]),
+        (0x01, 0x01, &[0x5F, 0xC1]),
+    ];
+    for (p1, p2, data) in forms {
+        let (sw, body) = run(&mut app, &mut fs, INS_SELECT, p1, p2, data);
+        assert_eq!(
+            (sw, body.len()),
+            (Sw::INS_NOT_SUPPORTED, 0),
+            "{p1:02X} {p2:02X} {data:02X?}"
+        );
+        let held = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0;
+        assert_eq!(
+            held,
+            Sw::OK,
+            "the PIN still holds after {p1:02X} {p2:02X} {data:02X?}"
+        );
+    }
 }
 
 #[test]
@@ -8075,9 +8118,9 @@ fn a_one_byte_body_is_the_same_refusal_on_every_command() {
     select(&mut app, &mut fs);
 
     // (INS, P1, P2) — every instruction `process` dispatches, gated and ungated
-    // alike, plus its `_ => 6D00` fall-through. `A4` is here at `P2 = 01`, the
-    // in-applet re-SELECT: the dispatcher intercepts `P2 = 00`/`04` before the
-    // applet, and the reference draws the same line — `00 A4 04 00 01 A0` is
+    // alike, plus its `_ => 6D00` fall-through. `A4` is here at `P2 = 01`, a SELECT
+    // form that reaches the applet: the dispatcher intercepts `P2 = 00`/`04` before
+    // it, and the reference draws the same line — `00 A4 04 00 01 A0` is
     // `9000` there while `00 A4 04 01 01 A0` is `6A80`. The rule is applet-local
     // on both cards and must not be lifted to the dispatcher (`rsk-oath` takes a
     // legitimate `Lc = 1`).

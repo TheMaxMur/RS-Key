@@ -108,7 +108,6 @@ const INS_RESET_RETRY: u8 = 0x2C;
 /// Shared with the OpenPGP GENERATE INS; PIV uses P1 = 0x00 (OpenPGP: 0x80/0x81).
 pub const INS_ASYM_KEYGEN: u8 = 0x47;
 const INS_AUTHENTICATE: u8 = 0x87;
-const INS_SELECT: u8 = 0xA4;
 const INS_GET_DATA: u8 = 0xCB;
 const INS_PUT_DATA: u8 = 0xDB;
 const INS_MOVE_KEY: u8 = 0xF6;
@@ -325,17 +324,13 @@ impl<'a> PivApplet<'a> {
 /// The SELECT application property template (`61 { … }`); the outer length
 /// byte is filled in (some implementations leave it 0).
 fn apt(res: &mut ResBuf) -> Sw {
-    // NIST SP 800-73-4 §3.1.1: 4F is the PIV AID/PIX and 79 (coexistent tag
-    // allocation authority) MUST wrap a nested 4F holding the NIST RID. A flat 79
-    // (no inner 4F) makes OpenSC's piv_match_card fall back to the OpenPGP applet.
+    // NIST SP 800-73-4 §3.1.1: 4F is the PIV PIX and 79 MUST wrap a nested 4F with
+    // the NIST RID (a flat 79 makes OpenSC's piv_match_card fall back to OpenPGP).
+    // Nothing optional follows: byte for byte a YubiKey 5.8.0's template.
     const BODY: &[u8] = &[
         0x4F, 0x06, 0x00, 0x00, 0x10, 0x00, 0x01, 0x00, // PIV application AID (PIX)
         0x79, 0x07, 0x4F, 0x05, 0xA0, 0x00, 0x00, 0x03,
         0x08, // tag alloc authority → NIST RID
-        0x50, 0x0A, b'R', b'S', b'-', b'K', b'e', b'y', b' ', b'P', b'I',
-        b'V', // application label
-        0xAC, 0x0C, 0x80, 0x07, 0x07, 0x08, 0x0A, 0x0C, 0x11, 0x14, 0x2E, 0x06, 0x01,
-        0x00, // supported algorithms
     ];
     if !res.push(0x61) || !res.push(BODY.len() as u8) || !res.extend(BODY) {
         return Sw::WRONG_LENGTH;
@@ -418,16 +413,6 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
             }
             INS_YK_SERIAL => {
                 res.extend(&rsk_sdk::serial4(self.serial_id));
-                Sw::OK
-            }
-            INS_SELECT => {
-                // A re-SELECT addressed at the applet itself.
-                if apdu.p2 != 0x01 {
-                    return Sw::WRONG_P1P2;
-                }
-                if !apdu.data.is_empty() && PIV_AID.starts_with(apdu.data) {
-                    return apt(res);
-                }
                 Sw::OK
             }
             INS_VERIFY => self.verify(&dev, fs, apdu, res),

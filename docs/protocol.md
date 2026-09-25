@@ -294,7 +294,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | `6A86` | INCORRECT_P1P2 | unsupported P1/P2 |
 | `6A88` | REFERENCE_NOT_FOUND | the object, key or PIN the request names is absent (PIV `GET METADATA`, `MOVE KEY`, the PIN commands' key reference) |
 | `6B00` | WRONG_P1P2 | P1/P2 outside what this command takes — including a DO that `P1P2` addresses and the command does not serve (OpenPGP `GET DATA`, `PUT DATA`), and an OpenPGP `SELECT DATA` occurrence past the third or `P2` other than `04`, judged before its body |
-| `6D00` | INS_NOT_SUPPORTED | unknown INS for this applet; OpenPGP answers it to any `SELECT` but the one by AID, as a YubiKey 5.8.0 does |
+| `6D00` | INS_NOT_SUPPORTED | unknown INS for this applet; OpenPGP and PIV answer it to any `SELECT` but the one by AID, as a YubiKey 5.8.0 does |
 | `6E00` | CLA_NOT_SUPPORTED | wrong CLA for this applet (OpenPGP ATTEST takes class `80` only) |
 
 ### 2.2 CTAP2 errors
