@@ -6,6 +6,7 @@
 //! Yubico-mode challenge-response. [`ticket`] and [`hid`] serve the keyboard side.
 
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use core::cell::RefCell;
 
@@ -16,7 +17,7 @@ use rsk_fs::{Fs, KeyFid, Storage};
 use rsk_sdk::error::Result;
 pub use rsk_sdk::{AlwaysConfirm, Confirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 mod counter;
 pub mod hid;
@@ -1018,31 +1019,31 @@ pub(crate) fn try_read_slot<S: Storage>(
 /// stored its secrets in the clear, and (via the pre-OTP arm, mirroring
 /// keydev/PIV/seed) keeps an OTP burn from orphaning a slot provisioned before it.
 pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
-    let mut out = [0u8; SLOT_SIZE];
+    let mut out = Secret::<[u8; SLOT_SIZE]>::zeroed();
     // Sized to hold a full sealed blob so a sealed-but-unauthenticating slot
     // (e.g. a foreign serial) reads back at its true length and is skipped
     // rather than truncated and mis-resealed.
-    let mut raw = [0u8; seal::MAX_BLOB];
+    let mut raw = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
     for i in 0..SLOT_COUNT as u16 {
         let fid = KeyFid::new(EF_OTP_SLOT1 + i);
-        if seal::seal_read(dev, fs, fid, &mut out).is_some() {
+        if seal::seal_read(dev, fs, fid, out.expose_mut()).is_some() {
             continue; // already sealed under the current arm
         }
         // A slot sealed before the OTP MKEK was burned is under the NO-OTP kbase;
         // recover it via the pre-OTP arm and re-seal under the current (OTP) arm,
         // so a burn never silently orphans an existing slot.
         if dev.otp_key.is_some()
-            && let Some(n) = seal::seal_read(&dev.without_otp(), fs, fid, &mut out)
+            && let Some(n) = seal::seal_read(&dev.without_otp(), fs, fid, out.expose_mut())
         {
             // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: the
             // copy it supersedes is the pre-OTP one. The `continue` stays outside —
             // falling through would re-seal that ciphertext as if it were plaintext.
             if rsk_fs::request_rescrub(fs).is_ok() {
-                let _ = seal::seal_put(dev, fs, rng, fid, &out[..n]);
+                let _ = seal::seal_put(dev, fs, rng, fid, &out.expose()[..n]);
             }
             continue;
         }
-        if let Some(n) = fs.read_key(fid, &mut raw) {
+        if let Some(n) = fs.read_key(fid, raw.expose_mut()) {
             // Only re-seal a genuine plaintext config; anything longer is not a
             // legacy record — the smallest sealed blob is already > SLOT_SIZE,
             // asserted at compile time in `seal.rs`.
@@ -1053,12 +1054,12 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
             if (CONFIG_SIZE..=SLOT_SIZE).contains(&n)
                 && (dev.otp_key.is_none() || rsk_fs::request_rescrub(fs).is_ok())
             {
-                let _ = seal::seal_put(dev, fs, rng, fid, &raw[..n]);
+                let _ = seal::seal_put(dev, fs, rng, fid, &raw.expose()[..n]);
             }
         }
     }
-    out.zeroize();
-    raw.zeroize();
+    out.wipe();
+    raw.wipe();
 }
 
 /// Attempts the boot bump spends on one slot, per side, before giving up on it.

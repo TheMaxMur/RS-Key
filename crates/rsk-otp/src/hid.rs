@@ -6,7 +6,6 @@
 //! via SET_REPORT and polled via GET_REPORT — the transport `ykman otp` speaks.
 
 use rsk_secret::Secret;
-use zeroize::Zeroize;
 
 use crate::{VERSION, crc16};
 
@@ -57,7 +56,7 @@ pub enum RxOutcome {
 /// 70-byte frame, whose stored CRC (a plain CRC-16 over the 64-byte payload) is
 /// checked before the frame is released.
 pub struct FrameRx {
-    buf: [u8; FRAME_SIZE],
+    buf: Secret<[u8; FRAME_SIZE]>,
 }
 
 impl Default for FrameRx {
@@ -69,7 +68,7 @@ impl Default for FrameRx {
 impl FrameRx {
     pub const fn new() -> Self {
         Self {
-            buf: [0; FRAME_SIZE],
+            buf: Secret::zeroed(),
         }
     }
 
@@ -94,20 +93,21 @@ impl FrameRx {
         if seq == 0 {
             self.scrub();
         }
-        self.buf[seq * REPORT_DATA..seq * REPORT_DATA + REPORT_DATA]
+        self.buf.expose_mut()[seq * REPORT_DATA..seq * REPORT_DATA + REPORT_DATA]
             .copy_from_slice(&report[..REPORT_DATA]);
         if seq != 9 {
             return RxOutcome::None;
         }
         // Final slice: validate the frame CRC (plain CRC-16 over the payload).
-        let want = u16::from_le_bytes([self.buf[FRAME_CRC_OFF], self.buf[FRAME_CRC_OFF + 1]]);
-        if crc16(&self.buf[..PAYLOAD_SIZE]) != want {
+        let buf = self.buf.expose();
+        let want = u16::from_le_bytes([buf[FRAME_CRC_OFF], buf[FRAME_CRC_OFF + 1]]);
+        if crc16(&buf[..PAYLOAD_SIZE]) != want {
             self.scrub();
             return RxOutcome::BadCrc;
         }
         let mut payload = [0u8; PAYLOAD_SIZE];
-        payload.copy_from_slice(&self.buf[..PAYLOAD_SIZE]);
-        let slot = self.buf[PAYLOAD_SIZE];
+        payload.copy_from_slice(&buf[..PAYLOAD_SIZE]);
+        let slot = buf[PAYLOAD_SIZE];
         // The caller owns the bytes now. A slot-configure frame holds the AES key,
         // the private UID and the presented access code, and nothing else clears
         // this buffer until some later frame happens to reuse it — so wipe it here.
@@ -118,7 +118,7 @@ impl FrameRx {
     /// Wipe the reassembly buffer. Called after a frame is handed off, on an abort,
     /// and before the device drops to the bootloader.
     pub fn scrub(&mut self) {
-        self.buf.zeroize();
+        self.buf.wipe();
     }
 }
 
@@ -293,7 +293,7 @@ pub struct OtpHid {
     /// Cached idle status frame, refreshed after each command.
     status: [u8; REPORT_SIZE],
     req_slot: u8,
-    req_payload: [u8; PAYLOAD_SIZE],
+    req_payload: Secret<[u8; PAYLOAD_SIZE]>,
     req_ready: bool,
 }
 
@@ -315,7 +315,7 @@ impl OtpHid {
             // build (panel and touch init), so an early host poll may read this one.
             status: [0, VERSION.0, VERSION.1, VERSION.2, 0, 0, 0, 0],
             req_slot: 0,
-            req_payload: [0; PAYLOAD_SIZE],
+            req_payload: Secret::zeroed(),
             req_ready: false,
         }
     }
@@ -329,7 +329,7 @@ impl OtpHid {
         match self.rx.feed(&report) {
             RxOutcome::Frame { slot, payload } => {
                 self.req_slot = slot;
-                self.req_payload = payload;
+                *self.req_payload.expose_mut() = payload;
                 self.req_ready = true;
                 self.processing.reset();
                 self.state = State::Processing;
@@ -373,8 +373,10 @@ impl OtpHid {
         // A slot-configure frame carries the AES key, the private UID and the
         // presented access code: the caller's copy wipes itself, and none stays here.
         let mut payload = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
-        payload.expose_mut().copy_from_slice(&self.req_payload);
-        self.req_payload.zeroize();
+        payload
+            .expose_mut()
+            .copy_from_slice(self.req_payload.expose());
+        self.req_payload.wipe();
         Some((self.req_slot, payload))
     }
 
@@ -411,7 +413,7 @@ impl OtpHid {
     pub fn scrub(&mut self) {
         self.rx.scrub();
         self.tx = FrameTx::new();
-        self.req_payload.zeroize();
+        self.req_payload.wipe();
         self.req_slot = 0;
     }
 }

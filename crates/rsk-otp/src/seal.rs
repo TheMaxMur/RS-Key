@@ -20,7 +20,7 @@
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
 use rsk_fs::{Fs, KeyFid, Sealed, Storage};
 use rsk_sdk::error::Result;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::{CONFIG_SIZE, Rng, SLOT_SIZE};
 
@@ -41,11 +41,16 @@ const _: () = assert!(NONCE_LEN + CONFIG_SIZE + TAG_LEN > SLOT_SIZE);
 
 const INFO_OTP_SLOT: &[u8] = b"OTP/SLOT";
 
-fn kenc(dev: &Device) -> [u8; 32] {
+fn kenc(dev: &Device) -> Secret<[u8; 32]> {
     let mut kbase = dev.derive_kbase();
-    let mut out = [0u8; 32];
-    hkdf_sha256(dev.serial_hash, kbase.expose(), INFO_OTP_SLOT, &mut out)
-        .expect("32-byte HKDF output is in range");
+    let mut out = Secret::<[u8; 32]>::zeroed();
+    hkdf_sha256(
+        dev.serial_hash,
+        kbase.expose(),
+        INFO_OTP_SLOT,
+        out.expose_mut(),
+    )
+    .expect("32-byte HKDF output is in range");
     kbase.wipe();
     out
 }
@@ -62,23 +67,23 @@ pub fn seal_put<S: Storage>(
     if plain.len() > MAX_PLAIN {
         return false;
     }
-    let mut blob = [0u8; MAX_BLOB];
+    let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
     let n = NONCE_LEN + plain.len() + TAG_LEN;
-    rng.fill(&mut blob[..NONCE_LEN]);
+    rng.fill(&mut blob.expose_mut()[..NONCE_LEN]);
     let mut nonce = [0u8; NONCE_LEN];
-    nonce.copy_from_slice(&blob[..NONCE_LEN]);
-    blob[NONCE_LEN..NONCE_LEN + plain.len()].copy_from_slice(plain);
+    nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
+    blob.expose_mut()[NONCE_LEN..NONCE_LEN + plain.len()].copy_from_slice(plain);
     let mut key = kenc(dev);
     let tag = aes256gcm_encrypt(
-        &key,
+        key.expose(),
         &nonce,
         dev.serial_hash,
-        &mut blob[NONCE_LEN..NONCE_LEN + plain.len()],
+        &mut blob.expose_mut()[NONCE_LEN..NONCE_LEN + plain.len()],
     );
-    key.zeroize();
-    blob[NONCE_LEN + plain.len()..n].copy_from_slice(&tag);
-    let ok = fs.put_key(fid, Sealed::wrap(&blob[..n])).is_ok();
-    blob.zeroize();
+    key.wipe();
+    blob.expose_mut()[NONCE_LEN + plain.len()..n].copy_from_slice(&tag);
+    let ok = fs.put_key(fid, Sealed::wrap(&blob.expose()[..n])).is_ok();
+    blob.wipe();
     ok
 }
 
@@ -106,38 +111,38 @@ pub fn try_seal_read<S: Storage>(
     fid: KeyFid,
     out: &mut [u8],
 ) -> Result<Option<usize>> {
-    let mut blob = [0u8; MAX_BLOB];
-    let Some(n) = fs.try_read_key(fid, &mut blob)? else {
+    let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
+    let Some(n) = fs.try_read_key(fid, blob.expose_mut())? else {
         return Ok(None);
     };
     if !(NONCE_LEN + TAG_LEN..=MAX_BLOB).contains(&n) {
-        blob.zeroize();
+        blob.wipe();
         return Ok(None);
     }
     let pt_len = n - NONCE_LEN - TAG_LEN;
     if out.len() < pt_len {
-        blob.zeroize();
+        blob.wipe();
         return Ok(None);
     }
     let mut nonce = [0u8; NONCE_LEN];
-    nonce.copy_from_slice(&blob[..NONCE_LEN]);
+    nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
     let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&blob[n - TAG_LEN..n]);
+    tag.copy_from_slice(&blob.expose()[n - TAG_LEN..n]);
     let mut key = kenc(dev);
     let r = aes256gcm_decrypt(
-        &key,
+        key.expose(),
         &nonce,
         dev.serial_hash,
-        &mut blob[NONCE_LEN..NONCE_LEN + pt_len],
+        &mut blob.expose_mut()[NONCE_LEN..NONCE_LEN + pt_len],
         &tag,
     );
-    key.zeroize();
+    key.wipe();
     if r.is_err() {
-        blob.zeroize();
+        blob.wipe();
         return Ok(None);
     }
-    out[..pt_len].copy_from_slice(&blob[NONCE_LEN..NONCE_LEN + pt_len]);
-    blob.zeroize();
+    out[..pt_len].copy_from_slice(&blob.expose()[NONCE_LEN..NONCE_LEN + pt_len]);
+    blob.wipe();
     Ok(Some(pt_len))
 }
 

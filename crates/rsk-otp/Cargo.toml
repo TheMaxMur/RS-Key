@@ -28,8 +28,6 @@ rsk-secret = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
 rsk-devconf = { workspace = true }
-# At-rest sealing of slot secrets: zeroize scrubs the plaintext scratch buffers.
-zeroize = { workspace = true }
 
 [dev-dependencies]
 # RamStorage for the host tests (the same backend the other applets use).
@@ -37,3 +35,5 @@ rsk-fs = { workspace = true, features = ["test-util"] }
 # An independent AES-128 for the typed Yubico-OTP round-trip test (decrypt the
 # emitted modhex token and check its embedded fields).
 aes = { workspace = true }
+# hid_tests.rs asserts the request copy is ZeroizeOnDrop.
+zeroize = { workspace = true }

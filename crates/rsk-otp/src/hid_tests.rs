@@ -214,7 +214,7 @@ fn taking_a_request_leaves_no_copy_of_its_payload() {
     let payload = [0xA5u8; PAYLOAD_SIZE];
     write_frame(&mut hid, 1, &payload);
     hid.take_request().unwrap();
-    assert!(hid.req_payload.iter().all(|&b| b == 0));
+    assert!(hid.req_payload.expose().iter().all(|&b| b == 0));
 }
 
 /// The copy the caller takes wipes itself, on whatever exit it leaves by: the

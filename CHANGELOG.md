@@ -648,6 +648,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Yubico OTP's seal and frame buffers are typed** — refactor; nothing a host
+  sees changes. `rsk-otp`'s seal key, the sealing and unsealing blob, the
+  reseal pass's two buffers, the keyboard frame's reassembly buffer and the
+  taken request's payload are `rsk_secret::Secret`s, wiped in place where the
+  hand wipes were and on every other exit. The crate takes the zeroize ban at
+  its root, and `zeroize` is left to its tests. `bcdDevice` 0x0A21 → 0x0A22.
+
 - **OATH's seal buffers are typed** — refactor; nothing a host sees changes.
   `rsk-oath`'s seal key, the sealing and unsealing blob, the credential walk's
   scratch and the reseal pass's two buffers are `rsk_secret::Secret`s, wiped in
