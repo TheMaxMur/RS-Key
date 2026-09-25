@@ -861,7 +861,7 @@ formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	326-326	self.disp.cur
 formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/RSKeyAdminSurface.tla	crates/rsk-sdk/src/applet.rs	202-204	pub fn set_enabled(&mut self, mask: u32) {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-oath/src/lib.rs	603-635	// gated here, before the HOTP counter burns.	fs,
-formal/RSKeyAppletPolicies.tla	crates/rsk-openpgp/src/keypairgen.rs	79-122	let priv_fid = slot_algo_fid(fid);	// sibling reader `info::slot_algo` has the same `attr.len() >= 3` gate.
+formal/RSKeyAppletPolicies.tla	crates/rsk-openpgp/src/keypairgen.rs	124-167	let priv_fid = slot_algo_fid(fid);	// sibling reader `info::slot_algo` has the same `attr.len() >= 3` gate.
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/counter.rs	16-26	pub(crate) fn next_use_counter(counter: u16, session: u8) -> (u16, u8, bool) {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	334-349	// The advance this press owes the PERSISTED half of the position. A	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	457-474	// A slot the medium could not read is not an unprogrammed one: the fold	}

@@ -153,7 +153,7 @@ PivKeyOp ==
 (***************************************************************************)
 (* OpenPGP. A generated/imported key records its algorithm attribute; an   *)
 (* operation must agree with that stored metadata                          *)
-(* (crates/rsk-openpgp/src/keypairgen.rs:79-122 and keys.rs' algorithm     *)
+(* (crates/rsk-openpgp/src/keypairgen.rs:124-167 and keys.rs' algorithm    *)
 (* checks), even if the public C1/C2/C3 DO later changes.                  *)
 (***************************************************************************)
 PgpSetAttribute(a) ==

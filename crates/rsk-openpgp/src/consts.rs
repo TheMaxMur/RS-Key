@@ -239,6 +239,16 @@ pub(crate) fn crt_slot(tag: u8) -> Option<KeyFid> {
         _ => None,
     }
 }
+
+/// The tag of the key reference a control-reference template may carry, `84 01 <ref>`.
+pub const CRT_KEY_REF: u8 = 0x84;
+// The key references: DO `DE`'s numbering (§4.4.3.8), also MSE's and ATTEST's, and
+// the `81` ykman sends inside `B6` for Yubico's attestation key.
+pub const KEY_REF_SIG: u8 = 0x01;
+pub const KEY_REF_DEC: u8 = 0x02;
+pub const KEY_REF_AUT: u8 = 0x03;
+pub const KEY_REF_ATT: u8 = 0x81;
+
 pub const EF_KEY_INFO: u16 = 0x00de; // S
 pub const EF_KDF: u16 = 0x00f9; // C — KDF parameters
 pub const EF_ALGO_INFO: u16 = 0x00fa; // C — algorithm info

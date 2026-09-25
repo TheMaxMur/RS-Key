@@ -387,7 +387,11 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         // byte — 00 not present, 01 generated on card, 02 imported. ykman >= 5.2
         // keys its parse on these refs, so they must be the spec values, not
         // 0-indexed.
-        for (key_ref, fid) in [(1u8, EF_PK_SIG), (2, EF_PK_DEC), (3, EF_PK_AUT)] {
+        for (key_ref, fid) in [
+            (KEY_REF_SIG, EF_PK_SIG),
+            (KEY_REF_DEC, EF_PK_DEC),
+            (KEY_REF_AUT, EF_PK_AUT),
+        ] {
             self.push(key_ref);
             let status = if self.fs.has_key(fid) {
                 crate::origin::of(self.fs, fid)

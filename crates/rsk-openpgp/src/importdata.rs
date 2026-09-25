@@ -11,6 +11,7 @@ use rsk_fs::{Fs, KeyFid, Storage};
 use rsk_sdk::{Rng, Sw};
 
 use crate::consts::*;
+use crate::keypairgen::{CrtKey, parse_crt};
 use crate::keys::{curve_from_attr, ec_sw, reset_sig_count, store_ec_key, store_rsa_key};
 use crate::origin;
 use crate::pin::Session;
@@ -51,9 +52,6 @@ pub fn import_data<S: Storage>(
     if p1 != 0x3F || p2 != 0xFF {
         return Sw::WRONG_P1P2;
     }
-    if data.len() < 5 {
-        return Sw::WRONG_LENGTH;
-    }
     // Key import is an admin (PW3) operation, judged before the body is read: the
     // control-reference template inside it names the key slot, so resolving first
     // let an unauthenticated caller enumerate the slots the card knows by the
@@ -67,9 +65,9 @@ pub fn import_data<S: Storage>(
     }
 }
 
-/// Parse the `4D` header through the control-reference template tag: returns the
-/// key-slot FID and the position just after the (skipped) CRT body. Pure (no fs /
-/// crypto), so it is fuzzable in isolation.
+/// Parse the `4D` header through the control-reference template: returns the
+/// key-slot FID and the position just after the template. Pure (no fs / crypto),
+/// so it is fuzzable in isolation.
 pub fn parse_ehl_head(data: &[u8]) -> Result<(KeyFid, usize), Sw> {
     let mut pos = 0usize;
     // 4D extended-header-list tag + its (ignored) length.
@@ -79,12 +77,14 @@ pub fn parse_ehl_head(data: &[u8]) -> Result<(KeyFid, usize), Sw> {
     pos += 1;
     tag_len(data, &mut pos).ok_or(Sw::WRONG_DATA)?;
 
-    // Control-reference template tag selects the key slot.
-    let fid = crt_slot(*data.get(pos).ok_or(Sw::WRONG_DATA)?).ok_or(Sw::WRONG_DATA)?;
-    pos += 1;
-    // Skip the CRT body: a 1-byte length followed by that many bytes.
-    let crt_body = *data.get(pos).ok_or(Sw::WRONG_DATA)? as usize;
-    Ok((fid, pos + 1 + crt_body))
+    // The control-reference template names the key slot.
+    let (key, crt_len) = parse_crt(data.get(pos..).ok_or(Sw::WRONG_DATA)?)?;
+    match key {
+        CrtKey::Slot(fid) => Ok((fid, pos + crt_len)),
+        // A YubiKey takes a host's attestation key here. RS-Key takes none: a key a
+        // host chose could vouch for keys that were never on the card.
+        CrtKey::Attestation => Err(Sw::WRONG_DATA),
+    }
 }
 
 /// Parse the `7F48` template + `5F48` key data starting at `pos`: returns, for

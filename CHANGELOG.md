@@ -40,6 +40,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP GENERATE and IMPORT read the whole control-reference template, as a
+  YubiKey 5.8.0 does. They read its first byte only, so the template ykman uses
+  for the attestation key, `B6 { 84 01 81 }`, named the signature slot: an IMPORT
+  or a GENERATE under it replaced the owner's signing key, and a read under it
+  returned that key. RS-Key has no OpenPGP attestation. IMPORT and GENERATE
+  `P1 = 80` refuse the template (`6A80`), and a `P1 = 81` read answers `6581`, as
+  for an empty slot ([limitations](docs/limitations.md)). A key reference
+  `84 01 01`/`02`/`03` that names the template's own slot selects that slot; one
+  naming another slot is `6A80`. The refusals follow a YubiKey's order and codes.
+  GENERATE judges P2, the template, P1 and then the admin password; it judged P1
+  first and answered any template length but 2 or 5 bytes with `6700`. IMPORT
+  judges the admin password before its body; a body under 5 bytes was `6700`,
+  with or without the password.
+  `bcdDevice` 0x0A05 → 0x0A06.
+
 - PIV stores any `5Fxxxx` data object a YubiKey 5.8.0 stores, except the
   attestation certificate `5FFF01`: the Yubico minidriver's `5FFF10`–`5FFF15`,
   `5FC1F0`–`5FC1FF`, `5FFF02`–`5FFFFF` and every other id, where RS-Key refused
