@@ -76,13 +76,15 @@ pub fn seal_put<S: Storage>(
 
 /// Read and unseal `fid` into `out`; returns the plaintext length, or `None` if
 /// the slot is absent, malformed, or does not authenticate (e.g. legacy
-/// plaintext — the caller treats that as "needs migration").
-pub fn seal_read<S: Storage>(
+/// plaintext — the caller treats that as "needs migration"). The plaintext is a
+/// credential's secret, so it goes only into a buffer that wipes itself.
+pub fn seal_read<S: Storage, const N: usize>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: KeyFid,
-    out: &mut [u8],
+    out: &mut Secret<[u8; N]>,
 ) -> Option<usize> {
+    let out = out.expose_mut();
     let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
     let n = fs.read_key(fid, blob.expose_mut())?;
     if !(NONCE_LEN + TAG_LEN..=MAX_BLOB).contains(&n) {

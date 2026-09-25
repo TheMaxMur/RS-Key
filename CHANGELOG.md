@@ -65,6 +65,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OATH left a credential's secret in RAM after most commands. PUT, DELETE,
+  RENAME, CALCULATE, CALCULATE ALL, LIST (and its SEND REMAINING pages),
+  VERIFY CODE and GET CREDENTIAL unseal a credential — its name, HMAC key and
+  counter, and for a password-safe entry the login and password — into a
+  buffer in their own frame, and returned without wiping it; PUT and RENAME
+  also built the record they store in one, and VALIDATE held the access-code
+  key the same way. A failed VALIDATE also left the right answer to the
+  session's challenge, which unlocks the applet until the next SELECT, and
+  VERIFY CODE the HOTP code the next CALCULATE returns. Only the credential
+  walk and the boot pass that reseals legacy records wiped theirs. `rsk-oath`'s
+  unseal now writes only into a `rsk_secret::Secret`, which the compiler holds
+  every reader to, and the builders' buffers and those two MACs are `Secret`s
+  too, so each is wiped on every exit. The `hmac` crate still leaves the key,
+  XORed with its pad, in its own dead frame after every MAC; the dead-stack
+  sweep planned for this work closes that. Reading any of it takes a memory
+  read on the live device. **bcdDevice → 0x0A21.**
+
 - An RSA decipher left the deciphered block in freed RAM. OpenPGP's
   PSO:DECIPHER and PIV's GENERAL AUTHENTICATE both run
   `rsk_rsa::crt::private_op`, whose unblinded result — for a decipher, the

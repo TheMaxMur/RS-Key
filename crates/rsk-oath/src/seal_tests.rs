@@ -48,7 +48,7 @@ fn a_record_shorter_than_its_framing_reads_as_absent() {
     for n in [1usize, NONCE_LEN + TAG_LEN - 1] {
         let junk = std::vec![0xEEu8; n];
         fs.put_key(FID, Sealed::wrap(&junk)).unwrap();
-        let mut out = [0u8; MAX_PLAIN];
+        let mut out = Secret::<[u8; MAX_PLAIN]>::zeroed();
         assert_eq!(
             seal_read(&dev, &mut fs, FID, &mut out),
             None,
@@ -64,9 +64,9 @@ fn an_output_buffer_under_the_plaintext_reads_as_absent() {
     let (dev, mut fs) = fixture();
     let plain = [0x11u8; 40];
     assert!(seal_put(&dev, &mut fs, &mut TestRng(2), FID, &plain));
-    let mut small = [0u8; 39];
+    let mut small = Secret::<[u8; 39]>::zeroed();
     assert_eq!(seal_read(&dev, &mut fs, FID, &mut small), None);
-    let mut exact = [0u8; 40];
+    let mut exact = Secret::<[u8; 40]>::zeroed();
     assert_eq!(seal_read(&dev, &mut fs, FID, &mut exact), Some(40));
-    assert_eq!(exact, plain);
+    assert_eq!(*exact.expose(), plain);
 }
