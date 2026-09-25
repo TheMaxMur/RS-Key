@@ -581,7 +581,7 @@ assurance/platform.toml	scripts/kani_gate.py	697-708	elif len(said) > 1:	)
 assurance/platform.toml	tests/29_reset_power_cut.py	527-530	assert assertion_status != 0, (	)
 assurance/platform.toml	tests/54_sram_residue.py	48-48	Run on 2026-08-05, Waveshare RP2350 Zero (silicon A4, secure boot off, picotool	Run on 2026-08-05, Waveshare RP2350 Zero (silicon A4, secure boot off, picotool
 assurance/token_refinement.toml	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
-assurance/toolchain.toml	crates/rsk-rsa/src/lib.rs	313-325	fn rsa_private_exp_crt(	);
+assurance/toolchain.toml	crates/rsk-rsa/src/lib.rs	320-332	fn rsa_private_exp_crt(	);
 assurance/toolchain.toml	scripts/check.sh	302-302	want="$(arm-none-eabi-nm "$elf" | awk '$3 == "__kvmain_start" { print $1 }')"	want="$(arm-none-eabi-nm "$elf" | awk '$3 == "__kvmain_start" { print $1 }')"
 assurance/toolchain.toml	scripts/pt.sh	27-31	nm_bin=	[ -n "$nm_bin" ] || { echo "pt.sh: no nm on PATH (need arm-none-eabi-nm, llvm-nm or nm)" >&2; exit 1; }
 assurance/toolchain.toml	scripts/pt.sh	43-43	start=$(sym __kvmain_start)	start=$(sym __kvmain_start)

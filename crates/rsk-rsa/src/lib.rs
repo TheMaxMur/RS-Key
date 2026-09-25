@@ -10,6 +10,7 @@
         reason = "the bignum asm FFI and its .data placement; docs/unsafe.md"
     )
 )]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! The RSA algorithm family: key generation, the CRT parameter layout and its
 //! blinded private operation, PKCS#1 v1.5, and the public-key DO both card
@@ -24,6 +25,8 @@
 //! own the APDU framing and the seal I/O, and map [`RsaError`] at their edge.
 
 extern crate alloc;
+
+use rsk_secret::Secret;
 
 pub mod crt;
 pub mod keygen;
@@ -285,6 +288,10 @@ impl IncrementalSieve {
     }
 
     /// Wipe the candidate window (a found prime may still sit in it).
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the sieve lives in a static: `scrub` is its wipe point"
+    )]
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
         self.cand.zeroize();
@@ -372,44 +379,46 @@ pub(crate) fn modexp_priv(
 
     // The C wants base placed in `temp` at byte offset 2 × modulus length; `temp`
     // must be ≥ 19 × modulus length bytes; `result` separate from `modulus`.
-    let mut temp = [0u32; 19 * MAX_MOD / 4];
-    let mut result = [0u32; MAX_MOD / 4];
-    let mut modulus = [0u32; MAX_MOD / 4];
+    let mut temp = Secret::new([0u32; 19 * MAX_MOD / 4]);
+    let mut result = Secret::new([0u32; MAX_MOD / 4]);
+    let mut modulus = Secret::new([0u32; MAX_MOD / 4]);
 
-    bytes_to_words_le(modulus_le, &mut modulus[..words]);
+    bytes_to_words_le(modulus_le, &mut modulus.expose_mut()[..words]);
 
     // `modulus_bitwise_inv` (= ~modulus) lives at temp + 18·mod_len. The public
     // wrapper does NOT fill it (only the CRT path does), yet the internal modexp
     // reads it — fill it here, or it uses garbage and returns a wrong result.
     for i in 0..words {
-        temp[18 * words + i] = !modulus[i];
+        temp.expose_mut()[18 * words + i] = !modulus.expose()[i];
     }
 
-    let mut base_buf = [0u8; MAX_MOD];
-    base_buf[..base_le.len()].copy_from_slice(base_le);
-    bytes_to_words_le(&base_buf[..mod_len], &mut temp[2 * words..3 * words]);
+    let mut base_buf = Secret::<[u8; MAX_MOD]>::zeroed();
+    base_buf.expose_mut()[..base_le.len()].copy_from_slice(base_le);
+    bytes_to_words_le(
+        &base_buf.expose()[..mod_len],
+        &mut temp.expose_mut()[2 * words..3 * words],
+    );
 
     // SAFETY: all buffers are ≥ the sizes the C requires (asserted above for the
     // modulus; `temp` is 19× the max, `result`/`modulus` are MAX_MOD); `result`
     // does not overlap `modulus`; the exponent is a valid big-endian slice.
     unsafe {
         bignum_modexp_private_exponent(
-            result.as_mut_ptr(),
+            result.expose_mut().as_mut_ptr(),
             exponent_be.as_ptr(),
-            modulus.as_ptr(),
+            modulus.expose().as_ptr(),
             exponent_be.len(),
             mod_len,
-            temp.as_mut_ptr(),
+            temp.expose_mut().as_mut_ptr(),
         );
     }
-    words_to_bytes_le(&result[..words], &mut out_le[..mod_len]);
+    words_to_bytes_le(&result.expose()[..words], &mut out_le[..mod_len]);
     // For keygen the modulus IS the prime candidate (and `temp` holds its
     // Montgomery state + complement) — wipe the working set.
-    use zeroize::Zeroize;
-    temp.zeroize();
-    result.zeroize();
-    modulus.zeroize();
-    base_buf.zeroize();
+    temp.wipe();
+    result.wipe();
+    modulus.wipe();
+    base_buf.wipe();
 }
 
 /// Host fallback (no ARM assembly): the same operation via num-bigint-dig.
@@ -462,51 +471,50 @@ pub(crate) fn sign_crt(
     qinv_be: &[u8],
     out_le: &mut [u8],
 ) {
-    use zeroize::Zeroize;
     let half = p_be.len();
     debug_assert!(half.is_multiple_of(32) && half <= MAX_MOD);
     debug_assert!(q_be.len() == half && qinv_be.len() == half);
     debug_assert!(base_le.len() == 2 * half && out_le.len() == 2 * half);
     let words = half / 4;
 
-    let mut p = [0u32; MAX_MOD / 4];
-    let mut q = [0u32; MAX_MOD / 4];
-    let mut qinv = [0u32; MAX_MOD / 4];
-    be_bytes_to_words_le(p_be, &mut p[..words]);
-    be_bytes_to_words_le(q_be, &mut q[..words]);
-    be_bytes_to_words_le(qinv_be, &mut qinv[..words]);
+    let mut p = Secret::new([0u32; MAX_MOD / 4]);
+    let mut q = Secret::new([0u32; MAX_MOD / 4]);
+    let mut qinv = Secret::new([0u32; MAX_MOD / 4]);
+    be_bytes_to_words_le(p_be, &mut p.expose_mut()[..words]);
+    be_bytes_to_words_le(q_be, &mut q.expose_mut()[..words]);
+    be_bytes_to_words_le(qinv_be, &mut qinv.expose_mut()[..words]);
 
-    let mut c = [0u32; 2 * MAX_MOD / 4];
-    bytes_to_words_le(base_le, &mut c[..2 * words]);
-    let mut result = [0u32; 2 * MAX_MOD / 4];
+    let mut c = Secret::new([0u32; 2 * MAX_MOD / 4]);
+    bytes_to_words_le(base_le, &mut c.expose_mut()[..2 * words]);
+    let mut result = Secret::new([0u32; 2 * MAX_MOD / 4]);
     // The C wants `temp` ≥ 20× a prime's width in bytes.
-    let mut temp = [0u32; 20 * MAX_MOD / 4];
+    let mut temp = Secret::new([0u32; 20 * MAX_MOD / 4]);
 
     // SAFETY: every pointer is to a buffer sized for the max prime width; the
     // asserted lengths (half multiple of 32, ≤ MAX_MOD) are the C's precondition;
     // `result`/`c`/`temp` do not overlap the key limbs.
     unsafe {
         rsa_private_exp_crt(
-            result.as_mut_ptr(),
-            c.as_ptr(),
+            result.expose_mut().as_mut_ptr(),
+            c.expose().as_ptr(),
             dp_be.as_ptr(),
             dp_be.len(),
             dq_be.as_ptr(),
             dq_be.len(),
-            p.as_ptr(),
-            q.as_ptr(),
-            qinv.as_ptr(),
+            p.expose().as_ptr(),
+            q.expose().as_ptr(),
+            qinv.expose().as_ptr(),
             half,
-            temp.as_mut_ptr(),
+            temp.expose_mut().as_mut_ptr(),
         );
     }
-    words_to_bytes_le(&result[..2 * words], &mut out_le[..2 * half]);
-    p.zeroize();
-    q.zeroize();
-    qinv.zeroize();
-    c.zeroize();
-    result.zeroize();
-    temp.zeroize();
+    words_to_bytes_le(&result.expose()[..2 * words], &mut out_le[..2 * half]);
+    p.wipe();
+    q.wipe();
+    qinv.wipe();
+    c.wipe();
+    result.wipe();
+    temp.wipe();
 }
 
 /// Host fallback for [`sign_crt`]: the same CRT combine via num-bigint-dig.
@@ -562,41 +570,40 @@ pub(crate) fn modexp_pub(
     modulus_le: &[u8],
     out_le: &mut [u8],
 ) -> bool {
-    use zeroize::Zeroize;
     let mod_len = modulus_le.len();
     debug_assert!(mod_len.is_multiple_of(32) && mod_len <= 2 * MAX_MOD);
     debug_assert!(base_le.len() == mod_len && out_le.len() == mod_len);
     let words = mod_len / 4;
 
-    let mut base = [0u32; 2 * MAX_MOD / 4];
-    let mut modulus = [0u32; 2 * MAX_MOD / 4];
-    let mut result = [0u32; 2 * MAX_MOD / 4];
+    let mut base = Secret::new([0u32; 2 * MAX_MOD / 4]);
+    let mut modulus = Secret::new([0u32; 2 * MAX_MOD / 4]);
+    let mut result = Secret::new([0u32; 2 * MAX_MOD / 4]);
     // The C wants `temp` ≥ 5× the modulus length in bytes.
-    let mut temp = [0u32; 5 * (2 * MAX_MOD) / 4];
-    bytes_to_words_le(base_le, &mut base[..words]);
-    bytes_to_words_le(modulus_le, &mut modulus[..words]);
+    let mut temp = Secret::new([0u32; 5 * (2 * MAX_MOD) / 4]);
+    bytes_to_words_le(base_le, &mut base.expose_mut()[..words]);
+    bytes_to_words_le(modulus_le, &mut modulus.expose_mut()[..words]);
 
     // SAFETY: buffers are sized for the max modulus; `result` does not overlap
     // `modulus`; lengths meet the C's stated preconditions (asserted above).
     let rc = unsafe {
         bignum_modexp_public_exponent(
-            result.as_mut_ptr(),
-            base.as_ptr(),
+            result.expose_mut().as_mut_ptr(),
+            base.expose().as_ptr(),
             exp_be.as_ptr(),
-            modulus.as_ptr(),
+            modulus.expose().as_ptr(),
             exp_be.len(),
             mod_len,
-            temp.as_mut_ptr(),
+            temp.expose_mut().as_mut_ptr(),
         )
     };
     let ok = rc == 0;
     if ok {
-        words_to_bytes_le(&result[..words], &mut out_le[..mod_len]);
+        words_to_bytes_le(&result.expose()[..words], &mut out_le[..mod_len]);
     }
-    base.zeroize();
-    modulus.zeroize();
-    result.zeroize();
-    temp.zeroize();
+    base.wipe();
+    modulus.wipe();
+    result.wipe();
+    temp.wipe();
     ok
 }
 
@@ -626,21 +633,26 @@ pub(crate) fn modexp_pub(
 /// be caught by the vetted final primality test), and a prime always passes — so
 /// this never rejects a real prime.
 pub fn passes_fermat_base2(n_le: &[u8]) -> bool {
-    use zeroize::Zeroize;
     let mod_len = n_le.len();
     // exponent = n − 1 in big-endian. n is odd, so n − 1 just clears bit 0.
-    let mut exp_be = [0u8; MAX_MOD];
+    let mut exp_be = Secret::<[u8; MAX_MOD]>::zeroed();
+    let exp = exp_be.expose_mut();
     for i in 0..mod_len {
-        exp_be[mod_len - 1 - i] = n_le[i];
+        exp[mod_len - 1 - i] = n_le[i];
     }
-    exp_be[mod_len - 1] &= 0xFE;
+    exp[mod_len - 1] &= 0xFE;
 
-    let mut out = [0u8; MAX_MOD];
-    modexp_priv(&[2u8], &exp_be[..mod_len], n_le, &mut out[..mod_len]);
-    let prime = out[0] == 1 && out[1..mod_len].iter().all(|&b| b == 0);
+    let mut out = Secret::<[u8; MAX_MOD]>::zeroed();
+    modexp_priv(
+        &[2u8],
+        &exp_be.expose()[..mod_len],
+        n_le,
+        &mut out.expose_mut()[..mod_len],
+    );
+    let prime = out.expose()[0] == 1 && out.expose()[1..mod_len].iter().all(|&b| b == 0);
     // `exp_be` is candidate − 1; for the accepted candidate that is p − 1.
-    exp_be.zeroize();
-    out.zeroize();
+    exp_be.wipe();
+    out.wipe();
     prime
 }
 
@@ -689,44 +701,53 @@ fn is_one_le(v: &[u8]) -> bool {
 /// tests hold the two implementations equal over random candidates and the
 /// canonical pseudoprime families.
 pub fn passes_strong_mr_base2(n_le: &[u8]) -> bool {
-    use zeroize::Zeroize;
     let len = n_le.len();
     debug_assert!(len >= 2 && n_le[0] & 1 == 1);
 
     // n − 1: n is odd, so clearing bit 0 is the whole subtraction.
-    let mut nm1 = [0u8; MAX_MOD];
-    nm1[..len].copy_from_slice(n_le);
-    nm1[0] &= 0xFE;
+    let mut nm1 = Secret::<[u8; MAX_MOD]>::zeroed();
+    nm1.expose_mut()[..len].copy_from_slice(n_le);
+    nm1.expose_mut()[0] &= 0xFE;
 
     // n − 1 = d · 2^s, d odd; the exponent rides big-endian.
-    let s = trailing_zeros_le(&nm1[..len]);
-    let mut d_be = [0u8; MAX_MOD];
-    shr_into_be(&nm1[..len], s, &mut d_be[..len]);
+    let s = trailing_zeros_le(&nm1.expose()[..len]);
+    let mut d_be = Secret::<[u8; MAX_MOD]>::zeroed();
+    shr_into_be(&nm1.expose()[..len], s, &mut d_be.expose_mut()[..len]);
 
-    let mut x = [0u8; MAX_MOD];
-    modexp_priv(&[2u8], &d_be[..len], n_le, &mut x[..len]);
+    let mut x = Secret::<[u8; MAX_MOD]>::zeroed();
+    modexp_priv(
+        &[2u8],
+        &d_be.expose()[..len],
+        n_le,
+        &mut x.expose_mut()[..len],
+    );
 
-    let mut verdict = is_one_le(&x[..len]) || x[..len] == nm1[..len];
+    let mut verdict = is_one_le(&x.expose()[..len]) || x.expose()[..len] == nm1.expose()[..len];
     if !verdict {
         for _ in 1..s {
             // One modular squaring: exponent 2 costs ~two multiplications.
-            let mut sq = [0u8; MAX_MOD];
-            modexp_priv(&x[..len], &[2u8], n_le, &mut sq[..len]);
-            x[..len].copy_from_slice(&sq[..len]);
-            sq.zeroize();
-            if x[..len] == nm1[..len] {
+            let mut sq = Secret::<[u8; MAX_MOD]>::zeroed();
+            modexp_priv(
+                &x.expose()[..len],
+                &[2u8],
+                n_le,
+                &mut sq.expose_mut()[..len],
+            );
+            x.expose_mut()[..len].copy_from_slice(&sq.expose()[..len]);
+            sq.wipe();
+            if x.expose()[..len] == nm1.expose()[..len] {
                 verdict = true;
                 break;
             }
-            if is_one_le(&x[..len]) {
+            if is_one_le(&x.expose()[..len]) {
                 break; // nontrivial √1 — certainly composite
             }
         }
     }
     // For the accepted candidate these hold p − 1 and its power residues.
-    nm1.zeroize();
-    d_be.zeroize();
-    x.zeroize();
+    nm1.wipe();
+    d_be.wipe();
+    x.wipe();
     verdict
 }
 

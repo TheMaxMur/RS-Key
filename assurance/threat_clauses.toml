@@ -408,9 +408,10 @@ ends: session state and PIN/UV tokens on drop, transient key copies at end of
 scope including error paths, and the transport/exchange buffers as soon as a
 message completes (requests carry PINs and imported keys).""", """
 Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
-internals, and heap limbs inside `num-bigint-dig` (which has no zeroizing `Drop`
-of its own — every value `rsk-rsa` owns rides in a `Zeroizing`, but a temporary
-the library allocates internally does not).""", """
+internals, and heap limbs inside `num-bigint-dig`, which has no zeroizing `Drop`
+of its own: `rsk-rsa` holds a key's values and its blinding values in a `Secret`
+or a key type whose `Drop` wipes them, and a temporary the library allocates
+internally has neither.""", """
 This is a property of the silicon revision and boot
 configuration, so it is re-measured when either moves; the explicit wipes stay as
 depth in case a future one keeps SRAM.""", """

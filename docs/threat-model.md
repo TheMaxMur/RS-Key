@@ -543,10 +543,11 @@ when it returns. That is what puts them out of reach of a parser bug — parsing
 runs before any store access, so at that moment neither key is anywhere in
 memory. It buys nothing against code execution, which can drive the same reads.
 Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
-internals, and heap limbs inside `num-bigint-dig` (which has no zeroizing `Drop`
-of its own — every value `rsk-rsa` owns rides in a `Zeroizing`, but a temporary
-the library allocates internally does not). Short-lived, library-internal, not
-wipeable without forking the crates.
+internals, and heap limbs inside `num-bigint-dig`, which has no zeroizing `Drop`
+of its own: `rsk-rsa` holds a key's values and its blinding values in a `Secret`
+or a key type whose `Drop` wipes them, and a temporary the library allocates
+internally has neither. Short-lived, library-internal, not wipeable without
+forking the crates.
 
 What holds the first sentence is a type, not a habit. Key-grade bytes live in
 `rsk_secret::Secret` — or, for a buffer that outlives the scope, under a

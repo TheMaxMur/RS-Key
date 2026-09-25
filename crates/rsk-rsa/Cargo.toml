@@ -31,6 +31,8 @@ test-util = []
 # The modexp working buffers and the CRT fields hold prime-candidate / key state;
 # `alloc` for the bignum `Vec`s the key paths marshal through.
 zeroize = { workspace = true, features = ["alloc"] }
+# Those buffers and bignums held in a type that wipes itself on every exit.
+rsk-secret = { workspace = true }
 # The bignum the whole crate is arithmetic over: key assembly, the blinding and
 # fault-check arithmetic, the strong-Lucas half of the prime test, and — on the
 # host, where there is no ARM assembler — the modexp fallback itself.

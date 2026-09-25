@@ -613,6 +613,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **RSA's working buffers and bignums are typed** — refactor; nothing a host
+  sees changes. `rsk-rsa`'s modexp and CRT buffers (the assembly's limb arrays,
+  a prime candidate among them), the CRT field bytes, the blinding factor, the
+  keygen's transport bytes and the software decryption's padded plaintext are
+  `rsk_secret::Secret`s or sit under a `WipeGuard`, wiped in place where the
+  hand wipes were and on every other exit; its 29 `Zeroizing` uses are
+  `Secret`s.
+  `RsaKey`, its CRT parameters, `RsaCrt` and the keygen state keep their
+  hand-written wiping `Drop`, the prime sieve its `scrub` and the keygen's
+  duplicate-prime refusal its wipe of a by-value prime: six `#[expect]`s. The
+  assembly wrappers' stack frames are unchanged; the drops wiping again what
+  `.wipe()` already cleared add 936 bytes of code. The crate takes the zeroize
+  ban at its root.
+  `bcdDevice` 0x0A1D → 0x0A1E.
+
 - **The EC key's scalars are typed** — refactor; nothing a host sees changes.
   `rsk-ec`'s key generation draws each candidate scalar into a
   `rsk_secret::Secret` and wipes it in place where the hand wipe was; the

@@ -14,7 +14,8 @@
 //! [`crt_plaintext`] and seal the result.
 
 use num_bigint_dig::BigUint;
-use zeroize::{Zeroize, Zeroizing};
+use rsk_secret::Secret;
+use zeroize::Zeroize;
 
 use crate::key::blind_pair;
 use crate::{MAX_RSA_BYTES, Rng, RsaError, RsaKey};
@@ -77,15 +78,15 @@ pub fn parse_rsa_blob(plain: &[u8]) -> Result<(usize, bool), RsaError> {
 /// A `P‖Q` blob mis-sliced into five fields fails this with overwhelming
 /// probability, so it disambiguates a colliding length.
 fn five_field_consistent(plain: &[u8], half: usize) -> bool {
-    let p = Zeroizing::new(BigUint::from_bytes_be(&plain[..half]));
-    if *p < BigUint::from(2u8) {
+    let p = Secret::new(BigUint::from_bytes_be(&plain[..half]));
+    if *p.expose() < BigUint::from(2u8) {
         return false;
     }
-    let q = Zeroizing::new(BigUint::from_bytes_be(&plain[half..2 * half]));
-    let qinv = Zeroizing::new(BigUint::from_bytes_be(&plain[4 * half..5 * half]));
-    let mul = Zeroizing::new(&*qinv * &*q);
-    let prod = Zeroizing::new(&*mul % &*p);
-    *prod == BigUint::from(1u8)
+    let q = Secret::new(BigUint::from_bytes_be(&plain[half..2 * half]));
+    let qinv = Secret::new(BigUint::from_bytes_be(&plain[4 * half..5 * half]));
+    let mul = Secret::new(qinv.expose() * q.expose());
+    let prod = Secret::new(mul.expose() % p.expose());
+    *prod.expose() == BigUint::from(1u8)
 }
 
 /// Build the CRT plaintext `P ‖ Q ‖ dP ‖ dQ ‖ qInv` (five `half`-byte big-endian
@@ -97,13 +98,13 @@ pub fn crt_plaintext(key: &RsaKey, out: &mut [u8]) -> Result<usize, RsaError> {
     // Absent only for a key whose primes share a factor — an IMPORT can offer
     // such a pair, and it is refused here rather than sealed unusable.
     let (dp, dq, qinv) = key.crt().ok_or(RsaError::Failed)?;
-    let mut pb = key.p().to_bytes_be();
-    let mut qb = key.q().to_bytes_be();
-    let half = pb.len().max(qb.len());
+    let mut pb = Secret::new(key.p().to_bytes_be());
+    let mut qb = Secret::new(key.q().to_bytes_be());
+    let half = pb.expose().len().max(qb.expose().len());
     let n = 5 * half;
-    let mut dpb = dp.to_bytes_be();
-    let mut dqb = dq.to_bytes_be();
-    let mut qib = qinv.to_bytes_be();
+    let mut dpb = Secret::new(dp.to_bytes_be());
+    let mut dqb = Secret::new(dq.to_bytes_be());
+    let mut qib = Secret::new(qinv.to_bytes_be());
     let r = (|| {
         // The asm CRT signer processes 32-bit words in 32-byte groups, so a
         // non-32-multiple prime width has no fast path — reject it at seal time
@@ -111,18 +112,18 @@ pub fn crt_plaintext(key: &RsaKey, out: &mut [u8]) -> Result<usize, RsaError> {
         if !half.is_multiple_of(32) || n > out.len() {
             return Err(RsaError::BadWidth);
         }
-        put_field(&mut out[0..half], &pb)?;
-        put_field(&mut out[half..2 * half], &qb)?;
-        put_field(&mut out[2 * half..3 * half], &dpb)?;
-        put_field(&mut out[3 * half..4 * half], &dqb)?;
-        put_field(&mut out[4 * half..5 * half], &qib)?;
+        put_field(&mut out[0..half], pb.expose())?;
+        put_field(&mut out[half..2 * half], qb.expose())?;
+        put_field(&mut out[2 * half..3 * half], dpb.expose())?;
+        put_field(&mut out[3 * half..4 * half], dqb.expose())?;
+        put_field(&mut out[4 * half..5 * half], qib.expose())?;
         Ok(n)
     })();
-    pb.zeroize();
-    qb.zeroize();
-    dpb.zeroize();
-    dqb.zeroize();
-    qib.zeroize();
+    pb.wipe();
+    qb.wipe();
+    dpb.wipe();
+    dqb.wipe();
+    qib.wipe();
     r
 }
 
@@ -170,6 +171,7 @@ impl RsaCrt {
 }
 
 impl Drop for RsaCrt {
+    #[expect(clippy::disallowed_methods, reason = "a RsaCrt's drop is its wipe")]
     fn drop(&mut self) {
         self.p.zeroize();
         self.q.zeroize();
@@ -204,15 +206,15 @@ pub fn crt_from_plain(plain: &[u8]) -> Result<RsaCrt, RsaError> {
         let q = BigUint::from_bytes_be(&plain[half..2 * half]);
         let k = RsaKey::from_p_q(p, q, rsa_e()).ok_or(RsaError::BadBlob)?;
         let (dp, dq, qinv) = k.crt().ok_or(RsaError::Failed)?;
-        let mut dpb = dp.to_bytes_be();
-        let mut dqb = dq.to_bytes_be();
-        let mut qib = qinv.to_bytes_be();
-        let put = put_field(&mut crt.dp[..half], &dpb)
-            .and(put_field(&mut crt.dq[..half], &dqb))
-            .and(put_field(&mut crt.qinv[..half], &qib));
-        dpb.zeroize();
-        dqb.zeroize();
-        qib.zeroize();
+        let mut dpb = Secret::new(dp.to_bytes_be());
+        let mut dqb = Secret::new(dq.to_bytes_be());
+        let mut qib = Secret::new(qinv.to_bytes_be());
+        let put = put_field(&mut crt.dp[..half], dpb.expose())
+            .and(put_field(&mut crt.dq[..half], dqb.expose()))
+            .and(put_field(&mut crt.qinv[..half], qib.expose()));
+        dpb.wipe();
+        dqb.wipe();
+        qib.wipe();
         put?;
     }
     Ok(crt)
@@ -238,11 +240,11 @@ pub fn private_op(
         return Err(RsaError::BadBlock);
     }
     // num-bigint-dig's BigUint has no zeroizing Drop (its heap limbs are freed
-    // un-wiped), so every secret value here rides in a `Zeroizing` that scrubs it
-    // on drop — on the success path and every `?`/error return alike.
-    let p = Zeroizing::new(BigUint::from_bytes_be(crt.p()));
-    let q = Zeroizing::new(BigUint::from_bytes_be(crt.q()));
-    let n = &*p * &*q;
+    // un-wiped), so the key's halves and the blinding values ride in a `Secret`
+    // that scrubs them on drop — on the success path and every `?` alike.
+    let p = Secret::new(BigUint::from_bytes_be(crt.p()));
+    let q = Secret::new(BigUint::from_bytes_be(crt.q()));
+    let n = p.expose() * q.expose();
     let m = BigUint::from_bytes_be(c);
 
     // The modulus little-endian, for the asm public-exponent modexp that both
@@ -252,44 +254,44 @@ pub fn private_op(
     let nb = n.to_bytes_le();
     n_le[..nb.len()].copy_from_slice(&nb);
     let pub_pow = |base: &BigUint| -> Option<BigUint> {
-        let mut b_le = [0u8; MAX_RSA_BYTES];
+        let mut b_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
         let bb = base.to_bytes_le();
-        b_le[..bb.len()].copy_from_slice(&bb);
-        let mut o_le = [0u8; MAX_RSA_BYTES];
+        b_le.expose_mut()[..bb.len()].copy_from_slice(&bb);
+        let mut o_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
         let ok = crate::modexp_pub(
-            &b_le[..mlen],
+            &b_le.expose()[..mlen],
             crate::RSA_PUB_EXP_BE,
             &n_le[..mlen],
-            &mut o_le[..mlen],
+            &mut o_le.expose_mut()[..mlen],
         );
-        let out = ok.then(|| BigUint::from_bytes_le(&o_le[..mlen]));
-        b_le.zeroize();
-        o_le.zeroize();
+        let out = ok.then(|| BigUint::from_bytes_le(&o_le.expose()[..mlen]));
+        b_le.wipe();
+        o_le.wipe();
         out
     };
 
     let (r, r_inv) = blind_pair(&n, mlen, rng);
-    let blinded = Zeroizing::new((&m * pub_pow(&r).ok_or(RsaError::Failed)?) % &n);
+    let blinded = Secret::new((&m * pub_pow(r.expose()).ok_or(RsaError::Failed)?) % &n);
 
     // CRT private op on the blinded message, then unblind.
-    let mut base_le = [0u8; MAX_RSA_BYTES];
-    let mut bl = blinded.to_bytes_le();
-    base_le[..bl.len()].copy_from_slice(&bl);
-    bl.zeroize();
-    let mut sig_le = [0u8; MAX_RSA_BYTES];
+    let mut base_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
+    let mut bl = Secret::new(blinded.expose().to_bytes_le());
+    base_le.expose_mut()[..bl.expose().len()].copy_from_slice(bl.expose());
+    bl.wipe();
+    let mut sig_le = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
     crate::sign_crt(
-        &base_le[..mlen],
+        &base_le.expose()[..mlen],
         crt.dp(),
         crt.dq(),
         crt.p(),
         crt.q(),
         crt.qinv(),
-        &mut sig_le[..mlen],
+        &mut sig_le.expose_mut()[..mlen],
     );
-    let s_blind = Zeroizing::new(BigUint::from_bytes_le(&sig_le[..mlen]));
-    let s = (&*s_blind * &*r_inv) % &n;
-    base_le.zeroize();
-    sig_le.zeroize();
+    let s_blind = Secret::new(BigUint::from_bytes_le(&sig_le.expose()[..mlen]));
+    let s = (s_blind.expose() * r_inv.expose()) % &n;
+    base_le.wipe();
+    sig_le.wipe();
 
     // Bellcore fault check: a correct signature satisfies sigᵉ ≡ c (mod n).
     if pub_pow(&s).ok_or(RsaError::Failed)? != m {
@@ -309,18 +311,18 @@ pub fn private_op(
 /// signer holds it (its refusals are [`crt_plaintext`]'s too), it signs one block
 /// through [`private_op`]'s fault check at e = 65537. Composite primes fail here.
 pub fn pairwise_consistent(key: &RsaKey, rng: &mut dyn Rng) -> Result<(), RsaError> {
-    let mut plain = [0u8; MAX_CRT_PLAIN];
-    let mut sig = [0u8; MAX_RSA_BYTES];
+    let mut plain = Secret::<[u8; MAX_CRT_PLAIN]>::zeroed();
+    let mut sig = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
     let r = (|| {
-        let n = crt_plaintext(key, &mut plain)?;
-        let crt = crt_from_plain(&plain[..n])?;
+        let n = crt_plaintext(key, plain.expose_mut())?;
+        let crt = crt_from_plain(&plain.expose()[..n])?;
         let mlen = crt.modulus_len();
         let mut block = [0u8; MAX_RSA_BYTES];
         block[mlen - 1] = 2;
-        private_op(&crt, &block[..mlen], rng, &mut sig).map(|_| ())
+        private_op(&crt, &block[..mlen], rng, sig.expose_mut()).map(|_| ())
     })();
-    plain.zeroize();
-    sig.zeroize();
+    plain.wipe();
+    sig.wipe();
     r
 }
 

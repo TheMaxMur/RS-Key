@@ -11,7 +11,7 @@
 //! four ways an EM can be malformed must not be timeable, or the status word's
 //! padding oracle gains a finer-grained sibling.
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::{MAX_RSA_BYTES, Rng, RsaError, RsaKey};
 
@@ -157,11 +157,11 @@ pub fn rsa_decrypt(
     if mlen > MAX_RSA_BYTES {
         return Err(RsaError::BadWidth);
     }
-    let mut em = [0u8; MAX_RSA_BYTES];
+    let mut em = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
     let res = key
-        .private_op(ct, rng, &mut em[..mlen])
-        .and_then(|_| unpad_encrypt(&em[..mlen], out));
-    em.zeroize();
+        .private_op(ct, rng, &mut em.expose_mut()[..mlen])
+        .and_then(|_| unpad_encrypt(&em.expose()[..mlen], out));
+    em.wipe();
     res
 }
 
@@ -187,8 +187,8 @@ fn rsa_raw(
     let (n, e, d) = (key.n(), key.e(), key.d());
     let m = BigUint::from_bytes_be(data);
     let (r, r_inv) = crate::key::blind_pair(n, key_size, rng);
-    let blinded = (&m * r.modpow(e, n)) % n;
-    let res = (blinded.modpow(d, n) * &*r_inv) % n;
+    let blinded = (&m * r.expose().modpow(e, n)) % n;
+    let res = (blinded.modpow(d, n) * r_inv.expose()) % n;
     let rb = res.to_bytes_be();
     if rb.len() > key_size {
         return Err(RsaError::Failed);

@@ -438,9 +438,9 @@ status = "pending"
 failure_direction = "memory-safety: a length disagreement across the ABI writes into whatever the caller's stack frame holds, on the path that is handling a private key"
 refines = ["PLAT-TOOLCHAIN-002"]
 covers = [
-  "unsafe:crates/rsk-rsa/src/lib.rs#block:bignum_modexp_private_exponent-result-as_mut_ptr-exponent_be-as_ptr-modulus",
-  "unsafe:crates/rsk-rsa/src/lib.rs#block:rsa_private_exp_crt-result-as_mut_ptr-c-as_ptr-dp_be",
-  "unsafe:crates/rsk-rsa/src/lib.rs#block:bignum_modexp_public_exponent-result-as_mut_ptr-base-as_ptr-exp_be",
+  "unsafe:crates/rsk-rsa/src/lib.rs#block:bignum_modexp_private_exponent-result-expose_mut-as_mut_ptr-exponent_be-as_ptr",
+  "unsafe:crates/rsk-rsa/src/lib.rs#block:rsa_private_exp_crt-result-expose_mut-as_mut_ptr-c-expose",
+  "unsafe:crates/rsk-rsa/src/lib.rs#block:bignum_modexp_public_exponent-result-expose_mut-as_mut_ptr-base-expose",
 ]
 
 [[assumption]]

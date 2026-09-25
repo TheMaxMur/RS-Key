@@ -2324,6 +2324,7 @@ dependencies = [
  "cc",
  "num-bigint-dig",
  "num-integer",
+ "rsk-secret",
  "zeroize",
 ]
 

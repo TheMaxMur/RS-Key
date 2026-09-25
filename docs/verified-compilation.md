@@ -35,7 +35,7 @@ subset, one is already C, and three are not code a C compiler could accept.
 |---|---|---|---|
 | gate / transition functions | the ten concrete gates `docs/authorization-slice.md` lists, over `crates/rsk-fido/src/state.rs` | 744 lines in `state.rs` alone | **No.** Half are generic over two traits (`<S: Storage, R: Rng>`); the other half take a Rust struct by reference, whose layout Rust owns |
 | zeroization routines | 16 `scrub` / `wipe_*` sites across `crates/` and `firmware/` | 16 sites, 68 files using `zeroize` | **No.** Each is a method on a Rust type, and the drop glue that makes it sound is the compiler's |
-| the RSA C/asm wrapper and fault check | `crates/rsk-rsa/src/lib.rs` over `crates/rsk-rsa/csrc/` | 772 Rust, 397 C, 1082 asm | **Already C — and that is the finding.** The assembly is 73% of the foreign half by line and no verified compiler compiles assembly |
+| the RSA C/asm wrapper and fault check | `crates/rsk-rsa/src/lib.rs` over `crates/rsk-rsa/csrc/` | 793 Rust, 397 C, 1082 asm | **Already C — and that is the finding.** The assembly is 73% of the foreign half by line and no verified compiler compiles assembly |
 | ML-DSA reductions | `crates/rsk-mldsa/src/reduce.rs`, `ntt.rs`, `round.rs` | 256 lines | **Yes, in principle.** Branch-free integer arithmetic, no generic function in any of the three |
 | linker-generated boundaries | five of the ten `[[boundary]]` rows in `assurance/toolchain.toml` | 5 symbols | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
 
@@ -58,9 +58,9 @@ costs at least as much again" is a measurement rather than a guess. What the
 first one costs today:
 
 - **three `unsafe` call sites** — `docs/unsafe.md` sites 17–19, at
-  `crates/rsk-rsa/src/lib.rs:395`, `crates/rsk-rsa/src/lib.rs:488` and
-  `crates/rsk-rsa/src/lib.rs:581`, behind the `unsafe extern "C"` block at
-  `crates/rsk-rsa/src/lib.rs:299` — plus a fourth, build-time, in
+  `crates/rsk-rsa/src/lib.rs:405`, `crates/rsk-rsa/src/lib.rs:496` and
+  `crates/rsk-rsa/src/lib.rs:588`, behind the `unsafe extern "C"` block at
+  `crates/rsk-rsa/src/lib.rs:306` — plus a fourth, build-time, in
   `crates/rsk-rsa/build.rs`;
 - **five registry rows** in `assurance/toolchain.toml`: three `import:` and two
   `unit:`, each owing a `provider` that is a pinned tool;
