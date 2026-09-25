@@ -2181,6 +2181,7 @@ dependencies = [
  "p384",
  "p521",
  "rfc6979",
+ "rsk-secret",
  "x25519-dalek",
  "zeroize",
 ]

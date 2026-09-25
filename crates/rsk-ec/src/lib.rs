@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! The elliptic-curve layer: the private key both card applets seal
 //! ([`PrivKey`] over [`Curve`]) with its signing / public-point / ECDH

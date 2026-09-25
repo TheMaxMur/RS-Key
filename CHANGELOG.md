@@ -613,6 +613,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The EC key's scalars are typed** — refactor; nothing a host sees changes.
+  `rsk-ec`'s key generation draws each candidate scalar into a
+  `rsk_secret::Secret` and wipes it in place where the hand wipe was; the
+  scalars signing and public-point derivation lift out of the stored key, and
+  the X25519 little-endian scalar and ECDH shared secret, are `Secret`s instead
+  of `Zeroizing` or plain arrays. `PrivKey` keeps its hand-written wiping
+  `Drop` under an `#[expect]`. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A1C → 0x0A1D.
+
 - **ML-DSA's secrets are typed, and it drops its zeroize proc-macro** —
   refactor; nothing a host sees changes. The two 64-byte seeds `rsk-mldsa`
   wiped by hand — ρ′, which expands to the whole secret key, and ρ″, the

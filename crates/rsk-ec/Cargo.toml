@@ -38,6 +38,7 @@ ecdsa = { workspace = true, features = ["algorithm"] }
 elliptic-curve = { workspace = true }
 rfc6979 = { workspace = true }
 zeroize = { workspace = true }
+rsk-secret = { workspace = true }
 
 # The comb tables are precomputed at build time from each curve's generator.
 [build-dependencies]
