@@ -130,7 +130,7 @@ Applets  == {Piv, Pgp, Oath}
 
 \* The authentication references, per applet. PIV's PIN and its 9B management
 \* key; OpenPGP's three (PW1 no. 81 signs, PW1 no. 82 deciphers, PW3 administers
-\* -- crates/rsk-openpgp/src/pin.rs:19-38); OATH's access-code unlock and its
+\* -- crates/rsk-openpgp/src/pin.rs:20-39); OATH's access-code unlock and its
 \* separate OTP PIN (crates/rsk-oath/src/lib.rs:192-200).
 Refs == {"pivPin", "pivMgm", "pw1", "pw2", "pw3", "oathCode", "oathOtpPin"}
 
@@ -209,7 +209,7 @@ Init ==
 
 \* Every status an applet owns, gone. This is `Session::reset`
 \* (crates/rsk-piv/src/lib.rs:201-205), `pin::Session::reset`
-\* (crates/rsk-openpgp/src/pin.rs:81-94) and OATH's `deselect`
+\* (crates/rsk-openpgp/src/pin.rs:82-95) and OATH's `deselect`
 \* (crates/rsk-oath/src/lib.rs:1161-1165) -- three functions, one meaning.
 ClearedFor(h, a) ==
     [r \in Refs |-> IF RefOwner(r) = a
@@ -318,7 +318,7 @@ PivChangeRefused ==
     /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, refused >>
 
 \* OpenPGP clears EXACTLY the addressed reference, and it keys the clear on the
-\* FID it compared rather than on P2 (crates/rsk-openpgp/src/pin.rs:190-202):
+\* FID it compared rather than on P2 (crates/rsk-openpgp/src/pin.rs:191-203):
 \* RESET RETRY COUNTER compares EF_RC while passing p2 = 0x81, so a wrong
 \* resetting code must leave PW1.81 standing.
 PgpVerify(r, ok) ==
@@ -330,7 +330,7 @@ PgpVerify(r, ok) ==
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
 \* A refused CHANGE clears the addressed reference too -- the same writer
-\* (crates/rsk-openpgp/src/pin.rs:267-269), which is where OpenPGP and PIV part
+\* (crates/rsk-openpgp/src/pin.rs:268-270), which is where OpenPGP and PIV part
 \* company.
 PgpChangeRefused(r) ==
     /\ sel = Pgp

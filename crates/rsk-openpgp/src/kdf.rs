@@ -184,7 +184,7 @@ pub fn put_kdf<S: Storage>(
         Ok((pw1_session, pw3_session))
     })();
     dek.zeroize();
-    match result {
+    match &result {
         // The access statuses stand, as they do on a YubiKey; only the session
         // keys they carry are replaced. See `Session::adopt_reseeded`.
         Ok((pw1_session, pw3_session)) => {
@@ -198,7 +198,7 @@ pub fn put_kdf<S: Storage>(
             sess.has_pw1 = false;
             sess.has_pw2 = false;
             sess.has_pw3 = false;
-            sw
+            *sw
         }
     }
 }

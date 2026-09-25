@@ -19,6 +19,7 @@ kani-soft = ["rsk-crypto/kani-soft"]
 
 [dependencies]
 rsk-sdk = { workspace = true }
+rsk-secret = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
 # `alloc` for the Vec impls (RSA prime bytes + decipher plaintext).

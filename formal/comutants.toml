@@ -986,7 +986,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:234-238) is the same switch's other half and is not in this entry — one entry, one file."
+note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:235-239) is the same switch's other half and is not in this entry — one entry, one file."
 
 [comutant.BugWrongDoesNotSpend]
 status = "patch"
@@ -1016,7 +1016,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:901."
+note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:902."
 
 # ---- RSKeyAppletPolicies: slot policy, attributes, gates, counter ----------
 

@@ -2368,3 +2368,31 @@ fn reset_retry_via_pw3_re_arms_the_at_rest_lap() {
         "RESET RETRY superseded a chip-serial-rooted verifier and must re-arm the lap",
     );
 }
+
+/// Every session key this module hands back wipes itself when it drops: a caller
+/// that discards one (`stage_dek(..)?;`) or loses it to a `?` leaves nothing.
+#[test]
+fn every_session_key_handed_back_wipes_itself() {
+    fn wipes_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+    let d = dev();
+    let mut fs = setup();
+    let mut sess = Session::new();
+    verify(
+        &d,
+        &mut fs,
+        &mut sess,
+        &mut CountRng(0),
+        0x00,
+        PW3_MODE83,
+        PW3_DEFAULT,
+    );
+    let mut dek = [0u8; DEK_SIZE];
+    load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
+
+    let staged = stage_dek(&d, &mut fs, &mut CountRng(9), EF_DEK_PW3, b"87654321", &dek);
+    wipes_on_drop(&staged.unwrap());
+    let rewrapped = rewrap_dek(&d, &mut fs, &mut CountRng(9), EF_DEK_PW1, b"123456", &dek);
+    wipes_on_drop(&rewrapped.unwrap());
+    let reseeded = reseed_pin(&d, &mut fs, &mut CountRng(9), EF_PW3, b"87654321", &dek);
+    wipes_on_drop(&reseeded.unwrap());
+}

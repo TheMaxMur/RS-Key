@@ -65,6 +65,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP left PIN-derived session keys in RAM unwiped. The session key a new
+  PW1, PW3 or resetting code derives — the key that, with the device root key,
+  opens the DEK every private key is sealed under — was returned as a bare
+  array by the staging and re-wrap steps, and dropped without a wipe wherever
+  a caller discarded it: on SUCCESS when `PUT DATA D3` sets a resetting code
+  and when a pre-OTP DEK copy is migrated at VERIFY, and on every flash-error
+  path after staging (CHANGE, RESET RETRY, the KDF-DO write). VERIFY's derived
+  verifier was never wiped either. They are held in `rsk_secret::Secret` now,
+  which wipes on every exit, and the KDF-DO write hands its two new keys over by
+  reference instead of by value. Exposure needs a memory read on a live device,
+  and a session key opens the DEK only together with the device root key, which
+  a fused board keeps in OTP.
+  **bcdDevice → 0x0A13.**
+
 - A display build with `WAKE_PIN=6` or `WAKE_PIN=7` compiled, and handed the
   touch controller's I2C1 data or clock pad to the wake button as well: the
   firmware stole that GPIO for a second driver while I2C1 still owned it. The
