@@ -11,8 +11,9 @@
 //! profile (`ExternalMu=false`). The firmware always passes an empty `ctx`
 //! (the COSE/WebAuthn profile); a non-empty `ctx` exists for the ACVP KATs.
 
+use rsk_secret::Secret;
 use sha3::digest::XofReader;
-use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::encode::{pk_decode, pk_encode, sig_decode, sig_encode, w1_encode};
 use crate::ntt::{inv_ntt_inplace, ntt_inplace};
@@ -35,7 +36,6 @@ const MAX_LAMBDA_DIV4: usize = 64;
 /// An expanded ML-DSA key: the NTT/Montgomery precomputes needed to sign, plus
 /// `t1` to re-emit the public key. Derived from the 32-byte seed and held for
 /// one request (the firmware boxes it off-stack). Zeroizes on drop.
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ExpandedKey<const K: usize, const L: usize> {
     rho: [u8; 32],
     cap_k: [u8; 32],
@@ -45,6 +45,21 @@ pub struct ExpandedKey<const K: usize, const L: usize> {
     s2_hat_mont: [Poly; K],
     t0_hat_mont: [Poly; K],
 }
+
+impl<const K: usize, const L: usize> Drop for ExpandedKey<K, L> {
+    // The polynomial fields wipe themselves (see `Poly`'s drop); these are the rest.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "an expanded key's drop is its wipe"
+    )]
+    fn drop(&mut self) {
+        self.rho.zeroize();
+        self.cap_k.zeroize();
+        self.tr.zeroize();
+    }
+}
+
+impl<const K: usize, const L: usize> ZeroizeOnDrop for ExpandedKey<K, L> {}
 
 /// NTT each element of a vector (out of place — the inputs are needed later).
 fn ntt_vec<const M: usize>(v: &[Poly; M]) -> [Poly; M] {
@@ -95,15 +110,15 @@ impl<const K: usize, const L: usize> ExpandedKey<K, L> {
         // (ρ, ρ′, K) ← H(ξ || IntegerToBytes(k,1) || IntegerToBytes(l,1))
         let mut h = shake256(&[xi, &[K as u8], &[L as u8]]);
         let mut rho = [0u8; 32];
-        let mut rho_prime = [0u8; 64];
+        let mut rho_prime = Secret::<[u8; 64]>::zeroed();
         let mut cap_k = [0u8; 32];
         h.read(&mut rho);
-        h.read(&mut rho_prime);
+        h.read(rho_prime.expose_mut());
         h.read(&mut cap_k);
 
         // (s1, s2) ← ExpandS(ρ′); t ← invNTT(Â ∘ NTT(s1)) + s2
-        let (s1, s2) = expand_s::<K, L>(p.eta, &rho_prime);
-        rho_prime.zeroize(); // ExpandS seed → whole SK; not held past this point
+        let (s1, s2) = expand_s::<K, L>(p.eta, rho_prime.expose());
+        rho_prime.wipe(); // ExpandS seed → whole SK; not held past this point
         let s1_hat = ntt_vec(&s1);
         let mut t = matrix_mul_streaming::<K, L>(&rho, &s1_hat);
         reduce_vec(&mut t);
@@ -190,9 +205,9 @@ impl<const K: usize, const L: usize> ExpandedKey<K, L> {
         shake256(&[&self.tr, &[0u8], &[ctx.len() as u8], ctx, msg]).read(&mut mu);
 
         // ρ′′ ← H(K || rnd || µ). ExpandMask seed → wiped on every exit path
-        // (Zeroizing) since it lives across the rejection loop's mid-body return.
-        let mut rho_pp = Zeroizing::new([0u8; 64]);
-        shake256(&[&self.cap_k, rnd, &mu]).read(&mut rho_pp[..]);
+        // (a Secret) since it lives across the rejection loop's mid-body return.
+        let mut rho_pp = Secret::<[u8; 64]>::zeroed();
+        shake256(&[&self.cap_k, rnd, &mu]).read(rho_pp.expose_mut());
 
         let ld4 = p.lambda_div4;
         let mut c_tilde = [0u8; MAX_LAMBDA_DIV4];
@@ -200,7 +215,7 @@ impl<const K: usize, const L: usize> ExpandedKey<K, L> {
 
         loop {
             // y ← ExpandMask(ρ′′, κ); w ← invNTT(Â ∘ NTT(y))
-            let y = expand_mask::<L>(p.gamma1, &rho_pp, kappa);
+            let y = expand_mask::<L>(p.gamma1, rho_pp.expose(), kappa);
             let mut w = matrix_mul_streaming::<K, L>(&self.rho, &ntt_vec(&y));
             reduce_vec(&mut w);
             for wk in &mut w {

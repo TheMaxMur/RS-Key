@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! `rsk-mldsa` — stack-optimized ML-DSA (FIPS 204, Dilithium) signatures for the
 //! RP2350. The reference arithmetic (reduction, NTT, sampling, packing,

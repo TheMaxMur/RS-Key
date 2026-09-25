@@ -599,6 +599,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **ML-DSA's secrets are typed, and it drops its zeroize proc-macro** —
+  refactor; nothing a host sees changes. The two 64-byte seeds `rsk-mldsa`
+  wiped by hand — ρ′, which expands to the whole secret key, and ρ″, the
+  per-signature mask seed — are `rsk_secret::Secret`s, wiped in place where the
+  hand wipe was and on every other exit. `Poly` and `ExpandedKey` keep wiping
+  themselves on drop through hand-written `Drop` impls instead of
+  `derive(Zeroize, ZeroizeOnDrop)`, whose generated field wipes the zeroize ban
+  would refuse; `ExpandedKey` loses `Clone`, which nothing used, so the expanded
+  key cannot be duplicated. The crate takes the ban at its root; `zeroize_derive`
+  leaves the dependency graph. `bcdDevice` 0x0A1A → 0x0A1B.
+
 - **The transports and the dispatcher wipe through guards** — refactor; nothing
   a host sees changes. CCID's request is wiped by a `WipeGuard` as soon as the
   handler is done with it, before the reply goes out rather than after, and its

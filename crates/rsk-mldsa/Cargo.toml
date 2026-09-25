@@ -26,7 +26,7 @@ kani-soft = []
 # SHAKE128/256 XOF (the FIPS 204 H/G functions and the samplers). Already in the
 # dependency tree via ml-kem; pinned here to the same 0.10 line.
 sha3 = { version = "0.10", default-features = false }
-# Wipe secret polynomials (s1/s2/y/z, the expanded key) on drop. `derive` for the
-# `Zeroize`/`ZeroizeOnDrop` proc-macros, declared explicitly so the crate builds
-# standalone rather than relying on workspace feature unification.
-zeroize = { workspace = true, features = ["derive"] }
+# Wipe secret polynomials (s1/s2/y/z, the expanded key) on drop, through the
+# hand-written Drop impls in poly.rs and sign.rs.
+zeroize = { workspace = true }
+rsk-secret = { workspace = true }

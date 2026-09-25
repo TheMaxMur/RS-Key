@@ -1913,6 +1913,7 @@ dependencies = [
 name = "rsk-mldsa"
 version = "0.1.0"
 dependencies = [
+ "rsk-secret",
  "sha3 0.10.9",
  "zeroize",
 ]
