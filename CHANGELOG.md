@@ -65,6 +65,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP answers its SELECT with no FCI, as a YubiKey 5.8.0 does, where RS-Key
+  sent a 34-byte `6F` template; a truncated AID selects the same way. The
+  application has no SELECT of its own either: every other form that reaches it,
+  by file id, by path or by AID with a `P2` other than `00` or `04`, is `6D00` and
+  leaves it selected, as on the YubiKey. RS-Key selected files by id (`9000` or
+  `6A88`) and answered `6A86` to some `P2`s. GnuPG and yubikit never read that
+  FCI, and OpenSC takes an empty answer as it takes a YubiKey's.
+  `bcdDevice` 0x0A0F → 0x0A10.
+
 - `rsk-tui` shows the OpenPGP PIN retry counters and how many keys the card holds.
   It looked for `C4` and `C5` at the top of `6E`, where neither a YubiKey 5.8.0
   nor RS-Key sends them — both carry them inside `73` — so the counters stayed

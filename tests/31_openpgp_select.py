@@ -95,8 +95,8 @@ def main():
     print("ATR:", toHexString(list(conn.getATR())))
 
     fci = expect_ok(conn, SELECT, "SELECT OpenPGP AID")
-    if not fci or fci[0] != 0x6F:
-        fail(f"SELECT FCI should start with 6F, got {toHexString(fci)}")
+    if fci:
+        fail(f"SELECT should answer no FCI, as a YubiKey 5.8.0 does; got {toHexString(fci)}")
 
     aid = expect_ok(conn, get_data(0x004F), "GET DATA 4F (full AID)")
     if aid[:6] != OPENPGP_AID:

@@ -79,7 +79,7 @@ pub(crate) fn check_uif<S: Storage>(
     Ok(())
 }
 
-/// Scratch buffer for the SELECT FCI and the PSO results. **Not** for GET DATA,
+/// Scratch buffer for the PSO results and GET CHALLENGE. **Not** for GET DATA,
 /// which builds into the caller's response buffer: a stored DO can be as long as
 /// DO C0 announces, and giving the applet private RAM that size costs more than
 /// the stack floor has. The largest thing built here is the `0xFA` algorithm
@@ -343,6 +343,9 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
         true
     }
 
+    /// No FCI, as a YubiKey 5.8.0 answers, and every other SELECT form reaching
+    /// `process` is `6D00` there too: the application has no SELECT of its own.
+    ///
     /// §4.2 spends its one sentence on which SELECT clears the access status —
     /// "a SELECT to a **different** DF" — and §7.2.2 repeats it for PW1 82. A
     /// SELECT that lands back here is not a state transition at all, so nothing
@@ -350,12 +353,10 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
     /// occurrence. Measured on a YubiKey 5.7.4, 3/3: re-SELECT of the bare AID
     /// and of a 5-byte truncation both keep all three PWs, while a different
     /// valid AID and an ICC power cycle clear them (the dispatcher's `deselect`).
-    fn select(&mut self, reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+    fn select(&mut self, reselect: bool, _fs: &mut Fs<S>, _res: &mut ResBuf) -> Sw {
         if !reselect {
             self.reset_session();
         }
-        let n = select::build_fci(&mut self.scratch);
-        res.extend(&self.scratch[..n]);
         Sw::OK
     }
 
@@ -378,13 +379,6 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 }
                 self.sess.cert_occ += 1;
                 self.read_cert_occurrence(fs, res)
-            }
-            consts::INS_SELECT => {
-                let (n, sw) = select::cmd_select(apdu, &mut self.scratch);
-                if sw.is_ok() && n > 0 {
-                    res.extend(&self.scratch[..n]);
-                }
-                sw
             }
             consts::INS_VERIFY => {
                 // Device is built inline (a `&self` helper would borrow all of

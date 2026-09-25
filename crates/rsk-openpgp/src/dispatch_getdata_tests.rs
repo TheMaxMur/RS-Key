@@ -360,13 +360,6 @@ const SERVED: &[u16] = &[
     0x00FA, 0x00FC, 0x0101, 0x0102, 0x0103, 0x0104, 0x5F50, 0x5F52, 0x7F21, 0x7F66, 0x7F74,
 ];
 
-/// The DOs only 65, 6E and 7A carry: GET DATA answers `6B00` to them, as the
-/// YubiKey does, and in-application SELECT still finds them.
-const NESTED: &[u16] = &[
-    0x005B, 0x0073, 0x0093, 0x00C0, 0x00C1, 0x00C2, 0x00C3, 0x00C5, 0x00C6, 0x00C7, 0x00C8, 0x00C9,
-    0x00CA, 0x00CB, 0x00CC, 0x00CD, 0x00CE, 0x00CF, 0x00D0, 0x5F2D, 0x5F35,
-];
-
 /// The pages the sweep walks end to end: every page carrying a served DO, plus
 /// the `0x10xx`/`0x1fxx` region where the internal EFs live.
 const SWEPT_PAGES: &[u8] = &[0x00, 0x01, 0x10, 0x1F, 0x5F, 0x7F];
@@ -381,10 +374,8 @@ const SWEPT_PAGES: &[u8] = &[0x00, 0x01, 0x10, 0x1F, 0x5F, 0x7F];
 /// reset-code DO — so the split enumerated the file system through a command
 /// that needs no credential.
 ///
-/// In-application SELECT is swept in the same loop because it resolves the fid
-/// from the same table and the dispatcher does not intercept it: it had the same
-/// split, and a fix in one command alone would leave the map readable from the
-/// other.
+/// In-application SELECT is swept in the same loop: it once resolved the fid from
+/// the same table and had the same split. It answers `6D00` to every fid now.
 #[test]
 fn get_data_answers_one_status_word_for_every_do_it_does_not_serve() {
     let mut fs = setup();
@@ -440,18 +431,14 @@ fn get_data_answers_one_status_word_for_every_do_it_does_not_serve() {
                 assert_eq!(sw, Sw::WRONG_P1P2, "GET DATA {tag:04X} verified={verified}");
             }
             // The same question through in-application SELECT, which the
-            // dispatcher does NOT intercept for `P1 <= 0x02` and which resolves
-            // the fid from the same table: an internal EF must be
-            // indistinguishable from an absent one here too. `0103`/`0104` are
-            // ungated for SELECT on both sides — it selects, it does not read.
+            // dispatcher does not intercept for `P1 <= 0x02`.
             let sel = [0x00, 0xA4, 0x00, 0x00, 0x02, (tag >> 8) as u8, tag as u8];
             let sw = dispatch(disp, applets, fs, &sel).1;
-            let want = if SERVED.contains(&tag) || NESTED.contains(&tag) {
-                Sw::OK
-            } else {
-                Sw::REFERENCE_NOT_FOUND
-            };
-            assert_eq!(sw, want, "SELECT fid {tag:04X} verified={verified}");
+            assert_eq!(
+                sw,
+                Sw::INS_NOT_SUPPORTED,
+                "SELECT fid {tag:04X} verified={verified}"
+            );
         };
         for &p1 in SWEPT_PAGES {
             for p2 in 0..=0xFFu8 {
@@ -479,5 +466,52 @@ fn get_data_answers_one_status_word_for_every_do_it_does_not_serve() {
             }
         }
         assert_eq!(cells, 2036, "the swept surface must not shrink silently");
+    }
+}
+
+/// A YubiKey 5.8.0's OpenPGP answers its SELECT by AID with no FCI, a truncated
+/// AID included, and has no SELECT of its own: every other form reaching it is
+/// `6D00`, and it stays selected (measured 2026-09-25).
+#[test]
+fn a_select_answers_as_a_yubikeys_openpgp_does() {
+    let mut fs = setup();
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut disp = Dispatcher::default();
+    let mut applets: [&mut dyn rsk_sdk::Applet<Fs<RamStorage>>; 1] = [&mut app];
+    let aid = &SELECT_OPENPGP[5..];
+    let with = |p1: u8, p2: u8, data: &[u8]| {
+        let mut a = std::vec![0x00, consts::INS_SELECT, p1, p2];
+        if !data.is_empty() {
+            a.push(data.len() as u8);
+            a.extend_from_slice(data);
+        }
+        a
+    };
+    for selection in [with(0x04, 0x00, aid), with(0x04, 0x00, &aid[..5])] {
+        let (body, sw) = dispatch(&mut disp, &mut applets, &mut fs, &selection);
+        assert_eq!((body.len(), sw), (0, Sw::OK), "{selection:02X?}");
+    }
+    let forms = [
+        with(0x04, 0x01, aid),
+        with(0x04, 0x0C, aid),
+        with(0x04, 0x02, aid),
+        with(0x04, 0x05, aid),
+        with(0x04, 0x08, aid),
+        with(0x00, 0x00, &[]),
+        with(0x00, 0x00, &[0x3F, 0x00]),
+        with(0x00, 0x00, &[0x00, 0x6E]),
+        with(0x01, 0x00, &[0x00, 0x6E]),
+        with(0x02, 0x00, &[0x00, 0x6E]),
+        with(0x03, 0x00, &[]),
+        with(0x08, 0x00, &[0x00, 0x6E]),
+    ];
+    for form in forms {
+        let (body, sw) = dispatch(&mut disp, &mut applets, &mut fs, &form);
+        assert_eq!((body.len(), sw), (0, Sw::INS_NOT_SUPPORTED), "{form:02X?}");
+        let get_aid = [0x00, 0xCA, 0x00, 0x4F, 0x00];
+        let still = dispatch(&mut disp, &mut applets, &mut fs, &get_aid).1;
+        assert_eq!(still, Sw::OK, "OpenPGP still selected after {form:02X?}");
     }
 }

@@ -9,7 +9,7 @@
 //! are reachable, then a sequence of length-prefixed attacker APDUs is replayed
 //! against the live applet + flash. This exercises every command parser at once:
 //! GET / PUT DATA, VERIFY / CHANGE PIN / RESET RETRY, IMPORT, PSO (incl. the ECDH
-//! `parse_ecdh_point` wrapper), INTERNAL AUTHENTICATE and SELECT. None may panic.
+//! `parse_ecdh_point` wrapper), INTERNAL AUTHENTICATE and SELECT DATA. None may panic.
 
 use core::cell::RefCell;
 

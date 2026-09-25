@@ -1234,7 +1234,7 @@ note = "selecting a different AID no longer deselects the applet that was curren
 status = "patch"
 slice = ["cargo", "test", "-p", "rsk-piv", "-p", "rsk-oath"]
 expect = "killed"
-note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:353-356. The OATH site joined with bcdDevice 0x09ED, when a YubiKey 5.8.0 was measured keeping an OATH VALIDATE through a re-SELECT too: reverting it is killed by crates/rsk-oath/src/reselect_tests.rs."
+note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:356-359. The OATH site joined with bcdDevice 0x09ED, when a YubiKey 5.8.0 was measured keeping an OATH VALIDATE through a re-SELECT too: reverting it is killed by crates/rsk-oath/src/reselect_tests.rs."
 
 [[comutant.BugReselectResetsStatus.site]]
 file = "crates/rsk-piv/src/lib.rs"

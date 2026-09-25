@@ -246,9 +246,9 @@ fn select_unknown_aid() {
     );
 }
 
-// Mimics OpenPGP/PIV: a current applet whose own SELECT handler answers a
-// non-6D00 status (6A88, exactly as OpenPGP's `cmd_select` does) for a SELECT it
-// does not recognise. Used to prove the dispatcher shadows it on a by-FID SELECT.
+// Mimics OpenPGP/PIV as they were: a current applet whose own SELECT handler
+// answered a non-6D00 status (6A88, as OpenPGP's `cmd_select` did) for a SELECT it
+// did not recognise. Used to prove the dispatcher shadows it on a by-FID SELECT.
 struct PickySelect;
 impl Applet<()> for PickySelect {
     fn aid(&self) -> &'static [u8] {
@@ -259,7 +259,7 @@ impl Applet<()> for PickySelect {
     }
     fn process(&mut self, apdu: &Apdu, _ctx: &mut (), _res: &mut ResBuf) -> Sw {
         if apdu.ins == 0xA4 {
-            Sw::REFERENCE_NOT_FOUND // 6A88 — what OpenPGP returns for a foreign SELECT
+            Sw::REFERENCE_NOT_FOUND // 6A88 — what OpenPGP returned for a foreign SELECT
         } else {
             Sw::INS_NOT_SUPPORTED
         }
@@ -272,8 +272,8 @@ fn select_by_fid_is_unsupported_like_a_yubikey() {
     // master file). A real YubiKey answers 6D00, which is the trigger for scdaemon
     // to recognise it and read its serial from the management applet. RS-Key is
     // applet-only (no MF), so the dispatcher must answer 6D00 *before* dispatch —
-    // otherwise the current applet (OpenPGP) returns 6A88 and scdaemon shows a raw
-    // serial and drops PIV (issue #44).
+    // otherwise the current applet (OpenPGP, then) returned 6A88 and scdaemon showed a raw
+    // serial and dropped PIV (issue #44).
     let mut app = PickySelect;
     let mut applets: [&mut dyn Applet<()>; 1] = [&mut app];
     let mut disp = Dispatcher::new();
@@ -944,7 +944,7 @@ impl Applet<()> for Verifiable {
             0x87 if self.verified => Sw::OK,
             0x87 => Sw::SECURITY_STATUS_NOT_SATISFIED,
             // A SELECT that reaches `process` instead of the dispatcher, answered
-            // the way OpenPGP's `cmd_select` does: prefix-match, so a buffer that
+            // the way OpenPGP's `cmd_select` did: prefix-match, so a buffer that
             // merely *starts* with this AID is accepted (audit run-37).
             0xA4 if apdu.data.starts_with(self.aid()) => Sw::OK,
             _ => Sw::INS_NOT_SUPPORTED,

@@ -77,19 +77,6 @@ fn run_big(app: &mut OpenpgpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> (Vec
 }
 
 #[test]
-fn select_emits_fci() {
-    let rng = RefCell::new(CountRng(0));
-    let mut fs = make_fs();
-    let presence = RefCell::new(crate::AlwaysConfirm);
-    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
-    let mut buf = [0u8; 64];
-    let mut res = ResBuf::new(&mut buf);
-    let sw = app.select(false, &mut fs, &mut res);
-    assert_eq!(sw, Sw::OK);
-    assert_eq!(res.as_slice()[0], 0x6F);
-}
-
-#[test]
 fn get_data_pw_status_via_process() {
     let rng = RefCell::new(CountRng(0));
     let mut fs = make_fs();

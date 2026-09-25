@@ -100,7 +100,7 @@ pub trait Applet<C> {
     /// select), so registering a shortened form makes the real AID unselectable.
     fn aid(&self) -> &'static [u8];
     /// Called on SELECT. `reselect` is true when this applet was already current.
-    /// `res` receives the SELECT response body (e.g. an OpenPGP FCI); leave it
+    /// `res` receives the SELECT response body (e.g. the PIV APT); leave it
     /// empty for applets that return no data.
     fn select(&mut self, reselect: bool, ctx: &mut C, res: &mut ResBuf) -> Sw;
     /// Handle a non-SELECT command APDU.
