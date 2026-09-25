@@ -132,7 +132,7 @@ artifact = "SoloClause_ResetKeepsThePinGate.cfg::ResetKeepsThePinGate"
 bound_invariants = 2
 stops_invariants = "anything about the rest of the invariant set. TypeOK and this one clause is the whole of what this row checks, which is exactly why its RED cannot be a neighbour's — and equally why it says nothing about whether a neighbour would have caught the same defect"
 bound_armed_switches = 1
-stops_armed_switches = "any defect the one switch does not build. One armed switch is also what makes the runner compare the reported name: `formal/floors.txt:SoloClause_*.cfg` gives this family `RED -` with no invariant column, and `formal/run-tlc.sh:226-234` then DERIVES the expected name from the configuration's own INVARIANTS block whenever `armed_count` is 1 — which it is here, measured"
+stops_armed_switches = "any defect the one switch does not build. One armed switch is also what makes the runner compare the reported name: `formal/floors.txt:SoloClause_*.cfg` gives this family `RED -` with no invariant column, and `formal/run-tlc.sh:229-237` then DERIVES the expected name from the configuration's own INVARIANTS block whenever `armed_count` is 1 — which it is here, measured"
 bound_clauses = 1
 stops_clauses = "the other two conjuncts of the parent. This row is about one third of `ResetNeverWeakensSurvivingState` and is silent on the rest"
 bound_depth = 16
@@ -233,7 +233,7 @@ features = "none"
 name = "tlaplus"
 version = "1.7.4, and TLC2 2.19 of 08 August 2024 (rev 5a47802) as every artifact's own banner records it"
 provenance = "flake.lock; tla2tools.jar sha256 936a2620… — the prefix formal/run-tlc.sh:16 records, and the half PLAT-TOOL-003 does not have for cargo-kani"
-invocation = "java -XX:+UseParallelGC -Xmx4g -cp $TLA2TOOLS_JAR tlc2.TLC -nowarning -workers 2 -config <cfg> RSKeySecurityState, which is formal/run-tlc.sh:245-247 verbatim but for the later `-metadir`, which only moves TLC's scratch"
+invocation = "java -XX:+UseParallelGC -Xmx4g -cp $TLA2TOOLS_JAR tlc2.TLC -nowarning -workers 2 -config <cfg> RSKeySecurityState, which is formal/run-tlc.sh:248-250 verbatim but for the later `-metadir` and `-Djava.io.tmpdir`, which only move TLC's scratch"
 environment = "nix develop; WORKERS=2, HEAP=4g. Not the liveness tier's 12g — no configuration in this bundle declares a temporal property"
 
 [[tool]]

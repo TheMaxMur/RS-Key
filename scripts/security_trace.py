@@ -923,9 +923,12 @@ def run_tlc(work: Path, config: str) -> tuple[int, int | None]:
     java = os.environ.get("JAVA") or shutil.which("java")
     if not java:
         die("java not found")
+    # Its own java.io.tmpdir; formal/run-tlc.sh says why.
+    jtmp = work / "java-tmp"
+    jtmp.mkdir(exist_ok=True)
     result = subprocess.run(
-        [java, "-XX:+UseParallelGC", "-Xmx2g", "-cp", jar, "tlc2.TLC",
-         "-nowarning", "-workers", "2", "-config", config, "TraceSecurity"],
+        [java, "-XX:+UseParallelGC", "-Xmx2g", f"-Djava.io.tmpdir={jtmp}", "-cp", jar,
+         "tlc2.TLC", "-nowarning", "-workers", "2", "-config", config, "TraceSecurity"],
         cwd=work,
         check=False,
         capture_output=True,

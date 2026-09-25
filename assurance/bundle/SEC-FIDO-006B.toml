@@ -224,7 +224,7 @@ features = "the default set and `always-uv`, driven separately"
 name = "tlaplus"
 version = "1.7.4"
 provenance = "flake.lock; formal/run-tlc.sh:16 records the tla2tools.jar sha256 prefix 936a2620, which is the half PLAT-TOOL-003 does not have for the prover"
-invocation = "java -XX:+UseParallelGC -Xmx4g -cp $TLA2TOOLS_JAR tlc2.TLC -nowarning -workers 2 -config <cfg> RSKeySecurityState — formal/run-tlc.sh:245-247, less the later `-metadir`, which only moves TLC's scratch"
+invocation = "java -XX:+UseParallelGC -Xmx4g -cp $TLA2TOOLS_JAR tlc2.TLC -nowarning -workers 2 -config <cfg> RSKeySecurityState — formal/run-tlc.sh:248-250, less the later `-metadir` and `-Djava.io.tmpdir`, which only move TLC's scratch"
 environment = "nix develop; WORKERS=2, HEAP=4g. Not the liveness tier's larger heap — no configuration in this bundle declares a temporal property"
 
 [[tool]]

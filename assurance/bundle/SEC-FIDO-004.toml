@@ -270,7 +270,7 @@ features = "none"
 name = "tlaplus"
 version = "1.7.4"
 provenance = "flake.lock; the jar this shell resolves is /nix/store/9kbz995wqfncy2vnqypdj23ihl6d0agb-tlaplus-1.7.4/share/java/tla2tools.jar, and formal/run-tlc.sh:16 records the sha256 prefix 936a2620 that floors.txt was measured against"
-invocation = "java -XX:+UseParallelGC -Xmx4g -cp $TLA2TOOLS_JAR tlc2.TLC -nowarning -workers 2 -config <cfg> RSKeySecurityState (formal/run-tlc.sh:245-247, less the later `-metadir`, which only moves TLC's scratch)"
+invocation = "java -XX:+UseParallelGC -Xmx4g -cp $TLA2TOOLS_JAR tlc2.TLC -nowarning -workers 2 -config <cfg> RSKeySecurityState (formal/run-tlc.sh:248-250, less the later `-metadir` and `-Djava.io.tmpdir`, which only move TLC's scratch)"
 environment = "nix develop; WORKERS=2, HEAP=4g — the safety tier's settings, not the liveness tier's 12g, because no configuration here declares a temporal property"
 
 [[tool]]

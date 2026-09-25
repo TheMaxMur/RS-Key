@@ -973,7 +973,7 @@ def test_deleting_the_entry_takes_both_of_its_findings_with_it(tree, monkeypatch
 
 def test_a_shell_citation_is_read(tree):
     """`.sh` beside `.rs`: the bundles cite the RUNNER as finely as the firmware,
-    and `formal/run-tlc.sh:231-234` is the derivation a reason-comparison argument
+    and `formal/run-tlc.sh:234-237` is the derivation a reason-comparison argument
     rests on. The `.rs`-only group saw none of them."""
     tree.write("formal/run-tlc.sh", "#!/usr/bin/env bash\nderived_inv() { :; }\n")
     tree.edit(BUNDLE_PAGE, "clientpin.rs:4-6", "formal/run-tlc.sh:2")

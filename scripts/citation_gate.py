@@ -277,7 +277,7 @@ SCRIPT_ROOT = "scripts/"
 #: sentences about the derived-invariant fallback wrote a bare `run-tlc.sh:200-203`
 #: and a bare `run-tlc.sh` resolves in none of the five [`SEARCH`] directories, so
 #: the report would have been "no such file" — the wrong reason, on a citation
-#: whose line had simply moved. Both are written `formal/run-tlc.sh:231-234` now,
+#: whose line had simply moved. Both are written `formal/run-tlc.sh:234-237` now,
 #: which is the form a narrowing could check; that repair is what a narrowing is
 #: worth, and it costs nothing.
 SCRIPT_EXEMPT = frozenset(
@@ -508,7 +508,7 @@ def floor_for(page):
 #: a single line with the upper bound silently discarded, in two pages whose prose
 #: already uses `—` and `·` throughout — measured: `state.rs:284–99991` passed.
 #: `.sh` and `.txt` beside `.rs`, because the bundles cite the RUNNER as finely
-#: as they cite the firmware — `formal/run-tlc.sh:231-234` is the derivation their
+#: as they cite the firmware — `formal/run-tlc.sh:234-237` is the derivation their
 #: reason-comparison argument rests on — and the `.rs`-only group made every one
 #: of those invisible. Priced before flipping it, over the whole tree and not
 #: just the pages: 122 citations the group had never seen, of which exactly ONE

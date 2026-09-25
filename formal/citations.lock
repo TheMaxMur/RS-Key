@@ -163,7 +163,7 @@ assurance/bundle/SEC-FIDO-004.toml	formal/gen-configs.sh	305-305	# family nothin
 assurance/bundle/SEC-FIDO-004.toml	formal/gen-configs.sh	305-306	# family nothing else runs: the pre-0x08BF tree with the repair the model	# proposed and the maintainer did not take. `FixSweepDropsCredsBeforeRpEntries`
 assurance/bundle/SEC-FIDO-004.toml	formal/gen-configs.sh	305-307	# family nothing else runs: the pre-0x08BF tree with the repair the model	# had never been passed TRUE by any call -- every configuration that assigned it
 assurance/bundle/SEC-FIDO-004.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
-assurance/bundle/SEC-FIDO-004.toml	formal/run-tlc.sh	245-247	"$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -cp "$JAR" tlc2.TLC \	"${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
+assurance/bundle/SEC-FIDO-004.toml	formal/run-tlc.sh	248-250	"$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -Djava.io.tmpdir="$metaroot/java-tmp" -cp "$JAR" tlc2.TLC \	"${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
 assurance/bundle/SEC-FIDO-004.toml	scripts/assurance_gate.py	220-222	def grep_word(files: list[pathlib.Path], word: str) -> list[str]:	return [f.name for f in files if pat.search(f.read_text(errors="ignore"))]
 assurance/bundle/SEC-FIDO-004.toml	scripts/assurance_gate.py	1053-1062	for cfg_name in OWNER_CFGS:	)
 assurance/bundle/SEC-FIDO-004.toml	scripts/citation_gate.py	368-374	def bundle_pages(root):	)
@@ -262,8 +262,8 @@ assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_tests.rs	626-626	f
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-usb/src/ctaphid.rs	757-762	if is_cbor {	});
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-usb/src/ctaphid.rs	767-772	// frames during fast/crypto processing would consume — and then	if up_pending() {
 assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
-assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	226-234	armed_n=$(armed_count "$cfg")	fi
-assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	245-247	"$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -cp "$JAR" tlc2.TLC \	"${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
+assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	229-237	armed_n=$(armed_count "$cfg")	fi
+assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	248-250	"$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -Djava.io.tmpdir="$metaroot/java-tmp" -cp "$JAR" tlc2.TLC \	"${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
 assurance/bundle/SEC-FIDO-006A.toml	fuzz/fuzz_targets/power_cut.rs	29-31	//! After a real reboot it checks `ResetNeverWeakensSurvivingState` and its three	//! `ResetKeepsTheBackupSeal`. This is the byte-granular half of the phase-6
 assurance/bundle/SEC-FIDO-006A.toml	fuzz/fuzz_targets/power_cut.rs	202-202	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
 assurance/bundle/SEC-FIDO-006A.toml	tests/29_reset_power_cut.py	12-14	This is the runtime witness for `ResetNeverWeakensSurvivingState` and its three	`ResetKeepsTheBackupSeal`. It provisions one owner seed, seals its export window,
@@ -297,7 +297,7 @@ assurance/bundle/SEC-FIDO-006B.toml	formal/gen-configs.sh	211-225	# `clauses=1` 
 assurance/bundle/SEC-FIDO-006B.toml	formal/gen-configs.sh	226-226	clauses=1 emit Shipped.cfg "" FALSE TRUE	clauses=1 emit Shipped.cfg "" FALSE TRUE
 assurance/bundle/SEC-FIDO-006B.toml	formal/gen-configs.sh	321-328	# minting one would take a name the runner's own tier roster does not have.	# Mutants run on the tree's own settings, so nothing pre-existing can mask them.
 assurance/bundle/SEC-FIDO-006B.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
-assurance/bundle/SEC-FIDO-006B.toml	formal/run-tlc.sh	245-247	"$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -cp "$JAR" tlc2.TLC \	"${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
+assurance/bundle/SEC-FIDO-006B.toml	formal/run-tlc.sh	248-250	"$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -Djava.io.tmpdir="$metaroot/java-tmp" -cp "$JAR" tlc2.TLC \	"${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
 assurance/bundle/SEC-FIDO-006B.toml	scripts/kani.sh	122-122	STATEFUL="rsk-fido rsk-fs"	STATEFUL="rsk-fido rsk-fs"
 assurance/bundle/SEC-FIDO-006B.toml	tests/29_reset_power_cut.py	526-529	assertion_status = old_credential_without_gates(dev, cid, credential_id)	f"(clientPin={options.get('clientPin')}, alwaysUv={options.get('alwaysUv')})"
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-display/src/backup.rs	47-47	can_reveal: st.has_seed && st.exportable && !st.sealed && !st.locked && device_pin_set,	can_reveal: st.has_seed && st.exportable && !st.sealed && !st.locked && device_pin_set,
@@ -414,9 +414,9 @@ assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/state_kani.rs	86-86	st.be
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fs/src/fs.rs	477-477	pub fn factory_wipe(	pub fn factory_wipe(
 assurance/bundle/SEC-FIDO-008.toml	formal/gen-configs.sh	109-114	# Structural facts the model's own arguments rest on, asserted on the baseline	EXTRA_INV=(RamNeverOutlivesFlashSeed NoLiveTokenWithoutPinRecord)
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
-assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	69-74	# The invariant a MUTATION configuration says it targets, for the rows where	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }
-assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	74-74	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }
-assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	231-234	if [ -z "${inv:-}" ] || [ "$inv" = "-" ]; then	fi
+assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	72-77	# The invariant a MUTATION configuration says it targets, for the rows where	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }
+assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	77-77	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }
+assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	234-237	if [ -z "${inv:-}" ] || [ "$inv" = "-" ]; then	fi
 assurance/bundle/SEC-FIDO-008.toml	scripts/citation_gate.py	368-374	def bundle_pages(root):	)
 assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	596-596	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
 assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	596-605	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
