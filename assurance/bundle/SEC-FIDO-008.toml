@@ -66,8 +66,8 @@ requirement = [
   "formal/README.md:122 — the claim-table row, and the record that this sentence was refuted once and then relied on again",
 ]
 # AND THE REQUIREMENT COVERS ONE HALF OF THE IMPLICATION. §6.5's rule is about
-# ISSUANCE — `crates/rsk-fido/src/clientpin.rs:685-693` is that rule in Rust,
-# `PinNotSet` when `EF_PIN` has no data, called from `get_pin_token` at :345 —
+# ISSUANCE — `crates/rsk-fido/src/clientpin.rs:700-708` is that rule in Rust,
+# `PinNotSet` when `EF_PIN` has no data, called from `get_pin_token` at :346 —
 # and it constrains the antecedent-maker only. Nothing in §6.5 says a token may
 # not SURVIVE the record's deletion; the only way a CTAP authenticator deletes
 # `EF_PIN` at all is §6.6's reset, and §6.6 is in neither the registry's `source`
@@ -88,20 +88,20 @@ threat_clause_reading = "linkage stronger than the counterpart's and still not c
 # The one `Refines … — SEC-FIDO-008` tag in the tree. `git grep -n \"Refines
 # \\`RSKeySecurityState\"` over `crates/` returns 28 tags across 9 files and
 # exactly one of them names this property.
-owners_tagged = ["crates/rsk-fido/src/clientpin.rs:404 clientpin::issue_token — the doc comment above `fn issue_token` at :405"]
+owners_tagged = ["crates/rsk-fido/src/clientpin.rs:412 clientpin::issue_token — the doc comment above `fn issue_token` at :413"]
 # AND IT IS ON A HALF THAT CAN FALSIFY, which the counterpart's is not. This is
 # the measured contrast with `SEC-FIDO-007`, whose tag sits on `ensure_seed` —
 # a function that writes the CONSEQUENT and structurally cannot break the
 # implication. `issue_token` makes `tok.live` TRUE (`begin_using_token` at
-# :425), so an unguarded issuance IS a falsifying step, and the model's
+# :433), so an unguarded issuance IS a falsifying step, and the model's
 # `GetPinToken` (RSKeySecurityState.tla:694-703) is exactly this function.
-owners_tag_reading = "the tag is correct and the coverage is half. `git grep -n begin_using_token` gives two non-test callers, `clientpin.rs:425` inside the tagged function and `crates/rsk-fido/src/conformance/mod.rs:165`, and the second is not in any image — `assurance_gate.cfg_excluded` reports `lib.rs declares mod conformance under cfg(test)`, measured by running that derivation. So the antecedent has exactly ONE production maker and it is tagged. The consequent's DESTROYER is not: `crates/rsk-fido/src/reset.rs:104` `ctx.state.reset()`, ahead of the flash phases that delete EF_PIN, is what makes this invariant true, and reset.rs carries seven Refines tags — 006 four times, 004, 006A, 006B, 006C — and none for 008. formal/README.md:122 records that this invariant was refuted once by modelling ONLY the `keydev_dec` half of that call, so the untagged half is the half with the history"
+owners_tag_reading = "the tag is correct and the coverage is half. `git grep -n begin_using_token` gives two non-test callers, `clientpin.rs:433` inside the tagged function and `crates/rsk-fido/src/conformance/mod.rs:165`, and the second is not in any image — `assurance_gate.cfg_excluded` reports `lib.rs declares mod conformance under cfg(test)`, measured by running that derivation. So the antecedent has exactly ONE production maker and it is tagged. The consequent's DESTROYER is not: `crates/rsk-fido/src/reset.rs:104` `ctx.state.reset()`, ahead of the flash phases that delete EF_PIN, is what makes this invariant true, and reset.rs carries seven Refines tags — 006 four times, 004, 006A, 006B, 006C — and none for 008. formal/README.md:122 records that this invariant was refuted once by modelling ONLY the `keydev_dec` half of that call, so the untagged half is the half with the history"
 # The antecedent: every production site that can make `tok.live` true.
 owners_antecedent = [
-  "crates/rsk-fido/src/state.rs:523 `begin_using_token` — the definition, `paut.in_use = true`; the model's `tok' = [live |-> TRUE, …]`",
-  "crates/rsk-fido/src/clientpin.rs:425 — the ONLY call site in a buildable image, inside the tagged `issue_token`",
-  "crates/rsk-fido/src/clientpin.rs:345 `get_pin_token` — the door, and where `pin_set_and_unblocked` gates issuance on the record",
-  "crates/rsk-fido/src/clientpin.rs:685-693 `pin_set_and_unblocked` — §6.5's rule in Rust: `PinNotSet` when EF_PIN has no data",
+  "crates/rsk-fido/src/state.rs:524 `begin_using_token` — the definition, `paut.in_use = true`; the model's `tok' = [live |-> TRUE, …]`",
+  "crates/rsk-fido/src/clientpin.rs:433 — the ONLY call site in a buildable image, inside the tagged `issue_token`",
+  "crates/rsk-fido/src/clientpin.rs:346 `get_pin_token` — the door, and where `pin_set_and_unblocked` gates issuance on the record",
+  "crates/rsk-fido/src/clientpin.rs:700-708 `pin_set_and_unblocked` — §6.5's rule in Rust: `PinNotSet` when EF_PIN has no data",
   "crates/rsk-fido/src/conformance/mod.rs:165 — the second caller, and NOT one: `mod conformance` is `#[cfg(test)]`, so it is in `assurance_gate.cfg_excluded` and reaches no image",
 ]
 # The consequent: every production site that can make `pin.set` false, and the
@@ -111,7 +111,7 @@ owners_consequent = [
   "crates/rsk-fido/src/reset.rs:121 the phase-2 sweep over `is_fido_gate_fid` — the only path in the FIDO applet that deletes EF_PIN",
   "crates/rsk-fido/src/reset.rs:228-252 `is_fido_gate_fid` / `is_fido_gate_record` — EF_PIN is a member, and the list is five where the clauses are three",
   "crates/rsk-fs/src/fs.rs:477 `Fs::factory_wipe` — the SECOND deleter, device-wide, which bypasses `reset()` entirely and is unmodelled (AS-TOK-4)",
-  "crates/rsk-fido/src/clientpin.rs:845-846 `write_pin_verifier` — the one EF_PIN writer that is not a deleter: it OVERWRITES and clears the persistent grant first, so it cannot falsify this implication",
+  "crates/rsk-fido/src/clientpin.rs:860-861 `write_pin_verifier` — the one EF_PIN writer that is not a deleter: it OVERWRITES and clears the persistent grant first, so it cannot falsify this implication",
 ]
 # The file the one killed code twin patches (formal/comutants.toml:361-384). Not
 # among the tagged owners, and the same file the counterpart's twin patches.
@@ -119,7 +119,7 @@ owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 # The test that falls when that twin is applied — and it asserts about the RAM
 # SEED, not about the token. Recorded because the `co = 1` column says nothing
 # about which half of which invariant the killing assertion is about.
-owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1202 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed — its assertion is `state.keydev_dec.is_none()`, which is `SEC-FIDO-007`'s consequent and not this one's antecedent"
+owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1203 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed — its assertion is `state.keydev_dec.is_none()`, which is `SEC-FIDO-007`'s consequent and not this one's antecedent"
 # The nearest thing in the suite to a shipped twin of THIS implication, and why
 # it is not one: it drives an UNTORN reset, where the twin's patch still runs
 # `ctx.state.reset()` before returning, so the assertion holds under the mutant.
@@ -263,7 +263,7 @@ bound_files_in_argument = 5
 stops_files_in_argument = "anything in a sixth file — and the measurement is the point: the slice page estimated ONE file, the tag's, which is the antecedent half only"
 bound_crates = 2
 stops_crates = "a site outside the two crates, including any other holder of the record the consequent names"
-shipped_relation = "the four antecedent sites are the definition (state.rs:523), its one in-image caller (clientpin.rs:425), the door above it (clientpin.rs:345) and the record gate that door runs first (clientpin.rs:685-693); the five consequent sites are reset.rs:104, the phase-2 sweep at :121, the membership predicate at :228-252, `Fs::factory_wipe` at crates/rsk-fs/src/fs.rs:477 and the overwriting writer at clientpin.rs:845-846. Five files over two crates, against the ONE file `docs/authorization-slice.md:462-467` estimated (`crates/rsk-fido/src/clientpin.rs`) — the estimate named the tag's file, which is the antecedent half only, and the half with the recorded history is in a file it did not name. THIS BOUND IS A COUNT OF SITES, not a shrink of a shipped constant, because a review has no other unit; the same weakness the counterpart recorded, at the same group"
+shipped_relation = "the four antecedent sites are the definition (state.rs:524), its one in-image caller (clientpin.rs:433), the door above it (clientpin.rs:346) and the record gate that door runs first (clientpin.rs:700-708); the five consequent sites are reset.rs:104, the phase-2 sweep at :121, the membership predicate at :228-252, `Fs::factory_wipe` at crates/rsk-fs/src/fs.rs:477 and the overwriting writer at clientpin.rs:860-861. Five files over two crates, against the ONE file `docs/authorization-slice.md:462-467` estimated (`crates/rsk-fido/src/clientpin.rs`) — the estimate named the tag's file, which is the antecedent half only, and the half with the recorded history is in a file it did not name. THIS BOUND IS A COUNT OF SITES, not a shrink of a shipped constant, because a review has no other unit; the same weakness the counterpart recorded, at the same group"
 cfg = "none — every site above is unconditional production code except crates/rsk-fido/src/conformance/mod.rs:165, which is cfg(test) and is counted apart in `owners_antecedent` rather than in these bounds"
 features = "none"
 
@@ -297,7 +297,7 @@ bound_states_changed_by_removal = 0
 stops_states_changed_by_removal = "anything about the INVARIANT. The zero says the GUARD disables nothing; the invariant itself has a reachable falsifying state the moment one switch is armed, and reading the zero as a claim about the property is the confusion this row exists to refuse"
 bound_transitions_changed_by_removal = 0
 stops_transitions_changed_by_removal = "the currency of the measurement. Both zeros are the review's, recorded in `formal/README.md` and not re-taken here — no TLC run was performed for this bundle"
-shipped_relation = "three sites in the module rest on this sentence: `ConfigGuard` at :1091 carries no `pin.set` conjunct because config.rs:243-245 tests the MAC and PERM_ACFG and nothing else, and the two `~(gate.alwaysUv /\\ ~pin.set)` conjuncts at :935 and :1056 are kept only because the Rust has them. formal/README.md:935-941 records the measurement: removed from BOTH call sites the reachable space is bit-identical AND the transition count is unchanged, so the conjunct disables nothing. THE DISTINCTION THIS ROW EXISTS FOR: it is the GUARD that is inert, not the invariant. The invariant has a reachable falsifying state — 98 069 distinct, depth 12 — the moment one switch is armed. The two zeros are that measurement's, taken by the review formal/README.md records and NOT re-taken here; no TLC run was performed for this bundle"
+shipped_relation = "three sites in the module rest on this sentence: `ConfigGuard` at :1091 carries no `pin.set` conjunct because config.rs:242-244 tests the MAC and PERM_ACFG and nothing else, and the two `~(gate.alwaysUv /\\ ~pin.set)` conjuncts at :935 and :1056 are kept only because the Rust has them. formal/README.md:935-941 records the measurement: removed from BOTH call sites the reachable space is bit-identical AND the transition count is unchanged, so the conjunct disables nothing. THE DISTINCTION THIS ROW EXISTS FOR: it is the GUARD that is inert, not the invariant. The invariant has a reachable falsifying state — 98 069 distinct, depth 12 — the moment one switch is armed. The two zeros are that measurement's, taken by the review formal/README.md records and NOT re-taken here; no TLC run was performed for this bundle"
 cfg = "none"
 features = "none"
 
@@ -370,7 +370,7 @@ b_twin_structural_fact = "Solo_RamNeverOutlivesFlashSeed.cfg RED: RamNeverOutliv
 # column is.
 r_owners = "4 antecedent sites and 5 consequent sites over 5 files in 2 crates; 1 of the 9 is cfg(test) and counted apart. The design page estimated ONE file"
 r_tag = "1 tagged owner, on the antecedent — a half that CAN falsify, unlike the counterpart's, whose tag sits on the consequent. The half with the recorded refutation, the reset, carries seven Refines tags and none for this property"
-r_requirement = "the registered requirement covers the SAME half the tag does. CTAP 2.3 §6.5 constrains issuance and is implemented at clientpin.rs:685-693; the surviving half belongs to §6.6, which is in neither the registry's source list nor any evidence here"
+r_requirement = "the registered requirement covers the SAME half the tag does. CTAP 2.3 §6.5 constrains issuance and is implemented at clientpin.rs:700-708; the surviving half belongs to §6.6, which is in neither the registry's source list nor any evidence here"
 r_column = "the `rust` column is not a count of tags: assurance_gate.grep_word matches the bare invariant name anywhere in a production file and returns FILE NAMES, so `rust = 1` is one FILE, and a second tag in clientpin.rs would move nothing. The counterpart reads 2 for the same reason — two files, not two owners"
 
 # THE CODE TWIN, and the one number in this bundle that is a status rather than
@@ -468,7 +468,7 @@ registered = "yes — assurance/platform.toml PLAT-TOKEN-001, pending, class mod
 id = "AS-TOK-2"
 statement = "One `pin.set` boolean stands for one record, and the display build's second PIN verifier `EF_DEVICE_PIN` is not it: a state where the device PIN exists and `EF_PIN` does not is a state this invariant cannot distinguish from a factory-fresh one."
 kind = "model abstraction"
-discharger = "reading the two records apart. crates/rsk-display/src/gates.rs:11 states in as many words that the backing record and the floor differ between the two PINs; crates/rsk-display/src/pin.rs:752 says the FIDO PIN goes to EF_PIN as the same verifier the host uses, and :455 that a host authenticatorReset clears both. Built-in UV verifies EF_PIN and not the device PIN (crates/rsk-fido/src/clientpin.rs:574, :612), so the antecedent's second door is gated on the same record the model has — which is what makes the single boolean sound TODAY and is exactly what a new pad-only issuance path would break"
+discharger = "reading the two records apart. crates/rsk-display/src/gates.rs:11 states in as many words that the backing record and the floor differ between the two PINs; crates/rsk-display/src/pin.rs:752 says the FIDO PIN goes to EF_PIN as the same verifier the host uses, and :455 that a host authenticatorReset clears both. Built-in UV verifies EF_PIN and not the device PIN (crates/rsk-fido/src/clientpin.rs:589, :627), so the antecedent's second door is gated on the same record the model has — which is what makes the single boolean sound TODAY and is exactly what a new pad-only issuance path would break"
 expressible = "no — the model has one `pin` record and expressing the alternative needs a second field, and scripts/assumption_gate.py accepts a boolean CONSTANT and nothing else"
 registered = "yes — assurance/platform.toml PLAT-TOKEN-002, pending, class model-abstraction"
 
@@ -476,7 +476,7 @@ registered = "yes — assurance/platform.toml PLAT-TOKEN-002, pending, class mod
 id = "AS-TOK-3"
 statement = "`issue_token` is the only production maker of the antecedent: every other caller of `begin_using_token` is outside every buildable image, so the one tagged owner is the whole antecedent side."
 kind = "model fidelity"
-discharger = "an enumeration that a derivation already in the tree can re-run, and it was re-run here rather than read. `git grep -n begin_using_token` gives 28 hits; all but two are in files `assurance_gate.production_rust` drops by name, and of the two remaining, `crates/rsk-fido/src/conformance/mod.rs:165` is reported by `assurance_gate.cfg_excluded` as `lib.rs declares mod conformance under cfg(test)`. That leaves `crates/rsk-fido/src/clientpin.rs:425`, inside the tagged function. What ends this row is a second in-image caller, and the derivation that would find it is the one just named"
+discharger = "an enumeration that a derivation already in the tree can re-run, and it was re-run here rather than read. `git grep -n begin_using_token` gives 28 hits; all but two are in files `assurance_gate.production_rust` drops by name, and of the two remaining, `crates/rsk-fido/src/conformance/mod.rs:165` is reported by `assurance_gate.cfg_excluded` as `lib.rs declares mod conformance under cfg(test)`. That leaves `crates/rsk-fido/src/clientpin.rs:433`, inside the tagged function. What ends this row is a second in-image caller, and the derivation that would find it is the one just named"
 expressible = "no — a fact about the call graph of one method, not about the model"
 registered = "yes — assurance/platform.toml PLAT-TOKEN-003, pending, class model-abstraction"
 

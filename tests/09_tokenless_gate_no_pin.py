@@ -10,7 +10,7 @@ Both cells here are served — `makeCredUvNotRqd` means a token-less
 makeCredential needs no token while the device has no PIN, whatever `rk` says.
 The suite exists for the phase-4 recording, where a gate boundary is a command
 that moves no raw state: a *served* registration only becomes one when it writes
-nothing. `crates/rsk-fido/src/credential.rs:810-825` reuses the slot when
+nothing. `crates/rsk-fido/src/credential.rs:811-826` reuses the slot when
 `(rpIdHash, userId)` already match, so the second `rk: true` of the same user is
 one row, and a non-discoverable create is the other. Without them `pin.set` is
 TRUE at every gate boundary the model replays, and that conjunct is true rather

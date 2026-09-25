@@ -682,6 +682,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **FIDO's seed and the keys derived from it are typed** — refactor; nothing a
+  host sees changes. `rsk-fido`'s seed loaders, the credential, hmac-secret and
+  key-handle derivations, the ratchet, the persistent token and the vendor
+  channel key hand their bytes out in `rsk_secret::Secret`s instead of bare
+  arrays their callers wiped, and the PIN-protocol shared secrets, PIN hashes,
+  unsealed records and field bytes are `Secret`s too, wiped in place where the
+  hand wipes were and on every other exit — three callers that never wiped a
+  derived key now do. The largeBlobKey, which CTAP hands to the platform, is
+  still returned as a plain array, but the chain it is derived through is a
+  `Secret`. The unlocked seed copy in RAM is an `Option<Secret>` that wipes
+  itself when cleared. The session's token, key-agreement key and channel key,
+  and a credential key's own `Drop`, keep their bare wipes under an
+  `#[expect]`. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A29 → 0x0A2A.
+
 - **OpenPGP's DEK and sealed keys are typed** — refactor; nothing a host sees
   changes. `rsk-openpgp`'s DEK load and its unseal write only into a
   `rsk_secret::Secret`, the DEK's split keys and the AES key are handed out in

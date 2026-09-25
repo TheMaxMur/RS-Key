@@ -19,7 +19,6 @@
 use minicbor::encode::Write;
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
-use zeroize::Zeroize;
 
 use rsk_crypto::MLDSA87_PK_LEN;
 use rsk_crypto::pinproto::PinProto;
@@ -500,8 +499,8 @@ pub fn make_credential<S: Storage, R: Rng>(
     let verified = enforce_pin(ctx, &req, &rp_id_hash, proto)?;
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::Other)?;
-    let result = make_credential_inner(ctx, &req, &rp_id_hash, &seed, verified, out);
-    seed.zeroize();
+    let result = make_credential_inner(ctx, &req, &rp_id_hash, seed.expose(), verified, out);
+    seed.wipe();
     result
 }
 
@@ -661,8 +660,8 @@ fn make_credential_inner<S: Storage, R: Rng>(
 
     // Derive the credential keypair for the selected curve.
     let mut raw = fido_load_key(seed, key_input).ok_or(CtapError::Other)?;
-    let key = CredKey::from_raw(req.sel_curve, &raw).ok_or(CtapError::Other)?;
-    raw.zeroize();
+    let key = CredKey::from_raw(req.sel_curve, raw.expose()).ok_or(CtapError::Other)?;
+    raw.wipe();
 
     // Cache the public point in the resident record so enumeration emits it
     // instead of recomputing d·G per call. `key` already holds it (it is the
@@ -966,8 +965,8 @@ fn make_attestation<S: Storage, R: Rng>(
         None
     };
     if let Some(mut scalar) = org_key {
-        let k = P256Key::from_scalar(&scalar);
-        scalar.zeroize();
+        let k = P256Key::from_scalar(scalar.expose());
+        scalar.wipe();
         let k = k.ok_or(CtapError::Other)?;
         let sl = k.sign_der(signed, &mut att.sig);
         let cl = ctx

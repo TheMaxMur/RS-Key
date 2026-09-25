@@ -147,7 +147,7 @@ fn grant_pcmr(fs: &mut Fs<RamStorage>, rng: &mut SeqRng) -> [u8; 32] {
     pin_file[1] = 4; // min length
     pin_file[2] = 1;
     fs.put(EF_PIN, &pin_file).unwrap();
-    ensure_ppuat(&dev(), fs, rng).unwrap()
+    *ensure_ppuat(&dev(), fs, rng).unwrap().expose()
 }
 
 // Encode a subCommandParams map, returning its raw CBOR bytes.
@@ -623,7 +623,7 @@ fn enumerate_emits_extension_fields() {
     let mut rec = [0u8; 1024];
     let _m = fs.read(EF_CRED, &mut rec).unwrap();
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
-    let expected = derive_large_blob_key(&seed, &rec[32..RECORD_PREFIX]);
+    let expected = derive_large_blob_key(seed.expose(), &rec[32..RECORD_PREFIX]);
     assert_eq!(lbk.as_deref(), Some(&expected[..]));
 }
 
@@ -2032,7 +2032,10 @@ fn clearing_the_persistent_token_revokes_the_grant() {
         run(&mut fs, &mut state, &cm_request(0x02, None, &old), &mut out),
         Err(CtapError::PinAuthInvalid)
     );
-    assert_ne!(ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap(), old);
+    assert_ne!(
+        crate::bare(ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap()),
+        crate::bare(&old)
+    );
 }
 
 /// A subcommand this command does not implement. Pinned to a YubiKey 5.7.4,

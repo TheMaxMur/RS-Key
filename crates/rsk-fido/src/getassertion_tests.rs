@@ -1128,8 +1128,8 @@ fn u2f_handle_usable_via_ctap2_allowlist() {
     let rp_id_hash = sha256(b"example.com");
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
     // cmd_register would derive this handle + scalar from the device seed.
-    let (kh, scalar) = derive_new(&seed, &rp_id_hash, &mut rng);
-    let (x, y) = public_xy(&scalar).unwrap();
+    let (kh, scalar) = derive_new(seed.expose(), &rp_id_hash, &mut rng);
+    let (x, y) = public_xy(scalar.expose()).unwrap();
 
     let mut out = [0u8; 1024];
     let mut state = crate::FidoState::new();
@@ -2765,7 +2765,7 @@ fn stored_box_and_seed(fs: &mut Fs<RamStorage>) -> (std::vec::Vec<u8>, [u8; 32])
     let mut rec = [0u8; 1024];
     let n = fs.read(EF_CRED, &mut rec).unwrap();
     let seed = crate::seed::load_keydev(&dev(), fs).unwrap();
-    (cred_record_box(&rec[..n]).to_vec(), seed)
+    (cred_record_box(&rec[..n]).to_vec(), *seed.expose())
 }
 
 fn cose_xy(e: &mut Encoder<Cursor<&mut [u8]>>, x: &[u8], y: &[u8]) {
@@ -2858,7 +2858,10 @@ fn hmac_secret_assertion_end_to_end() {
     // the box, so the reseal-stable id is the expected derivation input.
     let (_cred_box, seed) = stored_box_and_seed(&mut fs);
     let cr = crate::credential::derive_hmac_key(&seed, &resident_id[..]);
-    assert_eq!(&dec[..], &rsk_crypto::hmac_sha256(&cr[..32], &salt)[..]);
+    assert_eq!(
+        &dec[..],
+        &rsk_crypto::hmac_sha256(&cr.expose()[..32], &salt)[..]
+    );
 }
 
 fn run_mc_state(
@@ -3070,8 +3073,11 @@ fn hmac_secret_survives_updateuserinfo_reseal_end_to_end() {
     // And it is the correct HMAC(CredRandomWithoutUV, salt), keyed off the STABLE
     // resident id rather than the rotated box.
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
-    let cr = crate::credential::derive_hmac_key(&seed, &resident_id[..]);
-    assert_eq!(dec1, rsk_crypto::hmac_sha256(&cr[..32], &salt).to_vec());
+    let cr = crate::credential::derive_hmac_key(seed.expose(), &resident_id[..]);
+    assert_eq!(
+        dec1,
+        rsk_crypto::hmac_sha256(&cr.expose()[..32], &salt).to_vec()
+    );
 }
 
 // The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
@@ -4330,8 +4336,8 @@ fn getnextassertion_hmac_secret_keys_off_resident_id() {
 
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
     let expected = |cred_id: &[u8]| {
-        let cr = crate::credential::derive_hmac_key(&seed, cred_id);
-        rsk_crypto::hmac_sha256(&cr[..32], &salt).to_vec()
+        let cr = crate::credential::derive_hmac_key(seed.expose(), cred_id);
+        rsk_crypto::hmac_sha256(&cr.expose()[..32], &salt).to_vec()
     };
 
     // Discovery getAssertion → newest credential; its hmac output keys off its id.

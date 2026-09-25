@@ -14,7 +14,6 @@
 
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
-use zeroize::Zeroize;
 
 use rsk_crypto::pinproto::{self, PinProto};
 use rsk_fs::{Fs, Storage};
@@ -266,8 +265,8 @@ fn authorized_by_ppuat<S: Storage, R: Rng>(
     let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
         return false;
     };
-    let ok = pinproto::verify(proto, &tok, payload, param);
-    tok.zeroize();
+    let ok = pinproto::verify(proto, tok.expose(), payload, param);
+    tok.wipe();
     ok
 }
 
@@ -397,8 +396,13 @@ fn enumerate_rps<S: Storage, R: Rng>(
     rp_id_hash.copy_from_slice(&rp[1..RP_PREFIX]);
     let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
     let mut scratch = [0u8; RP_REC_MAX];
-    let unsealed = unseal_rp_id(&seed, &rp_id_hash, &rp[RP_PREFIX..rp_len], &mut scratch);
-    seed.zeroize();
+    let unsealed = unseal_rp_id(
+        seed.expose(),
+        &rp_id_hash,
+        &rp[RP_PREFIX..rp_len],
+        &mut scratch,
+    );
+    seed.wipe();
     let (rp_id, _) = unsealed.ok_or(CtapError::Other)?;
 
     let mut enc = Encoder::new(Cursor::new(out));
@@ -499,8 +503,15 @@ fn enumerate_creds<S: Storage, R: Rng>(
     }
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
-    let result = enumerate_creds_response(&rec[..rec_len], rp_id_hash, begin, total, &seed, out);
-    seed.zeroize();
+    let result = enumerate_creds_response(
+        &rec[..rec_len],
+        rp_id_hash,
+        begin,
+        total,
+        seed.expose(),
+        out,
+    );
+    seed.wipe();
     let resp_len = result?;
 
     if begin {
@@ -539,8 +550,8 @@ fn enumerate_creds_response(
         None
     } else {
         let mut raw = fido_load_key(seed, key_input).ok_or(CtapError::NotAllowed)?;
-        let k = CredKey::from_raw(cred.curve, &raw).ok_or(CtapError::NotAllowed)?;
-        raw.zeroize();
+        let k = CredKey::from_raw(cred.curve, raw.expose()).ok_or(CtapError::NotAllowed)?;
+        raw.wipe();
         Some(k)
     };
 
@@ -745,9 +756,9 @@ fn update_user<S: Storage, R: Rng>(
         user_id,
         user_name,
         user_display_name,
-        &seed,
+        seed.expose(),
     );
-    seed.zeroize();
+    seed.wipe();
     r
 }
 

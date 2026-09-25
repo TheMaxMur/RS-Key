@@ -60,11 +60,16 @@ fuzz_target!(|data: &[u8]| {
             },
         };
         let mut cred_box = [0u8; 512];
-        if let Ok(len) =
-            credential_create(&seed, &dev, &input, &rp_hash, &[0x11; 12], &mut cred_box)
-        {
+        if let Ok(len) = credential_create(
+            seed.expose(),
+            &dev,
+            &input,
+            &rp_hash,
+            &[0x11; 12],
+            &mut cred_box,
+        ) {
             let _ = credential_store(
-                &seed,
+                seed.expose(),
                 &dev,
                 &mut fs,
                 &cred_box[..len],

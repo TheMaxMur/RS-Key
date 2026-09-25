@@ -877,7 +877,7 @@ fn make_credential_extensions_stored_and_emitted() {
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
     let mut scratch = [0u8; 1024];
     let c = crate::credential::credential_load(
-        &seed,
+        seed.expose(),
         crate::credential::cred_record_box(&rec[..n]),
         &sha256(b"example.com"),
         &mut scratch,
@@ -1156,7 +1156,7 @@ fn large_blob_key_in_make_credential() {
     // v2 resident: largeBlobKey keys off the stable resident id (rec[32..74]),
     // not the box.
     let resident_id = &rec[32..crate::credential::RECORD_PREFIX];
-    let expected = crate::credential::derive_large_blob_key(&seed, resident_id);
+    let expected = crate::credential::derive_large_blob_key(seed.expose(), resident_id);
     assert_eq!(lbk.as_deref(), Some(&expected[..]));
 }
 
@@ -1893,7 +1893,7 @@ fn enterprise_attestation_level2_full_attestation() {
 
     // The attestation signature verifies under the DEVICE key (the seed
     // scalar), not the credential key.
-    let device_key = P256Key::from_scalar(&seed).unwrap();
+    let device_key = P256Key::from_scalar(seed.expose()).unwrap();
     let (x, y) = device_key.public_xy();
     let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
     let vk = VerifyingKey::from_sec1_point(&pt).unwrap();

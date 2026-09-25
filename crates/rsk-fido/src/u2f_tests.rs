@@ -412,8 +412,8 @@ fn register_then_authenticate() {
 
     // Verify the registration signature under the device (attestation) key.
     let mut seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
-    let device_key = P256Key::from_scalar(&seed).unwrap();
-    seed.zeroize();
+    let device_key = P256Key::from_scalar(seed.expose()).unwrap();
+    seed.wipe();
     let (dx, dy) = device_key.public_xy();
     let mut base = std::vec![0x00u8];
     base.extend_from_slice(&APP);

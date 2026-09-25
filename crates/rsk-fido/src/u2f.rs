@@ -6,7 +6,7 @@
 //! the attestation certificate and a signature by the device key;
 //! authentication signs a challenge with the credential key.
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_fs::Storage;
 use rsk_sdk::apdu::Apdu;
@@ -123,9 +123,9 @@ fn cmd_register<S: Storage, R: Rng>(
         Some(s) => s,
         None => return (Sw::EXEC_ERROR, 0),
     };
-    let (key_handle, mut scalar) = derive_new(&seed, &app, ctx.rng);
-    let cred_key = P256Key::from_scalar(&scalar);
-    scalar.zeroize();
+    let (key_handle, mut scalar) = derive_new(seed.expose(), &app, ctx.rng);
+    let cred_key = P256Key::from_scalar(scalar.expose());
+    scalar.wipe();
     // Org-provisioned attestation (vendor ATT_IMPORT) wins — classic U2F batch
     // attestation; otherwise the per-device key (the seed scalar) with its
     // self-signed EF_EE_DEV cert.
@@ -133,13 +133,13 @@ fn cmd_register<S: Storage, R: Rng>(
     let org = att_scalar.is_some();
     let device_key = match att_scalar.as_mut() {
         Some(s) => {
-            let k = P256Key::from_scalar(s);
-            s.zeroize();
+            let k = P256Key::from_scalar(s.expose());
+            s.wipe();
             k
         }
-        None => P256Key::from_scalar(&seed),
+        None => P256Key::from_scalar(seed.expose()),
     };
-    seed.zeroize();
+    seed.wipe();
     let (cred_key, device_key) = match (cred_key, device_key) {
         (Some(c), Some(d)) => (c, d),
         _ => return (Sw::EXEC_ERROR, 0),
@@ -257,7 +257,7 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     // scalar (verify_key, which fido_load_key would clobber by rewriting path[0]).
     // U2F is P-256 only, so take the leading 32 bytes of the ratchet as the scalar.
     let mut scratch = [0u8; CRED_REC_MAX];
-    let scalar: Option<[u8; 32]> = match credential_load(&seed, key_handle, &app, &mut scratch) {
+    let scalar = match credential_load(seed.expose(), key_handle, &app, &mut scratch) {
         // A CTAP2 credential box. credProtect=userVerificationRequired (L3) must
         // NOT be usable over U2F, which performs no user verification — only CTAP2
         // getAssertion (with a PIN/UV) may exercise it. L1/L2 stay usable: the RP
@@ -266,9 +266,9 @@ fn cmd_authenticate<S: Storage, R: Rng>(
             if c.ext.cred_protect == CRED_PROT_UV_REQUIRED {
                 None
             } else {
-                fido_load_key(&seed, key_handle).map(|raw| {
-                    let mut s = [0u8; 32];
-                    s.copy_from_slice(&raw[..32]);
+                fido_load_key(seed.expose(), key_handle).map(|raw| {
+                    let mut s = Secret::<[u8; 32]>::zeroed();
+                    s.expose_mut().copy_from_slice(&raw.expose()[..32]);
                     s
                 })
             }
@@ -276,11 +276,11 @@ fn cmd_authenticate<S: Storage, R: Rng>(
         Some(_) => {
             let mut kh = [0u8; KEY_HANDLE_LEN];
             kh.copy_from_slice(&key_handle[..KEY_HANDLE_LEN]);
-            verify_key(&seed, &app, &kh)
+            verify_key(seed.expose(), &app, &kh)
         }
         None => None,
     };
-    seed.zeroize();
+    seed.wipe();
     let mut scalar = match scalar {
         Some(s) => s,
         None => return (Sw::WRONG_DATA, 0), // 0x6A80 — handle not ours
@@ -289,7 +289,7 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     // check-only (P1=0x07): a valid handle reports "would require user presence".
     // No touch.
     if apdu.p1 == U2F_AUTH_CHECK_ONLY {
-        scalar.zeroize();
+        scalar.wipe();
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
 
@@ -302,11 +302,11 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     // TUP flag still follows the raw `tup`, so the wire meaning is unchanged.
     let owes = tup || u2f_gate(ctx) == U2fGate::BuiltinUv;
     if owes && !u2f_interaction(ctx, crate::Confirm::titled("Sign in?")) {
-        scalar.zeroize();
+        scalar.wipe();
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
-    let key = P256Key::from_scalar(&scalar);
-    scalar.zeroize();
+    let key = P256Key::from_scalar(scalar.expose());
+    scalar.wipe();
     let key = match key {
         Some(k) => k,
         None => return (Sw::EXEC_ERROR, 0),

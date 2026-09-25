@@ -478,7 +478,7 @@ def infer(event: dict, ledger: dict) -> tuple[list[tuple[str, str]], tuple[str, 
         "always_uv_record_len", "always_uv_raw"
     }:
         # authenticatorConfig toggleAlwaysUv. The model's ConfigOp flips
-        # `gate.alwaysUv` and spends nothing (config.rs:248 marks the token
+        # `gate.alwaysUv` and spends nothing (config.rs:247 marks the token
         # used, which is not a raw field), so the record moving IS the signature.
         actions = [("ConfigOp", "ConfigOp")]
         ledger["always_uv"] = bool(after["always_uv_raw"])

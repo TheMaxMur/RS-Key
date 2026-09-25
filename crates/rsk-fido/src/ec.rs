@@ -13,6 +13,7 @@ use minicbor::Encoder;
 use minicbor::encode::{Error as CborError, Write};
 use p256::FieldBytes;
 use p256::ecdsa::SigningKey;
+use rsk_secret::Secret;
 use zeroize::Zeroize;
 
 use crate::Rng;
@@ -90,8 +91,8 @@ impl P256Key {
     /// ratchet output). Returns `None` if the scalar is out of range `[1, n)` —
     /// the caller treats that as a derivation failure.
     pub fn from_scalar(scalar: &[u8; 32]) -> Option<Self> {
-        let fb = FieldBytes::from(*scalar);
-        SigningKey::from_bytes(&fb)
+        let fb = Secret::new(FieldBytes::from(*scalar));
+        SigningKey::from_bytes(fb.expose())
             .ok()
             .map(|signing| Self { signing })
     }
@@ -144,6 +145,10 @@ pub enum CredKey {
 // The bare Weierstrass scalars need explicit zeroize (`NonZeroScalar` has no `Drop`);
 // Ed25519's `SigningKey` and the boxed ML-DSA keys zeroize themselves.
 impl Drop for CredKey {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a CredKey's drop is its wipe: the Weierstrass NonZeroScalars have no Drop of their own"
+    )]
     fn drop(&mut self) {
         match self {
             Self::P256(s) => s.zeroize(),
@@ -162,11 +167,11 @@ impl Drop for CredKey {
 /// that much for nothing (at ~100 KiB it overflowed the worker stack: a replug wedge).
 #[inline(never)]
 fn mldsa44_from_raw(raw: &[u8]) -> Option<CredKey> {
-    let mut xi = [0u8; 32];
-    xi.copy_from_slice(raw.get(..32)?);
+    let mut xi = Secret::<[u8; 32]>::zeroed();
+    xi.expose_mut().copy_from_slice(raw.get(..32)?);
     let mut key = Box::new(rsk_crypto::MlDsa44::zeroed());
-    key.expand(&xi);
-    xi.zeroize();
+    key.expand(xi.expose());
+    xi.wipe();
     Some(CredKey::MlDsa44(key))
 }
 
@@ -174,11 +179,11 @@ fn mldsa44_from_raw(raw: &[u8]) -> Option<CredKey> {
 /// stack-isolation rationale as [`mldsa44_from_raw`].
 #[inline(never)]
 fn mldsa65_from_raw(raw: &[u8]) -> Option<CredKey> {
-    let mut xi = [0u8; 32];
-    xi.copy_from_slice(raw.get(..32)?);
+    let mut xi = Secret::<[u8; 32]>::zeroed();
+    xi.expose_mut().copy_from_slice(raw.get(..32)?);
     let mut key = Box::new(rsk_crypto::MlDsa65::zeroed());
-    key.expand(&xi);
-    xi.zeroize();
+    key.expand(xi.expose());
+    xi.wipe();
     Some(CredKey::MlDsa65(key))
 }
 
@@ -186,11 +191,11 @@ fn mldsa65_from_raw(raw: &[u8]) -> Option<CredKey> {
 /// stack-isolation rationale as [`mldsa44_from_raw`].
 #[inline(never)]
 fn mldsa87_from_raw(raw: &[u8]) -> Option<CredKey> {
-    let mut xi = [0u8; 32];
-    xi.copy_from_slice(raw.get(..32)?);
+    let mut xi = Secret::<[u8; 32]>::zeroed();
+    xi.expose_mut().copy_from_slice(raw.get(..32)?);
     let mut key = Box::new(rsk_crypto::MlDsa87::zeroed());
-    key.expand(&xi);
-    xi.zeroize();
+    key.expand(xi.expose());
+    xi.wipe();
     Some(CredKey::MlDsa87(key))
 }
 
@@ -200,30 +205,30 @@ fn mldsa87_from_raw(raw: &[u8]) -> Option<CredKey> {
 /// — which every EC assertion pays.
 #[inline(never)]
 fn mldsa44_sign<R: Rng>(k: &rsk_crypto::MlDsa44, msg: &[u8], rng: &mut R, out: &mut [u8]) -> usize {
-    let mut rnd = [0u8; 32];
-    rng.fill(&mut rnd);
-    let n = k.sign(msg, &rnd, out).unwrap_or(0);
-    rnd.zeroize();
+    let mut rnd = Secret::<[u8; 32]>::zeroed();
+    rng.fill(rnd.expose_mut());
+    let n = k.sign(msg, rnd.expose(), out).unwrap_or(0);
+    rnd.wipe();
     n
 }
 
 /// ML-DSA-65 counterpart of [`mldsa44_sign`].
 #[inline(never)]
 fn mldsa65_sign<R: Rng>(k: &rsk_crypto::MlDsa65, msg: &[u8], rng: &mut R, out: &mut [u8]) -> usize {
-    let mut rnd = [0u8; 32];
-    rng.fill(&mut rnd);
-    let n = k.sign(msg, &rnd, out).unwrap_or(0);
-    rnd.zeroize();
+    let mut rnd = Secret::<[u8; 32]>::zeroed();
+    rng.fill(rnd.expose_mut());
+    let n = k.sign(msg, rnd.expose(), out).unwrap_or(0);
+    rnd.wipe();
     n
 }
 
 /// ML-DSA-87 counterpart of [`mldsa44_sign`].
 #[inline(never)]
 fn mldsa87_sign<R: Rng>(k: &rsk_crypto::MlDsa87, msg: &[u8], rng: &mut R, out: &mut [u8]) -> usize {
-    let mut rnd = [0u8; 32];
-    rng.fill(&mut rnd);
-    let n = k.sign(msg, &rnd, out).unwrap_or(0);
-    rnd.zeroize();
+    let mut rnd = Secret::<[u8; 32]>::zeroed();
+    rng.fill(rnd.expose_mut());
+    let n = k.sign(msg, rnd.expose(), out).unwrap_or(0);
+    rnd.wipe();
     n
 }
 
@@ -236,45 +241,45 @@ impl CredKey {
         match curve {
             c if c == CURVE_P256 as i64 => {
                 use p256::elliptic_curve::PrimeField;
-                let mut fb = p256::FieldBytes::try_from(raw.get(..32)?).ok()?;
-                let scalar = Option::<p256::Scalar>::from(p256::Scalar::from_repr(fb));
-                fb.zeroize();
+                let mut fb = Secret::new(p256::FieldBytes::try_from(raw.get(..32)?).ok()?);
+                let scalar = Option::<p256::Scalar>::from(p256::Scalar::from_repr(*fb.expose()));
+                fb.wipe();
                 Some(Self::P256(Option::from(p256::NonZeroScalar::new(scalar?))?))
             }
             c if c == CURVE_P384 as i64 => {
                 use p384::elliptic_curve::PrimeField;
-                let mut fb = p384::FieldBytes::try_from(raw.get(..48)?).ok()?;
-                let scalar = Option::<p384::Scalar>::from(p384::Scalar::from_repr(fb));
-                fb.zeroize();
+                let mut fb = Secret::new(p384::FieldBytes::try_from(raw.get(..48)?).ok()?);
+                let scalar = Option::<p384::Scalar>::from(p384::Scalar::from_repr(*fb.expose()));
+                fb.wipe();
                 Some(Self::P384(Option::from(p384::NonZeroScalar::new(scalar?))?))
             }
             c if c == CURVE_P521 as i64 => {
                 use p521::elliptic_curve::PrimeField;
-                let mut buf = [0u8; 66];
-                buf.copy_from_slice(raw.get(..66)?);
-                buf[0] >>= 7; // a P-521 scalar is 521 bits: keep only the top byte's bit
-                let mut fb = p521::FieldBytes::try_from(&buf[..]).ok()?;
-                buf.zeroize();
-                let scalar = Option::<p521::Scalar>::from(p521::Scalar::from_repr(fb));
-                fb.zeroize();
+                let mut buf = Secret::<[u8; 66]>::zeroed();
+                buf.expose_mut().copy_from_slice(raw.get(..66)?);
+                buf.expose_mut()[0] >>= 7; // a P-521 scalar is 521 bits: keep only the top byte's bit
+                let mut fb = Secret::new(p521::FieldBytes::try_from(&buf.expose()[..]).ok()?);
+                buf.wipe();
+                let scalar = Option::<p521::Scalar>::from(p521::Scalar::from_repr(*fb.expose()));
+                fb.wipe();
                 Some(Self::P521(Option::from(p521::NonZeroScalar::new(scalar?))?))
             }
             c if c == CURVE_P256K1 as i64 => {
                 use k256::elliptic_curve::PrimeField;
-                let mut fb = k256::FieldBytes::try_from(raw.get(..32)?).ok()?;
-                let scalar = Option::<k256::Scalar>::from(k256::Scalar::from_repr(fb));
-                fb.zeroize();
+                let mut fb = Secret::new(k256::FieldBytes::try_from(raw.get(..32)?).ok()?);
+                let scalar = Option::<k256::Scalar>::from(k256::Scalar::from_repr(*fb.expose()));
+                fb.wipe();
                 Some(Self::K256(Option::from(k256::NonZeroScalar::new(scalar?))?))
             }
             c if c == CURVE_ED25519 as i64 => {
                 // The 32-byte seed is hashed to the scalar internally; the
                 // top-byte mask (Ed25519 is a 255-bit field) is part of the
                 // credential derivation — changing it changes existing keys.
-                let mut seed = [0u8; 32];
-                seed.copy_from_slice(raw.get(..32)?);
-                seed[0] >>= 1;
-                let key = ed25519_dalek::SigningKey::from_bytes(&seed);
-                seed.zeroize();
+                let mut seed = Secret::<[u8; 32]>::zeroed();
+                seed.expose_mut().copy_from_slice(raw.get(..32)?);
+                seed.expose_mut()[0] >>= 1;
+                let key = ed25519_dalek::SigningKey::from_bytes(seed.expose());
+                seed.wipe();
                 Some(Self::Ed25519(key))
             }
             // The lattice keygen (`expand`) has a 31-52 KiB matrix-expansion

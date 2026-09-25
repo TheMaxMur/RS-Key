@@ -26,7 +26,7 @@
 
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::chachapoly::{chacha20poly1305_decrypt, chacha20poly1305_encrypt};
 use rsk_crypto::mac::hkdf_sha256;
@@ -377,8 +377,8 @@ fn att_import<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult 
     }
     gate(ctx, req, "Import attestation key?")?;
     let mut scalar = open_channel_key(ctx, req.blob)?;
-    if P256Key::from_scalar(&scalar).is_none() {
-        scalar.zeroize();
+    if P256Key::from_scalar(scalar.expose()).is_none() {
+        scalar.wipe();
         return Err(CtapError::InvalidParameter);
     }
     // Chain first: the key is a fixed-size sealed record, so it is the write far
@@ -387,11 +387,11 @@ fn att_import<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult 
     // that does not certify it (audit run-32).
     let chain = ctx.fs.put(EF_ATT_CHAIN, &packed[..plen]);
     if chain.is_err() {
-        scalar.zeroize();
+        scalar.wipe();
         return Err(CtapError::Other);
     }
-    let r = store_att_key(&ctx.dev, ctx.fs, &scalar);
-    scalar.zeroize();
+    let r = store_att_key(&ctx.dev, ctx.fs, scalar.expose());
+    scalar.wipe();
     r.map_err(|_| CtapError::Other)?;
     journal::append(ctx, journal::EV_ATT_IMPORT, 0, &[]);
     Ok(0)
@@ -522,7 +522,7 @@ fn audit_config<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u
 pub(crate) fn open_channel_key<S: Storage, R: Rng>(
     ctx: &Ctx<S, R>,
     blob: &[u8],
-) -> Result<[u8; 32], CtapError> {
+) -> Result<Secret<[u8; 32]>, CtapError> {
     if blob.len() != LOCK_BLOB_LEN {
         return Err(CtapError::InvalidParameter);
     }
@@ -530,18 +530,18 @@ pub(crate) fn open_channel_key<S: Storage, R: Rng>(
     nonce.copy_from_slice(&blob[..12]);
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&blob[44..]);
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&blob[12..44]);
+    let mut key = Secret::<[u8; 32]>::zeroed();
+    key.expose_mut().copy_from_slice(&blob[12..44]);
     match chacha20poly1305_decrypt(
         &ctx.state.mse_key,
         &nonce,
         &ctx.state.mse_pub,
-        &mut key,
+        key.expose_mut(),
         &tag,
     ) {
         Ok(()) => Ok(key),
         Err(_) => {
-            key.zeroize();
+            key.wipe();
             Err(CtapError::InvalidParameter)
         }
     }
@@ -567,13 +567,13 @@ fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
     }
     let mut lock_key = open_channel_key(ctx, req.blob)?;
     if !lock_engaged(ctx.fs) {
-        lock_key.zeroize();
+        lock_key.wipe();
         return Err(CtapError::IntegrityFailure);
     }
     let mut blob = [0u8; LOCK_BLOB_LEN];
     let n = ctx.fs.read_key(EF_KEY_DEV_ENC, &mut blob);
-    let seed = n.and_then(|n| open_seed_locked(&lock_key, &blob[..n.min(blob.len())]));
-    lock_key.zeroize();
+    let seed = n.and_then(|n| open_seed_locked(lock_key.expose(), &blob[..n.min(blob.len())]));
+    lock_key.wipe();
     match seed {
         Some(seed) => {
             ctx.state.clear_keydev_dec();
@@ -581,7 +581,9 @@ fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
             // The one moment a locked device can migrate its attestation cert:
             // `ensure_seed` skips the rebuild while locked, and best-effort is
             // right here — a failed rebuild must not deny the unlock.
-            let _ = crate::seed::rebuild_att_cert(ctx.fs, ctx.rng, &seed);
+            if let Some(seed) = ctx.state.keydev_dec.as_ref() {
+                let _ = crate::seed::rebuild_att_cert(ctx.fs, ctx.rng, seed.expose());
+            }
             Ok(0)
         }
         None => Err(CtapError::InvalidParameter),
@@ -620,21 +622,21 @@ fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> Ct
     let kax = coord(req.kax)?;
     let kay = coord(req.kay)?;
 
-    let mut scalar = [0u8; 32];
+    let mut scalar = Secret::<[u8; 32]>::zeroed();
     let (dx, dy) = loop {
-        ctx.rng.fill(&mut scalar);
-        if let Some(k) = P256Key::from_scalar(&scalar) {
+        ctx.rng.fill(scalar.expose_mut());
+        if let Some(k) = P256Key::from_scalar(scalar.expose()) {
             break k.public_xy();
         }
     };
-    let mut z = match ecdh_raw(&scalar, &kax, &kay) {
+    let mut z = match ecdh_raw(scalar.expose(), &kax, &kay) {
         Ok(z) => z,
         Err(_) => {
-            scalar.zeroize();
+            scalar.wipe();
             return Err(CtapError::InvalidParameter);
         }
     };
-    scalar.zeroize();
+    scalar.wipe();
 
     let mut dev_pub = [0u8; 65];
     dev_pub[0] = 0x04;
@@ -643,7 +645,7 @@ fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> Ct
 
     let hybrid = !req.mlkem_ek.is_empty();
     let mut ct = [0u8; MLKEM768_CT_LEN];
-    let mut key = [0u8; 32];
+    let mut key = Secret::<[u8; 32]>::zeroed();
     let derived = if hybrid {
         mlkem_leg(
             ctx.rng,
@@ -651,22 +653,22 @@ fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> Ct
             z.expose(),
             &dev_pub,
             &mut ct,
-            &mut key,
+            key.expose_mut(),
         )
     } else {
-        hkdf_sha256(&[], z.expose(), &dev_pub, &mut key).map_err(|_| CtapError::Other)
+        hkdf_sha256(&[], z.expose(), &dev_pub, key.expose_mut()).map_err(|_| CtapError::Other)
     };
     z.wipe();
     if let Err(e) = derived {
-        key.zeroize();
+        key.wipe();
         return Err(e);
     }
-    ctx.state.mse_key = key;
+    ctx.state.mse_key = *key.expose();
     ctx.state.mse_pub = dev_pub;
     ctx.state.mse_active = true;
     // Defence in depth on top of the one-shot rule above; see `FidoState::mse_cid`.
     ctx.state.mse_cid = ctx.state.channel;
-    key.zeroize();
+    key.wipe();
 
     encode(out, |e| {
         e.map(if hybrid { 2 } else { 1 })?.u8(1)?;
@@ -695,23 +697,24 @@ fn mlkem_leg<R: Rng>(
     key: &mut [u8; 32],
 ) -> Result<(), CtapError> {
     let ek = <&[u8; MLKEM768_EK_LEN]>::try_from(ek).map_err(|_| CtapError::InvalidParameter)?;
-    let mut m = [0u8; 32];
-    rng.fill(&mut m);
-    let (c, mut ss) = mlkem768_encapsulate(ek, &m).map_err(|_| CtapError::InvalidParameter)?;
-    m.zeroize();
+    let mut m = Secret::<[u8; 32]>::zeroed();
+    rng.fill(m.expose_mut());
+    let (c, ss) = mlkem768_encapsulate(ek, m.expose()).map_err(|_| CtapError::InvalidParameter)?;
+    let mut ss = Secret::new(ss);
+    m.wipe();
     ct.copy_from_slice(&c);
 
-    let mut ikm = [0u8; 64];
-    ikm[..32].copy_from_slice(z);
-    ikm[32..].copy_from_slice(&ss);
-    ss.zeroize();
+    let mut ikm = Secret::<[u8; 64]>::zeroed();
+    ikm.expose_mut()[..32].copy_from_slice(z);
+    ikm.expose_mut()[32..].copy_from_slice(ss.expose());
+    ss.wipe();
 
     let mut info = [0u8; 65 + MLKEM768_CT_LEN];
     info[..65].copy_from_slice(dev_pub);
     info[65..].copy_from_slice(ct);
 
-    let r = hkdf_sha256(MSE_PQ_SALT, &ikm, &info, key);
-    ikm.zeroize();
+    let r = hkdf_sha256(MSE_PQ_SALT, ikm.expose(), &info, key);
+    ikm.wipe();
     r.map_err(|_| CtapError::Other)
 }
 
@@ -798,29 +801,29 @@ fn pin_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> Result<(), Ct
 /// spends a retry; only a real mismatch does.
 fn device_pin_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {
     let min = crate::consts::MIN_PIN_LENGTH as usize;
-    let mut pin = [0u8; crate::clientpin::PADDED_PIN_LEN];
-    let entry = ctx.presence.collect_device_pin(min, &mut pin);
+    let mut pin = Secret::<[u8; crate::clientpin::PADDED_PIN_LEN]>::zeroed();
+    let entry = ctx.presence.collect_device_pin(min, pin.expose_mut());
     let len = match entry {
-        crate::PinEntry::Entered(len) => len.min(pin.len()),
+        crate::PinEntry::Entered(len) => len.min(pin.expose().len()),
         crate::PinEntry::Declined => {
-            pin.zeroize();
+            pin.wipe();
             return Err(CtapError::OperationDenied);
         }
         crate::PinEntry::Timeout => {
-            pin.zeroize();
+            pin.wipe();
             return Err(CtapError::UserActionTimeout);
         }
         crate::PinEntry::Cancelled => {
-            pin.zeroize();
+            pin.wipe();
             return Err(CtapError::KeepAliveCancel);
         }
         crate::PinEntry::Unsupported => {
-            pin.zeroize();
+            pin.wipe();
             return Err(CtapError::UnsupportedOption);
         }
     };
-    let res = crate::clientpin::spend_and_verify_device_pin(&ctx.dev, ctx.fs, &pin[..len]);
-    pin.zeroize();
+    let res = crate::clientpin::spend_and_verify_device_pin(&ctx.dev, ctx.fs, &pin.expose()[..len]);
+    pin.wipe();
     match res {
         crate::clientpin::LocalPin::Ok => Ok(()),
         crate::clientpin::LocalPin::Wrong { .. } => Err(CtapError::PinInvalid),
@@ -848,20 +851,25 @@ fn backup_export<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [
     let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
     let mut nonce = [0u8; 12];
     ctx.rng.fill(&mut nonce);
-    let mut ct = [0u8; 32];
-    ct.copy_from_slice(&seed);
-    seed.zeroize();
-    let tag = chacha20poly1305_encrypt(&ctx.state.mse_key, &nonce, &ctx.state.mse_pub, &mut ct);
-    let mut blob = [0u8; LOCK_BLOB_LEN]; // nonce ‖ ciphertext(seed) ‖ tag
-    blob[..12].copy_from_slice(&nonce);
-    blob[12..44].copy_from_slice(&ct);
-    blob[44..].copy_from_slice(&tag);
-    ct.zeroize();
+    let mut ct = Secret::<[u8; 32]>::zeroed();
+    ct.expose_mut().copy_from_slice(seed.expose());
+    seed.wipe();
+    let tag = chacha20poly1305_encrypt(
+        &ctx.state.mse_key,
+        &nonce,
+        &ctx.state.mse_pub,
+        ct.expose_mut(),
+    );
+    let mut blob = Secret::<[u8; LOCK_BLOB_LEN]>::zeroed(); // nonce ‖ ciphertext(seed) ‖ tag
+    blob.expose_mut()[..12].copy_from_slice(&nonce);
+    blob.expose_mut()[12..44].copy_from_slice(ct.expose());
+    blob.expose_mut()[44..].copy_from_slice(&tag);
+    ct.wipe();
     let r = encode(out, |e| {
-        e.map(1)?.u8(1)?.bytes(&blob)?;
+        e.map(1)?.u8(1)?.bytes(blob.expose())?;
         Ok(())
     });
-    blob.zeroize();
+    blob.wipe();
     if r.is_ok() {
         journal::append(ctx, journal::EV_BACKUP_EXPORT, 0, &[]);
     }
@@ -896,32 +904,32 @@ fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult
     nonce.copy_from_slice(&req.blob[..12]);
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&req.blob[44..]);
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(&req.blob[12..44]);
+    let mut seed = Secret::<[u8; 32]>::zeroed();
+    seed.expose_mut().copy_from_slice(&req.blob[12..44]);
     let r = chacha20poly1305_decrypt(
         &ctx.state.mse_key,
         &nonce,
         &ctx.state.mse_pub,
-        &mut seed,
+        seed.expose_mut(),
         &tag,
     );
     if r.is_err() {
-        seed.zeroize();
+        seed.wipe();
         return Err(CtapError::IntegrityFailure);
     }
-    if P256Key::from_scalar(&seed).is_none() {
-        seed.zeroize();
+    if P256Key::from_scalar(seed.expose()).is_none() {
+        seed.wipe();
         return Err(CtapError::InvalidParameter);
     }
     // Drop the old cert BEFORE the new seed commits, and propagate the failure: a
     // tear the other way round leaves a certificate over the superseded key that
     // `matches_template` would once have accepted forever (audit run-32).
     if ctx.fs.delete(EF_EE_DEV).is_err() {
-        seed.zeroize();
+        seed.wipe();
         return Err(CtapError::Other);
     }
-    let res = encrypt_keydev_f1(&ctx.dev, ctx.fs, &seed);
-    seed.zeroize();
+    let res = encrypt_keydev_f1(&ctx.dev, ctx.fs, seed.expose());
+    seed.wipe();
     res.map_err(|_| CtapError::Other)?;
     ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
     journal::append(ctx, journal::EV_BACKUP_LOAD, 0, &[]);

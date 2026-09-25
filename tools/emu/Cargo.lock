@@ -1591,6 +1591,7 @@ dependencies = [
  "rsk-led",
  "rsk-phy",
  "rsk-sdk",
+ "rsk-secret",
  "zeroize",
 ]
 

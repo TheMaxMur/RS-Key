@@ -17,7 +17,7 @@ fn protected() -> ResetPersistentView {
 #[test]
 fn reset_projection_stitches_a_torn_epoch_to_the_next_boot() {
     let mut state = FidoState::new();
-    state.keydev_dec = Some([0x5a; 32]);
+    state.keydev_dec = Some(rsk_secret::Secret::new([0x5a; 32]));
     state.paut.in_use = true;
     let mut volatile = ResetVolatileView::from_state(&state);
     let mut reset = ResetRefinement::new(protected());

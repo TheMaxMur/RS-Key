@@ -354,8 +354,8 @@ fn att_import_state_clear_roundtrip() {
 
     // The stored key decrypts back to the imported scalar; STATE says so.
     assert_eq!(
-        crate::seed::load_att_key(&dev(), &mut fs).unwrap(),
-        org_scalar
+        crate::bare(crate::seed::load_att_key(&dev(), &mut fs).unwrap()),
+        crate::bare(&org_scalar)
     );
     let n = one_byte_req(&mut req, VENDOR_ATT_STATE);
     let r = call(
@@ -563,7 +563,7 @@ fn mse_then_export_roundtrips_seed() {
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&blob[44..]);
     chacha20poly1305_decrypt(&host.key, &nonce, &host.aad, &mut buf, &tag).unwrap();
-    assert_eq!(buf, seed);
+    assert_eq!(crate::bare(&buf), crate::bare(&seed));
 }
 
 // Audit run-33: `MSE` and `BACKUP_EXPORT` are separate CTAPHID transactions, so a
@@ -744,7 +744,7 @@ fn mse_hybrid_then_export_roundtrips_seed() {
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&blob[44..]);
     chacha20poly1305_decrypt(&host.key, &nonce, &host.aad, &mut buf, &tag).unwrap();
-    assert_eq!(buf, seed);
+    assert_eq!(crate::bare(&buf), crate::bare(&seed));
 }
 
 #[test]
@@ -832,8 +832,11 @@ fn load_installs_seed_and_rebuilds_attestation() {
     )
     .unwrap();
 
-    assert_ne!(new_seed, old);
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(new_seed));
+    assert_ne!(crate::bare(&new_seed), crate::bare(&old));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&new_seed))
+    );
     assert!(fs.has_data(EF_EE_DEV)); // attestation rebuilt over the new seed
 }
 
@@ -1165,7 +1168,7 @@ fn locked_setup() -> (Fs<RamStorage>, SeqRng, FidoState, Host, [u8; 32]) {
     // AUT_ENABLE spends the channel (it is one-shot), so hand callers a fresh one
     // — every one of them goes on to run another gated subcommand.
     let host = handshake(&mut fs, &mut rng, &mut st);
-    (fs, rng, st, host, seed)
+    (fs, rng, st, host, *seed.expose())
 }
 
 #[test]
@@ -1175,7 +1178,7 @@ fn lock_enable_wraps_seed_and_drops_plain() {
     assert_eq!(fs.size(EF_KEY_DEV_ENC.get()), Some(LOCK_BLOB_LEN));
     // No RAM copy after enable — operations are locked out immediately.
     assert!(st.keydev_dec.is_none());
-    assert_eq!(load_keydev(&dev(), &mut fs), None);
+    assert!((load_keydev(&dev(), &mut fs)).is_none());
     assert_eq!(
         state_flags(&mut fs, &mut rng, &mut st),
         (false, false, true, false, false)
@@ -1186,7 +1189,10 @@ fn lock_enable_wraps_seed_and_drops_plain() {
 fn unlock_restores_operations_for_the_session() {
     let (mut fs, mut rng, mut st, host, seed) = locked_setup();
     run_unlock(&mut fs, &mut rng, &mut st, &LOCK_KEY, &host, 0x22).unwrap();
-    assert_eq!(st.keydev_dec, Some(seed));
+    assert_eq!(
+        crate::bare(st.keydev_dec.as_ref()),
+        Some(crate::bare(&seed))
+    );
     // The op-level loader sees the RAM copy; flash stays wrapped.
     let mut presence = AlwaysConfirm;
     let mut ctx = Ctx {
@@ -1197,7 +1203,7 @@ fn unlock_restores_operations_for_the_session() {
         now_ms: 0,
         presence: &mut presence,
     };
-    assert_eq!(ctx.load_keydev(), Some(seed));
+    assert_eq!(crate::bare(ctx.load_keydev()), Some(crate::bare(&seed)));
     assert!(!fs.has_data(EF_KEY_DEV.get()));
     assert_eq!(
         state_flags(&mut fs, &mut rng, &mut st),
@@ -1230,7 +1236,10 @@ fn disable_restores_plain_seed() {
     run_config(&mut fs, &mut rng, &mut st, &mut AlwaysConfirm, &req[..n]).unwrap();
     assert!(!fs.has_data(EF_KEY_DEV_ENC.get()));
     assert!(st.keydev_dec.is_none()); // no stale RAM copy
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(seed));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&seed))
+    );
     assert_eq!(
         state_flags(&mut fs, &mut rng, &mut st),
         (false, true, false, false, false)
@@ -1360,7 +1369,7 @@ fn reset_clears_the_lock_and_regenerates() {
     crate::reset::reset(&mut ctx).unwrap();
     assert!(!fs.has_data(EF_KEY_DEV_ENC.get()));
     let new_seed = load_keydev(&dev(), &mut fs).unwrap();
-    assert_ne!(new_seed, old_seed); // fresh identity — the recovery path
+    assert_ne!(crate::bare(&new_seed), crate::bare(&old_seed)); // fresh identity — the recovery path
 }
 
 #[test]
@@ -1369,7 +1378,10 @@ fn ensure_seed_does_not_regenerate_under_lock() {
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     assert!(!fs.has_data(EF_KEY_DEV.get())); // boot on a locked device: no regen
     run_unlock(&mut fs, &mut rng, &mut st, &LOCK_KEY, &host, 0x27).unwrap();
-    assert_eq!(st.keydev_dec, Some(seed)); // blob untouched, same seed
+    assert_eq!(
+        crate::bare(st.keydev_dec.as_ref()),
+        Some(crate::bare(&seed))
+    ); // blob untouched, same seed
 }
 
 // ---- CONFIG_WRITE (0x0C): device config over the FIDO vendor channel ----
@@ -2834,8 +2846,8 @@ fn load_without_pin_demands_the_named_confirmation() {
         Err(CtapError::OperationDenied)
     );
     assert_eq!(
-        load_keydev(&dev(), &mut fs),
-        Some(old),
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old)),
         "a declined load replaced the seed"
     );
 
@@ -2856,7 +2868,10 @@ fn load_without_pin_demands_the_named_confirmation() {
         counting.calls, 2,
         "the seed was replaced on gate's generic touch alone"
     );
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(new_seed));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&new_seed))
+    );
 }
 
 /// A LOAD blob that is not `nonce ‖ seed ‖ tag` is refused before any prompt, and the
@@ -2881,7 +2896,10 @@ fn load_of_a_short_blob_is_refused() {
         ),
         Err(CtapError::MissingParameter)
     );
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(old));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old))
+    );
 }
 
 /// A seed that decrypts but is no P-256 scalar (zero here) is refused, and the seed
@@ -2905,7 +2923,10 @@ fn load_of_a_seed_that_is_no_scalar_is_refused() {
         ),
         Err(CtapError::InvalidParameter)
     );
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(old));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old))
+    );
 }
 
 /// LOAD drops the old attestation certificate before the new seed commits (audit
@@ -2943,8 +2964,8 @@ fn load_is_refused_when_the_old_certificate_cannot_be_dropped() {
         Err(CtapError::Other)
     );
     assert_eq!(
-        load_keydev(&dev(), &mut fs),
-        Some(old),
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old)),
         "the seed moved under a certificate that did not"
     );
 }

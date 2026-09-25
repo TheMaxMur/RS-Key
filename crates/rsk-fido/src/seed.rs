@@ -26,7 +26,7 @@
 //! runs, and the at-rest protection is the kbase itself (silicon-rooted once the
 //! OTP key is burnt).
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::aes_encrypt;
 use rsk_crypto::chachapoly::{chacha20poly1305_decrypt, chacha20poly1305_encrypt};
@@ -120,7 +120,7 @@ pub fn seal_seed_locked(
 
 /// Unwrap `EF_KEY_DEV_ENC` content with the lock key (vendor UNLOCK). `None` on
 /// a wrong key, a tampered blob, or a malformed length.
-pub fn open_seed_locked(lock_key: &[u8; 32], blob: &[u8]) -> Option<[u8; 32]> {
+pub fn open_seed_locked(lock_key: &[u8; 32], blob: &[u8]) -> Option<Secret<[u8; 32]>> {
     if blob.len() != LOCK_BLOB_LEN {
         return None;
     }
@@ -128,12 +128,12 @@ pub fn open_seed_locked(lock_key: &[u8; 32], blob: &[u8]) -> Option<[u8; 32]> {
     nonce.copy_from_slice(&blob[..12]);
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&blob[44..]);
-    let mut seed = [0u8; 32];
-    seed.copy_from_slice(&blob[12..44]);
-    match chacha20poly1305_decrypt(lock_key, &nonce, &[], &mut seed, &tag) {
+    let mut seed = Secret::<[u8; 32]>::zeroed();
+    seed.expose_mut().copy_from_slice(&blob[12..44]);
+    match chacha20poly1305_decrypt(lock_key, &nonce, &[], seed.expose_mut(), &tag) {
         Ok(()) => Some(seed),
         Err(_) => {
-            seed.zeroize();
+            seed.wipe();
             None
         }
     }
@@ -161,21 +161,31 @@ fn gcm_arm<'a>(dev: &Device<'a>, tag: u8) -> Option<Device<'a>> {
 }
 
 /// The ChaCha20-Poly1305 sealing key for `arm`: HKDF-SHA256(serial_hash, kbase).
-fn seed_enc_key(arm: &Device) -> [u8; 32] {
+fn seed_enc_key(arm: &Device) -> Secret<[u8; 32]> {
     let mut kbase = arm.derive_kbase();
-    let mut enc = [0u8; 32];
-    hkdf_sha256(arm.serial_hash, kbase.expose(), INFO_SEED_ENC, &mut enc)
-        .expect("32-byte HKDF output");
+    let mut enc = Secret::<[u8; 32]>::zeroed();
+    hkdf_sha256(
+        arm.serial_hash,
+        kbase.expose(),
+        INFO_SEED_ENC,
+        enc.expose_mut(),
+    )
+    .expect("32-byte HKDF output");
     kbase.wipe();
     enc
 }
 
 /// The synthetic-nonce PRF key for `arm`: a second HKDF label off the same kbase.
-fn seed_nonce_key(arm: &Device) -> [u8; 32] {
+fn seed_nonce_key(arm: &Device) -> Secret<[u8; 32]> {
     let mut kbase = arm.derive_kbase();
-    let mut nk = [0u8; 32];
-    hkdf_sha256(arm.serial_hash, kbase.expose(), INFO_SEED_NONCE, &mut nk)
-        .expect("32-byte HKDF output");
+    let mut nk = Secret::<[u8; 32]>::zeroed();
+    hkdf_sha256(
+        arm.serial_hash,
+        kbase.expose(),
+        INFO_SEED_NONCE,
+        nk.expose_mut(),
+    )
+    .expect("32-byte HKDF output");
     kbase.wipe();
     nk
 }
@@ -197,16 +207,21 @@ fn synth_nonce(nonce_key: &[u8; 32], fid: KeyFid, value: &[u8; 32]) -> [u8; NONC
 /// key, AAD = serial_hash; `fid` domain-separates the synthetic nonce.
 fn seal_gcm(dev: &Device, fid: KeyFid, value: &[u8; 32]) -> [u8; KEYDEV_G1_LEN] {
     let mut nk = seed_nonce_key(dev);
-    let nonce = synth_nonce(&nk, fid, value);
-    nk.zeroize();
+    let nonce = synth_nonce(nk.expose(), fid, value);
+    nk.wipe();
     let mut rec = [0u8; KEYDEV_G1_LEN];
     rec[0] = plain_tag(dev);
     rec[1..1 + NONCE_LEN].copy_from_slice(&nonce);
     let ctpos = 1 + NONCE_LEN;
     rec[ctpos..ctpos + 32].copy_from_slice(value);
     let mut enc = seed_enc_key(dev);
-    let tag = chacha20poly1305_encrypt(&enc, &nonce, dev.serial_hash, &mut rec[ctpos..ctpos + 32]);
-    enc.zeroize();
+    let tag = chacha20poly1305_encrypt(
+        enc.expose(),
+        &nonce,
+        dev.serial_hash,
+        &mut rec[ctpos..ctpos + 32],
+    );
+    enc.wipe();
     rec[ctpos + 32..].copy_from_slice(&tag);
     rec
 }
@@ -215,7 +230,7 @@ fn seal_gcm(dev: &Device, fid: KeyFid, value: &[u8; 32]) -> [u8; KEYDEV_G1_LEN] 
 /// authenticating with the serial hash. `None` on a malformed blob, an orphaned
 /// OTP-era tag (no OTP key), or an auth failure — a flipped tag byte picks the
 /// wrong arm and the MAC rejects it.
-fn open_gcm(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
+fn open_gcm(dev: &Device, buf: &[u8]) -> Option<Secret<[u8; 32]>> {
     if buf.len() != KEYDEV_G1_LEN {
         return None;
     }
@@ -225,15 +240,21 @@ fn open_gcm(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
     nonce.copy_from_slice(&buf[1..ctpos]);
     let mut tag = [0u8; TAG_LEN];
     tag.copy_from_slice(&buf[ctpos + 32..]);
-    let mut value = [0u8; 32];
-    value.copy_from_slice(&buf[ctpos..ctpos + 32]);
+    let mut value = Secret::<[u8; 32]>::zeroed();
+    value.expose_mut().copy_from_slice(&buf[ctpos..ctpos + 32]);
     let mut enc = seed_enc_key(&arm);
-    let r = chacha20poly1305_decrypt(&enc, &nonce, dev.serial_hash, &mut value, &tag);
-    enc.zeroize();
+    let r = chacha20poly1305_decrypt(
+        enc.expose(),
+        &nonce,
+        dev.serial_hash,
+        value.expose_mut(),
+        &tag,
+    );
+    enc.wipe();
     match r {
         Ok(()) => Some(value),
         Err(_) => {
-            value.zeroize();
+            value.wipe();
             None
         }
     }
@@ -242,7 +263,7 @@ fn open_gcm(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
 /// Decrypt a legacy fixed-IV AES-CBC record (`0x01` pre-OTP / `0x11` OTP, no
 /// MAC), kept for load + migration of devices provisioned before the AEAD
 /// format. An orphaned `0x11` read without the OTP key returns `None`.
-fn cbc_open(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
+fn cbc_open(dev: &Device, buf: &[u8]) -> Option<Secret<[u8; 32]>> {
     if buf.len() != KEYDEV_F1_LEN {
         return None;
     }
@@ -254,17 +275,17 @@ fn cbc_open(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
         }
         _ => return None,
     };
-    let mut value = [0u8; 32];
-    value.copy_from_slice(&buf[1..KEYDEV_F1_LEN]);
+    let mut value = Secret::<[u8; 32]>::zeroed();
+    value.expose_mut().copy_from_slice(&buf[1..KEYDEV_F1_LEN]);
     let mut kbase = arm.derive_kbase();
     let mut iv = [0u8; 16];
     iv.copy_from_slice(&dev.serial_hash[..16]);
-    let r = aes_decrypt(kbase.expose(), &iv, Mode::Cbc, &mut value);
+    let r = aes_decrypt(kbase.expose(), &iv, Mode::Cbc, value.expose_mut());
     kbase.wipe();
     match r {
         Ok(()) => Some(value),
         Err(_) => {
-            value.zeroize();
+            value.wipe();
             None
         }
     }
@@ -274,7 +295,7 @@ fn cbc_open(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
 /// AEAD (either arm) or a legacy CBC record. A PIN-wrapped (0x03/0x13) blob
 /// returns `None` — it is not loadable until `migrate_keydev_pin` opens its
 /// outer layer.
-fn open_any(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
+fn open_any(dev: &Device, buf: &[u8]) -> Option<Secret<[u8; 32]>> {
     open_gcm(dev, buf).or_else(|| cbc_open(dev, buf))
 }
 
@@ -282,14 +303,14 @@ fn open_any(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
 /// undecryptable, or still in a legacy PIN-wrapped format (0x03/0x13) — those
 /// become loadable again once a successful PIN verify migrates them
 /// ([`migrate_keydev_pin`]).
-pub fn load_keydev<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<[u8; 32]> {
+pub fn load_keydev<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<Secret<[u8; 32]>> {
     get_sealed32(dev, fs, EF_KEY_DEV)
 }
 
 /// The org-provisioned FIDO attestation scalar (`EF_ATT_KEY`), sealed exactly
 /// like the seed — the tag records which kbase arm wrapped it, so import before
 /// or after OTP provisioning both stay loadable.
-pub fn load_att_key<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<[u8; 32]> {
+pub fn load_att_key<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<Secret<[u8; 32]>> {
     get_sealed32(dev, fs, EF_ATT_KEY)
 }
 
@@ -301,7 +322,7 @@ pub fn store_att_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, key: &[u8; 32]) -
 /// seed; `None` if never minted, dropped by a PIN change, or unreadable here.
 /// Presence is necessary but NOT sufficient — provisioning mints it before any PIN
 /// exists, so [`crate::credmgmt`] owns the grant test, not this reader.
-pub fn load_ppuat<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<[u8; 32]> {
+pub fn load_ppuat<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<Secret<[u8; 32]>> {
     get_sealed32(dev, fs, EF_PAUTHTOKEN)
 }
 
@@ -312,15 +333,15 @@ pub fn ensure_ppuat<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     rng: &mut impl Rng,
-) -> Result<[u8; 32]> {
+) -> Result<Secret<[u8; 32]>> {
     if let Some(tok) = try_get_sealed32(dev, fs, EF_PAUTHTOKEN)? {
         return Ok(tok);
     }
-    let mut tok = [0u8; 32];
-    rng.fill(&mut tok);
-    let r = put_sealed32(dev, fs, EF_PAUTHTOKEN, &tok);
+    let mut tok = Secret::<[u8; 32]>::zeroed();
+    rng.fill(tok.expose_mut());
+    let r = put_sealed32(dev, fs, EF_PAUTHTOKEN, tok.expose());
     if r.is_err() {
-        tok.zeroize();
+        tok.wipe();
     }
     r.map(|()| tok)
 }
@@ -367,29 +388,34 @@ pub fn enc_identifier<S: Storage>(
     // dropped, opening the seal on the seed only to discard it would be a
     // ChaCha20-Poly1305 open on every getInfo for nothing.
     let mut token = load_ppuat(dev, fs)?;
-    let mut key = [0u8; 16];
-    let derived = hkdf_sha256(&ENCID_SALT, &token, INFO_ENCID, &mut key);
-    token.zeroize();
+    let mut key = Secret::<[u8; 16]>::zeroed();
+    let derived = hkdf_sha256(&ENCID_SALT, token.expose(), INFO_ENCID, key.expose_mut());
+    token.wipe();
     if derived.is_err() {
-        key.zeroize();
+        key.wipe();
         return None;
     }
 
     let Some(mut seed) = load_keydev(dev, fs) else {
-        key.zeroize();
+        key.wipe();
         return None;
     };
-    let mut id = [0u8; 16];
-    let derived = hkdf_sha256(dev.serial_hash, &seed, INFO_ENCID_DEVICE, &mut id);
-    seed.zeroize();
+    let mut id = Secret::<[u8; 16]>::zeroed();
+    let derived = hkdf_sha256(
+        dev.serial_hash,
+        seed.expose(),
+        INFO_ENCID_DEVICE,
+        id.expose_mut(),
+    );
+    seed.wipe();
     if derived.is_err() {
-        id.zeroize();
-        key.zeroize();
+        id.wipe();
+        key.wipe();
         return None;
     }
 
-    let out = seal_getinfo_member(&key, &mut id, rng);
-    key.zeroize();
+    let out = seal_getinfo_member(key.expose(), &mut id, rng);
+    key.wipe();
     out
 }
 
@@ -413,16 +439,16 @@ pub fn enc_cred_store_state<S: Storage>(
     rng: &mut impl Rng,
 ) -> Option<[u8; ENC_GETINFO_MEMBER_LEN]> {
     let mut token = load_ppuat(dev, fs)?;
-    let mut key = [0u8; 16];
-    let derived = hkdf_sha256(&ENCID_SALT, &token, INFO_ENCCSS, &mut key);
-    token.zeroize();
+    let mut key = Secret::<[u8; 16]>::zeroed();
+    let derived = hkdf_sha256(&ENCID_SALT, token.expose(), INFO_ENCCSS, key.expose_mut());
+    token.wipe();
     if derived.is_err() {
-        key.zeroize();
+        key.wipe();
         return None;
     }
-    let mut block = crate::credential::cred_store_state(fs).ok()?;
-    let out = seal_getinfo_member(&key, &mut block, rng);
-    key.zeroize();
+    let mut block = Secret::new(crate::credential::cred_store_state(fs).ok()?);
+    let out = seal_getinfo_member(key.expose(), &mut block, rng);
+    key.wipe();
     out
 }
 
@@ -432,26 +458,26 @@ pub fn enc_cred_store_state<S: Storage>(
 /// tracking vector they exist to avoid. `block` is spent: it is zeroized here.
 fn seal_getinfo_member(
     key: &[u8; 16],
-    block: &mut [u8; 16],
+    block: &mut Secret<[u8; 16]>,
     rng: &mut impl Rng,
 ) -> Option<[u8; ENC_GETINFO_MEMBER_LEN]> {
     let mut iv = [0u8; 16];
     rng.fill(&mut iv);
-    let sealed = aes_encrypt(key, &iv, Mode::Cbc, block);
+    let sealed = aes_encrypt(key, &iv, Mode::Cbc, block.expose_mut());
     if sealed.is_err() {
-        block.zeroize();
+        block.wipe();
         return None;
     }
 
     let mut out = [0u8; ENC_GETINFO_MEMBER_LEN];
     out[..16].copy_from_slice(&iv);
-    out[16..].copy_from_slice(block);
-    block.zeroize();
+    out[16..].copy_from_slice(block.expose());
+    block.wipe();
     Some(out)
 }
 
 /// Read and unseal a 32-byte value from any supported at-rest form (read-both).
-fn get_sealed32<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Option<[u8; 32]> {
+fn get_sealed32<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Option<Secret<[u8; 32]>> {
     try_get_sealed32(dev, fs, fid).ok().flatten()
 }
 
@@ -462,15 +488,15 @@ fn try_get_sealed32<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: KeyFid,
-) -> Result<Option<[u8; 32]>> {
-    let mut buf = [0u8; 64];
-    let out = match fs.try_read_key(fid, &mut buf) {
-        Ok(Some(n)) => open_any(dev, &buf[..n.min(buf.len())])
+) -> Result<Option<Secret<[u8; 32]>>> {
+    let mut buf = Secret::<[u8; 64]>::zeroed();
+    let out = match fs.try_read_key(fid, buf.expose_mut()) {
+        Ok(Some(n)) => open_any(dev, &buf.expose()[..n.min(buf.expose().len())])
             .map(Some)
             .ok_or(Error::ExecError),
         other => other.map(|_| None),
     };
-    buf.zeroize();
+    buf.wipe();
     out
 }
 
@@ -487,9 +513,9 @@ fn put_sealed32<S: Storage>(
     fid: KeyFid,
     value: &[u8; 32],
 ) -> Result<()> {
-    let mut rec = seal_gcm(dev, fid, value);
-    let r = fs.put_key(fid, Sealed::wrap(&rec));
-    rec.zeroize();
+    let mut rec = Secret::new(seal_gcm(dev, fid, value));
+    let r = fs.put_key(fid, Sealed::wrap(rec.expose()));
+    rec.wipe();
     r
 }
 
@@ -513,18 +539,18 @@ pub fn migrate_keydev_boot<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Result<(
 /// Re-seal one slot forward if it is not already current-arm ChaCha. Absent
 /// slots and unrecoverable (PIN-wrapped) records are no-ops.
 fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<()> {
-    let mut buf = [0u8; 64];
-    let Some(n) = fs.read_key(fid, &mut buf) else {
+    let mut buf = Secret::<[u8; 64]>::zeroed();
+    let Some(n) = fs.read_key(fid, buf.expose_mut()) else {
         return Ok(());
     };
-    let n = n.min(buf.len());
+    let n = n.min(buf.expose().len());
     // Already current-arm ChaCha? Skip the redundant flash erase (the
     // deterministic re-seal would be byte-identical anyway).
-    if buf[0] == plain_tag(dev)
-        && let Some(mut v) = open_gcm(dev, &buf[..n])
+    if buf.expose()[0] == plain_tag(dev)
+        && let Some(mut v) = open_gcm(dev, &buf.expose()[..n])
     {
-        v.zeroize();
-        buf.zeroize();
+        v.wipe();
+        buf.wipe();
         return Ok(());
     }
     // `weak`: 0x01/0x02 are sealed under the chip-serial arm, so the re-seal below
@@ -534,9 +560,9 @@ fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result
     // 0x11 is deliberately OUT: the copy it displaces is fixed-IV/no-MAC CBC, but
     // under the OTP arm, so a flash dump alone cannot open it. That is a second
     // at-rest weakness this re-seal repairs and the lap owes nothing for.
-    let weak = matches!(buf[0], FORMAT_F1 | FORMAT_G1) && dev.otp_key.is_some();
-    let recovered = open_any(dev, &buf[..n]);
-    buf.zeroize();
+    let weak = matches!(buf.expose()[0], FORMAT_F1 | FORMAT_G1) && dev.otp_key.is_some();
+    let recovered = open_any(dev, &buf.expose()[..n]);
+    buf.wipe();
     match recovered {
         Some(mut v) => {
             // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: a
@@ -545,9 +571,9 @@ fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result
             let r = if weak && rsk_fs::request_rescrub(fs).is_err() {
                 Err(Error::MemoryFatal)
             } else {
-                put_sealed32(dev, fs, fid, &v)
+                put_sealed32(dev, fs, fid, v.expose())
             };
-            v.zeroize();
+            v.wipe();
             r
         }
         None => Ok(()),
@@ -562,14 +588,14 @@ fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result
 /// lands straight at 0x12). No-op for current or unmatchable tags. `pin_hash` is
 /// the verified 16-byte PIN hash.
 pub fn migrate_keydev_pin<S: Storage>(dev: &Device, fs: &mut Fs<S>, pin_hash: &[u8]) -> Result<()> {
-    let mut buf = [0u8; 64];
-    let Some(KEYDEV_F3_LEN) = fs.read_key(EF_KEY_DEV, &mut buf) else {
+    let mut buf = Secret::<[u8; 64]>::zeroed();
+    let Some(KEYDEV_F3_LEN) = fs.read_key(EF_KEY_DEV, buf.expose_mut()) else {
         return Ok(());
     };
     // `weak`: a 0x03 record on an OTP card is sealed under the chip-serial arm, so
     // the re-seal below supersedes a copy the public serial alone derives. 0x13 is
     // already OTP-rooted, and a card with no OTP key has no lap to re-arm.
-    let (seal_dev, cbc_tag, weak) = match buf[0] {
+    let (seal_dev, cbc_tag, weak) = match buf.expose()[0] {
         FORMAT_F3 => (dev.without_otp(), FORMAT_F1, dev.otp_key.is_some()),
         FORMAT_F3_OTP if dev.otp_key.is_some() => (*dev, FORMAT_F1_OTP, false),
         _ => return Ok(()),
@@ -577,24 +603,24 @@ pub fn migrate_keydev_pin<S: Storage>(dev: &Device, fs: &mut Fs<S>, pin_hash: &[
     // Strip the outer PIN AEAD, leaving the inner CBC record the seed was sealed
     // in before the PIN was set.
     let mut session = seal_dev.pin_derive_session(pin_hash);
-    let mut cbc = [0u8; KEYDEV_F1_LEN];
-    cbc[0] = cbc_tag;
+    let mut cbc = Secret::<[u8; KEYDEV_F1_LEN]>::zeroed();
+    cbc.expose_mut()[0] = cbc_tag;
     let r = seal_dev.decrypt_with_aad(
         session.expose(),
-        &buf[1..KEYDEV_F3_LEN],
+        &buf.expose()[1..KEYDEV_F3_LEN],
         PinKdf::V2,
-        &mut cbc[1..],
+        &mut cbc.expose_mut()[1..],
     );
     session.wipe();
-    buf.zeroize();
+    buf.wipe();
     if r.is_err() {
-        cbc.zeroize();
+        cbc.wipe();
         return Err(Error::ExecError);
     }
     // Recover the seed through the shared CBC reader and re-seal it forward under
     // the current arm as authenticated ChaCha.
-    let recovered = cbc_open(dev, &cbc);
-    cbc.zeroize();
+    let recovered = cbc_open(dev, cbc.expose());
+    cbc.wipe();
     match recovered {
         Some(mut seed) => {
             // The re-arm belongs here, not at the two callers: theirs is gated on
@@ -603,9 +629,9 @@ pub fn migrate_keydev_pin<S: Storage>(dev: &Device, fs: &mut Fs<S>, pin_hash: &[
             let r = if weak && rsk_fs::request_rescrub(fs).is_err() {
                 Err(Error::MemoryFatal)
             } else {
-                put_sealed32(dev, fs, EF_KEY_DEV, &seed)
+                put_sealed32(dev, fs, EF_KEY_DEV, seed.expose())
             };
-            seed.zeroize();
+            seed.wipe();
             r
         }
         None => Err(Error::ExecError),
@@ -624,15 +650,15 @@ pub fn migrate_keydev_pin<S: Storage>(dev: &Device, fs: &mut Fs<S>, pin_hash: &[
 pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng) -> Result<()> {
     let locked = lock_state(fs)?;
     if !fs.try_has_key(EF_KEY_DEV)? && !locked {
-        let mut seed = [0u8; 32];
+        let mut seed = Secret::<[u8; 32]>::zeroed();
         loop {
-            rng.fill(&mut seed);
-            if P256Key::from_scalar(&seed).is_some() {
+            rng.fill(seed.expose_mut());
+            if P256Key::from_scalar(seed.expose()).is_some() {
                 break;
             }
         }
-        let r = encrypt_keydev_f1(dev, fs, &seed);
-        seed.zeroize();
+        let r = encrypt_keydev_f1(dev, fs, seed.expose());
+        seed.wipe();
         r?;
     }
     // Not `has_data`: a faulted probe here would roll the signature counter back
@@ -646,14 +672,14 @@ pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng)
     }
     if !locked {
         let mut seed = load_keydev(dev, fs).ok_or(Error::ExecError)?;
-        let r = rebuild_att_cert(fs, rng, &seed);
-        seed.zeroize();
+        let r = rebuild_att_cert(fs, rng, seed.expose());
+        seed.wipe();
         r?;
         // getInfo 0x19/0x1E are sealed under this grant, so a device never asked for
         // one published neither — and a conformance runner reads getInfo before it
         // can ask. The reference device publishes both from the factory.
         let mut tok = ensure_ppuat(dev, fs, rng)?;
-        tok.zeroize();
+        tok.wipe();
     }
     Ok(())
 }
@@ -821,11 +847,11 @@ pub(crate) fn wrap_keydev_legacy<S: Storage>(
     seed: &[u8; 32],
     pin_hash: &[u8],
 ) {
-    let mut inner = *seed;
+    let mut inner = Secret::new(*seed);
     let mut kbase = dev.derive_kbase();
     let mut iv = [0u8; 16];
     iv.copy_from_slice(&dev.serial_hash[..16]);
-    aes_encrypt(kbase.expose(), &iv, Mode::Cbc, &mut inner).unwrap();
+    aes_encrypt(kbase.expose(), &iv, Mode::Cbc, inner.expose_mut()).unwrap();
     kbase.wipe();
     let mut out = [0u8; KEYDEV_F3_LEN];
     out[0] = if dev.otp_key.is_some() {
@@ -836,13 +862,13 @@ pub(crate) fn wrap_keydev_legacy<S: Storage>(
     let session = dev.pin_derive_session(pin_hash);
     dev.encrypt_with_aad(
         session.expose(),
-        &inner,
+        inner.expose(),
         PinKdf::V2,
         &[0x24; 12],
         &mut out[1..],
     )
     .unwrap();
-    inner.zeroize();
+    inner.wipe();
     fs.put(EF_KEY_DEV.get(), &out).unwrap();
 }
 

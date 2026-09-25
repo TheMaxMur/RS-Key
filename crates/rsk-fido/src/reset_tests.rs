@@ -831,14 +831,14 @@ fn a_surviving_credential_is_dead_once_the_seed_is_replaced() {
     let mut rng = SeqRng(5);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let owner = load_keydev(&dev(), &mut fs).unwrap();
-    let rp_id_hash = provision_passkey(&mut fs, &owner);
+    let rp_id_hash = provision_passkey(&mut fs, owner.expose());
 
     let mut rec = [0u8; 1024];
     let n = fs.read(EF_CRED, &mut rec).unwrap();
     let mut scratch = [0u8; 1024];
     assert!(
         credential_load(
-            &owner,
+            owner.expose(),
             cred_record_box(&rec[..n]),
             &rp_id_hash,
             &mut scratch
@@ -852,12 +852,13 @@ fn a_surviving_credential_is_dead_once_the_seed_is_replaced() {
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let fresh = load_keydev(&dev(), &mut fs).unwrap();
     assert_ne!(
-        fresh, owner,
+        crate::bare(&fresh),
+        crate::bare(&owner),
         "ensure_seed must mint a new seed, not reuse it"
     );
     assert!(
         credential_load(
-            &fresh,
+            fresh.expose(),
             cred_record_box(&rec[..n]),
             &rp_id_hash,
             &mut scratch
@@ -883,7 +884,7 @@ fn provisioned_with_seed_last(seed_fid: u16) -> (TearAfter, Vec<u8>) {
     let mut rng = SeqRng(11);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let seed = load_keydev(&dev(), &mut fs).unwrap();
-    provision_passkey(&mut fs, &seed);
+    provision_passkey(&mut fs, seed.expose());
     fs.put(EF_PIN, &[8, 4, 1, 0, 0]).unwrap();
     let mut st = fs.into_storage();
     let at = st
@@ -1071,7 +1072,7 @@ fn provisioned_with_a_grant() -> TearAfter {
     let mut rng = SeqRng(17);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let seed = load_keydev(&dev(), &mut fs).unwrap();
-    provision_passkey(&mut fs, &seed);
+    provision_passkey(&mut fs, seed.expose());
     let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
     pin_file[0] = 8; // retries
     pin_file[1] = 4; // min length
@@ -1124,7 +1125,7 @@ fn no_wipe_prefix_leaves_a_grant_without_its_pin(
         if !fs.has_data(EF_PAUTHTOKEN.get()) {
             continue;
         }
-        if crate::seed::load_ppuat(&dev(), &mut fs) != Some(issued) {
+        if crate::bare(crate::seed::load_ppuat(&dev(), &mut fs)) != Some(crate::bare(&issued)) {
             continue; // rotated: the holder's value is gone, which is the point
         }
         // Only a prefix that got as far as the lead delete counts as a tear point:
@@ -1152,8 +1153,8 @@ fn no_wipe_prefix_leaves_a_grant_without_its_pin(
     assert!(wipe(&mut fs), "the control run did not report success");
     assert!(!fs.has_data(EF_CRED), "the control run kept a credential");
     assert_ne!(
-        crate::seed::load_ppuat(&dev(), &mut fs),
-        Some(issued),
+        crate::bare(crate::seed::load_ppuat(&dev(), &mut fs)),
+        Some(crate::bare(&issued)),
         "the control run kept the issued grant"
     );
     assert!(!fs.has_data(EF_PIN), "the control run never reached a gate");
@@ -1223,7 +1224,7 @@ fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
         let mut state = FidoState::new();
         // The RAM copy the wipe must not leave behind, planted the way
         // `Ctx::load_keydev` caches it.
-        state.keydev_dec = Some([0x5A; 32]);
+        state.keydev_dec = Some(rsk_secret::Secret::new([0x5A; 32]));
         {
             let mut presence = crate::AlwaysConfirm;
             let mut ctx = Ctx {

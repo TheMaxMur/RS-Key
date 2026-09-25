@@ -93,7 +93,7 @@ head_minters = ["crates/rsk-piv"]
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
-line = 354
+line = 353
 call = "ctx.fs.delete(EF_ALWAYS_UV).map_err(|_| CtapError::Other)?;"
 verb = "delete"
 answer = "read"
@@ -104,7 +104,7 @@ why = "the record IS the alwaysUv policy, and toggleAlwaysUv's whole effect is m
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
-line = 387
+line = 386
 call = ".and_then(|()| ctx.fs.delete_key(EF_KEY_DEV))"
 verb = "delete_key"
 answer = "read"
@@ -137,7 +137,7 @@ why = "an empty rpId list means no RP qualifies for vendor-facilitated enterpris
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 673
+line = 684
 call = ".delete(EF_CRED + slot)"
 verb = "delete"
 answer = "read"
@@ -148,7 +148,7 @@ why = "deleteCredential's only effect. A surviving EF_CRED is an assertable cred
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 706
+line = 717
 call = "let _ = fs.delete(EF_RP + j);"
 verb = "delete"
 answer = "discarded"
@@ -159,7 +159,7 @@ why = "the RP index at count zero, and the credential it counted has already gon
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 711
+line = 722
 call = "let _ = fs.delete(crate::consts::EF_RPNICK + j);"
 verb = "delete"
 answer = "discarded"
@@ -192,7 +192,7 @@ why = "the entries are already folded into the epoch and passed by m.start, and 
 
 [[site]]
 file = "crates/rsk-fido/src/largeblobext.rs"
-line = 276
+line = 281
 call = "let _ = fs.delete(EF_CRED_BLOB + slot);"
 verb = "delete"
 answer = "discarded"
@@ -203,7 +203,7 @@ why = "the blob is AAD-bound to its credential slot, so the slot's next owner ca
 
 [[site]]
 file = "crates/rsk-fido/src/passkeys.rs"
-line = 190
+line = 194
 call = "let _ = fs.delete(EF_RPNICK + slot); // absent is fine — the RP ends up unnamed"
 verb = "delete"
 answer = "discarded"
@@ -214,7 +214,7 @@ why = "clearing a display-only label: a survivor keeps the old nickname on the p
 
 [[site]]
 file = "crates/rsk-fido/src/passkeys.rs"
-line = 278
+line = 285
 call = "if fs.delete(ef_cred_fid).is_err() {"
 verb = "delete"
 answer = "read"
@@ -247,7 +247,7 @@ why = "the sweep. Best-effort in the sense that a torn wipe is a state the desig
 
 [[site]]
 file = "crates/rsk-fido/src/seed.rs"
-line = 340
+line = 361
 call = "fs.force_delete(EF_PAUTHTOKEN.get())"
 verb = "force_delete"
 answer = "read"
@@ -280,7 +280,7 @@ why = "the chain half of the same erase, ordered after the key so the surviving 
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 919
+line = 927
 call = "if ctx.fs.delete(EF_EE_DEV).is_err() {"
 verb = "delete"
 answer = "read"

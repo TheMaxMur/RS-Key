@@ -37,7 +37,7 @@ fn sign_selector_produces_a_der_signature() {
 #[test]
 fn ratchet_selector_matches_the_kdf() {
     let r = crate::keyderiv::ratchet(&FIXED_SEED, &FIXED_PATH);
-    assert_eq!(run(2), checksum(&r));
+    assert_eq!(run(2), checksum(r.expose()));
 }
 
 #[test]

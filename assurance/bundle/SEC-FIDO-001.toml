@@ -46,7 +46,7 @@ clause_ghost = "assurance/ghost_actions.toml — 21 model actions over 24 routes
 owners_tagged = [
   "crates/rsk-fido/src/state.rs:172 CredMgmtState::may_walk_rps",
   "crates/rsk-fido/src/state.rs:286 PinLock",
-  "crates/rsk-fido/src/clientpin.rs:724 spend_and_verify_pin_hash",
+  "crates/rsk-fido/src/clientpin.rs:739 spend_and_verify_pin_hash",
 ]
 # And the files co-refutation patches, which the derived column cannot see.
 owners_co_refuted = [

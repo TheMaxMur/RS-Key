@@ -155,21 +155,17 @@ where
         // Read + derive. The seed lives only long enough to compute the indices, then is wiped.
         let mkek = read_fused(self.keys.mkek_source);
         let dev = self.keys.device(&mkek);
-        let mut seed_opt = {
-            let mut fs = self.fs.borrow_mut();
-            rsk_fido::passkeys::load_keydev(&dev, &mut fs)
-        };
-        let mut indices = match seed_opt {
-            // `Option<[u8;32]>` is `Copy`, so this copies the seed out — derive, then wipe BOTH
-            // the copy here and the original `seed_opt` below, or a seed remnant lingers.
-            Some(mut seed) => {
-                let idx = rsk_bip39::entropy_to_indices(&seed);
-                seed.zeroize();
-                idx
+        let mut indices = {
+            // A `Secret`: the end of this block wipes it, the moment the indices exist.
+            let seed = {
+                let mut fs = self.fs.borrow_mut();
+                rsk_fido::passkeys::load_keydev(&dev, &mut fs)
+            };
+            match &seed {
+                Some(seed) => rsk_bip39::entropy_to_indices(seed.expose()),
+                None => return, // no seed / soft-locked — nothing to show
             }
-            None => return, // no seed / soft-locked — nothing to show
         };
-        seed_opt.zeroize();
         // The seed left the device's own keeping — the same event `BACKUP_EXPORT`
         // records over USB, and the higher-value half of the pair, since nothing on
         // the host can attest that it happened (audit run-34 #17).
@@ -272,27 +268,26 @@ where
         }
 
         // Read the seed and split it on-device; the seed lives only long enough to generate the
-        // shares, then is wiped (both the copied-out seed and the original `Option`).
+        // shares, then its `Secret` is wiped as the block that holds it ends.
         let mkek = read_fused(self.keys.mkek_source);
         let dev = self.keys.device(&mkek);
-        let mut seed_opt = {
-            let mut fs = self.fs.borrow_mut();
-            rsk_fido::passkeys::load_keydev(&dev, &mut fs)
-        };
         let mut shares = [[0u16; rsk_slip39::WORDS_PER_SHARE]; rsk_slip39::MAX_SHARES];
-        let ok = match seed_opt {
-            Some(mut seed) => {
-                let r = {
+        let ok = {
+            // A `Secret`: the end of this block wipes it, the moment the shares exist.
+            let seed = {
+                let mut fs = self.fs.borrow_mut();
+                rsk_fido::passkeys::load_keydev(&dev, &mut fs)
+            };
+            match &seed {
+                Some(seed) => {
                     let mut rng = self.rng.borrow_mut();
                     let mut fill = |b: &mut [u8]| rsk_sdk::Rng::fill(&mut *rng, b);
-                    rsk_slip39::generate(&seed, threshold, total, &mut fill, &mut shares)
-                };
-                seed.zeroize();
-                r.is_ok()
+                    rsk_slip39::generate(seed.expose(), threshold, total, &mut fill, &mut shares)
+                        .is_ok()
+                }
+                None => false, // no seed / soft-locked — nothing to show
             }
-            None => false, // no seed / soft-locked — nothing to show
         };
-        seed_opt.zeroize();
         if ok {
             self.journal_local(rsk_fido::journal::EV_BACKUP_EXPORT);
             self.show_shares(&shares, total);

@@ -11,7 +11,6 @@
 
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
-use zeroize::Zeroize;
 
 use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
@@ -363,8 +362,8 @@ pub fn get_assertion<S: Storage, R: Rng>(
     req.up |= verified.up_collected;
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::Other)?;
-    let result = get_assertion_inner(ctx, &req, &rp_id_hash, &seed, verified, out);
-    seed.zeroize();
+    let result = get_assertion_inner(ctx, &req, &rp_id_hash, seed.expose(), verified, out);
+    seed.wipe();
     if result.is_ok() {
         // A slot is earned by the gesture: the silent `up:false` pre-flight is ungated
         // and drivable on demand, so a run of those costs one entry rather than one
@@ -726,13 +725,13 @@ fn get_assertion_inner<S: Storage, R: Rng>(
         let kh = <&[u8; KEY_HANDLE_LEN]>::try_from(&best.id[..best.len])
             .map_err(|_| CtapError::Other)?;
         let mut scalar = verify_key(seed, rp_id_hash, kh).ok_or(CtapError::Other)?;
-        let key = CredKey::from_raw(CURVE_P256 as i64, &scalar).ok_or(CtapError::Other)?;
-        scalar.zeroize();
+        let key = CredKey::from_raw(CURVE_P256 as i64, scalar.expose()).ok_or(CtapError::Other)?;
+        scalar.wipe();
         key
     } else {
         let mut raw = fido_load_key(seed, key_input).ok_or(CtapError::Other)?;
-        let key = CredKey::from_raw(curve, &raw).ok_or(CtapError::Other)?;
-        raw.zeroize();
+        let key = CredKey::from_raw(curve, raw.expose()).ok_or(CtapError::Other)?;
+        raw.wipe();
         key
     };
 
@@ -972,10 +971,10 @@ pub fn get_next_assertion<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8
         &client_data_hash,
         uv,
         up,
-        &seed,
+        seed.expose(),
         out,
     );
-    seed.zeroize();
+    seed.wipe();
     let resp_len = result?;
 
     // §6.3 "Reset the timer": the 30-second budget is per leg, not for the whole
@@ -1060,8 +1059,8 @@ fn next_assertion_response<S: Storage, R: Rng>(
     let ed = if ext_len > 0 { FLAG_ED } else { 0 };
 
     let mut raw = fido_load_key(seed, key_input).ok_or(CtapError::Other)?;
-    let key = CredKey::from_raw(curve, &raw).ok_or(CtapError::Other)?;
-    raw.zeroize();
+    let key = CredKey::from_raw(curve, raw.expose()).ok_or(CtapError::Other)?;
+    raw.wipe();
 
     // getNextAssertion only ever walks resident discovery, so every credential
     // here has an EF_CRED slot and its own signature counter (a legacy credential

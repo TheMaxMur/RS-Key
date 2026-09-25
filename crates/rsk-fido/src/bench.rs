@@ -66,7 +66,7 @@ pub fn run(sel: u8) -> u32 {
         }
         2 => {
             let r = crate::keyderiv::ratchet(black_box(&FIXED_SEED), black_box(&FIXED_PATH));
-            checksum(&r)
+            checksum(r.expose())
         }
         _ => 0,
     }

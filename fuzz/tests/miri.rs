@@ -508,11 +508,16 @@ fn miri_fido_credmgmt() {
                 },
             };
             let mut cred_box = [0u8; 512];
-            if let Ok(len) =
-                credential_create(&seed, &d, &input, &rp_hash, &[0x11; 12], &mut cred_box)
-            {
+            if let Ok(len) = credential_create(
+                seed.expose(),
+                &d,
+                &input,
+                &rp_hash,
+                &[0x11; 12],
+                &mut cred_box,
+            ) {
                 let _ = credential_store(
-                    &seed,
+                    seed.expose(),
                     &d,
                     &mut fs,
                     &cred_box[..len],
@@ -1406,19 +1411,22 @@ fn miri_seed_blob() {
             continue;
         }
         if matches!(data[0], 0x03 | 0x11 | 0x13) {
-            assert_eq!(load_keydev(&dev_old, &mut fs), None);
+            assert!(load_keydev(&dev_old, &mut fs).is_none());
         }
         if data[0] == 0x13 {
-            assert_eq!(load_keydev(&dev_new, &mut fs), None);
+            assert!(load_keydev(&dev_new, &mut fs).is_none());
         }
         let _ = load_keydev(&dev_old, &mut fs);
         let _ = load_keydev(&dev_new, &mut fs);
         let _ = migrate_keydev_pin(&dev_old, &mut fs, &[0x42; 16]);
         let _ = migrate_keydev_pin(&dev_new, &mut fs, &[0x42; 16]);
         let _ = migrate_keydev_boot(&dev_new, &mut fs);
-        let after_one = load_keydev(&dev_new, &mut fs);
+        let after_one = load_keydev(&dev_new, &mut fs).map(|s| *s.expose());
         let _ = migrate_keydev_boot(&dev_new, &mut fs);
-        assert_eq!(after_one, load_keydev(&dev_new, &mut fs));
+        assert_eq!(
+            after_one,
+            load_keydev(&dev_new, &mut fs).map(|s| *s.expose())
+        );
     }
 }
 
@@ -1464,10 +1472,16 @@ fn miri_fido_session() {
             },
         };
         let mut cred_box = [0u8; 512];
-        if let Ok(len) = credential_create(&seed, &d, &input, &rp_hash, &[0x11; 12], &mut cred_box)
-        {
+        if let Ok(len) = credential_create(
+            seed.expose(),
+            &d,
+            &input,
+            &rp_hash,
+            &[0x11; 12],
+            &mut cred_box,
+        ) {
             let _ = credential_store(
-                &seed,
+                seed.expose(),
                 &d,
                 &mut fs,
                 &cred_box[..len],

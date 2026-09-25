@@ -63,7 +63,7 @@ subjects_absent = [
   "integration",
   "bounded proof over the Rust source — no harness in this tree bounds the implication at the code level",
 ]
-subjects_absent_reading = "the missing obligation is exactly this: that `credential_store`'s ordered writes and `decrement_rp`'s removal keep `EF_CRED ⊆ EF_RP` over an ARBITRARY interleaving of flash outcomes, rather than over the write budgets two host tests enumerate. What stands in its place is `crates/rsk-fido/src/credential_tests.rs:648` and `crates/rsk-fido/src/credmgmt_tests.rs:2265`, which sweep a failure budget across the sequence and assert the implication at every failing point — evidence, and bounded by a loop rather than by a solver. What would close it: a harness over `rsk-fs`'s `Fs` with a symbolic write/delete outcome per step, in the shape `crates/rsk-fs/src/powercut_kani.rs` already has for the store's own tears, asserting `has_data(EF_CRED + s) => has_data(EF_RP + j)` after `credential_store` and after `delete_credential`. It is NOT written here: adding a harness would move the derived `kani` column and the status word with it, which is stage 4's call and not a bundle's"
+subjects_absent_reading = "the missing obligation is exactly this: that `credential_store`'s ordered writes and `decrement_rp`'s removal keep `EF_CRED ⊆ EF_RP` over an ARBITRARY interleaving of flash outcomes, rather than over the write budgets two host tests enumerate. What stands in its place is `crates/rsk-fido/src/credential_tests.rs:657` and `crates/rsk-fido/src/credmgmt_tests.rs:2268`, which sweep a failure budget across the sequence and assert the implication at every failing point — evidence, and bounded by a loop rather than by a solver. What would close it: a harness over `rsk-fs`'s `Fs` with a symbolic write/delete outcome per step, in the shape `crates/rsk-fs/src/powercut_kani.rs` already has for the store's own tears, asserting `has_data(EF_CRED + s) => has_data(EF_RP + j)` after `credential_store` and after `delete_credential`. It is NOT written here: adding a harness would move the derived `kani` column and the status word with it, which is stage 4's call and not a bundle's"
 requirement = [
   "CTAP 2.3 §6.8 authenticatorCredentialManagement — enumerateRPs (0x02/0x03), enumerateCredentials (0x04/0x05) and deleteCredential (0x06), the surface the property is named for",
   "docs/threat-model.md:94-115 `TM-HOST-CRED-REVOCABLE` — the clause, which states the implication in prose and states the write ORDER that buys it",
@@ -86,32 +86,32 @@ threat_clause_reading = "a covering, and the two places it is WIDER than the inv
 # production file (`kani`/`tests` names dropped) and returns FILE NAMES, so a
 # second tag in a counted file moves nothing.
 owners_tagged = [
-  "crates/rsk-fido/src/credential.rs:795 credential_store — the producer of the ANTECEDENT (`store.cred`) and the site that writes the consequent first",
-  "crates/rsk-fido/src/credmgmt.rs:687 decrement_rp — the sole destroyer of the CONSEQUENT (`store.rpent`)",
+  "crates/rsk-fido/src/credential.rs:796 credential_store — the producer of the ANTECEDENT (`store.cred`) and the site that writes the consequent first",
+  "crates/rsk-fido/src/credmgmt.rs:698 decrement_rp — the sole destroyer of the CONSEQUENT (`store.rpent`)",
   "crates/rsk-fido/src/passkeys.rs:89 for_each_rp — the management surface, which is what `unmanageable` MEANS",
 ]
 # BOTH HALVES OF THE IMPLICATION ARE COVERED, and the grep that shows it is
 # `grep -rn NoUnmanageableCredential crates/ firmware/`: five hits, three of them
 # in production files, one per half plus the reader. That is a better tag set
 # than `SEC-FIDO-007`'s, whose single tag sat on the consequent alone.
-owners_tag_reading = "covered, and two named gaps rather than a wrong tag. The gaps are the SOLE producer of the consequent, `crates/rsk-fido/src/credential.rs:901 bump_rp`, which writes `rec[0] = 1` into a fresh EF_RP record and carries no tag of any kind; and `crates/rsk-fido/src/reset.rs`, which destroys BOTH sides in one sweep, carries six `Refines` tags for four OTHER properties (SEC-FIDO-004, -006, -006A, -006B, -006C at :35, :105, :199, :217-219, :285) and none for this one — while being the file `formal/comutants.toml`'s third co-mutant patches and the file whose model twin `ResetSweepSecrets` produces the deepest counterexample this property has. Neither absence moves the derived column: `credential.rs` and `reset.rs` are one file each, and `credential.rs` is already counted"
+owners_tag_reading = "covered, and two named gaps rather than a wrong tag. The gaps are the SOLE producer of the consequent, `crates/rsk-fido/src/credential.rs:902 bump_rp`, which writes `rec[0] = 1` into a fresh EF_RP record and carries no tag of any kind; and `crates/rsk-fido/src/reset.rs`, which destroys BOTH sides in one sweep, carries six `Refines` tags for four OTHER properties (SEC-FIDO-004, -006, -006A, -006B, -006C at :35, :105, :199, :217-219, :285) and none for this one — while being the file `formal/comutants.toml`'s third co-mutant patches and the file whose model twin `ResetSweepSecrets` produces the deepest counterexample this property has. Neither absence moves the derived column: `credential.rs` and `reset.rs` are one file each, and `credential.rs` is already counted"
 # Every production site that writes either side, enumerated because the tag set
 # names three functions and the sites are ten — eight entries, of which the third
 # names the three best-effort rollbacks together.
 owners_writers = [
-  "crates/rsk-fido/src/credential.rs:853 — `bump_rp(...)?` inside `credential_store`, the EF_RP write that LEADS the credential (the order the threat clause states)",
-  "crates/rsk-fido/src/credential.rs:888 — `fs.put(EF_CRED + slot, ...)`, the antecedent's only producer",
-  "crates/rsk-fido/src/credential.rs:867, :884, :890 — the three best-effort `let _ = decrement_rp(...)` rollbacks, each itself a flash write",
-  "crates/rsk-fido/src/credmgmt.rs:672 — `delete_credential`'s `fs.delete(EF_CRED + slot)`, the antecedent's destroyer, ahead of the RP work",
-  "crates/rsk-fido/src/credmgmt.rs:711 — `let _ = fs.delete(EF_RP + j)` at count zero, the consequent's destroyer",
-  "crates/rsk-fido/src/credmgmt.rs:715 — `fs.put(EF_RP + j, ...)` on the write-back path, the count decrement that does NOT delete",
-  "crates/rsk-fido/src/passkeys.rs:284 — the trusted-display delete's `let _ = decrement_rp(...)`, the same effect keyed by slot",
+  "crates/rsk-fido/src/credential.rs:854 — `bump_rp(...)?` inside `credential_store`, the EF_RP write that LEADS the credential (the order the threat clause states)",
+  "crates/rsk-fido/src/credential.rs:889 — `fs.put(EF_CRED + slot, ...)`, the antecedent's only producer",
+  "crates/rsk-fido/src/credential.rs:868, :885, :891 — the three best-effort `let _ = decrement_rp(...)` rollbacks, each itself a flash write",
+  "crates/rsk-fido/src/credmgmt.rs:683 — `delete_credential`'s `fs.delete(EF_CRED + slot)`, the antecedent's destroyer, ahead of the RP work",
+  "crates/rsk-fido/src/credmgmt.rs:722 — `let _ = fs.delete(EF_RP + j)` at count zero, the consequent's destroyer",
+  "crates/rsk-fido/src/credmgmt.rs:726 — `fs.put(EF_RP + j, ...)` on the write-back path, the count decrement that does NOT delete",
+  "crates/rsk-fido/src/passkeys.rs:291 — the trusted-display delete's `let _ = decrement_rp(...)`, the same effect keyed by slot",
   "crates/rsk-fido/src/reset.rs — the wipe, which deletes the seed first and then sweeps EF_RP and EF_CRED in flash-ring order (the clause's stated carve-out)",
 ]
 owners_readers = [
-  "crates/rsk-fido/src/credmgmt.rs:335 enumerate_rps — CTAP 0x02/0x03, the host's browse surface; it walks EF_RP and never EF_CRED",
+  "crates/rsk-fido/src/credmgmt.rs:334 enumerate_rps — CTAP 0x02/0x03, the host's browse surface; it walks EF_RP and never EF_CRED",
   "crates/rsk-fido/src/passkeys.rs:89 for_each_rp — the trusted-display Passkeys view, the second EF_RP walk",
-  "crates/rsk-fido/src/credmgmt.rs:640 find_resident — deleteCredential's own EF_CRED scan, which is why a strand costs discovery and not revocation outright",
+  "crates/rsk-fido/src/credmgmt.rs:651 find_resident — deleteCredential's own EF_CRED scan, which is why a strand costs discovery and not revocation outright",
 ]
 # The three files `formal/comutants.toml` patches for this property, which the
 # derived `co = 3` counts and no tag names.
@@ -123,7 +123,7 @@ owners_co_refuted = [
 # The tests that kill them, recorded here because they count in NO derived
 # column: `assurance_gate`'s `rust` axis drops filenames containing `tests`, and
 # its `test` axis reads only `tests/**/*.py`.
-owner_of_the_kill = "crates/rsk-fido/src/credential_tests.rs:648 a_failed_registration_never_leaves_a_credential_without_its_rp and its mirror at :702 a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry; for the delete half, crates/rsk-fido/src/credmgmt_tests.rs:2265 a_torn_delete_never_leaves_a_credential_without_its_rp"
+owner_of_the_kill = "crates/rsk-fido/src/credential_tests.rs:657 a_failed_registration_never_leaves_a_credential_without_its_rp and its mirror at :711 a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry; for the delete half, crates/rsk-fido/src/credmgmt_tests.rs:2268 a_torn_delete_never_leaves_a_credential_without_its_rp"
 
 # ---- 2. Commit, build and features -------------------------------------------
 
@@ -201,7 +201,7 @@ bound_solo_configurations = 3
 stops_solo_configurations = "a fourth ordering. The three switches are the three orderings the shipped tree chose — registration, credential-management delete and the wipe — so an ordering nobody wrote a switch for is not shown to be falsifiable"
 bound_counterexample_depths = 14
 stops_counterexample_depths = "nothing — the depth is the deepest MEASURED trace of the three and not a cap the configurations impose; the other two fall shallower"
-shipped_relation = "each configuration checks TypeOK and this invariant and NOTHING else, and arms exactly one Bug* with every other FALSE — which is what tells these kills from a neighbouring invariant's. The three switches are the three orderings the shipped tree chose: registration (EF_RP before EF_CRED, credential.rs:853 vs :888), credential-management delete (EF_CRED before the count, credmgmt.rs:672 vs :679) and the wipe (the seed before the batch — the `FIDO_SEED_FIDS` loop at reset.rs:113-117, under the comment at :105-107 that says why). The depth bound is the deepest of the three traces, 14 on Solo_BugDeleteRpBeforeCred; the other two fall at 7 and 13. Unlike SEC-FIDO-007, the Solo_ rows are not the ONLY place this property is observed to fail — `formal/gen-configs.sh:185-187` puts a mutant's target invariant FIRST in a Mut_ configuration's INVARIANTS block, so all three Mut_ twins report this name too"
+shipped_relation = "each configuration checks TypeOK and this invariant and NOTHING else, and arms exactly one Bug* with every other FALSE — which is what tells these kills from a neighbouring invariant's. The three switches are the three orderings the shipped tree chose: registration (EF_RP before EF_CRED, credential.rs:854 vs :889), credential-management delete (EF_CRED before the count, credmgmt.rs:683 vs :690) and the wipe (the seed before the batch — the `FIDO_SEED_FIDS` loop at reset.rs:113-117, under the comment at :105-107 that says why). The depth bound is the deepest of the three traces, 14 on Solo_BugDeleteRpBeforeCred; the other two fall at 7 and 13. Unlike SEC-FIDO-007, the Solo_ rows are not the ONLY place this property is observed to fail — `formal/gen-configs.sh:185-187` puts a mutant's target invariant FIRST in a Mut_ configuration's INVARIANTS block, so all three Mut_ twins report this name too"
 cfg = "none"
 features = "none"
 
@@ -235,7 +235,7 @@ bound_files_in_argument = 4
 stops_files_in_argument = "anything in a fifth file"
 bound_crates = 1
 stops_crates = "a site outside rsk-fido. The whole argument is in one crate, so a management surface in another would be outside it"
-shipped_relation = "eight writer entries over four files in ONE crate — ten sites, since one entry holds the three best-effort rollbacks — against the three functions the tag set names; the count is a count of sites and not a shrink of a shipped constant, because a review has no other unit. The three skip conditions are the finding: both browse surfaces drop an EF_RP slot when `fs.read` answers None (credmgmt.rs:364, passkeys.rs:113), when `n < RP_PREFIX || buf[0] == 0` (credmgmt.rs:368, passkeys.rs:117) and when `unseal_rp_id` fails (credmgmt.rs:402, passkeys.rs:122) — and `store.rpent` is plain set membership, so a record that exists and is skipped satisfies the invariant while being exactly what the clause forbids. The two surfaces do not even agree with each other on the third: `enumerate_rps` answers `CtapError::Other` for the WHOLE walk, so one unsealable record hides every other relying party from the host, while `for_each_rp` skips that one and lists the rest"
+shipped_relation = "eight writer entries over four files in ONE crate — ten sites, since one entry holds the three best-effort rollbacks — against the three functions the tag set names; the count is a count of sites and not a shrink of a shipped constant, because a review has no other unit. The three skip conditions are the finding: both browse surfaces drop an EF_RP slot when `fs.read` answers None (credmgmt.rs:363, passkeys.rs:113), when `n < RP_PREFIX || buf[0] == 0` (credmgmt.rs:367, passkeys.rs:117) and when `unseal_rp_id` fails (credmgmt.rs:406, passkeys.rs:122) — and `store.rpent` is plain set membership, so a record that exists and is skipped satisfies the invariant while being exactly what the clause forbids. The two surfaces do not even agree with each other on the third: `enumerate_rps` answers `CtapError::Other` for the WHOLE walk, so one unsealable record hides every other relying party from the host, while `for_each_rp` skips that one and lists the rest"
 cfg = "none — every site above is unconditional production code; the invariant's name appears in no cfg-gated mirror"
 features = "none"
 
@@ -337,7 +337,7 @@ b_denominator = "of the forty configurations naming the invariant: 5 GREEN (Alwa
 
 # THE CODE TWIN, driven. One of three; the other two are the register's.
 c_twin = "the two hunks of formal/comutants.toml:96-123 applied to crates/rsk-fido/src/credential.rs in a detached worktree at this commit, then `cargo test -p rsk-fido --lib --target aarch64-apple-darwin`: FAILED, 667 passed; 2 failed; 1 ignored, 11.75 s. The patch moves `bump_rp` from ahead of the EF_CRED write to behind it — the shipped file, not a model edit"
-c_twin_direction = "BOTH failures fall in the modelled direction and the assertion text is what says so, not the exit code. `a_failed_registration_never_leaves_a_credential_without_its_rp` panics at credential_tests.rs:676 with `write budget 3 left a credential with no EF_RP record — invisible to every enumeration and revocation surface`, which IS the defect; its mirror `a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry` panics at :728 with `write budget 3 answered an error over a credential that is live`, which is the same state seen from the other side. Neither says `should have been refused`, and neither says the registration was over-refused — the inverse defect, a rollback that removes too much, would fail the mirror alone and with the opposite message"
+c_twin_direction = "BOTH failures fall in the modelled direction and the assertion text is what says so, not the exit code. `a_failed_registration_never_leaves_a_credential_without_its_rp` panics at credential_tests.rs:685 with `write budget 3 left a credential with no EF_RP record — invisible to every enumeration and revocation surface`, which IS the defect; its mirror `a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry` panics at :737 with `write budget 3 answered an error over a credential that is live`, which is the same state seen from the other side. Neither says `should have been refused`, and neither says the registration was over-refused — the inverse defect, a rollback that removes too much, would fail the mirror alone and with the opposite message"
 c_twin_untransferred = "the other two twins are transcribed from formal/comutants.toml and were NOT re-driven here: BugDeleteRpBeforeCred (:125-154, `expect = \"killed\"`, whose note records it as batch 1's one measured GAP, closed by a_torn_delete_never_leaves_a_credential_without_its_rp) and BugSeedDoesNotLead (:343-359, `expect = \"killed\"`). A recorded verdict is evidence and a re-run is better evidence; this bundle bought one and says which"
 
 # THE PRODUCTION SIDE, by review.
@@ -441,7 +441,7 @@ sha256 = "0a1bc93a320447121b5ab19c9dab6ee8a03a688df2e684b6d9a89097e3e3ee3d"
 id = "AS-CRED-1"
 statement = "`store.cred` and `store.rpent` are SETS of relying parties — one credential per RP — so the EF_RP count byte that `bump_rp` increments and `decrement_rp` decrements does not exist in the model, and neither does any interleaving that needs two credentials of one relying party."
 kind = "model abstraction"
-discharger = "the store slice of stage 5, and until then the two host tests that reach where the model cannot: crates/rsk-fido/src/credmgmt_tests.rs:2166 deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot exists precisely because `decrement_rp`'s write-back path (credmgmt.rs:715) is a fourth EF_RP write that no sole-credential test reaches. The count is where this property's sharpest unmodelled failure would live: a count that under-runs deletes the EF_RP record with a credential still behind it, which is the invariant's forbidden direction, and crates/rsk-fido/src/credential.rs:937-942 says in its own comment that a 256th credential once recorded 255 and did exactly that (audit run-35)"
+discharger = "the store slice of stage 5, and until then the two host tests that reach where the model cannot: crates/rsk-fido/src/credmgmt_tests.rs:2169 deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot exists precisely because `decrement_rp`'s write-back path (credmgmt.rs:726) is a fourth EF_RP write that no sole-credential test reaches. The count is where this property's sharpest unmodelled failure would live: a count that under-runs deletes the EF_RP record with a credential still behind it, which is the invariant's forbidden direction, and crates/rsk-fido/src/credential.rs:938-943 says in its own comment that a 256th credential once recorded 255 and did exactly that (audit run-35)"
 expressible = "no — a cardinality, not a boolean; scripts/assumption_gate.py accepts a boolean CONSTANT and nothing else"
 registered = "yes — assurance/platform.toml PLAT-MODEL-002, pending, whose statement is this assumption in as many words and whose `supports` already names SEC-FIDO-005. Its `covers` needs `slice:AS-CRED-1` beside the AS-AUTH-6 it holds; an extension, not a new row"
 
@@ -449,7 +449,7 @@ registered = "yes — assurance/platform.toml PLAT-MODEL-002, pending, whose sta
 id = "AS-CRED-2"
 statement = "`r \\in store.rpent` means the EF_RP record for r is REACHABLE by the management surface, and in the shipped tree it means only that the record exists: both surfaces additionally require the read to succeed, the count byte to be positive and the rpId to unseal."
 kind = "model fidelity"
-discharger = "reading the two surfaces apart, and there is no run behind it. crates/rsk-fido/src/credmgmt.rs:364, :368 and :402 and crates/rsk-fido/src/passkeys.rs:113, :117 and :122 are the six `continue`/error arms; the third pair does not even agree — enumerate_rps answers CtapError::Other for the whole walk while for_each_rp skips one record. Of the three the read-failure arm is the one a live medium reaches, and docs/threat-model.md:60-93 states it as a threat of its own. What would discharge this is either a second model variable for `listable` or a test at each surface driving a refused EF_RP read and asserting what the owner is shown"
+discharger = "reading the two surfaces apart, and there is no run behind it. crates/rsk-fido/src/credmgmt.rs:363, :367 and :406 and crates/rsk-fido/src/passkeys.rs:113, :117 and :122 are the six `continue`/error arms; the third pair does not even agree — enumerate_rps answers CtapError::Other for the whole walk while for_each_rp skips one record. Of the three the read-failure arm is the one a live medium reaches, and docs/threat-model.md:60-93 states it as a threat of its own. What would discharge this is either a second model variable for `listable` or a test at each surface driving a refused EF_RP read and asserting what the owner is shown"
 expressible = "no — the alternative needs a second VARIABLE, and a boolean constant cannot carry a per-record predicate"
 registered = "yes — assurance/platform.toml PLAT-CRED-001, pending. The nearest existing row is PLAT-MODEL-002, which is about cardinality and not about what membership MEANS, and folding this into it would be two answers under one premise"
 
@@ -559,9 +559,9 @@ mutant = "the registration defect in production Rust: formal/comutants.toml's tw
 invocation = "git worktree add --detach; apply both hunks; cargo test -p rsk-fido --lib --target aarch64-apple-darwin"
 expected = "killed by the tree's own suite, and killed by the test that names the defect"
 verdict = "killed, 11.75 s — `test result: FAILED. 667 passed; 2 failed; 1 ignored`"
-fell = "credential::tests::a_failed_registration_never_leaves_a_credential_without_its_rp at credential_tests.rs:676, and credential::tests::a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry at :728; no third test moved"
+fell = "credential::tests::a_failed_registration_never_leaves_a_credential_without_its_rp at credential_tests.rs:685, and credential::tests::a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry at :737; no third test moved"
 direction = "modelled"
-reading = "read WHICH assertion fell and in which direction, because that is the whole content of a red run. The first says `write budget 3 left a credential with no EF_RP record — invisible to every enumeration and revocation surface`, which is the modelled defect in the modelled direction; the second says `write budget 3 answered an error over a credential that is live`, the same state from the host's side. Neither message is an over-refusal, and the inverse defect — a rollback that removes MORE than it should — would fail the mirror alone with `left an EF_RP record with no credential`. Note also what the pair says about the test rather than the code: the first test asserts inside `if fs.has_data(EF_CRED)` and its own doc comment at :700-712 explains that the conditional shape passes when the branch is never entered, which is why the unconditional mirror exists beside it."
+reading = "read WHICH assertion fell and in which direction, because that is the whole content of a red run. The first says `write budget 3 left a credential with no EF_RP record — invisible to every enumeration and revocation surface`, which is the modelled defect in the modelled direction; the second says `write budget 3 answered an error over a credential that is live`, the same state from the host's side. Neither message is an over-refusal, and the inverse defect — a rollback that removes MORE than it should — would fail the mirror alone with `left an EF_RP record with no credential`. Note also what the pair says about the test rather than the code: the first test asserts inside `if fs.has_data(EF_CRED)` and its own doc comment at :709-721 explains that the conditional shape passes when the branch is never entered, which is why the unconditional mirror exists beside it."
 
 [[mutation]]
 level = "B"

@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
+#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! `rsk-fido` — the FIDO2 (CTAP2) + U2F (CTAP1) applet. The logic is pure and
 //! host-testable: the device seed, serial, RNG and flash come from the caller
@@ -101,10 +102,15 @@ impl<S: Storage, R: Rng> Ctx<'_, S, R> {
     /// behind wins over flash; on a soft-locked device with no unlock this
     /// session, both fail and the operation errors out — that is the lock.
     /// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
-    pub fn load_keydev(&mut self) -> Option<[u8; 32]> {
-        self.state
-            .keydev_dec
-            .or_else(|| seed::load_keydev(&self.dev, self.fs))
+    pub fn load_keydev(&mut self) -> Option<rsk_secret::Secret<[u8; 32]>> {
+        match &self.state.keydev_dec {
+            Some(k) => {
+                let mut copy = rsk_secret::Secret::<[u8; 32]>::zeroed();
+                copy.expose_mut().copy_from_slice(k.expose());
+                Some(copy)
+            }
+            None => seed::load_keydev(&self.dev, self.fs),
+        }
     }
 }
 
@@ -216,6 +222,8 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+use tests::bare;
 
 #[cfg(test)]
 mod conformance;

@@ -31,7 +31,7 @@
 
 use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::mac::hkdf_sha256;
 use rsk_crypto::{Device, sha256};
@@ -455,18 +455,18 @@ pub fn attestation_key(devk: &[u8; 32], serial_hash: &[u8]) -> Option<P256Key> {
     const INFO_TAG: &[u8] = b"RSK audit attestation v1";
     let mut info = [0u8; 25];
     info[..INFO_TAG.len()].copy_from_slice(INFO_TAG);
-    let mut scalar = [0u8; 32];
+    let mut scalar = Secret::<[u8; 32]>::zeroed();
     for i in 0u8..8 {
         info[INFO_TAG.len()] = i;
-        if hkdf_sha256(serial_hash, devk, &info, &mut scalar).is_err() {
+        if hkdf_sha256(serial_hash, devk, &info, scalar.expose_mut()).is_err() {
             return None;
         }
-        if let Some(k) = P256Key::from_scalar(&scalar) {
-            scalar.zeroize();
+        if let Some(k) = P256Key::from_scalar(scalar.expose()) {
+            scalar.wipe();
             return Some(k);
         }
     }
-    scalar.zeroize();
+    scalar.wipe();
     None
 }
 

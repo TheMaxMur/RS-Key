@@ -23,7 +23,7 @@
 
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::{
     Device, chacha20poly1305_decrypt, chacha20poly1305_encrypt, hmac_sha256, hmac_sha512, sha256,
@@ -208,10 +208,11 @@ pub struct Credential<'a> {
 }
 
 /// The box encryption key: a SLIP-0022 HMAC chain over the device seed.
-pub(crate) fn derive_chacha_key(seed: &[u8; 32], proto: &[u8]) -> [u8; 32] {
-    let mut k = hmac_sha256(seed, b"SLIP-0022");
-    k = hmac_sha256(&k, proto);
-    hmac_sha256(&k, b"Encryption key")
+pub(crate) fn derive_chacha_key(seed: &[u8; 32], proto: &[u8]) -> Secret<[u8; 32]> {
+    let mut k = Secret::new(hmac_sha256(seed, b"SLIP-0022"));
+    *k.expose_mut() = hmac_sha256(k.expose(), proto);
+    *k.expose_mut() = hmac_sha256(k.expose(), b"Encryption key");
+    k
 }
 
 /// The silent tag: HMAC(SHA256(serial‖rpIdHash), prefix)[..16] where `prefix`
@@ -268,8 +269,8 @@ pub fn credential_create(
     // so the box need not carry it. `verify_decrypt` re-derives from the same
     // label for the prefix-free trial.
     let mut key = derive_chacha_key(seed, CRED_PROTO);
-    let tag = chacha20poly1305_encrypt(&key, iv, rp_id_hash, &mut out[IV_LEN..IV_LEN + rs]);
-    key.zeroize();
+    let tag = chacha20poly1305_encrypt(key.expose(), iv, rp_id_hash, &mut out[IV_LEN..IV_LEN + rs]);
+    key.wipe();
 
     out[..IV_LEN].copy_from_slice(iv);
     out[IV_LEN + rs..IV_LEN + rs + TAG_LEN].copy_from_slice(&tag);
@@ -372,13 +373,13 @@ fn try_format(
     tag.copy_from_slice(&scratch[ct_off + ct_len..ct_off + ct_len + TAG_LEN]);
     let mut key = derive_chacha_key(seed, key_label);
     let res = chacha20poly1305_decrypt(
-        &key,
+        key.expose(),
         &iv,
         rp_id_hash,
         &mut scratch[ct_off..ct_off + ct_len],
         &tag,
     );
-    key.zeroize();
+    key.wipe();
     res.ok()?;
     Some(ct_len)
 }
@@ -575,12 +576,12 @@ fn resident_has_trailer(rid: &[u8]) -> bool {
 /// hmac-secret extension — an HMAC-SHA512 ratchet over the device seed, keyed
 /// each round by the previous output's first 32 bytes. The caller picks the UV
 /// half: `[32..64]` with UV, `[0..32]` without.
-pub fn derive_hmac_key(seed: &[u8; 32], cred_id: &[u8]) -> [u8; 64] {
+pub fn derive_hmac_key(seed: &[u8; 32], cred_id: &[u8]) -> Secret<[u8; 64]> {
     let proto = &cred_id[..PROTO_LEN.min(cred_id.len())];
-    let mut k = hmac_sha512(seed, b"SLIP-0022");
-    k = hmac_sha512(&k[..32], proto);
-    k = hmac_sha512(&k[..32], b"hmac-secret");
-    k = hmac_sha512(&k[..32], cred_id);
+    let mut k = Secret::new(hmac_sha512(seed, b"SLIP-0022"));
+    *k.expose_mut() = hmac_sha512(&k.expose()[..32], proto);
+    *k.expose_mut() = hmac_sha512(&k.expose()[..32], b"hmac-secret");
+    *k.expose_mut() = hmac_sha512(&k.expose()[..32], cred_id);
     k
 }
 
@@ -588,11 +589,11 @@ pub fn derive_hmac_key(seed: &[u8; 32], cred_id: &[u8]) -> [u8; 64] {
 /// device seed (same shape as the chacha key).
 pub fn derive_large_blob_key(seed: &[u8; 32], cred_id: &[u8]) -> [u8; 32] {
     let proto = &cred_id[..PROTO_LEN.min(cred_id.len())];
-    let mut k = hmac_sha256(seed, b"SLIP-0022");
-    k = hmac_sha256(&k, proto);
-    k = hmac_sha256(&k, b"largeBlobKey");
-    k = hmac_sha256(&k, cred_id);
-    k
+    let mut k = Secret::new(hmac_sha256(seed, b"SLIP-0022"));
+    *k.expose_mut() = hmac_sha256(k.expose(), proto);
+    *k.expose_mut() = hmac_sha256(k.expose(), b"largeBlobKey");
+    *k.expose_mut() = hmac_sha256(k.expose(), cred_id);
+    *k.expose()
 }
 
 /// The key-derivation input for a credential's signing key ([`crate::keyderiv::fido_load_key`]),
@@ -976,14 +977,19 @@ pub(crate) fn seal_rp_id(
         return Err(Error::NoMemory);
     }
     let mut key = derive_chacha_key(seed, RP_PROTO);
-    let iv_full = hmac_sha256(&key, rp_id_hash);
+    let iv_full = hmac_sha256(key.expose(), rp_id_hash);
     let mut iv = [0u8; IV_LEN];
     iv.copy_from_slice(&iv_full[..IV_LEN]);
     out[..IV_LEN].copy_from_slice(&iv);
     out[IV_LEN..IV_LEN + id.len()].copy_from_slice(id);
-    let tag = chacha20poly1305_encrypt(&key, &iv, rp_id_hash, &mut out[IV_LEN..IV_LEN + id.len()]);
+    let tag = chacha20poly1305_encrypt(
+        key.expose(),
+        &iv,
+        rp_id_hash,
+        &mut out[IV_LEN..IV_LEN + id.len()],
+    );
     out[IV_LEN + id.len()..total].copy_from_slice(&tag);
-    key.zeroize();
+    key.wipe();
     Ok(total)
 }
 
@@ -1009,8 +1015,9 @@ pub(crate) fn unseal_rp_id<'a>(
         tag.copy_from_slice(&tail[n - TAG_LEN..]);
         out[..ct_len].copy_from_slice(&tail[IV_LEN..IV_LEN + ct_len]);
         let mut key = derive_chacha_key(seed, RP_PROTO);
-        let ok = chacha20poly1305_decrypt(&key, &iv, rp_id_hash, &mut out[..ct_len], &tag).is_ok();
-        key.zeroize();
+        let ok = chacha20poly1305_decrypt(key.expose(), &iv, rp_id_hash, &mut out[..ct_len], &tag)
+            .is_ok();
+        key.wipe();
         if ok {
             return core::str::from_utf8(&out[..ct_len]).ok().map(|s| (s, true));
         }
@@ -1056,14 +1063,19 @@ pub(crate) fn seal_nick(
     let mut iv_src = [0u8; 32 + RP_NICK_MAX_LEN];
     iv_src[..32].copy_from_slice(rp_id_hash);
     iv_src[32..32 + id.len()].copy_from_slice(id);
-    let iv_full = hmac_sha256(&key, &iv_src[..32 + id.len()]);
+    let iv_full = hmac_sha256(key.expose(), &iv_src[..32 + id.len()]);
     let mut iv = [0u8; IV_LEN];
     iv.copy_from_slice(&iv_full[..IV_LEN]);
     out[..IV_LEN].copy_from_slice(&iv);
     out[IV_LEN..IV_LEN + id.len()].copy_from_slice(id);
-    let tag = chacha20poly1305_encrypt(&key, &iv, rp_id_hash, &mut out[IV_LEN..IV_LEN + id.len()]);
+    let tag = chacha20poly1305_encrypt(
+        key.expose(),
+        &iv,
+        rp_id_hash,
+        &mut out[IV_LEN..IV_LEN + id.len()],
+    );
     out[IV_LEN + id.len()..total].copy_from_slice(&tag);
-    key.zeroize();
+    key.wipe();
     Ok(total)
 }
 
@@ -1090,8 +1102,9 @@ pub(crate) fn unseal_nick<'a>(
     tag.copy_from_slice(&tail[n - TAG_LEN..]);
     out[..ct_len].copy_from_slice(&tail[IV_LEN..IV_LEN + ct_len]);
     let mut key = derive_chacha_key(seed, NICK_PROTO);
-    let ok = chacha20poly1305_decrypt(&key, &iv, rp_id_hash, &mut out[..ct_len], &tag).is_ok();
-    key.zeroize();
+    let ok =
+        chacha20poly1305_decrypt(key.expose(), &iv, rp_id_hash, &mut out[..ct_len], &tag).is_ok();
+    key.wipe();
     if ok {
         core::str::from_utf8(&out[..ct_len]).ok()
     } else {
@@ -1141,7 +1154,7 @@ pub fn migrate_rp_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>) {
         let mut rp_id_hash = [0u8; 32];
         rp_id_hash.copy_from_slice(&buf[1..RP_PREFIX]);
         let Some((domain, was_boxed)) =
-            unseal_rp_id(&seed, &rp_id_hash, &buf[RP_PREFIX..n], &mut plain)
+            unseal_rp_id(seed.expose(), &rp_id_hash, &buf[RP_PREFIX..n], &mut plain)
         else {
             continue;
         };
@@ -1153,13 +1166,13 @@ pub fn migrate_rp_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>) {
         // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: the copy
         // it supersedes is the cleartext domain, and this pass is skipped whole
         // whenever the seed is PIN-wrapped or locked — boots that latched already.
-        if let Ok(blen) = seal_rp_id(&seed, domain, &rp_id_hash, &mut out[RP_PREFIX..])
+        if let Ok(blen) = seal_rp_id(seed.expose(), domain, &rp_id_hash, &mut out[RP_PREFIX..])
             && (dev.otp_key.is_none() || rsk_fs::request_rescrub(fs).is_ok())
         {
             let _ = fs.put(fid, &out[..RP_PREFIX + blen]);
         }
     }
-    seed.zeroize();
+    seed.wipe();
 }
 
 #[cfg(test)]

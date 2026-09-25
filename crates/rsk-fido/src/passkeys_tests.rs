@@ -33,7 +33,7 @@ fn provisioned() -> (Fs<RamStorage>, [u8; 32]) {
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let seed = load_keydev(&dev(), &mut fs).unwrap();
-    (fs, seed)
+    (fs, *seed.expose())
 }
 
 // Register a resident credential the way makeCredential's storage primitive does

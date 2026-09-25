@@ -337,7 +337,7 @@ pub struct FidoState {
     pub mse_pub: [u8; 65],
     /// Soft-lock: the seed decrypted by a vendor `UNLOCK`. RAM-only — held until
     /// power-off, a reset, or an `AUT_DISABLE`; zeroized on `Drop` and on overwrite.
-    pub keydev_dec: Option<[u8; 32]>,
+    pub keydev_dec: Option<rsk_secret::Secret<[u8; 32]>>,
     /// How to fetch the OTP DEVK (the reset-stable attestation root), rather than
     /// the key itself: it is wanted by one opt-in command, and holding it would
     /// park an unrotatable signing key in RAM for the whole power cycle. `None` on
@@ -422,15 +422,16 @@ impl FidoState {
     pub fn clear_mse(&mut self) {
         self.mse_active = false;
         self.mse_cid = 0;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the channel key is session state; clear_mse and drop are its wipe points"
+        )]
         self.mse_key.zeroize();
         self.mse_pub = [0; 65];
     }
 
     /// Drop the unlocked seed copy (disable / reset), zeroizing it first.
     pub fn clear_keydev_dec(&mut self) {
-        if let Some(k) = self.keydev_dec.as_mut() {
-            k.zeroize();
-        }
         self.keydev_dec = None;
     }
 
@@ -697,15 +698,16 @@ impl Drop for FidoState {
             // under the platform's key, and the enumerate positions are slot numbers.
             gna: _,
             cm: _,
-            // Large-blob fragments — CTAP 2.1 §11.5 makes the array the platform's
-            // ciphertext, keyed by a largeBlobKey this device never holds in RAM.
+            // Large-blob fragments: the platform's ciphertext (CTAP 2.1 §11.5), or under
+            // largeblob-ext a read's plaintext, which the reset that drops this overwrites.
             lba: _,
             mse_active: _,
             mse_cid: _,
             mse_key,
             // The device ephemeral public key, sent to the host as the AEAD AAD.
             mse_pub: _,
-            keydev_dec,
+            // A Secret: it wipes itself when the state drops.
+            keydev_dec: _,
             // How to fetch the DEVK, not the DEVK.
             devk_source: _,
             audit_boot_logged: _,
@@ -715,11 +717,14 @@ impl Drop for FidoState {
             led_written: _,
             phy_written: _,
         } = self;
-        ephemeral.zeroize();
-        paut.token.zeroize();
-        mse_key.zeroize();
-        if let Some(k) = keydev_dec.as_mut() {
-            k.zeroize();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the key-agreement key, the token and the channel key are session state; drop is their wipe point"
+        )]
+        {
+            ephemeral.zeroize();
+            paut.token.zeroize();
+            mse_key.zeroize();
         }
     }
 }

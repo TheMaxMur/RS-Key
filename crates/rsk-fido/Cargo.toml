@@ -26,6 +26,9 @@ rsk-led = { workspace = true }
 rsk-devconf = { workspace = true }
 rsk-phy = { workspace = true }
 rsk-sdk = { workspace = true }
+# The seed, every key derived from it and the PIN-protocol secrets held in a
+# type that wipes itself; `zeroize` stays for the session state wiped in place.
+rsk-secret = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]

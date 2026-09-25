@@ -1344,12 +1344,15 @@ fn seed_stays_loadable_after_pin_ops_and_legacy_wrap_migrates() {
     .unwrap();
     // Setting a PIN leaves the seed loadable with no session, so a
     // power-cycled UP-only assertion keeps working.
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(seed0));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&seed0))
+    );
 
     // A legacy PIN-wrapped blob is unreadable (the UP-only failure window)…
     let pin_hash = sha256(PIN);
-    crate::seed::wrap_keydev_legacy(&dev(), &mut fs, &seed0, &pin_hash[..16]);
-    assert_eq!(load_keydev(&dev(), &mut fs), None);
+    crate::seed::wrap_keydev_legacy(&dev(), &mut fs, seed0.expose(), &pin_hash[..16]);
+    assert!((load_keydev(&dev(), &mut fs)).is_none());
 
     // …until the first successful PIN op of any boot migrates it back.
     let mut state2 = FidoState::new();
@@ -1363,7 +1366,10 @@ fn seed_stays_loadable_after_pin_ops_and_legacy_wrap_migrates() {
     )
     .unwrap();
     let _ = plat2.decrypt_token(&out[..n]);
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(seed0));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&seed0))
+    );
 }
 
 #[test]
@@ -1426,7 +1432,7 @@ fn wrong_pin_decrements_then_locks_out() {
 fn the_legacy_get_pin_token_refuses_an_rp_id() {
     // CTAP 2.1 §6.5.5.7: subCommand 5 takes neither permissions nor an rpId —
     // it grants the fixed mc|ga set and no rp binding. The refusal was held by
-    // nothing: `clientpin.rs:395` hands `req.rp_id` to `issue_token` whatever the
+    // nothing: `clientpin.rs:403` hands `req.rp_id` to `issue_token` whatever the
     // subcommand, so relaxing the guard mints a legacy token BOUND to an rp the
     // caller named. Found by the reverse mutation pass (D2).
     let (mut fs, mut rng) = setup();
@@ -1649,7 +1655,7 @@ fn pin_verifier_and_pinwrapped_seed_migrate_at_verify() {
         store_new_pin(&mut ctx, &padded).unwrap();
     }
     let pin_hash = sha256(PIN);
-    crate::seed::wrap_keydev_legacy(&dev(), &mut fs, &seed0, &pin_hash[..16]);
+    crate::seed::wrap_keydev_legacy(&dev(), &mut fs, seed0.expose(), &pin_hash[..16]);
     let mut raw = [0u8; 61];
     assert_eq!(fs.read(EF_KEY_DEV.get(), &mut raw), Some(61));
     assert_eq!(raw[0], 0x03);
@@ -1692,7 +1698,10 @@ fn pin_verifier_and_pinwrapped_seed_migrate_at_verify() {
     assert_eq!(pin_rec[0], MAX_PIN_RETRIES);
     assert_eq!(ctx.fs.read(EF_KEY_DEV.get(), &mut raw), Some(61));
     assert_eq!(raw[0], 0x12);
-    assert_eq!(load_keydev(&otp_dev(), ctx.fs), Some(seed0));
+    assert_eq!(
+        crate::bare(load_keydev(&otp_dev(), ctx.fs)),
+        Some(crate::bare(&seed0))
+    );
     // What this witnesses is the `request_rescrub` CALL, not a leak: `RamStorage`
     // is a map that overwrites in place, so no superseded copy survives any write
     // here for a test to read. The medium that keeps one is the flash ring.
@@ -1753,7 +1762,7 @@ fn a_seed_migration_with_an_already_migrated_verifier_re_arms_the_lap() {
     }
     // The seed is the straggler: a pre-OTP PIN-wrapped 0x03 under the same PIN.
     let pin_hash = sha256(PIN);
-    crate::seed::wrap_keydev_legacy(&dev(), &mut fs, &seed0, &pin_hash[..16]);
+    crate::seed::wrap_keydev_legacy(&dev(), &mut fs, seed0.expose(), &pin_hash[..16]);
     let mut raw = [0u8; 61];
     assert_eq!(fs.read(EF_KEY_DEV.get(), &mut raw), Some(61));
     assert_eq!(raw[0], 0x03, "fixture: the seed is pre-OTP PIN-wrapped");
@@ -1780,7 +1789,10 @@ fn a_seed_migration_with_an_already_migrated_verifier_re_arms_the_lap() {
         raw[0], 0x12,
         "fixture: the verify really did re-key the seed off the pre-OTP arm"
     );
-    assert_eq!(load_keydev(&otp_dev(), ctx.fs), Some(seed0));
+    assert_eq!(
+        crate::bare(load_keydev(&otp_dev(), ctx.fs)),
+        Some(crate::bare(&seed0))
+    );
     assert!(
         !ctx.fs.has_data(rsk_fs::EF_HARDENED),
         "the seed was re-keyed off the chip-serial arm with `migrated` false, so \
@@ -1828,7 +1840,7 @@ fn a_faulted_seed_probe_leaves_the_verifier_migrated_and_the_seed_behind() {
         store_new_pin(&mut ctx, &padded).unwrap();
     }
     let pin_hash = sha256(PIN);
-    crate::seed::wrap_keydev_legacy(&dev(), &mut fs, &seed0, &pin_hash[..16]);
+    crate::seed::wrap_keydev_legacy(&dev(), &mut fs, seed0.expose(), &pin_hash[..16]);
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
 
     // Verify #1 on the OTP build: `migrated` is true, so the verifier is re-keyed and
@@ -2311,8 +2323,8 @@ fn local_pin_change_revokes_the_persistent_token() {
         "a grant minted under the old PIN must not survive the on-pad change"
     );
     assert_ne!(
-        crate::seed::ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap(),
-        before
+        crate::bare(crate::seed::ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap()),
+        crate::bare(&before)
     );
 }
 
@@ -2327,8 +2339,8 @@ fn every_ef_pin_verifier_write_revokes_the_persistent_token() {
 
     write_pin_verifier(EF_DEVICE_PIN, &dev(), &mut fs, NEW_PIN, 4).unwrap();
     assert_eq!(
-        crate::seed::load_ppuat(&dev(), &mut fs),
-        Some(token),
+        crate::bare(crate::seed::load_ppuat(&dev(), &mut fs)),
+        Some(crate::bare(&token)),
         "the device PIN grants nothing, so it revokes nothing"
     );
 

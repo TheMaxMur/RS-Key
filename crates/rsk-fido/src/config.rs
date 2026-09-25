@@ -10,7 +10,6 @@
 
 use minicbor::Decoder;
 use rsk_fs::{Fs, Sealed, Storage};
-use zeroize::Zeroize;
 
 use rsk_crypto::sha256;
 
@@ -375,18 +374,18 @@ fn aut_enable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, param: &[u8]) -> CtapResu
     }
     let mut lock_key = open_channel_key(ctx, param)?;
     if !ctx.check_user_presence(crate::Confirm::titled("Lock device?")) {
-        lock_key.zeroize();
+        lock_key.wipe();
         return Err(CtapError::OperationDenied);
     }
     let seed = load_keydev(&ctx.dev, ctx.fs);
     let r = seed.map(|mut seed| {
-        let blob = seal_seed_locked(ctx.rng, &lock_key, &seed);
-        seed.zeroize();
+        let blob = seal_seed_locked(ctx.rng, lock_key.expose(), seed.expose());
+        seed.wipe();
         ctx.fs
             .put_key(EF_KEY_DEV_ENC, Sealed::wrap(&blob))
             .and_then(|()| ctx.fs.delete_key(EF_KEY_DEV))
     });
-    lock_key.zeroize();
+    lock_key.wipe();
     match r {
         Some(Ok(())) => {
             journal::append(ctx, journal::EV_LOCK_ENGAGE, 0, &[]);
@@ -418,9 +417,10 @@ fn aut_disable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     // `require_presence`, so a platform `CTAPHID_CANCEL` reports itself as one
     // instead of being flattened into "the user declined".
     ctx.require_presence(crate::Confirm::titled("Remove device lock?"))?;
-    let mut seed = ctx.state.keydev_dec.unwrap();
-    let r = encrypt_keydev_f1(&ctx.dev, ctx.fs, &seed);
-    seed.zeroize();
+    let r = match ctx.state.keydev_dec.as_ref() {
+        Some(seed) => encrypt_keydev_f1(&ctx.dev, ctx.fs, seed.expose()),
+        None => return Err(CtapError::PinAuthInvalid),
+    };
     r.map_err(|_| CtapError::Other)?;
     ctx.fs
         .delete_key(EF_KEY_DEV_ENC)

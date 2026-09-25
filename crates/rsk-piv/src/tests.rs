@@ -438,7 +438,7 @@ fn a_wrong_pin_is_refused_on_the_kbase_fallback_path() {
     // wrong PIN accepted AND stored as the new one. Killed by no test, because
     // the fallback is only reachable on an OTP-provisioned device and every PIV
     // test that offers a wrong PIN runs without one (found by the reverse
-    // mutation pass, D2). Its FIDO twin at `clientpin.rs:764` is not the same
+    // mutation pass, D2). Its FIDO twin at `clientpin.rs:779` is not the same
     // shape: there the `ct_eq` sits inside the block, so a widened guard still
     // cannot write.
     const OTP: [u8; 32] = [0x44; 32];
