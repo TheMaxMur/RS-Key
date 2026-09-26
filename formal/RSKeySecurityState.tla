@@ -71,7 +71,7 @@ CONSTANTS
     BugSoftLockLostOnWarmReset,   \* crates/rsk-device/src/lib.rs:128-137 PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:262-263  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-180  may_walk_rps
-    BugDeleteRpBeforeCred,        \* credmgmt.rs:676-684 deleteCredential order
+    BugDeleteRpBeforeCred,        \* credmgmt.rs:691-699 deleteCredential order
     BugBackupSealedNotAGate,      \* reset.rs:218-255 is_fido_gate_fid (run-36)
     BugConsumeKeepsMcGa,          \* state.rs:664-669  a narrowed 6.5.5.7 triad
     BugNoDropStaleCancelAtEntry,  \* crates/rsk-device/src/presence.rs:195-196
@@ -117,7 +117,7 @@ CONSTANT BugFairnessFoldsLocalCeremony
 CONSTANT FixSweepDropsCredsBeforeRpEntries
 
 (* A second PROPOSED fix. `authorize_cm` consults the persistent grant FIRST   *)
-(* and returns Ok with no PIN check (credmgmt.rs:239-241), so a leftover       *)
+(* and returns Ok with no PIN check (credmgmt.rs:252-254), so a leftover       *)
 (* EF_PAUTHTOKEN on a PIN-less key still authorizes the three read            *)
 (* subcommands. clientpin.rs:217-221 already names that torn state but closes  *)
 (* only the exit where the user sets a PIN again. TRUE models refusing a       *)
@@ -523,7 +523,7 @@ OtpCancelWait ==
 \* (getassertion.rs:429-432) test the MAC, `user_verified()` -- which is
 \* `in_use && user_verified` (state.rs:764-766) -- the permission bit and the
 \* rpId binding. authenticatorConfig (config.rs:242-244) and
-\* credentialManagement (credmgmt.rs:277) test the MAC and the permission bit
+\* credentialManagement (credmgmt.rs:290) test the MAC and the permission bit
 \* ONLY: neither consults `in_use`.
 \*
 \* So for those two the sole thing separating a stopped or expired token from a
@@ -537,7 +537,7 @@ TokenGuardUv(p, rp) ==
     /\ p \in tok.perms
     /\ (tok.rp = NoRp \/ tok.rp = rp)      \* getassertion.rs:432 rpId binding
 
-\* config.rs:242-244 / credmgmt.rs:277 -- no `in_use` conjunct exists here.
+\* config.rs:242-244 / credmgmt.rs:290 -- no `in_use` conjunct exists here.
 TokenGuardBare(p, rp) ==
     /\ plat.held /\ plat.verifies
     /\ p \in tok.perms
@@ -727,7 +727,7 @@ WrongPin ==
 
 \* getPinUvAuthTokenUsingPinWithPermissions with `pcmr`: hands the platform the
 \* PERSISTENT token, minting the record first if none exists (clientpin.rs:422-427,
-\* `ensure_ppuat`). Holding it IS the grant (credmgmt.rs:248-265).
+\* `ensure_ppuat`). Holding it IS the grant (credmgmt.rs:261-278).
 MintPpuat ==
     /\ PinAttempt(TRUE, TokenIssuancePolicy)
     /\ TokenIssuanceGuard
@@ -1168,10 +1168,10 @@ DeviceUnlock ==
 
 (***************************************************************************)
 (* credentialManagement -- the enumerate walk, its channel, and the        *)
-(* persistent grant. credmgmt.rs:239-296, 327-339; state.rs:169-180.       *)
+(* persistent grant. credmgmt.rs:252-309, 342-354; state.rs:169-180.       *)
 (***************************************************************************)
 
-\* credmgmt.rs:248-265: a holder of the persistent token IS the pcmr grant.
+\* credmgmt.rs:261-278: a holder of the persistent token IS the pcmr grant.
 \* It carries no rpId binding and no usage timer, so it authorizes alone --
 \* which is exactly why every path that invalidates it must delete the record.
 PpuatGuard  == IF FixPpuatRequiresPin THEN gate.ppuat /\ pin.set ELSE gate.ppuat
@@ -1218,7 +1218,7 @@ CmNext(ch) ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, op,
                     snap, upSpent, ram >>
 
-\* 0x06 deleteCredential (credmgmt.rs:669-725). It calls verify_cm_token
+\* 0x06 deleteCredential (credmgmt.rs:684-741). It calls verify_cm_token
 \* DIRECTLY rather than going through authorize_cm, so the persistent grant
 \* authorizes no writes -- which is why CmBeginViaPpuat has no delete twin.
 DeleteCredStart(r) ==
@@ -1231,8 +1231,8 @@ DeleteCredStart(r) ==
                     upSpent, ram >>
 
 \* Two flash writes, so a cut has a position: `delete_credential` drops the
-\* EF_CRED record first (credmgmt.rs:676-678) and `decrement_rp` deletes the
-\* EF_RP entry only once its count reaches zero (:708-710). That order leaves a
+\* EF_CRED record first (credmgmt.rs:691-693) and `decrement_rp` deletes the
+\* EF_RP entry only once its count reaches zero (:723-725). That order leaves a
 \* torn delete showing an RP entry with no credential -- invisible but harmless.
 \* Reversed, it strands exactly the credential finding 1 strands.
 DeleteCredWriteA ==

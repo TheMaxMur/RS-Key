@@ -45,7 +45,7 @@ requirement = [
   "docs/threat-model.md:27-29 `TM-HOST-GATES` — the registered root, and it is three lines naming WHICH gates exist: PINs/UV with retry counters and lockout, touch on FIDO operations and OpenPGP UIF, OATH access codes, PIV management-key auth",
   "docs/threat-model.md:40-47 `TM-HOST-POWER-CUT` — the clause that actually states this property's rule: `no gate comes up softer on the next boot than it went down`, with a torn authenticatorReset dropping the PIN or alwaysUv record while leaving a credential usable as its worked example. It is NOT the registered root, and it names EF_PIN, EF_ALWAYS_UV and a credential — never the persistent grant",
   "CTAP 2.2 §6.5.5.7.2 step 12 / .3 step 11 — the producer's requirement, cited by the tree at crates/rsk-fido/src/clientpin.rs:421-424 and crates/rsk-fido/src/seed.rs:329-330 and by the model at formal/RSKeySecurityState.tla:723-725, and named in the property registry by nothing",
-  "CTAP 2.2 §6.8.2 step 4 — the consumer's, cited at crates/rsk-fido/src/credmgmt.rs:248 and formal/RSKeySecurityState.tla:1166",
+  "CTAP 2.2 §6.8.2 step 4 — the consumer's, cited at crates/rsk-fido/src/credmgmt.rs:261 and formal/RSKeySecurityState.tla:1166",
 ]
 threat_clause = "docs/threat-model.md#TM-HOST-GATES"
 # IT LINKS, IT DOES NOT COVER, and the direction of the gap is measurable.
@@ -67,12 +67,12 @@ clause_structural = "RSKeySecurityState.tla:1788 — `Idle => (gate.ppuat => pin
 # The files carrying the `Refines … — SEC-FIDO-004` tag the registry greps for.
 # Both landed in one commit, 324636e0, on 2026-08-15.
 owners_tagged = [
-  "crates/rsk-fido/src/credmgmt.rs:252 authorized_by_ppuat",
+  "crates/rsk-fido/src/credmgmt.rs:265 authorized_by_ppuat",
   "crates/rsk-fido/src/reset.rs:230 is_fido_gate_fid",
 ]
 # AND ONE OF THE TWO IS ON THE CONSEQUENT. `authorized_by_ppuat` writes nothing:
 # its whole structural act is `if !ctx.fs.has_data(EF_PIN) { return false }`
-# (credmgmt.rs:262-264), a TEST OF `pin.set` — the consequent of clause 3 — after
+# (credmgmt.rs:275-277), a TEST OF `pin.set` — the consequent of clause 3 — after
 # which it refuses. It can make neither side of `gate.ppuat => pin.set` true or
 # false. In the model it is `FixPpuatRequiresPin`, and RSKeySecurityState.tla
 # :1780-1787 says in as many words that the structural clause is `a strictly
@@ -80,7 +80,7 @@ owners_tagged = [
 # and leaves it stranded`. The tag names the clause the function is explicitly
 # NOT the owner of. What it does own is clause 1, the ghost, whose only writer
 # CmBeginViaPpuat is guarded by exactly this function's model twin.
-owners_tag_reading = "the second tag survives the same reading and the first does not. reset.rs:230 `is_fido_gate_fid` owns the DESTRUCTION order — EF_PAUTHTOKEN's absence from the phase-2 set is what stops the grant outliving EF_PIN across a cut — and both of this property's co-refutation patches are against that file, so it is a real owner of clause 3's second falsification route. credmgmt.rs:252 is a consequent test tagged onto a clause the module says it cannot carry, and it is the legitimate owner of a DIFFERENT clause of the same invariant. Neither is the producer"
+owners_tag_reading = "the second tag survives the same reading and the first does not. reset.rs:230 `is_fido_gate_fid` owns the DESTRUCTION order — EF_PAUTHTOKEN's absence from the phase-2 set is what stops the grant outliving EF_PIN across a cut — and both of this property's co-refutation patches are against that file, so it is a real owner of clause 3's second falsification route. credmgmt.rs:265 is a consequent test tagged onto a clause the module says it cannot carry, and it is the legitimate owner of a DIFFERENT clause of the same invariant. Neither is the producer"
 # THE PRODUCER IS UNTAGGED, and it is the sole way to make the antecedent true.
 owners_untagged_producer = "crates/rsk-fido/src/seed.rs:342 — `put_sealed32(dev, fs, EF_PAUTHTOKEN, tok.expose())` inside `ensure_ppuat` (seed.rs:332-347). `git grep -n EF_PAUTHTOKEN` over crates/ firmware/ tools/ returns one put_sealed32 and it is this one; the only other writer-shaped site is `clear_ppuat`'s force_delete at seed.rs:361, which removes the record. 0x09D9 adds a third: `crates/rsk-fido/src/seed.rs:538` hands EF_PAUTHTOKEN to `migrate_slot`, which re-seals the record under the current kbase arm without minting one"
 owners_producer_reading = "the model names it and the code does not. MintPpuat (RSKeySecurityState.tla:726-731) is the ONLY action assigning `gate.ppuat = TRUE`, and its own comment cites `clientpin.rs:422-427, seed.rs:325-336` — so the module points at the two Rust sites, and neither carries a Refines tag of any kind. The sharpest form of it is six lines long: `clear_ppuat`, the function immediately below `ensure_ppuat` in the same file, DOES carry a tag (seed.rs:359, `Refines RSKeySecurityState!NoTokenAfterInvalidation — SEC-FIDO-003`). The producer is untagged next to a tagged destroyer. `git log -S` over seed.rs shows this property's tag was never there"
@@ -226,7 +226,7 @@ bound_files_in_argument = 5
 stops_files_in_argument = "anything in a sixth file. Five files carry the argument, two of them only through cfg-gated projections that reach no image"
 bound_crates = 2
 stops_crates = "a site in a third crate. The argument spans two, so a consumer of this record outside them is not covered"
-shipped_relation = "one producer (seed.rs:342, the sole put_sealed32 that MINTS the record; 0x09D9's boot re-seal at seed.rs:538 writes it again and mints nothing); three consumers (seed.rs:325 load_ppuat, credmgmt.rs:265 through it, and clientpin.rs:426 which is also the producer's call site); two sweep sites (reset.rs:279 is_fido_fid, which puts the record in the SECRETS phase, and reset.rs:251 is_fido_gate_record, which keeps it out of the GATES phase). Five files — seed.rs, credmgmt.rs, clientpin.rs, reset.rs and crates/rsk-device/src/ctap.rs:209,244, the two cfg-gated projections — across rsk-fido and rsk-device. This bound is a count of sites and not a shrink of a shipped constant, because a review has no other unit; the honest reading of that is in the counterpart bundle and it applies here too"
+shipped_relation = "one producer (seed.rs:342, the sole put_sealed32 that MINTS the record; 0x09D9's boot re-seal at seed.rs:538 writes it again and mints nothing); three consumers (seed.rs:325 load_ppuat, credmgmt.rs:278 through it, and clientpin.rs:426 which is also the producer's call site); two sweep sites (reset.rs:279 is_fido_fid, which puts the record in the SECRETS phase, and reset.rs:251 is_fido_gate_record, which keeps it out of the GATES phase). Five files — seed.rs, credmgmt.rs, clientpin.rs, reset.rs and crates/rsk-device/src/ctap.rs:209,244, the two cfg-gated projections — across rsk-fido and rsk-device. This bound is a count of sites and not a shrink of a shipped constant, because a review has no other unit; the honest reading of that is in the counterpart bundle and it applies here too"
 cfg = "the two projection sites at rsk-device/src/ctap.rs are cfg-gated and reach no image; every other site above is unconditional production code"
 features = "none"
 

@@ -504,23 +504,23 @@ unseal_rp_id	crates/rsk-fido/src/credential.rs:1035	36	decides	D2	hands out the 
 seal_nick	crates/rsk-fido/src/credential.rs:1071	42	decides	D2	seals the nickname, the IV is synthesized from the plaintext — this is the rule against nonce reuse	SEC-FIDO-004
 unseal_nick	crates/rsk-fido/src/credential.rs:1120	31	decides	D2	opens only under its own rpIdHash — the AEAD itself is the protection against slot reuse	SEC-FIDO-004
 migrate_rp_seal	crates/rsk-fido/src/credential.rs:1143	62	decides	D3	the boot pass rewrites the EF_RP records and makes the write conditional on request_rescrub	SEC-FIDO-004
-parse	crates/rsk-fido/src/credmgmt.rs:58	35	decides	M	parsing of the CBOR map and the key order; permission lives in the cred_mgmt branches, not in the routing table	-
-parse_subpara	crates/rsk-fido/src/credmgmt.rs:94	44	decides	D5	captures raw_subpara — exactly the byte range that the pinUvAuthParam MAC covers	SEC-FIDO-001
-cred_mgmt	crates/rsk-fido/src/credmgmt.rs:139	88	decides	D1	the Next route returns BEFORE the pinUvAuthParam requirement (credmgmt.rs:150); its authorization is the cursor's channel	SEC-FIDO-001
-authorize_cm	crates/rsk-fido/src/credmgmt.rs:228	19	decides	D1	door order: the persistent grant first, then the session token + rpId binding + a refresh of the usage window	SEC-FIDO-001
-authorized_by_ppuat	crates/rsk-fido/src/credmgmt.rs:248	24	decides	D1	no EF_PIN — no grant; checks the MAC of the persistent token, which authorizes on its own	SEC-FIDO-004,SEC-FIDO-001
-verify_cm_token	crates/rsk-fido/src/credmgmt.rs:273	15	decides	D1	the session token MAC AND the PERM_CM bit, otherwise PinAuthInvalid	SEC-FIDO-001
-check_rp_binding	crates/rsk-fido/src/credmgmt.rs:289	14	decides	D1	an rpId-scoped token is admitted only to its own rp; None is a refusal too	SEC-FIDO-001
-payload_with_subpara	crates/rsk-fido/src/credmgmt.rs:304	13	decides	D5	assembles exactly the subcommand‖subpara statement that the MAC checks	SEC-FIDO-001
-creds_metadata	crates/rsk-fido/src/credmgmt.rs:318	13	marshals	M	counts occupied slots and encodes two numbers	-
-enumerate_rps	crates/rsk-fido/src/credmgmt.rs:332	84	decides	D4	sets the walk's owner channel and last_leg_ms, and itself refuses Next via may_walk_rps	SEC-FIDO-001,SEC-FIDO-004
-enumerate_creds	crates/rsk-fido/src/credmgmt.rs:422	96	decides	D4	the same for the credential walk, plus cm.rp_id_hash — the cursor that the demux reads back on Next	SEC-FIDO-001
-enumerate_creds_response	crates/rsk-fido/src/credmgmt.rs:526	121	decides	D2	returns the derived largeBlobKey (field 0x0B) and the default credProtect level to the host	SEC-FIDO-004
-find_resident	crates/rsk-fido/src/credmgmt.rs:648	26	decides	D5	returns the OWNER's rpIdHash, against which check_rp_binding matches the token's scope	SEC-FIDO-001
-delete_credential	crates/rsk-fido/src/credmgmt.rs:675	18	decides	D3	deletes EF_CRED, resets the largeblob and decrements EF_RP	SEC-FIDO-005
-decrement_rp	crates/rsk-fido/src/credmgmt.rs:694	38	decides	D3	at zero deletes EF_RP and the paired EF_RPNICK — this is the boundary of credential manageability	SEC-FIDO-005
-update_user	crates/rsk-fido/src/credmgmt.rs:733	31	decides	D2	materializes the keydev seed in RAM, and its None means a NotAllowed refusal when the seed is unavailable	SEC-FIDO-004
-reseal_user	crates/rsk-fido/src/credmgmt.rs:765	82	decides	D3	rewrites the EF_CRED slot, keeping the resident id, and requires a full userId match (§6.8.3)	SEC-FIDO-005,SEC-FIDO-001
+parse	crates/rsk-fido/src/credmgmt.rs:67	35	decides	M	parsing of the CBOR map and the key order; permission lives in the cred_mgmt branches, not in the routing table	-
+parse_subpara	crates/rsk-fido/src/credmgmt.rs:103	44	decides	D5	captures raw_subpara — exactly the byte range that the pinUvAuthParam MAC covers	SEC-FIDO-001
+cred_mgmt	crates/rsk-fido/src/credmgmt.rs:150	88	decides	D1	the Next route returns BEFORE the pinUvAuthParam requirement (credmgmt.rs:161); its authorization is the cursor's channel	SEC-FIDO-001
+authorize_cm	crates/rsk-fido/src/credmgmt.rs:241	19	decides	D1	door order: the persistent grant first, then the session token + rpId binding + a refresh of the usage window	SEC-FIDO-001
+authorized_by_ppuat	crates/rsk-fido/src/credmgmt.rs:261	24	decides	D1	no EF_PIN — no grant; checks the MAC of the persistent token, which authorizes on its own	SEC-FIDO-004,SEC-FIDO-001
+verify_cm_token	crates/rsk-fido/src/credmgmt.rs:286	15	decides	D1	the session token MAC AND the PERM_CM bit, otherwise PinAuthInvalid	SEC-FIDO-001
+check_rp_binding	crates/rsk-fido/src/credmgmt.rs:302	14	decides	D1	an rpId-scoped token is admitted only to its own rp; None is a refusal too	SEC-FIDO-001
+payload_with_subpara	crates/rsk-fido/src/credmgmt.rs:317	13	decides	D5	assembles exactly the subcommand‖subpara statement that the MAC checks	SEC-FIDO-001
+creds_metadata	crates/rsk-fido/src/credmgmt.rs:332	13	marshals	M	counts occupied slots and encodes two numbers	-
+enumerate_rps	crates/rsk-fido/src/credmgmt.rs:347	84	decides	D4	sets the walk's owner channel and last_leg_ms, and itself refuses Next via may_walk_rps	SEC-FIDO-001,SEC-FIDO-004
+enumerate_creds	crates/rsk-fido/src/credmgmt.rs:436	96	decides	D4	the same for the credential walk, plus cm.rp_id_hash — the cursor that the demux reads back on Next	SEC-FIDO-001
+enumerate_creds_response	crates/rsk-fido/src/credmgmt.rs:541	121	decides	D2	returns the derived largeBlobKey (field 0x0B) and the default credProtect level to the host	SEC-FIDO-004
+find_resident	crates/rsk-fido/src/credmgmt.rs:663	26	decides	D5	returns the OWNER's rpIdHash, against which check_rp_binding matches the token's scope	SEC-FIDO-001
+delete_credential	crates/rsk-fido/src/credmgmt.rs:690	18	decides	D3	deletes EF_CRED, resets the largeblob and decrements EF_RP	SEC-FIDO-005
+decrement_rp	crates/rsk-fido/src/credmgmt.rs:709	38	decides	D3	at zero deletes EF_RP and the paired EF_RPNICK — this is the boundary of credential manageability	SEC-FIDO-005
+update_user	crates/rsk-fido/src/credmgmt.rs:749	31	decides	D2	materializes the keydev seed in RAM, and its None means a NotAllowed refusal when the seed is unavailable	SEC-FIDO-004
+reseal_user	crates/rsk-fido/src/credmgmt.rs:782	82	decides	D3	rewrites the EF_CRED slot, keeping the resident id, and requires a full userId match (§6.8.3)	SEC-FIDO-005,SEC-FIDO-001
 for_each_rp	crates/rsk-fido/src/passkeys.rs:83	70	decides	D2	loads the seed and hands the plaintext rpId domains and nicknames to the panel — the walk has no gate of its own	SEC-FIDO-004,SEC-FIDO-005
 set_rp_nickname	crates/rsk-fido/src/passkeys.rs:158	50	decides	D3	deletes or writes the EF_RPNICK record in the slot paired with EF_RP	-
 for_each_cred	crates/rsk-fido/src/passkeys.rs:209	45	decides	D2	decrypts account names and credProtect for the screen, the seed lives inside the call	SEC-FIDO-004

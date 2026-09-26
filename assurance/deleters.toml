@@ -140,7 +140,7 @@ why = "an empty rpId list means no RP qualifies for vendor-facilitated enterpris
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 684
+line = 699
 call = ".delete(EF_CRED + slot)"
 verb = "delete"
 answer = "read"
@@ -151,7 +151,7 @@ why = "deleteCredential's only effect. A surviving EF_CRED is an assertable cred
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 717
+line = 732
 call = "let _ = fs.delete(EF_RP + j);"
 verb = "delete"
 answer = "discarded"
@@ -162,7 +162,7 @@ why = "the RP index at count zero, and the credential it counted has already gon
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 722
+line = 737
 call = "let _ = fs.delete(crate::consts::EF_RPNICK + j);"
 verb = "delete"
 answer = "discarded"
