@@ -7,9 +7,9 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 22.** Twelve in the firmware proper (`main.rs` + `presence.rs`):
-the interrupt-handler pair (2), the `Send` impl, the heap init, and the eight
-GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
+**Runtime sites: 27.** Seventeen in the firmware proper (`main.rs` + `presence.rs`):
+the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
+allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
 CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves and one
 stack limit per core, three in the RSA assembly FFI, two in the standalone
@@ -21,6 +21,7 @@ flowchart TB
       a["interrupt executor (×2)"]
       b["Send for SendUsb"]
       c["heap init"]
+      c2["zeroing allocator (×5)"]
       d["GPIO pin steal ×8 (presence, LED power, USR LED, display wake + CS/DC/RST/TP_RST)"]
       d2["core0 stack limit (MSPLIM)"]
     end
@@ -87,14 +88,47 @@ executor and embassy keeps the trait object `!Send`.
 unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
 ```
 
-A 128 KiB heap exists solely for `rsk-rsa`'s big integers (`num-bigint-dig`,
-the only allocating dependency). `init`'s contract (call once, with exclusive access
+A 128 KiB heap exists for `rsk-rsa`'s big integers (`num-bigint-dig`, the only
+allocating dependency) and for FIDO's boxed ML-DSA keys. `init`'s contract (call once, with exclusive access
 to the region) is met: it runs once at the top of `main`, on a dedicated
 static buffer used by nothing else.
 *Safe alternative:* none; every embedded allocator initializes this way.
 *Containment:* one call, before any allocation can happen.
 
-### 5–12. GPIO pin type-erasure (presence button, LED power rail, USR-LED-off, display wake + control pins, ×8) — `PLAT-UNSAFE-004`
+### 5–9. The zeroing allocator — `PLAT-UNSAFE-013`
+
+```rust
+unsafe impl GlobalAlloc for ZeroingHeap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe { self.0.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe {
+            for i in 0..layout.size() {
+                core::ptr::write_volatile(ptr.add(i), 0);
+            }
+            self.0.dealloc(ptr, layout);
+        }
+    }
+}
+```
+
+The global allocator is `LlffHeap` behind a wrapper that zeroes each block as it
+is freed. `num-bigint-dig` frees the limbs of its own working buffers unwiped —
+a division's, an inverse's, a modular exponentiation's, and a refused key's
+primes — and a freed block keeps its bytes until an allocation reuses it.
+`alloc` forwards unchanged. `dealloc` writes zeroes over exactly the
+`layout.size()` bytes the caller hands back, which `GlobalAlloc`'s contract
+makes a live block this allocator returned for that layout, then forwards.
+`realloc` is the trait's default, an alloc, a copy and a dealloc through these
+two, so a grown vector's old block is wiped as well. The writes are volatile,
+so no optimisation can drop them as stores into memory about to be freed.
+*Safe alternative:* none; `GlobalAlloc` is an `unsafe` trait with `unsafe fn`
+methods, and each forwarding call is an `unsafe` operation.
+*Containment:* two forwarding calls and one loop bounded by the caller's own
+layout.
+
+### 10–17. GPIO pin type-erasure (presence button, LED power rail, USR-LED-off, display wake + control pins, ×8) — `PLAT-UNSAFE-004`
 
 ```rust
 let any = unsafe { AnyPin::steal(pin) };
@@ -134,7 +168,7 @@ silently drives one pad from two owners at runtime, so it is checked at build ti
 
 ## Firmware dual-core keygen (`firmware/src/core1.rs`)
 
-### 13–15. The per-core prime sieves — `PLAT-UNSAFE-005`
+### 18–20. The per-core prime sieves — `PLAT-UNSAFE-005`
 
 ```rust
 static mut CORE0_SIEVE: IncrementalSieve = IncrementalSieve::new();
@@ -166,7 +200,7 @@ on core0; the partition (which core touches which sieve) is structural, and the 
 a candidate, scrubbed at the top of every keygen). A wrong residue can only let
 a composite through to the strong-MR/Lucas test, which still rejects it.
 
-### 16–17. The per-core stack limits (`main.rs`, `core1.rs`) — `PLAT-UNSAFE-006`
+### 21–22. The per-core stack limits (`main.rs`, `core1.rs`) — `PLAT-UNSAFE-006`
 
 ```rust
 unsafe { cortex_m::register::msplim::write(&raw const _stack_end as u32) }; // core0, entering `main`
@@ -201,7 +235,7 @@ issued by the routine that is at that moment generating and storing a key.
 
 ## RSA assembly FFI (`crates/rsk-rsa/src/lib.rs`)
 
-### 18–20. The modexp / CRT-sign calls — `PLAT-UNSAFE-007`
+### 23–25. The modexp / CRT-sign calls — `PLAT-UNSAFE-007`
 
 On-card RSA key generation needs hundreds of modular exponentiations over
 1024–2048-bit candidates. The pure-Rust path was ~7× too slow on the
@@ -220,7 +254,7 @@ all host tests exercise the same API safely.
 
 ## Flash wiper (`rsk-wipe/src/main.rs`)
 
-### 21–22. Raw flash erase/program in a critical section — `PLAT-UNSAFE-008`
+### 26–27. Raw flash erase/program in a critical section — `PLAT-UNSAFE-008`
 
 The wiper's entire job is to erase the flash the firmware lives on, from a
 RAM-resident image. It calls the ROM flash-erase/program routines inside

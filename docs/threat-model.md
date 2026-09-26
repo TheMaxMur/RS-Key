@@ -542,15 +542,15 @@ the MKEK exist in RAM only inside the operation that asked for one and are wiped
 when it returns. That is what puts them out of reach of a parser bug — parsing
 runs before any store access, so at that moment neither key is anywhere in
 memory. It buys nothing against code execution, which can drive the same reads.
-Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
-internals, and the working buffers `num-bigint-dig` allocates inside its own
-arithmetic — a division's, a modular inverse's, a modular exponentiation's —
-which it frees unwiped. `rsk-rsa` holds a key's values, its blinding values and
-a private operation's result and intermediates in a `Secret` or a key type whose
-`Drop` wipes them, except the primes and `d` of a key `RsaKey::from_p_q`
-refuses; but the heap does not clear what it frees, so a library buffer's bytes
-stay in RAM until an allocation reuses them, past the end of the command. A heap
-that wipes on free would close them.
+Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic and
+digest internals, in stack slots until a later frame overwrites them. The
+working buffers `num-bigint-dig` allocates inside its own arithmetic — a
+division's, a modular inverse's, a modular exponentiation's — it frees
+unwiped; `rsk-rsa` holds a key's values, its blinding values and a private
+operation's result and intermediates in a `Secret` or a key type whose `Drop`
+wipes them, except the primes and `d` of a key `RsaKey::from_p_q` refuses. The
+heap closes both: it wipes each block as it frees it (`ZeroingHeap` in
+`firmware/src/main.rs`), so a freed buffer's bytes do not outlive the free.
 
 What holds the first sentence is a type, not a habit. Key-grade bytes live in
 `rsk_secret::Secret` — or, for a buffer that outlives the scope, under a

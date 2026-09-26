@@ -65,6 +65,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- Freed heap blocks kept key material until an allocation reused them. The heap
+  serves `rsk-rsa`'s big integers, and `num-bigint-dig` frees the limbs of its
+  own working buffers without wiping them: a key rebuild's arithmetic (import,
+  OpenPGP ATTEST, key generation) and a key `RsaKey::from_p_q` refuses left
+  primes, `d` and CRT values in freed blocks. The allocator now zeroes every
+  block as it frees it (`ZeroingHeap` in `firmware/src/main.rs`), and a grown
+  vector's old block with it, so a freed buffer's bytes do not outlive the free.
+  What that costs RSA key generation and signing is still to be measured on the
+  board. Reading any of it took a memory read on the live device.
+  **bcdDevice → 0x0A4A.**
+
 - OpenPGP PSO:DECIPHER left the deciphered secret in the applet's memory. The
   applet builds every PSO result in a 1 KiB scratch buffer that lives as long
   as the applet, copies it into the response and never cleared it, so what a

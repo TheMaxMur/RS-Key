@@ -79,10 +79,36 @@ use worker::{ClientCcid, ClientCtap, Worker};
 
 use panic_halt as _;
 
+use core::alloc::{GlobalAlloc, Layout};
 use embedded_alloc::LlffHeap as Heap;
 
+/// The heap `rsk-rsa`'s big integers and the lattice keys live on, zeroing each
+/// block as it is freed: `num-bigint-dig` frees its limbs unwiped. `realloc` stays
+/// the default alloc-copy-free, so a grown `Vec`'s old block is wiped too.
+struct ZeroingHeap(Heap);
+
+// SAFETY: both methods forward to `Heap` under the caller's own contract, and
+// `dealloc` writes only into the block the caller is handing back.
+unsafe impl GlobalAlloc for ZeroingHeap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the caller's `alloc` contract, passed through unchanged.
+        unsafe { self.0.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // SAFETY: `ptr` is a live block of `layout.size()` bytes this allocator
+        // handed out (the caller's contract); volatile, so the wipe outlives LTO.
+        unsafe {
+            for i in 0..layout.size() {
+                core::ptr::write_volatile(ptr.add(i), 0);
+            }
+            self.0.dealloc(ptr, layout);
+        }
+    }
+}
+
 #[global_allocator]
-static HEAP: Heap = Heap::empty();
+static HEAP: ZeroingHeap = ZeroingHeap(Heap::empty());
 
 const HEAP_SIZE: usize = 128 * 1024;
 
@@ -556,7 +582,10 @@ async fn main(spawner: Spawner) {
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
         // SAFETY: runs once, before any allocation, over memory declared in this
         // block and so nameable by nothing else.
-        unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
+        unsafe {
+            HEAP.0
+                .init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE)
+        }
     }
 
     let serial_id = embassy_rp::otp::get_chipid().unwrap_or(0).to_le_bytes();
@@ -735,7 +764,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A49;
+    let device_release: u16 = 0x0A4A;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
