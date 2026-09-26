@@ -2501,17 +2501,12 @@ fn cose_with_alg(x: &[u8; 32], y: &[u8; 32], alg: Option<i64>) -> std::vec::Vec<
     buf[..n].to_vec()
 }
 
-/// The two lengths `change_pin` checks TOGETHER, and what the `||` between them
-/// holds back.
-///
-/// `pinHashEnc` arrives straight from the CBOR decoder (`clientpin.rs:100`) and
-/// nothing else bounds it. Widen the guard (`clientpin.rs:254-256`) to `&&` and a
-/// correct `newPinEnc` walks a `pinHashEnc` of any other length past it: a short
-/// one into the MAC-checked decrypt and a spent PIN retry, an over-long one into
-/// the 112-byte `macd` copy, which was a slice-index panic until that copy was
-/// checked. Both protocols, because 112 is `80 + 32` on two and `64 + 48` on one.
+/// `pinHashEnc` arrives unbounded (`clientpin.rs:100`). Widened to `&&`, the length
+/// guard (`clientpin.rs:254-256`) lets a short one reach the decrypt and spend a PIN
+/// retry; an over-long one meets the checked `macd` copy and the same refusal.
 #[test]
 fn change_pin_refuses_a_pin_hash_of_the_wrong_length() {
+    let mut answers = std::vec::Vec::new();
     // Four times the 16-byte hash it should carry, and none at all.
     for hash in [&[0u8; 64][..], &[]] {
         for (proto, wire) in [(PinProto::One, 1u64), (PinProto::Two, 2u64)] {
@@ -2543,14 +2538,17 @@ fn change_pin_refuses_a_pin_hash_of_the_wrong_length() {
                 (5, V::B(&npe)),
                 (6, V::B(&phe)),
             ]);
-            assert_eq!(
-                run(&mut fs, &mut rng, &mut state, &req, &mut out),
-                Err(CtapError::InvalidParameter),
-                "protocol {wire}, a {}-byte hash",
-                hash.len()
-            );
+            let answer = run(&mut fs, &mut rng, &mut state, &req, &mut out);
+            answers.push((wire, hash.len(), answer, ef_pin_retries(&mut fs)));
         }
     }
+    // One verdict over all four, so a widened guard shows what each protocol does.
+    assert!(
+        answers.iter().all(|(_, _, answer, retries)| {
+            *answer == Err(CtapError::InvalidParameter) && *retries == MAX_PIN_RETRIES
+        }),
+        "(protocol, hash bytes, answer, retries left): {answers:?}"
+    );
 }
 
 /// clientPIN's own copies of the "numeric 0 means absent" sentinel. A

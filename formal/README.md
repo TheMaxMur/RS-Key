@@ -384,7 +384,7 @@ those are where a hole costs the most:
 | `clientpin.rs:255` `\|\|` → `&&` | **the guard is load-bearing**: without it a short `pinHashEnc` reaches the decrypt and spends a PIN retry, and an over-long one met a slice-index panic until that copy was checked — see below | closed by `change_pin_refuses_a_pin_hash_of_the_wrong_length` |
 
 The row that stood open longest is closed by reading where its widened guard
-leads. `pinHashEnc` comes straight from the CBOR decoder and nothing bounds it;
+leads. `pinHashEnc` comes straight from the CBOR decoder and nothing else bounds it;
 `macd` is `[0u8; 112]`, and `change_pin` copied `newPinEnc ‖ pinHashEnc` into
 it **before** verifying the MAC. With `||` the length pair is refused together;
 with `&&` a request whose `newPinEnc` is the right length and whose
@@ -398,10 +398,10 @@ range end index 128 out of range for slice of length 112
 64 + 64 on protocol one, 80 + 80 on protocol two. So the consequence was an
 unauthenticated panic and the guard is load-bearing, not redundant — and nothing
 drove it, because no test had ever sent a `pinHashEnc` of the wrong length.
-Since the host-bytes deny that copy (`clientpin.rs:268-273`) is checked and
-answers the guard's own `InvalidParameter`, so an over-long hash no longer tells
-`&&` from `||`; the test also sends an empty one, which the widened guard lets
-through to the MAC-checked decrypt: `PinInvalid` on protocol one, a retry spent.
+Since the host-bytes deny landed, that copy (`clientpin.rs:268-273`) answers the
+guard's own `InvalidParameter`, and an over-long hash no longer tells `&&` from
+`||`. The test also sends an empty one, which the widened guard lets through to
+the MAC-checked decrypt: `PinInvalid` on both protocols, and a retry spent.
 
 Two of those are real defects the suite could not see, and the second one names
 a whole missing dimension rather than a line: **`PinProto::One` appears once in
