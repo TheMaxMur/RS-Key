@@ -72,9 +72,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   primes, `d` and CRT values in freed blocks. The allocator now zeroes every
   block as it frees it (`ZeroingHeap` in `firmware/src/main.rs`), and a grown
   vector's old block with it, so a freed buffer's bytes do not outlive the free.
-  What that costs RSA key generation and signing is still to be measured on the
-  board. Reading any of it took a memory read on the live device.
-  **bcdDevice → 0x0A4A.**
+  It stores words, not bytes: an RSA key generation frees tens of megabytes of
+  big-integer temporaries. What that costs RSA key generation and signing is
+  still to be measured on the board. Reading any of it took a memory read on the
+  live device. **bcdDevice → 0x0A4A, then 0x0A4C.**
 
 - OpenPGP PSO:DECIPHER left the deciphered secret in the applet's memory. The
   applet builds every PSO result in a 1 KiB scratch buffer that lives as long

@@ -82,7 +82,7 @@ use panic_halt as _;
 use core::alloc::{GlobalAlloc, Layout};
 use embedded_alloc::LlffHeap as Heap;
 
-/// The heap `rsk-rsa`'s big integers and the lattice keys live on, zeroing each
+/// The heap `rsk-rsa`'s big integers and the ML-DSA keys live on, zeroing each
 /// block as it is freed: `num-bigint-dig` frees its limbs unwiped. `realloc` stays
 /// the default alloc-copy-free, so a grown `Vec`'s old block is wiped too.
 struct ZeroingHeap(Heap);
@@ -96,11 +96,24 @@ unsafe impl GlobalAlloc for ZeroingHeap {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // SAFETY: `ptr` is a live block of `layout.size()` bytes this allocator
-        // handed out (the caller's contract); volatile, so the wipe outlives LTO.
+        // Words over the aligned body, bytes at the ends: an RSA keygen frees tens
+        // of megabytes, and a byte loop is four times the stores.
+        let len = layout.size();
+        let head = ptr.align_offset(size_of::<u32>()).min(len);
+        let words = (len - head) / size_of::<u32>();
+        // SAFETY: `ptr` is a live block of `len` bytes this allocator handed out
+        // (the caller's contract), so every store lands inside it, and `body` is
+        // 4-aligned by `head`. Volatile, so no dead-store elimination drops them.
         unsafe {
-            for i in 0..layout.size() {
-                core::ptr::write_volatile(ptr.add(i), 0);
+            for i in 0..head {
+                ptr.add(i).write_volatile(0);
+            }
+            let body = ptr.add(head).cast::<u32>();
+            for i in 0..words {
+                body.add(i).write_volatile(0);
+            }
+            for i in head + words * size_of::<u32>()..len {
+                ptr.add(i).write_volatile(0);
             }
             self.0.dealloc(ptr, layout);
         }
@@ -764,7 +777,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A4B;
+    let device_release: u16 = 0x0A4C;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

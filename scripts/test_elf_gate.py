@@ -74,19 +74,18 @@ Program Headers:
    05
 """
 
-#: `arm-none-eabi-nm --defined-only`, the four symbols the rule matches and four
+#: `arm-none-eabi-nm --defined-only`, the three symbols the rule matches and four
 #: neighbours it must NOT: `___rdl_alloc_error_handler` is the shim, not the
 #: handler, and `dealloc`/`deallocate`/`handle_alloc_error` are `alloc` machinery
-#: rather than the surface. A fixture of four clean lines would pass over a
+#: rather than the surface. A fixture of three clean lines would pass over a
 #: regex that matched everything with "alloc" in it.
 DEFINED = """1000053a t _RNvCsGIExRX8pES_7___rustc12___rust_alloc
-1000054c t _RNvCsGIExRX8pES_7___rustc14___rust_dealloc
-1000057c t _RNvCsGIExRX8pES_7___rustc14___rust_realloc
-10041e42 t _RNvCsGIExRX8pES_7___rustc25___rdl_alloc_error_handler
-1003d5c0 t _RNvCsGIExRX8pES_7___rustc26___rust_alloc_error_handler
-10041e9a t _RNvNtCs1bu0FZYAZ3A_5alloc5alloc18handle_alloc_error
-1009e8dc t _ZN5alloc7raw_vec20RawVecInner$LT$A$GT$10deallocate17hd6fb662329047188E
-1004e658 t _ZN79_$LT$embedded_alloc..llff..Heap$u20$as$u20$core..alloc..global..GlobalAlloc$GT$7dealloc17h0e3c912a2475acbcE
+1000054c t _RNvCsGIExRX8pES_7___rustc14___rust_realloc
+10041ff6 t _RNvCsGIExRX8pES_7___rustc25___rdl_alloc_error_handler
+1003d774 t _RNvCsGIExRX8pES_7___rustc26___rust_alloc_error_handler
+1004204e t _RNvNtCs1bu0FZYAZ3A_5alloc5alloc18handle_alloc_error
+1009e850 t _ZN5alloc7raw_vec20RawVecInner$LT$A$GT$10deallocate17hd6fb662329047188E
+1001789c t _ZN74_$LT$firmware..ZeroingHeap$u20$as$u20$core..alloc..global..GlobalAlloc$GT$7dealloc17h0cd100f08afe843fE
 """
 
 #: `arm-none-eabi-nm -u`. Empty, and that is the measurement: a fully linked
@@ -167,7 +166,6 @@ def test_the_registry_is_the_shape_the_gate_reads():
     assert image["writable_executable"] == [".data"]
     assert set(image["allocator"]) == {
         "__rust_alloc",
-        "__rust_dealloc",
         "__rust_realloc",
         "__rust_alloc_error_handler",
     }
@@ -210,7 +208,7 @@ def test_the_recorded_image_is_clean():
     assert not findings, findings
     assert "5 LOAD segment(s) inside 4" in summary
     assert "1 writable-executable as registered" in summary
-    assert "4 allocator symbol(s) from 1 declaration, 0 undefined" in summary
+    assert "3 allocator symbol(s) from 1 declaration, 0 undefined" in summary
     assert "3 compile unit(s) from 2 registered producer(s)" in summary
 
 

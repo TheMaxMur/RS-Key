@@ -31,11 +31,11 @@ writable_executable = [".data"]
 # its initialisation, sites 5–9 the wrapper. AGENTS.md's "no_std, no alloc" is
 # a rule about new code, not a description of the tree, and until this row
 # nothing held the surface: a second allocator or a `malloc` arriving through a
-# dependency was invisible. `__rust_dealloc` is on the list since the wrapper.
-# The image did not define it before, which an earlier note here read as the
-# heap never freeing; RSA's private operations free on every call, so the
-# missing symbol said nothing about whether blocks are freed.
-allocator = ["__rust_alloc", "__rust_alloc_error_handler", "__rust_dealloc", "__rust_realloc"]
+# dependency was invisible. `__rust_dealloc` is not on the list, and its absence
+# says nothing about frees: the shim is emitted only where the inliner keeps it.
+# The first, byte-wise wrapper kept one; the word-wise wrapper is called from its
+# 148 call sites directly, as the bare `LlffHeap` was before either.
+allocator = ["__rust_alloc", "__rust_realloc", "__rust_alloc_error_handler"]
 
 vector_section = ".vector_table"
 

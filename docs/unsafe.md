@@ -103,9 +103,19 @@ unsafe impl GlobalAlloc for ZeroingHeap {
         unsafe { self.0.alloc(layout) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let len = layout.size();
+        let head = ptr.align_offset(size_of::<u32>()).min(len);
+        let words = (len - head) / size_of::<u32>();
         unsafe {
-            for i in 0..layout.size() {
-                core::ptr::write_volatile(ptr.add(i), 0);
+            for i in 0..head {
+                ptr.add(i).write_volatile(0);
+            }
+            let body = ptr.add(head).cast::<u32>();
+            for i in 0..words {
+                body.add(i).write_volatile(0);
+            }
+            for i in head + words * size_of::<u32>()..len {
+                ptr.add(i).write_volatile(0);
             }
             self.0.dealloc(ptr, layout);
         }
@@ -119,13 +129,16 @@ a division's, an inverse's, a modular exponentiation's, and a refused key's
 primes — and a freed block keeps its bytes until an allocation reuses it.
 `alloc` forwards unchanged. `dealloc` writes zeroes over exactly the
 `layout.size()` bytes the caller hands back, which `GlobalAlloc`'s contract
-makes a live block this allocator returned for that layout, then forwards.
+makes a live block this allocator returned for that layout, then forwards. It
+stores words over the block's 4-aligned body and bytes only at its unaligned
+ends: an RSA key generation frees tens of megabytes through this path, and a
+byte loop is four times the stores.
 `realloc` is the trait's default, an alloc, a copy and a dealloc through these
 two, so a grown vector's old block is wiped as well. The writes are volatile,
 so no optimisation can drop them as stores into memory about to be freed.
 *Safe alternative:* none; `GlobalAlloc` is an `unsafe` trait with `unsafe fn`
 methods, and each forwarding call is an `unsafe` operation.
-*Containment:* two forwarding calls and one loop bounded by the caller's own
+*Containment:* two forwarding calls and three loops bounded by the caller's own
 layout.
 
 ### 10–17. GPIO pin type-erasure (presence button, LED power rail, USR-LED-off, display wake + control pins, ×8) — `PLAT-UNSAFE-004`
