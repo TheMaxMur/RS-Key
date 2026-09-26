@@ -14,6 +14,14 @@
 //! reset gate, `rsk-display`'s settings flow, and the firmware's boot path.
 
 #![cfg_attr(not(test), no_std)]
+// Host-written and boot-read bytes: a panic here is a board that never comes up.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
 
 use rsk_fs::{Fs, Storage};
 
@@ -136,7 +144,9 @@ fn clamped_len(s: &[u8], max_units: usize, max_bytes: usize) -> usize {
 /// units. Returns the byte length written.
 pub fn clamp_usb_string(s: &[u8], out: &mut [u8]) -> usize {
     let n = clamped_len(s, USB_STR_MAX, out.len());
-    out[..n].copy_from_slice(&s[..n]);
+    if let (Some(dst), Some(src)) = (out.get_mut(..n), s.get(..n)) {
+        dst.copy_from_slice(src);
+    }
     n
 }
 
@@ -153,20 +163,25 @@ impl Product {
             return None;
         }
         let mut buf = [0u8; PRODUCT_CAP];
-        buf[..s.len()].copy_from_slice(s);
+        buf.get_mut(..s.len())?.copy_from_slice(s);
         Some(Product {
             buf,
-            len: s.len() as u8,
+            len: u8::try_from(s.len()).ok()?,
         })
     }
 
     pub fn as_bytes(&self) -> &[u8] {
-        &self.buf[..self.len as usize]
+        self.buf.get(..self.len as usize).unwrap_or_default()
     }
 
     pub fn as_str(&self) -> Option<&str> {
         core::str::from_utf8(self.as_bytes()).ok()
     }
+}
+
+/// The first `N` bytes of a TLV value the caller's length match sized to `N`.
+fn head<const N: usize>(v: &[u8]) -> [u8; N] {
+    v.first_chunk().copied().unwrap_or([0; N])
 }
 
 /// The value a product / manufacturer string TLV carries: `Some(None)` is the
@@ -177,7 +192,8 @@ impl Product {
 ///
 /// The TLV length counts a trailing NUL; the string also stops at an embedded one.
 fn parse_string_tlv(v: &[u8]) -> Option<Option<Product>> {
-    let s = &v[..v.iter().position(|&b| b == 0).unwrap_or(v.len())];
+    let end = v.iter().position(|&b| b == 0).unwrap_or(v.len());
+    let s = v.get(..end).unwrap_or(v);
     if s.is_empty() {
         return Some(None);
     }
@@ -232,24 +248,24 @@ impl PhyData {
     pub fn overlay(&self, data: &[u8]) -> PhyData {
         let mut phy = *self;
         let mut p = data;
-        while p.len() >= 2 {
-            let tag = p[0];
-            let tlen = p[1] as usize;
-            p = &p[2..];
-            if tlen > p.len() {
+        while let (Some(&tag), Some(&tlen)) = (p.first(), p.get(1)) {
+            let end = 2 + usize::from(tlen);
+            let Some(v) = p.get(2..end) else {
                 break;
-            }
-            let v = &p[..tlen];
-            match (tag, tlen) {
+            };
+            match (tag, v.len()) {
                 (TAG_VIDPID, 4) => {
-                    let vid = u16::from_be_bytes([v[0], v[1]]);
-                    let pid = u16::from_be_bytes([v[2], v[3]]);
+                    let [v0, v1, p0, p1] = head(v);
+                    let vid = u16::from_be_bytes([v0, v1]);
+                    let pid = u16::from_be_bytes([p0, p1]);
                     phy.vid_pid = Some((vid, pid));
                 }
-                (TAG_LED_GPIO, 1) => phy.led_gpio = Some(v[0]),
-                (TAG_LED_BRIGHTNESS, 1) => phy.led_brightness = Some(v[0]),
-                (TAG_OPTS, 2) => phy.opts = u16::from_be_bytes([v[0], v[1]]),
-                (TAG_PRESENCE_TIMEOUT, 1) => phy.presence_timeout = Some(v[0]),
+                (TAG_LED_GPIO, 1) => phy.led_gpio = Some(u8::from_be_bytes(head(v))),
+                (TAG_LED_BRIGHTNESS, 1) => phy.led_brightness = Some(u8::from_be_bytes(head(v))),
+                (TAG_OPTS, 2) => phy.opts = u16::from_be_bytes(head(v)),
+                (TAG_PRESENCE_TIMEOUT, 1) => {
+                    phy.presence_timeout = Some(u8::from_be_bytes(head(v)))
+                }
                 (TAG_USB_PRODUCT, 1..=33) => {
                     if let Some(p) = parse_string_tlv(v) {
                         phy.usb_product = p;
@@ -260,16 +276,14 @@ impl PhyData {
                         phy.usb_manufacturer = m;
                     }
                 }
-                (TAG_ENABLED_CURVES, 4) => {
-                    phy.enabled_curves = Some(u32::from_be_bytes([v[0], v[1], v[2], v[3]]));
-                }
-                (TAG_ENABLED_USB_ITF, 1) => phy.enabled_usb_itf = Some(v[0]),
-                (TAG_LED_DRIVER, 1) => phy.led_driver = Some(v[0]),
-                (TAG_LED_ORDER, 1) => phy.led_order = Some(v[0]),
-                (TAG_LED_NUM, 1) => phy.led_num = Some(v[0]),
+                (TAG_ENABLED_CURVES, 4) => phy.enabled_curves = Some(u32::from_be_bytes(head(v))),
+                (TAG_ENABLED_USB_ITF, 1) => phy.enabled_usb_itf = Some(u8::from_be_bytes(head(v))),
+                (TAG_LED_DRIVER, 1) => phy.led_driver = Some(u8::from_be_bytes(head(v))),
+                (TAG_LED_ORDER, 1) => phy.led_order = Some(u8::from_be_bytes(head(v))),
+                (TAG_LED_NUM, 1) => phy.led_num = Some(u8::from_be_bytes(head(v))),
                 _ => {}
             }
-            p = &p[tlen..];
+            p = p.get(end..).unwrap_or_default();
         }
         phy
     }
@@ -279,10 +293,8 @@ impl PhyData {
     pub fn serialize(&self, out: &mut [u8]) -> Option<usize> {
         let mut w = Writer { out, len: 0 };
         if let Some((vid, pid)) = self.vid_pid {
-            w.tlv(
-                TAG_VIDPID,
-                &[(vid >> 8) as u8, vid as u8, (pid >> 8) as u8, pid as u8],
-            )?;
+            let ([v0, v1], [p0, p1]) = (vid.to_be_bytes(), pid.to_be_bytes());
+            w.tlv(TAG_VIDPID, &[v0, v1, p0, p1])?;
         }
         if let Some(g) = self.led_gpio {
             w.tlv(TAG_LED_GPIO, &[g])?;
@@ -296,13 +308,15 @@ impl PhyData {
         }
         if let Some(p) = &self.usb_product {
             let s = p.as_bytes();
-            w.raw(&[TAG_USB_PRODUCT, (s.len() + 1) as u8])?;
+            let [len, ..] = (s.len() + 1).to_le_bytes();
+            w.raw(&[TAG_USB_PRODUCT, len])?;
             w.raw(s)?;
             w.raw(&[0])?;
         }
         if let Some(m) = &self.usb_manufacturer {
             let s = m.as_bytes();
-            w.raw(&[TAG_USB_MANUFACTURER, (s.len() + 1) as u8])?;
+            let [len, ..] = (s.len() + 1).to_le_bytes();
+            w.raw(&[TAG_USB_MANUFACTURER, len])?;
             w.raw(s)?;
             w.raw(&[0])?;
         }
@@ -332,16 +346,15 @@ struct Writer<'a> {
 
 impl Writer<'_> {
     fn raw(&mut self, b: &[u8]) -> Option<()> {
-        if self.len + b.len() > self.out.len() {
-            return None;
-        }
-        self.out[self.len..self.len + b.len()].copy_from_slice(b);
+        let dst = self.out.get_mut(self.len..self.len + b.len())?;
+        dst.copy_from_slice(b);
         self.len += b.len();
         Some(())
     }
 
     fn tlv(&mut self, tag: u8, v: &[u8]) -> Option<()> {
-        self.raw(&[tag, v.len() as u8])?;
+        let [len, ..] = v.len().to_le_bytes();
+        self.raw(&[tag, len])?;
         self.raw(v)
     }
 }
@@ -364,7 +377,7 @@ pub fn try_load<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<Option<Phy
     // an over-long EF_PHY record can never push the slice past the fixed buffer.
     Ok(fs
         .try_read(EF_PHY, &mut buf)?
-        .map(|n| PhyData::parse(&buf[..n.min(PHY_MAX_SIZE)])))
+        .map(|n| PhyData::parse(buf.get(..n.min(PHY_MAX_SIZE)).unwrap_or_default())))
 }
 
 /// What a boot probe of `EF_PHY` found, with the two answers `load` folds kept
@@ -426,10 +439,11 @@ impl PhyBoot {
 /// Persist the phy record.
 pub fn save<S: Storage>(fs: &mut Fs<S>, phy: &PhyData) -> rsk_sdk::error::Result<()> {
     let mut buf = [0u8; PHY_MAX_SIZE];
-    let n = phy
+    let record = phy
         .serialize(&mut buf)
+        .and_then(|n| buf.get(..n))
         .ok_or(rsk_sdk::error::Error::NoMemory)?;
-    fs.put(EF_PHY, &buf[..n])
+    fs.put(EF_PHY, record)
 }
 
 /// Persist a host-written phy blob as a read-modify-write: overlay only the tags
@@ -512,12 +526,19 @@ pub fn normalize_usb_product(name: &[u8], out: &mut [u8]) -> usize {
             return 0;
         };
         let n = clamped_len(name, room, room);
-        out[..n].copy_from_slice(&name[..n]);
-        out[n..n + YK_TOKEN_SUFFIX.len()].copy_from_slice(YK_TOKEN_SUFFIX);
-        return n + YK_TOKEN_SUFFIX.len();
+        let end = n + YK_TOKEN_SUFFIX.len();
+        let (Some(dst), Some(src)) = (out.get_mut(..end), name.get(..n)) else {
+            return 0;
+        };
+        let (head, token) = dst.split_at_mut(n);
+        head.copy_from_slice(src);
+        token.copy_from_slice(YK_TOKEN_SUFFIX);
+        return end;
     }
     let n = clamped_len(name, USB_STR_MAX, cap);
-    out[..n].copy_from_slice(&name[..n]);
+    if let (Some(dst), Some(src)) = (out.get_mut(..n), name.get(..n)) {
+        dst.copy_from_slice(src);
+    }
     n
 }
 
@@ -531,4 +552,12 @@ pub fn normalize_usb_product(name: &[u8], out: &mut [u8]) -> usize {
 mod proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 mod tests;
