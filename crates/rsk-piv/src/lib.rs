@@ -2,7 +2,6 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! `rsk-piv` — the PIV card applet: the NIST SP 800-73-4 command subset plus the
 //! Yubico extensions `ykman piv` / `yubico-piv-tool` exercise (metadata, serial,

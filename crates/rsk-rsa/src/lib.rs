@@ -10,7 +10,6 @@
         reason = "the bignum asm FFI and its .data placement; docs/unsafe.md"
     )
 )]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! The RSA algorithm family: key generation, the CRT parameter layout and its
 //! blinded private operation, PKCS#1 v1.5, and the public-key DO both card

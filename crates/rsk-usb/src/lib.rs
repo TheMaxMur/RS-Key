@@ -2,7 +2,6 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! USB transport layer: CTAPHID (FIDO HID) and the CCID smart-card class.
 

@@ -2,7 +2,6 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! `rsk-openpgp` — the OpenPGP card applet, reached over the CCID transport.
 //! Generic over `S: Storage`; the device seed / serial / RNG and the flash file

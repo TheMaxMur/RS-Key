@@ -34,7 +34,6 @@
 // borrow from — `rsk-fs`'s RAM storage, `embassy-time`'s `std` driver — are std
 // too. The firmware build is untouched, and no test code reaches the image.
 #![cfg_attr(not(test), no_std)]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 extern crate alloc;
 

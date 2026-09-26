@@ -57,7 +57,7 @@ CONSTANTS
     \* admin channel to the mask being non-empty, the shape a naive
     \* "nothing selectable when all disabled" would take.
     BugAdminGateable,
-    \* crates/rsk-rescue/src/lib.rs:142-144 -- `require_presence` gates every
+    \* crates/rsk-rescue/src/lib.rs:141-143 -- `require_presence` gates every
     \* privileged runtime command (keydev sign, cert/config write, BOOTSEL
     \* reboot, fuse burns) so a USB host alone cannot drive them. The switch
     \* removes the gate.
@@ -136,8 +136,8 @@ LockCodeWrite ==
 
 (***************************************************************************)
 (* A PRIVILEGED RESCUE COMMAND. crates/rsk-rescue/src/lib.rs -- keydev_sign   *)
-(* (:179), write cert (:230), write config (:250), reboot-to-BOOTSEL (:374),  *)
-(* the page-58 / rollback fuse burns (:424). Each completes only on a         *)
+(* (:178), write cert (:229), write config (:249), reboot-to-BOOTSEL (:373),  *)
+(* the page-58 / rollback fuse burns (:423). Each completes only on a         *)
 (* Confirmed operator presence; a USB host alone (Denied / Timeout) must not   *)
 (* drive it. `present` is the presence request's answer, nondeterministic     *)
 (* here -- the presence machinery is RSKeySecurityState's, this is only       *)

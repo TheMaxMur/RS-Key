@@ -10,7 +10,6 @@
 #![no_std]
 #![no_main]
 #![expect(unsafe_code, reason = "board glue; docs/unsafe.md lists every site")]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use core::cell::RefCell;
 
@@ -732,7 +731,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A2D;
+    let device_release: u16 = 0x0A2E;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

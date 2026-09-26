@@ -11,11 +11,10 @@ unsafe_code = "deny"
 
 [workspace.lints.clippy]
 undocumented_unsafe_blocks = "deny"
-# The clippy.toml bans (bare wipes, `Zeroizing`) are switched on crate by crate, with
-# `#![deny(clippy::disallowed_methods, clippy::disallowed_types)]` at the root, as
-# each crate's secrets move into `rsk_secret`; the last one flips these to deny.
-disallowed_methods = "allow"
-disallowed_types = "allow"
+# The clippy.toml bans: a bare wipe or a `Zeroizing` anywhere is an error, and a
+# site that must keep one says why in an `#[expect(..., reason = ...)]`.
+disallowed_methods = "deny"
+disallowed_types = "deny"
 
 # Embassy crates are versioned together; pin them all to the same git source so
 # they stay mutually compatible. We track `branch = "main"`, not a crates.io

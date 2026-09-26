@@ -6,7 +6,6 @@
 //! Yubico-mode challenge-response. [`ticket`] and [`hid`] serve the keyboard side.
 
 #![cfg_attr(not(test), no_std)]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use core::cell::RefCell;
 

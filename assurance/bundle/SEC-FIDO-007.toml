@@ -73,7 +73,7 @@ owners_tagged = ["crates/rsk-fido/src/seed.rs:649 seed::ensure_seed", "crates/rs
 # is 0, and `ensure_seed` takes no `FidoState` at all, so it structurally cannot
 # touch the antecedent: it writes `EF_KEY_DEV`, which is `store.seed`. It can
 # never falsify `ram => store.seed`; it can only make the right side true.
-owners_tag_reading = "an independent measurement REFUTED the reading this bundle first wrote. The three SEC-FIDO-006 tags at reset.rs:35, state.rs:443 and crates/rsk-fido/src/lib.rs:104 are NOT a sibling's tag standing in this one's place: SEC-FIDO-006 is ResetNeverWeakensSurvivingState, two of whose three clauses contain SeedReachable == store.seed \\/ ram — the same `ram`. All three functions legitimately own BOTH properties, and crates/rsk-fido/src/lib.rs:105-114 `Ctx::load_keydev` IS SeedReachable's disjunction in Rust, cited for exactly that twice in RSKeySecurityState.tla. The defect is a MISSING SECOND TAG, not a wrong first one. The one genuinely untagged owner is vendor.rs:546 `unlock`, which the model names as `ram`'s only producer"
+owners_tag_reading = "an independent measurement REFUTED the reading this bundle first wrote. The three SEC-FIDO-006 tags at reset.rs:35, state.rs:443 and crates/rsk-fido/src/lib.rs:103 are NOT a sibling's tag standing in this one's place: SEC-FIDO-006 is ResetNeverWeakensSurvivingState, two of whose three clauses contain SeedReachable == store.seed \\/ ram — the same `ram`. All three functions legitimately own BOTH properties, and crates/rsk-fido/src/lib.rs:104-113 `Ctx::load_keydev` IS SeedReachable's disjunction in Rust, cited for exactly that twice in RSKeySecurityState.tla. The defect is a MISSING SECOND TAG, not a wrong first one. The one genuinely untagged owner is vendor.rs:546 `unlock`, which the model names as `ram`'s only producer"
 # Every production site that writes or reads the RAM copy, enumerated over five
 # spellings because one under-approximates: the field, `clear_keydev_dec`,
 # `ctx.state.reset()`, `*self = Self::new()` and the destructuring `Drop`.
@@ -88,7 +88,7 @@ owners_writers = [
   "crates/rsk-fido/src/reset.rs:104 — `ctx.state.reset()` AHEAD of every flash write, which is the ordering the invariant IS",
 ]
 owners_readers = [
-  "crates/rsk-fido/src/lib.rs:106 — `Ctx::load_keydev`, RAM first then flash: the concrete SeedReachable, and the chokepoint nine call sites reach it through",
+  "crates/rsk-fido/src/lib.rs:105 — `Ctx::load_keydev`, RAM first then flash: the concrete SeedReachable, and the chokepoint nine call sites reach it through",
   "crates/rsk-fido/src/config.rs:414 — AUT_DISABLE's authorization gate",
   "crates/rsk-fido/src/config.rs:420 — the borrow that re-seals it",
   "crates/rsk-fido/src/vendor.rs:970 — BACKUP_STATE's ungated `unlocked` bit",
@@ -200,7 +200,7 @@ bound_files_in_argument = 6
 stops_files_in_argument = "anything in a seventh file — and the measurement is the point: the slice page estimated three files, named the tag's file, and missed both writers and the ordering site"
 bound_crates = 2
 stops_crates = "a site outside the two crates. A holder of the RAM copy in a third would be outside the argument"
-shipped_relation = "the four writers are one producer (vendor.rs:580) and three destroyers (vendor.rs:579, config.rs:428, and reset.rs:104 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:106, config.rs:414, config.rs:420 and vendor.rs:970; the two projection sites are crates/rsk-device/src/ctap.rs:229 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit"
+shipped_relation = "the four writers are one producer (vendor.rs:580) and three destroyers (vendor.rs:579, config.rs:428, and reset.rs:104 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:105, config.rs:414, config.rs:420 and vendor.rs:970; the two projection sites are crates/rsk-device/src/ctap.rs:229 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit"
 cfg = "none — every writer and reader above is unconditional production code; the two projection sites are not, and the bound counts them apart for that reason"
 features = "none"
 
@@ -279,7 +279,7 @@ registered = "yes — assurance/platform.toml PLAT-MODEL-006, pending. There was
 id = "AS-RAM-6"
 statement = "The invariant is about REACHABILITY through `Ctx::load_keydev`, not about residue in SRAM: a copy the code can no longer reach satisfies it whatever the memory holds."
 kind = "platform"
-discharger = "a board measurement, and one exists without its artifact — it is `assurance/platform.toml` PLAT-MEM-001 and its `discharge` field carries the part, the date and the procedure. Deliberately NOT restated here: nothing in this bundle was taken on silicon, `freshness.expires_on_stepping` says so, and a stepping named in this file's prose makes the evidence gate demand a `build.board_revision` the bundle would then be claiming falsely. What belongs here is the software half: crates/rsk-fido/src/lib.rs:105-114 is the reachability the antecedent means — the RAM copy wins over flash — and the residue question is a different subject under a different entry"
+discharger = "a board measurement, and one exists without its artifact — it is `assurance/platform.toml` PLAT-MEM-001 and its `discharge` field carries the part, the date and the procedure. Deliberately NOT restated here: nothing in this bundle was taken on silicon, `freshness.expires_on_stepping` says so, and a stepping named in this file's prose makes the evidence gate demand a `build.board_revision` the bundle would then be claiming falsely. What belongs here is the software half: crates/rsk-fido/src/lib.rs:104-113 is the reachability the antecedent means — the RAM copy wins over flash — and the residue question is a different subject under a different entry"
 expressible = "no — a fact about silicon and about what a projection means, not a constant"
 registered = "yes — assurance/platform.toml PLAT-MEM-001, whose `covers` this bundle extended with `slice:AS-RAM-6`. It was the near miss: the only entry whose `supports` already named SEC-FIDO-007, covering a board-only test and no slice id"
 

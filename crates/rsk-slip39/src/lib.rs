@@ -19,7 +19,6 @@
 //! they are secret — the **caller zeroizes** the output once the shares are rendered.
 
 #![no_std]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 mod wordlist;
 // The raw table stays crate-internal; [`word`] is the only public accessor (no external

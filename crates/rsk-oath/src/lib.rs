@@ -6,7 +6,6 @@
 //! optional access code, and the Nitrokey OTP-PIN / password-safe extensions.
 
 #![cfg_attr(not(test), no_std)]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 mod seal;
 

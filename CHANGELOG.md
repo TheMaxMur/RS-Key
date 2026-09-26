@@ -692,6 +692,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The zeroize ban covers every crate** — a lint-policy change; the code is
+  the same. The workspace's clippy table now refuses a bare `Zeroize::zeroize`
+  and a `Zeroizing` everywhere, where each crate used to switch the ban on at
+  its own root as its secrets moved into `rsk_secret`; with every crate moved,
+  those per-crate switches are gone. `bcdDevice` 0x0A2D → 0x0A2E.
+
 - **The panel's PINs and backup words are typed** — refactor; nothing on the
   panel or the wire changes. `rsk-display`'s PIN buffers (the device, FIDO and
   PIV PIN and PUK flows), the pad-scramble entropy and the SLIP-39 share

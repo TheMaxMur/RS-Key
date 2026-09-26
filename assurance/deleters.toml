@@ -291,7 +291,7 @@ why = "BACKUP_LOAD drops the old certificate BEFORE the new seed commits: a surv
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 335
+line = 334
 call = "Some((fid, _)) => match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
@@ -302,7 +302,7 @@ why = "DELETE's only effect. Discarded until 0x0988, so a refused removal answer
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 358
+line = 357
 call = "let dropped = fs.delete_key(EF_OATH_CODE);"
 verb = "delete_key"
 answer = "read"
@@ -313,7 +313,7 @@ why = "SET CODE's 73 00: select derives validated from !code_set, so a 9000 over
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 418
+line = 417
 call = "match fs.delete(EF_OTP_PIN) {"
 verb = "delete"
 answer = "read"
@@ -324,7 +324,7 @@ why = "VERIFY PIN raises the same validated flag VALIDATE does, so an OTP-PIN th
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 1637
+line = 1636
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -357,7 +357,7 @@ why = "the DEK half of the same idempotent repair, retried on the next boot rath
 
 [[site]]
 file = "crates/rsk-openpgp/src/lib.rs"
-line = 291
+line = 290
 call = "let _ = fs.delete(stor);"
 verb = "delete"
 answer = "discarded"
@@ -478,7 +478,7 @@ why = "TERMINATE DF's sweep, secrets before every record scan_files re-seeds. Op
 
 [[site]]
 file = "crates/rsk-otp/src/lib.rs"
-line = 492
+line = 491
 call = "} else if fs.delete(fid).is_err() && slot_still_live(fs, fid) {"
 verb = "delete"
 answer = "read"
@@ -489,7 +489,7 @@ why = "the reply is status(), recomputed from flash in the same response — so 
 
 [[site]]
 file = "crates/rsk-otp/src/lib.rs"
-line = 636
+line = 635
 call = "if fs.delete(fid1).is_err() && slot_still_live(fs, fid1) {"
 verb = "delete"
 answer = "read"
@@ -500,7 +500,7 @@ why = "the swap's first half, under the same self-reporting status() reply. It s
 
 [[site]]
 file = "crates/rsk-otp/src/lib.rs"
-line = 651
+line = 650
 call = "if fs.delete(fid2).is_err() && slot_still_live(fs, fid2) {"
 verb = "delete"
 answer = "read"
@@ -533,7 +533,7 @@ why = "PUT DATA with an empty body deletes a pooled object, so the removal is th
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 867
+line = 866
 call = "return match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
@@ -544,7 +544,7 @@ why = "PUT DATA with an empty body IS the object delete, so the removal is the w
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1201
+line = 1200
 call = "let dropped = fs.delete_key(key_fid(from));"
 verb = "delete_key"
 answer = "read"
@@ -555,7 +555,7 @@ why = "MOVE with to = 0xFF, the slot delete. The head earns a retry because one 
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1202
+line = 1201
 call = "let _ = fs.delete(pubkey_fid(from));"
 verb = "delete"
 answer = "discarded"

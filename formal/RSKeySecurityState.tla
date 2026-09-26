@@ -68,7 +68,7 @@ CONSTANTS
     \* also resolves to firmware/src/presence.rs since the arbitration was lifted
     BugUnscopedCancel,            \* crates/rsk-device/src/presence.rs:118-122
     BugTouchNotSpent,             \* crates/rsk-device/src/presence.rs:203-211,226
-    BugSoftLockLostOnWarmReset,   \* crates/rsk-device/src/lib.rs:129-138 PinLock across sys_reset
+    BugSoftLockLostOnWarmReset,   \* crates/rsk-device/src/lib.rs:128-137 PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:259-260  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-180  may_walk_rps
     BugDeleteRpBeforeCred,        \* credmgmt.rs:676-684 deleteCredential order
@@ -228,7 +228,7 @@ VARIABLES
     \* `state.keydev_dec` (state.rs:338-340): the seed a vendor UNLOCK decrypted
     \* into RAM on a soft-locked device. NOT a second seed -- it is the SAME
     \* owner's seed by another route, and `Ctx::load_keydev` PREFERS it
-    \* (crates/rsk-fido/src/lib.rs:105-114), so deleting the flash record does
+    \* (crates/rsk-fido/src/lib.rs:104-113), so deleting the flash record does
     \* not end reachability
     \* while this stands. That preference is the whole of E110: the model used to
     \* have only the flash record, so a wipe whose flash half succeeded read as
@@ -299,7 +299,7 @@ Init ==
 (* The seed's TWO homes. Every credential box, rpId box, credBlob,          *)
 (* hmac-secret key and large-blob key is derived from the device seed       *)
 (* (reset.rs:173-177), and `Ctx::load_keydev` reads it from RAM first and   *)
-(* flash second (crates/rsk-fido/src/lib.rs:105-114). So "the records still *)
+(* flash second (crates/rsk-fido/src/lib.rs:104-113). So "the records still *)
 (* open" is a claim                                                         *)
 (* about BOTH, and the wipe's own claim -- that what a tear leaves behind is *)
 (* undecryptable -- holds only once the last copy is gone.                   *)
@@ -325,7 +325,7 @@ WaitOpen == pres.scope # NoOwner /\ pres.granted = "none"
 
 \* ONE BUTTON, ONE CEREMONY: a host command may not open a wait over one that is
 \* already running. The worker is synchronous and the panel yields to a queued
-\* host command only outside a hold (crates/rsk-display/src/lib.rs:194-200), so
+\* host command only outside a hold (crates/rsk-display/src/lib.rs:193-199), so
 \* the firmware never reassigns WAIT_SCOPE out from under a live ceremony.
 \*
 \* FOUR sites carry it: RegisterStart, AssertStart, ResetStart and
@@ -644,7 +644,7 @@ PinAttemptEnabled == pin.set /\ pin.retries > 0 /\ ~lock.soft
 \* The requirement the soft lock encodes: after MismatchLimit consecutive
 \* mismatches no further attempt is accepted until a REAL power cycle. The
 \* policy counter is cleared only by PowerCut, never by a host-requested warm
-\* reset -- which is the whole point of crates/rsk-device/src/lib.rs:129-138.
+\* reset -- which is the whole point of crates/rsk-device/src/lib.rs:128-137.
 PinAttemptPolicy == pin.set /\ pin.retries > 0 /\ lock.policyMism < MismatchLimit
 
 \* EF_MINPINLEN[1], the forced-PIN-change flag, and it is a GATE: while it stands
@@ -1516,7 +1516,7 @@ VolatileCleared ==
     /\ upSpent' = FALSE
 
 \* EVERY boot runs ensure_seed, not just the one at the end of a reset:
-\* firmware/src/main.rs:647 and tools/emu/src/device.rs:507. A cut that stranded
+\* firmware/src/main.rs:646 and tools/emu/src/device.rs:507. A cut that stranded
 \* the device mid-wipe therefore comes back WITH a seed and can hold usable
 \* credentials again. Leaving it out made the model less permissive than the
 \* firmware -- the one direction a safety argument cannot absorb.
@@ -1545,7 +1545,7 @@ PowerCut ==
     /\ UNCHANGED viol
 
 \* A host-requestable warm reset (SCB::sys_reset -- vendor 0x1F P1=0, the
-\* rescue twin, the phy config-write auto-reboot). crates/rsk-device/src/lib.rs:129-138
+\* rescue twin, the phy config-write auto-reboot). crates/rsk-device/src/lib.rs:128-137
 \* carries the PinLock across it from either transport; reset.rs:260 makes it CLOSE the reset window.
 WarmReset ==
     /\ VolatileCleared
@@ -1740,7 +1740,7 @@ NoAuthorizationBypass ==
     \* the authenticatorConfig the advisory named and not a second assertion.
     /\ (upSpent /\ tok.live) => tok.perms = {}
     \* The RAM soft lock must reflect the policy it stands for: MismatchLimit
-    \* consecutive mismatches and no real power cycle since (crates/rsk-device/src/lib.rs:129-138).
+    \* consecutive mismatches and no real power cycle since (crates/rsk-device/src/lib.rs:128-137).
     /\ (lock.policyMism >= MismatchLimit) => lock.soft
 
 \* A presence decision produced for one transport is never applied to

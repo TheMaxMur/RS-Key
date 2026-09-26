@@ -182,7 +182,7 @@ PgpDelete ==
 (***************************************************************************)
 (* OATH. `cmd_calculate` first requires the access-code session, then a    *)
 (* confirmed touch for PROP_TOUCH credentials                              *)
-(* (crates/rsk-oath/src/lib.rs:604-636).                                   *)
+(* (crates/rsk-oath/src/lib.rs:603-635).                                   *)
 (***************************************************************************)
 OathSetCode ==
     /\ oathCodeSet' = TRUE
@@ -221,7 +221,7 @@ OathCalculate(touched) ==
 (***************************************************************************)
 (* Yubico OTP. Existing-slot configure, update and swap each state the     *)
 (* stored-six-byte-code rule at their OWN gate, so the citation names all  *)
-(* three (crates/rsk-otp/src/lib.rs:464-481, 526-540, 620-628): a range    *)
+(* three (crates/rsk-otp/src/lib.rs:463-480, 525-539, 619-627): a range    *)
 (* resolving to a prologue reads as a gate nothing checks.                 *)
 (*                                                                         *)
 (* The position is a PAIR, per slot, because the two halves live in        *)
@@ -293,11 +293,11 @@ OtpMutate(k, codeMatches, keep) ==
 (***************************************************************************)
 (* SLOT_SWAP moves the record; the volatile half of the position has to    *)
 (* travel with it, or the moved record is re-paired with a session used    *)
-(* fewer times (crates/rsk-otp/src/lib.rs:656-662). The mark travels for   *)
+(* fewer times (crates/rsk-otp/src/lib.rs:655-661). The mark travels for   *)
 (* the same reason: it is the RECORD's history, not the slot's. A          *)
 (* programmed slot's stored code gates its move exactly as it gates an     *)
 (* overwrite, so an absent slot imposes no gate                            *)
-(* (crates/rsk-otp/src/lib.rs:624-628).                                    *)
+(* (crates/rsk-otp/src/lib.rs:623-627).                                    *)
 (***************************************************************************)
 OtpSwap(j, k, codeMatches) ==
     LET gated(s) == otpPresent[s] /\ otpProtected[s]
@@ -326,7 +326,7 @@ OtpSwap(j, k, codeMatches) ==
 (***************************************************************************)
 (* A cold boot: the RAM session restarts at zero, so `power_up_bump`       *)
 (* advances the persisted half of every plain slot it can read that still  *)
-(* has room, before USB is up (crates/rsk-otp/src/lib.rs:1108-1153). That  *)
+(* has room, before USB is up (crates/rsk-otp/src/lib.rs:1107-1152). That  *)
 (* is what keeps one power cycle's pairs out of the next one's, so the mark*)
 (* deliberately SURVIVES the cycle.                                        *)
 (***************************************************************************)
@@ -349,7 +349,7 @@ OtpUse(k) ==
                     ELSE IF wrapped THEN 0 ELSE otpSess[k] + 1
         (* The press that owes flash an advance and types without it: the RAM *)
         (* half rolls anyway, so the next press re-pairs the old counter with *)
-        (* this cycle's first session (crates/rsk-otp/src/lib.rs:335-350).    *)
+        (* this cycle's first session (crates/rsk-otp/src/lib.rs:334-349).    *)
         nextUse  == IF frozen \/ BugOtpPressTypesUnpersisted THEN otpUse[k]
                     ELSE IF persist THEN otpUse[k] + 1 ELSE otpUse[k]
         repeat   == otpMarked[k] /\ otpMark[k] = pos

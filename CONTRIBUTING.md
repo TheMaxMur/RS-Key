@@ -88,9 +88,21 @@ full stop.
 
 Key-grade bytes live in `rsk_secret::Secret` (or under a `WipeGuard` when the
 buffer outlives the scope), which wipes on every exit, a `?` included; the root
-`clippy.toml` refuses a bare `Zeroize::zeroize` or a `Zeroizing`, in every crate
-whose root denies those lints. A wipe written by hand at the end of a function
-is the bug that type exists to remove.
+`clippy.toml` refuses a bare `Zeroize::zeroize` or a `Zeroizing` in every crate.
+A wipe written by hand at the end of a function is the bug that type exists to
+remove. The rest follows from what the type can and cannot see:
+
+- A function that produces key-grade bytes hands them out in a `Secret`, or
+  writes them into the caller's `&mut Secret<[u8; N]>`, so a caller that brings
+  a bare array does not compile.
+- A move is a `memcpy` whose source is not wiped: build a secret in place
+  (`Secret::zeroed()`, then `expose_mut()`) and hand it on by reference.
+  `drop(secret)` is such a move; `.wipe()` wipes in place.
+- A wipe no `Secret` can make — state that outlives a command (a struct field,
+  a static), a key type's own `Drop` — stays bare at its wipe point under
+  `#[expect(clippy::disallowed_methods, reason = "…")]` naming that point, and
+  rustc holds the list both ways: a new bare wipe fails clippy, and so does an
+  `#[expect]` whose wipe is gone.
 
 Every file starts with the SPDX header:
 

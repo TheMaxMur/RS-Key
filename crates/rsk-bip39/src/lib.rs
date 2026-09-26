@@ -13,7 +13,6 @@
 //! indices encode the seed, so they come in a `rsk_secret::Secret` that wipes itself.
 
 #![no_std]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use rsk_secret::Secret;
 

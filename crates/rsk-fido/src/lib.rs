@@ -2,7 +2,6 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
-#![deny(clippy::disallowed_methods, clippy::disallowed_types)]
 
 //! `rsk-fido` — the FIDO2 (CTAP2) + U2F (CTAP1) applet. The logic is pure and
 //! host-testable: the device seed, serial, RNG and flash come from the caller

@@ -43,10 +43,10 @@ project — see [README.md](README.md) and
 - **Secrets live in `rsk_secret::Secret`.** Key-grade bytes go in a `Secret`,
   or under a `WipeGuard` when the buffer outlives the scope: both wipe on every
   exit, a `?` included. The root `clippy.toml` refuses a bare
-  `Zeroize::zeroize` or a `Zeroizing`; an exception is an `#[expect]` with its
-  reason. A crate is under that ban once its root carries
-  `#![deny(clippy::disallowed_methods, clippy::disallowed_types)]`; one that
-  does not yet still wipes by hand — move it over, don't add to it.
+  `Zeroize::zeroize` or a `Zeroizing` in every crate; a wipe no `Secret` can
+  make (state that outlives a command, a key type's own `Drop`) stays bare
+  under an `#[expect]` that names its wipe point. Wipe early with `.wipe()`,
+  never `drop(secret)`: that moves the bytes and wipes the copy.
 - **Every new file starts with the SPDX header** (`AGPL-3.0-only` — copy it from
   any neighbouring source file).
 - **Don't commit, push, flash, sign, or write OTP fuses unless asked.** The

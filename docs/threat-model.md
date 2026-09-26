@@ -555,10 +555,10 @@ that wipes on free would close them.
 What holds the first sentence is a type, not a habit. Key-grade bytes live in
 `rsk_secret::Secret` — or, for a buffer that outlives the scope, under a
 `WipeGuard` — whose `Drop` runs on every exit a scope has, a `?` included, and
-the root `clippy.toml` refuses a bare `Zeroize::zeroize` or a `Zeroizing`
-anywhere else. The migration onto it is not finished: a crate whose root does not
-yet deny those lints still wipes by hand, and a hand-written wipe below an early
-return is skipped when that return fires. Two exits no type reaches. A panic runs
+the root `clippy.toml` refuses a bare `Zeroize::zeroize` or a `Zeroizing` in
+every crate. A wipe no `Secret` can make — state that outlives a command, a key
+type's own `Drop` — stays bare under an `#[expect]` that names its wipe point,
+and rustc holds that list both ways. Two exits no type reaches. A panic runs
 nothing — `panic-halt` spins with no unwinding and no `Drop`, so a panic reached
 with a key unsealed leaves it in SRAM until power is cut; what bounds that is
 keeping a panic unreachable from host input, which is what the fuzz targets are
