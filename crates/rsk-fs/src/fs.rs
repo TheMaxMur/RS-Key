@@ -6,6 +6,7 @@
 use heapless::Vec;
 use rsk_sdk::error::{Error, Result};
 
+use crate::counter::CounterFid;
 use crate::sealed::{KeyFid, Sealed};
 use crate::storage::Storage;
 use crate::{EF_META, EF_SCRUB_FILLER, MAX_DYNAMIC_FILES};
@@ -699,6 +700,37 @@ impl<S: Storage> Fs<S> {
     /// Delete a key slot.
     pub fn delete_key(&mut self, fid: KeyFid) -> Result<()> {
         self.delete(fid.get())
+    }
+
+    // ---- typed counter API ----
+    // A [`CounterFid`] is not a `u16` either, so a counter record is written and
+    // read only through these; the storage backend routes it to its partition by
+    // the value, from the one list in [`crate::counter`].
+
+    /// Store a counter record.
+    pub fn put_counter(&mut self, fid: CounterFid, data: &[u8]) -> Result<()> {
+        self.put(fid.get(), data)
+    }
+
+    /// Copy a counter record into `buf`; its full length, or `None` if absent (or
+    /// unreadable — see [`try_read`](Self::try_read)).
+    pub fn read_counter(&mut self, fid: CounterFid, buf: &mut [u8]) -> Option<usize> {
+        self.read(fid.get(), buf)
+    }
+
+    /// [`read_counter`](Self::read_counter), fallible — see [`try_read`](Self::try_read).
+    pub fn try_read_counter(&mut self, fid: CounterFid, buf: &mut [u8]) -> Result<Option<usize>> {
+        self.try_read(fid.get(), buf)
+    }
+
+    /// Whether the counter record holds non-empty data.
+    pub fn has_counter(&mut self, fid: CounterFid) -> bool {
+        self.has_data(fid.get())
+    }
+
+    /// [`has_counter`](Self::has_counter), fallible — see [`try_read`](Self::try_read).
+    pub fn try_has_counter(&mut self, fid: CounterFid) -> Result<bool> {
+        self.try_has_data(fid.get())
     }
 
     // ---- meta side-store ----

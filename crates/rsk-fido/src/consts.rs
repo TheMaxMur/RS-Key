@@ -330,14 +330,14 @@ pub use rsk_fs::EF_HARDENED;
 /// (so a forgotten device PIN is recoverable by a host reset) and by factory reset. NOT
 /// in the OpenPGP 0x10xx range — kept in FIDO's 0xCExx block to avoid an applet clash.
 pub const EF_DEVICE_PIN: u16 = 0xCE20;
-pub const EF_COUNTER: u16 = 0xC000; // global signature counter (U2F + legacy-cred migration seed)
+pub use rsk_fs::counter::EF_COUNTER; // global signature counter (U2F + legacy-cred migration seed)
 /// Per-credential signature counters, a single packed `u32`-LE array indexed by
 /// EF_CRED slot (`[..MAX_RESIDENT_CREDENTIALS*4]`). One file keeps the
 /// dynamic-file budget flat, and being independent of the EF_CRED record version
 /// it migrates every stored credential without touching its box or keys. An
 /// absent slot entry means a credential created before this region existed: its
 /// counter is seeded from `EF_COUNTER` on first use so it never DEcreases.
-pub const EF_CRED_CTR: u16 = 0xC001;
+pub use rsk_fs::counter::EF_CRED_CTR;
 pub const EF_CRED: u16 = 0xCF00; // resident credentials, 0xCF00..0xCFFF
 pub const EF_RP: u16 = 0xD000; // relying-party metadata, 0xD000..0xD0FF
 // Device-local relying-party display nicknames, 0xD300..0xD3FF (one slot per EF_RP

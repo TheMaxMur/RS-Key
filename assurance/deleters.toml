@@ -571,7 +571,7 @@ why = "the source's cached public point. Heads live on key_fid alone, so this fi
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 518
+line = 519
 method = "factory_wipe"
 call = "self.storage.remove(fid)?;"
 rearms = true
@@ -580,7 +580,7 @@ why = "the device-wide wipe, and the reason this table exists. Its `compact()` t
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 599
+line = 600
 method = "delete"
 call = "self.storage.remove(fid)?;"
 rearms = false
@@ -589,7 +589,7 @@ why = "the family's own conditional removal. It cannot re-arm: `request_rescrub`
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 648
+line = 649
 method = "force_delete_halves"
 call = "if let Err(refused) = self.storage.remove(fid) {"
 rearms = false
@@ -598,7 +598,7 @@ why = "the unconditional twin, and `force_delete`'s body as well. Same reason: t
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 823
+line = 855
 method = "meta_delete"
 call = "self.storage.remove(EF_META)?;"
 rearms = false

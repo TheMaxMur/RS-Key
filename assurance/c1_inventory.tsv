@@ -358,7 +358,7 @@ is_fido_gate_fid	crates/rsk-fido/src/reset.rs:210	21	decides	D5	which records ar
 is_fido_gate_record	crates/rsk-fido/src/reset.rs:232	22	decides	D5	five list members, of which EF_PIN, EF_ALWAYS_UV and EF_BACKUP_SEALED are exactly the three clauses 006A/B/C	SEC-FIDO-006A,SEC-FIDO-006B,SEC-FIDO-006C
 in_reset_window	crates/rsk-fido/src/reset.rs:255	7	decides	D5	a warm boot CLOSES the window: otherwise the host restarts via sys_reset and gets the window on demand	SEC-FIDO-006
 is_fido_fid	crates/rsk-fido/src/reset.rs:263	43	decides	D5	the FIDO/OpenPGP boundary in the interleaved 0x10xx range — the answer decides whether the FID is wiped at all	SEC-FIDO-006,SEC-FIDO-004
-survives_factory_reset	crates/rsk-fido/src/reset.rs:307	10	decides	D5	the only predicate by which the display path of factory_wipe leaves the att key and the chain live	SEC-FIDO-006
+survives_factory_reset	crates/rsk-fido/src/reset.rs:308	10	decides	D5	the only predicate by which the display path of factory_wipe leaves the att key and the chain live	SEC-FIDO-006
 lock_engaged	crates/rsk-fido/src/seed.rs:82	7	decides	D5	an unanswered probe reads as ENGAGED — every caller treats true as "refuse until unlocked"	SEC-FIDO-004
 lock_state	crates/rsk-fido/src/seed.rs:90	14	decides	D5	both halves: a torn state reads as UNLOCKED, and on this answer ensure_seed decides whether to regenerate the seed	SEC-FIDO-004,SEC-FIDO-007
 plain_tag	crates/rsk-fido/src/seed.rs:142	9	decides	D5	selects the kbase branch (0x02 versus 0x12), i.e. under which key the record lies on flash	SEC-BOOT-001
@@ -405,49 +405,49 @@ backup_status	crates/rsk-fido/src/vendor.rs:1019	11	decides	M	the same mirror wi
 mark_backup_sealed	crates/rsk-fido/src/vendor.rs:1031	10	decides	D3	the panel path writes the same irreversible marker, bypassing Ctx and the journal	SEC-FIDO-006C
 backup_sealed	crates/rsk-fido/src/vendor.rs:1042	11	decides	D5	an unanswered probe reads as SEALED: a fault must not reopen the seed hand-out window	SEC-FIDO-006C,SEC-FIDO-004
 try_backup_sealed	crates/rsk-fido/src/vendor.rs:1047	8	decides	D5	the fallible probe on which backup_export refuses directly — absence here is itself the permitting state	SEC-FIDO-006C
-slot	crates/rsk-fs/src/fs.rs:38	10	decides	D5	cache address arithmetic: the injectivity of slot is the only thing that keeps one FID's bit from becoming another's decided absence	SEC-STORE-002
-new	crates/rsk-fs/src/fs.rs:152	11	decides	D5	sets both maps to "nothing decided" — the Init state from which known_absent cannot lie	SEC-STORE-002
-write_gen	crates/rsk-fs/src/fs.rs:164	6	marshals	M	hands out the mutation counter, compares nothing itself	-
-rescrub_refused	crates/rsk-fs/src/fs.rs:171	6	marshals	M	latch getter; the only reader is rsk-fido/src/vendor.rs:983, key 5 of BACKUP_STATE, a report over the wire	-
-note_rescrub_refused	crates/rsk-fs/src/fs.rs:178	6	marshals	M	arms the same latch, which gates nothing: the refusal stops the write in request_rescrub, not here	-
-into_storage	crates/rsk-fs/src/fs.rs:185	5	marshals	M	hands out the backend, does not touch the state	-
-present_bit	crates/rsk-fs/src/fs.rs:191	8	decides	D5	the raw presence bit by which delete decides whether to touch the medium	SEC-STORE-002
-decided_bit	crates/rsk-fs/src/fs.rs:200	6	decides	D5	the authority bit; without it a clear present bit would read as absence	SEC-STORE-002
-known_absent	crates/rsk-fs/src/fs.rs:207	10	decides	D5	only it permits skipping the backend, and it is also what sends meta_add_reserve into the "empty blob" branch	SEC-STORE-002,SEC-STORE-005
-record	crates/rsk-fs/src/fs.rs:218	9	decides	D5	puts the backend's authoritative answer into the cache, selecting present or absent	SEC-STORE-002
-mark_present	crates/rsk-fs/src/fs.rs:228	7	decides	D5	sets present+decided, i.e. makes the FID visible to delete and to present_slots	SEC-STORE-002
-settle	crates/rsk-fs/src/fs.rs:236	18	decides	D5	separates a medium fault from absence and caches only a definite answer — this is the faulted-read decision itself	SEC-STORE-002
-mark_absent	crates/rsk-fs/src/fs.rs:255	7	decides	D5	sets a confirmed absence; a false one here is itself the "seed lost" catastrophe	SEC-STORE-002
-scan	crates/rsk-fs/src/fs.rs:263	46	decides	D5	the if complete guard decides that the whole FID space is absent, otherwise leaves it undecided	SEC-STORE-002
-read	crates/rsk-fs/src/fs.rs:310	7	decides	D5	collapses a medium fault into None, and it is exactly this None that the consumer takes for "not provisioned"	SEC-STORE-002
-try_read	crates/rsk-fs/src/fs.rs:318	34	decides	D5	a short-circuit on known_absent plus settle: defines what counts as absence	SEC-STORE-002
-size	crates/rsk-fs/src/fs.rs:353	5	decides	D5	the same collapse of a fault into absence, for the length	SEC-STORE-002
-try_size	crates/rsk-fs/src/fs.rs:359	8	decides	D5	known_absent + settle for the length	SEC-STORE-002
-has_data	crates/rsk-fs/src/fs.rs:368	6	decides	D5	unwrap_or(false): gates that read has_data open on a flash fault	SEC-STORE-002
-try_has_data	crates/rsk-fs/src/fs.rs:375	4	decides	D5	non-empty presence as a boolean gate, with the fault moved out into Err	SEC-STORE-002
-for_each_key	crates/rsk-fs/src/fs.rs:380	16	marshals	M	a single pass-through to the backend; the caller decides what to do with the completeness flag	-
-present_slots	crates/rsk-fs/src/fs.rs:397	26	decides	D3	declares a slot free, and makeCredential writes into it without re-reading	SEC-STORE-002
-free_dynamic	crates/rsk-fs/src/fs.rs:424	8	marshals	M	a length subtraction for the capacity report; put checks is_full itself	-
-compact	crates/rsk-fs/src/fs.rs:433	8	marshals	M	a single pass-through to Storage::compact; run_at_rest_lap makes the lap decision	-
-factory_wipe	crates/rsk-fs/src/fs.rs:442	92	decides	D3	the two-phase first/last order, the batch budget and the refusal on an incomplete walk decide what survives the wipe	SEC-FIDO-006,SEC-BOOT-001,SEC-STORE-002
-put	crates/rsk-fs/src/fs.rs:535	22	decides	D3	writes the record to flash and rejects a new file at the ceiling BEFORE the write, otherwise the value would stay unregistered	SEC-STORE-002
-delete	crates/rsk-fs/src/fs.rs:558	48	decides	D3	metadata first, the value by the raw present bit, and the returned Err carries the fate of the metadata entry	SEC-STORE-001,SEC-STORE-006
-force_delete	crates/rsk-fs/src/fs.rs:607	23	decides	D3	folds the two halves into one Result and thereby defines what the caller learns about at all	SEC-STORE-006
-force_delete_halves	crates/rsk-fs/src/fs.rs:631	34	decides	D3	separates a medium refusal from an EF_META refusal: on the first, the sweep must stop; on the second, it must not	SEC-STORE-001,SEC-STORE-006
-put_key	crates/rsk-fs/src/fs.rs:673	4	marshals	M	unwraps KeyFid/Sealed into put	-
-read_key	crates/rsk-fs/src/fs.rs:678	5	marshals	M	unwraps KeyFid into read; the fault collapse lives in read	-
-try_read_key	crates/rsk-fs/src/fs.rs:684	4	marshals	M	unwraps KeyFid into try_read	-
-has_key	crates/rsk-fs/src/fs.rs:689	4	marshals	M	unwraps KeyFid into has_data	-
-try_has_key	crates/rsk-fs/src/fs.rs:694	4	marshals	M	unwraps KeyFid into try_has_data	-
-delete_key	crates/rsk-fs/src/fs.rs:699	4	marshals	M	unwraps KeyFid into delete; deleters.toml, by the same inference, does not count it as a decision site	-
-meta_find	crates/rsk-fs/src/fs.rs:709	6	decides	D5	an EF_META fault reads as "no entry", and no entry means the published default of the PIV touch policy	SEC-STORE-004
-try_meta_find	crates/rsk-fs/src/fs.rs:716	33	decides	D5	parses the blob and separates a confirmed absence of the entry from a read fault	SEC-STORE-004,SEC-STORE-005
-meta_add	crates/rsk-fs/src/fs.rs:750	4	marshals	M	passes reserve=0 to meta_add_reserve	-
-meta_add_reserve	crates/rsk-fs/src/fs.rs:755	35	decides	D3	an undecided EF_META does not count as empty: otherwise one write wipes out the metadata of every applet	SEC-STORE-003
-meta_delete	crates/rsk-fs/src/fs.rs:791	39	decides	D3	decides whether to rewrite the blob, remove EF_META or not write at all, and when the cache may say "absent"	SEC-STORE-001,SEC-STORE-004,SEC-STORE-005
-rebuild_meta	crates/rsk-fs/src/fs.rs:832	34	decides	D5	its w is the predicate by which meta_delete selects the branch, and its break decides which entries survive the rewrite	SEC-STORE-003
-request_rescrub	crates/rsk-fs/src/lib.rs:39	40	decides	D3	clears EF_HARDENED and re-checks with a probe; its Ok is the condition for every lazy re-seal in the tree	SEC-BOOT-001
-run_at_rest_lap	crates/rsk-fs/src/lib.rs:80	23	decides	D3	gates the multi-second lap on the marker and sets the marker only after a successful compact	SEC-BOOT-001
+slot	crates/rsk-fs/src/fs.rs:39	10	decides	D5	cache address arithmetic: the injectivity of slot is the only thing that keeps one FID's bit from becoming another's decided absence	SEC-STORE-002
+new	crates/rsk-fs/src/fs.rs:153	11	decides	D5	sets both maps to "nothing decided" — the Init state from which known_absent cannot lie	SEC-STORE-002
+write_gen	crates/rsk-fs/src/fs.rs:165	6	marshals	M	hands out the mutation counter, compares nothing itself	-
+rescrub_refused	crates/rsk-fs/src/fs.rs:172	6	marshals	M	latch getter; the only reader is rsk-fido/src/vendor.rs:983, key 5 of BACKUP_STATE, a report over the wire	-
+note_rescrub_refused	crates/rsk-fs/src/fs.rs:179	6	marshals	M	arms the same latch, which gates nothing: the refusal stops the write in request_rescrub, not here	-
+into_storage	crates/rsk-fs/src/fs.rs:186	5	marshals	M	hands out the backend, does not touch the state	-
+present_bit	crates/rsk-fs/src/fs.rs:192	8	decides	D5	the raw presence bit by which delete decides whether to touch the medium	SEC-STORE-002
+decided_bit	crates/rsk-fs/src/fs.rs:201	6	decides	D5	the authority bit; without it a clear present bit would read as absence	SEC-STORE-002
+known_absent	crates/rsk-fs/src/fs.rs:208	10	decides	D5	only it permits skipping the backend, and it is also what sends meta_add_reserve into the "empty blob" branch	SEC-STORE-002,SEC-STORE-005
+record	crates/rsk-fs/src/fs.rs:219	9	decides	D5	puts the backend's authoritative answer into the cache, selecting present or absent	SEC-STORE-002
+mark_present	crates/rsk-fs/src/fs.rs:229	7	decides	D5	sets present+decided, i.e. makes the FID visible to delete and to present_slots	SEC-STORE-002
+settle	crates/rsk-fs/src/fs.rs:237	18	decides	D5	separates a medium fault from absence and caches only a definite answer — this is the faulted-read decision itself	SEC-STORE-002
+mark_absent	crates/rsk-fs/src/fs.rs:256	7	decides	D5	sets a confirmed absence; a false one here is itself the "seed lost" catastrophe	SEC-STORE-002
+scan	crates/rsk-fs/src/fs.rs:264	46	decides	D5	the if complete guard decides that the whole FID space is absent, otherwise leaves it undecided	SEC-STORE-002
+read	crates/rsk-fs/src/fs.rs:311	7	decides	D5	collapses a medium fault into None, and it is exactly this None that the consumer takes for "not provisioned"	SEC-STORE-002
+try_read	crates/rsk-fs/src/fs.rs:319	34	decides	D5	a short-circuit on known_absent plus settle: defines what counts as absence	SEC-STORE-002
+size	crates/rsk-fs/src/fs.rs:354	5	decides	D5	the same collapse of a fault into absence, for the length	SEC-STORE-002
+try_size	crates/rsk-fs/src/fs.rs:360	8	decides	D5	known_absent + settle for the length	SEC-STORE-002
+has_data	crates/rsk-fs/src/fs.rs:369	6	decides	D5	unwrap_or(false): gates that read has_data open on a flash fault	SEC-STORE-002
+try_has_data	crates/rsk-fs/src/fs.rs:376	4	decides	D5	non-empty presence as a boolean gate, with the fault moved out into Err	SEC-STORE-002
+for_each_key	crates/rsk-fs/src/fs.rs:381	16	marshals	M	a single pass-through to the backend; the caller decides what to do with the completeness flag	-
+present_slots	crates/rsk-fs/src/fs.rs:398	26	decides	D3	declares a slot free, and makeCredential writes into it without re-reading	SEC-STORE-002
+free_dynamic	crates/rsk-fs/src/fs.rs:425	8	marshals	M	a length subtraction for the capacity report; put checks is_full itself	-
+compact	crates/rsk-fs/src/fs.rs:434	8	marshals	M	a single pass-through to Storage::compact; run_at_rest_lap makes the lap decision	-
+factory_wipe	crates/rsk-fs/src/fs.rs:443	92	decides	D3	the two-phase first/last order, the batch budget and the refusal on an incomplete walk decide what survives the wipe	SEC-FIDO-006,SEC-BOOT-001,SEC-STORE-002
+put	crates/rsk-fs/src/fs.rs:536	22	decides	D3	writes the record to flash and rejects a new file at the ceiling BEFORE the write, otherwise the value would stay unregistered	SEC-STORE-002
+delete	crates/rsk-fs/src/fs.rs:559	48	decides	D3	metadata first, the value by the raw present bit, and the returned Err carries the fate of the metadata entry	SEC-STORE-001,SEC-STORE-006
+force_delete	crates/rsk-fs/src/fs.rs:608	23	decides	D3	folds the two halves into one Result and thereby defines what the caller learns about at all	SEC-STORE-006
+force_delete_halves	crates/rsk-fs/src/fs.rs:632	34	decides	D3	separates a medium refusal from an EF_META refusal: on the first, the sweep must stop; on the second, it must not	SEC-STORE-001,SEC-STORE-006
+put_key	crates/rsk-fs/src/fs.rs:674	4	marshals	M	unwraps KeyFid/Sealed into put	-
+read_key	crates/rsk-fs/src/fs.rs:679	5	marshals	M	unwraps KeyFid into read; the fault collapse lives in read	-
+try_read_key	crates/rsk-fs/src/fs.rs:685	4	marshals	M	unwraps KeyFid into try_read	-
+has_key	crates/rsk-fs/src/fs.rs:690	4	marshals	M	unwraps KeyFid into has_data	-
+try_has_key	crates/rsk-fs/src/fs.rs:695	4	marshals	M	unwraps KeyFid into try_has_data	-
+delete_key	crates/rsk-fs/src/fs.rs:700	4	marshals	M	unwraps KeyFid into delete; deleters.toml, by the same inference, does not count it as a decision site	-
+meta_find	crates/rsk-fs/src/fs.rs:741	6	decides	D5	an EF_META fault reads as "no entry", and no entry means the published default of the PIV touch policy	SEC-STORE-004
+try_meta_find	crates/rsk-fs/src/fs.rs:748	33	decides	D5	parses the blob and separates a confirmed absence of the entry from a read fault	SEC-STORE-004,SEC-STORE-005
+meta_add	crates/rsk-fs/src/fs.rs:782	4	marshals	M	passes reserve=0 to meta_add_reserve	-
+meta_add_reserve	crates/rsk-fs/src/fs.rs:787	35	decides	D3	an undecided EF_META does not count as empty: otherwise one write wipes out the metadata of every applet	SEC-STORE-003
+meta_delete	crates/rsk-fs/src/fs.rs:823	39	decides	D3	decides whether to rewrite the blob, remove EF_META or not write at all, and when the cache may say "absent"	SEC-STORE-001,SEC-STORE-004,SEC-STORE-005
+rebuild_meta	crates/rsk-fs/src/fs.rs:864	34	decides	D5	its w is the predicate by which meta_delete selects the branch, and its break decides which entries survive the rewrite	SEC-STORE-003
+request_rescrub	crates/rsk-fs/src/lib.rs:40	40	decides	D3	clears EF_HARDENED and re-checks with a probe; its Ok is the condition for every lazy re-seal in the tree	SEC-BOOT-001
+run_at_rest_lap	crates/rsk-fs/src/lib.rs:81	23	decides	D3	gates the multi-second lap on the marker and sets the marker only after a successful compact	SEC-BOOT-001
 default	crates/rsk-openpgp/src/pin.rs:43	3	marshals	M	Self::new(), one expression	-
 new	crates/rsk-openpgp/src/pin.rs:49	16	decides	D4	initial access: every has_pw* cleared, the MSE slots at DEC/AUT, the session keys zeroed	SEC-SEAM-002
 adopt_reseeded	crates/rsk-openpgp/src/pin.rs:66	13	decides	D2	replaces the session keys under the standing status — changes which DEK opens, without touching the gate	-

@@ -64,18 +64,44 @@ type CounterCache = Cache<ArrayPageStates<4>, ArrayPagePointers<4>, ArrayKeyPoin
 /// convenience, so it is passed in — as this target has always spelled it.
 const META_MAX: usize = 1024;
 
-// Five main-partition FIDs plus every counter-routed one
-// (`rsk_store::is_counter_fid`) — both partitions get torn. The mirror this
-// replaced listed only three of the four; `EF_CRED_CTR` (0xC001), rewritten on
-// every getAssertion, was the one it missed.
-//
-// The selector below is `% FIDS.len()`, not `& 7`: three bits index 0..7, so the
-// ninth entry — `0xCC01`, a counter FID — could never be written by any input,
-// while the sweep asserted it absent on every one of them. A whole partition
-// routing was in the roster and out of the reach of the fuzzer.
-const FIDS: [u16; 9] = [
-    0xB000, 0xB001, 0xB002, 0xB003, 0xB004, 0xC000, 0xC001, 0x0093, 0xCC01,
-];
+/// The FIDs an op picks from: five main-partition ones and every counter-routed
+/// one, from the one list `rsk_store::is_counter_fid` routes by, so both
+/// partitions get torn. A hand-written mirror of that list once missed
+/// `EF_CRED_CTR`, rewritten on every getAssertion. The list is private: the one
+/// index into it is `pick`'s, modulo its length. A `& 7` over nine entries once
+/// left the ninth, a counter FID, out of every input's reach while the sweep
+/// asserted it absent.
+mod fids {
+    use rsk_fs::counter::COUNTER_FIDS;
+    use rsk_fs::powercut::PowerCutModel;
+
+    const MAIN: [u16; 5] = [0xB000, 0xB001, 0xB002, 0xB003, 0xB004];
+    const ALL: [u16; MAIN.len() + COUNTER_FIDS.len()] = {
+        let mut out = [0; MAIN.len() + COUNTER_FIDS.len()];
+        let mut i = 0;
+        while i < out.len() {
+            out[i] = if i < MAIN.len() {
+                MAIN[i]
+            } else {
+                COUNTER_FIDS[i - MAIN.len()].get()
+            };
+            i += 1;
+        }
+        out
+    };
+    const _: () = assert!(ALL.len() <= 16, "`touched` is a u16 mask of indices");
+
+    /// The model over every FID an op can pick.
+    pub fn model(meta_max: usize) -> PowerCutModel {
+        PowerCutModel::new(&ALL, meta_max)
+    }
+
+    /// The FID selector byte `b` picks, with its index. Every entry is reachable.
+    pub fn pick(b: u8) -> (usize, u16) {
+        let index = (b >> 3) as usize % ALL.len();
+        (index, ALL[index])
+    }
+}
 
 /// The `SharedFlash` analog: one mock flash shared by both partitions, plus
 /// the power latch. Mutations after a fired cut fail without touching flash.
@@ -366,7 +392,7 @@ fuzz_target!(|data: &[u8]| {
     };
     let mut fs = Fs::new(new_storage(dev.shared.clone()));
     fs.scan();
-    let mut model = PowerCutModel::new(&FIDS, META_MAX);
+    let mut model = fids::model(META_MAX);
     if dirty > 0 {
         // Whatever the store made of the garbage is the committed truth from here.
         model.adopt(&mut dev, &mut fs);
@@ -378,8 +404,7 @@ fuzz_target!(|data: &[u8]| {
     let mut it = data.iter().copied();
     while let Some(b) = it.next() {
         ops += 1;
-        let index = (b >> 3) as usize % FIDS.len();
-        let fid = FIDS[index];
+        let (index, fid) = fids::pick(b);
         touched |= 1 << index;
         tag = tag.wrapping_add(0x35);
 

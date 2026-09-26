@@ -818,22 +818,6 @@ run "display borrows vs dispatch" python scripts/display_borrow_gate.py
 # reflow was a false red; the third says what this row does NOT measure, since
 # assurance_gate.py forces BOUNDED from a harness NAME.
 run "OTP counter writers"      python scripts/counter_writers_gate.py
-# The same shape one crate down, and the set that has drifted twice already.
-# `rsk_store::is_counter_fid` routes a record to the counter partition or the
-# main one, and it is a `matches!` over four bare literals whose named homes are
-# in rsk-fido, rsk-openpgp and rsk-vendor — so the table and the constants drift
-# with no compile error. `EF_CRED_CTR` joined the table at 0x0821 after 0x081D
-# had been writing it to main, and the `power_cut` mirror listed three of the
-# four with a `& 7` selector over nine entries, so the counter FID could never be
-# written by any input while the sweep asserted it absent on every one. A record
-# on the wrong side reads absent while its old value stays live in the other
-# ring, and every `for_each_key` yields a copy nothing can delete. The values are
-# derived from the applet crates now and all four copies are held to them.
-# Driven through THIS row, exit taken with no pipe: a literal changed in any one
-# of the four -> rc 1 naming that copy and the direction; the constant renamed at
-# its home -> rc 1 saying the name resolves nowhere. The table is
-# scripts/test_partition_routing_gate.py.
-run "partition routing"        python scripts/partition_routing_gate.py
 # A model constant that stands for a fact about the world, not a defect switch.
 # `PowerOnClearsScratch2` was TRUE in all seven Boot configurations and read by
 # no action: deleting its `ASSUME` left every run bit-identical.

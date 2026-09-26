@@ -664,8 +664,8 @@ pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng)
     // Not `has_data`: a faulted probe here would roll the signature counter back
     // to zero and overwrite the large-blob array — the same absent-means-first-boot
     // reading the seed guard above makes, at two records the owner cannot rebuild.
-    if !fs.try_has_data(EF_COUNTER)? {
-        fs.put(EF_COUNTER, &[0u8; 4])?;
+    if !fs.try_has_counter(EF_COUNTER)? {
+        fs.put_counter(EF_COUNTER, &[0u8; 4])?;
     }
     if !fs.try_has_data(EF_LARGEBLOB)? {
         fs.put(EF_LARGEBLOB, &LARGEBLOB_INITIAL)?;
@@ -746,7 +746,7 @@ pub fn rebuild_att_cert<S: Storage>(
 /// [`crate::vendor::backup_sealed`] pair leans on does not exist for a `u32`.
 pub fn global_sign_counter<S: Storage>(fs: &mut Fs<S>) -> Result<u32> {
     let mut buf = [0u8; 4];
-    Ok(match fs.try_read(EF_COUNTER, &mut buf)? {
+    Ok(match fs.try_read_counter(EF_COUNTER, &mut buf)? {
         Some(4) => u32::from_le_bytes(buf),
         _ => 0,
     })
@@ -757,7 +757,7 @@ pub fn global_sign_counter<S: Storage>(fs: &mut Fs<S>) -> Result<u32> {
 /// signature counters are per-credential, see [`cred_sign_counter`]).
 pub fn bump_sign_counter<S: Storage>(fs: &mut Fs<S>) -> Result<u32> {
     let ctr = global_sign_counter(fs)?;
-    fs.put(EF_COUNTER, &ctr.wrapping_add(1).to_le_bytes())?;
+    fs.put_counter(EF_COUNTER, &ctr.wrapping_add(1).to_le_bytes())?;
     Ok(ctr)
 }
 
@@ -784,7 +784,7 @@ const CRED_CTR_LEN: usize = MAX_RESIDENT_CREDENTIALS as usize * 4;
 pub fn cred_sign_counter<S: Storage>(fs: &mut Fs<S>, slot: u16) -> Result<Option<u32>> {
     let off = slot as usize * 4;
     let mut buf = [0u8; CRED_CTR_LEN];
-    let Some(n) = fs.try_read(EF_CRED_CTR, &mut buf)? else {
+    let Some(n) = fs.try_read_counter(EF_CRED_CTR, &mut buf)? else {
         return Ok(None);
     };
     let end = off + 4;
@@ -830,11 +830,11 @@ pub fn set_cred_sign_counter<S: Storage>(fs: &mut Fs<S>, slot: u16, value: u32) 
     }
     let mut buf = [0u8; CRED_CTR_LEN];
     let n = fs
-        .try_read(EF_CRED_CTR, &mut buf)?
+        .try_read_counter(EF_CRED_CTR, &mut buf)?
         .unwrap_or(0)
         .min(CRED_CTR_LEN);
     buf[off..end].copy_from_slice(&value.to_le_bytes());
-    fs.put(EF_CRED_CTR, &buf[..end.max(n)])
+    fs.put_counter(EF_CRED_CTR, &buf[..end.max(n)])
 }
 
 /// Test-only: build a legacy PIN-wrapped seed record (tag 0x03 pre-OTP / 0x13

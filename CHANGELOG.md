@@ -692,6 +692,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The counter partition's FIDs are written once** — refactor; the records stay
+  where they are on flash. `rsk-fs` declares the four counters (FIDO's global
+  and per-credential signature counters, OpenPGP's signature counter, the vendor
+  test counter) as `rsk_fs::counter::CounterFid`s with the one list
+  `COUNTER_FIDS`, which `rsk_store::is_counter_fid`, its test and the
+  `power_cut` fuzz target now read instead of their own copies of the four
+  numbers; a counter is written and read through `Fs::put_counter` and its
+  readers, since the plaintext `Fs::put` does not take one. The gate that held
+  the copies to each other, `scripts/partition_routing_gate.py`, is gone.
+  `bcdDevice` 0x0A2F → 0x0A30.
+
 - **Clippy refuses a reset outside the secure reboot** — a lint-policy change;
   the code is the same. `clippy.toml` refuses `SCB::sys_reset`,
   `rom_data::reset_to_usb_boot`, `reboot`, `reboot_ns` and

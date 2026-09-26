@@ -625,7 +625,7 @@ tree can tear a write. Enumerated: every fault backend in
 answers `Ok(())` and cannot fail, and so does every local backend in
 `fs_tests.rs`. The one write-failing medium in the tree,
 `crates/rsk-openpgp/src/dying_storage.rs`, refuses ATOMICALLY — before writing —
-so it drives `crates/rsk-fs/src/fs.rs:786`'s `?` and cannot leave a partial
+so it drives `crates/rsk-fs/src/fs.rs:818`'s `?` and cannot leave a partial
 blob. So there IS a
 line of `rsk-fs` that decides what a failed metadata write costs, and there is no
 way to make one TEAR: the assumption belongs to the medium, and
@@ -637,8 +637,8 @@ DENIABLE — `StoreSolo_BugMetaWriteTearsBlob.cfg` goes RED on
 [comutant.BugMetaDeleteTearsBlob]
 status = "unreachable"
 evidence = """the same backend assumption its sibling denies, at
-`meta_delete`'s own rewrite (`crates/rsk-fs/src/fs.rs:827`) instead of
-`meta_add`'s (`crates/rsk-fs/src/fs.rs:786`), and no `Storage` in this tree
+`meta_delete`'s own rewrite (`crates/rsk-fs/src/fs.rs:859`) instead of
+`meta_add`'s (`crates/rsk-fs/src/fs.rs:818`), and no `Storage` in this tree
 can tear either.
 Re-enumerated rather than inherited, because the roster grew: FIVE fault
 backends in `crates/rsk-fs/src/storage.rs` now — `MetaStuck`, `ProbeStuck`,

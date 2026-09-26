@@ -34,7 +34,7 @@ mod tests;
 pub const VENDOR_AID: &[u8] = &[0xF0, 0x00, 0x00, 0x00, 0x01];
 
 /// Dynamic file holding the counter; `Fs::scan` rediscovers it after a reboot.
-pub const COUNTER_FID: u16 = 0xCC01;
+pub use rsk_fs::counter::COUNTER_FID;
 /// SET LED P2 bit that turns blinking off (solid color); the low 3 bits are the
 /// color and bits 5:4 select which status is being configured.
 const P2_STEADY: u8 = 0x08;
@@ -149,7 +149,7 @@ impl<S: Storage, P: Platform> Applet<Fs<S>> for VendorApplet<'_, P> {
                     return Sw::CONDITIONS_NOT_SATISFIED;
                 }
                 let next = read_counter(fs).wrapping_add(1);
-                if fs.put(COUNTER_FID, &next.to_be_bytes()).is_err() {
+                if fs.put_counter(COUNTER_FID, &next.to_be_bytes()).is_err() {
                     return Sw::MEMORY_FAILURE;
                 }
                 res.extend(&next.to_be_bytes());
@@ -240,7 +240,7 @@ impl<S: Storage, P: Platform> Applet<Fs<S>> for VendorApplet<'_, P> {
 
 fn read_counter<S: Storage>(fs: &mut Fs<S>) -> u32 {
     let mut buf = [0u8; 4];
-    match fs.read(COUNTER_FID, &mut buf) {
+    match fs.read_counter(COUNTER_FID, &mut buf) {
         Some(n) if n >= 4 => u32::from_be_bytes(buf),
         _ => 0,
     }

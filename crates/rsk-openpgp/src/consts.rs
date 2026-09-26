@@ -145,7 +145,9 @@ pub const EF_CH_DATA: u16 = 0x0065; // C — cardholder related data
 pub const EF_APP_DATA: u16 = 0x006e; // C — application related data
 pub const EF_DISCRETE_DO: u16 = 0x0073; // C
 pub const EF_SEC_TPL: u16 = 0x007a; // C — security support template
-pub const EF_SIG_COUNT: u16 = 0x0093; // S — signature counter (3 bytes)
+// S — signature counter (3 bytes). Its DO tag and its FID are one number, and the
+// store routes that FID to the counter partition: so the value is the list's.
+pub const EF_SIG_COUNT: u16 = rsk_fs::counter::EF_SIG_COUNT.get();
 pub const EF_EXT_CAP: u16 = 0x00c0; // S — extended capabilities
 pub const EF_ALGO_SIG: u16 = 0x00c1; // S — algorithm attributes (SIG)
 pub const EF_ALGO_DEC: u16 = 0x00c2; // S

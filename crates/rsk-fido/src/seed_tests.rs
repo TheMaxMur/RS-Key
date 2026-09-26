@@ -230,7 +230,7 @@ fn ensure_seed_is_idempotent() {
     let mut rng = SeqRng(7);
     ensure_seed(&d, &mut fs, &mut rng).unwrap();
     let seed1 = load_keydev(&d, &mut fs).unwrap();
-    assert!(fs.has_data(EF_COUNTER));
+    assert!(fs.has_counter(EF_COUNTER));
     assert_eq!(global_sign_counter(&mut fs).unwrap(), 0);
     // A second scan must not regenerate the seed.
     ensure_seed(&d, &mut fs, &mut rng).unwrap();
@@ -244,7 +244,7 @@ fn ensure_seed_is_idempotent() {
 #[test]
 fn counter_bumps_and_persists() {
     let mut fs = fs();
-    fs.put(EF_COUNTER, &[0u8; 4]).unwrap();
+    fs.put_counter(EF_COUNTER, &[0u8; 4]).unwrap();
     assert_eq!(bump_sign_counter(&mut fs).unwrap(), 0);
     assert_eq!(bump_sign_counter(&mut fs).unwrap(), 1);
     assert_eq!(global_sign_counter(&mut fs).unwrap(), 2);
@@ -279,7 +279,7 @@ fn ensure_seed_skips_generation_when_locked() {
     fs.put(EF_KEY_DEV_ENC.get(), &blob).unwrap();
     ensure_seed(&d, &mut fs, &mut rng).unwrap();
     assert!(!fs.has_data(EF_KEY_DEV.get()));
-    assert!(fs.has_data(EF_COUNTER)); // the rest of the scan still runs
+    assert!(fs.has_counter(EF_COUNTER)); // the rest of the scan still runs
     assert!(!fs.has_data(EF_EE_DEV)); // cert step skipped (seed unreadable)
 }
 
@@ -773,7 +773,7 @@ fn a_faulted_probe_does_not_mint_a_second_device_seed() {
         .value(EF_KEY_DEV.get())
         .expect("and is on the medium");
     let counter = medium
-        .value(EF_COUNTER)
+        .value(EF_COUNTER.get())
         .expect("so is the signature counter");
 
     // The next boot re-runs `ensure_seed`, with EF_KEY_DEV's reads faulting.
@@ -790,7 +790,7 @@ fn a_faulted_probe_does_not_mint_a_second_device_seed() {
         "a faulted probe minted a new device seed over the live one"
     );
     assert_eq!(
-        medium.value(EF_COUNTER).as_deref(),
+        medium.value(EF_COUNTER.get()).as_deref(),
         Some(&counter[..]),
         "and rolled the signature counter back to zero"
     );
@@ -815,11 +815,11 @@ fn a_faulted_probe_does_not_reinitialise_the_counter_or_the_large_blob() {
     fs.scan();
     ensure_seed(&d, &mut fs, &mut SeqRng(1)).unwrap();
     // Move both off the values a first boot writes, so a re-initialisation shows.
-    fs.put(EF_COUNTER, &[9, 8, 7, 6]).unwrap();
+    fs.put_counter(EF_COUNTER, &[9, 8, 7, 6]).unwrap();
     fs.put(EF_LARGEBLOB, &[0xAB; 8]).unwrap();
 
     for (fid, what) in [
-        (EF_COUNTER, "the signature counter"),
+        (EF_COUNTER.get(), "the signature counter"),
         (EF_LARGEBLOB, "the large-blob array"),
     ] {
         let before = medium.value(fid).expect("on the medium");
@@ -912,14 +912,14 @@ fn a_faulted_counter_probe_does_not_roll_the_global_counter_back() {
     fs.scan();
     ensure_seed(&d, &mut fs, &mut SeqRng(1)).unwrap();
     // Off the value a first boot writes, so a roll-back shows.
-    fs.put(EF_COUNTER, &77u32.to_le_bytes()).unwrap();
-    let before = medium.value(EF_COUNTER).expect("on the medium");
+    fs.put_counter(EF_COUNTER, &77u32.to_le_bytes()).unwrap();
+    let before = medium.value(EF_COUNTER.get()).expect("on the medium");
 
-    medium.stick(Some(EF_COUNTER));
+    medium.stick(Some(EF_COUNTER.get()));
     let bumped = bump_sign_counter(&mut fs);
     medium.stick(None);
     assert_eq!(
-        medium.value(EF_COUNTER).as_deref(),
+        medium.value(EF_COUNTER.get()).as_deref(),
         Some(&before[..]),
         "a faulted probe rolled the global signature counter back"
     );
@@ -943,13 +943,15 @@ fn a_faulted_cred_counter_probe_does_not_zero_the_other_slots() {
     for (slot, v) in [(0u16, 11u32), (1, 22), (2, 33)] {
         set_cred_sign_counter(&mut fs, slot, v).unwrap();
     }
-    let before = medium.value(EF_CRED_CTR).expect("on the medium");
+    let before = medium.value(EF_CRED_CTR.get()).expect("on the medium");
     assert_eq!(before.len(), 12, "three packed slots");
 
-    medium.stick(Some(EF_CRED_CTR));
+    medium.stick(Some(EF_CRED_CTR.get()));
     let wrote = set_cred_sign_counter(&mut fs, 1, 23);
     medium.stick(None);
-    let after = medium.value(EF_CRED_CTR).expect("still on the medium");
+    let after = medium
+        .value(EF_CRED_CTR.get())
+        .expect("still on the medium");
     assert_eq!(
         after.len(),
         before.len(),
@@ -983,7 +985,7 @@ fn a_faulted_cred_counter_probe_is_not_an_unmaterialized_slot() {
     let mut fs = Fs::new(backend);
     fs.scan();
     ensure_seed(&d, &mut fs, &mut SeqRng(1)).unwrap();
-    fs.put(EF_COUNTER, &60u32.to_le_bytes()).unwrap();
+    fs.put_counter(EF_COUNTER, &60u32.to_le_bytes()).unwrap();
 
     // Absent: no packed file at all.
     assert_eq!(cred_sign_counter(&mut fs, 0), Ok(None));
@@ -997,7 +999,7 @@ fn a_faulted_cred_counter_probe_is_not_an_unmaterialized_slot() {
     // Live-zero gap: writing slot 2 zero-extends the file across slot 1, which is
     // a real 0 on the medium and still unmaterialized.
     set_cred_sign_counter(&mut fs, 2, 55).unwrap();
-    assert_eq!(medium.value(EF_CRED_CTR).map(|v| v.len()), Some(12));
+    assert_eq!(medium.value(EF_CRED_CTR.get()).map(|v| v.len()), Some(12));
     assert_eq!(cred_sign_counter(&mut fs, 1), Ok(None));
     assert_eq!(report_sign_counter(&mut fs, 1).unwrap(), 60);
     // Live: its own value, never the global.
@@ -1005,7 +1007,7 @@ fn a_faulted_cred_counter_probe_is_not_an_unmaterialized_slot() {
     assert_eq!(report_sign_counter(&mut fs, 0).unwrap(), 44);
 
     // Faulted: the fourth state, and the only one that is not an answer.
-    medium.stick(Some(EF_CRED_CTR));
+    medium.stick(Some(EF_CRED_CTR.get()));
     let read = cred_sign_counter(&mut fs, 0);
     let reported = report_sign_counter(&mut fs, 0);
     medium.stick(None);

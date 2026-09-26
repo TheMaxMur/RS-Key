@@ -1398,7 +1398,7 @@ fn a_faulted_cred_counter_probe_does_not_fabricate_a_sign_count() {
     let r = run_assert(&mut fs, &mut rng, &ga_request(Some(&b)));
     assert_eq!(assertion_sign_count(&r), 1);
 
-    medium.stick(Some(crate::consts::EF_CRED_CTR));
+    medium.stick(Some(crate::consts::EF_CRED_CTR.get()));
     let faulted = try_assert(&mut fs, &mut rng, &ga_request(Some(&a)));
     medium.stick(None);
     // B was never named by that request; its counter is pure collateral.
@@ -1439,13 +1439,13 @@ fn a_transient_cred_counter_fault_does_not_reach_the_signature() {
         assert_eq!(assertion_sign_count(&r), want);
     }
     let before = medium
-        .value(crate::consts::EF_CRED_CTR)
+        .value(crate::consts::EF_CRED_CTR.get())
         .expect("the packed file is on the medium");
 
-    medium.stick_once(crate::consts::EF_CRED_CTR);
+    medium.stick_once(crate::consts::EF_CRED_CTR.get());
     let faulted = try_assert(&mut fs, &mut rng, &ga_request(Some(&a)));
     assert_eq!(
-        medium.value(crate::consts::EF_CRED_CTR).as_deref(),
+        medium.value(crate::consts::EF_CRED_CTR.get()).as_deref(),
         Some(&before[..]),
         "the counter was rewritten from a value that was never read"
     );
@@ -1501,11 +1501,11 @@ fn a_transient_cred_counter_fault_does_not_reach_the_next_signature() {
         }
     }
     let before = medium
-        .value(crate::consts::EF_CRED_CTR)
+        .value(crate::consts::EF_CRED_CTR.get())
         .expect("the packed file is on the medium");
 
     let mut o2 = [0u8; 1024];
-    medium.stick_once(crate::consts::EF_CRED_CTR);
+    medium.stick_once(crate::consts::EF_CRED_CTR.get());
     let r = {
         let mut presence = crate::AlwaysConfirm;
         let mut ctx = Ctx {
@@ -1519,7 +1519,7 @@ fn a_transient_cred_counter_fault_does_not_reach_the_next_signature() {
         get_next_assertion(&mut ctx, &mut o2)
     };
     assert_eq!(
-        medium.value(crate::consts::EF_CRED_CTR).as_deref(),
+        medium.value(crate::consts::EF_CRED_CTR.get()).as_deref(),
         Some(&before[..]),
         "the counter was rewritten from a value that was never read"
     );
@@ -1599,9 +1599,9 @@ fn legacy_resident_credential_seeds_from_global_counter() {
     ))
     .0;
     // Recreate a pre-upgrade device: a non-trivial global counter and no per-cred entry.
-    fs.put(crate::consts::EF_COUNTER, &100u32.to_le_bytes())
+    fs.put_counter(crate::consts::EF_COUNTER, &100u32.to_le_bytes())
         .unwrap();
-    fs.delete(crate::consts::EF_CRED_CTR).unwrap();
+    fs.delete(crate::consts::EF_CRED_CTR.get()).unwrap();
 
     let r1 = run_assert(&mut fs, &mut rng, &ga_request(Some(&cred_id)));
     assert_eq!(
@@ -1634,9 +1634,9 @@ fn legacy_credential_survives_gap_zerofill() {
     ))
     .0;
     // Recreate a pre-upgrade device: a live global and NO per-credential file at all.
-    fs.put(crate::consts::EF_COUNTER, &50u32.to_le_bytes())
+    fs.put_counter(crate::consts::EF_COUNTER, &50u32.to_le_bytes())
         .unwrap();
-    fs.delete(crate::consts::EF_CRED_CTR).unwrap();
+    fs.delete(crate::consts::EF_CRED_CTR.get()).unwrap();
 
     // Assert H (slot 1) first: this materializes slot 1 and zero-extends the packed
     // file over slot 0.

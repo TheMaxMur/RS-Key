@@ -324,7 +324,7 @@ fn incrementing_the_counter_needs_the_operator() {
     assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
     assert!(body.is_empty(), "a refused increment answered with a value");
     assert!(
-        !fs.has_data(COUNTER_FID),
+        !fs.has_counter(COUNTER_FID),
         "a declined touch wrote flash anyway — the wear this gate exists to close"
     );
 

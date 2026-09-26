@@ -9,6 +9,7 @@
 //! present-cache plus a metadata side-store sit on top; applets own their own FID
 //! ranges and access control, so `Fs` is a plain typed KV store.
 
+pub mod counter;
 pub mod fs;
 // The power-cut oracle. Its rules are `no_std` so `cargo kani` can prove them;
 // the driver that runs them against a real `Fs` needs a heap and is behind

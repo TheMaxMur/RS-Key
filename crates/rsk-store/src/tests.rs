@@ -237,24 +237,24 @@ fn keys(store: &mut TestStore) -> (Vec<u16>, bool) {
 
 /// A main-partition FID (a FIDO credential slot) and a counter-routed one.
 const CRED: u16 = 0xCF00;
-const CTR: u16 = 0xC000;
+const CTR: u16 = rsk_fs::counter::EF_COUNTER.get();
 
 // --- the routing table -----------------------------------------------------
 
 #[test]
-fn only_the_four_hot_counters_leave_the_main_partition() {
-    // The split is this crate's whole reason to exist, and the table is a copy of
-    // four other crates' FIDs: `EF_COUNTER` / `EF_CRED_CTR` (rsk-fido 0xC000 /
-    // 0xC001), OpenPGP's signature counter (0x0093) and the vendor test counter
-    // (0xCC01). A missing entry is invisible — the value still stores, it just
-    // stores in the pages holding the credentials. The `power_cut` target's
-    // hand-written mirror was missing 0xC001, rewritten on every getAssertion.
-    for fid in [0xC000, 0xC001, 0x0093, 0xCC01] {
+fn only_the_hot_counters_leave_the_main_partition() {
+    // The split is this crate's whole reason to exist. A missing entry is invisible
+    // — the value still stores, it just stores in the pages holding the credentials.
+    let counters = rsk_fs::counter::COUNTER_FIDS.map(|c| c.get());
+    for fid in counters {
         assert!(is_counter_fid(fid), "{fid:#06x} must be a counter");
     }
     // Their neighbours must NOT be: an off-by-one entry would quietly route a
     // credential into the churn partition, or a counter into the credential pages.
-    for fid in [0xBFFF, 0xC002, 0x0092, 0x0094, 0xCC00, 0xCC02, CRED] {
+    let neighbours = counters
+        .iter()
+        .flat_map(|&f| [f.wrapping_sub(1), f.wrapping_add(1)]);
+    for fid in neighbours.filter(|f| !counters.contains(f)).chain([CRED]) {
         assert!(!is_counter_fid(fid), "{fid:#06x} must stay in main");
     }
     assert!(

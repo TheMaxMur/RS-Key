@@ -268,17 +268,18 @@ fn in_reset_window<S: Storage, R: Rng>(ctx: &Ctx<S, R>) -> bool {
 /// in the 0x10xx range (FIDO `EF_PIN` 0x1080 vs OpenPGP PW1 0x1081), so this is an
 /// explicit set plus the resident-credential ranges, not a range test.
 fn is_fido_fid(fid: u16) -> bool {
-    // EF_KEY_DEV / EF_KEY_DEV_ENC / EF_PAUTHTOKEN are `KeyFid`s (sealed slots), so
-    // they can't sit in the `u16` match arm — compare their raw FIDs explicitly.
+    // EF_KEY_DEV / EF_KEY_DEV_ENC / EF_PAUTHTOKEN are `KeyFid`s (sealed slots) and
+    // EF_COUNTER / EF_CRED_CTR `CounterFid`s, so they can't sit in the `u16` match
+    // arm — compare their raw FIDs explicitly.
     fid == EF_KEY_DEV.get()
         || fid == EF_KEY_DEV_ENC.get()
         || fid == EF_PAUTHTOKEN.get()
+        || fid == EF_COUNTER.get()
+        || fid == EF_CRED_CTR.get()
         || matches!(
             fid,
             EF_BACKUP_SEALED
                 | EF_EE_DEV
-                | EF_COUNTER
-                | EF_CRED_CTR
                 // Goes with the credentials it summarises: absent reads as the
                 // zero tag, which is exactly the state of the store a reset leaves.
                 | EF_CRED_STATE

@@ -810,8 +810,8 @@ fn a_faulted_counter_probe_does_not_sign_a_fabricated_u2f_counter() {
     let key_handle = out[67..67 + KEY_HANDLE_LEN].to_vec();
 
     // Off a first boot's zero, so a roll-back shows in the reported counter too.
-    fs.put(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
-    let before = medium.value(EF_COUNTER).expect("on the medium");
+    fs.put_counter(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
+    let before = medium.value(EF_COUNTER.get()).expect("on the medium");
 
     let mut ad = std::vec::Vec::new();
     ad.extend_from_slice(&CHAL);
@@ -821,11 +821,11 @@ fn a_faulted_counter_probe_does_not_sign_a_fabricated_u2f_counter() {
     let auth_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &ad);
     let auth_apdu = Apdu::parse(&auth_bytes).unwrap();
     let mut out2 = [0u8; 256];
-    medium.stick(Some(EF_COUNTER));
+    medium.stick(Some(EF_COUNTER.get()));
     let (sw, n) = authenticate(&mut fs, &mut rng, &auth_apdu, &mut out2);
     medium.stick(None);
     assert_eq!(
-        medium.value(EF_COUNTER).as_deref(),
+        medium.value(EF_COUNTER.get()).as_deref(),
         Some(&before[..]),
         "a faulted probe rolled the U2F signature counter back"
     );
@@ -892,7 +892,7 @@ fn a_refused_counter_advance_signs_nothing() {
     ad.extend_from_slice(&out[67..67 + KEY_HANDLE_LEN]);
     let auth_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &ad);
     let auth_apdu = Apdu::parse(&auth_bytes).unwrap();
-    fs.put(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
+    fs.put_counter(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
 
     // Each answer as the RP sees it: the status, and the counter a body carried.
     let mut signed = |fs: &mut Fs<rsk_fs::storage::faults::Cut>| {

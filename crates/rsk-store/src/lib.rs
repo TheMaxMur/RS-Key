@@ -80,12 +80,10 @@ pub struct SeqStorage<
 }
 
 /// Route the hot per-operation counters to the dedicated counter partition so their
-/// churn never reclaims a credential/key page in the main partition. Values are
-/// `EF_COUNTER` (FIDO 0xC000), `EF_CRED_CTR` (FIDO per-credential signature counters,
-/// 0xC001 — rewritten on every getAssertion), `EF_SIG_COUNT` (OpenPGP 0x0093) and the
-/// vendor test counter `COUNTER_FID` (0xCC01).
+/// churn never reclaims a credential/key page in the main partition. The set is
+/// [`rsk_fs::counter::COUNTER_FIDS`], the one place it is written.
 pub fn is_counter_fid(fid: u16) -> bool {
-    matches!(fid, 0xC000 | 0xC001 | 0x0093 | 0xCC01)
+    rsk_fs::counter::COUNTER_FIDS.iter().any(|c| c.get() == fid)
 }
 
 impl<F: NorFlash + MultiwriteNorFlash + Clone, CM: CacheImpl<u16>, CC: CacheImpl<u16>>

@@ -35,7 +35,7 @@
 //!   [`two_file_fids`] has to assume the collision away. That direction is an
 //!   over-approximation the shrink INVENTS rather than one it hides: a `meta_add`
 //!   whose subject is EF_META itself is a state the shipped store cannot reach;
-//! * that `scan` registers every file it is handed. `fs.rs:286` skips
+//! * that `scan` registers every file it is handed. `fs.rs:287` skips
 //!   `fid == EF_META`, so under the alias it refuses FID 23 — a FID this file's
 //!   own domain draws from. Inert today, because no harness in the tree reaches
 //!   `scan`, and the first one written over this domain is where it would bite.
@@ -65,7 +65,7 @@ fn two_file_fids() -> (u16, u16) {
 }
 
 /// `MetaAdd(f)` at its faulted disjunct: an EF_META read that FAILED is refused,
-/// never rebuilt from an empty blob — `meta_add_reserve`'s guard, `fs.rs:776-778`.
+/// never rebuilt from an empty blob — `meta_add_reserve`'s guard, `fs.rs:808-810`.
 ///
 /// The clean direction is not decoration: over a backend that genuinely holds no
 /// blob, rebuilding from empty is the *correct* move, so a guard keyed on
@@ -114,7 +114,7 @@ fn a_faulted_meta_read_is_refused_rather_than_rebuilt_from_empty() {
 }
 
 /// `MetaDelete(f)` at its faulted disjunct: an EF_META read that FAILED never
-/// becomes a decided absence — `meta_delete`'s guard, `fs.rs:808`, and the one thing
+/// becomes a decided absence — `meta_delete`'s guard, `fs.rs:840`, and the one thing
 /// that keeps `metaAbsent` honest while records stand.
 ///
 /// The clean direction caches the absence, and must: that is what lets the next
