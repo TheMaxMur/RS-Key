@@ -325,8 +325,15 @@ def sources(root, rev, unit):
 
 def declarations(text):
     """(module name, `#[path]` operand or None, cfg-gated) per `mod x;` in `text`."""
-    held = []
+    held, depth = [], 0
     for line in text.splitlines():
+        if depth > 0:
+            # rustfmt breaks a long attribute over lines — the `#[allow(…)]` the
+            # host-bytes deny puts on each test module — and read one line at a
+            # time it ended the run, dropping the `#[cfg(test)]` above it.
+            held[-1] += "\n" + line
+            depth += line.count("[") - line.count("]")
+            continue
         found = MOD_DECL.match(line)
         if found:
             attrs = "\n".join(held)
@@ -335,6 +342,7 @@ def declarations(text):
             held = []
         elif ATTRIBUTE.match(line):
             held.append(line)
+            depth = line.count("[") - line.count("]")
         else:
             # A blank line ends the run too: an attribute is attached to the item
             # it touches, and treating a gap as transparent let a file-level
