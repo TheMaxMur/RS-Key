@@ -3,6 +3,15 @@
 
 //! ISO-7816 APDU parsing.
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use crate::error::{Error, Result};
 
 /// ISO 7816-4: Ne when Le is absent or encoded as 0 (short form).
@@ -16,11 +25,6 @@ pub const INS_GET_RESPONSE: u8 = 0xC0;
 const CLA_SM_MASK: u8 = 0x0C;
 /// ISO 7816-4 §5.4.1: b8 of the class byte set marks the proprietary class.
 pub const CLA_PROPRIETARY: u8 = 0x80;
-
-#[inline]
-fn be16(b: &[u8]) -> u16 {
-    ((b[0] as u16) << 8) | b[1] as u16
-}
 
 /// A parsed command APDU. `data` borrows the command buffer (the `Nc` bytes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,30 +48,32 @@ impl<'a> Apdu<'a> {
     /// Parse a raw command buffer. Handles ISO-7816 cases 1–4, short and
     /// extended length.
     pub fn parse(buf: &'a [u8]) -> Result<Self> {
-        if buf.len() < 4 {
+        // No slice patterns: Kani's codegen refuses them behind a reference, and the
+        // harnesses in `apdu_kani.rs` drive this parser.
+        let (Some(&[cla, ins, p1, p2]), Some(rest)) = (buf.first_chunk::<4>(), buf.get(4..)) else {
             return Err(Error::WrongLength);
-        }
-        let size = buf.len();
-        let (cla, ins, p1, p2) = (buf[0], buf[1], buf[2], buf[3]);
+        };
         let mut nc = 0usize;
         let mut ne = 0usize;
         let mut data: &[u8] = &[];
         let mut extended = false;
 
-        if size == 4 {
+        if rest.is_empty() {
             // Case 1 (Ne still defaults to 256).
             ne = NE_SHORT_MAX;
-        } else if size == 5 {
+        } else if rest.len() == 1
+            && let Some(&le) = rest.first()
+        {
             // Case 2 short.
-            ne = match buf[4] {
+            ne = match le {
                 0 => NE_SHORT_MAX,
                 n => n as usize,
             };
-        } else if buf[4] == 0 && size >= 7 {
+        } else if let (Some(&[0, hi, lo]), Some(tail)) = (rest.first_chunk::<3>(), rest.get(3..)) {
             // Extended length (leading 0 marker).
             extended = true;
-            if size == 7 {
-                ne = match be16(&buf[5..7]) {
+            if tail.is_empty() {
+                ne = match u16::from_be_bytes([hi, lo]) {
                     0 => NE_EXT_MAX,
                     n => n as usize,
                 };
@@ -75,29 +81,31 @@ impl<'a> Apdu<'a> {
                 // The whole 16-bit Lc, never its low byte. A YubiKey 5.7.4 stores
                 // `Lc mod 256` here and answers `9000` — 300 bytes of PUT DATA
                 // become 44 — which is the one parity that loses a user's data.
-                nc = be16(&buf[5..7]) as usize;
-                let start = 7;
-                if start + nc > size {
+                nc = u16::from_be_bytes([hi, lo]) as usize;
+                let (Some(body), Some(after)) = (tail.get(..nc), tail.get(nc..)) else {
                     return Err(Error::WrongLength);
-                }
-                data = &buf[start..start + nc];
-                if nc + 7 + 2 == size {
-                    ne = match be16(&buf[size - 2..]) {
+                };
+                data = body;
+                if after.len() == 2
+                    && let Some(&le) = after.first_chunk::<2>()
+                {
+                    ne = match u16::from_be_bytes(le) {
                         0 => NE_EXT_MAX,
                         n => n as usize,
                     };
                 }
             }
-        } else {
+        } else if let Some((&lc, tail)) = rest.split_first() {
             // Short Lc (cases 3 and 4).
-            nc = buf[4] as usize;
-            let start = 5;
-            if start + nc > size {
+            nc = lc as usize;
+            let (Some(body), Some(after)) = (tail.get(..nc), tail.get(nc..)) else {
                 return Err(Error::WrongLength);
-            }
-            data = &buf[start..start + nc];
-            if nc + 5 + 1 == size {
-                ne = match buf[size - 1] {
+            };
+            data = body;
+            if after.len() == 1
+                && let Some(&le) = after.first()
+            {
+                ne = match le {
                     0 => NE_SHORT_MAX,
                     n => n as usize,
                 };
@@ -155,5 +163,13 @@ impl<'a> Apdu<'a> {
 mod proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "apdu_tests.rs"]
 mod tests;
