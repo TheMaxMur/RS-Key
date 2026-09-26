@@ -95,6 +95,7 @@ assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	239-239	fn c
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	300-304	let mut padded = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();	return Err(CtapError::PinAuthInvalid);
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	306-310	// §6.5.5.6: under a pending forced change the new PIN must actually differ —	.expose()
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	317-317	.ok_or(CtapError::PinPolicyViolation)?;	.ok_or(CtapError::PinPolicyViolation)?;
+assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	323-327	// §6.5.5.6 step 15 calls resetPersistentPinUvAuthToken. Revoke *before* the new	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	324-328	// verifier lands: a power cut the other way round would leave the old holder's	let res = store_new_pin(ctx, padded.expose());
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	530-532	if force_change_pending(ctx) {	}
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	801-801	// the retry budget. If the stored value doesn't match, fail closed (treat as	// the retry budget. If the stored value doesn't match, fail closed (treat as
@@ -468,6 +469,8 @@ assurance/platform.toml	crates/rsk-display/src/pin.rs	804-804	/// floor); the **
 assurance/platform.toml	crates/rsk-display/src/presence.rs	41-44	let saved = self.hooks.led_status();	self.hooks.set_up_pending(true);
 assurance/platform.toml	crates/rsk-display/src/presence.rs	43-43	self.hooks.set_cancel_requested(false);	self.hooks.set_cancel_requested(false);
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	308-322	if force_change_pending(ctx) {	}
+assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	323-327	// §6.5.5.6 step 15 calls resetPersistentPinUvAuthToken. Revoke *before* the new	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
+assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	324-328	// verifier lands: a power cut the other way round would leave the old holder's	let res = store_new_pin(ctx, padded.expose());
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	456-456	ctx.state.begin_using_token(false, ctx.now_ms);	ctx.state.begin_using_token(false, ctx.now_ms);
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	530-532	if force_change_pending(ctx) {	}
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	618-618	if !ctx.fs.has_data(EF_PIN) {	if !ctx.fs.has_data(EF_PIN) {
@@ -503,7 +506,6 @@ assurance/platform.toml	crates/rsk-fido/src/seed.rs	346-347	r.map(|()| tok)	}
 assurance/platform.toml	crates/rsk-fido/src/seed.rs	360-360	pub fn clear_ppuat<S: Storage>(fs: &mut Fs<S>) -> Result<()> {	pub fn clear_ppuat<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
 assurance/platform.toml	crates/rsk-fido/src/seed.rs	565-565	let weak = matches!(buf.expose()[0], FORMAT_F1 | FORMAT_G1) && dev.otp_key.is_some();	let weak = matches!(buf.expose()[0], FORMAT_F1 | FORMAT_G1) && dev.otp_key.is_some();
 assurance/platform.toml	crates/rsk-fido/src/state.rs	300-304	/// ```compile_fail,E0616	///
-assurance/platform.toml	crates/rsk-fido/src/state.rs	306-310	///	/// ```
 assurance/platform.toml	crates/rsk-fido/src/state.rs	584-599	}	pub fn reset_pin_uv_auth_token(&mut self, rng: &mut impl Rng) {
 assurance/platform.toml	crates/rsk-fido/src/state.rs	645-660	/// `stopUsingPinUvAuthToken` — drop the in-use state, permissions, and	}
 assurance/platform.toml	crates/rsk-fido/src/state.rs	682-697	pub fn retire_sequences_except(&mut self, cmd: u8) {	/// Refines `RSKeySecurityState!NoTokenAfterInvalidation` — SEC-FIDO-003.

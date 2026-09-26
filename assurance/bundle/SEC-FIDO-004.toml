@@ -242,7 +242,7 @@ bound_tests_fallen = 1
 stops_tests_fallen = "which assertion is load-bearing. One test falls now and the count says the mutant died, not that the test was written for this property — it reads the gate set, which is what the patch edits. It was three before provisioning began minting the grant; see retired_owners_of_the_kill for why the two torn-wipe tests no longer reach the state"
 bound_slice_crates = 1
 stops_slice_crates = "any test outside the one crate the slice runs. A kill by a test in another crate would not be observed by this row"
-shipped_relation = "the patch puts `|| fid == EF_PAUTHTOKEN.get()` back on is_fido_gate_record (formal/comutants.toml:395-414) — eab4b5c reverted, in the shipped file, not a model edit — and it is the ONE co-refutation in this tree whose patch site is a function this property's own tag sits on. Driven here rather than transcribed: a throwaway worktree at 31c21a7, the anchor asserted to resolve exactly once, `cargo test -p rsk-fido --target aarch64-apple-darwin` against the main build cache. `expect = \"killed\"` in that file is a RECORDED verdict per its own status vocabulary (:19-21), and this run is the second observation of it"
+shipped_relation = "the patch puts `|| fid == EF_PAUTHTOKEN.get()` back on is_fido_gate_record (formal/comutants.toml:404-420) — eab4b5c reverted, in the shipped file, not a model edit — and it is the ONE co-refutation in this tree whose patch site is a function this property's own tag sits on. Driven here rather than transcribed: a throwaway worktree at 31c21a7, the anchor asserted to resolve exactly once, `cargo test -p rsk-fido --target aarch64-apple-darwin` against the main build cache. `expect = \"killed\"` in that file is a RECORDED verdict per its own status vocabulary (:19-21), and this run is the second observation of it"
 cfg = "none"
 features = "none — the slice is `cargo test -p rsk-fido` on the default feature set"
 
@@ -291,7 +291,7 @@ environment = "nix develop; CARGO_TARGET_DIR pointed at the main build cache and
 name = "cargo"
 version = "1.96.0 (30a34c682 2026-05-25)"
 provenance = "flake.lock"
-invocation = "see rustc; `cargo test -p rsk-fido` is exactly the slice formal/comutants.toml:418 names for this comutant"
+invocation = "see rustc; `cargo test -p rsk-fido` is exactly the slice formal/comutants.toml:421 names for this comutant"
 environment = "nix develop"
 
 [[tool]]
@@ -436,7 +436,7 @@ registered = "yes — assurance/platform.toml PLAT-GRANT-001, pending. Written B
 id = "AS-F004-2"
 statement = "`SeedReachable`'s `ram` disjunct, which stands in clause 2's antecedent, is INERT on the shipped tree, so the clause is exactly as strong as its `store.seed`-only reading and no weaker."
 kind = "model fidelity"
-discharger = "already measured, and written down rather than re-derived: formal/README.md:843-855 records that `ram => store.seed` holds over all 17 190 324 states, that dropping the disjunct leaves the reachable set IDENTICAL and flips no verdict, and that the reason is DeviceUnlock needing a live flash seed while ResetConfirmed drops the RAM copy first. THE DIRECTION IS WHAT THIS ROW IS FOR: an inert term in an ANTECEDENT can only ever make an implication stronger, so nothing about this property is weakened by it — what is lost is a CLAIM. Clause 2 may not be read as covering a credential whose seed lives only in RAM, because no reachable state has `ram /\\ ~store.seed` for it to cover. And the guarantee that this stays true is another property's invariant, RamNeverOutlivesFlashSeed / SEC-FIDO-007, which is a dependency between two registry rows that neither row records"
+discharger = "already measured, and written down rather than re-derived: formal/README.md:854-859 records that `ram => store.seed` holds over all 17 190 324 states, that dropping the disjunct leaves the reachable set IDENTICAL and flips no verdict, and that the reason is DeviceUnlock needing a live flash seed while ResetConfirmed drops the RAM copy first. THE DIRECTION IS WHAT THIS ROW IS FOR: an inert term in an ANTECEDENT can only ever make an implication stronger, so nothing about this property is weakened by it — what is lost is a CLAIM. Clause 2 may not be read as covering a credential whose seed lives only in RAM, because no reachable state has `ram /\\ ~store.seed` for it to cover. And the guarantee that this stays true is another property's invariant, RamNeverOutlivesFlashSeed / SEC-FIDO-007, which is a dependency between two registry rows that neither row records"
 expressible = "no — a statement about the reachable state graph, not a constant; the constant that PINS it is another property's invariant"
 registered = "yes — assurance/platform.toml PLAT-MODEL-006, pending; this bundle proposes extending its covers with slice:AS-F004-2 and its supports with SEC-FIDO-004, because the same measured inertness is a premise of two properties and the entry names one"
 
