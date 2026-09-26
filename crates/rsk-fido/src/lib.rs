@@ -7,7 +7,7 @@
 //! host-testable: the device seed, serial, RNG and flash come from the caller
 //! ([`Ctx`]), never from globals; `firmware` wires in the RP2350 TRNG and flash.
 
-// The ML-DSA credential keys are heap-boxed (their ~13–23 KB `rsk-mldsa` expanded
+// The ML-DSA credential keys are heap-boxed (their ~16–32 KB `rsk-mldsa` expanded
 // keys would otherwise sit on the worker stack right below the stack-heavy sign;
 // see `ec::CredKey`). The firmware provides the heap; everything else stays
 // no-alloc.

@@ -371,8 +371,8 @@ covers = ["unsafe:firmware/src/main.rs#impl:send-for-sendusb"]
 [[assumption]]
 id = "PLAT-UNSAFE-003"
 class = "toolchain"
-statement = "`HEAP.init` runs exactly once, over a static buffer nothing else touches, and before the first allocation the image can make."
-discharge = "Read firmware/src/main.rs for the first two — one `HEAP.init`, one `HEAP_MEM`, both inside one block — which hold. The third is what is owed and is not visible from the call site: no allocating call on the path from the reset vector to that line, including inside `embassy_rp::init` and any `StaticCell` or dependency initialiser that runs before it. An allocation before the allocator is initialised refutes it."
+statement = "`HEAP.0.init` runs exactly once, over a static buffer nothing else touches, and before the first allocation the image can make."
+discharge = "Read firmware/src/main.rs for the first two — one `HEAP.0.init`, one `HEAP_MEM`, both inside one block — which hold. The third is what is owed and is not visible from the call site: no allocating call on the path from the reset vector to that line, including inside `embassy_rp::init` and any `StaticCell` or dependency initialiser that runs before it. An allocation before the allocator is initialised refutes it."
 discharge_owner = "contributor"
 status = "pending"
 failure_direction = "memory-safety: an allocation against an uninitialised allocator, or a second `init` over a live heap"
@@ -521,10 +521,10 @@ covers = [
 id = "PLAT-UNSAFE-013"
 class = "toolchain"
 statement = "`ZeroingHeap` hands `alloc` and `dealloc` to `LlffHeap` under the caller's own `GlobalAlloc` contract, and `dealloc` writes only the `layout.size()` bytes of the block the caller hands back, before it frees them."
-discharge = "Read firmware/src/main.rs: `alloc` is one forwarding call, and `dealloc` volatile zero stores over the `layout.size()` bytes from `ptr` -- words over the 4-aligned body, bytes at its ends -- followed by one forwarding call. `GlobalAlloc`'s contract makes `ptr` a live block this allocator returned for `layout`, so the stores stay inside it, and `realloc` is the trait's default alloc-copy-dealloc through the same two methods. What is owed is the part no reading of the call site settles: that the linked image frees every block through this allocator (the ELF's allocator symbols, which scripts/elf_gate.py holds), and that the stores survive optimisation as volatile writes."
+discharge = "Read firmware/src/main.rs: `alloc` is one forwarding call, and `dealloc` volatile zero stores over the `layout.size()` bytes from `ptr` -- words over the 4-aligned body, bytes at its ends -- followed by one forwarding call. `GlobalAlloc`'s contract makes `ptr` a live block this allocator returned for `layout`, so the stores stay inside it, and `realloc` is the trait's default alloc-copy-dealloc through the same two methods. What is owed is the part no reading of the call site settles, and no gate holds: that the linked image frees every block through the wrapper, and that the stores survive optimisation. Both were read off the disassembly of the default image at bcdDevice 0x0A4C: three functions reference the heap static -- `main`'s init, `LlffHeap::alloc` and `ZeroingHeap::dealloc`, whose stores precede the inlined free -- and `__rust_realloc` calls those two. scripts/elf_gate.py's allocator symbols cannot settle it: a direct call to the inner heap's `dealloc` defines no new symbol."
 discharge_owner = "contributor"
 status = "pending"
-failure_direction = "memory-safety: a write past the freed block, or a free handed to the inner heap for a block it never gave out"
+failure_direction = "memory-safety: a write past the freed block, or a free handed to the inner heap for a block it never gave out; confidentiality: a free that bypasses the stores leaves the block's key bytes in RAM"
 refines = ["PLAT-TOOLCHAIN-002"]
 covers = [
   "unsafe:firmware/src/main.rs#impl:globalalloc-for-zeroingheap-fn-alloc-self",

@@ -262,8 +262,8 @@ pub fn store_rsa_key<S: Storage>(
 /// pays — the `dP/dQ/qInv` modular inverses cost ~50 ms on RSA-4096 — because GET
 /// METADATA and ATTEST need only `N` and the fixed 65537 exponent, never the
 /// private key.
-/// Byte-identical to `rsa_from_pqe(..)?.n_be()`, just without the key rebuild,
-/// which is also what leaves the primes' working copies in freed heap.
+/// Byte-identical to `rsa_from_pqe(..)?.n_be()`, just without the key rebuild
+/// and the working copies of the primes it makes.
 pub fn load_rsa_modulus<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,

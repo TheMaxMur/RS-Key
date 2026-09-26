@@ -220,7 +220,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-TOOLCHAIN-001` | The compiler on the path is the pinned rustc and its output is what th |
 | platform | `PLAT-TOOLCHAIN-002` | docs/unsafe.md is the enumeration of the first-party `unsafe` sites: e |
 | platform | `PLAT-UNSAFE-002` | `SendUsb` is sound: `embassy_usb::UsbDevice` is `!Send` only for the ` |
-| platform | `PLAT-UNSAFE-003` | `HEAP.init` runs exactly once, over a static buffer nothing else touch |
+| platform | `PLAT-UNSAFE-003` | `HEAP.0.init` runs exactly once, over a static buffer nothing else tou |
 | platform | `PLAT-UNSAFE-004` | Each of the eight build-selected GPIOs handed to `AnyPin::steal` has e |
 | platform | `PLAT-UNSAFE-005` | The two `static mut` prime sieves are single-core-exclusive: `CORE0_SI |
 | platform | `PLAT-UNSAFE-006` | Each core programs MSPLIM once, on the core that owns that stack, befo |

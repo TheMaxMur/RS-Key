@@ -834,7 +834,7 @@ pub(crate) fn attest<S: Storage>(
     let built = match meta[0] {
         ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
             // The modulus alone, as GET METADATA reads it: rebuilding the private
-            // key to certify it left the primes in freed heap, on a command no PIN gates.
+            // key to certify it copies the primes, on a command no PIN gates.
             let mut n = [0u8; MAX_RSA_BYTES];
             let nl = match seal::load_rsa_modulus(dev, fs, key_fid(slot), &mut n) {
                 Ok(l) => l,

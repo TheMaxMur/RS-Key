@@ -12,8 +12,9 @@ them looks at where the sections LAND or at what the image links.
 Three facts this measured that the tree's prose does not carry:
 
 * **The image has a heap.** `firmware/src/main.rs` declares
-  `#[global_allocator] static HEAP: embedded_alloc::LlffHeap` over 128 KiB, and
-  the linked image defines `__rust_alloc`, `__rust_realloc` and
+  `#[global_allocator] static HEAP: ZeroingHeap`, an `embedded_alloc::LlffHeap`
+  over 128 KiB that wipes each block it frees, and the linked image defines
+  `__rust_alloc`, `__rust_realloc` and
   `__rust_alloc_error_handler`. AGENTS.md's "no_std, no alloc" is a rule about
   new code, not a description of the tree — `docs/unsafe.md` site 4 is the heap
   init and says so. Nothing held that surface, so a SECOND allocator, or a

@@ -549,8 +549,10 @@ division's, a modular inverse's, a modular exponentiation's — it frees
 unwiped; `rsk-rsa` holds a key's values, its blinding values and a private
 operation's result and intermediates in a `Secret` or a key type whose `Drop`
 wipes them, except the primes and `d` of a key `RsaKey::from_p_q` refuses. The
-heap closes both: it wipes each block as it frees it (`ZeroingHeap` in
-`firmware/src/main.rs`), so a freed buffer's bytes do not outlive the free.
+heap closes both for what it holds: it wipes each block as it frees it
+(`ZeroingHeap` in `firmware/src/main.rs`), so a freed buffer's bytes do not
+outlive the free. A `num-bigint-dig` value of eight limbs or fewer is held inline,
+not on the heap, and a local one stays in its stack slot like those temporaries.
 
 What holds the first sentence is a type, not a habit. Key-grade bytes live in
 `rsk_secret::Secret` — or, for a buffer that outlives the scope, under a

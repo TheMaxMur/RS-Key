@@ -11,9 +11,9 @@ out memory-corruption bugs in this code. It is not a security audit; see the
 the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
-CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves and one
-stack limit per core, three in the RSA assembly FFI, two in the standalone
-flash-wipe tool.
+CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves; one
+stack limit per core, core0's in `main.rs` too; three in the RSA assembly FFI;
+two in the standalone flash-wipe tool.
 
 ```mermaid
 flowchart TB
@@ -85,7 +85,7 @@ executor and embassy keeps the trait object `!Send`.
 ### 4. Heap initialization — `PLAT-UNSAFE-003`
 
 ```rust
-unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
+unsafe { HEAP.0.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
 ```
 
 A 128 KiB heap exists for `rsk-rsa`'s big integers (`num-bigint-dig`, the only
@@ -125,8 +125,9 @@ unsafe impl GlobalAlloc for ZeroingHeap {
 
 The global allocator is `LlffHeap` behind a wrapper that zeroes each block as it
 is freed. `num-bigint-dig` frees the limbs of its own working buffers unwiped —
-a division's, an inverse's, a modular exponentiation's, and a refused key's
-primes — and a freed block keeps its bytes until an allocation reuses it.
+a division's, an inverse's, a modular exponentiation's — `rsk-rsa` drops the
+primes of a key `RsaKey::from_p_q` refuses, and a freed block keeps its bytes
+until an allocation reuses it.
 `alloc` forwards unchanged. `dealloc` writes zeroes over exactly the
 `layout.size()` bytes the caller hands back, which `GlobalAlloc`'s contract
 makes a live block this allocator returned for that layout, then forwards. It

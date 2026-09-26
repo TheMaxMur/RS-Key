@@ -100,9 +100,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   without a copy of its own — every private operation, key load and import
   reads its primes that way — and PIV ATTEST reads the modulus alone, as GET
   METADATA does. The replay finds no prime after either command now. A key
-  rebuild's own arithmetic (import, OpenPGP ATTEST, key generation) still
-  frees working copies unwiped; the heap wipe planned for this work closes
-  those. Reading any of it takes a memory read on the live device.
+  rebuild's own arithmetic (import, OpenPGP ATTEST, key generation) freed
+  working copies unwiped until the heap wiped what it frees (0x0A4A). Reading
+  any of it takes a memory read on the live device.
   **bcdDevice → 0x0A24.**
 
 - Yubico OTP left a slot's secrets in RAM after most commands. Every command
@@ -144,7 +144,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   PKCS#1 block that carries the session key — was a plain bignum, reduced from
   a product equal to it modulo the public n and copied into two byte vectors on
   its way out, one for the fault check and one for the answer. All four were
-  freed unwiped, and the heap does not clear what it frees. The software path,
+  freed unwiped, and the heap did not clear what it freed. The software path,
   `RsaKey::private_op` (the legacy decipher, and the signature on the PIV
   key-generation certificate), freed its product the same way and every step
   of its CRT recombination too — a CRT half, which with the blinded input
@@ -152,8 +152,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `rsk_secret::Secret`s now, wiped before they are freed. What is left is
   `num-bigint-dig`'s own working buffers — the reduction's, and on the
   software path the fault check's — each freed holding the result, less the
-  eight bytes the allocator's free-list header takes. The heap wipe planned for
-  this work closes those. Reading any of it takes a memory read on the live
+  eight bytes the allocator's free-list header takes, until the heap wiped what
+  it frees (0x0A4A). Reading any of it takes a memory read on the live
   device. **bcdDevice → 0x0A1F.**
 
 - An ML-DSA credential key was copied into its box through the stack, leaving
