@@ -2210,9 +2210,9 @@ fn get_next_assertion_expires_after_a_quiet_thirty_seconds() {
 /// FIRST channel's clientDataHash, under the first request's presence decision,
 /// having neither supplied the one nor satisfied the other.
 ///
-/// Ported from OpenSK's `test_channel_interleaving`; the same scoping this state
-/// struct's neighbour `mse_cid` already applies, and the unscoped version of it
-/// is what audit run-31 filed as HIGH.
+/// Ported from OpenSK's `test_channel_interleaving`; the same scoping the MSE
+/// channel in this state struct already applies to its `cid`, and the unscoped
+/// version of it is what audit run-31 filed as HIGH.
 #[test]
 fn get_next_assertion_refuses_a_second_channel() {
     const CHANNEL_A: u32 = 0x0100_0000;

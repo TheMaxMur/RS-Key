@@ -40,6 +40,9 @@ rsk-fs = { workspace = true, features = ["test-util"] }
 rsk-devconf = { workspace = true, features = ["test-util"] }
 
 [features]
+# `FidoState::establish_mse_for_test`, for the fuzz targets that start past the
+# MSE handshake. Never in the firmware: it installs a channel key.
+test-util = []
 # Verification-only α/domain/table surface used by the emulator trace and the
 # phase-5 Kani bridge. Additive and never enabled by the shipping firmware.
 assurance-trace = []

@@ -148,8 +148,7 @@ fn warm_boot_survives_reset_but_session_state_does_not() {
     // Session state.
     st.paut.permissions = PERM_ACFG;
     st.begin_using_token(true, 0);
-    st.mse_active = true;
-    st.mse_key = [0x11; 32];
+    st.establish_mse_for_test([0x11; 32], [0x04; 65]);
     st.cm.rp_total = 4;
     st.gna.active = true;
     st.restore_pin_lock(LOCKED);
@@ -166,8 +165,7 @@ fn warm_boot_survives_reset_but_session_state_does_not() {
     assert!(!st.paut.in_use);
     assert_eq!(st.paut.permissions, 0);
     assert!(!st.user_verified());
-    assert!(!st.mse_active);
-    assert_eq!(st.mse_key, [0; 32]);
+    assert!(!st.mse_live());
     assert_eq!(st.cm.rp_total, 0);
     assert!(!st.gna.active);
     // An authenticatorReset wipes EF_PIN, so the soft lock has nothing left to hold.

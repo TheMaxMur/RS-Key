@@ -146,7 +146,7 @@ R4bEventConsensus ==
 \*
 \* `alwaysUv` here is B's, and B reads it from the RECORD (`Beta`, above). The
 \* firmware falls back to `cfg!(feature = "always-uv")` when EF_ALWAYS_UV is
-\* absent (`config.rs:314`), so this arm assumes a build that does not ship the
+\* absent (`config.rs:312`), so this arm assumes a build that does not ship the
 \* feature -- which every recording apparatus is, `tools/emu` having no
 \* passthrough for it. Stated, like the pad, rather than left to be discovered.
 McTokenlessRefused(rk, alwaysUv, pinSet) == alwaysUv \/ (pinSet /\ rk)

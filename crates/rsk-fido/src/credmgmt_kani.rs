@@ -51,7 +51,7 @@ const OP_STOP: u8 = 2;
 /// - **C1** the call site refuses unless the `cm` permission genuinely survived;
 /// - **C2** the replayed MAC still *verifies* — `stop_using_token` and
 ///   `consume_after_user_presence` do not touch the token bytes
-///   (`state.rs:565-580`, `:541-553`). So at this call site, and at
+///   (`state.rs:655-670`, `:631-643`). So at this call site, and at
 ///   `config.rs:242-244`, zeroing `permissions` is not defence in depth: it is
 ///   the only defence. The TLA+ mutation experiment found exactly this by
 ///   failing to catch `BugStopUsingKeepsPerms` under a guard that also tested

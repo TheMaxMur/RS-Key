@@ -57,9 +57,7 @@ fuzz_target!(|data: &[u8]| {
 
     let mut state = rsk_fido::FidoState::new();
     // Pre-establish the MSE channel so EXPORT/LOAD/UNLOCK reach the AEAD paths.
-    state.mse_active = true;
-    state.mse_key = [0x5A; 32];
-    state.mse_pub = [0x04; 65];
+    state.establish_mse_for_test([0x5A; 32], [0x04; 65]);
     // A DEVK so AUDIT_CHECKPOINT's derive-and-sign path is reachable too. The state
     // holds a READER, not the key: the OTP row is read on demand so an unrotatable
     // signing key never sits in RAM for the whole power cycle.

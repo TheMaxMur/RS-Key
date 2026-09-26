@@ -334,7 +334,7 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
         };
         // Which CTAPHID channel is asking. Cross-message state a second process on
         // its own channel must not be able to ride — the seed-backup MSE key —
-        // binds to this (see `FidoState::mse_ready`).
+        // binds to this (see `FidoState::take_mse`).
         self.fido_state.borrow_mut().channel = cid;
         let n = {
             let mut fsb = self.fs.borrow_mut();

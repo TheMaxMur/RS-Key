@@ -1424,7 +1424,7 @@ impl Sess {
         //
         // It is also this tree's one fuzz instance of a `formal/` invariant, and
         // the assertion carries the name so the trace is greppable end to end:
-        // `NoTokenAfterInvalidation` -> `reset_pin_uv_auth_token` (state.rs:506-520,
+        // `NoTokenAfterInvalidation` -> `reset_pin_uv_auth_token` (state.rs:596-610,
         // the owner `formal/README.md` names first) -> here. A re-issued token is a
         // grant the mint invalidated going on authorizing.
         let Some(first) = self.issued_token(&msg[..n], proto, secret) else {

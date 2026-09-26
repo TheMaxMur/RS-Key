@@ -287,7 +287,8 @@ fn setup() -> (Fs<RamStorage>, SeqRng, FidoState) {
 #[test]
 fn fips_backup_export_refused() {
     let (mut fs, mut rng, mut st) = setup();
-    st.mse_active = true; // even over a live channel the seed is sealed in
+    // Even over a live channel the seed is sealed in.
+    st.establish_mse_for_test([0x5A; 32], [0x04; 65]);
     let mut req = [0u8; 16];
     let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
     let mut out = [0u8; 64];
@@ -575,16 +576,17 @@ fn mse_then_export_roundtrips_seed() {
 fn export_refused_after_another_channel_rekeys_the_mse() {
     // A CTAPHID channel id is written by the sender into its own frame header, so
     // an interloper forges the victim's CID rather than using its own — binding to
-    // `mse_cid` alone would compare the attacker's bytes against themselves. What
-    // holds is that the channel is one-shot: the re-key is refused and the channel
-    // dropped, so the export can never encrypt under the interloper's key.
+    // the channel's `cid` alone would compare the attacker's bytes against
+    // themselves. What holds is that the channel is one-shot: the re-key is refused
+    // and the channel dropped, so the export can never encrypt under the
+    // interloper's key.
     for interloper_cid in [1u32, 2] {
         let (mut fs, mut rng, mut st) = setup();
 
         // The victim's tool runs its handshake on channel 1.
         st.channel = 1;
         let host = handshake(&mut fs, &mut rng, &mut st);
-        let victim_key = st.mse_key;
+        let victim_key = st.mse_key_for_test().expect("the handshake made a channel");
         assert_eq!(victim_key, host.key);
 
         // The interloper re-keys — on its own CID, or forging the victim's.
@@ -607,8 +609,8 @@ fn export_refused_after_another_channel_rekeys_the_mse() {
             "a live channel must never be re-keyed (interloper cid {interloper_cid})"
         );
         // Refused *and* dropped: neither party can spend it.
-        assert!(!st.mse_active);
-        assert_ne!(st.mse_key, victim_key);
+        assert!(!st.mse_live());
+        assert_ne!(st.mse_key_for_test(), Some(victim_key));
 
         // The victim's export, still on channel 1, now fails closed rather than
         // encrypting the seed to whoever re-keyed.
@@ -638,7 +640,7 @@ fn export_refused_after_another_channel_rekeys_the_mse() {
 fn fips_refuses_the_export_and_still_spends_the_channel() {
     let (mut fs, mut rng, mut st) = setup();
     handshake(&mut fs, &mut rng, &mut st);
-    assert!(st.mse_active);
+    assert!(st.mse_live());
 
     let mut req = [0u8; 32];
     let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
@@ -656,10 +658,10 @@ fn fips_refuses_the_export_and_still_spends_the_channel() {
         "the profile seals the seed in"
     );
     assert!(
-        !st.mse_active,
+        !st.mse_live(),
         "a refused export must not leave the channel live"
     );
-    assert_eq!(st.mse_key, [0u8; 32]);
+    assert_eq!(st.mse_key_for_test(), None);
 }
 
 #[test]
@@ -674,7 +676,7 @@ fn a_gated_subcommand_spends_the_mse_channel() {
     // actually runs is what makes the case mean the same thing on all of them.
     let (mut fs, mut rng, mut st) = setup();
     handshake(&mut fs, &mut rng, &mut st);
-    assert!(st.mse_active);
+    assert!(st.mse_live());
 
     let mut req = [0u8; 32];
     let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
@@ -687,13 +689,13 @@ fn a_gated_subcommand_spends_the_mse_channel() {
         &req[..n],
         &mut out,
     );
-    assert!(!st.mse_active, "the consumer must spend the channel");
-    assert_eq!(st.mse_key, [0u8; 32]);
+    assert!(!st.mse_live(), "the consumer must spend the channel");
+    assert_eq!(st.mse_key_for_test(), None);
 
     // A declined touch spends it too — a failed ceremony must not leave the
     // channel live for the next caller to pick up.
     handshake(&mut fs, &mut rng, &mut st);
-    assert!(st.mse_active);
+    assert!(st.mse_live());
     assert_eq!(
         call(
             &mut fs,
@@ -705,7 +707,38 @@ fn a_gated_subcommand_spends_the_mse_channel() {
         ),
         Err(CtapError::OperationDenied)
     );
-    assert!(!st.mse_active);
+    assert!(!st.mse_live());
+}
+
+/// A consumer on another channel is refused, and spends the channel anyway: its
+/// `cid` cannot tell a second process from the owner forging it, so a refusal that
+/// left the key live would hand the owner's next call to whoever squats it.
+#[test]
+fn a_consumer_on_another_channel_is_refused_and_spends_the_mse() {
+    let (mut fs, mut rng, mut st) = setup();
+    st.channel = 1;
+    handshake(&mut fs, &mut rng, &mut st);
+    assert!(st.mse_live());
+
+    let mut req = [0u8; 32];
+    let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
+    let mut out = [0u8; 128];
+    for (channel, what) in [(2, "the other channel"), (1, "the owner, after")] {
+        st.channel = channel;
+        assert_eq!(
+            call(
+                &mut fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out
+            ),
+            Err(CtapError::NotAllowed),
+            "{what}"
+        );
+        assert!(!st.mse_live(), "{what}");
+    }
 }
 
 // Off the fips profile only: fips refuses export outright (see `fips_backup_export_refused`).
@@ -778,7 +811,7 @@ fn mse_rejects_short_mlkem_ek() {
         &mut out,
     );
     assert_eq!(e, Err(CtapError::InvalidParameter));
-    assert!(!st.mse_active);
+    assert!(!st.mse_live());
 }
 
 #[test]
@@ -800,7 +833,7 @@ fn mse_rejects_unreduced_mlkem_ek() {
         &mut out,
     );
     assert_eq!(e, Err(CtapError::InvalidParameter));
-    assert!(!st.mse_active);
+    assert!(!st.mse_live());
 }
 
 #[test]
@@ -3166,7 +3199,7 @@ fn mse_without_a_coordinate_is_missing_parameter() {
         ),
         Err(CtapError::MissingParameter)
     );
-    assert!(!st.mse_ready(), "a refused MSE left a channel open");
+    assert!(!st.mse_live(), "a refused MSE left a channel open");
 }
 
 /// `{1: subcmd, 3: 2, 4: mac}`: a vendor subcommand with no parameters, carrying a

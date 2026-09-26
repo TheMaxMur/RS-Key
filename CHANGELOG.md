@@ -692,6 +692,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The MSE seed-backup channel is spent by taking it** — refactor; the same
+  status words in the same order. The channel a `VENDOR_MSE` handshake
+  establishes is one private `Option<MseChannel>` in the FIDO state, where a
+  live flag, the key, the device public key and the CTAPHID channel were four
+  public fields: a consumer (`BACKUP_EXPORT`, `BACKUP_LOAD`, `UNLOCK`, `ATT_IMPORT`,
+  `ATT_CLEAR`, and `authenticatorConfig`'s `AUT_ENABLE`) reaches the key only
+  through the channel `take_mse` hands it, which empties the slot whatever it
+  answers, and a handshake installs one only with the token `vacate_mse` gives
+  when no channel is live.
+  `bcdDevice` 0x0A32 → 0x0A33.
+
 - **A write over a pre-OTP copy takes the at-rest re-arm's token** — refactor;
   the same appends in the same order. `rsk_fs::request_rescrub` answers
   `Result<Rearmed>`, and the writes that supersede or tombstone a record the

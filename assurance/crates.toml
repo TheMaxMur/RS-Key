@@ -70,7 +70,7 @@ gap = "oathOtpPin status is in RSKeyAppletSeams; protected-slot configure/update
 [crate.rsk-vendor]
 class = "state-partial"
 model = "RSKeySecurityState"
-gap = "ConfigOp/plat in the security model; the config-write pipeline it shares with rsk-devconf (persist_dev_conf) is RSKeyAdminSurface now. Still open: UNLOCK is modelled wider than its real gate (mse_ready + lock_engaged)."
+gap = "ConfigOp/plat in the security model; the config-write pipeline it shares with rsk-devconf (persist_dev_conf) is RSKeyAdminSurface now. Still open: UNLOCK is modelled wider than its real gate (the one-shot MSE channel + lock_engaged)."
 
 [crate.rsk-display]
 class = "state-partial"

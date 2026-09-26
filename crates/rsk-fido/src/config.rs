@@ -24,7 +24,7 @@ use crate::consts::{
 use crate::error::{CtapError, CtapResult};
 use crate::journal;
 use crate::seed::{encrypt_keydev_f1, load_keydev, lock_engaged, seal_seed_locked};
-use crate::state::{PERM_ACFG, puat_subcommand_msg};
+use crate::state::{MseChannel, PERM_ACFG, puat_subcommand_msg};
 use crate::vendor::open_channel_key;
 use crate::{Ctx, Rng};
 
@@ -265,12 +265,10 @@ pub fn authenticator_config<S: Storage, R: Rng>(
         ),
         CONFIG_VENDOR => match req.vendor_id {
             CONFIG_AUT_ENABLE => {
-                // The seed-backup channel is one-shot; spend it whatever the
-                // outcome. See `FidoState::mse_active` and `vendor::consumes_mse`,
-                // which does the same for the `0x41` consumers.
-                let res = aut_enable(ctx, req.vendor_param);
-                ctx.state.clear_mse();
-                res
+                // The seed-backup channel is one-shot: spend it whatever the outcome,
+                // as `vendor::consumes_mse` does for the `0x41` consumers.
+                let channel = ctx.state.take_mse();
+                aut_enable(ctx, channel.as_ref(), req.vendor_param)
             }
             CONFIG_AUT_DISABLE => aut_disable(ctx),
             // PicoForge physical config over FIDO → the phy record. Gated by the
@@ -365,14 +363,18 @@ fn toggle_always_uv<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
 /// `EF_KEY_DEV_ENC` and the plain `EF_KEY_DEV` is deleted. From here every
 /// power cycle needs a vendor UNLOCK before any FIDO operation; recovery from a
 /// lost lock key is an authenticatorReset (the identity is gone — by design).
-fn aut_enable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, param: &[u8]) -> CtapResult {
+fn aut_enable<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    channel: Option<&MseChannel>,
+    param: &[u8],
+) -> CtapResult {
     if !ctx.fs.has_key(EF_KEY_DEV) {
         return Err(CtapError::NotAllowed); // already locked, or no seed at all
     }
-    if !ctx.state.mse_ready() {
+    let Some(channel) = channel else {
         return Err(CtapError::NotAllowed);
-    }
-    let mut lock_key = open_channel_key(ctx, param)?;
+    };
+    let mut lock_key = open_channel_key(channel, param)?;
     if !ctx.check_user_presence(crate::Confirm::titled("Lock device?")) {
         lock_key.wipe();
         return Err(CtapError::OperationDenied);
@@ -401,7 +403,7 @@ fn aut_enable<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, param: &[u8]) -> CtapResu
 ///
 /// The gate is that the seed was unlocked this power cycle, which proves *someone*
 /// presented the lock key. It does not prove it was this caller: unlike
-/// [`crate::state::FidoState::mse_cid`] two fields above it, `keydev_dec` carries no channel,
+/// the seed-backup [`MseChannel`], `keydev_dec` carries no channel,
 /// token or timer and lives until power-off (audit run-34 #28). That is accepted —
 /// the lock key **is** the authorisation, and an attacker positioned to abuse the
 /// window already meets `BACKUP_EXPORT`'s prerequisites, which hand over the seed

@@ -53,7 +53,7 @@ use crate::journal;
 use crate::seed::{
     LOCK_BLOB_LEN, encrypt_keydev_f1, ensure_seed, lock_engaged, open_seed_locked, store_att_key,
 };
-use crate::state::{PERM_ACFG, puat_subcommand_msg};
+use crate::state::{MseChannel, PERM_ACFG, puat_subcommand_msg};
 use crate::{Ctx, Rng};
 
 /// Scratch for the pinUvAuth MAC message, which covers `subCommandParams`
@@ -171,10 +171,9 @@ where
     Ok(enc.writer().position())
 }
 
-/// Whether a subcommand spends the seed-backup channel. Every one of these reads
-/// `mse_key`/`mse_pub` behind [`crate::state::FidoState::mse_ready`], so the channel must
-/// not survive the call — see [`crate::state::FidoState::mse_active`] for why it is one-shot.
-/// `AUT_ENABLE`'s twin lives in [`crate::config`], which clears it there.
+/// Whether a subcommand spends the seed-backup channel: [`vendor`] takes it before the
+/// dispatch ([`crate::state::FidoState::take_mse`]), so it never survives the call.
+/// `AUT_ENABLE`'s twin lives in [`crate::config`], which takes it there.
 const fn consumes_mse(subcommand: u64) -> bool {
     matches!(
         subcommand,
@@ -188,28 +187,34 @@ const fn consumes_mse(subcommand: u64) -> bool {
 
 pub fn vendor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &mut [u8]) -> CtapResult {
     let req = parse(data)?;
-    let res = dispatch(ctx, &req, out);
-    // Spend the channel on the way out, whatever the outcome: a refused touch or a
+    // Spend the channel on the way in, whatever the outcome: a refused touch or a
     // failed decrypt must not leave it live for the next caller to pick up.
-    if consumes_mse(req.subcommand) {
-        ctx.state.clear_mse();
-    }
-    res
+    let channel = if consumes_mse(req.subcommand) {
+        ctx.state.take_mse()
+    } else {
+        None
+    };
+    dispatch(ctx, &req, channel.as_ref(), out)
 }
 
-fn dispatch<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
+fn dispatch<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    channel: Option<&MseChannel>,
+    out: &mut [u8],
+) -> CtapResult {
     match req.subcommand {
         VENDOR_MSE => mse(ctx, req, out),
-        VENDOR_BACKUP_EXPORT => backup_export(ctx, req, out),
-        VENDOR_BACKUP_LOAD => backup_load(ctx, req),
+        VENDOR_BACKUP_EXPORT => backup_export(ctx, req, channel, out),
+        VENDOR_BACKUP_LOAD => backup_load(ctx, req, channel),
         VENDOR_BACKUP_FINALIZE => backup_finalize(ctx, req),
         VENDOR_BACKUP_STATE => backup_state(ctx, out),
-        VENDOR_UNLOCK => unlock(ctx, req),
+        VENDOR_UNLOCK => unlock(ctx, req, channel),
         VENDOR_AUDIT_READ => audit_read(ctx, req, out),
         VENDOR_AUDIT_CHECKPOINT => audit_checkpoint(ctx, req, out),
         VENDOR_AUDIT_CONFIG => audit_config(ctx, req, out),
-        VENDOR_ATT_IMPORT => att_import(ctx, req),
-        VENDOR_ATT_CLEAR => att_clear(ctx, req),
+        VENDOR_ATT_IMPORT => att_import(ctx, req, channel),
+        VENDOR_ATT_CLEAR => att_clear(ctx, req, channel),
         VENDOR_ATT_STATE => att_state(ctx, out),
         VENDOR_CONFIG_WRITE => config_write(ctx, req),
         VENDOR_CONFIG_READ => config_read(ctx, req, out),
@@ -364,7 +369,11 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
 /// in the clear, MAC-covered like every subCommandParams. Gated like a seed
 /// move (MSE + PIN + touch). Survives authenticatorReset — it is
 /// org-provisioned *device* identity; ATT_CLEAR removes it.
-fn att_import<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
+fn att_import<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    channel: Option<&MseChannel>,
+) -> CtapResult {
     let mut packed = [0u8; cert::ATT_CHAIN_REC_MAX];
     let plen = cert::att_chain_pack(req.chain, &mut packed).ok_or(CtapError::InvalidParameter)?;
     // An import replaces the attestation identity every U2F REGISTER signs with, and
@@ -375,8 +384,8 @@ fn att_import<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult 
     {
         return Err(CtapError::OperationDenied);
     }
-    gate(ctx, req, "Import attestation key?")?;
-    let mut scalar = open_channel_key(ctx, req.blob)?;
+    let channel = gate(ctx, req, channel, "Import attestation key?")?;
+    let mut scalar = open_channel_key(channel, req.blob)?;
     if P256Key::from_scalar(scalar.expose()).is_none() {
         scalar.wipe();
         return Err(CtapError::InvalidParameter);
@@ -399,7 +408,11 @@ fn att_import<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult 
 
 /// `ATT_CLEAR`: drop the org attestation (same gate as the import, including its
 /// named touch when no PIN can authorise the handover).
-fn att_clear<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
+fn att_clear<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    channel: Option<&MseChannel>,
+) -> CtapResult {
     // The identity this destroys survives a factory reset and only the org's HSM
     // can restore it, so it gets the same explicit prompt the import gained.
     if !ctx.fs.has_data(EF_PIN)
@@ -407,7 +420,7 @@ fn att_clear<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
     {
         return Err(CtapError::OperationDenied);
     }
-    gate(ctx, req, "Clear attestation key?")?;
+    gate(ctx, req, channel, "Clear attestation key?")?;
     // Prove both deletes, key first. Discarding them reported "org attestation
     // removed" over a half-done erase: with the key surviving and the chain gone,
     // `u2f::cmd_register` still takes the org branch and then fails the chain read,
@@ -519,8 +532,8 @@ fn audit_config<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u
 /// Decrypt the channel-wrapped 32-byte lock key carried in `blob`
 /// (nonce ‖ ct ‖ tag, AAD = the device MSE public key). Shared with the
 /// `authenticatorConfig` AUT_ENABLE arm.
-pub(crate) fn open_channel_key<S: Storage, R: Rng>(
-    ctx: &Ctx<S, R>,
+pub(crate) fn open_channel_key(
+    channel: &MseChannel,
     blob: &[u8],
 ) -> Result<Secret<[u8; 32]>, CtapError> {
     if blob.len() != LOCK_BLOB_LEN {
@@ -533,9 +546,9 @@ pub(crate) fn open_channel_key<S: Storage, R: Rng>(
     let mut key = Secret::<[u8; 32]>::zeroed();
     key.expose_mut().copy_from_slice(&blob[12..44]);
     match chacha20poly1305_decrypt(
-        &ctx.state.mse_key,
+        channel.key(),
         &nonce,
-        &ctx.state.mse_pub,
+        channel.device_pub(),
         key.expose_mut(),
         &tag,
     ) {
@@ -561,11 +574,15 @@ pub(crate) fn open_channel_key<S: Storage, R: Rng>(
 /// implication.
 ///
 /// Refines `RSKeySecurityState!RamNeverOutlivesFlashSeed` — SEC-FIDO-007.
-fn unlock<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
-    if !ctx.state.mse_ready() {
+fn unlock<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    channel: Option<&MseChannel>,
+) -> CtapResult {
+    let Some(channel) = channel else {
         return Err(CtapError::NotAllowed);
-    }
-    let mut lock_key = open_channel_key(ctx, req.blob)?;
+    };
+    let mut lock_key = open_channel_key(channel, req.blob)?;
     if !lock_engaged(ctx.fs) {
         lock_key.wipe();
         return Err(CtapError::IntegrityFailure);
@@ -608,14 +625,13 @@ const MSE_PQ_SALT: &[u8] = b"RSK-MSE-PQ-v1";
 /// since recovering it needs *both* P-256 and ML-KEM-768 broken. A host that
 /// sends no key 2 gets the classical channel, byte-for-byte unchanged.
 fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
-    // Never re-key a live channel. `mse_cid` cannot tell the owner from a second
+    // Never re-key a live channel. Its `cid` cannot tell the owner from a second
     // process forging that CID in its own frame header, so overwriting would let
     // the interloper's key be the one the owner's export encrypts under. Drop the
     // channel and refuse: a squatter can deny a handshake, never redirect one.
-    if ctx.state.mse_active {
-        ctx.state.clear_mse();
+    let Some(vacant) = ctx.state.vacate_mse() else {
         return Err(CtapError::NotAllowed);
-    }
+    };
     if req.kax.is_empty() || req.kay.is_empty() {
         return Err(CtapError::MissingParameter);
     }
@@ -663,11 +679,7 @@ fn mse<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> Ct
         key.wipe();
         return Err(e);
     }
-    ctx.state.mse_key = *key.expose();
-    ctx.state.mse_pub = dev_pub;
-    ctx.state.mse_active = true;
-    // Defence in depth on top of the one-shot rule above; see `FidoState::mse_cid`.
-    ctx.state.mse_cid = ctx.state.channel;
+    ctx.state.establish_mse(vacant, &key, dev_pub);
     key.wipe();
 
     encode(out, |e| {
@@ -726,19 +738,20 @@ fn mlkem_leg<R: Rng>(
 /// operation (e.g. exporting the master seed) so the on-screen prompt matches the
 /// stakes — a generic "Vendor config?" for a seed export would let a host phish an
 /// approval for the most catastrophic op behind a benign-looking touch.
-fn gate<S: Storage, R: Rng>(
+fn gate<'c, S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     req: &Req,
+    channel: Option<&'c MseChannel>,
     title: &'static str,
-) -> Result<(), CtapError> {
-    if !ctx.state.mse_ready() {
+) -> Result<&'c MseChannel, CtapError> {
+    let Some(channel) = channel else {
         return Err(CtapError::NotAllowed);
-    }
+    };
     pin_gate(ctx, req)?;
     if !ctx.check_user_presence(crate::Confirm::titled(title)) {
         return Err(CtapError::OperationDenied);
     }
-    Ok(())
+    Ok(channel)
 }
 
 /// The PIN half of [`gate`], shared with the audit subcommands: when a PIN is
@@ -835,7 +848,12 @@ fn device_pin_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapEr
 /// Refused once the export window is sealed by `BACKUP_FINALIZE` (a reset reopens
 /// it). Export itself does not seal the window; each call re-encrypts under a
 /// fresh nonce, so a repeat export before finalize is safe (no keystream reuse).
-fn backup_export<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
+fn backup_export<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    channel: Option<&MseChannel>,
+    out: &mut [u8],
+) -> CtapResult {
     // The FIPS-style profile seals the seed in entirely (non-exportable key
     // material; the MSE channel is ChaCha20-Poly1305 — not approved transport).
     // LOAD stays available: keys may migrate *into* a profile build, never out.
@@ -847,19 +865,15 @@ fn backup_export<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [
     }
     // Name the operation explicitly: this hands the master seed to the host. A generic
     // prompt here would let a host phish the approval for a full identity export.
-    gate(ctx, req, "Export secret seed?")?;
+    let channel = gate(ctx, req, channel, "Export secret seed?")?;
     let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
     let mut nonce = [0u8; 12];
     ctx.rng.fill(&mut nonce);
     let mut ct = Secret::<[u8; 32]>::zeroed();
     ct.expose_mut().copy_from_slice(seed.expose());
     seed.wipe();
-    let tag = chacha20poly1305_encrypt(
-        &ctx.state.mse_key,
-        &nonce,
-        &ctx.state.mse_pub,
-        ct.expose_mut(),
-    );
+    let tag =
+        chacha20poly1305_encrypt(channel.key(), &nonce, channel.device_pub(), ct.expose_mut());
     let mut blob = Secret::<[u8; LOCK_BLOB_LEN]>::zeroed(); // nonce ‖ ciphertext(seed) ‖ tag
     blob.expose_mut()[..12].copy_from_slice(&nonce);
     blob.expose_mut()[12..44].copy_from_slice(ct.expose());
@@ -881,7 +895,11 @@ fn backup_export<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [
 /// rebuilt over the new seed. Refused while soft-locked — a restore next to a
 /// live wrapped blob would leave two competing seeds; disable the lock (or
 /// reset) first.
-fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {
+fn backup_load<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    req: &Req,
+    channel: Option<&MseChannel>,
+) -> CtapResult {
     if req.blob.len() != LOCK_BLOB_LEN {
         return Err(CtapError::MissingParameter);
     }
@@ -899,7 +917,7 @@ fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult
     {
         return Err(CtapError::OperationDenied);
     }
-    gate(ctx, req, "Load seed from host?")?;
+    let channel = gate(ctx, req, channel, "Load seed from host?")?;
     let mut nonce = [0u8; 12];
     nonce.copy_from_slice(&req.blob[..12]);
     let mut tag = [0u8; 16];
@@ -907,9 +925,9 @@ fn backup_load<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult
     let mut seed = Secret::<[u8; 32]>::zeroed();
     seed.expose_mut().copy_from_slice(&req.blob[12..44]);
     let r = chacha20poly1305_decrypt(
-        &ctx.state.mse_key,
+        channel.key(),
         &nonce,
-        &ctx.state.mse_pub,
+        channel.device_pub(),
         seed.expose_mut(),
         &tag,
     );
