@@ -692,6 +692,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The trusted display a host ceremony reaches holds no cell its dispatch
+  borrows** — refactor; the same screens, touches and store writes. The panel's
+  `Ui` no longer carries the store, the device keys or the DRBG: the device's own
+  screens get them as `Parked` cells, handed to the status loop only, and run as
+  methods of a `Local` view, while `TouchPresence` holds the `Ui` alone. A borrow
+  of a cell the host dispatch is holding (issue #107) no longer compiles from
+  anything a ceremony can reach; the one store read left there, the device-PIN bit
+  a mid-ceremony sleep locks on, goes through a try-borrow that cannot wait. The
+  gate that walked the call graph for such borrows,
+  `scripts/display_borrow_gate.py`, is gone.
+  `bcdDevice` 0x0A34 → 0x0A35.
+
 - **A response's UP bit and the token's spend come from one presence test** — refactor;
   the same status words, flags and token state. makeCredential's and
   getAssertion's four user-presence tests (the matched and the no-match

@@ -30,10 +30,10 @@
 (* WHAT IS ABSTRACTED. The card's CONTENT is one bit -- "names the           *)
 (* operation" -- because the ceremony is modal: `confirm_wait` /             *)
 (* `run_add_passkey` render the card and block until an exit                 *)
-(* (crates/rsk-display/src/presence.rs:91), so no second operation can       *)
+(* (crates/rsk-display/src/presence.rs:85), so no second operation can       *)
 (* repaint the glass mid-wait; card-swap is structurally absent and the one  *)
 (* bit is faithful. The touch controller reports LEVEL, not edges            *)
-(* (crates/rsk-display/src/power.rs:55-65) -- which is exactly why the       *)
+(* (crates/rsk-display/src/power.rs:53-63) -- which is exactly why the       *)
 (* stale-press question exists and is modelled. Timeouts and CTAPHID cancel  *)
 (* collapse into the one Dismiss exit: every non-Allow exit must read the    *)
 (* same, and that collapse IS the third invariant.                           *)
@@ -58,10 +58,10 @@ CONSTANTS
     \* panel reports contact LEVEL, not edges, so a finger already down when a
     \* screen paints reads as a tap ON that screen. The defence is the release
     \* edge, twice: `Ui::touch_armed` + `armed_touch`
-    \* (crates/rsk-display/src/power.rs:55-65 -- a contact predating this
+    \* (crates/rsk-display/src/power.rs:53-63 -- a contact predating this
     \* screen stays disarmed) and the
     \* ceremony's own `wait_release_ceremony` at card entry
-    \* (crates/rsk-display/src/presence.rs:198 -- "a finger already down
+    \* (crates/rsk-display/src/presence.rs:192 -- "a finger already down
     \* approves the card in the same frame it is painted, too fast to read").
     \* The switch removes the edge.
     BugPreScreenTouchApproves,
@@ -70,7 +70,7 @@ CONSTANTS
     \* band to None (crates/rsk-ui/src/lib.rs:252-260), and every other exit --
     \* Deny, the power button mid-ceremony, timeout, CTAPHID cancel -- ends the
     \* ceremony as Cancelled, "no signature is ever produced without the
-    \* deliberate on-screen hold" (crates/rsk-display/src/presence.rs:120-124).
+    \* deliberate on-screen hold" (crates/rsk-display/src/presence.rs:114-118).
     \* The switch is the collapse where any exit tap reads as the approval.
     BugAnyTapApproves
 
@@ -142,7 +142,7 @@ PadDone ==
               /\ UNCHANGED << pending, viol >>
 
 \* The finger lifts: the level-based controller sees no contact, `armed_touch`
-\* re-arms, and the next press is fresh (crates/rsk-display/src/power.rs:56-59).
+\* re-arms, and the next press is fresh (crates/rsk-display/src/power.rs:54-57).
 Lift ==
     /\ shown = Card
     /\ stale

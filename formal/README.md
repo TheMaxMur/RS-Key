@@ -541,7 +541,7 @@ The wrapper and both tests are gone since bcdDevice 0x0A01, with the Management
 reset they served: a YubiKey 5.8.0 has no reset on that applet, and the rescue and
 vendor `1E`/`1F`, sent while Management was selected, reached it. The trusted
 display's reset is the one caller of `Fs::factory_wipe` left
-(`crates/rsk-display/src/pin.rs:716-725`), and it carries the same `.is_ok()`.
+(`crates/rsk-display/src/pin.rs:764-774`), and it carries the same `.is_ok()`.
 
 What stays open is the layer below. `Fs::factory_wipe` is still not a producer in
 the store transition map: `RSKeyStore!Next` offers `Put`, `MetaAdd`,
@@ -1395,7 +1395,7 @@ FALSE, so the reset window still applies where a display build bypasses it
 compiles it out (`firmware/src/presence.rs:99-106`) in favour of the panel's own
 release debounce. And `OpenWaitFor` now stands for **two** different stale-cancel
 drops — `ButtonWait::wait`'s and the display's own
-(`crates/rsk-display/src/presence.rs:45-48`) — so
+(`crates/rsk-display/src/presence.rs:41-44`) — so
 `BugNoDropStaleCancelAtEntry` removes both at once where the firmware has two
 owners.
 
@@ -1886,10 +1886,10 @@ what the registry refuses:
 - `StaleTouchApprovesNothing` — the touch controller reports *level, not
   edges*, so a finger already down when the card paints would read as a tap on
   it; the release edge is the whole defence, and it is two layers — the ambient
-  chokepoint (`crates/rsk-display/src/power.rs:55-65`) and the ceremony's own
-  release wait (`crates/rsk-display/src/presence.rs:198`);
+  chokepoint (`crates/rsk-display/src/power.rs:53-63`) and the ceremony's own
+  release wait (`crates/rsk-display/src/presence.rs:192`);
 - `OnlyAllowConfirms` — Deny, the power button, timeout and CTAPHID cancel all
-  end as Cancelled (`crates/rsk-display/src/presence.rs:120-124`); the
+  end as Cancelled (`crates/rsk-display/src/presence.rs:114-118`); the
   Allow/Deny rectangles are disjoint and a stray touch above the band is no
   button at all (`crates/rsk-ui/src/lib.rs:252-260`).
 
@@ -1944,11 +1944,11 @@ it off the medium. `EF_HARDENED` says the lap has run
 and writes the marker only after `compact()` returns Ok
 (`crates/rsk-fs/src/lib.rs:126-144`) — marker AFTER scrub, the same write-order
 family as the store's delete and the PIN flows' revoke. The boot glue keeps only
-the OTP gate and the placement of the stall (`firmware/src/main.rs:648-664`).
+the OTP gate and the placement of the stall (`firmware/src/main.rs:652-668`).
 Every *lazy* re-key **or delete** after the lap must re-arm it — a tombstone
 appends too: **run-35 found four of five re-key sites skipping exactly that**,
 and the swept sites are the module's citations. *After the lap* means after any
-lap this device ever ran, the boot pass at `firmware/src/main.rs:640-647`
+lap this device ever ran, the boot pass at `firmware/src/main.rs:644-651`
 included: the marker latches once, so a boot that skipped a record — a faulted
 `read_key`, a refused `put` — leaves it standing over the boot that finally
 migrates that record. Those six arms re-arm for that reason, not because they
@@ -3021,7 +3021,7 @@ it does not promote MODELLED-ONLY to a proof or turn bounded Kani into PROVEN.
 behaviour than the firmware, "which is sound for safety". That was false**, and
 the one that broke it was holding the green run up: `PowerCut` left the seed as
 the cut found it, while the firmware regenerates a missing seed on **every**
-boot (`firmware/src/main.rs:646`, `tools/emu/src/device.rs:507`). A cut device
+boot (`firmware/src/main.rs:650`, `tools/emu/src/device.rs:508`). A cut device
 was permanently seedless in the model and could never hold a usable credential
 again — the model was *narrower* than the code, which is the one direction a
 safety argument cannot absorb. It is fixed (`BootEnsuresSeed`), and every
@@ -3047,7 +3047,7 @@ abstractions producing traces the firmware cannot follow.
 - **Any boot may mint the grant record, or not.** `BootEnsuresSeed` leaves
   `gate.ppuatRec` either way. `ensure_seed` skips the mint on a vendor-soft-locked
   key (`seed.rs:673`), and mints nothing when a step before it fails or the record
-  cannot be read or opened — an error `firmware/src/main.rs:646` drops. The trace
+  cannot be read or opened — an error `firmware/src/main.rs:650` drops. The trace
   mapper pins the mint it predicts for the unlocked emulator, so R4a still holds
   the recording to one branch.
 - **A regenerated seed still opens the credentials made under the old one.**

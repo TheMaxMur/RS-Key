@@ -9,13 +9,11 @@ use super::*;
 /// the 8-shade ramp cycles in ~2.4s (the design's breathe period).
 pub(super) const BREATHE_TICKS: u32 = 3;
 
-impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+impl<'a, P, T, H> Ui<'a, P, T, H>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_sdk::Rng,
 {
     /// Apply a brightness level (`1..=BRIGHTNESS_LEVELS`) to the backlight PWM and
     /// remember it for the menu's gauge.
@@ -75,14 +73,11 @@ where
     ///
     /// Called from host-ceremony screens too (the built-in-UV pad, an Approve/Deny prompt),
     /// where the worker still holds `fs` borrowed for the whole command — so read the
-    /// PIN-set bit with `try_borrow_mut` and fall back to the cached `home_pin_set` rather
-    /// than double-borrowing. That fallback is accurate: a device PIN can't change mid-
-    /// ceremony, and it stays fresh past an on-device set (see [`Ui::run_set_pin`]).
+    /// PIN-set bit through [`PinBit`], which never waits, and fall back to the cached
+    /// `home_pin_set`. That fallback is accurate: a device PIN can't change mid-ceremony,
+    /// and it stays fresh past an on-device set (see [`Local::run_set_pin`]).
     pub(super) fn enter_sleep(&mut self) {
-        let pin_set = match self.fs.try_borrow_mut() {
-            Ok(mut fs) => rsk_fido::passkeys::device_pin_is_set(&mut fs),
-            Err(_) => self.home_pin_set,
-        };
+        let pin_set = self.pin_bit.try_pin_set().unwrap_or(self.home_pin_set);
         if pin_set {
             self.locked = true;
         }
@@ -102,10 +97,7 @@ where
         if self.locked {
             return false;
         }
-        let pin_set = match self.fs.try_borrow_mut() {
-            Ok(mut fs) => rsk_fido::passkeys::device_pin_is_set(&mut fs),
-            Err(_) => self.home_pin_set,
-        };
+        let pin_set = self.pin_bit.try_pin_set().unwrap_or(self.home_pin_set);
         if pin_set {
             self.locked = true;
         }

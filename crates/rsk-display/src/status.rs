@@ -12,7 +12,7 @@ use super::*;
 pub(super) const KEYGEN_SPIN_MS: u64 = 100;
 
 /// Step the live presence/touch timeout to the next/previous menu choice and store
-/// it (the seconds → ms atomic the waits read). [`Ui::persist_settings`] writes the
+/// it (the seconds → ms atomic the waits read). [`Local::persist_settings`] writes the
 /// new value back to the phy record's `PresenceTimeout` tag on Settings exit, so it
 /// survives a reboot (the same tag `rsk hw --touch-timeout` and boot both read).
 /// Returns whether the value actually changed, so a no-op tap at a clamp boundary
@@ -106,13 +106,11 @@ pub(super) fn audit_kind(ev: u8) -> rsk_ui::AuditKind {
     }
 }
 
-impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+impl<'a, P, T, H> Ui<'a, P, T, H>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_sdk::Rng,
 {
     /// Paint `screen` and remember it as the one on the panel. The pair is never
     /// useful apart: a repaint whose `shown` is not updated repaints for ever, and
@@ -138,7 +136,16 @@ where
             passkeys: self.home_passkeys,
         })
     }
+}
 
+impl<'a, P, T, H, S, R> Local<'_, 'a, P, T, H, S, R>
+where
+    P: rsk_ui::scene::FrameTarget,
+    T: TouchPad,
+    H: Hooks,
+    S: rsk_fs::Storage,
+    R: rsk_sdk::Rng,
+{
     /// What the panel stands on when nothing else is happening: the Locked screen
     /// while the on-device UI is locked, the onboarding offer on a fresh PIN-less
     /// device, Home otherwise. `refresh` re-reads the Home card's facts, for the
@@ -338,7 +345,14 @@ where
         self.touch_armed = false;
         true
     }
+}
 
+impl<'a, P, T, H> Ui<'a, P, T, H>
+where
+    P: rsk_ui::scene::FrameTarget,
+    T: TouchPad,
+    H: Hooks,
+{
     /// Sleep and auto-lock, evaluated OUTSIDE the ambient-quiet window and outside
     /// the `kind` gate. They used to sit inside both, and `ceremony_end` pushes the
     /// quiet window 400 ms forward on *every* ceremony exit — so an unauthenticated
@@ -370,7 +384,7 @@ where
 /// [`TouchPresence`] (which holds the same [`Ui`]); a synchronous confirm occupies
 /// this executor, so this loop never runs mid-confirm and the two never collide on
 /// the panel (the `try_borrow_mut` is belt-and-suspenders).
-pub async fn status_loop<'a, P, T, H, S, R>(ui: &RefCell<Ui<'a, P, T, H, S, R>>)
+pub async fn status_loop<'a, P, T, H, S, R>(ui: &RefCell<Ui<'a, P, T, H>>, cells: Parked<'a, S, R>)
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
@@ -382,7 +396,7 @@ where
     note_local_activity(); // the fresh boot counts as activity, so the sleep clock starts now
     // Prime the Home status-card cache once before the first idle paint (boot has settled
     // the flash; the worker is parked here while this task runs, so the borrow is safe).
-    ui.borrow_mut().refresh_home_stats();
+    Local::new(&mut ui.borrow_mut(), cells).refresh_home_stats();
     // Liveness animation state: the spinner arc angle (advanced while busy) and the
     // locked-hint breathe phase (advanced every few ticks), plus a tick counter to pace
     // the breathe. These pulse a small region on top of the already-painted frame, so
@@ -403,6 +417,7 @@ where
         // Wrap-safe deadline checks (millis truncated to u32 wrap every ~49 days).
         let now = Instant::now().as_millis() as u32;
         if let Ok(mut u) = ui.try_borrow_mut() {
+            let mut u = Local::new(&mut u, cells);
             if u.asleep {
                 u.tick_asleep();
             } else {

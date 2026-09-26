@@ -457,6 +457,10 @@ static PHY_MANUFACTURER: StaticCell<[u8; 64]> = StaticCell::new();
 /// invariant as FS/RNG above — borrows never span `.await`.
 #[cfg(feature = "display")]
 static UI: StaticCell<RefCell<display::Ui>> = StaticCell::new();
+/// The device identity the display's own screens unbox the resident-credential seed
+/// with, behind the `'static` reference their [`display::Parked`] cells carry.
+#[cfg(feature = "display")]
+static DISPLAY_KEYS: StaticCell<display::DeviceKeys> = StaticCell::new();
 
 struct SendUsb(UsbDevice<'static, Drv>);
 // SAFETY: moved once into `usb_task` and never touched elsewhere; the handlers it
@@ -731,7 +735,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A34;
+    let device_release: u16 = 0x0A35;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1151,19 +1155,21 @@ async fn main(spawner: Spawner) {
         // The device key material the read-only Passkeys tab needs to unbox the
         // resident-credential seed on demand (the same identity the worker's `Ctx`
         // carries). Copied — these are all `Copy`, so the worker below still gets them.
-        let keys = display::DeviceKeys {
+        let keys: &'static display::DeviceKeys = DISPLAY_KEYS.init(display::DeviceKeys {
             serial_id,
             serial_hash,
             mkek_source,
-        };
+        });
+        // The worker's `fs_ref` and `rng_ref`, for the panel's own screens only: the
+        // `TouchPresence` backend below gets the `Ui` alone.
+        let cells = display::Parked::new(fs_ref, keys, rng_ref);
         // Reborrow the `&'static mut` from the cell as a shared `&'static` so both
         // `status_task` and the `TouchPresence` backend can hold it (a shared
-        // reference is `Copy`; the `RefCell` provides the interior mutability). The
-        // panel also shares the worker's `fs_ref` to enumerate resident credentials.
+        // reference is `Copy`; the `RefCell` provides the interior mutability).
         let ui: &'static RefCell<display::Ui> = UI.init(RefCell::new(display::build(
-            panel, touch, info, fs_ref, keys, rng_ref, wake_btn,
+            panel, touch, info, cells, rng_ref, wake_btn,
         )));
-        spawner.spawn(display::status_task(ui).unwrap());
+        spawner.spawn(display::status_task(ui, cells).unwrap());
         ui
     };
     core1::spawn(p.CORE1);

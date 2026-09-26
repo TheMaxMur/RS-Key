@@ -193,7 +193,7 @@ fid_retry	crates/rsk-piv/src/lib.rs:1374	6	decides	D5	binds a reference to its v
 check_new_reference	crates/rsk-piv/src/lib.rs:1395	24	decides	D5	the length rule for a new PIN/PUK: the condition for writing the verifier, which is also the lower bound of the brute-force space against the attempt counter	-
 change_reference	crates/rsk-piv/src/lib.rs:1420	28	decides	D1,D3	the order "first the old secret (spends an attempt), then the format of the new one, then the write" is itself the reference-change door	SEC-LAT-002
 unblock_pin_with_puk	crates/rsk-piv/src/lib.rs:1449	30	decides	D1,D3,D4	checks the PUK, re-arms EF_HARDENED, writes the new PIN verifier and raises its counter — a budget rise on a secret not its own	SEC-LAT-003,SEC-LAT-001,SEC-BOOT-001
-reference_retries_left	crates/rsk-piv/src/lib.rs:1480	5	marshals	M	reads the remaining attempts for the caption on the panel; the calls in rsk-display/src/pin.rs:934,960 are caption only	-
+reference_retries_left	crates/rsk-piv/src/lib.rs:1480	5	marshals	M	reads the remaining attempts for the caption on the panel; the calls in rsk-display/src/pin.rs:983,1013 are caption only	-
 verify_reference	crates/rsk-piv/src/lib.rs:1486	14	decides	D1	the panel door for the old secret: calls check_ref, i.e. spends an attempt and decides admission without touching the card status	SEC-LAT-001,SEC-LAT-002
 is_mgm_escrow	crates/rsk-piv/src/lib.rs:1501	12	decides	D5	exact match of 88{89 key}: whether the PRINTED record is stored in the clear or only confirmed depends on it	SEC-SEAM-003
 is_mgm_key_len	crates/rsk-piv/src/lib.rs:1514	6	decides	D5	a scan of the 9B algorithm table; the predicate that recognition of the escrow record rests on	SEC-SEAM-003
@@ -540,20 +540,20 @@ cancel_requested	crates/rsk-device/src/presence.rs:166	3	decides	D5	wait reads t
 new	crates/rsk-device/src/presence.rs:184	3	marshals	M	zero initialization of the spent latch, the policy is entirely in wait	-
 wait	crates/rsk-device/src/presence.rs:188	48	decides	D1	the presence gate itself: touch, scoped cancel, timeout and the spent latch against counting a hold twice	SEC-FIDO-002
 await_release	crates/rsk-device/src/presence.rs:237	17	decides	D5	debounce until release within the REMAINDER of the ceremony budget is what makes spent meaningful	SEC-FIDO-002
-ceremony_begin	crates/rsk-display/src/presence.rs:40	11	decides	D1	ceremony entry: resets a stale cancel and arms up_pending through the Arbiter	SEC-FIDO-002
-ceremony_end	crates/rsk-display/src/presence.rs:52	14	decides	D1	exit: clears both presence flags, releasing the gate for the next request	SEC-FIDO-002
-new	crates/rsk-display/src/presence.rs:76	3	marshals	M	a wrapper around a reference to Ui	-
-poll_pressed	crates/rsk-display/src/presence.rs:80	5	decides	M	constant false: the panel build has no BOOTSEL gesture	-
-confirm_wait	crates/rsk-display/src/presence.rs:86	95	decides	D1	the Allow/Deny ceremony: hold, sleep button, cancel and timeout — all four exits are decided here	SEC-DISP-001,SEC-DISP-002,SEC-DISP-003
-run_add_passkey	crates/rsk-display/src/presence.rs:182	45	decides	D1	the registration ceremony: a Save tap confirms, and the deadline is checked BEFORE the touch is read	SEC-DISP-002,SEC-DISP-003
-collect_pin_impl	crates/rsk-display/src/presence.rs:228	23	decides	D1	collects the clientPIN on the trusted panel — its return is itself the PIN attempt	-
-collect_pin_titled	crates/rsk-display/src/presence.rs:252	21	decides	D1	the same PIN collection for CCID secure-entry, blocks until the presence timeout	-
-request	crates/rsk-display/src/presence.rs:283	12	decides	D1	maps Outcome to Presence for smartcards: Cancelled collapses into Timeout	SEC-DISP-003
-request_ceremony	crates/rsk-display/src/presence.rs:296	26	decides	D1	selects the ceremony by kind (a tap for Register, a hold for Generic) and maps the outcome to Presence	SEC-DISP-001,SEC-DISP-003
-shows_confirm	crates/rsk-display/src/presence.rs:325	3	decides	D5	this true clears the power-up window from authenticatorReset (CTAP 2.1 §6.6)	SEC-DISP-001
-uv_available	crates/rsk-display/src/presence.rs:331	3	decides	D5	this true advertises options.uv in getInfo and enables built-in UV	-
-collect_pin	crates/rsk-display/src/presence.rs:335	3	decides	M	delegates to collect_pin_impl	-
-collect_device_pin	crates/rsk-display/src/presence.rs:339	16	decides	D1	collects the device PIN, naming it — a device PIN attempt, not a clientPIN one	-
+ceremony_begin	crates/rsk-display/src/presence.rs:36	11	decides	D1	ceremony entry: resets a stale cancel and arms up_pending through the Arbiter	SEC-FIDO-002
+ceremony_end	crates/rsk-display/src/presence.rs:48	14	decides	D1	exit: clears both presence flags, releasing the gate for the next request	SEC-FIDO-002
+new	crates/rsk-display/src/presence.rs:70	3	marshals	M	a wrapper around a reference to Ui	-
+poll_pressed	crates/rsk-display/src/presence.rs:74	5	decides	M	constant false: the panel build has no BOOTSEL gesture	-
+confirm_wait	crates/rsk-display/src/presence.rs:80	95	decides	D1	the Allow/Deny ceremony: hold, sleep button, cancel and timeout — all four exits are decided here	SEC-DISP-001,SEC-DISP-002,SEC-DISP-003
+run_add_passkey	crates/rsk-display/src/presence.rs:176	45	decides	D1	the registration ceremony: a Save tap confirms, and the deadline is checked BEFORE the touch is read	SEC-DISP-002,SEC-DISP-003
+collect_pin_impl	crates/rsk-display/src/presence.rs:222	23	decides	D1	collects the clientPIN on the trusted panel — its return is itself the PIN attempt	-
+collect_pin_titled	crates/rsk-display/src/presence.rs:246	21	decides	D1	the same PIN collection for CCID secure-entry, blocks until the presence timeout	-
+request	crates/rsk-display/src/presence.rs:275	12	decides	D1	maps Outcome to Presence for smartcards: Cancelled collapses into Timeout	SEC-DISP-003
+request_ceremony	crates/rsk-display/src/presence.rs:288	26	decides	D1	selects the ceremony by kind (a tap for Register, a hold for Generic) and maps the outcome to Presence	SEC-DISP-001,SEC-DISP-003
+shows_confirm	crates/rsk-display/src/presence.rs:317	3	decides	D5	this true clears the power-up window from authenticatorReset (CTAP 2.1 §6.6)	SEC-DISP-001
+uv_available	crates/rsk-display/src/presence.rs:323	3	decides	D5	this true advertises options.uv in getInfo and enables built-in UV	-
+collect_pin	crates/rsk-display/src/presence.rs:327	3	decides	M	delegates to collect_pin_impl	-
+collect_device_pin	crates/rsk-display/src/presence.rs:331	16	decides	D1	collects the device PIN, naming it — a device PIN attempt, not a clientPIN one	-
 new	crates/rsk-ui/src/lib.rs:61	3	marshals	M	point constructor	-
 new	crates/rsk-ui/src/lib.rs:77	3	marshals	M	rectangle constructor	-
 contains	crates/rsk-ui/src/lib.rs:81	9	decides	D5	the predicate the whole hit-test rests on, including ALLOW_RECT inside hit_confirm	SEC-DISP-003

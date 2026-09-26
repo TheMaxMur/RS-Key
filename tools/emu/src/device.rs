@@ -419,6 +419,13 @@ pub fn serve_display<P, T>(
     // Read off the hooks, not passed in beside them: the panel and the worker must
     // hold one pair, and two that do not match fail nothing.
     let links = parts.hooks.links();
+    let keys = Box::leak(Box::new(rsk_display::DeviceKeys {
+        serial_id: cfg.serial,
+        serial_hash: rsk_crypto::sha256(&cfg.serial),
+        mkek_source: None,
+    }));
+    // The panel's own screens get the cells; the presence backend gets the `Ui` alone.
+    let cells = rsk_display::Parked::new(fs, keys, rng);
     let ui = Box::leak(Box::new(RefCell::new(rsk_display::Ui::new(
         parts.panel,
         parts.touch,
@@ -427,17 +434,11 @@ pub fn serve_display<P, T>(
             version: crate::bcd::BCD_DEVICE,
             chipid: u64::from_le_bytes(cfg.serial),
         },
-        fs,
-        rsk_display::DeviceKeys {
-            serial_id: cfg.serial,
-            serial_hash: rsk_crypto::sha256(&cfg.serial),
-            mkek_source: None,
-        },
-        rng,
+        cells,
     ))));
     let presence = RefCell::new(rsk_display::TouchPresence::new(ui));
     crate::park::block_on(embassy_futures::select::select(
-        rsk_display::status_loop(ui),
+        rsk_display::status_loop(ui, cells),
         serve(cfg, jobs, signals, links, fs, rng, &presence),
     ));
 }

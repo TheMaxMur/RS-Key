@@ -72,12 +72,14 @@ fn a_brightness_step_that_moves_marks_the_session_dirty() {
     let mut ui = env.ui(Pad::idle());
     ui.set_brightness(BRIGHTNESS_LEVELS);
     let mut clamped = false;
-    ui.settings_brightness(center(rsk_ui::ADJ_PLUS_RECT), &mut clamped);
+    env.local(&mut ui)
+        .settings_brightness(center(rsk_ui::ADJ_PLUS_RECT), &mut clamped);
     assert_eq!(ui.brightness, BRIGHTNESS_LEVELS);
     assert!(!clamped);
 
     let mut dirty = false;
-    ui.settings_brightness(center(rsk_ui::ADJ_MINUS_RECT), &mut dirty);
+    env.local(&mut ui)
+        .settings_brightness(center(rsk_ui::ADJ_MINUS_RECT), &mut dirty);
     assert_eq!(ui.brightness, BRIGHTNESS_LEVELS - 1);
     assert!(dirty);
     assert_eq!(
@@ -94,19 +96,22 @@ fn the_root_nav_hands_the_next_tab_back_to_the_ambient_loop() {
     let mut last = Instant::now();
     let tab = |i: usize| center(rsk_ui::nav_tab_rect(i as u16));
     assert!(matches!(
-        ui.settings_root(tab(0), &mut last),
+        env.local(&mut ui).settings_root(tab(0), &mut last),
         Nav::Leave(None)
     ));
     assert!(matches!(
-        ui.settings_root(tab(1), &mut last),
+        env.local(&mut ui).settings_root(tab(1), &mut last),
         Nav::Leave(Some(NavTab::Passkeys))
     ));
     assert!(matches!(
-        ui.settings_root(tab(2), &mut last),
+        env.local(&mut ui).settings_root(tab(2), &mut last),
         Nav::Leave(Some(NavTab::Apps))
     ));
     assert!(
-        matches!(ui.settings_root(tab(3), &mut last), Nav::Idle),
+        matches!(
+            env.local(&mut ui).settings_root(tab(3), &mut last),
+            Nav::Idle
+        ),
         "Settings is already open"
     );
 }
@@ -121,7 +126,7 @@ fn saving_the_display_settings_preserves_the_onboarding_choice() {
     ui.pin_declined = true;
     ui.set_brightness(2);
     SLEEP_TIMEOUT_MS.store(15_000, Ordering::Relaxed);
-    ui.save_display_config();
+    env.local(&mut ui).save_display_config();
 
     let mut buf = [0u8; rsk_ui::DISPLAY_CONF_LEN];
     let n = env
@@ -152,7 +157,7 @@ fn persisting_the_touch_timeout_keeps_the_rest_of_the_phy_record() {
         rsk_phy::save(&mut fs, &phy).expect("EF_PHY");
     }
     ui.hooks.presence_ms = 20_000;
-    ui.persist_settings(false, true);
+    env.local(&mut ui).persist_settings(false, true);
 
     let stored = rsk_phy::load(&mut env.fs.borrow_mut()).expect("EF_PHY");
     assert_eq!(stored.presence_timeout, Some(20));
@@ -164,7 +169,7 @@ fn persisting_the_touch_timeout_keeps_the_rest_of_the_phy_record() {
 fn a_clean_settings_session_writes_no_flash() {
     let env = Env::new();
     let mut ui = env.ui(Pad::idle());
-    ui.persist_settings(false, false);
+    env.local(&mut ui).persist_settings(false, false);
     assert!(
         !env.fs.borrow_mut().has_data(EF_DISPLAY),
         "opening the menu and leaving it must not cost a write"
@@ -184,7 +189,8 @@ fn the_scramble_row_toggles_in_place_and_persists() {
     let row = rsk_ui::settings_row_rect(3);
     let tap = rsk_ui::Point::new(row.x + row.w / 2, row.y + row.h / 2);
     assert!(matches!(
-        ui.settings_security(tap, &mut last, &mut dirty),
+        env.local(&mut ui)
+            .settings_security(tap, &mut last, &mut dirty),
         Nav::Stay
     ));
     assert!(ui.scramble_pin, "the tap did not flip it");
@@ -193,7 +199,7 @@ fn the_scramble_row_toggles_in_place_and_persists() {
         "a flip that is never written is a setting that forgets itself"
     );
 
-    ui.save_display_config();
+    env.local(&mut ui).save_display_config();
     let mut buf = [0u8; rsk_ui::DISPLAY_CONF_LEN];
     let n = env
         .fs
@@ -206,7 +212,8 @@ fn the_scramble_row_toggles_in_place_and_persists() {
 
     // And back off again — a toggle that only travels one way is a trap.
     assert!(matches!(
-        ui.settings_security(tap, &mut last, &mut dirty),
+        env.local(&mut ui)
+            .settings_security(tap, &mut last, &mut dirty),
         Nav::Stay
     ));
     assert!(!ui.scramble_pin);
@@ -260,10 +267,10 @@ fn a_factory_reset_writes_no_edit_into_the_store_it_wiped() {
     let mut ui = env.ui(Pad::taps_then_hold(&taps, center(rsk_ui::DEL_HOLD_RECT)));
     // What declining onboarding leaves behind, so the wipe has a record to remove.
     ui.pin_declined = true;
-    ui.save_display_config();
+    env.local(&mut ui).save_display_config();
 
     let started = Instant::now();
-    ui.run_settings();
+    env.local(&mut ui).run_settings();
     // Well inside the menu's own idle exit, which a menu still open over the wipe waits out.
     let left_at_once = started.elapsed() < Duration::from_millis(MENU_INACTIVITY_MS / 2);
     let phy = env.fs.borrow_mut().has_data(rsk_phy::EF_PHY);
@@ -290,14 +297,14 @@ fn a_wipe_the_store_refuses_reboots_nothing() {
     script.extend([None, Some(hold), None]);
     let mut ui = env.ui(Pad::script(&script));
     ui.pin_declined = true;
-    ui.save_display_config();
+    env.local(&mut ui).save_display_config();
     assert!(
         medium.value(EF_DISPLAY).is_some(),
         "control: a record to wipe"
     );
     medium.refuse_remove(Some(EF_DISPLAY));
 
-    let done = ui.run_factory_reset();
+    let done = env.local(&mut ui).run_factory_reset();
     assert_eq!(
         (done, ui.hooks.reboot, medium.value(EF_DISPLAY).is_some()),
         (false, None, true),
@@ -333,7 +340,7 @@ fn an_edit_is_written_before_a_firmware_update_reboots() {
     let mut ui = env.ui(Pad::taps_then_hold(&taps, center(rsk_ui::DEL_HOLD_RECT)));
     ui.set_brightness(BRIGHTNESS_LEVELS);
 
-    ui.run_settings();
+    env.local(&mut ui).run_settings();
     assert_eq!(
         (
             ui.hooks.reboot,
@@ -371,7 +378,7 @@ fn an_abandoned_factory_reset_keeps_the_edit() {
     ];
     let mut ui = env.ui(Pad::taps(&taps));
 
-    ui.run_settings();
+    env.local(&mut ui).run_settings();
     assert_eq!(
         (
             ui.hooks.reboot,
@@ -407,7 +414,7 @@ fn a_faulted_phy_probe_does_not_wipe_the_record_the_timeout_shares() {
 
     ui.hooks.presence_ms = 20_000;
     medium.stick_once(rsk_phy::EF_PHY);
-    ui.persist_settings(false, true);
+    env.local(&mut ui).persist_settings(false, true);
 
     let after = medium.value(rsk_phy::EF_PHY).expect("record present");
     let kept = rsk_phy::PhyData::parse(&after);

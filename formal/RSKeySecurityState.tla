@@ -466,7 +466,7 @@ TouchTimeout ==
 \* WAIT_SCOPE at SCOPE_NONE (firmware/src/worker.rs:513-515); an OTP frame's wait
 \* runs under SCOPE_OTP (firmware/src/worker.rs:651-653). Both clear a stale
 \* cancel at their own wait's entry -- the panel in its own loop
-\* (crates/rsk-display/src/presence.rs:45-48), not in ButtonWait::wait -- so
+\* (crates/rsk-display/src/presence.rs:41-44), not in ButtonWait::wait -- so
 \* OpenWaitFor stands for two different drops here and
 \* BugNoDropStaleCancelAtEntry removes both at once.
 \*
@@ -1516,7 +1516,7 @@ VolatileCleared ==
     /\ upSpent' = FALSE
 
 \* EVERY boot runs ensure_seed, not just the one at the end of a reset:
-\* firmware/src/main.rs:646 and tools/emu/src/device.rs:507. A cut that stranded
+\* firmware/src/main.rs:650 and tools/emu/src/device.rs:508. A cut that stranded
 \* the device mid-wipe therefore comes back WITH a seed and can hold usable
 \* credentials again. Leaving it out made the model less permissive than the
 \* firmware -- the one direction a safety argument cannot absorb.
