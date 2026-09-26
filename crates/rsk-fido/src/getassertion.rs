@@ -9,6 +9,15 @@
 //! When resident discovery finds more than one credential, the sorted EF_CRED
 //! slots are saved so [`get_next_assertion`] can return the rest one at a time.
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
 
@@ -38,6 +47,10 @@ use crate::seed::{report_sign_counter, set_cred_sign_counter};
 use crate::state::{AssertionState, MAX_ASSERTION_CREDS, PERM_GA};
 use crate::{Ctx, Rng};
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the list ceiling is 16, and a const cannot call `usize::try_from`"
+)]
 const MAX_ALLOW: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
 /// Sized by the create-side ceiling so no creatable box is ever skipped
 /// (`Best::consider` drops longer candidates). It sits on the getAssertion
@@ -268,21 +281,24 @@ impl Best {
             self.resident = resident_id.is_some();
             self.slot = slot;
             if let Some(rid) = resident_id {
-                let m = rid.len().min(CRED_RESIDENT_LEN);
-                self.resident_id[..m].copy_from_slice(&rid[..m]);
+                copy_prefix(&mut self.resident_id, rid);
             }
             self.len = cand.len();
-            self.id[..cand.len()].copy_from_slice(cand);
-            self.user_len = c.user_id.len().min(MAX_USER_ID);
-            self.user[..self.user_len].copy_from_slice(&c.user_id[..self.user_len]);
-            self.name_len = c.user_name.len().min(MAX_USER_NAME);
-            self.name[..self.name_len].copy_from_slice(&c.user_name.as_bytes()[..self.name_len]);
-            self.display_len = c.user_display_name.len().min(MAX_USER_NAME);
-            self.display[..self.display_len]
-                .copy_from_slice(&c.user_display_name.as_bytes()[..self.display_len]);
+            copy_prefix(&mut self.id, cand);
+            self.user_len = copy_prefix(&mut self.user, c.user_id);
+            self.name_len = copy_prefix(&mut self.name, c.user_name.as_bytes());
+            self.display_len = copy_prefix(&mut self.display, c.user_display_name.as_bytes());
         }
         Some(c.created)
     }
+}
+
+/// Copy as much of `src` as `dst` holds; the count copied.
+fn copy_prefix(dst: &mut [u8], src: &[u8]) -> usize {
+    for (d, s) in dst.iter_mut().zip(src) {
+        *d = *s;
+    }
+    src.len().min(dst.len())
 }
 
 /// `authenticatorGetAssertion`: write the response CBOR into `out`, returning its
@@ -469,11 +485,11 @@ fn resolve_credential<S: Storage, R: Rng>(
     seed: &[u8; 32],
     uv: bool,
     best: &mut Best,
-) {
+) -> Result<(), CtapError> {
     if req.allow_present {
-        resolve_from_allowlist(ctx, req, rp_id_hash, seed, uv, best);
+        resolve_from_allowlist(ctx, req, rp_id_hash, seed, uv, best)
     } else {
-        resolve_by_discovery(ctx, req, rp_id_hash, seed, uv, best);
+        resolve_by_discovery(ctx, req, rp_id_hash, seed, uv, best)
     }
 }
 
@@ -487,19 +503,22 @@ fn resolve_from_allowlist<S: Storage, R: Rng>(
     seed: &[u8; 32],
     uv: bool,
     best: &mut Best,
-) {
+) -> Result<(), CtapError> {
     let mut scratch = [0u8; CRED_REC_MAX];
     let mut rec = [0u8; CRED_REC_MAX];
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(ctx.fs, EF_CRED, &mut occupied);
-    for &id in &req.allow[..req.allow_len] {
+    let Some(allow) = req.allow.get(..req.allow_len) else {
+        return Err(CtapError::LimitExceeded);
+    };
+    for &id in allow {
         // A resident id is exactly 42 bytes, matched against the stored records;
         // fall back to the non-resident box path for anything else — and for a
         // 42-byte id not stored as a resident — so no cleartext marker is needed.
         let mut resident_hit = false;
         if id.len() == CRED_RESIDENT_LEN {
-            for i in 0..MAX_RESIDENT_CREDENTIALS {
-                if !occupied[i as usize] {
+            for (i, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
+                if !live {
                     continue;
                 }
                 let Some(n) = ctx.fs.read(EF_CRED + i, &mut rec) else {
@@ -510,7 +529,7 @@ fn resolve_from_allowlist<S: Storage, R: Rng>(
                     best.consider(
                         seed,
                         rp_id_hash,
-                        cred_record_box(&rec[..n]),
+                        cred_record_box(rec.get(..n).unwrap_or(&rec)),
                         Some(&rec[32..RECORD_PREFIX]),
                         Some(i),
                         uv,
@@ -526,6 +545,7 @@ fn resolve_from_allowlist<S: Storage, R: Rng>(
             best.consider(seed, rp_id_hash, id, None, None, uv, true, &mut scratch);
         }
     }
+    Ok(())
 }
 
 /// Resident discovery (no allowList): fold every stored credential for this rp
@@ -538,7 +558,7 @@ fn resolve_by_discovery<S: Storage, R: Rng>(
     seed: &[u8; 32],
     uv: bool,
     best: &mut Best,
-) {
+) -> Result<(), CtapError> {
     let mut scratch = [0u8; CRED_REC_MAX];
     let mut rec = [0u8; CRED_REC_MAX];
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
@@ -546,8 +566,8 @@ fn resolve_by_discovery<S: Storage, R: Rng>(
     // Collect the matching EF_CRED slots so getNextAssertion can walk them.
     let mut cands: [(u16, u64); MAX_ASSERTION_CREDS] = [(0, 0); MAX_ASSERTION_CREDS];
     let mut ncand = 0usize;
-    for i in 0..MAX_RESIDENT_CREDENTIALS {
-        if !occupied[i as usize] {
+    for (i, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
+        if !live {
             continue;
         }
         let Some(n) = ctx.fs.read(EF_CRED + i, &mut rec) else {
@@ -559,16 +579,16 @@ fn resolve_by_discovery<S: Storage, R: Rng>(
             && let Some(created) = best.consider(
                 seed,
                 rp_id_hash,
-                cred_record_box(&rec[..n]),
+                cred_record_box(rec.get(..n).unwrap_or(&rec)),
                 Some(&rec[32..RECORD_PREFIX]),
                 Some(i),
                 uv,
                 false,
                 &mut scratch,
             )
-            && ncand < MAX_ASSERTION_CREDS
+            && let Some(cand) = cands.get_mut(ncand)
         {
-            cands[ncand] = (i, created);
+            *cand = (i, created);
             ncand += 1;
         }
     }
@@ -576,14 +596,15 @@ fn resolve_by_discovery<S: Storage, R: Rng>(
     if ncand > 1 {
         arm_get_next_assertion(
             &mut ctx.state.gna,
-            &mut cands[..ncand],
+            cands.get_mut(..ncand).ok_or(CtapError::Other)?,
             req,
             rp_id_hash,
             uv,
             ctx.now_ms,
             ctx.state.channel,
-        );
+        )?;
     }
+    Ok(())
 }
 
 /// Arm getNextAssertion for a multi-credential resident discovery: sort the
@@ -598,7 +619,7 @@ fn arm_get_next_assertion(
     uv: bool,
     now_ms: u64,
     channel: u32,
-) {
+) -> Result<(), CtapError> {
     cands.sort_unstable_by_key(|c| core::cmp::Reverse(c.1));
     gna.active = true;
     gna.channel = channel;
@@ -608,11 +629,11 @@ fn arm_get_next_assertion(
     // Carry the request's RAW `up` (not want_up) so every getNextAssertion leg emits
     // the same inert UP=0 as the Begin leg for an up:false pre-flight under strict-up.
     gna.up = req.up;
-    gna.total = cands.len() as u8;
+    gna.total = u8::try_from(cands.len()).map_err(|_| CtapError::Other)?;
     gna.counter = 1;
     gna.started_ms = now_ms;
     for (k, &(slot, _)) in cands.iter().enumerate() {
-        gna.slots[k] = slot;
+        *gna.slots.get_mut(k).ok_or(CtapError::Other)? = slot;
     }
     // Carry the request's extension inputs so getNextAssertion re-evaluates them
     // (hmac-secret included) per credential.
@@ -622,16 +643,15 @@ fn arm_get_next_assertion(
         gna.hmac_peer_x = req.hmac_secret.peer_x;
         gna.hmac_peer_y = req.hmac_secret.peer_y;
         let salt_enc = req.hmac_secret.salt_enc.unwrap_or_default();
-        let se = salt_enc.len().min(gna.hmac_salt_enc.len());
-        gna.hmac_salt_enc[..se].copy_from_slice(&salt_enc[..se]);
-        gna.hmac_salt_enc_len = se as u8;
+        let se = copy_prefix(&mut gna.hmac_salt_enc, salt_enc);
+        gna.hmac_salt_enc_len = u8::try_from(se).map_err(|_| CtapError::Other)?;
         let salt_auth = req.hmac_secret.salt_auth.unwrap_or_default();
-        let sa = salt_auth.len().min(gna.hmac_salt_auth.len());
-        gna.hmac_salt_auth[..sa].copy_from_slice(&salt_auth[..sa]);
-        gna.hmac_salt_auth_len = sa as u8;
+        let sa = copy_prefix(&mut gna.hmac_salt_auth, salt_auth);
+        gna.hmac_salt_auth_len = u8::try_from(sa).map_err(|_| CtapError::Other)?;
     }
     gna.ext_cred_blob = req.ext_cred_blob;
     gna.ext_third_party_payment = req.ext_third_party_payment;
+    Ok(())
 }
 
 fn get_assertion_inner<S: Storage, R: Rng>(
@@ -651,7 +671,7 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).
     let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
     let mut best = Best::new();
-    resolve_credential(ctx, req, rp_id_hash, seed, uv, &mut best);
+    resolve_credential(ctx, req, rp_id_hash, seed, uv, &mut best)?;
 
     if !best.any {
         // Poll presence BEFORE disclosing no-match so the device isn't a silent
@@ -665,8 +685,9 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     }
 
     // Re-load the selected credential for its stored extension data + curve.
+    let cred_box = best.id.get(..best.len).ok_or(CtapError::Other)?;
     let mut sel_scratch = [0u8; CRED_REC_MAX];
-    let sel = credential_load(seed, &best.id[..best.len], rp_id_hash, &mut sel_scratch);
+    let sel = credential_load(seed, cred_box, rp_id_hash, &mut sel_scratch);
     let sel_large_blob = sel.as_ref().map(|c| c.ext.large_blob_key).unwrap_or(false);
     let curve = sel.as_ref().map_or(CURVE_P256 as i64, |c| c.curve);
 
@@ -674,10 +695,7 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // credential keys off its STABLE resident id (so an updateUserInformation
     // reseal doesn't rotate the keys), everything else off the box — the same
     // choice makeCredential made when it issued the RP's pubkey.
-    let key_input = resident_key_input(
-        &best.id[..best.len],
-        best.resident.then_some(&best.resident_id[..]),
-    );
+    let key_input = resident_key_input(cred_box, best.resident.then_some(&best.resident_id[..]));
 
     // hmac-secret output (needs the clientPIN ephemeral key + the RNG for the IV).
     let mut hs = [0u8; SALT_ENC_MAX];
@@ -702,7 +720,7 @@ fn get_assertion_inner<S: Storage, R: Rng>(
         req.ext_cred_blob,
         req.ext_third_party_payment,
         sel.as_ref(),
-        &hs[..hs_len],
+        hs.get(..hs_len).ok_or(CtapError::Other)?,
         &mut ext,
     )?;
     let ed = if ext_len > 0 { FLAG_ED } else { 0 };
@@ -719,8 +737,7 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // its path-as-is scalar (keyderiv::verify_key); fido_load_key rewrites the
     // first path entry for CTAP2 creds.
     let key = if sel.as_ref().is_some_and(|c| c.u2f) {
-        let kh = <&[u8; KEY_HANDLE_LEN]>::try_from(&best.id[..best.len])
-            .map_err(|_| CtapError::Other)?;
+        let kh = <&[u8; KEY_HANDLE_LEN]>::try_from(cred_box).map_err(|_| CtapError::Other)?;
         let mut scalar = verify_key(seed, rp_id_hash, kh).ok_or(CtapError::Other)?;
         let key = CredKey::from_raw(CURVE_P256 as i64, scalar.expose()).ok_or(CtapError::Other)?;
         scalar.wipe();
@@ -779,11 +796,16 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // exemption yields a signable assertion (CTAP 2.1 §6.2.2; ssh-sk unaffected).
     ad[32] = up.bits() | ed | if uv { FLAG_UV } else { 0 };
     ad[33..37].copy_from_slice(&ctr.to_be_bytes());
-    ad[37..37 + ext_len].copy_from_slice(&ext[..ext_len]);
+    let (Some(ad_ext), Some(ext_out)) = (ad.get_mut(37..37 + ext_len), ext.get(..ext_len)) else {
+        return Err(CtapError::Other);
+    };
+    ad_ext.copy_from_slice(ext_out);
     let ad_len = 37 + ext_len;
-    ad[ad_len..ad_len + 32].copy_from_slice(req.client_data_hash);
+    let ad_cdh = ad.get_mut(ad_len..ad_len + 32).ok_or(CtapError::Other)?;
+    ad_cdh.copy_from_slice(req.client_data_hash);
     let mut sig = [0u8; MAX_SIG_LEN];
-    let sig_len = key.sign(&ad[..ad_len + 32], ctx.rng, &mut sig);
+    let signed = ad.get(..ad_len + 32).ok_or(CtapError::Other)?;
+    let sig_len = key.sign(signed, ctx.rng, &mut sig);
 
     // Response: { 1: {id,type}, 2: authData, 3: sig [, 4: user] [, 5: count]
     // [, 7: largeBlobKey] [, 8: unsignedExtensionOutputs] }. Fields 7 and 8 are
@@ -793,7 +815,7 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     let cred_id: &[u8] = if best.resident {
         &best.resident_id
     } else {
-        &best.id[..best.len]
+        cred_box
     };
     // numberOfCredentials and the full user identity are a resident-discovery
     // feature: with an allowList present, CTAP2.1 returns exactly one assertion
@@ -811,13 +833,15 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     }
     fields += u64::from(large_blob.emits()); // unsignedExtensionOutputs
 
+    let auth_data = ad.get(..ad_len).ok_or(CtapError::Other)?;
+    let signature = sig.get(..sig_len).ok_or(CtapError::Other)?;
     let mut enc = Encoder::new(Cursor::new(&mut *out));
     enc.map(fields)
         .and_then(|e| e.u8(1)?.map(2))
         .and_then(|e| e.str("id")?.bytes(cred_id))
         .and_then(|e| e.str("type")?.str("public-key"))
-        .and_then(|e| e.u8(2)?.bytes(&ad[..ad_len]))
-        .and_then(|e| e.u8(3)?.bytes(&sig[..sig_len]))
+        .and_then(|e| e.u8(2)?.bytes(auth_data))
+        .and_then(|e| e.u8(3)?.bytes(signature))
         .map_err(|_| CtapError::Other)?;
     if best.resident {
         // name / displayName are user-identifiable info: returned only on a
@@ -826,18 +850,24 @@ fn get_assertion_inner<S: Storage, R: Rng>(
         let with_name = multi && uv && best.name_len > 0;
         let with_display = multi && uv && best.display_len > 0;
         let entries = 1 + u64::from(with_name) + u64::from(with_display);
+        let user = best.user.get(..best.user_len).ok_or(CtapError::Other)?;
         enc.u8(4)
             .and_then(|e| e.map(entries))
-            .and_then(|e| e.str("id")?.bytes(&best.user[..best.user_len]))
+            .and_then(|e| e.str("id")?.bytes(user))
             .map_err(|_| CtapError::Other)?;
         if with_name {
-            let s = core::str::from_utf8(&best.name[..best.name_len]).unwrap_or("");
+            let name = best.name.get(..best.name_len).ok_or(CtapError::Other)?;
+            let s = core::str::from_utf8(name).unwrap_or("");
             enc.str("name")
                 .and_then(|e| e.str(s))
                 .map_err(|_| CtapError::Other)?;
         }
         if with_display {
-            let s = core::str::from_utf8(&best.display[..best.display_len]).unwrap_or("");
+            let display = best
+                .display
+                .get(..best.display_len)
+                .ok_or(CtapError::Other)?;
+            let s = core::str::from_utf8(display).unwrap_or("");
             enc.str("displayName")
                 .and_then(|e| e.str(s))
                 .map_err(|_| CtapError::Other)?;
@@ -847,8 +877,9 @@ fn get_assertion_inner<S: Storage, R: Rng>(
         // Clamp to what the getNextAssertion queue can actually serve
         // (MAX_ASSERTION_CREDS): over-reporting strands the excess credentials
         // behind a premature NOT_ALLOWED.
+        let served = u32::try_from(MAX_ASSERTION_CREDS).unwrap_or(u32::MAX);
         enc.u8(5)
-            .and_then(|e| e.u32(best.found.min(MAX_ASSERTION_CREDS as u32)))
+            .and_then(|e| e.u32(best.found.min(served)))
             .map_err(|_| CtapError::Other)?;
     }
     if let Some(lbk) = large_blob_key {
@@ -925,7 +956,9 @@ pub fn get_next_assertion<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8
         return Err(CtapError::NotAllowed);
     }
     let idx = ctx.state.gna.counter as usize;
-    let slot = ctx.state.gna.slots[idx];
+    let Some(&slot) = ctx.state.gna.slots.get(idx) else {
+        return Err(CtapError::NotAllowed);
+    };
     let rp_id_hash = ctx.state.gna.rp_id_hash;
     let client_data_hash = ctx.state.gna.client_data_hash;
     let uv = ctx.state.gna.uv;
@@ -950,7 +983,7 @@ pub fn get_next_assertion<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8
     let mut seed = ctx.load_keydev().ok_or(CtapError::Other)?;
     let result = next_assertion_response(
         ctx,
-        cred_record_box(&rec[..n]),
+        cred_record_box(rec.get(..n).unwrap_or(&rec)),
         &resident_id,
         slot,
         &rp_id_hash,
@@ -998,14 +1031,11 @@ fn next_assertion_response<S: Storage, R: Rng>(
     // name / displayName are user-identifiable and returned only when the user
     // is verified (§6.3 privacy rule), otherwise id only.
     let mut user = [0u8; MAX_USER_ID];
-    let user_len = cred.user_id.len().min(MAX_USER_ID);
-    user[..user_len].copy_from_slice(&cred.user_id[..user_len]);
+    let user_len = copy_prefix(&mut user, cred.user_id);
     let mut name = [0u8; MAX_USER_NAME];
-    let name_len = cred.user_name.len().min(MAX_USER_NAME);
-    name[..name_len].copy_from_slice(&cred.user_name.as_bytes()[..name_len]);
+    let name_len = copy_prefix(&mut name, cred.user_name.as_bytes());
     let mut display = [0u8; MAX_USER_NAME];
-    let display_len = cred.user_display_name.len().min(MAX_USER_NAME);
-    display[..display_len].copy_from_slice(&cred.user_display_name.as_bytes()[..display_len]);
+    let display_len = copy_prefix(&mut display, cred.user_display_name.as_bytes());
 
     // Re-evaluate hmac-secret for this credential from the carried request.
     let mut hs = [0u8; SALT_ENC_MAX];
@@ -1013,8 +1043,17 @@ fn next_assertion_response<S: Storage, R: Rng>(
         let g = &ctx.state.gna;
         let (se, sa) = (g.hmac_salt_enc_len as usize, g.hmac_salt_auth_len as usize);
         let (mut salt_enc, mut salt_auth) = ([0u8; SALT_ENC_MAX], [0u8; SALT_AUTH_MAX]);
-        salt_enc[..se].copy_from_slice(&g.hmac_salt_enc[..se]);
-        salt_auth[..sa].copy_from_slice(&g.hmac_salt_auth[..sa]);
+        // A carried length past its buffer is one `eval` would refuse as a salt length.
+        let (Some(enc), Some(auth), Some(carried_enc), Some(carried_auth)) = (
+            salt_enc.get_mut(..se),
+            salt_auth.get_mut(..sa),
+            g.hmac_salt_enc.get(..se),
+            g.hmac_salt_auth.get(..sa),
+        ) else {
+            return Err(CtapError::InvalidLength);
+        };
+        enc.copy_from_slice(carried_enc);
+        auth.copy_from_slice(carried_auth);
         let req = HmacSecretReq {
             present: true,
             // The replay only exists because the first assertion got past `eval`,
@@ -1024,8 +1063,8 @@ fn next_assertion_response<S: Storage, R: Rng>(
             proto: g.hmac_proto,
             peer_x: g.hmac_peer_x,
             peer_y: g.hmac_peer_y,
-            salt_enc: Some(&salt_enc[..se]),
-            salt_auth: Some(&salt_auth[..sa]),
+            salt_enc: Some(enc),
+            salt_auth: Some(auth),
         };
         let ephemeral = *ctx.state.ephemeral_scalar();
         hmacsecret::eval(&req, &ephemeral, seed, key_input, uv, ctx.rng, &mut hs)?
@@ -1039,7 +1078,7 @@ fn next_assertion_response<S: Storage, R: Rng>(
         ctx.state.gna.ext_cred_blob,
         ctx.state.gna.ext_third_party_payment,
         Some(&cred),
-        &hs[..hs_len],
+        hs.get(..hs_len).ok_or(CtapError::Other)?,
         &mut ext,
     )?;
     let ed = if ext_len > 0 { FLAG_ED } else { 0 };
@@ -1057,36 +1096,49 @@ fn next_assertion_response<S: Storage, R: Rng>(
     let up_flag = if up { FLAG_UP } else { 0 };
     ad[32] = up_flag | ed | if uv { FLAG_UV } else { 0 };
     ad[33..37].copy_from_slice(&ctr.to_be_bytes());
-    ad[37..37 + ext_len].copy_from_slice(&ext[..ext_len]);
+    let (Some(ad_ext), Some(ext_out)) = (ad.get_mut(37..37 + ext_len), ext.get(..ext_len)) else {
+        return Err(CtapError::Other);
+    };
+    ad_ext.copy_from_slice(ext_out);
     let ad_len = 37 + ext_len;
+    let auth_data = ad.get(..ad_len).ok_or(CtapError::Other)?;
     let mut signed = [0u8; 37 + 320 + 32];
-    signed[..ad_len].copy_from_slice(&ad[..ad_len]);
-    signed[ad_len..ad_len + 32].copy_from_slice(client_data_hash);
+    let signed_ad = signed.get_mut(..ad_len).ok_or(CtapError::Other)?;
+    signed_ad.copy_from_slice(auth_data);
+    let signed_cdh = signed
+        .get_mut(ad_len..ad_len + 32)
+        .ok_or(CtapError::Other)?;
+    signed_cdh.copy_from_slice(client_data_hash);
     let mut sig = [0u8; MAX_SIG_LEN];
-    let sig_len = key.sign(&signed[..ad_len + 32], ctx.rng, &mut sig);
+    let signed = signed.get(..ad_len + 32).ok_or(CtapError::Other)?;
+    let sig_len = key.sign(signed, ctx.rng, &mut sig);
 
     // Response: { 1: {id,type}, 2: authData, 3: sig, 4: {id[,name,displayName]} } (no count).
     let with_name = uv && name_len > 0;
     let with_display = uv && display_len > 0;
     let entries = 1 + u64::from(with_name) + u64::from(with_display);
+    let signature = sig.get(..sig_len).ok_or(CtapError::Other)?;
+    let user_id = user.get(..user_len).ok_or(CtapError::Other)?;
     let mut enc = Encoder::new(Cursor::new(&mut *out));
     enc.map(4)
         .and_then(|e| e.u8(1)?.map(2))
         .and_then(|e| e.str("id")?.bytes(resident_id))
         .and_then(|e| e.str("type")?.str("public-key"))
-        .and_then(|e| e.u8(2)?.bytes(&ad[..ad_len]))
-        .and_then(|e| e.u8(3)?.bytes(&sig[..sig_len]))
+        .and_then(|e| e.u8(2)?.bytes(auth_data))
+        .and_then(|e| e.u8(3)?.bytes(signature))
         .and_then(|e| e.u8(4)?.map(entries))
-        .and_then(|e| e.str("id")?.bytes(&user[..user_len]))
+        .and_then(|e| e.str("id")?.bytes(user_id))
         .map_err(|_| CtapError::Other)?;
     if with_name {
-        let s = core::str::from_utf8(&name[..name_len]).unwrap_or("");
+        let name = name.get(..name_len).ok_or(CtapError::Other)?;
+        let s = core::str::from_utf8(name).unwrap_or("");
         enc.str("name")
             .and_then(|e| e.str(s))
             .map_err(|_| CtapError::Other)?;
     }
     if with_display {
-        let s = core::str::from_utf8(&display[..display_len]).unwrap_or("");
+        let display = display.get(..display_len).ok_or(CtapError::Other)?;
+        let s = core::str::from_utf8(display).unwrap_or("");
         enc.str("displayName")
             .and_then(|e| e.str(s))
             .map_err(|_| CtapError::Other)?;
@@ -1097,5 +1149,13 @@ fn next_assertion_response<S: Storage, R: Rng>(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "getassertion_tests.rs"]
 mod tests;
