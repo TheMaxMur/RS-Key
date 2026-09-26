@@ -8,7 +8,7 @@
 
 With `alwaysUv` on and no built-in UV pad, a makeCredential carrying no
 pinUvAuthParam is refused PUAT_REQUIRED **whatever `rk` says** (§6.1.2 steps
-6.2/6.4, `crates/rsk-fido/src/makecredential.rs:536-537`). That is the half of the
+6.2/6.4, `crates/rsk-fido/src/makecredential.rs:553-554`). That is the half of the
 gate `makeCredUvNotRqd` does not reach: step 10 turns on `rk`, step 6 does not.
 
 `28_ctap_spec_alignment.py` asserts the `rk` = false case at the protocol level

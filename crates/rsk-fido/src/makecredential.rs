@@ -16,6 +16,15 @@
 //! key with its x5c cert and the `ep` response flag; level 1 is accepted but
 //! stays self-attestation.
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use minicbor::encode::Write;
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
@@ -53,6 +62,11 @@ use crate::seed::load_att_key;
 use crate::state::PERM_MC;
 use crate::{Ctx, Rng};
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the list ceiling getInfo advertises is a small constant, and a const item \
+              cannot call the checked `usize::try_from`"
+)]
 const MAX_EXCLUDE: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
 
 /// authData fixed prefix: rpIdHash(32) ‖ flags(1) ‖ signCount(4) ‖ aaguid(16) ‖
@@ -520,8 +534,11 @@ fn rp_eligible_for_vendor_ea<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) 
     // `Fs::read` answers the record's FULL length; a list written under a wider
     // `MAX_EA_RPIDS` reads back longer than this buffer. Clamped rather than
     // refused, because a shorter allowlist only ever DECLINES type-1 EA.
-    let n = fs.read(EF_EA_RPIDS, &mut buf).unwrap_or(0).min(buf.len());
-    buf[..n].chunks_exact(32).any(|h| h == rp_id_hash)
+    let n = fs.read(EF_EA_RPIDS, &mut buf).unwrap_or(0);
+    buf.get(..n)
+        .unwrap_or(&buf)
+        .chunks_exact(32)
+        .any(|h| h == rp_id_hash)
 }
 
 /// The FIDO Conformance Tool's fixed Enterprise-Attestation RPID.
@@ -602,9 +619,14 @@ fn make_credential_inner<S: Storage, R: Rng>(
     out: &mut [u8],
 ) -> CtapResult {
     let uv = verified.uv;
+    // A count past the array is the parser's own refusal of a list that long.
+    let exclude = req
+        .exclude
+        .get(..req.exclude_len)
+        .ok_or(CtapError::LimitExceeded)?;
     // excludeList: refuse if any listed credential is already ours and visible
     // (a UV-required credProtect credential is invisible without UV — §12.1).
-    for &id in &req.exclude[..req.exclude_len] {
+    for &id in exclude {
         if exclude_hit(ctx.fs, seed, rp_id_hash, id, uv) {
             // §6.1.2 step 12 requires a user-presence gesture BEFORE disclosing the
             // match, so the device isn't a silent credential-existence oracle
@@ -644,6 +666,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
     let mut cred_box = [0u8; CRED_BOX_MAX];
     let box_len = credential_create(seed, &ctx.dev, &input, rp_id_hash, &iv, &mut cred_box)
         .map_err(|_| CtapError::Other)?;
+    let cred_box = cred_box.get(..box_len).ok_or(CtapError::Other)?;
 
     // Compute the resident id up front (resident keys only): the signing key,
     // hmac-secret and largeBlobKey all derive from `key_input` — the STABLE
@@ -651,10 +674,8 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // they survive an updateUserInformation reseal (see `resident_key_input`). It
     // must be the same input the assertion / enumeration paths use, and the same
     // id echoed into authData below.
-    let resident = req
-        .rk
-        .then(|| derive_resident(&cred_box[..box_len], &ctx.dev));
-    let key_input = resident_key_input(&cred_box[..box_len], resident.as_ref().map(|r| &r[..]));
+    let resident = req.rk.then(|| derive_resident(cred_box, &ctx.dev));
+    let key_input = resident_key_input(cred_box, resident.as_ref().map(|r| &r[..]));
 
     // Derive the credential keypair for the selected curve.
     let mut raw = fido_load_key(seed, key_input).ok_or(CtapError::Other)?;
@@ -686,7 +707,8 @@ fn make_credential_inner<S: Storage, R: Rng>(
 
     // authData extension output (credBlob / credProtect / hmac-secret / minPinLength / hmac-secret-mc).
     let mut ext = [0u8; MC_EXT_MAX];
-    let ext_len = encode_mc_extensions(ctx.fs, req, rp_id_hash, &hs[..hs_len], &mut ext)?;
+    let hmac_mc = hs.get(..hs_len).ok_or(CtapError::Other)?;
+    let ext_len = encode_mc_extensions(ctx.fs, req, rp_id_hash, hmac_mc, &mut ext)?;
     let ed = if ext_len > 0 { FLAG_ED } else { 0 };
 
     // §6.1.2 user presence: makeCredential's `up` is implicitly true and cannot
@@ -718,38 +740,34 @@ fn make_credential_inner<S: Storage, R: Rng>(
     let ctr = 0u32;
     let mut ad = [0u8; AD_BUF];
     let mut p = 0;
-    ad[p..p + 32].copy_from_slice(rp_id_hash);
-    p += 32;
-    ad[p] = FLAG_AT | up.bits() | ed | if uv { FLAG_UV } else { 0 };
-    p += 1;
-    ad[p..p + 4].copy_from_slice(&ctr.to_be_bytes());
-    p += 4;
-    ad[p..p + 16].copy_from_slice(&AAGUID);
-    p += 16;
+    let flags = FLAG_AT | up.bits() | ed | if uv { FLAG_UV } else { 0 };
+    copy_at(&mut ad, &mut p, rp_id_hash)?;
+    copy_at(&mut ad, &mut p, &[flags])?;
+    copy_at(&mut ad, &mut p, &ctr.to_be_bytes())?;
+    copy_at(&mut ad, &mut p, &AAGUID)?;
     if let Some(rid) = &resident {
-        ad[p..p + 2].copy_from_slice(&(rid.len() as u16).to_be_bytes());
-        p += 2;
-        ad[p..p + rid.len()].copy_from_slice(rid);
-        p += rid.len();
+        let id_len = u16::try_from(rid.len()).map_err(|_| CtapError::Other)?;
+        copy_at(&mut ad, &mut p, &id_len.to_be_bytes())?;
+        copy_at(&mut ad, &mut p, rid)?;
     } else {
-        ad[p..p + 2].copy_from_slice(&(box_len as u16).to_be_bytes());
-        p += 2;
-        ad[p..p + box_len].copy_from_slice(&cred_box[..box_len]);
-        p += box_len;
+        let id_len = u16::try_from(box_len).map_err(|_| CtapError::Other)?;
+        copy_at(&mut ad, &mut p, &id_len.to_be_bytes())?;
+        copy_at(&mut ad, &mut p, cred_box)?;
     }
     let cose_len = {
-        let mut enc = Encoder::new(Cursor::new(&mut ad[p..]));
+        let mut enc = Encoder::new(Cursor::new(ad.get_mut(p..).ok_or(CtapError::Other)?));
         key.cose_public(req.sel_alg, &mut enc)
             .map_err(|_| CtapError::Other)?;
         enc.writer().position()
     };
     p += cose_len;
-    ad[p..p + ext_len].copy_from_slice(&ext[..ext_len]);
-    p += ext_len;
+    copy_at(&mut ad, &mut p, ext.get(..ext_len).ok_or(CtapError::Other)?)?;
     let ad_len = p;
 
     // Attestation over authData ‖ clientDataHash.
-    ad[ad_len..ad_len + 32].copy_from_slice(req.client_data_hash);
+    ad.get_mut(ad_len..ad_len + 32)
+        .ok_or(CtapError::Other)?
+        .copy_from_slice(req.client_data_hash);
     // `ea_performed` — platform-managed (type 2), or vendor-facilitated (type 1)
     // for an RP on the stored enterprise list (`EF_EA_RPIDS`, empty until written) —
     // presents the org/EP cert and sets the `ep` flag. A type-1 request for a
@@ -773,7 +791,8 @@ fn make_credential_inner<S: Storage, R: Rng>(
     let (sig_len, chain_len, certs) = if omit_att {
         (0, 0, 0)
     } else {
-        make_attestation(ctx, seed, &ad[..ad_len + 32], ea_performed, &mut att)?
+        let signed = ad.get(..ad_len + 32).ok_or(CtapError::Other)?;
+        make_attestation(ctx, seed, signed, ea_performed, &mut att)?
     };
 
     // largeBlobKey response field (0x05) — resident credentials only.
@@ -798,7 +817,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
 
     let resp_len = encode_mc_response(
         out,
-        &ad[..ad_len],
+        ad.get(..ad_len).ok_or(CtapError::Other)?,
         &att,
         AttShape {
             sig_len,
@@ -816,11 +835,13 @@ fn make_credential_inner<S: Storage, R: Rng>(
             seed,
             &ctx.dev,
             ctx.fs,
-            &cred_box[..box_len],
+            cred_box,
             rp_id_hash,
             req.rp_id,
             req.user_id,
-            &cached_pubkey[..cached_pubkey_len],
+            cached_pubkey
+                .get(..cached_pubkey_len)
+                .ok_or(CtapError::Other)?,
         )
     {
         // A full store and a medium that would not answer are different answers to
@@ -833,6 +854,17 @@ fn make_credential_inner<S: Storage, R: Rng>(
     }
     journal::append(ctx, journal::EV_MAKE_CRED, 0, &rp_id_hash[..8]);
     Ok(resp_len)
+}
+
+/// Copy `bytes` into `buf` at `*p` and advance `p` past them: the authData writer.
+/// No room is `Other`, as it is for the COSE key encoded into the same buffer.
+fn copy_at(buf: &mut [u8], p: &mut usize, bytes: &[u8]) -> Result<(), CtapError> {
+    let end = *p + bytes.len();
+    buf.get_mut(*p..end)
+        .ok_or(CtapError::Other)?
+        .copy_from_slice(bytes);
+    *p = end;
+    Ok(())
 }
 
 /// What shape the attestation statement takes, so the response encoder does not
@@ -886,11 +918,13 @@ fn encode_mc_response(
     if shape.omitted {
         enc.map(0).map_err(|_| CtapError::Other)?;
     } else {
+        let sig = att.sig.get(..shape.sig_len).ok_or(CtapError::Other)?;
         enc.map(3)
             .and_then(|e| e.str("alg")?.i64(ALG_ES256))
-            .and_then(|e| e.str("sig")?.bytes(&att.sig[..shape.sig_len]))
+            .and_then(|e| e.str("sig")?.bytes(sig))
             .map_err(|_| CtapError::Other)?;
-        encode_x5c(&mut enc, &att.chain[..shape.chain_len], shape.certs)?;
+        let chain = att.chain.get(..shape.chain_len).ok_or(CtapError::Other)?;
+        encode_x5c(&mut enc, chain, shape.certs)?;
     }
     if shape.ea_performed {
         enc.u8(4)
@@ -969,9 +1003,9 @@ fn make_attestation<S: Storage, R: Rng>(
             // cap reads back truncated with its count intact, and emitting it would
             // fail the whole registration. Falling through here attests with the
             // device key instead, so an upgraded device still registers.
-            .filter(|&n| cert::att_chain_intact(&att.chain[..n]))
+            .filter(|&n| att.chain.get(..n).is_some_and(cert::att_chain_intact))
             .ok_or(CtapError::Other)?;
-        let count = cert::att_chain_count(&att.chain[..cl]);
+        let count = cert::att_chain_count(att.chain.get(..cl).ok_or(CtapError::Other)?);
         Ok((sl, cl, count))
     } else {
         let device_key = P256Key::from_scalar(seed).ok_or(CtapError::Other)?;
@@ -987,7 +1021,8 @@ fn make_attestation<S: Storage, R: Rng>(
         // Wrap the single self-signed cert in the packed-chain layout so the
         // x5c encode has one shape.
         att.chain[0] = 1;
-        att.chain[1..3].copy_from_slice(&(cl as u16).to_le_bytes());
+        let len = u16::try_from(cl).map_err(|_| CtapError::Other)?;
+        att.chain[1..3].copy_from_slice(&len.to_le_bytes());
         Ok((sl, 3 + cl, 1))
     }
 }
@@ -1011,8 +1046,8 @@ fn exclude_hit<S: Storage>(
         let mut rec = [0u8; CRED_REC_MAX];
         let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
         slot_map(fs, crate::consts::EF_CRED, &mut occupied);
-        for i in 0..MAX_RESIDENT_CREDENTIALS {
-            if !occupied[i as usize] {
+        for (i, used) in (0..MAX_RESIDENT_CREDENTIALS).zip(occupied) {
+            if !used {
                 continue;
             }
             let Some(n) = fs.read(crate::consts::EF_CRED + i, &mut rec) else {
@@ -1020,7 +1055,11 @@ fn exclude_hit<S: Storage>(
             };
             let n = n.min(rec.len());
             if n >= RECORD_PREFIX && rec[..32] == *rp_id_hash && rec[32..RECORD_PREFIX] == *id {
-                return credential_load(seed, cred_record_box(&rec[..n]), rp_id_hash, &mut scratch)
+                // Unloadable, as a record whose box does not open.
+                let Some(record) = rec.get(..n) else {
+                    return false;
+                };
+                return credential_load(seed, cred_record_box(record), rp_id_hash, &mut scratch)
                     .map(|c| visible(&c))
                     .unwrap_or(false);
             }
@@ -1095,14 +1134,11 @@ fn rp_min_pin_len<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> u8 {
         return 0;
     };
     let n = n.min(buf.len());
-    let mut o = 2;
-    while o + 32 <= n {
-        if buf[o..o + 32] == *rp_id_hash {
-            return buf[0];
-        }
-        o += 32;
-    }
-    0
+    // A record too short to hold the `[len, force]` head lists no rp.
+    let listed = buf
+        .get(2..n)
+        .is_some_and(|rps| rps.chunks_exact(32).any(|h| h == rp_id_hash));
+    if listed { buf[0] } else { 0 }
 }
 
 /// The phase-4 trace reader (`formal/TraceSecurity.tla`).
@@ -1111,5 +1147,13 @@ fn rp_min_pin_len<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> u8 {
 pub mod assurance;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "makecredential_tests.rs"]
 mod tests;
