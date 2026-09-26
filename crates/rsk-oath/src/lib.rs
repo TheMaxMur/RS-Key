@@ -6,6 +6,14 @@
 //! optional access code, and the Nitrokey OTP-PIN / password-safe extensions.
 
 #![cfg_attr(not(test), no_std)]
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
 
 mod seal;
 
@@ -172,8 +180,8 @@ enum Chain {
 }
 
 /// How a LIST / CALCULATE ALL frame ended: with the last byte, with more to send
-/// (the FID and offset to resume at, and the bytes left), or at an entry that
-/// changed under the cursor.
+/// (the FID and offset to resume at, and the bytes left), or at an entry whose
+/// rest it cannot tell — one that changed under the cursor.
 enum Stop {
     Done,
     More(u16, usize, usize),
@@ -207,7 +215,7 @@ pub struct OathApplet<'a> {
     chain_at: u16,
     /// Bytes already sent of the entry at FID `chain_at`: a page ends where its `Ne`
     /// does, inside an entry if need be, as a YubiKey 5.8.0's do.
-    chain_skip: u16,
+    chain_skip: usize,
 }
 
 impl<'a> OathApplet<'a> {
@@ -254,11 +262,28 @@ impl<'a> OathApplet<'a> {
         out
     }
 
+    /// Seal the first `n` bytes of a credential blob into slot `fid`; `false` when
+    /// the store refused it.
+    fn store_cred<S: Storage>(
+        &self,
+        dev: &Device,
+        fs: &mut Fs<S>,
+        fid: u16,
+        blob: &[u8],
+        n: usize,
+    ) -> bool {
+        blob.get(..n).is_some_and(|body| {
+            seal::seal_put(dev, fs, &mut *self.rng.borrow_mut(), KeyFid::new(fid), body)
+        })
+    }
+
     fn cmd_put<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         // Judged before a byte is written. PUT overwrites by name, so a body
         // accepted here and found unusable later does not occupy a free slot —
         // it replaces a working credential with a dead one under `9000`, and the
@@ -286,7 +311,7 @@ impl<'a> OathApplet<'a> {
             // The 4-byte initial moving factor is left-padded into the counter.
             let mut counter = [0u8; 8];
             if let Some(v) = f.imf {
-                counter[8 - v.len()..].copy_from_slice(v);
+                counter[8 - IMF_LEN..].copy_from_slice(v);
             }
             ok &= emit_tlv(blob.expose_mut(), &mut n, TAG_IMF, &counter);
         }
@@ -304,13 +329,7 @@ impl<'a> OathApplet<'a> {
                 None => return Sw::FILE_FULL,
             },
         };
-        if seal::seal_put(
-            &dev,
-            fs,
-            &mut *self.rng.borrow_mut(),
-            KeyFid::new(fid),
-            &blob.expose()[..n],
-        ) {
+        if self.store_cred(&dev, fs, fid, blob.expose(), n) {
             Sw::OK
         } else {
             Sw::MEMORY_FAILURE
@@ -321,7 +340,10 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let Some(name) = find_tag(&apdu.data[..apdu.nc], TAG_NAME as u16) else {
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
+        let Some(name) = find_tag(data, TAG_NAME as u16) else {
             return Sw::WRONG_DATA;
         };
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
@@ -343,7 +365,9 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         // `73 00` is the card's ONE spelling of "remove the access code" — the one
         // ykman sends. A body-less APDU is `6A80` there despite YKOATH's "if length
         // 0 is sent", and so is a `73` carrying key material with no proof after it.
@@ -383,10 +407,13 @@ impl<'a> OathApplet<'a> {
         }
         // The host proves it knows the new code: response = HMAC(key, challenge).
         let mut mac = [0u8; 64];
-        let Some(size) = oath_hmac(key[0], &key[1..], chal, &mut mac) else {
+        let Some(proof) = key
+            .split_first()
+            .and_then(|(&alg, secret)| oath_hmac(alg, secret, chal, &mut mac))
+        else {
             return Sw::WRONG_DATA;
         };
-        if !ct_eq(resp, &mac[..size]) {
+        if !ct_eq(resp, proof) {
             return Sw::DATA_INVALID;
         }
         // Re-arm the one-shot at-rest lap (rsk-fs `EF_HARDENED`): EF_OTP_PIN is the
@@ -447,7 +474,7 @@ impl<'a> OathApplet<'a> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         // Extended list (nitropy): one data byte 0x01 appends a properties byte.
-        let ext = apdu.nc == 1 && apdu.data[0] == 0x01;
+        let ext = apdu.nc == 1 && apdu.data.first() == Some(&0x01);
         self.chain = Chain::List { ext };
         self.chain_at = 0;
         self.chain_skip = 0;
@@ -463,18 +490,18 @@ impl<'a> OathApplet<'a> {
         let stop = {
             let mkek = read_fused(self.mkek_source);
             let dev = self.device(&mkek);
-            let mut fids = [0u16; MAX_OATH_CRED as usize];
-            let nfids = present_creds(fs, &mut fids);
+            let mut buf = [0u16; MAX_OATH_CRED as usize];
+            let fids = present_creds(fs, &mut buf);
             let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
             let mut entry = [0u8; PAGE_ENTRY_MAX];
             // By FID, not by index: the list is rebuilt every frame, and one that lost
             // an entry must not slide the cursor onto another.
-            let mut idx = fids[..nfids].partition_point(|&f| f < self.chain_at);
-            let (mut skip, mut sent) = (self.chain_skip as usize, 0);
+            let mut idx = fids.partition_point(|&f| f < self.chain_at);
+            let (mut skip, mut sent) = (self.chain_skip, 0);
             let mut stop = Stop::Done;
-            while idx < nfids {
-                let len = match page_entry(&chain, &dev, fs, fids[idx], &mut scratch, &mut entry) {
-                    Some(len) if len > skip && (skip == 0 || fids[idx] == self.chain_at) => len,
+            while let Some(&fid) = fids.get(idx) {
+                let len = match page_entry(&chain, &dev, fs, fid, &mut scratch, &mut entry) {
+                    Some(len) if len > skip && (skip == 0 || fid == self.chain_at) => len,
                     // The entry the last frame stopped inside is gone, or no longer
                     // what it sent the head of: its tail cannot be told.
                     _ if skip > 0 => {
@@ -488,31 +515,35 @@ impl<'a> OathApplet<'a> {
                 };
                 let need = len - skip;
                 let take = need.min(budget - sent);
-                res.extend(&entry[skip..skip + take]);
+                let Some(part) = entry.get(skip..skip + take) else {
+                    stop = Stop::Lost;
+                    break;
+                };
+                res.extend(part);
                 sent += take;
                 if take < need {
                     // What is left, counted only as far as SW2 can say it.
                     let mut left = need - take;
-                    for &fid in &fids[idx + 1..nfids] {
+                    for &next in fids.iter().skip(idx + 1) {
                         if left > 0xFF {
                             break;
                         }
-                        left += page_entry(&chain, &dev, fs, fid, &mut scratch, &mut entry)
+                        left += page_entry(&chain, &dev, fs, next, &mut scratch, &mut entry)
                             .unwrap_or(0);
                     }
-                    stop = Stop::More(fids[idx], skip + take, left);
+                    stop = Stop::More(fid, skip + take, left);
                     break;
                 }
                 (idx, skip) = (idx + 1, 0);
             }
-            if skip > 0 && idx == nfids {
+            if skip > 0 && idx == fids.len() {
                 stop = Stop::Lost;
             }
             stop
         };
         match stop {
             Stop::More(at, skip, left) => {
-                (self.chain_at, self.chain_skip) = (at, skip as u16);
+                (self.chain_at, self.chain_skip) = (at, skip);
                 rsk_sdk::applet::bytes_remaining(left)
             }
             Stop::Done => {
@@ -528,7 +559,9 @@ impl<'a> OathApplet<'a> {
 
     /// Refines `RSKeyAppletSeams!ExemptRefusalPreservesStatus` — SEC-SEAM-005.
     fn cmd_validate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         // RESPONSE then CHALLENGE — the order the YKOATH document lists and
         // ykman sends, and the only one the card takes.
         let Some([resp, chal]) = parse_exact(data, [TAG_RESPONSE, TAG_CHALLENGE]) else {
@@ -551,29 +584,31 @@ impl<'a> OathApplet<'a> {
             }
             return Sw::DATA_INVALID;
         };
-        let code = &code.expose()[..n.min(OATH_CODE_MAX)];
-        if code.is_empty() {
+        let Some((&alg, secret)) = code.expose().get(..n).and_then(|c| c.split_first()) else {
             self.validated = false;
             return Sw::DATA_INVALID;
-        }
+        };
         let mut mac = Secret::<[u8; 64]>::zeroed();
-        let Some(size) = oath_hmac(code[0], &code[1..], &self.challenge, mac.expose_mut()) else {
+        let Some(proof) = oath_hmac(alg, secret, &self.challenge, mac.expose_mut()) else {
             return Sw::WRONG_DATA;
         };
         // A proof that does not match is `6A80` on a 5.7.4, which keeps `6984`
         // for "no code is installed" — the two branches above. One word for both
         // states left a host unable to tell a wrong password from no password.
-        if !ct_eq(resp, &mac.expose()[..size]) {
+        if !ct_eq(resp, proof) {
             return Sw::WRONG_DATA;
         }
         // Mutual authentication: answer the host's challenge with the same key.
-        let Some(size) = oath_hmac(code[0], &code[1..], chal, mac.expose_mut()) else {
+        let Some(answer) = oath_hmac(alg, secret, chal, mac.expose_mut()) else {
             return Sw::WRONG_DATA;
+        };
+        let Ok(len) = u8::try_from(answer.len()) else {
+            return Sw::EXEC_ERROR;
         };
         self.validated = true;
         res.push(TAG_RESPONSE);
-        res.push(size as u8);
-        res.extend(&mac.expose()[..size]);
+        res.push(len);
+        res.extend(answer);
         Sw::OK
     }
 
@@ -582,7 +617,9 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         // NAME then CHALLENGE and nothing else, the way the card reads it and
         // the way ykman writes it.
         let Some([name, chal]) = parse_exact(data, [TAG_NAME, TAG_CHALLENGE]) else {
@@ -597,15 +634,18 @@ impl<'a> OathApplet<'a> {
         let Some((fid, mut n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };
-        // Ranges, not slices: the mark below rewrites the blob in place, and a
-        // borrow held across that would have to be a second CRED_MAX buffer.
-        let Some(key_at) = find_tag_range(&scratch.expose()[..n], TAG_KEY) else {
+        let Some(blob) = scratch.expose().get(..n) else {
+            return Sw::DATA_INVALID;
+        };
+        // The key is kept as a range, not a slice: the mark below rewrites the blob
+        // in place, and a borrow held across that would need a second CRED_MAX buffer.
+        let Some(key_at) = find_tag_range(blob, TAG_KEY) else {
             return Sw::WRONG_DATA;
         };
-        if key_at.len() < 2 {
+        let Some(&[ty_alg, _]) = blob.get(key_at.clone()).and_then(|k| k.first_chunk::<2>()) else {
             return Sw::WRONG_DATA;
-        }
-        let prop = cred_property(&scratch.expose()[..n]);
+        };
+        let prop = cred_property(blob);
         // Touch-flagged credentials compute only after a confirmed press —
         // gated here, before the HOTP counter burns.
         if prop & PROP_TOUCH != 0
@@ -617,12 +657,12 @@ impl<'a> OathApplet<'a> {
         {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let hotp = scratch.expose()[key_at.start] & OATH_TYPE_MASK == OATH_TYPE_HOTP;
+        let hotp = ty_alg & OATH_TYPE_MASK == OATH_TYPE_HOTP;
         // HOTP ignores the host challenge: the stored 8-byte counter is the
         // moving factor.
         let imf = if hotp {
-            match find_tag_range(&scratch.expose()[..n], TAG_IMF) {
-                Some(r) if r.len() >= 8 => Some(r),
+            match find_tag_range(blob, TAG_IMF) {
+                Some(r) if r.len() >= 8 => Some(r.start),
                 _ => return Sw::WRONG_DATA,
             }
         } else {
@@ -637,29 +677,23 @@ impl<'a> OathApplet<'a> {
             if !raise_mark(scratch.expose_mut(), &mut n, chal) {
                 return Sw::WRONG_DATA;
             }
-            if !seal::seal_put(
-                &dev,
-                fs,
-                &mut *self.rng.borrow_mut(),
-                KeyFid::new(fid),
-                &scratch.expose()[..n],
-            ) {
+            if !self.store_cred(&dev, fs, fid, scratch.expose(), n) {
                 return Sw::MEMORY_FAILURE;
             }
         }
         // HOTP's counter is the same kind of mark: its advance lands before the code.
         let mut counter = [0u8; 8];
-        if let Some(r) = &imf {
-            counter.copy_from_slice(&scratch.expose()[r.start..r.start + 8]);
-            let v = u64::from_be_bytes(counter).wrapping_add(1);
-            scratch.expose_mut()[r.start..r.start + 8].copy_from_slice(&v.to_be_bytes());
-            if !seal::seal_put(
-                &dev,
-                fs,
-                &mut *self.rng.borrow_mut(),
-                KeyFid::new(fid),
-                &scratch.expose()[..n],
-            ) {
+        if let Some(at) = imf {
+            let Some(stored) = scratch
+                .expose_mut()
+                .get_mut(at..)
+                .and_then(|v| v.first_chunk_mut::<8>())
+            else {
+                return Sw::WRONG_DATA;
+            };
+            counter = *stored;
+            *stored = u64::from_be_bytes(counter).wrapping_add(1).to_be_bytes();
+            if !self.store_cred(&dev, fs, fid, scratch.expose(), n) {
                 return Sw::MEMORY_FAILURE;
             }
         }
@@ -668,7 +702,11 @@ impl<'a> OathApplet<'a> {
             Some(_) => &counter[..],
             None => chal,
         };
-        if calculate(apdu.p2 == 0x01, &scratch.expose()[key_at], chal_eff, res).is_none() {
+        let computed = scratch
+            .expose()
+            .get(key_at)
+            .and_then(|key| calculate(apdu.p2 == 0x01, key, chal_eff, res));
+        if computed.is_none() {
             return Sw::EXEC_ERROR;
         }
         Sw::OK
@@ -683,9 +721,21 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let Some(chal) = calc_all_challenge(&apdu.data[..apdu.nc]) else {
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
+        let Some(chal) = calc_all_challenge(data) else {
             return Sw::WRONG_DATA;
         };
+        // Stash the challenge whole so SEND REMAINING pages recompute the same
+        // codes — every byte of it, or a later page would answer a different
+        // code from the first under one 9000.
+        let mut chal_buf = [0u8; CHALLENGE_MAX];
+        let (Some(head), Ok(chal_len)) = (chal_buf.get_mut(..chal.len()), u8::try_from(chal.len()))
+        else {
+            return Sw::WRONG_DATA;
+        };
+        head.copy_from_slice(chal);
         // `only increasing` is settled for the whole store before a byte of the
         // response is built. The card fails the ENTIRE command at the first
         // credential the challenge does not beat — empty body, plain credentials
@@ -695,15 +745,10 @@ impl<'a> OathApplet<'a> {
         if let Err(sw) = self.advance_marks(fs, chal) {
             return sw;
         }
-        // Stash the challenge whole so SEND REMAINING pages recompute the same
-        // codes — every byte of it, or a later page would answer a different
-        // code from the first under one 9000.
-        let mut chal_buf = [0u8; CHALLENGE_MAX];
-        chal_buf[..chal.len()].copy_from_slice(chal);
         self.chain = Chain::CalcAll {
             p2: apdu.p2,
             chal: chal_buf,
-            chal_len: chal.len() as u8,
+            chal_len,
         };
         self.chain_at = 0;
         self.chain_skip = 0;
@@ -724,21 +769,23 @@ impl<'a> OathApplet<'a> {
     fn advance_marks<S: Storage>(&self, fs: &mut Fs<S>, chal: &[u8]) -> Result<(), Sw> {
         let mkek = read_fused(self.mkek_source);
         let dev = self.device(&mkek);
-        let mut fids = [0u16; MAX_OATH_CRED as usize];
-        let nfids = present_creds(fs, &mut fids);
+        let mut buf = [0u16; MAX_OATH_CRED as usize];
+        let fids = present_creds(fs, &mut buf);
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
-        for &fid in &fids[..nfids] {
+        for &fid in fids {
             let Some(mut n) = seal::seal_read(&dev, fs, KeyFid::new(fid), &mut scratch) else {
                 continue;
             };
-            let prop = cred_property(&scratch.expose()[..n]);
+            let Some(blob) = scratch.expose().get(..n) else {
+                continue;
+            };
+            let prop = cred_property(blob);
             if prop & PROP_INCREASING == 0 || prop & PROP_TOUCH != 0 {
                 continue;
             }
-            match find_tag_range(&scratch.expose()[..n], TAG_KEY) {
-                Some(k)
-                    if k.len() >= 2
-                        && scratch.expose()[k.start] & OATH_TYPE_MASK != OATH_TYPE_HOTP => {}
+            let key = find_tag_range(blob, TAG_KEY).and_then(|k| blob.get(k));
+            match key.and_then(|k| k.first_chunk::<2>()) {
+                Some(&[ty_alg, _]) if ty_alg & OATH_TYPE_MASK != OATH_TYPE_HOTP => {}
                 _ => continue,
             }
             // A blob an older build wrote can have no room for a mark, or carry
@@ -746,19 +793,13 @@ impl<'a> OathApplet<'a> {
             // such record must not fail the bulk read for the whole store, so
             // skip it here; `page_entry` gives it no code either, and its own
             // CALCULATE still refuses.
-            if !mark_has_room(&scratch.expose()[..n]) {
+            if !mark_has_room(blob) {
                 continue;
             }
             if !raise_mark(scratch.expose_mut(), &mut n, chal) {
                 return Err(Sw::WRONG_DATA);
             }
-            if !seal::seal_put(
-                &dev,
-                fs,
-                &mut *self.rng.borrow_mut(),
-                KeyFid::new(fid),
-                &scratch.expose()[..n],
-            ) {
+            if !self.store_cred(&dev, fs, fid, scratch.expose(), n) {
                 return Err(Sw::MEMORY_FAILURE);
             }
         }
@@ -775,7 +816,9 @@ impl<'a> OathApplet<'a> {
         if let Err(sw) = self.otp_pin_gate(fs) {
             return sw;
         }
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         if find_tag(data, TAG_NAME as u16).is_none() {
             return Sw::WRONG_DATA;
         }
@@ -786,14 +829,15 @@ impl<'a> OathApplet<'a> {
         let Some(n) = seal::seal_read(&dev, fs, KeyFid::new(EF_OATH_CRED), &mut scratch) else {
             return Sw::DATA_INVALID;
         };
-        let blob = &scratch.expose()[..n.min(CRED_MAX)];
-        let Some(key) = find_tag(blob, TAG_KEY as u16) else {
+        let Some(blob) = scratch.expose().get(..n) else {
+            return Sw::DATA_INVALID;
+        };
+        let Some((&[ty_alg, digits], secret)) =
+            find_tag(blob, TAG_KEY as u16).and_then(|k| k.split_first_chunk::<2>())
+        else {
             return Sw::WRONG_DATA;
         };
-        if key.len() < 2 {
-            return Sw::WRONG_DATA;
-        }
-        if key[0] & OATH_TYPE_MASK != OATH_TYPE_HOTP {
+        if ty_alg & OATH_TYPE_MASK != OATH_TYPE_HOTP {
             return Sw::DATA_INVALID;
         }
         // A touch-flagged credential is exercised only after a confirmed press —
@@ -808,25 +852,21 @@ impl<'a> OathApplet<'a> {
         {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let Some(imf) = find_tag(blob, TAG_IMF as u16) else {
+        let Some(imf) = find_tag(blob, TAG_IMF as u16).and_then(|v| v.first_chunk::<8>()) else {
             return Sw::WRONG_DATA;
         };
-        if imf.len() < 8 {
-            return Sw::WRONG_DATA;
-        }
-        let code_int = match find_tag(data, TAG_RESPONSE as u16) {
-            Some(v) if v.len() >= 4 => u32::from_be_bytes([v[0], v[1], v[2], v[3]]),
-            Some(_) => return Sw::WRONG_DATA,
+        let code_int = match find_tag(data, TAG_RESPONSE as u16).map(|v| v.first_chunk::<4>()) {
+            Some(Some(&v)) => u32::from_be_bytes(v),
+            Some(None) => return Sw::WRONG_DATA,
             None => 0,
         };
         let mut mac = Secret::<[u8; 64]>::zeroed();
-        let Some(size) = oath_hmac(key[0], &key[2..], &imf[..8], mac.expose_mut()) else {
+        let Some(trunc) =
+            oath_hmac(ty_alg, secret, imf, mac.expose_mut()).and_then(dynamic_truncation)
+        else {
             return Sw::EXEC_ERROR;
         };
-        let mac = mac.expose();
-        let off = (mac[size - 1] & 0xF) as usize;
-        let trunc = u32::from_be_bytes([mac[off] & 0x7F, mac[off + 1], mac[off + 2], mac[off + 3]]);
-        let Some(modulus) = code_modulus(key[1]) else {
+        let Some(modulus) = code_modulus(digits) else {
             return Sw::DATA_INVALID;
         };
         if trunc % modulus != code_int {
@@ -839,7 +879,9 @@ impl<'a> OathApplet<'a> {
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         if data.first() != Some(&TAG_NAME) {
             return SW_WRONG_DATA;
         }
@@ -865,29 +907,32 @@ impl<'a> OathApplet<'a> {
         let Some((fid, n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };
+        let Some(stored) = scratch.expose().get(..n) else {
+            return Sw::DATA_INVALID;
+        };
         // Rebuild the blob with the name TLV replaced in place.
         let mut blob = Secret::<[u8; CRED_MAX]>::zeroed();
         let mut bn = 0;
         let mut replaced = false;
         let mut ok = true;
-        for (t, v) in rsk_sdk::tlv::Tlv::new(&scratch.expose()[..n]) {
+        for (t, v) in rsk_sdk::tlv::Tlv::new(stored) {
             if t == TAG_NAME as u16 && !replaced {
                 ok &= emit_tlv(blob.expose_mut(), &mut bn, TAG_NAME, new_name);
                 replaced = true;
             } else {
-                ok &= emit_tlv(blob.expose_mut(), &mut bn, t as u8, v);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "PUT stores one-byte tags; one an older build kept verbatim that the \
+                              walker reads as two has always been rewritten by its low byte here"
+                )]
+                let tag = t as u8;
+                ok &= emit_tlv(blob.expose_mut(), &mut bn, tag, v);
             }
         }
         if !ok {
             return Sw::FILE_FULL;
         }
-        if seal::seal_put(
-            &dev,
-            fs,
-            &mut *self.rng.borrow_mut(),
-            KeyFid::new(fid),
-            &blob.expose()[..bn],
-        ) {
+        if self.store_cred(&dev, fs, fid, blob.expose(), bn) {
             Sw::OK
         } else {
             Sw::MEMORY_FAILURE
@@ -907,11 +952,13 @@ impl<'a> OathApplet<'a> {
         if let Err(sw) = self.otp_pin_gate(fs) {
             return sw;
         }
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         if data.len() < 3 {
             return Sw::WRONG_DATA;
         }
-        if data[0] != TAG_NAME {
+        if data.first() != Some(&TAG_NAME) {
             return SW_WRONG_DATA;
         }
         let Some(name) = find_tag(data, TAG_NAME as u16) else {
@@ -923,7 +970,9 @@ impl<'a> OathApplet<'a> {
         let Some((_, n)) = find_cred(&dev, fs, name, &mut scratch) else {
             return Sw::DATA_INVALID;
         };
-        let blob = &scratch.expose()[..n];
+        let Some(blob) = scratch.expose().get(..n) else {
+            return Sw::DATA_INVALID;
+        };
         for tag in [
             TAG_NAME,
             TAG_PWS_LOGIN,
@@ -932,11 +981,11 @@ impl<'a> OathApplet<'a> {
             TAG_PROPERTY,
         ] {
             if let Some(v) = find_tag(blob, tag as u16)
-                && v.len() <= 255
+                && let Ok(len) = u8::try_from(v.len())
                 && res.len() + 2 + v.len() <= res.capacity()
             {
                 res.push(tag);
-                res.push(v.len() as u8);
+                res.push(len);
                 res.extend(v);
             }
         }
@@ -950,9 +999,8 @@ impl<'a> OathApplet<'a> {
     fn otp_pin_matches(&self, rec: &[u8], pw: &[u8]) -> bool {
         let mkek = read_fused(self.mkek_source);
         let dev = self.device(&mkek);
-        match rec.len() {
-            OTP_PIN_REC_V1 if rec[1] == OTP_PIN_FMT_V1 => {
-                let stored = &rec[2..OTP_PIN_REC_V1];
+        match (rec.len(), rec) {
+            (OTP_PIN_REC_V1, [_, OTP_PIN_FMT_V1, stored @ ..]) => {
                 ct_eq(dev.pin_derive_verifier(pw).expose(), stored)
                     // kbase-migration fallback: a v1 verifier stored before the
                     // OTP key was provisioned. On a match the caller re-stores it
@@ -963,10 +1011,9 @@ impl<'a> OathApplet<'a> {
                     || (dev.otp_key.is_some()
                         && ct_eq(dev.without_otp().pin_derive_verifier(pw).expose(), stored))
             }
-            OTP_PIN_REC_LEGACY => ct_eq(
-                dev.double_hash_pin(pw).expose(),
-                &rec[1..OTP_PIN_REC_LEGACY],
-            ),
+            (OTP_PIN_REC_LEGACY, [_, stored @ ..]) => {
+                ct_eq(dev.double_hash_pin(pw).expose(), stored)
+            }
             _ => false,
         }
     }
@@ -1035,7 +1082,10 @@ impl<'a> OathApplet<'a> {
             Err(_) => return Sw::MEMORY_FAILURE,
             Ok(false) => {}
         }
-        let Some(pw) = find_tag(&apdu.data[..apdu.nc], TAG_PASSWORD as u16) else {
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
+        let Some(pw) = find_tag(data, TAG_PASSWORD as u16) else {
             return Sw::WRONG_DATA;
         };
         match fs.put(EF_OTP_PIN, &self.otp_pin_record_v1(pw)) {
@@ -1047,15 +1097,18 @@ impl<'a> OathApplet<'a> {
     /// Persist one retry decrement and confirm it stuck before an OTP-PIN compare,
     /// so a glitched or failed flash program can't widen the limiter (mirrors the
     /// FIDO clientPIN spend_and_verify_pin_hash read-back). `false` = fail closed, no compare.
-    fn spend_otp_retry<S: Storage>(fs: &mut Fs<S>, rec: &mut [u8], size: usize) -> bool {
-        rec[0] = rec[0].saturating_sub(1);
-        if fs.put(EF_OTP_PIN, &rec[..size]).is_err() {
+    fn spend_otp_retry<S: Storage>(fs: &mut Fs<S>, rec: &mut [u8]) -> bool {
+        let Some(counter) = rec.first_mut() else {
+            return false;
+        };
+        *counter = counter.saturating_sub(1);
+        if fs.put(EF_OTP_PIN, rec).is_err() {
             return false;
         }
         let mut back = [0u8; OTP_PIN_REC_V1];
         matches!(
             fs.read(EF_OTP_PIN, &mut back),
-            Some(n) if n == size && back[0] == rec[0]
+            Some(n) if n == rec.len() && rec.first() == Some(&back[0])
         )
     }
 
@@ -1071,28 +1124,28 @@ impl<'a> OathApplet<'a> {
         &self,
         fs: &mut Fs<S>,
         rec: &mut [u8],
-        size: usize,
         pw: &[u8],
     ) -> Result<(), Sw> {
-        if rec[0] == 0 {
+        if matches!(rec.first(), None | Some(0)) {
             return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
         }
-        if !Self::spend_otp_retry(fs, rec, size) {
+        if !Self::spend_otp_retry(fs, rec) {
             return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
         }
-        if !self.otp_pin_matches(&rec[..size], pw) {
+        if !self.otp_pin_matches(rec, pw) {
             return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
         }
         Ok(())
     }
 
     fn cmd_change_otp_pin<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
-        let mut rec = [0u8; OTP_PIN_REC_V1];
-        let size = match fs.read(EF_OTP_PIN, &mut rec) {
-            Some(n) if (OTP_PIN_REC_LEGACY..=OTP_PIN_REC_V1).contains(&n) => n,
-            _ => return Sw::CONDITIONS_NOT_SATISFIED,
+        let mut buf = [0u8; OTP_PIN_REC_V1];
+        let Some(rec) = read_otp_pin(fs, &mut buf) else {
+            return Sw::CONDITIONS_NOT_SATISFIED;
         };
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         let Some(pw) = find_tag(data, TAG_PASSWORD as u16) else {
             return Sw::WRONG_DATA;
         };
@@ -1112,7 +1165,7 @@ impl<'a> OathApplet<'a> {
         // Same anti-bruteforce gate as VERIFY: refuse at the counter floor. After a
         // lock-out even a correct old-PIN cannot CHANGE (that floor "recovery" was
         // the run-6 unlimited-guessing oracle); recover with RESET instead.
-        if let Err(sw) = self.spend_and_match_otp_pin(fs, &mut rec, size, pw) {
+        if let Err(sw) = self.spend_and_match_otp_pin(fs, rec, pw) {
             return sw;
         }
         // Re-arm the one-shot at-rest lap (rsk-fs `EF_HARDENED`; audit run-35): the
@@ -1129,12 +1182,14 @@ impl<'a> OathApplet<'a> {
     }
 
     fn cmd_verify_otp_pin<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
-        let mut rec = [0u8; OTP_PIN_REC_V1];
-        let size = match fs.read(EF_OTP_PIN, &mut rec) {
-            Some(n) if (OTP_PIN_REC_LEGACY..=OTP_PIN_REC_V1).contains(&n) => n,
-            _ => return Sw::CONDITIONS_NOT_SATISFIED,
+        let mut buf = [0u8; OTP_PIN_REC_V1];
+        let Some(rec) = read_otp_pin(fs, &mut buf) else {
+            return Sw::CONDITIONS_NOT_SATISFIED;
         };
-        let Some(pw) = find_tag(&apdu.data[..apdu.nc], TAG_PASSWORD as u16) else {
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
+        let Some(pw) = find_tag(data, TAG_PASSWORD as u16) else {
             return Sw::WRONG_DATA;
         };
         // Any attempt clears a prior unlock; only a correct PIN re-validates below.
@@ -1142,7 +1197,7 @@ impl<'a> OathApplet<'a> {
         self.otp_pin_verified = false;
         // Shared anti-bruteforce chokepoint: refuse at the counter floor, spend the
         // retry (persist + read-back), then constant-time compare.
-        if let Err(sw) = self.spend_and_match_otp_pin(fs, &mut rec, size, pw) {
+        if let Err(sw) = self.spend_and_match_otp_pin(fs, rec, pw) {
             return sw;
         }
         // The record the upgrade below supersedes may be keyed under the pre-OTP
@@ -1162,6 +1217,19 @@ impl<'a> OathApplet<'a> {
         self.otp_pin_verified = true;
         Sw::OK
     }
+}
+
+/// The stored OTP-PIN record in `buf`, legacy or v1; `None` when there is none, or
+/// one of neither length.
+fn read_otp_pin<'b, S: Storage>(
+    fs: &mut Fs<S>,
+    buf: &'b mut [u8; OTP_PIN_REC_V1],
+) -> Option<&'b mut [u8]> {
+    let n = fs.read(EF_OTP_PIN, buf)?;
+    if !(OTP_PIN_REC_LEGACY..=OTP_PIN_REC_V1).contains(&n) {
+        return None;
+    }
+    buf.get_mut(..n)
 }
 
 impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
@@ -1198,7 +1266,7 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
         if code_set {
             self.rng.borrow_mut().fill(&mut self.challenge);
             res.push(TAG_CHALLENGE);
-            res.push(CHALLENGE_LEN as u8);
+            res.push(u8::try_from(CHALLENGE_LEN).unwrap_or(u8::MAX));
             res.extend(&self.challenge);
             res.push(TAG_ALGO);
             res.push(1);
@@ -1295,7 +1363,7 @@ fn challenge_of(chal: &[u8]) -> Option<&[u8]> {
 /// positional throughout (§E61).
 fn calc_all_challenge(data: &[u8]) -> Option<&[u8]> {
     let (t, v) = tlv_at(data, 0)?;
-    (t == TAG_CHALLENGE).then(|| challenge_of(&data[v]))?
+    (t == TAG_CHALLENGE).then(|| data.get(v).and_then(challenge_of))?
 }
 
 /// A stored credential's YKOATH properties byte, or 0 when it carries none.
@@ -1319,17 +1387,20 @@ fn cred_property(blob: &[u8]) -> u8 {
 /// plain numeric `>`. An absent mark is all-zero, so a fresh credential refuses
 /// challenge 0 and serves 1, as the card does.
 fn raise_mark(blob: &mut [u8], n: &mut usize, chal: &[u8]) -> bool {
-    if chal.len() > MARK_LEN {
-        return false;
-    }
     let mut mark = [0u8; MARK_LEN];
-    mark[..chal.len()].copy_from_slice(chal);
-    match find_tag_range(&blob[..*n], TAG_LAST_CHAL) {
+    let (Some(head), Some(live)) = (mark.get_mut(..chal.len()), blob.get(..*n)) else {
+        return false;
+    };
+    head.copy_from_slice(chal);
+    match find_tag_range(live, TAG_LAST_CHAL) {
         Some(r) if r.len() == MARK_LEN => {
-            if mark[..] <= blob[r.clone()] {
+            let Some(stored) = blob.get_mut(r) else {
+                return false;
+            };
+            if mark[..] <= stored[..] {
                 return false;
             }
-            blob[r].copy_from_slice(&mark);
+            stored.copy_from_slice(&mark);
             true
         }
         // A mark of another width can only be one a caller planted through an
@@ -1381,23 +1452,31 @@ fn code_modulus(digits: u8) -> Option<u32> {
     matches!(digits, DIGITS_MIN..=DIGITS_MAX).then(|| 10u32.pow(digits as u32))
 }
 
-/// HMAC with the credential's algorithm nibble; returns the digest size.
-fn oath_hmac(alg: u8, key: &[u8], msg: &[u8], out: &mut [u8; 64]) -> Option<usize> {
+/// HMAC with the credential's algorithm nibble; returns the digest, the head of `out`.
+fn oath_hmac<'o>(alg: u8, key: &[u8], msg: &[u8], out: &'o mut [u8; 64]) -> Option<&'o [u8]> {
     match alg & ALG_MASK {
         ALG_HMAC_SHA1 => {
             out[..20].copy_from_slice(&hmac_sha1(key, msg));
-            Some(20)
+            Some(&out[..20])
         }
         ALG_HMAC_SHA256 => {
             out[..32].copy_from_slice(&hmac_sha256(key, msg));
-            Some(32)
+            Some(&out[..32])
         }
         ALG_HMAC_SHA512 => {
             out[..64].copy_from_slice(&hmac_sha512(key, msg));
-            Some(64)
+            Some(&out[..64])
         }
         _ => None,
     }
+}
+
+/// RFC 4226 §5.3 dynamic truncation: 31 bits at the offset the digest's last
+/// nibble names. `None` only for a digest under 19 bytes, which no HMAC here is.
+fn dynamic_truncation(mac: &[u8]) -> Option<u32> {
+    let off = usize::from(mac.last()? & 0xF);
+    let word = mac.get(off..)?.first_chunk::<4>()?;
+    Some(u32::from_be_bytes(*word) & 0x7FFF_FFFF)
 }
 
 /// The widest LIST / CALCULATE ALL entry: a 255-byte name TLV and a full-width
@@ -1416,7 +1495,7 @@ fn page_entry<S: Storage>(
     out: &mut [u8; PAGE_ENTRY_MAX],
 ) -> Option<usize> {
     let n = seal::seal_read(dev, fs, KeyFid::new(fid), scratch)?;
-    let blob = &scratch.expose()[..n.min(CRED_MAX)];
+    let blob = scratch.expose().get(..n)?;
     let (Some(name), Some(key)) = (
         find_tag(blob, TAG_NAME as u16),
         find_tag(blob, TAG_KEY as u16),
@@ -1430,8 +1509,8 @@ fn page_entry<S: Storage>(
                 return None;
             }
             e.push(TAG_NAME_LIST);
-            e.push((name.len() + 1 + ext as usize) as u8);
-            e.push(key[0]);
+            e.push(u8::try_from(name.len() + 1 + usize::from(ext)).ok()?);
+            e.push(*key.first()?);
             e.extend(name);
             if ext {
                 let mut props = 0u8;
@@ -1448,32 +1527,35 @@ fn page_entry<S: Storage>(
             }
         }
         Chain::CalcAll { p2, chal, chal_len } => {
-            if key.len() < 2 || name.len() > 255 {
+            let (Some(&[ty_alg, digits]), Ok(name_len)) =
+                (key.first_chunk::<2>(), u8::try_from(name.len()))
+            else {
                 return None;
-            }
+            };
             e.push(TAG_NAME);
-            e.push(name.len() as u8);
+            e.push(name_len);
             e.extend(name);
-            if key[0] & OATH_TYPE_MASK == OATH_TYPE_HOTP {
+            if ty_alg & OATH_TYPE_MASK == OATH_TYPE_HOTP {
                 // HOTP is never computed in bulk (it would burn counters).
                 e.push(TAG_NO_RESPONSE);
                 e.push(1);
-                e.push(key[1]);
+                e.push(digits);
             } else if cred_property(blob) & PROP_TOUCH != 0 {
                 e.push(TAG_TOUCH_RESPONSE);
                 e.push(1);
-                e.push(key[1]);
-            } else if bulk_computable(blob, key[0]) {
+                e.push(digits);
+            } else if bulk_computable(blob, ty_alg) {
                 e.push(TAG_RESPONSE + p2);
+                let chal = chal.get(..usize::from(chal_len))?;
                 // `alg_supported` is exactly `oath_hmac`'s domain.
-                let _ = calculate(p2 == 0x01, key, &chal[..chal_len as usize], &mut e);
+                let _ = calculate(p2 == 0x01, key, chal, &mut e);
             } else {
                 // A build before PUT's rule could store an algorithm nibble that
                 // has no HMAC. There is no code, and a `0x76` TLV one byte long is
                 // not one either: the protocol's own "no response" says so.
                 e.push(TAG_NO_RESPONSE);
                 e.push(1);
-                e.push(key[1]);
+                e.push(digits);
             }
         }
         Chain::None => return None,
@@ -1485,29 +1567,29 @@ fn page_entry<S: Storage>(
 /// when `truncate`, the full HMAC otherwise. The caller has already pushed the
 /// response tag. `key` = `[type|alg, digits, secret…]`.
 fn calculate(truncate: bool, key: &[u8], chal: &[u8], res: &mut ResBuf) -> Option<()> {
-    let mut mac = [0u8; 64];
-    let size = oath_hmac(key[0], &key[2..], chal, &mut mac)?;
+    let (&[ty_alg, digits], secret) = key.split_first_chunk::<2>()?;
+    let mut out = [0u8; 64];
+    let mac = oath_hmac(ty_alg, secret, chal, &mut out)?;
     if truncate {
+        let trunc = dynamic_truncation(mac)?;
         res.push(4 + 1);
-        res.push(key[1]);
-        let off = (mac[size - 1] & 0xF) as usize;
-        let trunc = u32::from_be_bytes([mac[off] & 0x7F, mac[off + 1], mac[off + 2], mac[off + 3]]);
+        res.push(digits);
         // RFC 4226 §5.3: the code is the truncation reduced to the credential's
         // decimal width — what a 5.7.4 sends, and what VERIFY CODE compares. A
         // width from before PUT bounded it has no modulus; the bare truncation
         // keeps such a record readable instead of unanswerable.
-        let code = code_modulus(key[1]).map_or(trunc, |m| trunc % m);
+        let code = code_modulus(digits).map_or(trunc, |m| trunc % m);
         res.extend(&code.to_be_bytes());
     } else {
-        res.push((size + 1) as u8);
-        res.push(key[1]);
-        res.extend(&mac[..size]);
+        res.push(u8::try_from(mac.len() + 1).ok()?);
+        res.push(digits);
+        res.extend(mac);
     }
     Some(())
 }
 
 /// FIDs of every present OATH credential (slots `EF_OATH_CRED..`), in ascending
-/// FID order; returns the count written to `out`. Reads occupancy straight from
+/// FID order: the head of `out` they were written to. Reads occupancy straight from
 /// the in-RAM present index via [`rsk_fs::Fs::present_slots`] — O(255) bit tests,
 /// no flash access — instead of a whole-partition [`for_each_key`] scan on every
 /// LIST / CALCULATE ALL (which cost tens of ms on a busy store: the exact
@@ -1519,17 +1601,22 @@ fn calculate(truncate: bool, key: &[u8], chal: &[u8], res: &mut ResBuf) -> Optio
 /// pass's torn-migration semantics (no new false-absent).
 ///
 /// [`for_each_key`]: rsk_fs::Fs::for_each_key
-fn present_creds<S: Storage>(fs: &mut Fs<S>, out: &mut [u16; MAX_OATH_CRED as usize]) -> usize {
+fn present_creds<'o, S: Storage>(
+    fs: &mut Fs<S>,
+    out: &'o mut [u16; MAX_OATH_CRED as usize],
+) -> &'o [u16] {
     let mut occ = [false; MAX_OATH_CRED as usize];
     fs.present_slots(EF_OATH_CRED, &mut occ);
+    let live = occ
+        .iter()
+        .zip(EF_OATH_CRED..)
+        .filter_map(|(&p, fid)| p.then_some(fid));
     let mut n = 0;
-    for (i, &present) in occ.iter().enumerate() {
-        if present {
-            out[n] = EF_OATH_CRED + i as u16;
-            n += 1;
-        }
+    for (slot, fid) in out.iter_mut().zip(live) {
+        *slot = fid;
+        n += 1;
     }
-    n
+    out.split_at(n).0
 }
 
 /// The 255 credential slots — everything the access code exists to protect.
@@ -1621,8 +1708,11 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
         let mut fids = [0u16; SWEEP_BATCH];
         let mut n = 0;
         let complete = fs.for_each_key(&mut |fid| {
-            if pred(fid) && n < fids.len() && !fids[..n].contains(&fid) {
-                fids[n] = fid;
+            if pred(fid)
+                && let Some((batch, [slot, ..])) = fids.split_at_mut_checked(n)
+                && !batch.contains(&fid)
+            {
+                *slot = fid;
                 n += 1;
             }
         });
@@ -1635,11 +1725,11 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
                 Err(Sw::MEMORY_FAILURE)
             };
         }
-        deleted += n as u32;
+        deleted += u32::try_from(n).map_err(|_| Sw::MEMORY_FAILURE)?;
         if deleted > RESET_MAX_DELETES {
             return Err(Sw::MEMORY_FAILURE);
         }
-        for &fid in &fids[..n] {
+        for &fid in fids.iter().take(n) {
             let gone = fs.force_delete_halves(fid);
             gone.value.map_err(|_| Sw::MEMORY_FAILURE)?;
             orphaned |= gone.record.is_err();
@@ -1672,16 +1762,17 @@ pub struct OathCredView<'a> {
 /// Returns `(period, label)` — `period` is `None` when there is no numeric prefix.
 fn split_period(name: &[u8]) -> (Option<u16>, &[u8]) {
     let mut i = 0;
-    while i < name.len() && i < 4 && name[i].is_ascii_digit() {
+    while i < 4 && name.get(i).is_some_and(u8::is_ascii_digit) {
         i += 1;
     }
-    if i > 0 && name.get(i) == Some(&b'/') {
-        let period = name[..i]
-            .iter()
-            .fold(0u16, |p, &d| p * 10 + (d - b'0') as u16);
-        (Some(period), &name[i + 1..])
-    } else {
-        (None, name)
+    match (name.get(..i), name.get(i), name.get(i + 1..)) {
+        (Some(digits), Some(&b'/'), Some(label)) if i > 0 => {
+            let period = digits
+                .iter()
+                .fold(0u16, |p, &d| p * 10 + u16::from(d - b'0'));
+            (Some(period), label)
+        }
+        _ => (None, name),
     }
 }
 
@@ -1706,26 +1797,28 @@ pub fn for_each_cred<S: Storage>(
     fs: &mut Fs<S>,
     mut f: impl FnMut(OathCredView<'_>),
 ) -> usize {
-    let mut fids = [0u16; MAX_OATH_CRED as usize];
-    let nfids = present_creds(fs, &mut fids);
+    let mut buf = [0u16; MAX_OATH_CRED as usize];
+    let fids = present_creds(fs, &mut buf);
     let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
     let mut count = 0;
-    for &fid in &fids[..nfids] {
+    for &fid in fids {
         let Some(n) = seal::seal_read(dev, fs, KeyFid::new(fid), &mut scratch) else {
             continue;
         };
-        let blob = &scratch.expose()[..n.min(CRED_MAX)];
+        let Some(blob) = scratch.expose().get(..n) else {
+            continue;
+        };
         let (Some(name), Some(key)) = (
             find_tag(blob, TAG_NAME as u16),
             find_tag(blob, TAG_KEY as u16),
         ) else {
             continue;
         };
-        if key.is_empty() {
+        let Some(&ty_alg) = key.first() else {
             continue;
-        }
-        let hotp = key[0] & OATH_TYPE_MASK == OATH_TYPE_HOTP;
-        let algo = key[0] & ALG_MASK;
+        };
+        let hotp = ty_alg & OATH_TYPE_MASK == OATH_TYPE_HOTP;
+        let algo = ty_alg & ALG_MASK;
         let digits = key.get(1).copied().unwrap_or(0);
         let touch = cred_property(blob) & PROP_TOUCH != 0;
         let (period_prefix, label) = split_period(name);
@@ -1753,10 +1846,13 @@ fn find_cred<S: Storage>(
     buf: &mut Secret<[u8; CRED_MAX]>,
 ) -> Option<(u16, usize)> {
     let mut fids = [0u16; MAX_OATH_CRED as usize];
-    let nfids = present_creds(fs, &mut fids);
-    for &fid in &fids[..nfids] {
+    for &fid in present_creds(fs, &mut fids) {
         if let Some(n) = seal::seal_read(dev, fs, KeyFid::new(fid), buf)
-            && find_tag(&buf.expose()[..n], TAG_NAME as u16) == Some(name)
+            && buf
+                .expose()
+                .get(..n)
+                .and_then(|b| find_tag(b, TAG_NAME as u16))
+                == Some(name)
         {
             return Some((fid, n));
         }
@@ -1773,14 +1869,14 @@ fn find_cred<S: Storage>(
 /// host command touches a credential. Closes the one applet that historically
 /// stored its secrets in the clear (FIDO / PIV / OpenPGP always sealed theirs).
 pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
-    let mut fids = [0u16; MAX_OATH_CRED as usize];
-    let n = present_creds(fs, &mut fids);
+    let mut buf = [0u16; MAX_OATH_CRED as usize];
+    let fids = present_creds(fs, &mut buf);
     let mut out = Secret::<[u8; CRED_MAX]>::zeroed();
     // Sized to hold a full sealed blob so a sealed-but-unauthenticating record
     // reads back at its true length and is skipped rather than truncated and
     // mis-resealed (mirrors `rsk_otp::migrate_seal`).
     let mut raw = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
-    for &fid in &fids[..n] {
+    for &fid in fids {
         reseal_if_plaintext(dev, fs, rng, KeyFid::new(fid), &mut out, raw.expose_mut());
     }
     reseal_if_plaintext(dev, fs, rng, EF_OATH_CODE, &mut out, raw.expose_mut());
@@ -1822,8 +1918,10 @@ fn reseal_if_plaintext<S: Storage>(
         // credential leaves LIST answering `9000` over an EMPTY body until a later
         // boot migrates it (measured). A reader fallback would re-admit the
         // chip-serial arm at every command, not just at boot.
-        if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {
-            let _ = seal::seal_put_over(dev, fs, rng, fid, &out.expose()[..n], Some(&rearmed));
+        if let Some(plain) = out.expose().get(..n)
+            && let Ok(rearmed) = rsk_fs::request_rescrub(fs)
+        {
+            let _ = seal::seal_put_over(dev, fs, rng, fid, plain, Some(&rearmed));
         }
         return;
     }
@@ -1862,8 +1960,8 @@ fn free_slot<S: Storage>(fs: &mut Fs<S>) -> Option<u16> {
     let mut used = [false; MAX_OATH_CRED as usize];
     fs.present_slots(EF_OATH_CRED, &mut used);
     used.iter()
-        .position(|&u| !u)
-        .map(|i| EF_OATH_CRED + i as u16)
+        .zip(EF_OATH_CRED..)
+        .find_map(|(&u, fid)| (!u).then_some(fid))
 }
 
 /// The BER-TLV starting at `blob[at..]`: its tag and the byte range of its
@@ -1918,7 +2016,7 @@ fn parse_exact<const N: usize>(data: &[u8], tags: [u8; N]) -> Option<[&[u8]; N]>
             return None;
         }
         at = v.end;
-        *slot = &data[v];
+        *slot = data.get(v)?;
     }
     (at == data.len()).then_some(out)
 }
@@ -1948,7 +2046,7 @@ const PUT_TAGS_ORDERED: usize = 4;
 struct PutFields<'d> {
     name: &'d [u8],
     key: &'d [u8],
-    imf: Option<&'d [u8]>,
+    imf: Option<&'d [u8; IMF_LEN]>,
     prop: Option<u8>,
     hotp: bool,
 }
@@ -1996,22 +2094,25 @@ fn parse_put(data: &[u8]) -> Option<PutFields<'_>> {
     if name.is_empty() || name.len() > NAME_MAX {
         return None;
     }
+    let &[ty_alg, digits] = key.first_chunk::<2>()?;
     // key = [type|alg, digits, secret…], so the length bound covers both bytes.
     if !(KEY_TLV_MIN..=KEY_TLV_MAX).contains(&key.len())
-        || !(DIGITS_MIN..=DIGITS_MAX).contains(&key[1])
-        || !alg_supported(key[0])
+        || !(DIGITS_MIN..=DIGITS_MAX).contains(&digits)
+        || !alg_supported(ty_alg)
     {
         return None;
     }
-    let hotp = match key[0] & OATH_TYPE_MASK {
+    let hotp = match ty_alg & OATH_TYPE_MASK {
         OATH_TYPE_HOTP => true,
         OATH_TYPE_TOTP => false,
         _ => return None,
     };
     // The IMF seeds HOTP's counter; TOTP has no moving factor to seed.
-    if imf.is_some_and(|v| !hotp || v.len() != IMF_LEN) {
-        return None;
-    }
+    let imf = match imf {
+        Some(v) if hotp => Some(v.try_into().ok()?),
+        Some(_) => return None,
+        None => None,
+    };
     Some(PutFields {
         name,
         key,
@@ -2041,8 +2142,8 @@ impl<'d> Iterator for PutIter<'d> {
         let b = self.rest;
         let t = *b.first()?;
         if t == TAG_PROPERTY {
-            let v = b.get(1..2)?;
-            self.rest = &b[2..];
+            let (v, rest) = (b.get(1..2)?, b.get(2..)?);
+            self.rest = rest;
             return Some((t, v));
         }
         let mut p = 1;
@@ -2062,29 +2163,31 @@ impl<'d> Iterator for PutIter<'d> {
             n => n as usize,
         };
         let end = p.checked_add(len)?;
-        if end > b.len() {
-            return None;
-        }
-        let v = &b[p..end];
-        self.rest = &b[end..];
+        let (v, rest) = (b.get(p..end)?, b.get(end..)?);
+        self.rest = rest;
         Some((t, v))
     }
 }
 
 /// Append a BER-TLV to `buf`; `false` on overflow.
 fn emit_tlv(buf: &mut [u8], n: &mut usize, tag: u8, val: &[u8]) -> bool {
-    if val.len() > u16::MAX as usize {
+    let Ok(len) = u16::try_from(val.len()) else {
         return false;
-    }
+    };
     let mut lenb = [0u8; 3];
-    let ln = format_len(val.len() as u16, &mut lenb);
-    if *n + 1 + ln + val.len() > buf.len() {
+    let ln = format_len(len, &mut lenb);
+    let end = *n + 1 + ln + val.len();
+    let (Some(head), Some((t, rest))) = (
+        lenb.get(..ln),
+        buf.get_mut(*n..end).and_then(<[u8]>::split_first_mut),
+    ) else {
         return false;
-    }
-    buf[*n] = tag;
-    buf[*n + 1..*n + 1 + ln].copy_from_slice(&lenb[..ln]);
-    buf[*n + 1 + ln..*n + 1 + ln + val.len()].copy_from_slice(val);
-    *n += 1 + ln + val.len();
+    };
+    let (l, v) = rest.split_at_mut(ln);
+    *t = tag;
+    l.copy_from_slice(head);
+    v.copy_from_slice(val);
+    *n = end;
     true
 }
 
@@ -2101,4 +2204,12 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 mod proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 mod tests;

@@ -498,7 +498,7 @@ fn cred_secret_is_sealed_on_flash() {
     );
 
     let mut fids = [0u16; MAX_OATH_CRED as usize];
-    assert_eq!(present_creds(&mut fs, &mut fids), 1);
+    assert_eq!(present_creds(&mut fs, &mut fids).len(), 1);
     let mut raw = [0u8; CRED_MAX];
     let len = fs.read(fids[0], &mut raw).unwrap();
     assert!(
@@ -543,7 +543,7 @@ fn present_creds_matches_for_each_key_occupancy() {
     );
 
     let mut fids = [0u16; MAX_OATH_CRED as usize];
-    let n = present_creds(&mut fs, &mut fids);
+    let n = present_creds(&mut fs, &mut fids).len();
 
     // Independent occupancy oracle: a fresh whole-partition scan of the range.
     let mut want = Vec::new();

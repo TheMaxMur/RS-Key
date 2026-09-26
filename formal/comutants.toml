@@ -1272,11 +1272,11 @@ status = "unreachable"
 evidence = """the applets' deselect is redundant with their own fresh SELECT, so
 removing it from the ICC power transition changes nothing observable. Three
 applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:406-408
-(sess.reset), crates/rsk-openpgp/src/lib.rs:340-342 (reset_session), crates/rsk-oath/src/lib.rs:1172-1179
+(sess.reset), crates/rsk-openpgp/src/lib.rs:340-342 (reset_session), crates/rsk-oath/src/lib.rs:1240-1247
 (validated + otp_pin_verified) — and all three ALSO re-lock in select on a
 select that is not a re-SELECT: piv and openpgp on `if !reselect`, oath by
 recomputing `validated = !code_set` there and clearing otp_pin_verified on every
-SELECT (crates/rsk-oath/src/lib.rs:1212-1213). After Dispatcher::reset_card
+SELECT (crates/rsk-oath/src/lib.rs:1280-1281). After Dispatcher::reset_card
 takes `self.current` (crates/rsk-sdk/src/applet.rs:247) every route back to an applet is a
 `select(reselect = false)`, so no reachable command sees an inherited status.
 The first patch here neutered the WHOLE reset_card call and scored a false kill:
@@ -1447,12 +1447,12 @@ note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's admi
 status = "patch"
 file = "crates/rsk-oath/src/lib.rs"
 find = """
-        if !ct_eq(resp, &mac.expose()[..size]) {
+        if !ct_eq(resp, proof) {
             return Sw::WRONG_DATA;
         }
 """
 replace = """
-        if !ct_eq(resp, &mac.expose()[..size]) {
+        if !ct_eq(resp, proof) {
             self.validated = true;
             return Sw::WRONG_DATA;
         }
@@ -1513,12 +1513,12 @@ note = "an EXEMPT refusal taken back out: CHANGE REFERENCE DATA clears the stand
 status = "patch"
 file = "crates/rsk-oath/src/lib.rs"
 find = """
-        if !ct_eq(resp, &mac.expose()[..size]) {
+        if !ct_eq(resp, proof) {
             return Sw::WRONG_DATA;
         }
 """
 replace = """
-        if !ct_eq(resp, &mac.expose()[..size]) {
+        if !ct_eq(resp, proof) {
             self.validated = false;
             return Sw::WRONG_DATA;
         }
@@ -1535,11 +1535,15 @@ find = """
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
 """
 replace = """
     fn cmd_set_code<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         let removing = matches!(parse_exact(data, [TAG_KEY]), Some([key]) if key.is_empty());
         if !self.validated && !removing {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
