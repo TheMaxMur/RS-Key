@@ -822,10 +822,10 @@ formal/README.md	crates/rsk-piv/src/lib.rs	1334-1334	if set_retries_left(fs, ret
 formal/README.md	crates/rsk-piv/src/lib.rs	1345-1345	&& ct_eq(	&& ct_eq(
 formal/README.md	crates/rsk-piv/src/lib.rs	1469-1469	puk: &[u8],	puk: &[u8],
 formal/README.md	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
-formal/README.md	crates/rsk-sdk/src/applet.rs	208-210	fn selectable(&self, i: usize) -> bool {	}
-formal/README.md	crates/rsk-sdk/src/applet.rs	386-402	let found = applets.iter().enumerate().position(|(i, app)| {	None => Sw::FILE_NOT_FOUND,
-formal/README.md	crates/rsk-sdk/src/applet.rs	391-391	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
-formal/README.md	crates/rsk-sdk/src/applet.rs	392-396	if let Some(c) = self.current	}
+formal/README.md	crates/rsk-sdk/src/applet.rs	227-229	fn selectable(&self, i: usize) -> bool {	}
+formal/README.md	crates/rsk-sdk/src/applet.rs	411-430	let found = applets.iter().enumerate().position(|(i, app)| {	None => Sw::FILE_NOT_FOUND,
+formal/README.md	crates/rsk-sdk/src/applet.rs	416-416	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
+formal/README.md	crates/rsk-sdk/src/applet.rs	417-421	if let Some(c) = self.current	}
 formal/README.md	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	422-500	pub fn feed(&mut self, f: &[u8; HID_RPT_SIZE]) -> Outcome {	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	452-452	let bcnt = ((f[5] as usize) << 8) | f[6] as usize;	let bcnt = ((f[5] as usize) << 8) | f[6] as usize;
@@ -856,7 +856,7 @@ formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	73-80	/// Refines `RS
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	248-256	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	330-330	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
 formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
-formal/RSKeyAdminSurface.tla	crates/rsk-sdk/src/applet.rs	203-205	pub fn set_enabled(&mut self, mask: u32) {	}
+formal/RSKeyAdminSurface.tla	crates/rsk-sdk/src/applet.rs	222-224	pub fn set_enabled(&mut self, mask: u32) {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-oath/src/lib.rs	610-642	// gated here, before the HOTP counter burns.	fs,
 formal/RSKeyAppletPolicies.tla	crates/rsk-openpgp/src/keypairgen.rs	123-166	let priv_fid = slot_algo_fid(fid);	// sibling reader `info::slot_algo` has the same `attr.len() >= 3` gate.
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/counter.rs	16-26	pub(crate) fn next_use_counter(counter: u16, session: u8) -> (u16, u8, bool) {	}
@@ -903,10 +903,10 @@ formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	186-189	fn set_pin(&mut se
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	206-210	self.clear_challenge();	pub struct PivApplet<'a> {
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	531-545	return Sw::PIN_BLOCKED;	// the oracle's order too.
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/lib.rs	553-587	// the retry counter … shall be decremented by one." A YubiKey 5.7.4 does	/// `6A88` for anything but `P1 = 00, P2 = 80`, as on `change_pin` — and here
-formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	149-149	current: Option<usize>,	current: Option<usize>,
-formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	227-235	pub fn reset_card<C>(&mut self, applets: &mut [&mut dyn Applet<C>], ctx: &mut C) {	}
-formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	386-402	let found = applets.iter().enumerate().position(|(i, app)| {	None => Sw::FILE_NOT_FOUND,
-formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	392-396	if let Some(c) = self.current	}
+formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	168-168	current: Option<usize>,	current: Option<usize>,
+formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	246-254	pub fn reset_card<C>(&mut self, applets: &mut [&mut dyn Applet<C>], ctx: &mut C) {	}
+formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	411-430	let found = applets.iter().enumerate().position(|(i, app)| {	None => Sw::FILE_NOT_FOUND,
+formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	417-421	if let Some(c) = self.current	}
 formal/RSKeyAppletSeams.tla	firmware/src/pin_lock.rs	12-21	//! [`rsk_fido::state::PinLock`] lives in RAM and is rebuilt clear on every boot,	//!
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	826-826	let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;	let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	826-834	let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;	.map_err(|_| CtapError::Other)?;
@@ -1184,7 +1184,7 @@ formal/comutants.toml	crates/rsk-piv/src/lib.rs	820-820	if !self.sess.has_mgm {	
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	1042-1042	if !self.sess.has_mgm {	if !self.sess.has_mgm {
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	1136-1136	if !self.sess.has_mgm {	if !self.sess.has_mgm {
 formal/comutants.toml	crates/rsk-piv/src/lib.rs	1334-1334	if set_retries_left(fs, retry, left - 1).is_err() {	if set_retries_left(fs, retry, left - 1).is_err() {
-formal/comutants.toml	crates/rsk-sdk/src/applet.rs	228-228	if let Some(i) = self.current.take()	if let Some(i) = self.current.take()
+formal/comutants.toml	crates/rsk-sdk/src/applet.rs	247-247	if let Some(i) = self.current.take()	if let Some(i) = self.current.take()
 formal/comutants.toml	firmware/src/pin_lock.rs	18-21	//! a real power cycle clears it. The *whole* lock moves: carrying the engaged flag	//!
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	368-368	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	372-372	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;
@@ -1207,5 +1207,5 @@ scripts/test_token_refinement_gate.py	crates/rsk-fido/src/credential.rs	920-920	
 scripts/test_token_refinement_gate.py	firmware/src/main.rs	1195-1195	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
 scripts/token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
 scripts/token_refinement_gate.py	firmware/src/main.rs	1195-1195	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
-scripts/trace_map.py	crates/rsk-sdk/src/applet.rs	391-391	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
+scripts/trace_map.py	crates/rsk-sdk/src/applet.rs	416-416	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
 tools/emu/src/hid.rs	crates/rsk-usb/src/ctaphid.rs	654-667	async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {	}

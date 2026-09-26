@@ -375,7 +375,7 @@ those are where a hole costs the most:
 
 | Mutation | Verdict | Owned by |
 |---|---|---|
-| `crates/rsk-sdk/src/applet.rs:391` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
+| `crates/rsk-sdk/src/applet.rs:416` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
 | `clientpin.rs:241` `+` → `*` — the padded-length bound | **model-blind, real** | `change_pin_over_protocol_one` |
 | `clientpin.rs:331` `\|\|` → `&&` — the legacy token's argument check | **model-blind, real** | `the_legacy_get_pin_token_refuses_an_rp_id` |
 | `clientpin.rs:399` `\|` → `^` on `PERM_MC \| PERM_GA` | equivalent — `0x01` and `0x02` are disjoint | — |
@@ -1425,7 +1425,7 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 
 | Invariant | What it asserts | The Rust that owns it |
 |---|---|---|
-| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:386-402` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:206-210` · `crates/rsk-openpgp/src/pin.rs:82-107` · `crates/rsk-oath/src/lib.rs:1174-1178` · `crates/rsk-device/src/ccid.rs:344-359` (the ICC power transition) |
+| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:411-430` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:206-210` · `crates/rsk-openpgp/src/pin.rs:82-107` · `crates/rsk-oath/src/lib.rs:1174-1178` · `crates/rsk-device/src/ccid.rs:344-359` (the ICC power transition) |
 | `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:186-189` · `crates/rsk-openpgp/src/pin.rs:215-227` · `crates/rsk-oath/src/lib.rs:1110-1111` |
 | `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:86-98` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:57-65`, `:113-117` |
 | `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status but OATH's OTP PIN. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:372-375` · `crates/rsk-openpgp/src/lib.rs:357-360` · `crates/rsk-oath/src/lib.rs:1212` |
@@ -1469,7 +1469,7 @@ it.
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:392-396` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
+| `BugSelectKeepsOtherApplet` | `crates/rsk-sdk/src/applet.rs:417-421` — the `deselect` a select of a *different* AID runs | `NoStatusOutsideItsSelection` | 27 states |
 | `BugReselectResetsStatus` | `637ed98` taken back out: PIV, OpenPGP and OATH's VALIDATE resetting on every select | `ReselectPreservesAccessStatus` | 42 states |
 | `BugCardResetKeepsStatus` | `crates/rsk-device/src/ccid.rs:344-359` — the ICC power transition | `NoStatusOutsideItsSelection` | 29 states |
 | `BugAdminOpensKeyOps` | `e5da38b` taken back out: PW3 standing in for PW1/PW2 | `NoKeyOpOnTheAdminStatus` | 67 states |
@@ -1838,7 +1838,7 @@ removed defences:
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:208-210`, fed at `crates/rsk-device/src/ccid.rs:248-256`, consulted at `:330`) | `DisabledAppletNeverDispatches` | 10 states |
+| `BugMaskIsCosmetic` | **the pre-`0x084A` tree, shipped**: `USB_ENABLED` echoed in DeviceInfo while SELECT and dispatch never consulted it — `ykman config usb --disable` disabled nothing (`crates/rsk-sdk/src/applet.rs:227-229`, fed at `crates/rsk-device/src/ccid.rs:248-256`, consulted at `:330`) | `DisabledAppletNeverDispatches` | 10 states |
 | `BugLockWriteResetsCaps` | **audit run-35, shipped**: a lock-code-only write strips to zero bytes, stored verbatim as an EMPTY record that `read_enabled_caps` reads as `SUPPORTED_CAPS` — every disabled application silently re-enabled (`crates/rsk-devconf/src/lib.rs:259-272`, the merge) | `DisableSetSurvivesLockWrite` | 9 states |
 | `BugAdminGateable` | the `APPLET_CAPS` cap-`0` carve-out removed (`crates/rsk-device/src/ccid.rs:73-80`): management/vendor/rescue gated by the mask, so one disable-everything write is irreversible | `AdminSurfaceAlwaysReachable` | 2 states |
 | `BugPrivilegedOpUngated` | `require_presence` removed (`crates/rsk-rescue/src/lib.rs:141-143`): keydev signing, cert/config writes, BOOTSEL reboot and fuse burns driven by the USB host alone | `PrivilegedOpNeedsPresence` | 10 states |

@@ -1221,7 +1221,7 @@ find = """
                     if let Some(c) = self.current
                         && c != i
                     {
-                        applets[c].deselect(ctx);
+                        deselect_slot(applets, c, ctx);
                     }
 """
 replace = ""
@@ -1281,7 +1281,7 @@ applets carry an access status and implement deselect — crates/rsk-piv/src/lib
 select that is not a re-SELECT: piv and openpgp on `if !reselect`, oath by
 recomputing `validated = !code_set` there and clearing otp_pin_verified on every
 SELECT (crates/rsk-oath/src/lib.rs:1212-1213). After Dispatcher::reset_card
-takes `self.current` (crates/rsk-sdk/src/applet.rs:228) every route back to an applet is a
+takes `self.current` (crates/rsk-sdk/src/applet.rs:247) every route back to an applet is a
 `select(reselect = false)`, so no reachable command sees an inherited status.
 The first patch here neutered the WHOLE reset_card call and scored a false kill:
 the only test that fell was `a_card_reset_drops_the_selection`, which asserts the

@@ -704,30 +704,30 @@ fs_usage	crates/rsk-rescue/src/lib.rs:501	17	marshals	M	FID enumeration and a su
 days_from_civil	crates/rsk-rescue/src/lib.rs:530	9	marshals	M	Hinnant's calendar arithmetic, stateless	-
 epoch_from_civil	crates/rsk-rescue/src/lib.rs:540	9	marshals	M	a range check against literals plus a conversion to epoch; no gate is spent here	-
 civil_from_epoch	crates/rsk-rescue/src/lib.rs:550	24	marshals	M	the reverse conversion from epoch to calendar for the READ P1=04 report	-
-new	crates/rsk-sdk/src/applet.rs:20	3	marshals	M	wraps the slice in a ResBuf with len=0	-
-clear	crates/rsk-sdk/src/applet.rs:23	3	marshals	M	resets only the length; zeroing is the job of clear_pending/scrub	-
-len	crates/rsk-sdk/src/applet.rs:26	3	marshals	M	getter for the response body length	-
-is_empty	crates/rsk-sdk/src/applet.rs:29	3	marshals	M	getter: the length equals zero	-
-capacity	crates/rsk-sdk/src/applet.rs:32	3	marshals	M	getter for the size of the backing buffer, with which config_tlv bounds the echo	-
-push	crates/rsk-sdk/src/applet.rs:35	10	marshals	M	appends the caller's byte and returns false on overflow	-
-extend	crates/rsk-sdk/src/applet.rs:45	10	marshals	M	copies the caller's slice whole or writes nothing	-
-spare_mut	crates/rsk-sdk/src/applet.rs:55	8	marshals	M	hands out the unwritten tail for in-place filling; the caller decides what goes there	-
-commit	crates/rsk-sdk/src/applet.rs:63	10	marshals	M	length arithmetic with a clamp to capacity; the "how much was actually written" discipline belongs to the caller	-
-as_slice	crates/rsk-sdk/src/applet.rs:73	3	marshals	M	a slice of the written body	-
-truncate	crates/rsk-sdk/src/applet.rs:76	6	marshals	M	shortens the body to n bytes for slicing by Le	-
-deselect	crates/rsk-sdk/src/applet.rs:99	2	decides	D4	the EMPTY trait default: an applet that has not overridden deselect keeps its status on deselection — that is exactly the SEC-SEAM-001 seam	SEC-SEAM-001
-response_chaining	crates/rsk-sdk/src/applet.rs:101	9	marshals	M	the default false is a per-applet 61xx transport option, not a permission	-
-bytes_remaining	crates/rsk-sdk/src/applet.rs:133	4	marshals	M	builds the 61XX status with SW2 saturating to 00	-
-is_select	crates/rsk-sdk/src/applet.rs:138	10	decides	D5	its true is the carve-out that drops a live chain instead of absorbing it; a bug here left the previous applet selected and PIN-verified	SEC-SEAM-001,SEC-SEAM-004
-default	crates/rsk-sdk/src/applet.rs:172	3	marshals	M	delegates to Dispatcher::new	-
-new	crates/rsk-sdk/src/applet.rs:178	14	decides	D4	enabled: u32::MAX (applet.rs:188) — the routing table starts fully permissive	SEC-ADM-004
-current	crates/rsk-sdk/src/applet.rs:193	4	marshals	M	getter for the index of the selected applet; the callers at ccid.rs:344,510,560 make it a condition	-
-set_enabled	crates/rsk-sdk/src/applet.rs:198	9	decides	D4	this is exactly where the routing table gets its PERMISSION column (applet.rs:204)	SEC-ADM-001,SEC-ADM-004
-selectable	crates/rsk-sdk/src/applet.rs:208	4	decides	D5	the permission test that process consults at three points (applet.rs:350,387,417); a cleared bit yields FILE_NOT_FOUND	SEC-ADM-001,SEC-ADM-004
-clear_selection	crates/rsk-sdk/src/applet.rs:213	6	decides	D4	drops the selection on CTAPHID_INIT so that U2F does not inherit the previous session's vendor-AID	SEC-SEAM-001
-reset_card	crates/rsk-sdk/src/applet.rs:220	17	decides	D4	deselect drops the applet's security status, which clear_selection does not do, plus resets the chain and pending	SEC-SEAM-001,SEC-SEAM-004
-process	crates/rsk-sdk/src/applet.rs:238	184	decides	D4	the table carries permission: selectable is consulted at applet.rs:350,387,417, and the selection changes at applet.rs:395,397; plus the binding of a chain to its opener	SEC-SEAM-001,SEC-SEAM-004,SEC-ADM-004
-clear_pending	crates/rsk-sdk/src/applet.rs:418	11	decides	D2	zeroes the held response tail, which may be PSO output	SEC-SEAM-001
-clear_chaining	crates/rsk-sdk/src/applet.rs:430	12	decides	D2	zeroes the accumulated chain holding private-key IMPORT data and clears the latch the next command could stick to	SEC-SEAM-001
-serve_pending	crates/rsk-sdk/src/applet.rs:447	17	decides	D2	hands out the held tail on 0xC0 ahead of any applet and without consulting the selection (a short-circuit in process before the SELECT parse)	SEC-SEAM-001
-maybe_chain	crates/rsk-sdk/src/applet.rs:469	27	decides	D2	copies the response tail into pending, which outlives the command — it is exactly this that creates the state clear_pending exists for	SEC-SEAM-001
+new	crates/rsk-sdk/src/applet.rs:29	3	marshals	M	wraps the slice in a ResBuf with len=0	-
+clear	crates/rsk-sdk/src/applet.rs:32	3	marshals	M	resets only the length; zeroing is the job of clear_pending/scrub	-
+len	crates/rsk-sdk/src/applet.rs:35	3	marshals	M	getter for the response body length	-
+is_empty	crates/rsk-sdk/src/applet.rs:38	3	marshals	M	getter: the length equals zero	-
+capacity	crates/rsk-sdk/src/applet.rs:41	3	marshals	M	getter for the size of the backing buffer, with which config_tlv bounds the echo	-
+push	crates/rsk-sdk/src/applet.rs:44	10	marshals	M	appends the caller's byte and returns false on overflow	-
+extend	crates/rsk-sdk/src/applet.rs:53	10	marshals	M	copies the caller's slice whole or writes nothing	-
+spare_mut	crates/rsk-sdk/src/applet.rs:63	8	marshals	M	hands out the unwritten tail for in-place filling; the caller decides what goes there	-
+commit	crates/rsk-sdk/src/applet.rs:71	10	marshals	M	length arithmetic with a clamp to capacity; the "how much was actually written" discipline belongs to the caller	-
+as_slice	crates/rsk-sdk/src/applet.rs:81	3	marshals	M	a slice of the written body	-
+truncate	crates/rsk-sdk/src/applet.rs:84	6	marshals	M	shortens the body to n bytes for slicing by Le	-
+deselect	crates/rsk-sdk/src/applet.rs:107	2	decides	D4	the EMPTY trait default: an applet that has not overridden deselect keeps its status on deselection — that is exactly the SEC-SEAM-001 seam	SEC-SEAM-001
+response_chaining	crates/rsk-sdk/src/applet.rs:109	9	marshals	M	the default false is a per-applet 61xx transport option, not a permission	-
+bytes_remaining	crates/rsk-sdk/src/applet.rs:141	4	marshals	M	builds the 61XX status with SW2 saturating to 00	-
+is_select	crates/rsk-sdk/src/applet.rs:157	10	decides	D5	its true is the carve-out that drops a live chain instead of absorbing it; a bug here left the previous applet selected and PIN-verified	SEC-SEAM-001,SEC-SEAM-004
+default	crates/rsk-sdk/src/applet.rs:191	3	marshals	M	delegates to Dispatcher::new	-
+new	crates/rsk-sdk/src/applet.rs:197	14	decides	D4	enabled: u32::MAX (applet.rs:207) — the routing table starts fully permissive	SEC-ADM-004
+current	crates/rsk-sdk/src/applet.rs:212	4	marshals	M	getter for the index of the selected applet; the callers at ccid.rs:344,510,560 make it a condition	-
+set_enabled	crates/rsk-sdk/src/applet.rs:217	9	decides	D4	this is exactly where the routing table gets its PERMISSION column (applet.rs:223)	SEC-ADM-001,SEC-ADM-004
+selectable	crates/rsk-sdk/src/applet.rs:227	4	decides	D5	the permission test that process consults at three points (applet.rs:373,412,444); a cleared bit yields FILE_NOT_FOUND	SEC-ADM-001,SEC-ADM-004
+clear_selection	crates/rsk-sdk/src/applet.rs:232	6	decides	D4	drops the selection on CTAPHID_INIT so that U2F does not inherit the previous session's vendor-AID	SEC-SEAM-001
+reset_card	crates/rsk-sdk/src/applet.rs:239	17	decides	D4	deselect drops the applet's security status, which clear_selection does not do, plus resets the chain and pending	SEC-SEAM-001,SEC-SEAM-004
+process	crates/rsk-sdk/src/applet.rs:257	184	decides	D4	the table carries permission: selectable is consulted at applet.rs:373,412,444, and the selection changes at applet.rs:420,422; plus the binding of a chain to its opener	SEC-SEAM-001,SEC-SEAM-004,SEC-ADM-004
+clear_pending	crates/rsk-sdk/src/applet.rs:459	11	decides	D2	zeroes the held response tail, which may be PSO output	SEC-SEAM-001
+clear_chaining	crates/rsk-sdk/src/applet.rs:459	12	decides	D2	zeroes the accumulated chain holding private-key IMPORT data and clears the latch the next command could stick to	SEC-SEAM-001
+serve_pending	crates/rsk-sdk/src/applet.rs:476	17	decides	D2	hands out the held tail on 0xC0 ahead of any applet and without consulting the selection (a short-circuit in process before the SELECT parse)	SEC-SEAM-001
+maybe_chain	crates/rsk-sdk/src/applet.rs:498	27	decides	D2	copies the response tail into pending, which outlives the command — it is exactly this that creates the state clear_pending exists for	SEC-SEAM-001
