@@ -97,8 +97,12 @@ impl FrameRx {
         if seq == 0 {
             self.scrub();
         }
-        self.buf.expose_mut()[seq * REPORT_DATA..seq * REPORT_DATA + REPORT_DATA]
-            .copy_from_slice(&report[..REPORT_DATA]);
+        // `seq` is at most 9 by now, and the frame holds ten reports' data.
+        let Some(slice) = self.buf.expose_mut().chunks_exact_mut(REPORT_DATA).nth(seq) else {
+            self.scrub();
+            return RxOutcome::Reset;
+        };
+        slice.copy_from_slice(&report[..REPORT_DATA]);
         if seq != 9 {
             return RxOutcome::None;
         }
@@ -161,14 +165,18 @@ impl FrameTx {
 
     /// Load a response body (≤ 64 bytes); the CRC suffix is appended here.
     pub fn load(&mut self, body: &[u8]) {
-        let n = body.len().min(PAYLOAD_SIZE);
+        let body = body.get(..PAYLOAD_SIZE).unwrap_or(body);
+        let n = body.len();
         self.buf = [0; FRAME_SIZE + 2];
-        self.buf[..n].copy_from_slice(&body[..n]);
-        let crc = !crc16(&body[..n]);
-        self.buf[n..n + 2].copy_from_slice(&crc.to_le_bytes());
+        let crc = !crc16(body);
+        if let Some((head, tail)) = self.buf.get_mut(..n + 2).map(|f| f.split_at_mut(n)) {
+            head.copy_from_slice(body);
+            tail.copy_from_slice(&crc.to_le_bytes());
+        }
         let total = n + 2;
         self.remaining = total;
-        self.expected = total.div_ceil(REPORT_DATA) as u8;
+        let [expected, ..] = total.div_ceil(REPORT_DATA).to_le_bytes();
+        self.expected = expected;
         self.seq = 0;
     }
 
@@ -179,7 +187,9 @@ impl FrameTx {
             let off = self.seq as usize * REPORT_DATA;
             let n = self.remaining.min(REPORT_DATA);
             *out = [0; REPORT_SIZE];
-            out[..n].copy_from_slice(&self.buf[off..off + n]);
+            if let (Some(dst), Some(src)) = (out.get_mut(..n), self.buf.get(off..off + n)) {
+                dst.copy_from_slice(src);
+            }
             out[REPORT_DATA] = FLAG_RESP_PENDING | self.seq;
             self.remaining -= n;
             self.seq += 1;
@@ -327,8 +337,9 @@ impl OtpHid {
     /// truncated, because the report size is the protocol's and not the host's.
     pub fn set_report(&mut self, data: &[u8]) -> SetOutcome {
         let mut report = [0u8; REPORT_SIZE];
-        let n = data.len().min(REPORT_SIZE);
-        report[..n].copy_from_slice(&data[..n]);
+        for (dst, src) in report.iter_mut().zip(data) {
+            *dst = *src;
+        }
         match self.rx.feed(&report, &mut self.req_payload) {
             RxOutcome::Frame { slot } => {
                 self.req_slot = slot;
@@ -430,14 +441,22 @@ pub fn split_frame(payload: &[u8; PAYLOAD_SIZE], slot: u8) -> [[u8; REPORT_SIZE]
     let crc = crc16(payload);
     frame[FRAME_CRC_OFF..FRAME_CRC_OFF + 2].copy_from_slice(&crc.to_le_bytes());
     let mut reports = [[0u8; REPORT_SIZE]; 10];
-    for (seq, rep) in reports.iter_mut().enumerate() {
-        rep[..REPORT_DATA]
-            .copy_from_slice(&frame[seq * REPORT_DATA..seq * REPORT_DATA + REPORT_DATA]);
-        rep[REPORT_DATA] = FLAG_WRITE | seq as u8;
+    let chunks = frame.chunks_exact(REPORT_DATA);
+    for ((rep, chunk), seq) in reports.iter_mut().zip(chunks).zip(0u8..) {
+        rep[..REPORT_DATA].copy_from_slice(chunk);
+        rep[REPORT_DATA] = FLAG_WRITE | seq;
     }
     reports
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "hid_tests.rs"]
 mod tests;

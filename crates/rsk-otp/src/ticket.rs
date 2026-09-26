@@ -9,9 +9,9 @@ use rsk_crypto::{aes128_encrypt_block, hmac_sha1};
 use rsk_secret::Secret;
 
 use crate::{
-    CFG_OATH_HOTP8, CFG_SHORT_TICKET, CFG_STATIC_TICKET, CONFIG_SIZE, FIXED_SIZE, KEY_SIZE,
-    OFF_AES_KEY, OFF_CFG_FLAGS, OFF_TKT_FLAGS, OFF_UID, SlotRecord, TKT_APPEND_CR, TKT_OATH_HOTP,
-    UID_SIZE, crc16,
+    CFG_OATH_HOTP8, CFG_SHORT_TICKET, CFG_STATIC_TICKET, FIXED_SIZE, KEY_SIZE, OFF_AES_KEY,
+    OFF_CFG_FLAGS, OFF_TKT_FLAGS, OFF_UID, SlotRecord, TKT_APPEND_CR, TKT_OATH_HOTP, UID_SIZE,
+    crc16,
 };
 
 /// The YubiKey modhex alphabet (keyboard-layout-independent).
@@ -37,9 +37,9 @@ pub struct Typed {
 
 fn encode_modhex(input: &[u8], out: &mut [u8]) -> usize {
     let mut n = 0;
-    for &b in input {
-        out[n] = MODHEX[(b >> 4) as usize];
-        out[n + 1] = MODHEX[(b & 0xF) as usize];
+    for (&b, pair) in input.iter().zip(out.chunks_exact_mut(2)) {
+        let digit = |nibble: u8| MODHEX.get(usize::from(nibble)).copied().unwrap_or_default();
+        pair.copy_from_slice(&[digit(b >> 4), digit(b & 0xF)]);
         n += 2;
     }
     n
@@ -49,16 +49,17 @@ fn encode_modhex(input: &[u8], out: &mut [u8]) -> usize {
 /// code (zero-padded to `digits`) into `out`, returning its length.
 fn hotp(key: &[u8], counter: u64, digits: u32, out: &mut [u8]) -> usize {
     let mac = hmac_sha1(key, &counter.to_be_bytes());
-    let off = (mac[19] & 0x0F) as usize;
-    let bin = ((mac[off] & 0x7F) as u32) << 24
-        | (mac[off + 1] as u32) << 16
-        | (mac[off + 2] as u32) << 8
-        | (mac[off + 3] as u32);
+    // §5.3's offset is at most 15, so its four bytes always sit inside the 20.
+    let off = usize::from(mac[19] & 0x0F);
+    let Some(&dbc) = mac.get(off..).and_then(<[u8]>::first_chunk::<4>) else {
+        return 0;
+    };
+    let bin = u32::from_be_bytes(dbc) & 0x7FFF_FFFF;
     let modulo = 10u32.pow(digits);
     let mut code = bin % modulo;
     let n = digits as usize;
-    for i in (0..n).rev() {
-        out[i] = b'0' + (code % 10) as u8;
+    for digit in out.iter_mut().take(n).rev() {
+        *digit = b'0' + (code % 10) as u8;
         code /= 10;
     }
     n
@@ -74,7 +75,7 @@ pub fn build(
     rnd: [u8; 2],
     out: &mut [u8; MAX_TICKET],
 ) -> Typed {
-    let cfg = &slot.expose()[..CONFIG_SIZE];
+    let cfg = slot.expose();
     let tkt = cfg[OFF_TKT_FLAGS];
     let cfgf = cfg[OFF_CFG_FLAGS];
     let append_cr = tkt & TKT_APPEND_CR != 0;
@@ -88,8 +89,8 @@ pub fn build(
         let imf = slot.press_hotp();
         let digits = if cfgf & CFG_OATH_HOTP8 != 0 { 8 } else { 6 };
         let mut len = hotp(key.expose(), imf, digits, out);
-        if append_cr {
-            out[len] = b'\r';
+        if append_cr && let Some(cr) = out.get_mut(len) {
+            *cr = b'\r';
             len += 1;
         }
         return Typed {
@@ -103,11 +104,11 @@ pub fn build(
     if cfgf & (CFG_SHORT_TICKET | CFG_STATIC_TICKET) != 0 {
         // Static password: the fixed ‖ uid ‖ key bytes are HID scancodes, typed
         // verbatim (SHORT_TICKET applies no truncation).
-        let n = FIXED_SIZE + UID_SIZE + KEY_SIZE; // 38
-        out[..n].copy_from_slice(&cfg[..n]);
-        let mut len = n;
-        if append_cr {
-            out[len] = 0x28; // HID Enter scancode
+        const N: usize = FIXED_SIZE + UID_SIZE + KEY_SIZE; // 38
+        out[..N].copy_from_slice(&cfg[..N]);
+        let mut len = N;
+        if append_cr && let Some(enter) = out.get_mut(len) {
+            *enter = 0x28; // HID Enter scancode
             len += 1;
         }
         return Typed {
@@ -120,15 +121,13 @@ pub fn build(
 
     // Yubico OTP. otpk = public id (6, clear) ‖ AES-ECB( private block 16 ).
     let (counter, new_session, persist) = slot.press_yubico(session);
-    let cfg = &slot.expose()[..CONFIG_SIZE];
+    let cfg = slot.expose();
     let mut otpk = [0u8; 22];
     otpk[..6].copy_from_slice(&cfg[..6]); // public id prefix
     otpk[6..12].copy_from_slice(&cfg[OFF_UID..OFF_UID + UID_SIZE]);
     otpk[12..14].copy_from_slice(&counter.to_le_bytes());
-    let ts = ts_secs >> 1;
-    otpk[14] = ts as u8;
-    otpk[15] = (ts >> 8) as u8;
-    otpk[16] = (ts >> 16) as u8;
+    let [t0, t1, t2, _] = (ts_secs >> 1).to_le_bytes();
+    otpk[14..17].copy_from_slice(&[t0, t1, t2]);
     otpk[17] = session;
     otpk[18..20].copy_from_slice(&rnd);
     let crc = !crc16(&otpk[6..20]);
@@ -141,8 +140,8 @@ pub fn build(
     aes128_encrypt_block(key.expose(), &mut block);
     otpk[6..22].copy_from_slice(&block);
     let mut len = encode_modhex(&otpk, out);
-    if append_cr {
-        out[len] = b'\r';
+    if append_cr && let Some(cr) = out.get_mut(len) {
+        *cr = b'\r';
         len += 1;
     }
     Typed {
@@ -154,5 +153,13 @@ pub fn build(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "ticket_tests.rs"]
 mod tests;

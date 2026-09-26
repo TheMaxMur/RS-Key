@@ -662,13 +662,13 @@ fn update_validates_slot_bounds_crc_and_rfu() {
     let (sw, _) = run(
         &mut app,
         &mut fs,
-        &otp_apdu(0x04, SLOT_COUNT as u8, &with_acc(&good)),
+        &otp_apdu(0x04, SLOT_COUNT, &with_acc(&good)),
     );
     assert_eq!(sw, Sw::INCORRECT_P1P2, "one past the last slot");
     let (sw, _) = run(
         &mut app,
         &mut fs,
-        &otp_apdu(0x04, SLOT_COUNT as u8 - 1, &with_acc(&good)),
+        &otp_apdu(0x04, SLOT_COUNT - 1, &with_acc(&good)),
     );
     assert_ne!(sw, Sw::INCORRECT_P1P2, "the last slot is addressable");
 

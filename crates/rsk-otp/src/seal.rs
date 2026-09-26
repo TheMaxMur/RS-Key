@@ -44,6 +44,10 @@ const INFO_OTP_SLOT: &[u8] = b"OTP/SLOT";
 fn kenc(dev: &Device) -> Secret<[u8; 32]> {
     let mut kbase = dev.derive_kbase();
     let mut out = Secret::<[u8; 32]>::zeroed();
+    #[expect(
+        clippy::expect_used,
+        reason = "HKDF-SHA256 refuses only an output past 255 × 32 bytes, and this one is 32"
+    )]
     hkdf_sha256(
         dev.serial_hash,
         kbase.expose(),
@@ -83,19 +87,23 @@ pub fn seal_put_over<S: Storage>(
     rng.fill(&mut blob.expose_mut()[..NONCE_LEN]);
     let mut nonce = [0u8; NONCE_LEN];
     nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
-    blob.expose_mut()[NONCE_LEN..NONCE_LEN + plain.len()].copy_from_slice(plain);
+    // A record is at most `MAX_PLAIN` long, so its seal fits the blob.
+    let Some((ct, tag_out)) = blob
+        .expose_mut()
+        .get_mut(NONCE_LEN..n)
+        .map(|body| body.split_at_mut(plain.len()))
+    else {
+        return false;
+    };
+    ct.copy_from_slice(plain);
     let mut key = kenc(dev);
-    let tag = aes256gcm_encrypt(
-        key.expose(),
-        &nonce,
-        dev.serial_hash,
-        &mut blob.expose_mut()[NONCE_LEN..NONCE_LEN + plain.len()],
-    );
+    let tag = aes256gcm_encrypt(key.expose(), &nonce, dev.serial_hash, ct);
     key.wipe();
-    blob.expose_mut()[NONCE_LEN + plain.len()..n].copy_from_slice(&tag);
-    let ok = fs
-        .put_key_over(fid, Sealed::wrap(&blob.expose()[..n]), rearmed)
-        .is_ok();
+    tag_out.copy_from_slice(&tag);
+    let ok = blob
+        .expose()
+        .get(..n)
+        .is_some_and(|sealed| fs.put_key_over(fid, Sealed::wrap(sealed), rearmed).is_ok());
     blob.wipe();
     ok
 }
@@ -156,26 +164,37 @@ pub fn try_seal_read<S: Storage, const N: usize>(
     }
     let mut nonce = [0u8; NONCE_LEN];
     nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
+    let (Some((ct, stored_tag)), Some(pt)) = (
+        blob.expose_mut()
+            .get_mut(NONCE_LEN..n)
+            .map(|body| body.split_at_mut(pt_len)),
+        out.get_mut(..pt_len),
+    ) else {
+        blob.wipe();
+        return Ok(None);
+    };
     let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&blob.expose()[n - TAG_LEN..n]);
+    tag.copy_from_slice(stored_tag);
     let mut key = kenc(dev);
-    let r = aes256gcm_decrypt(
-        key.expose(),
-        &nonce,
-        dev.serial_hash,
-        &mut blob.expose_mut()[NONCE_LEN..NONCE_LEN + pt_len],
-        &tag,
-    );
+    let r = aes256gcm_decrypt(key.expose(), &nonce, dev.serial_hash, ct, &tag);
     key.wipe();
     if r.is_err() {
         blob.wipe();
         return Ok(None);
     }
-    out[..pt_len].copy_from_slice(&blob.expose()[NONCE_LEN..NONCE_LEN + pt_len]);
+    pt.copy_from_slice(ct);
     blob.wipe();
     Ok(Some(pt_len))
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "seal_tests.rs"]
 mod tests;

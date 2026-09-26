@@ -1097,11 +1097,11 @@ status = "patch"
 file = "crates/rsk-otp/src/lib.rs"
 find = """
             // Existing config: the host must present its access code.
-            if data.len() < CONFIG_SIZE + ACC_CODE_SIZE {
+            let Some(code) = data.get(CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE) else {
                 return Sw::WRONG_LENGTH;
-            }
+            };
             if !ct_eq(
-                &data[CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE],
+                code,
                 &stored.expose()[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE],
             ) {
                 return Sw::SECURITY_STATUS_NOT_SATISFIED;
@@ -1112,11 +1112,11 @@ replace = """
 """
 find2 = """
         if programmed.is_some() {
-            if data.len() < CONFIG_SIZE + ACC_CODE_SIZE {
+            let Some(code) = data.get(CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE) else {
                 return Sw::WRONG_LENGTH;
-            }
+            };
             if !ct_eq(
-                &data[CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE],
+                code,
                 &stored.expose()[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE],
             ) {
                 return Sw::SECURITY_STATUS_NOT_SATISFIED;
@@ -1127,7 +1127,7 @@ replace2 = """
 """
 slice = ["cargo", "test", "-p", "rsk-otp"]
 expect = "killed"
-note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states the same rule a THIRD time, at crates/rsk-otp/src/lib.rs:616-620, and is left unpatched: its gate is a swap's own move/delete rule rather than the configure/update pair OtpMutate models."
+note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states the same rule a THIRD time, at crates/rsk-otp/src/lib.rs:644-648, and is left unpatched: its gate is a swap's own move/delete rule rather than the configure/update pair OtpMutate models."
 
 [comutant.BugOtpCounterRepeats]
 status = "patch"

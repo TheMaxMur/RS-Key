@@ -35,6 +35,9 @@ pub struct SlotRecord {
     len: usize,
 }
 
+/// Where the tail — the use counter or the HOTP moving factor — starts.
+const TAIL: usize = CONFIG_SIZE;
+
 /// Whether `fid` is a slot's: only a slot's bytes may become a record.
 fn is_slot(fid: u16) -> bool {
     (EF_OTP_SLOT1..=EF_OTP_SLOT_LAST).contains(&fid)
@@ -56,7 +59,7 @@ impl SlotRecord {
 
     /// What [`seal_put`](crate::seal::seal_put) seals: the record at its length.
     pub(crate) fn stored(&self) -> &[u8] {
-        &self.bytes.expose()[..self.len]
+        self.bytes.expose().get(..self.len).unwrap_or_default()
     }
 
     /// Read+unseal slot `fid` under `dev`'s arm, at whatever length it was stored —
@@ -102,23 +105,27 @@ impl SlotRecord {
         if !(CONFIG_SIZE..=SLOT_SIZE).contains(&n) {
             return None;
         }
-        self.bytes.expose_mut()[..n].copy_from_slice(&raw.expose()[..n]);
+        let (Some(dst), Some(src)) = (self.bytes.expose_mut().get_mut(..n), raw.expose().get(..n))
+        else {
+            return None;
+        };
+        dst.copy_from_slice(src);
         self.len = n;
         Some(n)
     }
 
     /// CONFIGURE: a fresh config, so the tail restarts at zero — as on a YubiKey.
-    pub(crate) fn configure(&mut self, cfg: &[u8]) {
+    pub(crate) fn configure(&mut self, cfg: &[u8; CONFIG_SIZE]) {
         self.bytes.wipe();
-        self.bytes.expose_mut()[..CONFIG_SIZE].copy_from_slice(&cfg[..CONFIG_SIZE]);
+        self.bytes.expose_mut()[..CONFIG_SIZE].copy_from_slice(cfg);
         self.len = SLOT_SIZE;
     }
 
     /// UPDATE: `cfg` replaces the config and the tail carries over; only a
     /// re-CONFIGURE resets it. (A 52-byte record here once dropped the tail and
     /// rolled the counter back on the next read — audit run-30.)
-    pub(crate) fn reconfigure(&mut self, cfg: &[u8]) {
-        self.bytes.expose_mut()[..CONFIG_SIZE].copy_from_slice(&cfg[..CONFIG_SIZE]);
+    pub(crate) fn reconfigure(&mut self, cfg: &[u8; CONFIG_SIZE]) {
+        self.bytes.expose_mut()[..CONFIG_SIZE].copy_from_slice(cfg);
         self.len = SLOT_SIZE;
     }
 
@@ -126,8 +133,8 @@ impl SlotRecord {
     /// from 0 to 1, the Yubico convention) and the session after it. The tail takes
     /// [`counter::next_use_counter`]'s step; `true` when it moved.
     pub(crate) fn press_yubico(&mut self, session: u8) -> (u16, u8, bool) {
-        let tail = self.tail_to_move();
-        let stored = u16::from_be_bytes([tail[0], tail[1]]);
+        let rec = self.tail_to_move();
+        let stored = u16::from_be_bytes([rec[TAIL], rec[TAIL + 1]]);
         let (typed, promoted) = match stored {
             0 => (1, true),
             n => (n, false),
@@ -135,7 +142,7 @@ impl SlotRecord {
         let (counter, new_session, bumped) = counter::next_use_counter(typed, session);
         let moved = promoted || bumped;
         if moved {
-            tail[..2].copy_from_slice(&counter.to_be_bytes());
+            rec[TAIL..TAIL + 2].copy_from_slice(&counter.to_be_bytes());
             self.len = SLOT_SIZE;
         }
         (typed, new_session, moved)
@@ -147,16 +154,16 @@ impl SlotRecord {
     pub(crate) fn press_hotp(&mut self) -> u64 {
         let rec = self.bytes.expose();
         let programmed = u64::from(u16::from_be_bytes([rec[OFF_UID + 4], rec[OFF_UID + 5]]));
-        let tail = self.tail_to_move();
-        let mut factor = [0u8; SLOT_SIZE - CONFIG_SIZE];
-        factor.copy_from_slice(tail);
+        let rec = self.tail_to_move();
+        let mut factor = [0u8; SLOT_SIZE - TAIL];
+        factor.copy_from_slice(&rec[TAIL..]);
         let imf = match u64::from_be_bytes(factor) {
             0 => programmed,
             n => n,
         };
         // `wrapping_add` matches the sibling config_seq bumps and removes a debug-panic /
         // release-wrap asymmetry at the (unreachable) u64::MAX factor.
-        tail.copy_from_slice(&imf.wrapping_add(1).to_be_bytes());
+        rec[TAIL..].copy_from_slice(&imf.wrapping_add(1).to_be_bytes());
         self.len = SLOT_SIZE;
         imf
     }
@@ -164,25 +171,26 @@ impl SlotRecord {
     /// The boot bump, [`counter::boot_use_counter`]'s: `true` when the use counter
     /// moved; at the ceiling it stays where it is.
     pub(crate) fn boot_bump(&mut self) -> bool {
-        let tail = self.tail_to_move();
-        let stored = u16::from_be_bytes([tail[0], tail[1]]);
+        let rec = self.tail_to_move();
+        let stored = u16::from_be_bytes([rec[TAIL], rec[TAIL + 1]]);
         let Some(counter) = counter::boot_use_counter(stored) else {
             return false;
         };
-        tail[..2].copy_from_slice(&counter.to_be_bytes());
+        rec[TAIL..TAIL + 2].copy_from_slice(&counter.to_be_bytes());
         self.len = SLOT_SIZE;
         true
     }
 
-    /// The tail a press or the boot bump moves. A record shorter than a full one
-    /// holds no counter, so the move starts from zero — as it always has.
-    fn tail_to_move(&mut self) -> &mut [u8] {
+    /// The record whose tail (from [`TAIL`]) a press or the boot bump moves. A record
+    /// shorter than a full one holds no counter, so the move starts from zero — as
+    /// it always has.
+    fn tail_to_move(&mut self) -> &mut [u8; SLOT_SIZE] {
         let short = self.len < SLOT_SIZE;
-        let tail = &mut self.bytes.expose_mut()[CONFIG_SIZE..];
+        let rec = self.bytes.expose_mut();
         if short {
-            tail.fill(0);
+            rec[TAIL..].fill(0);
         }
-        tail
+        rec
     }
 
     /// A record from its stored bytes, `None` past a full record's length: the
@@ -200,5 +208,13 @@ impl SlotRecord {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "record_tests.rs"]
 mod tests;

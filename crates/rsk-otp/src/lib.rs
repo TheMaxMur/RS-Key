@@ -6,6 +6,14 @@
 //! Yubico-mode challenge-response. [`ticket`] and [`hid`] serve the keyboard side.
 
 #![cfg_attr(not(test), no_std)]
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
 
 use core::cell::RefCell;
 
@@ -27,6 +35,14 @@ pub mod ticket;
 pub use record::SlotRecord;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 mod tests_support;
 
 /// OTP instance AID, all 8 bytes: YubiKit selects by the whole of it, ykman by 7.
@@ -42,7 +58,7 @@ pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
 pub(crate) const EF_OTP_SLOT1: u16 = 0xBB00;
 const EF_OTP_SLOT2: u16 = 0xBB01;
 /// Number of OTP slots (1/2 classic short/long press, 3/4 via CCID P2 offset).
-pub(crate) const SLOT_COUNT: usize = 4;
+pub(crate) const SLOT_COUNT: u8 = 4;
 /// Highest addressable slot FID. Only slots 1..=4 (0xBB00..=0xBB03) are ever read
 /// back (button_ticket, status, migrate_seal, power_up_bump); every command that
 /// derives a FID from a host offset must reject anything past this, or a slot can
@@ -214,7 +230,7 @@ pub struct OtpApplet<'a> {
     /// Per-slot RAM session-use counter mixed into a typed Yubico-OTP token;
     /// resets each power cycle. One entry per slot (1–4). It belongs to the
     /// slot's RECORD, not to the index: `cmd_swap` moves it with the record.
-    session_counter: [u8; SLOT_COUNT],
+    session_counter: [u8; SLOT_COUNT as usize],
 }
 
 impl<'a> OtpApplet<'a> {
@@ -232,7 +248,7 @@ impl<'a> OtpApplet<'a> {
             rng,
             presence,
             config_seq: 1,
-            session_counter: [0; SLOT_COUNT],
+            session_counter: [0; SLOT_COUNT as usize],
         }
     }
 
@@ -314,7 +330,7 @@ impl<'a> OtpApplet<'a> {
         fs: &mut Fs<S>,
         out: &mut [u8; ticket::MAX_TICKET],
     ) -> Option<(usize, bool)> {
-        if !(1..=SLOT_COUNT as u8).contains(&slot) {
+        if !(1..=SLOT_COUNT).contains(&slot) {
             return None;
         }
         let fid = EF_OTP_SLOT1 + (slot as u16 - 1);
@@ -326,8 +342,9 @@ impl<'a> OtpApplet<'a> {
         if cfg & CFG_CHAL_YUBICO != 0 && tkt & TKT_CHAL_RESP != 0 {
             return None;
         }
-        let idx = (slot - 1) as usize;
-        let t = ticket::build(&mut rec, self.session_counter[idx], ts_secs, rnd, out);
+        let idx = usize::from(slot - 1);
+        let session = self.session_counter.get(idx).copied()?;
+        let t = ticket::build(&mut rec, session, ts_secs, rnd, out);
         if t.persist {
             // The advance this press owes the PERSISTED half of the position. A
             // ticket typed without it is typed again: the next press reads the old
@@ -346,13 +363,18 @@ impl<'a> OtpApplet<'a> {
                 return None;
             }
         }
-        self.session_counter[idx] = t.new_session;
+        if let Some(counter) = self.session_counter.get_mut(idx) {
+            *counter = t.new_session;
+        }
         let (len, encode) = (t.len, t.encode);
         // Functional custom scancode map (0x12): if one is stored and the whole
         // typed output is within the covered 45-char set, emit raw scancodes so a
         // non-US host types the intended characters. Absent under strict-config.
         #[cfg(not(feature = "strict-config"))]
-        if encode && self.apply_scanmap(fs, &mut out[..len]) {
+        if encode
+            && let Some(typed) = out.get_mut(..len)
+            && self.apply_scanmap(fs, typed)
+        {
             return Some((len, false));
         }
         Some((len, encode))
@@ -363,9 +385,9 @@ impl<'a> OtpApplet<'a> {
     fn serial_str10(&self) -> [u8; 10] {
         const HEX: &[u8; 16] = b"0123456789ABCDEF";
         let mut out = [0u8; 10];
-        for i in 0..5 {
-            out[2 * i] = HEX[(self.serial_id[i] >> 4) as usize];
-            out[2 * i + 1] = HEX[(self.serial_id[i] & 0xF) as usize];
+        let digit = |nibble: u8| HEX.get(usize::from(nibble)).copied().unwrap_or_default();
+        for (&b, pair) in self.serial_id.iter().zip(out.chunks_exact_mut(2)) {
+            pair.copy_from_slice(&[digit(b >> 4), digit(b & 0xF)]);
         }
         out
     }
@@ -424,13 +446,8 @@ impl<'a> OtpApplet<'a> {
         res: &mut ResBuf,
     ) -> Sw {
         let mut raw = Secret::<[u8; 5 + hid::PAYLOAD_SIZE]>::zeroed();
-        raw.expose_mut()[..5].copy_from_slice(&[
-            0x00,
-            INS_OTP,
-            slot_id,
-            0x00,
-            hid::PAYLOAD_SIZE as u8,
-        ]);
+        let [lc, ..] = hid::PAYLOAD_SIZE.to_le_bytes();
+        raw.expose_mut()[..5].copy_from_slice(&[0x00, INS_OTP, slot_id, 0x00, lc]);
         raw.expose_mut()[5..].copy_from_slice(payload);
         match Apdu::parse(raw.expose()) {
             Ok(apdu) => self.process(&apdu, fs, res),
@@ -453,10 +470,12 @@ impl<'a> OtpApplet<'a> {
         if fid > EF_OTP_SLOT_LAST {
             return Sw::INCORRECT_P1P2;
         }
-        if apdu.nc < CONFIG_SIZE {
+        let Some(data) = apdu.data.get(..apdu.nc) else {
             return Sw::WRONG_LENGTH;
-        }
-        let data = &apdu.data[..apdu.nc];
+        };
+        let Some(cfg) = data.first_chunk::<CONFIG_SIZE>() else {
+            return Sw::WRONG_LENGTH;
+        };
         let mut stored = SlotRecord::vacant();
         // A slot the medium could not read is not an unprogrammed one: the fold
         // skipped the access-code check below, and this command's other arm
@@ -467,22 +486,22 @@ impl<'a> OtpApplet<'a> {
         };
         if programmed.is_some() {
             // Existing config: the host must present its access code.
-            if data.len() < CONFIG_SIZE + ACC_CODE_SIZE {
+            let Some(code) = data.get(CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE) else {
                 return Sw::WRONG_LENGTH;
-            }
+            };
             if !ct_eq(
-                &data[CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE],
+                code,
                 &stored.expose()[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE],
             ) {
                 return Sw::SECURITY_STATUS_NOT_SATISFIED;
             }
         }
-        if data[..CONFIG_SIZE].iter().any(|&b| b != 0) {
-            if data[OFF_RFU] != 0 || data[OFF_RFU + 1] != 0 || !check_crc(&data[..CONFIG_SIZE]) {
+        if cfg.iter().any(|&b| b != 0) {
+            if cfg[OFF_RFU] != 0 || cfg[OFF_RFU + 1] != 0 || !check_crc(cfg) {
                 return SW_WRONG_DATA;
             }
             let mut rec = SlotRecord::vacant();
-            rec.configure(data);
+            rec.configure(cfg);
             if !self.put_slot(fs, fid, &rec) {
                 return Sw::MEMORY_FAILURE;
             }
@@ -512,11 +531,13 @@ impl<'a> OtpApplet<'a> {
         if fid > EF_OTP_SLOT_LAST {
             return Sw::INCORRECT_P1P2;
         }
-        if apdu.nc < CONFIG_SIZE {
+        let Some(data) = apdu.data.get(..apdu.nc) else {
             return Sw::WRONG_LENGTH;
-        }
-        let data = &apdu.data[..apdu.nc];
-        if data[OFF_RFU] != 0 || data[OFF_RFU + 1] != 0 || !check_crc(&data[..CONFIG_SIZE]) {
+        };
+        let Some(cfg) = data.first_chunk::<CONFIG_SIZE>() else {
+            return Sw::WRONG_LENGTH;
+        };
+        if cfg[OFF_RFU] != 0 || cfg[OFF_RFU + 1] != 0 || !check_crc(cfg) {
             return SW_WRONG_DATA;
         }
         let mut stored = SlotRecord::vacant();
@@ -526,31 +547,31 @@ impl<'a> OtpApplet<'a> {
             return Sw::MEMORY_FAILURE;
         };
         if programmed.is_some() {
-            if data.len() < CONFIG_SIZE + ACC_CODE_SIZE {
+            let Some(code) = data.get(CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE) else {
                 return Sw::WRONG_LENGTH;
-            }
+            };
             if !ct_eq(
-                &data[CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE],
+                code,
                 &stored.expose()[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE],
             ) {
                 return Sw::SECURITY_STATUS_NOT_SATISFIED;
             }
             let mut merged = Secret::<[u8; CONFIG_SIZE]>::zeroed();
-            merged.expose_mut().copy_from_slice(&data[..CONFIG_SIZE]);
+            merged.expose_mut().copy_from_slice(cfg);
             // Keep the secret material and fixed part; merge only the
             // updateable flag bits.
             merged.expose_mut()[..OFF_ACC_CODE].copy_from_slice(&stored.expose()[..OFF_ACC_CODE]);
             merged.expose_mut()[OFF_FIXED_SIZE] = stored.expose()[OFF_FIXED_SIZE];
             merged.expose_mut()[OFF_EXT_FLAGS] = (stored.expose()[OFF_EXT_FLAGS]
                 & !EXTFLAG_UPDATE_MASK)
-                | (data[OFF_EXT_FLAGS] & EXTFLAG_UPDATE_MASK);
+                | (cfg[OFF_EXT_FLAGS] & EXTFLAG_UPDATE_MASK);
             merged.expose_mut()[OFF_TKT_FLAGS] = (stored.expose()[OFF_TKT_FLAGS]
                 & !TKTFLAG_UPDATE_MASK)
-                | (data[OFF_TKT_FLAGS] & TKTFLAG_UPDATE_MASK);
+                | (cfg[OFF_TKT_FLAGS] & TKTFLAG_UPDATE_MASK);
             merged.expose_mut()[OFF_CFG_FLAGS] =
                 if stored.expose()[OFF_TKT_FLAGS] & TKT_CHAL_RESP == 0 {
                     (stored.expose()[OFF_CFG_FLAGS] & !CFGFLAG_UPDATE_MASK)
-                        | (data[OFF_CFG_FLAGS] & CFGFLAG_UPDATE_MASK)
+                        | (cfg[OFF_CFG_FLAGS] & CFGFLAG_UPDATE_MASK)
                 } else {
                     stored.expose()[OFF_CFG_FLAGS]
                 };
@@ -581,15 +602,22 @@ impl<'a> OtpApplet<'a> {
             // The standard `ykman otp swap` frame: a bare 6-byte access code, no
             // slot-offset bytes → swap the default slots 1↔2 with it. Missing this
             // arm rejected the real swap as WRONG_LENGTH (ykman: "Failed to write").
-            code.expose_mut()
-                .copy_from_slice(&apdu.data[..ACC_CODE_SIZE]);
+            let Some(presented) = apdu.data.first_chunk::<ACC_CODE_SIZE>() else {
+                return Sw::WRONG_LENGTH;
+            };
+            code.expose_mut().copy_from_slice(presented);
         } else if apdu.nc == 2 || apdu.nc == 2 + ACC_CODE_SIZE {
             // RS-Key's 4-slot extension: [a,b] offsets, optionally + a 6-byte code.
-            fid1 += apdu.data[0] as u16;
-            fid2 += apdu.data[1] as u16;
+            let Some((&[a, b], rest)) = apdu.data.split_first_chunk::<2>() else {
+                return Sw::WRONG_LENGTH;
+            };
+            fid1 += u16::from(a);
+            fid2 += u16::from(b);
             if apdu.nc == 2 + ACC_CODE_SIZE {
-                code.expose_mut()
-                    .copy_from_slice(&apdu.data[2..2 + ACC_CODE_SIZE]);
+                let Some(presented) = rest.first_chunk::<ACC_CODE_SIZE>() else {
+                    return Sw::WRONG_LENGTH;
+                };
+                code.expose_mut().copy_from_slice(presented);
             }
         } else if apdu.nc != 0 {
             return Sw::WRONG_LENGTH;
@@ -659,8 +687,11 @@ impl<'a> OtpApplet<'a> {
     /// P1 = 0x14: per-slot flag/fixed-part TLVs (extended status).
     fn cmd_status_ext<S: Storage>(&mut self, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         let mut slot = SlotRecord::vacant();
-        for i in 0..SLOT_COUNT as u16 {
-            if self.read_slot_m(fs, EF_OTP_SLOT1 + i, &mut slot).is_none() {
+        for i in 0..SLOT_COUNT {
+            if self
+                .read_slot_m(fs, EF_OTP_SLOT1 + u16::from(i), &mut slot)
+                .is_none()
+            {
                 continue;
             }
             let tkt = slot.expose()[OFF_TKT_FLAGS];
@@ -669,7 +700,7 @@ impl<'a> OtpApplet<'a> {
             let plain_otp = !(cfg & CFG_CHAL_YUBICO != 0 && tkt & TKT_CHAL_RESP != 0)
                 && tkt & TKT_OATH_HOTP == 0
                 && cfg & (CFG_SHORT_TICKET | CFG_STATIC_TICKET) == 0;
-            res.push(0xB0 + i as u8);
+            res.push(0xB0 + i);
             res.push(if plain_otp { 4 + 8 } else { 4 });
             res.push(0xA0);
             res.push(2);
@@ -718,7 +749,9 @@ impl<'a> OtpApplet<'a> {
         {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         if apdu.p1 == P1_CHAL_HMAC_SLOT1 || apdu.p1 == P1_CHAL_HMAC_SLOT2 {
             // CFG_CHAL_HMAC is a TWO-bit mask (CHAL_YUBICO | 0x02) — Yubico decides
             // the mode with both bits because TKT_OATH_HOTP and TKT_CHAL_RESP are
@@ -729,9 +762,9 @@ impl<'a> OtpApplet<'a> {
             if cfg & CFG_CHAL_HMAC != CFG_CHAL_HMAC {
                 return SW_WRONG_DATA;
             }
-            if data.len() < hid::PAYLOAD_SIZE {
+            let Some(chal) = data.first_chunk::<{ hid::PAYLOAD_SIZE }>() else {
                 return Sw::WRONG_LENGTH;
-            }
+            };
             // HMAC key = AES field + all 6 UID bytes (22 total). HMAC zero-pads
             // keys, so with the zero UID tail this equals the 20-byte-key HMAC.
             let mut key = Secret::<[u8; KEY_SIZE + UID_SIZE]>::zeroed();
@@ -743,11 +776,13 @@ impl<'a> OtpApplet<'a> {
             // byte; trim that padding back off.
             let mut chal_len = hid::PAYLOAD_SIZE;
             if cfg & CFG_HMAC_LT64 != 0 {
-                while chal_len > 0 && data[chal_len - 1] == data[hid::PAYLOAD_SIZE - 1] {
-                    chal_len -= 1;
-                }
+                let pad = chal[hid::PAYLOAD_SIZE - 1];
+                chal_len = chal.iter().rposition(|&b| b != pad).map_or(0, |i| i + 1);
             }
-            res.extend(&hmac_sha1(key.expose(), &data[..chal_len]));
+            res.extend(&hmac_sha1(
+                key.expose(),
+                chal.get(..chal_len).unwrap_or_default(),
+            ));
         } else {
             // Mirror of the mask above: an OATH-HOTP slot sets 0x02 without
             // CHAL_YUBICO's 0x20, but a chal-resp slot in HMAC mode sets both — so
@@ -755,12 +790,12 @@ impl<'a> OtpApplet<'a> {
             if cfg & CFG_CHAL_YUBICO == 0 || cfg & CFG_OATH_HOTP8 != 0 {
                 return SW_WRONG_DATA;
             }
-            if data.len() < 6 {
+            let Some(chal) = data.first_chunk::<6>() else {
                 return Sw::WRONG_LENGTH;
-            }
+            };
             // Challenge block = 6 host bytes + 10 chars of the serial string.
             let mut block = [0u8; 16];
-            block[..6].copy_from_slice(&data[..6]);
+            block[..6].copy_from_slice(chal);
             block[6..].copy_from_slice(&self.serial_str10());
             let mut key = Secret::<[u8; KEY_SIZE]>::zeroed();
             key.expose_mut()
@@ -811,18 +846,16 @@ impl<'a> OtpApplet<'a> {
     /// blob is a no-op. Absent under `strict-config` (falls to the bare-OK swallow).
     #[cfg(not(feature = "strict-config"))]
     fn cmd_set_device_info<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
-        let data = apdu.data;
-        if data.is_empty() {
+        let Some((&len, rest)) = apdu.data.split_first() else {
             return Sw::OK;
-        }
-        let len = data[0] as usize;
+        };
         if len == 0 {
             return Sw::OK; // no config bytes → nothing to persist (status frame only)
         }
-        if 1 + len > data.len() {
+        let Some(conf) = rest.get(..usize::from(len)) else {
             return Sw::WRONG_DATA;
-        }
-        match rsk_devconf::persist_dev_conf(fs, &data[1..1 + len]) {
+        };
+        match rsk_devconf::persist_dev_conf(fs, conf) {
             Ok(()) => {
                 // ykman/yubikit confirm an OTP-transport write by the program-
                 // sequence byte in the status frame advancing (`_is_sequence_updated`),
@@ -843,9 +876,9 @@ impl<'a> OtpApplet<'a> {
     /// this USB-only board. Absent under `strict-config`.
     #[cfg(not(feature = "strict-config"))]
     fn cmd_device_config<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
-        let n = apdu.data.len().min(EF_OTP_DEVCFG_MAX);
-        if n != 0 {
-            let _ = fs.put(EF_OTP_DEVCFG, &apdu.data[..n]);
+        let body = apdu.data.get(..EF_OTP_DEVCFG_MAX).unwrap_or(apdu.data);
+        if !body.is_empty() {
+            let _ = fs.put(EF_OTP_DEVCFG, body);
             self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         }
         Sw::OK
@@ -856,8 +889,8 @@ impl<'a> OtpApplet<'a> {
     /// `strict-config`.
     #[cfg(not(feature = "strict-config"))]
     fn cmd_ndef<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>, slot2: bool) -> Sw {
-        let n = apdu.data.len().min(EF_OTP_NDEF_MAX);
-        if n == 0 {
+        let body = apdu.data.get(..EF_OTP_NDEF_MAX).unwrap_or(apdu.data);
+        if body.is_empty() {
             return Sw::OK;
         }
         // Same gate as SCAN_MAP, and for the same reason (audit run-34 #22, swept to
@@ -865,15 +898,14 @@ impl<'a> OtpApplet<'a> {
         // and a device-global write must satisfy EVERY programmed slot's code — it
         // is otherwise only as protected as the least-protected slot.
         let mut code = Secret::<[u8; ACC_CODE_SIZE]>::zeroed();
-        if apdu.data.len() >= n + ACC_CODE_SIZE {
-            code.expose_mut()
-                .copy_from_slice(&apdu.data[n..n + ACC_CODE_SIZE]);
+        if let Some(presented) = apdu.data.get(body.len()..body.len() + ACC_CODE_SIZE) {
+            code.expose_mut().copy_from_slice(presented);
         }
         if !self.code_clears_every_slot(fs, code.expose()) {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let fid = if slot2 { EF_OTP_NDEF2 } else { EF_OTP_NDEF1 };
-        let _ = fs.put(fid, &apdu.data[..n]);
+        let _ = fs.put(fid, body);
         self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         Sw::OK
     }
@@ -889,18 +921,17 @@ impl<'a> OtpApplet<'a> {
     #[cfg(not(feature = "strict-config"))]
     fn cmd_scan_map<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
         let data = apdu.data;
-        if data.len() < SCANMAP_LEN {
+        let Some(map) = data.first_chunk::<SCANMAP_LEN>() else {
             return Sw::OK;
-        }
+        };
         let mut code = Secret::<[u8; ACC_CODE_SIZE]>::zeroed();
-        if data.len() >= SCANMAP_LEN + ACC_CODE_SIZE {
-            code.expose_mut()
-                .copy_from_slice(&data[SCANMAP_LEN..SCANMAP_LEN + ACC_CODE_SIZE]);
+        if let Some(presented) = data.get(SCANMAP_LEN..SCANMAP_LEN + ACC_CODE_SIZE) {
+            code.expose_mut().copy_from_slice(presented);
         }
         if !self.code_clears_every_slot(fs, code.expose()) {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let _ = fs.put(EF_OTP_SCANMAP, &data[..SCANMAP_LEN]);
+        let _ = fs.put(EF_OTP_SCANMAP, map);
         self.config_seq = self.config_seq.wrapping_add(1); // pgmSeq bump (see cmd_set_device_info)
         Sw::OK
     }
@@ -915,7 +946,7 @@ impl<'a> OtpApplet<'a> {
         fs: &mut Fs<S>,
         code: &[u8; ACC_CODE_SIZE],
     ) -> bool {
-        for i in 0..SLOT_COUNT as u16 {
+        for i in 0..u16::from(SLOT_COUNT) {
             let mut rec = SlotRecord::vacant();
             // A slot the medium could not read is not an unprotected one, and this
             // gate is the only thing between a host and what a protected slot
@@ -952,7 +983,9 @@ impl<'a> OtpApplet<'a> {
             return false;
         }
         for c in buf.iter_mut() {
-            *c = scanmap_scancode(&map, *c).unwrap();
+            if let Some(code) = scanmap_scancode(&map, *c) {
+                *c = code;
+            }
         }
         true
     }
@@ -965,7 +998,10 @@ fn scanmap_scancode(map: &[u8], ch: u8) -> Option<u8> {
     if map.len() < SCANMAP_LEN {
         return None;
     }
-    YUBICO_CHARSET.iter().position(|&c| c == ch).map(|i| map[i])
+    YUBICO_CHARSET
+        .iter()
+        .position(|&c| c == ch)
+        .and_then(|i| map.get(i).copied())
 }
 
 /// YK2 STATUS: the status record SELECT answers. yubikit reads it after the NDEF
@@ -1032,7 +1068,7 @@ pub(crate) fn try_read_slot<S: Storage>(
 /// keydev/PIV/seed) keeps an OTP burn from orphaning a slot provisioned before it.
 pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
     let mut rec = SlotRecord::vacant();
-    for i in 0..SLOT_COUNT as u16 {
+    for i in 0..u16::from(SLOT_COUNT) {
         let fid = EF_OTP_SLOT1 + i;
         if rec.read(dev, fs, fid).is_some() {
             continue; // already sealed under the current arm
@@ -1089,7 +1125,7 @@ const BUMP_TRIES: u8 = 3;
 /// at startup.
 pub fn power_up_bump<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
     let mut slot = SlotRecord::vacant();
-    for i in 0..SLOT_COUNT as u16 {
+    for i in 0..u16::from(SLOT_COUNT) {
         let fid = EF_OTP_SLOT1 + i;
         // A read the medium REFUSED is not an unprogrammed slot: skipping it
         // leaves the use counter where the last power cycle left it, while the RAM
@@ -1150,4 +1186,12 @@ fn check_crc(config: &[u8]) -> bool {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 mod tests;

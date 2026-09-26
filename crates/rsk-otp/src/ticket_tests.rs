@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+use crate::CONFIG_SIZE;
 use crate::tests_support::*;
 
 /// A slot record as stored: `cfg`, then `tail`.

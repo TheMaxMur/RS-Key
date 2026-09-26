@@ -35,6 +35,14 @@ pub(crate) fn boot_use_counter(stored: u16) -> Option<u16> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "counter_tests.rs"]
 mod tests;
 
