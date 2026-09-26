@@ -136,8 +136,8 @@ LockCodeWrite ==
 
 (***************************************************************************)
 (* A PRIVILEGED RESCUE COMMAND. crates/rsk-rescue/src/lib.rs -- keydev_sign   *)
-(* (:173), write cert (:219), write config (:239), reboot-to-BOOTSEL (:363),  *)
-(* the page-58 / rollback fuse burns (:413). Each completes only on a         *)
+(* (:179), write cert (:230), write config (:250), reboot-to-BOOTSEL (:374),  *)
+(* the page-58 / rollback fuse burns (:424). Each completes only on a         *)
 (* Confirmed operator presence; a USB host alone (Denied / Timeout) must not   *)
 (* drive it. `present` is the presence request's answer, nondeterministic     *)
 (* here -- the presence machinery is RSKeySecurityState's, this is only       *)

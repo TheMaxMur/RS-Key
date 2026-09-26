@@ -401,7 +401,7 @@ HostCancel ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:416, :519), not around
+\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:416, :515), not around
 \* the touch wait, so Arbiter::request_cancel accepts a cancel during a FIDO
 \* command that never opens one -- getInfo, a denied CBOR, getAssertion up:false.
 \* Nothing clears `cancel_requested` when that dispatch ends, so the latch
