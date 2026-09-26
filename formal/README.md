@@ -1882,7 +1882,7 @@ what the registry refuses:
   completes only through the card that names it. The PIN pad cannot substitute:
   its title is `'static`, *never* RP data
   (`crates/rsk-fido/src/clientpin.rs:554-555`, consumed at
-  `getassertion.rs:671-672`, `makecredential.rs:727-728`, `u2f.rs:94`);
+  `getassertion.rs:671-672`, `makecredential.rs:727-728`, `u2f.rs:106`);
 - `StaleTouchApprovesNothing` — the touch controller reports *level, not
   edges*, so a finger already down when the card paints would read as a tap on
   it; the release edge is the whole defence, and it is two layers — the ambient

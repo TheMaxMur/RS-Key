@@ -759,7 +759,7 @@ formal/README.md	crates/rsk-fido/src/state.rs	694-707	/// Expire an in-use token
 formal/README.md	crates/rsk-fido/src/state.rs	718-724	pub fn expire_stale_sequences(&mut self, now_ms: u64) {	}
 formal/README.md	crates/rsk-fido/src/state_tests.rs	119-119	assert_eq!(st.pin_lock(), LOCKED);	assert_eq!(st.pin_lock(), LOCKED);
 formal/README.md	crates/rsk-fido/src/state_tests.rs	134-134	assert_eq!(st.pin_lock().mismatches, 2);	assert_eq!(st.pin_lock().mismatches, 2);
-formal/README.md	crates/rsk-fido/src/u2f.rs	94-94	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
+formal/README.md	crates/rsk-fido/src/u2f.rs	106-106	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
 formal/README.md	crates/rsk-fido/src/vendor.rs	577-606	fn unlock<S: Storage, R: Rng>(	None => Err(CtapError::InvalidParameter),
 formal/README.md	crates/rsk-fido/src/vendor.rs	958-970	fn backup_finalize<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {	.map_err(|_| CtapError::Other)?;
 formal/README.md	crates/rsk-fs/src/fs.rs	234-234	self.decided[i] |= m;	self.decided[i] |= m;
@@ -1119,7 +1119,7 @@ formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	192-192	// a r
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/clientpin.rs	554-555	pub fn needs_confirm(self, shows_confirm: bool) -> bool {	!self.up_collected || shows_confirm
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/getassertion.rs	671-672	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/makecredential.rs	727-728	let ask = verified	.needs_confirm(ctx.presence.shows_confirm())
-formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/u2f.rs	94-94	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
+formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/u2f.rs	106-106	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
 formal/RSKeyTrustedDisplay.tla	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
 formal/TraceSecurity.tla	crates/rsk-fido/src/clientpin.rs	627-627	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
 formal/TraceSecurity.tla	crates/rsk-fido/src/config.rs	312-312	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");

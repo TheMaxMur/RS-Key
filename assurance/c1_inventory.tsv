@@ -485,7 +485,7 @@ encode_body	crates/rsk-fido/src/credential.rs:303	64	marshals	M	CBOR encoding of
 try_format	crates/rsk-fido/src/credential.rs:368	37	decides	D2	poly1305 tag check under AAD=rpIdHash: its res.ok()? is exactly the moment the plaintext becomes reachable	SEC-FIDO-004
 verify_decrypt	crates/rsk-fido/src/credential.rs:399	56	decides	D2	selects the key label — for the oldest format it takes it FROM THE WIRE (cred_id[..4]), i.e. decides which key to open with	SEC-FIDO-004
 credential_load	crates/rsk-fido/src/credential.rs:448	35	decides	D2	Some(..) means "this credential belongs to this rp on this device"; the U2F branch authorizes by the verify_key MAC	SEC-FIDO-004
-parse_body	crates/rsk-fido/src/credential.rs:484	45	decides	D5	the default credProtect is set here (field absent → 0), and that is the condition of the uv gate in getassertion.rs:270 and u2f.rs:266	SEC-FIDO-001
+parse_body	crates/rsk-fido/src/credential.rs:484	45	decides	D5	the default credProtect is set here (field absent → 0), and that is the condition of the uv gate in getassertion.rs:270 and u2f.rs:282	SEC-FIDO-001
 resident_keys_off_id	crates/rsk-fido/src/credential.rs:563	8	decides	D5	decides what the signing key is derived from — the stable resident id or the box	-
 resident_has_trailer	crates/rsk-fido/src/credential.rs:572	6	decides	M	record layout test: whether there is a prefix with the cached point	-
 resident_key_input	crates/rsk-fido/src/credential.rs:603	23	decides	D2	returns the key-derivation input: exactly which key answers for the signature, hmac-secret and largeBlobKey	SEC-FIDO-004
