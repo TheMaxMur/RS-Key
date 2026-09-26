@@ -77,6 +77,8 @@ embassy-usb = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 # device_tests.rs reads a slot back through rsk-otp's seal, which unseals only
 # into a Secret.
 rsk-secret = { path = "../../crates/rsk-secret" }
+# ...and seeds one through it, which seals only a SlotRecord.
+rsk-otp = { path = "../../crates/rsk-otp", features = ["test-util"] }
 
 [workspace]
 

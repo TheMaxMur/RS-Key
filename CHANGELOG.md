@@ -692,6 +692,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **An OTP slot's use counter moves only by the record's own methods** —
+  refactor; the same bytes reach flash for every command. `rsk-otp`'s slot
+  record is a type, `SlotRecord`, whose tail (the Yubico-OTP use counter or the
+  OATH-HOTP moving factor) is private: it is read from a slot, zeroed by a
+  CONFIGURE, carried by an UPDATE, or moved by a press or the boot bump, and
+  `seal::seal_put` seals a record and nothing else. The
+  gate that listed the sites persisting a record,
+  `scripts/counter_writers_gate.py`, is gone with its ledger.
+  `bcdDevice` 0x0A30 → 0x0A31.
+
 - **The counter partition's FIDs are written once** — refactor; the records stay
   where they are on flash. `rsk-fs` declares the four counters (FIDO's global
   and per-credential signature counters, OpenPGP's signature counter, the vendor

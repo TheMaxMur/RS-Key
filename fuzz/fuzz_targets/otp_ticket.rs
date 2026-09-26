@@ -17,7 +17,7 @@ use rsk_fs::storage::ram::RamStorage;
 use rsk_fs::{Fs, KeyFid};
 use rsk_otp::seal::seal_put;
 use rsk_otp::ticket::MAX_TICKET;
-use rsk_otp::{AlwaysConfirm, OtpApplet, Rng, power_up_bump};
+use rsk_otp::{AlwaysConfirm, OtpApplet, Rng, SlotRecord, power_up_bump};
 
 /// First OTP slot FID (crate-private `EF_OTP_SLOT1`; the four slots are 0xBB00..=0xBB03).
 const SLOT1_FID: u16 = 0xBB00;
@@ -63,7 +63,7 @@ fuzz_target!(|data: &[u8]| {
             &mut fs,
             &mut seed_rng,
             KeyFid::new(SLOT1_FID + slot),
-            &rec,
+            &SlotRecord::from_bytes(&rec).expect("a full record"),
         );
     }
 

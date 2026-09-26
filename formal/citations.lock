@@ -519,7 +519,7 @@ assurance/platform.toml	crates/rsk-oath/src/seal.rs	47-47	pub fn seal_put<S: Sto
 assurance/platform.toml	crates/rsk-openpgp/src/pin.rs	302-302	if let Err(sw) = migrate_pin_kbase(dev, fs, rng, fid, data) {	if let Err(sw) = migrate_pin_kbase(dev, fs, rng, fid, data) {
 assurance/platform.toml	crates/rsk-openpgp/src/pin.rs	367-367	if n < 1 || blob[0] != DEK_FORMAT_V3 {	if n < 1 || blob[0] != DEK_FORMAT_V3 {
 assurance/platform.toml	crates/rsk-openpgp/src/pin.rs	814-814	rec.expose_mut()[1] = PIN_FORMAT_V1;	rec.expose_mut()[1] = PIN_FORMAT_V1;
-assurance/platform.toml	crates/rsk-otp/src/seal.rs	60-60	pub fn seal_put<S: Storage>(	pub fn seal_put<S: Storage>(
+assurance/platform.toml	crates/rsk-otp/src/seal.rs	61-61	pub fn seal_put<S: Storage>(	pub fn seal_put<S: Storage>(
 assurance/platform.toml	crates/rsk-piv/src/lib.rs	1348-1348	// kbase-migration fallback: the correct PIN against a verifier stored	// kbase-migration fallback: the correct PIN against a verifier stored
 assurance/platform.toml	crates/rsk-store/src/lib.rs	143-150	/// Removes from BOTH partitions, not just the one [`is_counter_fid`] routes to.	/// the second call finds nothing and costs one ring walk.
 assurance/platform.toml	crates/rsk-store/src/lib.rs	177-179	let main_done = for_each_in(&mut self.main, &mut self.buf, f);	main_done && counter_done
@@ -860,15 +860,15 @@ formal/RSKeyAdminSurface.tla	crates/rsk-sdk/src/applet.rs	203-205	pub fn set_ena
 formal/RSKeyAppletPolicies.tla	crates/rsk-oath/src/lib.rs	603-635	// gated here, before the HOTP counter burns.	fs,
 formal/RSKeyAppletPolicies.tla	crates/rsk-openpgp/src/keypairgen.rs	123-166	let priv_fid = slot_algo_fid(fid);	// sibling reader `info::slot_algo` has the same `attr.len() >= 3` gate.
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/counter.rs	16-26	pub(crate) fn next_use_counter(counter: u16, session: u8) -> (u16, u8, bool) {	}
-formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	334-349	// The advance this press owes the PERSISTED half of the position. A	}
-formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	463-480	// A slot the medium could not read is not an unprogrammed one: the fold	}
-formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	525-539	// An absent slot is updated by doing nothing, under an OK — so a read the	}
-formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	619-627	// The access code gates a swap's move/delete just as it gates	}
-formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	623-627	let unmatched =	}
-formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	655-661	// The replay position is a PAIR — the record's persisted use counter and	);
-formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	1107-1152	pub fn power_up_bump<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {	}
-formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/tests.rs	1487-1487	fn configure_does_not_rewind_the_session_counter() {	fn configure_does_not_rewind_the_session_counter() {
-formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/ticket.rs	168-168	let (counter, new_session, bumped) = next_use_counter(counter, session);	let (counter, new_session, bumped) = next_use_counter(counter, session);
+formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	332-347	// The advance this press owes the PERSISTED half of the position. A	}
+formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	461-478	// A slot the medium could not read is not an unprogrammed one: the fold	}
+formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	523-537	// An absent slot is updated by doing nothing, under an OK — so a read the	}
+formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	612-620	// The access code gates a swap's move/delete just as it gates	}
+formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	616-620	let unmatched =	}
+formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	648-654	// The replay position is a PAIR — the record's persisted use counter and	);
+formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/lib.rs	1090-1128	pub fn power_up_bump<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {	}
+formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/record.rs	135-135	let (counter, new_session, bumped) = counter::next_use_counter(typed, session);	let (counter, new_session, bumped) = counter::next_use_counter(typed, session);
+formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/tests.rs	1510-1510	fn configure_does_not_rewind_the_session_counter() {	fn configure_does_not_rewind_the_session_counter() {
 formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	58-66	fn pin_satisfied(sess: &Session, pinpol: u8) -> bool {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	114-118	/// Refines `RSKeyAppletPolicies!PivAlwaysSpendsFreshness` — SEC-POL-002.	}
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	97-115	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
@@ -1163,15 +1163,15 @@ formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	358-361	fn select(&mut self,
 formal/comutants.toml	crates/rsk-openpgp/src/pin.rs	259-263	if idx < n && pw[idx] == 0 {	let mut rec = [0u8; 64];
 formal/comutants.toml	crates/rsk-openpgp/src/pin.rs	946-946	let sw = check_pin(dev, fs, sess, rng, EF_RC, p2, &data[..rc_len]);	let sw = check_pin(dev, fs, sess, rng, EF_RC, p2, &data[..rc_len]);
 formal/comutants.toml	crates/rsk-otp/src/counter_tests.rs	9-9	assert_eq!(next_use_counter(5, 0), (5, 1, false));	assert_eq!(next_use_counter(5, 0), (5, 1, false));
-formal/comutants.toml	crates/rsk-otp/src/lib.rs	623-627	let unmatched =	}
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	1407-1407	assert!(	assert!(
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	1416-1416	fn swap_carries_the_session_counter_with_its_record() {	fn swap_carries_the_session_counter_with_its_record() {
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	1988-1988	assert_eq!(	assert_eq!(
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2127-2127	fn a_press_types_nothing_when_it_cannot_persist_the_counter() {	fn a_press_types_nothing_when_it_cannot_persist_the_counter() {
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2164-2164	assert!(	assert!(
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2179-2179	assert_eq!(pos, (*pid, 1, 255), "the wrap press did not resume");	assert_eq!(pos, (*pid, 1, 255), "the wrap press did not resume");
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2187-2187	fn boot_bump_retries_a_refused_write_and_pins_what_it_cannot_close() {	fn boot_bump_retries_a_refused_write_and_pins_what_it_cannot_close() {
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2220-2220	assert_ne!(	assert_ne!(
+formal/comutants.toml	crates/rsk-otp/src/lib.rs	616-620	let unmatched =	}
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	1430-1430	assert!(	assert!(
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	1439-1439	fn swap_carries_the_session_counter_with_its_record() {	fn swap_carries_the_session_counter_with_its_record() {
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2011-2011	assert_eq!(	assert_eq!(
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2150-2150	fn a_press_types_nothing_when_it_cannot_persist_the_counter() {	fn a_press_types_nothing_when_it_cannot_persist_the_counter() {
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2187-2187	assert!(	assert!(
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2202-2202	assert_eq!(pos, (*pid, 1, 255), "the wrap press did not resume");	assert_eq!(pos, (*pid, 1, 255), "the wrap press did not resume");
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2210-2210	fn boot_bump_retries_a_refused_write_and_pins_what_it_cannot_close() {	fn boot_bump_retries_a_refused_write_and_pins_what_it_cannot_close() {
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2243-2243	assert_ne!(	assert_ne!(
 formal/comutants.toml	crates/rsk-piv/src/auth.rs	63-63	PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,	PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,
 formal/comutants.toml	crates/rsk-piv/src/auth.rs	115-119	fn spend_pin(&mut self) {	}
 formal/comutants.toml	crates/rsk-piv/src/keygen.rs	703-703	if !sess.has_mgm {	if !sess.has_mgm {
@@ -1193,7 +1193,7 @@ scripts/bcd_gate.py	scripts/fuzz-coverage.sh	39-41	# A literal, not `${FUZZ_TARG
 scripts/comutate.py	crates/rsk-fido/src/state.rs	467-470	pub fn restore_pin_lock(&mut self, lock: PinLock) {	}
 scripts/ct_gate.py	crates/rsk-bench/src/lib.rs	12-12	//! bigger than the 16 KB XIP cache, so which lines collide and evict depends on	//! bigger than the 16 KB XIP cache, so which lines collide and evict depends on
 scripts/ct_gate.py	crates/rsk-crypto/src/mac.rs	55-55	if a.len() != b.len() {	if a.len() != b.len() {
-scripts/ct_gate.py	crates/rsk-otp/src/lib.rs	729-729	if apdu.p1 == P1_CHAL_HMAC_SLOT1 || apdu.p1 == P1_CHAL_HMAC_SLOT2 {	if apdu.p1 == P1_CHAL_HMAC_SLOT1 || apdu.p1 == P1_CHAL_HMAC_SLOT2 {
+scripts/ct_gate.py	crates/rsk-otp/src/lib.rs	722-722	if apdu.p1 == P1_CHAL_HMAC_SLOT1 || apdu.p1 == P1_CHAL_HMAC_SLOT2 {	if apdu.p1 == P1_CHAL_HMAC_SLOT1 || apdu.p1 == P1_CHAL_HMAC_SLOT2 {
 scripts/narrow_gate.py	crates/rsk-device/src/presence.rs	196-196	arb.set_cancel_requested(false);	arb.set_cancel_requested(false);
 scripts/security_trace.py	crates/rsk-fido/src/clientpin.rs	136-136	match req.subcommand {	match req.subcommand {
 scripts/security_trace.py	crates/rsk-fido/src/config.rs	247-247	ctx.state.mark_token_used(ctx.now_ms);	ctx.state.mark_token_used(ctx.now_ms);

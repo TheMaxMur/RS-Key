@@ -26,7 +26,8 @@ rsk-rsa = { path = "../crates/rsk-rsa" }
 rsk-devconf = { path = "../crates/rsk-devconf", features = ["test-util"] }
 rsk-mgmt = { path = "../crates/rsk-mgmt" }
 rsk-oath = { path = "../crates/rsk-oath" }
-rsk-otp = { path = "../crates/rsk-otp" }
+# test-util: SlotRecord::from_bytes, the one way to seal a record the fuzzer chose.
+rsk-otp = { path = "../crates/rsk-otp", features = ["test-util"] }
 # otp_slot_seal reads a slot back through rsk-otp's seal, which unseals only
 # into a Secret.
 rsk-secret = { path = "../crates/rsk-secret" }

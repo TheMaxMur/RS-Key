@@ -2,8 +2,8 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! The Yubico-OTP use-counter rule, in one place, so the 15-bit ceiling is not
-//! enforced two different ways. Only some writers of the counter step through
-//! here; `assurance/otp_counter_writers.toml` is the derived roster of which.
+//! enforced two different ways. Only [`SlotRecord`](crate::SlotRecord)'s methods write a
+//! record's counter; its press (after promoting an unused one) and boot bump step here.
 
 use crate::USE_COUNTER_MAX;
 

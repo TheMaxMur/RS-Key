@@ -21,6 +21,10 @@ kani-soft = ["rsk-crypto/kani-soft"]
 # OTP-HID admin writes (SET_DEVICE_INFO/DEVICE_CONFIG/SCAN_MAP/NDEF) as a real
 # YubiKey does; `--features strict-config` restores today's silent-OK no-op.
 strict-config = []
+# `SlotRecord::from_bytes`, for the fuzz targets and the emulator's tests, which
+# seed a slot as it was stored. Never in the firmware: it is the one way to pick a
+# record's tail.
+test-util = []
 
 [dependencies]
 rsk-sdk = { workspace = true }

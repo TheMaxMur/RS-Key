@@ -85,6 +85,11 @@ fn build_config(
     c
 }
 
+/// A legacy record: `cfg` alone, stored as it was before the counter tail.
+fn record(cfg: &[u8]) -> SlotRecord {
+    SlotRecord::from_bytes(cfg).unwrap()
+}
+
 /// HMAC-SHA1 challenge-response config (the `ykman otp chalresp` layout):
 /// 16 key bytes in the AES field, 4 in the UID head.
 fn chalresp_config(key20: &[u8; 20], acc: &[u8; 6], cfg_extra: u8) -> [u8; CONFIG_SIZE] {
@@ -124,10 +129,16 @@ fn slot_sealed_before_otp_burn_survives_the_burn() {
     // Seal a real config under the pre-OTP (NO-OTP) arm.
     let cfg = chalresp_config(&[0xAB; 20], &[0; 6], 0);
     let fid = KeyFid::new(EF_OTP_SLOT1);
-    assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, &cfg));
+    assert!(seal::seal_put(
+        &nootp,
+        &mut fs,
+        &mut rng,
+        fid,
+        &record(&cfg)
+    ));
 
     // The OTP-armed device cannot read it yet (different kbase)…
-    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
+    let mut buf = SlotRecord::vacant();
     assert!(
         try_read_slot(&otp, &mut fs, EF_OTP_SLOT1, &mut buf)
             .unwrap()
@@ -171,13 +182,19 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_slot() {
     let cfg = chalresp_config(&[0xAB; 20], &[0; 6], 0);
     let fid = KeyFid::new(EF_OTP_SLOT1);
     let mut rng = CountRng(7);
-    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
+    let mut buf = SlotRecord::vacant();
 
     // The ORDER, on the one medium that can tell the two orderings apart.
     let (cut, medium) = Cut::new();
     let mut fs = Fs::new(cut);
     fs.scan();
-    assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, &cfg));
+    assert!(seal::seal_put(
+        &nootp,
+        &mut fs,
+        &mut rng,
+        fid,
+        &record(&cfg)
+    ));
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     assert!(
         fs.has_data(rsk_fs::EF_HARDENED),
@@ -196,7 +213,13 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_slot() {
     let (stuck, medium) = RemoveStuck::new();
     let mut fs = Fs::new(stuck);
     fs.scan();
-    assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, &cfg));
+    assert!(seal::seal_put(
+        &nootp,
+        &mut fs,
+        &mut rng,
+        fid,
+        &record(&cfg)
+    ));
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
     migrate_seal(&otp, &mut fs, &mut rng);
@@ -675,7 +698,7 @@ fn update_validates_slot_bounds_crc_and_rfu() {
     let upd = build_config(b"public", &[3; 6], &[4; 16], &[0; 6], 0, 0x02, 0);
     let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 1, &with_acc(&upd)));
     assert_eq!(sw, Sw::OK);
-    let mut stored = Secret::<[u8; SLOT_SIZE]>::zeroed();
+    let mut stored = SlotRecord::vacant();
     app.read_slot_m(&mut fs, EF_OTP_SLOT1 + 1, &mut stored)
         .expect("the update must land on the slot its P2 names");
     assert_eq!(stored.expose()[OFF_TKT_FLAGS], 0x02);
@@ -747,7 +770,7 @@ fn update_replaces_the_whole_ext_flag_byte() {
     let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 0, &d));
     assert_eq!(sw, Sw::OK);
 
-    let mut stored = Secret::<[u8; SLOT_SIZE]>::zeroed();
+    let mut stored = SlotRecord::vacant();
     app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut stored)
         .expect("the slot is configured");
     assert_eq!(
@@ -788,7 +811,7 @@ fn update_preserves_use_counter_tail() {
     for _ in 0..3 {
         power_up_bump(&dev, &mut fs, &mut bump_rng);
     }
-    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
+    let mut buf = SlotRecord::vacant();
     let n = try_read_slot(&dev, &mut fs, EF_OTP_SLOT1, &mut buf)
         .unwrap()
         .unwrap();
@@ -1559,7 +1582,7 @@ fn configure_f<S: Storage>(
 /// observation reads the RECORD and not a status bit: `status()` is recomputed
 /// off the same flash the command could not read.
 fn slot_fixed<S: Storage>(app: &OtpApplet, fs: &mut Fs<S>, fid: u16) -> Option<[u8; 6]> {
-    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
+    let mut buf = SlotRecord::vacant();
     let n = app.read_slot_m(fs, fid, &mut buf)?;
     assert!(n >= CONFIG_SIZE);
     let mut pid = [0u8; 6];
@@ -1741,7 +1764,7 @@ fn update_reports_a_slot_it_could_not_read() {
     let sw = run_f(&mut app, &mut fs, &otp_apdu(0x04, 0, &d));
     medium.stick(None);
 
-    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
+    let mut buf = SlotRecord::vacant();
     app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut buf).unwrap();
     assert_eq!(
         buf.expose()[OFF_TKT_FLAGS],
@@ -1948,7 +1971,7 @@ fn scan_map_refuses_a_slot_it_could_not_read() {
 
 /// The stored use counter of slot 1, read with the fault disarmed.
 fn stored_use_counter(dev: &Device, fs: &mut Fs<ProbeStuck>) -> u16 {
-    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
+    let mut buf = SlotRecord::vacant();
     let n = try_read_slot(dev, fs, EF_OTP_SLOT1, &mut buf)
         .unwrap()
         .unwrap();
@@ -2004,7 +2027,7 @@ fn power_up_bump_retries_a_slot_the_medium_refused() {
     medium.stick_once(EF_OTP_SLOT2);
     power_up_bump(&dev, &mut fs, &mut bump_rng);
     medium.stick(None);
-    let mut buf = Secret::<[u8; SLOT_SIZE]>::zeroed();
+    let mut buf = SlotRecord::vacant();
     try_read_slot(&dev, &mut fs, EF_OTP_SLOT2, &mut buf)
         .unwrap()
         .unwrap();
@@ -2278,4 +2301,103 @@ fn yk2_status_answers_the_select_status() {
         let (_, status) = run(&mut app, &mut fs, &[0x00, INS_YK2_STATUS, 0x00, 0x00]);
         assert_eq!(status[3], selected[3] + 1, "the programming sequence");
     }
+}
+
+#[test]
+fn a_legacy_hotp_slot_types_a_new_code_on_every_press() {
+    // A 52-byte record is what an UPDATE left before the tail was carried. Its
+    // first press must store the whole record, or the next one reads the old tail
+    // back and types the same code again.
+    let mut fs = new_fs();
+    let dev = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let cfg = build_config(&[], &[0; 6], &[0x5C; 16], &[0; 6], 0, TKT_OATH_HOTP, 0);
+    let fid = KeyFid::new(EF_OTP_SLOT1);
+    assert!(seal::seal_put(
+        &dev,
+        &mut fs,
+        &mut CountRng(3),
+        fid,
+        &record(&cfg)
+    ));
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let mut press = || {
+        let mut out = [0u8; ticket::MAX_TICKET];
+        let (len, _) = app.button_ticket(1, 0, [0, 0], &mut fs, &mut out).unwrap();
+        out[..len].to_vec()
+    };
+    let (first, second) = (press(), press());
+    assert_ne!(first, second, "the second press re-typed the first code");
+    let mut rec = SlotRecord::vacant();
+    assert_eq!(
+        try_read_slot(&dev, &mut fs, EF_OTP_SLOT1, &mut rec),
+        Ok(Some(SLOT_SIZE))
+    );
+}
+
+#[test]
+fn a_legacy_record_keeps_its_length_until_something_moves_it() {
+    // A swap and both boot re-seal arms copy a record verbatim; only a move or an
+    // UPDATE makes a 52-byte record whole, with the zero tail it implied.
+    let nootp = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let otp_key = [0x55u8; 32];
+    let otp = Device {
+        otp_key: Some(&otp_key),
+        ..nootp
+    };
+    let cfg = chalresp_config(&[0x0C; 20], &[0; 6], 0);
+    let mut fs = new_fs();
+    let mut rng = CountRng(5);
+    assert!(seal::seal_put(
+        &otp,
+        &mut fs,
+        &mut rng,
+        KeyFid::new(EF_OTP_SLOT1),
+        &record(&cfg)
+    ));
+    fs.put(EF_OTP_SLOT1 + 2, &cfg).unwrap();
+    assert!(seal::seal_put(
+        &nootp,
+        &mut fs,
+        &mut rng,
+        KeyFid::new(EF_OTP_SLOT1 + 3),
+        &record(&cfg)
+    ));
+    migrate_seal(&otp, &mut fs, &mut rng);
+    fn fused(key: &mut [u8; 32]) -> bool {
+        *key = [0x55; 32];
+        true
+    }
+    let presence = RefCell::new(AlwaysConfirm);
+    let app_rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, Some(fused), &app_rng, &presence);
+    assert_eq!(run(&mut app, &mut fs, &otp_apdu(0x06, 0, &[])).0, Sw::OK);
+    let mut rec = SlotRecord::vacant();
+    for (slot, n) in [(1, CONFIG_SIZE), (2, CONFIG_SIZE), (3, CONFIG_SIZE)] {
+        let read = try_read_slot(&otp, &mut fs, EF_OTP_SLOT1 + slot, &mut rec);
+        assert_eq!(read, Ok(Some(n)), "slot {}", slot + 1);
+    }
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &otp_apdu(0x05, 0, &[cfg.as_slice(), &[0; 6]].concat())
+        )
+        .0,
+        Sw::OK
+    );
+    assert_eq!(
+        try_read_slot(&otp, &mut fs, EF_OTP_SLOT1 + 1, &mut rec),
+        Ok(Some(SLOT_SIZE))
+    );
+    assert_eq!(rec.expose()[CONFIG_SIZE..], [0; SLOT_SIZE - CONFIG_SIZE]);
 }

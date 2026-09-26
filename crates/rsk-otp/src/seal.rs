@@ -22,7 +22,7 @@ use rsk_fs::{Fs, KeyFid, Sealed, Storage};
 use rsk_sdk::error::Result;
 use rsk_secret::Secret;
 
-use crate::{CONFIG_SIZE, Rng, SLOT_SIZE};
+use crate::{CONFIG_SIZE, Rng, SLOT_SIZE, SlotRecord};
 
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
@@ -55,18 +55,17 @@ fn kenc(dev: &Device) -> Secret<[u8; 32]> {
     out
 }
 
-/// Seal `plain` and write it to `fid` as `nonce ‖ ct ‖ tag`. `false` on an
-/// over-length plaintext or a storage failure.
+/// Seal `rec` at its stored length and write it to `fid` as `nonce ‖ ct ‖ tag`.
+/// `false` on a storage failure. A record is the only plaintext this takes, so
+/// no writer chooses the tail's bytes ([`SlotRecord`] says who does).
 pub fn seal_put<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     rng: &mut dyn Rng,
     fid: KeyFid,
-    plain: &[u8],
+    rec: &SlotRecord,
 ) -> bool {
-    if plain.len() > MAX_PLAIN {
-        return false;
-    }
+    let plain = rec.stored();
     let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
     let n = NONCE_LEN + plain.len() + TAG_LEN;
     rng.fill(&mut blob.expose_mut()[..NONCE_LEN]);

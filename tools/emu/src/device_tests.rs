@@ -7,6 +7,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use rsk_fs::KeyFid;
+use rsk_otp::SlotRecord;
 use rsk_otp::seal::{seal_put, seal_read};
 use rsk_secret::Secret;
 
@@ -90,7 +91,7 @@ fn bench_with(name: &str, presence: PresenceMode) -> (PathBuf, Jobs, Arc<Signals
             &mut mount(&path),
             &mut rng,
             KeyFid::new(SLOT1_FID),
-            &[0u8; SLOT_RECORD],
+            &SlotRecord::from_bytes(&[0u8; SLOT_RECORD]).unwrap(),
         ),
         "seal a slot into the image"
     );

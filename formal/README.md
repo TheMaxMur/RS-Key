@@ -3276,9 +3276,11 @@ than a settled abstraction.
   is checked at a domain the firmware's own is far wider than. What no scope of
   this model reaches is bounded at source instead:
   use_counter_climbs_and_stops_at_the_ceiling quantifies over every session byte
-  and both stepped writers across the whole 0x7FFF domain, and which writers it
-  does NOT reach is the derived roster of assurance/otp_counter_writers.toml
-  rather than a sentence anywhere.
+  and both stepped writers across the whole 0x7FFF domain. Only SlotRecord's
+  methods write the counter, since its tail is private: a CONFIGURE zeroes it,
+  the boot bump steps it through one of those two rules, and a press through the
+  other, after promoting an unused counter to 1. A raw write to a slot FID is
+  below the type, and outside this bound.
 - **The PIN comparison is a nondeterministic boolean** (`correct`), the
   counters run to a single step (`Max`), and OpenPGP's admin path from PW3 to
   PW1 is deliberately outside the recovery graph because it gates on a live

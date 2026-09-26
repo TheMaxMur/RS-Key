@@ -3,15 +3,15 @@
 
 //! Typed-ticket generation — what a button press "types" as keystrokes: a
 //! 44-char modhex Yubico OTP (6-byte public id ‖ AES-128-ECB private block), an
-//! OATH-HOTP 6/8-digit code, or a static password of raw scancodes. [`build`] is pure.
+//! OATH-HOTP 6/8-digit code, or a static password of raw scancodes. [`build`] does no I/O.
 
 use rsk_crypto::{aes128_encrypt_block, hmac_sha1};
 use rsk_secret::Secret;
 
 use crate::{
     CFG_OATH_HOTP8, CFG_SHORT_TICKET, CFG_STATIC_TICKET, CONFIG_SIZE, FIXED_SIZE, KEY_SIZE,
-    OFF_AES_KEY, OFF_CFG_FLAGS, OFF_TKT_FLAGS, OFF_UID, SLOT_SIZE, TKT_APPEND_CR, TKT_OATH_HOTP,
-    UID_SIZE, counter::next_use_counter, crc16,
+    OFF_AES_KEY, OFF_CFG_FLAGS, OFF_TKT_FLAGS, OFF_UID, SlotRecord, TKT_APPEND_CR, TKT_OATH_HOTP,
+    UID_SIZE, crc16,
 };
 
 /// The YubiKey modhex alphabet (keyboard-layout-independent).
@@ -20,23 +20,20 @@ const MODHEX: &[u8; 16] = b"cbdefghijklnrtuv";
 /// Largest typed ticket: a 44-char Yubico-OTP modhex string plus a trailing CR.
 pub const MAX_TICKET: usize = 64;
 
-/// The outcome of [`build`]: the bytes to type and how, plus any slot state to
-/// persist (the bumped use counter / HOTP moving factor) and the new RAM session
-/// counter for this slot.
+/// The outcome of [`build`]: the bytes to type and how, whether the slot record's
+/// tail moved (the use counter / HOTP moving factor) and so has to be persisted, and
+/// the new RAM session counter for this slot.
 pub struct Typed {
     /// Number of valid bytes in the caller's `out` buffer.
     pub len: usize,
     /// `true` → `out` is ASCII to be mapped through the keycode table; `false` →
     /// `out` holds raw HID scancodes (a static password).
     pub encode: bool,
-    /// New 8-byte slot tail to persist, or `None` if the counter is unchanged.
-    pub new_tail: Option<[u8; SLOT_TAIL]>,
+    /// The record's tail moved: persist it before typing, or the ticket repeats.
+    pub persist: bool,
     /// The session counter to keep in RAM for this slot after this press.
     pub new_session: u8,
 }
-
-/// The dynamic counter tail appended to a slot file.
-pub const SLOT_TAIL: usize = SLOT_SIZE - CONFIG_SIZE; // 8
 
 fn encode_modhex(input: &[u8], out: &mut [u8]) -> usize {
     let mut n = 0;
@@ -67,20 +64,17 @@ fn hotp(key: &[u8], counter: u64, digits: u32, out: &mut [u8]) -> usize {
     n
 }
 
-/// Build the ticket for slot `cfg`+`tail`. Returns `None` for slots that type
-/// nothing (challenge-response slots — the button only gates the CCID/HID
-/// calculate for those). `ts_secs` is the device uptime in seconds, `rnd` two
-/// fresh random bytes (Yubico-OTP only), `session` the current RAM session
-/// counter for this slot.
+/// Build the ticket a press on `slot` types, moving its tail as the press owes it;
+/// a challenge-response slot types nothing, so the caller does not ask. `session` is
+/// the slot's RAM session counter, `ts_secs` the uptime, `rnd` two fresh random bytes.
 pub fn build(
-    slot: &[u8; SLOT_SIZE],
+    slot: &mut SlotRecord,
     session: u8,
     ts_secs: u32,
     rnd: [u8; 2],
     out: &mut [u8; MAX_TICKET],
-) -> Option<Typed> {
-    let cfg = &slot[..CONFIG_SIZE];
-    let tail = &slot[CONFIG_SIZE..];
+) -> Typed {
+    let cfg = &slot.expose()[..CONFIG_SIZE];
     let tkt = cfg[OFF_TKT_FLAGS];
     let cfgf = cfg[OFF_CFG_FLAGS];
     let append_cr = tkt & TKT_APPEND_CR != 0;
@@ -91,28 +85,19 @@ pub fn build(
         let mut key = Secret::<[u8; KEY_SIZE + 4]>::zeroed();
         key.expose_mut()[..KEY_SIZE].copy_from_slice(&cfg[OFF_AES_KEY..OFF_AES_KEY + KEY_SIZE]);
         key.expose_mut()[KEY_SIZE..].copy_from_slice(&cfg[OFF_UID..OFF_UID + 4]);
-        // Moving factor: the 64-bit tail, or the programmed initial IMF in the
-        // last two UID bytes when the tail is still zero.
-        let mut imf = u64::from_be_bytes(tail.try_into().ok()?);
-        if imf == 0 {
-            imf = u16::from_be_bytes([cfg[OFF_UID + 4], cfg[OFF_UID + 5]]) as u64;
-        }
+        let imf = slot.press_hotp();
         let digits = if cfgf & CFG_OATH_HOTP8 != 0 { 8 } else { 6 };
         let mut len = hotp(key.expose(), imf, digits, out);
         if append_cr {
             out[len] = b'\r';
             len += 1;
         }
-        // Roll the HOTP counter; `wrapping_add` matches the sibling config_seq
-        // bumps and removes a debug-panic/release-wrap asymmetry at the
-        // (unreachable) u64::MAX counter.
-        let new_tail = imf.wrapping_add(1).to_be_bytes();
-        return Some(Typed {
+        return Typed {
             len,
             encode: true,
-            new_tail: Some(new_tail),
+            persist: true,
             new_session: session,
-        });
+        };
     }
 
     if cfgf & (CFG_SHORT_TICKET | CFG_STATIC_TICKET) != 0 {
@@ -125,21 +110,17 @@ pub fn build(
             out[len] = 0x28; // HID Enter scancode
             len += 1;
         }
-        return Some(Typed {
+        return Typed {
             len,
             encode: false,
-            new_tail: None,
+            persist: false,
             new_session: session,
-        });
+        };
     }
 
     // Yubico OTP. otpk = public id (6, clear) ‖ AES-ECB( private block 16 ).
-    let mut counter = u16::from_be_bytes([tail[0], tail[1]]);
-    let mut update = false;
-    if counter == 0 {
-        counter = 1;
-        update = true;
-    }
+    let (counter, new_session, persist) = slot.press_yubico(session);
+    let cfg = &slot.expose()[..CONFIG_SIZE];
     let mut otpk = [0u8; 22];
     otpk[..6].copy_from_slice(&cfg[..6]); // public id prefix
     otpk[6..12].copy_from_slice(&cfg[OFF_UID..OFF_UID + UID_SIZE]);
@@ -164,23 +145,12 @@ pub fn build(
         out[len] = b'\r';
         len += 1;
     }
-
-    let (counter, new_session, bumped) = next_use_counter(counter, session);
-    update |= bumped;
-    let new_tail = if update {
-        let mut t = [0u8; SLOT_TAIL];
-        t.copy_from_slice(tail);
-        t[..2].copy_from_slice(&counter.to_be_bytes());
-        Some(t)
-    } else {
-        None
-    };
-    Some(Typed {
+    Typed {
         len,
         encode: true,
-        new_tail,
+        persist,
         new_session,
-    })
+    }
 }
 
 #[cfg(test)]

@@ -14,8 +14,8 @@ use libfuzzer_sys::fuzz_target;
 use rsk_crypto::Device;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_fs::{Fs, KeyFid};
-use rsk_otp::Rng;
 use rsk_otp::seal::{seal_put, seal_read};
+use rsk_otp::{Rng, SlotRecord};
 use rsk_secret::Secret;
 
 /// First OTP slot FID (crate-private `EF_OTP_SLOT1`; the four slots are
@@ -50,12 +50,12 @@ fuzz_target!(|data: &[u8]| {
     let mut out = Secret::<[u8; 256]>::zeroed();
 
     // Round-trip + pre-OTP→OTP survival: seal the fuzz bytes under the pre-OTP arm
-    // (skipped when over-length), then the OTP boot migration must recover and
-    // re-seal them — never orphan (drop) or double-seal (corrupt).
-    {
+    // (skipped when longer than a record), then the OTP boot migration must recover
+    // and re-seal them — never orphan (drop) or double-seal (corrupt).
+    if let Some(rec) = SlotRecord::from_bytes(data) {
         let mut fs = Fs::new(RamStorage::new());
         fs.scan();
-        if seal_put(&dev_old, &mut fs, &mut rng, fid, data) {
+        if seal_put(&dev_old, &mut fs, &mut rng, fid, &rec) {
             let n = seal_read(&dev_old, &mut fs, fid, &mut out).expect("a fresh seal must unseal");
             assert_eq!(&out.expose()[..n], data);
             // The OTP arm can't read a pre-OTP-sealed record yet…

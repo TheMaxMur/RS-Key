@@ -793,31 +793,6 @@ run "delete-caller dispositions" python scripts/deleter_gate.py
 # `rng`. Cells derived from the dispatch, roots from the handle, reach by call
 # walk. The table is scripts/test_display_borrow_gate.py, driven through THIS row.
 run "display borrows vs dispatch" python scripts/display_borrow_gate.py
-# The same shape one crate over, and the finding that asked for it: the OTP use
-# counter's own two files each stated a roster of its writers from memory and
-# each was wrong. `counter.rs` said "both writers … take their step from here"
-# and `counter_kani.rs` said four sites "are every writer of the first two tail
-# bytes". There are eight — `cmd_swap` writes them twice per command and
-# `migrate_seal` twice per boot, and neither sentence mentioned either. A proof
-# whose scope is a sentence has no way to notice a ninth arriving; this derives
-# the roster and the harness cites it. Driven through THIS row, exit taken with
-# no pipe: a ninth writer in a new `crates/rsk-otp/src/*.rs` -> rc 1 naming that
-# file and function; removed -> rc 0. An adversarial review then found four ways
-# past it, three overclaiming: a BARE `seal_put(` (the receiver test), a grouped
-# `use rsk_otp::{…, seal}`, a ledger entry certifying its own coverage through a
-# `via` hop it never calls, and a same-named stepper in another file. All four
-# redden now. A fifth was measured later and is the one every other clause was
-# blind to by construction: they all read PRODUCTION code, so deleting both
-# `#[kani::proof]`s from counter_kani.rs left this row at rc 0 still printing
-# "2 functions take their step from counter.rs" over an empty proof. A rule the
-# ledger's `proved` column is about must now be called by a harness in that file.
-# The table is scripts/test_counter_writers_gate.py, 32 cases, three of them
-# controls that must stay GREEN: twelve lines inserted above every site, a local
-# renamed at one call site, and the harness itself renamed. The second is why the
-# key is (file, fn, ordinal) — keyed on the call TEXT, a rename or a rustfmt
-# reflow was a false red; the third says what this row does NOT measure, since
-# assurance_gate.py forces BOUNDED from a harness NAME.
-run "OTP counter writers"      python scripts/counter_writers_gate.py
 # A model constant that stands for a fact about the world, not a defect switch.
 # `PowerOnClearsScratch2` was TRUE in all seven Boot configurations and read by
 # no action: deleting its `ASSUME` left every run bit-identical.
