@@ -699,9 +699,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   failure the code handles: under `panic-halt` a panic on a host's bytes is a
   board that answers nothing until it is unplugged. So far: `rsk-sdk`'s TLV walk,
   whose `format_len` now takes the `[u8; 3]` it writes at most, its APDU
-  parser and applet dispatcher, `rsk-usb`'s CTAPHID and CCID transports, and
-  `rsk-fido`'s credential-descriptor list decoder.
-  `bcdDevice` 0x0A35 → 0x0A3B.
+  parser and applet dispatcher, `rsk-usb`'s CTAPHID and CCID transports,
+  `rsk-fido`'s credential-descriptor list decoder, and `rsk-openpgp`'s
+  data-object writer.
+  `bcdDevice` 0x0A35 → 0x0A3C.
 
 - **The trusted display a host ceremony reaches holds no cell its dispatch
   borrows** — refactor; the same screens, touches and store writes. The panel's
