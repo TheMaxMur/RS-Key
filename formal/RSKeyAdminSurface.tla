@@ -31,7 +31,7 @@
 (*                                                                           *)
 (* WHAT IS ABSTRACTED. The mask is a set of opaque capabilities, not the     *)
 (* 16-bit USB_ENABLED bitmask -- the clamp to SUPPORTED_CAPS                 *)
-(* (crates/rsk-devconf/src/lib.rs:586) is modelled as "the mask stays a      *)
+(* (crates/rsk-devconf/src/lib.rs:590) is modelled as "the mask stays a      *)
 (* subset of the gateable caps" and enforced by construction. The            *)
 (* config-lock TLV is present only as the class of write that carries no     *)
 (* capability change (`LockCodeWrite`); its unsealed-disclosure hole (audit  *)
@@ -66,7 +66,7 @@ CONSTANTS
     \* zero bytes; storing that verbatim left an EMPTY record, and
     \* `read_enabled_caps` reads empty as SUPPORTED_CAPS, so a lock-code write
     \* silently re-enabled every disabled application. The fix MERGES onto the
-    \* stored record (crates/rsk-devconf/src/lib.rs:248-262); the switch
+    \* stored record (crates/rsk-devconf/src/lib.rs:261-275); the switch
     \* replaces it.
     BugLockWriteResetsCaps,
     \* The pre-0x084A tree, shipped and fixed: USB_ENABLED was REPORTING-ONLY --
@@ -99,7 +99,7 @@ TypeOK ==
     /\ viol \in SUBSET InvNames
 
 \* A factory device: every gateable application enabled (the default record's
-\* USB_ENABLED is SUPPORTED_CAPS, crates/rsk-devconf/src/lib.rs:590).
+\* USB_ENABLED is SUPPORTED_CAPS, crates/rsk-devconf/src/lib.rs:594).
 Init ==
     /\ enabled = Caps
     /\ viol = {}
@@ -112,7 +112,7 @@ AdminChannelOpen ==
     IF BugAdminGateable THEN enabled # {} ELSE TRUE
 
 (***************************************************************************)
-(* WRITE CONFIG. crates/rsk-devconf/src/lib.rs:237 (persist_dev_conf) via    *)
+(* WRITE CONFIG. crates/rsk-devconf/src/lib.rs:250 (persist_dev_conf) via    *)
 (* the CCID applet and the FIDO vendor config-write. Sets the enabled set to *)
 (* any subset of the gateable caps. Modelled UNCONDITIONALLY enabled: the    *)
 (* default build does not presence-gate it (a documented, reversible DoS),   *)

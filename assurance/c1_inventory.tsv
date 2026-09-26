@@ -652,25 +652,25 @@ encode	firmware/src/pin_lock.rs:73	3	decides	D5	packs BOTH halves of the lock �
 decode	firmware/src/pin_lock.rs:77	22	decides	D5	derives engaged from the batch, not from bit 7: an old canary with a clear bit still reads as a lock	SEC-BOOT-002
 in_range	firmware/src/pin_lock.rs:100	9	decides	D5	clips the restored mismatch batch to PIN_MISMATCH_LIMIT	SEC-BOOT-002
 round_trips	firmware/src/pin_lock.rs:122	4	marshals	M	const fn only under const _: () = assert!; owner_binding.toml marks it absent/const-evaluated	SEC-BOOT-002
-writable_tag	crates/rsk-devconf/src/lib.rs:47	23	decides	D5	the whitelist of tags a host may write: its refusal is the WRITE CONFIG refusal (lib.rs:441); device-owned tags cannot be forged	SEC-ADM-003,SEC-ADM-004
-config_tlv	crates/rsk-devconf/src/lib.rs:121	102	decides	D2	decides whether the 16-byte config-lock code goes out to the host and whether the echo is synthesised from the mask actually enforced (lib.rs:155,183)	SEC-ADM-003,SEC-ADM-004
-persist_dev_conf	crates/rsk-devconf/src/lib.rs:240	47	decides	D3	the only writer of EF_DEV_CONF and of the DEV_CONF_DIRTY latch (lib.rs:284); marked Refines SEC-ADM-003	SEC-ADM-003,SEC-ADM-004
-merged_dev_conf	crates/rsk-devconf/src/lib.rs:288	12	decides	D3	returns exactly the bytes that will land in flash, and their length gives rise to the TooLong refusal	SEC-ADM-003
-trim_to_cap	crates/rsk-devconf/src/lib.rs:301	43	decides	D4	evicts old entries, but NEVER TAG_USB_ENABLED (lib.rs:331) — otherwise a lock-code write silently enabled all disabled applets	SEC-ADM-003,SEC-ADM-004
-stored_matches	crates/rsk-devconf/src/lib.rs:345	8	decides	D5	its true is the condition under which the flash write and the audit-ring write do not happen at all	SEC-ADM-003
-overlay_dev_conf	crates/rsk-devconf/src/lib.rs:354	52	decides	D3	three answers instead of two: a FAULTED read refuses (lib.rs:377), otherwise ykman's delta would turn into a full replacement of the record	SEC-ADM-003
+writable_tag	crates/rsk-devconf/src/lib.rs:55	23	decides	D5	the whitelist of tags a host may write: its refusal is the WRITE CONFIG refusal (lib.rs:449); device-owned tags cannot be forged	SEC-ADM-003,SEC-ADM-004
+config_tlv	crates/rsk-devconf/src/lib.rs:129	102	decides	D2	decides whether the 16-byte config-lock code goes out to the host and whether the echo is synthesised from the mask actually enforced (lib.rs:161,190)	SEC-ADM-003,SEC-ADM-004
+persist_dev_conf	crates/rsk-devconf/src/lib.rs:253	47	decides	D3	the only writer of EF_DEV_CONF and of the DEV_CONF_DIRTY latch (lib.rs:297); marked Refines SEC-ADM-003	SEC-ADM-003,SEC-ADM-004
+merged_dev_conf	crates/rsk-devconf/src/lib.rs:301	12	decides	D3	returns exactly the bytes that will land in flash, and their length gives rise to the TooLong refusal	SEC-ADM-003
+trim_to_cap	crates/rsk-devconf/src/lib.rs:314	43	decides	D4	evicts old entries, but NEVER TAG_USB_ENABLED (lib.rs:340) — otherwise a lock-code write silently enabled all disabled applets	SEC-ADM-003,SEC-ADM-004
+stored_matches	crates/rsk-devconf/src/lib.rs:354	8	decides	D5	its true is the condition under which the flash write and the audit-ring write do not happen at all	SEC-ADM-003
+overlay_dev_conf	crates/rsk-devconf/src/lib.rs:363	52	decides	D3	three answers instead of two: a FAULTED read refuses (lib.rs:387), otherwise ykman's delta would turn into a full replacement of the record	SEC-ADM-003
 has_tag	crates/rsk-devconf/src/lib.rs:407	15	decides	D5	its answer decides whether each stored entry survives the merge, USB_ENABLED included	SEC-ADM-003
-well_formed_writable	crates/rsk-devconf/src/lib.rs:423	49	decides	D5	the only path by which WRITE CONFIG gets a "no": the USB_ENABLED width (lib.rs:457), duplicate tags, per-tag widths	SEC-ADM-003,SEC-ADM-004
-max_value_len	crates/rsk-devconf/src/lib.rs:473	14	decides	D5	the width-policy table by which well_formed_writable refuses; its absence yielded a permanent configuration refusal	SEC-ADM-003
-whole_tlvs	crates/rsk-devconf/src/lib.rs:488	15	decides	D5	its slice defines which part of the stored record survives into the merge and into the echo	SEC-ADM-003
-strip_config_lock	crates/rsk-devconf/src/lib.rs:504	29	decides	D2	cuts out 0x0A/0x0B so that a user-entered lock code neither lands in flash nor goes out to an unauthenticated reader	SEC-ADM-003
-dev_conf_unchanged	crates/rsk-devconf/src/lib.rs:534	33	decides	D5	its true cancels both the flash write and the audit-ring write, that is, it suppresses the proof of the operation	SEC-ADM-003
-take_dev_conf_dirty	crates/rsk-devconf/src/lib.rs:574	4	decides	D5	a consumed true is what makes the firmware re-read the mask gating the applet dispatcher	SEC-ADM-004
-enabled_from_conf	crates/rsk-devconf/src/lib.rs:579	19	decides	D4	computes the enforced permission mask; an absent tag resolves permissively to SUPPORTED_CAPS	SEC-ADM-004
-read_enabled_caps	crates/rsk-devconf/src/lib.rs:599	25	decides	D4	distinguishes the absence of a record from an unanswered probe: Err yields NO_CAPS (lib.rs:616), fail-closed	SEC-ADM-001,SEC-ADM-004
-cap_enabled	crates/rsk-devconf/src/lib.rs:629	6	decides	D4	the cap==0 carve-out (lib.rs:633) is exactly "the admin surface is always reachable"; otherwise disabling is irreversible	SEC-ADM-001,SEC-ADM-004
-clamp_usb_enabled	crates/rsk-devconf/src/lib.rs:636	21	marshals	M	edits only the response draft in config_tlv; enforcement lives in enabled_from_conf's own & SUPPORTED_CAPS	SEC-ADM-004
-push_tlv	crates/rsk-devconf/src/lib.rs:658	11	marshals	M	appends a tag-len-value to the buffer and silently returns on overflow	-
+well_formed_writable	crates/rsk-devconf/src/lib.rs:432	49	decides	D5	the only path by which WRITE CONFIG gets a "no": the USB_ENABLED width (lib.rs:465), duplicate tags, per-tag widths	SEC-ADM-003,SEC-ADM-004
+max_value_len	crates/rsk-devconf/src/lib.rs:481	14	decides	D5	the width-policy table by which well_formed_writable refuses; its absence yielded a permanent configuration refusal	SEC-ADM-003
+whole_tlvs	crates/rsk-devconf/src/lib.rs:494	15	decides	D5	its slice defines which part of the stored record survives into the merge and into the echo	SEC-ADM-003
+strip_config_lock	crates/rsk-devconf/src/lib.rs:508	29	decides	D2	cuts out 0x0A/0x0B so that a user-entered lock code neither lands in flash nor goes out to an unauthenticated reader	SEC-ADM-003
+dev_conf_unchanged	crates/rsk-devconf/src/lib.rs:537	33	decides	D5	its true cancels both the flash write and the audit-ring write, that is, it suppresses the proof of the operation	SEC-ADM-003
+take_dev_conf_dirty	crates/rsk-devconf/src/lib.rs:579	4	decides	D5	a consumed true is what makes the firmware re-read the mask gating the applet dispatcher	SEC-ADM-004
+enabled_from_conf	crates/rsk-devconf/src/lib.rs:584	19	decides	D4	computes the enforced permission mask; an absent tag resolves permissively to SUPPORTED_CAPS	SEC-ADM-004
+read_enabled_caps	crates/rsk-devconf/src/lib.rs:603	25	decides	D4	distinguishes the absence of a record from an unanswered probe: Err yields NO_CAPS (lib.rs:622), fail-closed	SEC-ADM-001,SEC-ADM-004
+cap_enabled	crates/rsk-devconf/src/lib.rs:635	6	decides	D4	the cap==0 carve-out (lib.rs:639) is exactly "the admin surface is always reachable"; otherwise disabling is irreversible	SEC-ADM-001,SEC-ADM-004
+clamp_usb_enabled	crates/rsk-devconf/src/lib.rs:642	21	marshals	M	edits only the response draft in config_tlv; enforcement lives in enabled_from_conf's own & SUPPORTED_CAPS	SEC-ADM-004
+push_tlv	crates/rsk-devconf/src/lib.rs:659	11	marshals	M	appends a tag-len-value to the buffer and silently returns on overflow	-
 gates_wiped_last	crates/rsk-device/src/ccid.rs:113	41	decides	D3	a fold over the applets' predicates defines the ORDER of deletion in factory_wipe: gate records go last (ccid.rs:148-152)	SEC-BOOT-001
 new	crates/rsk-device/src/ccid.rs:158	69	marshals	M	REVIEW: a 69-line struct literal whose one live line calls read_enabled_caps, counted separately as 25 core lines — double count (was D4)	SEC-ADM-002,SEC-ADM-004
 refresh_enabled	crates/rsk-device/src/ccid.rs:228	7	decides	D4	reloads the permission cache from flash, after which the next command sees the new set	SEC-ADM-004

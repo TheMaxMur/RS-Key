@@ -8,6 +8,14 @@
 //! vendor pair, the FIDO vendor `CONFIG_WRITE`), so the codec sits below all of
 //! them instead of inside the management applet that needed it first.
 #![cfg_attr(not(test), no_std)]
+// Host-written records: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
 
 use rsk_fs::{Fs, Storage};
 use rsk_sdk::{FIRMWARE_VERSION, ResBuf, Sw};
@@ -146,9 +154,7 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
     // enforced by construction, for an unreadable record as much as an unparseable
     // one, instead of the two sides diverging.
     let stored = match fs.read(EF_DEV_CONF, &mut conf) {
-        Some(full) if full > 0 && full <= conf.len() && well_formed_writable(&conf[..full]) => {
-            Some(full)
-        }
+        Some(full) if full > 0 && conf.get(..full).is_some_and(well_formed_writable) => Some(full),
         _ => None,
     };
     match stored {
@@ -174,14 +180,17 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
             let room = taken
                 .saturating_sub(n + CONFIG_LOCK_TLV_LEN)
                 .min(buf.len().saturating_sub(n + CONFIG_LOCK_TLV_LEN));
-            let stripped = strip_config_lock(&conf[..len], &mut echoed).min(room);
+            let stored = conf.get(..len).unwrap_or_default();
+            let stripped = strip_config_lock(stored, &mut echoed).min(room);
             // …and to whole entries. Every bound above is a byte count, so any of
             // them can land inside a TLV; emitting the head of one is precisely the
             // unparseable DeviceInfo this response must never produce. Only a record
             // an older build stored (or corrupt flash) can reach the cut.
-            let elen = whole_tlvs(&echoed[..stripped]);
-            buf[n..n + elen].copy_from_slice(&echoed[..elen]);
-            clamp_usb_enabled(&mut buf[n..n + elen]);
+            let elen = whole_tlvs(echoed.get(..stripped).unwrap_or_default());
+            if let (Some(dst), Some(src)) = (buf.get_mut(n..n + elen), echoed.get(..elen)) {
+                dst.copy_from_slice(src);
+                clamp_usb_enabled(dst);
+            }
             n += elen;
             // The stored blob never carries a lock tag; report it unset on read, as
             // real hardware does.
@@ -206,8 +215,12 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
         }
     }
 
-    buf[0] = (n - 1) as u8;
-    if !res.extend(&buf[..n]) {
+    let [overall, ..] = (n - 1).to_le_bytes();
+    buf[0] = overall;
+    let Some(body) = buf.get(..n) else {
+        return Sw::EXEC_ERROR;
+    };
+    if !res.extend(body) {
         // Unreachable given the clamp above, but never answer OK over a body the
         // buffer silently dropped — an empty success is what the host parses.
         return Sw::EXEC_ERROR;
@@ -260,18 +273,18 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     // SUPPORTED_CAPS, so a lock-code write silently re-enabled every application
     // the owner had disabled (audit run-35).
     let mut merged = [0u8; DEV_CONF_MERGE_MAX];
-    let m = merged_dev_conf(fs, &stripped[..n], &mut merged)?;
-    if m > EF_DEV_CONF_MAX {
+    let m = merged_dev_conf(fs, stripped.get(..n).unwrap_or_default(), &mut merged)?;
+    let Some(record) = merged.get(..m).filter(|_| m <= EF_DEV_CONF_MAX) else {
         return Err(DevConfError::TooLong);
-    }
+    };
     // An idempotent write costs no flash and no audit-journal entry. Folded in here
     // rather than left to the caller: only one of the four call sites ever ran the
     // check, and after the merge landed it could not recognise a partial replay at
     // all, which is the only shape ykman sends (audit run-36).
-    if stored_matches(fs, &merged[..m]) {
+    if stored_matches(fs, record) {
         return Ok(());
     }
-    fs.put(EF_DEV_CONF, &merged[..m])
+    fs.put(EF_DEV_CONF, record)
         .map_err(|_| DevConfError::Store)?;
     // The enabled-applications set changed; the firmware reloads its cached mask
     // (which gates applet dispatch) before the next command it guards.
@@ -312,20 +325,16 @@ fn merged_dev_conf<S: Storage>(
 /// (audit run-37).
 fn trim_to_cap(merged: &mut [u8], mut m: usize, keep: usize) -> usize {
     while m > EF_DEV_CONF_MAX && m > keep {
-        let stored = m - keep;
+        let stored = merged.get(..m - keep).unwrap_or_default();
         let mut i = 0;
         let victim = loop {
-            if i + 2 > stored {
+            let Some((tag, end)) = entry_at(stored, i) else {
                 break None;
+            };
+            if tag != TAG_USB_ENABLED {
+                break Some((i, end - i));
             }
-            let entry = 2 + merged[i + 1] as usize;
-            if i + entry > stored {
-                break None;
-            }
-            if merged[i] != TAG_USB_ENABLED {
-                break Some((i, entry));
-            }
-            i += entry;
+            i = end;
         };
         // Only the policy (or a half entry) left to give: refusing the write beats
         // dropping it, and `persist_dev_conf` turns the over-cap length into 6A80.
@@ -342,7 +351,7 @@ fn stored_matches<S: Storage>(fs: &mut Fs<S>, want: &[u8]) -> bool {
     // `read` reports the value's *full* stored length, which an over-length record
     // from an older build can push past `cur` — compare only when it fits.
     matches!(fs.read(EF_DEV_CONF, &mut cur),
-        Some(c) if c == want.len() && c <= cur.len() && cur[..c] == *want)
+        Some(c) if c == want.len() && cur.get(..c) == Some(want))
 }
 
 /// Overlay the TLV entries `incoming` carries onto the stored `EF_DEV_CONF`,
@@ -370,27 +379,23 @@ fn overlay_dev_conf<S: Storage>(
         Ok(n) => n.unwrap_or(0).min(EF_DEV_CONF_READ_MAX),
         Err(_) => return Err(DevConfError::Store),
     };
-    let stored = &stored[..whole_tlvs(&stored[..stored_n])];
+    let stored = stored.get(..stored_n).unwrap_or_default();
+    let stored = stored.get(..whole_tlvs(stored)).unwrap_or_default();
 
     let mut n = 0usize;
     let mut push = |src: &[u8], out: &mut [u8]| -> Result<(), DevConfError> {
-        if n + src.len() > out.len() {
+        let Some(dst) = out.get_mut(n..n + src.len()) else {
             return Err(DevConfError::TooLong);
-        }
-        out[n..n + src.len()].copy_from_slice(src);
+        };
+        dst.copy_from_slice(src);
         n += src.len();
         Ok(())
     };
     // Stored entries first, minus any tag the request restates.
     let mut i = 0;
-    while i + 1 < stored.len() {
-        let len = stored[i + 1] as usize;
-        let end = i + 2 + len;
-        if end > stored.len() {
-            break;
-        }
-        if !has_tag(incoming, stored[i]) {
-            push(&stored[i..end], out)?;
+    while let Some((tag, end)) = entry_at(stored, i) {
+        if !has_tag(incoming, tag) {
+            push(stored.get(i..end).unwrap_or_default(), out)?;
         }
         i = end;
     }
@@ -401,17 +406,21 @@ fn overlay_dev_conf<S: Storage>(
 /// Whether a well-formed TLV run carries an entry with `tag`.
 fn has_tag(blob: &[u8], tag: u8) -> bool {
     let mut i = 0;
-    while i + 1 < blob.len() {
-        let end = i + 2 + blob[i + 1] as usize;
-        if end > blob.len() {
-            return false;
-        }
-        if blob[i] == tag {
+    while let Some((t, end)) = entry_at(blob, i) {
+        if t == tag {
             return true;
         }
         i = end;
     }
     false
+}
+
+/// The short-form TLV entry at `i`: its tag and the offset just past its value, or
+/// `None` at the end of `blob` or where the entry's length runs past it.
+fn entry_at(blob: &[u8], i: usize) -> Option<(u8, usize)> {
+    let &[tag, len] = blob.get(i..)?.first_chunk::<2>()?;
+    let end = i + 2 + len as usize;
+    (end <= blob.len()).then_some((tag, end))
 }
 
 /// Whether `blob` is a clean run of TLV entries whose every tag a host may write.
@@ -423,26 +432,25 @@ fn well_formed_writable(blob: &[u8]) -> bool {
     let mut seen = [0u8; 16];
     let mut seen_n = 0;
     while i < blob.len() {
-        let Some(&len) = blob.get(i + 1) else {
+        let Some(&[tag, len]) = blob.get(i..).and_then(<[u8]>::first_chunk::<2>) else {
             return false; // truncated header
         };
         let Some(end) = i.checked_add(2).and_then(|h| h.checked_add(len as usize)) else {
             return false;
         };
-        let tag = blob[i];
         if end > blob.len() || !writable_tag(tag) {
             return false;
         }
         // One entry per tag. A real YubiKey emits each exactly once; a duplicate
         // makes this device (first-wins, `enabled_from_conf`) and ykman (last-wins,
         // `Tlv.parse_dict`) disagree about what was just stored.
-        if seen[..seen_n].contains(&tag) {
+        if seen.get(..seen_n).is_some_and(|seen| seen.contains(&tag)) {
             return false;
         }
-        if seen_n == seen.len() {
+        let Some(slot) = seen.get_mut(seen_n) else {
             return false; // more distinct tags than the writable set has
-        }
-        seen[seen_n] = tag;
+        };
+        *slot = tag;
         seen_n += 1;
         // `enabled_from_conf` and `clamp_usb_enabled` both act only on a two-byte
         // value, so any other width would store a mask the device silently ignores
@@ -485,11 +493,7 @@ fn max_value_len(tag: u8) -> Option<usize> {
 /// a half entry is the whole point.
 fn whole_tlvs(blob: &[u8]) -> usize {
     let mut i = 0;
-    while i + 2 <= blob.len() {
-        let end = i + 2 + blob[i + 1] as usize;
-        if end > blob.len() {
-            break;
-        }
+    while let Some((_, end)) = entry_at(blob, i) {
         i = end;
     }
     i
@@ -507,17 +511,16 @@ fn strip_config_lock(blob: &[u8], out: &mut [u8]) -> usize {
     let mut i = 0;
     let mut n = 0;
     while i < blob.len() {
-        let Some(&len) = blob.get(i + 1) else {
-            out[..blob.len()].copy_from_slice(blob);
+        let Some((tag, end)) = entry_at(blob, i) else {
+            if let Some(dst) = out.get_mut(..blob.len()) {
+                dst.copy_from_slice(blob);
+            }
             return blob.len();
         };
-        let end = i + 2 + len as usize;
-        if end > blob.len() {
-            out[..blob.len()].copy_from_slice(blob);
-            return blob.len();
-        }
-        if blob[i] != TAG_CONFIG_LOCK && blob[i] != TAG_CONFIG_UNLOCK {
-            out[n..n + (end - i)].copy_from_slice(&blob[i..end]);
+        if tag != TAG_CONFIG_LOCK && tag != TAG_CONFIG_UNLOCK {
+            if let (Some(dst), Some(src)) = (out.get_mut(n..n + (end - i)), blob.get(i..end)) {
+                dst.copy_from_slice(src);
+            }
             n += end - i;
         }
         i = end;
@@ -553,10 +556,12 @@ pub fn dev_conf_unchanged<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> bool {
     // the limits never fitted, so every replay of it looked "changed" and churned
     // flash plus the audit ring (audit run-34 #35).
     let mut merged = [0u8; DEV_CONF_MERGE_MAX];
-    let Ok(m) = merged_dev_conf(fs, &stripped[..n], &mut merged) else {
+    let Ok(m) = merged_dev_conf(fs, stripped.get(..n).unwrap_or_default(), &mut merged) else {
         return false;
     };
-    stored_matches(fs, &merged[..m])
+    merged
+        .get(..m)
+        .is_some_and(|record| stored_matches(fs, record))
 }
 
 /// Set by [`persist_dev_conf`] on any successful write, drained by the firmware to
@@ -577,15 +582,14 @@ pub fn take_dev_conf_dirty() -> bool {
 /// stops the walk (→ default), never slicing out of bounds.
 pub fn enabled_from_conf(conf: &[u8]) -> u16 {
     let mut i = 0;
-    while i + 2 <= conf.len() {
-        let len = conf[i + 1] as usize;
-        if i + 2 + len > conf.len() {
-            break;
+    while let Some((tag, end)) = entry_at(conf, i) {
+        if tag == TAG_USB_ENABLED
+            && end - i == 4
+            && let Some(&mask) = conf.get(i + 2..end).and_then(<[u8]>::first_chunk::<2>)
+        {
+            return u16::from_be_bytes(mask) & SUPPORTED_CAPS;
         }
-        if conf[i] == TAG_USB_ENABLED && len == 2 {
-            return u16::from_be_bytes([conf[i + 2], conf[i + 3]]) & SUPPORTED_CAPS;
-        }
-        i += 2 + len;
+        i = end;
     }
     SUPPORTED_CAPS
 }
@@ -605,7 +609,9 @@ pub fn read_enabled_caps<S: Storage>(fs: &mut Fs<S>) -> u16 {
     // be scanned whole, or a disabled applet silently comes back after the upgrade.
     let mut conf = [0u8; EF_DEV_CONF_READ_MAX];
     match fs.try_read(EF_DEV_CONF, &mut conf) {
-        Ok(Some(full)) if full > 0 => enabled_from_conf(&conf[..full.min(conf.len())]),
+        Ok(Some(full)) if full > 0 => {
+            enabled_from_conf(conf.get(..full.min(conf.len())).unwrap_or_default())
+        }
         Ok(_) => SUPPORTED_CAPS,
         Err(_) => NO_CAPS,
     }
@@ -635,29 +641,31 @@ pub fn cap_enabled(mask: u16, cap: u16) -> bool {
 /// TLVs in place; a malformed length stops the walk, leaving the rest untouched.
 fn clamp_usb_enabled(blob: &mut [u8]) {
     let mut i = 0;
-    while i + 2 <= blob.len() {
-        let len = blob[i + 1] as usize;
-        if i + 2 + len > blob.len() {
-            break;
+    while let Some((tag, end)) = entry_at(blob, i) {
+        if tag == TAG_USB_ENABLED
+            && end - i == 4
+            && let Some(mask) = blob
+                .get_mut(i + 2..end)
+                .and_then(<[u8]>::first_chunk_mut::<2>)
+        {
+            *mask = (u16::from_be_bytes(*mask) & SUPPORTED_CAPS).to_be_bytes();
         }
-        if blob[i] == TAG_USB_ENABLED && len == 2 {
-            let masked =
-                (u16::from_be_bytes([blob[i + 2], blob[i + 3]]) & SUPPORTED_CAPS).to_be_bytes();
-            blob[i + 2..i + 4].copy_from_slice(&masked);
-        }
-        i += 2 + len;
+        i = end;
     }
 }
 
 /// Append a `tag, len, value` TLV; silently truncated by the fixed `read_config`
 /// buffer (sized for the largest config, so this never actually overflows).
 fn push_tlv(buf: &mut [u8], n: &mut usize, tag: u8, val: &[u8]) {
-    if *n + 2 + val.len() > buf.len() {
+    let Some(entry) = buf.get_mut(*n..*n + 2 + val.len()) else {
         return;
-    }
-    buf[*n] = tag;
-    buf[*n + 1] = val.len() as u8;
-    buf[*n + 2..*n + 2 + val.len()].copy_from_slice(val);
+    };
+    let Some((head, value)) = entry.split_first_chunk_mut::<2>() else {
+        return;
+    };
+    let [len, ..] = val.len().to_le_bytes();
+    *head = [tag, len];
+    value.copy_from_slice(val);
     *n += 2 + val.len();
 }
 
@@ -689,4 +697,12 @@ pub mod raw {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 mod tests;

@@ -783,17 +783,13 @@ status = "patch"
 file = "crates/rsk-devconf/src/lib.rs"
 find = """
     let mut merged = [0u8; DEV_CONF_MERGE_MAX];
-    let m = merged_dev_conf(fs, &stripped[..n], &mut merged)?;
-    if m > EF_DEV_CONF_MAX {
-        return Err(DevConfError::TooLong);
-    }
+    let m = merged_dev_conf(fs, stripped.get(..n).unwrap_or_default(), &mut merged)?;
+    let Some(record) = merged.get(..m).filter(|_| m <= EF_DEV_CONF_MAX) else {
 """
 replace = """
     let merged = stripped;
     let m = n;
-    if m > EF_DEV_CONF_MAX {
-        return Err(DevConfError::TooLong);
-    }
+    let Some(record) = merged.get(..m).filter(|_| m <= EF_DEV_CONF_MAX) else {
 """
 slice = ["cargo", "test", "-p", "rsk-devconf"]
 expect = "killed"

@@ -654,7 +654,7 @@ crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	47
 crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	476-479	if seq != self.seq {	}
 crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	483-489	let n = CONT_DATA.min(self.bcnt.saturating_sub(self.cur));	dst.copy_from_slice(src);
 crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	654-667	async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {	}
-formal/README.md	crates/rsk-devconf/src/lib.rs	259-272	// and `read_enabled_caps` reads empty as "no record" and returns	return Ok(());
+formal/README.md	crates/rsk-devconf/src/lib.rs	272-285	// and `read_enabled_caps` reads empty as "no record" and returns	return Ok(());
 formal/README.md	crates/rsk-device/src/ccid.rs	73-80	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
 formal/README.md	crates/rsk-device/src/ccid.rs	97-115	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
 formal/README.md	crates/rsk-device/src/ccid.rs	248-256	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
@@ -848,10 +848,10 @@ formal/README.md	firmware/src/worker.rs	513-515	// Nothing is in flight again: a
 formal/README.md	firmware/src/worker.rs	515-515	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
 formal/README.md	firmware/src/worker.rs	651-653	// Scope any touch wait this command starts to the OTP transport, so a host	crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
 formal/README.md	tools/emu/src/device.rs	508-508	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);
-formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	237-237	/// the enabled-applications TLV *without* any transport length prefix; the caller	/// the enabled-applications TLV *without* any transport length prefix; the caller
-formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	248-262	// the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a	let mut merged = [0u8; DEV_CONF_MERGE_MAX];
-formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	586-586	return u16::from_be_bytes([conf[i + 2], conf[i + 3]]) & SUPPORTED_CAPS;	return u16::from_be_bytes([conf[i + 2], conf[i + 3]]) & SUPPORTED_CAPS;
-formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	590-590	SUPPORTED_CAPS	SUPPORTED_CAPS
+formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	250-250	/// the enabled-applications TLV *without* any transport length prefix; the caller	/// the enabled-applications TLV *without* any transport length prefix; the caller
+formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	261-275	// the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a	let mut merged = [0u8; DEV_CONF_MERGE_MAX];
+formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	590-590	return u16::from_be_bytes(mask) & SUPPORTED_CAPS;	return u16::from_be_bytes(mask) & SUPPORTED_CAPS;
+formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	594-594	SUPPORTED_CAPS	SUPPORTED_CAPS
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	73-80	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	248-256	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	330-330	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
