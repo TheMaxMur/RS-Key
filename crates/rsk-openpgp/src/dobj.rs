@@ -215,7 +215,8 @@ impl<'a, S: Storage> DoWriter<'a, S> {
 
     /// BER-TLV length encoding: 1 byte (<128), `81 LL` (<256), or `82 HH LL`.
     fn fmt_len(&mut self, len: usize) {
-        let [lo, hi, ..] = len.to_le_bytes();
+        // Past 65,535 the DO outgrows any reply, and GET DATA refuses it on its size.
+        let [hi, lo] = u16::try_from(len).unwrap_or(u16::MAX).to_be_bytes();
         if len < 0x80 {
             self.push(lo);
         } else if len < 0x100 {
@@ -521,7 +522,7 @@ impl<'a, S: Storage> DoWriter<'a, S> {
                 self.emit_algo(a, EF_ALGO_ATT);
             }
             let lpdif = self.pos - lp - 2;
-            let [lo, hi, ..] = lpdif.to_le_bytes();
+            let [hi, lo] = u16::try_from(lpdif).unwrap_or(u16::MAX).to_be_bytes();
             if let Some(slot) = self.out.get_mut(lp) {
                 *slot = hi;
             }
@@ -539,8 +540,12 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             } else {
                 let len = self.fs.size(priv_fid).unwrap_or(0);
                 self.push((fid & 0xff) as u8);
-                let [lo, ..] = len.to_le_bytes();
-                self.push(lo);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "PUT DATA stores no attribute near 255 bytes; a longer one, from \
+                              corrupt flash, has always kept its low byte here"
+                )]
+                self.push(len as u8);
                 let at = self.pos;
                 self.read_flash(priv_fid);
                 // An older build stored the e length it was sent.

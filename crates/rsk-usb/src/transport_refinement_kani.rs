@@ -11,7 +11,7 @@
 //! whether a declared length can walk the copy past the array.
 //!
 //! The `Outcome` each one reads is what the production dispatcher branches on —
-//! `CtapHid::on_frame` (`crates/rsk-usb/src/ctaphid.rs:654-667`) is the only
+//! `CtapHid::on_frame` (`crates/rsk-usb/src/ctaphid.rs:657-670`) is the only
 //! caller of `feed` in the image, so a refusal proved here is a refusal there.
 
 use super::transport_assurance::{PROBE_MAX, cont_frame, init_frame};

@@ -175,8 +175,7 @@ impl FrameTx {
         }
         let total = n + 2;
         self.remaining = total;
-        let [expected, ..] = total.div_ceil(REPORT_DATA).to_le_bytes();
-        self.expected = expected;
+        self.expected = u8::try_from(total.div_ceil(REPORT_DATA)).unwrap_or(u8::MAX);
         self.seq = 0;
     }
 

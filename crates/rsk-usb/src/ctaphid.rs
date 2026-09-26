@@ -535,7 +535,10 @@ impl Iterator for TxFrames<'_> {
 
         if !self.started {
             self.started = true;
-            let [lo, hi, ..] = total.to_le_bytes();
+            let Ok(bcnt) = u16::try_from(total) else {
+                return None;
+            };
+            let [hi, lo] = bcnt.to_be_bytes();
             frame[4] = self.cmd; // already carries the TYPE_INIT bit
             frame[5] = hi;
             frame[6] = lo;

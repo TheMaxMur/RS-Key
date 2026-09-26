@@ -446,7 +446,7 @@ impl<'a> OtpApplet<'a> {
         res: &mut ResBuf,
     ) -> Sw {
         let mut raw = Secret::<[u8; 5 + hid::PAYLOAD_SIZE]>::zeroed();
-        let [lc, ..] = hid::PAYLOAD_SIZE.to_le_bytes();
+        let lc = u8::try_from(hid::PAYLOAD_SIZE).unwrap_or(u8::MAX);
         raw.expose_mut()[..5].copy_from_slice(&[0x00, INS_OTP, slot_id, 0x00, lc]);
         raw.expose_mut()[5..].copy_from_slice(payload);
         match Apdu::parse(raw.expose()) {

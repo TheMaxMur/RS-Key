@@ -215,7 +215,9 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
         }
     }
 
-    let [overall, ..] = (n - 1).to_le_bytes();
+    let Ok(overall) = u8::try_from(n - 1) else {
+        return Sw::EXEC_ERROR;
+    };
     buf[0] = overall;
     let Some(body) = buf.get(..n) else {
         return Sw::EXEC_ERROR;
@@ -657,13 +659,15 @@ fn clamp_usb_enabled(blob: &mut [u8]) {
 /// Append a `tag, len, value` TLV; silently truncated by the fixed `read_config`
 /// buffer (sized for the largest config, so this never actually overflows).
 fn push_tlv(buf: &mut [u8], n: &mut usize, tag: u8, val: &[u8]) {
+    let Ok(len) = u8::try_from(val.len()) else {
+        return;
+    };
     let Some(entry) = buf.get_mut(*n..*n + 2 + val.len()) else {
         return;
     };
     let Some((head, value)) = entry.split_first_chunk_mut::<2>() else {
         return;
     };
-    let [len, ..] = val.len().to_le_bytes();
     *head = [tag, len];
     value.copy_from_slice(val);
     *n += 2 + val.len();
