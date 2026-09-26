@@ -547,7 +547,7 @@ why = "PUT DATA with an empty body IS the object delete, so the removal is the w
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1200
+line = 1202
 call = "let dropped = fs.delete_key(key_fid(from));"
 verb = "delete_key"
 answer = "read"
@@ -558,7 +558,7 @@ why = "MOVE with to = 0xFF, the slot delete. The head earns a retry because one 
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1201
+line = 1203
 call = "let _ = fs.delete(pubkey_fid(from));"
 verb = "delete"
 answer = "discarded"

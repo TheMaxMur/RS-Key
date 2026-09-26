@@ -692,6 +692,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The parsers of host bytes cannot index, unwrap or truncate unchecked** —
+  refactor; the same bytes out for the same bytes in. A module that reads what a
+  host sent denies `clippy::indexing_slicing`, `unwrap_used`, `expect_used`,
+  `panic` and `cast_possible_truncation`, so every access there is one whose
+  failure the code handles: under `panic-halt` a panic on a host's bytes is a
+  board that answers nothing until it is unplugged. So far: `rsk-sdk`'s TLV walk,
+  whose `format_len` now takes the `[u8; 3]` it writes at most.
+  `bcdDevice` 0x0A35 → 0x0A36.
+
 - **The trusted display a host ceremony reaches holds no cell its dispatch
   borrows** — refactor; the same screens, touches and store writes. The panel's
   `Ui` no longer carries the store, the device keys or the DRBG: the device's own

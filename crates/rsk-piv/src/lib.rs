@@ -1016,7 +1016,9 @@ impl PivApplet<'_> {
             }
             _ => {
                 body[0] = 0x86;
-                let ll = format_len(pn as u16, &mut body[1..4]);
+                let mut len = [0u8; 3];
+                let ll = format_len(pn as u16, &mut len);
+                body[1..1 + ll].copy_from_slice(&len[..ll]);
                 body[1 + ll..1 + ll + pn].copy_from_slice(&public[..pn]);
                 1 + ll + pn
             }
