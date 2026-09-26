@@ -110,6 +110,20 @@ Resets are held the same way: `clippy.toml` refuses `SCB::sys_reset`,
 scrub of the RAM secrets. The secure reboot and `rsk-wipe` (a RAM-only image with
 no secret to lose) keep their calls under an `#[expect]`.
 
+Host bytes cannot panic a parser: under `panic-halt` a panic is a board that
+answers nothing until it is unplugged. A module that reads what a host sent —
+the CTAPHID and CCID transports, the APDU, TLV and CBOR parsers, the record
+codecs, each applet crate and each CTAP command handler — denies
+`clippy::indexing_slicing`, `unwrap_used`, `expect_used`, `panic` and
+`cast_possible_truncation` at its top; an applet crate does it on its root, so
+the whole crate. An access there is checked — `get`, `first_chunk`, a fixed-size
+array, `try_from` — and fails to the status word or CTAP error its path already
+answers, never to a silent default. The test modules keep their fixtures'
+indexing under an `#[allow]` with a reason. An exemption is an
+`#[expect(…, reason = …)]` on the smallest item, where the truncation is the
+behaviour kept or a checked form costs a proof; a byte picked out of
+`to_le_bytes()` is not one, because it hides the narrowing from the lint.
+
 Every file starts with the SPDX header:
 
 ```rust

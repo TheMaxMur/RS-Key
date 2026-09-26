@@ -52,6 +52,14 @@ project — see [README.md](README.md) and
   `rom_data::reset_to_usb_boot` / `reboot` / `reboot_ns` or
   `Watchdog::trigger_reset`; the secure reboot and `rsk-wipe` keep theirs under
   an `#[expect]`.
+- **Host bytes cannot panic a parser.** A module that reads what a host sent —
+  a transport, an APDU / TLV / CBOR parser, a record codec, an applet crate, a
+  CTAP handler — denies `clippy::indexing_slicing`, `unwrap_used`,
+  `expect_used`, `panic` and `cast_possible_truncation` at its top (an applet
+  crate on its root). An access there is checked and fails to the error its
+  path already answers; an exemption is an `#[expect(…, reason = …)]` on the
+  smallest item, never a byte picked out of `to_le_bytes()`. A new parser module
+  starts with the block (CONTRIBUTING.md → "Code").
 - **Every new file starts with the SPDX header** (`AGPL-3.0-only` — copy it from
   any neighbouring source file).
 - **Don't commit, push, flash, sign, or write OTP fuses unless asked.** The
