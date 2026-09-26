@@ -45,7 +45,7 @@ Two things worth reading carefully:
   declines. There is no path to a *new* secp256k1 FIDO credential.
 - **RSA-1024 is blocked on two independent gates**: the generation template
   parser (`crates/rsk-piv/src/keygen.rs:50-53`) and the separate import path
-  (`crates/rsk-piv/src/keygen.rs:716-718`), which does not go through that parser. So neither
+  (`crates/rsk-piv/src/keygen.rs:747-749`), which does not go through that parser. So neither
   `ykman piv keys generate ... RSA1024` nor importing an external 1024-bit
   key onto a slot succeeds. Both return `6A 80` (incorrect data).
 

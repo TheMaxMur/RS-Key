@@ -39,6 +39,10 @@ const INFO_PIV_KEYS: &[u8] = b"PIV/KEYS";
 fn kenc(dev: &Device) -> Secret<[u8; 32]> {
     let mut kbase = dev.derive_kbase();
     let mut out = Secret::<[u8; 32]>::zeroed();
+    #[expect(
+        clippy::expect_used,
+        reason = "HKDF-SHA256 refuses only an output past 255 × 32 bytes, and this one is 32"
+    )]
     hkdf_sha256(
         dev.serial_hash,
         kbase.expose(),
@@ -78,19 +82,25 @@ pub fn seal_put_over<S: Storage>(
     rng.fill(&mut blob.expose_mut()[..NONCE_LEN]);
     let mut nonce = [0u8; NONCE_LEN];
     nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
-    blob.expose_mut()[NONCE_LEN..NONCE_LEN + plain.len()].copy_from_slice(plain);
+    // `plain` is at most `MAX_PLAIN` (tested above), so its seal fits the blob.
+    let Some((ct, tag_out)) = blob
+        .expose_mut()
+        .get_mut(NONCE_LEN..n)
+        .map(|body| body.split_at_mut(plain.len()))
+    else {
+        return Err(Sw::WRONG_LENGTH);
+    };
+    ct.copy_from_slice(plain);
     let mut key = kenc(dev);
-    let tag = aes256gcm_encrypt(
-        key.expose(),
-        &nonce,
-        dev.serial_hash,
-        &mut blob.expose_mut()[NONCE_LEN..NONCE_LEN + plain.len()],
-    );
+    let tag = aes256gcm_encrypt(key.expose(), &nonce, dev.serial_hash, ct);
     key.wipe();
-    blob.expose_mut()[NONCE_LEN + plain.len()..n].copy_from_slice(&tag);
-    let r = fs
-        .put_key_over(fid, Sealed::wrap(&blob.expose()[..n]), rearmed)
-        .map_err(|_| Sw::MEMORY_FAILURE);
+    tag_out.copy_from_slice(&tag);
+    let r = match blob.expose().get(..n) {
+        Some(sealed) => fs
+            .put_key_over(fid, Sealed::wrap(sealed), rearmed)
+            .map_err(|_| Sw::MEMORY_FAILURE),
+        None => Err(Sw::WRONG_LENGTH),
+    };
     blob.wipe();
     r
 }
@@ -118,22 +128,25 @@ pub fn seal_read<S: Storage, const N: usize>(
     }
     let mut nonce = [0u8; NONCE_LEN];
     nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
+    let (Some((ct, stored_tag)), Some(pt)) = (
+        blob.expose_mut()
+            .get_mut(NONCE_LEN..n)
+            .map(|body| body.split_at_mut(pt_len)),
+        out.get_mut(..pt_len),
+    ) else {
+        blob.wipe();
+        return Err(Sw::WRONG_LENGTH);
+    };
     let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&blob.expose()[n - TAG_LEN..n]);
+    tag.copy_from_slice(stored_tag);
     let mut key = kenc(dev);
-    let r = aes256gcm_decrypt(
-        key.expose(),
-        &nonce,
-        dev.serial_hash,
-        &mut blob.expose_mut()[NONCE_LEN..NONCE_LEN + pt_len],
-        &tag,
-    );
+    let r = aes256gcm_decrypt(key.expose(), &nonce, dev.serial_hash, ct, &tag);
     key.wipe();
     if r.is_err() {
         blob.wipe();
         return Err(Sw::MEMORY_FAILURE);
     }
-    out[..pt_len].copy_from_slice(&blob.expose()[NONCE_LEN..NONCE_LEN + pt_len]);
+    pt.copy_from_slice(ct);
     blob.wipe();
     Ok(pt_len)
 }
@@ -172,9 +185,10 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
         // A reader fallback would re-admit the chip-serial arm at every command,
         // which is the at-rest widening this class exists to prevent.
         if let Ok(n) = seal_read(&old, fs, fid, &mut plain)
+            && let Some(opened) = plain.expose().get(..n)
             && let Ok(rearmed) = rsk_fs::request_rescrub(fs)
         {
-            let _ = seal_put_over(dev, fs, rng, fid, &plain.expose()[..n], Some(&rearmed));
+            let _ = seal_put_over(dev, fs, rng, fid, opened, Some(&rearmed));
         }
         plain.wipe();
     }
@@ -191,9 +205,20 @@ pub fn store_ec_key<S: Storage>(
 ) -> Result<(), Sw> {
     let scalar = key.scalar();
     let mut plain = Secret::<[u8; 1 + 66]>::zeroed();
-    plain.expose_mut()[0] = key.curve().id();
-    plain.expose_mut()[1..1 + scalar.len()].copy_from_slice(scalar);
-    let r = seal_put(dev, fs, rng, fid, &plain.expose()[..1 + scalar.len()]);
+    let len = 1 + scalar.len();
+    let Some((id, body)) = plain
+        .expose_mut()
+        .get_mut(..len)
+        .and_then(<[u8]>::split_first_mut)
+    else {
+        return Err(Sw::EXEC_ERROR);
+    };
+    *id = key.curve().id();
+    body.copy_from_slice(scalar);
+    let r = match plain.expose().get(..len) {
+        Some(blob) => seal_put(dev, fs, rng, fid, blob),
+        None => Err(Sw::EXEC_ERROR),
+    };
     plain.wipe();
     r
 }
@@ -207,7 +232,8 @@ pub fn load_ec_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Res
         return Err(Sw::MEMORY_FAILURE);
     }
     let curve = curve_from_id(plain[0]).ok_or(Sw::MEMORY_FAILURE)?;
-    PrivKey::from_scalar(curve, &plain[1..n]).ok_or(Sw::MEMORY_FAILURE)
+    let scalar = plain.get(1..n).ok_or(Sw::MEMORY_FAILURE)?;
+    PrivKey::from_scalar(curve, scalar).ok_or(Sw::MEMORY_FAILURE)
 }
 
 /// Seal an RSA key as `P ‖ Q ‖ dP ‖ dQ ‖ qInv` (the shared CRT layout — see
@@ -222,7 +248,13 @@ pub fn store_rsa_key<S: Storage>(
 ) -> Result<(), Sw> {
     let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
     let n = crt::crt_plaintext(key, plain.expose_mut()).map_err(rsa_sw)?;
-    seal_put(dev, fs, rng, fid, &plain.expose()[..n])
+    seal_put(
+        dev,
+        fs,
+        rng,
+        fid,
+        plain.expose().get(..n).ok_or(Sw::EXEC_ERROR)?,
+    )
 }
 
 /// Load a sealed RSA key and return ONLY its public modulus `N = p·q`, big-endian
@@ -243,8 +275,12 @@ pub fn load_rsa_modulus<S: Storage>(
     let plain = plain.expose();
     // Only `half` and the first `2*half` bytes are read, so the 2-vs-5-field
     // length classification (the `_` bool) cannot change `N` — collision-immune.
-    let (half, _) = crt::parse_rsa_blob(&plain[..n]).map_err(rsa_sw)?;
-    rsk_rsa::modulus_be(&plain[..half], &plain[half..2 * half], out).map_err(rsa_sw)
+    let blob = plain.get(..n).ok_or(Sw::MEMORY_FAILURE)?;
+    let (half, _) = crt::parse_rsa_blob(blob).map_err(rsa_sw)?;
+    let (Some(p), Some(q)) = (blob.get(..half), blob.get(half..2 * half)) else {
+        return Err(Sw::MEMORY_FAILURE);
+    };
+    rsk_rsa::modulus_be(p, q, out).map_err(rsa_sw)
 }
 
 /// Load the CRT signing parameters of an RSA key — new `P‖Q‖dP‖dQ‖qInv` blobs
@@ -253,7 +289,7 @@ pub fn load_rsa_modulus<S: Storage>(
 pub fn load_rsa_crt<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<RsaCrt, Sw> {
     let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
     let n = seal_read(dev, fs, fid, &mut plain)?;
-    crt::crt_from_plain(&plain.expose()[..n]).map_err(rsa_sw)
+    crt::crt_from_plain(plain.expose().get(..n).ok_or(Sw::MEMORY_FAILURE)?).map_err(rsa_sw)
 }
 
 /// The read side is narrower than [`Curve::id`] on purpose: PIV stores only
@@ -270,5 +306,13 @@ pub(crate) fn curve_from_id(b: u8) -> Option<Curve> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "seal_tests.rs"]
 mod tests;

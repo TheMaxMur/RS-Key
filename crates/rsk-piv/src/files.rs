@@ -271,7 +271,7 @@ pub fn put_pin_verifier<S: Storage>(
     rearmed: Option<&Rearmed>,
 ) -> Result<(), Sw> {
     let mut rec = Secret::<[u8; PIN_REC_LEN]>::zeroed();
-    rec.expose_mut()[0] = pin.len() as u8;
+    rec.expose_mut()[0] = u8::try_from(pin.len()).map_err(|_| Sw::WRONG_LENGTH)?;
     rec.expose_mut()[1] = 0x01;
     rec.expose_mut()[2..].copy_from_slice(dev.pin_derive_verifier(pin).expose());
     let r = fs
@@ -364,7 +364,8 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
         seal::store_ec_key(dev, fs, rng, key_fid(SLOT_ATTESTATION), &key)?;
         let mut point = [0u8; MAX_EC_POINT];
         let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
-        let _ = fs.put(pubkey_fid(SLOT_ATTESTATION), &point[..plen]);
+        let point = point.get(..plen).ok_or(Sw::EXEC_ERROR)?;
+        let _ = fs.put(pubkey_fid(SLOT_ATTESTATION), point);
         let mut cert = [0u8; x509::MAX_CERT];
         let n = x509::build_cert(
             &x509::CertParams {
@@ -372,7 +373,7 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
                 algo: ALGO_ECCP384,
                 spki: x509::Spki::Ec {
                     curve: Curve::P384,
-                    point: &point[..plen],
+                    point,
                 },
                 attestation: None,
                 ca_pathlen: Some(1),
@@ -382,8 +383,8 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
             &mut cert,
         )?;
         let mut obj = [0u8; x509::MAX_CERT + 16];
-        let on = crate::wrap_cert_object(&cert[..n], &mut obj);
-        fs.put(EF_ATTESTATION_CERT, &obj[..on])
+        let on = crate::wrap_cert_object(cert.get(..n).ok_or(Sw::EXEC_ERROR)?, &mut obj);
+        fs.put(EF_ATTESTATION_CERT, obj.get(..on).ok_or(Sw::EXEC_ERROR)?)
             .map_err(|_| Sw::MEMORY_FAILURE)?;
     }
     Ok(())
@@ -501,8 +502,12 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
         let mut fids = [0u16; SWEEP_BATCH];
         let mut n = 0;
         let complete = fs.for_each_key(&mut |fid| {
-            if pred(fid) && n < fids.len() && !fids[..n].contains(&fid) {
-                fids[n] = fid;
+            let (seen, free) = fids.split_at_mut(n);
+            if pred(fid)
+                && !seen.contains(&fid)
+                && let Some(slot) = free.first_mut()
+            {
+                *slot = fid;
                 n += 1;
             }
         });
@@ -517,11 +522,12 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
         }
         // Liveness measured as PROGRESS, not as a pass count: each pass deletes
         // `n` distinct fids, so a converging sweep can never exceed the budget.
-        deleted += n as u32;
+        // `n` is at most `SWEEP_BATCH`, far inside a `u32`.
+        deleted = deleted.saturating_add(u32::try_from(n).unwrap_or(u32::MAX));
         if deleted > RESET_MAX_DELETES {
             return Err(Sw::MEMORY_FAILURE);
         }
-        for &fid in &fids[..n] {
+        for &fid in fids.iter().take(n) {
             // force_delete (unconditional, and it drops the meta record itself):
             // `delete` skips a false-absent file that `for_each_key` keeps
             // yielding, so the sweep would spin instead of converging.
@@ -533,5 +539,13 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "files_tests.rs"]
 mod tests;

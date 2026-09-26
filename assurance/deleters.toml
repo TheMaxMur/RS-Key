@@ -514,7 +514,7 @@ why = "and its second. Both slots' valid bits come off flash in the response tha
 
 [[site]]
 file = "crates/rsk-piv/src/files.rs"
-line = 528
+line = 534
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -525,7 +525,7 @@ why = "the site this audit was about: PIV key fids carry EF_META heads, so the r
 
 [[site]]
 file = "crates/rsk-piv/src/objects.rs"
-line = 118
+line = 122
 call = "Some((fid, _)) => fs.delete(fid).map_err(|_| Sw::MEMORY_FAILURE),"
 verb = "delete"
 answer = "read"
@@ -536,7 +536,7 @@ why = "PUT DATA with an empty body deletes a pooled object, so the removal is th
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 866
+line = 885
 call = "return match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
@@ -547,7 +547,7 @@ why = "PUT DATA with an empty body IS the object delete, so the removal is the w
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1202
+line = 1236
 call = "let dropped = fs.delete_key(key_fid(from));"
 verb = "delete_key"
 answer = "read"
@@ -558,7 +558,7 @@ why = "MOVE with to = 0xFF, the slot delete. The head earns a retry because one 
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1203
+line = 1237
 call = "let _ = fs.delete(pubkey_fid(from));"
 verb = "delete"
 answer = "discarded"

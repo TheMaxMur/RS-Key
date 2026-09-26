@@ -148,7 +148,7 @@ VARIABLES
     sel,    \* Dispatcher::current            (crates/rsk-sdk/src/applet.rs:168)
     held,   \* [Refs -> BOOLEAN]: the in-RAM security statuses
     \* PIV's `pin_fresh` -- the UNSPENT half of `has_pin`, which a PIN-policy
-    \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:168-182). The
+    \* ALWAYS key operation consumes (crates/rsk-piv/src/lib.rs:176-190). The
     \* only status here that is a two-part thing.
     fresh,
     \* Whether OATH has an access code provisioned. It decides what a new SELECT
@@ -208,7 +208,7 @@ Init ==
     /\ viol  = {}
 
 \* Every status an applet owns, gone. This is `Session::reset`
-\* (crates/rsk-piv/src/lib.rs:206-210), `pin::Session::reset`
+\* (crates/rsk-piv/src/lib.rs:214-218), `pin::Session::reset`
 \* (crates/rsk-openpgp/src/pin.rs:82-107) and OATH's `deselect`
 \* (crates/rsk-oath/src/lib.rs:1174-1178) -- three functions, one meaning.
 ClearedFor(h, a) ==
@@ -284,9 +284,9 @@ SelectOther(a) ==
 (* disagree about what a refusal costs -- see the invariant's comment.      *)
 (***************************************************************************)
 
-\* PIV VERIFY (crates/rsk-piv/src/lib.rs:531-545): success sets has_pin AND
+\* PIV VERIFY (crates/rsk-piv/src/lib.rs:540-554): success sets has_pin AND
 \* pin_fresh, refusal clears both, through `Session::set_pin`
-\* (crates/rsk-piv/src/lib.rs:186-189) which is the only writer of either.
+\* (crates/rsk-piv/src/lib.rs:194-197) which is the only writer of either.
 PivVerify(ok) ==
     /\ sel = Piv
     /\ held' = [held EXCEPT !["pivPin"] = ok]
@@ -297,7 +297,7 @@ PivVerify(ok) ==
     /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, viol >>
 
 \* PIV CHANGE REFERENCE DATA / RESET RETRY COUNTER take no `&mut Session` at all
-\* (crates/rsk-piv/src/lib.rs:553-587), so a refused change costs the standing
+\* (crates/rsk-piv/src/lib.rs:562-596), so a refused change costs the standing
 \* status NOTHING. Deliberate, and settled by measurement rather than taste:
 \* SP 800-73-4 pt2 3.2.2/3.2.3 say the security status is unchanged and a real
 \* YubiKey keeps it.
@@ -669,7 +669,7 @@ NoKeyOpOnTheAdminStatus ==
 \* THE OTHER HALF OF THE REFUSAL RULE, and it points the opposite way: two
 \* refusals must cost NOTHING, and each is settled by its own authority rather
 \* than by a cross-applet principle. PIV's CHANGE REFERENCE DATA takes no
-\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:553-587) -- SP 800-73-4 pt2
+\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:562-596) -- SP 800-73-4 pt2
 \* 3.2.2/3.2.3, plus a measured YubiKey 5.7.4. OATH's access-code VALIDATE keeps
 \* the standing unlock (crates/rsk-oath/src/lib.rs:565-567), because a MAC
 \* challenge-response has no retry counter for a refusal to protect.

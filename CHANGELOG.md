@@ -706,8 +706,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `rsk-otp`, whose slot configure/update now takes the 52-byte config as a
   `[u8; 52]` it cannot be handed short. A length narrowed into a byte is a
   checked conversion, or a cast under a stated `#[expect]`, rather than a byte
-  picked out of a wider integer (outside `rsk-phy`, which follows).
-  `bcdDevice` 0x0A35 → 0x0A40.
+  picked out of a wider integer (outside `rsk-phy`, which follows). The PIV
+  applet, `rsk-piv`, whole crate, follows the OTP one; its data-object reader
+  takes the `[u8; RECORD_MAX]` it fills.
+  `bcdDevice` 0x0A35 → 0x0A41.
 
 - **The trusted display a host ceremony reaches holds no cell its dispatch
   borrows** — refactor; the same screens, touches and store writes. The panel's

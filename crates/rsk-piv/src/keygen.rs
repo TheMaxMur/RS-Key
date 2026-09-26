@@ -35,18 +35,18 @@ pub(crate) struct GenReq {
 }
 
 pub(crate) fn parse_gen_template(data: &[u8]) -> Result<GenReq, Sw> {
-    if data.is_empty() {
+    let Some(&first) = data.first() else {
         return Err(Sw::WRONG_LENGTH);
-    }
-    if data[0] != TAG_GEN_TEMPLATE {
+    };
+    if first != TAG_GEN_TEMPLATE {
         return Err(Sw::WRONG_DATA);
     }
     let ac = find_tag(data, TAG_GEN_TEMPLATE as u16)
         .filter(|v| !v.is_empty())
         .ok_or(Sw::WRONG_DATA)?;
     let algo = find_tag(ac, 0x80)
-        .filter(|v| !v.is_empty())
-        .ok_or(Sw::WRONG_DATA)?[0];
+        .and_then(|v| v.first().copied())
+        .ok_or(Sw::WRONG_DATA)?;
     // SP 800-131A: no RSA-1024 generation under the FIPS-style profile. This is
     // the one template parser, so it also covers the firmware prime-search path.
     if cfg!(feature = "fips-profile") && algo == ALGO_RSA1024 {
@@ -168,8 +168,9 @@ fn store_slot_cert<S: Storage>(
         &mut cert,
     )?;
     let mut obj = [0u8; x509::MAX_CERT + 16];
-    let on = wrap_cert_object(&cert[..n], &mut obj);
-    fs.put(fid, &obj[..on]).map_err(|_| Sw::MEMORY_FAILURE)
+    let on = wrap_cert_object(cert.get(..n).ok_or(Sw::EXEC_ERROR)?, &mut obj);
+    fs.put(fid, obj.get(..on).ok_or(Sw::EXEC_ERROR)?)
+        .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
 /// Whether GENERATE leaves `slot`'s certificate as it is: there is one, and it is not
@@ -187,7 +188,7 @@ fn keeps_certificate<S: Storage>(
     let Some(n) = fs.try_read(fid, &mut obj).map_err(|_| Sw::MEMORY_FAILURE)? else {
         return Ok(false);
     };
-    let cert = &obj[..n.min(obj.len())];
+    let cert = obj.get(..n).unwrap_or(&obj);
     Ok(!certifies_slot_key(dev, fs, slot, cert)?)
 }
 
@@ -218,10 +219,16 @@ fn certifies_slot_key<S: Storage>(
         return Ok(false);
     }
     let mut key = [0u8; MAX_RSA_BYTES];
-    let Ok(n) = slot_public(dev, fs, slot, &meta[..mn], &mut key) else {
+    let Some(head) = meta.get(..mn) else {
         return Ok(false);
     };
-    Ok(n > 0 && cert.windows(n).any(|w| w == &key[..n]))
+    let Ok(n) = slot_public(dev, fs, slot, head, &mut key) else {
+        return Ok(false);
+    };
+    Ok(n > 0
+        && key
+            .get(..n)
+            .is_some_and(|k| cert.windows(n).any(|w| w == k)))
 }
 
 /// The public half of the key in `slot` — the EC or EdDSA point, or the RSA modulus —
@@ -234,7 +241,10 @@ pub(crate) fn slot_public<S: Storage>(
     meta: &[u8],
     out: &mut [u8],
 ) -> Result<usize, Sw> {
-    match meta[0] {
+    let Some(&algo) = meta.first() else {
+        return Err(Sw::REFERENCE_NOT_FOUND);
+    };
+    match algo {
         // The modulus without rebuilding the private key: `from_p_q`'s CRT
         // precompute costs ~50 ms on RSA-4096 and nothing here needs it.
         ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
@@ -243,13 +253,15 @@ pub(crate) fn slot_public<S: Storage>(
         // The per-slot cache first (O(1) at any slot count), then the legacy
         // in-EF_META cache of older keys, and only then `d·G` from the scalar.
         ALGO_ECCP256 | ALGO_ECCP384 | ALGO_ED25519 | ALGO_X25519 => {
-            let out = &mut out[..MAX_EC_POINT];
+            let out = out.get_mut(..MAX_EC_POINT).ok_or(Sw::EXEC_ERROR)?;
             if let Some(n) = fs.read(pubkey_fid(slot), out) {
                 return Ok(n.min(out.len()));
             }
-            if meta.len() > 4 {
-                out[..meta.len() - 4].copy_from_slice(&meta[4..]);
-                return Ok(meta.len() - 4);
+            if let Some(cached) = meta.get(4..).filter(|c| !c.is_empty())
+                && let Some(dst) = out.get_mut(..cached.len())
+            {
+                dst.copy_from_slice(cached);
+                return Ok(cached.len());
             }
             let key = seal::load_ec_key(dev, fs, key_fid(slot)).map_err(|_| Sw::EXEC_ERROR)?;
             key.public_point(out).map_err(crate::ec_sw)
@@ -300,14 +312,25 @@ fn store_generated_cert<S: Storage>(
 /// `[algo, pin_policy, touch_policy, origin]` head with the uncompressed public
 /// `point` appended, so GET METADATA emits it (tag 0x04) instead of recomputing
 /// `d·G` per probe. An empty `point` writes just the head (uncacheable path).
-/// Returns the record length; `out` must be `>= 4 + point.len()`.
-fn ec_slot_meta(algo: u8, pol: [u8; 2], origin: u8, point: &[u8], out: &mut [u8]) -> usize {
-    out[0] = algo;
-    out[1] = pol[0];
-    out[2] = pol[1];
-    out[3] = origin;
-    out[4..4 + point.len()].copy_from_slice(point);
-    4 + point.len()
+/// Returns the record; `out` must be `>= 4 + point.len()`.
+fn ec_slot_meta<'o>(
+    algo: u8,
+    pol: [u8; 2],
+    origin: u8,
+    point: &[u8],
+    out: &'o mut [u8],
+) -> &'o [u8] {
+    let [pin, touch] = pol;
+    let mut n = 0;
+    for (dst, &b) in out
+        .iter_mut()
+        .zip([algo, pin, touch, origin].iter().chain(point))
+    {
+        *dst = b;
+        n += 1;
+    }
+    let out: &'o [u8] = out;
+    out.split_at(n).0
 }
 
 /// EF_META bytes kept free for every slot's essential 4-byte head, so an optional
@@ -328,7 +351,7 @@ pub(crate) fn meta_add_slot<S: Storage>(fs: &mut Fs<S>, fid: u16, rec: &[u8]) ->
     if fs.meta_add_reserve(fid, rec, META_POINT_RESERVE).is_ok() {
         return Ok(());
     }
-    fs.meta_add(fid, &rec[..rec.len().min(4)])
+    fs.meta_add(fid, rec.get(..4).unwrap_or(rec))
         .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
@@ -373,8 +396,10 @@ pub(crate) fn generate_ec<S: Storage>(
         Ok(n) => n,
         Err(e) => return crate::ec_sw(e),
     };
-    if let Err(e) = store_generated_cert(dev, fs, rng, slot, req.algo, curve, &point[..plen], &key)
-    {
+    let Some(point) = point.get(..plen) else {
+        return Sw::EXEC_ERROR;
+    };
+    if let Err(e) = store_generated_cert(dev, fs, rng, slot, req.algo, curve, point, &key) {
         return e;
     }
     if let Err(e) = seal::store_ec_key(dev, fs, rng, key_fid(slot), &key) {
@@ -383,15 +408,18 @@ pub(crate) fn generate_ec<S: Storage>(
     // Cache the public point in its own per-slot file so GET METADATA stays O(1) at
     // any slot count — the shared EF_META cache fills after ~10 EC slots and the
     // rest would recompute d·G. Best-effort: on failure GET METADATA derives it.
-    let _ = fs.put(pubkey_fid(slot), &point[..plen]);
+    let _ = fs.put(pubkey_fid(slot), point);
     let mut mbuf = [0u8; 4 + MAX_EC_POINT];
-    let mlen = ec_slot_meta(req.algo, pol, ORIGIN_GENERATED, &point[..plen], &mut mbuf);
-    if let Err(e) = meta_add_slot(fs, key_fid(slot).get(), &mbuf[..mlen]) {
+    let rec = ec_slot_meta(req.algo, pol, ORIGIN_GENERATED, point, &mut mbuf);
+    if let Err(e) = meta_add_slot(fs, key_fid(slot).get(), rec) {
         return e;
     }
     let mut out = [0u8; MAX_EC_PUBDO];
-    let n = make_ec_pubkey_do(&point[..plen], &mut out);
-    if !res.extend(&out[..n]) {
+    let n = make_ec_pubkey_do(point, &mut out);
+    let Some(body) = out.get(..n) else {
+        return Sw::EXEC_ERROR;
+    };
+    if !res.extend(body) {
         return Sw::WRONG_LENGTH;
     }
     Sw::OK
@@ -438,7 +466,10 @@ pub(crate) fn finish_rsa<S: Storage>(
     }
     let mut out = [0u8; MAX_RSA_PUBDO];
     let dn = make_rsa_response(key, &mut out);
-    if !res.extend(&out[..dn]) {
+    let Some(body) = out.get(..dn) else {
+        return Sw::EXEC_ERROR;
+    };
+    if !res.extend(body) {
         return Sw::WRONG_LENGTH;
     }
     Sw::OK
@@ -522,12 +553,13 @@ pub(crate) fn generate_retired_ec<S: Storage>(
     };
     let mut point = [0u8; MAX_EC_POINT];
     let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
-    store_generated_cert(dev, fs, rng, slot, algo, curve, &point[..plen], &key)?;
+    let point = point.get(..plen).ok_or(Sw::EXEC_ERROR)?;
+    store_generated_cert(dev, fs, rng, slot, algo, curve, point, &key)?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)?;
     let pol = resolved_policies(slot, None, None)?;
     let mut mbuf = [0u8; 4 + MAX_EC_POINT];
-    let mlen = ec_slot_meta(algo, pol, ORIGIN_GENERATED, &point[..plen], &mut mbuf);
-    meta_add_slot(fs, key_fid(slot).get(), &mbuf[..mlen])
+    let rec = ec_slot_meta(algo, pol, ORIGIN_GENERATED, point, &mut mbuf);
+    meta_add_slot(fs, key_fid(slot).get(), rec)
 }
 
 /// Persist a display-generated RSA key into an empty retired slot — the RSA companion
@@ -669,11 +701,10 @@ fn import_edwards<S: Storage>(
     // integer, so it is imported verbatim.
     let mut flipped = Secret::<[u8; 32]>::zeroed();
     let scalar = if algo == ALGO_X25519 {
-        let n = scalar.len();
-        for (i, &b) in scalar.iter().enumerate() {
-            flipped.expose_mut()[n - 1 - i] = b;
+        for (dst, &b) in flipped.expose_mut().iter_mut().rev().zip(scalar) {
+            *dst = b;
         }
-        &flipped.expose()[..n]
+        flipped.expose().as_slice()
     } else {
         scalar
     };
@@ -740,24 +771,26 @@ pub(crate) fn import<S: Storage>(
     // Cache the public point for EC slots (import is not a hot path, so derive it
     // once from the freshly sealed key); RSA keeps the bare 4-byte record.
     let mut mbuf = [0u8; 4 + MAX_EC_POINT];
-    let mlen = if matches!(
+    let mut point = [0u8; MAX_EC_POINT];
+    let cached: &[u8] = if matches!(
         algo,
         ALGO_ECCP256 | ALGO_ECCP384 | ALGO_ED25519 | ALGO_X25519
     ) {
-        let mut point = [0u8; MAX_EC_POINT];
         match seal::load_ec_key(dev, fs, key_fid(slot))
             .and_then(|k| k.public_point(&mut point).map_err(crate::ec_sw))
+            .map(|plen| point.get(..plen).unwrap_or_default())
         {
-            Ok(plen) => {
-                let _ = fs.put(pubkey_fid(slot), &point[..plen]);
-                ec_slot_meta(algo, pol, ORIGIN_IMPORTED, &point[..plen], &mut mbuf)
+            Ok(point) => {
+                let _ = fs.put(pubkey_fid(slot), point);
+                point
             }
-            Err(_) => ec_slot_meta(algo, pol, ORIGIN_IMPORTED, &[], &mut mbuf),
+            Err(_) => &[],
         }
     } else {
-        ec_slot_meta(algo, pol, ORIGIN_IMPORTED, &[], &mut mbuf)
+        &[]
     };
-    if let Err(e) = meta_add_slot(fs, key_fid(slot).get(), &mbuf[..mlen]) {
+    let rec = ec_slot_meta(algo, pol, ORIGIN_IMPORTED, cached, &mut mbuf);
+    if let Err(e) = meta_add_slot(fs, key_fid(slot).get(), rec) {
         return e;
     }
     Sw::OK
@@ -807,12 +840,15 @@ pub(crate) fn attest<S: Storage>(
                 Ok(l) => l,
                 Err(e) => return e,
             };
+            let Some(n) = n.get(..nl) else {
+                return Sw::EXEC_ERROR;
+            };
             x509::build_cert(
                 &x509::CertParams {
                     subject_slot: slot,
                     algo: meta[0],
                     spki: x509::Spki::Rsa {
-                        n: &n[..nl],
+                        n,
                         e: rsk_rsa::RSA_PUB_EXP_BE,
                     },
                     attestation: Some(att),
@@ -833,13 +869,16 @@ pub(crate) fn attest<S: Storage>(
                 Ok(n) => n,
                 Err(e) => return crate::ec_sw(e),
             };
+            let Some(point) = point.get(..plen) else {
+                return Sw::EXEC_ERROR;
+            };
             x509::build_cert(
                 &x509::CertParams {
                     subject_slot: slot,
                     algo: meta[0],
                     spki: x509::Spki::Ec {
                         curve: key.curve(),
-                        point: &point[..plen],
+                        point,
                     },
                     attestation: Some(att),
                     ca_pathlen: None,
@@ -859,13 +898,16 @@ pub(crate) fn attest<S: Storage>(
                 Ok(n) => n,
                 Err(e) => return crate::ec_sw(e),
             };
+            let Some(point) = point.get(..plen) else {
+                return Sw::EXEC_ERROR;
+            };
             x509::build_cert(
                 &x509::CertParams {
                     subject_slot: slot,
                     algo: meta[0],
                     spki: x509::Spki::Rfc8410 {
                         curve: key.curve(),
-                        point: &point[..plen],
+                        point,
                     },
                     attestation: Some(att),
                     ca_pathlen: None,
@@ -881,7 +923,7 @@ pub(crate) fn attest<S: Storage>(
         Ok(n) => n,
         Err(e) => return e,
     };
-    let ok = res.extend(&cert.expose()[..n]);
+    let ok = cert.expose().get(..n).is_some_and(|c| res.extend(c));
     cert.wipe();
     if !ok {
         return Sw::WRONG_LENGTH;

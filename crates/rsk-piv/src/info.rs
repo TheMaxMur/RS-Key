@@ -60,7 +60,8 @@ pub struct PivInfo {
 impl PivInfo {
     /// How many primary slots hold a key or a certificate.
     pub fn populated(&self) -> u8 {
-        self.slots.iter().filter(|s| s.present || s.cert).count() as u8
+        let n = self.slots.iter().filter(|s| s.present || s.cert).count();
+        u8::try_from(n).unwrap_or(u8::MAX)
     }
 }
 
@@ -166,8 +167,10 @@ pub fn read_extra<S: Storage>(fs: &mut Fs<S>, out: &mut [PivSlot]) -> usize {
             break;
         }
         let s = read_slot(fs, slot);
-        if s.present || s.cert {
-            out[n] = s;
+        if (s.present || s.cert)
+            && let Some(entry) = out.get_mut(n)
+        {
+            *entry = s;
             n += 1;
         }
     }
@@ -178,7 +181,7 @@ pub fn read_extra<S: Storage>(fs: &mut Fs<S>, out: &mut [PivSlot]) -> usize {
 /// F9), for the count on the PIV overview row.
 pub fn extra_count<S: Storage>(fs: &mut Fs<S>) -> u8 {
     let mut out = [PivSlot::default(); MAX_EXTRA_SLOTS];
-    read_extra(fs, &mut out) as u8
+    u8::try_from(read_extra(fs, &mut out)).unwrap_or(u8::MAX)
 }
 
 /// The lowest-numbered retired slot (82–95) holding neither a key nor a certificate,
@@ -231,8 +234,8 @@ pub fn store_retired_rsa<S: Storage>(
 /// Read the public state of the PIV applet for the trusted display.
 pub fn read_info<S: Storage>(fs: &mut Fs<S>) -> PivInfo {
     let mut slots = [PivSlot::default(); 4];
-    for (i, &slot) in PRIMARY_SLOTS.iter().enumerate() {
-        slots[i] = read_slot(fs, slot);
+    for (entry, &slot) in slots.iter_mut().zip(PRIMARY_SLOTS.iter()) {
+        *entry = read_slot(fs, slot);
     }
 
     let mut r = [0u8; 4];
@@ -249,5 +252,13 @@ pub fn read_info<S: Storage>(fs: &mut Fs<S>) -> PivInfo {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "info_tests.rs"]
 mod tests;

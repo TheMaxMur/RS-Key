@@ -202,12 +202,14 @@ impl<S: Storage> GenAuth<'_, S> {
                 return Err(Sw::WRONG_DATA);
             }
             check_touch(self.touch_policy, self.presence)?;
-            self.rng.fill(&mut self.sess.challenge[..self.chal_len]);
+            let chal = block_mut(&mut self.sess.challenge, self.chal_len)?;
+            self.rng.fill(chal);
             let mut enc = [0u8; 16];
-            enc[..self.chal_len].copy_from_slice(&self.sess.challenge[..self.chal_len]);
-            mgm_crypt(self.algo, mgm, &mut enc[..self.chal_len], Dir::Encrypt)?;
+            let witness = block_mut(&mut enc, self.chal_len)?;
+            witness.copy_from_slice(chal);
+            mgm_crypt(self.algo, mgm, witness, Dir::Encrypt)?;
             self.begin_handshake(ChallengeKind::MutualWitness);
-            dyn_auth_resp(res, TAG_AUTH_WITNESS, &enc[..self.chal_len])?;
+            dyn_auth_resp(res, TAG_AUTH_WITNESS, witness)?;
             return Ok(());
         }
         // Mutual auth step 2: host returns the decrypted witness + its own
@@ -226,7 +228,7 @@ impl<S: Storage> GenAuth<'_, S> {
         let host_chal = host_chal.filter(|c| !c.is_empty()).ok_or(Sw::WRONG_DATA)?;
         self.sess.has_challenge = false;
         self.sess.chal_kind = ChallengeKind::None;
-        if w.len() != self.chal_len || !ct_eq(w, &self.sess.challenge[..self.chal_len]) {
+        if w.len() != self.chal_len || !ct_eq(w, block(&self.sess.challenge, self.chal_len)?) {
             return Err(Sw::DATA_INVALID);
         }
         self.sess.has_mgm = true;
@@ -234,21 +236,23 @@ impl<S: Storage> GenAuth<'_, S> {
             return Err(Sw::DATA_INVALID);
         }
         let mut enc = [0u8; 16];
-        enc[..self.chal_len].copy_from_slice(host_chal);
-        mgm_crypt(self.algo, mgm, &mut enc[..self.chal_len], Dir::Encrypt)?;
-        dyn_auth_resp(res, TAG_AUTH_RESPONSE, &enc[..self.chal_len])?;
+        let answer = block_mut(&mut enc, self.chal_len)?;
+        answer.copy_from_slice(host_chal);
+        mgm_crypt(self.algo, mgm, answer, Dir::Encrypt)?;
+        dyn_auth_resp(res, TAG_AUTH_RESPONSE, answer)?;
         Ok(())
     }
 
     /// t81 single auth step 1: issue a plaintext challenge for the host to
     /// encrypt and return (verified in [`Self::single_auth_verify`]).
     fn single_challenge(&mut self, res: &mut ResBuf) -> Result<(), Sw> {
-        self.rng.fill(&mut self.sess.challenge[..self.chal_len]);
+        self.rng
+            .fill(block_mut(&mut self.sess.challenge, self.chal_len)?);
         self.begin_handshake(ChallengeKind::SingleChallenge);
         dyn_auth_resp(
             res,
             TAG_AUTH_CHALLENGE,
-            &self.sess.challenge[..self.chal_len],
+            block(&self.sess.challenge, self.chal_len)?,
         )?;
         Ok(())
     }
@@ -274,7 +278,11 @@ impl<S: Storage> GenAuth<'_, S> {
                     out.expose_mut(),
                 )
                 .map_err(crate::rsa_sw)?;
-                dyn_auth_resp(res, TAG_AUTH_RESPONSE, &out.expose()[..n])?;
+                dyn_auth_resp(
+                    res,
+                    TAG_AUTH_RESPONSE,
+                    out.expose().get(..n).ok_or(Sw::EXEC_ERROR)?,
+                )?;
                 out.wipe();
             }
             ALGO_ECCP256 | ALGO_ECCP384 => {
@@ -283,8 +291,8 @@ impl<S: Storage> GenAuth<'_, S> {
                 let mut raw = [0u8; 96];
                 let rn = key.sign(c, &mut raw).map_err(crate::ec_sw)?;
                 let mut der = [0u8; 112];
-                let dn = x509::ecdsa_sig_der(&raw[..rn], &mut der)?;
-                dyn_auth_resp(res, TAG_AUTH_RESPONSE, &der[..dn])?;
+                let dn = x509::ecdsa_sig_der(raw.get(..rn).ok_or(Sw::EXEC_ERROR)?, &mut der)?;
+                dyn_auth_resp(res, TAG_AUTH_RESPONSE, der.get(..dn).ok_or(Sw::EXEC_ERROR)?)?;
             }
             ALGO_ED25519 => {
                 check_touch(self.touch_policy, self.presence)?;
@@ -293,7 +301,7 @@ impl<S: Storage> GenAuth<'_, S> {
                 // returned bare (no ASN.1 wrapping).
                 let mut sig = [0u8; 64];
                 let n = key.sign(c, &mut sig).map_err(crate::ec_sw)?;
-                dyn_auth_resp(res, TAG_AUTH_RESPONSE, &sig[..n])?;
+                dyn_auth_resp(res, TAG_AUTH_RESPONSE, sig.get(..n).ok_or(Sw::EXEC_ERROR)?)?;
             }
             ALGO_3DES | ALGO_AES128 | ALGO_AES192 | ALGO_AES256 => {
                 // "Internal authenticate" — encrypting caller-chosen data under
@@ -329,9 +337,10 @@ impl<S: Storage> GenAuth<'_, S> {
             return Err(Sw::DATA_INVALID);
         }
         let mut dec = [0u8; 16];
-        dec[..self.chal_len].copy_from_slice(r);
-        mgm_crypt(self.algo, mgm, &mut dec[..self.chal_len], Dir::Decrypt)?;
-        if !ct_eq(&dec[..self.chal_len], &self.sess.challenge[..self.chal_len]) {
+        let plain = block_mut(&mut dec, self.chal_len)?;
+        plain.copy_from_slice(r);
+        mgm_crypt(self.algo, mgm, plain, Dir::Decrypt)?;
+        if !ct_eq(plain, block(&self.sess.challenge, self.chal_len)?) {
             return Err(Sw::DATA_INVALID);
         }
         self.sess.has_mgm = true;
@@ -358,10 +367,24 @@ impl<S: Storage> GenAuth<'_, S> {
         let n = key
             .ecdh(pp, shared.expose_mut())
             .map_err(|_| Sw::WRONG_DATA)?;
-        dyn_auth_resp(res, TAG_AUTH_RESPONSE, &shared.expose()[..n])?;
+        dyn_auth_resp(
+            res,
+            TAG_AUTH_RESPONSE,
+            shared.expose().get(..n).ok_or(Sw::EXEC_ERROR)?,
+        )?;
         shared.wipe();
         Ok(())
     }
+}
+
+/// A challenge buffer's first `len` bytes: the algorithm's block, 8 or 16 of its 16.
+fn block(buf: &[u8; 16], len: usize) -> Result<&[u8], Sw> {
+    buf.get(..len).ok_or(Sw::EXEC_ERROR)
+}
+
+/// [`block`], to write.
+fn block_mut(buf: &mut [u8; 16], len: usize) -> Result<&mut [u8], Sw> {
+    buf.get_mut(..len).ok_or(Sw::EXEC_ERROR)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -381,7 +404,7 @@ pub(crate) fn general_authenticate<S: Storage>(
     // never `6700` — the same spelling `0x0920` gave VERIFY's P1 axis. This
     // command has no ACL of its own, being the authentication, so its framing is
     // all it can answer for.
-    if data.is_empty() || data[0] != TAG_DYN_AUTH {
+    if data.first() != Some(&TAG_DYN_AUTH) {
         return Sw::WRONG_DATA;
     }
     let Some(dyn_auth) = find_tag(data, TAG_DYN_AUTH as u16) else {
@@ -451,6 +474,7 @@ pub(crate) fn general_authenticate<S: Storage>(
 
     let chal_len: usize = if algo == ALGO_3DES { 8 } else { 16 };
     let op = first_operation(dyn_auth);
+    let mgm = mgm_key.expose().get(..mgm_len).unwrap_or_default();
 
     let sw = {
         let mut ga = GenAuth {
@@ -469,7 +493,7 @@ pub(crate) fn general_authenticate<S: Storage>(
         match op {
             Some((Op::Witness, w)) => {
                 let host_chal = find_tag(dyn_auth, TAG_AUTH_CHALLENGE as u16);
-                ga.mutual_auth(&mgm_key.expose()[..mgm_len], w, host_chal, res)
+                ga.mutual_auth(mgm, w, host_chal, res)
             }
             // Empty at 9B opens the single-auth handshake; at a key slot it is a
             // private-key operation over an empty challenge, which is what the
@@ -478,7 +502,7 @@ pub(crate) fn general_authenticate<S: Storage>(
                 ga.single_challenge(res)
             }
             Some((Op::Challenge, c)) => ga.slot_key_op(c, res),
-            Some((Op::Response, r)) => ga.single_auth_verify(&mgm_key.expose()[..mgm_len], r),
+            Some((Op::Response, r)) => ga.single_auth_verify(mgm, r),
             Some((Op::Exponentiation, pp)) => ga.ecdh_op(pp, res),
             // No operation tag the card recognises. A YubiKey answers 6A80 to
             // every such body — an unknown tag, a truncated TLV, a lone empty
