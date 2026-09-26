@@ -63,6 +63,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   ([limitations](docs/limitations.md)).
   `bcdDevice` 0x0A06 → 0x0A07.
 
+### Changed
+
+- PIV GENERATE writes no certificate, from the host or the panel, as a YubiKey
+  5.8.0's writes none. RS-Key wrote a self-signed one into the slot's certificate
+  object for every key but X25519, so a slot showed a certificate the host never
+  asked for, and a key-management key's said `digitalSignature`. Make the
+  certificate as on a YubiKey: `ykman piv certificates generate`, or import one a
+  CA issued. A certificate already in a slot, one an older build wrote included,
+  stays through a new GENERATE, as on a YubiKey: replace it with the new key's.
+  This replaces the 0x09FD and 0x0A02 rules below, under which GENERATE replaced
+  the certificate of the key it replaced. A key with no certificate is one OpenSC
+  and the OS certificate stores do not list, on a YubiKey too, so a key the panel
+  generates needs its certificate from a host with the management key. GENERATE
+  also drops the slot's metadata head before it writes the key, as IMPORT does: a
+  head it cannot read now refuses with nothing written, where the new key was
+  written and left under the old key's PIN and touch policies.
+  `bcdDevice` 0x0A14 → 0x0A15.
+
 ### Fixed
 
 - Over CCID the card passes on only the classes a YubiKey 5.8.0 does: `00`,
@@ -84,7 +102,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   PIV `9D` or OpenPGP DEC key meant for key agreement or decryption was stated as
   a signing key. The PIV statement follows the OpenPGP one's measured shape;
   reading a YubiKey's own PIV statement uses its `F9` key, which stays untouched.
-  The slot, `F9` and `FC` certificates keep their keyUsage.
+  The `F9` and `FC` certificates keep their keyUsage.
   `bcdDevice` 0x0A12 → 0x0A13.
 
 - The management applet answers its SELECT with a YubiKey 5.8.0's words,

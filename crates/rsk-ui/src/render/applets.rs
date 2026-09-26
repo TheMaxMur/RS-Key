@@ -1117,9 +1117,8 @@ where
         MUTED,
     )?;
     text(t, algo, EgPoint::new(MIDX, 146), Role::Body, theme::TEXT_2)?;
-    // Says what the write is fenced to, not "erases nothing": the generate also writes
-    // the slot's self-signed certificate, so the promise only holds because
-    // `next_free_retired` skips a slot that already has one.
+    // Says what the write is fenced to: `next_free_retired` picks a slot holding
+    // neither a key nor a certificate.
     text(
         t,
         "Adds a key to an empty slot.",

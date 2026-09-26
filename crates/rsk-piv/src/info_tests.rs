@@ -140,7 +140,7 @@ fn on_device_generate_fills_an_empty_retired_slot() {
     assert!(s.present);
     assert_eq!(algo_name(s.algo), "NIST P-256");
     assert_eq!(origin_name(s.origin), "Generated");
-    assert!(s.cert, "a self-signed cert is stored alongside the key");
+    assert!(!s.cert, "no certificate, as from a host GENERATE");
 
     // Refuses to overwrite a populated slot, a non-retired slot, and RSA on-device.
     assert!(generate_slot_key(&dev, &mut fs, &mut rng, 0x82, ALGO_ECCP256).is_err());
@@ -148,12 +148,50 @@ fn on_device_generate_fills_an_empty_retired_slot() {
     assert!(generate_slot_key(&dev, &mut fs, &mut rng, 0x83, ALGO_RSA2048).is_err());
 }
 
+/// The panel's generate drops the slot's metadata head before it writes the key, as the
+/// host GENERATE does: a head it cannot read refuses with no key written, where a stale
+/// head a failed MOVE left would otherwise govern the new key.
+#[test]
+fn a_faulted_head_refuses_the_panel_generate_before_it_writes() {
+    let dev = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
+        otp_key: None,
+    };
+    let rsa = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 1024).unwrap();
+    for via_rsa in [false, true] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        let stale = [
+            ALGO_ECCP256,
+            PINPOLICY_NEVER,
+            TOUCHPOLICY_NEVER,
+            ORIGIN_GENERATED,
+        ];
+        fs.meta_add(key_fid(0x82).get(), &stale).unwrap();
+        medium.stick(Some(rsk_fs::EF_META));
+        let got = if via_rsa {
+            store_retired_rsa(&dev, &mut fs, &mut TestRng(5), 0x82, &rsa)
+        } else {
+            generate_slot_key(&dev, &mut fs, &mut TestRng(5), 0x82, ALGO_ECCP256)
+        };
+        medium.stick(None);
+        assert_eq!(got, Err(Sw::MEMORY_FAILURE), "RSA {via_rsa}");
+        assert_eq!(
+            medium.value(key_fid(0x82).get()),
+            None,
+            "RSA {via_rsa}: a key was written"
+        );
+    }
+}
+
 /// The panel's generate is fenced by presence alone — no management key — so
 /// `retired_slot_is_free` is the whole authorisation for overwriting nothing. Both its
 /// probes collapsed a failed read into "absent", so one faulted probe reported an
-/// OCCUPIED retired slot free and the generate wrote over the sealed key and the
-/// certificate the screen promises it never erases. One row per probe, each aimed at
-/// its OWN fid: a fault on the key shadows the cert probe behind it.
+/// OCCUPIED retired slot free and the generate wrote over the sealed key, or put a key
+/// beside a certificate that is someone else's. One row per probe, each aimed at its OWN
+/// fid: a fault on the key shadows the cert probe behind it.
 #[test]
 fn a_faulted_retired_probe_does_not_overwrite_a_populated_slot() {
     let dev = Device {
@@ -161,7 +199,7 @@ fn a_faulted_retired_probe_does_not_overwrite_a_populated_slot() {
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
     };
-    // (slot, the fid to fault, the fid whose bytes must survive, what it holds)
+    // (slot, the fid to fault, the fid whose contents must not change, what it holds)
     for (slot, faulted, guarded, what) in [
         (
             0x82u8,
@@ -172,8 +210,8 @@ fn a_faulted_retired_probe_does_not_overwrite_a_populated_slot() {
         (
             0x83,
             cert_fid_for_slot(0x83).unwrap(),
-            cert_fid_for_slot(0x83).unwrap(),
-            "the certificate of a slot holding a certificate and no key",
+            key_fid(0x83).get(),
+            "the absent key of a slot holding only a certificate",
         ),
     ] {
         let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
@@ -185,8 +223,12 @@ fn a_faulted_retired_probe_does_not_overwrite_a_populated_slot() {
             &[0x30, 0x03, 0x01, 0x02, 0x03],
         )
         .unwrap();
+        let populated = (
+            medium.value(key_fid(0x82).get()).is_some(),
+            medium.value(cert_fid_for_slot(0x83).unwrap()).is_some(),
+        );
+        assert_eq!(populated, (true, true), "control: both slots populated");
         let before = medium.value(guarded);
-        assert!(before.is_some(), "{what} is present before the fault");
 
         medium.stick(Some(faulted));
         // The picker must not offer a slot it could not confirm empty.
@@ -197,7 +239,7 @@ fn a_faulted_retired_probe_does_not_overwrite_a_populated_slot() {
         assert_eq!(
             medium.value(guarded),
             before,
-            "a faulted probe let the panel generate destroy {what}"
+            "a faulted probe let the panel generate change {what}"
         );
         assert_ne!(
             offered,

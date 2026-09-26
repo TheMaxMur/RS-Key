@@ -9,8 +9,8 @@
 //! `prefix ‖ hash` buffer construction must never panic or overflow `em`. This is
 //! the pure half of `rsa_sign` (no modexp), so it runs at full fuzzing speed; the
 //! raw fallback and the actual signature are the modexp's, exercised by the
-//! unit tests. OpenPGP no longer reaches it — its PSO:CDS signs what it is sent —
-//! so on-device only the PIV certificate path does, with a digest it computed.
+//! unit tests. Nothing on the device reaches it now: OpenPGP's PSO:CDS signs what it
+//! is sent, and PIV no longer writes certificates.
 
 use libfuzzer_sys::fuzz_target;
 use rsk_rsa::MAX_RSA_DIGESTINFO;

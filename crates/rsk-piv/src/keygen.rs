@@ -2,26 +2,22 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! GENERATE ASYMMETRIC KEY PAIR (0x47), IMPORT ASYMMETRIC KEY (0xFE) and
-//! ATTESTATION (0xF9). Generation writes a self-signed certificate into the
-//! slot's certificate object (`70/71/FE`-wrapped, as `ykman` expects) so GET
-//! DATA serves one immediately, unless that object holds a certificate for
-//! another key; IMPORT requires management-key auth.
+//! ATTESTATION (0xF9). Neither GENERATE nor IMPORT writes a certificate, as on a
+//! YubiKey; both require management-key auth.
 
 use rsk_crypto::Device;
 use rsk_ec::{Curve, MAX_EC_PUBDO, PrivKey, make_ec_pubkey_do};
 use rsk_fs::{Fs, Storage};
-use rsk_rsa::{
-    MAX_RSA_BYTES, MAX_RSA_PUBDO, RsaKey, generate_rsa, make_rsa_response, rsa_from_pqe,
-};
+use rsk_rsa::{MAX_RSA_PUBDO, RsaKey, generate_rsa, make_rsa_response, rsa_from_pqe};
 use rsk_sdk::Rng;
 use rsk_sdk::tlv::find_tag;
 use rsk_sdk::{ResBuf, Sw};
 use zeroize::Zeroize;
 
+use crate::Session;
 use crate::files::*;
 use crate::seal;
 use crate::x509;
-use crate::{Session, wrap_cert_object};
 
 // Yubico generation/import template policy tags.
 const TAG_PIN_POLICY: u16 = 0xAA;
@@ -138,92 +134,6 @@ pub(crate) fn resolved_policies(
     Ok([pin, touch])
 }
 
-/// Build the slot's self-signed certificate and store it (70/71/FE-wrapped) in the
-/// paired certificate object, unless that object holds one not shown to be for the key
-/// this replaces: a moved key's, one a host put there, or one beside an unreadable key.
-fn store_slot_cert<S: Storage>(
-    dev: &Device,
-    fs: &mut Fs<S>,
-    rng: &mut dyn Rng,
-    slot: u8,
-    algo: u8,
-    spki: x509::Spki,
-    signer: x509::Signer,
-) -> Result<(), Sw> {
-    let fid = cert_fid_for_slot(slot).ok_or(Sw::WRONG_DATA)?;
-    if keeps_certificate(dev, fs, slot, fid)? {
-        return Ok(());
-    }
-    let mut cert = [0u8; x509::MAX_CERT];
-    let n = x509::build_cert(
-        &x509::CertParams {
-            subject_slot: slot,
-            algo,
-            spki,
-            attestation: None,
-            ca_pathlen: None,
-        },
-        &signer,
-        rng,
-        &mut cert,
-    )?;
-    let mut obj = [0u8; x509::MAX_CERT + 16];
-    let on = wrap_cert_object(&cert[..n], &mut obj);
-    fs.put(fid, &obj[..on]).map_err(|_| Sw::MEMORY_FAILURE)
-}
-
-/// Whether GENERATE leaves `slot`'s certificate as it is: there is one, and it is not
-/// shown to carry the key being replaced. A YubiKey's GENERATE writes none at all.
-/// Out of line, so the object buffer is gone before the new certificate is signed.
-#[inline(never)]
-fn keeps_certificate<S: Storage>(
-    dev: &Device,
-    fs: &mut Fs<S>,
-    slot: u8,
-    fid: u16,
-) -> Result<bool, Sw> {
-    let mut obj = [0u8; crate::MAX_OBJECT];
-    // A probe the medium could not serve is not "no certificate": writing over one is the loss.
-    let Some(n) = fs.try_read(fid, &mut obj).map_err(|_| Sw::MEMORY_FAILURE)? else {
-        return Ok(false);
-    };
-    let cert = &obj[..n.min(obj.len())];
-    Ok(!certifies_slot_key(dev, fs, slot, cert)?)
-}
-
-/// Whether `cert` carries the public key now in `slot`, matched as bytes: its point or
-/// modulus, which no other key's certificate contains. `false` for no key, a head GET
-/// METADATA would not report, or a key that cannot be read back, faulted read included.
-fn certifies_slot_key<S: Storage>(
-    dev: &Device,
-    fs: &mut Fs<S>,
-    slot: u8,
-    cert: &[u8],
-) -> Result<bool, Sw> {
-    if !fs
-        .try_has_key(key_fid(slot))
-        .map_err(|_| Sw::MEMORY_FAILURE)?
-    {
-        return Ok(false);
-    }
-    let mut meta = [0u8; 4 + MAX_EC_POINT];
-    let Some(mn) = fs
-        .try_meta_find(key_fid(slot).get(), &mut meta)
-        .map_err(|_| Sw::MEMORY_FAILURE)?
-    else {
-        return Ok(false);
-    };
-    let mn = mn.min(meta.len());
-    if mn < 4 {
-        return Ok(false);
-    }
-    let mut key = [0u8; MAX_RSA_BYTES];
-    let Ok(n) = slot_public(dev, fs, slot, &meta[..mn], &mut key) else {
-        return Ok(false);
-    };
-    Ok(n > 0 && cert.windows(n).any(|w| w == &key[..n]))
-}
-
 /// The public half of the key in `slot` — the EC or EdDSA point, or the RSA modulus —
 /// into `out`, for a key whose metadata head is `meta`: what GET METADATA reports and
 /// what a certificate for that key carries.
@@ -267,33 +177,6 @@ pub(crate) fn curve_for_algo(algo: u8) -> Option<Curve> {
         ALGO_X25519 => Curve::X25519,
         _ => return None,
     })
-}
-
-/// Build + store the slot's self-signed certificate for a freshly minted EC or
-/// Ed25519 key. X25519 is key-agreement-only and cannot self-sign, so — by
-/// design — no certificate is written; a host/CA provisions one later via PUT
-/// DATA (GET DATA then returns 6A82 until it does).
-// `dev` reads the slot's current key for the certificate check; the rest is the key.
-#[allow(clippy::too_many_arguments)]
-fn store_generated_cert<S: Storage>(
-    dev: &Device,
-    fs: &mut Fs<S>,
-    rng: &mut dyn Rng,
-    slot: u8,
-    algo: u8,
-    curve: Curve,
-    point: &[u8],
-    key: &PrivKey,
-) -> Result<(), Sw> {
-    let (spki, signer) = match algo {
-        ALGO_X25519 => return Ok(()),
-        ALGO_ED25519 => (
-            x509::Spki::Rfc8410 { curve, point },
-            x509::Signer::Ed25519(key),
-        ),
-        _ => (x509::Spki::Ec { curve, point }, x509::Signer::Ec(key)),
-    };
-    store_slot_cert(dev, fs, rng, slot, algo, spki, signer)
 }
 
 /// Build the metadata record for an EC key slot into `out`: the 4-byte
@@ -373,8 +256,10 @@ pub(crate) fn generate_ec<S: Storage>(
         Ok(n) => n,
         Err(e) => return crate::ec_sw(e),
     };
-    if let Err(e) = store_generated_cert(dev, fs, rng, slot, req.algo, curve, &point[..plen], &key)
-    {
+    // The old head goes before the key, as IMPORT's does: one that cannot be dropped
+    // refuses with nothing written, and a tear leaves a key with no head, which nothing
+    // uses, where writing the key first left it under the old key's policies.
+    if let Err(e) = drop_slot_meta(fs, key_fid(slot).get()) {
         return e;
     }
     if let Err(e) = seal::store_ec_key(dev, fs, rng, key_fid(slot), &key) {
@@ -397,7 +282,7 @@ pub(crate) fn generate_ec<S: Storage>(
     Sw::OK
 }
 
-/// Store a freshly generated RSA key + certificate and emit the
+/// Store a freshly generated RSA key and emit the
 /// `7F49 { 81 N, 82 E }` response. Shared by the firmware keygen fast-path and
 /// the blocking in-process fallback.
 #[allow(clippy::too_many_arguments)]
@@ -411,17 +296,8 @@ pub(crate) fn finish_rsa<S: Storage>(
     key: &RsaKey,
     res: &mut ResBuf,
 ) -> Sw {
-    let n = key.n_be();
-    let e = key.e_be();
-    if let Err(sw) = store_slot_cert(
-        dev,
-        fs,
-        rng,
-        slot,
-        algo,
-        x509::Spki::Rsa { n: &n, e: &e },
-        x509::Signer::Rsa(key),
-    ) {
+    // The old head first, for `generate_ec`'s reason.
+    if let Err(sw) = drop_slot_meta(fs, key_fid(slot).get()) {
         return sw;
     }
     if let Err(sw) = seal::store_rsa_key(dev, fs, rng, key_fid(slot), key) {
@@ -499,9 +375,9 @@ fn retired_slot_is_free<S: Storage>(fs: &mut Fs<S>, slot: u8) -> Result<bool, Sw
 /// neither a key nor a certificate: it can only fill an empty slot, never overwrite one
 /// (the four primary slots and F9 stay USB-managed). EC P-256/P-384, Ed25519 and X25519 only — these are instant; RSA
 /// runs its slow dual-core prime search in the firmware and persists via
-/// [`store_retired_rsa`]. Stores the sealed key, the self-signed cert (none for X25519,
-/// which can't self-sign) and the metadata, the same writes the host GENERATE makes, so
-/// `ykman` / GET DATA see a normal slot after.
+/// [`store_retired_rsa`]. Stores the sealed key and the metadata, the same writes the host
+/// GENERATE makes (no certificate, as on a YubiKey), so `ykman` / GET DATA see a normal
+/// slot after.
 pub(crate) fn generate_retired_ec<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -522,7 +398,8 @@ pub(crate) fn generate_retired_ec<S: Storage>(
     };
     let mut point = [0u8; MAX_EC_POINT];
     let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
-    store_generated_cert(dev, fs, rng, slot, algo, curve, &point[..plen], &key)?;
+    // A stale head a failed MOVE left goes first, for `generate_ec`'s reason.
+    drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)?;
     let pol = resolved_policies(slot, None, None)?;
     let mut mbuf = [0u8; 4 + MAX_EC_POINT];
@@ -532,8 +409,8 @@ pub(crate) fn generate_retired_ec<S: Storage>(
 
 /// Persist a display-generated RSA key into an empty retired slot — the RSA companion
 /// to [`generate_retired_ec`]. The slow prime search runs in the firmware (dual-core,
-/// off this function), so this only writes the result: the self-signed cert, the sealed
-/// key and the metadata, with the same empty-retired-slot fence (it can only fill an
+/// off this function), so this only writes the result: the sealed key and the
+/// metadata, with the same empty-retired-slot fence (it can only fill an
 /// empty slot, never overwrite one; the four primary slots and F9 stay USB-managed).
 pub(crate) fn store_retired_rsa<S: Storage>(
     dev: &Device,
@@ -549,17 +426,7 @@ pub(crate) fn store_retired_rsa<S: Storage>(
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     let algo = rsa_algo_from_size(key.size()).ok_or(Sw::EXEC_ERROR)?;
-    let n = key.n_be();
-    let e = key.e_be();
-    store_slot_cert(
-        dev,
-        fs,
-        rng,
-        slot,
-        algo,
-        x509::Spki::Rsa { n: &n, e: &e },
-        x509::Signer::Rsa(key),
-    )?;
+    drop_slot_meta(fs, key_fid(slot).get())?;
     seal::store_rsa_key(dev, fs, rng, key_fid(slot), key)?;
     let pol = resolved_policies(slot, None, None)?;
     fs.meta_add(

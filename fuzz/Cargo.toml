@@ -20,7 +20,7 @@ rsk-openpgp = { path = "../crates/rsk-openpgp" }
 # `Curve`); the applet no longer owns it, only its algorithm-attribute mapping.
 rsk-ec = { path = "../crates/rsk-ec" }
 # The RSA layer the two openpgp_* RSA targets fuzz directly: the DigestInfo parser
-# (`rsa_sign_em`, the PIV certificate path's now) and the import-side key rebuild
+# (`rsa_sign_em`, which no device path calls now) and the import-side key rebuild
 # (`rsa_from_pqe`).
 rsk-rsa = { path = "../crates/rsk-rsa" }
 rsk-devconf = { path = "../crates/rsk-devconf", features = ["test-util"] }

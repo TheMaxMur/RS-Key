@@ -135,10 +135,9 @@ time if you want it gated like the rest.
 **RSA-1024** (disabled under the FIPS-style build, SP 800-131A), **ECC P-256 /
 P-384**, and the Curve25519 pair **Ed25519** (signing) and **X25519** (key
 agreement), the Yubico 5.7 PIV algorithm ids `0xE0` / `0xE1`, so `ykman` drives
-them as `--algorithm ED25519` / `X25519`. An Ed25519 key generates with a
-self-signed certificate like the other curves; an X25519 key is key-agreement-only
-and can't self-sign, so generation writes **no** auto-certificate (provision one
-from a CA via `ykman piv certificates import`). RSA-3072/4096 keygen is slow on
+them as `--algorithm ED25519` / `X25519`. Generation writes no certificate for
+any of them, as on a YubiKey: make one with `ykman piv certificates generate`, or
+import one a CA issued (an X25519 key can't sign its own). RSA-3072/4096 keygen is slow on
 this hardware (tens of seconds to a minute-plus).
 
 ## Generate a key on-card
@@ -149,11 +148,10 @@ ykman piv certificates generate --subject "CN=me" 9a pub.pem   # self-signed cer
 ykman piv info
 ```
 
-Generating in a slot already writes a self-signed certificate into that slot's
-certificate object, so a GET DATA serves one immediately even before you run
-`certificates generate`. It replaces only a certificate that carries the key it
-replaces: one for any other key — what a key move leaves behind — is kept, as a
-YubiKey keeps it, and so is one stored compressed. X25519 writes none.
+Generating writes the key alone, as on a YubiKey: the slot's certificate object
+is left as it was, empty on a fresh slot, until `certificates generate` or
+`certificates import` fills it. A certificate already there stays through a new
+key, one an older RS-Key build wrote included, so replace it with the new key's.
 Management-key auth is required to generate.
 
 For a real CA, emit a CSR instead of a self-signed cert:

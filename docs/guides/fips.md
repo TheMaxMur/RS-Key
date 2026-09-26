@@ -44,8 +44,8 @@ Two things worth reading carefully:
   asks for `-47` anyway, `makeCredential` maps it to "unsupported" and
   declines. There is no path to a *new* secp256k1 FIDO credential.
 - **RSA-1024 is blocked on two independent gates**: the generation template
-  parser (`crates/rsk-piv/src/keygen.rs:50-53`) and the separate import path
-  (`crates/rsk-piv/src/keygen.rs:716-718`), which does not go through that parser. So neither
+  parser (`crates/rsk-piv/src/keygen.rs:46-49`) and the separate import path
+  (`crates/rsk-piv/src/keygen.rs:583-585`), which does not go through that parser. So neither
   `ykman piv keys generate ... RSA1024` nor importing an external 1024-bit
   key onto a slot succeeds. Both return `6A 80` (incorrect data).
 
@@ -84,7 +84,9 @@ mechanical:
 # 2. replace any non-approved long-lived keys:
 ykman piv access change-management-key --algorithm AES256 --generate --protect
 ykman piv keys generate 9a pub.pem            # re-issue any RSA-1024 slots as
-                                              # ECC P-256 or RSA-2048
+                                              # ECC P-256 or RSA-2048, then give
+ykman piv certificates generate --subject "CN=me" 9a pub.pem  # the new key its
+                                              # own certificate (or import a CA's)
 # 3. FIDO: re-register any sites that hold a secp256k1 credential with an
 #    ES256 / EdDSA passkey; the old credential keeps working until you do.
 ```

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! PKCS#1 v1.5 (RFC 8017): the DigestInfo encoding the PIV certificate signer
-//! builds, the two signers — one on the asm CRT core ([`crate::crt`]) over the
-//! bytes a host sends, one on a full [`RsaKey`] for the PIV certificate path —
+//! PKCS#1 v1.5 (RFC 8017): the DigestInfo encoding, the two signers — one on the
+//! asm CRT core ([`crate::crt`]) over the bytes a host sends, one on a full
+//! [`RsaKey`] that no firmware path calls since PIV stopped writing certificates —
 //! the decryption both DECIPHER arms end in, and the constant-time unpadding they
 //! read the block back with.
 //!
@@ -115,8 +115,8 @@ pub fn rsa_sign_crt(
 }
 
 /// PKCS#1 v1.5 over the supplied data with a full [`RsaKey`], on the software
-/// private op. Used by the on-card certificate signer (`rsk_x509`), whose key may
-/// be any width a PIV IMPORT accepted; the OpenPGP applet's own PSO:CDS /
+/// private op. `rsk_x509`'s RSA signer, which no firmware path uses since PIV stopped
+/// writing certificates, is its caller; the OpenPGP applet's own PSO:CDS /
 /// INTERNAL AUTHENTICATE use [`rsa_sign_crt`] (asm). If it is a DigestInfo (or a
 /// bare hash whose length names the algorithm), sign that digest; otherwise fall
 /// back to the raw private operation.
@@ -136,8 +136,8 @@ pub fn rsa_sign(
     }
     let mut em = [0u8; MAX_RSA_BYTES];
     // Every failure past the DigestInfo parse is `Failed` — the one status word
-    // (`EXEC_ERROR`) the `rsa` crate's `sign_with_rng` could answer here, and
-    // `rsk-piv`'s certificate path still keys off it.
+    // (`EXEC_ERROR`) the `rsa` crate's `sign_with_rng` could answer here, which
+    // `rsk-piv`'s certificate path keyed off while it had one.
     emsa_block(&di[..dlen], mlen, &mut em).map_err(|_| RsaError::Failed)?;
     key.private_op(&em[..mlen], rng, out)
         .map_err(|_| RsaError::Failed)

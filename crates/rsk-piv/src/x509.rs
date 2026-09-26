@@ -33,8 +33,8 @@ pub struct CertParams<'a> {
     pub algo: u8,
     pub spki: Spki<'a>,
     /// `Some` ⇒ an attestation certificate (subject "Attestation %X", issuer
-    /// "Slot F9", Yubico extensions, no keyUsage); `None` ⇒ self-signed slot
-    /// certificate.
+    /// "Slot F9", Yubico extensions, no keyUsage); `None` ⇒ the F9 CA's own,
+    /// self-signed.
     pub attestation: Option<AttestExt>,
     /// `Some(pathlen)` marks a CA certificate (the F9 self-cert uses 1).
     pub ca_pathlen: Option<u8>,

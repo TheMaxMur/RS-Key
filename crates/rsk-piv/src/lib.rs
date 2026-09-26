@@ -295,7 +295,7 @@ impl<'a> PivApplet<'a> {
         Some((p2, nbits, pol))
     }
 
-    /// Store the firmware-generated RSA key, certificate and metadata and write
+    /// Store the firmware-generated RSA key and its metadata and write
     /// the `7F49` response body into `resp`; returns its length and the status.
     pub fn rsa_generate_finish<S: Storage>(
         &mut self,

@@ -16,8 +16,8 @@ use num_bigint_dig::BigUint;
 
 /// Whether `sig` is a valid RSASSA-PKCS1-v1_5 signature over `data` under the
 /// public key `(n, e)`, both big-endian. `data` is the block the signer padded —
-/// the DigestInfo the PIV certificate path builds, or what a host sent OpenPGP's
-/// PSO:CDS — matching the `rsa` crate's `Pkcs1v15Sign::new_unprefixed()`.
+/// a DigestInfo, or what a host sent OpenPGP's PSO:CDS — matching the `rsa`
+/// crate's `Pkcs1v15Sign::new_unprefixed()`.
 pub fn verify_pkcs1v15(n_be: &[u8], e_be: &[u8], data: &[u8], sig: &[u8]) -> bool {
     let n = BigUint::from_bytes_be(n_be);
     let e = BigUint::from_bytes_be(e_be);

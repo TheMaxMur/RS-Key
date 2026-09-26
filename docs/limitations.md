@@ -27,8 +27,8 @@ covers the security boundary. This page covers feature and hardware gaps.
   crate is gone from the tree (0.4.12), and with it RUSTSEC-2023-0071 — the
   Marvin timing side channel, which never had a fixed release. What replaced it
   is `rsk-rsa`: its own key type, `RsaKey`, and a software private operation for
-  the two paths the asm CRT core cannot serve (PIV certificate signing, and a
-  legacy `P‖Q` key whose prime width is not a multiple of 32). Both are
+  the paths the asm CRT core cannot serve (a legacy `P‖Q` key whose prime width is
+  not a multiple of 32; PIV certificate signing too, until 0x0A15 dropped it). Both are
   base-blinded and Bellcore-fault-checked like the asm path, and every signature
   and decryption is checked byte-for-byte against OpenSSL vectors in the host
   tests. It is still ours, still single-maintainer, and still unaudited — the

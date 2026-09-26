@@ -183,9 +183,8 @@ pub fn extra_count<S: Storage>(fs: &mut Fs<S>) -> u8 {
 
 /// The lowest-numbered retired slot (82–95) holding neither a key nor a certificate,
 /// or `None` when all twenty are taken — the target for the on-device generate action.
-/// The predicate is [`read_extra`]'s (`present || cert`) on purpose: keying off the key
-/// alone offered a slot whose certificate the generate would then overwrite, on a screen
-/// that promises it erases nothing.
+/// The predicate is [`read_extra`]'s (`present || cert`) on purpose: a certificate there
+/// is someone's, and a new key beside it would not be its key.
 pub fn next_free_retired<S: Storage>(fs: &mut Fs<S>) -> Option<u8> {
     (SLOT_RETIRED_FIRST..=SLOT_RETIRED_LAST).find(|&slot| {
         // A probe that FAILED is not a slot known free. Skipping it costs a candidate
@@ -200,10 +199,9 @@ pub fn next_free_retired<S: Storage>(fs: &mut Fs<S>) -> Option<u8> {
 /// Physical presence at the trusted display authorises it (no management-key auth, unlike
 /// the host GENERATE), and it is restricted to retired slots that hold no key. The slot
 /// comes from [`next_free_retired`], which also skips a slot holding only a certificate —
-/// that certificate is someone's, and the new key would get none of its own. Writes the
-/// sealed key, that certificate (none for X25519) and the metadata, so the slot then looks
-/// exactly like a host-generated one. RSA goes through [`store_retired_rsa`] (its prime
-/// search runs in the firmware).
+/// that certificate is someone's. Writes the sealed key and the metadata, no certificate,
+/// so the slot then looks exactly like a host-generated one. RSA goes through
+/// [`store_retired_rsa`] (its prime search runs in the firmware).
 pub fn generate_slot_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -216,7 +214,7 @@ pub fn generate_slot_key<S: Storage>(
 
 /// Persist a firmware-generated RSA key on-device into an empty retired slot — the RSA
 /// companion to [`generate_slot_key`]. Same empty-retired-slot fence and the same writes
-/// (sealed key, self-signed cert, metadata); the slow dual-core prime search runs in the
+/// (sealed key, metadata); the slow dual-core prime search runs in the
 /// firmware before this is called, so the key arrives ready to store.
 pub fn store_retired_rsa<S: Storage>(
     dev: &Device,

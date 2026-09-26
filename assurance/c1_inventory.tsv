@@ -162,7 +162,7 @@ new	crates/rsk-piv/src/lib.rs:220	19	decides	D4	sets the initial access status (
 age_challenge	crates/rsk-piv/src/lib.rs:240	14	decides	D1,D5	the branch on INS/P2 decides whether an issued witness survives the next command; everything except 0x87 and GET METADATA 9B clears it	SEC-SEAM-003
 device_ids	crates/rsk-piv/src/lib.rs:255	10	marshals	M	assembles the tuple of identifiers and FusedRead for Device; no branch, nothing handed out to the host	-
 rsa_generate_params	crates/rsk-piv/src/lib.rs:266	30	decides	D1,D5	clears the challenge and refuses the fast path without has_mgm; resolved_policies determines the pin/touch policy of the future slot	SEC-SEAM-003,SEC-POL-001
-rsa_generate_finish	crates/rsk-piv/src/lib.rs:297	24	decides	D3	the effect is a write to flash of the generated RSA key, the certificate and the EF_META head carrying the policy	SEC-POL-001
+rsa_generate_finish	crates/rsk-piv/src/lib.rs:297	24	decides	D3	the effect is a write to flash of the generated RSA key and the EF_META head carrying the policy; the old head is deleted first	SEC-POL-001
 apt	crates/rsk-piv/src/lib.rs:323	20	marshals	M	lays out the constant template 61{...} into ResBuf, decides only whether it fits	-
 aid	crates/rsk-piv/src/lib.rs:345	3	marshals	M	returns the constant PIV_AID — the routing table carries an address, not a permission	-
 response_chaining	crates/rsk-piv/src/lib.rs:349	6	marshals	M	a constant transport attribute (GET RESPONSE), carries no policy	-
