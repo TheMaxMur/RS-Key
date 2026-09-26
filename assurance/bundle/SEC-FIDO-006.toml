@@ -70,7 +70,7 @@ owners_tagged = [
   "crates/rsk-fido/src/reset.rs:136 sweep — one phase of it",
   "crates/rsk-fido/src/reset.rs:317 survives_factory_reset — the OTHER wipe, the trusted-display one, which the model does not have at all",
   "crates/rsk-fido/src/state.rs:533 FidoState::reset — the volatile half, and the first thing the command does",
-  "crates/rsk-fido/src/lib.rs:103 Ctx::load_keydev — RAM first then flash, which is what makes the RAM copy count as surviving",
+  "crates/rsk-fido/src/lib.rs:104 Ctx::load_keydev — RAM first then flash, which is what makes the RAM copy count as surviving",
 ]
 # And the three CLAUSE tags, which are all on one function and are the reason
 # each clause row derives `rust = 1`.

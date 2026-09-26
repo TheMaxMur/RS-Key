@@ -117,7 +117,7 @@ derive_resident	crates/rsk-fido/src/credential.rs:526	32	decides	D2	the 42-byte 
 derive_hmac_key	crates/rsk-fido/src/credential.rs:575	12	decides	D2	computes the 64-byte cred_random hmac-secret from the seed — exactly the secret that goes out to the RP	SEC-FIDO-004
 derive_large_blob_key	crates/rsk-fido/src/credential.rs:588	10	decides	D2	computes largeBlobKey from the seed; it is issued to the RP and decrypts its blob	SEC-FIDO-004
 cred_store_state	crates/rsk-fido/src/credential.rs:730	18	decides	D5	keeps Err apart from absence: the zero tag is the tag of a FRESH device, and collapsing a failed read into it would replay a prefix of the sequence to the platform; its Err is the condition on which the getInfo member is not published	SEC-STORE-002,SEC-FIDO-005
-load_keydev	crates/rsk-fido/src/lib.rs:100	9	decides	D2	the only access FIDO operations have to the seed: the RAM copy after vendor UNLOCK wins over flash, and the refusal of both halves is itself the soft-lock	SEC-FIDO-006,SEC-FIDO-007,SEC-FIDO-004
+load_keydev	crates/rsk-fido/src/lib.rs:101	9	decides	D2	the only access FIDO operations have to the seed: the RAM copy after vendor UNLOCK wins over flash, and the refusal of both halves is itself the soft-lock	SEC-FIDO-006,SEC-FIDO-007,SEC-FIDO-004
 seal_seed_locked	crates/rsk-fido/src/seed.rs:105	15	decides	D2	wraps the seed VALUE under the host's 32-byte key (AUT_ENABLE) — this blob stays on flash instead of the plaintext seed	SEC-FIDO-004,SEC-FIDO-007
 open_seed_locked	crates/rsk-fido/src/seed.rs:121	20	decides	D2	checks the Poly1305 tag of the lock blob; its Some is itself the clearing of the soft-lock and the seed's arrival in RAM	SEC-FIDO-004,SEC-FIDO-007
 seed_enc_key	crates/rsk-fido/src/seed.rs:163	8	decides	D2	computes the ChaCha storage key (HKDF from the arm's kbase) that opens EF_KEY_DEV and EF_ATT_KEY	SEC-FIDO-004
@@ -278,17 +278,17 @@ reset_pin_uv_auth_token	crates/rsk-fido/src/state.rs:596	15	decides	D4	the regis
 begin_using_token	crates/rsk-fido/src/state.rs:612	9	decides	D4	the registered IssueToken: sets in_use/user_verified and starts both §6.5.5.7 timers	SEC-FIDO-001,SEC-FIDO-008
 mark_token_used	crates/rsk-fido/src/state.rs:622	8	decides	D1	moves the sliding inactivity window, which is directly the token's freshness; the gate lives longer precisely because of this call	SEC-FIDO-003
 consume_after_user_presence	crates/rsk-fido/src/state.rs:631	13	decides	D4	the post-presence triad: the mask is sliced down to PERM_LBW, UP/UV are cleared — so that authenticatorConfig does not ride on someone else's touch	SEC-FIDO-001
-consume_after_user_presence_if	crates/rsk-fido/src/state.rs:645	9	decides	D4	the same mask slice under the user_present condition: a silent up:false pre-flight stays inert (GHSA-wqjm-653g-hgw3)	SEC-FIDO-001
-stop_using_token	crates/rsk-fido/src/state.rs:655	16	decides	D4	the registered RevokeToken: in_use=false, the mask and the rpId binding zeroed, the credMgmt cursor dies together with them	SEC-FIDO-003
-retire_sequences_except	crates/rsk-fido/src/state.rs:672	31	decides	D4	clears every multi-step sequence the command does not continue — §6 "exclusively preceded"	SEC-FIDO-003
-expire_stale_token	crates/rsk-fido/src/state.rs:704	14	decides	D1	token expiry on the inactivity window or the absolute ceiling — checked before every CBOR command	SEC-FIDO-003
-expire_stale_sequences	crates/rsk-fido/src/state.rs:719	17	decides	D4	the only bound on a walk opened by a pcmr token (it has no timer), and on largeBlob on a key without a PIN	SEC-FIDO-003
-user_verified	crates/rsk-fido/src/state.rs:737	4	decides	D5	the uv predicate on which makecredential.rs:561 and getassertion.rs:420 decide to refuse	SEC-FIDO-001
-user_present	crates/rsk-fido/src/state.rs:742	8	decides	D5	getUserPresentFlagValue §6.5.5.7; measured: there are no production callers — into the core by rule 1	SEC-FIDO-001
-verify_token	crates/rsk-fido/src/state.rs:751	4	decides	D1	the check of the pinUvAuthParam MAC under the current token is itself the §6.5.5.7 token door	SEC-FIDO-001,SEC-FIDO-003
-idle_past	crates/rsk-fido/src/state.rs:757	5	decides	D5	the §6 window between walk steps: the predicate on which expire_stale_sequences decides to clear the cursor	SEC-FIDO-003
-puat_subcommand_msg	crates/rsk-fido/src/state.rs:763	9	decides	D5	builds 0xff×32‖cmd‖subcommand — domain separation: without it the MAC of one subcommand would authorize another	SEC-FIDO-001
-drop	crates/rsk-fido/src/state.rs:774	39	decides	D2	exhaustive destructuring decides for each field whether it is a secret: wipes ephemeral and paut.token; the MSE channel key and keydev_dec are Secret and wipe themselves	SEC-FIDO-007
+user_presence_test	crates/rsk-fido/src/up.rs:60	17	decides	D4	the mc/ga presence test: a touch poll, then the same slicing of the mask under the request's up — the response's UP bit is taken from its UpFlag; a silent up:false preflight stays inert (GHSA-wqjm-653g-hgw3)	SEC-FIDO-001
+stop_using_token	crates/rsk-fido/src/state.rs:645	16	decides	D4	the registered RevokeToken: in_use=false, the mask and the rpId binding zeroed, the credMgmt cursor dies together with them	SEC-FIDO-003
+retire_sequences_except	crates/rsk-fido/src/state.rs:662	31	decides	D4	clears every multi-step sequence the command does not continue — §6 "exclusively preceded"	SEC-FIDO-003
+expire_stale_token	crates/rsk-fido/src/state.rs:694	14	decides	D1	token expiry on the inactivity window or the absolute ceiling — checked before every CBOR command	SEC-FIDO-003
+expire_stale_sequences	crates/rsk-fido/src/state.rs:709	17	decides	D4	the only bound on a walk opened by a pcmr token (it has no timer), and on largeBlob on a key without a PIN	SEC-FIDO-003
+user_verified	crates/rsk-fido/src/state.rs:727	4	decides	D5	the uv predicate on which makecredential.rs:561 and getassertion.rs:420 decide to refuse	SEC-FIDO-001
+user_present	crates/rsk-fido/src/state.rs:732	8	decides	D5	getUserPresentFlagValue §6.5.5.7; measured: there are no production callers — into the core by rule 1	SEC-FIDO-001
+verify_token	crates/rsk-fido/src/state.rs:741	4	decides	D1	the check of the pinUvAuthParam MAC under the current token is itself the §6.5.5.7 token door	SEC-FIDO-001,SEC-FIDO-003
+idle_past	crates/rsk-fido/src/state.rs:747	5	decides	D5	the §6 window between walk steps: the predicate on which expire_stale_sequences decides to clear the cursor	SEC-FIDO-003
+puat_subcommand_msg	crates/rsk-fido/src/state.rs:753	9	decides	D5	builds 0xff×32‖cmd‖subcommand — domain separation: without it the MAC of one subcommand would authorize another	SEC-FIDO-001
+drop	crates/rsk-fido/src/state.rs:764	39	decides	D2	exhaustive destructuring decides for each field whether it is a secret: wipes ephemeral and paut.token; the MSE channel key and keydev_dec are Secret and wipe themselves	SEC-FIDO-007
 fixed_do_len	crates/rsk-openpgp/src/putdata.rs:18	16	marshals	M	the table of fixed DO lengths is a check of the body format, not of permission	-
 max_do_len	crates/rsk-openpgp/src/putdata.rs:35	16	marshals	M	the upper bound on DO length is length arithmetic from the MARSHALS list	-
 write_authorized	crates/rsk-openpgp/src/putdata.rs:52	14	decides	D1	the only ACL of the whole PUT DATA: PW2 for private DOs 1/3, otherwise PW3	SEC-SEAM-003
@@ -347,9 +347,9 @@ ecdh_op	crates/rsk-piv/src/auth.rs:341	22	decides	D2	issues the ECDH shared secr
 general_authenticate	crates/rsk-piv/src/auth.rs:367	129	decides	D1	resolves the slot's pin_policy, gates on pin_satisfied and dispatches the operations by key	SEC-POL-001,SEC-POL-002,SEC-SEAM-003
 first_operation	crates/rsk-piv/src/auth.rs:497	15	decides	D5	the precedence rule by body order and the skipping of an empty 82 decide which operation runs	SEC-POL-001
 from_tag	crates/rsk-piv/src/auth.rs:525	15	decides	M	comparison of the tag against four literals as u16	-
-check_user_presence	crates/rsk-fido/src/lib.rs:82	6	decides	D1	the ceremony is spent right here: Confirmed versus everything else is itself the presence-gate spend	SEC-ADM-002,SEC-DISP-003
-require_presence	crates/rsk-fido/src/lib.rs:89	10	decides	D1	the same presence spend, but Cancelled is kept apart from Timeout/Declined — the outcome decides whether the platform retries	SEC-ADM-002,SEC-DISP-003
-process_cbor	crates/rsk-fido/src/lib.rs:116	105	decides	D1	expire_stale_token and retire_sequences_except run BEFORE the dispatch: token freshness is cleared here	SEC-FIDO-003
+check_user_presence	crates/rsk-fido/src/lib.rs:83	6	decides	D1	the ceremony is spent right here: Confirmed versus everything else is itself the presence-gate spend	SEC-ADM-002,SEC-DISP-003
+require_presence	crates/rsk-fido/src/lib.rs:90	10	decides	D1	the same presence spend, but Cancelled is kept apart from Timeout/Declined — the outcome decides whether the platform retries	SEC-ADM-002,SEC-DISP-003
+process_cbor	crates/rsk-fido/src/lib.rs:117	105	decides	D1	expire_stale_token and retire_sequences_except run BEFORE the dispatch: token freshness is cleared here	SEC-FIDO-003
 reset	crates/rsk-fido/src/reset.rs:31	53	decides	D4	presence plus the §6.6 window, then a full factory reset; request_rescrub stands BETWEEN wipe and its `?`	SEC-FIDO-006,SEC-BOOT-001
 wipe	crates/rsk-fido/src/reset.rs:85	39	decides	D3	state.reset() clears the RAM copy, the seed FIDs go as a separate write, then two phases: secrets, then gates	SEC-FIDO-006,SEC-FIDO-007
 sweep	crates/rsk-fido/src/reset.rs:128	47	decides	D3	deletes every matching FID and decides whether the emptiness of the range is PROVEN: a truncated walk must answer Err	SEC-FIDO-006,SEC-FIDO-004

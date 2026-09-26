@@ -37,6 +37,7 @@ pub mod seed;
 pub mod selection;
 pub mod state;
 pub mod u2f;
+mod up;
 pub mod vendor;
 
 #[cfg(any(test, kani, feature = "assurance-trace"))]

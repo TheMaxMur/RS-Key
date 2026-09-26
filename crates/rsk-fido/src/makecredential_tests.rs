@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::consts::{ALG_ED25519, ALG_ESP256, ALG_ESP384, ALG_ESP512, EF_ALWAYS_UV};
+use crate::consts::{ALG_ED25519, ALG_ESP256, ALG_ESP384, ALG_ESP512, EF_ALWAYS_UV, FLAG_UP};
 use crate::seed::ensure_seed;
 use crate::test_pins::PIN;
 use minicbor::Decoder;
@@ -1706,6 +1706,45 @@ fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
         pad.touches, 0,
         "built-in UV must not ask for a second touch"
     );
+}
+
+// Built-in UV supplies the user-presence gesture itself (§6.1.2 step 13), so the test
+// polls nothing and must still spend a live token: a pad-verified registration that
+// hits its excludeList leaves no acfg token usable without a touch either.
+#[test]
+fn a_builtin_uv_presence_test_spends_a_live_token_without_polling() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let cred_id = register_and_get_cred_id(&mut fs, &mut rng, &mut state);
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
+    state.paut.permissions = PERM_MC | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+    state.begin_using_token(false, 0);
+    let req = mc_build(6, |e| {
+        good_params(e);
+        e.u8(5).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&cred_id).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(7).unwrap().map(1).unwrap();
+        e.str("uv").unwrap().bool(true).unwrap();
+    });
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad::typing();
+    let got = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        make_credential(&mut ctx, &req, &mut out)
+    };
+    assert_eq!(got, Err(CtapError::CredentialExcluded));
+    assert_eq!(pad.touches, 0, "the pad was the gesture");
+    assert_eq!(state.paut.permissions, crate::state::PERM_LBW);
 }
 
 #[test]

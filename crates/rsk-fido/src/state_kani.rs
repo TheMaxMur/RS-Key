@@ -141,7 +141,7 @@ fn no_token_after_invalidation() {
     let ops: [u8; STEPS] = kani::any();
     let perms: [u8; STEPS] = kani::any();
     for i in 0..STEPS {
-        // The dispatch prologue every CBOR command runs first (`lib.rs:133`).
+        // The dispatch prologue every CBOR command runs first (`lib.rs:134`).
         // A grant issued before the jump has outrun both windows by now.
         st.expire_stale_token(now);
         if jumped && granted && !issued_late {
@@ -315,7 +315,7 @@ const W_TIME_PASSES: u8 = 7;
 /// authorization check for a *Next*, and this asserts that over a symbolic
 /// five-operation interleaving: a walk is servable only by the channel whose
 /// Begin opened it, and only while nothing has retired it — an unrelated command
-/// (`lib.rs:140`), another credentialManagement subcommand (`credmgmt.rs:163`),
+/// (`lib.rs:141`), another credentialManagement subcommand (`credmgmt.rs:163`),
 /// `stopUsingPinUvAuthToken`, an `authenticatorReset`, or the §6 idle window.
 ///
 /// This is the channel half of the maintainer's `cancel(transport, channel)`
@@ -353,7 +353,7 @@ fn no_authorization_bypass_walk_owner() {
         // dispatch (`state.rs:406-410`).
         st.channel = if chans[i] { C1 } else { C2 };
 
-        // The dispatch prologue (`lib.rs:133-140`); `retire_sequences_except`
+        // The dispatch prologue (`lib.rs:134-141`); `retire_sequences_except`
         // belongs to the opcode below, which is what knows the command. A walk
         // whose last leg predates the jump has outrun the §6 idle window.
         st.expire_stale_sequences(now);

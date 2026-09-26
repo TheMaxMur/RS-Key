@@ -33,9 +33,9 @@ use crate::consts::{
     ALG_ESP384, ALG_ESP512, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87, ATT_FMT_NONE, ATT_FMT_PACKED,
     CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED, CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65,
     CURVE_MLDSA87, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN, EF_EA_ENABLED,
-    EF_EA_RPIDS, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UP, FLAG_UV,
-    LARGE_BLOB_EXT, MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_EA_RPIDS,
-    MAX_MIN_PIN_RPIDS, MAX_RESIDENT_CREDENTIALS,
+    EF_EA_RPIDS, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UV, LARGE_BLOB_EXT,
+    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS,
+    MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_PUBKEY_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredExt, CredInput, Credential,
@@ -116,7 +116,7 @@ fn alg_to_curve(alg: i64) -> Option<(i64, u8)> {
     }
 }
 
-struct Request<'a> {
+pub(crate) struct Request<'a> {
     client_data_hash: &'a [u8],
     rp_id: &'a str,
     /// Whether `rp.id` / `user.id` were sent AT ALL. The value alone cannot say:
@@ -612,12 +612,10 @@ fn make_credential_inner<S: Storage, R: Rng>(
             // built-in UV already provided it, and step 12 then terminates without
             // waiting. No `needs_confirm` here: this card is title-only, so unlike
             // the registration card below it names nothing a display would owe the
-            // user. `up` is implicit; spend the token on that touch too, so acfg
+            // user. `up` is implicit, so the test spends the token here too and acfg
             // can't ride it (GHSA-wqjm class).
-            if !verified.up_collected {
-                ctx.require_presence(crate::Confirm::titled("Use this key?"))?;
-            }
-            ctx.state.consume_after_user_presence();
+            let ask = (!verified.up_collected).then(|| crate::Confirm::titled("Use this key?"));
+            let _up = ctx.user_presence_test(req, ask)?;
             return Err(CtapError::CredentialExcluded);
         }
     }
@@ -702,18 +700,12 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // the `Register` kind picks the "Save new passkey?" layout. §6.1.2 step 13: a
     // built-in UV ceremony IS the evidence of user interaction, so it sets `up`
     // without asking a second time — except where that card is the only screen
-    // naming the rp being registered ([`needs_confirm`]).
-    if verified.needs_confirm(ctx.presence.shows_confirm()) {
-        ctx.require_presence(crate::Confirm::register(
-            req.rp_id.as_bytes(),
-            req.user_name.as_bytes(),
-        ))?;
-    }
-
-    // Spend the pinUvAuthToken now the presence test passed (CTAP 2.1 §6.5.5.7
-    // triad; GHSA-wqjm-653g-hgw3). makeCredential's `up` is implicitly true; on the
-    // no-PIN path no token is in use so this is a no-op.
-    ctx.state.consume_after_user_presence();
+    // naming the rp being registered ([`needs_confirm`]). The test spends the
+    // pinUvAuthToken ([`crate::up`]); on the no-PIN path none is in use.
+    let ask = verified
+        .needs_confirm(ctx.presence.shows_confirm())
+        .then(|| crate::Confirm::register(req.rp_id.as_bytes(), req.user_name.as_bytes()));
+    let up = ctx.user_presence_test(req, ask)?;
 
     // authData = rpIdHash | flags | counter | aaguid | credIdLen | credId | COSEpubkey | ext.
     // Worst case (ML-DSA-65): AUTH_DATA_HEADER(55) + CRED_BOX_MAX(748) +
@@ -728,7 +720,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
     let mut p = 0;
     ad[p..p + 32].copy_from_slice(rp_id_hash);
     p += 32;
-    ad[p] = FLAG_AT | FLAG_UP | ed | if uv { FLAG_UV } else { 0 };
+    ad[p] = FLAG_AT | up.bits() | ed | if uv { FLAG_UV } else { 0 };
     p += 1;
     ad[p..p + 4].copy_from_slice(&ctr.to_be_bytes());
     p += 4;

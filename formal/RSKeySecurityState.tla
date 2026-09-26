@@ -62,8 +62,8 @@ CONSTANTS
     BugTokenSurvivesPinChange,    \* clientpin.rs:317  resetPinUvAuthToken
     BugSetPinKeepsPpuat,          \* clientpin.rs:217-221
     BugChangePinKeepsPpuat,       \* clientpin.rs:306-310
-    BugStopUsingKeepsPerms,       \* state.rs:692-707  stopUsingPinUvAuthToken
-    BugNoConsumeAfterUp,          \* state.rs:668-679  GHSA-wqjm-653g-hgw3
+    BugStopUsingKeepsPerms,       \* state.rs:682-697  stopUsingPinUvAuthToken
+    BugNoConsumeAfterUp,          \* state.rs:658-669  GHSA-wqjm-653g-hgw3
     \* the three below cite crates/rsk-device/src/presence.rs -- the bare name
     \* also resolves to firmware/src/presence.rs since the arbitration was lifted
     BugUnscopedCancel,            \* crates/rsk-device/src/presence.rs:118-122
@@ -73,7 +73,7 @@ CONSTANTS
     BugCmWalkIgnoresChannel,      \* state.rs:169-180  may_walk_rps
     BugDeleteRpBeforeCred,        \* credmgmt.rs:676-684 deleteCredential order
     BugBackupSealedNotAGate,      \* reset.rs:218-255 is_fido_gate_fid (run-36)
-    BugConsumeKeepsMcGa,          \* state.rs:674-679  a narrowed 6.5.5.7 triad
+    BugConsumeKeepsMcGa,          \* state.rs:664-669  a narrowed 6.5.5.7 triad
     BugNoDropStaleCancelAtEntry,  \* crates/rsk-device/src/presence.rs:195-196
     BugWrongPinKeepsToken,        \* clientpin.rs:801  the pre-E38 tree
     BugSeedDoesNotLead,           \* reset.rs:108-120 / fs.rs `first`, pre-0x08BF
@@ -100,7 +100,7 @@ CONSTANTS
 CONSTANTS
     BugAssertWedgesOnTimeout,     \* getassertion.rs: only a confirm completes it
     BugWaitScopeNotCleared,       \* worker.rs:515  set_wait_scope(SCOPE_NONE)
-    BugWalkNeverExpires           \* state.rs:765-771 expire_stale_sequences
+    BugWalkNeverExpires           \* state.rs:755-761 expire_stale_sequences
 
 (* A switch on the SHAPE of the fairness assumption rather than on a behaviour: *)
 (* E160 verbatim, LocalCeremonyEnds folded back into OpAdvances, where          *)
@@ -170,7 +170,7 @@ Symm == Permutations(RPs) \cup Permutations(Channels)
 (* eleven missing subsets reach no violation at the three scopes measured.   *)
 (*                                                                           *)
 (* getPinToken 0x05 grants exactly {mc,ga} (clientpin.rs:399-403), and       *)
-(* consume_after_user_presence leaves {} (lbw only, state.rs:676).           *)
+(* consume_after_user_presence leaves {} (lbw only, state.rs:666).           *)
 Perms    == {"mc", "ga", "cm", "acfg"}
 PermSets == IF WidePerms
               THEN SUBSET Perms
@@ -228,7 +228,7 @@ VARIABLES
     \* `state.keydev_dec` (state.rs:387-389): the seed a vendor UNLOCK decrypted
     \* into RAM on a soft-locked device. NOT a second seed -- it is the SAME
     \* owner's seed by another route, and `Ctx::load_keydev` PREFERS it
-    \* (crates/rsk-fido/src/lib.rs:104-113), so deleting the flash record does
+    \* (crates/rsk-fido/src/lib.rs:105-114), so deleting the flash record does
     \* not end reachability
     \* while this stands. That preference is the whole of E110: the model used to
     \* have only the flash record, so a wipe whose flash half succeeded read as
@@ -299,7 +299,7 @@ Init ==
 (* The seed's TWO homes. Every credential box, rpId box, credBlob,          *)
 (* hmac-secret key and large-blob key is derived from the device seed       *)
 (* (reset.rs:176-180), and `Ctx::load_keydev` reads it from RAM first and   *)
-(* flash second (crates/rsk-fido/src/lib.rs:104-113). So "the records still *)
+(* flash second (crates/rsk-fido/src/lib.rs:105-114). So "the records still *)
 (* open" is a claim                                                         *)
 (* about BOTH, and the wipe's own claim -- that what a tear leaves behind is *)
 (* undecryptable -- holds only once the last copy is gone.                   *)
@@ -521,14 +521,14 @@ OtpCancelWait ==
 \* THE FOUR CALL SITES DO NOT TEST THE SAME THING, and the difference is
 \* load-bearing. makeCredential (makecredential.rs:558-561) and getAssertion
 \* (getassertion.rs:413-416) test the MAC, `user_verified()` -- which is
-\* `in_use && user_verified` (state.rs:774-776) -- the permission bit and the
+\* `in_use && user_verified` (state.rs:764-766) -- the permission bit and the
 \* rpId binding. authenticatorConfig (config.rs:242-244) and
 \* credentialManagement (credmgmt.rs:277) test the MAC and the permission bit
 \* ONLY: neither consults `in_use`.
 \*
 \* So for those two the sole thing separating a stopped or expired token from a
 \* live authorization is that stopUsingPinUvAuthToken ALSO zeroes the
-\* permissions (state.rs:660-661). `verify_token` is a MAC over bytes that stay
+\* permissions (state.rs:650-651). `verify_token` is a MAC over bytes that stay
 \* put, so it keeps succeeding. Modelling one uniform guard hid that, and hid
 \* the BugStopUsingKeepsPerms mutant with it.
 TokenGuardUv(p, rp) ==
@@ -609,7 +609,7 @@ TokenBypass ==
       \cup (IF tok.live /\ ~plat.revoked
               THEN {} ELSE {"NoTokenAfterInvalidation"})
 
-\* CTAP 2.1 6.5.5.7 post-user-presence triad (state.rs:668-679). Spending the
+\* CTAP 2.1 6.5.5.7 post-user-presence triad (state.rs:658-669). Spending the
 \* token down to largeBlobWrite is what stops a follow-on authenticatorConfig
 \* riding the touch that a getAssertion just collected (GHSA-wqjm-653g-hgw3).
 \* BugConsumeKeepsMcGa is the narrow fix somebody could have written for that
@@ -695,7 +695,7 @@ PinAttempt(correct, policy) ==
 
 \* getPinUvAuthTokenUsingPinWithPermissions: a correct PIN mints a fresh
 \* session token (clientpin.rs:429-442) and resets the credMgmt cursor
-\* (state.rs:633-647).
+\* (state.rs:596-610).
 GetPinToken(ps, r) ==
     /\ PinAttempt(TRUE, TokenIssuancePolicy)
     /\ TokenIssuanceGuard
@@ -896,7 +896,7 @@ ChangePinWrite == \* clientpin.rs:311 store_new_pin
     /\ UNCHANGED << store, tok, plat, pres, walk, sys, upSpent, ram >>
 
 \* clientpin.rs:317 resetPinUvAuthToken -- RAM only, and it must end every
-\* session credential the old PIN authorized (state.rs:633-647).
+\* session credential the old PIN authorized (state.rs:596-610).
 ChangePinRotateToken ==
     /\ op.kind = "chpin" /\ op.step = 2
     /\ tok'  = IF BugTokenSurvivesPinChange
@@ -911,7 +911,7 @@ ChangePinRotateToken ==
     /\ UNCHANGED << pin, gate, store, lock, pres, sys, snap, upSpent, viol,
                     ram >>
 
-\* stopUsingPinUvAuthToken (state.rs:692-707) / expire_stale_token (:741-753).
+\* stopUsingPinUvAuthToken (state.rs:682-697) / expire_stale_token (:731-743).
 \* The bytes stay put; in_use = FALSE and zero permissions make every
 \* downstream check fail closed. Modelled as always enabled -- an
 \* over-approximation of the 30 s / 600 s timers.
@@ -1007,8 +1007,8 @@ RegisterWriteB ==
                     viol, ram >>
 
 \* THE NON-DISCOVERABLE REGISTRATION, and the reason it is not `RegisterStart`
-\* with a flag: it writes NOTHING. makecredential.rs:822-823 stores only under
-\* `req.rk`, and makecredential.rs:797-799 says why -- "a non-discoverable
+\* with a flag: it writes NOTHING. makecredential.rs:814-815 stores only under
+\* `req.rk`, and makecredential.rs:789-791 says why -- "a non-discoverable
 \* credential keeps no on-device state at all". So there is no `rp` to carry
 \* either: `store` is exactly what it observes per relying party, and a
 \* credential the device does not record is one it cannot tell apart from
@@ -1563,7 +1563,7 @@ Tick ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, op, snap,
                     upSpent, viol, ram >>
 
-\* expire_stale_sequences (state.rs:765-771): an enumerate cursor idle past
+\* expire_stale_sequences (state.rs:755-761): an enumerate cursor idle past
 \* STATEFUL_WALK_IDLE_MS is reset, WHATEVER opened it. The model closed a walk
 \* only through the session token, and that docstring says in as many words why
 \* the token is not enough -- "a `pcmr` token never expires", so a walk opened by
@@ -1766,7 +1766,7 @@ NoTokenAfterInvalidation ==
     /\ "NoTokenAfterInvalidation" \notin viol
     \* Every path that retires a session token must leave nothing behind that
     \* still opens a door. `verify_token` is a MAC over bytes that stay put, so
-    \* zero permissions is the whole defence (state.rs:660-661).
+    \* zero permissions is the whole defence (state.rs:650-651).
     /\ ~(plat.held /\ plat.revoked /\ tok.perms # {})
     \* And every path that revokes the persistent grant must DELETE the record,
     \* not merely stop honouring it (clientpin.rs:217-221, :300-304).

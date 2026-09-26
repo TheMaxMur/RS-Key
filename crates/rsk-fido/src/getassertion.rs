@@ -46,7 +46,7 @@ const MAX_CRED_ID: usize = CRED_BOX_MAX;
 /// The stored user.id is capped at create, so echoing this many is lossless.
 const MAX_USER_ID: usize = USER_ID_MAX;
 
-struct Request<'a> {
+pub(crate) struct Request<'a> {
     rp_id: &'a str,
     client_data_hash: &'a [u8],
     allow: [&'a [u8]; MAX_ALLOW],
@@ -62,7 +62,7 @@ struct Request<'a> {
     /// pre-flight probe; honoring it (no touch, UP flag 0) is what keeps a
     /// WebAuthn login to a single touch. See the presence check in
     /// `get_assertion_inner` and the `strict-up` feature.
-    up: bool,
+    pub(crate) up: bool,
     pin_uv_auth_param: Option<&'a [u8]>,
     /// `None` = the platform sent no pinUvAuthProtocol. A numeric `0` is a value
     /// it did send, and an unsupported one (§6.2.2 step 2).
@@ -657,13 +657,10 @@ fn get_assertion_inner<S: Storage, R: Rng>(
         // Poll presence BEFORE disclosing no-match so the device isn't a silent
         // credential-existence oracle (matches YubiKey; §6.2.2 discloses first, but
         // requiring the gesture is spec-permitted). up:false pre-flight stays silent.
-        if want_up {
-            ctx.require_presence(crate::Confirm::new("Sign in?", req.rp_id.as_bytes(), &[]))?;
-        }
-        // That poll is a real presence gesture, so spend the token like the success
-        // path — a no-match ceremony must not leave an acfg token usable without a
-        // fresh touch (GHSA-wqjm-653g-hgw3). Keyed on the raw `up`.
-        ctx.state.consume_after_user_presence_if(req.up);
+        // A no-match ceremony asserting `up` spends the token like the success path,
+        // keyed on the raw `up` ([`crate::up`]): no acfg token survives it untouched.
+        let ask = want_up.then(|| crate::Confirm::new("Sign in?", req.rp_id.as_bytes(), &[]));
+        let _up = ctx.user_presence_test(req, ask)?;
         return Err(CtapError::NoCredentials);
     }
 
@@ -742,25 +739,15 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // every assertion, so an allowList login asks for two touches (one for the
     // pre-flight probe, one for the real assertion). No button configured → the
     // poll confirms instantly. A CTAPHID_CANCEL during the wait surfaces as
-    // KEEPALIVE_CANCEL.
-    if want_up {
-        // The trusted screen (display build) names the relying party AND the
-        // account of the credential being used — the anti-phishing payload: a tap
-        // can't approve a hidden rp, and the user sees which stored credential
-        // signs in. Empty for a credential with no stored user name (older / U2F).
-        let account = sel.as_ref().map(|c| c.user_name.as_bytes()).unwrap_or(&[]);
-        ctx.require_presence(crate::Confirm::new(
-            "Sign in?",
-            req.rp_id.as_bytes(),
-            account,
-        ))?;
-    }
-
-    // Spend the pinUvAuthToken now presence was asserted (CTAP 2.1 §6.2.2 / §6.5.5.7
-    // triad; GHSA-wqjm-653g-hgw3). Keyed on the raw `up`, NOT want_up: a strict-up
-    // pre-flight (up:false) stays inert and must not consume the token, else the real
-    // assertion loses its permission.
-    ctx.state.consume_after_user_presence_if(req.up);
+    // KEEPALIVE_CANCEL. The test spends the pinUvAuthToken ([`crate::up`]).
+    //
+    // The trusted screen (display build) names the relying party AND the account of
+    // the credential being used — the anti-phishing payload: a tap can't approve a
+    // hidden rp, and the user sees which stored credential signs in. Empty for a
+    // credential with no stored user name (older / U2F).
+    let account = sel.as_ref().map(|c| c.user_name.as_bytes()).unwrap_or(&[]);
+    let ask = want_up.then(|| crate::Confirm::new("Sign in?", req.rp_id.as_bytes(), account));
+    let up = ctx.user_presence_test(req, ask)?;
 
     // CTAP 2.3 §12.4 largeBlob, run here so the gesture the assertion asked for is
     // already spent before any flash is touched. The rules themselves live with the
@@ -787,11 +774,10 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     };
     let mut ad = [0u8; 37 + 320 + 32];
     ad[..32].copy_from_slice(rp_id_hash);
-    // Emit UP from the request's raw `up`, NOT want_up: strict-up still polls the
-    // button (above) but an up:false pre-flight must stay inert (UP=0), else the
-    // alwaysUv exemption yields a signable assertion (CTAP 2.1 §6.2.2; ssh-sk unaffected).
-    let up_flag = if req.up { FLAG_UP } else { 0 };
-    ad[32] = up_flag | ed | if uv { FLAG_UV } else { 0 };
+    // UP follows the request's raw `up`, NOT want_up: strict-up still polls the button
+    // (above) but an up:false pre-flight must stay inert (UP=0), else the alwaysUv
+    // exemption yields a signable assertion (CTAP 2.1 §6.2.2; ssh-sk unaffected).
+    ad[32] = up.bits() | ed | if uv { FLAG_UV } else { 0 };
     ad[33..37].copy_from_slice(&ctr.to_be_bytes());
     ad[37..37 + ext_len].copy_from_slice(&ext[..ext_len]);
     let ad_len = 37 + ext_len;

@@ -692,6 +692,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **A response's UP bit and the token's spend come from one presence test** — refactor;
+  the same status words, flags and token state. makeCredential's and
+  getAssertion's four user-presence tests (the matched and the no-match
+  assertion, the registration, the excludeList hit) go through one producer,
+  `Ctx::user_presence_test`: it polls the touch when there is one, runs CTAP
+  2.1 §6.5.5.7's triad when the request asserts `up`, and answers the `UpFlag`
+  the two success paths build their authenticator data's UP bit from. Only
+  those two commands' requests can ask it (a sealed trait).
+  `bcdDevice` 0x0A33 → 0x0A34.
+
 - **The MSE seed-backup channel is spent by taking it** — refactor; the same
   status words in the same order. The channel a `VENDOR_MSE` handshake
   establishes is one private `Option<MseChannel>` in the FIDO state, where a
