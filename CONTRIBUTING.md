@@ -104,6 +104,12 @@ remove. The rest follows from what the type can and cannot see:
   rustc holds the list both ways: a new bare wipe fails clippy, and so does an
   `#[expect]` whose wipe is gone.
 
+Resets are held the same way: `clippy.toml` refuses `SCB::sys_reset`,
+`rom_data::reset_to_usb_boot`, `reboot`, `reboot_ns` and
+`Watchdog::trigger_reset`, because a reset that skips `Worker::reboot` skips its
+scrub of the RAM secrets. The secure reboot and `rsk-wipe` (a RAM-only image with
+no secret to lose) keep their calls under an `#[expect]`.
+
 Every file starts with the SPDX header:
 
 ```rust

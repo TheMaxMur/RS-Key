@@ -174,6 +174,10 @@ async fn main(_spawner: Spawner) {
     // verified functionally, not by a flaky in-RAM readback).
     blink(&mut ws, GREEN, 3, 150).await;
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a RAM-only image that holds no secret"
+    )]
     rom_data::reset_to_usb_boot(0, 0);
     // reset_to_usb_boot does not return on success; park if a reboot ever fails.
     loop {

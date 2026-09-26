@@ -605,6 +605,15 @@ the image it ran on. This is a property of the silicon revision and boot
 configuration, so it is re-measured when either moves; the explicit wipes stay as
 depth in case a future one keeps SRAM.
 
+Every reset goes through `worker::reboot`. `clippy.toml` refuses `SCB::sys_reset`,
+`rom_data::reset_to_usb_boot`, `rom_data::reboot` / `reboot_ns` and
+`Watchdog::trigger_reset` anywhere else, so a new path to a reset cannot skip the
+wipe without an `#[expect]` that says why. Not covered, and none of it in the
+tree today: a watchdog started and left unfed (`Watchdog::start`), a raw write
+to the watchdog or power-manager registers through `rp_pac`, an `AIRCR` write
+through `SCB::PTR`, a ROM function called through its `ptr()`, and the ROM's
+`chain_image`.
+
 ## Supply chain & process
 
 - `cargo audit` + `cargo deny` (advisories, license allow-list, source

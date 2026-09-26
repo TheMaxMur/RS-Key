@@ -47,6 +47,11 @@ project — see [README.md](README.md) and
   make (state that outlives a command, a key type's own `Drop`) stays bare
   under an `#[expect]` that names its wipe point. Wipe early with `.wipe()`,
   never `drop(secret)`: that moves the bytes and wipes the copy.
+- **A reset goes through `Worker::reboot`**, which scrubs the RAM secrets
+  first. Clippy refuses a direct `SCB::sys_reset`,
+  `rom_data::reset_to_usb_boot` / `reboot` / `reboot_ns` or
+  `Watchdog::trigger_reset`; the secure reboot and `rsk-wipe` keep theirs under
+  an `#[expect]`.
 - **Every new file starts with the SPDX header** (`AGPL-3.0-only` — copy it from
   any neighbouring source file).
 - **Don't commit, push, flash, sign, or write OTP fuses unless asked.** The

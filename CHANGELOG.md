@@ -692,6 +692,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **Clippy refuses a reset outside the secure reboot** — a lint-policy change;
+  the code is the same. `clippy.toml` refuses `SCB::sys_reset`,
+  `rom_data::reset_to_usb_boot`, `reboot`, `reboot_ns` and
+  `Watchdog::trigger_reset`; the secure reboot, which scrubs the RAM secrets
+  first, and `rsk-wipe`, which holds none, keep their calls under an
+  `#[expect]`. `bcdDevice` 0x0A2E → 0x0A2F.
+
 - **The zeroize ban covers every crate** — a lint-policy change; the code is
   the same. The workspace's clippy table now refuses a bare `Zeroize::zeroize`
   and a `Zeroizing` everywhere, where each crate used to switch the ban on at
