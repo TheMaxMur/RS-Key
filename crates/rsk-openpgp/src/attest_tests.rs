@@ -218,7 +218,9 @@ fn yubico(n: u8) -> String {
     format!("1.3.6.1.4.1.41482.5.{n}")
 }
 
-const STANDARD_FOUR: [&str; 4] = ["2.5.29.19", "2.5.29.14", "2.5.29.35", "2.5.29.15"];
+/// What a statement carries after Yubico's extensions: no keyUsage, as a YubiKey's
+/// carries none. Ours put `digitalSignature` on a DEC key unless it was X25519.
+const LEAF_STANDARD: [&str; 3] = ["2.5.29.19", "2.5.29.14", "2.5.29.35"];
 
 #[test]
 fn every_card_holds_an_attestation_key_and_its_root_from_the_first_boot() {
@@ -234,6 +236,8 @@ fn every_card_holds_an_attestation_key_and_its_root_from_the_first_boot() {
         assert_eq!(cert.issuer().to_string(), name);
         let bc = cert.basic_constraints().unwrap().unwrap();
         assert!(bc.value.ca && bc.value.path_len_constraint == Some(0));
+        let ku = cert.key_usage().unwrap().expect("a CA keeps its keyUsage");
+        assert!(ku.critical && ku.value.digital_signature() && ku.value.key_cert_sign());
         let alg = &cert.tbs_certificate.subject_pki.algorithm;
         let curve = alg.parameters.as_ref().unwrap().as_oid().unwrap();
         assert_eq!(curve.to_id_string(), "1.3.132.0.34", "P-384");
@@ -369,7 +373,7 @@ fn a_generated_key_is_attested_as_a_yubikey_attests_it() {
             assert_eq!(got[i], (yubico(*n), value.clone(), false), "extension {i}");
         }
         let rest: Vec<_> = got[want.len()..].iter().map(|e| e.0.as_str()).collect();
-        assert_eq!(rest, STANDARD_FOUR);
+        assert_eq!(rest, LEAF_STANDARD);
     });
 }
 
@@ -417,6 +421,7 @@ fn each_statement_lands_in_its_keys_occurrence() {
             let oids: Vec<_> = got.iter().map(|e| e.0.clone()).collect();
             let want: Vec<_> = [3, 7, 8, 9, 1, 4, 5, 2].into_iter().map(yubico).collect();
             assert_eq!(oids[..8], want[..], "{label}");
+            assert_eq!(oids[8..], LEAF_STANDARD, "{label}");
             assert_eq!(got[2].1, [0x04, 0x01, flag], "{label} .8");
             assert_eq!(
                 got[5].1,

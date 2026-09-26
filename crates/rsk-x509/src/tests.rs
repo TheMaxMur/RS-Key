@@ -120,6 +120,7 @@ fn a_self_signed_ec_certificate_parses_and_verifies() {
             },
             sha384: false,
             ca_pathlen: None,
+            key_usage: true,
             extra: &[],
         },
         &Signer::Ec(&k),
@@ -190,6 +191,7 @@ fn an_issued_certificate_carries_the_callers_extensions_in_order() {
             },
             sha384: true,
             ca_pathlen: None,
+            key_usage: true,
             extra: &[
                 (first, &[0x04, 0x03, 5, 8, 0]),
                 (second, &[0x02, 0x01, 0x07]),
@@ -231,6 +233,44 @@ fn an_issued_certificate_carries_the_callers_extensions_in_order() {
         .unwrap();
 }
 
+/// Left out, keyUsage takes nothing else with it: the caller's extensions, then
+/// basicConstraints, SKI and AKI — the shape of an attestation statement.
+#[test]
+fn a_certificate_without_key_usage_keeps_the_rest_of_the_profile() {
+    let (issuer, issuer_pt) = key(Curve::P384, 2);
+    let (_, subject_pt) = key(Curve::P256, 3);
+    let first: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xC4, 0x0A, 0x05, 0x03];
+    let der = issue(
+        &Cert {
+            subject_cn: b"Attested",
+            issuer_cn: b"Attester",
+            spki: Spki::Ec {
+                curve: Curve::P256,
+                point: &subject_pt,
+            },
+            sha384: true,
+            ca_pathlen: None,
+            key_usage: false,
+            extra: &[(first, &[0x04, 0x03, 5, 8, 0])],
+        },
+        &Signer::Ec(&issuer),
+    );
+    let cert = parse(&der);
+    assert_eq!(
+        oids(&cert),
+        [
+            "1.3.6.1.4.1.41482.5.3",
+            "2.5.29.19",
+            "2.5.29.14",
+            "2.5.29.35"
+        ]
+    );
+    let vk = p384::ecdsa::VerifyingKey::from_sec1_bytes(&issuer_pt).unwrap();
+    let sig = p384::ecdsa::Signature::from_der(&cert.signature_value.data).unwrap();
+    vk.verify_prehash(&sha384(cert.tbs_certificate.as_ref()), &sig)
+        .unwrap();
+}
+
 /// A CA certificate says so in a critical basicConstraints with its path length,
 /// and only then asserts keyCertSign (RFC 5280 §4.2.1.3).
 #[test]
@@ -246,6 +286,7 @@ fn a_ca_certificate_marks_itself() {
             },
             sha384: true,
             ca_pathlen: Some(1),
+            key_usage: true,
             extra: &[],
         },
         &Signer::Ec(&k),
@@ -275,6 +316,7 @@ fn an_rsa_signer_signs_sha256_whatever_is_asked() {
             spki: Spki::Rsa { n: &n, e: &e },
             sha384: true,
             ca_pathlen: None,
+            key_usage: true,
             extra: &[],
         },
         &Signer::Rsa(&rsa),
@@ -335,6 +377,7 @@ fn rfc8410_keys_carry_their_bare_oid() {
             },
             sha384: false,
             ca_pathlen: None,
+            key_usage: true,
             extra: &[],
         },
         &Signer::Ed25519(&ed),
@@ -369,6 +412,7 @@ fn an_ed25519_key_is_named_and_signs_for_itself() {
             },
             sha384: false,
             ca_pathlen: None,
+            key_usage: true,
             extra: &[],
         },
         &Signer::Ed25519(&ed),
@@ -417,6 +461,7 @@ fn the_serial_is_twenty_positive_bytes_whatever_the_rng_gives() {
             },
             sha384: false,
             ca_pathlen: None,
+            key_usage: true,
             extra: &[],
         };
         let n = build(&c, &Signer::Ec(&k), &mut Fixed(byte), &mut out).unwrap();
@@ -450,6 +495,7 @@ fn each_curve_names_its_oid() {
                 spki: Spki::Ec { curve, point: &pt },
                 sha384: false,
                 ca_pathlen: None,
+                key_usage: true,
                 extra: &[],
             },
             &Signer::Ec(&signer),
@@ -482,6 +528,7 @@ fn what_the_profile_cannot_encode_is_refused() {
         spki: Spki::Ec { curve, point: &pt },
         sha384: false,
         ca_pathlen: None,
+        key_usage: true,
         extra: &[],
     };
     let mut short = [0u8; MAX_CERT - 1];

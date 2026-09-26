@@ -286,8 +286,10 @@ ykman piv keys attest 9a attestation.pem
 Proves a slot key was generated on-device, not imported. The attestation
 certificate is signed on-card by the `f9` key (a P-384 CA key, self-signed at
 first boot) and carries the standard Yubico OIDs: firmware version, device
-serial, and the slot's pin/touch policy. Subject/issuer names are
-`C=ES, O=RS-Key, CN=RS-Key PIV …`. Read the `f9` CA cert with:
+serial, the slot's pin/touch policy and the form factor. It names no key usage,
+as a YubiKey's OpenPGP statement names none: it says where the key came from, not
+what the key is for. Subject/issuer
+names are `C=ES, O=RS-Key, CN=RS-Key PIV …`. Read the `f9` CA cert with:
 
 ```sh
 ykman piv certificates export f9 attestation-ca.pem

@@ -303,7 +303,8 @@ openssl verify -CAfile card-att.pem sig-att.pem
 The statement lands in the key's certificate slot (the one `gpg` shows as the
 cardholder certificate) and carries Yubico's extensions: firmware version,
 serial, touch policy, form factor, cardholder name, fingerprint and generation
-time, the signature counter for the signing key, and the key source. With
+time, the signature counter for the signing key, and the key source. Like a
+YubiKey's, it names no key usage. With
 `forcesig` on, each ATTEST spends the PIN as a signature does. A YubiKey's chain ends
 at Yubico's CA; this card's attestation certificate is self-signed, so pin the
 `card-att.pem` you read off your own device. A factory reset mints a new

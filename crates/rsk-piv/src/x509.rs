@@ -33,7 +33,8 @@ pub struct CertParams<'a> {
     pub algo: u8,
     pub spki: Spki<'a>,
     /// `Some` ⇒ an attestation certificate (subject "Attestation %X", issuer
-    /// "Slot F9", Yubico extensions); `None` ⇒ self-signed slot certificate.
+    /// "Slot F9", Yubico extensions, no keyUsage); `None` ⇒ self-signed slot
+    /// certificate.
     pub attestation: Option<AttestExt>,
     /// `Some(pathlen)` marks a CA certificate (the F9 self-cert uses 1).
     pub ca_pathlen: Option<u8>,
@@ -94,6 +95,7 @@ pub fn build_cert(
         spki: p.spki,
         sha384: p.algo == ALGO_ECCP384,
         ca_pathlen: p.ca_pathlen,
+        key_usage: p.attestation.is_none(),
         extra,
     };
     rsk_x509::build(&cert, signer, rng, out).map_err(x509_sw)

@@ -65,6 +65,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- An attestation statement names no key usage: a YubiKey 5.8.0's OpenPGP
+  statement carries Yubico's extensions and nothing else. RS-Key's put a critical
+  keyUsage in every statement, `digitalSignature` for all but an X25519 key, so a
+  PIV `9D` or OpenPGP DEC key meant for key agreement or decryption was stated as
+  a signing key. The PIV statement follows the OpenPGP one's measured shape;
+  reading a YubiKey's own PIV statement uses its `F9` key, which stays untouched.
+  The slot, `F9` and `FC` certificates keep their keyUsage.
+  `bcdDevice` 0x0A12 → 0x0A13.
+
 - The management applet answers its SELECT with a YubiKey 5.8.0's words,
   `Virtual mgr - FW version 5.8.0`, where RS-Key sent the bare `5.8.0`. yubikit
   and ykman read the version out of either. A host that compared the whole

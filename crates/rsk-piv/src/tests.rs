@@ -6709,21 +6709,26 @@ fn key_cert_sign_is_asserted_only_on_a_ca() {
     );
     assert_eq!(sw, Sw::OK);
 
-    // The attestation leaf (cA=FALSE) and the F9 self-signed CA it chains to.
-    let (sw, leaf) = run(&mut app, &mut fs, INS_ATTESTATION, 0x9A, 0, &[]);
-    assert_eq!(sw, Sw::OK);
-    let (sw, f9) = run(
-        &mut app,
-        &mut fs,
-        INS_GET_DATA,
-        0x3F,
-        0xFF,
-        &[0x5C, 0x03, 0x5F, 0xFF, 0x01],
-    );
-    assert_eq!(sw, Sw::OK);
-    let f9der = find_tag(find_tag(&f9, 0x53).unwrap(), 0x70).expect("F9 cert object");
+    // The slot's self-signed leaf (cA=FALSE) and the F9 self-signed CA. An
+    // attestation leaf carries no keyUsage at all; the next test holds that.
+    let cert_object = |app: &mut PivApplet, fs: &mut _, tag: [u8; 3]| {
+        let (sw, obj) = run(
+            app,
+            fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[&[0x5C, 0x03][..], &tag].concat(),
+        );
+        assert_eq!(sw, Sw::OK);
+        find_tag(find_tag(&obj, 0x53).unwrap(), 0x70)
+            .expect("cert object")
+            .to_vec()
+    };
+    let slot = cert_object(&mut app, &mut fs, [0x5F, 0xC1, 0x05]);
+    let f9der = cert_object(&mut app, &mut fs, [0x5F, 0xFF, 0x01]);
 
-    for (label, der) in [("attestation leaf", &leaf[..]), ("F9 self-cert", f9der)] {
+    for (label, der) in [("9A self-cert", &slot[..]), ("F9 self-cert", &f9der[..])] {
         let (_, c) = x509_parser::parse_x509_certificate(der).unwrap();
         let is_ca = c.basic_constraints().unwrap().is_some_and(|bc| bc.value.ca);
         let ku = c
@@ -6741,6 +6746,33 @@ fn key_cert_sign_is_asserted_only_on_a_ca() {
             "{label}: keyCertSign={} but cA={is_ca} — RFC 5280 §4.2.1.3",
             ku.key_cert_sign()
         );
+    }
+}
+
+/// An attestation statement carries no keyUsage, as a YubiKey's OpenPGP statement
+/// carries none: it says where a key came from, not what it is for. Ours put
+/// `digitalSignature` on a 9D key-management key unless it was X25519.
+#[test]
+fn an_attestation_statement_names_no_key_usage() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    for (slot, algo) in [
+        (0x9A, ALGO_ECCP256),
+        (0x9D, ALGO_ECCP256),
+        (0x9D, ALGO_X25519),
+    ] {
+        let template = gen_template(algo);
+        let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, slot, &template);
+        assert_eq!(sw, Sw::OK);
+        let (sw, leaf) = run(&mut app, &mut fs, INS_ATTESTATION, slot, 0, &[]);
+        assert_eq!(sw, Sw::OK);
+        let (_, c) = x509_parser::parse_x509_certificate(&leaf).unwrap();
+        assert!(c.key_usage().unwrap().is_none(), "{slot:02X}/{algo:02X}");
     }
 }
 

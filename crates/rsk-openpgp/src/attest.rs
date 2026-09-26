@@ -70,6 +70,7 @@ pub(crate) fn provision<S: Storage>(
         },
         sha384: true,
         ca_pathlen: Some(0),
+        key_usage: true,
         extra: &[],
     };
     let n = rsk_x509::build(&root, &Signer::Ec(&key), rng, &mut cert).map_err(x509_sw)?;
@@ -231,6 +232,7 @@ fn write_statement<S: Storage>(
         spki,
         sha384: true,
         ca_pathlen: None,
+        key_usage: false,
         extra,
     };
     let mut algo = [0u8; 16];

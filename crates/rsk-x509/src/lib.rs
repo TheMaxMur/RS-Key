@@ -9,10 +9,10 @@
 //!
 //! Profile: X.509 v3, 20-byte random serial, validity 2024-03-25 → 2074-12-31,
 //! names `C=ES, O=RS-Key, CN=<caller's>`, basicConstraints (CA when the caller
-//! asks), a critical keyUsage (digitalSignature, plus keyCertSign on a CA;
-//! keyAgreement alone for X25519), SKI/AKI (SHA-1, RFC 5280 method 1), and any
-//! further non-critical extensions the caller names — PIV's attestation statement
-//! is one such set.
+//! asks), a critical keyUsage unless the caller leaves it out (digitalSignature,
+//! plus keyCertSign on a CA; keyAgreement alone for X25519), SKI/AKI (SHA-1, RFC
+//! 5280 method 1), and any further non-critical extensions the caller names — PIV's
+//! attestation statement is one such set.
 #![cfg_attr(not(test), no_std)]
 
 use rsk_crypto::{sha1, sha256, sha384};
@@ -182,8 +182,11 @@ pub struct Cert<'a> {
     pub sha384: bool,
     /// `Some(pathlen)` marks a CA certificate.
     pub ca_pathlen: Option<u8>,
+    /// Whether the keyUsage goes in. An attestation statement leaves it out, as a
+    /// YubiKey's does: it says where a key came from, not what it is for.
+    pub key_usage: bool,
     /// Further non-critical extensions, `(OID content, extnValue content)` in DER
-    /// order; they precede the four this profile always carries.
+    /// order; they precede the profile's own.
     pub extra: &'a [(&'a [u8], &'a [u8])],
 }
 
@@ -308,8 +311,8 @@ fn extensions(
     issuer_hash: &[u8; 20],
 ) -> Result<(), Error> {
     let m_outer = w.mark();
-    // DER order: [extra…,] BC, SKI, AKI, KU — written backward.
-    {
+    // DER order: [extra…,] BC, SKI, AKI[, KU] — written backward.
+    if c.key_usage {
         // keyUsage, critical: keyAgreement for X25519, else digitalSignature, and
         // keyCertSign only on a CA — RFC 5280 §4.2.1.3: "if keyCertSign is asserted,
         // cA MUST also be asserted", which every leaf broke once (audit run-34 #36).
