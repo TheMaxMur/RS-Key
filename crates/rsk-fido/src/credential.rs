@@ -1167,9 +1167,9 @@ pub fn migrate_rp_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>) {
         // it supersedes is the cleartext domain, and this pass is skipped whole
         // whenever the seed is PIN-wrapped or locked — boots that latched already.
         if let Ok(blen) = seal_rp_id(seed.expose(), domain, &rp_id_hash, &mut out[RP_PREFIX..])
-            && (dev.otp_key.is_none() || rsk_fs::request_rescrub(fs).is_ok())
+            && let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, dev.otp_key.is_some())
         {
-            let _ = fs.put(fid, &out[..RP_PREFIX + blen]);
+            let _ = fs.put_over(fid, &out[..RP_PREFIX + blen], rearmed.as_ref());
         }
     }
     seed.wipe();

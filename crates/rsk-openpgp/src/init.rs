@@ -60,7 +60,7 @@ fn put_pin_verifier<S: Storage>(
     fid: u16,
     pin: &[u8],
 ) -> Result<(), Error> {
-    crate::pin::put_verifier(dev, fs, fid, pin).map_err(|_| Error::Storage)
+    crate::pin::put_verifier(dev, fs, fid, pin, None).map_err(|_| Error::Storage)
 }
 
 /// Initialise the OpenPGP EFs: the DEK (sealed under the default PINs), the PIN
@@ -200,7 +200,7 @@ fn neutralize_default_reset_code<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Re
     // The one re-arm whose failure does NOT stop the write: "leave the record in
     // force" means, here, a live unauthenticated `RESET RETRY P1=0` path, and
     // refusing would abort `scan_files` before `settle_rc_retry_counter` too.
-    let _ = rsk_fs::request_rescrub(fs);
+    let _attempted = rsk_fs::attempt_rescrub(fs);
     let _ = fs.delete(EF_RC);
     let _ = fs.delete_key(EF_DEK_RC);
     Ok(())

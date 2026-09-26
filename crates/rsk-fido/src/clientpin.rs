@@ -823,16 +823,14 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
     // force — where the other loses the re-arm and no later boot ever laps again.
     // Gated on it too: a medium that refuses the re-arm reaches the losing state
     // with no reset at all, and the flash failures below already answer `Other`.
-    if migrated && rsk_fs::request_rescrub(ctx.fs).is_err() {
-        return Err(CtapError::Other);
-    }
+    let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;
     // Correct PIN: migrate a legacy PIN-wrapped seed to the plain format (the
     // only moment its outer layer is open), then reset the counter.
     migrate_keydev_pin(&ctx.dev, ctx.fs, pin_hash).map_err(|_| CtapError::Other)?;
     pin_data[0] = MAX_PIN_RETRIES;
     ctx.state.new_pin_mismatches = 0;
     ctx.fs
-        .put(EF_PIN, &pin_data)
+        .put_over(EF_PIN, &pin_data, rearmed.as_ref())
         .map_err(|_| CtapError::Other)?;
     Ok(())
 }
@@ -1224,10 +1222,10 @@ fn spend_and_verify_pin_at<S: Storage>(
     // has already run, and the re-arm goes BEFORE them and gates them — a reset in
     // the window then costs an idempotent lap, and a medium that refuses the re-arm
     // is turned away instead of superseding under a marker nothing will clear.
-    if migrated && rsk_fs::request_rescrub(fs).is_err() {
+    let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, migrated) else {
         pin_hash.wipe();
         return LocalPin::Blocked;
-    }
+    };
     // Correct PIN: for the FIDO clientPIN, migrate a legacy PIN-wrapped seed (only
     // openable now) before resetting the counter; the device PIN has no seed to migrate.
     // Fail closed if a required flash write fails.
@@ -1241,7 +1239,7 @@ fn spend_and_verify_pin_at<S: Storage>(
         pin_hash.wipe();
     }
     pin_data[0] = MAX_PIN_RETRIES;
-    if fs.put(fid, &pin_data).is_err() {
+    if fs.put_over(fid, &pin_data, rearmed.as_ref()).is_err() {
         return LocalPin::Blocked;
     }
     LocalPin::Ok

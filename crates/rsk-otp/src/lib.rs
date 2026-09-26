@@ -1044,8 +1044,8 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
             // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: the
             // copy it supersedes is the pre-OTP one. The `continue` stays outside —
             // falling through would re-seal that ciphertext as if it were plaintext.
-            if rsk_fs::request_rescrub(fs).is_ok() {
-                let _ = seal::seal_put(dev, fs, rng, KeyFid::new(fid), &rec);
+            if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {
+                let _ = seal::seal_put_over(dev, fs, rng, KeyFid::new(fid), &rec, Some(&rearmed));
             }
             continue;
         }
@@ -1057,9 +1057,9 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
         // slot's AES key is in the clear on the medium. Gated on the OTP key
         // because that is what `run_at_rest_lap`'s caller gates the lap on.
         if rec.read_plaintext(fs, fid).is_some()
-            && (dev.otp_key.is_none() || rsk_fs::request_rescrub(fs).is_ok())
+            && let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, dev.otp_key.is_some())
         {
-            let _ = seal::seal_put(dev, fs, rng, KeyFid::new(fid), &rec);
+            let _ = seal::seal_put_over(dev, fs, rng, KeyFid::new(fid), &rec, rearmed.as_ref());
         }
     }
 }

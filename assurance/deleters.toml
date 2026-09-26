@@ -22,16 +22,18 @@
 #
 # Scope, matching the roadmap's §3.4 so the counts reproduce: callers outside
 # `crates/rsk-fs` (which defines the family), outside `fuzz/`, and outside the
-# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 43 — 24 `delete`,
-# 9 `delete_key`, 5 `force_delete`, 5 `force_delete_halves`.
+# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 43 — 21 `delete`,
+# 5 `delete_key`, 2 `delete_over`, 5 `delete_key_over`, 5 `force_delete`,
+# 5 `force_delete_halves`.
 #
-# Run the same derivation over `crates/rsk-fs` and it finds FIVE more, which this
+# Run the same derivation over `crates/rsk-fs` and it finds SEVEN more, which this
 # header used to call "the one" — a hand-written count in the header of the file
-# written to refute hand-written counts. Four of them are not decisions: `fs.rs`'s
-# `delete_key` and `force_delete` delegate to the family rather than call it, and
+# written to refute hand-written counts. Six of them are not decisions: `fs.rs`'s
+# `delete_key`, `force_delete`, `delete_over` and `delete_key_over` delegate to the
+# family rather than call it, and
 # `powercut_model.rs` is behind the `test-util` feature, where one line is the
 # power-cut model's OWN `delete` method (the receiver test cannot tell it from
-# this one) and the other is that model's driver. The fifth is the only shipping
+# this one) and the other is that model's driver. The seventh is the only shipping
 # in-crate caller and it is a decision: `rsk-fs`'s own `request_rescrub`
 # (`lib.rs`), which re-arms the at-rest scrub marker and is best-effort for the
 # reason `init.rs`'s pair below are — the next boot runs it again.
@@ -77,7 +79,8 @@
 #
 # scrub — what the method does about the at-rest lap (rsk-fs `EF_HARDENED`),
 # which every tombstone owes, because a tombstone appends like a re-seal
-#   re-arms            the method calls `request_rescrub` itself, before it
+#   re-arms            the method calls `request_rescrub` (or its best-effort
+#                      `attempt_rescrub`) itself, before it
 #                      supersedes anything
 #   deferred-to-caller the method is a primitive the delete family or an applet
 #                      reaches through; the decision is the `[[site]]` row above
@@ -225,7 +228,7 @@ why = "the panel's own deleteCredential — it reports the deletion to the owner
 
 [[site]]
 file = "crates/rsk-fido/src/reset.rs"
-line = 114
+line = 117
 call = "let gone = ctx.fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -236,7 +239,7 @@ why = "the seed fids ahead of the batch. Both halves are read and BOTH are carri
 
 [[site]]
 file = "crates/rsk-fido/src/reset.rs"
-line = 166
+line = 169
 call = "let gone = ctx.fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -313,9 +316,9 @@ why = "SET CODE's 73 00: select derives validated from !code_set, so a 9000 over
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 417
-call = "match fs.delete(EF_OTP_PIN) {"
-verb = "delete"
+line = 424
+call = "match fs.delete_over(EF_OTP_PIN, Some(&rearmed)) {"
+verb = "delete_over"
 answer = "read"
 class = "secret-or-gate"
 metadata = "none"
@@ -324,7 +327,7 @@ why = "VERIFY PIN raises the same validated flag VALIDATE does, so an OTP-PIN th
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 1636
+line = 1643
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -369,8 +372,8 @@ why = "one instance of the cardholder certificate: a public data object the host
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
 line = 453
-call = "let _ = fs.delete_key(stage);"
-verb = "delete_key"
+call = "let _ = fs.delete_key_over(stage, Some(&rearmed));"
+verb = "delete_key_over"
 answer = "discarded"
 class = "secret-or-gate"
 metadata = "none"
@@ -379,9 +382,9 @@ why = "load_dek re-runs this retirement on every PIN use, so a failed one is ret
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 526
-call = "let _ = fs.delete_key(stage);"
-verb = "delete_key"
+line = 525
+call = "let _ = fs.delete_key_over(stage, rearmed.as_ref().ok());"
+verb = "delete_key_over"
 answer = "discarded"
 class = "secret-or-gate"
 metadata = "none"
@@ -390,9 +393,9 @@ why = "the same retirement after a recovered update commits; the same next-load_
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 592
-call = "let _ = fs.delete_key(stage);"
-verb = "delete_key"
+line = 596
+call = "let _ = fs.delete_key_over(stage, Some(rearmed));"
+verb = "delete_key_over"
 answer = "discarded"
 class = "secret-or-gate"
 metadata = "none"
@@ -401,9 +404,9 @@ why = "and after an ordinary staged commit. All three are the one record load_de
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 660
-call = "let verifier = fs.delete(EF_RC).is_ok();"
-verb = "delete"
+line = 664
+call = "let verifier = fs.delete_over(EF_RC, Some(&rearmed)).is_ok();"
+verb = "delete_over"
 answer = "read"
 class = "secret-or-gate"
 metadata = "none"
@@ -412,9 +415,9 @@ why = "the RC verifier is what RESET RETRY P1=0 walks in through, and init's rep
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 661
-call = "let dek = fs.delete_key(EF_DEK_RC).is_ok();"
-verb = "delete_key"
+line = 665
+call = "let dek = fs.delete_key_over(EF_DEK_RC, Some(&rearmed)).is_ok();"
+verb = "delete_key_over"
 answer = "read"
 class = "secret-or-gate"
 metadata = "none"
@@ -423,9 +426,9 @@ why = "the DEK sealed under that reset code. A survivor of any of the three leav
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 662
-call = "let staged = fs.delete_key(EF_DEK_STAGE_RC).is_ok();"
-verb = "delete_key"
+line = 666
+call = "let staged = fs.delete_key_over(EF_DEK_STAGE_RC, Some(&rearmed)).is_ok();"
+verb = "delete_key_over"
 answer = "read"
 class = "secret-or-gate"
 metadata = "none"
@@ -511,7 +514,7 @@ why = "and its second. Both slots' valid bits come off flash in the response tha
 
 [[site]]
 file = "crates/rsk-piv/src/files.rs"
-line = 524
+line = 528
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -598,7 +601,7 @@ why = "the unconditional twin, and `force_delete`'s body as well. Same reason: t
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 855
+line = 884
 method = "meta_delete"
 call = "self.storage.remove(EF_META)?;"
 rearms = false

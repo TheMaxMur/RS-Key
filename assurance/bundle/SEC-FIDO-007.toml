@@ -62,7 +62,7 @@ threat_clause = "docs/threat-model.md#TM-ZEROIZATION"
 # crates/rsk-fido/src/config.rs:404-408 — "`keydev_dec` carries no channel, token
 # or timer and lives until power-off (audit run-34 #28). That is accepted". So
 # the registered source is a clause the property's own subject is carved out of.
-threat_clause_reading = "the anchor is topical and not the claim: TM-ZEROIZATION is end-of-use wiping, this property is an ORDERING between the RAM copy and the flash record across a reset. What would fix it is a threat-model sentence naming the vendor-unlock RAM seed and the reset ordering — reset.rs:100-104 already carries the argument in prose — or a re-source onto a clause about the wipe order. TM-HOST-POWER-CUT is the nearest existing clause and is about a torn flash WRITE, not about volatile state outliving it"
+threat_clause_reading = "the anchor is topical and not the claim: TM-ZEROIZATION is end-of-use wiping, this property is an ORDERING between the RAM copy and the flash record across a reset. What would fix it is a threat-model sentence naming the vendor-unlock RAM seed and the reset ordering — reset.rs:103-107 already carries the argument in prose — or a re-source onto a clause about the wipe order. TM-HOST-POWER-CUT is the nearest existing clause and is about a torn flash WRITE, not about volatile state outliving it"
 # What `assurance_gate.py` derives as `rust = 1`. Read the derivation before the
 # column: `grep_word` matches the bare invariant name ANYWHERE in a production
 # file and returns FILE NAMES, so the column counts files that MENTION it, not
@@ -85,7 +85,7 @@ owners_writers = [
   "crates/rsk-fido/src/state.rs:449 — `*self = Self::new()` inside `FidoState::reset`, which drops the old value",
   "crates/rsk-fido/src/state.rs:710 — `Drop for FidoState`, whose exhaustive destructuring names it; a `Secret`, it wipes itself as the state drops",
   "crates/rsk-fido/src/config.rs:428 — AUT_DISABLE's clear; the model omits this action outright",
-  "crates/rsk-fido/src/reset.rs:104 — `ctx.state.reset()` AHEAD of every flash write, which is the ordering the invariant IS",
+  "crates/rsk-fido/src/reset.rs:107 — `ctx.state.reset()` AHEAD of every flash write, which is the ordering the invariant IS",
 ]
 owners_readers = [
   "crates/rsk-fido/src/lib.rs:105 — `Ctx::load_keydev`, RAM first then flash: the concrete SeedReachable, and the chokepoint nine call sites reach it through",
@@ -200,7 +200,7 @@ bound_files_in_argument = 6
 stops_files_in_argument = "anything in a seventh file — and the measurement is the point: the slice page estimated three files, named the tag's file, and missed both writers and the ordering site"
 bound_crates = 2
 stops_crates = "a site outside the two crates. A holder of the RAM copy in a third would be outside the argument"
-shipped_relation = "the four writers are one producer (vendor.rs:580) and three destroyers (vendor.rs:579, config.rs:428, and reset.rs:104 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:105, config.rs:414, config.rs:420 and vendor.rs:970; the two projection sites are crates/rsk-device/src/ctap.rs:229 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit"
+shipped_relation = "the four writers are one producer (vendor.rs:580) and three destroyers (vendor.rs:579, config.rs:428, and reset.rs:107 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:105, config.rs:414, config.rs:420 and vendor.rs:970; the two projection sites are crates/rsk-device/src/ctap.rs:229 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit"
 cfg = "none — every writer and reader above is unconditional production code; the two projection sites are not, and the bound counts them apart for that reason"
 features = "none"
 
@@ -261,7 +261,7 @@ registered = "yes — assurance/platform.toml PLAT-MODEL-005, pending, and it is
 
 [[assumption]]
 id = "AS-RAM-4"
-statement = "The RAM copy dies by Rust drop-and-replace, not by an explicit clear, on the path the invariant is about: `reset.rs:104` calls `FidoState::reset`, which assigns `*self = Self::new()` and lets the field's `Secret` wipe itself as the old state drops."
+statement = "The RAM copy dies by Rust drop-and-replace, not by an explicit clear, on the path the invariant is about: `reset.rs:107` calls `FidoState::reset`, which assigns `*self = Self::new()` and lets the field's `Secret` wipe itself as the old state drops."
 kind = "compiler"
 discharger = "stage 11's source-to-binary work, and nothing here. The model writes `ram' = FALSE` outright (RSKeySecurityState.tla:1225); the code's equivalent is state.rs:444-454 plus the exhaustive destructuring at :683-728, whose own comment says a field added later stops the pattern compiling. What no proof in this tree covers is that the emitted image does what the `Drop` says"
 expressible = "no — a fact about a compiler, not about the model"
@@ -385,7 +385,7 @@ r_column = "the `rust` column is not a count of tags: assurance_gate.grep_word m
 
 # The gates this bundle's own change moved, each with the number it now derives.
 gate_ghost = "ghost-gate: ok — 21 action(s) record NoAuthorizationBypass over 24 route(s), consulting 11 guard(s) — unchanged by this bundle, and transcribed because the roster rule demands every gate line whether or not this property moved it"
-gate_ledger = "token-refinement-gate: GREEN keys=2 api=12 volatile=11/10 persistent=14/5 outcomes=7/6 walk=4 softlock=12 window=2 testonly=1 — the ledger owns the token axes, not the seed ones, so none of the owners this bundle enumerates is in it"
+gate_ledger = "token-refinement-gate: GREEN keys=2 api=16 volatile=11/10 persistent=14/5 outcomes=7/6 walk=4 softlock=12 window=2 testonly=1 — the ledger owns the token axes, not the seed ones, so none of the owners this bundle enumerates is in it"
 gate_assumption = "5 standing assumption(s) AlwaysUvShipped TRUE=5 FALSE=91 ForceChangeModelled TRUE=3 FALSE=93 PowerOnClearsScratch2 TRUE=11 FALSE=4 RekeyOrderModelled TRUE=2 FALSE=13 WidePerms TRUE=3 FALSE=93 — re-derived, and it REFUTES what this line used to say. `grep -lw RamNeverOutlivesFlashSeed formal/*.cfg` is Shipped.cfg, AlwaysUv.cfg, ForceChange.cfg, PermWide.cfg and Solo_RamNeverOutlivesFlashSeed.cfg, and across those five all three model constants now have BOTH arms run against this property — `AlwaysUvShipped` through Shipped.cfg and AlwaysUv.cfg, `WidePerms` through PermWide.cfg, `ForceChangeModelled` through ForceChange.cfg. The earlier wording said the two scope constants were FALSE in every configuration that checks it, which was true when it was typed and is not now. `PowerOnClearsScratch2` and `RekeyOrderModelled` are the two whose arms this property never sees, because both live in RSKeyBootHardening — the second joined the registry after this line was first written, and is why the total is five rather than four"
 gate_matrix = "matrix-gate: ok — 40 P0-family properties × 31 build configurations = 1240 cells (37 covered, 143 equivalent, 0 conditional, 106 out-of-scope, 954 gap) — UNCHANGED by this bundle: a model check and a host-test slice read no board preset and no flash geometry, so nothing here settles a cell"
 gate_registry = "SEC-FIDO-007   RamNeverOutlivesFlashSeed                MODELLED-ONLY cfgs=5   mut=1  co=1 kani=0 fuzz=0 rust=2 test=0 — `rust` moved to two when the ONE producer of the antecedent, `vendor.rs::unlock`, was tagged; it had carried only the consequent's owner. `cfgs` counts configurations CHECKING the invariant rather than evidence about it"

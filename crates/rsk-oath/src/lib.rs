@@ -12,7 +12,7 @@ mod seal;
 use core::cell::RefCell;
 
 use rsk_crypto::{Device, FusedKey, FusedRead, hmac_sha1, hmac_sha256, hmac_sha512, read_fused};
-use rsk_fs::{Fs, KeyFid, Storage};
+use rsk_fs::{Fs, KeyFid, RearmAttempted, Storage};
 // The VALIDATE challenge's randomness and the `PROP_TOUCH` presence check are
 // `rsk-sdk`'s seams, shared with every sibling applet.
 use rsk_sdk::tlv::{find_tag, format_len};
@@ -398,13 +398,20 @@ impl<'a> OathApplet<'a> {
         // Ahead of the SEAL as well, because this returns: a code sealed first is a
         // lock the caller was told had failed, with the PIN it never reached still
         // opening it — `validated` is per-session, and the next SELECT is not.
-        if rsk_fs::request_rescrub(fs).is_err() {
+        let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
             return Sw::MEMORY_FAILURE;
-        }
+        };
         self.rng.borrow_mut().fill(&mut self.challenge);
         let mkek = read_fused(self.mkek_source);
         let dev = self.device(&mkek);
-        if !seal::seal_put(&dev, fs, &mut *self.rng.borrow_mut(), EF_OATH_CODE, key) {
+        if !seal::seal_put_over(
+            &dev,
+            fs,
+            &mut *self.rng.borrow_mut(),
+            EF_OATH_CODE,
+            key,
+            Some(&rearmed),
+        ) {
             return Sw::MEMORY_FAILURE;
         }
         // Installing a new access code drops any OTP-PIN: VERIFY PIN sets the same
@@ -414,7 +421,7 @@ impl<'a> OathApplet<'a> {
         // Answered rather than discarded: a surviving PIN is that second path, and
         // the lock-down covers both arms below, the refused drop's included.
         self.validated = false;
-        match fs.delete(EF_OTP_PIN) {
+        match fs.delete_over(EF_OTP_PIN, Some(&rearmed)) {
             Ok(()) => Sw::OK,
             Err(_) => Sw::MEMORY_FAILURE,
         }
@@ -1112,10 +1119,10 @@ impl<'a> OathApplet<'a> {
         // record the write below supersedes may be keyed under the pre-OTP arm the
         // public chip serial derives. Before the write and gating it, like VERIFY —
         // a marker this command cannot clear is one the next boot obeys.
-        if rsk_fs::request_rescrub(fs).is_err() {
+        let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
             return Sw::MEMORY_FAILURE;
-        }
-        match fs.put(EF_OTP_PIN, &self.otp_pin_record_v1(new_pw)) {
+        };
+        match fs.put_over(EF_OTP_PIN, &self.otp_pin_record_v1(new_pw), Some(&rearmed)) {
             Ok(()) => Sw::OK,
             Err(_) => Sw::MEMORY_FAILURE,
         }
@@ -1146,10 +1153,10 @@ impl<'a> OathApplet<'a> {
         // A re-arm the medium REFUSED skips the write instead of failing the verify:
         // this upgrade is already best-effort here (`let _`), and skipping it leaves
         // the record in force rather than superseded under a marker nothing clears.
-        if rsk_fs::request_rescrub(fs).is_ok() {
+        if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {
             // Success: reset the counter and (lazily) upgrade a legacy record to the
             // OTP-rooted v1 verifier. The OTP PIN doubles as VALIDATE (nitropy flow).
-            let _ = fs.put(EF_OTP_PIN, &self.otp_pin_record_v1(pw));
+            let _ = fs.put_over(EF_OTP_PIN, &self.otp_pin_record_v1(pw), Some(&rearmed));
         }
         self.validated = true;
         self.otp_pin_verified = true;
@@ -1564,8 +1571,8 @@ fn wipe_oath<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     //
     // The failure does NOT stop the write, unlike the gated sites: "leave the
     // record in force" means, on a wipe, leave the secrets live.
-    let _ = rsk_fs::request_rescrub(fs);
-    let swept = sweep_phases(fs);
+    let attempted = rsk_fs::attempt_rescrub(fs);
+    let swept = sweep_phases(fs, &attempted);
     // Retry, BETWEEN the sweeps and their `?` rather than after their last one: a
     // refused head leaves the marker latched over every tombstone [`sweep_phases`]
     // appended, and a sweep that faults on the way is exactly when that is true and
@@ -1574,7 +1581,7 @@ fn wipe_oath<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     // A single-shot refusal is the only kind either call recovers from (`rsk_otp`'s
     // BUMP_TRIES states the same), and where the head landed this costs no append at
     // all — `Fs::delete` skips a backend it already marked absent.
-    let _ = rsk_fs::request_rescrub(fs);
+    let _retried = rsk_fs::attempt_rescrub(fs);
     swept
 }
 
@@ -1586,7 +1593,7 @@ fn wipe_oath<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 /// Its own function so the at-rest re-arm can stand between it and its caller's
 /// answer: every early return in here is one a re-arm written BELOW them would be
 /// skipped by, which is the case that re-arm exists for.
-fn sweep_phases<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+fn sweep_phases<S: Storage>(fs: &mut Fs<S>, _attempted: &RearmAttempted) -> Result<(), Sw> {
     // Two phases, and the order carries the security property. `for_each_key`
     // yields in flash-ring (write) order, not FID order, so one combined sweep can
     // reach the access code before the credentials — and a power cut there leaves
@@ -1815,8 +1822,8 @@ fn reseal_if_plaintext<S: Storage>(
         // credential leaves LIST answering `9000` over an EMPTY body until a later
         // boot migrates it (measured). A reader fallback would re-admit the
         // chip-serial arm at every command, not just at boot.
-        if rsk_fs::request_rescrub(fs).is_ok() {
-            let _ = seal::seal_put(dev, fs, rng, fid, &out.expose()[..n]);
+        if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {
+            let _ = seal::seal_put_over(dev, fs, rng, fid, &out.expose()[..n], Some(&rearmed));
         }
         return;
     }
@@ -1826,9 +1833,9 @@ fn reseal_if_plaintext<S: Storage>(
     if let Some(n) = fs.read_key(fid, raw)
         && let Some(blob) = raw.get(..n)
         && is_legacy_plaintext(fid, blob)
-        && (dev.otp_key.is_none() || rsk_fs::request_rescrub(fs).is_ok())
+        && let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, dev.otp_key.is_some())
     {
-        let _ = seal::seal_put(dev, fs, rng, fid, blob);
+        let _ = seal::seal_put_over(dev, fs, rng, fid, blob, rearmed.as_ref());
     }
 }
 

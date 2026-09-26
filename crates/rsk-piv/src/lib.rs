@@ -626,11 +626,11 @@ impl PivApplet<'_> {
         // keyed under the pre-OTP arm. Before them and gating them — a reset between
         // the two appends keeps whichever landed, and a REFUSED re-arm reaches that
         // same end state with no reset in it, so the re-seed must not go ahead.
-        if rsk_fs::request_rescrub(fs).is_err() {
+        let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
             return Sw::MEMORY_FAILURE;
-        }
-        let stored = put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN)
-            .and_then(|()| put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK));
+        };
+        let stored = put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN, Some(&rearmed))
+            .and_then(|()| put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK, Some(&rearmed)));
         if stored.is_err() {
             return Sw::MEMORY_FAILURE;
         }
@@ -1353,10 +1353,10 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
         // (rsk-fs `EF_HARDENED` invariant; audit run-35). Ahead of the write and
         // gating it — the two are separate appends, and neither a reset between them
         // nor a medium that refuses the re-arm may leave the marker over the copy.
-        if rsk_fs::request_rescrub(fs).is_err() {
+        let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
             return Sw::MEMORY_FAILURE;
-        }
-        if put_pin_verifier(dev, fs, fid, pin).is_err() {
+        };
+        if put_pin_verifier(dev, fs, fid, pin, Some(&rearmed)).is_err() {
             return Sw::MEMORY_FAILURE;
         }
         matched = true;
@@ -1452,7 +1452,7 @@ pub fn change_reference<S: Storage>(
     if let Err(sw) = check_new_reference(new) {
         return sw;
     }
-    if put_pin_verifier(dev, fs, fid, new).is_err() {
+    if put_pin_verifier(dev, fs, fid, new, None).is_err() {
         return Sw::MEMORY_FAILURE;
     }
     Sw::OK
@@ -1479,10 +1479,10 @@ pub fn unblock_pin_with_puk<S: Storage>(
     // still keyed under the pre-OTP arm. Before the write and gating it — a reset
     // between the two appends must not be able to keep the marker, and a medium that
     // refuses the re-arm reaches that state outright.
-    if rsk_fs::request_rescrub(fs).is_err() {
+    let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
         return Sw::MEMORY_FAILURE;
-    }
-    let stored = put_pin_verifier(dev, fs, EF_PIN, new);
+    };
+    let stored = put_pin_verifier(dev, fs, EF_PIN, new, Some(&rearmed));
     if stored.is_err() {
         return Sw::MEMORY_FAILURE;
     }

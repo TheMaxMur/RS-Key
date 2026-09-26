@@ -57,7 +57,7 @@ CONSTANTS
 (* Mutation switches. All FALSE is the shipped tree. Each rebuilds one real  *)
 (* defect; `formal/README.md` maps every switch to its commit or audit id.   *)
 CONSTANTS
-    BugResetGatesFirst,           \* reset.rs:120-121   two-phase wipe order
+    BugResetGatesFirst,           \* reset.rs:123-124   two-phase wipe order
     BugCredBeforeRp,              \* credential.rs:842-895 registration order
     BugTokenSurvivesPinChange,    \* clientpin.rs:317  resetPinUvAuthToken
     BugSetPinKeepsPpuat,          \* clientpin.rs:217-221
@@ -69,16 +69,16 @@ CONSTANTS
     BugUnscopedCancel,            \* crates/rsk-device/src/presence.rs:118-122
     BugTouchNotSpent,             \* crates/rsk-device/src/presence.rs:203-211,226
     BugSoftLockLostOnWarmReset,   \* crates/rsk-device/src/lib.rs:128-137 PinLock across sys_reset
-    BugWarmResetReopensWindow,    \* reset.rs:259-260  in_reset_window
+    BugWarmResetReopensWindow,    \* reset.rs:262-263  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-180  may_walk_rps
     BugDeleteRpBeforeCred,        \* credmgmt.rs:676-684 deleteCredential order
-    BugBackupSealedNotAGate,      \* reset.rs:215-252 is_fido_gate_fid (run-36)
+    BugBackupSealedNotAGate,      \* reset.rs:218-255 is_fido_gate_fid (run-36)
     BugConsumeKeepsMcGa,          \* state.rs:584-589  a narrowed 6.5.5.7 triad
     BugNoDropStaleCancelAtEntry,  \* crates/rsk-device/src/presence.rs:195-196
     BugWrongPinKeepsToken,        \* clientpin.rs:801  the pre-E38 tree
-    BugSeedDoesNotLead,           \* reset.rs:105-117 / fs.rs `first`, pre-0x08BF
+    BugSeedDoesNotLead,           \* reset.rs:108-120 / fs.rs `first`, pre-0x08BF
     BugNoTouchRequired,           \* the presence gate on mc / ga
-    BugStateResetAfterWipe,       \* reset.rs:101-104 ctx.state.reset() ordering
+    BugStateResetAfterWipe,       \* reset.rs:104-107 ctx.state.reset() ordering
     BugPanelCancelable,           \* the panel's half of request_cancel's scope test
     BugUnscopedOtpCancel,         \* crates/rsk-device/src/presence.rs:127
     BugLocalPinKeepsToken,        \* crates/rsk-display/src/gates.rs:149
@@ -195,9 +195,9 @@ VARIABLES
     \* platform. `ensure_seed` mints the record with no PIN behind it (ea63a56), and a
     \* record nobody was handed grants nobody anything, so the invariants read `ppuat`.
     \* `backupSealed` is EF_BACKUP_SEALED and it runs the other way round from
-    \* the rest: its ABSENCE is the permissive state (reset.rs:215-252), so what
+    \* the rest: its ABSENCE is the permissive state (reset.rs:218-255), so what
     \* a torn wipe can re-open is a window the owner had closed.
-    gate,   \*                                                 (reset.rs:210-253)
+    gate,   \*                                                 (reset.rs:213-256)
     \* The secrets: [cred, rpent, seed]. `cred` and `rpent` are the records that
     \* still OPEN, not the records that still occupy a slot: every credential box,
     \* rpId box and EF_RP domain is sealed under the seed, and `credential_load` /
@@ -205,7 +205,7 @@ VARIABLES
     \* deleting the seed empties both here while the flash records remain, which
     \* is exactly what the shipped wipe buys and the only thing these invariants
     \* can be about -- an unopenable record is neither usable nor manageable.
-    store,  \*                                                  (reset.rs:263-306)
+    store,  \*                                                  (reset.rs:266-309)
     lock,   \* the soft lock: [soft, mism, policyMism]         (state.rs:285-293)
     tok,    \* device-side session token: [live, perms, rp]    (state.rs:248-262)
     plat,   \* the platform's copy: [held, verifies, revoked]  (ghost + wire)
@@ -298,7 +298,7 @@ Init ==
 (***************************************************************************)
 (* The seed's TWO homes. Every credential box, rpId box, credBlob,          *)
 (* hmac-secret key and large-blob key is derived from the device seed       *)
-(* (reset.rs:173-177), and `Ctx::load_keydev` reads it from RAM first and   *)
+(* (reset.rs:176-180), and `Ctx::load_keydev` reads it from RAM first and   *)
 (* flash second (crates/rsk-fido/src/lib.rs:104-113). So "the records still *)
 (* open" is a claim                                                         *)
 (* about BOTH, and the wipe's own claim -- that what a tear leaves behind is *)
@@ -654,7 +654,7 @@ PinAttemptPolicy == pin.set /\ pin.retries > 0 /\ lock.policyMism < MismatchLimi
 \* action here at all, so neither the guard nor its switch models it.
 \*
 \* WHO CLEARS IT, read rather than assumed. changePIN does (clientpin.rs:315) and
-\* the PANEL's own set/change does (clientpin.rs:1286, inside store_local_pin --
+\* the PANEL's own set/change does (clientpin.rs:1284, inside store_local_pin --
 \* a flow this module has no action for). The host setPIN does NOT: store_new_pin
 \* touches no EF_MINPINLEN byte, so a PIN established over a standing flag leaves
 \* it standing. A first draft cleared it in SetPinWrite, which was a transition
@@ -667,7 +667,7 @@ PinAttemptPolicy == pin.set /\ pin.retries > 0 /\ lock.policyMism < MismatchLimi
 TokenIssuanceGuard  == IF BugForceChangeIgnored THEN TRUE ELSE ~gate.forceChange
 TokenIssuancePolicy == ~gate.forceChange
 
-\* clientpin.rs:760-836. The lockout ladder: spend, read back, compare.
+\* clientpin.rs:760-834. The lockout ladder: spend, read back, compare.
 \* `policy` is the SECOND refusal, and it belongs to the issuing doors rather
 \* than to the ladder: the forced-change check runs after the verify, costs no
 \* retry, and the change door -- which is how the flag is cleared -- must not
@@ -678,7 +678,7 @@ PinAttempt(correct, policy) ==
     /\ viol' = IF PinAttemptPolicy /\ policy THEN viol
                                    ELSE viol \cup {"NoAuthorizationBypass"}
     /\ IF correct
-         THEN \* clientpin.rs:832-834 reset the budget and the mismatch batch.
+         THEN \* clientpin.rs:830-832 reset the budget and the mismatch batch.
               /\ pin' = [pin EXCEPT !.retries = MaxRetries]
               /\ lock' = [soft |-> FALSE, mism |-> 0, policyMism |-> 0]
          ELSE LET r == pin.retries - 1 IN
@@ -743,9 +743,9 @@ MintPpuat ==
 \* It spends the SAME persistent retry counter the wire path spends -- a correct
 \* PIN refills it, a wrong one costs a try -- because
 \* `spend_and_verify_local_pin` is `spend_and_verify_pin_at(EF_PIN, ..)`
-\* (crates/rsk-fido/src/clientpin.rs:1144-1150). What it deliberately does NOT
+\* (crates/rsk-fido/src/clientpin.rs:1142-1148). What it deliberately does NOT
 \* touch is the CTAP session: no ECDH regeneration, no RAM 3-strikes lock, no
-\* journal (crates/rsk-fido/src/clientpin.rs:1138-1142). So this is not a
+\* journal (crates/rsk-fido/src/clientpin.rs:1136-1140). So this is not a
 \* PinAttempt: the pad neither consults `lock.soft` nor arms it, and the
 \* persistent 8-try counter is the whole gate. A host-soft-locked device still
 \* takes PIN entry at the pad, which is the documented recovery.
@@ -753,7 +753,7 @@ MintPpuat ==
 \* gate" while nothing could see it move: deleting it left the reachable space
 \* BIT-IDENTICAL at 79 985 500 states. `spend_and_verify_pin_at` refuses at zero
 \* before any compare and a correct PIN at zero must not refill
-\* (crates/rsk-fido/src/clientpin.rs:1178-1180), which is the same shape
+\* (crates/rsk-fido/src/clientpin.rs:1176-1178), which is the same shape
 \* PinAttemptEnabled / PinAttemptPolicy carry for the wire path.
 LocalPinGuard  == IF BugLocalPinIgnoresBudget THEN pin.set
                                               ELSE pin.set /\ pin.retries > 0
@@ -791,7 +791,7 @@ LocalPinWrong ==
     /\ UNCHANGED << gate, store, lock, pres, sys, op, snap, upSpent, ram >>
 
 \* A correct PIN at the pad refills the persistent budget
-\* (crates/rsk-fido/src/clientpin.rs:1144-1150) and grants NOTHING host-visible:
+\* (crates/rsk-fido/src/clientpin.rs:1142-1148) and grants NOTHING host-visible:
 \* no token, no `pcmr`, no CCID security status. It also leaves the RAM soft lock
 \* armed, which fails closed -- the host stays blocked until a replug.
 LocalPinOk ==
@@ -853,7 +853,7 @@ SetPinWrite ==
     /\ pin' = [set |-> TRUE, retries |-> MaxRetries, everSet |-> TRUE]
     /\ lock' = [lock EXCEPT !.soft = FALSE, !.mism = 0, !.policyMism = 0]
     \* AND IT DOES NOT CLEAR THE FORCED-CHANGE FLAG. `store_new_pin`
-    \* (clientpin.rs:965-989) touches no EF_MINPINLEN byte and `set_pin` does not
+    \* (clientpin.rs:963-987) touches no EF_MINPINLEN byte and `set_pin` does not
     \* either, so a PIN established over a standing flag leaves it standing --
     \* changePIN is the only host way out. A first draft cleared it here.
     /\ op' = IF BugPinWriteBeforeRevoke THEN [op EXCEPT !.step = 1] ELSE NoOp
@@ -1259,12 +1259,12 @@ DeleteCredWriteB ==
                     viol, ram >>
 
 (***************************************************************************)
-(* authenticatorReset -- reset.rs:36-123. Two phases, each a batch of        *)
+(* authenticatorReset -- reset.rs:36-126. Two phases, each a batch of        *)
 (* force_delete calls; `for_each_key` yields in FLASH-RING order, so the    *)
 (* order WITHIN a phase is not controlled and is modelled as arbitrary.     *)
 (***************************************************************************)
 
-\* reset.rs:255-260. A warm boot CLOSES the window rather than opening one:
+\* reset.rs:258-263. A warm boot CLOSES the window rather than opening one:
 \* sys_reset is host-requestable ungated, so a window the host can restart at
 \* will is no window at all. Modelled on a button build, where
 \* presence.shows_confirm() is FALSE and the window therefore applies.
@@ -1299,7 +1299,7 @@ ResetRefused ==
 \* surviving state was gated by, so ResetNeverWeakensSurvivingState is a
 \* relational claim rather than a restatement of the post state.
 \*
-\* THE LIVE SESSION GOES FIRST, ahead of every flash write (reset.rs:101-104). That
+\* THE LIVE SESSION GOES FIRST, ahead of every flash write (reset.rs:104-107). That
 \* is not tidiness: with the flash seed deleted first, a sweep that then FAILS
 \* leaves the rest of the power cycle running on `state.keydev_dec` -- the seed
 \* nothing stores any more -- and BACKUP_EXPORT reads through `Ctx::load_keydev`
@@ -1349,7 +1349,7 @@ ResetConfirmed ==
     /\ UNCHANGED << pin, gate, lock, pres, sys >>
 
 \* Which phase EF_BACKUP_SEALED belongs to is the audit run-36 class fix itself
-\* (reset.rs:215-252): it is in the GATE set, so the marker outlives the seed it
+\* (reset.rs:218-255): it is in the GATE set, so the marker outlives the seed it
 \* protects. BugBackupSealedNotAGate moves it back into phase 1, where it sat.
 SealedIsAGate == ~BugBackupSealedNotAGate /\ gate.backupSealed
 SealedIsASecret == BugBackupSealedNotAGate /\ gate.backupSealed
@@ -1375,13 +1375,13 @@ SecretsLive == store.seed \/ store.cred # {} \/ store.rpent # {} \/ SealedIsASec
 GatesLive   == pin.set \/ gate.alwaysUv # AlwaysUvShipped \/ gate.forceChange
                        \/ PpuatIsAGate \/ SealedIsAGate
 
-\* reset.rs:105-117 -- the seed goes in its own force_delete AHEAD of the batch, so
+\* reset.rs:108-120 -- the seed goes in its own force_delete AHEAD of the batch, so
 \* nothing the sweep leaves behind still opens. Modelled as an ordering rule over
 \* the same phase rather than a fourth step: the tear between the touch and the
 \* seed delete leaves the store untouched, which is a state the model already has.
 SeedLeadsTheWipe == ~BugSeedDoesNotLead
 
-\* Phase 1, reset.rs:120 -- every live FIDO-owned fid that is NOT a gate. One
+\* Phase 1, reset.rs:123 -- every live FIDO-owned fid that is NOT a gate. One
 \* force_delete per step, in an order the flash ring picks.
 ResetSweepSecrets ==
     /\ op.kind = "reset" /\ op.step = 1
@@ -1435,7 +1435,7 @@ ResetSweepSecrets ==
 \* PIN they had themselves asked to erase.
 PinRecordDeleted == [pin EXCEPT !.set = FALSE, !.everSet = SecretsLive]
 
-\* Phase 2, reset.rs:121 -- the records that GATE the applet rather than being
+\* Phase 2, reset.rs:124 -- the records that GATE the applet rather than being
 \* the secret. Same arbitrary intra-phase order.
 ResetSweepGates ==
     /\ op.kind = "reset" /\ op.step = 2
@@ -1451,7 +1451,7 @@ ResetSweepGates ==
                                   /\ UNCHANGED pin)
                  \/ (SealedIsAGate /\ gate' = [gate EXCEPT !.backupSealed = FALSE]
                                     /\ UNCHANGED pin)
-                 \* reset.rs:251 puts EF_MINPINLEN in this phase, and :237-243
+                 \* reset.rs:254 puts EF_MINPINLEN in this phase, and :240-246
                  \* says out loud that the list is five records and the clauses
                  \* are three. This disjunct buys the PHASE ORDER for the fourth;
                  \* no clause names it, so a torn reset that drops it early is
@@ -1464,7 +1464,7 @@ ResetSweepGates ==
     /\ UNCHANGED << store, lock, tok, plat, pres, walk, sys, snap, upSpent,
                     viol, ram >>
 
-\* reset.rs:72: ensure_seed. The session already died at reset.rs:104, ahead of the
+\* reset.rs:72: ensure_seed. The session already died at reset.rs:107, ahead of the
 \* flash, so `ram` is only still standing here on the BugStateResetAfterWipe tree.
 \* The wipe deleted the grant record, so the mint here ROTATES it: a new record that
 \* nobody holds.
@@ -1486,8 +1486,8 @@ ResetFinish ==
     /\ snap' = NoSnap
     /\ UNCHANGED << sys, viol >>
 
-\* Any `?` in reset.rs:71-72, 113-121 -- a force_delete that errors, a truncated
-\* `for_each_key` (reset.rs:152-156), the RESET_MAX_DELETES backstop, a failed
+\* Any `?` in reset.rs:71-72, 116-124 -- a force_delete that errors, a truncated
+\* `for_each_key` (reset.rs:155-159), the RESET_MAX_DELETES backstop, a failed
 \* ensure_seed. The command answers with an error and THE DEVICE KEEPS RUNNING:
 \* no boot, no ensure_seed, RAM intact. That is the transition the model did not
 \* have, and without it the RAM copy above is unobservable -- every other tear
@@ -1546,7 +1546,7 @@ PowerCut ==
 
 \* A host-requestable warm reset (SCB::sys_reset -- vendor 0x1F P1=0, the
 \* rescue twin, the phy config-write auto-reboot). crates/rsk-device/src/lib.rs:128-137
-\* carries the PinLock across it from either transport; reset.rs:260 makes it CLOSE the reset window.
+\* carries the PinLock across it from either transport; reset.rs:263 makes it CLOSE the reset window.
 WarmReset ==
     /\ VolatileCleared
     /\ BootEnsuresSeed                 \* sys_reset re-enters main: same boot path
@@ -1842,7 +1842,7 @@ NoLiveTokenWithoutPinRecord == tok.live => pin.set
 NoUnmanageableCredential == Idle => store.cred \subseteq store.rpent
 
 \* No prefix of an authenticatorReset -- torn or complete -- leaves a
-\* surviving usable secret whose gate has already gone (reset.rs:95-104).
+\* surviving usable secret whose gate has already gone (reset.rs:98-107).
 \* Shipped twin: reset_tests.rs::a_torn_reset_never_unseals_a_surviving_seed.
 \*
 \* THE THREE CLAUSES ARE NAMED because `Solo_*` names an INVARIANT and never a

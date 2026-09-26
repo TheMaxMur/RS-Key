@@ -105,7 +105,7 @@ CONSTANTS
     \* defaulting both of OATH's flags from the one default-open rule.
     BugFreshCardOpensOtpPin,
     \* A deselect that leaves a provisioned OATH unlocked
-    \* (crates/rsk-oath/src/lib.rs:1167-1171 ignoring `code_set`).
+    \* (crates/rsk-oath/src/lib.rs:1174-1178 ignoring `code_set`).
     BugDeselectKeepsOathUnlock,
     \* The same fact one path over: a card reset or a power cycle that rebuilds
     \* the applet with the unlock still standing.
@@ -152,7 +152,7 @@ VARIABLES
     \* only status here that is a two-part thing.
     fresh,
     \* Whether OATH has an access code provisioned. It decides what a new SELECT
-    \* means: `validated = !code_set` (crates/rsk-oath/src/lib.rs:1205), so a
+    \* means: `validated = !code_set` (crates/rsk-oath/src/lib.rs:1212), so a
     \* code-less applet is unlocked by design and only a provisioned one has a
     \* status a SELECT elsewhere can take away.
     oathCodeSet,
@@ -210,7 +210,7 @@ Init ==
 \* Every status an applet owns, gone. This is `Session::reset`
 \* (crates/rsk-piv/src/lib.rs:206-210), `pin::Session::reset`
 \* (crates/rsk-openpgp/src/pin.rs:82-107) and OATH's `deselect`
-\* (crates/rsk-oath/src/lib.rs:1167-1171) -- three functions, one meaning.
+\* (crates/rsk-oath/src/lib.rs:1174-1178) -- three functions, one meaning.
 ClearedFor(h, a) ==
     [r \in Refs |-> IF RefOwner(r) = a
                       THEN (r = "oathCode"
@@ -231,7 +231,7 @@ AllCleared ==
 \* holds until a select to a DIFFERENT DF, and a YubiKey 5.7.4 was measured
 \* keeping all of it). OATH keeps its VALIDATE too, as a YubiKey 5.8.0 was measured
 \* doing, and drops only the OTP PIN: Nitrokey's, so no oracle speaks for it, and
-\* never inherited across a SELECT (crates/rsk-oath/src/lib.rs:1202-1206).
+\* never inherited across a SELECT (crates/rsk-oath/src/lib.rs:1209-1213).
 Reselect(a) ==
     /\ sel = a
     /\ held' = IF BugReselectResetsStatus THEN ClearedFor(held, a)
@@ -340,7 +340,7 @@ PgpChangeRefused(r) ==
     /\ refused' = r
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
-\* OATH VERIFY PIN (crates/rsk-oath/src/lib.rs:1133-1154) clears BOTH flags at
+\* OATH VERIFY PIN (crates/rsk-oath/src/lib.rs:1140-1161) clears BOTH flags at
 \* entry and re-sets them only on success: `validated` is reachable THROUGH the
 \* OTP PIN as well as through the access code, so one bool carries two
 \* provenances and both have to fall.
@@ -353,7 +353,7 @@ OathVerifyOtpPin(ok) ==
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, viol >>
 
 \* aa47867: a refused CHANGE of the OTP PIN drops the standing authentication,
-\* both halves (crates/rsk-oath/src/lib.rs:1103-1104). Before it, `0xB2` VERIFY
+\* both halves (crates/rsk-oath/src/lib.rs:1110-1111). Before it, `0xB2` VERIFY
 \* closed the safe on a wrong PIN and `0xB3` CHANGE did not -- so the whole retry
 \* budget could be burned through CHANGE while GET CREDENTIAL went on serving
 \* the stored password.
@@ -368,7 +368,7 @@ OathChangeRefused ==
 
 \* The access code is a MAC challenge-response with NO retry counter, so a wrong
 \* answer costs nothing and keeps the standing unlock
-\* (crates/rsk-oath/src/lib.rs:558-560) -- measured on a YubiKey 5.7.4 from a
+\* (crates/rsk-oath/src/lib.rs:565-567) -- measured on a YubiKey 5.7.4 from a
 \* genuinely locked applet. Two failed-auth rules inside one applet, and this is
 \* the second: it must NOT write `refused`, because nothing was refused that had
 \* a budget to protect.
@@ -397,7 +397,7 @@ OathValidateRefused ==
                     refused >>
 
 \* SET CODE provisions the access code and re-locks
-\* (crates/rsk-oath/src/lib.rs:410-416).
+\* (crates/rsk-oath/src/lib.rs:417-423).
 OathSetCode ==
     /\ sel = Oath
     /\ ~oathCodeSet
@@ -576,7 +576,7 @@ PowerCycle ==
 \* `authenticatorReset` is FIDO's and reaches none of these: `is_fido_fid` is an
 \* explicit enumeration plus four credential ranges precisely because the applets
 \* interleave in the 0x10xx band, and 0x10A0 inside it is OATH's EF_OTP_PIN
-\* rather than OpenPGP's (crates/rsk-fido/src/reset.rs:263-306). Modelled as a
+\* rather than OpenPGP's (crates/rsk-fido/src/reset.rs:266-309). Modelled as a
 \* step that changes nothing, so a mutant that made it reach would be visible.
 FidoReset == UNCHANGED vars
 
@@ -671,7 +671,7 @@ NoKeyOpOnTheAdminStatus ==
 \* than by a cross-applet principle. PIV's CHANGE REFERENCE DATA takes no
 \* `&mut Session` at all (crates/rsk-piv/src/lib.rs:553-587) -- SP 800-73-4 pt2
 \* 3.2.2/3.2.3, plus a measured YubiKey 5.7.4. OATH's access-code VALIDATE keeps
-\* the standing unlock (crates/rsk-oath/src/lib.rs:558-560), because a MAC
+\* the standing unlock (crates/rsk-oath/src/lib.rs:565-567), because a MAC
 \* challenge-response has no retry counter for a refusal to protect.
 \*
 \* So THREE APPLETS KEEP THREE RULES and no single one can be written: OpenPGP's

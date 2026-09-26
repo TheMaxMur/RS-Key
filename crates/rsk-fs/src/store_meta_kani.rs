@@ -65,7 +65,7 @@ fn two_file_fids() -> (u16, u16) {
 }
 
 /// `MetaAdd(f)` at its faulted disjunct: an EF_META read that FAILED is refused,
-/// never rebuilt from an empty blob — `meta_add_reserve`'s guard, `fs.rs:808-810`.
+/// never rebuilt from an empty blob — `meta_add_reserve`'s guard, `fs.rs:837-839`.
 ///
 /// The clean direction is not decoration: over a backend that genuinely holds no
 /// blob, rebuilding from empty is the *correct* move, so a guard keyed on
@@ -114,7 +114,7 @@ fn a_faulted_meta_read_is_refused_rather_than_rebuilt_from_empty() {
 }
 
 /// `MetaDelete(f)` at its faulted disjunct: an EF_META read that FAILED never
-/// becomes a decided absence — `meta_delete`'s guard, `fs.rs:840`, and the one thing
+/// becomes a decided absence — `meta_delete`'s guard, `fs.rs:869`, and the one thing
 /// that keeps `metaAbsent` honest while records stand.
 ///
 /// The clean direction caches the absence, and must: that is what lets the next

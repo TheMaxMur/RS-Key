@@ -196,11 +196,11 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-fido"]
 expect = "killed"
-note = "THE VERDICT THIS ROW CARRIED WAS MEASURED IN THE MODEL AND WRITTEN ABOUT THE CODE. `unreachable` said the defect is not falsifiable on its own, and that is true of the MODEL: with the seed leading the wipe unconditionally (0x08BF) the window this re-opens is over a seed already gone, which is why `Mut_BugBackupSealedNotAGate.cfg` has to arm `BugSeedDoesNotLead` beside it. Nothing had asked the code the same question, and a model measurement is evidence about the model. WHAT THE CODE ANSWERS, AND WHAT THAT ANSWER IS WORTH -- both halves, because the first draft of this note got the second one wrong. Two tests fall deterministically, and BOTH TRANSCRIBE THE MATCH ARM this patch edits: `the_gate_set_defers_every_record_whose_absence_is_permissive` (crates/rsk-fido/src/reset_tests.rs:638) iterates the same five-member list, and `reset_projection_finishes_only_after_every_ordered_phase` (crates/rsk-fido/src/reset_assurance_tests.rs:76) asserts the Gate phase may delete it. Control measured, not argued: demoting `EF_MINPINLEN` instead -- which crates/rsk-fido/src/reset.rs:237-243 says out loud is in the phase and in NO clause -- kills the slice identically, 3 of 3 runs. So on their own these two answer `did somebody edit the list`, not `is the defect caught`. THE BEHAVIOURAL TEST THAT EXISTED WAS A COIN FLIP, and the mechanism is measured: `RamStorage` is a `HashMap` and `for_each_key` iterates it (crates/rsk-fs/src/storage.rs:78 and :105), so whether the sweep reaches 0xCC02 before it aborts on the refused 0xCC00 is a fresh permutation per process. Over 400 fixtures the marker survived 233 times and was lost 167. `a_seed_the_medium_kept_stops_the_wipe_before_the_gates` is therefore ~42% and reads deterministic-green on the shipped tree, which is where it looks trustworthy. SO A DETERMINISTIC ONE WAS ADDED IN THE SAME DIFF: `a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window` (crates/rsk-fido/src/reset_assurance_tests.rs:130) drives the projection, whose `delete` takes its phase from the production `reset_phase`, and asserts `reset_keeps_the_backup_seal` over a seed still reachable. Measured in all three directions: shipped GREEN, this mutant RED 5 of 5, the `EF_MINPINLEN` control GREEN 3 of 3. That is the test this row`s `killed` should be read against; the two transcribers are the reason it is not read against them."
+note = "THE VERDICT THIS ROW CARRIED WAS MEASURED IN THE MODEL AND WRITTEN ABOUT THE CODE. `unreachable` said the defect is not falsifiable on its own, and that is true of the MODEL: with the seed leading the wipe unconditionally (0x08BF) the window this re-opens is over a seed already gone, which is why `Mut_BugBackupSealedNotAGate.cfg` has to arm `BugSeedDoesNotLead` beside it. Nothing had asked the code the same question, and a model measurement is evidence about the model. WHAT THE CODE ANSWERS, AND WHAT THAT ANSWER IS WORTH -- both halves, because the first draft of this note got the second one wrong. Two tests fall deterministically, and BOTH TRANSCRIBE THE MATCH ARM this patch edits: `the_gate_set_defers_every_record_whose_absence_is_permissive` (crates/rsk-fido/src/reset_tests.rs:638) iterates the same five-member list, and `reset_projection_finishes_only_after_every_ordered_phase` (crates/rsk-fido/src/reset_assurance_tests.rs:76) asserts the Gate phase may delete it. Control measured, not argued: demoting `EF_MINPINLEN` instead -- which crates/rsk-fido/src/reset.rs:240-246 says out loud is in the phase and in NO clause -- kills the slice identically, 3 of 3 runs. So on their own these two answer `did somebody edit the list`, not `is the defect caught`. THE BEHAVIOURAL TEST THAT EXISTED WAS A COIN FLIP, and the mechanism is measured: `RamStorage` is a `HashMap` and `for_each_key` iterates it (crates/rsk-fs/src/storage.rs:78 and :105), so whether the sweep reaches 0xCC02 before it aborts on the refused 0xCC00 is a fresh permutation per process. Over 400 fixtures the marker survived 233 times and was lost 167. `a_seed_the_medium_kept_stops_the_wipe_before_the_gates` is therefore ~42% and reads deterministic-green on the shipped tree, which is where it looks trustworthy. SO A DETERMINISTIC ONE WAS ADDED IN THE SAME DIFF: `a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window` (crates/rsk-fido/src/reset_assurance_tests.rs:130) drives the projection, whose `delete` takes its phase from the production `reset_phase`, and asserts `reset_keeps_the_backup_seal` over a seed still reachable. Measured in all three directions: shipped GREEN, this mutant RED 5 of 5, the `EF_MINPINLEN` control GREEN 3 of 3. That is the test this row`s `killed` should be read against; the two transcribers are the reason it is not read against them."
 
 [comutant.BugSetPinKeepsPpuat]
 status = "unreachable"
-evidence = "MEASURED AT THE CODE LEVEL, after its sibling BugBackupSealedNotAGate was found carrying a model measurement written about the code. The model half stands: under eab4b5c the grant is swept in phase 1 and EF_PIN in phase 2, so `~pin.set /\\ gate.ppuat` is unreachable and the mutant explored 40M+ states without a counterexample (E171). The CODE half is different and is why this stays without a patch: there is no site whose removal reproduces `setPIN keeps the grant` ALONE. `set_pin`s own `clear_ppuat` (crates/rsk-fido/src/clientpin.rs:220) is REDUNDANT — deleting it leaves all 668 rsk-fido tests green, three runs — because `write_pin_verifier` (crates/rsk-fido/src/clientpin.rs:860-862) clears the grant before the EF_PIN write, which is where the ordering guarantee actually lives. Deleting THAT one is red at once (`every_ef_pin_verifier_write_revokes_the_persistent_token` and `local_pin_change_revokes_the_persistent_token`), but it is the site changePIN and the panel share, so it is BugChangePinKeepsPpuats twin as much as this ones. A shared chokepoint has no per-caller mutant, and saying so is the measurement."
+evidence = "MEASURED AT THE CODE LEVEL, after its sibling BugBackupSealedNotAGate was found carrying a model measurement written about the code. The model half stands: under eab4b5c the grant is swept in phase 1 and EF_PIN in phase 2, so `~pin.set /\\ gate.ppuat` is unreachable and the mutant explored 40M+ states without a counterexample (E171). The CODE half is different and is why this stays without a patch: there is no site whose removal reproduces `setPIN keeps the grant` ALONE. `set_pin`s own `clear_ppuat` (crates/rsk-fido/src/clientpin.rs:220) is REDUNDANT — deleting it leaves all 668 rsk-fido tests green, three runs — because `write_pin_verifier` (crates/rsk-fido/src/clientpin.rs:858-860) clears the grant before the EF_PIN write, which is where the ordering guarantee actually lives. Deleting THAT one is red at once (`every_ef_pin_verifier_write_revokes_the_persistent_token` and `local_pin_change_revokes_the_persistent_token`), but it is the site changePIN and the panel share, so it is BugChangePinKeepsPpuats twin as much as this ones. A shared chokepoint has no per-caller mutant, and saying so is the measurement."
 
 # ---- batch 2: the rest, floor now 0 ----------------------------------------
 
@@ -625,7 +625,7 @@ tree can tear a write. Enumerated: every fault backend in
 answers `Ok(())` and cannot fail, and so does every local backend in
 `fs_tests.rs`. The one write-failing medium in the tree,
 `crates/rsk-openpgp/src/dying_storage.rs`, refuses ATOMICALLY — before writing —
-so it drives `crates/rsk-fs/src/fs.rs:818`'s `?` and cannot leave a partial
+so it drives `crates/rsk-fs/src/fs.rs:847`'s `?` and cannot leave a partial
 blob. So there IS a
 line of `rsk-fs` that decides what a failed metadata write costs, and there is no
 way to make one TEAR: the assumption belongs to the medium, and
@@ -637,8 +637,8 @@ DENIABLE — `StoreSolo_BugMetaWriteTearsBlob.cfg` goes RED on
 [comutant.BugMetaDeleteTearsBlob]
 status = "unreachable"
 evidence = """the same backend assumption its sibling denies, at
-`meta_delete`'s own rewrite (`crates/rsk-fs/src/fs.rs:859`) instead of
-`meta_add`'s (`crates/rsk-fs/src/fs.rs:818`), and no `Storage` in this tree
+`meta_delete`'s own rewrite (`crates/rsk-fs/src/fs.rs:888`) instead of
+`meta_add`'s (`crates/rsk-fs/src/fs.rs:847`), and no `Storage` in this tree
 can tear either.
 Re-enumerated rather than inherited, because the roster grew: FIVE fault
 backends in `crates/rsk-fs/src/storage.rs` now — `MetaStuck`, `ProbeStuck`,
@@ -1016,7 +1016,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:946."
+note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:955."
 
 # ---- RSKeyAppletPolicies: slot policy, attributes, gates, counter ----------
 
@@ -1276,11 +1276,11 @@ status = "unreachable"
 evidence = """the applets' deselect is redundant with their own fresh SELECT, so
 removing it from the ICC power transition changes nothing observable. Three
 applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:397-399
-(sess.reset), crates/rsk-openpgp/src/lib.rs:340-342 (reset_session), crates/rsk-oath/src/lib.rs:1165-1172
+(sess.reset), crates/rsk-openpgp/src/lib.rs:340-342 (reset_session), crates/rsk-oath/src/lib.rs:1172-1179
 (validated + otp_pin_verified) — and all three ALSO re-lock in select on a
 select that is not a re-SELECT: piv and openpgp on `if !reselect`, oath by
 recomputing `validated = !code_set` there and clearing otp_pin_verified on every
-SELECT (crates/rsk-oath/src/lib.rs:1205-1206). After Dispatcher::reset_card
+SELECT (crates/rsk-oath/src/lib.rs:1212-1213). After Dispatcher::reset_card
 takes `self.current` (crates/rsk-sdk/src/applet.rs:228) every route back to an applet is a
 `select(reselect = false)`, so no reachable command sees an inherited status.
 The first patch here neutered the WHOLE reset_card call and scored a false kill:
@@ -1628,14 +1628,14 @@ note = "EF_MINPINLEN[1], and the only mutant here whose MODEL half had to be bui
 status = "patch"
 file = "crates/rsk-fs/src/lib.rs"
 find = """
-pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
+pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<Rearmed> {
     let _ = fs.delete(EF_HARDENED);
     // Not `delete`'s own answer: it reports the METADATA drop (EF_HARDENED, a one-byte
     // flag, keeps none) and answers `Ok` where the present bit is clear over a live
     // marker — what a read-fault-truncated `Fs::scan` leaves. Ask the lap's own gate.
     let answer = match fs.try_has_data(EF_HARDENED) {
         Ok(true) => Err(Error::MemoryFatal),
-        Ok(false) => Ok(()),
+        Ok(false) => Ok(Rearmed(())),
         Err(e) => Err(e),
     };
     // Both arms, and before the caller can drop it: an unreadable probe is a re-arm
@@ -1648,9 +1648,9 @@ pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
 }
 """
 replace = """
-pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
+pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<Rearmed> {
     let _ = fs;
-    Ok(())
+    Ok(Rearmed(()))
 }
 """
 slice = ["cargo", "test", "-p", "rsk-fs"]

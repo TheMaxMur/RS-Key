@@ -31,7 +31,7 @@ use rsk_secret::Secret;
 use rsk_crypto::aes_encrypt;
 use rsk_crypto::chachapoly::{chacha20poly1305_decrypt, chacha20poly1305_encrypt};
 use rsk_crypto::{Device, Mode, PinKdf, aes_decrypt, hkdf_sha256, hmac_sha256};
-use rsk_fs::{Fs, KeyFid, Sealed, Storage};
+use rsk_fs::{Fs, KeyFid, Rearmed, Sealed, Storage};
 use rsk_sdk::error::{Error, Result};
 
 use crate::Rng;
@@ -315,7 +315,7 @@ pub fn load_att_key<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<Secret<[
 }
 
 pub fn store_att_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, key: &[u8; 32]) -> Result<()> {
-    put_sealed32(dev, fs, EF_ATT_KEY, key)
+    put_sealed32(dev, fs, EF_ATT_KEY, key, None)
 }
 
 /// The persistent pinUvAuthToken (CTAP 2.2 §6.5.2.2), sealed exactly like the
@@ -339,7 +339,7 @@ pub fn ensure_ppuat<S: Storage>(
     }
     let mut tok = Secret::<[u8; 32]>::zeroed();
     rng.fill(tok.expose_mut());
-    let r = put_sealed32(dev, fs, EF_PAUTHTOKEN, tok.expose());
+    let r = put_sealed32(dev, fs, EF_PAUTHTOKEN, tok.expose(), None);
     if r.is_err() {
         tok.wipe();
     }
@@ -503,18 +503,20 @@ fn try_get_sealed32<S: Storage>(
 /// Store `seed` ChaCha20-Poly1305-sealed under the device root key (tag 0x02, or
 /// 0x12 once the OTP key is provisioned).
 pub fn encrypt_keydev_f1<S: Storage>(dev: &Device, fs: &mut Fs<S>, seed: &[u8; 32]) -> Result<()> {
-    put_sealed32(dev, fs, EF_KEY_DEV, seed)
+    put_sealed32(dev, fs, EF_KEY_DEV, seed, None)
 }
 
-/// Seal a 32-byte value under the current arm's ChaCha key and write it to `fid`.
+/// Seal a 32-byte value under the current arm's ChaCha key and write it to `fid`,
+/// over a pre-OTP copy when `rearmed` says so.
 fn put_sealed32<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: KeyFid,
     value: &[u8; 32],
+    rearmed: Option<&Rearmed>,
 ) -> Result<()> {
     let mut rec = Secret::new(seal_gcm(dev, fid, value));
-    let r = fs.put_key(fid, Sealed::wrap(rec.expose()));
+    let r = fs.put_key_over(fid, Sealed::wrap(rec.expose()), rearmed);
     rec.wipe();
     r
 }
@@ -568,10 +570,9 @@ fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result
             // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: a
             // reset in the window then costs one idempotent lap, and a medium that
             // refuses the re-arm leaves the pre-OTP record in force instead.
-            let r = if weak && rsk_fs::request_rescrub(fs).is_err() {
-                Err(Error::MemoryFatal)
-            } else {
-                put_sealed32(dev, fs, fid, v.expose())
+            let r = match rsk_fs::request_rescrub_if(fs, weak) {
+                Ok(rearmed) => put_sealed32(dev, fs, fid, v.expose(), rearmed.as_ref()),
+                Err(_) => Err(Error::MemoryFatal),
             };
             v.wipe();
             r
@@ -626,10 +627,9 @@ pub fn migrate_keydev_pin<S: Storage>(dev: &Device, fs: &mut Fs<S>, pin_hash: &[
             // The re-arm belongs here, not at the two callers: theirs is gated on
             // EF_PIN's verifier having been pre-OTP, and one faulted `read_key` here
             // is enough to leave that verifier migrated and this record at 0x03.
-            let r = if weak && rsk_fs::request_rescrub(fs).is_err() {
-                Err(Error::MemoryFatal)
-            } else {
-                put_sealed32(dev, fs, EF_KEY_DEV, seed.expose())
+            let r = match rsk_fs::request_rescrub_if(fs, weak) {
+                Ok(rearmed) => put_sealed32(dev, fs, EF_KEY_DEV, seed.expose(), rearmed.as_ref()),
+                Err(_) => Err(Error::MemoryFatal),
             };
             seed.wipe();
             r

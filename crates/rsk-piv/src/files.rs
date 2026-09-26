@@ -9,7 +9,7 @@
 
 use rsk_crypto::Device;
 use rsk_ec::{Curve, PrivKey};
-use rsk_fs::{Fs, KeyFid, Storage};
+use rsk_fs::{Fs, KeyFid, RearmAttempted, Rearmed, Storage};
 use rsk_sdk::Rng;
 use rsk_sdk::Sw;
 use rsk_secret::Secret;
@@ -261,18 +261,22 @@ pub const DEFAULT_RETRIES: u8 = 3;
 /// PIN/PUK verifier record length: `[len, fmt=0x01, verifier(32)]`.
 pub(crate) const PIN_REC_LEN: usize = 34;
 
-/// Write a PIN/PUK verifier file: `[len, 0x01, pin_derive_verifier(pin)]`.
+/// Write a PIN/PUK verifier file: `[len, 0x01, pin_derive_verifier(pin)]`, over a
+/// pre-OTP one when `rearmed` says so.
 pub fn put_pin_verifier<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: u16,
     pin: &[u8],
+    rearmed: Option<&Rearmed>,
 ) -> Result<(), Sw> {
     let mut rec = Secret::<[u8; PIN_REC_LEN]>::zeroed();
     rec.expose_mut()[0] = pin.len() as u8;
     rec.expose_mut()[1] = 0x01;
     rec.expose_mut()[2..].copy_from_slice(dev.pin_derive_verifier(pin).expose());
-    let r = fs.put(fid, rec.expose()).map_err(|_| Sw::MEMORY_FAILURE);
+    let r = fs
+        .put_over(fid, rec.expose(), rearmed)
+        .map_err(|_| Sw::MEMORY_FAILURE);
     rec.wipe();
     r
 }
@@ -290,10 +294,10 @@ fn provisioned<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<bool, Sw> {
 /// Idempotent — every step is guarded by a has-data check.
 pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Result<(), Sw> {
     if !provisioned(fs, EF_PIN)? {
-        put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN)?;
+        put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN, None)?;
     }
     if !provisioned(fs, EF_PUK)? {
-        put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK)?;
+        put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK, None)?;
     }
     if !provisioned(fs, EF_RETRIES)? {
         let d = DEFAULT_RETRIES;
@@ -447,8 +451,8 @@ fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     //
     // The failure does NOT stop the write, unlike the gated sites: "leave the
     // record in force" means, on a wipe, leave the secrets live.
-    let _ = rsk_fs::request_rescrub(fs);
-    let swept = sweep_phases(fs);
+    let attempted = rsk_fs::attempt_rescrub(fs);
+    let swept = sweep_phases(fs, &attempted);
     // Retry, BETWEEN the sweeps and their `?` rather than after their last one: a
     // refused head leaves the marker latched over every tombstone [`sweep_phases`]
     // appended, and a sweep that faults on the way is exactly when that is true and
@@ -457,7 +461,7 @@ fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     // A single-shot refusal is the only kind either call recovers from (`rsk_otp`'s
     // BUMP_TRIES states the same), and where the head landed this costs no append at
     // all — `Fs::delete` skips a backend it already marked absent.
-    let _ = rsk_fs::request_rescrub(fs);
+    let _retried = rsk_fs::attempt_rescrub(fs);
     swept
 }
 
@@ -472,7 +476,7 @@ fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 /// Its own function so the at-rest re-arm can stand between it and its caller's
 /// answer: every early return in here is one a re-arm written BELOW them would be
 /// skipped by, which is the case that re-arm exists for.
-fn sweep_phases<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+fn sweep_phases<S: Storage>(fs: &mut Fs<S>, _attempted: &RearmAttempted) -> Result<(), Sw> {
     let secrets = sweep(fs, is_piv_secret_fid)?;
     let gates = sweep(fs, is_piv_gate_fid)?;
     if secrets || gates {

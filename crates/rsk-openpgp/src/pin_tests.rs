@@ -625,7 +625,7 @@ fn scan_files_neutralizes_a_legacy_default_reset_code() {
     let mut fs = setup();
     // Recreate the legacy-vulnerable state: RC verifier = default admin PIN with
     // an enabled retry counter (what firmware <= 0x07F6 wrote at init).
-    put_verifier(&d, &mut fs, EF_RC, PW3_DEFAULT).unwrap();
+    put_verifier(&d, &mut fs, EF_RC, PW3_DEFAULT, None).unwrap();
     set_pin_retry_counter(&mut fs, EF_RC, PW_RETRIES_DEFAULT).unwrap();
     // Re-run init (reboot): the migration must delete the default RC.
     scan_files(&d, &mut fs, &mut CountRng(0)).unwrap();
@@ -754,7 +754,8 @@ fn deactivating_the_reset_code_takes_its_staged_dek_copy_with_it() {
     load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
 
     // An update that staged and then did not land.
-    stage_dek(&d, &mut fs, &mut rng, EF_DEK_RC, b"resetme0", dek.expose()).unwrap();
+    let (_session, _rearmed) =
+        stage_dek(&d, &mut fs, &mut rng, EF_DEK_RC, b"resetme0", dek.expose()).unwrap();
     assert!(fs.has_key(EF_DEK_STAGE_RC), "fixture: the stage is live");
 
     assert_eq!(
@@ -1125,7 +1126,7 @@ fn a_pending_stage_survives_an_unrelated_pin_update() {
     // A PW3 update torn after its verifier: PW3 stands on b"87654321", its copy
     // is still sealed under the default, and the stage holds the new one.
     const NEW3: &[u8] = b"87654321";
-    stage_dek(
+    let (_session, _rearmed) = stage_dek(
         &d,
         &mut fs,
         &mut CountRng(9),
@@ -1134,7 +1135,7 @@ fn a_pending_stage_survives_an_unrelated_pin_update() {
         dek.expose(),
     )
     .unwrap();
-    put_verifier(&d, &mut fs, EF_PW3, NEW3).unwrap();
+    put_verifier(&d, &mut fs, EF_PW3, NEW3, None).unwrap();
 
     // Now a completely unrelated PW1 change, and a refused one for good measure.
     let mut s1 = Session::new();
@@ -1233,7 +1234,7 @@ fn a_stale_stage_is_retired_and_re_arms_the_at_rest_lap() {
 
     // An update that staged under a new PW3 and died before `put_verifier`: the
     // committed copy still opens under the standing PIN, so the stage is garbage.
-    stage_dek(
+    let (_session, _rearmed) = stage_dek(
         &d,
         &mut fs,
         &mut CountRng(9),
@@ -1683,7 +1684,7 @@ fn a_stored_reference_outside_the_policy_still_verifies() {
     let mut fs = setup();
     let mut sess = Session::new();
     let d = dev();
-    store_verifier(&d, &mut fs, EF_PW1, b"abc").unwrap();
+    store_verifier(&d, &mut fs, EF_PW1, b"abc", None).unwrap();
 
     assert_eq!(
         verify(
@@ -1969,7 +1970,7 @@ fn neutralizing_a_pre_otp_default_reset_code_re_arms_the_at_rest_lap() {
     let d_otp = otp_dev();
 
     // The legacy state, rooted where firmware <= 0x07F6 wrote it: the chip serial.
-    put_verifier(&d_pre, &mut fs, EF_RC, PW3_DEFAULT).unwrap();
+    put_verifier(&d_pre, &mut fs, EF_RC, PW3_DEFAULT, None).unwrap();
     set_pin_retry_counter(&mut fs, EF_RC, PW_RETRIES_DEFAULT).unwrap();
     let mut rc_rec = [0u8; 34];
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
@@ -2011,7 +2012,7 @@ fn a_refused_re_arm_still_closes_the_default_reset_code_backdoor() {
     let d_pre = dev();
     let d_otp = otp_dev();
 
-    put_verifier(&d_pre, &mut fs, EF_RC, PW3_DEFAULT).unwrap();
+    put_verifier(&d_pre, &mut fs, EF_RC, PW3_DEFAULT, None).unwrap();
     set_pin_retry_counter(&mut fs, EF_RC, PW_RETRIES_DEFAULT).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
@@ -2426,7 +2427,8 @@ fn every_session_key_handed_back_wipes_itself() {
         b"87654321",
         dek.expose(),
     );
-    wipes_on_drop(&staged.unwrap());
+    wipes_on_drop(&staged.unwrap().0);
+    let rearmed = rsk_fs::request_rescrub(&mut fs).unwrap();
     let rewrapped = rewrap_dek(
         &d,
         &mut fs,
@@ -2434,6 +2436,7 @@ fn every_session_key_handed_back_wipes_itself() {
         EF_DEK_PW1,
         b"123456",
         dek.expose(),
+        &rearmed,
     );
     wipes_on_drop(&rewrapped.unwrap());
     let reseeded = reseed_pin(

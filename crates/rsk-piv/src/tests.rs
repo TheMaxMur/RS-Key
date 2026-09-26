@@ -1058,7 +1058,7 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     let mut fs = new_fs();
     select(&mut app, &mut fs);
-    put_pin_verifier(&dev, &mut fs, EF_PIN, short).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PIN, short, None).unwrap();
     assert_eq!(
         run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
         Sw::retries(2),
@@ -1087,7 +1087,7 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
     let mut fs = new_fs();
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     select(&mut app, &mut fs);
-    put_pin_verifier(&dev, &mut fs, EF_PUK, short).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PUK, short, None).unwrap();
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
     assert_eq!(run(&mut app, &mut fs, INS_SET_RETRIES, 3, 3, &[]).0, Sw::OK);
@@ -1103,8 +1103,8 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
     let mut fs = new_fs();
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     select(&mut app, &mut fs);
-    put_pin_verifier(&dev, &mut fs, EF_PIN, short).unwrap();
-    put_pin_verifier(&dev, &mut fs, EF_PUK, short).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PIN, short, None).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PUK, short, None).unwrap();
     assert_eq!(
         run(&mut app, &mut fs, INS_RESET, 0, 0, &[]).0,
         Sw::WRONG_DATA,

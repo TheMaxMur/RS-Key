@@ -228,8 +228,8 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
         // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: this pass
         // runs before the boot's lap, but a boot that could not read this slot has
         // already latched the marker, and the lap gates on it and nothing else.
-        if !weak || rsk_fs::request_rescrub(fs).is_ok() {
-            let _ = fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&rec));
+        if let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, weak) {
+            let _ = fs.put_key_over(EF_DEVCERT_KEY, Sealed::wrap(&rec), rearmed.as_ref());
         }
     }
     buf.wipe();

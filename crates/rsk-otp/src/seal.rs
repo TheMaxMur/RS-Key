@@ -18,7 +18,7 @@
 //! pre-existing plaintext slot at boot.
 
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
-use rsk_fs::{Fs, KeyFid, Sealed, Storage};
+use rsk_fs::{Fs, KeyFid, Rearmed, Sealed, Storage};
 use rsk_sdk::error::Result;
 use rsk_secret::Secret;
 
@@ -65,6 +65,18 @@ pub fn seal_put<S: Storage>(
     fid: KeyFid,
     rec: &SlotRecord,
 ) -> bool {
+    seal_put_over(dev, fs, rng, fid, rec, None)
+}
+
+/// [`seal_put`] over a record another root sealed; see [`Fs::put_key_over`].
+pub fn seal_put_over<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    rng: &mut dyn Rng,
+    fid: KeyFid,
+    rec: &SlotRecord,
+    rearmed: Option<&Rearmed>,
+) -> bool {
     let plain = rec.stored();
     let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
     let n = NONCE_LEN + plain.len() + TAG_LEN;
@@ -81,7 +93,9 @@ pub fn seal_put<S: Storage>(
     );
     key.wipe();
     blob.expose_mut()[NONCE_LEN + plain.len()..n].copy_from_slice(&tag);
-    let ok = fs.put_key(fid, Sealed::wrap(&blob.expose()[..n])).is_ok();
+    let ok = fs
+        .put_key_over(fid, Sealed::wrap(&blob.expose()[..n]), rearmed)
+        .is_ok();
     blob.wipe();
     ok
 }

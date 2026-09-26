@@ -692,6 +692,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **A write over a pre-OTP copy takes the at-rest re-arm's token** — refactor;
+  the same appends in the same order. `rsk_fs::request_rescrub` answers
+  `Result<Rearmed>`, and the writes that supersede or tombstone a record the
+  chip serial alone keys (`Fs::put_over`, `put_key_over`, `delete_over`,
+  `delete_key_over`, and the applets' seal and verifier writers above them)
+  take it, so a write that passes it comes neither before the re-arm nor after
+  a refused one; which writes supersede such a copy stays the caller's call. The wipe
+  sweeps take the `RearmAttempted` that `rsk_fs::attempt_rescrub` returns, so
+  none runs without the best-effort re-arm ahead of it.
+  `bcdDevice` 0x0A31 → 0x0A32.
+
 - **An OTP slot's use counter moves only by the record's own methods** —
   refactor; the same bytes reach flash for every command. `rsk-otp`'s slot
   record is a type, `SlotRecord`, whose tail (the Yubico-OTP use counter or the

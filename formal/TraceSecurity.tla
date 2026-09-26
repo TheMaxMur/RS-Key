@@ -151,7 +151,7 @@ R4bEventConsensus ==
 \* passthrough for it. Stated, like the pad, rather than left to be discovered.
 McTokenlessRefused(rk, alwaysUv, pinSet) == alwaysUv \/ (pinSet /\ rk)
 
-\* CTAP 2.1 6.6, crates/rsk-fido/src/reset.rs:260 -- the same predicate the
+\* CTAP 2.1 6.6, crates/rsk-fido/src/reset.rs:263 -- the same predicate the
 \* model already gates ResetStart on, read for its answer instead of its
 \* enabling. `InResetWindowGuard` is the Guard and not the Policy on purpose:
 \* what is being predicted is what the DEVICE does.

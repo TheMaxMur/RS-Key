@@ -10,7 +10,7 @@
 
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
 use rsk_ec::{Curve, PrivKey};
-use rsk_fs::{Fs, KeyFid, Sealed, Storage};
+use rsk_fs::{Fs, KeyFid, Rearmed, Sealed, Storage};
 use rsk_rsa::{RsaKey, crt};
 use rsk_sdk::Rng;
 use rsk_sdk::Sw;
@@ -58,6 +58,18 @@ pub fn seal_put<S: Storage>(
     fid: KeyFid,
     plain: &[u8],
 ) -> Result<(), Sw> {
+    seal_put_over(dev, fs, rng, fid, plain, None)
+}
+
+/// [`seal_put`] over a record another root sealed; see [`Fs::put_key_over`].
+pub fn seal_put_over<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    rng: &mut dyn Rng,
+    fid: KeyFid,
+    plain: &[u8],
+    rearmed: Option<&Rearmed>,
+) -> Result<(), Sw> {
     if plain.len() > MAX_PLAIN {
         return Err(Sw::WRONG_LENGTH);
     }
@@ -77,7 +89,7 @@ pub fn seal_put<S: Storage>(
     key.wipe();
     blob.expose_mut()[NONCE_LEN + plain.len()..n].copy_from_slice(&tag);
     let r = fs
-        .put_key(fid, Sealed::wrap(&blob.expose()[..n]))
+        .put_key_over(fid, Sealed::wrap(&blob.expose()[..n]), rearmed)
         .map_err(|_| Sw::MEMORY_FAILURE);
     blob.wipe();
     r
@@ -160,9 +172,9 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
         // A reader fallback would re-admit the chip-serial arm at every command,
         // which is the at-rest widening this class exists to prevent.
         if let Ok(n) = seal_read(&old, fs, fid, &mut plain)
-            && rsk_fs::request_rescrub(fs).is_ok()
+            && let Ok(rearmed) = rsk_fs::request_rescrub(fs)
         {
-            let _ = seal_put(dev, fs, rng, fid, &plain.expose()[..n]);
+            let _ = seal_put_over(dev, fs, rng, fid, &plain.expose()[..n], Some(&rearmed));
         }
         plain.wipe();
     }

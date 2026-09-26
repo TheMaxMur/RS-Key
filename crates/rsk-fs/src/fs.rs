@@ -9,7 +9,7 @@ use rsk_sdk::error::{Error, Result};
 use crate::counter::CounterFid;
 use crate::sealed::{KeyFid, Sealed};
 use crate::storage::Storage;
-use crate::{EF_META, EF_SCRUB_FILLER, MAX_DYNAMIC_FILES};
+use crate::{EF_META, EF_SCRUB_FILLER, MAX_DYNAMIC_FILES, Rearmed};
 
 /// Max size of the meta side-store blob.
 const META_MAX: usize = 1024;
@@ -484,7 +484,7 @@ impl<S: Storage> Fs<S> {
         // Every tombstone below appends like a re-seal, so the at-rest lap owes a
         // re-arm ahead of the first — best-effort, because on a wipe a stopped
         // re-arm means live secrets. Phase 1 removes EF_HARDENED itself, retrying it.
-        let _ = crate::request_rescrub(self);
+        let _attempted = crate::attempt_rescrub(self);
         // `first` wins over `last` if a caller ever hands in overlapping predicates:
         // deleting a record early can only ever be safe, deleting it late cannot.
         let phase_of = |fid: u16| {
@@ -700,6 +700,35 @@ impl<S: Storage> Fs<S> {
     /// Delete a key slot.
     pub fn delete_key(&mut self, fid: KeyFid) -> Result<()> {
         self.delete(fid.get())
+    }
+
+    // ---- writes over a record another root sealed ----
+    // `rearmed` is `Some` where the record superseded (or tombstoned) was sealed under
+    // the pre-OTP root, and only a landed re-arm can stand there ([`crate::Rearmed`]).
+
+    /// [`put`](Self::put) over a record: see [`crate::Rearmed`].
+    pub fn put_over(&mut self, fid: u16, data: &[u8], _rearmed: Option<&Rearmed>) -> Result<()> {
+        self.put(fid, data)
+    }
+
+    /// [`put_key`](Self::put_key) over a record: see [`crate::Rearmed`].
+    pub fn put_key_over(
+        &mut self,
+        fid: KeyFid,
+        sealed: Sealed,
+        _rearmed: Option<&Rearmed>,
+    ) -> Result<()> {
+        self.put_key(fid, sealed)
+    }
+
+    /// [`delete`](Self::delete) of a record: see [`crate::Rearmed`].
+    pub fn delete_over(&mut self, fid: u16, _rearmed: Option<&Rearmed>) -> Result<()> {
+        self.delete(fid)
+    }
+
+    /// [`delete_key`](Self::delete_key) of a record: see [`crate::Rearmed`].
+    pub fn delete_key_over(&mut self, fid: KeyFid, _rearmed: Option<&Rearmed>) -> Result<()> {
+        self.delete_key(fid)
     }
 
     // ---- typed counter API ----

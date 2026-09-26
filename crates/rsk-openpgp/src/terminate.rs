@@ -6,7 +6,7 @@
 //! must not wipe FIDO state, and vice versa) before re-seeding via [`scan_files`].
 
 use rsk_crypto::Device;
-use rsk_fs::{Fs, Storage};
+use rsk_fs::{Fs, RearmAttempted, Storage};
 use rsk_sdk::{Apdu, Sw};
 
 use crate::Rng;
@@ -153,8 +153,8 @@ fn wipe_openpgp<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     //
     // The failure does NOT stop the write, unlike the gated sites: "leave the
     // record in force" means, on a wipe, leave the secrets live.
-    let _ = rsk_fs::request_rescrub(fs);
-    let swept = sweep(fs);
+    let attempted = rsk_fs::attempt_rescrub(fs);
+    let swept = sweep(fs, &attempted);
     // Retry, BETWEEN the sweep and its `?` rather than after its last one: a refused
     // head leaves the marker latched over every tombstone [`sweep`] appended, and a
     // sweep that faults on the way is exactly when that is true and unrecoverable.
@@ -162,7 +162,7 @@ fn wipe_openpgp<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     // A single-shot refusal is the only kind either call recovers from (`rsk_otp`'s
     // BUMP_TRIES states the same), and where the head landed this costs no append at
     // all — `Fs::delete` skips a backend it already marked absent.
-    let _ = rsk_fs::request_rescrub(fs);
+    let _retried = rsk_fs::attempt_rescrub(fs);
     swept
 }
 
@@ -175,7 +175,7 @@ fn wipe_openpgp<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 /// Its own function so the at-rest re-arm can stand between it and its caller's
 /// answer: every early return in here is one a re-arm written BELOW them would be
 /// skipped by, which is the case that re-arm exists for.
-fn sweep<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+fn sweep<S: Storage>(fs: &mut Fs<S>, _attempted: &RearmAttempted) -> Result<(), Sw> {
     // Two phases, the rule the three sibling sweeps carry: `for_each_key` yields in
     // flash-ring order, not FID order, so one combined sweep can reach a deferred
     // record before the secrets it sits beside. The PW verifiers do not need it —

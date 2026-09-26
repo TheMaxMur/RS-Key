@@ -55,60 +55,60 @@ device	crates/rsk-oath/src/lib.rs:223	7	marshals	M	builds Device from the alread
 cmd_put	crates/rsk-oath/src/lib.rs:244	62	decides	D1,D3	!validated → SECURITY_STATUS_NOT_SATISFIED, then seal_put into the selected slot — the only credential write	SEC-POL-004
 cmd_delete	crates/rsk-oath/src/lib.rs:307	21	decides	D1,D3	!validated refuses, and the Ok/Err of fs.delete(fid) is the whole effect of the command	SEC-POL-004,SEC-STORE-006
 cmd_set_code	crates/rsk-oath/src/lib.rs:328	81	decides	D1,D3,D4	ct_eq(resp, mac) decides whether the code is set; the "73 00" branch clears the code and sets validated=true; the tail sets validated=false and deletes EF_OTP_PIN	SEC-SEAM-006,SEC-POL-004
-cmd_reset	crates/rsk-oath/src/lib.rs:410	14	decides	D3,D4	returns OK only if wipe_oath proved the wipe, and only then sets validated=true	SEC-SEAM-001,SEC-STORE-006
-cmd_list	crates/rsk-oath/src/lib.rs:425	10	decides	D1	!validated → refusal; this is the only access-code check on the LIST path, list_page does not repeat it	SEC-POL-004
-list_page	crates/rsk-oath/src/lib.rs:436	68	decides	D5	match Chain::List is the only authorization of the SEND REMAINING branch, which does not go through the validated check	SEC-POL-004
-cmd_validate	crates/rsk-oath/src/lib.rs:504	50	decides	D1,D4,D5	ct_eq over the code's HMAC sets validated=true; an unreadable or empty code sets validated=false	SEC-SEAM-005,SEC-POL-004
-cmd_calculate	crates/rsk-oath/src/lib.rs:555	96	decides	D1,D2,D3,D5	!validated refuses, PROP_TOUCH requires a confirmed touch, the mark and the HOTP counter are persisted before the code is issued	SEC-POL-004
-cmd_calculate_all	crates/rsk-oath/src/lib.rs:652	34	decides	D1,D3	!validated refuses, and an Err from advance_marks fails the whole command before the first page is built	SEC-POL-004
-advance_marks	crates/rsk-oath/src/lib.rs:687	52	decides	D3,D5	picks which credentials raise the mark, and persists them; an Err refuses the whole CALCULATE ALL	SEC-POL-004
-calc_all_page	crates/rsk-oath/src/lib.rs:742	81	decides	D2,D5	for each credential decides: a real TOTP code, a touch placeholder or no-response	SEC-POL-004
-cmd_verify_code	crates/rsk-oath/src/lib.rs:825	68	decides	D1,D2,D5	validated + otp_pin_gate + PROP_TOUCH, then trunc % modulus != code_int — an oracle on the current HOTP code	SEC-POL-004
-cmd_rename	crates/rsk-oath/src/lib.rs:894	58	decides	D1,D3	!validated refuses, a taken name refuses, seal_put rewrites the credential record	SEC-POL-004
-cmd_get_credential	crates/rsk-oath/src/lib.rs:953	48	decides	D1,D2	validated + otp_pin_gate, after which it returns PWS_LOGIN/PWS_PASSWORD from the blob to the host	SEC-POL-004
-otp_pin_matches	crates/rsk-oath/src/lib.rs:1005	24	decides	D1,D5	ct_eq of the v1 verifier (with kbase-fallback) or of the legacy double-hash is itself the OTP-PIN comparison	-
-otp_pin_gate	crates/rsk-oath/src/lib.rs:1040	26	decides	D1,D5	try_has_data(EF_OTP_PIN): PIN set and not presented → refusal; probe fault → MEMORY_FAILURE, not "no PIN"	SEC-STORE-002
-cmd_set_otp_pin	crates/rsk-oath/src/lib.rs:1067	35	decides	D1,D3,D4	validated, presence when the code is absent, refusal on a faulted probe, then the EF_OTP_PIN write	SEC-STORE-002
-spend_otp_retry	crates/rsk-oath/src/lib.rs:1103	14	decides	D3,D4	spends one unit of the retry counter and confirms the write by reading it back; false = no comparison will happen	-
-spend_and_match_otp_pin	crates/rsk-oath/src/lib.rs:1118	26	decides	D1,D4,D5	rec[0]==0 → refusal; spend before the comparison; Ok only on a real PIN match	-
-cmd_change_otp_pin	crates/rsk-oath/src/lib.rs:1145	41	decides	D1,D3,D4	clears validated and otp_pin_verified, spends an attempt through the choke point, and only then writes the new verifier	SEC-SEAM-002
-cmd_verify_otp_pin	crates/rsk-oath/src/lib.rs:1187	34	decides	D1,D3,D4	any attempt clears validated; success sets validated=true, otp_pin_verified=true and resets the counter	SEC-SEAM-002
-aid	crates/rsk-oath/src/lib.rs:1224	3	marshals	M	returns the constant OATH_AID	-
-deselect	crates/rsk-oath/src/lib.rs:1228	8	decides	D4	clears validated, otp_pin_verified and chain on leaving the applet	SEC-SEAM-001
-select	crates/rsk-oath/src/lib.rs:1237	35	decides	D4,D5	validated = !code_set || (reselect && validated), where code_set = try_has_key(EF_OATH_CODE).unwrap_or(true) — a failed probe locks a new SELECT rather than opening it	SEC-SEAM-001,SEC-SEAM-004,SEC-STORE-002
-process	crates/rsk-oath/src/lib.rs:1273	41	decides	D4,D5	line :1217 clears chain on any non-SEND REMAINING, and :1238 routes SEND REMAINING by chain — this cursor is itself the page authorization	SEC-POL-004
-p1p2_ok	crates/rsk-oath/src/lib.rs:1316	25	marshals	M	REVIEW: `DE AD` is a magic constant any host sends — it separates a typo, it does not refuse authorization (was D5)	-
-challenge_of	crates/rsk-oath/src/lib.rs:1342	7	marshals	M	the only condition is challenge length ≤ CHALLENGE_MAX	-
-calc_all_challenge	crates/rsk-oath/src/lib.rs:1350	7	marshals	M	body grammar: challenge must be the first TLV	-
-cred_property	crates/rsk-oath/src/lib.rs:1358	8	decides	D5	the only reader of PROP_TOUCH/PROP_INCREASING; an absent tag yields 0, i.e. "no touch required"	SEC-POL-004
-raise_mark	crates/rsk-oath/src/lib.rs:1367	32	decides	D3,D5	comparison of challenge with the high-water mark: false refuses CALCULATE, true rewrites the mark for persisting	SEC-POL-004
-mark_has_room	crates/rsk-oath/src/lib.rs:1400	12	decides	D5	decides whether the mark can be kept in the blob — the condition on which the bulk path issues a code at all	SEC-POL-004
-bulk_computable	crates/rsk-oath/src/lib.rs:1413	8	decides	D5	the condition for issuing a real code in CALCULATE ALL instead of the protocol no-response	SEC-POL-004
-alg_supported	crates/rsk-oath/src/lib.rs:1422	9	marshals	M	match on three literal nibbles; the domain is exactly oath_hmac's, so a spurious true yields None, not a code	-
-code_modulus	crates/rsk-oath/src/lib.rs:1432	8	decides	D5	code width: None → DATA_INVALID in VERIFY CODE, and the value itself sets the entropy of the compared OTP	SEC-POL-004
-oath_hmac	crates/rsk-oath/src/lib.rs:1441	18	decides	D2	computes the MAC itself, from which the OTP code and the access-code check are derived; None is the refusal path of both	SEC-POL-004
-calculate	crates/rsk-oath/src/lib.rs:1460	24	marshals	M	REVIEW: the decision to hand out a code is already taken in cmd_calculate/calc_all_page; no branch here moves D1-D4 (was D2)	SEC-POL-004
-present_creds	crates/rsk-oath/src/lib.rs:1485	25	marshals	M	enumeration of the in-RAM present bits into a list of fids, no policy	-
-is_oath_cred_fid	crates/rsk-oath/src/lib.rs:1511	4	decides	D5	the range that sweep must wipe on RESET; outside it a record survives the wipe	SEC-STORE-006
-is_oath_lock_fid	crates/rsk-oath/src/lib.rs:1516	13	decides	D5	which records count as locks — deleting them last is itself the order the wipe relies on	SEC-STORE-006
-wipe_oath	crates/rsk-oath/src/lib.rs:1541	22	decides	D3,D4	returns the verdict of the whole wipe and brackets it with re-arms of the at-rest lap	SEC-STORE-006
-sweep_phases	crates/rsk-oath/src/lib.rs:1564	22	decides	D3,D5	phase order: credentials first, then locks; any orphan yields MEMORY_FAILURE	SEC-STORE-001,SEC-STORE-006
-sweep	crates/rsk-oath/src/lib.rs:1587	38	decides	D3	Ok only on a complete walk: a truncated walk returns MEMORY_FAILURE, not "range clean"	SEC-STORE-002,SEC-STORE-006
-split_period	crates/rsk-oath/src/lib.rs:1645	18	marshals	M	cuts the numeric <period>/ prefix out of the name for display	-
-algo_name	crates/rsk-oath/src/lib.rs:1664	9	marshals	M	mapping of the nibble to an ASCII label for the screen	-
-for_each_cred	crates/rsk-oath/src/lib.rs:1674	48	decides	D2	the only path that unseals all credentials with no gate at all; whatever does not make it into OathCredView does not leak	-
-find_cred	crates/rsk-oath/src/lib.rs:1723	19	decides	D5	Some/None on a TAG_NAME match selects the record that will be deleted or rewritten, and refuses RENAME to a taken name	SEC-POL-004
-migrate_seal	crates/rsk-oath/src/lib.rs:1743	23	decides	D3	a boot pass that rewrites every slot; raw sized MAX_BLOB is what keeps a truncated record from being mis-resealed	-
-reseal_if_plaintext	crates/rsk-oath/src/lib.rs:1767	50	decides	D3,D5	decides under which arm to rebuild the secret, and skips the write if request_rescrub refused	-
-is_legacy_plaintext	crates/rsk-oath/src/lib.rs:1818	14	decides	D5	the predicate whose error destroys the HMAC secret by double wrapping	-
-free_slot	crates/rsk-oath/src/lib.rs:1833	11	decides	D5	the slot number PUT will overwrite; an error means the silent loss of a live credential	SEC-STORE-002
-tlv_at	crates/rsk-oath/src/lib.rs:1845	23	decides	M	decodes one BER-TLV, None on a truncated or overflowing one	-
-find_tag_range	crates/rsk-oath/src/lib.rs:1869	13	decides	M	linear TLV walk up to the first tag match	-
-parse_put	crates/rsk-oath/src/lib.rs:1932	67	decides	D3,D5	the only path that refuses PUT on its body: secret bounds, digits, alg, tag order and duplicate tags — before a byte is written	SEC-POL-004
-new	crates/rsk-oath/src/lib.rs:2008	3	marshals	M	wraps the slice in an iterator	-
-next	crates/rsk-oath/src/lib.rs:2016	32	decides	M	TLV iteration with a special case for TAG_PROPERTY; parse_put builds the refusal itself from the remainder it.rest	-
-emit_tlv	crates/rsk-oath/src/lib.rs:2050	16	decides	M	appends a TLV to the buffer, false on overflow	-
-ct_eq	crates/rsk-oath/src/lib.rs:2067	5	decides	D5	constant-time comparison that decides VALIDATE, SET CODE and OTP-PIN; a short response must not match	-
+cmd_reset	crates/rsk-oath/src/lib.rs:417	14	decides	D3,D4	returns OK only if wipe_oath proved the wipe, and only then sets validated=true	SEC-SEAM-001,SEC-STORE-006
+cmd_list	crates/rsk-oath/src/lib.rs:432	10	decides	D1	!validated → refusal; this is the only access-code check on the LIST path, list_page does not repeat it	SEC-POL-004
+list_page	crates/rsk-oath/src/lib.rs:443	68	decides	D5	match Chain::List is the only authorization of the SEND REMAINING branch, which does not go through the validated check	SEC-POL-004
+cmd_validate	crates/rsk-oath/src/lib.rs:511	50	decides	D1,D4,D5	ct_eq over the code's HMAC sets validated=true; an unreadable or empty code sets validated=false	SEC-SEAM-005,SEC-POL-004
+cmd_calculate	crates/rsk-oath/src/lib.rs:562	96	decides	D1,D2,D3,D5	!validated refuses, PROP_TOUCH requires a confirmed touch, the mark and the HOTP counter are persisted before the code is issued	SEC-POL-004
+cmd_calculate_all	crates/rsk-oath/src/lib.rs:659	34	decides	D1,D3	!validated refuses, and an Err from advance_marks fails the whole command before the first page is built	SEC-POL-004
+advance_marks	crates/rsk-oath/src/lib.rs:694	52	decides	D3,D5	picks which credentials raise the mark, and persists them; an Err refuses the whole CALCULATE ALL	SEC-POL-004
+calc_all_page	crates/rsk-oath/src/lib.rs:749	81	decides	D2,D5	for each credential decides: a real TOTP code, a touch placeholder or no-response	SEC-POL-004
+cmd_verify_code	crates/rsk-oath/src/lib.rs:832	68	decides	D1,D2,D5	validated + otp_pin_gate + PROP_TOUCH, then trunc % modulus != code_int — an oracle on the current HOTP code	SEC-POL-004
+cmd_rename	crates/rsk-oath/src/lib.rs:901	58	decides	D1,D3	!validated refuses, a taken name refuses, seal_put rewrites the credential record	SEC-POL-004
+cmd_get_credential	crates/rsk-oath/src/lib.rs:960	48	decides	D1,D2	validated + otp_pin_gate, after which it returns PWS_LOGIN/PWS_PASSWORD from the blob to the host	SEC-POL-004
+otp_pin_matches	crates/rsk-oath/src/lib.rs:1012	24	decides	D1,D5	ct_eq of the v1 verifier (with kbase-fallback) or of the legacy double-hash is itself the OTP-PIN comparison	-
+otp_pin_gate	crates/rsk-oath/src/lib.rs:1047	26	decides	D1,D5	try_has_data(EF_OTP_PIN): PIN set and not presented → refusal; probe fault → MEMORY_FAILURE, not "no PIN"	SEC-STORE-002
+cmd_set_otp_pin	crates/rsk-oath/src/lib.rs:1074	35	decides	D1,D3,D4	validated, presence when the code is absent, refusal on a faulted probe, then the EF_OTP_PIN write	SEC-STORE-002
+spend_otp_retry	crates/rsk-oath/src/lib.rs:1110	14	decides	D3,D4	spends one unit of the retry counter and confirms the write by reading it back; false = no comparison will happen	-
+spend_and_match_otp_pin	crates/rsk-oath/src/lib.rs:1125	26	decides	D1,D4,D5	rec[0]==0 → refusal; spend before the comparison; Ok only on a real PIN match	-
+cmd_change_otp_pin	crates/rsk-oath/src/lib.rs:1152	41	decides	D1,D3,D4	clears validated and otp_pin_verified, spends an attempt through the choke point, and only then writes the new verifier	SEC-SEAM-002
+cmd_verify_otp_pin	crates/rsk-oath/src/lib.rs:1194	34	decides	D1,D3,D4	any attempt clears validated; success sets validated=true, otp_pin_verified=true and resets the counter	SEC-SEAM-002
+aid	crates/rsk-oath/src/lib.rs:1231	3	marshals	M	returns the constant OATH_AID	-
+deselect	crates/rsk-oath/src/lib.rs:1235	8	decides	D4	clears validated, otp_pin_verified and chain on leaving the applet	SEC-SEAM-001
+select	crates/rsk-oath/src/lib.rs:1244	35	decides	D4,D5	validated = !code_set || (reselect && validated), where code_set = try_has_key(EF_OATH_CODE).unwrap_or(true) — a failed probe locks a new SELECT rather than opening it	SEC-SEAM-001,SEC-SEAM-004,SEC-STORE-002
+process	crates/rsk-oath/src/lib.rs:1280	41	decides	D4,D5	line :1224 clears chain on any non-SEND REMAINING, and :1245 routes SEND REMAINING by chain — this cursor is itself the page authorization	SEC-POL-004
+p1p2_ok	crates/rsk-oath/src/lib.rs:1323	25	marshals	M	REVIEW: `DE AD` is a magic constant any host sends — it separates a typo, it does not refuse authorization (was D5)	-
+challenge_of	crates/rsk-oath/src/lib.rs:1349	7	marshals	M	the only condition is challenge length ≤ CHALLENGE_MAX	-
+calc_all_challenge	crates/rsk-oath/src/lib.rs:1357	7	marshals	M	body grammar: challenge must be the first TLV	-
+cred_property	crates/rsk-oath/src/lib.rs:1365	8	decides	D5	the only reader of PROP_TOUCH/PROP_INCREASING; an absent tag yields 0, i.e. "no touch required"	SEC-POL-004
+raise_mark	crates/rsk-oath/src/lib.rs:1374	32	decides	D3,D5	comparison of challenge with the high-water mark: false refuses CALCULATE, true rewrites the mark for persisting	SEC-POL-004
+mark_has_room	crates/rsk-oath/src/lib.rs:1407	12	decides	D5	decides whether the mark can be kept in the blob — the condition on which the bulk path issues a code at all	SEC-POL-004
+bulk_computable	crates/rsk-oath/src/lib.rs:1420	8	decides	D5	the condition for issuing a real code in CALCULATE ALL instead of the protocol no-response	SEC-POL-004
+alg_supported	crates/rsk-oath/src/lib.rs:1429	9	marshals	M	match on three literal nibbles; the domain is exactly oath_hmac's, so a spurious true yields None, not a code	-
+code_modulus	crates/rsk-oath/src/lib.rs:1439	8	decides	D5	code width: None → DATA_INVALID in VERIFY CODE, and the value itself sets the entropy of the compared OTP	SEC-POL-004
+oath_hmac	crates/rsk-oath/src/lib.rs:1448	18	decides	D2	computes the MAC itself, from which the OTP code and the access-code check are derived; None is the refusal path of both	SEC-POL-004
+calculate	crates/rsk-oath/src/lib.rs:1467	24	marshals	M	REVIEW: the decision to hand out a code is already taken in cmd_calculate/calc_all_page; no branch here moves D1-D4 (was D2)	SEC-POL-004
+present_creds	crates/rsk-oath/src/lib.rs:1492	25	marshals	M	enumeration of the in-RAM present bits into a list of fids, no policy	-
+is_oath_cred_fid	crates/rsk-oath/src/lib.rs:1518	4	decides	D5	the range that sweep must wipe on RESET; outside it a record survives the wipe	SEC-STORE-006
+is_oath_lock_fid	crates/rsk-oath/src/lib.rs:1523	13	decides	D5	which records count as locks — deleting them last is itself the order the wipe relies on	SEC-STORE-006
+wipe_oath	crates/rsk-oath/src/lib.rs:1548	22	decides	D3,D4	returns the verdict of the whole wipe and brackets it with re-arms of the at-rest lap	SEC-STORE-006
+sweep_phases	crates/rsk-oath/src/lib.rs:1571	22	decides	D3,D5	phase order: credentials first, then locks; any orphan yields MEMORY_FAILURE	SEC-STORE-001,SEC-STORE-006
+sweep	crates/rsk-oath/src/lib.rs:1594	38	decides	D3	Ok only on a complete walk: a truncated walk returns MEMORY_FAILURE, not "range clean"	SEC-STORE-002,SEC-STORE-006
+split_period	crates/rsk-oath/src/lib.rs:1652	18	marshals	M	cuts the numeric <period>/ prefix out of the name for display	-
+algo_name	crates/rsk-oath/src/lib.rs:1671	9	marshals	M	mapping of the nibble to an ASCII label for the screen	-
+for_each_cred	crates/rsk-oath/src/lib.rs:1681	48	decides	D2	the only path that unseals all credentials with no gate at all; whatever does not make it into OathCredView does not leak	-
+find_cred	crates/rsk-oath/src/lib.rs:1730	19	decides	D5	Some/None on a TAG_NAME match selects the record that will be deleted or rewritten, and refuses RENAME to a taken name	SEC-POL-004
+migrate_seal	crates/rsk-oath/src/lib.rs:1750	23	decides	D3	a boot pass that rewrites every slot; raw sized MAX_BLOB is what keeps a truncated record from being mis-resealed	-
+reseal_if_plaintext	crates/rsk-oath/src/lib.rs:1774	50	decides	D3,D5	decides under which arm to rebuild the secret, and skips the write if request_rescrub refused	-
+is_legacy_plaintext	crates/rsk-oath/src/lib.rs:1825	14	decides	D5	the predicate whose error destroys the HMAC secret by double wrapping	-
+free_slot	crates/rsk-oath/src/lib.rs:1840	11	decides	D5	the slot number PUT will overwrite; an error means the silent loss of a live credential	SEC-STORE-002
+tlv_at	crates/rsk-oath/src/lib.rs:1852	23	decides	M	decodes one BER-TLV, None on a truncated or overflowing one	-
+find_tag_range	crates/rsk-oath/src/lib.rs:1876	13	decides	M	linear TLV walk up to the first tag match	-
+parse_put	crates/rsk-oath/src/lib.rs:1939	67	decides	D3,D5	the only path that refuses PUT on its body: secret bounds, digits, alg, tag order and duplicate tags — before a byte is written	SEC-POL-004
+new	crates/rsk-oath/src/lib.rs:2015	3	marshals	M	wraps the slice in an iterator	-
+next	crates/rsk-oath/src/lib.rs:2023	32	decides	M	TLV iteration with a special case for TAG_PROPERTY; parse_put builds the refusal itself from the remainder it.rest	-
+emit_tlv	crates/rsk-oath/src/lib.rs:2057	16	decides	M	appends a TLV to the buffer, false on overflow	-
+ct_eq	crates/rsk-oath/src/lib.rs:2074	5	decides	D5	constant-time comparison that decides VALIDATE, SET CODE and OTP-PIN; a short response must not match	-
 otp_status_record	crates/rsk-device/src/ccid.rs:467	7	marshals	M	rearranges the bytes of an already-built status frame for boot-seeding the keyboard report; touches no gate at all	-
 coord	crates/rsk-fido/src/clientpin.rs:100	7	marshals	M	try_into of a coordinate of the platform's PUBLIC key to 32 bytes before ECDH (clientpin.rs:731); the refusal is a matter of wire width (parity with YubiKey), not a gate verdict	-
 derive_chacha_key	crates/rsk-fido/src/credential.rs:210	6	decides	D2	computes the ChaCha box key from the seed; it opens the credential box, EF_RP, the nick and largeBlob — 9 production call sites	SEC-FIDO-004
@@ -139,12 +139,12 @@ try_get_sealed32	crates/rsk-fido/src/seed.rs:484	18	decides	D2	the only place wh
 ephemeral_scalar	crates/rsk-fido/src/state.rs:479	3	decides	D2	hands out the session's raw private ECDH scalar; four production call sites copy it from the return without a single condition	SEC-FIDO-004
 coord	crates/rsk-fido/src/vendor.rs:170	6	marshals	M	the same try_into of a coordinate of the host's public key to 32 bytes before MSE-ECDH (vendor.rs:634); wire length, not a gate	-
 open_channel_key	crates/rsk-fido/src/vendor.rs:531	30	decides	D2	checks the Poly1305 tag under the MSE session key with the device's public key in the AAD; its Ok is the 32-byte lock key with which UNLOCK/AUT_ENABLE unseal the seed	SEC-FIDO-004,SEC-FIDO-007
-serial_name	crates/rsk-oath/src/lib.rs:231	12	decides	D2	the 8-byte id goes out in the UNauthenticated SELECT (lib.rs:1185) and serves as ykman's PBKDF2 salt: a one-way sha256 of serial_hash, which, handed out directly, would reveal the root identifier	-
-otp_pin_record_v1	crates/rsk-oath/src/lib.rs:1030	9	decides	D4	builds the gate record itself — the PIN verifier and the full MAX_OTP_COUNTER budget; the three sites (set/change/unblock) raise the budget with exactly this record	SEC-LAT-003
-parse_exact	crates/rsk-oath/src/lib.rs:1883	18	decides	D5	strict positional grammar is the only thing that separates "73 00" = clear the access code (lib.rs:350) from a body with a key and no proof: an extra byte after the tag is 6A80 here, not a deletion of the code	SEC-SEAM-006,SEC-POL-004
-stage_dek	crates/rsk-openpgp/src/pin.rs:530	37	decides	D2	derives the session key from the new PIN and re-seals the DEK under it into the stage slot; the rescrub re-arm (pin.rs:551) is also here, on the FIRST append of the sequence, otherwise a reset has time to pass over unwiped copies	-
-reseed_pin	crates/rsk-openpgp/src/pin.rs:602	30	decides	D4	makes new the reference value of PW1/PW3 and gives back the attempt budget (pin_reset_retries) without comparing A SINGLE old value — the authority rests entirely with the caller	SEC-LAT-003
-rewrap_dek	crates/rsk-openpgp/src/pin.rs:821	23	decides	D2	derives the session key from the PIN and re-seals the DEK under it: after it, the DEK opens with the new PIN and stops opening with the old one	-
+serial_name	crates/rsk-oath/src/lib.rs:231	12	decides	D2	the 8-byte id goes out in the UNauthenticated SELECT (lib.rs:1192) and serves as ykman's PBKDF2 salt: a one-way sha256 of serial_hash, which, handed out directly, would reveal the root identifier	-
+otp_pin_record_v1	crates/rsk-oath/src/lib.rs:1037	9	decides	D4	builds the gate record itself — the PIN verifier and the full MAX_OTP_COUNTER budget; the three sites (set/change/unblock) raise the budget with exactly this record	SEC-LAT-003
+parse_exact	crates/rsk-oath/src/lib.rs:1890	18	decides	D5	strict positional grammar is the only thing that separates "73 00" = clear the access code (lib.rs:350) from a body with a key and no proof: an extra byte after the tag is 6A80 here, not a deletion of the code	SEC-SEAM-006,SEC-POL-004
+stage_dek	crates/rsk-openpgp/src/pin.rs:529	37	decides	D2	derives the session key from the new PIN and re-seals the DEK under it into the stage slot; the rescrub re-arm (pin.rs:551) is also here, on the FIRST append of the sequence, otherwise a reset has time to pass over unwiped copies	-
+reseed_pin	crates/rsk-openpgp/src/pin.rs:606	30	decides	D4	makes new the reference value of PW1/PW3 and gives back the attempt budget (pin_reset_retries) without comparing A SINGLE old value — the authority rests entirely with the caller	SEC-LAT-003
+rewrap_dek	crates/rsk-openpgp/src/pin.rs:829	23	decides	D2	derives the session key from the PIN and re-seals the DEK under it: after it, the DEK opens with the new PIN and stops opening with the old one	-
 serial_str10	crates/rsk-otp/src/lib.rs:361	11	marshals	M	hex expansion of the public serial into the 10 bytes of the challenge block	-
 status_bytes	crates/rsk-otp/src/lib.rs:373	24	marshals	M	projection of the stored slot state into the report (valid/touch/seq); reads through the COLLAPSING read_slot_m, and that is correct — no gate hangs on this report, the touch itself is spent on the ticket path	-
 hid_status_frame	crates/rsk-otp/src/lib.rs:407	7	marshals	M	wraps status_bytes in the 8-byte frame of a keyboard GET_REPORT	-
@@ -230,28 +230,28 @@ pin_set_and_unblocked	crates/rsk-fido/src/clientpin.rs:700	9	decides	D1	the lock
 require_pin_inputs	crates/rsk-fido/src/clientpin.rs:710	14	decides	D5	the only place where pinUvAuthParam/pinHashEnc become mandatory — below it sit unwrap() calls; doubt goes to the core (rule 1)	-
 derive_shared	crates/rsk-fido/src/clientpin.rs:725	11	decides	D2	the ECDH secret under which the token leaves for the host; coord() rejects a coordinate that is not 32 bytes	SEC-FIDO-008
 spend_and_verify_pin_hash	crates/rsk-fido/src/clientpin.rs:737	102	decides	D1	the PIN door itself: EF_PIN decrement before the comparison, fail-closed read-back, ct comparison, the lockout ladder and soft-lock	SEC-FIDO-001,SEC-LAT-002,SEC-LAT-003
-write_pin_verifier	crates/rsk-fido/src/clientpin.rs:840	34	decides	D3	writes the PIN record (counter, length, format, verifier) and for EF_PIN first tears down the pcmr grant	SEC-FIDO-003
-pin_verifier_matches	crates/rsk-fido/src/clientpin.rs:875	14	decides	D5	the §6.5.5.6 predicate "the new PIN must differ": a match is a policy violation, not an attempt, and spends no attempts	-
-pin_code_points	crates/rsk-fido/src/clientpin.rs:890	7	decides	D5	defines the unit minPINLength is measured in; None (not UTF-8) makes the caller refuse rather than count bytes	-
-pin_is_trivial	crates/rsk-fido/src/clientpin.rs:910	52	decides	D5	the PIN shape policy for strong-pin/fips-profile: its true means store_new_pin/the panel refuses to write the verifier	-
-store_new_pin	crates/rsk-fido/src/clientpin.rs:963	29	decides	D3	decides whether the record lands: padding, the minPINLength floor (:981), triviality (:985), then write_pin_verifier	SEC-FIDO-003
-min_pin_length	crates/rsk-fido/src/clientpin.rs:993	9	decides	D5	yields the floor by which the panel rejects a short entry without verify (clientpin.rs:638) — i.e. without spending an attempt	-
-try_min_pin_length	crates/rsk-fido/src/clientpin.rs:1003	11	decides	D5	the enforcing read of the floor: a read fault must not collapse into MIN_PIN_LENGTH below the one the owner configured	SEC-STORE-002
-force_change_pending	crates/rsk-fido/src/clientpin.rs:1015	13	decides	D5	the token-issuance gate; a faulted probe reads as PENDING, because every caller spends false to let something through	SEC-FIDO-001
-clear_force_change	crates/rsk-fido/src/clientpin.rs:1029	23	decides	D3	writes EF_MINPINLEN with the flag cleared and (:1044) skips the write instead of truncating, so as not to lose the owner's RP-ids	SEC-FIDO-003
-pinproto_ct_eq	crates/rsk-fido/src/clientpin.rs:1053	3	decides	D5	the very constant-time comparison of the candidate with the stored verifier on which all three PIN doors decide	SEC-FIDO-001
-pin_is_set	crates/rsk-fido/src/clientpin.rs:1081	10	decides	D5	local_pin_gate (rsk-display gates.rs:123) returns true at once if there is no PIN — so a faulted probe reads as SET	SEC-STORE-002
-pin_retries_left	crates/rsk-fido/src/clientpin.rs:1092	7	decides	D5	its answer decides ends_host_token in gates.rs:130: whether to clear the host pinUvAuthToken after a panel refusal	SEC-FIDO-003
-device_pin_is_set	crates/rsk-fido/src/clientpin.rs:1100	8	decides	D5	vendor.rs:792 decides on it whether a second factor is needed for seed export; a faulted probe reads as SET	SEC-STORE-002
-try_device_pin_is_set	crates/rsk-fido/src/clientpin.rs:1109	7	decides	D5	the honest EF_DEVICE_PIN probe that tells a medium fault from an absent record — the input of the same export gate	SEC-STORE-002
-device_pin_retries_left	crates/rsk-fido/src/clientpin.rs:1117	4	decides	D5	the same input to ends_host_token/the budget caption in gates.rs:129, but for the device PIN record	-
-retries_left_at	crates/rsk-fido/src/clientpin.rs:1122	10	decides	D5	the shared read of the counter byte of both PIN records; None versus Some(0) means different decisions at the callers	SEC-LAT-001
-spend_and_verify_local_pin	crates/rsk-fido/src/clientpin.rs:1133	18	decides	D1	the panel door into the same EF_PIN counter: spends an attempt and migrates the seed, registered as LocalPinGuard	SEC-FIDO-001,SEC-LAT-002
-spend_and_verify_device_pin	crates/rsk-fido/src/clientpin.rs:1152	11	decides	D1	the device PIN door for the panel's lock/delete/factory-reset: the same fail-closed counter, no seed migration	SEC-LAT-002
-spend_and_verify_pin_at	crates/rsk-fido/src/clientpin.rs:1164	83	decides	D1	the shared core of the panel doors: decrement before the comparison, read-back, ct comparison, pre-OTP fallback, budget reset	SEC-LAT-001,SEC-LAT-002,SEC-LAT-003
-store_local_pin	crates/rsk-fido/src/clientpin.rs:1250	39	decides	D3	enforces the minPINLength floor and the MAX_PIN_LENGTH ceiling and writes EF_PIN; the pcmr grant dies inside write_pin_verifier	SEC-FIDO-003
-store_device_pin	crates/rsk-fido/src/clientpin.rs:1290	25	decides	D3	writes EF_DEVICE_PIN with its own MIN_PIN_LENGTH floor — the record every panel gate looks at	SEC-FIDO-003
-encode	crates/rsk-fido/src/clientpin.rs:1316	10	marshals	M	minicbor wrapper: builds the response into the buffer and returns the length	-
+write_pin_verifier	crates/rsk-fido/src/clientpin.rs:838	34	decides	D3	writes the PIN record (counter, length, format, verifier) and for EF_PIN first tears down the pcmr grant	SEC-FIDO-003
+pin_verifier_matches	crates/rsk-fido/src/clientpin.rs:873	14	decides	D5	the §6.5.5.6 predicate "the new PIN must differ": a match is a policy violation, not an attempt, and spends no attempts	-
+pin_code_points	crates/rsk-fido/src/clientpin.rs:888	7	decides	D5	defines the unit minPINLength is measured in; None (not UTF-8) makes the caller refuse rather than count bytes	-
+pin_is_trivial	crates/rsk-fido/src/clientpin.rs:908	52	decides	D5	the PIN shape policy for strong-pin/fips-profile: its true means store_new_pin/the panel refuses to write the verifier	-
+store_new_pin	crates/rsk-fido/src/clientpin.rs:961	29	decides	D3	decides whether the record lands: padding, the minPINLength floor (:979), triviality (:983), then write_pin_verifier	SEC-FIDO-003
+min_pin_length	crates/rsk-fido/src/clientpin.rs:991	9	decides	D5	yields the floor by which the panel rejects a short entry without verify (clientpin.rs:638) — i.e. without spending an attempt	-
+try_min_pin_length	crates/rsk-fido/src/clientpin.rs:1001	11	decides	D5	the enforcing read of the floor: a read fault must not collapse into MIN_PIN_LENGTH below the one the owner configured	SEC-STORE-002
+force_change_pending	crates/rsk-fido/src/clientpin.rs:1013	13	decides	D5	the token-issuance gate; a faulted probe reads as PENDING, because every caller spends false to let something through	SEC-FIDO-001
+clear_force_change	crates/rsk-fido/src/clientpin.rs:1027	23	decides	D3	writes EF_MINPINLEN with the flag cleared and (:1042) skips the write instead of truncating, so as not to lose the owner's RP-ids	SEC-FIDO-003
+pinproto_ct_eq	crates/rsk-fido/src/clientpin.rs:1051	3	decides	D5	the very constant-time comparison of the candidate with the stored verifier on which all three PIN doors decide	SEC-FIDO-001
+pin_is_set	crates/rsk-fido/src/clientpin.rs:1079	10	decides	D5	local_pin_gate (rsk-display gates.rs:123) returns true at once if there is no PIN — so a faulted probe reads as SET	SEC-STORE-002
+pin_retries_left	crates/rsk-fido/src/clientpin.rs:1090	7	decides	D5	its answer decides ends_host_token in gates.rs:130: whether to clear the host pinUvAuthToken after a panel refusal	SEC-FIDO-003
+device_pin_is_set	crates/rsk-fido/src/clientpin.rs:1098	8	decides	D5	vendor.rs:792 decides on it whether a second factor is needed for seed export; a faulted probe reads as SET	SEC-STORE-002
+try_device_pin_is_set	crates/rsk-fido/src/clientpin.rs:1107	7	decides	D5	the honest EF_DEVICE_PIN probe that tells a medium fault from an absent record — the input of the same export gate	SEC-STORE-002
+device_pin_retries_left	crates/rsk-fido/src/clientpin.rs:1115	4	decides	D5	the same input to ends_host_token/the budget caption in gates.rs:129, but for the device PIN record	-
+retries_left_at	crates/rsk-fido/src/clientpin.rs:1120	10	decides	D5	the shared read of the counter byte of both PIN records; None versus Some(0) means different decisions at the callers	SEC-LAT-001
+spend_and_verify_local_pin	crates/rsk-fido/src/clientpin.rs:1131	18	decides	D1	the panel door into the same EF_PIN counter: spends an attempt and migrates the seed, registered as LocalPinGuard	SEC-FIDO-001,SEC-LAT-002
+spend_and_verify_device_pin	crates/rsk-fido/src/clientpin.rs:1150	11	decides	D1	the device PIN door for the panel's lock/delete/factory-reset: the same fail-closed counter, no seed migration	SEC-LAT-002
+spend_and_verify_pin_at	crates/rsk-fido/src/clientpin.rs:1162	83	decides	D1	the shared core of the panel doors: decrement before the comparison, read-back, ct comparison, pre-OTP fallback, budget reset	SEC-LAT-001,SEC-LAT-002,SEC-LAT-003
+store_local_pin	crates/rsk-fido/src/clientpin.rs:1248	39	decides	D3	enforces the minPINLength floor and the MAX_PIN_LENGTH ceiling and writes EF_PIN; the pcmr grant dies inside write_pin_verifier	SEC-FIDO-003
+store_device_pin	crates/rsk-fido/src/clientpin.rs:1288	25	decides	D3	writes EF_DEVICE_PIN with its own MIN_PIN_LENGTH floor — the record every panel gate looks at	SEC-FIDO-003
+encode	crates/rsk-fido/src/clientpin.rs:1314	10	marshals	M	minicbor wrapper: builds the response into the buffer and returns the length	-
 new	crates/rsk-fido/src/state.rs:71	24	decides	D4	the zeroed state of the assertion walk (active=false, uv=false) is what FidoState::reset sets as the revocation of the walk's rights	SEC-FIDO-003
 reset	crates/rsk-fido/src/state.rs:96	8	decides	D4	clears the walk that carries the presence/UV decision of the original getAssertion — after it, Next is not served	SEC-FIDO-003
 new	crates/rsk-fido/src/state.rs:152	16	decides	D4	the fail-closed cursor (rp_counter=1, rp_total=0): it is precisely what makes may_walk_rps false until an authorized Begin	SEC-FIDO-001
@@ -352,13 +352,13 @@ require_presence	crates/rsk-fido/src/lib.rs:89	10	decides	D1	the same presence s
 process_cbor	crates/rsk-fido/src/lib.rs:116	105	decides	D1	expire_stale_token and retire_sequences_except run BEFORE the dispatch: token freshness is cleared here	SEC-FIDO-003
 reset	crates/rsk-fido/src/reset.rs:31	53	decides	D4	presence plus the §6.6 window, then a full factory reset; request_rescrub stands BETWEEN wipe and its `?`	SEC-FIDO-006,SEC-BOOT-001
 wipe	crates/rsk-fido/src/reset.rs:85	39	decides	D3	state.reset() clears the RAM copy, the seed FIDs go as a separate write, then two phases: secrets, then gates	SEC-FIDO-006,SEC-FIDO-007
-sweep	crates/rsk-fido/src/reset.rs:125	47	decides	D3	deletes every matching FID and decides whether the emptiness of the range is PROVEN: a truncated walk must answer Err	SEC-FIDO-006,SEC-FIDO-004
-is_fido_seed_fid	crates/rsk-fido/src/reset.rs:179	6	decides	D5	the list of seed FIDs is itself the "seed first" rule that Fs::factory_wipe uses, bypassing reset	SEC-FIDO-006,SEC-FIDO-007
-is_fido_gate_fid	crates/rsk-fido/src/reset.rs:210	21	decides	D5	which records are recognized as gates — what survives any interruption of wipe depends on it	SEC-FIDO-004,SEC-FIDO-006A
-is_fido_gate_record	crates/rsk-fido/src/reset.rs:232	22	decides	D5	five list members, of which EF_PIN, EF_ALWAYS_UV and EF_BACKUP_SEALED are exactly the three clauses 006A/B/C	SEC-FIDO-006A,SEC-FIDO-006B,SEC-FIDO-006C
-in_reset_window	crates/rsk-fido/src/reset.rs:255	7	decides	D5	a warm boot CLOSES the window: otherwise the host restarts via sys_reset and gets the window on demand	SEC-FIDO-006
-is_fido_fid	crates/rsk-fido/src/reset.rs:263	43	decides	D5	the FIDO/OpenPGP boundary in the interleaved 0x10xx range — the answer decides whether the FID is wiped at all	SEC-FIDO-006,SEC-FIDO-004
-survives_factory_reset	crates/rsk-fido/src/reset.rs:308	10	decides	D5	the only predicate by which the display path of factory_wipe leaves the att key and the chain live	SEC-FIDO-006
+sweep	crates/rsk-fido/src/reset.rs:128	47	decides	D3	deletes every matching FID and decides whether the emptiness of the range is PROVEN: a truncated walk must answer Err	SEC-FIDO-006,SEC-FIDO-004
+is_fido_seed_fid	crates/rsk-fido/src/reset.rs:182	6	decides	D5	the list of seed FIDs is itself the "seed first" rule that Fs::factory_wipe uses, bypassing reset	SEC-FIDO-006,SEC-FIDO-007
+is_fido_gate_fid	crates/rsk-fido/src/reset.rs:213	21	decides	D5	which records are recognized as gates — what survives any interruption of wipe depends on it	SEC-FIDO-004,SEC-FIDO-006A
+is_fido_gate_record	crates/rsk-fido/src/reset.rs:235	22	decides	D5	five list members, of which EF_PIN, EF_ALWAYS_UV and EF_BACKUP_SEALED are exactly the three clauses 006A/B/C	SEC-FIDO-006A,SEC-FIDO-006B,SEC-FIDO-006C
+in_reset_window	crates/rsk-fido/src/reset.rs:258	7	decides	D5	a warm boot CLOSES the window: otherwise the host restarts via sys_reset and gets the window on demand	SEC-FIDO-006
+is_fido_fid	crates/rsk-fido/src/reset.rs:266	43	decides	D5	the FIDO/OpenPGP boundary in the interleaved 0x10xx range — the answer decides whether the FID is wiped at all	SEC-FIDO-006,SEC-FIDO-004
+survives_factory_reset	crates/rsk-fido/src/reset.rs:311	10	decides	D5	the only predicate by which the display path of factory_wipe leaves the att key and the chain live	SEC-FIDO-006
 lock_engaged	crates/rsk-fido/src/seed.rs:82	7	decides	D5	an unanswered probe reads as ENGAGED — every caller treats true as "refuse until unlocked"	SEC-FIDO-004
 lock_state	crates/rsk-fido/src/seed.rs:90	14	decides	D5	both halves: a torn state reads as UNLOCKED, and on this answer ensure_seed decides whether to regenerate the seed	SEC-FIDO-004,SEC-FIDO-007
 plain_tag	crates/rsk-fido/src/seed.rs:142	9	decides	D5	selects the kbase branch (0x02 versus 0x12), i.e. under which key the record lies on flash	SEC-BOOT-001
@@ -367,9 +367,9 @@ store_att_key	crates/rsk-fido/src/seed.rs:317	3	decides	D3	the effect is a write
 clear_ppuat	crates/rsk-fido/src/seed.rs:349	14	decides	D4	force_delete revokes the capability: a falsely absent bit must not leave the grant live in the backend	SEC-FIDO-003
 encrypt_keydev_f1	crates/rsk-fido/src/seed.rs:503	5	decides	D3	the effect is a write of EF_KEY_DEV itself, the root of the whole key hierarchy	SEC-FIDO-007
 put_sealed32	crates/rsk-fido/src/seed.rs:509	12	decides	D3	seals and stores to flash — the point where a 32-byte secret becomes a persistent record	-
-migrate_keydev_boot	crates/rsk-fido/src/seed.rs:522	16	decides	D3	three slot rewrites on every boot: the seed, the att key and the persistent grant	SEC-BOOT-001
-migrate_slot	crates/rsk-fido/src/seed.rs:539	43	decides	D3	computes weak and GATES the write on request_rescrub: a medium refusal leaves the pre-OTP record in force	SEC-BOOT-001
-migrate_keydev_pin	crates/rsk-fido/src/seed.rs:583	52	decides	D3	strips the outer PIN-AEAD at the only moment that layer is open, and re-seals the seed	SEC-BOOT-001,SEC-FIDO-004
+migrate_keydev_boot	crates/rsk-fido/src/seed.rs:524	16	decides	D3	three slot rewrites on every boot: the seed, the att key and the persistent grant	SEC-BOOT-001
+migrate_slot	crates/rsk-fido/src/seed.rs:541	43	decides	D3	computes weak and GATES the write on request_rescrub: a medium refusal leaves the pre-OTP record in force	SEC-BOOT-001
+migrate_keydev_pin	crates/rsk-fido/src/seed.rs:584	52	decides	D3	strips the outer PIN-AEAD at the only moment that layer is open, and re-seals the seed	SEC-BOOT-001,SEC-FIDO-004
 ensure_seed	crates/rsk-fido/src/seed.rs:641	45	decides	D3	generates the seed only when EF_KEY_DEV is absent AND the lock is not engaged — otherwise it is the destruction of every credential	SEC-FIDO-007,SEC-FIDO-006
 rebuild_att_cert	crates/rsk-fido/src/seed.rs:687	51	decides	D3	a rewrite of EF_EE_DEV when the leaf does not certify the current seed; the collapsing probe is kept on purpose	-
 global_sign_counter	crates/rsk-fido/src/seed.rs:739	15	decides	D5	try_read, not read: collapsing a fault to 0 is exactly a rollback of the counter, the only evidence of cloning	-
@@ -440,14 +440,14 @@ try_read_key	crates/rsk-fs/src/fs.rs:685	4	marshals	M	unwraps KeyFid into try_re
 has_key	crates/rsk-fs/src/fs.rs:690	4	marshals	M	unwraps KeyFid into has_data	-
 try_has_key	crates/rsk-fs/src/fs.rs:695	4	marshals	M	unwraps KeyFid into try_has_data	-
 delete_key	crates/rsk-fs/src/fs.rs:700	4	marshals	M	unwraps KeyFid into delete; deleters.toml, by the same inference, does not count it as a decision site	-
-meta_find	crates/rsk-fs/src/fs.rs:741	6	decides	D5	an EF_META fault reads as "no entry", and no entry means the published default of the PIV touch policy	SEC-STORE-004
-try_meta_find	crates/rsk-fs/src/fs.rs:748	33	decides	D5	parses the blob and separates a confirmed absence of the entry from a read fault	SEC-STORE-004,SEC-STORE-005
-meta_add	crates/rsk-fs/src/fs.rs:782	4	marshals	M	passes reserve=0 to meta_add_reserve	-
-meta_add_reserve	crates/rsk-fs/src/fs.rs:787	35	decides	D3	an undecided EF_META does not count as empty: otherwise one write wipes out the metadata of every applet	SEC-STORE-003
-meta_delete	crates/rsk-fs/src/fs.rs:823	39	decides	D3	decides whether to rewrite the blob, remove EF_META or not write at all, and when the cache may say "absent"	SEC-STORE-001,SEC-STORE-004,SEC-STORE-005
-rebuild_meta	crates/rsk-fs/src/fs.rs:864	34	decides	D5	its w is the predicate by which meta_delete selects the branch, and its break decides which entries survive the rewrite	SEC-STORE-003
+meta_find	crates/rsk-fs/src/fs.rs:770	6	decides	D5	an EF_META fault reads as "no entry", and no entry means the published default of the PIV touch policy	SEC-STORE-004
+try_meta_find	crates/rsk-fs/src/fs.rs:777	33	decides	D5	parses the blob and separates a confirmed absence of the entry from a read fault	SEC-STORE-004,SEC-STORE-005
+meta_add	crates/rsk-fs/src/fs.rs:811	4	marshals	M	passes reserve=0 to meta_add_reserve	-
+meta_add_reserve	crates/rsk-fs/src/fs.rs:816	35	decides	D3	an undecided EF_META does not count as empty: otherwise one write wipes out the metadata of every applet	SEC-STORE-003
+meta_delete	crates/rsk-fs/src/fs.rs:852	39	decides	D3	decides whether to rewrite the blob, remove EF_META or not write at all, and when the cache may say "absent"	SEC-STORE-001,SEC-STORE-004,SEC-STORE-005
+rebuild_meta	crates/rsk-fs/src/fs.rs:893	34	decides	D5	its w is the predicate by which meta_delete selects the branch, and its break decides which entries survive the rewrite	SEC-STORE-003
 request_rescrub	crates/rsk-fs/src/lib.rs:40	40	decides	D3	clears EF_HARDENED and re-checks with a probe; its Ok is the condition for every lazy re-seal in the tree	SEC-BOOT-001
-run_at_rest_lap	crates/rsk-fs/src/lib.rs:81	23	decides	D3	gates the multi-second lap on the marker and sets the marker only after a successful compact	SEC-BOOT-001
+run_at_rest_lap	crates/rsk-fs/src/lib.rs:126	23	decides	D3	gates the multi-second lap on the marker and sets the marker only after a successful compact	SEC-BOOT-001
 default	crates/rsk-openpgp/src/pin.rs:43	3	marshals	M	Self::new(), one expression	-
 new	crates/rsk-openpgp/src/pin.rs:49	16	decides	D4	initial access: every has_pw* cleared, the MSE slots at DEC/AUT, the session keys zeroed	SEC-SEAM-002
 adopt_reseeded	crates/rsk-openpgp/src/pin.rs:66	13	decides	D2	replaces the session keys under the standing status — changes which DEK opens, without touching the gate	-
@@ -465,17 +465,17 @@ stage_fid	crates/rsk-openpgp/src/pin.rs:464	9	marshals	M	the address table of th
 staged_is_for	crates/rsk-openpgp/src/pin.rs:474	7	decides	D5	one guard for the commit and for the recovery: its refusal is the only thing that keeps a short blob from being written over the live copy	-
 recover_staged_dek	crates/rsk-openpgp/src/pin.rs:482	47	decides	D3	completes a torn PIN update: decides whether to commit the stage, and zeroes the out buffer on refusal	SEC-STORE-006
 commit_staged_dek	crates/rsk-openpgp/src/pin.rs:574	21	decides	D3	moves the stage onto the target slot and clears the stage, having checked the record with the same guard	-
-pw_fid	crates/rsk-openpgp/src/pin.rs:596	5	marshals	M	0x1000|p2, pure address arithmetic; the mode enumeration sits in the callers	-
-clear_reset_code	crates/rsk-openpgp/src/pin.rs:633	37	decides	D3	tears down the four RC records (verifier, DEK, stage, counter) and answers Ok only if all four went through	SEC-LAT-003
-verify	crates/rsk-openpgp/src/pin.rs:671	66	decides	D1	P1=FF clears status only for a defined P2, the mode enumeration closes off cross-applet FIDs, the status query reads the latch before the counter	SEC-LAT-001,SEC-SEAM-002
-check_pin_len	crates/rsk-openpgp/src/pin.rs:738	19	decides	D5	length policy for the new value; its refusal is a refusal of the whole command before any write	-
-offered_len_impossible	crates/rsk-openpgp/src/pin.rs:758	21	decides	D5	decides whether to spend an attempt: an impossible length means 6A80, with no spend and before the lockout floor	SEC-LAT-002
-verifier_unusable	crates/rsk-openpgp/src/pin.rs:780	7	decides	D5	declares an unusable verifier blocked and thereby opens TERMINATE DF	SEC-LAT-001
-put_verifier	crates/rsk-openpgp/src/pin.rs:788	14	decides	D3	checks the length and only then writes the reference value	-
-store_verifier	crates/rsk-openpgp/src/pin.rs:803	17	decides	D3	stores the record [len,0x01,verifier] to flash — the reference value itself, with no length check	-
-change_pin	crates/rsk-openpgp/src/pin.rs:851	67	decides	D1	checks the old PIN, opens the DEK and writes stage/verifier/commit; an unsupported P2 is rejected before any write	SEC-LAT-002
-reset_retry	crates/rsk-openpgp/src/pin.rs:919	81	decides	D1	two doors to a new PW1 — reset code and PW3 — both raise the PW1 budget after their own secret is presented	SEC-LAT-003,SEC-LAT-001
-put_reset_code	crates/rsk-openpgp/src/pin.rs:1002	45	decides	D1	requires PW3, seals the DEK under the new RC and enables its counter; empty data goes to clear_reset_code	SEC-LAT-003
+pw_fid	crates/rsk-openpgp/src/pin.rs:600	5	marshals	M	0x1000|p2, pure address arithmetic; the mode enumeration sits in the callers	-
+clear_reset_code	crates/rsk-openpgp/src/pin.rs:637	37	decides	D3	tears down the four RC records (verifier, DEK, stage, counter) and answers Ok only if all four went through	SEC-LAT-003
+verify	crates/rsk-openpgp/src/pin.rs:675	66	decides	D1	P1=FF clears status only for a defined P2, the mode enumeration closes off cross-applet FIDs, the status query reads the latch before the counter	SEC-LAT-001,SEC-SEAM-002
+check_pin_len	crates/rsk-openpgp/src/pin.rs:742	19	decides	D5	length policy for the new value; its refusal is a refusal of the whole command before any write	-
+offered_len_impossible	crates/rsk-openpgp/src/pin.rs:762	21	decides	D5	decides whether to spend an attempt: an impossible length means 6A80, with no spend and before the lockout floor	SEC-LAT-002
+verifier_unusable	crates/rsk-openpgp/src/pin.rs:784	7	decides	D5	declares an unusable verifier blocked and thereby opens TERMINATE DF	SEC-LAT-001
+put_verifier	crates/rsk-openpgp/src/pin.rs:792	14	decides	D3	checks the length and only then writes the reference value	-
+store_verifier	crates/rsk-openpgp/src/pin.rs:808	17	decides	D3	stores the record [len,0x01,verifier] to flash — the reference value itself, with no length check	-
+change_pin	crates/rsk-openpgp/src/pin.rs:860	67	decides	D1	checks the old PIN, opens the DEK and writes stage/verifier/commit; an unsupported P2 is rejected before any write	SEC-LAT-002
+reset_retry	crates/rsk-openpgp/src/pin.rs:928	81	decides	D1	two doors to a new PW1 — reset code and PW3 — both raise the PW1 budget after their own secret is presented	SEC-LAT-003,SEC-LAT-001
+put_reset_code	crates/rsk-openpgp/src/pin.rs:1011	45	decides	D1	requires PW3, seals the DEK under the new RC and enables its counter; empty data goes to clear_reset_code	SEC-LAT-003
 truncate_utf8	crates/rsk-fido/src/credential.rs:108	11	marshals	M	cuts the string at a UTF-8 boundary — length arithmetic and nothing more	-
 cred_blob_ok	crates/rsk-fido/src/credential.rs:157	7	marshals	M	length comparison against MAX_CREDBLOB_LENGTH; the record is written in both cases, the blob simply does not get into the box	-
 box_entries	crates/rsk-fido/src/credential.rs:165	8	marshals	M	counts the entries of the 0x07 sub-map for the CBOR header	-
