@@ -10,6 +10,15 @@
 //! commands (INIT, PING, WINK, LOCK, VERSION, UUID, CANCEL) are answered in the
 //! transport; MSG (U2F APDU) and CBOR (CTAP2) route to a [`MsgHandler`].
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use core::future::Future;
 
 use embassy_futures::select::{Either, Either3, select, select3};
@@ -371,7 +380,7 @@ impl Reassembler {
     /// Payload of the most recently completed message (`msg[..bcnt]`). Valid
     /// until the next [`feed`](Self::feed).
     pub fn message(&self) -> &[u8] {
-        &self.msg[..self.bcnt]
+        self.msg.get(..self.bcnt).unwrap_or_default()
     }
 
     /// Whether a multi-frame message is mid-reassembly (awaiting continuations).
@@ -393,12 +402,14 @@ impl Reassembler {
     /// material, and the buffer otherwise holds them until the next message.
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the reassembly buffer lives as long as the transport: `scrub` is \
-                      its wipe point, after each MSG/CBOR/vendor dispatch"
-        )]
-        self.msg[..self.bcnt].zeroize();
+        if let Some(held) = self.msg.get_mut(..self.bcnt) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the reassembly buffer lives as long as the transport: `scrub` \
+                          is its wipe point, after each MSG/CBOR/vendor dispatch"
+            )]
+            held.zeroize();
+        }
         self.bcnt = 0;
     }
 
@@ -442,12 +453,15 @@ impl Reassembler {
             if bcnt > CTAP_MAX_MESSAGE {
                 return Outcome::Error(cid, ERR_INVALID_LEN);
             }
+            let n = bcnt.min(INIT_DATA);
+            let (Some(dst), Some(src)) = (self.msg.get_mut(..n), f.get(7..7 + n)) else {
+                return Outcome::Error(cid, ERR_INVALID_LEN);
+            };
+            dst.copy_from_slice(src);
             self.cid = cid;
             self.cmd = cmd;
             self.bcnt = bcnt;
             self.seq = 0;
-            let n = bcnt.min(INIT_DATA);
-            self.msg[..n].copy_from_slice(&f[7..7 + n]);
             self.cur = n;
             self.in_tx = bcnt > INIT_DATA;
         } else {
@@ -467,7 +481,12 @@ impl Reassembler {
             // saturating subtraction makes the no-underflow self-evident across
             // refactors (a wrapped count here would index past the message).
             let n = CONT_DATA.min(self.bcnt.saturating_sub(self.cur));
-            self.msg[self.cur..self.cur + n].copy_from_slice(&f[5..5 + n]);
+            let held = self.msg.get_mut(self.cur..self.cur + n);
+            let (Some(dst), Some(src)) = (held, f.get(5..5 + n)) else {
+                self.in_tx = false;
+                return Outcome::Error(cid, ERR_INVALID_LEN);
+            };
+            dst.copy_from_slice(src);
             self.cur += n;
             self.seq = self.seq.wrapping_add(1);
         }
@@ -516,11 +535,15 @@ impl Iterator for TxFrames<'_> {
 
         if !self.started {
             self.started = true;
+            let [lo, hi, ..] = total.to_le_bytes();
             frame[4] = self.cmd; // already carries the TYPE_INIT bit
-            frame[5] = (total >> 8) as u8;
-            frame[6] = (total & 0xff) as u8;
+            frame[5] = hi;
+            frame[6] = lo;
             let n = total.min(INIT_DATA);
-            frame[7..7 + n].copy_from_slice(&self.data[..n]);
+            let (Some(dst), Some(src)) = (frame.get_mut(7..7 + n), self.data.get(..n)) else {
+                return None;
+            };
+            dst.copy_from_slice(src);
             self.off = n;
             return Some(frame);
         }
@@ -531,7 +554,11 @@ impl Iterator for TxFrames<'_> {
 
         frame[4] = self.seq & !TYPE_INIT;
         let n = CONT_DATA.min(total - self.off);
-        frame[5..5 + n].copy_from_slice(&self.data[self.off..self.off + n]);
+        let src = self.data.get(self.off..self.off + n);
+        let (Some(dst), Some(src)) = (frame.get_mut(5..5 + n), src) else {
+            return None;
+        };
+        dst.copy_from_slice(src);
         self.off += n;
         self.seq = self.seq.wrapping_add(1);
         Some(frame)
@@ -653,7 +680,9 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 let nonce = self.asm.message();
                 let mut resp = [0u8; 17];
                 let k = nonce.len().min(8);
-                resp[..k].copy_from_slice(&nonce[..k]);
+                if let (Some(dst), Some(src)) = (resp.get_mut(..k), nonce.get(..k)) {
+                    dst.copy_from_slice(src);
+                }
                 // §11.2.9.1.3: on the broadcast CID this allocates a fresh channel;
                 // on an already-allocated one it only resynchronises that channel,
                 // and the response names the CID it arrived on.
@@ -812,7 +841,7 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         };
         let cmd = if is_cbor { CTAPHID_CBOR } else { CTAPHID_MSG };
         // Request and response both carried secrets (PINs, tokens, key blobs).
-        let resp = WipeGuard::new(&mut scratch[..n]);
+        let resp = WipeGuard::new(scratch.get_mut(..n).unwrap_or_default());
         write_message(writer, cid, cmd, &resp).await;
         asm.scrub();
     }
@@ -837,7 +866,7 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             Some(n) => {
                 // Same discipline as `run_with_keepalive`: neither the request nor
                 // the response stays resident past the frame that carried it.
-                let resp = WipeGuard::new(&mut scratch[..n]);
+                let resp = WipeGuard::new(scratch.get_mut(..n).unwrap_or_default());
                 write_message(writer, cid, cmd, &resp).await;
             }
             None => write_message(writer, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]).await,
@@ -905,6 +934,14 @@ async fn write_message<'d, D: Driver<'d>>(
 }
 
 #[cfg(any(kani, test))]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "verification-only: the harness sets its bounds, a failed assertion is its report"
+)]
 #[path = "transport_assurance.rs"]
 pub mod transport_assurance;
 
@@ -913,5 +950,13 @@ pub mod transport_assurance;
 mod transport_refinement_proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "ctaphid_tests.rs"]
 mod tests;
