@@ -49,7 +49,7 @@ CONSTANTS
     \* whenever the pad had already run. The PIN pad's title is 'static and can
     \* never carry RP data; only the card can. The fix is
     \* `needs_confirm = !up_collected || shows_confirm`
-    \* (crates/rsk-fido/src/clientpin.rs:554-555), consumed at
+    \* (crates/rsk-fido/src/clientpin.rs:583-584), consumed at
     \* getassertion.rs:671-672, makecredential.rs:727-728 and u2f.rs:106. The
     \* switch restores the pre-fix gate.
     BugPadSubstitutesForCard,

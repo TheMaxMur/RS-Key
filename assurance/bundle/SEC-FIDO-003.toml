@@ -83,20 +83,20 @@ owners_tagged = [
   "crates/rsk-fido/src/state.rs:599 FidoState::reset_pin_uv_auth_token — session",
   "crates/rsk-fido/src/state.rs:649 FidoState::stop_using_token — session, and the site the model cites",
   "crates/rsk-fido/src/state.rs:698 FidoState::expire_stale_token — session, on the timer arm",
-  "crates/rsk-fido/src/clientpin.rs:175 set_pin — persistent, and the REDUNDANT layer",
-  "crates/rsk-fido/src/clientpin.rs:229 change_pin — persistent, and the REDUNDANT layer",
+  "crates/rsk-fido/src/clientpin.rs:184 set_pin — persistent, and the REDUNDANT layer",
+  "crates/rsk-fido/src/clientpin.rs:239 change_pin — persistent, and the REDUNDANT layer",
   "crates/rsk-fido/src/seed.rs:360 clear_ppuat — persistent, the deletion itself",
 ]
 # AND THE ORDER'S OWNER IS NOT AMONG THEM. `write_pin_verifier`
-# (clientpin.rs:849) clears the grant at :858-860 and writes EF_PIN at :870 — it
+# (clientpin.rs:884) clears the grant at :893-895 and writes EF_PIN at :905 — it
 # is the one function every EF_PIN verifier write goes through, from
-# `store_new_pin` (:981), the panel's `store_local_pin` (:1271) and the
-# device-PIN path (:1302). It carries no tag of any kind.
+# `store_new_pin` (:1021), the panel's `store_local_pin` (:1312) and the
+# device-PIN path (:1355). It carries no tag of any kind.
 owners_tag_reading = "the tagged pair `set_pin`/`change_pin` hold a SECOND `clear_ppuat` above the one that matters, and `formal/comutants.toml [comutant.BugSetPinKeepsPpuat]` records the measurement: deleting `set_pin`'s leaves all 668 rsk-fido tests green over three runs, while deleting `write_pin_verifier`'s is red at once on `every_ef_pin_verifier_write_revokes_the_persistent_token` and `local_pin_change_revokes_the_persistent_token`. So the tags sit on the layer whose removal nothing notices. The column would not move if this were fixed — `assurance_gate.grep_word` returns FILE names and `clientpin.rs` is already counted — which is exactly why no gate has ever asked for it"
 # The fourth invalidation door, in a crate the `rust` axis DOES scan, with a
 # killed code twin and no tag. Fixing this one WOULD move the column, 3 -> 4.
 owners_untagged = [
-  "crates/rsk-fido/src/clientpin.rs:849 write_pin_verifier — the revoke-before-write order, three callers",
+  "crates/rsk-fido/src/clientpin.rs:884 write_pin_verifier — the revoke-before-write order, three callers",
   "crates/rsk-display/src/gates.rs:149 local_pin_gate's `ends_host_token` — the panel PIN pad as a fourth door (E66); `formal/comutants.toml [comutant.BugLocalPinKeepsToken]` patches it and records `expect = \"killed\"`",
   "crates/rsk-fido/src/state.rs:534 FidoState::reset — the `reset` invalidator the statement names; tagged for SEC-FIDO-006 and not for this one, though `state_kani.rs`'s OP_AUTHENTICATOR_RESET drives it and asserts A1-A4 after it",
   "crates/rsk-fido/src/state.rs:425 FidoState::new — the `power cycle` invalidator the statement names, driven as OP_POWER_CYCLE and carrying no tag at all",
@@ -210,7 +210,7 @@ bound_max_retries = 2
 stops_max_retries = "the six rungs between two and the shipped eight; a retry-shaped defect is not what this arm is for"
 bound_mismatch_limit = 1
 stops_mismatch_limit = "the two mismatches between one and the shipped three, on the forced-change arm"
-shipped_relation = "ForceChangeModelled = TRUE turns on `gate.forceChange`, EF_MINPINLEN byte 1, which `clientpin.rs` reads at the two get_pin_token doors and `change_pin` clears. It belongs to this property because it is a refusal AFTER the PIN has verified — a grant that must not be minted rather than one that must be retired — and `assurance/platform.toml` PLAT-MODEL-010 is `discharged` on it. What the arm does NOT reach is the built-in-UV door (clientpin.rs:501-503), which has no action in this module at all, and the panel's own clear at clientpin.rs:1284"
+shipped_relation = "ForceChangeModelled = TRUE turns on `gate.forceChange`, EF_MINPINLEN byte 1, which `clientpin.rs` reads at the two get_pin_token doors and `change_pin` clears. It belongs to this property because it is a refusal AFTER the PIN has verified — a grant that must not be minted rather than one that must be retired — and `assurance/platform.toml` PLAT-MODEL-010 is `discharged` on it. What the arm does NOT reach is the built-in-UV door (clientpin.rs:530-532), which has no action in this module at all, and the panel's own clear at clientpin.rs:1331"
 cfg = "none"
 features = "none"
 
@@ -282,7 +282,7 @@ bound_citations_read = 23
 stops_citations_read = "any citation the review never opened. Twenty-three OCCURRENCES were read, which is a count of readings and not of sources"
 bound_citations_wrong = 5
 stops_citations_wrong = "how many SOURCES are wrong. The occurrences collapse onto fewer distinct references — one of them is written three times — so the defect count is smaller than the occurrence count and this bound cannot say by how much"
-shipped_relation = "six tags over three files, and the `rust` column is 3 because `assurance_gate.grep_word` returns FILE names — a seventh tag in a counted file moves nothing, which is the reason the missing one has never reddened a row. The mapping is clean on two conjuncts and empty on the third: session gets state.rs:599/:649/:698, persistent gets clientpin.rs:175/:229 and seed.rs:360, and the ORDER — the conjunct SetPinWrite and ChangePinWrite write the ghost for — gets nothing, because `write_pin_verifier` is untagged. Two more invalidators the statement names by word, `reset` and `power cycle`, are owned by state.rs:534 and state.rs:425 and carry SEC-FIDO-006's tag and no tag respectively. The citation bounds are OCCURRENCES, not distinct citations: 23 read and 5 wrong over 3 distinct references, and the distinction matters because one of the three is written three times. This bound is a count of sites and of citations, not a shrink of a shipped constant, because a review has no other unit"
+shipped_relation = "six tags over three files, and the `rust` column is 3 because `assurance_gate.grep_word` returns FILE names — a seventh tag in a counted file moves nothing, which is the reason the missing one has never reddened a row. The mapping is clean on two conjuncts and empty on the third: session gets state.rs:599/:649/:698, persistent gets clientpin.rs:184/:239 and seed.rs:360, and the ORDER — the conjunct SetPinWrite and ChangePinWrite write the ghost for — gets nothing, because `write_pin_verifier` is untagged. Two more invalidators the statement names by word, `reset` and `power cycle`, are owned by state.rs:534 and state.rs:425 and carry SEC-FIDO-006's tag and no tag respectively. The citation bounds are OCCURRENCES, not distinct citations: 23 read and 5 wrong over 3 distinct references, and the distinction matters because one of the three is written three times. This bound is a count of sites and of citations, not a shrink of a shipped constant, because a review has no other unit"
 cfg = "none — every site above is unconditional production code; the two Kani mirrors are not, and are named in the rows above rather than counted here"
 features = "none"
 
@@ -383,7 +383,7 @@ c_scope = "both harnesses are about the SESSION token. `grep -c keydev\\|EF_PAUT
 
 # THE CODE TWINS, from formal/comutants.toml's own recorded verdicts.
 co_killed = "six of the seven switches carry `status = \"patch\"` and `expect = \"killed\"`: BugTokenSurvivesPinChange, BugStopUsingKeepsPerms, BugWrongPinKeepsToken, BugChangePinKeepsPpuat, BugPinWriteBeforeRevoke (all `cargo test -p rsk-fido`) and BugLocalPinKeepsToken (`cargo test -p rsk-display`). `assurance_gate.co_refuted` credits them by reading `comutate.solo_invariants`, so `co = 6`"
-co_unreachable = "the seventh is the finding. BugSetPinKeepsPpuat is `status = \"unreachable\"`, and its `evidence` is a code measurement rather than a model one: deleting `set_pin`'s own `clear_ppuat` (clientpin.rs:220) leaves all 668 rsk-fido tests green over three runs, because `write_pin_verifier` clears the grant before the EF_PIN write; deleting THAT one is red at once, but it is the site changePIN and the panel share, so it is BugChangePinKeepsPpuat's twin as much as this one's. A shared chokepoint has no per-caller mutant, and the file says so"
+co_unreachable = "the seventh is the finding. BugSetPinKeepsPpuat is `status = \"unreachable\"`, and its `evidence` is a code measurement rather than a model one: deleting `set_pin`'s own `clear_ppuat` (clientpin.rs:230) leaves all 668 rsk-fido tests green over three runs, because `write_pin_verifier` clears the grant before the EF_PIN write; deleting THAT one is red at once, but it is the site changePIN and the panel share, so it is BugChangePinKeepsPpuat's twin as much as this one's. A shared chokepoint has no per-caller mutant, and the file says so"
 co_two_layer = "BugChangePinKeepsPpuat needed TWO hunks for the same reason, and its note records the first attempt measuring exactly that redundancy: removing only the outer layer left every test green. The property is enforced twice and a single-layer mutant cannot re-create the model's defect"
 
 # THE PRODUCTION SIDE, by review, and the three axes no gate derives.
@@ -503,7 +503,7 @@ registered = "yes — assurance/platform.toml PLAT-MODEL-012, pending"
 
 [[assumption]]
 id = "AS-NTAI-2"
-statement = "The revoke-before-write ORDER the ghost conjunct is about is owned by one function, `write_pin_verifier` (crates/rsk-fido/src/clientpin.rs:849), which clears the grant at :858-860 and writes EF_PIN at :870 — and that function carries no `Refines` tag."
+statement = "The revoke-before-write ORDER the ghost conjunct is about is owned by one function, `write_pin_verifier` (crates/rsk-fido/src/clientpin.rs:884), which clears the grant at :893-895 and writes EF_PIN at :905 — and that function carries no `Refines` tag."
 kind = "model fidelity"
 discharger = "a tag on write_pin_verifier, and the review of its other two callers that a tag forces. The measurement that says the tagged sites are the wrong ones is already in the tree: formal/comutants.toml's BugSetPinKeepsPpuat entry records that deleting `set_pin`'s own `clear_ppuat` leaves all 668 rsk-fido tests green over three runs, and that deleting write_pin_verifier's is red at once on two named tests. No gate will ask for this — clientpin.rs is already one of the three files the `rust` axis counts"
 expressible = "no — a fact about which source site owns a clause, not a constant"
@@ -545,7 +545,7 @@ registered = "yes — assurance/platform.toml PLAT-MODEL-009, pending, whose `co
 id = "AS-NTAI-7"
 statement = "Three of the citations carrying this property's model-to-code bridge name code the surrounding prose is not about, and scripts/citation_gate.py is green over all three."
 kind = "model fidelity"
-discharger = "re-point the three and re-lock, with the git evidence that makes each checkable: `state.rs:584-599` WAS exactly `stop_using_token` at `250be31` and the function is at `:645-660` now; the bare `clientpin.rs:300-304` WAS the §6.5.5.6-step-15 comment through `clear_ppuat(ctx.fs)` at `c9bdc5b` and that block is at `:306-310` now, which is what formal/README.md already writes for the same claim; and `seed.rs:323-324` was `r.map(|()| tok)` and `}` at `5e3abef`, the commit that introduced it, so it has never named clear_ppuat. The gate cannot be blamed for the third: it says in as many words that whether a citation still MEANS what the prose claims is a review question"
+discharger = "re-point the three and re-lock, with the git evidence that makes each checkable: `state.rs:584-599` WAS exactly `stop_using_token` at `250be31` and the function is at `:645-660` now; the bare `clientpin.rs:300-304` WAS the §6.5.5.6-step-15 comment through `clear_ppuat(ctx.fs)` at `c9bdc5b` and that block is at `:324-328` now, which is what formal/README.md already writes for the same claim; and `seed.rs:323-324` was `r.map(|()| tok)` and `}` at `5e3abef`, the commit that introduced it, so it has never named clear_ppuat. The gate cannot be blamed for the third: it says in as many words that whether a citation still MEANS what the prose claims is a review question"
 expressible = "no — a fact about prose in two pages"
 registered = "yes — assurance/platform.toml PLAT-SOURCE-002, pending"
 
@@ -666,7 +666,7 @@ expected = "RED: NoTokenAfterInvalidation"
 verdict = "RED: NoTokenAfterInvalidation, 5 521 139 states, 599 634 distinct, depth 15, 12 s"
 fell = "the third conjunct, at SetPinClearPpuat — and only after a fifteen-state path"
 direction = "modelled"
-reading = "the depth is the reading. Reaching it needs a PIN to be set, a grant minted, a reset started, confirmed, swept through ResetSweepSecrets twice and ResetSweepGates, then ABORTED, and only then a second setPIN — because on a tree where the sweep completes there is no PIN to set over. So the state this switch reaches is the torn-reset leftover the production comment at clientpin.rs:217-219 names, and its 599 634 distinct states are two orders above every other row here."
+reading = "the depth is the reading. Reaching it needs a PIN to be set, a grant minted, a reset started, confirmed, swept through ResetSweepSecrets twice and ResetSweepGates, then ABORTED, and only then a second setPIN — because on a tree where the sweep completes there is no PIN to set over. So the state this switch reaches is the torn-reset leftover the production comment at clientpin.rs:227-229 names, and its 599 634 distinct states are two orders above every other row here."
 
 [[mutation]]
 level = "B"
@@ -693,7 +693,7 @@ level = "code"
 mutant = "BugSetPinKeepsPpuat as a CODE twin — the seventh switch, and the one that could not be made"
 invocation = "formal/comutants.toml [comutant.BugSetPinKeepsPpuat], `status = \"unreachable\"`"
 expected = "a patch reproducing `setPIN keeps the grant` and nothing else"
-verdict = "no such patch exists, measured: deleting set_pin's own `clear_ppuat` (clientpin.rs:220) leaves all 668 rsk-fido tests green over three runs, and deleting write_pin_verifier's is red at once on `every_ef_pin_verifier_write_revokes_the_persistent_token` and `local_pin_change_revokes_the_persistent_token`"
+verdict = "no such patch exists, measured: deleting set_pin's own `clear_ppuat` (clientpin.rs:230) leaves all 668 rsk-fido tests green over three runs, and deleting write_pin_verifier's is red at once on `every_ef_pin_verifier_write_revokes_the_persistent_token` and `local_pin_change_revokes_the_persistent_token`"
 fell = "nothing, on the redundant site — which IS the result. The green suite over a deleted `clear_ppuat` is the measurement, and the red one over the chokepoint is what says the property is enforced there instead"
 direction = "modelled"
 reading = "this row is why `mut = 7` and `co = 6`, and it is a finding about the CODE rather than a hole in the evidence: the site changePIN and the panel share has no per-caller mutant, so a defect scoped to setPIN alone cannot be built. The entry's own history is the warning it carries — it was written as a MODEL measurement first, after its sibling BugBackupSealedNotAGate was caught carrying a model result in a code field, and the code half turned out to be a different answer."
@@ -705,7 +705,7 @@ measured = "2026-08-30, Europe/Moscow"
 expires_on_prover_bump = "tlaplus 1.7.4 or its jar hash — seventeen of the eighteen mechanised verdicts here are TLC's; and cargo-kani 0.67.0, whose version is pinned but whose solver bundle is unhashed, for the other two"
 expires_on_toolchain_bump = "rustc/cargo 1.96.0 — the two co-refutation slices and, through MIR, both Kani verdicts"
 expires_on_stepping = "nothing here is a hardware result and `property.subjects_absent` says so; no method row is a `measurement`, so this bundle declares no board and records no revision"
-expires_on_owner_change = "any file in property.owners_tagged, property.owners_untagged or property.owners_co_refuted — and clientpin.rs:849 write_pin_verifier in particular, which is the untagged chokepoint AS-NTAI-2 is about"
+expires_on_owner_change = "any file in property.owners_tagged, property.owners_untagged or property.owners_co_refuted — and clientpin.rs:884 write_pin_verifier in particular, which is the untagged chokepoint AS-NTAI-2 is about"
 expires_on_model_change = "RSKeySecurityState's TokenBypass, SetPinClearPpuat, SetPinWrite, ChangePinClearPpuat, ChangePinWrite, StopUsingToken, WrongPin, LocalPinWrong or CmBeginViaPpuat — the nine actions that write the three conjuncts"
 expires_on_feature_change = "the default feature set of firmware/Cargo.toml, or the `kani-soft` feature the two harnesses are built with"
 expires_on_schema_change = "assurance/properties.toml's field set, formal/comutants.toml's status vocabulary, or formal/gen-configs.sh's SOLO block — the last because the whole non-degeneracy argument rests on a Solo_ configuration checking one invariant"

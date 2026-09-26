@@ -142,7 +142,7 @@ R4bEventConsensus ==
 \* only where it is a function of these two, and the recording it was omitted for
 \* is the one that refutes `pin.set /\ rk` on its own (event 26: alwaysUv on,
 \* rk FALSE, PUAT_REQUIRED, where that rule predicts served). The pad is
-\* `clientpin.rs:627`'s first conjunct, recorded per boundary.
+\* `clientpin.rs:656`'s first conjunct, recorded per boundary.
 \*
 \* `alwaysUv` here is B's, and B reads it from the RECORD (`Beta`, above). The
 \* firmware falls back to `cfg!(feature = "always-uv")` when EF_ALWAYS_UV is

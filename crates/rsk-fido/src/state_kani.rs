@@ -74,8 +74,8 @@ const OP_POWER_CYCLE: u8 = 6;
 const OP_TIME_PASSES: u8 = 7;
 
 /// The token issuance `clientpin::issue_token` performs, in its own order
-/// (`clientpin.rs:428-434`): fresh token, begin using it, then the permission
-/// set. Its rpId binding (`:435-441`) is left out — `paut.has_rp_id` starts
+/// (`clientpin.rs:451-457`): fresh token, begin using it, then the permission
+/// set. Its rpId binding (`:458-464`) is left out — `paut.has_rp_id` starts
 /// false and no clause here reads the hash. Reproduced rather than called
 /// because the real function needs a whole `Ctx` — flash, a device identity and
 /// a presence source — none of which this sequence has. Not because *holding* a

@@ -110,7 +110,7 @@ next	crates/rsk-oath/src/lib.rs:2124	32	decides	M	TLV iteration with a special c
 emit_tlv	crates/rsk-oath/src/lib.rs:2158	16	decides	M	appends a TLV to the buffer, false on overflow	-
 ct_eq	crates/rsk-oath/src/lib.rs:2172	5	decides	D5	constant-time comparison that decides VALIDATE, SET CODE and OTP-PIN; a short response must not match	-
 otp_status_record	crates/rsk-device/src/ccid.rs:467	7	marshals	M	rearranges the bytes of an already-built status frame for boot-seeding the keyboard report; touches no gate at all	-
-coord	crates/rsk-fido/src/clientpin.rs:100	7	marshals	M	try_into of a coordinate of the platform's PUBLIC key to 32 bytes before ECDH (clientpin.rs:731); the refusal is a matter of wire width (parity with YubiKey), not a gate verdict	-
+coord	crates/rsk-fido/src/clientpin.rs:109	7	marshals	M	try_into of the platform's PUBLIC key coordinate into 32 bytes before ECDH (clientpin.rs:760); a refusal is the width on the wire (parity with YubiKey), not a gate verdict	-
 derive_chacha_key	crates/rsk-fido/src/credential.rs:219	6	decides	D2	computes the ChaCha box key from the seed; it opens the credential box, EF_RP, the nick and largeBlob — 9 production call sites	SEC-FIDO-004
 silent_tag	crates/rsk-fido/src/credential.rs:227	19	decides	D2	computes the key sha256(otp_key|serial_id ‖ rpIdHash) and the MAC under it into the tail of the id that goes out to the RP; the binding to rpIdHash is the only thing that keeps two RPs from linking the device (NOBODY checks the tag; verdict by rule 1 + "computes a key")	-
 derive_resident	crates/rsk-fido/src/credential.rs:530	32	decides	D2	the 42-byte id for the RP is HMAC-SHA512 under serial_id, and no byte can be recomputed from the rest; the carve-out [4..8] (credential.rs:558) keeps a v4-id from being read as legacy and rebound to the box	SEC-FIDO-005
@@ -207,51 +207,51 @@ ct_eq	crates/rsk-piv/src/lib.rs:1773	4	decides	D5	a forwarder to the canonical c
 push_tlv	crates/rsk-piv/src/lib.rs:1754	9	marshals	M	appends tag{len,payload} to ResBuf, decides only whether it fits	-
 dyn_auth_resp	crates/rsk-piv/src/lib.rs:1775	11	marshals	M	builds the 7C{tag payload} envelope of the GENERAL AUTHENTICATE response, does not judge the contents	-
 wrap_cert_object	crates/rsk-piv/src/lib.rs:1789	15	marshals	M	wraps the certificate in 70{}71{00}FE{} — pure encoding	-
-parse	crates/rsk-fido/src/clientpin.rs:57	42	decides	M	parses the request's CBOR map into Req; every gate refusal (PIN, permissions, forced-change) lies below, in separate functions	-
-checked_proto	crates/rsk-fido/src/clientpin.rs:108	9	decides	D5	the protocol gate of §6.1.2/§6.2.2 step 2 for six commands: an unsupported proto refuses before the selection gesture	SEC-FIDO-001
-client_pin	crates/rsk-fido/src/clientpin.rs:118	33	decides	D5	the routing table carries a permission (:146/:147 `if ctx.presence.uv_available()`), plus the proto gate :129 and ensure_initialized	SEC-FIDO-001
-get_pin_retries	crates/rsk-fido/src/clientpin.rs:152	12	marshals	M	encodes the counter and powerCycleState into the response; decides nothing and spends nothing	-
-get_key_agreement	crates/rsk-fido/src/clientpin.rs:165	8	marshals	M	encodes the already computed public point ephemeral_public into COSE	-
-set_pin	crates/rsk-fido/src/clientpin.rs:174	53	decides	D3	§6.5.5.5: try_has_data(EF_PIN) closes off setting a PIN over someone else's, then clear_ppuat and the EF_PIN write	SEC-FIDO-003,SEC-STORE-002
-change_pin	crates/rsk-fido/src/clientpin.rs:228	92	decides	D1	spends an attempt of the old PIN (spend_and_verify_pin_hash), revokes pcmr BEFORE the new write and resets the session token	SEC-FIDO-003,SEC-FIDO-001
-get_pin_token	crates/rsk-fido/src/clientpin.rs:322	78	decides	D1	validates the permissions mask (:339 be, :342 pcmr exclusivity), soft-lock, spends the PIN and refuses on forced-change	SEC-FIDO-001,SEC-FIDO-003
-issue_token	crates/rsk-fido/src/clientpin.rs:408	55	decides	D2	issues pinUvAuthToken to the host encrypted, assigns permissions and the rpId binding; the pcmr branch (:425) hands out the flash grant	SEC-FIDO-008,SEC-FIDO-001
-get_uv_token	crates/rsk-fido/src/clientpin.rs:464	47	decides	D1	the built-in UV door: permissions mask, readiness, consent, entry on the panel, forced-change — all before issuance	SEC-FIDO-001
-needs_confirm	crates/rsk-fido/src/clientpin.rs:546	11	decides	D5	decides whether the Confirm screen is drawn: skipping it would trade one PIN entry for an assertion over an rp that was not shown (run-28)	SEC-DISP-001
-builtin_uv_step	crates/rsk-fido/src/clientpin.rs:559	24	decides	D1	returns UvOutcome::BUILTIN (uv=true, up_collected=true) — i.e. covers both uv and the second gesture; Deny stays final	SEC-FIDO-001,SEC-DISP-003
-builtin_uv_ready	crates/rsk-fido/src/clientpin.rs:584	13	decides	D1	the lockout floor before entry on the panel: no EF_PIN → NotAllowed, zero budget or soft-lock → UvBlocked	SEC-LAT-001
-consent_for_permissions	crates/rsk-fido/src/clientpin.rs:598	24	decides	D1	spends the confirmation gesture and (:612) names pcmr with a separate title, because it is not a session grant	SEC-DISP-001
-builtin_uv_enabled	crates/rsk-fido/src/clientpin.rs:623	6	decides	D5	the uv option predicate that makecredential.rs:460/:594 and getassertion.rs:337/:463 read as the condition to refuse/start the ceremony	SEC-FIDO-001
-builtin_uv	crates/rsk-fido/src/clientpin.rs:630	15	decides	D1	starts the ceremony on the panel; the panel rejects a short entry without verify, so no attempt is spent	SEC-LAT-002
-perform_builtin_uv	crates/rsk-fido/src/clientpin.rs:646	26	decides	D1	a non-entry (Declined/Timeout/Cancelled) returns BEFORE verify and spends no attempt; a real mismatch spends one	SEC-LAT-002
-get_uv_retries	crates/rsk-fido/src/clientpin.rs:673	15	marshals	M	encodes the same counter as getPINRetries, under key 0x05	-
-pin_retries	crates/rsk-fido/src/clientpin.rs:691	8	decides	D5	on an EF_PIN read fault answers with the FULL budget MAX_PIN_RETRIES — and that is the input of both lockout floors	SEC-LAT-001
-pin_set_and_unblocked	crates/rsk-fido/src/clientpin.rs:700	9	decides	D1	the lockout floor of the host path: PinNotSet without EF_PIN, PinBlocked on a zero budget — before any comparison	SEC-LAT-001
-require_pin_inputs	crates/rsk-fido/src/clientpin.rs:710	14	decides	D5	the only place where pinUvAuthParam/pinHashEnc become mandatory — below it sit unwrap() calls; doubt goes to the core (rule 1)	-
-derive_shared	crates/rsk-fido/src/clientpin.rs:725	11	decides	D2	the ECDH secret under which the token leaves for the host; coord() rejects a coordinate that is not 32 bytes	SEC-FIDO-008
-spend_and_verify_pin_hash	crates/rsk-fido/src/clientpin.rs:737	102	decides	D1	the PIN door itself: EF_PIN decrement before the comparison, fail-closed read-back, ct comparison, the lockout ladder and soft-lock	SEC-FIDO-001,SEC-LAT-002,SEC-LAT-003
-write_pin_verifier	crates/rsk-fido/src/clientpin.rs:838	34	decides	D3	writes the PIN record (counter, length, format, verifier) and for EF_PIN first tears down the pcmr grant	SEC-FIDO-003
-pin_verifier_matches	crates/rsk-fido/src/clientpin.rs:873	14	decides	D5	the §6.5.5.6 predicate "the new PIN must differ": a match is a policy violation, not an attempt, and spends no attempts	-
-pin_code_points	crates/rsk-fido/src/clientpin.rs:888	7	decides	D5	defines the unit minPINLength is measured in; None (not UTF-8) makes the caller refuse rather than count bytes	-
-pin_is_trivial	crates/rsk-fido/src/clientpin.rs:908	52	decides	D5	the PIN shape policy for strong-pin/fips-profile: its true means store_new_pin/the panel refuses to write the verifier	-
-store_new_pin	crates/rsk-fido/src/clientpin.rs:961	29	decides	D3	decides whether the record lands: padding, the minPINLength floor (:979), triviality (:983), then write_pin_verifier	SEC-FIDO-003
-min_pin_length	crates/rsk-fido/src/clientpin.rs:991	9	decides	D5	yields the floor by which the panel rejects a short entry without verify (clientpin.rs:638) — i.e. without spending an attempt	-
-try_min_pin_length	crates/rsk-fido/src/clientpin.rs:1001	11	decides	D5	the enforcing read of the floor: a read fault must not collapse into MIN_PIN_LENGTH below the one the owner configured	SEC-STORE-002
-force_change_pending	crates/rsk-fido/src/clientpin.rs:1013	13	decides	D5	the token-issuance gate; a faulted probe reads as PENDING, because every caller spends false to let something through	SEC-FIDO-001
-clear_force_change	crates/rsk-fido/src/clientpin.rs:1027	23	decides	D3	writes EF_MINPINLEN with the flag cleared and (:1042) skips the write instead of truncating, so as not to lose the owner's RP-ids	SEC-FIDO-003
-pinproto_ct_eq	crates/rsk-fido/src/clientpin.rs:1051	3	decides	D5	the very constant-time comparison of the candidate with the stored verifier on which all three PIN doors decide	SEC-FIDO-001
-pin_is_set	crates/rsk-fido/src/clientpin.rs:1079	10	decides	D5	local_pin_gate (rsk-display gates.rs:123) returns true at once if there is no PIN — so a faulted probe reads as SET	SEC-STORE-002
-pin_retries_left	crates/rsk-fido/src/clientpin.rs:1090	7	decides	D5	its answer decides ends_host_token in gates.rs:130: whether to clear the host pinUvAuthToken after a panel refusal	SEC-FIDO-003
-device_pin_is_set	crates/rsk-fido/src/clientpin.rs:1098	8	decides	D5	vendor.rs:805 decides on it whether a second factor is needed for seed export; a faulted probe reads as SET	SEC-STORE-002
-try_device_pin_is_set	crates/rsk-fido/src/clientpin.rs:1107	7	decides	D5	the honest EF_DEVICE_PIN probe that tells a medium fault from an absent record — the input of the same export gate	SEC-STORE-002
-device_pin_retries_left	crates/rsk-fido/src/clientpin.rs:1115	4	decides	D5	the same input to ends_host_token/the budget caption in gates.rs:129, but for the device PIN record	-
-retries_left_at	crates/rsk-fido/src/clientpin.rs:1120	10	decides	D5	the shared read of the counter byte of both PIN records; None versus Some(0) means different decisions at the callers	SEC-LAT-001
-spend_and_verify_local_pin	crates/rsk-fido/src/clientpin.rs:1131	18	decides	D1	the panel door into the same EF_PIN counter: spends an attempt and migrates the seed, registered as LocalPinGuard	SEC-FIDO-001,SEC-LAT-002
-spend_and_verify_device_pin	crates/rsk-fido/src/clientpin.rs:1150	11	decides	D1	the device PIN door for the panel's lock/delete/factory-reset: the same fail-closed counter, no seed migration	SEC-LAT-002
-spend_and_verify_pin_at	crates/rsk-fido/src/clientpin.rs:1162	83	decides	D1	the shared core of the panel doors: decrement before the comparison, read-back, ct comparison, pre-OTP fallback, budget reset	SEC-LAT-001,SEC-LAT-002,SEC-LAT-003
-store_local_pin	crates/rsk-fido/src/clientpin.rs:1248	39	decides	D3	enforces the minPINLength floor and the MAX_PIN_LENGTH ceiling and writes EF_PIN; the pcmr grant dies inside write_pin_verifier	SEC-FIDO-003
-store_device_pin	crates/rsk-fido/src/clientpin.rs:1288	25	decides	D3	writes EF_DEVICE_PIN with its own MIN_PIN_LENGTH floor — the record every panel gate looks at	SEC-FIDO-003
-encode	crates/rsk-fido/src/clientpin.rs:1314	10	marshals	M	minicbor wrapper: builds the response into the buffer and returns the length	-
+parse	crates/rsk-fido/src/clientpin.rs:66	42	decides	M	parses the request's CBOR map into Req; every gate refusal (PIN, permissions, forced-change) lies below, in separate functions	-
+checked_proto	crates/rsk-fido/src/clientpin.rs:117	9	decides	D5	the protocol gate of §6.1.2/§6.2.2 step 2 for six commands: an unsupported proto refuses before the selection gesture	SEC-FIDO-001
+client_pin	crates/rsk-fido/src/clientpin.rs:127	33	decides	D5	the routing table carries the permission (:155/:156 `if ctx.presence.uv_available()`), plus the proto gate :138 and ensure_initialized	SEC-FIDO-001
+get_pin_retries	crates/rsk-fido/src/clientpin.rs:161	12	marshals	M	encodes the counter and powerCycleState into the response; decides nothing and spends nothing	-
+get_key_agreement	crates/rsk-fido/src/clientpin.rs:174	8	marshals	M	encodes the already computed public point ephemeral_public into COSE	-
+set_pin	crates/rsk-fido/src/clientpin.rs:183	53	decides	D3	§6.5.5.5: try_has_data(EF_PIN) closes off setting a PIN over someone else's, then clear_ppuat and the EF_PIN write	SEC-FIDO-003,SEC-STORE-002
+change_pin	crates/rsk-fido/src/clientpin.rs:238	92	decides	D1	spends an attempt of the old PIN (spend_and_verify_pin_hash), revokes pcmr BEFORE the new write and resets the session token	SEC-FIDO-003,SEC-FIDO-001
+get_pin_token	crates/rsk-fido/src/clientpin.rs:340	78	decides	D1	validates the permissions mask (:362 be, :365 pcmr exclusivity) and the soft-lock, spends a PIN retry and refuses on forced-change	SEC-FIDO-001,SEC-FIDO-003
+issue_token	crates/rsk-fido/src/clientpin.rs:431	55	decides	D2	returns the pinUvAuthToken to the host encrypted, assigns permissions and the rpId binding; the pcmr branch (:448) hands out a flash grant	SEC-FIDO-008,SEC-FIDO-001
+get_uv_token	crates/rsk-fido/src/clientpin.rs:488	47	decides	D1	the built-in UV door: permissions mask, readiness, consent, entry on the panel, forced-change — all before issuance	SEC-FIDO-001
+needs_confirm	crates/rsk-fido/src/clientpin.rs:575	11	decides	D5	decides whether the Confirm screen is drawn: skipping it would trade one PIN entry for an assertion over an rp that was not shown (run-28)	SEC-DISP-001
+builtin_uv_step	crates/rsk-fido/src/clientpin.rs:588	24	decides	D1	returns UvOutcome::BUILTIN (uv=true, up_collected=true) — i.e. covers both uv and the second gesture; Deny stays final	SEC-FIDO-001,SEC-DISP-003
+builtin_uv_ready	crates/rsk-fido/src/clientpin.rs:613	13	decides	D1	the lockout floor before entry on the panel: no EF_PIN → NotAllowed, zero budget or soft-lock → UvBlocked	SEC-LAT-001
+consent_for_permissions	crates/rsk-fido/src/clientpin.rs:627	24	decides	D1	spends the confirmation gesture and (:641) names pcmr under its own heading, because it is not a session grant	SEC-DISP-001
+builtin_uv_enabled	crates/rsk-fido/src/clientpin.rs:652	6	decides	D5	the uv option predicate that makecredential.rs:460/:594 and getassertion.rs:337/:463 read as the condition to refuse/start the ceremony	SEC-FIDO-001
+builtin_uv	crates/rsk-fido/src/clientpin.rs:659	15	decides	D1	starts the ceremony on the panel; the panel rejects a short entry without verify, so no attempt is spent	SEC-LAT-002
+perform_builtin_uv	crates/rsk-fido/src/clientpin.rs:675	26	decides	D1	a non-entry (Declined/Timeout/Cancelled) returns BEFORE verify and spends no attempt; a real mismatch spends one	SEC-LAT-002
+get_uv_retries	crates/rsk-fido/src/clientpin.rs:702	15	marshals	M	encodes the same counter as getPINRetries, under key 0x05	-
+pin_retries	crates/rsk-fido/src/clientpin.rs:720	8	decides	D5	on an EF_PIN read fault answers with the FULL budget MAX_PIN_RETRIES — and that is the input of both lockout floors	SEC-LAT-001
+pin_set_and_unblocked	crates/rsk-fido/src/clientpin.rs:729	9	decides	D1	the lockout floor of the host path: PinNotSet without EF_PIN, PinBlocked on a zero budget — before any comparison	SEC-LAT-001
+require_pin_inputs	crates/rsk-fido/src/clientpin.rs:739	14	decides	D5	the only place where pinUvAuthParam/pinHashEnc become mandatory — below it sit unwrap() calls; doubt goes to the core (rule 1)	-
+derive_shared	crates/rsk-fido/src/clientpin.rs:754	11	decides	D2	the ECDH secret under which the token leaves for the host; coord() rejects a coordinate that is not 32 bytes	SEC-FIDO-008
+spend_and_verify_pin_hash	crates/rsk-fido/src/clientpin.rs:772	102	decides	D1	the PIN door itself: EF_PIN decrement before the comparison, fail-closed read-back, ct comparison, the lockout ladder and soft-lock	SEC-FIDO-001,SEC-LAT-002,SEC-LAT-003
+write_pin_verifier	crates/rsk-fido/src/clientpin.rs:873	34	decides	D3	writes the PIN record (counter, length, format, verifier) and for EF_PIN first tears down the pcmr grant	SEC-FIDO-003
+pin_verifier_matches	crates/rsk-fido/src/clientpin.rs:908	14	decides	D5	the §6.5.5.6 predicate "the new PIN must differ": a match is a policy violation, not an attempt, and spends no attempts	-
+pin_code_points	crates/rsk-fido/src/clientpin.rs:923	7	decides	D5	defines the unit minPINLength is measured in; None (not UTF-8) makes the caller refuse rather than count bytes	-
+pin_is_trivial	crates/rsk-fido/src/clientpin.rs:943	52	decides	D5	the PIN shape policy for strong-pin/fips-profile: its true means store_new_pin/the panel refuses to write the verifier	-
+store_new_pin	crates/rsk-fido/src/clientpin.rs:1000	29	decides	D3	decides whether the record lands: padding, the minPINLength floor (:1019), triviality (:1023), then write_pin_verifier	SEC-FIDO-003
+min_pin_length	crates/rsk-fido/src/clientpin.rs:1031	9	decides	D5	gives the panel the floor by which it rejects short input without verify (clientpin.rs:667), that is, without spending an attempt	-
+try_min_pin_length	crates/rsk-fido/src/clientpin.rs:1041	11	decides	D5	the enforcing read of the floor: a read fault must not collapse into MIN_PIN_LENGTH below the one the owner configured	SEC-STORE-002
+force_change_pending	crates/rsk-fido/src/clientpin.rs:1053	13	decides	D5	the token-issuance gate; a faulted probe reads as PENDING, because every caller spends false to let something through	SEC-FIDO-001
+clear_force_change	crates/rsk-fido/src/clientpin.rs:1067	23	decides	D3	writes EF_MINPINLEN with the flag cleared and (:1082) skips the write instead of truncating, so as not to lose the owner's RP-id	SEC-FIDO-003
+pinproto_ct_eq	crates/rsk-fido/src/clientpin.rs:1092	3	decides	D5	the very constant-time comparison of the candidate with the stored verifier on which all three PIN doors decide	SEC-FIDO-001
+pin_is_set	crates/rsk-fido/src/clientpin.rs:1120	10	decides	D5	local_pin_gate (rsk-display gates.rs:123) returns true at once if there is no PIN — so a faulted probe reads as SET	SEC-STORE-002
+pin_retries_left	crates/rsk-fido/src/clientpin.rs:1131	7	decides	D5	its answer decides ends_host_token in gates.rs:130: whether to clear the host pinUvAuthToken after a panel refusal	SEC-FIDO-003
+device_pin_is_set	crates/rsk-fido/src/clientpin.rs:1139	8	decides	D5	vendor.rs:805 decides on it whether a second factor is needed for seed export; a faulted probe reads as SET	SEC-STORE-002
+try_device_pin_is_set	crates/rsk-fido/src/clientpin.rs:1148	7	decides	D5	the honest EF_DEVICE_PIN probe that tells a medium fault from an absent record — the input of the same export gate	SEC-STORE-002
+device_pin_retries_left	crates/rsk-fido/src/clientpin.rs:1156	4	decides	D5	the same input to ends_host_token/the budget caption in gates.rs:129, but for the device PIN record	-
+retries_left_at	crates/rsk-fido/src/clientpin.rs:1161	10	decides	D5	the shared read of the counter byte of both PIN records; None versus Some(0) means different decisions at the callers	SEC-LAT-001
+spend_and_verify_local_pin	crates/rsk-fido/src/clientpin.rs:1172	18	decides	D1	the panel door into the same EF_PIN counter: spends an attempt and migrates the seed, registered as LocalPinGuard	SEC-FIDO-001,SEC-LAT-002
+spend_and_verify_device_pin	crates/rsk-fido/src/clientpin.rs:1191	11	decides	D1	the device PIN door for the panel's lock/delete/factory-reset: the same fail-closed counter, no seed migration	SEC-LAT-002
+spend_and_verify_pin_at	crates/rsk-fido/src/clientpin.rs:1203	83	decides	D1	the shared core of the panel doors: decrement before the comparison, read-back, ct comparison, pre-OTP fallback, budget reset	SEC-LAT-001,SEC-LAT-002,SEC-LAT-003
+store_local_pin	crates/rsk-fido/src/clientpin.rs:1289	39	decides	D3	enforces the minPINLength floor and the MAX_PIN_LENGTH ceiling and writes EF_PIN; the pcmr grant dies inside write_pin_verifier	SEC-FIDO-003
+store_device_pin	crates/rsk-fido/src/clientpin.rs:1335	25	decides	D3	writes EF_DEVICE_PIN with its own MIN_PIN_LENGTH floor — the record every panel gate looks at	SEC-FIDO-003
+encode	crates/rsk-fido/src/clientpin.rs:1367	10	marshals	M	minicbor wrapper: builds the response into the buffer and returns the length	-
 new	crates/rsk-fido/src/state.rs:71	24	decides	D4	the zeroed state of the assertion walk (active=false, uv=false) is what FidoState::reset sets as the revocation of the walk's rights	SEC-FIDO-003
 reset	crates/rsk-fido/src/state.rs:96	8	decides	D4	clears the walk that carries the presence/UV decision of the original getAssertion — after it, Next is not served	SEC-FIDO-003
 new	crates/rsk-fido/src/state.rs:152	16	decides	D4	the fail-closed cursor (rp_counter=1, rp_total=0): it is precisely what makes may_walk_rps false until an authorized Begin	SEC-FIDO-001

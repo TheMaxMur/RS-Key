@@ -170,7 +170,7 @@ ISSUED_PERMS = {
 }
 RESET_GATE_CODES = {0x00, 0x30}  # served, or the window's own NOT_ALLOWED
 
-# The clientPIN subcommands that hand out a pinUvAuthToken -- `clientpin.rs:136`'s
+# The clientPIN subcommands that hand out a pinUvAuthToken -- `clientpin.rs:145`'s
 # dispatch, where 0x05 and 0x09 share `get_pin_token` and 0x06 is the built-in-UV
 # door. A re-issuance through any of them over a token that already holds those
 # permissions moves NO raw field, so without the subcommand it is a bare stutter
@@ -228,7 +228,7 @@ NO_OPINION_EXEMPTIONS = {
 # nothing, because there is nothing to read: the absence of an action is what the
 # class asserts, and only a human comparing `Next` with §6 can say so.
 MODEL_SILENT_COMMANDS = {0x04, 0x08}
-# `clientpin.rs:136`'s read-only arms, the complement of `TOKEN_SUBCOMMANDS` that
+# `clientpin.rs:145`'s read-only arms, the complement of `TOKEN_SUBCOMMANDS` that
 # still reaches the mapper: getPinRetries and getKeyAgreement. setPIN (0x03) is
 # deliberately absent -- it IS modelled, and the one recorded boundary where it
 # answers an error lands in `refusal-is-a-disabled-action` instead.

@@ -71,7 +71,7 @@ fn no_token_after_invalidation_at_call_site() {
     let mut st = FidoState::new();
     let proto = PinProto::Two;
 
-    // Issuance, in `clientpin.rs:428-434`'s order, with a symbolic permission set.
+    // Issuance, in `clientpin.rs:451-457`'s order, with a symbolic permission set.
     let perms0: u8 = kani::any();
     st.reset_pin_uv_auth_token(&mut rng);
     st.begin_using_token(false, 1_000);
@@ -381,7 +381,7 @@ fn no_authorization_bypass_rps_begin_at_call_site() {
     let mut st = FidoState::new();
     let proto = PinProto::Two;
 
-    // Issuance in `clientpin.rs:428-442`'s order, with the permission set and the
+    // Issuance in `clientpin.rs:451-465`'s order, with the permission set and the
     // rpId binding both symbolic — the two halves the Begin's gate reads.
     let perms0: u8 = kani::any();
     let scoped: bool = kani::any();

@@ -19,8 +19,8 @@
 (*    the lap must re-arm it (`request_rescrub`) -- a tombstone appends too  *)
 (*    -- or the superseded copy stays readable forever: run-35 found FOUR OF *)
 (*    FIVE lazy re-keys skipping that, and its sweep landed the CALL at      *)
-(*    crates/rsk-fido/src/clientpin.rs:826,                                  *)
-(*    crates/rsk-fido/src/clientpin.rs:1225-1228,                            *)
+(*    crates/rsk-fido/src/clientpin.rs:861,                                  *)
+(*    crates/rsk-fido/src/clientpin.rs:1266-1269,                            *)
 (*    crates/rsk-piv/src/lib.rs:1398, crates/rsk-oath/src/lib.rs:1211,       *)
 (*    crates/rsk-openpgp/src/pin.rs:357 -- three of those five used to name  *)
 (*    the comment or the write ABOVE the call, which is what a mechanical    *)
@@ -73,7 +73,7 @@ CONSTANTS
     RekeyOrderModelled,
     \* Under that split, the record first and the re-arm after it -- the order
     \* the tree shipped until the re-arm was hoisted AHEAD of the write. The pair
-    \* this switch orders is crates/rsk-fido/src/clientpin.rs:826-834, and it
+    \* this switch orders is crates/rsk-fido/src/clientpin.rs:861-869, and it
     \* reads the FALSE arm there now: the `rsk_fs::request_rescrub_if` and then the
     \* `fs.put_over` below it. TRUE is the arm a cut could catch -- between the two the
     \* marker stands over a copy the write has already superseded, and a reset

@@ -29,7 +29,7 @@ code-owning configurations must have a production tag.
 
 ## What is decidable, and what is not
 
-That `clientpin.rs:35` still *means* what the model says is a review question.
+That `clientpin.rs:44` still *means* what the model says is a review question.
 That the file exists, that the line is inside it, and that a range runs forwards
 are not, so those are the rules — plus one drift signal that costs nothing: a
 citation whose first or last line is **blank**. Measured over every citation the
