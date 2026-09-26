@@ -343,6 +343,7 @@ where
         // Whatever the tap opened has closed, and a flow can close on a contact still down
         // (a nav-bar tap, a hold): the screen it returned to has not been touched yet.
         self.touch_armed = false;
+        self.hooks.sweep_dead_stack();
         true
     }
 }

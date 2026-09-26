@@ -253,6 +253,22 @@ fn a_tap_that_hits_nothing_is_still_a_local_interaction() {
     assert_ne!(LAST_LOCAL_MS.load(Ordering::Relaxed), stale);
 }
 
+/// A flow the panel runs leaves its frames dead when it returns, and no host request
+/// may follow to sweep them: the tick that ran it asks the board to, a quiet one not.
+#[test]
+fn a_returned_panel_flow_asks_for_the_dead_stack_sweep() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::taps(&[nowhere()]));
+    ui.onboarding = false;
+    env.local(&mut ui).handle_local_input(StatusKind::Idle); // arms the pad
+    assert_eq!(ui.hooks.sweeps, 0, "a tick with no gesture ran no flow");
+    assert!((0..8).any(|_| env.local(&mut ui).handle_local_input(StatusKind::Idle)));
+    assert_eq!(
+        ui.hooks.sweeps, 1,
+        "the tap's flow returned, and its frames were swept"
+    );
+}
+
 #[test]
 fn the_panel_blanks_after_the_sleep_timeout() {
     let env = Env::new();

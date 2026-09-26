@@ -65,6 +65,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- What a request's crypto left below the stack pointer stayed there until a
+  later frame overwrote it. RustCrypto's `Copy` temporaries, the `hmac` crate's
+  key XORed with its pads, `aes`'s key schedule and a SHAKE reader's state are
+  in no value a `Secret` or a `Drop` can reach: the frame that held them has
+  returned. Core0's dead stack, every word from the stack's floor to its live
+  frames, is now zeroed after each request, each keyboard OTP frame, each typed
+  ticket and each flow the panel runs, and core1 zeroes its own after each prime
+  search (`firmware/src/sweep.rs`). A `--features bench` build adds a vendor
+  probe (INS 0x15) that counts a pattern in that region and can stop the sweep,
+  and `tests/55_stack_residue.py` uses it to find an OATH key's HMAC residue
+  there with the sweep stopped and none with it running; that run, and what the
+  sweep adds to a request, are still to be measured on the board. Reading any of
+  it took a memory read on the live device. **bcdDevice → 0x0A4D.**
+
 - Freed heap blocks kept key material until an allocation reused them. The heap
   serves `rsk-rsa`'s big integers, and `num-bigint-dig` frees the limbs of its
   own working buffers without wiping them: a key rebuild's arithmetic (import,
@@ -116,9 +130,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   now writes only into a `rsk_secret::Secret`, which the compiler holds every
   reader to, the key, code and request copies are `Secret`s, and the keyboard
   frame is copied straight into the request buffer that wipes itself. The
-  `hmac` and `aes` crates still leave the key in their own dead frames, as a
-  padded block or a key schedule; the dead-stack sweep planned for this work
-  closes that. Reading any of it takes a memory read on the live device.
+  `hmac` and `aes` crates left the key in their own dead frames, as a padded
+  block or a key schedule, until the dead-stack sweep (0x0A4D). Reading any of
+  it takes a memory read on the live device.
   **bcdDevice → 0x0A23.**
 
 - OATH left a credential's secret in RAM after most commands. PUT, DELETE,
@@ -133,10 +147,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   walk and the boot pass that reseals legacy records wiped theirs. `rsk-oath`'s
   unseal now writes only into a `rsk_secret::Secret`, which the compiler holds
   every reader to, and the builders' buffers and those two MACs are `Secret`s
-  too, so each is wiped on every exit. The `hmac` crate still leaves the key,
-  XORed with its pad, in its own dead frame after every MAC; the dead-stack
-  sweep planned for this work closes that. Reading any of it takes a memory
-  read on the live device. **bcdDevice → 0x0A21.**
+  too, so each is wiped on every exit. The `hmac` crate left the key, XORed
+  with its pad, in its own dead frame after every MAC until the dead-stack sweep
+  (0x0A4D). Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A21.**
 
 - An RSA decipher left the deciphered block in freed RAM. OpenPGP's
   PSO:DECIPHER and PIV's GENERAL AUTHENTICATE both run
@@ -165,10 +179,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   Measured in an emulator on the release image, the secret bytes a derivation
   leaves in dead stack fall from 36.0 / 49.4 / 65.7 KB to 8.3 / 10.4 / 14.5 KB
   (ML-DSA-44 / -65 / -87), and its stack depth from 77.6 / 105.3 / 140.1 KB to
-  42.6 / 53.8 / 70.2 KB. What remains still rebuilds the key: ρ′ and K sit in
-  the SHAKE256 reader's state, which `sha3` never wipes; the dead-stack sweep
-  planned for the zeroize work is what closes that. Reading any of it takes a
-  memory read on the live device. **bcdDevice → 0x0A1C.**
+  42.6 / 53.8 / 70.2 KB. What remained still rebuilt the key — ρ′ and K sat in
+  the SHAKE256 reader's state, which `sha3` never wipes — until the dead-stack
+  sweep (0x0A4D). Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A1C.**
 
 - An RSA key generation could leave the key's primes on core0's stack. A prime
   core1 found was handed back by value on its way to the key, and each frame it

@@ -54,6 +54,9 @@ const INS_CORE1_STATS: u8 = 0x12;
 const INS_KEYGEN_BENCH: u8 = 0x13;
 // LATENCY MICROBENCH (measurement builds only): times one EC / KDF hot path.
 const INS_BENCH: u8 = 0x14;
+// STACK RESIDUE (measurement builds only): counts a pattern in the dead stack the
+// sweep zeroes, or stops and restarts the sweep for a positive control.
+const INS_STACK_RESIDUE: u8 = 0x15;
 /// REBOOT. P1: 0 = warm reboot, 1 = secure reboot to BOOTSEL.
 const INS_REBOOT: u8 = 0x1F;
 
@@ -100,6 +103,12 @@ pub trait Platform {
 
     /// Latency harness (INS 0x14); likewise measurement-only.
     fn latency_bench(&mut self, _p1: u8, _p2: u8, _res: &mut ResBuf) -> Sw {
+        Sw::INS_NOT_SUPPORTED
+    }
+
+    /// Dead-stack residue probe (INS 0x15); it reads what the sweep would remove,
+    /// so it is measurement-only too.
+    fn stack_residue(&mut self, _p1: u8, _data: &[u8], _res: &mut ResBuf) -> Sw {
         Sw::INS_NOT_SUPPORTED
     }
 }
@@ -206,6 +215,7 @@ impl<S: Storage, P: Platform> Applet<Fs<S>> for VendorApplet<'_, P> {
             },
             INS_KEYGEN_BENCH => self.platform.keygen_bench(apdu.p1, apdu.data, res),
             INS_BENCH => self.platform.latency_bench(apdu.p1, apdu.p2, res),
+            INS_STACK_RESIDUE => self.platform.stack_residue(apdu.p1, apdu.data, res),
             INS_REBOOT => {
                 // Just record the request — the reset runs after this SW_OK
                 // reaches the host.

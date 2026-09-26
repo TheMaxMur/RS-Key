@@ -291,6 +291,7 @@ fn core1_main(stack_floor: u32) -> ! {
         JOBS.fetch_add(1, Ordering::Relaxed);
         search(&job);
         job.seed.wipe();
+        crate::sweep::dead_stack();
         BUSY.store(false, Ordering::Release);
         cortex_m::asm::sev();
     }

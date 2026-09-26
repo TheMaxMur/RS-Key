@@ -427,7 +427,7 @@ sha256 = "0a1bc93a320447121b5ab19c9dab6ee8a03a688df2e684b6d9a89097e3e3ee3d"
 # (PLAT-BUILD-001) already claims its id and needs nothing — and four need a new
 # entry. None of it is written here: this bundle may not edit that registry, so
 # every addition and every `covers` extension is PROPOSED, and
-# `scripts/platform_gate.py:1890-1918` derives every id below and fails in BOTH
+# `scripts/platform_gate.py:1894-1922` derives every id below and fails in BOTH
 # directions until an entry claims it.
 #
 # INTEGRATOR: merging the proposals flips four `registered` fields in this file

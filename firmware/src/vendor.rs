@@ -31,6 +31,18 @@ const SEL_OTP_READ: u8 = 3;
 /// the host divides the sample by this.
 #[cfg(feature = "bench")]
 const OTP_READ_REPS: u32 = 100;
+/// The residue probe's selectors, and the pattern lengths it takes: short enough
+/// to say where a secret came from, long enough not to match by chance.
+#[cfg(feature = "bench")]
+const RESIDUE_SCAN: u8 = 0;
+#[cfg(feature = "bench")]
+const RESIDUE_STOP: u8 = 1;
+#[cfg(feature = "bench")]
+const RESIDUE_RESTART: u8 = 2;
+#[cfg(feature = "bench")]
+const RESIDUE_PATTERN_MIN: usize = 8;
+#[cfg(feature = "bench")]
+const RESIDUE_PATTERN_MAX: usize = 64;
 
 /// The pending reboot. Set by the applet's REBOOT and consumed by the worker once
 /// the SW_OK response has been sent — the reset can't run inline or the host never
@@ -178,6 +190,30 @@ impl rsk_vendor::Platform for VendorPlatform {
             res.extend(&OTP_READ_REPS.to_le_bytes());
         }
         Sw::OK
+    }
+
+    /// P1 selects: 0 = count `data` (the pattern) in core0's dead stack, answering
+    /// matches ‖ non-zero bytes ‖ bytes scanned, each a little-endian u32; 1 = stop
+    /// the sweep on both cores; 2 = restart it. Behind `bench`: it reads dead stack.
+    #[cfg(feature = "bench")]
+    fn stack_residue(&mut self, p1: u8, data: &[u8], res: &mut ResBuf) -> Sw {
+        match p1 {
+            RESIDUE_SCAN => {
+                if !(RESIDUE_PATTERN_MIN..=RESIDUE_PATTERN_MAX).contains(&data.len()) {
+                    return Sw::WRONG_LENGTH;
+                }
+                let found = crate::sweep::residue(data);
+                res.extend(&found.matches.to_le_bytes());
+                res.extend(&found.nonzero.to_le_bytes());
+                res.extend(&found.scanned.to_le_bytes());
+                Sw::OK
+            }
+            RESIDUE_STOP | RESIDUE_RESTART => {
+                crate::sweep::pause(p1 == RESIDUE_STOP);
+                Sw::OK
+            }
+            _ => Sw::INCORRECT_P1P2,
+        }
     }
 }
 

@@ -543,10 +543,14 @@ when it returns. That is what puts them out of reach of a parser bug — parsing
 runs before any store access, so at that moment neither key is anywhere in
 memory. It buys nothing against code execution, which can drive the same reads.
 Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic and
-digest internals, in stack slots until a later frame overwrites them. The
-working buffers `num-bigint-dig` allocates inside its own arithmetic — a
-division's, a modular inverse's, a modular exponentiation's — it frees
-unwiped; `rsk-rsa` holds a key's values, its blinding values and a private
+digest internals, in stack slots until the work that made them is done: core0's
+dead stack is zeroed after each request, keyboard OTP frame, typed ticket and
+panel flow, and core1's after each prime search (`firmware/src/sweep.rs`). The
+few hundred bytes above the shallowest of those callers — the tasks' own poll
+frames, interrupt frames taken while the worker idles — no sweep reaches. The
+working buffers `num-bigint-dig` allocates inside its own
+arithmetic — a division's, a modular inverse's, a modular exponentiation's — it
+frees unwiped; `rsk-rsa` holds a key's values, its blinding values and a private
 operation's result and intermediates in a `Secret` or a key type whose `Drop`
 wipes them, except the primes and `d` of a key `RsaKey::from_p_q` refuses. The
 heap closes both for what it holds: it wipes each block as it frees it

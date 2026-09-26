@@ -127,7 +127,8 @@ core1-stats = []
 # hot paths. Times a primitive over many iterations via the RP2350 timer and
 # returns a robust median/MAD + a cold-cache sample (see `rsk bench`), so EC
 # latency A/B survives the XIP-cache/code-layout noise. Pulls in `rsk-bench` for
-# the (gated, Kani-proved) on-device summary.
+# the (gated, Kani-proved) on-device summary. Also carries the dead-stack probe
+# (INS 0x15, `tests/55_stack_residue.py`), which reads what the sweep removes.
 bench = ["dep:rsk-bench", "rsk-fido/bench"]
 # FIDO Conformance Tool build profile (see rsk-fido's feature docs): suppresses
 # the EdDSA (-8) advertisement so the tool can verify every advertised algorithm.

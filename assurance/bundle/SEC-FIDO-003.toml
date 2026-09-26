@@ -486,7 +486,7 @@ sha256 = "beedae517d84c4e8900a89f584a439ca0e09bc71d81810e6a52857c9f79fee30"
 # SEC-FIDO-007's precedent with AS-AUTH-2 — a fresh id for the same standing
 # assumption creates a candidate no entry claims and reddens platform-gate.
 #
-# `registered` is machine-checked: scripts/platform_gate.py:1890-1918 compares
+# `registered` is machine-checked: scripts/platform_gate.py:1894-1922 compares
 # `registered.startswith("yes")` against whether some assurance/platform.toml
 # entry's `covers` names `slice:<id>`. The seven new ids are RED there until the
 # integrator merges the six new entries and one extension proposed alongside

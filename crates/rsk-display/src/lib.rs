@@ -139,6 +139,9 @@ pub trait Hooks {
         30_000
     }
     fn set_presence_timeout_ms(&mut self, _ms: u32) {}
+    /// Zero the stack below the caller once a flow the panel ran has returned: its
+    /// frames held what it handled (a PIN, a revealed phrase), and no request follows.
+    fn sweep_dead_stack(&mut self) {}
     /// Search for an RSA key on whatever accelerator the board has, calling
     /// `on_tick` often enough to keep the on-screen spinner moving. `None` means
     /// no accelerator *and* no key — the caller reports the failure either way, so

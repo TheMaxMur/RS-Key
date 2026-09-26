@@ -374,13 +374,17 @@ impl<'a> Worker<'a> {
             {
                 Either3::First(_) => {
                     self.handle_transport().await;
+                    crate::sweep::dead_stack();
                     // A vendor reboot command takes effect only after its SW_OK has
                     // been sent (the reset can't run mid-dispatch).
                     if let Some(mode) = crate::vendor::take_reboot() {
                         self.reboot(mode).await;
                     }
                 }
-                Either3::Second(_) => self.handle_otp_hid(),
+                Either3::Second(_) => {
+                    self.handle_otp_hid();
+                    crate::sweep::dead_stack();
+                }
                 Either3::Third(_) => {
                     self.button_tick();
                     // A reboot queued off-transport — the display's Settings → Firmware
@@ -676,6 +680,8 @@ impl<'a> Worker<'a> {
         if let Some((buf, len, encode)) = self.ccid.otp_button_ticket(slot, ts) {
             otp_kbd::enqueue(&buf[..len], encode);
         }
+        // The ticket was made with the slot's key, and `aes` leaves its schedule.
+        crate::sweep::dead_stack();
     }
 
     /// Secure reboot. The SW_OK has already been signalled; give it ~200 ms to
@@ -685,10 +691,10 @@ impl<'a> Worker<'a> {
     /// from RAM; `mode` 1 is a warm reboot. Flash-at-rest secrets are out of
     /// scope for this path.
     ///
-    /// The stack is deliberately not scrubbed. `tests/54_sram_residue.py` measured
-    /// the premise on RP2350 A4: after the drop, all 520 KiB of SRAM read as zeros
-    /// while a pattern written through picoboot read straight back, so the platform
-    /// clears it and there is nothing there to reach.
+    /// The stack is not scrubbed here: its dead part was swept as the work that
+    /// queued this returned, and `tests/54_sram_residue.py` measured the rest on
+    /// RP2350 A4 — after the drop all 520 KiB of SRAM read as zeros while a pattern
+    /// written through picoboot read back, so the platform clears it.
     #[expect(
         clippy::disallowed_methods,
         reason = "the one reset, and it comes after every scrub in this function"

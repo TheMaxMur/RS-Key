@@ -57,7 +57,7 @@ This tree already pays for one foreign-language boundary, so "a second one
 costs at least as much again" is a measurement rather than a guess. What the
 first one costs today:
 
-- **three `unsafe` call sites** — `docs/unsafe.md` sites 23–25, at
+- **three `unsafe` call sites** — `docs/unsafe.md` sites 25–27, at
   `crates/rsk-rsa/src/lib.rs:404`, `crates/rsk-rsa/src/lib.rs:495` and
   `crates/rsk-rsa/src/lib.rs:587`, behind the `unsafe extern "C"` block at
   `crates/rsk-rsa/src/lib.rs:305` — plus a fourth, build-time, in

@@ -128,6 +128,10 @@ impl rsk_display::Hooks for DisplayHooks {
         self.bl.set_config(&backlight_cfg(duty));
     }
 
+    fn sweep_dead_stack(&mut self) {
+        crate::sweep::dead_stack();
+    }
+
     fn wake_pressed(&self) -> bool {
         match &self.wake_btn {
             Some((btn, active_high)) => {

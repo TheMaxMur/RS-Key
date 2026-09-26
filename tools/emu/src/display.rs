@@ -253,11 +253,18 @@ impl rsk_display::TouchPad for Touch {
 /// `every_display_hook_is_accounted_for` refuses a hook in neither column; it is
 /// this list's only reader, so the list is gated to a test build.
 #[cfg(test)]
-const DEFAULTED_HOOKS: &[(&str, &str)] = &[(
-    "secure_boot_enabled",
-    "read from OTP; there are no fuses here, and `false` is what a device without \
-     secure boot reports",
-)];
+const DEFAULTED_HOOKS: &[(&str, &str)] = &[
+    (
+        "secure_boot_enabled",
+        "read from OTP; there are no fuses here, and `false` is what a device without \
+         secure boot reports",
+    ),
+    (
+        "sweep_dead_stack",
+        "zeroes the board's own stack below a returned panel flow (firmware/src/sweep.rs); \
+         a flow here runs on a host thread, whose stack is not device memory",
+    ),
+];
 
 /// The board verbs, for a board that is a window.
 ///

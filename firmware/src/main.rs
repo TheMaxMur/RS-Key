@@ -56,6 +56,7 @@ mod otp_keys;
 mod pin_lock;
 mod presence;
 mod rescue_platform;
+mod sweep;
 mod usb_attach;
 mod vendor;
 mod worker;
@@ -777,7 +778,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A4C;
+    let device_release: u16 = 0x0A4D;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

@@ -7,13 +7,13 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 27.** Seventeen in the firmware proper (`main.rs` + `presence.rs`):
+**Runtime sites: 29.** Seventeen in the firmware proper (`main.rs` + `presence.rs`):
 the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
 CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves; one
-stack limit per core, core0's in `main.rs` too; three in the RSA assembly FFI;
-two in the standalone flash-wipe tool.
+stack limit per core, core0's in `main.rs` too; two for the dead-stack sweep and
+its probe; three in the RSA assembly FFI; two in the standalone flash-wipe tool.
 
 ```mermaid
 flowchart TB
@@ -28,6 +28,10 @@ flowchart TB
     subgraph kg["firmware/src/core1.rs"]
       e["per-core prime sieves (×3)"]
       e2["core1 stack limit (MSPLIM)"]
+    end
+    subgraph sw["firmware/src/sweep.rs"]
+      s1["dead-stack sweep"]
+      s2["residue probe (bench builds)"]
     end
     subgraph asm["rsk-rsa"]
       f["modexp / sign_crt / modexp_pub FFI (×3)"]
@@ -235,7 +239,9 @@ runs off into unmapped space and faults with or without this — there is no gap
 here to close. What the write buys is independence from the linker. Drop
 `flip-link` and that floor disappears silently, along with the only thing keeping
 this stack out of `.bss`; `MSPLIM` states the bound in code, where it can be read
-and where removing it is a visible edit.
+and where removing it is a visible edit. It is also where the dead-stack sweep
+(sections 23–24) reads core0's floor: without the write it reads 0 and sweeps
+nothing.
 *Safe alternative:* none. `cortex-m` offers no checked form, and the MPU route is
 both weaker (above) and more `unsafe`, not less.
 *Containment:* one write per core, on the core that owns that stack, before anything has
@@ -247,9 +253,39 @@ the device until it is replugged. That is the trade being made — a wedge a rep
 clears, rather than a silent write into whatever `.bss` the linker put below,
 issued by the routine that is at that moment generating and storing a key.
 
+## Dead-stack sweep (`firmware/src/sweep.rs`)
+
+### 23–24. The sweep and its probe — `PLAT-UNSAFE-014`
+
+```rust
+unsafe { core::ptr::with_exposed_provenance_mut::<u32>(word).write_volatile(0) }; // the sweep, either core
+unsafe { core::ptr::with_exposed_provenance::<u8>(addr).read_volatile() }         // the probe, `bench` only
+```
+
+What a request's crypto leaves below the stack pointer — a RustCrypto `Copy`
+temporary, the `hmac` crate's padded key block, a SHAKE reader's state — no
+`Drop` or `Secret` can reach, because the frame that held it has returned. So
+core0's dead stack is zeroed after every request, keyboard OTP frame and typed
+ticket (by the worker) and every flow the panel runs (through the display's
+hooks), and core1 zeroes its own after every prime search: every word from the
+floor that core's `MSPLIM` holds (sections 21–22) up to its stack pointer, both
+read by the code on that core, eight stores a pass. Nothing under the live
+pointer is a value: the stack grows down, and what is below belongs to frames
+that have returned. An interrupt taken mid-sweep pushes its frame below the
+pointer and returns before the loop runs again, so no store lands under a live
+frame; what a handler leaves in the part already swept waits for the next sweep.
+A measurement build (`--features bench`) adds vendor `INS 0x15`, which reads the
+same region to count a pattern in it and can stop the sweep for a positive
+control; `check.sh` holds it out of the default image with the other debug
+commands.
+*Safe alternative:* none; memory no Rust value owns has no safe handle.
+*Containment:* one function, bounded by two registers of the core it runs on,
+called at three points in the worker, from the display's hooks and in core1's job
+loop, each after the work's frames have returned; the probe only reads.
+
 ## RSA assembly FFI (`crates/rsk-rsa/src/lib.rs`)
 
-### 23–25. The modexp / CRT-sign calls — `PLAT-UNSAFE-007`
+### 25–27. The modexp / CRT-sign calls — `PLAT-UNSAFE-007`
 
 On-card RSA key generation needs hundreds of modular exponentiations over
 1024–2048-bit candidates. The pure-Rust path was ~7× too slow on the
@@ -268,7 +304,7 @@ all host tests exercise the same API safely.
 
 ## Flash wiper (`rsk-wipe/src/main.rs`)
 
-### 26–27. Raw flash erase/program in a critical section — `PLAT-UNSAFE-008`
+### 28–29. Raw flash erase/program in a critical section — `PLAT-UNSAFE-008`
 
 The wiper's entire job is to erase the flash the firmware lives on, from a
 RAM-resident image. It calls the ROM flash-erase/program routines inside

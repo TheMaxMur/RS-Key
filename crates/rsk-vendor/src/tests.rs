@@ -128,6 +128,7 @@ fn a_build_without_the_hardware_says_so() {
         INS_CORE1_STATS,
         INS_KEYGEN_BENCH,
         INS_BENCH,
+        INS_STACK_RESIDUE,
     ] {
         let (sw, body) = run(&mut app, &mut fs, &apdu(ins, 0, 0, &[]));
         assert_eq!(sw, Sw::INS_NOT_SUPPORTED, "ins {ins:#04x}");

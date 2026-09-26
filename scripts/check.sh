@@ -247,9 +247,9 @@ assurance_trace_is_image_neutral() {
   echo "assurance sources are absent from firmware; poisoned/default images are byte-identical"
 }
 
-# The vendor AID's three debug commands (INS 12/13/14) are timing oracles — over
-# the RSA keygen prime search and the EC/KDF hot paths — so each is feature-gated
-# and none may reach a shipped image. A `#[cfg]` is only as good as the default
+# The vendor AID's four debug commands (INS 12/13/14/15) are oracles — timing ones
+# over the RSA keygen prime search and the EC/KDF hot paths, and a read of the dead
+# stack the sweep zeroes — so each is feature-gated and none may reach a shipped image. A `#[cfg]` is only as good as the default
 # feature set, and nothing else here reads the artifact, so read it: `opt-level=s`
 # inlines the method away but `debug = 2` keeps its linkage name. `led_block` is
 # the positive control — the same `impl Platform for VendorPlatform` produces it —
@@ -257,15 +257,15 @@ assurance_trace_is_image_neutral() {
 # Mutation table, each observed red — and note a bare `#[cfg]` removal is a COMPILE
 # error (the bodies need feature-gated items), so the mutations are whole builds:
 # the pre-gate image → `core1_stats` fires; `--features bench,keygen-bench,core1-stats`
-# → all three names present, row red; `strip --strip-debug` → the control fires.
-DEBUG_VENDOR_METHODS=(core1_stats keygen_bench latency_bench)
+# → all four names present, row red; `strip --strip-debug` → the control fires.
+DEBUG_VENDOR_METHODS=(core1_stats keygen_bench latency_bench stack_residue)
 debug_vendor_commands_absent() {
   local elf="target/thumbv8m.main-none-eabihf/release/firmware" m
   if [ ! -f "$elf" ]; then
     echo "FAIL: $elf was not built, so there is nothing to check." >&2
     exit 1
   fi
-  if [ "${#DEBUG_VENDOR_METHODS[@]}" -ne 3 ]; then
+  if [ "${#DEBUG_VENDOR_METHODS[@]}" -ne 4 ]; then
     echo "FAIL: the debug-command list lost an entry; an empty loop reads as a pass." >&2
     exit 1
   fi
@@ -277,7 +277,7 @@ debug_vendor_commands_absent() {
   for m in "${DEBUG_VENDOR_METHODS[@]}"; do
     if LC_ALL=C grep -qa "$m" "$elf"; then
       echo "FAIL: the debug vendor command \`$m\` is compiled into the default image." >&2
-      echo "      It is a timing oracle; keep it behind its feature. Matched:" >&2
+      echo "      It is an oracle over secrets; keep it behind its feature. Matched:" >&2
       # An unanchored match over 17 MB of .debug_str: print it, so an unrelated
       # name colliding with one of these is diagnosable rather than just red.
       LC_ALL=C grep -ao ".\{0,60\}$m.\{0,20\}" "$elf" | head -3 >&2

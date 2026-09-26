@@ -312,6 +312,8 @@ pub struct Board {
     pub pin_changed: usize,
     /// …and how many times a failed clientPIN comparison at the pad did.
     pub pin_failed: usize,
+    /// How many times a returned panel flow asked for the dead stack to be swept.
+    pub sweeps: usize,
 }
 
 impl Board {
@@ -333,6 +335,7 @@ impl Board {
             attach_ms: 0,
             pin_changed: 0,
             pin_failed: 0,
+            sweeps: 0,
         }
     }
 
@@ -378,6 +381,9 @@ impl Hooks for Board {
     }
     fn note_local_pin_failed(&mut self) {
         self.pin_failed += 1;
+    }
+    fn sweep_dead_stack(&mut self) {
+        self.sweeps += 1;
     }
     fn secure_boot_enabled(&self) -> bool {
         self.secure_boot

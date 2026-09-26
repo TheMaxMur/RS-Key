@@ -421,7 +421,7 @@ sha256 = "13928ba3caee7642ada6584f3fcd795c3d23b596f97ec7edbd06c4d81dfca799"
 # slice id at all — and one needs no registry change because it reuses the id
 # SEC-FIDO-007's bundle uses for the same standing assumption. The three new
 # entries are proposed rather than written: `assurance/platform.toml` is not this
-# bundle's file, and `scripts/platform_gate.py:1890-1918` will be RED against every
+# bundle's file, and `scripts/platform_gate.py:1894-1922` will be RED against every
 # `AS-F004-*` id below until the integrator merges them.
 
 [[assumption]]
