@@ -113,7 +113,7 @@ owners_consequent = [
   "crates/rsk-fs/src/fs.rs:478 `Fs::factory_wipe` — the SECOND deleter, device-wide, which bypasses `reset()` entirely and is unmodelled (AS-TOK-4)",
   "crates/rsk-fido/src/clientpin.rs:858-859 `write_pin_verifier` — the one EF_PIN writer that is not a deleter: it OVERWRITES and clears the persistent grant first, so it cannot falsify this implication",
 ]
-# The file the one killed code twin patches (formal/comutants.toml:361-384). Not
+# The file the one killed code twin patches (formal/comutants.toml:367-390). Not
 # among the tagged owners, and the same file the counterpart's twin patches.
 owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 # The test that falls when that twin is applied — and it asserts about the RAM

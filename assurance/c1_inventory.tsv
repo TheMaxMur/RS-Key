@@ -111,12 +111,12 @@ emit_tlv	crates/rsk-oath/src/lib.rs:2158	16	decides	M	appends a TLV to the buffe
 ct_eq	crates/rsk-oath/src/lib.rs:2172	5	decides	D5	constant-time comparison that decides VALIDATE, SET CODE and OTP-PIN; a short response must not match	-
 otp_status_record	crates/rsk-device/src/ccid.rs:467	7	marshals	M	rearranges the bytes of an already-built status frame for boot-seeding the keyboard report; touches no gate at all	-
 coord	crates/rsk-fido/src/clientpin.rs:100	7	marshals	M	try_into of a coordinate of the platform's PUBLIC key to 32 bytes before ECDH (clientpin.rs:731); the refusal is a matter of wire width (parity with YubiKey), not a gate verdict	-
-derive_chacha_key	crates/rsk-fido/src/credential.rs:210	6	decides	D2	computes the ChaCha box key from the seed; it opens the credential box, EF_RP, the nick and largeBlob — 9 production call sites	SEC-FIDO-004
-silent_tag	crates/rsk-fido/src/credential.rs:218	19	decides	D2	computes the key sha256(otp_key|serial_id ‖ rpIdHash) and the MAC under it into the tail of the id that goes out to the RP; the binding to rpIdHash is the only thing that keeps two RPs from linking the device (NOBODY checks the tag; verdict by rule 1 + "computes a key")	-
-derive_resident	crates/rsk-fido/src/credential.rs:526	32	decides	D2	the 42-byte id for the RP is HMAC-SHA512 under serial_id, and no byte can be recomputed from the rest; the carve-out [4..8] (credential.rs:554) keeps a v4-id from being read as legacy and rebound to the box	SEC-FIDO-005
-derive_hmac_key	crates/rsk-fido/src/credential.rs:575	12	decides	D2	computes the 64-byte cred_random hmac-secret from the seed — exactly the secret that goes out to the RP	SEC-FIDO-004
-derive_large_blob_key	crates/rsk-fido/src/credential.rs:588	10	decides	D2	computes largeBlobKey from the seed; it is issued to the RP and decrypts its blob	SEC-FIDO-004
-cred_store_state	crates/rsk-fido/src/credential.rs:730	18	decides	D5	keeps Err apart from absence: the zero tag is the tag of a FRESH device, and collapsing a failed read into it would replay a prefix of the sequence to the platform; its Err is the condition on which the getInfo member is not published	SEC-STORE-002,SEC-FIDO-005
+derive_chacha_key	crates/rsk-fido/src/credential.rs:219	6	decides	D2	computes the ChaCha box key from the seed; it opens the credential box, EF_RP, the nick and largeBlob — 9 production call sites	SEC-FIDO-004
+silent_tag	crates/rsk-fido/src/credential.rs:227	19	decides	D2	computes the key sha256(otp_key|serial_id ‖ rpIdHash) and the MAC under it into the tail of the id that goes out to the RP; the binding to rpIdHash is the only thing that keeps two RPs from linking the device (NOBODY checks the tag; verdict by rule 1 + "computes a key")	-
+derive_resident	crates/rsk-fido/src/credential.rs:530	32	decides	D2	the 42-byte id for the RP is HMAC-SHA512 under serial_id, and no byte can be recomputed from the rest; the carve-out [4..8] (credential.rs:558) keeps a v4-id from being read as legacy and rebound to the box	SEC-FIDO-005
+derive_hmac_key	crates/rsk-fido/src/credential.rs:579	12	decides	D2	computes the 64-byte cred_random hmac-secret from the seed — exactly the secret that goes out to the RP	SEC-FIDO-004
+derive_large_blob_key	crates/rsk-fido/src/credential.rs:592	10	decides	D2	computes largeBlobKey from the seed; it is issued to the RP and decrypts its blob	SEC-FIDO-004
+cred_store_state	crates/rsk-fido/src/credential.rs:745	18	decides	D5	keeps Err apart from absence: the zero tag is the tag of a FRESH device, and collapsing a failed read into it would replay a prefix of the sequence to the platform; its Err is the condition on which the getInfo member is not published	SEC-STORE-002,SEC-FIDO-005
 load_keydev	crates/rsk-fido/src/lib.rs:101	9	decides	D2	the only access FIDO operations have to the seed: the RAM copy after vendor UNLOCK wins over flash, and the refusal of both halves is itself the soft-lock	SEC-FIDO-006,SEC-FIDO-007,SEC-FIDO-004
 seal_seed_locked	crates/rsk-fido/src/seed.rs:105	15	decides	D2	wraps the seed VALUE under the host's 32-byte key (AUT_ENABLE) — this blob stays on flash instead of the plaintext seed	SEC-FIDO-004,SEC-FIDO-007
 open_seed_locked	crates/rsk-fido/src/seed.rs:121	20	decides	D2	checks the Poly1305 tag of the lock blob; its Some is itself the clearing of the soft-lock and the seed's arrival in RAM	SEC-FIDO-004,SEC-FIDO-007
@@ -476,34 +476,34 @@ store_verifier	crates/rsk-openpgp/src/pin.rs:808	17	decides	D3	stores the record
 change_pin	crates/rsk-openpgp/src/pin.rs:860	67	decides	D1	checks the old PIN, opens the DEK and writes stage/verifier/commit; an unsupported P2 is rejected before any write	SEC-LAT-002
 reset_retry	crates/rsk-openpgp/src/pin.rs:928	81	decides	D1	two doors to a new PW1 — reset code and PW3 — both raise the PW1 budget after their own secret is presented	SEC-LAT-003,SEC-LAT-001
 put_reset_code	crates/rsk-openpgp/src/pin.rs:1011	45	decides	D1	requires PW3, seals the DEK under the new RC and enables its counter; empty data goes to clear_reset_code	SEC-LAT-003
-truncate_utf8	crates/rsk-fido/src/credential.rs:108	11	marshals	M	cuts the string at a UTF-8 boundary — length arithmetic and nothing more	-
-cred_blob_ok	crates/rsk-fido/src/credential.rs:157	7	marshals	M	length comparison against MAX_CREDBLOB_LENGTH; the record is written in both cases, the blob simply does not get into the box	-
-box_entries	crates/rsk-fido/src/credential.rs:165	8	marshals	M	counts the entries of the 0x07 sub-map for the CBOR header	-
-is_resident	crates/rsk-fido/src/credential.rs:238	7	decides	M	comparison of 4 bytes against the literal CRED_PROTO_RESIDENT: a v1-v3/v4 format dispatcher, not a right	-
-credential_create	crates/rsk-fido/src/credential.rs:246	37	decides	D2	seals the box: key from the seed, rpIdHash as AAD, which is exactly the owner binding that verify_decrypt later checks	SEC-FIDO-004
-encode_body	crates/rsk-fido/src/credential.rs:284	64	marshals	M	CBOR encoding of already accepted fields, no policy branch at all	-
-try_format	crates/rsk-fido/src/credential.rs:349	37	decides	D2	poly1305 tag check under AAD=rpIdHash: its res.ok()? is exactly the moment the plaintext becomes reachable	SEC-FIDO-004
-verify_decrypt	crates/rsk-fido/src/credential.rs:387	56	decides	D2	selects the key label — for the oldest format it takes it FROM THE WIRE (cred_id[..4]), i.e. decides which key to open with	SEC-FIDO-004
-credential_load	crates/rsk-fido/src/credential.rs:444	35	decides	D2	Some(..) means "this credential belongs to this rp on this device"; the U2F branch authorizes by the verify_key MAC	SEC-FIDO-004
-parse_body	crates/rsk-fido/src/credential.rs:480	45	decides	D5	the default credProtect is set here (field absent → 0), and that is the condition of the uv gate in getassertion.rs:257 and u2f.rs:266	SEC-FIDO-001
-resident_keys_off_id	crates/rsk-fido/src/credential.rs:559	8	decides	D5	decides what the signing key is derived from — the stable resident id or the box	-
-resident_has_trailer	crates/rsk-fido/src/credential.rs:568	6	decides	M	record layout test: whether there is a prefix with the cached point	-
-resident_key_input	crates/rsk-fido/src/credential.rs:599	23	decides	D2	returns the key-derivation input: exactly which key answers for the signature, hmac-secret and largeBlobKey	SEC-FIDO-004
-cred_box_offset	crates/rsk-fido/src/credential.rs:643	11	marshals	M	offset of the box inside the record, with a clamp; an error here yields a decryption refusal, not a hand-out	-
-cred_record_box	crates/rsk-fido/src/credential.rs:655	7	marshals	M	slice of the record from the computed offset	-
-cred_record_pubkey	crates/rsk-fido/src/credential.rs:663	13	marshals	M	slice of the cached point by the length prefix	-
-compose_cred_record	crates/rsk-fido/src/credential.rs:677	33	decides	D3	its None means KeyStoreFull, which keeps the record from being written; and it stores the owner prefix rp_id_hash	SEC-FIDO-005
-slot_map	crates/rsk-fido/src/credential.rs:719	10	decides	M	delegates to fs.present_slots — a read of the presence index	-
-bump_cred_store_state	crates/rsk-fido/src/credential.rs:749	13	decides	D3	writes EF_CRED_STATE, and its refusal cancels the store change (the "before the write" order)	-
-remaining_discoverable	crates/rsk-fido/src/credential.rs:763	10	marshals	M	counts occupied slots for the getInfo 0x14 estimate, forbids nothing	-
-remaining_rk	crates/rsk-fido/src/credential.rs:774	12	marshals	M	min of two budgets for the report; registration is refused not by it but by the slot search	-
-credential_store	crates/rsk-fido/src/credential.rs:795	102	decides	D3	writes EF_CRED, bumps EF_RP and the signature counter; the order is chosen so that a power cut does not leave a credential without EF_RP	SEC-FIDO-005
-bump_rp	crates/rsk-fido/src/credential.rs:898	63	decides	D3	creates/increments EF_RP; an unread slot → MemoryFatal, otherwise a second EF_RP would appear for the same rpIdHash	SEC-FIDO-005,SEC-STORE-002
-seal_rp_id	crates/rsk-fido/src/credential.rs:962	28	decides	D2	decides whether the rpId domain sits in flash as plaintext	SEC-FIDO-004
-unseal_rp_id	crates/rsk-fido/src/credential.rs:996	36	decides	D2	hands out the plaintext domain; on AEAD failure it returns the RAW tail as legacy cleartext (was_boxed=false)	SEC-FIDO-004
-seal_nick	crates/rsk-fido/src/credential.rs:1034	42	decides	D2	seals the nickname, the IV is synthesized from the plaintext — this is the rule against nonce reuse	SEC-FIDO-004
-unseal_nick	crates/rsk-fido/src/credential.rs:1082	31	decides	D2	opens only under its own rpIdHash — the AEAD itself is the protection against slot reuse	SEC-FIDO-004
-migrate_rp_seal	crates/rsk-fido/src/credential.rs:1115	62	decides	D3	the boot pass rewrites the EF_RP records and makes the write conditional on request_rescrub	SEC-FIDO-004
+truncate_utf8	crates/rsk-fido/src/credential.rs:117	11	marshals	M	cuts the string at a UTF-8 boundary — length arithmetic and nothing more	-
+cred_blob_ok	crates/rsk-fido/src/credential.rs:166	7	marshals	M	length comparison against MAX_CREDBLOB_LENGTH; the record is written in both cases, the blob simply does not get into the box	-
+box_entries	crates/rsk-fido/src/credential.rs:174	8	marshals	M	counts the entries of the 0x07 sub-map for the CBOR header	-
+is_resident	crates/rsk-fido/src/credential.rs:250	7	decides	M	comparison of 4 bytes against the literal CRED_PROTO_RESIDENT: a v1-v3/v4 format dispatcher, not a right	-
+credential_create	crates/rsk-fido/src/credential.rs:258	37	decides	D2	seals the box: key from the seed, rpIdHash as AAD, which is exactly the owner binding that verify_decrypt later checks	SEC-FIDO-004
+encode_body	crates/rsk-fido/src/credential.rs:303	64	marshals	M	CBOR encoding of already accepted fields, no policy branch at all	-
+try_format	crates/rsk-fido/src/credential.rs:368	37	decides	D2	poly1305 tag check under AAD=rpIdHash: its res.ok()? is exactly the moment the plaintext becomes reachable	SEC-FIDO-004
+verify_decrypt	crates/rsk-fido/src/credential.rs:399	56	decides	D2	selects the key label — for the oldest format it takes it FROM THE WIRE (cred_id[..4]), i.e. decides which key to open with	SEC-FIDO-004
+credential_load	crates/rsk-fido/src/credential.rs:448	35	decides	D2	Some(..) means "this credential belongs to this rp on this device"; the U2F branch authorizes by the verify_key MAC	SEC-FIDO-004
+parse_body	crates/rsk-fido/src/credential.rs:484	45	decides	D5	the default credProtect is set here (field absent → 0), and that is the condition of the uv gate in getassertion.rs:257 and u2f.rs:266	SEC-FIDO-001
+resident_keys_off_id	crates/rsk-fido/src/credential.rs:563	8	decides	D5	decides what the signing key is derived from — the stable resident id or the box	-
+resident_has_trailer	crates/rsk-fido/src/credential.rs:572	6	decides	M	record layout test: whether there is a prefix with the cached point	-
+resident_key_input	crates/rsk-fido/src/credential.rs:603	23	decides	D2	returns the key-derivation input: exactly which key answers for the signature, hmac-secret and largeBlobKey	SEC-FIDO-004
+cred_box_offset	crates/rsk-fido/src/credential.rs:655	11	marshals	M	offset of the box inside the record, with a clamp; an error here yields a decryption refusal, not a hand-out	-
+cred_record_box	crates/rsk-fido/src/credential.rs:667	7	marshals	M	slice of the record from the computed offset	-
+cred_record_pubkey	crates/rsk-fido/src/credential.rs:677	13	marshals	M	slice of the cached point by the length prefix	-
+compose_cred_record	crates/rsk-fido/src/credential.rs:691	33	decides	D3	its None means KeyStoreFull, which keeps the record from being written; and it stores the owner prefix rp_id_hash	SEC-FIDO-005
+slot_map	crates/rsk-fido/src/credential.rs:734	10	decides	M	delegates to fs.present_slots — a read of the presence index	-
+bump_cred_store_state	crates/rsk-fido/src/credential.rs:764	13	decides	D3	writes EF_CRED_STATE, and its refusal cancels the store change (the "before the write" order)	-
+remaining_discoverable	crates/rsk-fido/src/credential.rs:778	10	marshals	M	counts occupied slots for the getInfo 0x14 estimate, forbids nothing	-
+remaining_rk	crates/rsk-fido/src/credential.rs:789	12	marshals	M	min of two budgets for the report; registration is refused not by it but by the slot search	-
+credential_store	crates/rsk-fido/src/credential.rs:811	102	decides	D3	writes EF_CRED, bumps EF_RP and the signature counter; the order is chosen so that a power cut does not leave a credential without EF_RP	SEC-FIDO-005
+bump_rp	crates/rsk-fido/src/credential.rs:920	63	decides	D3	creates/increments EF_RP; an unread slot → MemoryFatal, otherwise a second EF_RP would appear for the same rpIdHash	SEC-FIDO-005,SEC-STORE-002
+seal_rp_id	crates/rsk-fido/src/credential.rs:987	28	decides	D2	decides whether the rpId domain sits in flash as plaintext	SEC-FIDO-004
+unseal_rp_id	crates/rsk-fido/src/credential.rs:1035	36	decides	D2	hands out the plaintext domain; on AEAD failure it returns the RAW tail as legacy cleartext (was_boxed=false)	SEC-FIDO-004
+seal_nick	crates/rsk-fido/src/credential.rs:1071	42	decides	D2	seals the nickname, the IV is synthesized from the plaintext — this is the rule against nonce reuse	SEC-FIDO-004
+unseal_nick	crates/rsk-fido/src/credential.rs:1120	31	decides	D2	opens only under its own rpIdHash — the AEAD itself is the protection against slot reuse	SEC-FIDO-004
+migrate_rp_seal	crates/rsk-fido/src/credential.rs:1143	62	decides	D3	the boot pass rewrites the EF_RP records and makes the write conditional on request_rescrub	SEC-FIDO-004
 parse	crates/rsk-fido/src/credmgmt.rs:58	35	decides	M	parsing of the CBOR map and the key order; permission lives in the cred_mgmt branches, not in the routing table	-
 parse_subpara	crates/rsk-fido/src/credmgmt.rs:94	44	decides	D5	captures raw_subpara — exactly the byte range that the pinUvAuthParam MAC covers	SEC-FIDO-001
 cred_mgmt	crates/rsk-fido/src/credmgmt.rs:139	88	decides	D1	the Next route returns BEFORE the pinUvAuthParam requirement (credmgmt.rs:150); its authorization is the cursor's channel	SEC-FIDO-001

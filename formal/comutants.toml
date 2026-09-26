@@ -105,7 +105,11 @@ replace = """
     let _defer_bump = new_record;
 """
 find2 = """
-    if let Err(e) = fs.put(EF_CRED + slot, &rec[..total]) {
+    if let Err(e) = rec
+        .get(..total)
+        .ok_or(Error::NoMemory)
+        .and_then(|record| fs.put(EF_CRED + slot, record))
+    {
         if new_record {
             let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
         }
@@ -113,7 +117,9 @@ find2 = """
     }
 """
 replace2 = """
-    fs.put(EF_CRED + slot, &rec[..total])?;
+    rec.get(..total)
+        .ok_or(Error::NoMemory)
+        .and_then(|record| fs.put(EF_CRED + slot, record))?;
     if _defer_bump {
         bump_rp(fs, seed, rp_id_hash, rp_id)?;
     }

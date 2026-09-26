@@ -291,7 +291,7 @@ environment = "nix develop; CARGO_TARGET_DIR pointed at the main build cache and
 name = "cargo"
 version = "1.96.0 (30a34c682 2026-05-25)"
 provenance = "flake.lock"
-invocation = "see rustc; `cargo test -p rsk-fido` is exactly the slice formal/comutants.toml:412 names for this comutant"
+invocation = "see rustc; `cargo test -p rsk-fido` is exactly the slice formal/comutants.toml:418 names for this comutant"
 environment = "nix develop"
 
 [[tool]]

@@ -710,7 +710,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   follows the OTP one; its data-object reader takes the `[u8; RECORD_MAX]` it
   fills. The OATH applet, `rsk-oath`, follows too; its PUT keeps a HOTP
   credential's initial moving factor as the `[u8; 4]` it was checked to be.
-  `bcdDevice` 0x0A35 → 0x0A43.
+  In `rsk-fido` the CTAP handlers follow, a module at a time: `credential.rs`,
+  the credential-id box codec.
+  `bcdDevice` 0x0A35 → 0x0A44.
 
 - **The trusted display a host ceremony reaches holds no cell its dispatch
   borrows** — refactor; the same screens, touches and store writes. The panel's

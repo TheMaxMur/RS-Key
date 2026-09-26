@@ -200,7 +200,7 @@ fn legacy_is22_box_still_loads() {
     let mut old = [0u8; 512];
     old[..PROTO_LEN].copy_from_slice(CRED_PROTO);
     old[PROTO_LEN..PROTO_LEN + core].copy_from_slice(&newbox[..core]);
-    let st = silent_tag(&d, &old[..PROTO_LEN + core], &rp_hash);
+    let st = silent_tag(&d, &old[..PROTO_LEN + core], &rp_hash).unwrap();
     old[PROTO_LEN + core..PROTO_LEN + core + SILENT_TAG_LEN].copy_from_slice(&st);
     let olen = PROTO_LEN + core + SILENT_TAG_LEN;
     assert_eq!(&old[..PROTO_LEN], CRED_PROTO); // it IS the legacy framing
