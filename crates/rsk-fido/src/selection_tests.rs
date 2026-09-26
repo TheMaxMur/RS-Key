@@ -74,3 +74,31 @@ fn selection_cancelled_maps_keepalive_cancel() {
         Err(CtapError::KeepAliveCancel)
     );
 }
+
+// authenticatorSelection's touch is not the makeCredential / getAssertion
+// user-presence test CTAP 2.1 §6.5.5.7 spends a token on: a live one survives it.
+#[test]
+fn a_selection_touch_leaves_a_live_token_unspent() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    let mut state = FidoState::new();
+    let armed = crate::state::PERM_MC | crate::state::PERM_GA | crate::state::PERM_ACFG;
+    state.paut.permissions = armed;
+    state.begin_using_token(false, 0);
+    let mut presence = Fixed(Presence::Confirmed);
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: Device {
+            serial_hash: &[0xAB; 32],
+            serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
+            otp_key: None,
+        },
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    assert_eq!(selection(&mut ctx), Ok(0));
+    assert_eq!(state.paut.permissions, armed);
+    assert!(state.user_verified());
+}

@@ -348,6 +348,105 @@ fn assertion_no_match_spends_token_permissions_except_lbw() {
     );
 }
 
+/// A presence source that answers what it was built with.
+struct Answer(crate::Presence);
+impl crate::UserPresence for Answer {
+    fn request(&mut self, _confirm: crate::Confirm<'_>) -> crate::Presence {
+        self.0
+    }
+}
+
+/// The three ways a user-presence test fails, and the status each answers.
+const REFUSALS: [(crate::Presence, CtapError); 3] = [
+    (crate::Presence::Declined, CtapError::OperationDenied),
+    (crate::Presence::Timeout, CtapError::OperationDenied),
+    (crate::Presence::Cancelled, CtapError::KeepAliveCancel),
+];
+
+// CTAP 2.1 §6.5.5.7 spends the token once the user-presence test SUCCEEDS, so a
+// refused touch -- declined, timed out or cancelled -- spends nothing, on the
+// matched path and on the no-match one: the same token can retry the ceremony.
+#[test]
+fn a_refused_touch_leaves_the_token_unspent() {
+    for (answer, status) in REFUSALS {
+        for matched in [true, false] {
+            let (mut fs, mut rng) = setup();
+            let mut state = crate::FidoState::new();
+            let mut out = [0u8; 1024];
+            let cred_id = {
+                let mut presence = crate::AlwaysConfirm;
+                let mut ctx = Ctx {
+                    presence: &mut presence,
+                    dev: dev(),
+                    fs: &mut fs,
+                    rng: &mut rng,
+                    state: &mut state,
+                    now_ms: 10,
+                };
+                let n = make_credential(&mut ctx, &mc_request(false), &mut out).unwrap();
+                parse_mc(&out[..n]).0
+            };
+            let token = arm_pin(&mut fs, &mut state);
+            let armed = PERM_GA | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+            state.paut.permissions = armed;
+            let mut param = [0u8; 32];
+            let plen = rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &CDH, &mut param)
+                .unwrap();
+            let allow = if matched {
+                cred_id
+            } else {
+                std::vec![0x77u8; 42]
+            };
+            let req = ga_request_pin(&allow, &param[..plen], 2);
+            let mut o = [0u8; 1024];
+            let got = {
+                let mut presence = Answer(answer);
+                let mut ctx = Ctx {
+                    presence: &mut presence,
+                    dev: dev(),
+                    fs: &mut fs,
+                    rng: &mut rng,
+                    state: &mut state,
+                    now_ms: 20,
+                };
+                get_assertion(&mut ctx, &req, &mut o)
+            };
+            let case = if matched { "matched" } else { "no match" };
+            assert_eq!(got, Err(status), "{answer:?}, {case}");
+            assert_eq!(state.paut.permissions, armed, "{answer:?}, {case}");
+            assert!(state.user_verified(), "{answer:?}, {case}");
+        }
+    }
+}
+
+// The zero-length pinUvAuthParam probe takes a touch of its own (§6.2.2 step 1)
+// and is not a user-presence test in §6.5.5.7's sense: a live token survives it.
+#[test]
+fn the_selection_probe_touch_leaves_the_token_unspent() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let _token = arm_pin(&mut fs, &mut state);
+    let armed = PERM_GA | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+    state.paut.permissions = armed;
+    let req = ga_request_pin(&[0x77u8; 42], &[], 2);
+    let mut o = [0u8; 1024];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 20,
+    };
+    assert_eq!(
+        get_assertion(&mut ctx, &req, &mut o),
+        Err(CtapError::PinInvalid)
+    );
+    assert_eq!(state.paut.permissions, armed);
+    assert!(state.user_verified());
+}
+
 #[test]
 fn unscoped_pin_token_binds_rpid_on_first_getassertion() {
     // A GA-capable token minted without an rpId (legacy getPinToken) must bind

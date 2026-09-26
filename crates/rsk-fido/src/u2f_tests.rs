@@ -918,3 +918,37 @@ fn a_refused_counter_advance_signs_nothing() {
         "a refused advance must sign nothing, and the counter must not repeat"
     );
 }
+
+// A U2F REGISTER's touch is not the CTAP2 user-presence test CTAP 2.1 §6.5.5.7
+// spends a pinUvAuthToken on: a live one survives it.
+#[test]
+fn a_u2f_register_touch_leaves_a_live_token_unspent() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut data = std::vec::Vec::new();
+    data.extend_from_slice(&CHAL);
+    data.extend_from_slice(&APP);
+    let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &data);
+    let reg_apdu = Apdu::parse(&reg_bytes).unwrap();
+    let mut out = [0u8; 1024];
+    let mut state = crate::FidoState::new();
+    let armed = crate::state::PERM_MC | crate::state::PERM_GA | crate::state::PERM_ACFG;
+    state.paut.permissions = armed;
+    state.begin_using_token(false, 0);
+    let (sw, _) = {
+        let mut presence = Fixed(crate::Presence::Confirmed);
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        process_u2f(&mut ctx, &reg_apdu, &mut out)
+    };
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(state.paut.permissions, armed);
+    assert!(state.user_verified());
+}
