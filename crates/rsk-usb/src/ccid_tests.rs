@@ -33,6 +33,59 @@ fn atr_identities_are_well_formed() {
     assert!(ATR_YUBIKEY.windows(7).any(|w| w == b"YubiKey"));
 }
 
+/// An XfrBlock too short for an APDU header, answered as a YubiKey 5.8.0 answered
+/// ones of 1 and 3 bytes: a failed SlotStatus whose `bError` names `dwLength`, with
+/// the slot's ICC status kept. Four bytes is a case-1 APDU and goes through.
+#[test]
+fn a_short_xfr_block_is_refused_by_the_reader() {
+    for len in 0..=3 {
+        for status in [STATUS_ACTIVE, STATUS_INACTIVE] {
+            let m = msg(CCID_XFR_BLOCK, 9, &[0x40, 0xA4, 0x04][..len]);
+            let mut out = [0u8; 64];
+            let n = refuse_short_xfr(&m, status, &mut out).expect("refused");
+            assert_eq!(
+                out[..n],
+                [
+                    CCID_SLOT_STATUS_RET,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    9,
+                    0x40 | status,
+                    0x01,
+                    0
+                ],
+                "{len} byte(s), status {status}"
+            );
+        }
+    }
+    let case1 = msg(CCID_XFR_BLOCK, 9, &[0x00, 0xA4, 0x04, 0x00]);
+    assert_eq!(
+        refuse_short_xfr(&case1, STATUS_ACTIVE, &mut [0u8; 64]),
+        None
+    );
+    // `dwLength` decides, not what else arrived behind it: bError names that field.
+    let mut trailing = msg(CCID_XFR_BLOCK, 9, &[0x40]);
+    trailing.extend_from_slice(&[0xA4, 0x04, 0x00, 0x00]);
+    assert_eq!(
+        refuse_short_xfr(&trailing, STATUS_ACTIVE, &mut [0u8; 64]),
+        Some(HEADER)
+    );
+    // A reply buffer too short for the header is no refusal to send.
+    let short = msg(CCID_XFR_BLOCK, 9, &[0x40]);
+    assert_eq!(
+        refuse_short_xfr(&short, STATUS_ACTIVE, &mut [0u8; HEADER - 1]),
+        None
+    );
+    let status = msg(CCID_SLOT_STATUS, 9, &[]);
+    assert_eq!(
+        refuse_short_xfr(&status, STATUS_ACTIVE, &mut [0u8; 64]),
+        None
+    );
+}
+
 #[test]
 fn slot_status_returns_ret_with_status() {
     let mut status = STATUS_INACTIVE;

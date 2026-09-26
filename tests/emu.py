@@ -55,10 +55,13 @@ CCID_XFR_BLOCK = 0x6F
 CCID_DATA_BLOCK_RET = 0x80
 CCID_SLOT_STATUS_RET = 0x81
 CCID_HEADER = 10
-# bmCommandStatus (bStatus bits 7:6) == 01 — "time extension requested": the card
-# is still working, and the answer is the message after it.
+# bmCommandStatus (bStatus bits 7:6): `10` is "time extension requested", the card
+# still working and the answer the message after it; `01` is a command that failed.
 CCID_STATUS_MASK = 0xC0
 CCID_STATUS_TIMEEXT = 0x80
+CCID_STATUS_FAILED = 0x40
+# What pcsc-lite makes of a block libccid reports failed: that one transmit fails.
+SCARD_E_NOT_TRANSACTED = 0x80100016
 
 # An on-card RSA-4096 keygen is the slowest thing the card socket ever answers.
 CARD_TIMEOUT_S = 300
@@ -236,7 +239,12 @@ class SmartcardException(Exception):
 
 
 class CardConnectionException(SmartcardException):
-    pass
+    """`hresult` as pyscard sets it: 0 for a transmit that worked and brought back no
+    status word, the stack's `SCARD_E_*` code for one that failed, -1 for the rest."""
+
+    def __init__(self, message="", hresult=-1):
+        super().__init__(message)
+        self.hresult = hresult
 
 
 class NoCardException(SmartcardException):
@@ -329,7 +337,9 @@ class EmuCard:
             raise CardConnectionException("transmit on a card that is not connected")
         resp = self._exchange(CCID_XFR_BLOCK, bytes(apdu))
         if len(resp) < 2:
-            raise CardConnectionException(f"response shorter than a status word: {resp.hex()}")
+            raise CardConnectionException(
+                f"response shorter than a status word: {resp.hex()}", hresult=0
+            )
         return list(resp[:-2]), resp[-2], resp[-1]
 
     def reconnect(self, protocol=None, mode=None, disposition=None):
@@ -352,8 +362,9 @@ class EmuCard:
     def _exchange(self, msg_type, payload=b""):
         """Send one `PC_to_RDR` and return the answering message's body, stepping
         over the time extensions a slow command (on-card RSA keygen) streams
-        first. Checks what a driver checks — the echoed sequence and the reply
-        type — because a client that accepts any framing tests none of it."""
+        first. Checks what a driver checks — the echoed sequence, and a block the
+        reader answers failed — because a client that accepts any framing tests none
+        of it."""
         self.seq = (self.seq + 1) & 0xFF
         header = bytes([msg_type]) + len(payload).to_bytes(4, "little") + bytes(
             [0x00, self.seq, 0x00, 0x00, 0x00]
@@ -372,6 +383,11 @@ class EmuCard:
                 raise CardConnectionException(f"bSeq {resp[6]} answering {self.seq}")
             if resp[0] == CCID_DATA_BLOCK_RET and resp[7] & CCID_STATUS_MASK == CCID_STATUS_TIMEEXT:
                 continue
+            if msg_type == CCID_XFR_BLOCK and resp[7] & CCID_STATUS_MASK == CCID_STATUS_FAILED:
+                raise CardConnectionException(
+                    f"the reader refused the block: bError {resp[8]:02X}",
+                    hresult=SCARD_E_NOT_TRANSACTED,
+                )
             dw = int.from_bytes(resp[1:5], "little")
             if len(resp) < CCID_HEADER + dw:
                 raise CardConnectionException(f"dwLength {dw} over {len(resp)} bytes")

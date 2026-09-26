@@ -107,7 +107,14 @@ other command is `6E00` — **no applet here implements secure messaging**, and
 OpenPGP's Extended Capabilities says so. All of that is a YubiKey 5.8.0's, read
 class by class over raw USB. RS-Key's own: an unanswered command changes nothing,
 so an open chain still takes its final segment and a held tail its
-`GET RESPONSE`. Applets that additionally name a class of their own reject
+`GET RESPONSE`. An `XfrBlock` of one or three bytes, too short for `CLA INS P1
+P2`, is refused by the reader as a YubiKey 5.8.0 refuses one, measured with the
+slot powered: a failed `RDR_to_PC_SlotStatus`, `bStatus` `40`, whose `bError` `01`
+names `dwLength`, and no APDU runs. RS-Key's own: none and two bytes are refused
+the same way, and a powered-off slot keeps its ICC status (`bStatus` `41`). An
+empty block is no response continuation here: RS-Key never chains a response
+across CCID messages (`bChainParameter` stays `00`).
+Applets that additionally name a class of their own reject
 anything else themselves: OATH, management and OTP take `00` and `80` alike,
 both of which a YubiKey 5.8.0 serves there, U2F wants `00` and rescue `80`. A
 chain is reassembled into a single command of at most **3072 bytes**, as on a

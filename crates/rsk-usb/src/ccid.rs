@@ -53,9 +53,16 @@ pub const STATUS_TIMEEXT: u8 = 0x80;
 /// (even a wrong-PIN status word is a *successful* command — the card answered).
 /// The transport substitutes the live slot status for this value.
 pub const SECURE_STATUS_OK: u8 = STATUS_ACTIVE;
+/// `bStatus` with `bmCommandStatus = failed`, ICC active; the slot's ICC status goes
+/// in the low bits beside it.
+pub const STATUS_FAILED: u8 = 0x40;
 /// `bStatus` with `bmCommandStatus = failed` (ICC active): the secure-PIN entry
 /// did not produce a card response (the user cancelled or it timed out).
-pub const SECURE_STATUS_FAILED: u8 = 0x40;
+pub const SECURE_STATUS_FAILED: u8 = STATUS_FAILED;
+/// CCID `bError` for a field the reader rejects is that field's offset: `dwLength`'s.
+pub const ERR_BAD_DWLENGTH: u8 = 0x01;
+/// The shortest APDU there is: `CLA INS P1 P2`.
+const APDU_HEADER: usize = 4;
 /// CCID `bError`: the user cancelled PIN entry on the pad → `SCARD_W_CANCELLED_BY_USER`.
 pub const SECURE_ERR_CANCELLED: u8 = 0xEF;
 /// CCID `bError`: PIN entry on the pad timed out → `SCARD_E_TIMEOUT`.
@@ -204,6 +211,19 @@ pub fn xfr_apdu(msg: &[u8]) -> Option<(usize, usize)> {
     Some((HEADER, HEADER + dw.min(msg.len() - HEADER)))
 }
 
+/// An `XfrBlock` too short to hold an APDU header is refused by the reader, as a
+/// YubiKey 5.8.0 refuses one: a failed `RDR_to_PC_SlotStatus` naming `dwLength`, and
+/// no APDU run. Its length in `out`, or `None` for any other message.
+pub fn refuse_short_xfr(msg: &[u8], status: u8, out: &mut [u8]) -> Option<usize> {
+    let (a, b) = xfr_apdu(msg)?;
+    if b - a >= APDU_HEADER || out.len() < HEADER {
+        return None;
+    }
+    put_header(out, CCID_SLOT_STATUS_RET, 0, msg[6], STATUS_FAILED | status);
+    out[8] = ERR_BAD_DWLENGTH;
+    Some(HEADER)
+}
+
 /// If `msg` is a `PC_to_RDR_Secure`, the `(start, end)` byte range of its
 /// `abPINDataStructure` payload (the CCID pinpad VERIFY request).
 pub fn secure_apdu(msg: &[u8]) -> Option<(usize, usize)> {
@@ -338,10 +358,17 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         loop {
             match self.read_message().await {
                 Some(total) => {
-                    // An XfrBlock APDU goes to the worker (async) with a streamed
-                    // CCID time-extension; the protocol messages (power/params/…)
-                    // are pure and answered inline.
-                    if let Some((a, b)) = xfr_apdu(&self.rx[..total]) {
+                    // An XfrBlock too short for an APDU is refused inline, any other
+                    // goes to the worker (async) with a streamed CCID time-extension;
+                    // the protocol messages (power/params/…) are answered inline.
+                    if let Some(n) = refuse_short_xfr(&self.rx[..total], self.status, &mut self.tx)
+                    {
+                        let _ = select(
+                            self.write_ep.write_transfer(&self.tx[..n], false),
+                            Timer::after_millis(TX_TIMEOUT_MS),
+                        )
+                        .await;
+                    } else if let Some((a, b)) = xfr_apdu(&self.rx[..total]) {
                         self.run_xfr(a, b).await;
                     } else if let Some((a, b)) = secure_apdu(&self.rx[..total]) {
                         self.run_secure(a, b).await;

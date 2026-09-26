@@ -83,6 +83,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- An `XfrBlock` of one or three bytes, too short for `CLA INS P1 P2`, is refused
+  by the reader as a YubiKey 5.8.0 refuses one: a failed `RDR_to_PC_SlotStatus`,
+  `bStatus` `40` with the slot powered, whose `bError` `01` names `dwLength`, and
+  no APDU runs. RS-Key ran it as an APDU and answered a data block with `6700`.
+  Read off the YubiKey over raw USB; RS-Key refuses none and two bytes the same
+  way, which was not measured.
+  `bcdDevice` 0x0A15 → 0x0A16.
+
 - Over CCID the card passes on only the classes a YubiKey 5.8.0 does: `00`,
   `04`, `80`, `84`, and any with the chaining bit. Every other class gets an
   empty data block, no body and no status word, as from the YubiKey. RS-Key ran

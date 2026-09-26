@@ -43,6 +43,8 @@ GET = [0x00, 0x02, 0x00, 0x00, 0x00]  # Le = 0 (case 2)
 # CORE1_STATS: core1's prime-search counters, a timing oracle over RSA keygen.
 # Behind `--features core1-stats`, so a shipped image must not answer it.
 CORE1_STATS = [0x00, 0x12, 0x00, 0x00, 0x00]
+# pcsc-lite's answer to a transmit the reader reports failed.
+SCARD_E_NOT_TRANSACTED = 0x80100016
 
 
 def fail(msg):
@@ -102,6 +104,24 @@ def main():
     data, sw1, sw2 = conn.transmit(SELECT)
     if (sw1, sw2) != (0x90, 0x00):
         fail(f"SELECT after the empty answer not 9000 (got {sw1:02X}{sw2:02X})")
+
+    # A block too short for CLA INS P1 P2 is refused by the reader, as a YubiKey
+    # 5.8.0 refuses one: a failed slot status, which PC/SC makes a failed transmit.
+    try:
+        data, sw1, sw2 = conn.transmit([0x40])
+    except CardConnectionException as e:
+        hresult = getattr(e, "hresult", 0)
+        if hresult == SCARD_E_NOT_TRANSACTED:
+            print(f"1-byte block -> refused by the reader ({e})")
+        elif hresult == 0:
+            fail(f"a 1-byte block got an empty answer ({e}); a YubiKey's reader refuses it")
+        else:
+            print(f"1-byte block -> not sent by this host ({e}); unchecked")
+    else:
+        fail(f"a 1-byte block was answered {sw1:02X}{sw2:02X}; a YubiKey's reader refuses it")
+    data, sw1, sw2 = conn.transmit(SELECT)
+    if (sw1, sw2) != (0x90, 0x00):
+        fail(f"SELECT after the refused block not 9000 (got {sw1:02X}{sw2:02X})")
 
     # A board assertion, not an emulator one: `tools/emu`'s `EmuVendorPlatform`
     # never implemented `core1_stats`, so the shim answers 6D00 either way. What

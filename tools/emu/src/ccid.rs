@@ -31,8 +31,8 @@ use std::time::Duration;
 
 use rsk_usb::ccid::{
     CCID_DATA_BLOCK_RET, CCID_POWER_OFF, CCID_POWER_ON, HEADER, MAX_CCID_MSG, SECURE_STATUS_FAILED,
-    STATUS_INACTIVE, STATUS_TIMEEXT, WTX_INTERVAL_MS, process_message, put_header, secure_apdu,
-    xfr_apdu,
+    STATUS_INACTIVE, STATUS_TIMEEXT, WTX_INTERVAL_MS, process_message, put_header,
+    refuse_short_xfr, secure_apdu, xfr_apdu,
 };
 
 use crate::device::{Job, Jobs, Unplug};
@@ -82,9 +82,10 @@ pub fn serve(mut stream: TcpStream, jobs: Jobs, atr: &'static [u8]) -> io::Resul
     }
 }
 
-/// Answer one CCID message, mirroring `Ccid::run`'s arms: `XfrBlock` and `Secure`
-/// go to the device, a power transition resets the card first, everything else is
-/// [`process_message`]'s to answer, and bad framing gets the `6F 00` resync.
+/// Answer one CCID message, mirroring `Ccid::run`'s arms: an `XfrBlock` too short
+/// for an APDU is refused, any other and `Secure` go to the device, a power
+/// transition resets the card first, everything else is [`process_message`]'s to
+/// answer, and bad framing gets the `6F 00` resync.
 #[allow(clippy::too_many_arguments)] // one call site; every argument is state it needs
 fn serve_message(
     stream: &mut TcpStream,
@@ -105,6 +106,9 @@ fn serve_message(
         return send(stream, &out[..HEADER + 2]);
     }
 
+    if let Some(n) = refuse_short_xfr(msg, *status, out) {
+        return send(stream, &out[..n]);
+    }
     if let Some((a, b)) = xfr_apdu(msg) {
         let body = run_with_wtx(stream, jobs, Job::Apdu(msg[a..b].to_vec()), seq, *status)?;
         let n = body.len().min(out.len() - HEADER);
