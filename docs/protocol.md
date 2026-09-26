@@ -94,13 +94,18 @@ def select(conn, aid):
     return transmit(conn, [0x00, 0xA4, 0x04, 0x00, len(aid)] + list(aid) + [0x00])
 ```
 
-The class byte is judged before the command, for every applet and for SELECT
-itself, `GET RESPONSE` aside (below). Bit `0x10` marks a **command-chaining**
-segment and is looked at first, so `10`, `1C`, `90` and `FF` are all ordinary
-segments. Otherwise a class carrying a
-secure-messaging indication (`CLA & 0x0C`: `04`, `0C`, `84`, `8C`, …) answers
-`6E00` — **no applet here implements secure messaging**, and OpenPGP's Extended
-Capabilities says so. Applets that additionally name a class of their own reject
+The class byte is judged before the command, for every applet, `GET RESPONSE`
+aside (below). Bit `0x10` marks a **command-chaining** segment and is looked at
+first, so `10`, `1C`, `90` and `FF` are all ordinary segments. Otherwise only
+`00`, `04`, `80` and `84` reach an applet. Every other class gets an **empty
+answer**: a data block with no body and no status word, which a client library
+that expects one raises on (pyscard: `Card returned no valid response`). Under
+`04` and `84`, the secure-messaging classes, SELECT works as under `00` and any
+other command is `6E00` — **no applet here implements secure messaging**, and
+OpenPGP's Extended Capabilities says so. All of that is a YubiKey 5.8.0's, read
+class by class over raw USB. RS-Key's own: an unanswered command changes nothing,
+so an open chain still takes its final segment and a held tail its
+`GET RESPONSE`. Applets that additionally name a class of their own reject
 anything else themselves: OATH, management and OTP take `00` and `80` alike,
 both of which a YubiKey 5.8.0 serves there, U2F wants `00` and rescue `80`. A
 chain is reassembled into a single command of at most **3072 bytes**, as on a
@@ -123,12 +128,15 @@ it is read with a short `GET DATA`, so a host that sends a short `GET DATA` with
 an `Le` must still follow `61xx`. A `00 C0` with nothing left to serve is `6A80`
 on PIV and `6D00` on OpenPGP, OATH, management, OTP and FIDO. While a tail is
 owed, a `GET RESPONSE` without the chaining bit serves it whatever its class,
-secure messaging included, since that answer already began in the clear. With
-the chaining bit (`10`, `90`, `1C`), owed tail or not, it is a `9000` that opens
-no chain and leaves any tail for the next one; inside an open chain it is
-`6883`, like any command outside that chain. All of it as on a YubiKey 5.8.0.
-With nothing owed, a secure-messaging `GET RESPONSE` is `6E00`, like any command
-in that class.
+since that answer already began in the clear: a YubiKey 5.8.0 does so under `00`,
+`80`, `04`, `84` and `0C`, a class it answers nothing otherwise, and RS-Key
+under every class. With the chaining bit (`10`, `90`, `1C`), owed tail or not,
+it is a `9000` that opens no chain and leaves any tail for the next one; inside
+an open chain it is `6883`, like any command outside that chain, both as on a
+YubiKey 5.8.0.
+With nothing owed, a `GET RESPONSE` under `04` or `84` is `6E00`, like any
+command but SELECT there, and under a class no applet is reached by it gets the
+empty answer.
 
 OATH `LIST` (`0xA1`) and `CALCULATE ALL` (`0xA4`) responses that outgrow the
 command's `Le` chain the YubiKey-OATH way instead: `61 XX` followed by **SEND
@@ -637,7 +645,8 @@ interface, so this is reachable over plain USB.
 
 The three CTAP2 instructions (`10`, `11`, `12`) are taken under class `00` as
 under `80`, as on a YubiKey 5.8.0. Anything else under `80` is `6D00`, under `00`
-it is U2F's, and any other class is refused `6E00`.
+it is U2F's, under `04` and `84` it is refused `6E00`, and no other class reaches
+it (above).
 
 **Chaining runs in both directions and a host needs both.** A CTAP2 command longer
 than 255 bytes arrives in `CLA|0x10` segments; a response longer than the short

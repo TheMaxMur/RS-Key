@@ -149,13 +149,13 @@ FLOOR_light3=28
 # is caught on its own (the row fails when the per-check listing is absent); the
 # floor is for the partial case, a cover that stopped being reported while the
 # rest still are. Counted from source by the same guard as the floors above.
-COVERS_pr=41
+COVERS_pr=42
 COVERS_state=36
-COVERS_all=67
+COVERS_all=68
 COVERS_heavy=1
 COVERS_light1=35
 COVERS_light2=12
-COVERS_light3=19
+COVERS_light3=20
 
 # `kani::cover!` properties CBMC may report unsatisfied while their source-level
 # cover is still reached. One `cover!` becomes several properties wherever the

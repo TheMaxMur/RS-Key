@@ -52,7 +52,7 @@ assurance/board/PLAT-TRNG-002.toml	scripts/platform_gate.py	1337-1337	OUTCOME_ST
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/clientpin.rs	724-724	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/state.rs	172-172	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/state.rs	286-286	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
-assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/ccid_tests.rs	996-996	fn both_transports_answer_from_one_session_state() {	fn both_transports_answer_from_one_session_state() {
+assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/ccid_tests.rs	1004-1004	fn both_transports_answer_from_one_session_state() {	fn both_transports_answer_from_one_session_state() {
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	4-21	//! Presence-scope arbitration: one physical button, four transports, and the	//! `NoCrossTransportTouchConsumption` (`formal/RSKeySecurityState.tla`).
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	13-14	//! touch the key for somebody else's operation. CTAP 2.1 §11.2.9.1.4 scopes a	//! cancel to its own channel.
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	26-32	pub const SCOPE_NONE: u8 = 0;	pub const SCOPE_OTP: u8 = 3;
@@ -658,11 +658,11 @@ crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	45
 crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	463-464	let n = CONT_DATA.min(self.bcnt.saturating_sub(self.cur));	self.msg[self.cur..self.cur + n].copy_from_slice(&f[5..5 + n]);
 crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	621-634	async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {	}
 formal/README.md	crates/rsk-devconf/src/lib.rs	259-272	// and `read_enabled_caps` reads empty as "no record" and returns	return Ok(());
-formal/README.md	crates/rsk-device/src/ccid.rs	79-86	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
-formal/README.md	crates/rsk-device/src/ccid.rs	103-121	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
-formal/README.md	crates/rsk-device/src/ccid.rs	254-262	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
-formal/README.md	crates/rsk-device/src/ccid.rs	332-332	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
-formal/README.md	crates/rsk-device/src/ccid.rs	346-361	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
+formal/README.md	crates/rsk-device/src/ccid.rs	80-87	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
+formal/README.md	crates/rsk-device/src/ccid.rs	104-122	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
+formal/README.md	crates/rsk-device/src/ccid.rs	255-263	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
+formal/README.md	crates/rsk-device/src/ccid.rs	333-333	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
+formal/README.md	crates/rsk-device/src/ccid.rs	347-362	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
 formal/README.md	crates/rsk-device/src/ctap.rs	82-93	fido_state: &'a RefCell<rsk_fido::FidoState>,	}
 formal/README.md	crates/rsk-device/src/ctap.rs	177-181	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
 formal/README.md	crates/rsk-device/src/ctap.rs	234-241	.abstract_token(rsk_fido::TokenPersistentView {	/// the first conjunct of `crates/rsk-fido/src/clientpin.rs:612`. An INPUT to
@@ -855,9 +855,9 @@ formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	237-237	/// the enabl
 formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	248-262	// the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a	let mut merged = [0u8; DEV_CONF_MERGE_MAX];
 formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	586-586	return u16::from_be_bytes([conf[i + 2], conf[i + 3]]) & SUPPORTED_CAPS;	return u16::from_be_bytes([conf[i + 2], conf[i + 3]]) & SUPPORTED_CAPS;
 formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	590-590	SUPPORTED_CAPS	SUPPORTED_CAPS
-formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	79-86	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
-formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	254-262	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
-formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	332-332	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
+formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	80-87	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
+formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	255-263	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
+formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	333-333	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
 formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	141-143	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/RSKeyAdminSurface.tla	crates/rsk-sdk/src/applet.rs	228-230	pub fn set_enabled(&mut self, mask: u32) {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-oath/src/lib.rs	603-635	// gated here, before the HOTP counter burns.	fs,
@@ -874,8 +874,8 @@ formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/tests.rs	1485-1485	fn configur
 formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/ticket.rs	166-166	let (counter, new_session, bumped) = next_use_counter(counter, session);	let (counter, new_session, bumped) = next_use_counter(counter, session);
 formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	58-66	fn pin_satisfied(sess: &Session, pinpol: u8) -> bool {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	114-118	/// Refines `RSKeyAppletPolicies!PivAlwaysSpendsFreshness` — SEC-POL-002.	}
-formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	103-121	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
-formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	346-361	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
+formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	104-122	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
+formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	347-362	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ctap.rs	177-181	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
 formal/RSKeyAppletSeams.tla	crates/rsk-display/src/pin.rs	713-721	let _ = rsk_ui::render_erasing(&mut self.frame());	)
 formal/RSKeyAppletSeams.tla	crates/rsk-fido/src/reset.rs	263-305	/// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus	}
@@ -1202,9 +1202,9 @@ scripts/security_trace.py	crates/rsk-fido/src/clientpin.rs	136-136	match req.sub
 scripts/security_trace.py	crates/rsk-fido/src/config.rs	248-248	ctx.state.mark_token_used(ctx.now_ms);	ctx.state.mark_token_used(ctx.now_ms);
 scripts/security_trace.py	crates/rsk-fido/src/consts.rs	404-404	pub const RESET_WINDOW_MS: u64 = 10_000;	pub const RESET_WINDOW_MS: u64 = 10_000;
 scripts/security_trace.py	crates/rsk-fido/src/reset.rs	260-260	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS
-scripts/security_trace.py	tools/emu/src/device.rs	815-816	crate::security_trace::POWER_CYCLE,	0,
+scripts/security_trace.py	tools/emu/src/device.rs	816-817	crate::security_trace::POWER_CYCLE,	0,
 scripts/test_run_tlc.py	scripts/verdict_gate.py	619-634	if row["invariant"] is not None:	" that name")
-scripts/test_security_trace.py	tools/emu/src/device.rs	815-816	crate::security_trace::POWER_CYCLE,	0,
+scripts/test_security_trace.py	tools/emu/src/device.rs	816-817	crate::security_trace::POWER_CYCLE,	0,
 scripts/test_token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
 scripts/test_token_refinement_gate.py	crates/rsk-fido/src/credential.rs	919-919	let fid = EF_RP + i;	let fid = EF_RP + i;
 scripts/test_token_refinement_gate.py	firmware/src/main.rs	1173-1173	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));

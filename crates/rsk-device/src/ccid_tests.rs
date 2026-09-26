@@ -531,6 +531,14 @@ fn a_keygen_fast_path_judges_the_class_byte_too() {
         rsk_sdk::Sw::CLA_NOT_SUPPORTED,
         "a secure-messaging class generated a key"
     );
+    // Nor does a class the card does not serve: no key, no answer at all.
+    for cla in [0x40, 0xC0] {
+        let res = ccid.handle_apdu(&generate(cla), 0);
+        assert!(
+            res.is_empty(),
+            "CLA {cla:02X} reached the fast path: {res:02X?}"
+        );
+    }
     let seg = ccid.handle_apdu(&generate(0x10), 0).to_vec();
     assert_eq!(
         (sw(&seg), seg.len()),
@@ -1420,6 +1428,121 @@ fn a_card_applet_serves_class_80_as_it_serves_00() {
     }
 }
 
+/// Every class byte, as a YubiKey 5.8.0 answered it over CCID: SELECT OATH, then
+/// its LIST, each after a clean SELECT. `00`/`80` serve both, `04`/`84` the SELECT
+/// alone, a chaining class is a segment and then `6883`, and every other class gets
+/// an empty data block, no status word. PIV's and OpenPGP's SELECT, nine classes.
+#[test]
+fn every_class_byte_is_answered_as_a_yubikey_answers_it() {
+    use rsk_sdk::Sw;
+    // `None` is the empty data block.
+    let answer = |res: &[u8]| (!res.is_empty()).then(|| sw(res));
+    let under = |cla: u8, cmd: &[u8]| [&[cla][..], &cmd[1..]].concat();
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let oath = select(rsk_oath::OATH_AID);
+    let list = apdu(0x00, 0xA1, 0x00, 0x00, &[]);
+    let base = ccid.handle_apdu(&oath, 0).to_vec();
+    assert_eq!(sw(&base), Sw::OK);
+    for cla in 0..=0xFFu8 {
+        assert_eq!(
+            ccid.handle_apdu(&oath, 0),
+            &base[..],
+            "{cla:02X}: clean SELECT"
+        );
+        let sel = ccid.handle_apdu(&under(cla, &oath), 0).to_vec();
+        let lst = ccid.handle_apdu(&under(cla, &list), 0).to_vec();
+        let want = match cla {
+            0x00 | 0x80 => (Some(Sw::OK), Some(Sw::OK)),
+            0x04 | 0x84 => (Some(Sw::OK), Some(Sw::CLA_NOT_SUPPORTED)),
+            c if c & 0x10 != 0 => (Some(Sw::OK), Some(Sw::LAST_CHAIN_EXPECTED)),
+            _ => (None, None),
+        };
+        assert_eq!((answer(&sel), answer(&lst)), want, "CLA {cla:02X}");
+        if want.0.is_some() && cla & 0x10 == 0 {
+            assert_eq!(sel, base, "CLA {cla:02X}: SELECT answered as under 00");
+        }
+    }
+    for aid in [rsk_piv::PIV_AID, rsk_openpgp::consts::OPENPGP_AID] {
+        let base = ccid.handle_apdu(&select(aid), 0).to_vec();
+        assert_eq!(sw(&base), Sw::OK);
+        for cla in [0x00, 0x80, 0x40, 0xC0, 0x01, 0x20, 0x08, 0x84, 0x04] {
+            let res = ccid.handle_apdu(&under(cla, &select(aid)), 0).to_vec();
+            let want: &[u8] = match cla {
+                0x00 | 0x80 | 0x04 | 0x84 => &base,
+                _ => &[],
+            };
+            assert_eq!(res, want, "{aid:02X?} under {cla:02X}");
+        }
+    }
+}
+
+/// An answer already begun is served on to its end whatever class the GET RESPONSE
+/// carries, the one the class gate never answers included. With nothing owed, the
+/// gate stands.
+#[test]
+fn an_owed_tail_is_served_under_any_class() {
+    use rsk_sdk::Sw;
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let fido = select(rsk_fido::consts::FIDO_AID);
+    let get_info = apdu(0x80, 0x10, 0x00, 0x00, GET_INFO);
+    ccid.handle_apdu(&fido, 0);
+    let (whole, status) = exchange_chained(&mut ccid, &get_info);
+    assert_eq!(status, Sw::OK);
+    for cla in [0x0C, 0x40, 0x84] {
+        ccid.handle_apdu(&fido, 0);
+        let first = ccid.handle_apdu(&get_info, 0).to_vec();
+        assert_eq!(sw(&first).sw1(), 0x61, "a short read owes a tail");
+        let rest = ccid.handle_apdu(&[cla, 0xC0, 0x00, 0x00, 0x00], 0).to_vec();
+        let (at, n) = (first.len() - 2, rest.len().saturating_sub(2));
+        assert!(n > 0, "CLA {cla:02X}: {rest:02X?}");
+        assert_eq!(rest[..n], whole[at..at + n], "CLA {cla:02X}: the tail");
+    }
+    ccid.handle_apdu(&fido, 0);
+    let res = ccid.handle_apdu(&[0x40, 0xC0, 0x00, 0x00, 0x00], 0);
+    assert!(res.is_empty(), "nothing owed: {res:02X?}");
+}
+
+/// A command the card does not answer changes nothing: a held tail is served on
+/// from where it stood, and an open chain still takes its final segment. Not read
+/// off a YubiKey; it follows from the command never reaching an application.
+#[test]
+fn an_unanswered_class_leaves_a_tail_and_a_chain_as_they_were() {
+    use rsk_sdk::Sw;
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let fido = select(rsk_fido::consts::FIDO_AID);
+    let get_info = apdu(0x80, 0x10, 0x00, 0x00, GET_INFO);
+    let unserved = [0x40, 0xCA, 0x00, 0x6E, 0x00];
+    ccid.handle_apdu(&fido, 0);
+    let (whole, _) = exchange_chained(&mut ccid, &get_info);
+    ccid.handle_apdu(&fido, 0);
+    let first = ccid.handle_apdu(&get_info, 0).to_vec();
+    assert!(ccid.handle_apdu(&unserved, 0).is_empty());
+    let (rest, status) = exchange_chained(&mut ccid, &[0x00, 0xC0, 0x00, 0x00, 0x00]);
+    assert_eq!(status, Sw::OK);
+    assert_eq!(
+        [&first[..first.len() - 2], &rest[..]].concat(),
+        whole,
+        "the tail"
+    );
+
+    let write = crate::tests::vendor_config_write(rsk_fido::consts::CONFIG_TARGET_LED, &LED_BLOCK);
+    let (head, tail) = write.split_at(write.len() / 2);
+    ccid.handle_apdu(&fido, 0);
+    let segment = apdu(0x90, 0x10, 0x00, 0x00, head);
+    assert_eq!(sw(ccid.handle_apdu(&segment, 0)), Sw::OK);
+    assert!(ccid.handle_apdu(&unserved, 0).is_empty());
+    let last = exchange_chained(&mut ccid, &apdu(0x80, 0x10, 0x00, 0x00, tail));
+    assert_eq!(
+        last,
+        (vec![0x00], Sw::OK),
+        "the chain took its final segment"
+    );
+    assert_eq!(env.board.borrow().config_written, 1);
+}
+
 #[test]
 fn fido_over_ccid_answers_each_instruction_as_a_yubikey_does() {
     // A YubiKey 5.8.0, one command per process because some of its FIDO commands
@@ -1429,7 +1552,7 @@ fn fido_over_ccid_answers_each_instruction_as_a_yubikey_does() {
     let env = Env::new();
     let mut ccid = env.ccid();
     let timeout = [rsk_fido::error::CtapError::UserActionTimeout as u8];
-    let rows: [(&str, [u8; 4], Sw, &[u8]); 24] = [
+    let rows: [(&str, [u8; 4], Sw, &[u8]); 22] = [
         ("GETRESPONSE", [0x80, 0x11, 0x00, 0x00], Sw::OK, &timeout),
         (
             "GETRESPONSE, cancel",
@@ -1498,19 +1621,6 @@ fn fido_over_ccid_answers_each_instruction_as_a_yubikey_does() {
             Sw::OK,
             &[],
         ),
-        // No reading reached a class past these two, so another goes to U2F as it did.
-        (
-            "MSG under A0",
-            [0xA0, 0x10, 0x00, 0x00],
-            Sw::CLA_NOT_SUPPORTED,
-            &[],
-        ),
-        (
-            "GETRESPONSE under 01",
-            [0x01, 0x11, 0x00, 0x00],
-            Sw::CLA_NOT_SUPPORTED,
-            &[],
-        ),
         (
             "U2F VERSION under 80",
             [0x80, 0x03, 0x00, 0x00],
@@ -1568,6 +1678,13 @@ fn fido_over_ccid_answers_each_instruction_as_a_yubikey_does() {
         assert_eq!(sw(&sel), Sw::OK, "{name}: SELECT");
         let res = ccid.handle_apdu(&[cla, ins, p1, p2, 0x00], 0).to_vec();
         assert_eq!((sw(&res), &res[..res.len() - 2]), (want, body), "{name}");
+    }
+    // Past 00/04/80/84 no class reaches it: the class gate answers first, as a
+    // YubiKey 5.8.0's did for OATH, PIV and OpenPGP (FIDO was read under 00/80 only).
+    for [cla, ins] in [[0xA0, 0x10], [0x01, 0x11]] {
+        ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0);
+        let res = ccid.handle_apdu(&[cla, ins, 0x00, 0x00, 0x00], 0);
+        assert!(res.is_empty(), "{cla:02X} {ins:02X}: {res:02X?}");
     }
     // MSG under `00` is the same CTAP2 command: getInfo answers alike both ways.
     let get_info = |ccid: &mut Ccid<'_>, cla: u8| {

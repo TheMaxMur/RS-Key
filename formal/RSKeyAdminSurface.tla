@@ -51,7 +51,7 @@ CONSTANTS
     \* so three is padding the measurement does not need -- kept because it
     \* is the shipped vocabulary, now visible as a scope (formal/scopes.txt).
     Caps,
-    \* crates/rsk-device/src/ccid.rs:79-86 -- APPLET_CAPS marks management,
+    \* crates/rsk-device/src/ccid.rs:80-87 -- APPLET_CAPS marks management,
     \* vendor and rescue as cap `0` (always available), because gating them off
     \* would make `ykman config usb --disable` irreversible. The switch ties the
     \* admin channel to the mask being non-empty, the shape a naive
@@ -73,8 +73,8 @@ CONSTANTS
     \* the persisted mask echoed in DeviceInfo while SELECT and dispatch never
     \* consulted it, so `ykman config usb --disable PIV` disabled nothing. The
     \* enforcement is Dispatcher::set_enabled (crates/rsk-sdk/src/applet.rs:228-230)
-    \* fed from the mask (crates/rsk-device/src/ccid.rs:254-262) and consulted at
-    \* select AND dispatch-to-current (crates/rsk-device/src/ccid.rs:332). The
+    \* fed from the mask (crates/rsk-device/src/ccid.rs:255-263) and consulted at
+    \* select AND dispatch-to-current (crates/rsk-device/src/ccid.rs:333). The
     \* switch removes exactly that consultation.
     BugMaskIsCosmetic
 
@@ -185,7 +185,7 @@ Spec == Init /\ [][Next]_vars
 \* administrative channel is reachable in EVERY state, so no sequence of config
 \* writes can strand the device unable to re-enable a disabled applet. Structural
 \* -- it needs no cooperation from any action, the strong form. This is the
-\* `APPLET_CAPS` cap-`0` carve-out (crates/rsk-device/src/ccid.rs:79-86) as an
+\* `APPLET_CAPS` cap-`0` carve-out (crates/rsk-device/src/ccid.rs:80-87) as an
 \* invariant: management/vendor/rescue are never gated by the mask, so `enabled =
 \* {}` (everything off) is not a dead end -- READ/WRITE CONFIG still answer there.
 AdminSurfaceAlwaysReachable == AdminChannelOpen

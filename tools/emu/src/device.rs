@@ -737,13 +737,14 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                 let body = ccid.handle_apdu(&data, now_ms).to_vec();
                 ccid.scrub();
                 if cfg.trace {
-                    eprintln!(
-                        "emu: apdu {} B -> sw={:02x}{:02x} ({} B)",
-                        data.len(),
-                        body[body.len() - 2],
-                        body[body.len() - 1],
-                        body.len() - 2
-                    );
+                    match body.as_slice() {
+                        [rest @ .., sw1, sw2] => eprintln!(
+                            "emu: apdu {} B -> sw={sw1:02x}{sw2:02x} ({} B)",
+                            data.len(),
+                            rest.len()
+                        ),
+                        _ => eprintln!("emu: apdu {} B -> no answer", data.len()),
+                    }
                 }
                 Some(body)
             }

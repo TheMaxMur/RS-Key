@@ -90,8 +90,9 @@ fn buffers_sane(d: &Dispatcher) {
 /// Drive the real [`Dispatcher`] over a selected card and EVERY pair of raw
 /// command APDUs up to 6 bytes each: it never panics, its buffer accounting
 /// stays in bounds, **the applet is never handed bytes from a command it did
-/// not itself terminate**, a secure-messaging class reaches no applet, and a
-/// SELECT-by-AID is always a SELECT.
+/// not itself terminate**, a secure-messaging class reaches no applet's
+/// `process` and selects only as a SELECT under `04`/`84`, and a SELECT-by-AID
+/// in any other class is always a SELECT.
 ///
 /// The third clause is the invariant with the worst history in this file, and
 /// it is stated over the *sequence* rather than over any one branch: whatever
@@ -102,12 +103,10 @@ fn buffers_sane(d: &Dispatcher) {
 /// third possibility, so no sequence can splice one client's data onto
 /// another's command (audit run-34 #26, and run-35 for the non-SELECT half).
 ///
-/// The fourth pins the class-byte rule the dispatcher now owns for every
-/// applet: `CLA & 0x0C` without the chaining bit reaches no applet, so none
-/// answers a client that believes it negotiated secure messaging in the clear.
-/// It is `6E00`, save a GET RESPONSE for an owed tail, which the dispatcher
-/// serves itself on a path `Stub` never opens. It is also why the fifth clause
-/// has to exclude those classes — a SELECT is not exempt from it.
+/// The fourth pins the class-byte rule the dispatcher owns for every applet:
+/// `CLA & 0x0C` without the chaining bit is `6E00`, save a GET RESPONSE for an
+/// owed tail (served on a path `Stub` never opens) and a SELECT under `04` or
+/// `84`, which a YubiKey 5.8.0 serves — its answer is public.
 ///
 /// The fifth is run-37 stated positively: a well-formed SELECT for a
 /// registered AID reaches the applet, whatever chain state it walks into.
@@ -194,17 +193,20 @@ fn two_command_sequence_never_splices() {
         && y.is_secure_messaging()
     {
         assert!(
-            stub.seen_nc.is_none() && !stub.selected,
+            stub.seen_nc.is_none(),
             "a secure-messaging class reached the applet"
         );
-        // …including the SELECT shape, which is the exemption a class check is
-        // most likely to grow.
-        kani::cover!(is_select(&y));
+        assert!(
+            !stub.selected || (is_select(&y) && y.is_served_over_ccid()),
+            "a secure-messaging command selected"
+        );
+        // …one that carries data, whose `Nc` an applet it reached would have seen.
+        kani::cover!(y.nc > 0 && !is_select(&y));
     }
 
     if let Ok(y) = a2
         && !y.is_chaining()
-        && !y.is_secure_messaging()
+        && (!y.is_secure_messaging() || y.is_served_over_ccid())
         && is_select(&y)
         && !y.data.is_empty()
         && STUB_AID.starts_with(y.data)
@@ -215,7 +217,9 @@ fn two_command_sequence_never_splices() {
             "a SELECT for a registered AID did not select it"
         );
         assert!(stub.selected, "the SELECT never reached the applet");
-        // …including when it walks into a live chain, which is the run-37 case.
+        // …including when it walks into a live chain, which is the run-37 case,
+        // and under `04` or `84`.
         kani::cover!(a1.map(|x| x.is_chaining()).unwrap_or(false));
+        kani::cover!(y.is_secure_messaging());
     }
 }

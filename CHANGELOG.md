@@ -65,6 +65,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- Over CCID the card passes on only the classes a YubiKey 5.8.0 does: `00`,
+  `04`, `80`, `84`, and any with the chaining bit. Every other class gets an
+  empty data block, no body and no status word, as from the YubiKey. RS-Key ran
+  those commands instead (a SELECT under `01`, `20`, `40` or `C0` selected, and
+  PIV and OpenPGP served what followed) or answered `6E00`. A SELECT under `04`
+  or `84` selects as under `00`, where RS-Key answered `6E00` (over CTAPHID's
+  vendor channel too); any other command there is still `6E00`. The classes were
+  read off a YubiKey 5.8.0 one by one over raw USB. As before, a GET RESPONSE for
+  an answer already begun is served under any class (the YubiKey serves one under
+  `0C`), and an unanswered command leaves an open chain and a held tail as they
+  were.
+  `bcdDevice` 0x0A13 → 0x0A14.
+
 - An attestation statement names no key usage: a YubiKey 5.8.0's OpenPGP
   statement carries Yubico's extensions and nothing else. RS-Key's put a critical
   keyUsage in every statement, `digitalSignature` for all but an X25519 key, so a

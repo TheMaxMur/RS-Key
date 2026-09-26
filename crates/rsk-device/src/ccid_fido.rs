@@ -144,8 +144,8 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_,
     }
 
     /// CTAP2's three instructions are served under `00` as under `80`, and U2F's
-    /// under `00` alone, which is how a YubiKey 5.8.0 answers them. Any other class
-    /// goes to U2F as it did, and is refused there: no reading reached past those.
+    /// under `00` alone, which is how a YubiKey 5.8.0 answers them. Over CCID no
+    /// other class gets here; called directly, one goes to U2F and is refused there.
     ///
     /// **No `91 00` keep-alive is ever returned**, so the host's GETRESPONSE poll
     /// loop never runs. A touch wait blocks inside this call while the CCID

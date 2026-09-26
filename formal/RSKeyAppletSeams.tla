@@ -12,7 +12,7 @@
 (* RSKeySecurityState.tla. Those two state machines share no variable, and   *)
 (* that is a measured claim rather than a convenience: the CCID side owns a  *)
 (* Dispatcher and the only instances of openpgp / oath / piv / otp /         *)
-(* management / rescue / vendor (crates/rsk-device/src/ccid.rs:103-121),      *)
+(* management / rescue / vendor (crates/rsk-device/src/ccid.rs:104-122),      *)
 (* while the CTAPHID side owns a SEPARATE Dispatcher whose applet array is   *)
 (* literally one element, its own VendorApplet                               *)
 (* (crates/rsk-device/src/ctap.rs:177-181). PIV, OpenPGP and OATH are not    *)
@@ -45,7 +45,7 @@ CONSTANTS
     \* WRITER rather than in the invariant; widen it to the PIN and the shipped
     \* tree is red for a drop the applet does on purpose.
     BugOathReselectUnrecorded,
-    \* crates/rsk-device/src/ccid.rs:346-361 -- the ICC power transition.
+    \* crates/rsk-device/src/ccid.rs:347-362 -- the ICC power transition.
     BugCardResetKeepsStatus,
     \* e5da38b taken back out: PW3, the admin PIN, standing in for PW1/PW2 on
     \* PSO:CDS, PSO:DECIPHER and INTERNAL AUTHENTICATE.
@@ -536,7 +536,7 @@ PivKeyOp ==
 
 \* SCardDisconnect(SCARD_RESET_CARD) / CCID_POWER_OFF / CCID_POWER_ON:
 \* `Dispatcher::reset_card` deselects, which drops the selected applet's
-\* security status (crates/rsk-device/src/ccid.rs:346-361,
+\* security status (crates/rsk-device/src/ccid.rs:347-362,
 \* crates/rsk-sdk/src/applet.rs:252-260). This is the one the `cross_applet`
 \* fuzz target already watches, one layer down.
 \* Its own trailing UNCHANGED named `psig` while the ELSE branch assigned it, so

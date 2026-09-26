@@ -115,6 +115,26 @@ fn chaining_flag() {
     );
 }
 
+/// The classes a YubiKey 5.8.0's CCID layer passed on, read off it one by one:
+/// `00`, `04`, `80`, `84`, and all 128 with the chaining bit.
+#[test]
+fn the_classes_served_over_ccid_are_a_yubikeys() {
+    let served: std::vec::Vec<u8> = (0..=0xFFu8)
+        .filter(|&cla| {
+            Apdu::parse(&[cla, 0xA4, 0x04, 0x00])
+                .unwrap()
+                .is_served_over_ccid()
+        })
+        .collect();
+    let chaining = (0..=0xFFu8).filter(|c| c & 0x10 != 0);
+    let mut want: std::vec::Vec<u8> = [0x00, 0x04, 0x80, 0x84]
+        .into_iter()
+        .chain(chaining)
+        .collect();
+    want.sort_unstable();
+    assert_eq!(served, want);
+}
+
 #[test]
 fn too_short() {
     assert_eq!(Apdu::parse(&[0x00, 0x01]), Err(Error::WrongLength));

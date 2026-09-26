@@ -279,7 +279,7 @@ impl Dispatcher {
         // owed its SM bits are not judged: a YubiKey 5.8.0 serves the rest of an
         // answer it already began in the clear.
         let get_response = apdu.ins == INS_GET_RESPONSE;
-        if get_response && !apdu.is_chaining() && self.pending_off < self.pending_len {
+        if get_response && !apdu.is_chaining() && self.response_owed() {
             return self.serve_pending(apdu.frame_cap(), res);
         }
         // With the chaining bit and no chain open a YubiKey 5.8.0 answers it `9000`
@@ -288,13 +288,13 @@ impl Dispatcher {
             return Sw::OK;
         }
 
-        // The class byte, one owner for every applet. A YubiKey 5.7.4 examines
-        // exactly two bits and in this order: chaining wins outright (`1C`, `90`
-        // and `FF` are plain segments there, so an SM refusal must not touch
-        // them), else a secure-messaging class is `6E00` — measured on PIV,
-        // OpenPGP and OATH alike. Serving it instead would hand a client that
-        // believes it negotiated SM an unprotected exchange it cannot tell apart.
-        if !apdu.is_chaining() && apdu.is_secure_messaging() {
+        // Chaining wins outright (`1C`, `90`, `FF` are plain segments); an SM class is
+        // `6E00`, bar a SELECT under `04` or `84`, which a YubiKey 5.8.0 serves as under
+        // `00`. Over CCID, rsk-device's class gate has dropped the other SM classes.
+        if !apdu.is_chaining()
+            && apdu.is_secure_messaging()
+            && !(is_select(&apdu) && apdu.is_served_over_ccid())
+        {
             return Sw::CLA_NOT_SUPPORTED;
         }
 
@@ -484,6 +484,11 @@ impl Dispatcher {
     /// Whether a command chain is open: a segment taken and its final one due.
     pub fn chain_open(&self) -> bool {
         self.chaining
+    }
+
+    /// Whether a GET RESPONSE would be served a tail: an answer begun, not finished.
+    pub fn response_owed(&self) -> bool {
+        self.pending_off < self.pending_len
     }
 
     /// The answer half of [`Self::process`], for a response an applet made outside

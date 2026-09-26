@@ -1357,9 +1357,9 @@ fn select_matches_an_aid_by_prefix() {
     assert_eq!(d.current(), Some(0), "the lower index wins a shared prefix");
 }
 
-/// The class byte, measured on a YubiKey 5.7.4 across PIV, OpenPGP and OATH: a
-/// class asking for secure messaging is `6E00`, and the chaining bit is looked at
-/// FIRST — `1C`, `90` and `FF` are plain segments there, not SM refusals.
+/// The class byte, measured on a YubiKey 5.8.0 across PIV, OpenPGP and OATH: a
+/// class asking for secure messaging is `6E00` for all but a SELECT, and the
+/// chaining bit is looked at FIRST — `1C`, `90` and `FF` are plain segments there.
 #[test]
 fn a_secure_messaging_class_is_refused() {
     let mut echo = Echo { selected: false };
@@ -1376,9 +1376,9 @@ fn a_secure_messaging_class_is_refused() {
     sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
     assert_eq!(go(&mut d, &mut apps, &sel).0, Sw::OK);
 
-    // 04 and 84 are the two the oracle could be asked directly (macOS PC/SC
-    // refuses to transmit the rest); 0C and 8C are the ISO SM encodings the same
-    // rule covers, and the applet must never see any of them.
+    // 04 and 84 are the SM classes the oracle's CCID layer passes on; 0C and 8C it
+    // answers with an empty data block (rsk-device's gate), and here they are refused
+    // too. The applet must never see any of them.
     for cla in [0x04u8, 0x84, 0x0C, 0x8C, 0x4C] {
         assert_eq!(
             go(&mut d, &mut apps, &[cla, 0x10, 0, 0, 0x02, 0xAA, 0xBB]),
@@ -1386,16 +1386,23 @@ fn a_secure_messaging_class_is_refused() {
             "CLA {cla:02X} asks for secure messaging"
         );
     }
-    // A SELECT is not privileged: the class is judged before the command is.
+    // A SELECT is served under 04 and 84, as the oracle serves it; under 0C, a class
+    // it never answers at all, it is refused like any SM command.
     let mut sm_sel = sel.clone();
     sm_sel[0] = 0x04;
     assert_eq!(
         go(&mut d, &mut apps, &sm_sel).0,
-        Sw::CLA_NOT_SUPPORTED,
+        Sw::OK,
         "SELECT at an SM class"
     );
+    sm_sel[0] = 0x0C;
+    assert_eq!(
+        go(&mut d, &mut apps, &sm_sel).0,
+        Sw::CLA_NOT_SUPPORTED,
+        "SELECT at 0C"
+    );
 
-    // Everything the oracle serves must still be served, byte for byte.
+    // No SM indication, no refusal here; over CCID 40 and C0 never get this far.
     for cla in [0x00u8, 0x80, 0x40, 0xC0] {
         assert_eq!(
             go(&mut d, &mut apps, &[cla, 0x10, 0, 0, 0x02, 0xAA, 0xBB]),

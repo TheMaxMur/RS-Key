@@ -18,6 +18,7 @@ use rsk_openpgp::consts::INS_KEYPAIR_GEN;
 use rsk_otp::OtpApplet;
 use rsk_piv::PivApplet;
 use rsk_rescue::RescueApplet;
+use rsk_sdk::apdu::INS_GET_RESPONSE;
 use rsk_sdk::applet::RESP_BUILD;
 use rsk_sdk::{Apdu, Applet, Dispatcher, ResBuf, Sw};
 
@@ -362,9 +363,19 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     }
 
     /// Dispatch one CCID APDU synchronously, returning the response APDU (body +
-    /// SW1 SW2). On-card RSA keygen is run to completion inline (see module docs);
-    /// everything else goes straight to the applet dispatcher.
+    /// SW1 SW2), or nothing for a class a YubiKey 5.8.0 does not pass on. On-card
+    /// RSA keygen is run to completion inline (see module docs); everything else
+    /// goes straight to the applet dispatcher.
     pub fn handle_apdu(&mut self, apdu: &[u8], now_ms: u64) -> &[u8] {
+        // A YubiKey 5.8.0 answers such a class with an empty data block before any
+        // application sees it, and nothing changes; a GET RESPONSE for a tail already
+        // begun is still served, as the YubiKey serves one under `0C`.
+        if let Ok(p) = Apdu::parse(apdu)
+            && !p.is_served_over_ccid()
+            && !(p.ins == INS_GET_RESPONSE && self.disp.response_owed())
+        {
+            return &self.resp[..0];
+        }
         // The FIDO applet's context is the filesystem alone, like every other
         // applet's, so the two things it needs and cannot reach — the transport's
         // clock and the enabled-applications mask — are stamped on here, one

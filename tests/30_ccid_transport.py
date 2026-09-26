@@ -22,6 +22,7 @@ import os
 import sys
 
 try:
+    from smartcard.Exceptions import CardConnectionException
     from smartcard.util import toHexString
 except ImportError:
     sys.exit("missing dependency: pip install pyscard")
@@ -83,6 +84,24 @@ def main():
         fail(f"counter mismatch: INC returned {inc}, GET returned {cur}")
 
     print(f"counter = {cur} (consistent across INC/GET over CCID)")
+
+    # A YubiKey 5.8.0 answers a class it does not serve (all but 00/04/80/84,
+    # chaining aside) with an empty data block, no status word, which PC/SC
+    # reports as an error. The card answers the next command as ever.
+    try:
+        data, sw1, sw2 = conn.transmit([0x40] + SELECT[1:])
+    except CardConnectionException as e:
+        # hresult 0: the transmit worked and brought back no status word. Any other
+        # is the host refusing to send class 40, which proves nothing either way.
+        if getattr(e, "hresult", 0):
+            print(f"SELECT under class 40 -> not sent by this host ({e}); unchecked")
+        else:
+            print(f"SELECT under class 40 -> no answer ({e})")
+    else:
+        fail(f"SELECT under class 40 answered {sw1:02X}{sw2:02X}; a YubiKey answers nothing")
+    data, sw1, sw2 = conn.transmit(SELECT)
+    if (sw1, sw2) != (0x90, 0x00):
+        fail(f"SELECT after the empty answer not 9000 (got {sw1:02X}{sw2:02X})")
 
     # A board assertion, not an emulator one: `tools/emu`'s `EmuVendorPlatform`
     # never implemented `core1_stats`, so the shim answers 6D00 either way. What

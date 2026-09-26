@@ -38,8 +38,9 @@
 //! | anything else | a raw APDU, framed by `apdu_frame::next_frame`: one length byte then that many bytes, or `0xFF` for the extended-Lc escape |
 //!
 //! Beyond not panicking, the oracle is the set of rules this crate owns and no
-//! applet can enforce for itself: a reply always carries its status word and fits
-//! one CCID frame; an application the capability mask has disabled answers
+//! applet can enforce for itself: a reply carries its status word and fits one
+//! CCID frame, or is empty for a class the card does not serve and for no other;
+//! an application the capability mask has disabled answers
 //! `FILE_NOT_FOUND` to SELECT and an ungated one never does; a card reset leaves
 //! nothing selected for the PIN pad to paint for; READ CONFIG never goes silent;
 //! the mask never reports a capability this build does not have; a factory wipe
@@ -55,6 +56,7 @@ use rsk_devconf::raw::TAG_USB_ENABLED;
 use rsk_device::{CcidApplets, Hooks};
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
+use rsk_sdk::apdu::INS_GET_RESPONSE;
 use rsk_sdk::{Apdu, Sw};
 
 mod apdu_frame;
@@ -372,7 +374,18 @@ fuzz_target!(|data: &[u8]| {
                 if matches!(Apdu::parse(raw), Ok(p) if p.ins == INS_GENERATE) {
                     continue;
                 }
-                let _ = status(ccid.handle_apdu(raw, 0));
+                let res = ccid.handle_apdu(raw, 0);
+                // An unserved class is answered with nothing, as by a YubiKey 5.8.0;
+                // a GET RESPONSE under one still collects a tail that is owed.
+                match Apdu::parse(raw) {
+                    Ok(p) if !p.is_served_over_ccid() && p.ins != INS_GET_RESPONSE => {
+                        assert!(res.is_empty(), "an unserved class got {res:02X?}");
+                    }
+                    Ok(p) if !p.is_served_over_ccid() && res.is_empty() => {}
+                    _ => {
+                        let _ = status(res);
+                    }
+                }
             }
         }
     }

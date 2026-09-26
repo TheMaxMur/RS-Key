@@ -285,7 +285,8 @@ crypto-critical helpers, where a proof genuinely beats a sample:
   findings each needed two commands to express. It pins that the applet is
   never handed a body from a command it did not itself terminate, that a
   dropped chain leaves no bytes behind, that a secure-messaging class reaches
-  no applet, and that a SELECT for a registered AID always arrives. Its bound is
+  no applet as a command and selects only as a SELECT under `04` or `84`, and
+  that a SELECT for a registered AID in any other class always arrives. Its bound is
   a `cfg(kani)` shrink of production source — the table below is the whole set —
   and it states what it stops proving where it is written, this one in
   `applet_kani.rs`.
@@ -438,12 +439,12 @@ command with it. "Peak" is the tier's `maximum resident set size` under
 
 | Tier | Crates | Harnesses | Covers | Solve | Wall | Peak | Slowest harness |
 |---|---|---|---|---|---|---|---|
-| `pr` | 13 | 65 | 41 | 229 s | 251 s | 2.8 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 39 s |
+| `pr` | 13 | 65 | 42 | 229 s | 251 s | 2.8 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 39 s |
 | `state` | 2 | 29 | 36 | 1341 s | 1365 s | 15.3 GiB | `rsk-fido::…_at_call_site`, 6 m 06 s |
-| `all` | 17 | 94 | 67 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
+| `all` | 17 | 94 | 68 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
 | `light1` | 4 | 32 | 35 | 528 s | 538 s | 9.3 GiB | `rsk-fido::…_at_call_site`, 5 m 35 s |
 | `light2` | 5 | 29 | 12 | 1289 s | 1300 s | 8.9 GiB | `rsk-rsa::sieve_step_keeps_residues`, 17 m 38 s |
-| `light3` | 7 | 28 | 19 | 162 s | 176 s | 2.4 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 36 s |
+| `light3` | 7 | 28 | 20 | 162 s | 176 s | 2.4 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 36 s |
 | `heavy` | 1 | 5 | 1 | 1785 s | 1788 s | 19.9 GiB | `rsk-phy::serialize_parse_roundtrip`, 18 m 35 s |
 
 > **`state` is the one row re-measured after the authorization slice, and it

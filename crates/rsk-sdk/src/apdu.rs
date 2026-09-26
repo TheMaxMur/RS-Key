@@ -14,6 +14,8 @@ pub const INS_GET_RESPONSE: u8 = 0xC0;
 /// ISO 7816-4 §5.4.1: b4b3 of a first-interindustry class byte carry the
 /// secure-messaging indication (`01` proprietary, `10`/`11` per §6).
 const CLA_SM_MASK: u8 = 0x0C;
+/// ISO 7816-4 §5.4.1: b4b3 = `01`, the proprietary secure-messaging indication.
+const CLA_SM_PROPRIETARY: u8 = 0x04;
 /// ISO 7816-4 §5.4.1: b8 of the class byte set marks the proprietary class.
 pub const CLA_PROPRIETARY: u8 = 0x80;
 
@@ -128,6 +130,14 @@ impl<'a> Apdu<'a> {
     #[inline]
     pub fn is_secure_messaging(&self) -> bool {
         self.cla & CLA_SM_MASK != 0
+    }
+
+    /// Whether a YubiKey 5.8.0's CCID layer hands this class on at all: `00`, `04`,
+    /// `80`, `84`, or any class with the chaining bit, taken as a segment first.
+    /// It answers every other class with an empty data block.
+    #[inline]
+    pub fn is_served_over_ccid(&self) -> bool {
+        self.is_chaining() || self.cla & !(CLA_PROPRIETARY | CLA_SM_PROPRIETARY) == 0
     }
 
     /// Class `00` or `80`: the basic channel with no other bit set, interindustry
