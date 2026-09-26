@@ -43,7 +43,7 @@ use crate::consts::{
     CRED_PROT_UV_OPTIONAL, CRED_PROT_UV_REQUIRED, CURVE_ED25519, CURVE_MLDSA44, CURVE_MLDSA65,
     CURVE_MLDSA87, CURVE_P256, CURVE_P256K1, CURVE_P384, CURVE_P521, EF_ATT_CHAIN, EF_EA_ENABLED,
     EF_EA_RPIDS, EF_EE_DEV, EF_MINPINLEN, EF_PIN, FLAG_AT, FLAG_ED, FLAG_UV, LARGE_BLOB_EXT,
-    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS,
+    MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_LIST_LEN, MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS,
     MAX_RESIDENT_CREDENTIALS,
 };
 use crate::credential::{
@@ -62,12 +62,7 @@ use crate::seed::load_att_key;
 use crate::state::PERM_MC;
 use crate::{Ctx, Rng};
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "the list ceiling getInfo advertises is a small constant, and a const item \
-              cannot call the checked `usize::try_from`"
-)]
-const MAX_EXCLUDE: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
+const MAX_EXCLUDE: usize = MAX_CREDENTIAL_LIST_LEN;
 
 /// authData fixed prefix: rpIdHash(32) ‖ flags(1) ‖ signCount(4) ‖ aaguid(16) ‖
 /// credIdLen(2).

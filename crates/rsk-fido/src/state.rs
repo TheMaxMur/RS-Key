@@ -12,7 +12,7 @@ use rsk_crypto::pinproto::{self, PinProto, public_xy};
 
 use crate::Rng;
 use crate::consts::{
-    CTAP_CREDENTIAL_MGMT, CTAP_GET_NEXT_ASSERTION, CTAP_LARGE_BLOBS, MAX_CREDENTIAL_COUNT_IN_LIST,
+    CTAP_CREDENTIAL_MGMT, CTAP_GET_NEXT_ASSERTION, CTAP_LARGE_BLOBS, MAX_CREDENTIAL_LIST_LEN,
     MAX_LARGE_BLOB_SIZE, MAX_RESIDENT_CREDENTIALS, PUAT_INITIAL_USAGE_LIMIT_MS,
     PUAT_MAX_USAGE_PERIOD_MS, STATEFUL_WALK_IDLE_MS,
 };
@@ -28,7 +28,7 @@ pub const PERM_ACFG: u8 = 0x20; // authenticatorConfiguration
 pub const PERM_PCMR: u8 = 0x40; // per-credential-management read-only
 
 /// Max credentials tracked for `getNextAssertion` (`MAX_CREDENTIAL_COUNT_IN_LIST`).
-pub const MAX_ASSERTION_CREDS: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
+pub const MAX_ASSERTION_CREDS: usize = MAX_CREDENTIAL_LIST_LEN;
 
 /// State carried between `getAssertion` and `getNextAssertion` when resident
 /// discovery finds more than one credential. Holds EF_CRED slot offsets (newest

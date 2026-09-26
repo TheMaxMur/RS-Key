@@ -145,7 +145,7 @@ OUTCOMES_RATCHET = "@TraceSecurityOutcomesMin"
 # command space, so it cannot collide with a real command byte.
 POWER_CYCLE = 0xFF
 
-# `crates/rsk-fido/src/consts.rs:404`, applied at `crates/rsk-fido/src/reset.rs:263`
+# `crates/rsk-fido/src/consts.rs:407`, applied at `crates/rsk-fido/src/reset.rs:263`
 # as `!warm_boot && now_ms <= RESET_WINDOW_MS`. The model abstracts the clock to
 # `ResetWindow` plus a `Tick`; the mapper needs the real bound.
 RESET_WINDOW_MS = 10_000

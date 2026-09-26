@@ -149,7 +149,7 @@ emit() { # $1 = cfg, $2 = bug switch (""), $3 = sweep fix, $4 = ppuat fix
     # symmetry is what pays for the two constants below being the firmware's
     # own. Quotienting the interchangeable relying parties and channels takes
     # 61 215 504 distinct states to 25 829 584, which is what let MAX_PIN_RETRIES
-    # = 8 and PIN_MISMATCH_LIMIT = 3 (consts.rs:368,372) be affordable at all.
+    # = 8 and PIN_MISMATCH_LIMIT = 3 (consts.rs:371,375) be affordable at all.
     # They cost 108 618 956 now -- MORE than the reduced 3 : 2 explored before the
     # quotient, the token-less registration and the grant record having been folded
     # in since. The mechanism is the measurement; the margin was, and is not.

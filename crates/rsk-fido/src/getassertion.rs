@@ -29,7 +29,7 @@ use crate::cbordec::{cbor, def_map, parse_credential_descriptors, skip_value};
 use crate::clientpin::{UvOutcome, builtin_uv_enabled, builtin_uv_step};
 use crate::consts::{
     CRED_PROT_UV_OPTIONAL_WITH_LIST, CRED_PROT_UV_REQUIRED, CURVE_P256, EF_CRED, EF_PIN, FLAG_ED,
-    FLAG_UP, FLAG_UV, LARGE_BLOB_EXT, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_RESIDENT_CREDENTIALS,
+    FLAG_UP, FLAG_UV, LARGE_BLOB_EXT, MAX_CREDENTIAL_LIST_LEN, MAX_RESIDENT_CREDENTIALS,
     STATEFUL_WALK_IDLE_MS,
 };
 use crate::credential::{
@@ -47,11 +47,7 @@ use crate::seed::{report_sign_counter, set_cred_sign_counter};
 use crate::state::{AssertionState, MAX_ASSERTION_CREDS, PERM_GA};
 use crate::{Ctx, Rng};
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "the list ceiling is 16, and a const cannot call `usize::try_from`"
-)]
-const MAX_ALLOW: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
+const MAX_ALLOW: usize = MAX_CREDENTIAL_LIST_LEN;
 /// Sized by the create-side ceiling so no creatable box is ever skipped
 /// (`Best::consider` drops longer candidates). It sits on the getAssertion
 /// frame — the ML-DSA keypair already lives off-stack.

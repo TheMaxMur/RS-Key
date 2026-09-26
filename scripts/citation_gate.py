@@ -213,7 +213,7 @@ PAGES = (
     pathlib.Path("formal/comutants.toml"),
     # Not a model page but the config generator, and it makes the same kind of
     # model-to-code claim: the two firmware constants its SYMMETRY argument is
-    # priced against. Both had moved — `consts.rs:361,334` named `EF_LARGEBLOB`
+    # priced against. Both had moved — `consts.rs:364,337` named `EF_LARGEBLOB`
     # and a doc comment, not MAX_PIN_RETRIES and PIN_MISMATCH_LIMIT.
     pathlib.Path("formal/gen-configs.sh"),
 )

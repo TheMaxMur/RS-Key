@@ -723,8 +723,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   credential's initial moving factor as the `[u8; 4]` it was checked to be.
   In `rsk-fido` the CTAP handlers follow, a module at a time: `credential.rs`,
   the credential-id box codec, `getassertion.rs`, `makecredential.rs`,
-  `u2f.rs`, `credmgmt.rs` and `clientpin.rs`.
-  `bcdDevice` 0x0A35 → 0x0A49.
+  `u2f.rs`, `credmgmt.rs` and `clientpin.rs`. The allowList and excludeList take
+  their length from the constant `getNextAssertion`'s list does, not a cast each.
+  `bcdDevice` 0x0A35 → 0x0A49, then 0x0A4B.
 
 - **The trusted display a host ceremony reaches holds no cell its dispatch
   borrows** — refactor; the same screens, touches and store writes. The panel's

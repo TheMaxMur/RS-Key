@@ -5,7 +5,7 @@
 //! site** rather than the state predicates behind it.
 //!
 //! Only one of the four token gates can be reached this way. The other three
-//! (`config.rs:242`, `getassertion.rs:435`, `makecredential.rs:575`) are inline
+//! (`config.rs:242`, `getassertion.rs:431`, `makecredential.rs:570`) are inline
 //! in functions that need a `Ctx`, and a `Ctx` drags `p256` into the reachable
 //! set, where Kani 0.67.0 does not merely time out — it aborts in codegen:
 //! `crypto-bigint 0.7.5 UintRef::lowest_u64` panics cprover_bindings' typecheck

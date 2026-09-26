@@ -144,7 +144,7 @@ bound_max_clock = 1
 stops_max_clock = "nothing this invariant can express. What one Tick costs is reach: a falsifying state needing a second unit of elapsed time is not in the set searched"
 bound_reset_window = 0
 stops_reset_window = "nothing this invariant can express. What zero costs is reach: a reset started inside the shipped window is a prefix no run here produces"
-shipped_relation = "MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES (8) and PIN_MISMATCH_LIMIT (3) at crates/rsk-fido/src/consts.rs:368,372; RPs and Channels are 2 against an unbounded device; MaxClock 1 is the smallest value at which Tick is not dead; ResetWindow 0 runs the window closed only. AND NONE OF THE SIX IS ON THIS PROPERTY'S PATH: `ram => store.seed` names two booleans and no constant, so what the six buy is the reachable set a falsifying state would have to appear in, and what they cost this invariant is nothing it can express. That is the honest difference from SEC-FIDO-001, where MaxRetries IS the retry ladder the invariant is about"
+shipped_relation = "MaxRetries and MismatchLimit ARE the shipped MAX_PIN_RETRIES (8) and PIN_MISMATCH_LIMIT (3) at crates/rsk-fido/src/consts.rs:371,375; RPs and Channels are 2 against an unbounded device; MaxClock 1 is the smallest value at which Tick is not dead; ResetWindow 0 runs the window closed only. AND NONE OF THE SIX IS ON THIS PROPERTY'S PATH: `ram => store.seed` names two booleans and no constant, so what the six buy is the reachable set a falsifying state would have to appear in, and what they cost this invariant is nothing it can express. That is the honest difference from SEC-FIDO-001, where MaxRetries IS the retry ladder the invariant is about"
 cfg = "none"
 features = "none"
 

@@ -1582,7 +1582,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-fido"]
 expect = "killed"
-note = "makeCredUvNotRqd widened to every credential: §6.1.2 step 10 carves the token out for a NON-discoverable credential only, and without `req.rk` a resident one is created with a PIN set and no token. `crates/rsk-fido/src/makecredential.rs:605-607` — the direction matters and BOTH levels were read for it rather than for their colour: TLC's counterexample has RegisterStart firing at `pin.set` with no token, and the host test reports `Ok(770)` against `Err(PuatRequired)` — a credential minted, not a refusal wearing a different code. It said `Err(Other)` until the test's `out` was sized for a served response; the encoder ran out of room AFTER the gate had already let it through, which is the shape of a kill that reads like the inverse defect."
+note = "makeCredUvNotRqd widened to every credential: §6.1.2 step 10 carves the token out for a NON-discoverable credential only, and without `req.rk` a resident one is created with a PIN set and no token. `crates/rsk-fido/src/makecredential.rs:600-602` — the direction matters and BOTH levels were read for it rather than for their colour: TLC's counterexample has RegisterStart firing at `pin.set` with no token, and the host test reports `Ok(770)` against `Err(PuatRequired)` — a credential minted, not a refusal wearing a different code. It said `Err(Other)` until the test's `out` was sized for a served response; the encoder ran out of room AFTER the gate had already let it through, which is the shape of a kill that reads like the inverse defect."
 
 [comutant.BugTokenlessIgnoresAlwaysUv]
 status = "patch"
@@ -1596,7 +1596,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-fido"]
 expect = "killed"
-note = "the other half, §6.1.2 steps 6.2/6.4: alwaysUv with no way to verify refuses whatever `rk` says. Dropped, a token-less request falls through to `Ok(UvOutcome::NONE)` and alwaysUv is served on the touch alone. `crates/rsk-fido/src/makecredential.rs:599-601`. Two switches and not one because a single widened guard cannot say which half was load-bearing — the same split TraceSecurity draws with MutateUvNotRqd / MutateAlwaysUvArm. Two host tests fall, both reporting `Ok(802)` against `Err(PuatRequired)`, so this one is served and not merely mis-refused either."
+note = "the other half, §6.1.2 steps 6.2/6.4: alwaysUv with no way to verify refuses whatever `rk` says. Dropped, a token-less request falls through to `Ok(UvOutcome::NONE)` and alwaysUv is served on the touch alone. `crates/rsk-fido/src/makecredential.rs:594-596`. Two switches and not one because a single widened guard cannot say which half was load-bearing — the same split TraceSecurity draws with MutateUvNotRqd / MutateAlwaysUvArm. Two host tests fall, both reporting `Ok(802)` against `Err(PuatRequired)`, so this one is served and not merely mis-refused either."
 
 # ---- batch 7: the gate the module did not carry ----------------------------
 

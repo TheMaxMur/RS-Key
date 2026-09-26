@@ -203,6 +203,9 @@ pub const MAX_MSG_SIZE: u64 = 7609;
 /// mints (a non-resident box) — and therefore the largest it will assert.
 pub const MAX_CRED_ID_LENGTH: u64 = crate::credential::CRED_BOX_MAX as u64;
 pub const MAX_CREDENTIAL_COUNT_IN_LIST: u64 = 16;
+/// [`MAX_CREDENTIAL_COUNT_IN_LIST`] as a length: what the allowList, excludeList
+/// and `getNextAssertion` buffers hold.
+pub const MAX_CREDENTIAL_LIST_LEN: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
 /// The only `PublicKeyCredentialType` WebAuthn defines. A credential descriptor
 /// carrying anything else is a type this device cannot assert, so the allowList
 /// and excludeList parsers drop it rather than match on its id.
