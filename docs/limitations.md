@@ -283,6 +283,12 @@ covers the security boundary. This page covers feature and hardware gaps.
   `6A80` and changes nothing. The project matches a YubiKey everywhere except
   where matching would lose user data, and this is that exception.
   *Status: never — deliberate.*
+- **A SELECT with `P2 = 04` still selects.** A YubiKey 5.8.0 takes only
+  `P2 = 00` as a SELECT by AID and hands `04` to the current application, which
+  answers `6D00`. RS-Key selects on `04` as on `00`, because PicoForge opens the
+  management and rescue applets that way (`APDU_P2_RETURN_FCI = 0x04` in its
+  `src/hal/rescue/constants.rs`), and the YubiKey's answer would cut it off the
+  device. *Status: never — deliberate.*
 - **OpenPGP secure messaging** is not implemented (rarely used by clients;
   PINs gate everything in practice).
 - **One physical button on the base build.** Touch = the BOOTSEL button, and

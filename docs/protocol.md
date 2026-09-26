@@ -82,7 +82,9 @@ challenges it had in fact completed.
 
 ### 1.1 CCID APDU framing
 
-Standard ISO-7816 short APDUs. SELECT is always `00 A4 04 00 Lc <AID> 00`; the
+Standard ISO-7816 short APDUs. SELECT is always `00 A4 04 00 Lc <AID> 00`; a
+`P2` of `04` selects too, where a YubiKey 5.8.0 answers `6D00`, because PicoForge
+sends it ([limitations](limitations.md)). The
 selected applet then receives `CLA INS P1 P2 [Lc <data>] [Le]`. There is no ISO
 master file, so the master-file SELECT (`00 A4 00 0C …`, GnuPG's `3F00` probe)
 answers `6D00` like a YubiKey. The power-on ATR is T=1, its historical bytes labelled
