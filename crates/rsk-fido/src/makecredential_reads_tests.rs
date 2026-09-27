@@ -21,7 +21,7 @@ fn seeded(fs: &mut Fs<Traced>) -> Session {
     }
 }
 
-fn make(fs: &mut Fs<Traced>, s: &mut Session) -> bool {
+fn make(fs: &mut Fs<Traced>, s: &mut Session) -> Option<std::vec::Vec<u8>> {
     let mut out = [0u8; 1024];
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
@@ -32,7 +32,8 @@ fn make(fs: &mut Fs<Traced>, s: &mut Session) -> bool {
         state: &mut s.state,
         now_ms: 1000,
     };
-    make_credential(&mut ctx, &s.req, &mut out).is_ok()
+    let n = make_credential(&mut ctx, &s.req, &mut out).ok()?;
+    out.get(..n).map(<[u8]>::to_vec)
 }
 
 /// A resident request authorised by the session's live token.
@@ -109,7 +110,7 @@ fn a_faulted_read_fails_a_re_registration_or_replaces_the_credential_whole() {
         |fs| {
             let mut s = seeded(fs);
             s.req = build_request(true);
-            assert!(make(fs, &mut s));
+            assert!(make(fs, &mut s).is_some());
             s
         },
         make,

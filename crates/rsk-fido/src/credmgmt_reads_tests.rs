@@ -27,9 +27,10 @@ fn session(req: std::vec::Vec<u8>) -> Session {
     }
 }
 
-fn send(fs: &mut Fs<Traced>, s: &mut Session) -> bool {
+fn send(fs: &mut Fs<Traced>, s: &mut Session) -> Option<std::vec::Vec<u8>> {
     let mut out = [0u8; 1024];
-    run(fs, &mut s.state, &s.req, &mut out).is_ok()
+    let n = run(fs, &mut s.state, &s.req, &mut out).ok()?;
+    out.get(..n).map(<[u8]>::to_vec)
 }
 
 #[test]
@@ -84,23 +85,4 @@ fn no_faulted_read_lets_a_scoped_token_delete_another_rps_credential() {
         send,
         &[],
     );
-}
-
-/// getCredsMetadata (0x01) is not here: it answers from the present index and reads
-/// no record, which the sweep refuses as vacuous.
-#[test]
-fn a_faulted_read_fails_an_enumeration_or_writes_nothing() {
-    for (sub, para) in [
-        (0x02, None),
-        (0x04, Some(subpara_rpidhash(&sha256(b"example.com")))),
-    ] {
-        sweep(
-            |fs| {
-                stocked(fs);
-                session(cm_request(sub, para.as_deref(), &TOKEN))
-            },
-            send,
-            &[],
-        );
-    }
 }

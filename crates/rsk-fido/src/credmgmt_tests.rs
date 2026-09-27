@@ -2482,3 +2482,38 @@ mod reads;
 // needs this module's fixtures.
 #[path = "credmgmt_recovery_tests.rs"]
 mod recovery;
+
+/// `decrement_rp` refuses only when the RP it must decrement could be the record
+/// the flash would not serve: an unreadable record of another RP does not stop a
+/// delete from settling its own RP's count.
+#[test]
+fn a_delete_settles_its_rp_past_another_rps_unread_record() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    let (alice, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    assert_eq!(
+        rp_counts(&mut fs),
+        [1, 2],
+        "control: other.com, then example.com"
+    );
+
+    medium.stick(Some(EF_RP)); // other.com's record
+    let mut out = [0u8; 256];
+    let req = cm_request(0x06, Some(&subpara_cred(&alice)), &TOKEN);
+    let deleted = run(&mut fs, &mut armed(PERM_CM), &req, &mut out);
+    medium.stick(None);
+    assert_eq!(
+        deleted,
+        Ok(0),
+        "another RP's unread record cannot be example.com's"
+    );
+    assert_eq!(
+        rp_counts(&mut fs),
+        [1, 1],
+        "and example.com's count went down"
+    );
+}

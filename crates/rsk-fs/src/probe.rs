@@ -112,7 +112,8 @@ impl Storage for Traced {
 
 /// One run of the command: what it answered, and the medium around it.
 struct Run {
-    ok: bool,
+    /// The answer of a command that succeeded, `None` for a refusal.
+    answer: Option<Vec<u8>>,
     before: Records,
     after: Records,
     reads: Vec<u16>,
@@ -120,25 +121,35 @@ struct Run {
     wrote: BTreeMap<u16, BTreeSet<Option<Vec<u8>>>>,
 }
 
+/// One read a sweep lets break the rule: its fid, which read of that fid it is
+/// (the first is 1), and why a fault there is not a defect.
+pub type Excuse = (u16, u32, &'static str);
+
 /// Run a command clean, then once per flash read it made with that read failed,
 /// then once per fid it read with every read of it failed, and hold each faulted
 /// run to the rule [`Fs::try_read`] states: a fault may only fail the command.
-/// It never succeeds where the clean run refused, it leaves no record holding a
+/// It never succeeds where the clean run refused; it leaves no record holding a
 /// value the clean run never gave it — what it held before, or any value the clean
-/// run wrote there on the way, since failing part-way is failing — and a run that
-/// succeeds leaves the store the clean run left, since mixing old and new is not.
+/// run wrote there on the way, since failing part-way is failing; and a run that
+/// succeeds answers what the clean run answered and leaves the store it left,
+/// since a different answer or a mix of old and new is not failing.
 ///
 /// `provision` builds the starting state on a healthy medium and returns what the
 /// command needs beside the store (an rng, a session); both must be deterministic,
-/// since a faulted run is judged against the clean one. `command` answers whether
-/// it succeeded, and may be a sequence, which is how a latched flag's harm in a
-/// LATER command is reached. `excused` names the fids whose faults deliberately
-/// break the rule, each with its reason; an excuse no fault needs is stale.
+/// since a faulted run is judged against the clean one. `command` answers `Some`
+/// with the command's response when it succeeded, and may be a sequence, which is
+/// how a latched flag's harm in a LATER command is reached. `excused` names the
+/// one-shot faults that deliberately break the rule, each with its reason; what an
+/// excuse lets through is printed, and an excuse no fault needs is stale.
+///
+/// Answers the clean run's answer, so a row whose success half is the point can
+/// check it had one. Blind by construction: each record is judged alone, so two
+/// related records left one old and one new pass, and no refusal code is compared.
 pub fn sweep<C>(
     provision: impl Fn(&mut Fs<Traced>) -> C,
-    command: impl Fn(&mut Fs<Traced>, &mut C) -> bool,
-    excused: &[(u16, &str)],
-) {
+    command: impl Fn(&mut Fs<Traced>, &mut C) -> Option<Vec<u8>>,
+    excused: &[Excuse],
+) -> Option<Vec<u8>> {
     let clean = run(&provision, &command, Fault::Healthy);
     assert!(!clean.reads.is_empty(), "vacuous: the command read nothing");
     let mut faults = Vec::new();
@@ -152,9 +163,6 @@ pub fn sweep<C>(
     let mut needed = vec![false; excused.len()];
     let mut broken = Vec::new();
     for fault in faults {
-        let (Fault::Once { fid, .. } | Fault::Every(fid)) = fault else {
-            unreachable!()
-        };
         let faulted = run(&provision, &command, fault);
         assert_eq!(
             faulted.before, clean.before,
@@ -171,23 +179,30 @@ pub fn sweep<C>(
         let Some(broke) = judge(&clean, &faulted) else {
             continue;
         };
-        match excused.iter().position(|&(f, _)| f == fid) {
-            Some(i) => needed[i] = true,
+        let excuse = excused.iter().position(|&(fid, nth, _)| {
+            matches!(fault, Fault::Once { fid: f, skip } if f == fid && skip + 1 == nth)
+        });
+        match excuse {
+            Some(i) => {
+                needed[i] = true;
+                eprintln!("excused: {fault:?} {broke} — {}", excused[i].2);
+            }
             None => broken.push(format!("{fault:?} {broke}")),
         }
     }
     assert!(broken.is_empty(), "{}", broken.join("\n"));
-    for (&(fid, why), needed) in excused.iter().zip(needed) {
+    for (&(fid, nth, why), needed) in excused.iter().zip(needed) {
         assert!(
             needed,
-            "the excuse for {fid:#06x} is stale, no fault of it broke the rule: {why}"
+            "the excuse for read {nth} of {fid:#06x} is stale, its fault broke nothing: {why}"
         );
     }
+    clean.answer
 }
 
 fn run<C>(
     provision: &impl Fn(&mut Fs<Traced>) -> C,
-    command: &impl Fn(&mut Fs<Traced>, &mut C) -> bool,
+    command: &impl Fn(&mut Fs<Traced>, &mut C) -> Option<Vec<u8>>,
     fault: Fault,
 ) -> Run {
     let map = Rc::new(RefCell::new(Records::new()));
@@ -206,7 +221,7 @@ fn run<C>(
     reads.borrow_mut().clear();
     wrote.borrow_mut().clear();
     armed.set(fault);
-    let ok = catch_unwind(AssertUnwindSafe(|| command(&mut fs, &mut cx))).unwrap_or_else(|e| {
+    let answer = catch_unwind(AssertUnwindSafe(|| command(&mut fs, &mut cx))).unwrap_or_else(|e| {
         eprintln!("{fault:?}: the command panicked");
         resume_unwind(e)
     });
@@ -215,7 +230,7 @@ fn run<C>(
         values.entry(fid).or_default().insert(v);
     }
     Run {
-        ok,
+        answer,
         before,
         after: map.take(),
         reads: reads.take(),
@@ -240,7 +255,8 @@ fn landing(reads: &[u16], fault: Fault) -> usize {
 }
 
 /// How a faulted run broke the rule, if it did: the records it left holding a
-/// value the clean run never gave them, then its answer, then what a success left.
+/// value the clean run never gave them; then, for a run that succeeded, a clean
+/// run that refused, another answer, or another store.
 fn judge(clean: &Run, faulted: &Run) -> Option<String> {
     let third: Vec<String> = faulted
         .before
@@ -267,11 +283,16 @@ fn judge(clean: &Run, faulted: &Run) -> Option<String> {
             third.join(", ")
         ));
     }
-    if !faulted.ok {
-        return None;
-    }
-    if !clean.ok {
+    let answer = faulted.answer.as_ref()?;
+    let Some(clean_answer) = clean.answer.as_ref() else {
         return Some("succeeded where the clean run refused".into());
+    };
+    if answer != clean_answer {
+        return Some(format!(
+            "succeeded with another answer: {} bytes where the clean run gave {}",
+            answer.len(),
+            clean_answer.len()
+        ));
     }
     let apart: Vec<String> = faulted
         .after

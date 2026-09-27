@@ -20,8 +20,13 @@ fn pinned(fs: &mut Fs<Traced>, req: std::vec::Vec<u8>) -> Session {
     }
 }
 
-fn send(fs: &mut Fs<Traced>, s: &mut Session) -> bool {
-    run_fs(fs, &mut s.state, &s.req).is_ok()
+/// authenticatorConfig answers with its status byte alone, so a success's answer
+/// is empty and only its store is compared. A token-less request is not swept: it
+/// is refused before anything is read, which the sweep refuses as vacuous.
+fn send(fs: &mut Fs<Traced>, s: &mut Session) -> Option<std::vec::Vec<u8>> {
+    run_fs(fs, &mut s.state, &s.req)
+        .ok()
+        .map(|_| std::vec::Vec::new())
 }
 
 #[test]

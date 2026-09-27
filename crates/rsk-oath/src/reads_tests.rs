@@ -54,8 +54,13 @@ fn pinned(fs: &mut Fs<Traced>) -> OathApplet<'static> {
     app
 }
 
-fn sends(raw: Vec<u8>) -> impl Fn(&mut Fs<Traced>, &mut OathApplet<'static>) -> bool {
-    move |fs, app| run(app, fs, &raw).0 == Sw::OK
+fn sends(raw: Vec<u8>) -> impl Fn(&mut Fs<Traced>, &mut OathApplet<'static>) -> Option<Vec<u8>> {
+    move |fs, app| answer(run(app, fs, &raw))
+}
+
+/// A command's response when it answered `9000`.
+fn answer((sw, body): (Sw, Vec<u8>)) -> Option<Vec<u8>> {
+    (sw == Sw::OK).then_some(body)
 }
 
 fn named(names: &[&[u8]]) -> Vec<u8> {
@@ -100,7 +105,7 @@ fn no_faulted_read_opens_a_code_locked_store() {
         },
         |fs, app| {
             select(app, fs);
-            run(app, fs, &apdu(INS_LIST, 0, 0, &[])).0 == Sw::OK
+            answer(run(app, fs, &apdu(INS_LIST, 0, 0, &[])))
         },
         &[],
     );
@@ -116,7 +121,8 @@ fn no_faulted_read_opens_the_password_safe_without_its_pin() {
         pinned,
         move |fs, app| {
             let verify = apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"));
-            run(app, fs, &verify).0 == Sw::OK && run(app, fs, &get).0 == Sw::OK
+            answer(run(app, fs, &verify))?;
+            answer(run(app, fs, &get))
         },
         &[],
     );
@@ -133,4 +139,41 @@ fn a_faulted_read_fails_a_pin_command_or_lands_it_whole() {
     ] {
         sweep(pinned, sends(raw), &[]);
     }
+}
+
+/// `find_cred` refuses only when the name is found nowhere and a slot went unread:
+/// PUT over a name that turns up in a readable slot replaces it in place, while a
+/// new name refuses rather than risk filing a second account under a name the
+/// unread slot may hold (the cost: new names wait for the slot to read, or RESET).
+#[test]
+fn an_unread_account_refuses_only_a_name_it_could_hold() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let mut app = applet();
+    select(&mut app, &mut fs);
+    for name in [&b"first"[..], b"second"] {
+        let data = put_data(name, 0x21, 6, &[0xAA; 20], false, None);
+        assert_eq!(put(&mut app, &mut fs, &data), Sw::OK);
+    }
+    medium.stick(Some(EF_OATH_CRED)); // "first"
+    let over = put_data(b"second", 0x21, 8, &[0xBB; 20], false, None);
+    assert_eq!(
+        put(&mut app, &mut fs, &over),
+        Sw::OK,
+        "found past the unread slot"
+    );
+    assert_eq!(
+        medium.value(EF_OATH_CRED + 2),
+        None,
+        "replaced in place, no third"
+    );
+    let fresh = put_data(b"third", 0x21, 6, &[0xCC; 20], false, None);
+    assert_eq!(
+        put(&mut app, &mut fs, &fresh),
+        Sw::MEMORY_FAILURE,
+        "a new name the unread slot may hold refuses"
+    );
+    medium.stick(None);
+    assert_eq!(medium.value(EF_OATH_CRED + 2), None, "and files nothing");
 }

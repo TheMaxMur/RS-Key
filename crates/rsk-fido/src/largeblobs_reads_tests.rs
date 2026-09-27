@@ -37,9 +37,10 @@ fn bare_set(blob: &[u8]) -> std::vec::Vec<u8> {
     buf[..n].to_vec()
 }
 
-fn send(fs: &mut Fs<Traced>, s: &mut Session) -> bool {
+fn send(fs: &mut Fs<Traced>, s: &mut Session) -> Option<std::vec::Vec<u8>> {
     let mut out = [0u8; 1100];
-    run(fs, &mut s.state, &s.req, &mut out).is_ok()
+    let n = run(fs, &mut s.state, &s.req, &mut out).ok()?;
+    out.get(..n).map(<[u8]>::to_vec)
 }
 
 #[test]

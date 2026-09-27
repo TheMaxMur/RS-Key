@@ -10,8 +10,14 @@ fn locked(fs: &mut Fs<Traced>) {
     persist_dev_conf(&SERIAL, fs, &write(None, &[], Some(&CODE))).unwrap();
 }
 
-fn writes(blob: Vec<u8>) -> impl Fn(&mut Fs<Traced>, &mut ()) -> bool {
-    move |fs, _| persist_dev_conf(&SERIAL, fs, &blob).is_ok()
+/// A configuration write answers with its status alone: a success's answer is
+/// empty and only its store is compared.
+fn writes(blob: Vec<u8>) -> impl Fn(&mut Fs<Traced>, &mut ()) -> Option<Vec<u8>> {
+    move |fs, _| {
+        persist_dev_conf(&SERIAL, fs, &blob)
+            .ok()
+            .map(|()| Vec::new())
+    }
 }
 
 /// A lock whose record the flash would not serve is still a lock: no write

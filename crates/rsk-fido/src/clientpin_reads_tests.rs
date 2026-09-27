@@ -34,9 +34,10 @@ fn pinned(fs: &mut Fs<Traced>) -> Session {
     s
 }
 
-fn send(fs: &mut Fs<Traced>, s: &mut Session) -> bool {
+fn send(fs: &mut Fs<Traced>, s: &mut Session) -> Option<std::vec::Vec<u8>> {
     let mut out = [0u8; 256];
-    run(fs, &mut s.rng, &mut s.state, &s.req, &mut out).is_ok()
+    let n = run(fs, &mut s.rng, &mut s.state, &s.req, &mut out).ok()?;
+    out.get(..n).map(<[u8]>::to_vec)
 }
 
 #[test]
@@ -92,8 +93,9 @@ fn a_faulted_read_fails_a_change_pin_or_lands_it_whole() {
     );
 }
 
-/// A wrong current PIN is refused and spends a retry; a fault may refuse sooner,
-/// never refund the retry or take the change.
+/// A wrong current PIN is refused; a fault may not take the change. Whether a fault
+/// can refund the retry is not this sweep's to judge (an unspent retry is also the
+/// state before the spend): the dying-write tests hold that ordering.
 #[test]
 fn no_faulted_read_takes_a_change_pin_the_wrong_pin_refuses() {
     sweep(

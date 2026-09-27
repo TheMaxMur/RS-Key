@@ -47,9 +47,14 @@ fn sends(
     p1: u8,
     p2: u8,
     data: &[u8],
-) -> impl Fn(&mut Fs<Traced>, &mut PivApplet<'static>) -> bool {
+) -> impl Fn(&mut Fs<Traced>, &mut PivApplet<'static>) -> Option<Vec<u8>> {
     let data = data.to_vec();
-    move |fs, app| run(app, fs, ins, p1, p2, &data).0 == Sw::OK
+    move |fs, app| answer(run(app, fs, ins, p1, p2, &data))
+}
+
+/// A command's response when it answered `9000`.
+fn answer((sw, body): (Sw, Vec<u8>)) -> Option<Vec<u8>> {
+    (sw == Sw::OK).then_some(body)
 }
 
 /// SELECT on a fresh connection runs the boot-time file scan; one faulted probe of
@@ -65,8 +70,10 @@ fn no_faulted_read_at_select_reseeds_a_default_over_the_owners() {
         |fs, app| {
             let mut out = [0u8; 256];
             let mut res = ResBuf::new(&mut out);
-            Applet::select(app, false, fs, &mut res) == Sw::OK
-                && run(app, fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0 == Sw::OK
+            if Applet::select(app, false, fs, &mut res) != Sw::OK {
+                return None;
+            }
+            answer(run(app, fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN))
         },
         &[],
     );
@@ -77,7 +84,9 @@ fn a_faulted_read_fails_a_verify_or_answers_it_as_clean() {
     sweep(reconnected, sends(INS_VERIFY, 0, 0x80, &OWNER_PIN), &[]);
 }
 
-/// A wrong PIN spends a retry; a fault may refuse sooner, never refund it or admit.
+/// A wrong PIN is refused, fault or no fault. Whether a fault can refund its retry
+/// is not this sweep's to judge (an unspent retry is also the state before the
+/// spend): the dying-write tests hold that ordering.
 #[test]
 fn no_faulted_read_admits_the_wrong_pin() {
     sweep(reconnected, sends(INS_VERIFY, 0, 0x80, &DEFAULT_PIN), &[]);
@@ -125,20 +134,25 @@ fn a_faulted_read_fails_a_generate_or_lands_it_whole() {
         sends(INS_ASYM_KEYGEN, 0x00, 0x9A, &gen_template(ALGO_ECCP256)),
         &[(
             rsk_fs::EF_META,
+            2,
             "a refused head-and-point record falls back to the head",
         )],
     );
 }
 
-/// SET MANAGEMENT KEY over an authenticated session. PUT DATA is not swept: it
-/// reads nothing, which the sweep refuses as vacuous.
+/// SET MANAGEMENT KEY over an authenticated session, the same algorithm and
+/// another. Each record is judged alone, so which key authenticates after a change
+/// is not this sweep's to see. PUT DATA is not swept: it reads nothing, which the
+/// sweep refuses as vacuous.
 #[test]
 fn a_faulted_read_fails_a_management_key_change_or_lands_it_whole() {
-    let mut set_key = vec![ALGO_AES192, SLOT_CARDMGM, 24];
-    set_key.extend_from_slice(&[0x5A; 24]);
-    sweep(
-        authenticated,
-        sends(INS_SET_MGMKEY, 0xFF, 0xFF, &set_key),
-        &[],
-    );
+    for (algo, len) in [(ALGO_AES192, 24u8), (ALGO_AES256, 32)] {
+        let mut set_key = vec![algo, SLOT_CARDMGM, len];
+        set_key.extend(std::iter::repeat_n(0x5A, usize::from(len)));
+        sweep(
+            authenticated,
+            sends(INS_SET_MGMKEY, 0xFF, 0xFF, &set_key),
+            &[],
+        );
+    }
 }

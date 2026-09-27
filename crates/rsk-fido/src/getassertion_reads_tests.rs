@@ -17,7 +17,7 @@ fn seeded(fs: &mut Fs<Traced>) -> SeqRng {
     rng
 }
 
-fn assert(fs: &mut Fs<Traced>, s: &mut Session) -> bool {
+fn assert(fs: &mut Fs<Traced>, s: &mut Session) -> Option<std::vec::Vec<u8>> {
     let mut out = [0u8; 1024];
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
@@ -28,13 +28,14 @@ fn assert(fs: &mut Fs<Traced>, s: &mut Session) -> bool {
         state: &mut s.state,
         now_ms: 20,
     };
-    get_assertion(&mut ctx, &s.req, &mut out).is_ok()
+    let n = get_assertion(&mut ctx, &s.req, &mut out).ok()?;
+    out.get(..n).map(<[u8]>::to_vec)
 }
 
-/// The global signature counter a non-resident credential signs with: a fault may
-/// fail the assertion, never restart the counter below what it already reported.
+/// A non-resident credential signs with no counter (signCount 0), so a faulted read
+/// can only fail the assertion or give the clean one, signature included.
 #[test]
-fn a_faulted_read_fails_a_non_resident_assertion_or_advances_the_counter() {
+fn a_faulted_read_fails_a_non_resident_assertion_or_answers_it_as_clean() {
     sweep(
         |fs| {
             let mut rng = seeded(fs);

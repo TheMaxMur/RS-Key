@@ -37,8 +37,11 @@ fn stocked(fs: &mut Fs<Traced>) -> OtpApplet<'static> {
     app
 }
 
-fn sends(raw: Vec<u8>) -> impl Fn(&mut Fs<Traced>, &mut OtpApplet<'static>) -> bool {
-    move |fs, app| run(app, fs, &raw).0 == Sw::OK
+/// A slot write answers with the applet's status, whose valid-slot bits read each
+/// slot the collapsing way on purpose (`status_bytes`): a status field, so only
+/// the answer's word and the store are compared.
+fn sends(raw: Vec<u8>) -> impl Fn(&mut Fs<Traced>, &mut OtpApplet<'static>) -> Option<Vec<u8>> {
+    move |fs, app| (run(app, fs, &raw).0 == Sw::OK).then(Vec::new)
 }
 
 fn with_code(config: &[u8; CONFIG_SIZE], code: &[u8; 6]) -> Vec<u8> {
@@ -62,10 +65,14 @@ fn no_faulted_read_rewrites_a_protected_slot_without_its_code() {
     }
 }
 
+/// Each write with the code its slot asks for, so the clean run lands it. The swap
+/// moves the protected slot 1 to the vacant slot 3: one code cannot match both of
+/// two programmed slots with different codes, so 1↔2 is refused whole.
 #[test]
 fn a_faulted_read_fails_a_slot_write_or_lands_it_whole() {
     let other = chalresp_config(&[0xCC; 20], &[0; 6], 0);
     let mut swap = [0u8; 2 + ACC_CODE_SIZE];
+    swap[1] = 1;
     swap[2..].copy_from_slice(&ACC);
     for raw in [
         otp_apdu(P1_CONFIG_SLOT1, 0, &with_code(&other, &ACC)),
@@ -73,6 +80,9 @@ fn a_faulted_read_fails_a_slot_write_or_lands_it_whole() {
         otp_apdu(P1_CONFIG_SLOT1, 0, &with_code(&[0; CONFIG_SIZE], &ACC)),
         otp_apdu(P1_SWAP, 0, &swap),
     ] {
-        sweep(stocked, sends(raw), &[]);
+        assert!(
+            sweep(stocked, sends(raw.clone()), &[]).is_some(),
+            "vacuous: the clean run refused {raw:02X?}"
+        );
     }
 }

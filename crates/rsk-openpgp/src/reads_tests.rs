@@ -59,8 +59,11 @@ fn owned(fs: &mut Fs<Traced>) -> OpenpgpApplet<'static> {
     applet()
 }
 
-fn sends(raw: Vec<u8>) -> impl Fn(&mut Fs<Traced>, &mut OpenpgpApplet<'static>) -> bool {
-    move |fs, app| run(app, fs, &raw).1 == Sw::OK
+fn sends(raw: Vec<u8>) -> impl Fn(&mut Fs<Traced>, &mut OpenpgpApplet<'static>) -> Option<Vec<u8>> {
+    move |fs, app| {
+        let (body, sw) = run(app, fs, &raw);
+        (sw == Sw::OK).then_some(body)
+    }
 }
 
 /// The boot-time file scan; one faulted probe of PW1 there once replaced the
@@ -69,7 +72,11 @@ fn sends(raw: Vec<u8>) -> impl Fn(&mut Fs<Traced>, &mut OpenpgpApplet<'static>) 
 fn no_faulted_read_at_boot_reseeds_a_default_password() {
     sweep(
         owned,
-        |fs, _| scan_files(&dev(), fs, &mut CountRng(0)).is_ok(),
+        |fs, _| {
+            scan_files(&dev(), fs, &mut CountRng(0))
+                .ok()
+                .map(|_| Vec::new())
+        },
         &[],
     );
 }
