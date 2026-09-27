@@ -780,7 +780,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A55;
+    let device_release: u16 = 0x0A56;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

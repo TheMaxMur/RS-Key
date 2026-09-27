@@ -106,40 +106,37 @@ pub fn seal_read<S: Storage, const N: usize>(
     fid: KeyFid,
     out: &mut Secret<[u8; N]>,
 ) -> Option<usize> {
-    let out = out.expose_mut();
     let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
-    let n = fs.read_key(fid, blob.expose_mut())?;
-    if !(NONCE_LEN + TAG_LEN..=MAX_BLOB).contains(&n) {
-        blob.wipe();
+    let r = fs
+        .read_key(fid, blob.expose_mut())
+        .and_then(|n| open(dev, blob.expose().get(..n)?, out));
+    blob.wipe();
+    r
+}
+
+/// [`seal_read`] past its read: unseal `blob`, bytes already read, into `out`, for a caller
+/// that tries more than one arm over the SAME bytes — a second read is a second
+/// chance for the flash to fail, and `None` cannot say which of the two it was.
+pub fn open<const N: usize>(dev: &Device, blob: &[u8], out: &mut Secret<[u8; N]>) -> Option<usize> {
+    let pt_len = blob.len().checked_sub(NONCE_LEN + TAG_LEN)?;
+    if pt_len > MAX_PLAIN {
         return None;
     }
-    let pt_len = n - NONCE_LEN - TAG_LEN;
-    if out.len() < pt_len {
-        blob.wipe();
-        return None;
-    }
-    let mut nonce = [0u8; NONCE_LEN];
-    nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
-    let (Some((ct, stored_tag)), Some(pt)) = (
-        blob.expose_mut()
-            .get_mut(NONCE_LEN..n)
-            .map(|body| body.split_at_mut(pt_len)),
-        out.get_mut(..pt_len),
-    ) else {
-        blob.wipe();
-        return None;
-    };
+    let (nonce, rest) = blob.split_at_checked(NONCE_LEN)?;
+    let (ct, stored_tag) = rest.split_at_checked(pt_len)?;
+    let pt = out.expose_mut().get_mut(..pt_len)?;
+    pt.copy_from_slice(ct);
+    let mut iv = [0u8; NONCE_LEN];
+    iv.copy_from_slice(nonce);
     let mut tag = [0u8; TAG_LEN];
     tag.copy_from_slice(stored_tag);
     let mut key = kenc(dev);
-    let r = aes256gcm_decrypt(key.expose(), &nonce, dev.serial_hash, ct, &tag);
+    let r = aes256gcm_decrypt(key.expose(), &iv, dev.serial_hash, pt, &tag);
     key.wipe();
     if r.is_err() {
-        blob.wipe();
+        out.wipe();
         return None;
     }
-    pt.copy_from_slice(ct);
-    blob.wipe();
     Some(pt_len)
 }
 

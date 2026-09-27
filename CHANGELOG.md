@@ -92,6 +92,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **One failed flash read at boot no longer destroys the OATH access code.**
+  The boot pass that brings every OATH secret under the current seal read each
+  record up to three times: to open it under the current key, under the pre-burn
+  key, and as legacy plaintext. When one of the first two reads failed, the third
+  went on to the plaintext arm, which takes any short record for the access code,
+  and re-sealed the sealed code's ciphertext as the code. `VALIDATE` could never
+  succeed again, and the only way out was an OATH reset, which wipes every
+  account. It took one transient read error at any boot of a key with an access
+  code set, on a burned key or not. The pass now reads each record once and tries
+  every arm over those bytes; a read that fails leaves the record for the next
+  boot. `bcdDevice` 0x0A55 → 0x0A56.
+
 - **A passkey delete cut by a power loss no longer leaves an RP with no
   credential in it.** A delete removes the credential and then its RP record's
   count; a cut between the two left the count one too high, and for an RP's last

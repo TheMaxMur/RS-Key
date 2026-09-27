@@ -1888,7 +1888,7 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
 /// authenticates there. A secret sealed under the pre-OTP (NO-OTP) arm is
 /// recovered and re-sealed under the OTP arm; otherwise the stored bytes are
 /// sealed in place only if they can still be legacy plaintext
-/// ([`is_legacy_plaintext`]). No-op when the slot is absent.
+/// ([`is_legacy_plaintext`]). No-op when the slot is absent or could not be read.
 fn reseal_if_plaintext<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -1897,7 +1897,16 @@ fn reseal_if_plaintext<S: Storage>(
     out: &mut Secret<[u8; CRED_MAX]>,
     raw: &mut [u8],
 ) {
-    if seal::seal_read(dev, fs, fid, out).is_some() {
+    // ONE read, every arm tried over its bytes: a later read the flash failed sent a
+    // sealed record down the plaintext arm below, and re-sealing its ciphertext as
+    // the secret destroyed it. A failed read waits for the next boot.
+    let Ok(Some(n)) = fs.try_read_key(fid, raw) else {
+        return;
+    };
+    let Some(blob) = raw.get(..n) else {
+        return; // longer than any sealed blob or plaintext record
+    };
+    if seal::open(dev, blob, out).is_some() {
         return; // already sealed under the current arm
     }
     // A credential sealed before the OTP MKEK was burned is under the NO-OTP
@@ -1908,7 +1917,7 @@ fn reseal_if_plaintext<S: Storage>(
     // unlike the OTP applet this cannot be a size guard — it must be the AEAD
     // trial-decrypt. Mirrors keydev/PIV/seed.
     if dev.otp_key.is_some()
-        && let Some(n) = seal::seal_read(&dev.without_otp(), fs, fid, out)
+        && let Some(n) = seal::open(&dev.without_otp(), blob, out)
     {
         // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: the copy
         // it supersedes is the pre-OTP one. The `return` stays outside — falling
@@ -1928,9 +1937,7 @@ fn reseal_if_plaintext<S: Storage>(
     // The re-arm is the pre-OTP arm's, for a copy weaker still: this record's HMAC
     // secret is in the clear on the medium. Gated on the OTP key because that is
     // what `run_at_rest_lap`'s caller gates the lap on.
-    if let Some(n) = fs.read_key(fid, raw)
-        && let Some(blob) = raw.get(..n)
-        && is_legacy_plaintext(fid, blob)
+    if is_legacy_plaintext(fid, blob)
         && let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, dev.otp_key.is_some())
     {
         let _ = seal::seal_put_over(dev, fs, rng, fid, blob, rearmed.as_ref());

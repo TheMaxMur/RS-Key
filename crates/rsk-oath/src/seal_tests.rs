@@ -70,3 +70,53 @@ fn an_output_buffer_under_the_plaintext_reads_as_absent() {
     assert_eq!(seal_read(&dev, &mut fs, FID, &mut exact), Some(40));
     assert_eq!(*exact.expose(), plain);
 }
+
+/// A read of the access code the flash failed at boot sent the sealed record down
+/// the plaintext arm, and its ciphertext was re-sealed as the key: VALIDATE could
+/// never succeed again short of RESET, which wipes every account. Each read of the
+/// record is failed in turn, under either arm and across the burn, and the next
+/// healthy boot must leave the code the owner set.
+#[test]
+fn a_faulted_read_at_boot_never_re_seals_a_sealed_code_as_its_key() {
+    let mkek = [0x55u8; 32];
+    let nootp = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let otp = Device {
+        otp_key: Some(&mkek),
+        ..nootp
+    };
+    let mut key = [0xABu8; 17];
+    key[0] = crate::ALG_HMAC_SHA1;
+    for (sealed, booted) in [(nootp, nootp), (otp, otp), (nootp, otp)] {
+        for skip in 0..3 {
+            let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+            let mut fs = Fs::new(backend);
+            fs.scan();
+            let mut rng = TestRng(1);
+            assert!(seal_put(
+                &sealed,
+                &mut fs,
+                &mut rng,
+                crate::EF_OATH_CODE,
+                &key
+            ));
+            medium.stick_after(crate::EF_OATH_CODE.get(), skip);
+            crate::migrate_seal(&booted, &mut fs, &mut rng);
+            medium.stick(None);
+            crate::migrate_seal(&booted, &mut fs, &mut rng);
+            let mut out = Secret::<[u8; MAX_PLAIN]>::zeroed();
+            let n = seal_read(&booted, &mut fs, crate::EF_OATH_CODE, &mut out);
+            assert_eq!(
+                n.and_then(|n| out.expose().get(..n)),
+                Some(&key[..]),
+                "read {} of the code failed: sealed with a fused key {}, booted with one {}",
+                skip + 1,
+                sealed.otp_key.is_some(),
+                booted.otp_key.is_some()
+            );
+        }
+    }
+}
