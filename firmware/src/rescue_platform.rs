@@ -13,6 +13,19 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use rsk_rescue::{Platform, SecureBootStatus};
 
 static TIME_SET: AtomicBool = AtomicBool::new(false);
+/// What this boot's seal passes left under the pre-burn key; above `u16::MAX` until
+/// a boot with the fused key has recorded it ([`record_pre_otp_left`]).
+static PRE_OTP_LEFT: AtomicU32 = AtomicU32::new(PRE_OTP_UNRECORDED);
+const PRE_OTP_UNRECORDED: u32 = u32::MAX;
+
+/// Record what the boot's seal passes left under the pre-burn key, `None` for a boot
+/// that ran them without the fused key; `lock_page58` reads it through the platform.
+pub fn record_pre_otp_left(left: Option<u16>) {
+    PRE_OTP_LEFT.store(
+        left.map_or(PRE_OTP_UNRECORDED, u32::from),
+        Ordering::Relaxed,
+    );
+}
 static EPOCH_AT_SET: AtomicU32 = AtomicU32::new(0);
 static UPTIME_AT_SET: AtomicU32 = AtomicU32::new(0);
 
@@ -85,6 +98,10 @@ impl Platform for RescuePlatform {
 
     fn read_page58_lock_raw(&self) -> Option<u32> {
         crate::otp_keys::read_page58_lock()
+    }
+
+    fn pre_otp_left(&self) -> Option<u16> {
+        u16::try_from(PRE_OTP_LEFT.load(Ordering::Relaxed)).ok()
     }
 
     fn lock_page58(&mut self) -> bool {

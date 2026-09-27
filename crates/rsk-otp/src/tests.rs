@@ -201,7 +201,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_slot() {
         "fixture: an earlier boot latched the marker"
     );
     medium.clear_ops();
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "the slot it moved is not left"
+    );
     medium.assert_re_armed_before(EF_OTP_SLOT1, |_| false, "migrate_seal's pre-OTP arm");
     assert!(
         !fs.has_data(rsk_fs::EF_HARDENED),
@@ -222,7 +225,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_slot() {
     ));
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        migrate_seal(&otp, &mut fs, &mut rng),
+        "a refused re-seal is left"
+    );
     assert!(
         try_read_slot(&otp, &mut fs, EF_OTP_SLOT1, &mut buf)
             .unwrap()
@@ -2458,4 +2464,47 @@ fn a_legacy_record_keeps_its_length_until_something_moves_it() {
         Ok(Some(SLOT_SIZE))
     );
     assert_eq!(rec.expose()[CONFIG_SIZE..], [0; SLOT_SIZE - CONFIG_SIZE]);
+}
+
+/// A read the flash failed is not a slot with nothing left in it: whichever read of
+/// the slot the fault lands on, or every read, the pass moved the pre-OTP slot or
+/// reports it, and a probe it could not complete writes nothing.
+#[test]
+fn a_faulted_read_of_a_pre_otp_slot_is_never_reported_clear() {
+    let nootp = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let otp_key = [0x55u8; 32];
+    let otp = Device {
+        otp_key: Some(&otp_key),
+        ..nootp
+    };
+    let cfg = chalresp_config(&[0xAB; 20], &[0; 6], 0);
+    let fid = KeyFid::new(EF_OTP_SLOT1);
+    for fault in [None, Some(0), Some(1), Some(2)] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        let mut rng = CountRng(7);
+        assert!(seal::seal_put(
+            &nootp,
+            &mut fs,
+            &mut rng,
+            fid,
+            &record(&cfg)
+        ));
+        let before = medium.value(fid.get());
+        match fault {
+            None => medium.stick(Some(fid.get())),
+            Some(skip) => medium.stick_after(fid.get(), skip),
+        }
+        let left = migrate_seal(&otp, &mut fs, &mut rng);
+        medium.stick(None);
+        assert!(
+            left || medium.value(fid.get()) != before,
+            "fault {fault:?}: reported clear over the pre-OTP slot it never moved"
+        );
+    }
 }

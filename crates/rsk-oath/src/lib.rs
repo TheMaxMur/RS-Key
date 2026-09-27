@@ -1868,7 +1868,9 @@ fn find_cred<S: Storage>(
 /// run unconditionally at every boot (see `firmware/src/main.rs`), before any
 /// host command touches a credential. Closes the one applet that historically
 /// stored its secrets in the clear (FIDO / PIV / OpenPGP always sealed theirs).
-pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
+/// Answers whether a record is left under the chip-serial arm or in the clear on a
+/// fused device, a legacy OTP-PIN included.
+pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> bool {
     let mut buf = [0u16; MAX_OATH_CRED as usize];
     let fids = present_creds(fs, &mut buf);
     let mut out = Secret::<[u8; CRED_MAX]>::zeroed();
@@ -1876,12 +1878,20 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
     // reads back at its true length and is skipped rather than truncated and
     // mis-resealed (mirrors `rsk_otp::migrate_seal`).
     let mut raw = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
+    let mut left = false;
     for &fid in fids {
-        reseal_if_plaintext(dev, fs, rng, KeyFid::new(fid), &mut out, raw.expose_mut());
+        left |= reseal_if_plaintext(dev, fs, rng, KeyFid::new(fid), &mut out, raw.expose_mut());
     }
-    reseal_if_plaintext(dev, fs, rng, EF_OATH_CODE, &mut out, raw.expose_mut());
+    left |= reseal_if_plaintext(dev, fs, rng, EF_OATH_CODE, &mut out, raw.expose_mut());
     out.wipe();
     raw.wipe();
+    // A legacy OTP-PIN is a serial-only hash a flash writer can plant; it moves to v1
+    // at its next VERIFY, so until then it keeps the page-58 lock waiting too, as
+    // does a probe of it the flash failed.
+    let legacy_pin = fs
+        .try_read(EF_OTP_PIN, &mut [0u8; 1])
+        .map_or(true, |n| n == Some(OTP_PIN_REC_LEGACY));
+    left || (dev.otp_key.is_some() && legacy_pin)
 }
 
 /// Bring `fid` to a seal under the current kbase arm. No-op if it already
@@ -1889,6 +1899,8 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
 /// recovered and re-sealed under the OTP arm; otherwise the stored bytes are
 /// sealed in place only if they can still be legacy plaintext
 /// ([`is_legacy_plaintext`]). No-op when the slot is absent or could not be read.
+/// Answers whether the slot is left under the chip-serial arm or in the clear on a
+/// fused device, or unread: the next boot looks again.
 fn reseal_if_plaintext<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -1896,18 +1908,20 @@ fn reseal_if_plaintext<S: Storage>(
     fid: KeyFid,
     out: &mut Secret<[u8; CRED_MAX]>,
     raw: &mut [u8],
-) {
+) -> bool {
     // ONE read, every arm tried over its bytes: a later read the flash failed sent a
     // sealed record down the plaintext arm below, and re-sealing its ciphertext as
     // the secret destroyed it. A failed read waits for the next boot.
-    let Ok(Some(n)) = fs.try_read_key(fid, raw) else {
-        return;
+    let n = match fs.try_read_key(fid, raw) {
+        Ok(Some(n)) => n,
+        Ok(None) => return false,
+        Err(_) => return true,
     };
     let Some(blob) = raw.get(..n) else {
-        return; // longer than any sealed blob or plaintext record
+        return false; // longer than any sealed blob or plaintext record
     };
     if seal::open(dev, blob, out).is_some() {
-        return; // already sealed under the current arm
+        return false; // already sealed under the current arm
     }
     // A credential sealed before the OTP MKEK was burned is under the NO-OTP
     // kbase. Recover it via the pre-OTP arm and re-seal under the current (OTP)
@@ -1927,21 +1941,21 @@ fn reseal_if_plaintext<S: Storage>(
         // credential leaves LIST answering `9000` over an EMPTY body until a later
         // boot migrates it (measured). A reader fallback would re-admit the
         // chip-serial arm at every command, not just at boot.
-        if let Some(plain) = out.expose().get(..n)
-            && let Ok(rearmed) = rsk_fs::request_rescrub(fs)
-        {
-            let _ = seal::seal_put_over(dev, fs, rng, fid, plain, Some(&rearmed));
-        }
-        return;
+        let moved = out.expose().get(..n).is_some_and(|plain| {
+            rsk_fs::request_rescrub(fs)
+                .is_ok_and(|rearmed| seal::seal_put_over(dev, fs, rng, fid, plain, Some(&rearmed)))
+        });
+        return !moved;
     }
     // The re-arm is the pre-OTP arm's, for a copy weaker still: this record's HMAC
     // secret is in the clear on the medium. Gated on the OTP key because that is
     // what `run_at_rest_lap`'s caller gates the lap on.
-    if is_legacy_plaintext(fid, blob)
-        && let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, dev.otp_key.is_some())
-    {
-        let _ = seal::seal_put_over(dev, fs, rng, fid, blob, rearmed.as_ref());
+    if is_legacy_plaintext(fid, blob) {
+        let moved = rsk_fs::request_rescrub_if(fs, dev.otp_key.is_some())
+            .is_ok_and(|rearmed| seal::seal_put_over(dev, fs, rng, fid, blob, rearmed.as_ref()));
+        return !moved && dev.otp_key.is_some();
     }
+    false
 }
 
 /// Whether the stored bytes at `fid` can still be a pre-seal plaintext record,

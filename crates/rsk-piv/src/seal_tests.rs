@@ -98,7 +98,10 @@ fn a_slot_that_opens_under_neither_generation_is_left_untouched() {
     let fid = key_fid(SLOT_AUTHENTICATION);
     let junk = [0xEEu8; NONCE_LEN + 8 + TAG_LEN];
     fs.put_key(fid, Sealed::wrap(&junk)).unwrap();
-    migrate_kbase(&dev(Some(&OTP)), &mut fs, &mut TestRng(3));
+    assert!(
+        !migrate_kbase(&dev(Some(&OTP)), &mut fs, &mut TestRng(3)),
+        "a record no arm opens is not counted as left: it would hold the lock off for ever"
+    );
     let mut back = [0u8; MAX_BLOB];
     let n = fs
         .read_key(fid, &mut back)
@@ -137,11 +140,39 @@ fn a_slot_is_not_re_sealed_while_the_lap_stays_armed_shut() {
     let plain = [0x77u8; 32];
     seal_put(&dev(None), &mut fs, &mut TestRng(5), fid, &plain).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
-    migrate_kbase(&dev(Some(&OTP)), &mut fs, &mut TestRng(6));
+    assert!(
+        migrate_kbase(&dev(Some(&OTP)), &mut fs, &mut TestRng(6)),
+        "the slot the refusal left under the old arm is reported"
+    );
     let mut out = Secret::<[u8; MAX_PLAIN]>::zeroed();
     assert_eq!(
         seal_read(&dev(None), &mut fs, fid, &mut out),
         Ok(32),
         "the slot was re-sealed although the lap could not be re-armed"
     );
+}
+
+/// A read the flash failed is not a slot with nothing left in it: whichever read of
+/// the slot the fault lands on, or every read, the pass moved the pre-OTP key or
+/// reports it.
+#[test]
+fn a_faulted_read_of_a_pre_otp_slot_is_never_reported_clear() {
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    for fault in [None, Some(0), Some(1), Some(2), Some(3)] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        seal_put(&dev(None), &mut fs, &mut TestRng(5), fid, &[0x77u8; 32]).unwrap();
+        let before = medium.value(fid.get());
+        match fault {
+            None => medium.stick(Some(fid.get())),
+            Some(skip) => medium.stick_after(fid.get(), skip),
+        }
+        let left = migrate_kbase(&dev(Some(&OTP)), &mut fs, &mut TestRng(6));
+        medium.stick(None);
+        assert!(
+            left || medium.value(fid.get()) != before,
+            "fault {fault:?}: reported clear over the pre-OTP key it never moved"
+        );
+    }
 }

@@ -83,11 +83,14 @@ fn a_verbatim_read_keeps_the_stored_length() {
     seed(&mut fs, EF_OTP_SLOT1, &[0x33; CONFIG_SIZE]);
     fs.put(EF_OTP_SLOT1 + 1, &[0x44; CONFIG_SIZE]).unwrap();
     let mut rec = SlotRecord::vacant();
-    assert_eq!(rec.read(&dev(), &mut fs, EF_OTP_SLOT1), Some(CONFIG_SIZE));
+    assert_eq!(
+        rec.try_read(&dev(), &mut fs, EF_OTP_SLOT1),
+        Ok(Some(CONFIG_SIZE))
+    );
     assert_eq!(rec.stored(), &[0x33; CONFIG_SIZE]);
     assert_eq!(
-        rec.read_plaintext(&mut fs, EF_OTP_SLOT1 + 1),
-        Some(CONFIG_SIZE)
+        rec.try_read_plaintext(&mut fs, EF_OTP_SLOT1 + 1),
+        Ok(Some(CONFIG_SIZE))
     );
     assert_eq!(rec.stored(), &[0x44; CONFIG_SIZE]);
 }
@@ -102,7 +105,7 @@ fn a_fid_outside_the_slots_reads_as_no_record() {
     fs.put(beyond + 1, &[0x66; CONFIG_SIZE]).unwrap();
     let mut rec = SlotRecord::vacant();
     assert_eq!(rec.try_read(&dev(), &mut fs, beyond), Ok(None));
-    assert_eq!(rec.read_plaintext(&mut fs, beyond + 1), None);
+    assert_eq!(rec.try_read_plaintext(&mut fs, beyond + 1), Ok(None));
     assert!(rec.stored().is_empty());
 }
 

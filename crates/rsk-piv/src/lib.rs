@@ -1324,8 +1324,9 @@ fn wire_reference_pair<'a>(apdu: &'a Apdu) -> Option<(&'a [u8], &'a [u8])> {
 
 /// Boot-pass migration: re-seal every sealed PIV key slot under the OTP kbase
 /// (no-op without the OTP key). PIN/PUK verifiers migrate lazily at their own
-/// verify instead — they are one-way derivations of the PIN.
-pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
+/// verify instead — they are one-way derivations of the PIN. Answers whether a
+/// slot is left under the chip-serial arm.
+pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> bool {
     seal::migrate_kbase(dev, fs, rng)
 }
 

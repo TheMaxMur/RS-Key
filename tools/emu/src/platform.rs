@@ -62,6 +62,11 @@ impl Platform for EmuPlatform {
         None
     }
 
+    // No fuses, so no boot ran its seal passes with a fused key.
+    fn pre_otp_left(&self) -> Option<u16> {
+        None
+    }
+
     fn lock_page58(&mut self) -> bool {
         false
     }

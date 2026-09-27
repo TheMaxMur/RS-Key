@@ -267,7 +267,7 @@ impl<'a> OtpApplet<'a> {
     /// A read the medium refused reads as an absent slot here. The four gates
     /// that decide on the answer take [`try_read_slot_m`](Self::try_read_slot_m).
     ///
-    /// **7 functions / 11 probes keep the collapse on purpose** — 10 under
+    /// **6 functions / 8 probes keep the collapse on purpose** — 7 under
     /// `strict-config`, where `apply_scanmap` is compiled out. The list is written
     /// down so a new one arrives unlisted rather than unnoticed, and NOTHING
     /// checks it: no gate in the tree derives this roster, so a name here can rot
@@ -275,14 +275,11 @@ impl<'a> OtpApplet<'a> {
     /// `button_ticket` (1, types nothing) · `status_bytes` (2, the valid/touch
     /// bits) · `cmd_status_ext` (1) · [`cmd_calculate`](Self::cmd_calculate) (1,
     /// an empty 9000 body) · `Applet::select` (2 `has_data`, the latched
-    /// `config_seq`) · `apply_scanmap` (1, falls back to ASCII) ·
-    /// [`migrate_seal`] (3: two `SlotRecord::read` and one `read_plaintext`).
+    /// `config_seq`) · `apply_scanmap` (1, falls back to ASCII).
     ///
-    /// The last is the one worth reading twice, because its cost is not a status
-    /// field: a faulted probe there leaves a legacy PLAINTEXT slot unsealed for
-    /// that boot, silently, and the pass runs again next boot rather than
-    /// recording anything. It stays collapsing because the alternative — writing
-    /// on a probe it could not complete — is the one that destroys the record.
+    /// [`migrate_seal`] left the list: it still writes nothing on a probe it could
+    /// not complete, the alternative that destroys the record, but it reports one,
+    /// because the page-58 lock must not take an unread slot for a moved one.
     fn read_slot_m<S: Storage>(
         &self,
         fs: &mut Fs<S>,
@@ -1065,24 +1062,44 @@ pub(crate) fn try_read_slot<S: Storage>(
 /// [`power_up_bump`] touches a slot. Closes the one applet that historically
 /// stored its secrets in the clear, and (via the pre-OTP arm, mirroring
 /// keydev/PIV/seed) keeps an OTP burn from orphaning a slot provisioned before it.
-pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
+/// Answers whether a slot is left under the chip-serial arm or in the clear on a
+/// device that has the fused key — a re-seal the medium refused — or unread: a
+/// probe it could not complete writes nothing, and the next boot looks again.
+pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> bool {
+    let mut left = false;
     let mut rec = SlotRecord::vacant();
     for i in 0..u16::from(SLOT_COUNT) {
         let fid = EF_OTP_SLOT1 + i;
-        if rec.read(dev, fs, fid).is_some() {
-            continue; // already sealed under the current arm
+        match rec.try_read(dev, fs, fid) {
+            Ok(Some(_)) => continue, // already sealed under the current arm
+            Ok(None) => {}
+            Err(_) => {
+                left = true;
+                continue;
+            }
         }
         // A slot sealed before the OTP MKEK was burned is under the NO-OTP kbase;
         // recover it via the pre-OTP arm and re-seal under the current (OTP) arm,
         // so a burn never silently orphans an existing slot.
-        if dev.otp_key.is_some() && rec.read(&dev.without_otp(), fs, fid).is_some() {
-            // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: the
-            // copy it supersedes is the pre-OTP one. The `continue` stays outside —
-            // falling through would re-seal that ciphertext as if it were plaintext.
-            if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {
-                let _ = seal::seal_put_over(dev, fs, rng, KeyFid::new(fid), &rec, Some(&rearmed));
+        if dev.otp_key.is_some() {
+            match rec.try_read(&dev.without_otp(), fs, fid) {
+                Ok(Some(_)) => {
+                    // Ahead of the write and gating it, per `rsk_fs::request_rescrub`:
+                    // the copy it supersedes is the pre-OTP one. The `continue` stays
+                    // outside — falling through would re-seal that ciphertext as if it
+                    // were plaintext.
+                    let moved = rsk_fs::request_rescrub(fs).is_ok_and(|rearmed| {
+                        seal::seal_put_over(dev, fs, rng, KeyFid::new(fid), &rec, Some(&rearmed))
+                    });
+                    left |= !moved;
+                    continue;
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    left = true;
+                    continue;
+                }
             }
-            continue;
         }
         // Only re-seal a genuine plaintext config; anything longer is not a
         // legacy record — the smallest sealed blob is already > SLOT_SIZE,
@@ -1091,12 +1108,19 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
         // The re-arm is the pre-OTP one's, for a copy that is weaker still: this
         // slot's AES key is in the clear on the medium. Gated on the OTP key
         // because that is what `run_at_rest_lap`'s caller gates the lap on.
-        if rec.read_plaintext(fs, fid).is_some()
-            && let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, dev.otp_key.is_some())
-        {
-            let _ = seal::seal_put_over(dev, fs, rng, KeyFid::new(fid), &rec, rearmed.as_ref());
+        match rec.try_read_plaintext(fs, fid) {
+            Ok(Some(_)) => {
+                let moved =
+                    rsk_fs::request_rescrub_if(fs, dev.otp_key.is_some()).is_ok_and(|rearmed| {
+                        seal::seal_put_over(dev, fs, rng, KeyFid::new(fid), &rec, rearmed.as_ref())
+                    });
+                left |= !moved && dev.otp_key.is_some();
+            }
+            Ok(None) => {}
+            Err(_) => left = true,
         }
     }
+    left
 }
 
 /// Attempts the boot bump spends on one slot, per side, before giving up on it.

@@ -306,6 +306,12 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   that opens under one, and the boot migration then re-seals it under the fused
   root. Reading the flash still tells them nothing. Closing this needs a
   fuse-rooted latch on the migration window; audit run-27 #8 has the analysis.
+  Its first step ships: `rsk otp lock-page58` burns only once a boot has moved
+  every device-sealed record off the pre-burn key, and a record a pass could not
+  read counts as not moved. PIN-derived records are not counted, since their
+  format does not say which key made them: a PIN verifier, and the OpenPGP DEK
+  copies wrapped under the default PINs, can still be pre-burn on a locked
+  device, so a later latch must not close their arms before they move.
 - **Soft-lock** ([guides/soft-lock.md](guides/soft-lock.md)): optionally, the
   seed at rest is additionally wrapped with ChaCha20-Poly1305 under a 32-byte
   key only you hold (BIP-39/SLIP-39 words). A stolen device (even running

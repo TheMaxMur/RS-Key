@@ -532,18 +532,24 @@ fn put_sealed32<S: Storage>(
 /// The grant is here because provisioning mints it ([`ensure_seed`]) and a device
 /// is burned after its first boot, so the record a `pcmr` holder and getInfo's
 /// encIdentifier hang off would otherwise stay under the chip-serial arm for life.
-pub fn migrate_keydev_boot<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Result<()> {
-    migrate_slot(dev, fs, EF_KEY_DEV)?;
-    migrate_slot(dev, fs, EF_ATT_KEY)?;
-    migrate_slot(dev, fs, EF_PAUTHTOKEN)
+///
+/// `Ok(true)` when a slot stays under the chip-serial arm (a PIN-wrapped seed, until
+/// its PIN verifies), and a refused re-seal or a read the flash failed is the `Err`:
+/// either keeps the page-58 lock waiting (`rsk_rescue::Platform::pre_otp_left`).
+pub fn migrate_keydev_boot<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Result<bool> {
+    let seed = migrate_slot(dev, fs, EF_KEY_DEV)?;
+    let att = migrate_slot(dev, fs, EF_ATT_KEY)?;
+    let grant = migrate_slot(dev, fs, EF_PAUTHTOKEN)?;
+    Ok(seed || att || grant)
 }
 
 /// Re-seal one slot forward if it is not already current-arm ChaCha. Absent
-/// slots and unrecoverable (PIN-wrapped) records are no-ops.
-fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<()> {
+/// slots and unrecoverable (PIN-wrapped) records are no-ops; the answer is whether
+/// the slot is left under the chip-serial arm.
+fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<bool> {
     let mut buf = Secret::<[u8; 64]>::zeroed();
-    let Some(n) = fs.read_key(fid, buf.expose_mut()) else {
-        return Ok(());
+    let Some(n) = fs.try_read_key(fid, buf.expose_mut())? else {
+        return Ok(false);
     };
     let n = n.min(buf.expose().len());
     // Already current-arm ChaCha? Skip the redundant flash erase (the
@@ -553,7 +559,7 @@ fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result
     {
         v.wipe();
         buf.wipe();
-        return Ok(());
+        return Ok(false);
     }
     // `weak`: 0x01/0x02 are sealed under the chip-serial arm, so the re-seal below
     // supersedes a copy the public serial alone derives. This pass runs BEFORE the
@@ -563,6 +569,7 @@ fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result
     // under the OTP arm, so a flash dump alone cannot open it. That is a second
     // at-rest weakness this re-seal repairs and the lap owes nothing for.
     let weak = matches!(buf.expose()[0], FORMAT_F1 | FORMAT_G1) && dev.otp_key.is_some();
+    let pin_wrapped = buf.expose()[0] == FORMAT_F3 && dev.otp_key.is_some();
     let recovered = open_any(dev, &buf.expose()[..n]);
     buf.wipe();
     match recovered {
@@ -575,9 +582,10 @@ fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result
                 Err(_) => Err(Error::MemoryFatal),
             };
             v.wipe();
-            r
+            r.map(|()| false)
         }
-        None => Ok(()),
+        // A pre-OTP PIN-wrapped seed moves at its first PIN verify (`migrate_keydev_pin`).
+        None => Ok(pin_wrapped),
     }
 }
 

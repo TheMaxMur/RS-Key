@@ -41,6 +41,8 @@ struct FakePlatform {
     /// Simulated anti-rollback rows; `None` models a read error.
     rollback_raw: Option<rollback::RollbackRaw>,
     rollback_writes: u32,
+    /// What the boot's seal passes left under the pre-burn key.
+    pre_otp_left: Option<u16>,
 }
 impl Default for FakePlatform {
     fn default() -> Self {
@@ -56,6 +58,7 @@ impl Default for FakePlatform {
                 version1: [0; 3],
             }),
             rollback_writes: 0,
+            pre_otp_left: Some(0),
         }
     }
 }
@@ -78,6 +81,9 @@ impl Platform for FakePlatform {
     }
     fn read_page58_lock_raw(&self) -> Option<u32> {
         self.lock_raw
+    }
+    fn pre_otp_left(&self) -> Option<u16> {
+        self.pre_otp_left
     }
     fn lock_page58(&mut self) -> bool {
         // OTP bits only go 0→1; model the fuse burning to our value.
@@ -1067,4 +1073,79 @@ fn a_faulted_devcert_key_probe_does_not_remint_the_device_key() {
     // medium recovers.
     let (sw, again) = run(&mut app, &mut fs, &pub_apdu);
     assert_eq!((sw, again), (Sw::OK, pubkey));
+}
+
+/// Audit run-27 #8's interim ratchet: the burn waits for a boot whose seal passes
+/// left nothing under the pre-burn key, and refuses before the touch, so the
+/// operator is never asked to confirm a burn that will not happen. READ `1E/07`
+/// says what it waits on, every bit set for a boot that could not check.
+#[test]
+fn otp_lock_waits_for_a_boot_that_left_nothing_under_the_pre_burn_key() {
+    struct Counting(u32);
+    impl UserPresence for Counting {
+        fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
+            self.0 += 1;
+            Presence::Confirmed
+        }
+    }
+    let lefts = [
+        Some(otp_lock::PRE_OTP_PIV),
+        Some(otp_lock::PRE_OTP_FIDO | otp_lock::PRE_OTP_OTP),
+        None,
+    ];
+    for left in lefts {
+        let rng = RefCell::new(LcgRng(7));
+        let platform = RefCell::new(FakePlatform {
+            pre_otp_left: left,
+            ..Default::default()
+        });
+        let presence = RefCell::new(Counting(0));
+        let mut app = RescueApplet::new(
+            SERIAL_ID,
+            SERIAL_HASH,
+            Some(test_mkek as FusedKey),
+            None,
+            &rng,
+            &platform,
+            &presence,
+            KV_TOTAL,
+            FLASH_SIZE,
+        );
+        let mut fs = Fs::new(RamStorage::new());
+        assert_eq!(
+            run(&mut app, &mut fs, &lock_apdu()).0,
+            Sw::CONDITIONS_NOT_SATISFIED
+        );
+        assert_eq!(
+            platform.borrow().lock_writes,
+            0,
+            "{left:?}: the lock was burnt"
+        );
+        assert_eq!(
+            presence.borrow().0,
+            0,
+            "{left:?}: a touch was asked for a refused burn"
+        );
+        let (sw, body) = run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x07, 0, &[]));
+        assert_eq!(sw, Sw::OK);
+        let want = left.unwrap_or(otp_lock::PRE_OTP_UNCHECKED).to_be_bytes();
+        assert_eq!(body, want, "{left:?}");
+    }
+}
+
+/// A row already holding the lock answers OK whatever the passes left: nothing
+/// is burnt, so there is nothing to wait for.
+#[test]
+fn an_already_locked_row_stays_ok_over_records_left_behind() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform {
+        lock_raw: Some(otp_lock::PAGE58_LOCK_VALUE),
+        pre_otp_left: Some(otp_lock::PRE_OTP_OATH),
+        ..Default::default()
+    });
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = lock_app(&rng, &platform, &presence, Some(test_mkek as FusedKey));
+    let mut fs = Fs::new(RamStorage::new());
+    assert_eq!(run(&mut app, &mut fs, &lock_apdu()).0, Sw::OK);
+    assert_eq!(platform.borrow().lock_writes, 0);
 }

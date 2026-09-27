@@ -156,11 +156,13 @@ pub fn seal_read<S: Storage, const N: usize>(
 /// that opens under the current `dev` is already migrated; one that opens only
 /// under the pre-OTP arm is re-sealed; one that opens under neither is left
 /// untouched (corrupt — re-sealing garbage would only destroy evidence).
-/// Idempotent and crash-safe per slot.
-pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
+/// Idempotent and crash-safe per slot. Answers whether a slot the pre-OTP arm
+/// opened is left under it, a re-seal the medium refused, or a slot is unread.
+pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> bool {
     if dev.otp_key.is_none() {
-        return;
+        return false;
     }
+    let mut left = false;
     let old = dev.without_otp();
     // Retired (82–95), active (9A–9E incl. the 9B management key), attestation.
     let slots = (SLOT_RETIRED_FIRST..=SLOT_RETIRED_LAST)
@@ -168,8 +170,14 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
         .chain([SLOT_ATTESTATION]);
     for slot in slots {
         let fid = crate::files::key_fid(slot);
-        if !fs.has_key(fid) {
-            continue;
+        match fs.try_has_key(fid) {
+            Ok(true) => {}
+            Ok(false) => continue,
+            // Unread is unchecked; the next boot looks again.
+            Err(_) => {
+                left = true;
+                continue;
+            }
         }
         let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
         if seal_read(dev, fs, fid, &mut plain).is_ok() {
@@ -184,14 +192,23 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
         // answers `6581` at every command until a later boot migrates it (measured).
         // A reader fallback would re-admit the chip-serial arm at every command,
         // which is the at-rest widening this class exists to prevent.
-        if let Ok(n) = seal_read(&old, fs, fid, &mut plain)
-            && let Some(opened) = plain.expose().get(..n)
-            && let Ok(rearmed) = rsk_fs::request_rescrub(fs)
-        {
-            let _ = seal_put_over(dev, fs, rng, fid, opened, Some(&rearmed));
+        match seal_read(&old, fs, fid, &mut plain) {
+            Ok(n) => {
+                let moved = plain.expose().get(..n).is_some_and(|opened| {
+                    rsk_fs::request_rescrub(fs).is_ok_and(|rearmed| {
+                        seal_put_over(dev, fs, rng, fid, opened, Some(&rearmed)).is_ok()
+                    })
+                });
+                left |= !moved;
+            }
+            // Present a probe ago and gone now: a read the flash failed, not a
+            // record no arm opens.
+            Err(sw) if sw == Sw::REFERENCE_NOT_FOUND => left = true,
+            Err(_) => {}
         }
         plain.wipe();
     }
+    left
 }
 
 /// Seal an EC key as `[curve_id] ‖ scalar` — the same blob layout the OpenPGP

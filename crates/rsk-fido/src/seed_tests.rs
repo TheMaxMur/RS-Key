@@ -1141,3 +1141,79 @@ fn a_truncated_scan_still_issues_the_attestation_certificate() {
         "and it certifies that seed's public key"
     );
 }
+
+/// What the boot pass reports keeps the page-58 lock waiting (audit run-27 #8): a
+/// pre-OTP seed it moved is not left, a PIN-wrapped one it cannot touch is, until
+/// the first PIN verify moves it, and one whose re-seal the medium refused is the
+/// error. Without the fused key nothing is judged left.
+#[test]
+fn the_boot_pass_reports_what_it_left_under_the_chip_serial_arm() {
+    let seed = [0x5A; 32];
+    let pin_hash = [0x99u8; 16];
+
+    let mut store = fs();
+    encrypt_keydev_f1(&dev(), &mut store, &seed).unwrap();
+    assert_eq!(
+        migrate_keydev_boot(&otp_dev(), &mut store),
+        Ok(false),
+        "moved"
+    );
+    assert_eq!(
+        migrate_keydev_boot(&otp_dev(), &mut store),
+        Ok(false),
+        "already current"
+    );
+
+    let mut store = fs();
+    wrap_keydev_legacy(&dev(), &mut store, &seed, &pin_hash);
+    assert_eq!(
+        migrate_keydev_boot(&otp_dev(), &mut store),
+        Ok(true),
+        "PIN-wrapped"
+    );
+    assert_eq!(
+        migrate_keydev_boot(&dev(), &mut store),
+        Ok(false),
+        "no fused key"
+    );
+    migrate_keydev_pin(&otp_dev(), &mut store, &pin_hash).unwrap();
+    assert_eq!(
+        migrate_keydev_boot(&otp_dev(), &mut store),
+        Ok(false),
+        "after the PIN"
+    );
+
+    let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+    let mut store = Fs::new(cut);
+    store.scan();
+    encrypt_keydev_f1(&dev(), &mut store, &seed).unwrap();
+    medium.arm(0);
+    assert!(
+        migrate_keydev_boot(&otp_dev(), &mut store).is_err(),
+        "refused re-seal"
+    );
+}
+
+/// A read of a slot the flash failed is not a slot with nothing left in it (review
+/// of the page-58 verdict). Whichever read the fault lands on, or every read, the
+/// pass either moved the pre-OTP record or keeps the lock waiting.
+#[test]
+fn a_faulted_read_of_a_pre_otp_slot_is_never_reported_clear() {
+    for fault in [None, Some(0), Some(1), Some(2)] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut store = Fs::new(backend);
+        store.scan();
+        encrypt_keydev_f1(&dev(), &mut store, &[0x5A; 32]).unwrap();
+        let before = medium.value(EF_KEY_DEV.get());
+        match fault {
+            None => medium.stick(Some(EF_KEY_DEV.get())),
+            Some(skip) => medium.stick_after(EF_KEY_DEV.get(), skip),
+        }
+        let verdict = migrate_keydev_boot(&otp_dev(), &mut store);
+        medium.stick(None);
+        assert!(
+            verdict != Ok(false) || medium.value(EF_KEY_DEV.get()) != before,
+            "fault {fault:?}: reported clear over the pre-OTP seed it never moved"
+        );
+    }
+}

@@ -151,7 +151,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_keydev() {
         "fixture: an earlier boot latched the marker"
     );
     medium.clear_ops();
-    migrate_kbase(&otp_dev(), &mut fs, &mut rng);
+    assert!(
+        !migrate_kbase(&otp_dev(), &mut fs, &mut rng),
+        "the key it moved is not left"
+    );
     medium.assert_re_armed_before(EF_DEVCERT_KEY.get(), |_| false, "migrate_kbase");
     assert!(
         !fs.has_data(rsk_fs::EF_HARDENED),
@@ -172,7 +175,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_keydev() {
     let key = load_or_generate(&dev(), None, &mut fs, &mut rng).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
-    migrate_kbase(&otp_dev(), &mut fs, &mut rng);
+    assert!(
+        migrate_kbase(&otp_dev(), &mut fs, &mut rng),
+        "a refused re-seal is left"
+    );
     assert!(
         load_or_generate(&dev(), None, &mut fs, &mut rng).is_some(),
         "the re-arm never landed, so the pre-OTP record must stay in force instead \
@@ -229,4 +235,39 @@ fn an_absent_devcert_key_is_still_minted_and_persisted() {
             "and the next call loads it rather than minting again"
         );
     }
+}
+
+/// A read the flash failed is not a key with nothing left in it: whichever read the
+/// fault lands on, or every read, the pass moved the pre-OTP key or reports it.
+#[test]
+fn a_faulted_read_of_a_pre_otp_keydev_is_never_reported_clear() {
+    for fault in [None, Some(0), Some(1), Some(2)] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        let mut rng = LcgRng(5);
+        load_or_generate(&dev(), None, &mut fs, &mut rng).unwrap();
+        let before = medium.value(EF_DEVCERT_KEY.get());
+        match fault {
+            None => medium.stick(Some(EF_DEVCERT_KEY.get())),
+            Some(skip) => medium.stick_after(EF_DEVCERT_KEY.get(), skip),
+        }
+        let left = migrate_kbase(&otp_dev(), &mut fs, &mut rng);
+        medium.stick(None);
+        assert!(
+            left || medium.value(EF_DEVCERT_KEY.get()) != before,
+            "fault {fault:?}: reported clear over the pre-OTP key it never moved"
+        );
+    }
+}
+
+/// A GCM-length record neither arm opens (corrupt, or restored from another chip)
+/// is not counted: no boot could ever move it, so counting it would refuse the
+/// page-58 lock for good with a hint that cannot help.
+#[test]
+fn a_keydev_no_arm_opens_is_not_reported_left() {
+    let mut fs = fs();
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&[0xEE; GCM_LEN]))
+        .unwrap();
+    assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut LcgRng(5)));
 }

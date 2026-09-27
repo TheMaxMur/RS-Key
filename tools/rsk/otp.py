@@ -8,7 +8,9 @@ burn:        write DEVK@0xE80 + MKEK@0xE90 + chaff into OTP page 58 from BOOTSEL
 lock-page58: apply the permanent BL/NS access lock from secure firmware (rescue
              INS 0x1B) — the half picotool cannot do (the lock row lives in OTP
              page 63, bootloader-read-only). After it lands, `picotool otp get`
-             can no longer read the page-58 keys; the firmware still can.
+             can no longer read the page-58 keys; the firmware still can. The
+             firmware burns only once a boot has moved every device-sealed record
+             off the pre-burn key (READ 1E/07); this reads that first.
 rollback-require: fuse BOOT_FLAGS0.ROLLBACK_REQUIRED from secure firmware
              (rescue INS 0x1B, P1=0x48) — after `rsk secure-boot lock` the flag
              row is bootloader-read-only, so only the firmware can. From then
@@ -34,12 +36,37 @@ K256_N = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
 LOCK_APDU = [0x80, 0x1B, 0x58, 0x00, 0x06] + list(b"LOCK58") + [0x00]
 LOCK_SW = {
     ccid.SW_OK: "OK — page 58 is now locked (or was already)",
-    ccid.SW_COND_NOT_SATISFIED: "CONDITIONS_NOT_SATISFIED — keys not provisioned, or the lock row "
-                                "already holds a foreign value (firmware refused)",
+    ccid.SW_COND_NOT_SATISFIED: "CONDITIONS_NOT_SATISFIED — keys not provisioned, records still "
+                                "under the pre-burn key (see --dry-run), the lock row already "
+                                "holds a foreign value, or the touch was declined",
     (0x69, 0x84): "DATA_INVALID — wrong magic payload",
     (0x6A, 0x86): "INCORRECT_P1P2",
     (0x64, 0x00): "EXEC_ERROR — OTP read/write failed or did not verify",
 }
+# READ 1E/07: what the boot's seal passes left under the pre-burn key, rsk-rescue
+# `otp_lock::PRE_OTP_*` bits big-endian; all set for a boot that could not check.
+PRE_OTP_UNCHECKED = 0xFFFF
+PRE_OTP_ACTIONS = (
+    (0x0001, "FIDO seed, attestation key or grant: replug once; a seed wrapped by a PIN set "
+             "before the burn moves at its first FIDO PIN use — use it, then replug (a "
+             "forgotten PIN: `ykman fido reset`, which drops every passkey)"),
+    (0x0002, "device key: replug once"),
+    (0x0004, "PIV keys: replug once"),
+    (0x0008, "OATH: replug once; a legacy OTP-PIN moves at its next VERIFY — verify it, "
+             "then replug (a forgotten or blocked one: `ykman oath access change` drops it, "
+             "or `ykman oath reset`)"),
+    (0x0010, "OTP slots: replug once"),
+)
+
+
+def pre_otp_actions(left):
+    """What to do before page 58 can lock, from READ 1E/07; empty when nothing waits."""
+    if left == PRE_OTP_UNCHECKED:
+        return ["this boot had no fused key to check with: burn it first (`rsk otp burn`); "
+                "if it is burned, the boot could not read it — replug"]
+    return [text for bit, text in PRE_OTP_ACTIONS if left & bit]
+
+
 ROLLBACK_APDU = [0x80, 0x1B, 0x48, 0x00, 0x06] + list(b"ROLLBK") + [0x00]
 ROLLBACK_SW = {
     ccid.SW_OK: "OK — ROLLBACK_REQUIRED is now fused (or was already)",
@@ -186,6 +213,20 @@ def _select_rescue(conn):
 def lock_page58(args):
     conn = ccid.connect(exclusive=True)
     serial = _select_rescue(conn)
+    d, s1, s2 = rescue_read(conn, 0x07)
+    if (s1, s2) == (0x6A, 0x86):
+        print("warning: this firmware predates the pre-burn-key check (READ 1E/07)")
+    elif (s1, s2) != ccid.SW_OK or len(d) < 2:
+        die(f"pre-burn-key state read failed: SW {s1:02X}{s2:02X}")
+    else:
+        todo = pre_otp_actions(int.from_bytes(d[:2], "big"))
+        if todo:
+            print("the firmware will not lock page 58 until a boot moves these off the "
+                  "pre-burn key:")
+            for line in todo:
+                print(f"  - {line}")
+            raise SystemExit(2)
+        print("every device-sealed record is on the fused key ✓")
     if args.dry_run:
         print("dry-run: would send OTP_LOCK (80 1B 58 00 06 'LOCK58' 00)")
         return

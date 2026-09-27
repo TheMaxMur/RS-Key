@@ -202,19 +202,28 @@ pub fn load_or_generate<S: Storage>(
 /// the current kbase arm. Upgrades a legacy CBC record (removing the fixed-IV /
 /// no-MAC weakness) and re-seals a pre-OTP GCM blob under the OTP arm once the
 /// fuse key is present. No-op when the key is absent or already current;
-/// idempotent (the re-seal is one atomic record write).
-pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
+/// idempotent (the re-seal is one atomic record write). Answers whether the key is
+/// left under the chip-serial arm, or unread, which keeps the page-58 lock waiting;
+/// a record no arm opens is not counted, since no boot could ever move it.
+pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> bool {
     let mut buf = Secret::<[u8; GCM_LEN]>::zeroed();
-    let Some(n) = fs.read_key(EF_DEVCERT_KEY, buf.expose_mut()) else {
-        buf.wipe();
-        return;
+    let n = match fs.try_read_key(EF_DEVCERT_KEY, buf.expose_mut()) {
+        Ok(Some(n)) => n.min(GCM_LEN),
+        Ok(None) => {
+            buf.wipe();
+            return false;
+        }
+        // Unread is unchecked; the next boot looks again.
+        Err(_) => {
+            buf.wipe();
+            return true;
+        }
     };
-    let n = n.min(GCM_LEN);
     // Already GCM under the current arm? Nothing to do.
     if let Some(mut s) = gcm_open(dev, dev, &buf.expose()[..n]) {
         s.wipe();
         buf.wipe();
-        return;
+        return false;
     }
     // The current-arm GCM case returned above, so a GCM-length blob here opened
     // under `without_otp`, and a bare 32-byte CBC record is pre-OTP by construction
@@ -222,17 +231,21 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
     let weak = dev.otp_key.is_some() && matches!(n, GCM_LEN | 32);
     // Otherwise recover via the pre-OTP GCM arm or a legacy CBC record and
     // re-seal as GCM under the current arm.
+    let mut left = false;
     if let Some(mut scalar) = unseal_scalar(dev, &buf.expose()[..n]) {
         let rec = seal_gcm(dev, rng, scalar.expose());
         scalar.wipe();
         // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: this pass
         // runs before the boot's lap, but a boot that could not read this slot has
         // already latched the marker, and the lap gates on it and nothing else.
-        if let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, weak) {
-            let _ = fs.put_key_over(EF_DEVCERT_KEY, Sealed::wrap(&rec), rearmed.as_ref());
-        }
+        let moved = rsk_fs::request_rescrub_if(fs, weak).is_ok_and(|rearmed| {
+            fs.put_key_over(EF_DEVCERT_KEY, Sealed::wrap(&rec), rearmed.as_ref())
+                .is_ok()
+        });
+        left = weak && !moved;
     }
     buf.wipe();
+    left
 }
 
 /// ECDSA over a host-supplied 32-byte digest; returns r || s (64 bytes), with

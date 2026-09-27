@@ -75,7 +75,7 @@ authoritative source is the code (`tools/rsk/otp.py`, `tools/rsk/secureboot.py`,
 | Region | Rows | What it holds | Written by |
 |---|---|---|---|
 | **Page 58** | `0xE80…` | `DEVK` (device attestation key), `MKEK` (master sealing key), anti-imaging chaff | `rsk otp burn` (BOOTSEL) |
-| Page-58 lock | `0xFF5` | makes page 58 **BOOTSEL-unreadable, secure read/write** | `rsk otp lock-page58` (firmware) |
+| Page-58 lock | `0xFF5` | makes page 58 **BOOTSEL-unreadable, secure read/write** | `rsk otp lock-page58` (firmware; only once a boot migrated every device-sealed record) |
 | **Boot key** | `0x80…` | `SHA-256` fingerprint of your secure-boot public key (slot 0 of 4) | `rsk secure-boot load-key <otp.json>` |
 | `BOOT_FLAGS1` | `0x4B` | `KEY_VALID` / `KEY_INVALID` (which key slots are live / revoked) | `load-key`, `lock` |
 | `CRIT1` | `0x40` | `SECURE_BOOT_ENABLE`, `DEBUG_DISABLE`, `GLITCH_DETECTOR_ENABLE/SENS` | `harden`, `enable` |

@@ -27,6 +27,19 @@ pub enum LockDecision {
     Unexpected,
 }
 
+/// What a boot's seal passes left under the pre-burn key: the record a flash writer
+/// could plant under the public chip-serial key, which the next boot would launder
+/// onto the fused root (audit run-27 #8). One bit per pass; the lock burns only over 0.
+pub const PRE_OTP_FIDO: u16 = 1 << 0;
+pub const PRE_OTP_DEVICE_KEY: u16 = 1 << 1;
+pub const PRE_OTP_PIV: u16 = 1 << 2;
+pub const PRE_OTP_OATH: u16 = 1 << 3;
+pub const PRE_OTP_OTP: u16 = 1 << 4;
+
+/// READ `1E/07`'s answer for a boot that ran its seal passes without the fused key,
+/// so checked nothing: every bit set.
+pub const PRE_OTP_UNCHECKED: u16 = u16::MAX;
+
 /// Decide the lock action purely from the row's current raw value.
 pub fn lock_decision(current_raw: u32) -> LockDecision {
     match current_raw {

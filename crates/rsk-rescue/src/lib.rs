@@ -66,6 +66,10 @@ pub trait Platform {
     /// Raw 24-bit value of PAGE58_LOCK1; `None` on a read error. Drives the
     /// idempotency / refuse-foreign decision in [`otp_lock`].
     fn read_page58_lock_raw(&self) -> Option<u32>;
+    /// What this boot's seal passes left under the pre-burn key, as
+    /// `otp_lock::PRE_OTP_*` bits; `None` when they ran without the fused key and
+    /// so checked nothing. [`otp_lock`]'s page-58 burn waits for `Some(0)`.
+    fn pre_otp_left(&self) -> Option<u16>;
     /// Burn the page-58 access lock ([`otp_lock::PAGE58_LOCK_VALUE`] into
     /// [`otp_lock::PAGE58_LOCK1_ROW`]). The implementation fixes both the row
     /// and the value, so a caller can never redirect this write. IRREVERSIBLE;
@@ -344,6 +348,12 @@ impl<'a> RescueApplet<'a> {
                 res.extend(&[required as u8, version, rollback::VERSION_CAPACITY]);
                 Sw::OK
             }
+            // What the page-58 burn waits on, big-endian `PRE_OTP_*` bits.
+            0x07 => {
+                let left = self.platform.borrow().pre_otp_left();
+                res.extend(&left.unwrap_or(otp_lock::PRE_OTP_UNCHECKED).to_be_bytes());
+                Sw::OK
+            }
             _ => Sw::INCORRECT_P1P2,
         }
     }
@@ -386,7 +396,9 @@ impl<'a> RescueApplet<'a> {
     /// tooling cannot (the lock row lives in bootloader-read-only OTP page 63).
     /// IRREVERSIBLE, so it is triply guarded: P1=0x58 (the page), the
     /// [`OTP_LOCK_MAGIC`] payload, and a provisioned MKEK (locking a blank
-    /// page would only hide nothing while blinding BOOTSEL). Idempotent: a row
+    /// page would only hide nothing while blinding BOOTSEL); and it waits for a
+    /// boot that left nothing under the pre-burn key ([`Platform::pre_otp_left`]).
+    /// Idempotent: a row
     /// already holding our value returns OK; any other non-blank value is
     /// refused rather than clobbered. See [`otp_lock`].
     fn lock_page58(&mut self, apdu: &Apdu) -> Sw {
@@ -407,6 +419,12 @@ impl<'a> RescueApplet<'a> {
             otp_lock::LockDecision::AlreadyLocked => Sw::OK,
             otp_lock::LockDecision::Unexpected => Sw::CONDITIONS_NOT_SATISFIED,
             otp_lock::LockDecision::Write => {
+                // Only over a device whose boot moved every device-sealed record to the
+                // fused root, and before the touch: the lock is what a later build will
+                // read as "migrated", so it must not be burnt over one that is not.
+                if self.platform.borrow().pre_otp_left() != Some(0) {
+                    return Sw::CONDITIONS_NOT_SATISFIED;
+                }
                 // Irreversible fuse burn: gate on the operator like every other
                 // privileged rescue op — the magic payload is a source-visible
                 // constant, not authentication against a hostile USB host.

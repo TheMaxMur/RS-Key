@@ -1029,12 +1029,18 @@ fn cred_sealed_before_otp_burn_survives_the_burn() {
     assert!(seal::seal_read(&otp, &mut fs, fid, &mut buf).is_none());
 
     // …migrate_seal recovers and re-seals it under the OTP arm, byte-identical.
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "the credential it moved is not left"
+    );
     let n = seal::seal_read(&otp, &mut fs, fid, &mut buf).expect("cred survives the burn");
     assert_eq!(&buf.expose()[..n], secret);
 
     // Idempotent, and it is no longer readable under the pre-OTP arm.
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "nothing left on a second pass"
+    );
     assert!(seal::seal_read(&otp, &mut fs, fid, &mut buf).is_some());
     assert!(seal::seal_read(&nootp, &mut fs, fid, &mut buf).is_none());
 }
@@ -1131,7 +1137,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_cred() {
     fs.put(EF_OATH_CRED, &blob).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.clear_ops();
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "the plaintext it sealed is not left"
+    );
     medium.assert_re_armed_before(EF_OATH_CRED, |_| false, "migrate_seal's plaintext arm");
     assert!(!fs.has_data(rsk_fs::EF_HARDENED));
 
@@ -1142,7 +1151,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_cred() {
     fs.put(EF_OATH_CRED, &blob).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        migrate_seal(&otp, &mut fs, &mut rng),
+        "a refused seal is left"
+    );
     let n = fs
         .read(EF_OATH_CRED, &mut stored)
         .expect("fixture: the credential is still there");
@@ -1156,7 +1168,10 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_cred() {
          decrypt every command reads through, so LIST does not show it either"
     );
     medium.refuse(None);
-    migrate_seal(&otp, &mut fs, &mut rng);
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "sealed once the medium recovers"
+    );
     let n = fs
         .read(EF_OATH_CRED, &mut stored)
         .expect("fixture: the credential is still there");
@@ -2582,3 +2597,80 @@ mod reselect_tests;
 /// with no page owed, as on a YubiKey 5.8.0.
 #[path = "paging_tests.rs"]
 mod paging_tests;
+
+/// A legacy OTP-PIN is a serial-only hash a flash writer can plant, and only its
+/// next VERIFY moves it to v1, so the boot pass reports it as left under the
+/// chip-serial key while the device has the fused one (audit run-27 #8).
+#[test]
+fn a_legacy_otp_pin_is_reported_as_left_until_it_is_verified() {
+    let nootp = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let otp = Device {
+        otp_key: Some(&TEST_MKEK),
+        ..nootp
+    };
+    let mut rng = CountRng(1);
+    let mut fs = new_fs();
+    fs.put(EF_OTP_PIN, &[3; OTP_PIN_REC_LEGACY]).unwrap();
+    assert!(
+        migrate_seal(&otp, &mut fs, &mut rng),
+        "the legacy PIN is left"
+    );
+    assert!(
+        !migrate_seal(&nootp, &mut fs, &mut rng),
+        "no fused key, nothing judged"
+    );
+    fs.put(EF_OTP_PIN, &[3; OTP_PIN_REC_V1]).unwrap();
+    assert!(
+        !migrate_seal(&otp, &mut fs, &mut rng),
+        "a v1 PIN is on the fused root"
+    );
+}
+
+/// A read the flash failed is not a record with nothing left in it: whichever read
+/// the fault lands on, or every read, the pass moved the pre-OTP credential or
+/// reports it — and a legacy OTP-PIN it could not look at is reported too.
+#[test]
+fn a_faulted_read_of_a_pre_otp_record_is_never_reported_clear() {
+    let nootp = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
+    let otp = Device {
+        otp_key: Some(&TEST_MKEK),
+        ..nootp
+    };
+    let fid = KeyFid::new(EF_OATH_CRED);
+    for fault in [None, Some(0), Some(1), Some(2)] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        let mut rng = CountRng(7);
+        assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, b"a-cred"));
+        let before = medium.value(fid.get());
+        match fault {
+            None => medium.stick(Some(fid.get())),
+            Some(skip) => medium.stick_after(fid.get(), skip),
+        }
+        let left = migrate_seal(&otp, &mut fs, &mut rng);
+        medium.stick(None);
+        assert!(
+            left || medium.value(fid.get()) != before,
+            "fault {fault:?}: reported clear over the pre-OTP credential it never moved"
+        );
+    }
+
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    fs.put(EF_OTP_PIN, &[3; OTP_PIN_REC_LEGACY]).unwrap();
+    medium.stick(Some(EF_OTP_PIN));
+    assert!(
+        migrate_seal(&otp, &mut fs, &mut CountRng(1)),
+        "an OTP-PIN the pass could not look at is not a v1 one"
+    );
+}

@@ -276,7 +276,7 @@ Init ==
     \* alwaysUv's COMPILED default, not a state choice: `--features always-uv`
     \* is what the device comes up on and what a reset restores it to.
     \* The record exists from provisioning: `ensure_seed` mints it beside the seed
-    \* (seed.rs:678-681), and no platform has been handed it yet.
+    \* (seed.rs:686-689), and no platform has been handed it yet.
     /\ gate  = [ppuat |-> FALSE, ppuatRec |-> TRUE, ppuatStale |-> FALSE,
                 alwaysUv |-> AlwaysUvShipped, backupSealed |-> FALSE,
                 forceChange |-> FALSE]
@@ -1516,7 +1516,7 @@ VolatileCleared ==
     /\ upSpent' = FALSE
 
 \* EVERY boot runs ensure_seed, not just the one at the end of a reset:
-\* firmware/src/main.rs:693 and tools/emu/src/device.rs:508. A cut that stranded
+\* firmware/src/main.rs:713 and tools/emu/src/device.rs:508. A cut that stranded
 \* the device mid-wipe therefore comes back WITH a seed and can hold usable
 \* credentials again. Leaving it out made the model less permissive than the
 \* firmware -- the one direction a safety argument cannot absorb.
@@ -1527,7 +1527,7 @@ VolatileCleared ==
 \*
 \* And it MAY mint the grant record if none stands (`ensure_ppuat`), which is how a
 \* grant a PIN change revoked comes back -- as a record, issued to nobody. May,
-\* because `ensure_seed` skips the mint on a vendor-soft-locked key (seed.rs:673)
+\* because `ensure_seed` skips the mint on a vendor-soft-locked key (seed.rs:681)
 \* and main.rs drops its error: a boot that leaves no record is the firmware's too.
 BootEnsuresSeed ==
     /\ store' = [KeepOpen(store, store.seed) EXCEPT !.seed = TRUE]

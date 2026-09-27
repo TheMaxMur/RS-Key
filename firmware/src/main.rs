@@ -684,11 +684,31 @@ async fn main(spawner: Spawner) {
             serial_id: &serial_id,
             otp_key: mkek.as_ref().map(|k| k.expose()),
         };
-        let _ = rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs);
-        rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng);
-        rsk_piv::migrate_kbase(&dev, &mut fs, &mut rng);
-        rsk_oath::migrate_seal(&dev, &mut fs, &mut rng);
-        rsk_otp::migrate_seal(&dev, &mut fs, &mut rng);
+        use rsk_rescue::otp_lock::{
+            PRE_OTP_DEVICE_KEY, PRE_OTP_FIDO, PRE_OTP_OATH, PRE_OTP_OTP, PRE_OTP_PIV,
+        };
+        // What each pass left under the pre-burn key is what the page-58 lock waits on.
+        let passes = [
+            (
+                rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs).unwrap_or(true),
+                PRE_OTP_FIDO,
+            ),
+            (
+                rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng),
+                PRE_OTP_DEVICE_KEY,
+            ),
+            (rsk_piv::migrate_kbase(&dev, &mut fs, &mut rng), PRE_OTP_PIV),
+            (
+                rsk_oath::migrate_seal(&dev, &mut fs, &mut rng),
+                PRE_OTP_OATH,
+            ),
+            (rsk_otp::migrate_seal(&dev, &mut fs, &mut rng), PRE_OTP_OTP),
+        ];
+        let left = passes
+            .iter()
+            .filter(|(l, _)| *l)
+            .fold(0, |m, (_, bit)| m | bit);
+        rescue_platform::record_pre_otp_left(dev.otp_key.is_some().then_some(left));
         rsk_fido::credential::migrate_rp_seal(&dev, &mut fs);
         let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
         let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
@@ -780,7 +800,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A56;
+    let device_release: u16 = 0x0A57;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

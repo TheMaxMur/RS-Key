@@ -173,6 +173,9 @@ impl rsk_rescue::Platform for RescueBoard {
     fn read_page58_lock_raw(&self) -> Option<u32> {
         Some(0)
     }
+    fn pre_otp_left(&self) -> Option<u16> {
+        Some(0)
+    }
     fn lock_page58(&mut self) -> bool {
         false
     }

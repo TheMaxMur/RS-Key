@@ -152,7 +152,11 @@ covers the security boundary. This page covers feature and hardware gaps.
   The boot migration then re-seals the planted record under the fused root.
   *Status: needs a fuse-rooted latch that closes the migration window once the
   device is provisioned; the analysis is audit run-27 #8, the decision is the
-  maintainer's because it makes `lock-page58` load-bearing for boot correctness.*
+  maintainer's because it makes `lock-page58` load-bearing for boot correctness.
+  The interim step is in: the page-58 lock burns only over a device whose boot
+  read every device-sealed record and left none on the pre-burn key (READ
+  `1E/07`). A PIN verifier cannot be told apart by arm, so it does not hold the
+  lock back.*
 - **A PIN-derived record stays on the weaker root until its own reference is
   presented after the burn.** Every record sealed under the key base alone is
   moved to the fused root by a boot pass, but re-keying a PIN-derived one needs

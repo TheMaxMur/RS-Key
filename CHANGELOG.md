@@ -65,6 +65,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **`rsk otp lock-page58` burns only over a device the migration has finished.**
+  A record sealed under the pre-burn key derives from the public chip serial, so
+  a flash writer can plant one and the boot pass re-seals it under the fused key
+  (audit run-27 #8); a later latch that closes those arms must not strand a
+  record a device still holds there. Each boot's seal passes now report what
+  they left behind, and the firmware refuses the page-58 burn with `6985`,
+  before the touch, until that is nothing: a FIDO seed, attestation key or
+  grant, the device key, a PIV, OATH or OTP record the pre-burn arm opened or
+  left in the clear, a FIDO seed wrapped by a PIN set before the burn, or a
+  legacy OATH OTP-PIN; a record a pass could not read counts as left. A boot
+  that could not read the fused key checked nothing and holds the burn too. A
+  record no key opens does not count, since no boot could ever move it. READ
+  `1E/07` reports the bits, and the tool reads them
+  first and names the fix (usually a replug; a PIN-wrapped seed or a legacy
+  OTP-PIN moves at its next use). PIN verifiers cannot be told apart by arm and
+  do not hold it back. It never burns what it would not have burnt before.
+  `bcdDevice` 0x0A56 → 0x0A57; `rsk` 0.3.38.
+
 - **A wrong OpenPGP password answers `6982`, as a YubiKey 5.8.0 does**, in
   VERIFY, CHANGE REFERENCE DATA and a RESET RETRY COUNTER with the reset code.
   It was `63Cx` with the tries left, which is what OpenPGP 3.4 §7.2.2 says, but

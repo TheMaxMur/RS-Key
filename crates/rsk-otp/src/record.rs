@@ -80,38 +80,34 @@ impl SlotRecord {
         Ok(n)
     }
 
-    /// [`try_read`](Self::try_read), with a read the medium refused folded into
-    /// `None` as [`seal::seal_read`] folds it.
-    pub(crate) fn read<S: Storage>(
-        &mut self,
-        dev: &Device,
-        fs: &mut Fs<S>,
-        fid: u16,
-    ) -> Option<usize> {
-        self.try_read(dev, fs, fid).ok().flatten()
-    }
-
     /// A legacy slot stored in the clear: `Some` at a config's length up to a full
     /// record's. The scratch holds a whole sealed blob, so one that does not
-    /// authenticate reads at its true length and is refused, not truncated.
-    pub(crate) fn read_plaintext<S: Storage>(&mut self, fs: &mut Fs<S>, fid: u16) -> Option<usize> {
+    /// authenticate reads at its true length and is refused, not truncated. `Err`
+    /// is a read the medium could not complete.
+    pub(crate) fn try_read_plaintext<S: Storage>(
+        &mut self,
+        fs: &mut Fs<S>,
+        fid: u16,
+    ) -> Result<Option<usize>> {
         self.bytes.wipe();
         self.len = 0;
         if !is_slot(fid) {
-            return None;
+            return Ok(None);
         }
         let mut raw = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
-        let n = fs.read_key(KeyFid::new(fid), raw.expose_mut())?;
+        let Some(n) = fs.try_read_key(KeyFid::new(fid), raw.expose_mut())? else {
+            return Ok(None);
+        };
         if !(CONFIG_SIZE..=SLOT_SIZE).contains(&n) {
-            return None;
+            return Ok(None);
         }
         let (Some(dst), Some(src)) = (self.bytes.expose_mut().get_mut(..n), raw.expose().get(..n))
         else {
-            return None;
+            return Ok(None);
         };
         dst.copy_from_slice(src);
         self.len = n;
-        Some(n)
+        Ok(Some(n))
     }
 
     /// CONFIGURE: a fresh config, so the tail restarts at zero — as on a YubiKey.
