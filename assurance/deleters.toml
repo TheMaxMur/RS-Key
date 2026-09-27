@@ -547,7 +547,7 @@ why = "and its second. Both slots' valid bits come off flash in the response tha
 
 [[site]]
 file = "crates/rsk-piv/src/files.rs"
-line = 534
+line = 630
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -569,7 +569,7 @@ why = "PUT DATA with an empty body deletes a pooled object, so the removal is th
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 870
+line = 867
 call = "return match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
@@ -580,7 +580,7 @@ why = "PUT DATA with an empty body IS the object delete, so the removal is the w
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1221
+line = 1218
 call = "let dropped = fs.delete_key(key_fid(from));"
 verb = "delete_key"
 answer = "read"
@@ -591,7 +591,7 @@ why = "MOVE with to = 0xFF, the slot delete. The head earns a retry because one 
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1222
+line = 1219
 call = "let _ = fs.delete(pubkey_fid(from));"
 verb = "delete"
 answer = "discarded"

@@ -5,7 +5,7 @@
 //! of the fault sweep ([`rsk_fs::probe::sweep`]).
 
 use super::*;
-use rsk_fs::probe::{Traced, sweep};
+use rsk_fs::probe::{Excuse, Traced, sweep};
 
 const OWNER_PIN: [u8; 8] = *b"48162900";
 const OWNER_PUK: [u8; 8] = *b"73915400";
@@ -141,18 +141,23 @@ fn a_faulted_read_fails_a_generate_or_lands_it_whole() {
 }
 
 /// SET MANAGEMENT KEY over an authenticated session, the same algorithm and
-/// another. Each record is judged alone, so which key authenticates after a change
-/// is not this sweep's to see. PUT DATA is not swept: it reads nothing, which the
-/// sweep refuses as vacuous.
+/// another. The one excused read is the rewrite of the head, a cache of the record
+/// that carries the key with its algorithm: `mgmkey_tests` hold what authenticates.
+/// PUT DATA is not swept: it reads nothing, which the sweep refuses as vacuous.
 #[test]
 fn a_faulted_read_fails_a_management_key_change_or_lands_it_whole() {
-    for (algo, len) in [(ALGO_AES192, 24u8), (ALGO_AES256, 32)] {
+    let stale: &[Excuse] = &[(
+        rsk_fs::EF_META,
+        2,
+        "a refused head rewrite leaves the cache stale behind the record's 9000",
+    )];
+    for (algo, len, excused) in [(ALGO_AES192, 24u8, &[][..]), (ALGO_AES256, 32, stale)] {
         let mut set_key = vec![algo, SLOT_CARDMGM, len];
         set_key.extend(std::iter::repeat_n(0x5A, usize::from(len)));
         sweep(
             authenticated,
             sends(INS_SET_MGMKEY, 0xFF, 0xFF, &set_key),
-            &[],
+            excused,
         );
     }
 }

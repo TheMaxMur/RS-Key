@@ -110,6 +110,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **Changing the PIV management key can no longer lock the admin out, or leave
+  a key behind another touch policy.** SET MANAGEMENT KEY wrote the new key,
+  then its algorithm head, as two records. A power cut between them, or one
+  failed flash read of the head after the key had landed, left the new key under
+  the old algorithm, and slot 9B then refused every algorithm: management was
+  gone until a PIV reset, which wipes every key. A changed key is now sealed in
+  one record with its algorithm and touch policy, by SET MANAGEMENT KEY and by
+  the panel's protect alike, so a change lands whole or not at all. The head
+  only caches that record, and a refused head write answers `9000`, since the
+  key it describes is in force. A head the flash will not take at SELECT no
+  longer fails it: the next SELECT writes it, and a RESET that could not says
+  so. ADMIN DATA is read before the key is written too, so a failed read of
+  it refuses the change with nothing written, where it answered `6581` over the
+  new key. The factory key and a key an older build wrote stay key-only, their
+  head the word on both; a new boot's SELECT gives such a head that disagrees
+  with its key's length the algorithm the length names (16, 24 or 32 bytes, 24
+  read as AES-192). A build older than this one cannot use a key this one
+  changed: after a downgrade, slot 9B refuses until the upgrade, and nothing is
+  erased. Found in review. `bcdDevice` 0x0A5C → 0x0A5D.
+
 - **A failed flash read no longer hides a passkey from credMgmt.**
   `enumerateRPs` and `enumerateCredentialsBegin` skipped a record they could not
   read and answered success, a total one short: the owner was shown a list with

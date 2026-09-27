@@ -1002,7 +1002,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1360."
+note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1363."
 
 [comutant.BugRecoveryWithoutSecret]
 status = "patch"
@@ -1447,7 +1447,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:302, 598, 680, 824, 1062, 1154 and crates/rsk-piv/src/keygen.rs:597), none of them patched here."
+note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:302, 598, 680, 824, 1062, 1157 and crates/rsk-piv/src/keygen.rs:597), none of them patched here."
 
 [comutant.BugRefusedValidateGrants]
 status = "patch"

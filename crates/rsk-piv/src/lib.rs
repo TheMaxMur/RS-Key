@@ -224,9 +224,8 @@ pub struct PivApplet<'a> {
     presence: &'a RefCell<dyn UserPresence>,
     sess: Session,
     /// Set once `scan_files` has provisioned the default files this power-cycle,
-    /// so a re-SELECT skips its five flash probes. Only ever cleared by the fresh
-    /// struct a reboot builds — nothing removes those files mid-power-cycle
-    /// without a reboot (see `select`).
+    /// so a re-SELECT skips its flash probes. Left clear while the 9B head is
+    /// owed, and cleared by a RESET that failed part-way (see `select`).
     files_ensured: bool,
 }
 
@@ -380,8 +379,8 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         // and afterwards only ever removed by a path that recreates them (PIV
         // `reset_files`) or reboots (trusted-display factory wipe → `sys_reset`);
         // `authenticatorReset` leaves them. So past the first SELECT this
-        // power-cycle they are present — skip the five flash `has_data` probes
-        // scan_files would otherwise repeat on every re-SELECT.
+        // power-cycle they are present — skip the flash probes scan_files would
+        // otherwise repeat on every re-SELECT, unless it left the 9B head owed.
         if !self.files_ensured {
             let (serial_hash, serial_id, mkek) = self.device_ids();
             let dev = Device {
@@ -390,10 +389,10 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                 otp_key: mkek.as_ref().map(|k| k.expose()),
             };
             let mut rng = self.rng.borrow_mut();
-            if files::scan_files(&dev, fs, &mut *rng).is_err() {
-                return Sw::MEMORY_FAILURE;
+            match files::scan_files(&dev, fs, &mut *rng) {
+                Ok(landed) => self.files_ensured = landed,
+                Err(_) => return Sw::MEMORY_FAILURE,
             }
-            self.files_ensured = true;
         }
         apt(res)
     }
@@ -790,23 +789,20 @@ impl PivApplet<'_> {
             serial_id: &self.serial_id,
             otp_key: mkek.as_ref().map(|k| k.expose()),
         };
-        let mut key = Secret::<[u8; 32]>::zeroed();
-        let klen = match seal::seal_read(&dev, fs, key_fid(SLOT_CARDMGM), &mut key) {
-            Ok(n) => n,
+        let mut mgm = match mgm_read(&dev, fs) {
+            Ok(k) => k,
             Err(sw) => return sw,
         };
+        let klen = mgm.key().len();
         // PivmanProtectedData: 88 { 89 <key> }, wrapped in the 53 response object.
         let mut body = Secret::<[u8; 4 + 32]>::zeroed();
-        let (Some(k), Some(dst), Ok(len)) = (
-            key.expose().get(..klen),
-            body.expose_mut().get_mut(4..4 + klen),
-            u8::try_from(klen),
-        ) else {
-            key.wipe();
+        let (Some(dst), Ok(len)) = (body.expose_mut().get_mut(4..4 + klen), u8::try_from(klen))
+        else {
+            mgm.wipe();
             return Sw::EXEC_ERROR;
         };
-        dst.copy_from_slice(k);
-        key.wipe();
+        dst.copy_from_slice(mgm.key());
+        mgm.wipe();
         body.expose_mut()[..4].copy_from_slice(&[PROTECTED_TAG, len + 2, PROTECTED_MGM_TAG, len]);
         let r = match body.expose().get(..4 + klen) {
             Some(object) if push_tlv(res, TAG_DATA_OBJECT, object).is_ok() => Sw::OK,
@@ -935,13 +931,14 @@ impl PivApplet<'_> {
                 if n < 3 {
                     return Sw::REFERENCE_NOT_FOUND;
                 }
-                let mut key = Secret::<[u8; 32]>::zeroed();
-                let is_default = match seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key) {
-                    Ok(24) => ct_eq(&key.expose()[..24], &DEFAULT_MGM),
-                    Ok(_) => false,
+                let mut mgm = match mgm_read(dev, fs) {
+                    Ok(k) => k,
                     Err(sw) => return sw,
                 };
-                key.wipe();
+                let is_default = ct_eq(mgm.key(), &DEFAULT_MGM);
+                mgm.wipe();
+                // The record's own algorithm and touch policy: the head only caches them.
+                let (algo, touch) = mgm.policy.unwrap_or((meta[0], meta[2]));
                 // Tag `05` answers "is this slot as it left the factory", not
                 // "are these the factory key bytes" — a YubiKey 5.7.4 clears it
                 // when the FACTORY key is written back with `P2 = 0xFE`,
@@ -954,9 +951,9 @@ impl PivApplet<'_> {
                 // the factory key — losing a true warning to make a byte no
                 // reference varies agree. `&`, not `&&`: the key compare is
                 // `ct_eq` and this must not reintroduce a branch on its result.
-                let is_default = is_default & (meta[2] == TOUCHPOLICY_NEVER);
-                res.extend(&[0x01, 0x01, meta[0]]);
-                res.extend(&[0x02, 0x02, meta[1], meta[2]]);
+                let is_default = is_default & (touch == TOUCHPOLICY_NEVER);
+                res.extend(&[0x01, 0x01, algo]);
+                res.extend(&[0x02, 0x02, meta[1], touch]);
                 res.extend(&[0x05, 0x01, is_default as u8]);
                 Sw::OK
             }
@@ -1083,28 +1080,35 @@ impl PivApplet<'_> {
         let Some(key) = apdu.data.get(3..3 + klen) else {
             return Sw::WRONG_LENGTH;
         };
-        let mut rng = self.rng.borrow_mut();
-        if seal::seal_put(dev, fs, &mut *rng, key_fid(SLOT_CARDMGM), key).is_err() {
-            return Sw::MEMORY_FAILURE;
-        }
+        // The head and the escrow record are read before anything is written: a read
+        // that failed after the key landed answered 6A88 or 6581 over a key in force.
         let mut meta = [0u8; 8];
-        let Some(n) = fs.meta_find(key_fid(SLOT_CARDMGM).get(), &mut meta) else {
-            return Sw::REFERENCE_NOT_FOUND;
-        };
-        if n < 3 {
-            return Sw::REFERENCE_NOT_FOUND;
+        match fs.try_meta_find(key_fid(SLOT_CARDMGM).get(), &mut meta) {
+            Ok(Some(n)) if n >= 3 => {}
+            Ok(_) => return Sw::REFERENCE_NOT_FOUND,
+            Err(_) => return Sw::MEMORY_FAILURE,
         }
-        if fs
-            .meta_add(key_fid(SLOT_CARDMGM).get(), &[algo, meta[1], touch])
-            .is_err()
-        {
+        let revoke = match escrow_revocation(fs) {
+            Ok(r) => r,
+            Err(sw) => return sw,
+        };
+        // One record carries the key, its algorithm and its touch policy, so the
+        // change lands whole or not at all. The head is a cache of it that a refused
+        // write leaves stale until `files::scan_files`, not a reason to answer 6581.
+        let mut rng = self.rng.borrow_mut();
+        if mgm_put(dev, fs, &mut *rng, algo, touch, key).is_err() {
             return Sw::MEMORY_FAILURE;
         }
+        let _ = fs.meta_add(key_fid(SLOT_CARDMGM).get(), &[algo, meta[1], touch]);
         // Revoke the one-key escrow LAST, mirroring `protect_mgm_key`'s ordering:
         // clearing the flag before its key is really replaced would strand a
         // PRINTED-only owner whenever the seal write fails. ykman re-sets it.
-        if let Err(sw) = mgm_clear_protected(fs) {
-            return sw;
+        if let Some((admin, len)) = revoke
+            && admin
+                .get(..len)
+                .is_none_or(|rec| fs.put(EF_PIVMAN_DATA, rec).is_err())
+        {
+            return Sw::MEMORY_FAILURE;
         }
         Sw::OK
     }
@@ -1592,17 +1596,17 @@ fn try_mgm_is_protected<S: Storage>(fs: &mut Fs<S>) -> Result<bool, Sw> {
         .is_some_and(|flags| flags & PIVMAN_FLAG_MGM_PROTECTED != 0))
 }
 
-/// Revoke the PIN-readable escrow: clear the ADMIN-DATA `0x02` flag, carrying
-/// the rest of the record forward ([`pivman_set_protected`] with the bit off).
-/// A record without the flag is left untouched, so a host's PivmanData is only
-/// rewritten when there is an escrow to revoke.
+/// The record that revokes the PIN-readable escrow: ADMIN DATA with its `0x02`
+/// flag cleared and the rest carried forward ([`pivman_set_protected`] with the
+/// bit off). `None` without the flag, so a host's PivmanData is only rewritten
+/// when there is an escrow to revoke.
 ///
-/// Fallible on BOTH probes: its one caller has already replaced the key the flag
-/// escrows, so a record read absent out of a fault leaves the flag standing over
-/// the host's own new key — PIN-readable, under the `9000` that says revoked.
-fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+/// Fallible on BOTH probes: a record read absent out of a fault leaves the flag
+/// standing over the host's own new key — PIN-readable, under the `9000` that
+/// says revoked. Its one caller reads it before it writes the key.
+fn escrow_revocation<S: Storage>(fs: &mut Fs<S>) -> Result<Option<([u8; PIVMAN_MAX], usize)>, Sw> {
     if !try_mgm_is_protected(fs)? {
-        return Ok(());
+        return Ok(None);
     }
     // Sized as in `try_mgm_is_protected`: a real ykman record (flags + salt + timestamp).
     let mut prior = [0u8; 64];
@@ -1610,12 +1614,11 @@ fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
         .try_read(EF_PIVMAN_DATA, &mut prior)
         .map_err(|_| Sw::MEMORY_FAILURE)?
     else {
-        return Ok(());
+        return Ok(None);
     };
     let mut admin = [0u8; PIVMAN_MAX];
     let len = pivman_rebuild(prior.get(..n).unwrap_or(&prior), false, &mut admin);
-    fs.put(EF_PIVMAN_DATA, admin.get(..len).ok_or(Sw::MEMORY_FAILURE)?)
-        .map_err(|_| Sw::MEMORY_FAILURE)
+    Ok(Some((admin, len)))
 }
 
 /// Replace the PIV management key with a fresh random AES-256 key and mark it
@@ -1629,7 +1632,7 @@ fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 /// unlocks the random mgmt key), exactly as YubiKey's `--protect`. Caller-gated
 /// behind the device PIN + a deliberate hold on the panel.
 ///
-/// Power-cut ordering: the key+meta are written before the ADMIN flag, so a torn
+/// Power-cut ordering: the key's record is written before the ADMIN flag, so a torn
 /// write leaves the flag clear → PRINTED reads absent (fail-closed, no half-key
 /// disclosure). Re-running this (or a PIV factory reset) recovers: the only prior
 /// state it reads is the touch byte, and an absent one resolves to the default.
@@ -1665,27 +1668,37 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
     let Ok(head) = fs.try_meta_find(key_fid(SLOT_CARDMGM).get(), &mut cur) else {
         return Sw::MEMORY_FAILURE;
     };
-    let touch = match head {
-        Some(n) if n >= 3 && cur[2] == TOUCHPOLICY_ALWAYS => TOUCHPOLICY_ALWAYS,
+    // The record's own touch policy where it seals one; the head caches it. A read
+    // the flash failed is no absent record: the head's word then could drop a gate
+    // only the record carries. One no arm opens is re-keyed, as it always was.
+    let stored = match mgm_read(dev, fs) {
+        Ok(k) => k.policy.map(|(_, t)| t),
+        Err(sw)
+            if sw == Sw::REFERENCE_NOT_FOUND
+                && !matches!(fs.try_has_key(key_fid(SLOT_CARDMGM)), Ok(false)) =>
+        {
+            return Sw::MEMORY_FAILURE;
+        }
+        Err(_) => None,
+    };
+    let touch = match stored.or(head.filter(|&n| n >= 3).map(|_| cur[2])) {
+        Some(TOUCHPOLICY_ALWAYS) => TOUCHPOLICY_ALWAYS,
         _ => TOUCHPOLICY_NEVER,
     };
 
     let mut key = Secret::<[u8; 32]>::zeroed();
     rng.fill(key.expose_mut());
-    let sealed = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), key.expose());
+    let sealed = mgm_put(dev, fs, rng, ALGO_AES256, touch, key.expose());
     key.wipe();
     if sealed.is_err() {
         return Sw::MEMORY_FAILURE;
     }
-    if fs
-        .meta_add(
-            key_fid(SLOT_CARDMGM).get(),
-            &[ALGO_AES256, MGM_PIN_POLICY, touch],
-        )
-        .is_err()
-    {
-        return Sw::MEMORY_FAILURE;
-    }
+    // A cache of the record: a refused write must not stop the flag below, without
+    // which the new key is reachable by no one.
+    let _ = fs.meta_add(
+        key_fid(SLOT_CARDMGM).get(),
+        &[ALGO_AES256, MGM_PIN_POLICY, touch],
+    );
     let Some(record) = admin.get(..admin_len) else {
         return Sw::MEMORY_FAILURE;
     };

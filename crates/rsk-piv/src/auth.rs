@@ -415,8 +415,7 @@ pub(crate) fn general_authenticate<S: Storage>(
     }
 
     // Management-key sanity (algo class + stored length).
-    let mut mgm_key = Secret::<[u8; 32]>::zeroed();
-    let mut mgm_len = 0usize;
+    let mut mgm_key = None;
     if key_ref == SLOT_CARDMGM {
         // Same class, same word as every other "this key is not that algorithm"
         // cell: a YubiKey answers 6A80 to any body at 9B under a non-9B algorithm
@@ -424,14 +423,13 @@ pub(crate) fn general_authenticate<S: Storage>(
         let Some(want) = mgm_key_len(algo) else {
             return Sw::WRONG_DATA;
         };
-        mgm_len = match seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut mgm_key) {
-            Ok(n) => n,
-            Err(_) => return Sw::MEMORY_FAILURE,
+        let Ok(k) = mgm_read(dev, fs) else {
+            return Sw::MEMORY_FAILURE;
         };
-        if mgm_len != want {
-            mgm_key.wipe();
+        if k.key().len() != want {
             return Sw::WRONG_DATA;
         }
+        mgm_key = Some(k);
     }
 
     let mut meta = [0u8; 8];
@@ -440,19 +438,20 @@ pub(crate) fn general_authenticate<S: Storage>(
     // the zero-fill (matches info::read_slot's n >= 3 guard).
     match fs.meta_find(key_fid(key_ref).get(), &mut meta) {
         Some(n) if n >= 3 => {}
-        _ => {
-            mgm_key.wipe();
-            return Sw::REFERENCE_NOT_FOUND;
-        }
+        _ => return Sw::REFERENCE_NOT_FOUND,
     }
+    // A 9B record seals its own algorithm and touch policy; the head caches them.
+    let (slot_algo, touch_policy) = mgm_key
+        .as_ref()
+        .and_then(|k| k.policy)
+        .unwrap_or((meta[0], meta[2]));
     // The management key's *declared* algorithm must be the one being used. Only
     // its stored length was checked, and 3DES and AES-192 are both 24 bytes — so an
     // AES-192 key completed a full 3DES mutual authentication, the one algorithm
     // `fips-profile` provisioning refuses (audit run-34 #19).
     // `WRONG_DATA`, the same status the `chal_algo` binding below answers, so
     // one class of "this key is not that algorithm" has one status word.
-    if key_ref == SLOT_CARDMGM && meta[0] != algo {
-        mgm_key.wipe();
+    if key_ref == SLOT_CARDMGM && slot_algo != algo {
         return Sw::WRONG_DATA;
     }
     // Only a record an OLDER build wrote can still hold an unresolved `0` here — no
@@ -466,15 +465,12 @@ pub(crate) fn general_authenticate<S: Storage>(
         meta[1]
     };
     if is_key(key_ref) && !pin_satisfied(sess, pinpol) {
-        mgm_key.wipe();
         return Sw::SECURITY_STATUS_NOT_SATISFIED;
     }
-    // Touch policy of the key being used (slot key, or 9B management key).
-    let touch_policy = meta[2];
 
     let chal_len: usize = if algo == ALGO_3DES { 8 } else { 16 };
     let op = first_operation(dyn_auth);
-    let mgm = mgm_key.expose().get(..mgm_len).unwrap_or_default();
+    let mgm = mgm_key.as_ref().map_or(&[][..], MgmKey::key);
 
     let sw = {
         let mut ga = GenAuth {
@@ -484,7 +480,7 @@ pub(crate) fn general_authenticate<S: Storage>(
             rng: &mut *rng,
             presence: &mut *presence,
             algo,
-            slot_algo: meta[0],
+            slot_algo,
             key_ref,
             pin_policy: pinpol,
             touch_policy,
@@ -510,7 +506,9 @@ pub(crate) fn general_authenticate<S: Storage>(
             None => Err(Sw::WRONG_DATA),
         }
     };
-    mgm_key.wipe();
+    if let Some(k) = &mut mgm_key {
+        k.wipe();
+    }
 
     match sw {
         Ok(()) => Sw::OK,

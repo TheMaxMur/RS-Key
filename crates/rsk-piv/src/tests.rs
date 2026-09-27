@@ -1300,12 +1300,9 @@ fn pin_protected_mgm_key_roundtrip() {
     let host_key: [u8; 32] = printed[6..38].try_into().unwrap();
 
     // The synthesized key equals the sealed 0x9B auth key (single source).
-    let mut sealed = Secret::<[u8; 32]>::zeroed();
-    assert_eq!(
-        seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed),
-        Ok(32)
-    );
-    assert_eq!(host_key, *sealed.expose());
+    let sealed = files::mgm_read(&dev, &mut fs).unwrap();
+    assert_eq!(sealed.policy, Some((ALGO_AES256, TOUCHPOLICY_NEVER)));
+    assert_eq!(host_key, sealed.key());
 
     // And the host-read key authenticates via AES-256 mutual auth.
     let (sw, wit) = run(
@@ -1657,9 +1654,8 @@ fn printed_information_round_trips_but_an_escrow_body_is_never_stored() {
             0x20
         ]
     );
-    let mut sealed = Secret::<[u8; 32]>::zeroed();
-    let n = seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed).unwrap();
-    assert_eq!(&body[6..6 + n], &sealed.expose()[..n]);
+    let sealed = files::mgm_read(&dev, &mut fs).unwrap();
+    assert_eq!(&body[6..6 + sealed.key().len()], sealed.key());
     // …so a write of anything else is refused while it is live, rather than
     // acknowledged and hidden under it. (A YubiKey takes the write and loses the
     // escrowed key with it; that is the data loss we do not copy.)
@@ -1678,7 +1674,9 @@ fn printed_information_round_trips_but_an_escrow_body_is_never_stored() {
         run(&mut cold, &mut fs, INS_PUT_DATA, 0x3F, 0xFF, &wipe).0,
         Sw::OK
     );
-    mgm_clear_protected(&mut fs).unwrap();
+    if let Some((admin, len)) = escrow_revocation(&mut fs).unwrap() {
+        fs.put(EF_PIVMAN_DATA, &admin[..len]).unwrap();
+    }
     verify_pin(&mut cold, &mut fs);
     assert_eq!(
         run(&mut cold, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &get).0,
@@ -6625,11 +6623,9 @@ fn pivman_printed_codec_property_fuzz() {
                 &out[..6],
                 &[0x53, 0x24, PROTECTED_TAG, 0x22, PROTECTED_MGM_TAG, 0x20]
             );
-            let mut sealed = Secret::<[u8; 32]>::zeroed();
-            let klen = seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed)
-                .expect("sealed mgmt key present");
-            assert_eq!(klen, 32);
-            assert_eq!(&out[6..38], &sealed.expose()[..]);
+            let sealed = files::mgm_read(&dev, &mut fs).expect("sealed mgmt key present");
+            assert_eq!(sealed.key().len(), 32);
+            assert_eq!(&out[6..38], sealed.key());
         } else {
             assert_eq!(sw_pin, Sw::FILE_NOT_FOUND);
         }
@@ -8003,18 +7999,25 @@ fn the_management_slots_default_flag_answers_for_the_slots_touch_policy() {
         "the factory key behind a raised touch gate is not the factory configuration"
     );
 
-    // e. planted touch bytes. `NEVER` is the rule, not "anything but ALWAYS": a
-    // head carrying a value no writer emits is not the factory configuration
-    // either, and `!= ALWAYS` would call it one.
+    // e. planted touch bytes, on the key-only record an older build wrote, whose
+    // head is the only word on its policy. `NEVER` is the rule, not "anything but
+    // ALWAYS": a head carrying a value no writer emits is not the factory
+    // configuration either, and `!= ALWAYS` would call it one.
     // The last row is the card the rule is scoped for — `0x0875`'s
     // `PINPOLICY_ALWAYS` in `meta[1]`, still on the factory key. It must keep
     // reporting `01`, or an upgrade silently retires a true warning.
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+    };
     let flag_for = |planted: [u8; 3]| -> u8 {
         let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
         let mut fs = new_fs();
         select(&mut app, &mut fs);
-        fs.meta_add(files::key_fid(SLOT_CARDMGM).get(), &planted)
-            .unwrap();
+        let fid = files::key_fid(SLOT_CARDMGM);
+        seal::seal_put(&dev, &mut fs, &mut TestRng(3), fid, &DEFAULT_MGM).unwrap();
+        fs.meta_add(fid.get(), &planted).unwrap();
         find_tag(
             &run(&mut app, &mut fs, INS_GET_METADATA, 0, SLOT_CARDMGM, &[]).1,
             0x05,
@@ -9360,20 +9363,16 @@ fn a_faulted_meta_probe_at_select_does_not_retire_the_management_touch_gate() {
     );
 }
 
-/// SET MANAGEMENT KEY revokes the PIN-readable escrow last, and both of
-/// `mgm_clear_protected`'s `EF_PIVMAN_DATA` probes answered the same `None` for "no
-/// ADMIN DATA record" and for one the flash could not serve. The absent arm is
-/// `Ok(())` — nothing to revoke — so a faulted probe answered `9000` with the flag
-/// still standing, and the flag is what makes GET DATA PRINTED synthesize the key
-/// from the 0x9B slot. That slot now holds the key the HOST just chose, so the card
-/// hands it to the PIN while reporting the escrow gone.
+/// SET MANAGEMENT KEY revokes the PIN-readable escrow last, and both of its
+/// `EF_PIVMAN_DATA` probes answered the same `None` for "no ADMIN DATA record" and
+/// for one the flash could not serve. The absent arm is "nothing to revoke", so a
+/// faulted probe answered `9000` with the flag still standing, and the flag is what
+/// makes GET DATA PRINTED synthesize the key from the 0x9B slot — by then the key
+/// the HOST just chose, handed to the PIN under a report of the escrow gone.
 ///
-/// The standing flag itself is not the defect: the ordering is key-then-flag on
-/// purpose (a torn write must not strand a PRINTED-only owner), so that state is
-/// reachable by a power cut too. What may not happen is reporting it as done — the
-/// status word is the only thing that lets the host repair it.
-///
-/// Both probes, each reached on its own: a persistent fault stops at the first
+/// Both probes now run before the key is written, so a fault refuses the whole
+/// change with nothing written: the escrow and the key it holds stand as they were.
+/// Each probe reached on its own: a persistent fault stops at the first
 /// (`try_mgm_is_protected`), so only `stick_after(.., 1)` reaches the second.
 #[test]
 fn a_faulted_pivman_probe_does_not_report_an_escrow_revoked() {
@@ -9428,27 +9427,26 @@ fn a_faulted_pivman_probe_does_not_report_an_escrow_revoked() {
         let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
         card(&medium, &mut app, &mut fs);
 
+        let (_, escrowed) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &printed_id);
         medium.stick_after(EF_PIVMAN_DATA, skip);
         let sw = run(&mut app, &mut fs, INS_SET_MGMKEY, 0xFF, 0xFF, &set_key).0;
         medium.stick(None);
 
-        // What the status word is about, measured first: the escrow the command was
-        // asked to revoke still stands, and it now escrows the host's own new key.
-        assert!(
-            mgm_is_protected(&mut fs),
-            "skip={skip}: vacuous — the fault did not reach the revocation"
-        );
-        let (get_sw, body) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &printed_id);
-        assert_eq!(get_sw, Sw::OK);
-        assert!(
-            body.windows(new_key.len()).any(|w| w == new_key),
-            "skip={skip}: vacuous — PRINTED does not hand back the host's new key"
-        );
         assert_eq!(
             sw,
             Sw::MEMORY_FAILURE,
-            "skip={skip}: the card reported an escrow revoked that still hands the \
-             host's own new management key to the PIN"
+            "skip={skip}: a probe the flash failed was taken for no escrow"
+        );
+        assert!(mgm_is_protected(&mut fs), "skip={skip}: the escrow went");
+        let (get_sw, body) = run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &printed_id);
+        assert_eq!(get_sw, Sw::OK);
+        assert_eq!(
+            body, escrowed,
+            "skip={skip}: a refused change replaced the key the escrow holds"
+        );
+        assert!(
+            !body.windows(new_key.len()).any(|w| w == new_key),
+            "skip={skip}: the host's new key is in force"
         );
     }
 }
@@ -10863,3 +10861,8 @@ fn a_torn_move_key_never_loses_the_key_or_serves_it_headless() {
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "reads_tests.rs"]
 mod reads;
+
+/// SET MANAGEMENT KEY under a cut and a faulted read; its own file, it needs this
+/// module's fixtures.
+#[path = "mgmkey_tests.rs"]
+mod mgmkey;
