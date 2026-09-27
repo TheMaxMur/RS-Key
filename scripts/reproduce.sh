@@ -110,6 +110,7 @@ REFUSED=(
 #: Every shell runner under scripts/ and formal/.
 CLAIM_RUNNERS=(
   "scripts/check.sh|gate|"
+  "scripts/gate-lib.sh|gate|"
   "scripts/docs.sh|docs|"
   "scripts/kani.sh|proofs|"
   "formal/run-tlc.sh|model-safety|"

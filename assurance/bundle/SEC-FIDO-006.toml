@@ -219,7 +219,7 @@ stops_wipe_steps = "the step boundary the model folds away. The wipe is five ord
 bound_crates = 1
 stops_crates = "a site outside rsk-fido. Every site in the argument is in one crate, so an ordering owner elsewhere would be outside it"
 shipped_relation = "five parent tags in three files, and the column is 3 because `assurance_gate.grep_word` returns FILE names — two tags move nothing, and one of them (`survives_factory_reset`) is about the trusted-display factory wipe, a SECOND reset path the model does not have at all. The gate phase holds five records and the clauses name three; the wipe is five ordered steps and the model has four actions for them, `ResetConfirmed` folding step 1 and step 2 into one. Every site is in one crate, which is what makes `rust = 3` a count of three files of `rsk-fido` and not a spread"
-cfg = "none — every site above is unconditional production code; `reset_assurance.rs` is the exception and is proved absent from every image by `scripts/check.sh:576`"
+cfg = "none — every site above is unconditional production code; `reset_assurance.rs` is the exception and is proved absent from every image by `scripts/check.sh:549`"
 features = "none"
 
 [[method]]
@@ -445,7 +445,7 @@ registered = "yes — assurance/platform.toml PLAT-FLASH-001, pending, which alr
 id = "AS-RESET-2"
 statement = "The relational pre-state is a GHOST in both tiers — `snap` in the model, `ResetSnapshot` in the Rust α — and no shipped image holds it, so nothing in the firmware can observe or enforce this property at runtime."
 kind = "model fidelity"
-discharger = "nothing to run, and that is the content: the write ORDER is the whole implementation. What supports it is the other direction, and it is machine-checked — scripts/check.sh:576 `assurance-trace image identity` builds the default image twice, poisoning reset_assurance.rs and reset_refinement_kani.rs before the second, and requires the two loadable images byte-identical. A device that had reordered its phases would answer every command exactly as one that had not"
+discharger = "nothing to run, and that is the content: the write ORDER is the whole implementation. What supports it is the other direction, and it is machine-checked — scripts/check.sh:549 `assurance-trace image identity` builds the default image twice, poisoning reset_assurance.rs and reset_refinement_kani.rs before the second, and requires the two loadable images byte-identical. A device that had reordered its phases would answer every command exactly as one that had not"
 expressible = "no — the absence of a runtime check is not something a configuration can assign"
 registered = "yes — assurance/platform.toml PLAT-MODEL-014, accepted-risk. Written BY this bundle as PLAT-MODEL-012 and renumbered on merge, where two sibling bundles proposed that same number: there was no entry for `the property is not observable by the subject of it`, and the nearest shape, PLAT-MODEL-008, is about an action being wider"
 

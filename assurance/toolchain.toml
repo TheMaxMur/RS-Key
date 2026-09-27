@@ -234,7 +234,7 @@ statement = "firmware/memory.x:32. The counter partition's flash offset, fenced 
 [[boundary]]
 id = "import:firmware/src/main.rs:__kvcnt_end"
 provider = "rust-lld"
-statement = "firmware/memory.x:33. The end of the counter partition; scripts/check.sh:302 holds the partition table against __kvmain_start..__kvcnt_end."
+statement = "firmware/memory.x:33. The end of the counter partition; scripts/check.sh:275 holds the partition table against __kvmain_start..__kvcnt_end."
 
 [[boundary]]
 id = "unit:crates/rsk-rsa/csrc/bignum_high_level.c"

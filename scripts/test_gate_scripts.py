@@ -156,6 +156,11 @@ def check_sh():
     return (ROOT / "scripts/check.sh").read_text()
 
 
+def lib_sh():
+    """What `check.sh` sources: the pytest base is assigned there, not in the runner."""
+    return (ROOT / "scripts/gate-lib.sh").read_text()
+
+
 def suite_cases():
     """`def test_` over every table under `scripts/`, this file included."""
     return sum(len(CASE.findall(p.read_text()))
@@ -319,10 +324,13 @@ def test_every_gate_reports_a_summary_when_it_is_happy():
 #: reason of all — "a `run` row with no mutation table" — and are on [`NAMED`]
 #: now. What is left is the two shapes a table here is not the answer to: a
 #: script that is not a guard, and a guard whose table is INSIDE it, driven by
-#: the row itself. Three rows, and `pt.sh` is the only one that is not a guard.
+#: the row itself. `pt.sh` and `gate-lib.sh` are the two that are not guards.
 UNROSTERED = {
     "pt.sh": "not a guard and not a `run` row: the elf and store rows invoke it"
              " to apply a partition table, and it asserts nothing",
+    "gate-lib.sh": "not a guard and not a row: `check.sh` sources it for `run`,"
+                   " the signal traps and the pytest base, which the per-checkout"
+                   " base cases below evaluate",
     "ci-scope.sh": "a `run` row, and the one shape that does not need a table"
                    " here — `check.sh` runs its `--self-test`, so the table is"
                    " inside the script and the row IS the drive",
@@ -932,7 +940,7 @@ def test_the_skip_budget_can_go_red():
 #: directory survives with its contents. Moving TMPDIR is the mechanism that
 #: works, and it is invisible to every rule above because no `.sh` file carries it.
 DEVSHELL = pathlib.Path("nix/devshells.nix")
-#: The cache root, read out of `check.sh` rather than written here a second time:
+#: The cache root, read out of `gate-lib.sh` rather than written here a second time:
 #: the gate's pytest bases already live under it, and a pin that drifted away
 #: from them would leave two temp roots where the file claims one.
 CACHE_ROOT = re.compile(r"\$\{XDG_CACHE_HOME:-\$HOME/\.cache\}/rs-key")
@@ -950,8 +958,8 @@ def devshell_text():
 
 
 def test_the_cache_root_is_one_root():
-    """`check.sh` names it and the dev shell must name the same one."""
-    assert CACHE_ROOT.search((ROOT / "scripts/check.sh").read_text())
+    """The gate's lib names it and the dev shell must name the same one."""
+    assert CACHE_ROOT.search(lib_sh())
     assert CACHE_ROOT.search(devshell_text())
 
 
@@ -996,8 +1004,8 @@ def test_the_tmpdir_rules_can_go_red():
 
 # --- the pytest base is per checkout, not per user ------------------------------
 
-#: `check.sh`'s own assignment of the pytest base, and the `set` line it runs
-#: under. The cases below EVALUATE both in a stand-in checkout.
+#: The pytest base's assignment in `gate-lib.sh`, and the `set` line of the
+#: runner that sources it. The cases below EVALUATE both in a stand-in checkout.
 PYTEST_BASE = re.compile(r"^GATE_PYTEST_TMP=.*$", re.M)
 SHELL_OPTIONS = re.compile(r"^set -.*$", re.M)
 
@@ -1050,15 +1058,15 @@ def a_bin_without_git(tmp_path):
 
 
 def gate_pytest_base(checkout, cache, line=None, options=None, path=None):
-    """Evaluate `check.sh`'s assignment, under its `set` line, standing in `checkout`."""
-    text = check_sh()
+    """Evaluate the lib's assignment, under `check.sh`'s `set` line, standing in `checkout`."""
     if line is None:
-        # Exactly one: bash keeps the LAST of two, so a stale line below the fixed
-        # one would put the gate back on a shared base with the first still read here.
-        found = PYTEST_BASE.findall(text)
+        # Exactly one over the runner and what it sources: bash keeps the LAST of
+        # two, so a stale line below the fixed one would put the gate back on a
+        # shared base with the first still read here.
+        found = PYTEST_BASE.findall(lib_sh() + check_sh())
         assert len(found) == 1, f"check.sh assigns GATE_PYTEST_TMP {len(found)} times: {found}"
         line = found[0]
-    options = SHELL_OPTIONS.search(text)[0] if options is None else options
+    options = SHELL_OPTIONS.search(check_sh())[0] if options is None else options
     env = no_git_env(XDG_CACHE_HOME=str(cache), **({"PATH": path} if path else {}))
     return subprocess.run(
         [shutil.which("bash"), "-c", f'{options}\n{line}\nprintf %s "$GATE_PYTEST_TMP"'],
