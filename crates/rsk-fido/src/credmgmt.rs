@@ -213,10 +213,15 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
             let mut pbuf = [0u8; 1 + MAX_RAW_SUBPARA];
             let payload = payload_with_subpara(CM_DELETE_CREDENTIAL, req.raw_subpara, &mut pbuf)?;
             verify_cm_token(ctx.state, proto, payload, param)?;
+            // A lookup the flash failed binds as one that found nothing: a scoped
+            // token must not learn which other RP's ids are stored from the word.
             let found = find_resident(ctx.fs, cred_id);
-            check_rp_binding(ctx.state, found.as_ref().map(|(_, h)| h))?;
+            check_rp_binding(
+                ctx.state,
+                found.as_ref().ok().and_then(|f| f.as_ref()).map(|(_, h)| h),
+            )?;
             ctx.state.mark_token_used(ctx.now_ms);
-            let (slot, rp_id_hash) = found.ok_or(CtapError::NoCredentials)?;
+            let (slot, rp_id_hash) = found?.ok_or(CtapError::NoCredentials)?;
             delete_credential(ctx, slot, &rp_id_hash)
         }
         CM_UPDATE_USER_INFO => {
@@ -225,10 +230,15 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
             let mut pbuf = [0u8; 1 + MAX_RAW_SUBPARA];
             let payload = payload_with_subpara(CM_UPDATE_USER_INFO, req.raw_subpara, &mut pbuf)?;
             verify_cm_token(ctx.state, proto, payload, param)?;
+            // A lookup the flash failed binds as one that found nothing: a scoped
+            // token must not learn which other RP's ids are stored from the word.
             let found = find_resident(ctx.fs, cred_id);
-            check_rp_binding(ctx.state, found.as_ref().map(|(_, h)| h))?;
+            check_rp_binding(
+                ctx.state,
+                found.as_ref().ok().and_then(|f| f.as_ref()).map(|(_, h)| h),
+            )?;
             ctx.state.mark_token_used(ctx.now_ms);
-            let (slot, _) = found.ok_or(CtapError::NoCredentials)?;
+            let (slot, _) = found?.ok_or(CtapError::NoCredentials)?;
             update_user(ctx, slot, user_id, req.user_name, req.user_display_name)
         }
         // §8.1 would have this be INVALID_SUBCOMMAND; a YubiKey 5.7.4 answers
@@ -378,7 +388,13 @@ fn enumerate_rps<S: Storage, R: Rng>(
         if !live {
             continue;
         }
-        let Some(n) = ctx.fs.read(EF_RP + i, &mut buf) else {
+        // A record the flash would not serve fails the walk: skipping it answered
+        // a total one short, and the owner was shown a list with an RP missing.
+        let Some(n) = ctx
+            .fs
+            .try_read(EF_RP + i, &mut buf)
+            .map_err(|_| CtapError::Other)?
+        else {
             continue;
         };
         let n = n.min(buf.len());
@@ -458,29 +474,12 @@ fn enumerate_creds<S: Storage, R: Rng>(
     let mut buf = [0u8; CRED_REC_MAX];
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(ctx.fs, EF_CRED, &mut occupied);
-    // Build (or refresh) the slot→rpId-hash-prefix index once per enumeration, so
-    // each per-rp Begin filters slots in RAM and reads flash only for its own rp.
-    // Without it every Begin re-read all slots, making a many-distinct-rp walk
-    // O(rps·creds) (256 rps × 256 creds ≈ 13 s on hardware). `write_gen` moves on
-    // any put/delete, so a mid-walk mutation forces a rebuild rather than a stale
-    // read. See `CredMgmtState::rp_index`.
-    if !ctx.state.cm.rp_index_valid || ctx.state.cm.rp_index_gen != ctx.fs.write_gen() {
-        for ((i, &live), entry) in (0..MAX_RESIDENT_CREDENTIALS)
-            .zip(&occupied)
-            .zip(&mut ctx.state.cm.rp_index)
-        {
-            let prefix = if live {
-                match ctx.fs.read(EF_CRED + i, &mut buf) {
-                    Some(n) if n >= 4 => u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
-                    _ => 0,
-                }
-            } else {
-                0
-            };
-            *entry = prefix;
-        }
-        ctx.state.cm.rp_index_gen = ctx.fs.write_gen();
-        ctx.state.cm.rp_index_valid = true;
+    let unread = refresh_rp_index(ctx, begin, &occupied, &mut buf);
+    // A getNext has only the Begin's total to go by, so an unread record in a rebuild
+    // under the walk ends it, before a read of the walk itself can answer first.
+    if unread && !begin {
+        ctx.state.cm.reset();
+        return Err(CtapError::Other);
     }
     let want_prefix =
         u32::from_le_bytes([rp_id_hash[0], rp_id_hash[1], rp_id_hash[2], rp_id_hash[3]]);
@@ -500,7 +499,11 @@ fn enumerate_creds<S: Storage, R: Rng>(
         if prefix != want_prefix {
             continue;
         }
-        let Some(n) = ctx.fs.read(EF_CRED + i, &mut buf) else {
+        let Some(n) = ctx
+            .fs
+            .try_read(EF_CRED + i, &mut buf)
+            .map_err(|_| CtapError::Other)?
+        else {
             continue;
         };
         let n = n.min(buf.len());
@@ -519,6 +522,14 @@ fn enumerate_creds<S: Storage, R: Rng>(
             }
         }
     }
+    // A record the flash would not serve is this rp's only if its EF_RP count says
+    // more credentials than the walk found, as for makeCredential's refusal.
+    if unread
+        && crate::credential::rp_count(ctx.fs, rp_id_hash).map_err(|_| CtapError::Other)?
+            > usize::from(total)
+    {
+        return Err(CtapError::Other);
+    }
     if !found {
         return Err(CtapError::NoCredentials);
     }
@@ -536,6 +547,51 @@ fn enumerate_creds<S: Storage, R: Rng>(
     ctx.state.cm.cred_counter = target.saturating_add(1);
     ctx.state.cm.last_leg_ms = ctx.now_ms;
     Ok(resp_len)
+}
+
+/// Build (or refresh) the slot→rpId-hash-prefix index once per enumeration, so
+/// each per-rp Begin filters slots in RAM and reads flash only for its own rp.
+/// Without it every Begin re-read all slots, making a many-distinct-rp walk
+/// O(rps·creds) (256 rps × 256 creds ≈ 13 s on hardware). `write_gen` moves on
+/// any put/delete, so a mid-walk mutation forces a rebuild rather than a stale
+/// read. See `CredMgmtState::rp_index`. Answers whether a record the flash would
+/// not serve went in as prefix 0.
+fn refresh_rp_index<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    begin: bool,
+    occupied: &[bool; MAX_RESIDENT_CREDENTIALS as usize],
+    buf: &mut [u8; CRED_REC_MAX],
+) -> bool {
+    // A getNext walks the index its Begin built, whose count check excused a slot
+    // it could not read; only a write since then rebuilds it under the walk.
+    let current = ctx.state.cm.rp_index_gen == ctx.fs.write_gen();
+    if current && (ctx.state.cm.rp_index_valid || !begin) {
+        return false;
+    }
+    let mut unread = false;
+    for ((i, &live), entry) in (0..MAX_RESIDENT_CREDENTIALS)
+        .zip(occupied)
+        .zip(&mut ctx.state.cm.rp_index)
+    {
+        let prefix = if live {
+            match ctx.fs.try_read(EF_CRED + i, buf) {
+                Ok(Some(n)) if n >= 4 => u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
+                Ok(_) => 0,
+                Err(_) => {
+                    unread = true;
+                    0
+                }
+            }
+        } else {
+            0
+        };
+        *entry = prefix;
+    }
+    // A failed read would cache prefix 0 and hide its credential from every walk
+    // until the next flash write: an index with one is rebuilt next time.
+    ctx.state.cm.rp_index_gen = ctx.fs.write_gen();
+    ctx.state.cm.rp_index_valid = !unread;
+    unread
 }
 
 fn enumerate_creds_response(
@@ -662,29 +718,41 @@ fn enumerate_creds_response(
 
 /// Locate the resident credential carrying this 42-byte stored id: its EF_CRED slot
 /// and the rp it belongs to. The rp hash is what §6.8.5/6.8.6 compare an rpId-scoped
-/// pinUvAuthToken against, so the lookup precedes the authorization decision.
-fn find_resident<S: Storage>(fs: &mut Fs<S>, cred_id: &[u8]) -> Option<(u16, [u8; 32])> {
+/// pinUvAuthToken against, so the lookup precedes the authorization decision. An id
+/// found nowhere fails if a record the flash would not serve could hold it.
+fn find_resident<S: Storage>(
+    fs: &mut Fs<S>,
+    cred_id: &[u8],
+) -> Result<Option<(u16, [u8; 32])>, CtapError> {
     if cred_id.len() != CRED_RESIDENT_LEN {
-        return None;
+        return Ok(None);
     }
     let mut buf = [0u8; CRED_REC_MAX];
+    let mut unread = false;
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(fs, EF_CRED, &mut occupied);
     for (i, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
         if !live {
             continue;
         }
-        let Some(n) = fs.read(EF_CRED + i, &mut buf) else {
-            continue;
+        let n = match fs.try_read(EF_CRED + i, &mut buf) {
+            Ok(Some(n)) => n.min(buf.len()),
+            Ok(None) => continue,
+            Err(_) => {
+                unread = true;
+                continue;
+            }
         };
-        let n = n.min(buf.len());
         if n >= RECORD_PREFIX && buf[32..RECORD_PREFIX] == *cred_id {
             let mut rp_id_hash = [0u8; 32];
             rp_id_hash.copy_from_slice(&buf[..32]);
-            return Some((i, rp_id_hash));
+            return Ok(Some((i, rp_id_hash)));
         }
     }
-    None
+    if unread {
+        return Err(CtapError::Other);
+    }
+    Ok(None)
 }
 
 /// 0x06 deleteCredential: drop the located EF_CRED record and decrement (or delete)
@@ -830,7 +898,11 @@ fn update_user<S: Storage, R: Rng>(
     user_display_name: &str,
 ) -> CtapResult {
     let mut buf = [0u8; CRED_REC_MAX];
-    let Some(n) = ctx.fs.read(EF_CRED + slot, &mut buf) else {
+    let Some(n) = ctx
+        .fs
+        .try_read(EF_CRED + slot, &mut buf)
+        .map_err(|_| CtapError::Other)?
+    else {
         return Err(CtapError::NoCredentials);
     };
     let n = n.min(buf.len());

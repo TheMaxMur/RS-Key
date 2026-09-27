@@ -110,6 +110,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A failed flash read no longer hides a passkey from credMgmt.**
+  `enumerateRPs` and `enumerateCredentialsBegin` skipped a record they could not
+  read and answered success, a total one short: the owner was shown a list with
+  an RP or a passkey missing. The credential walk also cached each slot's rpId
+  prefix across commands, so one failed read hid that passkey from every later
+  walk until the next flash write. `deleteCredential` and
+  `updateUserInformation` answered `NO_CREDENTIALS` for a passkey whose record
+  would not read, which tells a platform to forget one that is still stored.
+  Each now answers `ERR_OTHER` over a record the flash would not serve, and the
+  cache is only kept from a complete pass. A credential list fails only for the
+  RP whose `EF_RP` count says the walk missed one, so another RP's unreadable
+  record leaves it whole. The display's Passkeys view still skips such a
+  record. Found by the read-fault sweep and in review.
+  `bcdDevice` 0x0A5B → 0x0A5C.
+
 - **A passkey record the flash cannot read no longer refuses registrations at
   every site.** Refusing a new account while a record went unread (the fix a
   few lines down) reached every relying party: one record that never reads

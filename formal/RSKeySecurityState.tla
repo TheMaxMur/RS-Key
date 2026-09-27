@@ -71,7 +71,7 @@ CONSTANTS
     BugSoftLockLostOnWarmReset,   \* crates/rsk-device/src/lib.rs:128-137 PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:262-263  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:169-180  may_walk_rps
-    BugDeleteRpBeforeCred,        \* credmgmt.rs:691-699 deleteCredential order
+    BugDeleteRpBeforeCred,        \* credmgmt.rs:707-715 deleteCredential order
     BugBackupSealedNotAGate,      \* reset.rs:218-255 is_fido_gate_fid (run-36)
     BugConsumeKeepsMcGa,          \* state.rs:664-669  a narrowed 6.5.5.7 triad
     BugNoDropStaleCancelAtEntry,  \* crates/rsk-device/src/presence.rs:195-196
@@ -1218,7 +1218,7 @@ CmNext(ch) ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, pres, walk, sys, op,
                     snap, upSpent, ram >>
 
-\* 0x06 deleteCredential (credmgmt.rs:684-749). It calls verify_cm_token
+\* 0x06 deleteCredential (credmgmt.rs:700-765). It calls verify_cm_token
 \* DIRECTLY rather than going through authorize_cm, so the persistent grant
 \* authorizes no writes -- which is why CmBeginViaPpuat has no delete twin.
 DeleteCredStart(r) ==
@@ -1231,7 +1231,7 @@ DeleteCredStart(r) ==
                     upSpent, ram >>
 
 \* Two flash writes, so a cut has a position: `delete_credential` drops the
-\* EF_CRED record first (credmgmt.rs:691-693) and `decrement_rp` deletes the
+\* EF_CRED record first (credmgmt.rs:707-709) and `decrement_rp` deletes the
 \* EF_RP entry only once its count reaches zero (:723-725). That order leaves a
 \* torn delete showing an RP entry with no credential -- invisible but harmless.
 \* Reversed, it strands exactly the credential finding 1 strands.

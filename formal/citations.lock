@@ -183,18 +183,18 @@ assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	1000-1005	/
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	657-657	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	685-685	assert!(	assert!(
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	349-349	fn enumerate_rps<S: Storage, R: Rng>(	fn enumerate_rps<S: Storage, R: Rng>(
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	381-381	let Some(n) = ctx.fs.read(EF_RP + i, &mut buf) else {	let Some(n) = ctx.fs.read(EF_RP + i, &mut buf) else {
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	385-385	if n >= RP_PREFIX && buf[0] > 0 {	if n >= RP_PREFIX && buf[0] > 0 {
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	420-420	let (rp_id, _) = unsealed.ok_or(CtapError::Other)?;	let (rp_id, _) = unsealed.ok_or(CtapError::Other)?;
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	666-666	fn find_resident<S: Storage>(fs: &mut Fs<S>, cred_id: &[u8]) -> Option<(u16, [u8; 32])> {	fn find_resident<S: Storage>(fs: &mut Fs<S>, cred_id: &[u8]) -> Option<(u16, [u8; 32])> {
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	698-698	ctx.fs	ctx.fs
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	713-713	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	745-745	let _ = fs.delete(crate::consts::EF_RPNICK + j);	let _ = fs.delete(crate::consts::EF_RPNICK + j);
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	748-748	fs.put(EF_RP + j, record)	fs.put(EF_RP + j, record)
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	750-750	}	}
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	768-768	pub fn settle_rp_records<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<()> {	pub fn settle_rp_records<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<()> {
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	803-803	fs.delete(EF_RP + j)?;	fs.delete(EF_RP + j)?;
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	811-811	fs.put(EF_RP + j, record)?;	fs.put(EF_RP + j, record)?;
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	383-383	let Some(n) = ctx	let Some(n) = ctx
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	389-389	};	};
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	391-391	if n >= RP_PREFIX && buf[0] > 0 {	if n >= RP_PREFIX && buf[0] > 0 {
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	426-426	let (rp_id, _) = unsealed.ok_or(CtapError::Other)?;	let (rp_id, _) = unsealed.ok_or(CtapError::Other)?;
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	682-682	fn find_resident<S: Storage>(fs: &mut Fs<S>, cred_id: &[u8]) -> Option<(u16, [u8; 32])> {	fn find_resident<S: Storage>(fs: &mut Fs<S>, cred_id: &[u8]) -> Option<(u16, [u8; 32])> {
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	714-714	ctx.fs	ctx.fs
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	729-729	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	756-756	let _ = fs.delete(EF_RP + j);	let _ = fs.delete(EF_RP + j);
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	764-764	fs.put(EF_RP + j, record)	fs.put(EF_RP + j, record)
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	784-784	pub fn settle_rp_records<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<()> {	pub fn settle_rp_records<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<()> {
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	819-819	fs.delete(EF_RP + j)?;	fs.delete(EF_RP + j)?;
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	827-827	fs.put(EF_RP + j, record)?;	fs.put(EF_RP + j, record)?;
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt_tests.rs	2169-2169	fn deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot() {	fn deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot() {
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt_tests.rs	2268-2268	fn a_torn_delete_never_leaves_a_credential_without_its_rp() {	fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/passkeys.rs	89-89	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
@@ -493,7 +493,7 @@ assurance/platform.toml	crates/rsk-fido/src/conformance/config.rs	77-77	cfg!(fea
 assurance/platform.toml	crates/rsk-fido/src/conformance/mod.rs	165-165	self.state.begin_using_token(false, self.clock);	self.state.begin_using_token(false, self.clock);
 assurance/platform.toml	crates/rsk-fido/src/consts.rs	395-395	pub const PUAT_MAX_USAGE_PERIOD_MS: u64 = 600_000;	pub const PUAT_MAX_USAGE_PERIOD_MS: u64 = 600_000;
 assurance/platform.toml	crates/rsk-fido/src/credmgmt.rs	275-277	if !ctx.fs.has_data(EF_PIN) {	}
-assurance/platform.toml	crates/rsk-fido/src/credmgmt.rs	381-381	let Some(n) = ctx.fs.read(EF_RP + i, &mut buf) else {	let Some(n) = ctx.fs.read(EF_RP + i, &mut buf) else {
+assurance/platform.toml	crates/rsk-fido/src/credmgmt.rs	389-389	};	};
 assurance/platform.toml	crates/rsk-fido/src/credmgmt_kani.rs	77-77	st.begin_using_token(false, 1_000);	st.begin_using_token(false, 1_000);
 assurance/platform.toml	crates/rsk-fido/src/passkeys.rs	113-113	let Some(n) = fs.read(EF_RP + i, &mut buf) else {	let Some(n) = fs.read(EF_RP + i, &mut buf) else {
 assurance/platform.toml	crates/rsk-fido/src/reset.rs	183-183	/// `Fs::factory_wipe` bypasses [`reset`] and needs the same rule — it is the only	/// `Fs::factory_wipe` bypasses [`reset`] and needs the same rule — it is the only
@@ -602,13 +602,13 @@ crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	245-259	fn 
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	252-254	if authorized_by_ppuat(ctx, proto, payload, param) {	}
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	255-257	verify_cm_token(ctx.state, proto, payload, param)?;	ctx.state.mark_token_used(ctx.now_ms);
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	290-300	fn verify_cm_token(	}
-crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	400-402	if !found {	}
-crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	403-410	if begin {	ctx.state.cm.last_leg_ms = ctx.now_ms;
-crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	415-415	let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;	let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
-crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	522-524	if !found {	}
-crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	526-526	let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;	let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
-crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	532-535	if begin {	}
-crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	534-534	ctx.state.cm.rp_id_hash = *rp_id_hash;	ctx.state.cm.rp_id_hash = *rp_id_hash;
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	406-408	if !found {	}
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	409-416	if begin {	ctx.state.cm.last_leg_ms = ctx.now_ms;
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	421-421	let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;	let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	538-540	if !found {	}
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	542-542	let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;	let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	548-551	if begin {	}
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	550-550	ctx.state.cm.rp_id_hash = *rp_id_hash;	ctx.state.cm.rp_id_hash = *rp_id_hash;
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/getassertion.rs	431-431	if !ctx.state.verify_token(proto, req.client_data_hash, param)	if !ctx.state.verify_token(proto, req.client_data_hash, param)
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/makecredential.rs	570-570	if !ctx.state.verify_token(proto, req.client_data_hash, param)	if !ctx.state.verify_token(proto, req.client_data_hash, param)
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/state.rs	631-643	/// The CTAP 2.1 §6.5.5.7 post-user-presence triad — `clearUserPresentFlag()`,	}
@@ -623,10 +623,10 @@ crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	174-174	ctx.st
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	296-296	if !state.verify_token(proto, payload, param) || state.paut.permissions & PERM_CM == 0 {	if !state.verify_token(proto, payload, param) || state.paut.permissions & PERM_CM == 0 {
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	354-358	if begin {	ctx.state.cm.rp_next_slot = 0;
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	359-359	} else if !ctx.state.cm.may_walk_rps(ctx.state.channel) {	} else if !ctx.state.cm.may_walk_rps(ctx.state.channel) {
-crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	403-410	if begin {	ctx.state.cm.last_leg_ms = ctx.now_ms;
-crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	406-410	ctx.state.cm.rp_counter = target.saturating_add(1);	ctx.state.cm.last_leg_ms = ctx.now_ms;
-crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	444-448	if begin {	ctx.state.cm.cred_next_slot = 0;
-crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	532-537	if begin {	ctx.state.cm.last_leg_ms = ctx.now_ms;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	409-416	if begin {	ctx.state.cm.last_leg_ms = ctx.now_ms;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	412-416	ctx.state.cm.rp_counter = target.saturating_add(1);	ctx.state.cm.last_leg_ms = ctx.now_ms;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	450-454	if begin {	ctx.state.cm.cred_next_slot = 0;
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	548-553	if begin {	ctx.state.cm.last_leg_ms = ctx.now_ms;
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/getassertion.rs	431-434	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| (ctx.state.paut.has_rp_id && ctx.state.paut.rp_id_hash != *rp_id_hash)
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/lib.rs	134-134	ctx.state.expire_stale_token(ctx.now_ms);	ctx.state.expire_stale_token(ctx.now_ms);
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/lib.rs	134-141	ctx.state.expire_stale_token(ctx.now_ms);	ctx.state.retire_sequences_except(cmd);
@@ -713,8 +713,8 @@ formal/README.md	crates/rsk-fido/src/credmgmt.rs	252-254	if authorized_by_ppuat(
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	261-278	/// Whether the MAC was made with the persistent token (CTAP 2.2 §6.8.2 step 4).	let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	290-290	fn verify_cm_token(	fn verify_cm_token(
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	353-353	) -> CtapResult {	) -> CtapResult {
-formal/README.md	crates/rsk-fido/src/credmgmt.rs	684-748	return Some((i, rp_id_hash));	fs.put(EF_RP + j, record)
-formal/README.md	crates/rsk-fido/src/credmgmt.rs	691-699	/// its EF_RP record. Replies with only the status byte.	.delete(EF_CRED + slot)
+formal/README.md	crates/rsk-fido/src/credmgmt.rs	700-764	return Some((i, rp_id_hash));	fs.put(EF_RP + j, record)
+formal/README.md	crates/rsk-fido/src/credmgmt.rs	707-715	/// its EF_RP record. Replies with only the status byte.	.delete(EF_CRED + slot)
 formal/README.md	crates/rsk-fido/src/getassertion.rs	431-434	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| (ctx.state.paut.has_rp_id && ctx.state.paut.rp_id_hash != *rp_id_hash)
 formal/README.md	crates/rsk-fido/src/getassertion.rs	432-432	|| !ctx.state.user_verified()	|| !ctx.state.user_verified()
 formal/README.md	crates/rsk-fido/src/getassertion.rs	667-668	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
@@ -1007,9 +1007,9 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	252-309	if authori
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	261-278	/// Whether the MAC was made with the persistent token (CTAP 2.2 §6.8.2 step 4).	let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	290-290	fn verify_cm_token(	fn verify_cm_token(
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	342-354	.and_then(|e| e.u8(2)?.u16(remaining))	if begin {
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	684-749	return Some((i, rp_id_hash));	.map_err(|_| CtapError::NotAllowed)?;
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	691-693	/// its EF_RP record. Replies with only the status byte.	ctx: &mut Ctx<S, R>,
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	691-699	/// its EF_RP record. Replies with only the status byte.	.delete(EF_CRED + slot)
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	700-765	return Some((i, rp_id_hash));	.map_err(|_| CtapError::NotAllowed)?;
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	707-709	/// its EF_RP record. Replies with only the status byte.	ctx: &mut Ctx<S, R>,
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	707-715	/// its EF_RP record. Replies with only the status byte.	.delete(EF_CRED + slot)
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	425-428	} else {	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	426-426	CtapError::PinNotSet	CtapError::PinNotSet
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	428-428	}	}

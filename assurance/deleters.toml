@@ -151,7 +151,7 @@ why = "an empty rpId list means no RP qualifies for vendor-facilitated enterpris
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 699
+line = 748
 call = ".delete(EF_CRED + slot)"
 verb = "delete"
 answer = "read"
@@ -162,7 +162,7 @@ why = "deleteCredential's only effect. A surviving EF_CRED is an assertable cred
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 740
+line = 789
 call = "let _ = fs.delete(EF_RP + j);"
 verb = "delete"
 answer = "discarded"
@@ -173,7 +173,7 @@ why = "the RP index at count zero, and the credential it counted has already gon
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 745
+line = 794
 call = "let _ = fs.delete(crate::consts::EF_RPNICK + j);"
 verb = "delete"
 answer = "discarded"
@@ -184,7 +184,7 @@ why = "a device-local nickname sealed with the rpIdHash as AAD, never surfaced w
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 803
+line = 852
 call = "fs.delete(EF_RP + j)?;"
 verb = "delete"
 answer = "read"
@@ -195,7 +195,7 @@ why = "the boot pass removes an RP record no readable credential names, which en
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 805
+line = 854
 call = "let _ = fs.delete(crate::consts::EF_RPNICK + j);"
 verb = "delete"
 answer = "discarded"

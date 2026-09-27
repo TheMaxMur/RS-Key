@@ -243,7 +243,7 @@ fn no_token_after_invalidation() {
 }
 
 /// The `enumerateRPsBegin` cursor write, `credmgmt.rs:354-358` plus the totals
-/// and the leg stamp its serving tail sets (`:403-410`). `total` is symbolic:
+/// and the leg stamp its serving tail sets (`:409-416`). `total` is symbolic:
 /// how many RPs the store held is not this proof's business.
 ///
 /// The leading `cm.reset()` is `credmgmt.rs:174` — every credentialManagement
@@ -263,7 +263,7 @@ fn begin_rps(st: &mut FidoState, total: u16, now_ms: u64) {
     st.cm.last_leg_ms = now_ms;
 }
 
-/// `enumerateCredentialsBegin`, the same shape (`credmgmt.rs:174`, `:444-448`, `:532-537`).
+/// `enumerateCredentialsBegin`, the same shape (`credmgmt.rs:174`, `:450-454`, `:548-553`).
 fn begin_creds(st: &mut FidoState, total: u16, now_ms: u64) {
     st.cm.reset();
     st.cm.channel = st.channel;
@@ -386,7 +386,7 @@ fn no_authorization_bypass_walk_owner() {
             }
             W_NEXT_LEG => {
                 // A *Next* the guard admits: serve it exactly as `enumerate_rps`
-                // does (`credmgmt.rs:406-410`). The guard was just checked above,
+                // does (`credmgmt.rs:412-416`). The guard was just checked above,
                 // so an admission it should not have made is already recorded.
                 if st.cm.may_walk_rps(st.channel) {
                     st.cm.rp_counter = st.cm.rp_counter.saturating_add(1);

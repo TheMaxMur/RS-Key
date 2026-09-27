@@ -86,3 +86,28 @@ fn no_faulted_read_lets_a_scoped_token_delete_another_rps_credential() {
         &[],
     );
 }
+
+/// A walk answers as the clean one or fails: a record it could not read may not be
+/// dropped from the list. Each walk is begun twice, and the second must answer as
+/// clean too, since the credential walk caches each slot's rpId prefix across
+/// commands. getCredsMetadata (0x01) is not here: it answers from the present
+/// index and reads no record, which the sweep refuses as vacuous.
+#[test]
+fn a_faulted_read_fails_an_enumeration_or_answers_it_whole() {
+    for (sub, para) in [
+        (0x02, None),
+        (0x04, Some(subpara_rpidhash(&sha256(b"example.com")))),
+    ] {
+        sweep(
+            |fs| {
+                stocked(fs);
+                session(cm_request(sub, para.as_deref(), &TOKEN))
+            },
+            |fs, s| {
+                let _ = send(fs, s);
+                send(fs, s)
+            },
+            &[],
+        );
+    }
+}

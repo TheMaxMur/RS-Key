@@ -275,8 +275,8 @@ fn drive_begin(
     let authorized = !forged && perms0 & PERM_CM != 0 && (!scoped || (!rps && mine));
 
     // The Begin's body, verbatim from its call site, run only where the gate let
-    // it — an empty scan refuses BEFORE the totals move (`credmgmt.rs:400-402`,
-    // `:522-524`), which is why a zero total opens nothing.
+    // it — an empty scan refuses BEFORE the totals move (`credmgmt.rs:406-408`,
+    // `:538-540`), which is why a zero total opens nothing.
     if authorized {
         if rps {
             st.cm.channel = st.channel;
@@ -284,8 +284,8 @@ fn drive_begin(
             st.cm.rp_total = 0;
             st.cm.rp_next_slot = 0;
             if total > 0 {
-                // `credmgmt.rs:403-410`, and every line of it is BEFORE the seed
-                // load at `:415`.
+                // `credmgmt.rs:409-416`, and every line of it is BEFORE the seed
+                // load at `:421`.
                 st.cm.rp_total = total;
                 st.cm.rp_counter = 1u16.saturating_add(1);
                 st.cm.last_leg_ms = NOW;
@@ -295,8 +295,8 @@ fn drive_begin(
             st.cm.cred_counter = 1;
             st.cm.cred_total = 0;
             st.cm.cred_next_slot = 0;
-            // `credmgmt.rs:532-535`, and every line of it is AFTER the seed load
-            // at `:526`. The opposite side from the walk above.
+            // `credmgmt.rs:548-551`, and every line of it is AFTER the seed load
+            // at `:542`. The opposite side from the walk above.
             if total > 0 && !late {
                 st.cm.cred_total = total;
                 st.cm.rp_id_hash = want_rp;
@@ -361,8 +361,8 @@ fn check_begin(st: &FidoState, begin: &Begin, rps: bool) {
 ///   harness cost 448 s and **14.5 GiB**, over the 16 GiB a hosted runner has.
 ///   Without it D1's `forged` flag would be an assumption; with it in its own
 ///   harness the flag is a proved fact and this one costs two evaluations;
-/// - **D4** `enumerate_rps` writes `rp_total` at `credmgmt.rs:403-410`, BEFORE
-///   the seed load at `:415`, so an authorized Begin that then fails to the host
+/// - **D4** `enumerate_rps` writes `rp_total` at `credmgmt.rs:409-416`, BEFORE
+///   the seed load at `:421`, so an authorized Begin that then fails to the host
 ///   leaves a live walk cursor behind. Not a bypass — the authorization had
 ///   already succeeded — and asserted here because "checked by hand" was the
 ///   reason it was written down rather than the reason it could be omitted.
@@ -430,7 +430,7 @@ fn no_authorization_bypass_rps_begin_at_call_site() {
 /// - the request NAMES an rp, so §6.8.4's binding is a match rather than a
 ///   refusal: a scoped token may use this subcommand exactly for its own rp;
 /// - **D5**, which the RP walk has no counterpart for: `enumerate_creds` writes
-///   `cm.rp_id_hash` (`credmgmt.rs:534`) and the demux reads it back to serve a
+///   `cm.rp_id_hash` (`credmgmt.rs:550`) and the demux reads it back to serve a
 ///   *Next* (`:163-164`). `state_kani.rs`'s `begin_creds` never writes it, so the
 ///   rp a *Next* is served for was outside that harness's shape entirely. Here it
 ///   is asserted to be the rp **the request named**, which is what the binding
@@ -439,7 +439,7 @@ fn no_authorization_bypass_rps_begin_at_call_site() {
 ///   rp, so the cursor legitimately holds one the token was never bound to.
 ///
 /// And **D4 in the other direction**: `enumerate_creds` writes its totals AFTER
-/// the seed load (`credmgmt.rs:526` then `:532-535`), so the same failure that
+/// the seed load (`credmgmt.rs:542` then `:548-551`), so the same failure that
 /// leaves an RP walk live leaves this one dead. The two call sites sit on
 /// opposite sides of one call, which is the kind of thing a projection over the
 /// guard alone cannot see.

@@ -2483,6 +2483,299 @@ mod reads;
 #[path = "credmgmt_recovery_tests.rs"]
 mod recovery;
 
+/// deleteCredential and updateUserInformation name a credential by its id, and a
+/// record the flash would not serve may hold it: `NO_CREDENTIALS` there tells a
+/// platform to forget a passkey that is still stored, so the lookup fails instead.
+#[test]
+fn a_lookup_over_an_unread_record_fails_rather_than_deny_the_passkey() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let (alice, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let (bob, ..) = register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    let [alice_slot, bob_slot] = cred_slots(&mut fs)[..] else {
+        panic!("two passkeys, two slots");
+    };
+    let mut out = [0u8; 256];
+    let update = |id: &[u8], uid: &[u8]| {
+        cm_request(
+            0x07,
+            Some(&subpara_update(id, uid, "renamed", "Renamed")),
+            &TOKEN,
+        )
+    };
+
+    medium.stick(Some(EF_CRED + alice_slot));
+    for req in [
+        cm_request(0x06, Some(&subpara_cred(&alice)), &TOKEN),
+        update(&alice, &[1, 1]),
+    ] {
+        assert_eq!(
+            run(&mut fs, &mut armed(PERM_CM), &req, &mut out),
+            Err(CtapError::Other),
+            "a passkey the flash would not serve was denied"
+        );
+    }
+    // Found past the unread record, bob is served; and read once more by the
+    // update itself, a fault there fails it the same way.
+    medium.stick_after(EF_CRED + bob_slot, 1);
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut armed(PERM_CM),
+            &update(&bob, &[2, 2]),
+            &mut out
+        ),
+        Err(CtapError::Other)
+    );
+    medium.stick(Some(EF_CRED + alice_slot));
+    let delete_bob = cm_request(0x06, Some(&subpara_cred(&bob)), &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut armed(PERM_CM), &delete_bob, &mut out),
+        Ok(0)
+    );
+    medium.stick(None);
+    assert_eq!(cred_slots(&mut fs), [alice_slot], "alice is still stored");
+}
+
+/// A record the flash would not serve fails only the credential lists it could
+/// belong to: example.com's EF_RP count says its walk found every one of its
+/// passkeys, so other.com's unread record cannot be among them.
+#[test]
+fn an_unread_passkey_fails_only_the_lists_it_could_be_in() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    let [carol_slot, alice_slot, _] = cred_slots(&mut fs)[..] else {
+        panic!("three passkeys, three slots");
+    };
+    let begin = |fs: &mut Fs<_>, rp: &[u8]| {
+        let mut out = [0u8; 512];
+        let req = cm_request(0x04, Some(&subpara_rpidhash(&sha256(rp))), &TOKEN);
+        run(fs, &mut armed(PERM_CM), &req, &mut out).map(|n| parse_cred(&out[..n], true).3)
+    };
+
+    medium.stick(Some(EF_CRED + carol_slot));
+    assert_eq!(begin(&mut fs, b"example.com"), Ok(Some(2)));
+    assert_eq!(begin(&mut fs, b"other.com"), Err(CtapError::Other));
+    medium.stick(Some(EF_CRED + alice_slot));
+    assert_eq!(begin(&mut fs, b"example.com"), Err(CtapError::Other));
+    medium.stick(None);
+    assert_eq!(begin(&mut fs, b"other.com"), Ok(Some(1)));
+}
+
+/// getNext walks the index its Begin built: a record the Begin counted and the
+/// flash then would not serve fails the leg, where a rebuild under the walk cached
+/// it as prefix 0 and answered the passkey after it, or none, in its place.
+#[test]
+fn a_get_next_over_a_counted_passkey_it_could_not_read_fails_the_leg() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    register(&mut fs, &mut rng, "example.com", &[4, 4], "dave");
+    let [carol_slot, _, bob_slot, _] = cred_slots(&mut fs)[..] else {
+        panic!("four passkeys, four slots");
+    };
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 512];
+    medium.stick(Some(EF_CRED + carol_slot));
+    let req = cm_request(
+        0x04,
+        Some(&subpara_rpidhash(&sha256(b"example.com"))),
+        &TOKEN,
+    );
+    let n = run(&mut fs, &mut state, &req, &mut out).unwrap();
+    assert_eq!(parse_cred(&out[..n], true).3, Some(3));
+    medium.stick_once(EF_CRED + bob_slot);
+    assert_eq!(
+        run(&mut fs, &mut state, &cm_next(0x05), &mut out),
+        Err(CtapError::Other)
+    );
+    let mut names = std::vec::Vec::new();
+    for _ in 0..2 {
+        let n = run(&mut fs, &mut state, &cm_next(0x05), &mut out).unwrap();
+        names.push(cred_user_name(&out[..n]));
+    }
+    assert_eq!(names, ["bob", "dave"], "the retried leg lost its place");
+}
+
+/// A write under a credential walk rebuilds the index, and the rebuild cannot use
+/// the Begin's count check: an unread record there ends the walk, and the next
+/// getNext answers as after any ended walk.
+#[test]
+fn an_unread_record_in_a_rebuild_under_the_walk_ends_it() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    let carol_slot = cred_slots(&mut fs)[0];
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 512];
+    let req = cm_request(
+        0x04,
+        Some(&subpara_rpidhash(&sha256(b"example.com"))),
+        &TOKEN,
+    );
+    run(&mut fs, &mut state, &req, &mut out).unwrap();
+    // Any write moves `write_gen`; one another command makes does too.
+    fs.put(
+        crate::consts::EF_LARGEBLOB,
+        &crate::consts::LARGEBLOB_INITIAL,
+    )
+    .unwrap();
+    medium.stick(Some(EF_CRED + carol_slot));
+    assert_eq!(
+        run(&mut fs, &mut state, &cm_next(0x05), &mut out),
+        Err(CtapError::Other)
+    );
+    medium.stick(None);
+    assert_eq!(
+        run(&mut fs, &mut state, &cm_next(0x05), &mut out),
+        Err(CtapError::NotAllowed)
+    );
+}
+
+/// A token scoped to example.com, deleting by id: another RP's stored passkey and
+/// an id stored nowhere answer alike with a record unread, as they do without one.
+#[test]
+fn a_scoped_token_learns_nothing_from_a_lookup_the_flash_failed() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let (carol, ..) = register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
+    register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    register(&mut fs, &mut rng, "third.com", &[4, 4], "dave");
+    let dave_slot = cred_slots(&mut fs)[2];
+    let scoped = || {
+        let mut s = armed(PERM_CM);
+        s.paut.has_rp_id = true;
+        s.paut.rp_id_hash = sha256(b"example.com");
+        s
+    };
+    let mut out = [0u8; 256];
+    for (id, rename) in [
+        (&carol[..], false),
+        (&[0x55; 42][..], false),
+        (&carol[..], true),
+    ] {
+        let req = if rename {
+            cm_request(0x07, Some(&subpara_update(id, &[3, 3], "x", "X")), &TOKEN)
+        } else {
+            cm_request(0x06, Some(&subpara_cred(id)), &TOKEN)
+        };
+        medium.stick(None);
+        let healthy = run(&mut fs, &mut scoped(), &req, &mut out);
+        medium.stick(Some(EF_CRED + dave_slot));
+        let faulted = run(&mut fs, &mut scoped(), &req, &mut out);
+        assert_eq!(healthy, Err(CtapError::PinAuthInvalid));
+        assert_eq!(faulted, healthy, "{id:02X?}: the answer told a fault apart");
+    }
+}
+
+/// A RAM medium that fails one chosen read of each planned fid: `(fid, skip)` lets
+/// `skip` reads of `fid` through and fails the next.
+struct FaultPlan {
+    inner: rsk_fs::storage::ram::RamStorage,
+    plan: std::rc::Rc<std::cell::RefCell<std::vec::Vec<(u16, u32)>>>,
+    err: bool,
+}
+
+impl Storage for FaultPlan {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        let mut plan = self.plan.borrow_mut();
+        self.err = false;
+        if let Some(i) = plan.iter().position(|&(f, _)| f == fid) {
+            if plan[i].1 == 0 {
+                plan.remove(i);
+                self.err = true;
+                return None;
+            }
+            plan[i].1 -= 1;
+        }
+        self.inner.read(fid, buf)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.err = false;
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+    fn last_error(&self) -> bool {
+        self.err
+    }
+}
+
+/// Two faults in one getNext: a rebuild under the walk that could not read one
+/// counted passkey, and a read of the walk itself that failed after it. The walk
+/// ends before the second can answer; it once left the index behind as current,
+/// and the legs after skipped the passkey the rebuild could not read.
+#[test]
+fn a_rebuild_that_missed_a_counted_passkey_ends_the_walk_before_it_reads() {
+    let plan = std::rc::Rc::new(std::cell::RefCell::new(std::vec::Vec::new()));
+    let mut fs = Fs::new(FaultPlan {
+        inner: rsk_fs::storage::ram::RamStorage::new(),
+        plan: plan.clone(),
+        err: false,
+    });
+    fs.scan();
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    for (uid, name) in [(1u8, "alice"), (2, "bob"), (3, "dave"), (4, "erin")] {
+        register(&mut fs, &mut rng, "example.com", &[uid, uid], name);
+    }
+    let [_, bob_slot, dave_slot, _] = cred_slots(&mut fs)[..] else {
+        panic!("four passkeys, four slots");
+    };
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 512];
+    let req = cm_request(
+        0x04,
+        Some(&subpara_rpidhash(&sha256(b"example.com"))),
+        &TOKEN,
+    );
+    let n = run(&mut fs, &mut state, &req, &mut out).unwrap();
+    assert_eq!(parse_cred(&out[..n], true).3, Some(4));
+    fs.put(
+        crate::consts::EF_LARGEBLOB,
+        &crate::consts::LARGEBLOB_INITIAL,
+    )
+    .unwrap();
+    plan.borrow_mut()
+        .extend([(EF_CRED + dave_slot, 0), (EF_CRED + bob_slot, 1)]);
+    let legs: std::vec::Vec<_> = (0..4)
+        .map(|_| run(&mut fs, &mut state, &cm_next(0x05), &mut out).map(|_| ()))
+        .collect();
+    assert_eq!(
+        legs,
+        [
+            Err(CtapError::Other),
+            Err(CtapError::NotAllowed),
+            Err(CtapError::NotAllowed),
+            Err(CtapError::NotAllowed),
+        ]
+    );
+}
+
 /// `decrement_rp` refuses only when the RP it must decrement could be the record
 /// the flash would not serve: an unreadable record of another RP does not stop a
 /// delete from settling its own RP's count.
