@@ -177,8 +177,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   a product equal to it modulo the public n and copied into two byte vectors on
   its way out, one for the fault check and one for the answer. All four were
   freed unwiped, and the heap did not clear what it freed. The software path,
-  `RsaKey::private_op` (the legacy decipher, and the signature on the PIV
-  key-generation certificate), freed its product the same way and every step
+  `RsaKey::private_op` (the legacy decipher, and the signature on the
+  certificate PIV GENERATE wrote until 0x0A15), freed its product the same way and every step
   of its CRT recombination too — a CRT half, which with the blinded input
   factors the key — and both paths their blinding temporaries. All of them are
   `rsk_secret::Secret`s now, wiped before they are freed. What is left is
@@ -812,14 +812,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
-- **The type-contracts line lands on develop** — merge. Its commits (the entries
-  from the host-bytes deny down to the one lint policy below, and the zeroing heap
-  and the dead-stack sweep under Fixed) meet develop's own since 0x0A0E here, and
-  where develop's parity fixes land in a module under the host-bytes deny they are
-  written as it asks: `refuse_short_xfr`, the dispatcher's frame limit, and PIV
-  GENERATE without its certificate. Both lines numbered their builds from 0x0A0F,
-  so 0x0A0F–0x0A16 each name one build on either line; the merge is the next.
-  `bcdDevice` 0x0A16 and 0x0A4D → 0x0A4E.
+- **The type-contracts line lands on develop** — merge. Its entries (the thirteen
+  under Fixed from the dead-stack sweep down to the `WAKE_PIN` build, and those
+  here from the host-bytes deny down to the one lint policy) meet develop's own
+  since 0x0A0E, and where develop's parity fixes land in a module under the
+  host-bytes deny they are written as it asks: `refuse_short_xfr`, the
+  dispatcher's frame limit, and PIV GENERATE without its certificate. Both lines
+  numbered their builds from 0x0A0F, so 0x0A0F–0x0A16 each name one build on
+  either line; the merge is the next. `bcdDevice` 0x0A16 and 0x0A4D → 0x0A4E.
 
 - **The parsers of host bytes cannot index, unwrap or truncate unchecked** —
   refactor; the same bytes out for the same bytes in. A module that reads what a
