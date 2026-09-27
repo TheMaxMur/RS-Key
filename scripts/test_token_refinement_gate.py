@@ -407,7 +407,7 @@ def test_an_unowned_concrete_site_fails(tree: Tree, body: str, finding: str):
         # CONTROL. A local bound from a fid this projection does not own.
         "fn stray() { let fid = EF_ALWAYS_UV; let _ = fs.put(fid, &[]); }\n",
         # CONTROL. A fid built from a RUNTIME value folds to nothing —
-        # `credential.rs:942` really is `let fid = EF_RP + i`, and a rule that
+        # `credential.rs:953` really is `let fid = EF_RP + i`, and a rule that
         # guessed from the mention would own it.
         "fn stray(i: u16) { let fid = EF_PIN_BASE + i; let _ = fs.put(fid, &[]); }\n",
         # CONTROL. A gate that masks its own PARAMETER and that nobody hands the

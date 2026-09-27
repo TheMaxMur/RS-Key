@@ -175,11 +175,11 @@ assurance/bundle/SEC-FIDO-004.toml	scripts/evidence_gate.py	515-546	def freshnes
 assurance/bundle/SEC-FIDO-004.toml	scripts/ghost_gate.py	64-64	INVARIANT = "NoAuthorizationBypass"	INVARIANT = "NoAuthorizationBypass"
 assurance/bundle/SEC-FIDO-004.toml	scripts/platform_gate.py	1894-1922	def check_bundles(root, ids, findings):	)
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	812-812	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	872-872	bump_rp(fs, seed, rp_id_hash, rp_id)?;	bump_rp(fs, seed, rp_id_hash, rp_id)?;
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	886-886	let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);	let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	910-910	.and_then(|record| fs.put(EF_CRED + slot, record))	.and_then(|record| fs.put(EF_CRED + slot, record))
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	924-924	fn bump_rp<S: Storage>(	fn bump_rp<S: Storage>(
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	960-965	// Existing rp: bump the count, re-storing the boxed tail verbatim.	// every enumeration surface (audit run-35).
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	883-883	bump_rp(fs, seed, rp_id_hash, rp_id)?;	bump_rp(fs, seed, rp_id_hash, rp_id)?;
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	897-897	let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);	let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	921-921	.and_then(|record| fs.put(EF_CRED + slot, record))	.and_then(|record| fs.put(EF_CRED + slot, record))
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	935-935	fn bump_rp<S: Storage>(	fn bump_rp<S: Storage>(
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	971-976	// Existing rp: bump the count, re-storing the boxed tail verbatim.	// every enumeration surface (audit run-35).
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	657-657	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	685-685	assert!(	assert!(
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	349-349	fn enumerate_rps<S: Storage, R: Rng>(	fn enumerate_rps<S: Storage, R: Rng>(
@@ -705,10 +705,10 @@ formal/README.md	crates/rsk-fido/src/config.rs	242-244	if !ctx.state.verify_toke
 formal/README.md	crates/rsk-fido/src/config.rs	429-430	.map_err(|_| CtapError::Other)?;	ctx.state.clear_keydev_dec();
 formal/README.md	crates/rsk-fido/src/consts.rs	371-371	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
 formal/README.md	crates/rsk-fido/src/consts.rs	375-375	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;
-formal/README.md	crates/rsk-fido/src/credential.rs	831-855	if !live {	let slot = slot.ok_or(Error::NoMemory)?; // KEY_STORE_FULL
-formal/README.md	crates/rsk-fido/src/credential.rs	834-855	}	let slot = slot.ok_or(Error::NoMemory)?; // KEY_STORE_FULL
-formal/README.md	crates/rsk-fido/src/credential.rs	841-853	if n < RECORD_PREFIX || rec[..32] != *rp_id_hash {	}
-formal/README.md	crates/rsk-fido/src/credential.rs	857-864	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	// delete it, while `getAssertion` (which scans EF_CRED) authenticates with it
+formal/README.md	crates/rsk-fido/src/credential.rs	832-866	if !live {	let slot = slot.ok_or(Error::NoMemory)?; // KEY_STORE_FULL
+formal/README.md	crates/rsk-fido/src/credential.rs	835-866	}	let slot = slot.ok_or(Error::NoMemory)?; // KEY_STORE_FULL
+formal/README.md	crates/rsk-fido/src/credential.rs	848-860	if n < RECORD_PREFIX || rec[..32] != *rp_id_hash {	}
+formal/README.md	crates/rsk-fido/src/credential.rs	868-875	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	// delete it, while `getAssertion` (which scans EF_CRED) authenticates with it
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	252-254	if authorized_by_ppuat(ctx, proto, payload, param) {	}
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	261-278	/// Whether the MAC was made with the persistent token (CTAP 2.2 §6.8.2 step 4).	let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	290-290	fn verify_cm_token(	fn verify_cm_token(
@@ -999,9 +999,9 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/config.rs	502-505	if force {	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/consts.rs	371-371	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/consts.rs	375-375	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/consts.rs	404-404	/// display honors a reset only this long after power-up, so the wipe takes a	/// display honors a reset only this long after power-up, so the wipe takes a
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	857-864	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	// delete it, while `getAssertion` (which scans EF_CRED) authenticates with it
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	857-917	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	Ok(())
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	860-917	// Order so that any truncation of this non-transactional sequence leaves an RP	Ok(())
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	868-875	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	// delete it, while `getAssertion` (which scans EF_CRED) authenticates with it
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	868-928	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	Ok(())
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	871-928	// Order so that any truncation of this non-transactional sequence leaves an RP	Ok(())
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	252-254	if authorized_by_ppuat(ctx, proto, payload, param) {	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	252-309	if authorized_by_ppuat(ctx, proto, payload, param) {	return Ok(());
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	261-278	/// Whether the MAC was made with the persistent token (CTAP 2.2 §6.8.2 step 4).	let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
@@ -1206,7 +1206,7 @@ scripts/security_trace.py	tools/emu/src/device.rs	819-820	crate::security_trace:
 scripts/test_run_tlc.py	scripts/verdict_gate.py	619-634	if row["invariant"] is not None:	" that name")
 scripts/test_security_trace.py	tools/emu/src/device.rs	819-820	crate::security_trace::POWER_CYCLE,	0,
 scripts/test_token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
-scripts/test_token_refinement_gate.py	crates/rsk-fido/src/credential.rs	942-942	let fid = EF_RP + i;	let fid = EF_RP + i;
+scripts/test_token_refinement_gate.py	crates/rsk-fido/src/credential.rs	953-953	let fid = EF_RP + i;	let fid = EF_RP + i;
 scripts/test_token_refinement_gate.py	firmware/src/main.rs	1260-1260	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
 scripts/token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
 scripts/token_refinement_gate.py	firmware/src/main.rs	1260-1260	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));

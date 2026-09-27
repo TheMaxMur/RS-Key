@@ -822,6 +822,7 @@ pub fn credential_store<S: Storage>(
 ) -> Result<()> {
     let mut slot: Option<u16> = None;
     let mut new_record = true;
+    let mut unread = false;
     let mut rec = [0u8; CRED_REC_MAX];
     let mut scratch = [0u8; CRED_REC_MAX];
 
@@ -834,9 +835,15 @@ pub fn credential_store<S: Storage>(
             }
             continue;
         }
-        let n = match fs.read(EF_CRED + i, &mut rec) {
-            Some(n) if n > 0 => n.min(rec.len()),
-            _ => continue,
+        // Carried, as `bump_rp` carries its own: a slot the flash could not serve
+        // may hold this (rp, user), and only a NEW record would duplicate it.
+        let n = match fs.try_read(EF_CRED + i, &mut rec) {
+            Ok(Some(n)) if n > 0 => n.min(rec.len()),
+            Ok(_) => continue,
+            Err(_) => {
+                unread = true;
+                continue;
+            }
         };
         if n < RECORD_PREFIX || rec[..32] != *rp_id_hash {
             continue;
@@ -852,6 +859,10 @@ pub fn credential_store<S: Storage>(
         }
     }
 
+    // §6.1.2: the same (rp, user) is overwritten, never filed twice.
+    if new_record && unread {
+        return Err(Error::MemoryFatal);
+    }
     let slot = slot.ok_or(Error::NoMemory)?; // KEY_STORE_FULL
     let resident = derive_resident(cred_id, dev);
     let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)

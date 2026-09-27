@@ -110,6 +110,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A failed flash read no longer files a second passkey for one account.**
+  A resident makeCredential for an (RP, user) the key already holds overwrites
+  that credential (CTAP 2.1 §6.1.2). The search for it skipped a slot whose read
+  failed, so one failed read of the old credential's record filed the new one
+  beside it: two passkeys for one account, the RP counting both, and the old one
+  still signing for the RP that had just replaced it. An unread slot now refuses
+  the registration unless the account turns up in another one, as the RP record
+  search already did. Found by the read-fault sweep. `bcdDevice` 0x0A57 → 0x0A58.
+
 - **One failed flash read at boot no longer destroys the OATH access code.**
   The boot pass that brings every OATH secret under the current seal read each
   record up to three times: to open it under the current key, under the pre-burn

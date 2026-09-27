@@ -100,3 +100,19 @@ fn a_faulted_read_fails_an_unprotected_registration_or_lands_it_whole() {
         &[],
     );
 }
+
+/// The same user again: the new credential replaces the old one's slot, and a
+/// failed read of either may not leave a third record or two for one user.
+#[test]
+fn a_faulted_read_fails_a_re_registration_or_replaces_the_credential_whole() {
+    sweep(
+        |fs| {
+            let mut s = seeded(fs);
+            s.req = build_request(true);
+            assert!(make(fs, &mut s));
+            s
+        },
+        make,
+        &[],
+    );
+}
