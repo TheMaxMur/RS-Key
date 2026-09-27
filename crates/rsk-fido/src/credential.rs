@@ -823,6 +823,7 @@ pub fn credential_store<S: Storage>(
     let mut slot: Option<u16> = None;
     let mut new_record = true;
     let mut unread = false;
+    let mut same_rp = 0usize;
     let mut rec = [0u8; CRED_REC_MAX];
     let mut scratch = [0u8; CRED_REC_MAX];
 
@@ -848,6 +849,7 @@ pub fn credential_store<S: Storage>(
         if n < RECORD_PREFIX || rec[..32] != *rp_id_hash {
             continue;
         }
+        same_rp += 1;
         if let Some(stored) = rec.get(..n)
             && let Some(c) =
                 credential_load(seed, cred_record_box(stored), rp_id_hash, &mut scratch)
@@ -859,8 +861,10 @@ pub fn credential_store<S: Storage>(
         }
     }
 
-    // §6.1.2: the same (rp, user) is overwritten, never filed twice.
-    if new_record && unread {
+    // §6.1.2: the same (rp, user) is overwritten, never filed twice. An unread slot
+    // can hold it only while the RP counts more credentials than were read (a count
+    // is never below its credentials), so one bad record costs its own RP alone.
+    if new_record && unread && rp_count(fs, rp_id_hash)? > same_rp {
         return Err(Error::MemoryFatal);
     }
     let slot = slot.ok_or(Error::NoMemory)?; // KEY_STORE_FULL
@@ -926,6 +930,34 @@ pub fn credential_store<S: Storage>(
         return Err(e);
     }
     Ok(())
+}
+
+/// How many credentials `rp_id_hash`'s EF_RP record counts, 0 without one. `Err`
+/// when a record the flash would not serve could be it. Never below the live
+/// credentials of a store this build wrote (a torn reset leaves only ones that no
+/// longer open); an older build's can be, until a boot's
+/// [`crate::credmgmt::settle_rp_records`] reads every credential.
+pub(crate) fn rp_count<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> Result<usize> {
+    let mut rec = [0u8; RP_REC_MAX];
+    let mut unread = false;
+    let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
+    slot_map(fs, EF_RP, &mut occupied);
+    for (j, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
+        if !live {
+            continue;
+        }
+        match fs.try_read(EF_RP + j, &mut rec) {
+            Ok(Some(n)) if n >= RP_PREFIX && rec[1..RP_PREFIX] == *rp_id_hash => {
+                return Ok(usize::from(rec[0]));
+            }
+            Ok(_) => {}
+            Err(_) => unread = true,
+        }
+    }
+    if unread {
+        return Err(Error::MemoryFatal);
+    }
+    Ok(0)
 }
 
 /// Increment the credential count for an rp, creating its EF_RP record if new.

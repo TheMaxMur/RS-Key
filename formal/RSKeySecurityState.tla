@@ -58,7 +58,7 @@ CONSTANTS
 (* defect; `formal/README.md` maps every switch to its commit or audit id.   *)
 CONSTANTS
     BugResetGatesFirst,           \* reset.rs:123-124   two-phase wipe order
-    BugCredBeforeRp,              \* credential.rs:871-928 registration order
+    BugCredBeforeRp,              \* credential.rs:875-932 registration order
     BugTokenSurvivesPinChange,    \* clientpin.rs:335  resetPinUvAuthToken
     BugSetPinKeepsPpuat,          \* clientpin.rs:227-231
     BugChangePinKeepsPpuat,       \* clientpin.rs:324-328
@@ -983,7 +983,7 @@ RegisterRefused ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, snap,
                     upSpent, viol, ram >>
 
-\* credential.rs:868-928. Order so that any truncation leaves an RP entry
+\* credential.rs:872-932. Order so that any truncation leaves an RP entry
 \* without a credential -- rolled back best-effort, never reclaimed -- never a
 \* without an RP entry, which enumerateRPs and the display can neither list
 \* nor delete while getAssertion authenticates with it happily (audit run-35).
@@ -1838,7 +1838,7 @@ NoLiveTokenWithoutPinRecord == tok.live => pin.set
 \* Every live credential is reachable by the management surface: enumerateRPs
 \* and the trusted-display Passkeys view both walk EF_RP, so a credential
 \* without its RP entry can be authenticated with but neither listed nor
-\* deleted (credential.rs:868-875, audit run-35).
+\* deleted (credential.rs:872-879, audit run-35).
 NoUnmanageableCredential == Idle => store.cred \subseteq store.rpent
 
 \* No prefix of an authenticatorReset -- torn or complete -- leaves a

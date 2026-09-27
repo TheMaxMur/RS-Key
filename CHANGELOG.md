@@ -110,6 +110,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A passkey record the flash cannot read no longer refuses registrations at
+  every site.** Refusing a new account while a record went unread (the fix a
+  few lines down) reached every relying party: one record that never reads
+  again refused every new passkey on the key with `ERR_OTHER`, and credMgmt
+  cannot delete a record it cannot read, so only `authenticatorReset` ended it.
+  An unread record can only be the account being registered while that account's
+  RP counts more credentials than the search read — a count is never below its
+  credentials — so a new account at any other RP, or at a new one, now
+  registers. Found in review. `bcdDevice` 0x0A5A → 0x0A5B.
+
 - **A failed flash read no longer files a second OATH account under one name.**
   An OATH `PUT` for a name the key already holds replaces that account, and
   `RENAME` onto a taken name is refused. Both found the name by reading every

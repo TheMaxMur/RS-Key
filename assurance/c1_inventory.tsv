@@ -498,12 +498,12 @@ bump_cred_store_state	crates/rsk-fido/src/credential.rs:764	13	decides	D3	writes
 remaining_discoverable	crates/rsk-fido/src/credential.rs:778	10	marshals	M	counts occupied slots for the getInfo 0x14 estimate, forbids nothing	-
 remaining_rk	crates/rsk-fido/src/credential.rs:789	12	marshals	M	min of two budgets for the report; registration is refused not by it but by the slot search	-
 credential_store	crates/rsk-fido/src/credential.rs:811	102	decides	D3	writes EF_CRED, bumps EF_RP and the signature counter; the order is chosen so that a power cut does not leave a credential without EF_RP	SEC-FIDO-005
-bump_rp	crates/rsk-fido/src/credential.rs:931	63	decides	D3	creates/increments EF_RP; an unread slot → MemoryFatal, otherwise a second EF_RP would appear for the same rpIdHash	SEC-FIDO-005,SEC-STORE-002
-seal_rp_id	crates/rsk-fido/src/credential.rs:998	28	decides	D2	decides whether the rpId domain sits in flash as plaintext	SEC-FIDO-004
-unseal_rp_id	crates/rsk-fido/src/credential.rs:1046	36	decides	D2	hands out the plaintext domain; on AEAD failure it returns the RAW tail as legacy cleartext (was_boxed=false)	SEC-FIDO-004
-seal_nick	crates/rsk-fido/src/credential.rs:1082	42	decides	D2	seals the nickname, the IV is synthesized from the plaintext — this is the rule against nonce reuse	SEC-FIDO-004
-unseal_nick	crates/rsk-fido/src/credential.rs:1131	31	decides	D2	opens only under its own rpIdHash — the AEAD itself is the protection against slot reuse	SEC-FIDO-004
-migrate_rp_seal	crates/rsk-fido/src/credential.rs:1154	62	decides	D3	the boot pass rewrites the EF_RP records and makes the write conditional on request_rescrub	SEC-FIDO-004
+bump_rp	crates/rsk-fido/src/credential.rs:960	63	decides	D3	creates/increments EF_RP; an unread slot → MemoryFatal, otherwise a second EF_RP would appear for the same rpIdHash	SEC-FIDO-005,SEC-STORE-002
+seal_rp_id	crates/rsk-fido/src/credential.rs:1027	28	decides	D2	decides whether the rpId domain sits in flash as plaintext	SEC-FIDO-004
+unseal_rp_id	crates/rsk-fido/src/credential.rs:1075	36	decides	D2	hands out the plaintext domain; on AEAD failure it returns the RAW tail as legacy cleartext (was_boxed=false)	SEC-FIDO-004
+seal_nick	crates/rsk-fido/src/credential.rs:1111	42	decides	D2	seals the nickname, the IV is synthesized from the plaintext — this is the rule against nonce reuse	SEC-FIDO-004
+unseal_nick	crates/rsk-fido/src/credential.rs:1160	31	decides	D2	opens only under its own rpIdHash — the AEAD itself is the protection against slot reuse	SEC-FIDO-004
+migrate_rp_seal	crates/rsk-fido/src/credential.rs:1183	62	decides	D3	the boot pass rewrites the EF_RP records and makes the write conditional on request_rescrub	SEC-FIDO-004
 parse	crates/rsk-fido/src/credmgmt.rs:67	35	decides	M	parsing of the CBOR map and the key order; permission lives in the cred_mgmt branches, not in the routing table	-
 parse_subpara	crates/rsk-fido/src/credmgmt.rs:103	44	decides	D5	captures raw_subpara — exactly the byte range that the pinUvAuthParam MAC covers	SEC-FIDO-001
 cred_mgmt	crates/rsk-fido/src/credmgmt.rs:150	88	decides	D1	the Next route returns BEFORE the pinUvAuthParam requirement (credmgmt.rs:161); its authorization is the cursor's channel	SEC-FIDO-001

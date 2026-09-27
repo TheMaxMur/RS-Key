@@ -40,7 +40,7 @@ subset, one is already C, and three are not code a C compiler could accept.
 | linker-generated boundaries | five of the ten `[[boundary]]` rows in `assurance/toolchain.toml` | 5 symbols | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
 
 The genericity is the load-bearing number. Across the production modules of
-`crates/rsk-fido/src/`, 216 of 414 functions are generic and 169 of those carry
+`crates/rsk-fido/src/`, 217 of 415 functions are generic and 170 of those carry
 `<S: Storage`. C has no traits and no monomorphisation, so "port the gate" means
 "hand-instantiate and rewrite it", and the rewrite is the risk the verification
 was meant to remove.

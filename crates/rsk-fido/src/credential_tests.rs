@@ -1131,3 +1131,70 @@ fn the_boot_pass_re_arms_the_lap_before_it_boxes_a_cleartext_rp_id() {
     );
     assert!(!medium.live(rsk_fs::EF_HARDENED));
 }
+
+/// `credential_store` refuses a NEW account while a credential slot is unreadable
+/// only when that slot could be this account: when its RP counts more credentials
+/// than the search read. A record belonging to another RP, or a brand-new RP, is
+/// no reason to refuse, and an account found in a readable slot is replaced there.
+#[test]
+fn an_unread_credential_refuses_only_a_new_account_its_own_rp_could_hide() {
+    let d = dev();
+    let mine = sha256(b"example.com");
+    let other = sha256(b"other.example");
+    let fresh = sha256(b"new.example");
+    let store = |fs: &mut Fs<_>, hash: &[u8; 32], id: &str, user: u8| {
+        let mut req = input();
+        let user = [user];
+        req.user_id = &user;
+        let mut out = [0u8; 512];
+        let len = credential_create(&SEED, &d, &req, hash, &IV, &mut out).unwrap();
+        credential_store(&SEED, &d, fs, &out[..len], hash, id, &user, &[])
+    };
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    // Slot 0 other.example's user 1, slot 1 example.com's user 2.
+    store(&mut fs, &other, "other.example", 1).unwrap();
+    store(&mut fs, &mine, "example.com", 2).unwrap();
+
+    medium.stick(Some(EF_CRED));
+    assert_eq!(
+        store(&mut fs, &mine, "example.com", 3),
+        Ok(()),
+        "another RP's unread credential cannot be this account"
+    );
+    assert_eq!(
+        store(&mut fs, &fresh, "new.example", 4),
+        Ok(()),
+        "an RP with no record has no credential to hide"
+    );
+    assert_eq!(
+        store(&mut fs, &mine, "example.com", 2),
+        Ok(()),
+        "an account found in a readable slot is replaced there"
+    );
+    assert_eq!(
+        medium.value(EF_CRED + 4),
+        None,
+        "in place: slots 0-3 hold the four accounts, and no fifth was filed"
+    );
+    medium.stick(None);
+
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    store(&mut fs, &mine, "example.com", 2).unwrap();
+    medium.stick(Some(EF_CRED));
+    assert_eq!(
+        store(&mut fs, &mine, "example.com", 5),
+        Err(Error::MemoryFatal),
+        "example.com counts one credential and none was read: it may be this account"
+    );
+    medium.stick(None);
+    assert!(!fs.has_data(EF_CRED + 1), "the refusal wrote no credential");
+    assert_eq!(
+        medium.value(EF_RP).map(|v| v[0]),
+        Some(1),
+        "nor counted one"
+    );
+}
