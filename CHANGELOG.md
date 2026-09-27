@@ -83,6 +83,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A tap past the trusted display's right edge no longer opens Settings.** The
+  bottom bar picked its tab by dividing the tap's x by the cell width and
+  clamping to the last tab, so a touch reported at x ≥ 240, off the 240-pixel
+  panel with no tab under it, opened Settings; one below the panel opened a tab
+  too. A tap now selects the tab whose drawn rect holds it, and nothing
+  elsewhere. The Kani proof that every painted tab is hit now also proves the
+  converse. `bcdDevice` 0x0A4F → 0x0A50.
+
 - What a request's crypto left below the stack pointer stayed there until a
   later frame overwrote it. RustCrypto's `Copy` temporaries, the `hmac` crate's
   key XORed with its pads, `aes`'s key schedule and a SHAKE reader's state are

@@ -1023,13 +1023,12 @@ pub const fn nav_tab_rect(i: u16) -> Rect {
     Rect::new(i * NAV_CELL_W, NAV_TOP, NAV_CELL_W, NAV_H)
 }
 
-/// Which nav tab a tap selects, or `None` if it lands above the nav bar.
+/// Which nav tab a tap selects: the one whose rect holds it, else `None` — a tap
+/// above the bar, or past the panel's edge where no tab is drawn.
 pub fn hit_nav(p: Point) -> Option<NavTab> {
-    if p.y < NAV_TOP {
-        return None;
-    }
-    let i = (p.x / NAV_CELL_W).min(NAV_TABS.len() as u16 - 1);
-    Some(NAV_TABS[i as usize])
+    let i = p.x / NAV_CELL_W;
+    let tab = *NAV_TABS.get(usize::from(i))?;
+    nav_tab_rect(i).contains(p).then_some(tab)
 }
 
 /// List-row height (a lifted card holding icon + label + trailing + chevron).

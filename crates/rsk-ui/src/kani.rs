@@ -277,6 +277,9 @@ fn nav_and_rows_disjoint() {
     // Paint ⇒ hit, for EVERY tap: a tab rect is on-panel by construction, so the cell
     // the renderer fills for tab `i` is exactly the one `hit_nav` routes there.
     assert!(!nav_tab_rect(i).contains(p) || hit_nav(p) == Some(NAV_TABS[i as usize]));
+    // Hit ⇒ paint: no tab is routed from a point its rect does not hold, the panel's
+    // edge included.
+    assert!(hit_nav(p) != Some(NAV_TABS[i as usize]) || nav_tab_rect(i).contains(p));
     // Nothing above the nav band routes anywhere at all.
     assert!(p.y >= NAV_TOP || hit_nav(p).is_none());
 
