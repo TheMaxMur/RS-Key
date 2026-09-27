@@ -86,15 +86,6 @@ static BUSY: AtomicBool = AtomicBool::new(false);
 /// SRAM load per spin keeps it off the spinlock and (nearly) off XIP, instead
 /// of hammering both through the Mutex on every spurious wake.
 static JOB_PENDING: AtomicBool = AtomicBool::new(false);
-/// Latched after core1 misses the entry deadline twice running: from then on
-/// every search runs single-core. A halted core1 (panic, fault) must degrade
-/// keygen, never hang the worker — the worker is the device. One lone miss
-/// does NOT latch: a genuine in-flight candidate at RSA-4096 (strong MR + a
-/// software Lucas) can hold BUSY for a few seconds, and that core is alive.
-static DEGRADED: AtomicBool = AtomicBool::new(false);
-/// Consecutive entry-deadline misses; reset on any clean engage. Two in a row
-/// is a core that is not coming back.
-static MISSES: AtomicU32 = AtomicU32::new(0);
 
 /// Core1's stack. The deep frame is `passes_fermat_base2` → `modexp_priv`
 /// (~6 KiB of fixed buffers); 16 KiB leaves comfortable headroom for the
@@ -121,19 +112,22 @@ static C1_TRIES: AtomicU32 = AtomicU32::new(0);
 static C1_FINDS: AtomicU32 = AtomicU32::new(0);
 static C0_TRIES: AtomicU32 = AtomicU32::new(0);
 static C0_FINDS: AtomicU32 = AtomicU32::new(0);
+/// Searches core1 never joined: it was still busy with the one before when core0
+/// finished alone.
+static SOLO: AtomicU32 = AtomicU32::new(0);
 
-/// The seven counters plus the live flags (busy, stop, job-pending, degraded),
-/// little-endian packed for the vendor read.
+/// The seven counters plus the live flags (busy, stop, job-pending), little-endian
+/// packed for the vendor read; the last byte is zero.
 #[cfg(feature = "core1-stats")]
 pub fn stats() -> [u8; 32] {
     let mut out = [0u8; 32];
     let counters = [
-        &WAKES, &JOBS, &C1_TRIES, &C1_FINDS, &C0_TRIES, &C0_FINDS, &MISSES,
+        &WAKES, &JOBS, &C1_TRIES, &C1_FINDS, &C0_TRIES, &C0_FINDS, &SOLO,
     ];
     for (slot, c) in out.chunks_exact_mut(4).take(7).zip(counters) {
         slot.copy_from_slice(&c.load(Ordering::Relaxed).to_le_bytes());
     }
-    let flags = [&BUSY, &STOP, &JOB_PENDING, &DEGRADED];
+    let flags = [&BUSY, &STOP, &JOB_PENDING];
     for (b, f) in out[28..].iter_mut().zip(flags) {
         *b = f.load(Ordering::Relaxed) as u8;
     }
@@ -209,8 +203,8 @@ fn take_found(slot: &mut Option<Found>, into: &mut Found) -> bool {
 /// `SIEVE_WINDOW` candidates, one of which is the prime that was found — still
 /// resident (audit run-34 #23).
 ///
-/// A core1 that never answers is faulted, and that is exactly what latches
-/// `DEGRADED`; its sieve stays resident and cannot be cleared soundly from here.
+/// A core1 that never answers is faulted; its sieve stays resident and cannot be
+/// cleared soundly from here.
 pub fn scrub() {
     MAILBOX.lock(|mb| {
         let mb = &mut mb.borrow_mut();
@@ -389,55 +383,6 @@ pub fn run_rsa_search_progress(
         return None;
     }
 
-    // The PREVIOUS search's core1 tail may still be running — one candidate at
-    // most, but at RSA-4096 that candidate can be a strong-MR plus a software
-    // Lucas, several seconds of work (STOP is only checked between
-    // candidates). Wait it out here, off this keygen's critical path, before
-    // reusing the mailbox. The wait is BOUNDED so a core1 that never releases
-    // BUSY (panicked / faulted) costs the speedup, never the worker: a lone
-    // miss just skips core1 for this search, and only two misses running latch
-    // permanent single-core mode (a core that is genuinely gone).
-    let engaged = !DEGRADED.load(Ordering::Relaxed) && {
-        let deadline = embassy_time::Instant::now() + embassy_time::Duration::from_secs(6);
-        let mut timed_out = false;
-        while BUSY.load(Ordering::Acquire) {
-            if embassy_time::Instant::now() > deadline {
-                timed_out = true;
-                break;
-            }
-            core::hint::spin_loop();
-        }
-        if timed_out {
-            if MISSES.fetch_add(1, Ordering::Relaxed) + 1 >= 2 {
-                DEGRADED.store(true, Ordering::Relaxed);
-            }
-            false
-        } else {
-            MISSES.store(0, Ordering::Relaxed);
-            true
-        }
-    };
-
-    if engaged {
-        // Post the job: stale finds scrubbed, fresh DRBG seed for core1 — drawn
-        // here and copied into the slot, so no move carries it through a frame.
-        let mut seed = Secret::<[u8; SEED_LEN]>::zeroed();
-        rng.fill(&mut seed.expose_mut()[..SEED_LEN - SEED_TAG.len()]);
-        seed.expose_mut()[SEED_LEN - SEED_TAG.len()..].copy_from_slice(SEED_TAG);
-        STOP.store(false, Ordering::Release);
-        MAILBOX.lock(|mb| {
-            let mut mb = mb.borrow_mut();
-            scrub_found(&mut mb);
-            let job = mb.job.insert(Job {
-                half_bytes: kg.half_bytes(),
-                seed: Secret::zeroed(),
-            });
-            job.seed.expose_mut().copy_from_slice(seed.expose());
-        });
-        JOB_PENDING.store(true, Ordering::Release);
-        cortex_m::asm::sev();
-    }
-
     // SAFETY: CORE0_SIEVE is touched only here, on core0. Scrub forces a fresh
     // window for this keygen and wipes any prime from the previous one.
     let sieve = unsafe { &mut *core::ptr::addr_of_mut!(CORE0_SIEVE) };
@@ -456,14 +401,20 @@ pub fn run_rsa_search_progress(
     ];
     // `Some(Some(key))` = assembled, `Some(None)` = the old `Failed`.
     let mut outcome: Option<Option<Box<RsaKey>>> = None;
+    // Core1 may still be on the last search's final candidate, which at RSA-4096
+    // can be a software Lucas of ten seconds and more: search alone meanwhile and
+    // hand it the job once it is free. A core1 that never frees costs no wait.
+    let mut engaged = false;
     while outcome.is_none() {
         // Observation hook (display spinner); time-gated by the caller, off the keygen state.
         on_tick();
-        // Core1's finds first (cheap to drain) — but only when we actually
-        // engaged it this keygen. If the entry gate timed out (engaged=false),
-        // core1 is still on the PRIOR job, so anything in `found` is a stale
-        // prime for a different (possibly different-size) key; feeding it to this
-        // keygen would corrupt the modulus. Leave it for the wind-down scrub.
+        if !engaged && !BUSY.load(Ordering::Acquire) {
+            post_job(kg.half_bytes(), rng);
+            engaged = true;
+        }
+        // Core1's finds first, once it has this keygen's job: before that, a find
+        // is a stale prime for another (maybe other-size) key that would corrupt
+        // the modulus. The post scrubs it, and so does the wind-down.
         let taken = if engaged {
             MAILBOX.lock(|mb| {
                 let mb = &mut mb.borrow_mut();
@@ -522,5 +473,29 @@ pub fn run_rsa_search_progress(
     sieve.scrub();
     STOP.store(true, Ordering::Release);
     cortex_m::asm::sev();
+    if !engaged {
+        SOLO.fetch_add(1, Ordering::Relaxed);
+    }
     outcome.flatten()
+}
+
+/// Post a job for core1, which is idle (`BUSY` down): stale finds scrubbed, a fresh
+/// DRBG seed drawn here and copied into the slot, so no move carries it through a
+/// frame.
+fn post_job(half_bytes: usize, rng: &mut dyn Rng) {
+    let mut seed = Secret::<[u8; SEED_LEN]>::zeroed();
+    rng.fill(&mut seed.expose_mut()[..SEED_LEN - SEED_TAG.len()]);
+    seed.expose_mut()[SEED_LEN - SEED_TAG.len()..].copy_from_slice(SEED_TAG);
+    STOP.store(false, Ordering::Release);
+    MAILBOX.lock(|mb| {
+        let mut mb = mb.borrow_mut();
+        scrub_found(&mut mb);
+        let job = mb.job.insert(Job {
+            half_bytes,
+            seed: Secret::zeroed(),
+        });
+        job.seed.expose_mut().copy_from_slice(seed.expose());
+    });
+    JOB_PENDING.store(true, Ordering::Release);
+    cortex_m::asm::sev();
 }

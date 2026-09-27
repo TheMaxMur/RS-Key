@@ -725,8 +725,8 @@ impl<'a> Worker<'a> {
         // on-card keygen — factors of a live modulus, in plain SRAM. The sieves are
         // scrubbed by their owning core (issuing that from core0 would alias a live
         // `&mut` across cores); `scrub` now waits, bounded, for core1 to reach that
-        // point. A core1 that never answers is faulted — which is what latches
-        // `DEGRADED` — and its window stays resident (audit run-34 #23).
+        // point. A core1 that never answers is faulted, and its window stays
+        // resident (audit run-34 #23).
         crate::core1::scrub();
         if mode == 2 {
             embassy_rp::rom_data::reset_to_usb_boot(0, 0);

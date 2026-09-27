@@ -92,6 +92,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **An RSA keygen right after another no longer runs on one core.** Before it
+  handed core1 its job, core0 waited for core1 to finish the previous keygen's
+  last candidate, for at most 6 s, and gave up past that: the keygen then ran
+  on core0 alone, after the wait. At RSA-4096 that last candidate can be a
+  software Lucas test of ten seconds and more, and on a Waveshare RP2350-Zero 2
+  of 8 back-to-back PIV GENERATEs took 72 s and 100 s single-core; two such
+  misses running latched every later keygen to one core until a reboot. Core0
+  now starts searching at once and hands core1 the job as soon as it is free,
+  with no wait and no latch; OpenPGP's three-key generation and the panel's
+  keygen take the same path. `bcdDevice` 0x0A51 → 0x0A52.
+
 - **A tap past the trusted display's right edge no longer opens Settings.** The
   bottom bar picked its tab by dividing the tap's x by the cell width and
   clamping to the last tab, so a touch reported at x ≥ 240, off the 240-pixel
