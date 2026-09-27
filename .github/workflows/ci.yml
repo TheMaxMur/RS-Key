@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Eight jobs:
+# Nine jobs:
 #   changes — what this change can possibly affect (`scripts/ci-scope.sh`), so a
 #             documentation edit does not build 24 firmware images. Gating is by
 #             `if:` on the jobs rather than `paths:` on the trigger: a skipped
@@ -42,6 +42,9 @@
 #   assurance — the gate's second layer, `scripts/check-assurance.sh`: the TLA+
 #             plumbing and the registries held against the prose, run once
 #             before a pull request rather than per commit (AGENTS.md).
+#   mutants-diff — advisory: cargo-mutants over the lines a pull request
+#             touches (`scripts/mutants-all.sh --in-diff`), survivors annotated
+#             on the diff. Never a required check.
 
 name: ci
 
@@ -407,3 +410,32 @@ jobs:
 
       - name: check-assurance.sh — TLA+ plumbing, registries against prose
         run: nix develop -c ./scripts/check-assurance.sh
+
+  # `continue-on-error`: a survivor is for the author to read, and a red job
+  # would withhold the green run preview-publish waits on. The base ref goes
+  # through `env`, never through `${{ }}` inside the script (see `changes`).
+  mutants-diff:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.proofs == 'true'
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: mutants over the lines this pull request touches (advisory)
+        env:
+          BASE: ${{ github.base_ref }}
+          MUTANTS_JOBS: "2"
+          HOST_TARGET: x86_64-unknown-linux-gnu
+        run: nix develop -c ./scripts/mutants-all.sh --in-diff "origin/$BASE"

@@ -1081,22 +1081,25 @@ third reader of our CTAP replies, and the only one that claims 2.3.
 `check.sh` and `check-assurance.sh` are plain bash over the Nix dev shell.
 CI runs each as its own job on every pull request (`check` and `assurance`),
 plus the `proofs` job — `scripts/kani.sh`, which cannot join `check.sh` because
-Kani is not in the dev shell — plus, on a runner with the board attached, the
-`tests/` scripts. The scheduled
+Kani is not in the dev shell — plus the advisory `mutants-diff` job, cargo-mutants
+over the lines the pull request touches (`scripts/mutants-all.sh --in-diff`, the
+same command the fix loop runs locally) — plus, on a runner with the board
+attached, the `tests/` scripts. The scheduled
 `deep-checks` workflow runs on two cadences. Daily: the Miri and fuzz commands
 from this page, both sharded across runners, a `repro` job that builds the
 hermetic firmware twice and requires bit-identical outputs
 ([build.md](build.md#nix-build-hermetic-no-dev-shell)), and an `llvm-cov` job
 that floors host-crate line coverage. Weekly, on Sunday: the full Kani roster,
-one runner per tier, an advisory `cargo-mutants` sweep, the semantic
+one runner per tier, the `cargo-mutants` sweep held against the accepted
+survivors in `scripts/mutants-accepted.txt`, the semantic
 co-refutation roster, TLC's formal safety tier and `check-assurance.sh` again
 over `main`. No hidden state.
 
 ```mermaid
 flowchart TB
-    a["Merge gate — every commit / PR<br/>check.sh: fmt · clippy · host tests · firmware builds · size ratchet · audit · deny · vet · gitleaks<br/>check-assurance.sh (every PR; locally once before it): TLA+ plumbing · registries against prose<br/>proofs: Kani pr tier (+ state tier when the diff reaches it)"]
+    a["Merge gate — every commit / PR<br/>check.sh: fmt · clippy · host tests · firmware builds · size ratchet · audit · deny · vet · gitleaks<br/>check-assurance.sh (every PR; locally once before it): TLA+ plumbing · registries against prose<br/>proofs: Kani pr tier (+ state tier when the diff reaches it)<br/>mutants-diff (advisory): cargo-mutants over the PR's lines"]
     b["Daily — deep-checks<br/>Miri (3 shards) · timed libFuzzer (4 shards) · repro (bit-identical build) · llvm-cov (coverage floor)"]
-    c["Weekly — deep-checks<br/>Kani all roster · cargo-mutants (advisory)<br/>semantic co-refutation · TLC safety tier · check-assurance.sh"]
+    c["Weekly — deep-checks<br/>Kani all roster · cargo-mutants (against the accepted survivors)<br/>semantic co-refutation · TLC safety tier · check-assurance.sh"]
     a ~~~ b ~~~ c
 ```
 

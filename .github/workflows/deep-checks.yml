@@ -48,9 +48,9 @@
 #          these jobs are rustup-based, not nix.
 #   mutants — cargo-mutants over the host crates, sharded
 #          (scripts/mutants-all.sh). Coverage says a line ran; this says a test
-#          would notice if it changed. **Advisory**, for the reason that script
-#          states at length: most survivors are not defects, so a gating row
-#          would be red every week.
+#          would notice if it changed. Gating against the accepted survivors,
+#          each under its reason, in scripts/mutants-accepted.txt: a survivor not
+#          there fails the shard, and so does an entry a test now kills.
 #   comutants — the semantic model mutants re-injected into production Rust
 #          (`scripts/comutate.py run`). Gating: every recorded code-level kill
 #          must still go red, and a new GAP is an abstraction-fidelity finding.
@@ -462,6 +462,19 @@ jobs:
           MUTANTS_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
           MUTANTS_JOBS: "3"
           HOST_TARGET: x86_64-unknown-linux-gnu
+
+      # What seeding and triage start from: the survivors the baseline does not
+      # hold, already in its format, beside the tool's own outcome lists.
+      - name: upload this shard's survivors
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutants-${{ github.run_id }}-s${{ matrix.shard }}
+          path: |
+            target/mutants/new-survivors.txt
+            target/mutants/mutants.out/missed.txt
+            target/mutants/mutants.out/caught.txt
+          if-no-files-found: ignore
 
   comutants:
     if: github.event.schedule != '17 5 * * *'

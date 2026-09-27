@@ -98,6 +98,9 @@ NAMED = {
     # `UNROSTERED`, and the one of that shape with a table of its own, so it
     # belongs here rather than in the carve-out that forbids one.
     "reproduce.sh": ("test_reproduce.py", "check.sh"),
+    # The accepted-survivors baseline made the weekly mutants row a guard. It is
+    # no gate row, so its runner is the workflow, like `run-tlc.sh`'s.
+    "mutants-all.sh": ("test_mutants_all.py", "../.github/workflows/deep-checks.yml"),
 }
 #: The board-only scripts under `tests/` that have a host table here, as
 #: **(script, its table)**. They are not guards and no `check.sh` row runs them —
@@ -210,14 +213,18 @@ def test_the_named_guards_still_exist():
     assert not missing, f"{missing} are named here but not in scripts/"
 
 
-def wired_in(guard, runner_text):
+def wired_in(guard, runner_text, workflow=False):
     """Whether the runner's code — not its prose — names `guard`.
 
     `gate_lines.runs` rather than a comment-cut written here: this file had one,
     and having it in the file that needed it did not stop the rule above from
     comparing raw text instead. The eight guards that assert their own row in
-    their own table read it from there too now.
+    their own table read it from there too now. A workflow's code is its `run:`
+    scalars: `deep-checks.yml` names `mutants-all.sh` in its push `paths:`, which
+    answered for the job's step with the step gone.
     """
+    if workflow:
+        runner_text = "\n".join(body for body, run in gate_lines.yaml_runs(runner_text) if run)
     return gate_lines.runs(runner_text, pathlib.PurePath(guard).name)
 
 
@@ -238,7 +245,7 @@ def test_every_named_guard_is_run_by_its_stated_runner():
         # reading it here would report the same cause a second time, as a
         # traceback rather than a sentence.
         if (HERE / runner).is_file()
-        and not wired_in(guard, (HERE / runner).read_text())
+        and not wired_in(guard, (HERE / runner).read_text(), runner.endswith(".yml"))
     ]
     assert not missing, f"named but invoked nowhere in their runner: {missing}"
 
@@ -255,6 +262,9 @@ def test_a_comment_is_not_an_invocation():
     assert not wired_in("kani.sh", "# the weekly row runs scripts/kani.sh")
     assert not wired_in("kani.sh", "true # scripts/kani.sh all")
     assert not wired_in("kani.sh", "   \n\n")
+    # …and in a workflow, a trigger's `paths:` entry is not a step that runs it.
+    assert not wired_in("x.sh", 'on:\n  push:\n    paths: ["scripts/x.sh"]\n', workflow=True)
+    assert wired_in("x.sh", "    steps:\n      - run: ./scripts/x.sh\n", workflow=True)
 
 
 #: How each runner selects out of `scripts/`: complements, so a table lands in
@@ -281,9 +291,11 @@ def test_the_mutation_tables_are_collected():
 
 def test_ci_runs_both_runners():
     """The rule is "every commit, and once before a pull request", and CI is what
-    holds it: both runners as steps of `ci.yml`, the second weekly as well. Read
-    out of the `run:` scalars, so a step name or a comment naming one is not a run."""
-    wanted = {"ci.yml": ("./scripts/check.sh", "./scripts/check-assurance.sh"),
+    holds it: both runners as steps of `ci.yml`, the second weekly as well, and the
+    advisory mutants over each pull request's lines. Read out of the `run:` scalars,
+    so a step name or a comment naming one is not a run."""
+    wanted = {"ci.yml": ("./scripts/check.sh", "./scripts/check-assurance.sh",
+                         "./scripts/mutants-all.sh --in-diff"),
               "deep-checks.yml": ("./scripts/check-assurance.sh",)}
     for workflow, commands in wanted.items():
         text = (ROOT / ".github/workflows" / workflow).read_text()

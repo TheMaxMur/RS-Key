@@ -938,6 +938,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **cargo-mutants in three places: the fix loop, every pull request, and a
+  weekly sweep that gates against a baseline** — host only, no `bcdDevice`
+  bump. `scripts/mutants-all.sh --in-diff [<base>]` mutates only the lines the
+  working tree changes against its merge base with `<base>` (default
+  `origin/main`), untracked files under `crates/` included, and exits 2 when one
+  of those mutants survives; AGENTS.md puts `--in-diff HEAD` in the fix loop.
+  CI runs the same over each pull request's diff as `mutants-diff`, advisory
+  (`continue-on-error`, never a required check). The weekly sharded sweep now
+  compares each shard with `scripts/mutants-accepted.txt` — `path: mutation`
+  per accepted survivor, less its `:LINE:COL`, each under a `[class] reason` —
+  counting duplicates: a survivor it does not hold fails the shard, and so does
+  an entry the shard now catches or one no longer in the roster, so killing a
+  survivor means deleting its line. The file ships with no entries; the first
+  sweep's uploaded `new-survivors.txt` lists are its seed. Driven by
+  `scripts/test_mutants_all.py` over a fake `cargo-mutants`.
+
 - **The gate is two runners: `scripts/check.sh` on every commit,
   `scripts/check-assurance.sh` once before a pull request** — host only, no
   `bcdDevice` bump. The 26 rows of the TLA+ plumbing (generated

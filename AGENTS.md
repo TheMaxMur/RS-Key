@@ -88,6 +88,10 @@ project — see [README.md](README.md) and
   repro otherwise — then fixes it. A refactor preserves behaviour and proves it
   with the existing tests and an unchanged wire surface. For multi-step work,
   each step names its verification.
+- **Ask which test would notice the fix gone.** For a change under `crates/`,
+  `nix develop -c ./scripts/mutants-all.sh --in-diff HEAD` (`HEAD~1` once it is
+  committed) mutates only the lines you touched; each survivor is a test to write
+  or a reason to state. CI runs the same over every pull request, advisory.
 - **Never report unverified success.** Don't claim a fix works, a command
   succeeded, or the gate is green unless you observed it. If something couldn't
   be verified (e.g. it needs hardware), say exactly what remains unchecked.

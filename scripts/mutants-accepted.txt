@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+#
+# The accepted survivors of the weekly cargo-mutants sweep (scripts/mutants-all.sh):
+# one line per surviving mutant, `path: mutation`, which is the name `--list`
+# prints less its `:LINE:COL` — that part moves with every edit above it. Every
+# entry sits under a `[class] reason` line saying why a survivor there is not a
+# missing test, and the same mutation surviving twice in one function is listed
+# twice. A shard fails on a survivor not listed here, on an entry a test now
+# catches, and on an entry whose mutant no longer exists: killing a survivor
+# means deleting its line in the same commit.
+#
+# Seeding. A shard writes its unlisted survivors, in this format, to
+# target/mutants/new-survivors.txt, which the weekly job uploads. The first sweep
+# after this file landed is the seed: its twelve lists go in below under
+# `[untriaged <date>] seeded from that sweep, not yet read`, and triage moves each
+# entry to a class, or deletes it with the test that kills it.
+#
+# The classes the 2026-08-15 triage found:
+#   [cfg-off]      behind a feature the default `cargo test` never builds
+#   [masked]       a guard a deeper guard repeats, so removing it changes nothing
+#   [unpinned]     a value no test pins on purpose, a colour or a coordinate
+#   [const-assert] a compile-time assert, which no runtime test can kill

@@ -65,7 +65,7 @@ PHASES=(
   "repro|deep|~30 min|the hermetic firmware build is bit-identical on a rebuild|nix build .#firmware -o result-repro && nix build .#firmware --rebuild"
   "miri|deep|~40 min|every fuzz target's logic under Miri's UB checker|nix develop .#fuzz -c ./scripts/miri-all.sh"
   "fuzz|deep|~2 h|a timed libFuzzer run over every fuzz target, from whatever corpus this checkout has|nix develop .#fuzz -c ./scripts/fuzz-all.sh"
-  "mutants|deep|~10 h|the advisory cargo-mutants sweep: would any test notice if this line changed|./scripts/mutants-all.sh"
+  "mutants|deep|~10 h|the cargo-mutants sweep, held against the accepted survivors in scripts/mutants-accepted.txt: would any test notice if this line changed|./scripts/mutants-all.sh"
 )
 
 #: Tier -> the phases it runs, cheapest first. `all` is every phase this
@@ -147,6 +147,7 @@ CLAIM_JOBS=(
   "ci:knob-builds|-|the same build matrix under the board and feature knobs, held by scripts/ci-knobs.sh --self-test in the gate phase"
   "ci:knobs|-|the same, sharded; the self-test row is what says the shards cover the matrix"
   "ci:assurance|assurance|"
+  "ci:mutants-diff|mutants|"
   "deep-checks:miri|miri|"
   "deep-checks:fuzz|fuzz|"
   "deep-checks:fuzz-coverage|-|needs the accumulated corpus cache; see REFUSED"
