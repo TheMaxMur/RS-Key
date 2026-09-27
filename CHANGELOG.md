@@ -92,6 +92,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A configuration-lock code an old build stored in plaintext is erased.** Up
+  to 0.4.4, `ykman config set-lock-code` left the 16-byte code verbatim in the
+  device-config record; 0.4.5 stopped storing and echoing it (audit run-30) but
+  kept what was already there, and every later config write merged it forward.
+  A boot pass now drops it and re-arms the at-rest scrub, so the lap erases the
+  superseded copy on an OTP-provisioned device, and a config write no longer
+  carries a stored lock tag. `bcdDevice` 0x0A52 → 0x0A53.
+
 - **An RSA keygen right after another no longer runs on one core.** Before it
   handed core1 its job, core0 waited for core1 to finish the previous keygen's
   last candidate, for at most 6 s, and gave up past that: the keygen then ran

@@ -737,7 +737,7 @@ So READ CONFIG is always parseable and never contradicts enforcement, whatever i
 in flash (audit run-34 #25). The config-lock tags (`0A` set-code, `0B` unlock) are **write-
 only on real hardware**; RS-Key does not implement the lock, so it strips them on
 write and never stores or echoes a lock code (audit run-30) — `0A` on read is
-always the 1-byte `00`.
+always the 1-byte `00`. A code a build before 0.4.5 stored is dropped at boot.
 
 **Capability bits** (`USB_SUPPORTED` / `USB_ENABLED`):
 

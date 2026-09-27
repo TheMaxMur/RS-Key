@@ -684,3 +684,72 @@ fn an_unconfigured_device_reports_device_flags_00() {
         Some(&[0x00][..])
     );
 }
+
+/// A lock code a build before 0.4.5 stored, as it stored it: `0A 10 <code>` beside
+/// the owner's other fields.
+fn legacy_locked_record() -> Vec<u8> {
+    let mut rec = std::vec![TAG_CONFIG_LOCK, 16];
+    rec.extend_from_slice(&[0xAB; 16]);
+    rec.extend_from_slice(&[TAG_USB_ENABLED, 2, 0x02, 0x3B]);
+    rec
+}
+
+#[test]
+fn the_boot_pass_drops_a_legacy_lock_code_and_re_arms_the_scrub() {
+    let mut fs = fs();
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    fs.put(EF_DEV_CONF, &legacy_locked_record()).unwrap();
+    scrub_legacy_lock(&mut fs).unwrap();
+    let mut rec = [0u8; EF_DEV_CONF_READ_MAX];
+    let n = fs.read(EF_DEV_CONF, &mut rec).unwrap();
+    assert_eq!(
+        &rec[..n],
+        &[TAG_USB_ENABLED, 2, 0x02, 0x3B],
+        "the code or a field is wrong"
+    );
+    assert!(
+        !fs.has_data(rsk_fs::EF_HARDENED),
+        "the superseded plaintext copy needs the lap re-armed"
+    );
+}
+
+#[test]
+fn the_boot_pass_leaves_a_record_without_a_lock_code_alone() {
+    let mut fs = fs();
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    fs.put(EF_DEV_CONF, &[TAG_USB_ENABLED, 2, 0x02, 0x3B])
+        .unwrap();
+    scrub_legacy_lock(&mut fs).unwrap();
+    assert!(
+        fs.has_data(rsk_fs::EF_HARDENED),
+        "a clean record re-armed the lap"
+    );
+    let mut empty = Fs::new(RamStorage::new());
+    assert_eq!(scrub_legacy_lock(&mut empty), Ok(()));
+    assert!(!empty.has_data(EF_DEV_CONF), "an absent record was written");
+}
+
+#[test]
+fn a_faulted_probe_is_not_a_record_without_a_lock_code() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    fs.put(EF_DEV_CONF, &legacy_locked_record()).unwrap();
+    medium.stick_once(EF_DEV_CONF);
+    assert_eq!(scrub_legacy_lock(&mut fs), Err(DevConfError::Store));
+}
+
+#[test]
+fn a_write_config_does_not_carry_a_legacy_lock_code_forward() {
+    let mut fs = fs();
+    fs.put(EF_DEV_CONF, &legacy_locked_record()).unwrap();
+    persist_dev_conf(&mut fs, &[TAG_CHALRESP_TIMEOUT, 1, 0x0F]).unwrap();
+    let mut rec = [0u8; EF_DEV_CONF_READ_MAX];
+    let n = fs.read(EF_DEV_CONF, &mut rec).unwrap();
+    assert_eq!(
+        tlv_get(&rec[..n], TAG_CONFIG_LOCK),
+        None,
+        "the legacy code rode the merge"
+    );
+    assert_eq!(tlv_get(&rec[..n], TAG_USB_ENABLED), Some(&[0x02, 0x3B][..]));
+}

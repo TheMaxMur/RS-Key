@@ -31,7 +31,7 @@
 (*                                                                           *)
 (* WHAT IS ABSTRACTED. The mask is a set of opaque capabilities, not the     *)
 (* 16-bit USB_ENABLED bitmask -- the clamp to SUPPORTED_CAPS                 *)
-(* (crates/rsk-devconf/src/lib.rs:592) is modelled as "the mask stays a      *)
+(* (crates/rsk-devconf/src/lib.rs:621) is modelled as "the mask stays a      *)
 (* subset of the gateable caps" and enforced by construction. The            *)
 (* config-lock TLV is present only as the class of write that carries no     *)
 (* capability change (`LockCodeWrite`); its unsealed-disclosure hole (audit  *)
@@ -99,7 +99,7 @@ TypeOK ==
     /\ viol \in SUBSET InvNames
 
 \* A factory device: every gateable application enabled (the default record's
-\* USB_ENABLED is SUPPORTED_CAPS, crates/rsk-devconf/src/lib.rs:596).
+\* USB_ENABLED is SUPPORTED_CAPS, crates/rsk-devconf/src/lib.rs:625).
 Init ==
     /\ enabled = Caps
     /\ viol = {}

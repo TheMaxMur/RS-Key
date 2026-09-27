@@ -218,7 +218,7 @@ NO_OPINION_EXEMPTIONS = {
     ),
     "pseudo-command": (
         "a power cycle is not a CTAP command and has no response: `outcome_raw` is"
-        " the literal 0 that `tools/emu/src/device.rs:817-818` passes as the status,"
+        " the literal 0 that `tools/emu/src/device.rs:818-819` passes as the status,"
         " so agreeing with `delta_c` of it would be agreeing with a placeholder",
         1,
     ),
@@ -605,7 +605,7 @@ def no_opinion_class(event: dict, action_names: set[str]) -> str | None:
     """
     if event["command_raw"] == POWER_CYCLE:
         # The class's whole reason is that `outcome_raw` here is the literal 0
-        # `tools/emu/src/device.rs:817-818` passes for a replug, not a response.
+        # `tools/emu/src/device.rs:818-819` passes for a replug, not a response.
         # Asserted rather than described: with this unchecked, a power cycle
         # carrying 0x31 was excused and the row stayed green at 15/18.
         if event["outcome_raw"] != 0x00:

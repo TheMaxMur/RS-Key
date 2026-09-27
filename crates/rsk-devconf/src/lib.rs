@@ -294,6 +294,34 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     Ok(())
 }
 
+/// Drop the configuration-lock code a build before 0.4.5 stored verbatim in
+/// `EF_DEV_CONF`: audit run-30 stopped storing it but left what was there, a secret
+/// the owner typed, at rest in plaintext. The at-rest scrub is re-armed before the
+/// write, per [`rsk_fs::request_rescrub`], so the lap erases the superseded copy too.
+/// A record with no lock tag is left alone; one wider than a read reaches is too,
+/// since writing back its readable head would cut it.
+pub fn scrub_legacy_lock<S: Storage>(fs: &mut Fs<S>) -> Result<(), DevConfError> {
+    let mut stored = [0u8; EF_DEV_CONF_READ_MAX];
+    let n = match fs.try_read(EF_DEV_CONF, &mut stored) {
+        Ok(Some(n)) if n <= EF_DEV_CONF_READ_MAX => n,
+        Ok(_) => return Ok(()),
+        Err(_) => return Err(DevConfError::Store),
+    };
+    let stored = stored.get(..n).unwrap_or_default();
+    if !has_tag(stored, TAG_CONFIG_LOCK) && !has_tag(stored, TAG_CONFIG_UNLOCK) {
+        return Ok(());
+    }
+    let mut kept = [0u8; EF_DEV_CONF_READ_MAX];
+    let m = strip_config_lock(stored, &mut kept);
+    let rearmed = rsk_fs::request_rescrub(fs).map_err(|_| DevConfError::Store)?;
+    fs.put_over(
+        EF_DEV_CONF,
+        kept.get(..m).unwrap_or_default(),
+        Some(&rearmed),
+    )
+    .map_err(|_| DevConfError::Store)
+}
+
 /// The record a write of `incoming` (already lock-stripped) would store: the merge
 /// onto what is on flash, trimmed to the cap. One definition, so the writer and
 /// [`dev_conf_unchanged`] can never disagree about what "unchanged" means. `out`
@@ -393,10 +421,11 @@ fn overlay_dev_conf<S: Storage>(
         n += src.len();
         Ok(())
     };
-    // Stored entries first, minus any tag the request restates.
+    // Stored entries first, minus any tag the request restates and any lock tag: a
+    // build before 0.4.5 stored the code verbatim, and a merge must not carry it on.
     let mut i = 0;
     while let Some((tag, end)) = entry_at(stored, i) {
-        if !has_tag(incoming, tag) {
+        if !has_tag(incoming, tag) && tag != TAG_CONFIG_LOCK && tag != TAG_CONFIG_UNLOCK {
             push(stored.get(i..end).unwrap_or_default(), out)?;
         }
         i = end;
