@@ -468,6 +468,37 @@ def test_the_counter_may_not_stand_still_across_a_bump_commit(tree):
     assert only(tree.problems(), "it only goes up")
 
 
+def side_line_merged(tree, merged_value=None):
+    """A side line that bumps to 0x0101, merged into a main line that changed code
+    without a bump; the merge commit then bumps to `merged_value`, or keeps 0x0101."""
+    tree.git("checkout", "-q", "-b", "side")
+    tree.append("crates/rsk-a/src/helper.rs", "\npub fn side() -> u8 { 2 }\n")
+    tree.bump()
+    tree.note()
+    tree.commit("side, and 0x0101")
+    tree.git("checkout", "-q", "-")
+    tree.append("crates/rsk-a/src/lib.rs", "\npub const MAIN_ONLY: u8 = 3;\n")
+    tree.commit("main, unbumped")
+    tree.git("merge", "-q", "--no-ff", "--no-commit", "side")
+    if merged_value:
+        tree.edit("firmware/src/main.rs", "0x0101", merged_value)
+        tree.note(merged_value)
+    tree.commit("merge side")
+
+
+def test_a_merge_that_bumps_is_the_bump(tree):
+    """`git log -G` lists no merge unless asked, and the side line's bump read as the
+    last one: every change the main line brought through the merge was unbumped."""
+    side_line_merged(tree, "0x0102")
+    assert tree.problems() == []
+
+
+def test_a_merge_that_keeps_the_side_lines_number_is_no_bump(tree):
+    """A new image under 0x0101, which the side line's build already carried."""
+    side_line_merged(tree)
+    assert only(tree.problems(), "MAIN_ONLY")
+
+
 def test_the_binding_renamed_away(tree):
     tree.edit("firmware/src/main.rs", "let device_release: u16", "let rel: u16")
     assert only(tree.problems(), "no longer binds")

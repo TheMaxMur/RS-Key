@@ -257,15 +257,28 @@ def bump_commit(root):
     `-G` yields candidates: it also matches a commit that only moved the line,
     and taking the first one blindly would let a reformat of `main.rs` reset the
     base and wave a whole span of firmware changes through. Each candidate is
-    confirmed against its parent, so a mover is skipped rather than trusted.
+    confirmed against its parents, so a mover is skipped rather than trusted.
+
+    A merge is a candidate through its first-parent diff (`-G` lists none
+    otherwise, and a line that landed by a merge read the side line's last bump
+    as the base), and a bump only when its value is none of its parents': a merge
+    that keeps the side line's number built a new image under an old one.
     """
-    listing = git(root, "log", "--format=%H", "-G", RELEASE_TEXT, "--", str(MAIN), missing_ok=True)
+    listing = git(
+        root, "log", "--format=%H", "--diff-merges=first-parent", "--no-patch",
+        "-G", RELEASE_TEXT, "--", str(MAIN), missing_ok=True,
+    )
     for sha in listing.split():
         now = release(read(root, sha, MAIN))
-        before = release(read(root, f"{sha}^", MAIN))
-        if now is not None and now != before:
-            return sha, now, before
+        befores = [release(read(root, p, MAIN)) for p in parents(root, sha)]
+        if now is not None and now not in befores:
+            return sha, now, max((b for b in befores if b is not None), default=None)
     return None, None, None
+
+
+def parents(root, sha):
+    """Every parent of `sha`: none for a first commit, two for a merge."""
+    return git(root, "rev-list", "--parents", "-n", "1", sha).split()[1:]
 
 
 def parent(root, sha):
