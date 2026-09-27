@@ -327,8 +327,8 @@ why = "BACKUP_LOAD drops the old certificate BEFORE the new seed commits: a surv
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 356
-call = "Some((fid, _)) => match fs.delete(fid) {"
+line = 357
+call = "Ok(Some((fid, _))) => match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
 class = "secret-or-gate"
@@ -338,7 +338,7 @@ why = "DELETE's only effect. Discarded until 0x0988, so a refused removal answer
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 381
+line = 383
 call = "let dropped = fs.delete_key(EF_OATH_CODE);"
 verb = "delete_key"
 answer = "read"
@@ -349,7 +349,7 @@ why = "SET CODE's 73 00: select derives validated from !code_set, so a 9000 over
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 451
+line = 453
 call = "match fs.delete_over(EF_OTP_PIN, Some(&rearmed)) {"
 verb = "delete_over"
 answer = "read"
@@ -360,7 +360,7 @@ why = "VERIFY PIN raises the same validated flag VALIDATE does, so an OTP-PIN th
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 1733
+line = 1743
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"

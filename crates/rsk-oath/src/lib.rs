@@ -323,11 +323,12 @@ impl<'a> OathApplet<'a> {
         let mkek = read_fused(self.mkek_source);
         let dev = self.device(&mkek);
         let fid = match find_cred(&dev, fs, f.name, &mut scratch) {
-            Some((fid, _)) => fid,
-            None => match free_slot(fs) {
+            Ok(Some((fid, _))) => fid,
+            Ok(None) => match free_slot(fs) {
                 Some(fid) => fid,
                 None => return Sw::FILE_FULL,
             },
+            Err(sw) => return sw,
         };
         if self.store_cred(&dev, fs, fid, blob.expose(), n) {
             Sw::OK
@@ -353,11 +354,12 @@ impl<'a> OathApplet<'a> {
             // Read the answer: this command's whole effect is the removal, and a
             // `9000` over a TOTP secret still in flash is what the host prints as
             // "deleted". PIV's DELETE DATA and CTAP's deleteCredential both do.
-            Some((fid, _)) => match fs.delete(fid) {
+            Ok(Some((fid, _))) => match fs.delete(fid) {
                 Ok(()) => Sw::OK,
                 Err(_) => Sw::MEMORY_FAILURE,
             },
-            None => Sw::DATA_INVALID,
+            Ok(None) => Sw::DATA_INVALID,
+            Err(sw) => sw,
         }
     }
     /// Refines `RSKeyAppletSeams!AccessCodeRemovalNeedsTheCode` — SEC-SEAM-006.
@@ -631,8 +633,10 @@ impl<'a> OathApplet<'a> {
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
         let mkek = read_fused(self.mkek_source);
         let dev = self.device(&mkek);
-        let Some((fid, mut n)) = find_cred(&dev, fs, name, &mut scratch) else {
-            return Sw::DATA_INVALID;
+        let (fid, mut n) = match find_cred(&dev, fs, name, &mut scratch) {
+            Ok(Some(found)) => found,
+            Ok(None) => return Sw::DATA_INVALID,
+            Err(sw) => return sw,
         };
         let Some(blob) = scratch.expose().get(..n) else {
             return Sw::DATA_INVALID;
@@ -901,11 +905,15 @@ impl<'a> OathApplet<'a> {
         // One credential per name: PUT holds it by overwriting, RENAME by refusing
         // a taken target (self-rename included, as on a YubiKey 5.7.4). Judged
         // before the source, which stays invisible only while both answer this.
-        if find_cred(&dev, fs, new_name, &mut scratch).is_some() {
-            return Sw::DATA_INVALID;
+        match find_cred(&dev, fs, new_name, &mut scratch) {
+            Ok(None) => {}
+            Ok(Some(_)) => return Sw::DATA_INVALID,
+            Err(sw) => return sw,
         }
-        let Some((fid, n)) = find_cred(&dev, fs, name, &mut scratch) else {
-            return Sw::DATA_INVALID;
+        let (fid, n) = match find_cred(&dev, fs, name, &mut scratch) {
+            Ok(Some(found)) => found,
+            Ok(None) => return Sw::DATA_INVALID,
+            Err(sw) => return sw,
         };
         let Some(stored) = scratch.expose().get(..n) else {
             return Sw::DATA_INVALID;
@@ -967,8 +975,10 @@ impl<'a> OathApplet<'a> {
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
         let mkek = read_fused(self.mkek_source);
         let dev = self.device(&mkek);
-        let Some((_, n)) = find_cred(&dev, fs, name, &mut scratch) else {
-            return Sw::DATA_INVALID;
+        let n = match find_cred(&dev, fs, name, &mut scratch) {
+            Ok(Some((_, n))) => n,
+            Ok(None) => return Sw::DATA_INVALID,
+            Err(sw) => return sw,
         };
         let Some(blob) = scratch.expose().get(..n) else {
             return Sw::DATA_INVALID;
@@ -1839,25 +1849,44 @@ pub fn for_each_cred<S: Storage>(
 
 /// Find a present credential whose `TAG_NAME` equals `name`; the blob is left in
 /// `buf`. Only present slots are read (see [`present_creds`]).
+///
+/// `Err` when the name is found nowhere and a slot the flash would not serve could
+/// hold it: PUT would file the name twice and RENAME take a taken one.
 fn find_cred<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     name: &[u8],
     buf: &mut Secret<[u8; CRED_MAX]>,
-) -> Option<(u16, usize)> {
+) -> Result<Option<(u16, usize)>, Sw> {
     let mut fids = [0u16; MAX_OATH_CRED as usize];
+    let mut raw = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
+    let mut unread = false;
+    let mut found = None;
     for &fid in present_creds(fs, &mut fids) {
-        if let Some(n) = seal::seal_read(dev, fs, KeyFid::new(fid), buf)
+        let n = match fs.try_read_key(KeyFid::new(fid), raw.expose_mut()) {
+            Ok(Some(n)) => n,
+            Ok(None) => continue,
+            Err(_) => {
+                unread = true;
+                continue;
+            }
+        };
+        if let Some(n) = raw.expose().get(..n).and_then(|b| seal::open(dev, b, buf))
             && buf
                 .expose()
                 .get(..n)
                 .and_then(|b| find_tag(b, TAG_NAME as u16))
                 == Some(name)
         {
-            return Some((fid, n));
+            found = Some((fid, n));
+            break;
         }
     }
-    None
+    raw.wipe();
+    match found {
+        None if unread => Err(Sw::MEMORY_FAILURE),
+        found => Ok(found),
+    }
 }
 
 /// Boot pass: seal any OATH secret slot still stored as legacy plaintext. A blob

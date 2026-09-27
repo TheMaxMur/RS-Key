@@ -110,6 +110,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A failed flash read no longer files a second OATH account under one name.**
+  An OATH `PUT` for a name the key already holds replaces that account, and
+  `RENAME` onto a taken name is refused. Both found the name by reading every
+  account, and an account whose read failed was skipped: one failed read of the
+  account itself filed the new one beside it, two accounts under one name, and
+  `CALCULATE` by that name kept answering with the old secret. A `RENAME` could
+  likewise take a name already in use. An account the flash cannot read now
+  refuses the command with `6581` unless the name turns up in another one, and
+  each account is read once. The cost, stated: while one account never reads
+  again, no new name can be added until an OATH reset. Found by the read-fault
+  sweep. `bcdDevice` 0x0A59 → 0x0A5A.
+
 - **A passkey delete no longer answers success over an RP record it could not
   read.** `deleteCredential` removes the credential and then decrements its RP
   record's count. A failed read of that record was taken for "no such RP", so

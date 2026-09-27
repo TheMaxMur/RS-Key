@@ -88,7 +88,7 @@ CONSTANTS
     BugRefusedValidateDropsUnlock,
     \* The access-code REMOVAL (`73 00`) reached without the validated status.
     \* cmd_set_code's whole body -- install and remove alike -- sits behind one
-    \* gate (crates/rsk-oath/src/lib.rs:365-367); this is the remove half taken
+    \* gate (crates/rsk-oath/src/lib.rs:367-369); this is the remove half taken
     \* out from under it. The hole was RECORDED for two revisions as
     \* definitionally invisible: NoStatusOutsideItsSelection's oathCode
     \* exemption fires exactly when ~oathCodeSet, which the removal itself sets,
@@ -105,7 +105,7 @@ CONSTANTS
     \* defaulting both of OATH's flags from the one default-open rule.
     BugFreshCardOpensOtpPin,
     \* A deselect that leaves a provisioned OATH unlocked
-    \* (crates/rsk-oath/src/lib.rs:1242-1246 ignoring `code_set`).
+    \* (crates/rsk-oath/src/lib.rs:1252-1256 ignoring `code_set`).
     BugDeselectKeepsOathUnlock,
     \* The same fact one path over: a card reset or a power cycle that rebuilds
     \* the applet with the unlock still standing.
@@ -152,7 +152,7 @@ VARIABLES
     \* only status here that is a two-part thing.
     fresh,
     \* Whether OATH has an access code provisioned. It decides what a new SELECT
-    \* means: `validated = !code_set` (crates/rsk-oath/src/lib.rs:1280), so a
+    \* means: `validated = !code_set` (crates/rsk-oath/src/lib.rs:1290), so a
     \* code-less applet is unlocked by design and only a provisioned one has a
     \* status a SELECT elsewhere can take away.
     oathCodeSet,
@@ -210,7 +210,7 @@ Init ==
 \* Every status an applet owns, gone. This is `Session::reset`
 \* (crates/rsk-piv/src/lib.rs:213-217), `pin::Session::reset`
 \* (crates/rsk-openpgp/src/pin.rs:82-107) and OATH's `deselect`
-\* (crates/rsk-oath/src/lib.rs:1242-1246) -- three functions, one meaning.
+\* (crates/rsk-oath/src/lib.rs:1252-1256) -- three functions, one meaning.
 ClearedFor(h, a) ==
     [r \in Refs |-> IF RefOwner(r) = a
                       THEN (r = "oathCode"
@@ -231,7 +231,7 @@ AllCleared ==
 \* holds until a select to a DIFFERENT DF, and a YubiKey 5.7.4 was measured
 \* keeping all of it). OATH keeps its VALIDATE too, as a YubiKey 5.8.0 was measured
 \* doing, and drops only the OTP PIN: Nitrokey's, so no oracle speaks for it, and
-\* never inherited across a SELECT (crates/rsk-oath/src/lib.rs:1277-1281).
+\* never inherited across a SELECT (crates/rsk-oath/src/lib.rs:1287-1291).
 Reselect(a) ==
     /\ sel = a
     /\ held' = IF BugReselectResetsStatus THEN ClearedFor(held, a)
@@ -340,7 +340,7 @@ PgpChangeRefused(r) ==
     /\ refused' = r
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
-\* OATH VERIFY PIN (crates/rsk-oath/src/lib.rs:1195-1216) clears BOTH flags at
+\* OATH VERIFY PIN (crates/rsk-oath/src/lib.rs:1205-1226) clears BOTH flags at
 \* entry and re-sets them only on success: `validated` is reachable THROUGH the
 \* OTP PIN as well as through the access code, so one bool carries two
 \* provenances and both have to fall.
@@ -353,7 +353,7 @@ OathVerifyOtpPin(ok) ==
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, viol >>
 
 \* aa47867: a refused CHANGE of the OTP PIN drops the standing authentication,
-\* both halves (crates/rsk-oath/src/lib.rs:1163-1164). Before it, `0xB2` VERIFY
+\* both halves (crates/rsk-oath/src/lib.rs:1173-1174). Before it, `0xB2` VERIFY
 \* closed the safe on a wrong PIN and `0xB3` CHANGE did not -- so the whole retry
 \* budget could be burned through CHANGE while GET CREDENTIAL went on serving
 \* the stored password.
@@ -368,7 +368,7 @@ OathChangeRefused ==
 
 \* The access code is a MAC challenge-response with NO retry counter, so a wrong
 \* answer costs nothing and keeps the standing unlock
-\* (crates/rsk-oath/src/lib.rs:597-599) -- measured on a YubiKey 5.7.4 from a
+\* (crates/rsk-oath/src/lib.rs:599-601) -- measured on a YubiKey 5.7.4 from a
 \* genuinely locked applet. Two failed-auth rules inside one applet, and this is
 \* the second: it must NOT write `refused`, because nothing was refused that had
 \* a budget to protect.
@@ -397,7 +397,7 @@ OathValidateRefused ==
                     refused >>
 
 \* SET CODE provisions the access code and re-locks
-\* (crates/rsk-oath/src/lib.rs:444-450).
+\* (crates/rsk-oath/src/lib.rs:446-452).
 OathSetCode ==
     /\ sel = Oath
     /\ ~oathCodeSet
@@ -410,11 +410,11 @@ OathValidateOk ==
     /\ held' = [held EXCEPT !["oathCode"] = TRUE]
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, refused, viol >>
 
-\* `73 00` -- remove the access code (crates/rsk-oath/src/lib.rs:374-386): drop
+\* `73 00` -- remove the access code (crates/rsk-oath/src/lib.rs:376-388): drop
 \* EF_OATH_CODE and leave the applet default-open (the Rust sets `validated =
-\* true` on the way out at crates/rsk-oath/src/lib.rs:382, which over no code is
+\* true` on the way out at crates/rsk-oath/src/lib.rs:384, which over no code is
 \* the same TRUE). The one gate is the command's own validated test at
-\* crates/rsk-oath/src/lib.rs:365-367, shared with the install half; the
+\* crates/rsk-oath/src/lib.rs:367-369, shared with the install half; the
 \* install-over-existing (replace) path stands behind the SAME gate, so this
 \* action carries the rule for every code-set mutation.
 RemoveCodeGuard  == IF BugRemoveCodeUnvalidated THEN TRUE ELSE held["oathCode"]
@@ -671,7 +671,7 @@ NoKeyOpOnTheAdminStatus ==
 \* than by a cross-applet principle. PIV's CHANGE REFERENCE DATA takes no
 \* `&mut Session` at all (crates/rsk-piv/src/lib.rs:547-581) -- SP 800-73-4 pt2
 \* 3.2.2/3.2.3, plus a measured YubiKey 5.7.4. OATH's access-code VALIDATE keeps
-\* the standing unlock (crates/rsk-oath/src/lib.rs:597-599), because a MAC
+\* the standing unlock (crates/rsk-oath/src/lib.rs:599-601), because a MAC
 \* challenge-response has no retry counter for a refusal to protect.
 \*
 \* So THREE APPLETS KEEP THREE RULES and no single one can be written: OpenPGP's
@@ -698,7 +698,7 @@ ReselectPreservesAccessStatus == "ReselectPreservesAccessStatus" \notin viol
 
 \* THE REPAIR OF A RECORDED HOLE. Removing the access code (`73 00`) is a
 \* code-set mutation and needs the validated status the code bought
-\* (crates/rsk-oath/src/lib.rs:365-367) -- but an unauthenticated removal is
+\* (crates/rsk-oath/src/lib.rs:367-369) -- but an unauthenticated removal is
 \* DEFINITIONALLY invisible to NoStatusOutsideItsSelection: its oathCode
 \* exemption fires exactly when ~oathCodeSet, and the removal itself sets that.
 \* No state the violation produces can trip a state predicate, so the rule

@@ -62,6 +62,23 @@ fn named(names: &[&[u8]]) -> Vec<u8> {
     names.iter().flat_map(|n| tlv(TAG_NAME, n)).collect()
 }
 
+/// One account per name: PUT over a taken name replaces it, RENAME onto one is
+/// refused, and a slot the flash would not serve may hold either name.
+#[test]
+fn a_faulted_read_fails_an_account_write_or_lands_it_whole() {
+    let fresh = put_data(b"new", 0x21, 6, &[0xDD; 20], false, None);
+    let over = put_data(b"totp", 0x21, 8, &[0xEE; 20], false, None);
+    for raw in [
+        apdu(INS_PUT, 0, 0, &fresh),
+        apdu(INS_PUT, 0, 0, &over),
+        apdu(INS_DELETE, 0, 0, &named(&[b"totp"])),
+        apdu(INS_RENAME, 0, 0, &named(&[b"totp", b"totp2"])),
+        apdu(INS_RENAME, 0, 0, &named(&[b"totp", b"hotp"])),
+    ] {
+        sweep(stocked, sends(raw), &[]);
+    }
+}
+
 /// HOTP advances its counter with every code; a fault may fail the code, never
 /// hand out one for a counter already spent.
 #[test]
