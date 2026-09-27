@@ -1304,7 +1304,7 @@ the release carries the flag, the decision stays yours
   feature at all. The three `SEC-DISP-*` cells stay `gap` for that reason.
 
 - **The delete ledger carried the record half of the contract and not the value
-  half.** Stage 5A п.6 of the formal programme asks the `Fs` contract to
+  half.** Stage 5A item 6 of the formal programme asks the `Fs` contract to
   distinguish three outcomes — "value removed, metadata left", "both removed",
   "the medium refused" — and to name which each `force_delete` site requires.
   The three are already typed in `rsk-fs` as `Removal { value, record }`, and
@@ -1369,7 +1369,7 @@ the release carries the flag, the decision stays yours
   repo had.
 
 - **The model's five permission subsets were a scope claiming to be a
-  description, and both halves of stage 2 п.7 now answer for it.** `PermSets`
+  description, and both halves of stage 2 item 7 now answer for it.** `PermSets`
   carried five of the sixteen subsets of its four permission elements with a
   comment calling them "the sets a host actually asks for". Measured by driving
   `client_pin` over all 256 requestable permission bytes on both
@@ -2721,7 +2721,7 @@ the release carries the flag, the decision stays yours
   drift at one site and leave any assertion about the other four passing. All
   five now call one `const fn slot(fid) -> (usize, u8)`.
 
-  What that buys is stage 5A п.5 of the formal programme: the aliasing clauses
+  What that buys is stage 5A item 5 of the formal programme: the aliasing clauses
   `store_refinement_kani.rs` proves are drawn from `0..FID_LIMIT`, and under
   `cfg(kani)` that limit is 24 of 65 536 bits. A `const _: () = assert!` beside
   `slot` now enumerates all 65 536 FIDs and states that its two halves recompose
@@ -2794,7 +2794,7 @@ the release carries the flag, the decision stays yours
   when told "not 123456" (`123321`, `112233`, `112358`). The two-symbol rule is not a
   length argument: two symbols leave two smudges on the glass, and the space an onlooker
   or a fingerprint leaves is then the orderings of two marks, however long the PIN.
-  Every rule reads **code points**, so a repeated multi-byte character (`АААААА`) is
+  Every rule reads **code points**, so a repeated multi-byte character (`ÄÄÄÄÄÄ`) is
   refused where the old byte-wise check passed it, and a PIN that is not UTF-8 is refused
   rather than measured. The default build is untouched — it keeps the CTAP-standard
   four-code-point floor with no complexity rule. **bcdDevice → 0x0982.**
@@ -3960,7 +3960,7 @@ the release carries the flag, the decision stays yours
   number, two vocabularies widened by a member). Six also redden the real
   checkout. Six more did not apply on the first pass and the harness said so — an
   unapplied patch over a green suite reads exactly like a survivor.
-- **The two registries are one graph.** Stage 1B п.3's link vocabulary less
+- **The two registries are one graph.** Stage 1B item 3's link vocabulary less
   `contradicts`: `supports` names registry properties, `depends_on` and `refines`
   name entries here, and `discharges` names a constant of the first registry —
   with `covers`/`discharges` held to agree, so the two files cannot hold two
@@ -4031,7 +4031,7 @@ the release carries the flag, the decision stays yours
   `test_assurance_gate.py` said "28 of 44" — while the tree has **46**
   MODELLED-ONLY rows, 28 of which carry a driven, killed code twin. The number is
   generated into `docs/assurance-vector.md` now and the four copies point at it,
-  which is 1A п.2's open class closed the way §7.1 asks rather than refreshed for
+  which is 1A item 2's open class closed the way §7.1 asks rather than refreshed for
   the next reader to find stale again.
 
 - **The first closed slice's raw evidence bundle, held to stage 1A's ten-group

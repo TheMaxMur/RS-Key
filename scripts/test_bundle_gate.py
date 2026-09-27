@@ -79,7 +79,7 @@ def tree(tmp_path):
     under its own floor and make every case in this file fail for the wrong
     reason — the failure mode this table exists to refuse.
 
-    The slice page comes too, because `METHODS` is now held against п.3 and a
+    The slice page comes too, because `METHODS` is now held against item 3 and a
     fixture without it would report a missing page in every case here — the
     fixture asserted instead of the rule.
     """

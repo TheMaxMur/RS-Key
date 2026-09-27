@@ -870,7 +870,7 @@ def claims(rows):
 def per_column(root, rows):
     """(column, kind, published, placed, unplaced) for every built image.
 
-    The rollup roadmap §1B п.7 asks for by name and the tree did not have. Its
+    The rollup roadmap §1B item 7 asks for by name and the tree did not have. Its
     columns come from `matrix_gate` and NOT from the ledger: a cell nobody wrote
     is a `gap`, so counting gaps needs the derived list of images, and asking the
     ledger how many images exist would be a second answer to a question one gate
@@ -938,7 +938,7 @@ def outstanding(root, rows):
 def packet(root, rows):
     """The reviewer's packet for THIS commit: what to reproduce, and with what.
 
-    Roadmap §1B п.7 asks for it and the tree had no such output — 0 mentions. It
+    Roadmap §1B item 7 asks for it and the tree had no such output — 0 mentions. It
     is small on purpose: the assurance CASE is stage 12, and what 1B owes is that
     a reviewer arriving at a release commit is not left to find the artifacts by
     reading the history. So every line here is derived — the artifacts from the

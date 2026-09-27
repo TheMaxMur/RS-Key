@@ -460,12 +460,12 @@ fn pin_length_is_measured_in_code_points() {
         ),
         Err(CtapError::PinPolicyViolation)
     );
-    // "тест" — 4 code points, 8 bytes.
+    // "ÄÖÜß" — 4 code points, 8 bytes.
     run(
         &mut fs,
         &mut rng,
         &mut state,
-        &plat.set_pin_req("тест".as_bytes()),
+        &plat.set_pin_req("ÄÖÜß".as_bytes()),
         &mut out,
     )
     .unwrap();

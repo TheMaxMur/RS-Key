@@ -122,7 +122,7 @@ Thirteen rules, and the first is the one that earns the file:
   runtime sites ([`check_page_sections`]). Six rows were already wrong about the
   first half in the small.
 
-`contradicts` is the one link kind of stage 1B п.3 left out. No pair in this
+`contradicts` is the one link kind of stage 1B item 3 left out. No pair in this
 registry contradicts another, so the field would have no instance — and a rule
 whose only exercise is its own mutation is the thing this programme keeps finding
 switched off. It goes in when a real pair arrives.
@@ -1298,7 +1298,7 @@ def check_covered_files(name, entry, findings):
 
 #: `assurance/board/<ID>.toml`: the raw record a hardware measurement leaves
 #: behind, and the reason it is a FILE rather than three more sentences in the
-#: registry. Stage 2 п.9 asks for the board, the stepping, the boot
+#: registry. Stage 2 item 9 asks for the board, the stepping, the boot
 #: configuration, the firmware hash, the cut method, the first-boot capture and
 #: BOTH values -- and the split below is what makes the file worth writing before
 #: the run: the PLAN half is knowable in advance and the RESULT half is not, so
@@ -1921,8 +1921,8 @@ def check_bundles(root, ids, findings):
 #: The page that publishes what this project does NOT defend against, and the one
 #: an `accepted-risk` row has to point INTO. `scripts/test_threat_gate.py` has a
 #: case recording it as cited by nothing yet, and that was literal: before this
-#: rule, ZERO rows of any `assurance/*.toml` named it, so stage 9 п.5 and stage 10
-#: п.5 — "the accepted risk is published" — were both claims about a page no
+#: rule, ZERO rows of any `assurance/*.toml` named it, so stage 9 item 5 and stage 10
+#: item 5 — "the accepted risk is published" — were both claims about a page no
 #: register referenced and no gate could check.
 LIMITATIONS = pathlib.Path("docs/limitations.md")
 
@@ -2215,7 +2215,7 @@ def settled_freshness(root, registered, tree):
 def check_freshness(name, entry, findings, vector):
     """A settled row is DATED, and only a settled row is.
 
-    Stage 10 п.3 asks that an assumption mark its dependent claims stale, and
+    Stage 10 item 3 asks that an assumption mark its dependent claims stale, and
     `grep -c stale` over this file answered 0: the registry had `revalidated_by`,
     a sentence naming what would unsettle a row, and no machine could tell whether
     that had happened. `evidence_gate` had the machine and reads bundles, not this
@@ -2258,7 +2258,7 @@ def check_freshness(name, entry, findings, vector):
 
 def inherits(name, registered):
     """What goes stale with `name`: the properties it supports, then the rows that
-    rest on it. Stage 10 п.3's "dependent claims", derived from the links the
+    rest on it. Stage 10 item 3's "dependent claims", derived from the links the
     registry already carries rather than from a second list of them.
     """
     onward = sorted(
@@ -2661,7 +2661,7 @@ def render(root, registered=None, dated=None):
         "",
         "## The graph",
         "",
-        "Stage 1B п.3's link vocabulary, less `contradicts`: no pair here"
+        "Stage 1B item 3's link vocabulary, less `contradicts`: no pair here"
         " contradicts another, and a link kind with no instance is a rule whose"
         " only exercise is its own mutation.",
         "",

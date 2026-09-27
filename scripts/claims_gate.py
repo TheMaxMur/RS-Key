@@ -3,7 +3,7 @@
 # Copyright (C) 2026 RS-Key contributors
 """Hold every published sentence about a registered property to the registry.
 
-Stage 0 п.3 and the last exit of stage 4 are ONE predicate — "a public claim
+Stage 0 item 3 and the last exit of stage 4 are ONE predicate — "a public claim
 about a P0-family id is generated from the registry; one written by hand fails on
 a docs row" — and it was closed by nothing. Measured before this file existed:
 four false hand-written sentences, including "`SEC-FIDO-001` … PROVEN on

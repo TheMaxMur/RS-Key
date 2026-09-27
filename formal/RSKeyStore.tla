@@ -91,7 +91,7 @@ CONSTANTS
     BugMetaDeleteDropsOnFault,
     \* fs.rs:786 -- `self.storage.write(EF_META, &out[..w])?`. The model faulted the
     \* metadata READ in two places and never the WRITE, so the one step that can
-    \* lose every record at once was the only one with no failing arm (stage 2 п.1).
+    \* lose every record at once was the only one with no failing arm (stage 2 item 1).
     \* A failed write leaves `meta` untouched, which is a CLAIM about the backend
     \* and not a fact: it holds only because an append is old-or-new per item. This
     \* switch denies that -- the blob afterwards is an ARBITRARY subset -- so

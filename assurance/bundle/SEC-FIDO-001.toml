@@ -3,7 +3,7 @@
 #
 # THE FIRST CLOSED P0-LAUNCH SLICE, as raw evidence.
 #
-# Stage 1A п.3's ten-group contract in current formats, unabridged, so that
+# Stage 1A item 3's ten-group contract in current formats, unabridged, so that
 # stage 1B's schema gets a real migration fixture instead of data scattered
 # across logs. `scripts/bundle_gate.py` holds it: ten groups, a leaf floor per
 # group, every artifact still in the tree at the byte count recorded beside it,
@@ -408,7 +408,7 @@ statement = "PermSets, five of the sixteen subsets, is the set a host can actual
 kind = "model fidelity"
 discharger = "reading the two production sites that mint permissions"
 expressible = "no — a set, not a boolean"
-registered = "yes — assurance/platform.toml PLAT-MODEL-001, pending on stage 2 п.7"
+registered = "yes — assurance/platform.toml PLAT-MODEL-001, pending on stage 2 item 7"
 
 [[assumption]]
 id = "AS-AUTH-6"

@@ -49,7 +49,7 @@
 # metadata
 #   drops-head     the fid can carry an EF_META head and the drop must go with
 #                  the value. The three `delete` spellings' postconditions differ
-#                  nowhere else, so this is the axis §5A п.6 asks each site to
+#                  nowhere else, so this is the axis §5A item 6 asks each site to
 #                  name
 #   none           the fid carries no head — heads are minted on PIV key fids
 #                  alone (`head_minters` below, derived), so the metadata half

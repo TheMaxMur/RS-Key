@@ -944,7 +944,7 @@ run "bundle bounds table"      python scripts/bounds_gate.py
 # comment, a .github/*.json, SECURITY.md and eighteen more, all driven at
 # exit 0. `formal/runs.toml` itself and CHANGELOG.md are the two carve-outs.
 run "published run-counts"     python scripts/run_count_gate.py
-# And what the pages SAY a property IS. Stage 0 п.3 and the last exit of stage 4
+# And what the pages SAY a property IS. Stage 0 item 3 and the last exit of stage 4
 # are one predicate -- a public claim about a registered id is generated, and one
 # written by hand fails on a docs row -- and this file carried no docs row at all,
 # so four false sentences including "`SEC-FIDO-001` ... PROVEN on hardware" in

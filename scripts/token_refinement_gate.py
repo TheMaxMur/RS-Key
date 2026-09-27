@@ -70,7 +70,7 @@ EXPORT = Path("formal/generated/token_relation.txt")
 # derivation; re-deriving the axis is what item 0 exists to prevent.
 MATRIX = Path("docs/assurance-matrix.md")
 
-# Roadmap stage 4 п.4: every production writer is one of these three.
+# Roadmap stage 4 item 4: every production writer is one of these three.
 DISPOSITIONS = ("step", "stutter", "out-of-scope")
 #: Three writer axes and three GUARD axes. The token half was ledgered and the
 #: other three clauses of `NoAuthorizationBypass` — the walk's owning channel,

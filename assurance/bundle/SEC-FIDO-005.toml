@@ -9,8 +9,8 @@
 #
 # Three things about it are worth reading before the table:
 #
-#  * `FORMAL_VERIFICATION_ROADMAP.md:2538-2543` says this property "числится в
-#    `threat_clauses.toml` `[[untraced]]` с вердиктом `missing-clause`", and that
+#  * `FORMAL_VERIFICATION_ROADMAP.md:2538-2543` says this property "is listed in
+#    `threat_clauses.toml` `[[untraced]]` with the verdict `missing-clause`", and that
 #    the stage-4 exit is therefore unreachable BY DEFINITION. That is STALE.
 #    `assurance/properties.toml:123` roots it at `TM-HOST-CRED-REVOCABLE` today
 #    and `scripts/threat_gate.py` serves the edge; the only `[[untraced]]` row

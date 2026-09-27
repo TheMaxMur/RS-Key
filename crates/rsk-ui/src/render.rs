@@ -100,7 +100,7 @@ const ALLOW_FILL: Rgb565 = theme::APPROVE;
 /// Corner radius for the floating buttons — the design's 11px, matching [`CARD_RADIUS`].
 const BTN_RADIUS: u32 = 11;
 /// Corner radius for the pad / stepper key surfaces — the design's 9px, tighter than the
-/// 11px buttons (handoff: "Клавиатура PIN: … скругление 9").
+/// 11px buttons (handoff: "PIN keypad: … corner radius 9").
 const KEY_RADIUS: u32 = 9;
 /// Fill for the numeric PIN keys and the settings −/+ steppers — a dark neutral card
 /// ([`theme::KEY_BG`]) edged with [`theme::KEY_BORDER`]. The affirmative OK is a solid

@@ -177,7 +177,7 @@ FORMAL = pathlib.Path("formal")
 #: gates and `tools/` is a CLI, and both resolved a KAT row at exit 0 before this.
 RUNNERS = pathlib.Path("tests")
 
-#: Stage 1A п.3's ten groups, in its order, with the table each is spelled as.
+#: Stage 1A item 3's ten groups, in its order, with the table each is spelled as.
 #: The names are the contract's; renaming one here would be renaming the
 #: contract, so a group that is gone reads as gone.
 GROUPS = (
@@ -325,8 +325,8 @@ UNIT_TEST = re.compile(r"#\[test\]")
 #: is a test and not what it checks.
 PYTEST_FUNCTION = "test"
 
-#: §4.1's method vocabulary, in `docs/authorization-slice.md` п.3's order — held
-#: to that page by [`vocabulary_problems`], because until it was, "in п.3's order"
+#: §4.1's method vocabulary, in `docs/authorization-slice.md` item 3's order — held
+#: to that page by [`vocabulary_problems`], because until it was, "in item 3's order"
 #: was a sentence and not a rule: both rosters were extended BY HAND when
 #: `KAT/differential` arrived, and nothing anywhere compared them. A word
 #: outside it is a finding and not a shrug: [`METHOD_KIND`] reads this field, so
@@ -873,12 +873,12 @@ def vocabulary_problems(text: str | None, methods=METHODS) -> list[str]:
     """[`METHODS`] against the page it says it is a copy of, in order.
 
     Two registers extended by hand on the same day and compared by nothing: the
-    tenth word went into `METHODS`, `METHOD_KIND` and п.3 in one commit and would
+    tenth word went into `METHODS`, `METHOD_KIND` and item 3 in one commit and would
     have gone into one of them just as quietly. `methods` is a PARAMETER so both
     directions are drivable without patching the roster the shipped run is judged
     by — the same shape as `bounds_gate`'s floors.
 
-    ORDER as well as membership, because `METHODS` claims п.3's order in as many
+    ORDER as well as membership, because `METHODS` claims item 3's order in as many
     words, and a set equality would leave that half of the sentence a promise.
     """
     if text is None:
@@ -895,7 +895,7 @@ def vocabulary_problems(text: str | None, methods=METHODS) -> list[str]:
         ]
     if published != tuple(methods):
         return [
-            f"{SLICE} п.3 publishes {list(published)} and this gate reads"
+            f"{SLICE} item 3 publishes {list(published)} and this gate reads"
             f" {list(methods)} — one was extended by hand and the other was not."
             " The page is what a reader is held to; make them the same list, in"
             " the same order"
@@ -1752,7 +1752,7 @@ def audit_one(root: pathlib.Path, bundle: pathlib.Path) -> tuple[list[str], str]
     for group in GROUPS:
         if group not in doc:
             findings.append(
-                f"{bundle}: group `{group}` is missing — stage 1A п.3 blocks the exit"
+                f"{bundle}: group `{group}` is missing — stage 1A item 3 blocks the exit"
                 " on any field of the contract, not on most of them"
             )
     for group in sorted(set(doc) - set(GROUPS)):

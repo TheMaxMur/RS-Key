@@ -2,7 +2,7 @@
 # Copyright (C) 2026 RS-Key contributors
 """`METHODS` against the page it says it is a copy of.
 
-`bundle_gate.METHODS` carried "in `docs/authorization-slice.md` п.3's order" as a
+`bundle_gate.METHODS` carried "in `docs/authorization-slice.md` item 3's order" as a
 comment, and nothing compared the two. Both were extended by hand when
 `KAT/differential` arrived — the same day, in the same commit, which is exactly
 the pair that survives a green gate when only one of them moves.
@@ -10,7 +10,7 @@ the pair that survives a green gate when only one of them moves.
 Driven through `bundle_gate.audit` for the page side, so what the arms falsify is
 the `slice evidence bundle` ROW and not a helper nothing calls. Measured by hand
 on the shipped tree, `python scripts/bundle_gate.py` without a pipe: a word added
-to `METHODS` alone, a word added to п.3 alone, the item's heading renamed and the
+to `METHODS` alone, a word added to item 3 alone, the item's heading renamed and the
 two lists reordered are exit 1 each, and removing the call from `audit` puts the
 first two back to exit 0.
 
@@ -69,7 +69,7 @@ def test_a_word_in_the_roster_and_not_on_the_page():
 
 
 def test_the_same_words_in_a_different_order(tmp_path):
-    """`METHODS` claims п.3's ORDER in as many words. A set equality leaves that
+    """`METHODS` claims item 3's ORDER in as many words. A set equality leaves that
     half of the sentence a promise: with one, this case is green."""
     root = T.tree(tmp_path)
     edit_page(
@@ -97,7 +97,7 @@ def test_the_page_going_away_is_not_an_empty_roster(tmp_path):
 
 
 def test_the_separator_keeps_a_slash_inside_a_word_and_rejoins_a_wrap():
-    """Whitespace on BOTH sides is what lets п.3 spell `KAT/differential` at all,
+    """Whitespace on BOTH sides is what lets item 3 spell `KAT/differential` at all,
     and the page wraps mid-list — `bounded proof` arrives split across a newline
     and three spaces of indent."""
     text = (

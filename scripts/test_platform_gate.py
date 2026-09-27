@@ -1329,7 +1329,7 @@ def test_a_board_result_owes_a_capture_not_just_a_file_that_exists(tree):
     assert tree.problems() == []
 
 
-# --- the raw record a hardware measurement leaves behind (stage 2 п.9) --------
+# --- the raw record a hardware measurement leaves behind (stage 2 item 9) --------
 #
 # The registry already obliged a stepping and an artifact PATH; what it could not
 # say was what has to be IN the artifact, so a discharge could cite any file that
@@ -2490,7 +2490,7 @@ def test_the_freshness_of_a_row_is_on_the_page(tree):
 
 
 def test_what_goes_stale_with_a_row_is_derived_from_its_own_links(tree):
-    """Stage 10 п.3's `dependent claims`, from the links the registry carries."""
+    """Stage 10 item 3's `dependent claims`, from the links the registry carries."""
     registered = platform_gate.entries(tree.root, [])
     assert platform_gate.inherits("PLAT-BUILD-001", registered) == ["SEC-T-001"]
     tree.edit(
@@ -2506,7 +2506,7 @@ def test_what_goes_stale_with_a_row_is_derived_from_its_own_links(tree):
 
 # --- rule 10: an accepted risk says where it is published ----------------------
 #
-# Stage 9 п.5 and stage 10 п.5 both turn on it and both were unverifiable:
+# Stage 9 item 5 and stage 10 item 5 both turn on it and both were unverifiable:
 # measured, ZERO rows of any `assurance/*.toml` referenced `docs/limitations.md`,
 # and `scripts/test_threat_gate.py` has a case recording it as cited by nothing.
 # The obligation is DERIVED from the page — a row is owed a pin when the page

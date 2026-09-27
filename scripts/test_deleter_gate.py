@@ -224,7 +224,7 @@ def test_a_caller_that_became_a_different_call_is_rejected(tree, capsys):
 
 
 def test_a_read_answer_turned_into_a_discard_is_rejected(tree, capsys):
-    """The freshness trigger §5A п.6 asks for: the disposition is a claim about
+    """The freshness trigger §5A item 6 asks for: the disposition is a claim about
     what the site does, so quietly making a must-read site discard the answer
     has to be red rather than a label mismatch nobody looks at."""
     tree.edit("crates/rsk-app/src/lib.rs", "    fs.delete_key(KEY)\n", "    let _ = fs.delete_key(KEY)\n")

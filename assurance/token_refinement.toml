@@ -5,7 +5,7 @@
 # domains, flash keys, the Fs write API, the permission set and the module graph,
 # then refuses any unowned writer/outcome producer.
 #
-# `disposition` is roadmap stage 4 п.4, and every entry answers it: `step`
+# `disposition` is roadmap stage 4 item 4, and every entry answers it: `step`
 # implements the named abstract Step (the default, and the only one that may
 # carry an `op`), `stutter` moves security-visible state the abstraction does not
 # observe, `out-of-scope` is a real gate outside the abstraction's vocabulary.
