@@ -11,8 +11,8 @@ publish = false
 # public matrix A on the fly (one polynomial resident instead of the full k×l)
 # and transform in place — so ML-DSA-65 fits the ~222 KiB main stack where the
 # by-value `fips204` crate (~290 KiB) overflows it. `no_std`, no alloc, no unsafe.
-# The leaf math is byte-for-byte checked against NIST ACVP KATs (both parameter
-# sets, keygen/sign/verify) and by Kani proofs over the reductions and rounding.
+# The leaf math is byte-for-byte checked against NIST ACVP KATs (all three sets,
+# keygen/sign/verify); Kani proves the rounding only, not the reductions.
 [lints]
 workspace = true
 

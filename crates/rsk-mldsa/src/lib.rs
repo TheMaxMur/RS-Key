@@ -11,8 +11,8 @@
 //! fits the ~222 KiB main stack where the by-value `fips204` crate overflows it.
 //!
 //! `no_std`, no alloc, no `unsafe`. Byte-for-byte compatible with FIPS 204: host
-//! tests check both parameter sets against NIST ACVP KATs (keygen/sign/verify),
-//! with Kani proofs over the reductions, rounding, and bit-packing.
+//! tests check all three parameter sets against NIST ACVP KATs (keygen/sign/verify);
+//! Kani proves the rounding (`decompose`, the hint round-trip), not the reductions.
 
 mod encode;
 mod ntt;
@@ -32,7 +32,7 @@ mod testvectors;
 use params::{ML_DSA_44, ML_DSA_65, ML_DSA_87};
 use sign::{ExpandedKey, verify};
 
-/// Length of the key-generation seed ξ (both parameter sets).
+/// Length of the key-generation seed ξ (every parameter set).
 pub const SEED_LEN: usize = 32;
 
 /// ML-DSA-44 serialized public-key length.

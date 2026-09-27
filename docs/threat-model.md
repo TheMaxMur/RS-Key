@@ -644,8 +644,8 @@ streams the FIPS 204 matrix A on the fly so even ML-DSA-87's keygen+sign fit
 the RP2350 stack — measured, ML-DSA-87's keygen runs 69 KiB deep and its
 signing frame is 65 KiB, against a 205 KiB ceiling. It is hand-written, so its constant-time posture is a source-level
 claim (branch-free reductions, masked norm checks, no secret division), not
-proven at machine code. It is checked byte-for-byte against NIST ACVP KATs,
-with Kani proofs over the reductions and rounding. ML-KEM-768 is compiled in as
+proven at machine code. It is checked byte-for-byte against NIST ACVP KATs;
+Kani proves its rounding, not its reductions. ML-KEM-768 is compiled in as
 scaffolding but nothing calls it until a CTAP PQC PIN/UV protocol exists.
 None of these has a third-party audit yet, the same standing as the rest of
 the RustCrypto stack, tracked via cargo-audit/deny.
