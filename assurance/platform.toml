@@ -538,9 +538,15 @@ covers = [
 id = "PLAT-UNSAFE-014"
 class = "toolchain"
 statement = "The dead-stack sweep writes, and the measurement build's probe reads, only the stack of the core it runs on, between the floor that core's `MSPLIM` holds and its stack pointer, where no live value is."
-discharge = "Read firmware/src/sweep.rs: `dead_region` takes the floor from `MSPLIM` and the top from `MSP`, both registers of the core the code runs on, and is empty while `MSPLIM` reads 0; the sweep stores zero words over that range and the probe reads bytes from it. Read the callers: firmware/src/worker.rs after each transport request (before a queued reboot runs), each keyboard OTP frame and each typed ticket, firmware/src/display.rs's `sweep_dead_stack` hook after each flow the panel runs, and firmware/src/core1.rs after each search, all in thread mode on the core whose stack they sweep, after the frames that did the work have returned. What is owed is what no reading of the source settles: that the linked image keeps the stores, and how much of what a request leaves the sweep removes, which tests/55_stack_residue.py measures on a `--features bench` board."
+discharge = "Read firmware/src/sweep.rs: `dead_region` takes the floor from `MSPLIM` and the top from `MSP`, both registers of the core the code runs on, and is empty while `MSPLIM` reads 0; the sweep stores zero words over that range and the probe reads bytes from it. Read the callers: firmware/src/worker.rs after each transport request (before a queued reboot runs), each keyboard OTP frame and each typed ticket, firmware/src/display.rs's `sweep_dead_stack` hook after each flow the panel runs, and firmware/src/core1.rs after each search, all in thread mode on the core whose stack they sweep, after the frames that did the work have returned. What no reading of the source settles -- that the linked image keeps the stores, and how much of what a request leaves the sweep removes -- was measured on 2026-09-27 by tests/55_stack_residue.py on a `--features bench,no-touch` build of e54914a9, in three runs, each PASS against the `expected` assurance/board/PLAT-UNSAFE-014.toml committed before the board was read: with the sweep stopped the probe found the HMAC-SHA1 outer-pad block that `expected` names, and with it running none of the three patterns. That is one residue class after one command, on core0; core1's sweep is read from the source alone."
 discharge_owner = "maintainer"
-status = "pending"
+status = "discharged"
+evidence = [
+  "assurance/board/PLAT-UNSAFE-014-2026-09-27-run.log",
+]
+board_revision = "RP2350 A4"
+revalidated_by = "The sweep and what it rests on: firmware/src/sweep.rs (the region and the stores), its callers in firmware/src/worker.rs, firmware/src/display.rs and firmware/src/core1.rs, the floor each core's `MSPLIM` is given in firmware/src/main.rs and firmware/src/core1.rs, and the probe in firmware/src/vendor.rs with tests/55_stack_residue.py, which reads it. A change to any of them, a new version of the `hmac` crate whose padded block the run looks for, or another RP2350 stepping re-runs tests/55_stack_residue.py."
+evidence_commit = "e54914a9884bb6b1bd0596896eb93700359f8e52"
 failure_direction = "memory-safety: a store under a live frame corrupts it, from a floor or top read on the wrong core or a sweep called with a frame still live under the pointer; confidentiality: a sweep skipped or elided leaves a request's secrets in dead stack"
 refines = ["PLAT-TOOLCHAIN-002"]
 covers = [
