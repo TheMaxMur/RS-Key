@@ -938,6 +938,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The gate is two runners: `scripts/check.sh` on every commit,
+  `scripts/check-assurance.sh` once before a pull request** — host only, no
+  `bcdDevice` bump. The 26 rows of the TLA+ plumbing (generated
+  configurations, citations, scopes, verdicts, the co-refutation lint, the trace
+  and token refinements) and of the registries held against the prose
+  (assurance, build matrix, threat model, standing and platform assumptions,
+  evidence vector, bounds, published run counts and claims, the release
+  manifest, the toolchain TCB, the 11C record) move to the new runner, with the
+  32 tables behind them under a pytest `assurance` marker: `check.sh` collects
+  `scripts/` with `-m "not assurance"` and the new runner with `-m assurance`,
+  so an unmarked new table runs per commit and none falls between the two. CI
+  runs the new runner as its own `assurance` job on every pull request — no
+  path filter, since its rows read `docs/` — and weekly in deep-checks.
+  `run`, the signal traps and the per-checkout pytest base are shared through
+  `scripts/gate-lib.sh`. `docstring_count_gate.py` and the `SUITE_CASES`
+  equality pin are gone. AGENTS.md, CONTRIBUTING.md, README.md and
+  docs/testing.md carry the rule.
+
 - **The certificate builder signs with an EC key and nothing else** — refactor,
   no behaviour change. Since GENERATE stopped writing a self-signed certificate
   (0x0A15), every certificate the card makes is signed by an EC key, PIV's F9

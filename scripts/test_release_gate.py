@@ -54,6 +54,8 @@ import claims_gate
 import gate_lines
 import release_gate
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 WORKFLOW = ".github/workflows/release-build.yml"
@@ -1711,42 +1713,13 @@ def test_the_shipped_map_cannot_derive_the_frontier():
     assert release_gate.UNSHAPED in release_gate.SUBJECTS
 
 
-def test_check_sh_runs_this_row():
+def test_check_assurance_sh_runs_this_row():
     """The row, with its flags — a name match cannot see a `--write` typed into
-    the gate row, which would rewrite the page instead of diffing it.
-
-    Where the row SITS was argued from a line number that has since moved, so the
-    argument is restated rather than kept: the `SEC-FIDO-002` citations the first
-    version reasoned about were re-anchored on the row's NAME by `d544aa1`, and
-    that reason is gone. The conclusion holds for another one, asserted below
-    rather than written: every line-numbered citation of `check.sh` in the tree
-    is ABOVE this row, so inserting it renumbered none of them — and the highest
-    of them is the `assurance-trace image identity` row that `SEC-FIDO-006`'s
-    discharge rests on, cited twice.
-    """
-    text = (ROOT / "scripts/check.sh").read_text()
+    the gate row, which would rewrite the page instead of diffing it."""
+    text = (ROOT / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(text, "scripts/release_gate.py")
     code = [gate_lines.split_at_comment(body)[0]
             for _indent, body in gate_lines.logical_lines(text)]
     rows = [line for line in code if "scripts/release_gate.py" in line]
     assert rows == ['run "release manifest"        python scripts/release_gate.py'], rows
 
-
-def test_this_row_sits_below_every_line_numbered_citation_of_check_sh():
-    """The placement argument above, as a measurement rather than a sentence.
-
-    Inserting a row renumbers every line under it, and this tree cites `check.sh`
-    by line from `assurance/bundle/`. The row went in below all of them, so it
-    moved none — and a later row that does not would break a discharge's citation
-    silently, since a shifted line still resolves to something.
-    """
-    needle = "scripts/check.sh" + ":"
-    found = subprocess.run(
-        ["git", "-C", str(ROOT), "grep", "-hoE", re.escape(needle) + r"[0-9]+"],
-        capture_output=True, text=True,
-    )
-    cited = sorted({int(hit.rsplit(":", 1)[1]) for hit in found.stdout.split()})
-    assert cited, "nothing cites check.sh by line any more; drop this case"
-    text = (ROOT / "scripts/check.sh").read_text().splitlines()
-    row = next(i for i, line in enumerate(text, 1) if "scripts/release_gate.py" in line)
-    assert row > max(cited), f"this row is at {row} and {max(cited)} is cited"

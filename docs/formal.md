@@ -194,7 +194,7 @@ the faithful versions are `unreachable` — defence in depth whose removal chang
 nothing observable. A red run is not evidence until the reason it went red is
 read.
 
-The merge gate cheaply checks the closed roster, patch anchors, expectations,
+The assurance gate cheaply checks the closed roster, patch anchors, expectations,
 floors and generated table freshness. The expensive full measurement runs
 weekly next to `cargo-mutants`; `run --write-readme` publishes the 28-row table
 only after measuring every executable phase-2 patch.
@@ -202,7 +202,7 @@ only after measuring every executable phase-2 patch.
 ## The registry
 
 Every property TLC checks has an entry in `assurance/properties.toml` — id,
-statement, source and status, nothing else hand-written. A `check.sh` row,
+statement, source and status, nothing else hand-written. A `check-assurance.sh` row,
 `scripts/assurance_gate.py`, derives the rest per run: which module defines
 the property, which configurations check it, which mutants target it, which
 Kani harnesses, fuzz targets, Rust files and device tests carry its name. The
@@ -268,4 +268,4 @@ last model widening did to the margin. The
 `floors.txt` records for it, and a hosted runner has already died under less, so
 it is run by hand on the machine above.
 The registry and co-refutation lint gates run on every pull request as part of
-`check.sh`; the full co-refutation roster runs weekly.
+`check-assurance.sh`; the full co-refutation roster runs weekly.

@@ -65,6 +65,10 @@
 #          rather than up to a week later. The `liveness` tier is deliberately
 #          not here — it needs a 12g heap, and the kani `heavy` runner has
 #          already died twice under a harness that peaks at 19.9 GiB.
+#   assurance — scripts/check-assurance.sh, the gate's second layer: the TLA+
+#          plumbing and the registries held against the prose. ci.yml runs it on
+#          every pull request; this re-checks `main` weekly. Full history, like
+#          the pull request job, because the evidence rows read `git log`.
 #
 # `complexity` used to be here and is gone: scripts/check.sh already runs
 # scripts/complexity_gate.sh on every pull request, so the row re-proved a merge
@@ -83,6 +87,7 @@
 #   ./scripts/kani.sh light1   ./scripts/kani.sh heavy   # what the weekly rows run
 #   nix develop -c ./scripts/mutants-all.sh   (MUTANTS_SHARD=2/12 for one shard)
 #   nix develop -c python scripts/comutate.py run
+#   nix develop -c ./scripts/check-assurance.sh
 #   nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 --target <host> --workspace --exclude firmware --exclude rsk-wipe
 
 name: deep-checks
@@ -531,7 +536,7 @@ jobs:
   # The row fails on RED (a mutant that should fire and did not, or an invariant
   # that broke), on FLOOR (a GREEN that got smaller than its recorded floor) and
   # on VACUOUS (a spec nothing enabled). `scripts/test_run_tlc.py`, collected by
-  # the merge gate, keeps the roadmap's four corruptions: broken jar, a Solo
+  # check-assurance.sh, keeps the roadmap's four corruptions: broken jar, a Solo
   # invariant that misses its mutant, one-state VACUOUS, and a muted Mut switch.
   # Direct RED and FLOOR cases make all three job verdict boundaries explicit,
   # and four more hold every reader of a log with a NUL hole in it — the state
@@ -598,3 +603,26 @@ jobs:
           name: formal-logs-${{ github.run_id }}-${{ matrix.shard }}
           path: formal/out/
           if-no-files-found: ignore
+
+  # The gate's second layer again, weekly over `main` (see the header).
+  # `fetch-depth: 0`: every other checkout here is shallow, and the evidence rows
+  # go red on a shallow clone.
+  assurance:
+    if: github.event.schedule != '17 5 * * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: check-assurance.sh — TLA+ plumbing, registries against prose
+        run: nix develop -c ./scripts/check-assurance.sh

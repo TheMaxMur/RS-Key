@@ -29,7 +29,7 @@ in one — and because the spellings TLC accepts and this tree has never used
 (`CONSTANT x = v`, `PROPERTY Name`) cannot be exercised by a file that does not
 carry them. And the last four run the SCRIPT, over a throwaway git checkout:
 everything else calls `audit()`, so the row's exit code — the only thing
-`check.sh` reads — was held by nothing, and `run()` returning 0 with every
+the runner reads — was held by nothing, and `run()` returning 0 with every
 finding printed passed all 182 cases of the first edition.
 """
 
@@ -42,6 +42,8 @@ import sys
 import pytest
 
 import verdict_gate
+
+pytestmark = pytest.mark.assurance
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 HERE = pathlib.Path(__file__).resolve().parent
@@ -822,10 +824,10 @@ def test_the_configuration_floor_catches_a_glob_that_found_nothing(tmp_path):
     assert any("no such configuration, so a `Fix*` constant" in p for p in problems), problems[:3]
 
 
-# --- the row as check.sh runs it ------------------------------------------
+# --- the row as the gate runs it -------------------------------------------
 #
 # Everything above calls `audit()`, so the row's EXIT CODE — the only thing
-# `check.sh` reads — was held by nothing: `run()`'s `return 1` turned into
+# the runner reads — was held by nothing: `run()`'s `return 1` turned into
 # `return 0` survived the whole table, printing all fourteen findings and passing
 # the row. Nor was `decoded()` ever on the path, because a case that hands the
 # registry over as TEXT cannot exercise the read that keeps its bytes.

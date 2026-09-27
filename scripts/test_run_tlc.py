@@ -28,6 +28,8 @@ import tomllib
 
 import pytest
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNNER = ROOT / "formal" / "run-tlc.sh"
 

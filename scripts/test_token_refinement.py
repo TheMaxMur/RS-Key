@@ -33,6 +33,8 @@ import pytest
 
 import gate_lines
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GUARD = ROOT / "scripts/token_refinement.sh"
 
@@ -156,10 +158,10 @@ def test_the_exporter_keeps_a_java_io_tmpdir_of_its_own(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_check_sh_runs_the_row_as_a_check_and_not_a_generation():
+def test_check_assurance_sh_runs_the_row_as_a_check_and_not_a_generation():
     """The flag is part of the wiring: `--generate` rewrites the tree and exits 0
     whatever it finds, so a row spelled that way could never be red."""
-    check = (ROOT / "scripts/check.sh").read_text()
+    check = (ROOT / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(check, "scripts/token_refinement.sh --check")
     assert not gate_lines.runs(check, "scripts/token_refinement.sh --generate")
 

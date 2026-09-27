@@ -26,6 +26,8 @@ import pytest
 
 import level11c_gate as g
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PAGE = ROOT / g.PAGE
 
@@ -128,8 +130,8 @@ def test_the_page_standing_still_while_the_tree_moves_is_refused(audit):
 def test_the_named_row_still_runs_this_guard():
     """The wiring, not the function.
 
-    A guard whose `check.sh` row nobody added is a guard the tree can delete with
-    the suite green — measured five times in this repo, once per new guard.
+    A guard whose `check-assurance.sh` row nobody added is a guard the tree can
+    delete with the suite green — measured five times in this repo, once per new guard.
     """
-    check = (ROOT / "scripts/check.sh").read_text()
+    check = (ROOT / "scripts/check-assurance.sh").read_text()
     assert "python scripts/level11c_gate.py" in check

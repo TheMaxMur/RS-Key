@@ -2179,9 +2179,9 @@ The pipeline, each stage falsifiable:
    a mapper that skips what it does not understand is a checker that stopped
    checking. The one state it keeps is the current selection, which decides
    `Reselect` vs `SelectOther` exactly as the Dispatcher's `reselect` flag
-   does. A `check.sh` row holds the committed `TraceSeamsData.tla` against the
-   committed trace (neither can drift alone), and the mapper carries its own
-   12-case mutation table.
+   does. A `check-assurance.sh` row holds the committed `TraceSeamsData.tla`
+   against the committed trace (neither can drift alone), and the mapper
+   carries its own 12-case mutation table.
 3. **Replay** — `TraceSeams.tla` extends the seam model with a position index:
    `TraceNext` at step `i` takes *exactly* the recorded action, so the whole
    behavior space is the one linear run and a step the model refuses leaves no
@@ -2374,7 +2374,7 @@ prose, and this one was until the suite landed.
 **And the pad is recorded but never varied**, which is the same shape one level
 down: `builtin_uv` is `false` in all 40 events, so both refusals it feeds — the
 mapper's and `load_events`' — are killed only by their unit cases and neither is
-killed by the `check.sh` row. Deleting either leaves `security-trace: GREEN`
+killed by the `check-assurance.sh` row. Deleting either leaves `security-trace: GREEN`
 untouched; measured. The claim this file may make is therefore that the scope is
 **stated and unit-tested**, not that the recording exercises it. Running the
 other arm needs `tools/emu --display` with a pad and a PIN typed on it, and the
@@ -2396,7 +2396,7 @@ Coverage moved with the session twice: commands 21 → 32 → **40**, steps
 new action — it adds the *states* two of them run in), gate boundaries
 3 → 5 → **7**, AMBIGUOUS still 0. `floors.txt` carries all four, and its GREEN trace rows are now **pinned** at
 `TraceSteps + 1` by `security_trace.py` rather than floored by hand — a floor is
-compared with `-lt`, and `check.sh` runs the mapper without `--mutations`, so the
+compared with `-lt`, and `check-assurance.sh` runs the mapper without `--mutations`, so the
 second GREEN row's own count was checked by nothing.
 
 The RED rows gained a column too. A mutant can go red for a defect it does not
@@ -2856,7 +2856,7 @@ on the ten exact RED rows**, which had had none of the four; the floor arms run
 on all 26 subjects that carry one, in both directions, because a guard that
 refuses a legitimate re-measurement is deleted the first week a model shrinks.
 Four more cases run the script itself over a throwaway git checkout, because an
-exit code is the only thing `check.sh` reads.
+exit code is the only thing `check-assurance.sh` reads.
 
 What it deliberately does not catch: which of several invariants a configuration
 checks a mutation actually breaks. Swap `R4cGateAnswers` for

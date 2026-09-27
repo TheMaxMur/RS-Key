@@ -33,6 +33,8 @@ import gate_lines
 import matrix_gate
 import platform_gate
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 #: Two images with no features, one with a feature that swaps a gate out, one
@@ -352,9 +354,9 @@ def test_this_checkout_passes():
     assert matrix_gate.run(ROOT) == 0
 
 
-def test_check_sh_runs_the_row():
+def test_check_assurance_sh_runs_the_row():
     """A guard nothing invokes can have its whole table deleted, suite green."""
-    assert gate_lines.runs((ROOT / "scripts/check.sh").read_text(), "scripts/matrix_gate.py")
+    assert gate_lines.runs((ROOT / "scripts/check-assurance.sh").read_text(), "scripts/matrix_gate.py")
 
 
 def test_the_shipped_matrix_is_the_one_the_generator_writes():

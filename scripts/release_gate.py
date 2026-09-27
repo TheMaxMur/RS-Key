@@ -31,7 +31,7 @@ record half is written into the region as [`OPEN`], with its cost, rather than
 faked with a placeholder.
 
 That is also the reason [`stable`] exists. A generated region is byte-diffed on
-every `check.sh` run, so a value that changes on every commit would leave the
+every gate run, so a value that changes on every commit would leave the
 region permanently dirty and the row a nuisance instead of a guard. Every value
 below is a function of a file's CONTENT, so it moves when that file moves and at
 no other time; the rule refuses any hex in the rendered region that names a
@@ -1569,7 +1569,7 @@ def body(root, job, packages, flavors, built, published) -> list[str]:
         + ", ".join(f"`{path}`" for path in PROCEDURE[:-1])
         + f" and `{PROCEDURE[-1]}`. Every command and every input below was read"
         " out of those files on the run that wrote this table; a file that no"
-        " longer says the same thing fails `check.sh`.",
+        " longer says the same thing fails `check-assurance.sh`.",
         "",
         "**This is a recipe, not a record.** It says what a release runs, over"
         " which inputs. It is bound to no tag, no commit and no artifact — see"
@@ -1641,7 +1641,7 @@ def body(root, job, packages, flavors, built, published) -> list[str]:
         "### The image each flavor is",
         "",
         "The build step and the reproducibility gate iterate the same list, and"
-        " a difference between them is a `check.sh` failure. Every published"
+        " a difference between them is a `check-assurance.sh` failure. Every published"
         f" image is `{NIX}`'s package of the same name.",
         "",
         "| Flavor | Published as | Build selection |",

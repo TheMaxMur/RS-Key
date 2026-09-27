@@ -35,6 +35,8 @@ import pytest
 import gate_lines
 import model_exception_gate as gate
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 #: A fixture module with one of each shape: a narrowing operand joined by `\\/`, a
@@ -604,13 +606,13 @@ def test_a_model_edit_that_touches_no_narrowing_stays_green(tmp_path):
     assert len(gate.exceptions(tmp_path)) == 5
 
 
-def test_check_sh_runs_this_row():
+def test_check_assurance_sh_runs_this_row():
     """The row, not the helper. `test_gate_scripts.py` asserts this over the
     `*_gate.py` glob as well; pinned here too, because that file is another
     agent's and a guard that asserts its own row is the convention eight of these
     already follow."""
-    text = (ROOT / "scripts/check.sh").read_text()
-    assert gate_lines.runs(text, "scripts/model_exception_gate.py"), "no check.sh row"
+    text = (ROOT / "scripts/check-assurance.sh").read_text()
+    assert gate_lines.runs(text, "scripts/model_exception_gate.py"), "no check-assurance.sh row"
 
 
 def test_a_finding_reaches_the_row_as_a_non_zero_exit(monkeypatch, capsys):

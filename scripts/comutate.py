@@ -86,7 +86,7 @@ SUCCESSFUL` is the only thing that verdict is read off now; anything else is
 
 Three modes:
 
-* `--lint` — the cheap closed-world half, a `check.sh` row. Every `Mut_*.cfg`
+* `--lint` — the cheap closed-world half, a gate row. Every `Mut_*.cfg`
   has exactly one entry and vice versa; every patch anchor resolves exactly
   once in the current tree (drifted code fails loudly instead of patching the
   wrong place); every patch names a slice and an expected verdict; the pending

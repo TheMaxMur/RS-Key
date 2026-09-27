@@ -9,6 +9,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import assumption_gate
 
+pytestmark = pytest.mark.assurance
+
 MODULE = """------------------------- MODULE Probe -------------------------
 EXTENDS Naturals
 

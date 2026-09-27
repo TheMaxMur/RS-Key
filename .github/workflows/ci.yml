@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Seven jobs:
+# Eight jobs:
 #   changes — what this change can possibly affect (`scripts/ci-scope.sh`), so a
 #             documentation edit does not build 24 firmware images. Gating is by
 #             `if:` on the jobs rather than `paths:` on the trigger: a skipped
@@ -39,6 +39,9 @@
 #   knobs   — the aggregate of those rows, and the name `main`'s ruleset requires.
 #             A required check has to be reported by a fixed name; a matrix
 #             reports one per row.
+#   assurance — the gate's second layer, `scripts/check-assurance.sh`: the TLA+
+#             plumbing and the registries held against the prose, run once
+#             before a pull request rather than per commit (AGENTS.md).
 
 name: ci
 
@@ -382,3 +385,25 @@ jobs:
             success | skipped) echo "knob builds: $RESULT" ;;
             *) echo "knob builds: $RESULT"; exit 1 ;;
           esac
+
+  # No `needs` and no `if`: its rows read docs/, and a documentation-only change
+  # is exactly what skips `check`. Full history, because the evidence rows read
+  # `git log` and go red on a shallow clone.
+  assurance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - name: check-assurance.sh — TLA+ plumbing, registries against prose
+        run: nix develop -c ./scripts/check-assurance.sh

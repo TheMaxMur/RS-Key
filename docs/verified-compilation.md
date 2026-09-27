@@ -87,7 +87,7 @@ producer, one more unreadable contract, and one more containment argument.
 
 ## The TCB delta
 
-`scripts/check.sh:"toolchain TCB registry"` prints the live roster, and
+`scripts/check-assurance.sh:"toolchain TCB registry"` prints the live roster, and
 `assurance/toolchain.toml` is what it prints from: 13 registered tools
 carrying 7 distinct roles, of which 12 name a file that pins them and 1 is
 unpinned against an open obligation. The FFI boundaries are the ten above. Of
@@ -140,7 +140,7 @@ rebuild bit-for-bit; a non-redistributable compiler in the build closure means
 only someone who has separately licensed it can do that.
 
 **The release pipeline has no place for a second language.** From
-`scripts/check.sh:"release manifest"`: 15 steps over 6 subjects. Three of the
+`scripts/check-assurance.sh:"release manifest"`: 15 steps over 6 subjects. Three of the
 fifteen are touched, and the third is the one that fails quietly.
 
 | Step | Subject | What a second language does to it |
@@ -154,7 +154,7 @@ checksums, provenance, signing, notes, publication — are language-agnostic.
 
 ## What it costs the gate
 
-`scripts/check.sh` runs 120 rows: 55 invoke `cargo`, 44 are Python, 21 are
+`scripts/check.sh` runs 93 rows: 55 invoke `cargo`, 18 are Python, 20 are
 neither. A kernel outside Rust is invisible to a measured nine of them, and
 would need a twin for many more.
 

@@ -35,6 +35,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import gate_lines
 import run_count_gate
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 #: A runner that answers only the pure query, which is all the gate asks of it.
@@ -1790,10 +1792,10 @@ def test_recording_a_whole_tier_leaves_a_green_tree(tree, tmp_path):
 # --- the row itself --------------------------------------------------------
 
 
-def test_check_sh_runs_this_gate():
-    """The row as `check.sh` runs it, over its CODE — a `#` in front of the line
-    is not a row, and that is how eleven guards were switched off at once."""
-    assert gate_lines.runs((ROOT / "scripts/check.sh").read_text(), "scripts/run_count_gate.py")
+def test_check_assurance_sh_runs_this_gate():
+    """The row as `check-assurance.sh` runs it, over its CODE — a `#` in front of
+    the line is not a row, and that is how eleven guards were switched off at once."""
+    assert gate_lines.runs((ROOT / "scripts/check-assurance.sh").read_text(), "scripts/run_count_gate.py")
 
 
 def test_the_usage_line_refuses_what_it_does_not_take():

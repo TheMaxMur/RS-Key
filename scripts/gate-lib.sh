@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-# Sourced by scripts/check.sh after its `set` line and its `cd` to the root: the
-# row helper, the signal verdicts and the pytest base. It runs no row itself.
+# Sourced by scripts/check.sh and scripts/check-assurance.sh after their `set`
+# line and their `cd` to the root: the row helper, the signal verdicts and the
+# pytest base. It runs no row itself.
 
 # The EXIT trap check.sh sets already runs on a fatal signal (measured), so these
 # are for the verdict, not the cleanup: without the INT one, a SIGINT delivered

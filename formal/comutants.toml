@@ -9,7 +9,7 @@
 # not is a measured abstraction gap — the exact place where "TLA+ green AND
 # tests green" stops meaning "the same system was checked twice".
 #
-# scripts/comutate.py owns the mechanics: `--lint` (a check.sh row) holds this
+# scripts/comutate.py owns the mechanics: `--lint` (a check-assurance.sh row) holds this
 # file against the Mut_*.cfg roster in both directions, resolves every patch
 # anchor against the current tree, and floors the pending count; `run` applies
 # a patch in a throwaway worktree, runs the slice, and compares the verdict to
@@ -1567,7 +1567,7 @@ note = "SEC-SEAM-006's own defect: the `73 00` removal reaches past the validate
 # its outcome producer — and the model edge those two mutants falsify is the
 # `None` arm of exactly that function. The anchors below are what makes the tie
 # checkable rather than asserted: `--lint` resolves each against the tree on
-# every `check.sh` run, so the model's claim about who owns this gate fails
+# every `check-assurance.sh` run, so the model's claim about who owns this gate fails
 # loudly the day the code moves out from under it.
 
 [comutant.BugUvNotRqdIgnoresRk]

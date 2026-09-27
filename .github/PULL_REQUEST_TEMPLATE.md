@@ -7,6 +7,7 @@
 <!-- Keep what applies, delete the rest. -->
 
 - [ ] `nix develop -c ./scripts/check.sh` passes locally
+- [ ] `nix develop -c ./scripts/check-assurance.sh` passes locally (once, before opening this PR)
 - [ ] On hardware: board = …, what was exercised = …
 - [ ] Host-only change (CLI / docs / CI) — no device behavior touched
 

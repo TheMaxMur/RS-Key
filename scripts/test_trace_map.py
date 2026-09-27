@@ -17,6 +17,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import trace_map
 
+pytestmark = pytest.mark.assurance
+
 GOOD = [
     {"ev": "select", "app": "piv", "sw": "9000"},
     {"ev": "verify", "app": "piv", "ref": "pivPin", "sw": "63C2"},

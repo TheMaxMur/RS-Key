@@ -21,13 +21,14 @@ flowchart TD
 
 Top to bottom: fast and host-only, tapering to slow and needs-a-board.
 
-## The one command
+## The two commands
 
 ```sh
-nix develop -c ./scripts/check.sh
+nix develop -c ./scripts/check.sh            # every commit
+nix develop -c ./scripts/check-assurance.sh  # once, before opening a pull request
 ```
 
-runs fmt, clippy (embedded **and** host targets, `-D warnings`), rustdoc over
+The first runs fmt, clippy (embedded **and** host targets, `-D warnings`), rustdoc over
 every workspace (also `-D warnings`, so a broken intra-doc link fails the gate,
 private items included — but only links in `///` and `//!`: a name in a plain
 `//` comment is not parsed, and rots unseen), all host tests, both firmware
@@ -35,7 +36,17 @@ builds (touch + no-touch), the rsk-wipe build, a firmware flash-size ratchet
 (the shipping image must stay under a ceiling that hugs its current size, well
 below the 2560K code region), `cargo-audit`, `cargo-deny`, `cargo-vet` and
 `gitleaks`.
-Green check.sh is the bar for every commit.
+Green check.sh is the bar for every commit; green check-assurance.sh is the bar
+for a pull request.
+
+The second is the gate's other layer: the TLA+ plumbing (generated
+configurations, citations, scopes, verdicts, the trace and token refinements)
+and the registries held against the prose (assurance, build matrix, threat
+model, platform assumptions, evidence, bounds, published counts and claims, the
+release manifest), with their own tables. It goes red only when a model, a
+registry, a generated page, or code they cite or count moves, so it runs once
+before a pull request rather than on every commit. CI runs the two as separate
+jobs on every pull request, and the second weekly as well.
 
 Two of those rows hold the crate tiers of
 [architecture.md](architecture.md#crates) rather than a dependency's licence or
@@ -717,7 +728,7 @@ roster runs weekly.
 
 Which of those rows a code-level harness kills, and which are unreachable by
 construction, is the generated table in `formal/README.md` and is not restated
-here; ordinary `check.sh` rejects a stale copy of it.
+here; `check-assurance.sh` rejects a stale copy of it.
 
 ```sh
 python scripts/comutate.py --lint
@@ -1067,31 +1078,33 @@ third reader of our CTAP replies, and the only one that claims 2.3.
 
 ## CI parity
 
-`check.sh` is plain bash over the Nix dev shell. A CI job is
-`nix develop -c ./scripts/check.sh` plus the `proofs` job — `scripts/kani.sh`,
-which cannot join `check.sh` because Kani is not in the dev shell — plus, on a
-runner with the board attached, the `tests/` scripts. The scheduled
+`check.sh` and `check-assurance.sh` are plain bash over the Nix dev shell.
+CI runs each as its own job on every pull request (`check` and `assurance`),
+plus the `proofs` job — `scripts/kani.sh`, which cannot join `check.sh` because
+Kani is not in the dev shell — plus, on a runner with the board attached, the
+`tests/` scripts. The scheduled
 `deep-checks` workflow runs on two cadences. Daily: the Miri and fuzz commands
 from this page, both sharded across runners, a `repro` job that builds the
 hermetic firmware twice and requires bit-identical outputs
 ([build.md](build.md#nix-build-hermetic-no-dev-shell)), and an `llvm-cov` job
 that floors host-crate line coverage. Weekly, on Sunday: the full Kani roster,
 one runner per tier, an advisory `cargo-mutants` sweep, the semantic
-co-refutation roster and TLC's formal safety tier. No hidden state.
+co-refutation roster, TLC's formal safety tier and `check-assurance.sh` again
+over `main`. No hidden state.
 
 ```mermaid
 flowchart TB
-    a["Merge gate — every commit / PR<br/>check.sh: fmt · clippy · host tests · firmware builds · size ratchet · audit · deny · vet · gitleaks<br/>proofs: Kani pr tier (+ state tier when the diff reaches it)"]
+    a["Merge gate — every commit / PR<br/>check.sh: fmt · clippy · host tests · firmware builds · size ratchet · audit · deny · vet · gitleaks<br/>check-assurance.sh (every PR; locally once before it): TLA+ plumbing · registries against prose<br/>proofs: Kani pr tier (+ state tier when the diff reaches it)"]
     b["Daily — deep-checks<br/>Miri (3 shards) · timed libFuzzer (4 shards) · repro (bit-identical build) · llvm-cov (coverage floor)"]
-    c["Weekly — deep-checks<br/>Kani all roster · cargo-mutants (advisory)<br/>semantic co-refutation · TLC safety tier"]
+    c["Weekly — deep-checks<br/>Kani all roster · cargo-mutants (advisory)<br/>semantic co-refutation · TLC safety tier · check-assurance.sh"]
     a ~~~ b ~~~ c
 ```
 
 One more workflow reports on a pull request and is deliberately absent from
 that diagram. `codeql.yml` runs GitHub's CodeQL over the Rust and Python
 sources — buildless (`build-mode: none`), since `firmware/` does not build on a
-host runner at all. It is advisory, not a gate: `check.sh` is still the whole
-bar. It runs on pull requests and on demand only, so there is no default-branch
+host runner at all. It is advisory, not a gate: `check.sh` and
+`check-assurance.sh` are still the whole bar. It runs on pull requests and on demand only, so there is no default-branch
 baseline and findings surface on the PR itself.
 
 Not over *all* of them: `.github/codeql/codeql-config.yml` keeps the test

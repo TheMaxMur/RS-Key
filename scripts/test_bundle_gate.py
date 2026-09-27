@@ -23,6 +23,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import bundle_gate  # noqa: E402
 
+pytestmark = pytest.mark.assurance
+
 ROOT = bundle_gate.ROOT
 
 
@@ -2000,7 +2002,7 @@ def gate_process(root):
     """`python scripts/bundle_gate.py`'s exit code and stderr, from its own
     process, over `root`.
 
-    `check.sh`'s `slice evidence bundle` row reads that exit code and nothing
+    The `slice evidence bundle` row reads that exit code and nothing
     else, and a table driving `audit` proves nothing about it — the family this
     tree has measured fourteen times over. `main()` is reached through `-c`
     rather than by running the file, because the row's own `ROOT` is the

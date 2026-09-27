@@ -21,6 +21,8 @@ import gate_lines
 import platform_gate
 import threat_gate
 
+pytestmark = pytest.mark.assurance
+
 DOC = "\n".join(
     [
         "# Threat model",
@@ -868,14 +870,14 @@ def test_the_platform_registry_is_an_input_of_this_row(tree):
     assert found == [f"{threat_gate.ASSUMPTIONS} is missing — the mapping is unchecked"]
 
 
-def test_check_sh_runs_this_gate():
+def test_check_assurance_sh_runs_this_gate():
     """The row, with its flags — a name match cannot pin those.
 
     `test_gate_scripts.py` covers the set; this covers the invocation, the way
     `crate_graph` and `security_trace` pin theirs.
     """
-    text = (threat_gate.ROOT / "scripts/check.sh").read_text()
-    assert gate_lines.runs(text, "scripts/threat_gate.py"), "check.sh does not run it"
+    text = (threat_gate.ROOT / "scripts/check-assurance.sh").read_text()
+    assert gate_lines.runs(text, "scripts/threat_gate.py"), "check-assurance.sh does not run it"
     assert 'run "threat-model traceability" python scripts/threat_gate.py' in text
 
 

@@ -28,6 +28,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import bundle_gate
 import test_bundle_gate as T
 
+pytestmark = pytest.mark.assurance
+
 #: Refused now, with the reason each is refused for. Every one resolves in the
 #: tree, so the fixture carries the real file and the rule is read over real
 #: source rather than a stub written to fail.

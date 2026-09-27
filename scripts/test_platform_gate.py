@@ -85,6 +85,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import gate_lines
 import platform_gate
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 MODEL_REGISTRY = """\
@@ -1163,9 +1165,9 @@ def test_the_floors_are_apart_not_in_total(tree):
 # --- the row that runs it ------------------------------------------------------
 
 
-def test_check_sh_runs_this_gate():
+def test_check_assurance_sh_runs_this_gate():
     """Its own row, including that a `#` in front of it is not an invocation."""
-    text = (ROOT / "scripts/check.sh").read_text()
+    text = (ROOT / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(text, "scripts/platform_gate.py")
 
 

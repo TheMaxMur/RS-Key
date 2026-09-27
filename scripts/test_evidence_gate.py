@@ -35,6 +35,8 @@ import platform_gate
 # one function. A second copy is a second answer that agrees until one is redone.
 import test_platform_gate as P
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 MINI = """\
@@ -475,6 +477,15 @@ def test_a_script_named_elsewhere_in_check_sh_is_not_wired_to_a_session(tree):
     assert tree.vector("SEC-T-001")["trace"] == 0
 
 
+def test_a_replay_row_in_the_second_runner_is_read_too(tree):
+    """The trace rows run in `check-assurance.sh` now; the handshake reads both."""
+    row = 'run "replay data" python scripts/replay_gen.py formal/traces/session.jsonl\n'
+    tree.edit("scripts/check.sh", row, "")
+    assert evidence_gate.trace_data_modules(tree.root) == {}
+    tree.write("scripts/check-assurance.sh", "#!/usr/bin/env bash\n" + row)
+    assert set(evidence_gate.trace_data_modules(tree.root)) == {"ReplayData"}
+
+
 def test_a_commented_out_row_wires_nothing(tree):
     tree.edit("scripts/check.sh", 'run "replay data"', '# run "replay data"')
     assert evidence_gate.trace_data_modules(tree.root) == {}
@@ -612,9 +623,9 @@ def test_the_page_says_about_a_board_what_the_axis_says():
 # --- the wiring ----------------------------------------------------------------
 
 
-def test_check_sh_runs_this_gate():
+def test_check_assurance_sh_runs_this_gate():
     """The row's CODE: a `#` in front of it is not a row."""
-    text = (ROOT / "scripts/check.sh").read_text()
+    text = (ROOT / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(text, "scripts/evidence_gate.py")
 
 

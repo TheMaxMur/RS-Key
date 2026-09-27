@@ -23,9 +23,13 @@ be asserting over a rule the shipped run never uses.
 import pathlib
 import sys
 
+import pytest
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import bundle_gate
 import test_bundle_gate as T
+
+pytestmark = pytest.mark.assurance
 
 PAGE = bundle_gate.SLICE
 

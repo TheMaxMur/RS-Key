@@ -6,7 +6,7 @@
 # tree publishes, from a clean checkout, in tiers.
 #
 #   nix develop -c ./scripts/reproduce.sh quick   # minutes
-#   nix develop -c ./scripts/reproduce.sh merge   # the per-commit gate
+#   nix develop -c ./scripts/reproduce.sh merge   # both gate layers and the PR proofs
 #   nix develop -c ./scripts/reproduce.sh model   # the TLA+ tiers, hours
 #   nix develop -c ./scripts/reproduce.sh --list --refusals
 #
@@ -53,7 +53,8 @@ HOST_TRIPLE="${HOST_TARGET:-aarch64-apple-darwin}"
 PHASES=(
   "pages|quick|~1 min|the four generated assurance pages, re-derived from the tree and diffed against what is committed|python scripts/evidence_gate.py && python scripts/matrix_gate.py && python scripts/platform_gate.py && python scripts/assurance_gate.py"
   "docs|quick|~1 min|the documentation site builds and every relative link in it resolves offline|./scripts/docs.sh check"
-  "gate|merge|~25 min|the merge gate: fmt, clippy, rustdoc, host tests over every feature flavour, the firmware builds, the image gates, SCA, and every registry/citation/roster guard|./scripts/check.sh"
+  "gate|merge|~25 min|the per-commit gate: fmt, clippy, rustdoc, host tests over every feature flavour, the firmware builds, the image gates, SCA, and the roster guards|./scripts/check.sh"
+  "assurance|merge|~25 min|the gate's second layer, run once per pull request: the TLA+ plumbing and every registry and citation guard held against the prose, with their tables|./scripts/check-assurance.sh"
   "proofs|merge|~10 min|the two Kani tiers a pull request runs: bounded proofs over the applet crates, then over the security-state crates|./scripts/kani.sh pr && ./scripts/kani.sh state"
   "model-safety|model|~110 min|TLC over the safety tier: the eight modules, their mutants, the solo twins and the recorded floors|./formal/run-tlc.sh safety"
   "model-liveness|model|~35 min|TLC over the liveness tier: the temporal properties and one mutant per property|./formal/run-tlc.sh liveness"
@@ -72,10 +73,10 @@ PHASES=(
 #: see REFUSED.
 TIERS=(
   "quick|pages docs"
-  "merge|gate proofs"
+  "merge|gate assurance proofs"
   "model|model-safety model-liveness"
   "deep|comutants emu proofs-all coverage repro miri fuzz mutants"
-  "all|pages docs gate proofs model-safety model-liveness comutants emu proofs-all coverage repro miri fuzz mutants"
+  "all|pages docs gate assurance proofs model-safety model-liveness comutants emu proofs-all coverage repro miri fuzz mutants"
 )
 
 # --- what this checkout cannot produce ----------------------------------------
@@ -110,6 +111,7 @@ REFUSED=(
 #: Every shell runner under scripts/ and formal/.
 CLAIM_RUNNERS=(
   "scripts/check.sh|gate|"
+  "scripts/check-assurance.sh|assurance|"
   "scripts/gate-lib.sh|gate|"
   "scripts/docs.sh|docs|"
   "scripts/kani.sh|proofs|"
@@ -121,8 +123,8 @@ CLAIM_RUNNERS=(
   "scripts/ci-scope.sh|gate|"
   "scripts/ci-knobs.sh|gate|"
   "scripts/complexity_gate.sh|gate|"
-  "scripts/token_refinement.sh|gate|"
-  "formal/gen-configs.sh|gate|"
+  "scripts/token_refinement.sh|assurance|"
+  "formal/gen-configs.sh|assurance|"
   "scripts/fuzz-coverage.sh|-|measures the weekly job's accumulated corpus cache, which no checkout carries"
   "scripts/usbip-suites.sh|-|needs a Linux host with vhci_hcd and KVM to boot the guest that owns the USB stack"
   "scripts/usbip-guest.sh|-|the in-guest half of the same suite, invoked by it and never directly"
@@ -144,6 +146,7 @@ CLAIM_JOBS=(
   "ci:flavors|-|builds the fourteen published image flavours; the gate phase builds four of them and scripts/matrix_gate.py holds the matrix"
   "ci:knob-builds|-|the same build matrix under the board and feature knobs, held by scripts/ci-knobs.sh --self-test in the gate phase"
   "ci:knobs|-|the same, sharded; the self-test row is what says the shards cover the matrix"
+  "ci:assurance|assurance|"
   "deep-checks:miri|miri|"
   "deep-checks:fuzz|fuzz|"
   "deep-checks:fuzz-coverage|-|needs the accumulated corpus cache; see REFUSED"
@@ -153,17 +156,21 @@ CLAIM_JOBS=(
   "deep-checks:mutants|mutants|"
   "deep-checks:comutants|comutants|"
   "deep-checks:formal|model-safety|"
+  "deep-checks:assurance|assurance|"
   "emulator:changes|-|path classification, as above"
   "emulator:sockets|emu|"
   "emulator:usb|-|the USB-stack half, in a QEMU guest; see REFUSED"
 )
 
-#: How a `check.sh` row's command is recognised. The gate phase runs the file
-#: whole, so every row it already has is reproduced by construction -- what this
-#: table is for is the row that arrives needing something a clean checkout has
-#: not got. A command shape nobody has classified is UNCLAIMED and red, so a row
-#: invoking a board, a key or a network service has to be looked at by a human
-#: before this script may go on claiming it reproduces the gate.
+#: How a gate row's command is recognised, in either runner. Each phase runs its
+#: runner whole (`gate` check.sh, `assurance` check-assurance.sh), so every row
+#: either already has is reproduced by construction -- what this table is for is
+#: the row that arrives needing something a clean checkout has not got. The
+#: column says `gate` for both runners: it answers whether a clean checkout can
+#: run the shape, not which runner holds it. A command shape nobody has
+#: classified is UNCLAIMED and red, so a row invoking a board, a key or a network
+#: service has to be looked at by a human before this script may go on claiming
+#: it reproduces the gate.
 #:
 #: `extended regex|phase|reason`, first match wins. One alternative per entry
 #: and never an `|` inside a pattern: the record separator is `|`, so an
@@ -196,7 +203,7 @@ LOCK="${XDG_CACHE_HOME:-$HOME/.cache}/rs-key/reproduce.lock"
 
 # `[r]…` so the pattern cannot match the `pgrep` that carries it, which is the
 # oldest way to make this check report a run that is only itself.
-OTHERS='[c]heck\.sh|[r]un-tlc\.sh|[c]argo-kani'
+OTHERS='[c]heck\.sh|[c]heck-assurance\.sh|[r]un-tlc\.sh|[c]argo-kani'
 
 take_lock() {
   mkdir -p "$(dirname "$LOCK")"
@@ -380,9 +387,10 @@ verdict() {
 FAILS=0
 bad() { echo "FAIL $1"; FAILS=$((FAILS + 1)); }
 
-#: `run`/`run_tests` rows, line continuations folded, as `check.sh` runs them.
+#: `run`/`run_tests` rows of both runners, line continuations folded, as they
+#: run them.
 check_rows() {
-  sed -e ':a' -e '/\\$/{N;s/\\\n[[:space:]]*/ /;ba' -e '}' scripts/check.sh \
+  sed -e ':a' -e '/\\$/{N;s/\\\n[[:space:]]*/ /;ba' -e '}' scripts/check.sh scripts/check-assurance.sh \
     | sed -nE 's/^[[:space:]]*(run|run_tests)[[:space:]]+"([^"]+)"[[:space:]]*(.*)$/\2\t\3/p'
 }
 
@@ -414,16 +422,16 @@ check_claim() {
 self_test() {
   local n cmd subject entry pat phase found t m
 
-  # C1 — every check.sh row's command shape is recognised.
+  # C1 — every gate row's command shape is recognised, in either runner.
   n=$(check_rows | grep -c .)
-  [ "$n" -ge 50 ] || bad "rows: read $n rows out of scripts/check.sh — the extractor is broken, and a table over nothing passes every case below"
+  [ "$n" -ge 50 ] || bad "rows: read $n rows out of the gate runners — the extractor is broken, and a table over nothing passes every case below"
   while IFS=$'\t' read -r subject cmd; do
     found=""
     for entry in "${CLAIM_ROWS[@]}"; do
       pat=$(field "$entry" 1)
       if printf '%s' "$cmd" | grep -qE "$pat"; then found=$(printf '%s|%s' "$(field "$entry" 2)" "$(rest "$entry" 3)"); break; fi
     done
-    [ -n "$found" ] || bad "rows: check.sh row \"$subject\" runs '$cmd', a shape no claim here recognises — say which phase reproduces it, and whether a clean checkout can"
+    [ -n "$found" ] || bad "rows: gate row \"$subject\" runs '$cmd', a shape no claim here recognises — say which phase reproduces it, and whether a clean checkout can"
     [ -n "$found" ] && check_claim rows "$subject" "$found"
   done < <(check_rows)
 

@@ -13,7 +13,7 @@ would be under it before a case touched it and the only way to test any other
 rule would be to hand `audit` a smaller floor — which is the shape this tree has
 already measured as a hole: a ceiling a case patches down is a ceiling whose
 shipped value nothing exercises. Copying means the numbers under test are the
-numbers `check.sh` runs with, and the floor is reached by REMOVING a row, which
+numbers the gate runs with, and the floor is reached by REMOVING a row, which
 is the direction it exists for.
 
 The one thing handed in rather than copied is the tier list: `run-tlc.sh
@@ -31,6 +31,8 @@ import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import narrow_gate
+
+pytestmark = pytest.mark.assurance
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 

@@ -20,6 +20,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import claims_gate  # noqa: E402
 
+pytestmark = pytest.mark.assurance
+
 ROOT = claims_gate.ROOT
 PAGE = "README.md"
 
@@ -978,7 +980,7 @@ def test_a_shape_derived_from_the_registry_blinds_the_rule(tree):
 
 
 def test_the_row_and_not_the_helper(tree):
-    """`check.sh` runs `python scripts/claims_gate.py`. Fourteen of thirty gates
+    """The gate runs `python scripts/claims_gate.py`. Fourteen of thirty gates
     here were byte-identical to baseline when their entry function's non-zero
     return was flipped to zero — the exit PATH was unheld, this file among them.
     A shared case drives that generically now; this drives it over THIS rule's

@@ -9,6 +9,8 @@ import pytest
 
 import token_refinement_gate
 
+pytestmark = pytest.mark.assurance
+
 
 EXPORT = """TOKEN|OP|IssueToken
 TOKEN|OP|SetPin

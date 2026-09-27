@@ -21,6 +21,8 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import comutate
 
+pytestmark = pytest.mark.assurance
+
 SPEC = """\
 pending_floor = 1
 phase2_count = 3
@@ -942,7 +944,7 @@ def proof_tree(tmp_path):
 
 
 def row(root: pathlib.Path) -> subprocess.CompletedProcess:
-    """`python scripts/comutate.py --lint` over `root` — the `check.sh` row itself.
+    """`python scripts/comutate.py --lint` over `root` — the gate row itself.
 
     The row keys on the PROCESS exit code of the entry point, and every other arm
     in this file drives `lint()`, one function below it. Fourteen of thirty gates

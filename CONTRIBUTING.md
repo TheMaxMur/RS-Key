@@ -14,9 +14,10 @@ Using an AI agent (Claude Code, Cursor, Codex, …) to write a patch is fine —
 several already have. Two expectations. **You own the diff:** you understand it
 and can defend it in review; the agent is a tool (a `Co-Authored-By:` trailer is
 welcome), you are the contributor. And **the bar doesn't move:**
-`./scripts/check.sh` green, `bcdDevice` bumped if firmware behaviour changed,
-tests where the change is visible, docs in sync. A PR that compiles but skips the
-gate is more work to review than no PR.
+`./scripts/check.sh` green, and `./scripts/check-assurance.sh` before the PR,
+`bcdDevice` bumped if firmware behaviour changed, tests where the change is
+visible, docs in sync. A PR that compiles but skips the gate is more work to
+review than no PR.
 
 Point your agent at [AGENTS.md](AGENTS.md) — the condensed rules plus the gotchas
 agents reliably trip on (the `no_std` host-test split, the bcdDevice bump, keeping
@@ -46,14 +47,19 @@ dependencies. It works; it's just more moving parts to keep in sync.
 ## The gate
 
 ```sh
-./scripts/check.sh
+./scripts/check.sh            # every commit
+./scripts/check-assurance.sh  # once, before opening the pull request
 ```
 
-Everything that has to be green before a merge: rustfmt, clippy twice
-(embedded and host-test profiles), the host test suite, the fips-profile test
-flavor, both firmware images, the rsk-wipe image, cargo-audit, cargo-deny,
-gitleaks. CI runs exactly this script (`.github/workflows/ci.yml`), so green
-locally means green on the PR — there is no CI-only logic to discover later.
+Everything that has to be green before a merge. The first: rustfmt, clippy
+twice (embedded and host-test profiles), the host test suite, the fips-profile
+test flavor, both firmware images, the rsk-wipe image, cargo-audit, cargo-deny,
+gitleaks. The second: the TLA+ plumbing and the registries held against the
+prose, with their tables. CI runs `check.sh` and `check-assurance.sh` as
+separate jobs on every pull request (`.github/workflows/ci.yml`), so both green
+locally means green on the PR. The second goes red only when a model, a
+registry, a generated page, or code they cite or count moves: run it once
+before opening the PR, not on every commit.
 
 The default host target is `aarch64-apple-darwin` because that's where
 development happens; on Linux run `HOST_TARGET=x86_64-unknown-linux-gnu

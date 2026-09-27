@@ -19,6 +19,8 @@ import pytest
 
 import transport_bridge_gate as gate
 
+pytestmark = pytest.mark.assurance
+
 BRIDGE = """\
 // SPDX-License-Identifier: AGPL-3.0-only
 #[cfg(kani)]

@@ -34,6 +34,8 @@ import pytest
 import gate_lines
 import toolchain_gate as gate
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 NIXPKGS_REV = "331800de5053fcebacf6813adb5db9c9dca22a0c"
@@ -856,11 +858,11 @@ def test_the_region_names_every_criterion_category(tree):
 # ---- the row that runs it ----------------------------------------------------
 
 
-def test_check_sh_runs_this_gate():
+def test_check_assurance_sh_runs_this_gate():
     """A guard nothing invokes can be deleted with the suite still green, and the
     row is the half `test_gate_scripts.py` covers by glob only for `GATES`. Read
     through `gate_lines.runs`, so a `#` in front of the row does not count."""
-    assert gate_lines.runs((ROOT / "scripts/check.sh").read_text(), "scripts/toolchain_gate.py")
+    assert gate_lines.runs((ROOT / "scripts/check-assurance.sh").read_text(), "scripts/toolchain_gate.py")
 
 
 def test_the_real_registry_is_green():

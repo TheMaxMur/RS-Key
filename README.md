@@ -186,10 +186,12 @@ USB identity, is in [docs/build.md](docs/build.md).
 
 `nix develop` is the whole setup: Rust with the `thumbv8m.main-none-eabihf`
 target, `picotool`, the Python host stack, and the security tooling. One command
-is the merge gate, and CI runs exactly the same script:
+is the per-commit gate, a second is the assurance layer run once before a pull
+request, and CI runs both as they are:
 
 ```sh
-nix develop -c ./scripts/check.sh   # fmt, clippy, host tests, firmware builds, audit, deny, gitleaks
+nix develop -c ./scripts/check.sh            # fmt, clippy, host tests, firmware builds, audit, deny, gitleaks
+nix develop -c ./scripts/check-assurance.sh  # TLA+ plumbing, registries against prose
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/testing.md](docs/testing.md).

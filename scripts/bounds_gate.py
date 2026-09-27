@@ -19,7 +19,7 @@ over 107 `[[method]]` rows in 17 files — and `bundle_gate.method_bounds` floor
 them, but on COUNT and TYPE only: the VALUES are unconstrained and nothing
 rendered them anywhere. So this writes them out, the shape `evidence_gate.py`
 already uses on `docs/assurance-vector.md`: one page, `--write`, a byte diff, a
-`check.sh` row.
+gate row.
 
 ## What it renders, and why all seventeen
 

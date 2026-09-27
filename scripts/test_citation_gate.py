@@ -18,6 +18,8 @@ import pytest
 import citation_gate
 import gate_lines
 
+pytestmark = pytest.mark.assurance
+
 CODE = """// SPDX-License-Identifier: AGPL-3.0-only
 pub const RETRIES: u8 = 8;
 
@@ -121,6 +123,12 @@ run "comutants lint"           python scripts/comutate.py --lint
 run_tests "test (host)"        cargo test --workspace
 """
 
+#: The second runner, keyed the same way: a row that moved out of `check.sh`
+#: is cited by name in the file that runs it now.
+ASSURANCE = """#!/usr/bin/env bash
+run "seam trace map"           python scripts/trace_map.py
+"""
+
 #: An evidence bundle: it cites code by line and the verdict table by ROW, which
 #: is the pair the six repaired citations are about. In the corpus because the
 #: directory holds it, not because a tuple names it. The second block writes the
@@ -162,6 +170,7 @@ EXEMPT_PAGE = "scripts/citation_gate.py"
 BUNDLE_PAGE = "assurance/bundle/SEC-T-001.toml"
 FLOORS_PAGE = "formal/floors.txt"
 CHECK_PAGE = "scripts/check.sh"
+ASSURANCE_PAGE = "scripts/check-assurance.sh"
 
 #: The derived page every registry-half case drives, and the registry that cites
 #: NOTHING — the control that separates this half's rule from the bundles'.
@@ -185,6 +194,7 @@ class Tree:
         self.write(EXEMPT_PAGE, SCRIPT)
         self.write(FLOORS_PAGE, FLOORS)
         self.write(CHECK_PAGE, CHECK)
+        self.write(ASSURANCE_PAGE, ASSURANCE)
         self.write(BUNDLE_PAGE, BUNDLE)
         self.write(REGISTRY_PAGE, REGISTRY)
         self.write("crates/rsk-device/src/ctap.rs", UNTAGGED_CODE)
@@ -481,8 +491,8 @@ def test_a_per_page_floor_is_honoured_and_is_lower_than_the_default():
 # --- the guard's own wiring ---------------------------------------------------
 
 
-def test_check_sh_still_runs_the_guard():
-    check = (citation_gate.ROOT / "scripts/check.sh").read_text()
+def test_check_assurance_sh_still_runs_the_guard():
+    check = (citation_gate.ROOT / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(check, "scripts/citation_gate.py")
 
 
@@ -907,6 +917,17 @@ def test_a_check_row_citation_that_names_no_row(tree, monkeypatch):
     function: a key nothing in the file answers to has to reach an exit code."""
     tree.edit(BUNDLE_PAGE, 'check.sh:\\"comutants lint\\"', 'check.sh:\\"comutants lynt\\"')
     assert only(tree.problems(), "names no row of scripts/check.sh")
+    assert tree.run(monkeypatch) == 1
+
+
+def test_a_row_of_the_second_runner_resolves_by_its_name(tree, monkeypatch):
+    """A row that moved to `check-assurance.sh` is cited there by the same key,
+    and a key that file has no row for is red — with the file out of [`KEYED`],
+    that citation would be checked against nothing and read green."""
+    tree.edit(BUNDLE_PAGE, 'check.sh:\\"comutants lint\\"', 'check-assurance.sh:\\"seam trace map\\"')
+    assert tree.problems() == []
+    tree.edit(BUNDLE_PAGE, 'check-assurance.sh:\\"seam trace map\\"', 'check-assurance.sh:\\"seam trace mop\\"')
+    assert only(tree.problems(), "names no row of scripts/check-assurance.sh")
     assert tree.run(monkeypatch) == 1
 
 

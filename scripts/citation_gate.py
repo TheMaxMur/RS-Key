@@ -676,6 +676,7 @@ KEYED = {
     # column the runner matches on.
     "formal/floors.txt": lambda line: line.split()[0],
     "scripts/check.sh": check_row,
+    "scripts/check-assurance.sh": check_row,
 }
 
 

@@ -687,7 +687,7 @@ def check_green_floors_pin_the_replay() -> None:
 
     `run-tlc.sh` compares a floor with `-lt`, so it is a MINIMUM — and only
     `TraceSecurity.cfg` gets this file's exact distinct-count check, because
-    `check.sh` runs without `--mutations`. Left at a minimum, the second GREEN row
+    the gate row runs without `--mutations`. Left at a minimum, the second GREEN row
     could stop twenty states short of its evidence and read GREEN, which is the
     "44 of 59 for three days" failure verbatim. Two hand-kept numbers, related
     here rather than by remembering.

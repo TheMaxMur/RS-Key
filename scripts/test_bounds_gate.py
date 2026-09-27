@@ -35,6 +35,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import bounds_gate
 import gate_lines
 
+pytestmark = pytest.mark.assurance
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
@@ -620,9 +622,9 @@ def test_run_reports_findings_on_stderr(tree, capsys):
 # --- the wiring ---------------------------------------------------------------
 
 
-def test_check_sh_runs_this_gate():
+def test_check_assurance_sh_runs_this_gate():
     """The row's CODE: a `#` in front of it is not a row."""
-    text = (ROOT / "scripts/check.sh").read_text()
+    text = (ROOT / "scripts/check-assurance.sh").read_text()
     assert gate_lines.runs(text, "scripts/bounds_gate.py")
 
 

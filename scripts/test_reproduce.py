@@ -16,8 +16,8 @@ with the suite still green.
 
 Five clauses, each with a removal arm and a defect arm:
 
-* **rows** — every `check.sh` row's command shape is claimed, and the extractor
-  that reads them is held to finding any at all;
+* **rows** — every row's command shape is claimed, in both gate runners, and the
+  extractor that reads them is held to finding any at all;
 * **runners** — every shell runner under `scripts/` and `formal/` is claimed,
   and every claim names a file that is still there;
 * **jobs** — every job of the three evidence workflows is claimed, and every
@@ -112,6 +112,17 @@ def test_rows_defect_a_row_that_needs_a_board_is_unclaimed(tree):
     assert rc == 1
     assert 'row "board smoke"' in out
     assert "whether a clean checkout can" in out
+
+
+def test_rows_defect_the_second_runner_is_read_too(tree):
+    """The same board row landing in `check-assurance.sh`: its rows are claimed
+    the way `check.sh`'s are, or that runner could grow one unseen."""
+    edit(tree, 'run "formal citations"',
+         'run "board smoke" python tests/10_fido_getinfo.py\nrun "formal citations"',
+         path="scripts/check-assurance.sh")
+    rc, out = self_test(tree)
+    assert rc == 1
+    assert 'row "board smoke"' in out
 
 
 def test_rows_defect_an_extractor_that_reads_nothing_is_a_finding(tree):

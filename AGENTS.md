@@ -21,10 +21,14 @@ project — see [README.md](README.md) and
 
 ## Golden rules
 
-- **The gate is the source of truth.** Run `nix develop -c ./scripts/check.sh`
-  and make it fully green before you call a change done. Don't infer success
-  from a partial build — CI runs exactly this script, so green locally is the
-  whole bar.
+- **The gate is the source of truth, in two layers.** Every commit:
+  `nix develop -c ./scripts/check.sh`, fully green before you call a change
+  done. Once before opening a pull request, not per commit:
+  `nix develop -c ./scripts/check-assurance.sh` (the TLA+ plumbing and the
+  registries held against the prose), and commit what its `--write`/`--relock`
+  asks for in the same PR. CI runs each as its own job on every pull request,
+  so both green locally is the whole bar. Don't infer success from a partial
+  build.
 - **Bump `bcdDevice` on a firmware-behaviour change.** `config.device_release`
   in [firmware/src/main.rs](firmware/src/main.rs), +1 hex. Host-only changes
   (CLI, docs, CI) do **not** bump it. (Background, plus the separate
@@ -36,10 +40,10 @@ project — see [README.md](README.md) and
   `Cargo.toml`; a new crate opts in with `[lints] workspace = true`.
 - **`unsafe` and new dependencies are not free.** `unsafe` compiles only in
   `firmware`, `rsk-wipe` and — on the device target — `rsk-rsa`; a new site
-  there needs an entry in [docs/unsafe.md](docs/unsafe.md), and a new `unsafe`
-  block or `unsafe impl` a `// SAFETY:` comment (clippy refuses it otherwise). A
-  new dependency needs a stated reason — it's joining an authenticator's trust
-  base.
+  there needs an entry in [docs/unsafe.md](docs/unsafe.md) (held by
+  `check-assurance.sh`), and a new `unsafe` block or `unsafe impl` a
+  `// SAFETY:` comment (clippy refuses it otherwise). A new dependency needs a
+  stated reason — it's joining an authenticator's trust base.
 - **Secrets live in `rsk_secret::Secret`.** Key-grade bytes go in a `Secret`,
   or under a `WipeGuard` when the buffer outlives the scope: both wipe on every
   exit, a `?` included. The root `clippy.toml` refuses a bare
