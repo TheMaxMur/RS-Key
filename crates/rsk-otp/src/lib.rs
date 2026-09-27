@@ -1142,7 +1142,7 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
 /// pins the repeat so whichever arm lands is visible.
 const BUMP_TRIES: u8 = 3;
 
-/// Boot-time use-counter bump: on power-up, advance the 16-bit use counter of
+/// Boot-time use-counter bump: on power-up, advance the 15-bit use counter of
 /// every plain Yubico-OTP slot (skipping HOTP / short / static slots), so a
 /// counter never repeats across reboots — the YubiKey replay defence. Runs once
 /// at startup.
