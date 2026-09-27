@@ -594,3 +594,74 @@ fn the_layouts_describe_gpgs_two_lengths() {
     assert_eq!(single_salt().len(), SINGLE_SALT_LEN);
     assert_eq!(three_salts().len(), THREE_SALTS_LEN);
 }
+
+/// Whether `pw` verifies reference `mode` on a fresh session.
+fn verifies<S: Storage>(fs: &mut Fs<S>, mode: u8, pw: &[u8]) -> bool {
+    let mut s = Session::new();
+    verify(&dev(), fs, &mut s, &mut CountRng(0), 0x00, mode, pw) == Sw::OK
+}
+
+/// `kdf-setup` cut at every mutation, then the boot a cut leads to (`scan_files`).
+/// No order keeps the DO and the references in step, so the claim is the weaker
+/// one the command's comment makes: some admin password always verifies — the old
+/// one or the DO's — and from it a re-run of the same command completes the setup.
+/// No cut ends in a card its admin cannot get back into.
+#[test]
+fn a_torn_kdf_setup_always_leaves_the_admin_a_way_back() {
+    let body = three_salts();
+    rsk_fs::cut::sweep(
+        || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            fs.scan();
+            scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+            (fs, medium)
+        },
+        |fs| {
+            // The VERIFY is cut too: its retry bookkeeping is an append of its own.
+            let mut sess = Session::new();
+            let rng = &mut CountRng(0);
+            verify(&dev(), fs, &mut sess, rng, 0x00, PW3_MODE83, PW3_DEFAULT) == Sw::OK
+                && write(fs, &mut sess, &body) == Sw::OK
+        },
+        |fs, budget, completed, medium| {
+            let _ = scan_files(&dev(), fs, &mut CountRng(9));
+            let pw3 = [PW3_DEFAULT, &HASH_PW3[..]]
+                .into_iter()
+                .find(|pw| verifies(fs, PW3_MODE83, pw))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "budget {budget}: no admin password verifies — {:?}",
+                        medium.ops()
+                    )
+                });
+            if completed {
+                assert_eq!(pw3, &HASH_PW3[..], "budget {budget}: reported done, is not");
+            }
+            let mut sess = Session::new();
+            assert_eq!(
+                verify(
+                    &dev(),
+                    fs,
+                    &mut sess,
+                    &mut CountRng(0),
+                    0x00,
+                    PW3_MODE83,
+                    pw3
+                ),
+                Sw::OK
+            );
+            assert_eq!(
+                write(fs, &mut sess, &body),
+                Sw::OK,
+                "budget {budget}: the re-run did not heal — {:?}",
+                medium.ops()
+            );
+            assert!(
+                verifies(fs, PW3_MODE83, &HASH_PW3) && verifies(fs, PW1_MODE81, &HASH_PW1),
+                "budget {budget}: after the re-run a reference is not at its DO hash — {:?}",
+                medium.ops()
+            );
+        },
+    );
+}

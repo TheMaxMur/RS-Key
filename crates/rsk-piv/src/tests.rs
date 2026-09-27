@@ -10793,3 +10793,69 @@ fn rsa_import_refuses_a_key_a_yubikey_refuses() {
         (Sw::OK, Some(&[ALGO_RSA2048][..]))
     );
 }
+
+/// MOVE KEY 9A → 82, cut at every mutation. The source goes only once the
+/// destination holds the key, so no cut loses it; the destination's head lands after
+/// its key, so a cut can leave the moved key there with no head, which the use-time
+/// gate refuses (`6A88`) rather than serve under a default PIN or touch policy.
+#[test]
+fn a_torn_move_key_never_loses_the_key_or_serves_it_headless() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let app_on = || PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    rsk_fs::cut::sweep(
+        || {
+            let (mut fs, medium) = new_cut_fs();
+            let mut app = app_on();
+            select(&mut app, &mut fs);
+            auth_mgm(&mut app, &mut fs);
+            let tmpl = gen_template(ALGO_ECCP256);
+            assert_eq!(
+                run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl).0,
+                Sw::OK
+            );
+            (fs, medium)
+        },
+        |fs| {
+            let mut app = app_on();
+            select(&mut app, fs);
+            auth_mgm(&mut app, fs);
+            run(&mut app, fs, INS_MOVE_KEY, 0x82, 0x9A, &[]).0 == Sw::OK
+        },
+        |fs, budget, completed, medium| {
+            let held: Vec<u8> = [0x9A, 0x82]
+                .into_iter()
+                .filter(|&s| fs.has_key(key_fid(s)))
+                .collect();
+            assert!(
+                !held.is_empty(),
+                "budget {budget}: the key is gone — {:?}",
+                medium.ops()
+            );
+            let mut app = app_on();
+            select(&mut app, fs);
+            verify_pin(&mut app, fs);
+            for slot in held {
+                let headed = fs.meta_find(key_fid(slot).get(), &mut [0u8; 8]).is_some();
+                let want = if headed {
+                    Sw::OK
+                } else {
+                    Sw::REFERENCE_NOT_FOUND
+                };
+                assert_eq!(
+                    sign_p256(&mut app, fs, slot),
+                    want,
+                    "budget {budget}: slot {slot:#04x}, head {headed} — {:?}",
+                    medium.ops()
+                );
+            }
+            if completed {
+                assert!(
+                    !fs.has_key(key_fid(0x9A))
+                        && fs.meta_find(key_fid(0x82).get(), &mut [0u8; 8]).is_some(),
+                    "budget {budget}: MOVE answered OK and did not finish"
+                );
+            }
+        },
+    );
+}
