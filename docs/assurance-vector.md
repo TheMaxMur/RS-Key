@@ -66,8 +66,8 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-FIDO-002` | `NoCrossTransportTouchConsumption` | 5 of 42 | 5 | 0 of 0 | 2 | 0 | 3 | 4 | `31c21a7` stale (4 input(s) newer) | BOUNDED |
 | `SEC-FIDO-003` | `NoTokenAfterInvalidation` | 5 of 45 | 6 | 0 of 0 | 2 | 0 | 4 | 0 | `31c21a7` stale (11 input(s) newer) | BOUNDED |
 | `SEC-FIDO-004` | `NoAccessibleSecretWithoutGate` | 5 of 39 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | `31c21a7` stale (6 input(s) newer) | MODELLED-ONLY |
-| `SEC-FIDO-005` | `NoUnmanageableCredential` | 5 of 40 | 3 | 0 of 0 | 0 | 0 | 4 | 0 | `31c21a7` stale (7 input(s) newer) | MODELLED-ONLY |
-| `SEC-FIDO-006` | `ResetNeverWeakensSurvivingState` | 5 of 40 | 3 | 0 of 0 | 1 | 0 | 4 | 0 | `31c21a7` stale (6 input(s) newer) | BOUNDED |
+| `SEC-FIDO-005` | `NoUnmanageableCredential` | 5 of 40 | 3 | 0 of 0 | 0 | 0 | 4 | 0 | `31c21a7` stale (8 input(s) newer) | MODELLED-ONLY |
+| `SEC-FIDO-006` | `ResetNeverWeakensSurvivingState` | 5 of 40 | 3 | 0 of 0 | 1 | 0 | 4 | 0 | `31c21a7` stale (7 input(s) newer) | BOUNDED |
 | `SEC-FIDO-006A` | `ResetKeepsThePinGate` | 1 of 2 | 1 | 0 of 0 | 1 | 0 | 4 | 0 | `b185fc3` stale (3 input(s) newer) | BOUNDED |
 | `SEC-FIDO-006B` | `ResetKeepsTheAlwaysUvGate` | 1 of 2 | 1 | 0 of 0 | 1 | 0 | 4 | 0 | `b185fc3` stale (3 input(s) newer) | BOUNDED |
 | `SEC-FIDO-006C` | `ResetKeepsTheBackupSeal` | 1 of 2 | 1 | 0 of 0 | 1 | 0 | 4 | 0 | `b185fc3` stale (3 input(s) newer) | BOUNDED |
@@ -170,8 +170,8 @@ Three spellings of "not current", which used to sit on two different pages and i
 | bundle | `SEC-FIDO-002` | 4 input(s) newer than `31c21a7` |
 | bundle | `SEC-FIDO-003` | 11 input(s) newer than `31c21a7` |
 | bundle | `SEC-FIDO-004` | 6 input(s) newer than `31c21a7` |
-| bundle | `SEC-FIDO-005` | 7 input(s) newer than `31c21a7` |
-| bundle | `SEC-FIDO-006` | 6 input(s) newer than `31c21a7` |
+| bundle | `SEC-FIDO-005` | 8 input(s) newer than `31c21a7` |
+| bundle | `SEC-FIDO-006` | 7 input(s) newer than `31c21a7` |
 | bundle | `SEC-FIDO-006A` | 3 input(s) newer than `b185fc3` |
 | bundle | `SEC-FIDO-006B` | 3 input(s) newer than `b185fc3` |
 | bundle | `SEC-FIDO-006C` | 3 input(s) newer than `b185fc3` |

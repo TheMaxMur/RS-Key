@@ -150,13 +150,13 @@ That price is worth stating for the `unsafe` rows, because the input is a whole 
 |---|---|---|---|---|
 | `PLAT-BUILD-001` | `bd1cff7` | **stale** | `docs/assurance-matrix.md`, `firmware/Cargo.toml` | `SEC-FIDO-001`, `SEC-FIDO-004`, `SEC-FIDO-006`, `SEC-FIDO-006B` |
 | `PLAT-CRED-004` | `0eb2a5f` | **stale** | `formal/RSKeySecurityState.tla`, `formal/gen-configs.sh`, `formal/runs.toml` | `SEC-FIDO-005` |
-| `PLAT-MEM-001` | `7904f01` | **stale** | `assurance/board/PLAT-MEM-001-2026-09-03-control.log`, `assurance/board/image-2026-09-03.txt`, `firmware/src/worker.rs`, `tests/54_sram_residue.py` | `SEC-FIDO-007` |
+| `PLAT-MEM-001` | `7904f01` | **stale** | `assurance/board/PLAT-MEM-001-2026-09-03-control.log`, `assurance/board/image-2026-09-03.txt`, `crates/rsk-vendor/src/lib.rs`, `firmware/src/worker.rs`, `tests/54_sram_residue.py` | `SEC-FIDO-007` |
 | `PLAT-MODEL-010` | `f5577ab` | **stale** | `formal/RSKeySecurityState.tla`, `formal/comutants.toml` | `SEC-FIDO-001`, `SEC-FIDO-003`, `SEC-FIDO-004` |
-| `PLAT-ROM-002` | `7904f01` | **stale** | `assurance/board/PLAT-ROM-002-2026-09-03-enumeration.txt`, `assurance/board/PLAT-ROM-002-2026-09-03-reboot.log`, `assurance/board/image-2026-09-03.txt`, `firmware/src/worker.rs` | `SEC-ADM-001`, `PLAT-MEM-001`, `PLAT-ROM-001` |
+| `PLAT-ROM-002` | `7904f01` | **stale** | `assurance/board/PLAT-ROM-002-2026-09-03-enumeration.txt`, `assurance/board/PLAT-ROM-002-2026-09-03-reboot.log`, `assurance/board/image-2026-09-03.txt`, `crates/rsk-vendor/src/lib.rs`, `firmware/src/worker.rs` | `SEC-ADM-001`, `PLAT-MEM-001`, `PLAT-ROM-001` |
 | `PLAT-TIMER-001` | `4f2b659` | **stale** | `Cargo.lock`, `firmware/Cargo.toml`, `firmware/src/main.rs` | `PLAT-TIMER-003` |
 | `PLAT-TRNG-001` | `578a924` | **stale** | `Cargo.lock`, `firmware/src/handler.rs`, `firmware/src/main.rs` | `PLAT-TRNG-002` |
 | `PLAT-UNSAFE-001` | `709cb52` | **stale** | `firmware/src/main.rs` | — |
-| `PLAT-UNSAFE-009` | `709cb52` | **stale** | `firmware/Cargo.toml`, `firmware/build.rs` | — |
+| `PLAT-UNSAFE-009` | `709cb52` | **stale** | `crates/rsk-rsa/Cargo.toml`, `crates/rsk-rsa/build.rs`, `firmware/Cargo.toml`, `firmware/build.rs` | — |
 
 ## Where the accepted risks are published
 
