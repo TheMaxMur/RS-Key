@@ -136,6 +136,18 @@ fn dispatch_get_info_carries_the_encrypted_members_once_a_token_exists() {
     );
 }
 
+/// Whether the live audit-journal window records `ev`, read as the panel reads it.
+/// The fault sweeps ask it: the journal swallows its own write failures, so a
+/// command's `Ok` says nothing about whether its entry landed.
+pub(crate) fn journals<S: Storage>(dev: &Device, fs: &mut Fs<S>, ev: u8) -> bool {
+    let mut seen = false;
+    crate::journal::for_each_event(dev, fs, |e| {
+        seen |= e.event == ev;
+        !seen
+    });
+    seen
+}
+
 /// Tests compare secrets by value: the bytes of a `Secret`, an `Option` of one or a
 /// reference to one, and plain arrays passed through as they are. Test-only.
 pub(crate) trait Bare {

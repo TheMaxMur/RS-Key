@@ -3368,3 +3368,88 @@ fn audit_checkpoint_without_touch_signs_nothing() {
         "control: a touched checkpoint is signed"
     );
 }
+
+/// `CONFIG_WRITE`'s three targets, cut at every mutation with the audit journal on:
+/// each writes one record and then counts itself in the journal, so a cut leaves the
+/// old record or the new one, and the journal never counts a config write whose
+/// record did not land. Done means answered `Ok` with the entry in the window.
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn a_torn_config_write_never_journals_a_record_that_did_not_land() {
+    use crate::tests::journals;
+    use rsk_devconf::raw::EF_DEV_CONF;
+    let phy = rsk_phy::PhyData {
+        presence_timeout: Some(45),
+        ..Default::default()
+    };
+    let mut phy_blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+    let phy_len = phy.serialize(&mut phy_blob).unwrap();
+    let cases: [(&str, u64, u16, &[u8]); 3] = [
+        (
+            "DEV_CONF",
+            CONFIG_TARGET_DEV_CONF,
+            EF_DEV_CONF,
+            DEV_CONF_BLOB,
+        ),
+        (
+            "PHY",
+            CONFIG_TARGET_PHY,
+            rsk_phy::EF_PHY,
+            &phy_blob[..phy_len],
+        ),
+        ("LED", CONFIG_TARGET_LED, EF_LED_CONF, &[0x11; LED_CONF_LEN]),
+    ];
+    let record = |fs: &mut Fs<rsk_fs::storage::faults::Cut>, fid: u16| {
+        let mut buf = [0u8; 256];
+        fs.read(fid, &mut buf).map(|n| buf[..n].to_vec())
+    };
+    for (name, target, fid, blob) in cases {
+        let provision = || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            crate::journal::set_enabled(&mut fs, true).unwrap();
+            (fs, medium)
+        };
+        let write = |fs: &mut Fs<rsk_fs::storage::faults::Cut>| {
+            let mut req = [0u8; 128];
+            let n = config_write_req(target, blob, false, &mut req);
+            let mut out = [0u8; 16];
+            let mut st = FidoState::new();
+            call(
+                fs,
+                &mut SeqRng(1),
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out,
+            )
+        };
+        let (mut healthy, _) = provision();
+        assert_eq!(write(&mut healthy), Ok(0), "{name}");
+        let after = record(&mut healthy, fid);
+        assert!(after.is_some(), "{name}: the write stored nothing to sweep");
+        rsk_fs::cut::sweep(
+            provision,
+            |fs| write(fs).is_ok() && journals(&dev(), fs, crate::journal::EV_CONFIG_WRITE),
+            |fs, budget, completed, medium| {
+                let now = record(fs, fid);
+                assert!(
+                    now.is_none() || now == after,
+                    "{name}, budget {budget}: {now:02x?} is neither record — {:?}",
+                    medium.ops()
+                );
+                if journals(&dev(), fs, crate::journal::EV_CONFIG_WRITE) {
+                    assert_eq!(
+                        now,
+                        after,
+                        "{name}, budget {budget}: journalled a write that did not land — {:?}",
+                        medium.ops()
+                    );
+                }
+                if completed {
+                    assert_eq!(now, after, "{name}, budget {budget}: reported done, is not");
+                }
+            },
+        );
+    }
+}

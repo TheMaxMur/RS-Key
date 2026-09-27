@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::FidoState;
+use crate::tests::journals;
 use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
 use rsk_crypto::Device;
@@ -927,16 +928,6 @@ fn force_change_pin_alone_keeps_the_floor() {
     assert_eq!(buf, [MIN_PIN_LENGTH, 1]);
 }
 
-/// Whether the live audit window records `ev`, read as the panel reads it.
-fn journals<S: Storage>(fs: &mut Fs<S>, ev: u8) -> bool {
-    let mut seen = false;
-    journal::for_each_event(&dev(), fs, |e| {
-        seen |= e.event == ev;
-        !seen
-    });
-    seen
-}
-
 /// The one-record config commands, cut at every mutation with the audit journal on:
 /// enableEnterpriseAttestation, the enterprise RP list set and cleared, and
 /// toggleAlwaysUv both ways. Each record is written before its journal entry, so a
@@ -1008,7 +999,7 @@ fn a_torn_one_record_config_write_never_journals_a_change_that_did_not_land() {
         );
         rsk_fs::cut::sweep(
             provision,
-            |fs| run_fs(fs, &mut armed(PERM_ACFG), &req).is_ok() && journals(fs, ev),
+            |fs| run_fs(fs, &mut armed(PERM_ACFG), &req).is_ok() && journals(&dev(), fs, ev),
             |fs, budget, completed, medium| {
                 let now = read_record(fs, fid);
                 assert!(
@@ -1016,7 +1007,7 @@ fn a_torn_one_record_config_write_never_journals_a_change_that_did_not_land() {
                     "{name}, budget {budget}: {now:02x?} is neither record — {:?}",
                     medium.ops()
                 );
-                if journals(fs, ev) {
+                if journals(&dev(), fs, ev) {
                     assert_eq!(
                         now,
                         after,
