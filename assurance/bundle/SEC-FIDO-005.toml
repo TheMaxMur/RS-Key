@@ -88,7 +88,7 @@ threat_clause_reading = "a covering, and the two places it is WIDER than the inv
 owners_tagged = [
   "crates/rsk-fido/src/credential.rs:812 credential_store — the producer of the ANTECEDENT (`store.cred`) and the site that writes the consequent first",
   "crates/rsk-fido/src/credmgmt.rs:713 decrement_rp — a destroyer of the CONSEQUENT (`store.rpent`), at the delete",
-  "crates/rsk-fido/src/credmgmt.rs:757 settle_rp_records — the consequent's other destroyer, the boot pass, which removes only a record no readable credential names",
+  "crates/rsk-fido/src/credmgmt.rs:768 settle_rp_records — the consequent's other destroyer, the boot pass, which removes only a record no readable credential names",
   "crates/rsk-fido/src/passkeys.rs:89 for_each_rp — the management surface, which is what `unmanageable` MEANS",
 ]
 # BOTH HALVES OF THE IMPLICATION ARE COVERED, and the grep that shows it is
@@ -104,11 +104,11 @@ owners_writers = [
   "crates/rsk-fido/src/credential.rs:921 — `fs.put(EF_CRED + slot, ...)`, the antecedent's only producer",
   "crates/rsk-fido/src/credential.rs:897, :903, :913 — the three best-effort `let _ = decrement_rp(...)` rollbacks, each itself a flash write",
   "crates/rsk-fido/src/credmgmt.rs:698 — `delete_credential`'s `fs.delete(EF_CRED + slot)`, the antecedent's destroyer, ahead of the RP work",
-  "crates/rsk-fido/src/credmgmt.rs:737 — `let _ = fs.delete(EF_RP + j)` at count zero, the consequent's destroyer",
-  "crates/rsk-fido/src/credmgmt.rs:742 — `fs.put(EF_RP + j, ...)` on the write-back path, the count decrement that does NOT delete",
+  "crates/rsk-fido/src/credmgmt.rs:745 — `let _ = fs.delete(EF_RP + j)` at count zero, the consequent's destroyer",
+  "crates/rsk-fido/src/credmgmt.rs:750 — `fs.put(EF_RP + j, ...)` on the write-back path, the count decrement that does NOT delete",
   "crates/rsk-fido/src/passkeys.rs:291 — the trusted-display delete's `let _ = decrement_rp(...)`, the same effect keyed by slot",
-  "crates/rsk-fido/src/credmgmt.rs:792 — the boot pass's `fs.delete(EF_RP + j)`, for a record no readable credential names; a credential the medium cannot read refuses the whole pass before it",
-  "crates/rsk-fido/src/credmgmt.rs:800 — the boot pass's `fs.put(EF_RP + j, record)`, a count brought back to the credentials that remain",
+  "crates/rsk-fido/src/credmgmt.rs:803 — the boot pass's `fs.delete(EF_RP + j)`, for a record no readable credential names; a credential the medium cannot read refuses the whole pass before it",
+  "crates/rsk-fido/src/credmgmt.rs:811 — the boot pass's `fs.put(EF_RP + j, record)`, a count brought back to the credentials that remain",
   "crates/rsk-fido/src/reset.rs — the wipe, which deletes the seed first and then sweeps EF_RP and EF_CRED in flash-ring order (the clause's stated carve-out)",
 ]
 owners_readers = [
@@ -444,7 +444,7 @@ sha256 = "0a1bc93a320447121b5ab19c9dab6ee8a03a688df2e684b6d9a89097e3e3ee3d"
 id = "AS-CRED-1"
 statement = "`store.cred` and `store.rpent` are SETS of relying parties — one credential per RP — so the EF_RP count byte that `bump_rp` increments and `decrement_rp` decrements does not exist in the model, and neither does any interleaving that needs two credentials of one relying party."
 kind = "model abstraction"
-discharger = "the store slice of stage 5, and until then the two host tests that reach where the model cannot: crates/rsk-fido/src/credmgmt_tests.rs:2169 deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot exists precisely because `decrement_rp`'s write-back path (credmgmt.rs:742) is a fourth EF_RP write that no sole-credential test reaches. The count is where this property's sharpest unmodelled failure would live: a count that under-runs deletes the EF_RP record with a credential still behind it, which is the invariant's forbidden direction, and crates/rsk-fido/src/credential.rs:971-976 says in its own comment that a 256th credential once recorded 255 and did exactly that (audit run-35)"
+discharger = "the store slice of stage 5, and until then the two host tests that reach where the model cannot: crates/rsk-fido/src/credmgmt_tests.rs:2169 deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot exists precisely because `decrement_rp`'s write-back path (credmgmt.rs:748) is a fourth EF_RP write that no sole-credential test reaches. The count is where this property's sharpest unmodelled failure would live: a count that under-runs deletes the EF_RP record with a credential still behind it, which is the invariant's forbidden direction, and crates/rsk-fido/src/credential.rs:971-976 says in its own comment that a 256th credential once recorded 255 and did exactly that (audit run-35)"
 expressible = "no — a cardinality, not a boolean; scripts/assumption_gate.py accepts a boolean CONSTANT and nothing else"
 registered = "yes — assurance/platform.toml PLAT-MODEL-002, pending, whose statement is this assumption in as many words and whose `supports` already names SEC-FIDO-005. Its `covers` needs `slice:AS-CRED-1` beside the AS-AUTH-6 it holds; an extension, not a new row"
 

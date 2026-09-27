@@ -33,6 +33,31 @@ fn send(fs: &mut Fs<Traced>, s: &mut Session) -> bool {
 }
 
 #[test]
+fn a_faulted_read_fails_a_delete_or_lands_it_whole() {
+    sweep(
+        |fs| {
+            let [alice, ..] = stocked(fs);
+            session(cm_request(0x06, Some(&subpara_cred(&alice)), &TOKEN))
+        },
+        send,
+        &[],
+    );
+}
+
+/// The RP's last credential: the delete takes its RP record with it.
+#[test]
+fn a_faulted_read_fails_a_last_delete_or_lands_it_whole() {
+    sweep(
+        |fs| {
+            let [.., carol] = stocked(fs);
+            session(cm_request(0x06, Some(&subpara_cred(&carol)), &TOKEN))
+        },
+        send,
+        &[],
+    );
+}
+
+#[test]
 fn a_faulted_read_fails_an_update_or_lands_it_whole() {
     sweep(
         |fs| {

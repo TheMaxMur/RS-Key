@@ -110,6 +110,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A passkey delete no longer answers success over an RP record it could not
+  read.** `deleteCredential` removes the credential and then decrements its RP
+  record's count. A failed read of that record was taken for "no such RP", so
+  the delete answered success and left the count one too high: for an RP's
+  last credential, a record `enumerateRPs` lists and whose credential walk
+  answers `NO_CREDENTIALS`, until the next boot settles it. The delete now
+  answers `ERR_OTHER` when the RP it must decrement could be the record it could
+  not read. Found by the read-fault sweep. `bcdDevice` 0x0A58 → 0x0A59.
+
 - **A failed flash read no longer files a second passkey for one account.**
   A resident makeCredential for an (RP, user) the key already holds overwrites
   that credential (CTAP 2.1 §6.1.2). The search for it skipped a slot whose read

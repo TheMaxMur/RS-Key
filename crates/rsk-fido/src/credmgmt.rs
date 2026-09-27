@@ -716,14 +716,22 @@ pub(crate) fn decrement_rp<S: Storage>(
     rp_id_hash: &[u8; 32],
 ) -> Result<(), CtapError> {
     let mut rp = [0u8; RP_REC_MAX];
+    let mut unread = false;
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(fs, EF_RP, &mut occupied);
     for (j, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
         if !live {
             continue;
         }
-        let Some(m) = fs.read(EF_RP + j, &mut rp) else {
-            continue;
+        // Carried, as `bump_rp` carries its own: only an RP found nowhere else can be
+        // the one the flash would not serve, and a delete must not answer over it.
+        let m = match fs.try_read(EF_RP + j, &mut rp) {
+            Ok(Some(m)) => m,
+            Ok(None) => continue,
+            Err(_) => {
+                unread = true;
+                continue;
+            }
         };
         let m = m.min(rp.len());
         if m >= RP_PREFIX && rp[1..RP_PREFIX] == *rp_id_hash {
@@ -740,8 +748,11 @@ pub(crate) fn decrement_rp<S: Storage>(
                 fs.put(EF_RP + j, record)
                     .map_err(|_| CtapError::NotAllowed)?;
             }
-            break;
+            return Ok(());
         }
+    }
+    if unread {
+        return Err(CtapError::Other);
     }
     Ok(())
 }
