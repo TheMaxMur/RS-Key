@@ -508,6 +508,7 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
         let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);
         let _ = rsk_openpgp::scan_files(&dev(), &mut fsb, &mut *rngb);
         let _ = rsk_devconf::scrub_legacy_lock(&mut fsb);
+        let _ = rsk_fido::credmgmt::settle_rp_records(&mut fsb);
         seeded
     };
     if let Err(e) = boot_block() {

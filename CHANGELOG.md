@@ -92,6 +92,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A passkey delete cut by a power loss no longer leaves an RP with no
+  credential in it.** A delete removes the credential and then its RP record's
+  count; a cut between the two left the count one too high, and for an RP's last
+  credential a record naming none, which `enumerateRPs` went on listing and whose
+  `enumerateCredentialsBegin` answered `NO_CREDENTIALS` until a reset, from the
+  host's `deleteCredential` and the display's delete alike. A boot pass now
+  settles every RP record against the credentials that remain; a credential the
+  flash cannot read settles nothing, so it can never delete a live RP's record.
+  Found by the per-command power-cut sweeps. `bcdDevice` 0x0A54 → 0x0A55.
+
 - **`ykman config set-lock-code` locks the configuration, as on a YubiKey.** The
   code was accepted and ignored: ykman printed "Lock code updated", DeviceInfo
   went on reporting the device unlocked, and any host could still change which

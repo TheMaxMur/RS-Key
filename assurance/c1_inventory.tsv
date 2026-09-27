@@ -519,8 +519,8 @@ enumerate_creds_response	crates/rsk-fido/src/credmgmt.rs:541	121	decides	D2	retu
 find_resident	crates/rsk-fido/src/credmgmt.rs:663	26	decides	D5	returns the OWNER's rpIdHash, against which check_rp_binding matches the token's scope	SEC-FIDO-001
 delete_credential	crates/rsk-fido/src/credmgmt.rs:690	18	decides	D3	deletes EF_CRED, resets the largeblob and decrements EF_RP	SEC-FIDO-005
 decrement_rp	crates/rsk-fido/src/credmgmt.rs:709	38	decides	D3	at zero deletes EF_RP and the paired EF_RPNICK — this is the boundary of credential manageability	SEC-FIDO-005
-update_user	crates/rsk-fido/src/credmgmt.rs:749	31	decides	D2	materializes the keydev seed in RAM, and its None means a NotAllowed refusal when the seed is unavailable	SEC-FIDO-004
-reseal_user	crates/rsk-fido/src/credmgmt.rs:782	82	decides	D3	rewrites the EF_CRED slot, keeping the resident id, and requires a full userId match (§6.8.3)	SEC-FIDO-005,SEC-FIDO-001
+update_user	crates/rsk-fido/src/credmgmt.rs:808	31	decides	D2	materializes the keydev seed in RAM, and its None means a NotAllowed refusal when the seed is unavailable	SEC-FIDO-004
+reseal_user	crates/rsk-fido/src/credmgmt.rs:841	82	decides	D3	rewrites the EF_CRED slot, keeping the resident id, and requires a full userId match (§6.8.3)	SEC-FIDO-005,SEC-FIDO-001
 for_each_rp	crates/rsk-fido/src/passkeys.rs:83	70	decides	D2	loads the seed and hands the plaintext rpId domains and nicknames to the panel — the walk has no gate of its own	SEC-FIDO-004,SEC-FIDO-005
 set_rp_nickname	crates/rsk-fido/src/passkeys.rs:158	50	decides	D3	deletes or writes the EF_RPNICK record in the slot paired with EF_RP	-
 for_each_cred	crates/rsk-fido/src/passkeys.rs:209	45	decides	D2	decrypts account names and credProtect for the screen, the seed lives inside the call	SEC-FIDO-004

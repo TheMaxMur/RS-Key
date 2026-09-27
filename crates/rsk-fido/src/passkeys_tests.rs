@@ -39,8 +39,8 @@ fn provisioned() -> (Fs<RamStorage>, [u8; 32]) {
 // Register a resident credential the way makeCredential's storage primitive does
 // (a sealed box + an EF_CRED record + the boxed EF_RP domain).
 #[allow(clippy::too_many_arguments)]
-fn add(
-    fs: &mut Fs<RamStorage>,
+fn add<S: Storage>(
+    fs: &mut Fs<S>,
     seed: &[u8; 32],
     iv_byte: u8,
     rp_id: &str,
@@ -224,7 +224,7 @@ fn empty_for_rp_with_no_credentials() {
     assert_eq!(calls, 0);
 }
 
-fn fids_under(fs: &mut Fs<RamStorage>, rp_id: &str) -> std::vec::Vec<u16> {
+fn fids_under<S: Storage>(fs: &mut Fs<S>, rp_id: &str) -> std::vec::Vec<u16> {
     let h = sha256(rp_id.as_bytes());
     let mut fids = std::vec::Vec::new();
     for_each_cred(&dev(), fs, &h, |a| fids.push(a.ef_cred_fid));
@@ -576,5 +576,74 @@ fn fuzz_unseal_nick_shapes_never_panic() {
         // Random junk practically never authenticates → always None, never panic.
         let r = unseal_nick(&seed, &rp_a, &tail[..len], &mut out[..out_cap]);
         assert!(r.is_none(), "random bytes must not forge a valid nickname");
+    }
+}
+
+/// The panel's delete, cut at every mutation, over an RP that keeps a credential and
+/// one that loses its last. The store tag moves first and the credential goes before
+/// its RP record, so no cut leaves a live credential its RP does not count, or a
+/// delete behind an unchanged tag; and once the boot pass a cut always leads to has
+/// run, the RP record agrees with its credentials exactly, with no RP left naming none.
+#[test]
+fn a_torn_on_device_delete_never_orphans_a_credential_or_hides_behind_the_tag() {
+    use crate::credential::cred_store_state;
+    use crate::credmgmt::settle_rp_records;
+
+    let rp_count = |fs: &mut Fs<rsk_fs::storage::faults::Cut>, rp: &str| {
+        let mut counted = None;
+        for_each_rp(&dev(), fs, |r| {
+            if r.rp_id == rp {
+                counted = Some(usize::from(r.count));
+            }
+        });
+        counted
+    };
+    for (rp, keep) in [("github.com", 1usize), ("solo.example", 0)] {
+        let provision = || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            ensure_seed(&dev(), &mut fs, &mut SeqRng(1)).unwrap();
+            let seed = *load_keydev(&dev(), &mut fs).unwrap().expose();
+            for (i, uid) in [b"u-a", b"u-b"].iter().take(keep + 1).enumerate() {
+                add(&mut fs, &seed, i as u8 + 1, rp, *uid, "n", "N", 0);
+            }
+            (fs, medium)
+        };
+        let (mut fresh, _) = provision();
+        let tag = cred_store_state(&mut fresh).unwrap();
+        let victim = fids_under(&mut fresh, rp)[0];
+        rsk_fs::cut::sweep(
+            provision,
+            |fs| delete_cred(fs, victim),
+            |fs, budget, completed, medium| {
+                let live = fids_under(fs, rp).len();
+                let counted = rp_count(fs, rp);
+                if live > 0 {
+                    assert!(
+                        counted.is_some_and(|c| c >= live),
+                        "{rp}, budget {budget}: {live} live credential(s) under an RP counting {counted:?} — {:?}",
+                        medium.ops()
+                    );
+                }
+                if live == keep {
+                    assert_ne!(
+                        cred_store_state(fs).unwrap(),
+                        tag,
+                        "{rp}, budget {budget}: the delete landed behind an unchanged tag — {:?}",
+                        medium.ops()
+                    );
+                }
+                if completed {
+                    assert_eq!(live, keep, "{rp}, budget {budget}: reported done, is not");
+                }
+                settle_rp_records(fs).unwrap();
+                assert_eq!(
+                    rp_count(fs, rp),
+                    (live > 0).then_some(live),
+                    "{rp}, budget {budget}: after the boot pass the RP disagrees with its credentials — {:?}",
+                    medium.ops()
+                );
+            },
+        );
     }
 }

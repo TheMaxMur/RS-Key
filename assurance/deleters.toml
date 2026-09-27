@@ -22,7 +22,7 @@
 #
 # Scope, matching the roadmap's §3.4 so the counts reproduce: callers outside
 # `crates/rsk-fs` (which defines the family), outside `fuzz/`, and outside the
-# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 44 — 22 `delete`,
+# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 46 — 24 `delete`,
 # 5 `delete_key`, 2 `delete_over`, 5 `delete_key_over`, 5 `force_delete`,
 # 5 `force_delete_halves`.
 #
@@ -169,7 +169,7 @@ answer = "discarded"
 class = "bookkeeping"
 metadata = "none"
 disposition = "best-effort"
-why = "the RP index at count zero, and the credential it counted has already gone through the read above; a survivor is a stale count the next decrement or a reset reclaims."
+why = "the RP index at count zero, and the credential it counted has already gone through the read above; a survivor names no credential, and the boot pass `settle_rp_records` removes it."
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
@@ -181,6 +181,28 @@ class = "bookkeeping"
 metadata = "none"
 disposition = "best-effort"
 why = "a device-local nickname sealed with the rpIdHash as AAD, never surfaced while its EF_RP slot is empty and rejected outright if the slot is reused."
+
+[[site]]
+file = "crates/rsk-fido/src/credmgmt.rs"
+line = 792
+call = "fs.delete(EF_RP + j)?;"
+verb = "delete"
+answer = "read"
+class = "bookkeeping"
+metadata = "none"
+disposition = "must-read"
+why = "the boot pass removes an RP record no readable credential names, which enumerateRPs would otherwise list over NO_CREDENTIALS; its refusal goes back to a boot that runs the pass again next time."
+
+[[site]]
+file = "crates/rsk-fido/src/credmgmt.rs"
+line = 794
+call = "let _ = fs.delete(crate::consts::EF_RPNICK + j);"
+verb = "delete"
+answer = "discarded"
+class = "bookkeeping"
+metadata = "none"
+disposition = "best-effort"
+why = "the same nickname `decrement_rp` drops with its RP: sealed with the rpIdHash as AAD, never surfaced while its EF_RP slot is empty and rejected outright if the slot is reused."
 
 [[site]]
 file = "crates/rsk-fido/src/journal.rs"

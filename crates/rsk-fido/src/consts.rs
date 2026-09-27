@@ -412,3 +412,7 @@ pub const U2F_AUTH_CHECK_ONLY: u8 = 0x07; // is this key handle ours?
 pub const U2F_AUTH_NO_ENFORCE: u8 = 0x08; // don't enforce user presence and sign
 pub const U2F_AUTH_FLAG_TUP: u8 = 0x01; // test-of-user-presence bit
 pub const U2F_REGISTER_ID: u8 = 0x05; // registration response leading byte
+
+/// How much of an rpIdHash `credmgmt::settle_rp_records` matches a credential to
+/// its RP record on: a collision can only count a record high, never delete it.
+pub const SETTLE_KEY_LEN: usize = 8;

@@ -87,7 +87,8 @@ threat_clause_reading = "a covering, and the two places it is WIDER than the inv
 # second tag in a counted file moves nothing.
 owners_tagged = [
   "crates/rsk-fido/src/credential.rs:812 credential_store — the producer of the ANTECEDENT (`store.cred`) and the site that writes the consequent first",
-  "crates/rsk-fido/src/credmgmt.rs:713 decrement_rp — the sole destroyer of the CONSEQUENT (`store.rpent`)",
+  "crates/rsk-fido/src/credmgmt.rs:713 decrement_rp — a destroyer of the CONSEQUENT (`store.rpent`), at the delete",
+  "crates/rsk-fido/src/credmgmt.rs:757 settle_rp_records — the consequent's other destroyer, the boot pass, which removes only a record no readable credential names",
   "crates/rsk-fido/src/passkeys.rs:89 for_each_rp — the management surface, which is what `unmanageable` MEANS",
 ]
 # BOTH HALVES OF THE IMPLICATION ARE COVERED, and the grep that shows it is
@@ -96,7 +97,7 @@ owners_tagged = [
 # than `SEC-FIDO-007`'s, whose single tag sat on the consequent alone.
 owners_tag_reading = "covered, and two named gaps rather than a wrong tag. The gaps are the SOLE producer of the consequent, `crates/rsk-fido/src/credential.rs:924 bump_rp`, which writes `rec[0] = 1` into a fresh EF_RP record and carries no tag of any kind; and `crates/rsk-fido/src/reset.rs`, which destroys BOTH sides in one sweep, carries six `Refines` tags for four OTHER properties (SEC-FIDO-004, -006, -006A, -006B, -006C at :35, :108, :202, :220-222, :289) and none for this one — while being the file `formal/comutants.toml`'s third co-mutant patches and the file whose model twin `ResetSweepSecrets` produces the deepest counterexample this property has. Neither absence moves the derived column: `credential.rs` and `reset.rs` are one file each, and `credential.rs` is already counted"
 # Every production site that writes either side, enumerated because the tag set
-# names three functions and the sites are ten — eight entries, of which the third
+# names four functions and the sites are twelve — ten entries, of which the third
 # names the three best-effort rollbacks together.
 owners_writers = [
   "crates/rsk-fido/src/credential.rs:872 — `bump_rp(...)?` inside `credential_store`, the EF_RP write that LEADS the credential (the order the threat clause states)",
@@ -106,6 +107,8 @@ owners_writers = [
   "crates/rsk-fido/src/credmgmt.rs:737 — `let _ = fs.delete(EF_RP + j)` at count zero, the consequent's destroyer",
   "crates/rsk-fido/src/credmgmt.rs:742 — `fs.put(EF_RP + j, ...)` on the write-back path, the count decrement that does NOT delete",
   "crates/rsk-fido/src/passkeys.rs:291 — the trusted-display delete's `let _ = decrement_rp(...)`, the same effect keyed by slot",
+  "crates/rsk-fido/src/credmgmt.rs:792 — the boot pass's `fs.delete(EF_RP + j)`, for a record no readable credential names; a credential the medium cannot read refuses the whole pass before it",
+  "crates/rsk-fido/src/credmgmt.rs:800 — the boot pass's `fs.put(EF_RP + j, record)`, a count brought back to the credentials that remain",
   "crates/rsk-fido/src/reset.rs — the wipe, which deletes the seed first and then sweeps EF_RP and EF_CRED in flash-ring order (the clause's stated carve-out)",
 ]
 owners_readers = [
@@ -222,11 +225,11 @@ features = "none"
 [[method]]
 obligation = "the production side: which sites own each half, whether the tags reach them, and what `reachable by the management surface` means in Rust that `store.rpent` does not say"
 method = "review"
-artifact = "crates/rsk-fido/src/credential.rs::credential_store + crates/rsk-fido/src/credmgmt.rs::decrement_rp + …enumerate_rps + crates/rsk-fido/src/passkeys.rs::for_each_rp"
-bound_tagged_owners = 3
-stops_tagged_owners = "any owner outside the three the tag set names. This is a count of SITES and not a shrink of a shipped constant, because a review has no other unit"
-bound_writer_sites = 8
-stops_writer_sites = "a writer in a file the review did not open. Eight entries over four files is what was read, and one entry holds three best-effort rollbacks, so the site count is larger than the entry count"
+artifact = "crates/rsk-fido/src/credential.rs::credential_store + crates/rsk-fido/src/credmgmt.rs::decrement_rp + …settle_rp_records + …enumerate_rps + crates/rsk-fido/src/passkeys.rs::for_each_rp"
+bound_tagged_owners = 4
+stops_tagged_owners = "any owner outside the four the tag set names. This is a count of SITES and not a shrink of a shipped constant, because a review has no other unit"
+bound_writer_sites = 10
+stops_writer_sites = "a writer in a file the review did not open. Ten entries over four files is what was read, and one entry holds three best-effort rollbacks, so the site count is larger than the entry count"
 bound_reader_sites = 3
 stops_reader_sites = "anything about what a reader DOES with a slot it read. The count names the three browse surfaces and not their agreement — measured, two of them disagree on one skip condition"
 bound_skip_conditions = 3
@@ -341,8 +344,8 @@ c_twin_direction = "BOTH failures fall in the modelled direction and the asserti
 c_twin_untransferred = "the other two twins are transcribed from formal/comutants.toml and were NOT re-driven here: BugDeleteRpBeforeCred (:125-154, `expect = \"killed\"`, whose note records it as batch 1's one measured GAP, closed by a_torn_delete_never_leaves_a_credential_without_its_rp) and BugSeedDoesNotLead (:343-359, `expect = \"killed\"`). A recorded verdict is evidence and a re-run is better evidence; this bundle bought one and says which"
 
 # THE PRODUCTION SIDE, by review.
-r_owners = "8 writer entries (10 sites, one entry holding the three best-effort rollbacks) and 3 reader sites over 4 files in 1 crate, against the 3 functions the Refines tags name. The sole producer of the consequent (bump_rp) and the file that destroys both sides (reset.rs) carry no tag for this property, and reset.rs carries six for four others"
-r_tag = "both halves of the implication are tagged, which is what SEC-FIDO-007's single tag was not: credential.rs::credential_store owns the antecedent, credmgmt.rs::decrement_rp owns the consequent, passkeys.rs::for_each_rp owns the reader that makes `manageable` mean anything"
+r_owners = "10 writer entries (12 sites, one entry holding the three best-effort rollbacks) and 3 reader sites over 4 files in 1 crate, against the 4 functions the Refines tags name. The sole producer of the consequent (bump_rp) and the file that destroys both sides (reset.rs) carry no tag for this property, and reset.rs carries six for four others"
+r_tag = "both halves of the implication are tagged, which is what SEC-FIDO-007's single tag was not: credential.rs::credential_store owns the antecedent, credmgmt.rs::decrement_rp and the boot pass credmgmt.rs::settle_rp_records own the consequent's destruction, passkeys.rs::for_each_rp owns the reader that makes `manageable` mean anything"
 r_management_surface = "`store.rpent` is set membership; the shipped surfaces need three more conjuncts. Both drop a slot on a failed `fs.read`, on `buf[0] == 0` and on a failed `unseal_rp_id`, and the model can express none of them — so a device whose EF_RP record exists but does not unseal satisfies this invariant while showing the owner nothing. The two surfaces also disagree on the last arm: enumerate_rps fails the whole walk with CtapError::Other, for_each_rp skips one record. Of the three arms only the read failure is one a live medium reaches, and it is the same class docs/threat-model.md:60-93 states as its own clause"
 r_rollback_class = "the five sites CHANGELOG.md [0.4.11] `Still open, same class, and named here` leaves open in this class are ALL in the direction this invariant does not constrain — each strands an EF_RP entry over a credential that never landed or is already gone. That is not luck: it is the shipped write order, and the threat clause states the same thing in the same words. The model hides them for a different reason than a wrong direction — it has no failing write at all"
 r_fix_arm_never_run = "THE RUN HAS HAPPENED, so this row's name is now its history. `FixSweepDropsCredsBeforeRpEntries` — the counterfactual repair the tree did NOT take, RSKeySecurityState.tla:1405, which holds the sweep's rpent arm until `store.cred` is empty — WAS FALSE in every configuration that assigns it and TRUE in none when this row was written; measured now, it is TRUE in exactly one, formal/gen-configs.sh:322 over Historical_E76.cfg, against 95 files that pass FALSE. formal/runs.toml's safety tier at 9cafee7 records that file GREEN over a complete search, so a recorded verdict now DOES depend on the constant's value and the tree has MEASURED that the repair holds this invariant. The conjunct is load-bearing and observed to be: the one-line control Mut_BugSeedDoesNotLead.cfg is RED on this invariant at 1 875 109 states. What is still true of the row: the constant is outside the standing-assumption registry, so the assumption gate's both-arms rule never looks at it — gate_assumption below tracks four booleans and this is not one, and the FALSE arm is observed through that control rather than through the gate"

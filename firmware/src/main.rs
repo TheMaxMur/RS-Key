@@ -693,6 +693,7 @@ async fn main(spawner: Spawner) {
         let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
         let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
         let _ = rsk_devconf::scrub_legacy_lock(&mut fs);
+        let _ = rsk_fido::credmgmt::settle_rp_records(&mut fs);
         // One-shot at-rest hardening: the seal migrations above leave the superseded
         // chip-serial-sealed copies recoverable from a flash dump until a GC lap
         // reclaims the page. The marker, the write order and the crash-safety are
@@ -779,7 +780,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A54;
+    let device_release: u16 = 0x0A55;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

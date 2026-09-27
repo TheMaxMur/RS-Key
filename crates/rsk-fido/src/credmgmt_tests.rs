@@ -2378,3 +2378,98 @@ fn a_torn_update_user_never_changes_a_credential_behind_the_store_state() {
         },
     );
 }
+
+/// Every live `EF_CRED` slot, in order.
+fn cred_slots<S: Storage>(fs: &mut Fs<S>) -> std::vec::Vec<u16> {
+    (0..MAX_RESIDENT_CREDENTIALS)
+        .filter(|&i| fs.has_data(EF_CRED + i))
+        .collect()
+}
+
+/// The stored count of every `EF_RP` record, in slot order.
+fn rp_counts<S: Storage>(fs: &mut Fs<S>) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; RP_REC_MAX];
+    (0..MAX_RESIDENT_CREDENTIALS)
+        .filter_map(|j| fs.read(EF_RP + j, &mut buf).map(|_| buf[0]))
+        .collect()
+}
+
+/// A delete torn after the credential went and before its RP record did leaves an
+/// RP that `enumerateRPs` lists and whose `enumerateCredentialsBegin` answers
+/// NO_CREDENTIALS — until the boot pass settles it, which a power cut always reaches.
+#[test]
+fn the_rp_a_torn_last_delete_leaves_behind_is_settled_at_boot() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1], "alice");
+    let slot = cred_slots(&mut fs)[0];
+    fs.delete(EF_CRED + slot).unwrap(); // the cut, after the credential went
+    let mut out = [0u8; 512];
+    let rps = cm_request(0x02, None, &TOKEN);
+    assert!(
+        run(&mut fs, &mut armed(PERM_CM), &rps, &mut out).is_ok(),
+        "precondition: the torn delete left an RP to list"
+    );
+    let rp_hash = sha256(b"example.com");
+    let creds = cm_request(0x04, Some(&subpara_rpidhash(&rp_hash)), &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut armed(PERM_CM), &creds, &mut out),
+        Err(CtapError::NoCredentials),
+        "precondition: and nothing under it"
+    );
+
+    settle_rp_records(&mut fs).unwrap();
+    assert_eq!(rp_counts(&mut fs), std::vec::Vec::<u8>::new());
+    assert_eq!(
+        run(&mut fs, &mut armed(PERM_CM), &rps, &mut out),
+        Err(CtapError::NoCredentials),
+        "the settled store still lists an RP with no credential"
+    );
+}
+
+#[test]
+fn settling_brings_a_count_left_high_back_to_the_credentials() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1], "alice");
+    register(&mut fs, &mut rng, "example.com", &[2], "bob");
+    register(&mut fs, &mut rng, "other.example", &[3], "carol");
+    assert_eq!(rp_counts(&mut fs), [2, 1]);
+    let slot = cred_slots(&mut fs)[0];
+    fs.delete(EF_CRED + slot).unwrap();
+    settle_rp_records(&mut fs).unwrap();
+    assert_eq!(rp_counts(&mut fs), [1, 1]);
+}
+
+#[test]
+fn settling_a_consistent_store_writes_nothing() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1], "alice");
+    register(&mut fs, &mut rng, "other.example", &[2], "bob");
+    let before = fs.write_gen();
+    settle_rp_records(&mut fs).unwrap();
+    assert_eq!(
+        fs.write_gen(),
+        before,
+        "a boot pass wrote over a store it had nothing to settle"
+    );
+}
+
+/// A credential the medium cannot read may be the one an RP still names, so the
+/// pass refuses outright rather than count it out and delete a live RP's record.
+#[test]
+fn a_credential_that_cannot_be_read_settles_nothing() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    register(&mut fs, &mut rng, "example.com", &[1], "alice");
+    let slot = cred_slots(&mut fs)[0];
+    medium.stick(Some(EF_CRED + slot));
+    assert!(settle_rp_records(&mut fs).is_err());
+    medium.stick(None);
+    assert_eq!(
+        rp_counts(&mut fs),
+        [1],
+        "an unreadable credential's RP was settled away"
+    );
+}

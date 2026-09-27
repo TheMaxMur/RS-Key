@@ -546,12 +546,12 @@ Every one of the 17 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 #### Method 5 — the production side: which sites own each half, whether the tags reach them, and what `reachable by the management surface` means in Rust that `store.rpent` does not say
 
-`review` over crates/rsk-fido/src/credential.rs::credential_store + crates/rsk-fido/src/credmgmt.rs::decrement_rp + …enumerate_rps + crates/rsk-fido/src/passkeys.rs::for_each_rp. cfg: none — every site above is unconditional production code; the invariant's name appears in no cfg-gated mirror. features: none.
+`review` over crates/rsk-fido/src/credential.rs::credential_store + crates/rsk-fido/src/credmgmt.rs::decrement_rp + …settle_rp_records + …enumerate_rps + crates/rsk-fido/src/passkeys.rs::for_each_rp. cfg: none — every site above is unconditional production code; the invariant's name appears in no cfg-gated mirror. features: none.
 
 | Bound | Value | What stops being proved |
 |---|---|---|
-| `bound_tagged_owners` | `3` | any owner outside the three the tag set names. This is a count of SITES and not a shrink of a shipped constant, because a review has no other unit |
-| `bound_writer_sites` | `8` | a writer in a file the review did not open. Eight entries over four files is what was read, and one entry holds three best-effort rollbacks, so the site count is larger than the entry count |
+| `bound_tagged_owners` | `4` | any owner outside the four the tag set names. This is a count of SITES and not a shrink of a shipped constant, because a review has no other unit |
+| `bound_writer_sites` | `10` | a writer in a file the review did not open. Ten entries over four files is what was read, and one entry holds three best-effort rollbacks, so the site count is larger than the entry count |
 | `bound_reader_sites` | `3` | anything about what a reader DOES with a slot it read. The count names the three browse surfaces and not their agreement — measured, two of them disagree on one skip condition |
 | `bound_skip_conditions` | `3` | the invariant itself, and this is the finding: a record that exists and is SKIPPED satisfies `store.rpent` as plain set membership while being exactly what the clause forbids. Three skip conditions are three ways for that to happen, and no model bound reaches any of them |
 | `bound_files_in_argument` | `4` | anything in a fifth file |

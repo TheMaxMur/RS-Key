@@ -1954,7 +1954,7 @@ it off the medium. `EF_HARDENED` says the lap has run
 and writes the marker only after `compact()` returns Ok
 (`crates/rsk-fs/src/lib.rs:126-144`) — marker AFTER scrub, the same write-order
 family as the store's delete and the PIN flows' revoke. The boot glue keeps only
-the OTP gate and the placement of the stall (`firmware/src/main.rs:696-712`).
+the OTP gate and the placement of the stall (`firmware/src/main.rs:697-713`).
 Every *lazy* re-key **or delete** after the lap must re-arm it — a tombstone
 appends too: **run-35 found four of five re-key sites skipping exactly that**,
 and the swept sites are the module's citations. *After the lap* means after any

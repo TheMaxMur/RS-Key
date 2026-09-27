@@ -32,7 +32,7 @@ use crate::consts::{
     CM_DELETE_CREDENTIAL, CM_ENUMERATE_CREDS_BEGIN, CM_ENUMERATE_CREDS_NEXT,
     CM_ENUMERATE_RPS_BEGIN, CM_ENUMERATE_RPS_NEXT, CM_GET_CREDS_METADATA, CM_UPDATE_USER_INFO,
     CRED_PROT_UV_OPTIONAL, EF_CRED, EF_PIN, EF_RP, LARGE_BLOB_EXT, MAX_RAW_SUBPARA,
-    MAX_RESIDENT_CREDENTIALS,
+    MAX_RESIDENT_CREDENTIALS, SETTLE_KEY_LEN,
 };
 use crate::credential::{
     CRED_BOX_MAX, CRED_REC_MAX, CRED_RESIDENT_LEN, CredInput, RECORD_PREFIX, RP_PREFIX, RP_REC_MAX,
@@ -741,6 +741,65 @@ pub(crate) fn decrement_rp<S: Storage>(
                     .map_err(|_| CtapError::NotAllowed)?;
             }
             break;
+        }
+    }
+    Ok(())
+}
+
+/// Settle every `EF_RP` record against the credentials that remain — a boot pass. A
+/// delete torn after its `EF_CRED` record went and before `decrement_rp` ran leaves
+/// a count one too high or, for an RP's last credential, a record naming none, which
+/// `enumerateRPs` lists and whose `enumerateCredentialsBegin` answers NO_CREDENTIALS
+/// until a reset. Credentials are matched on an 8-byte rpIdHash prefix, so a collision
+/// can only count high, never delete a live RP's record; a credential the medium cannot
+/// read settles nothing, and an RP record it cannot read is left as it is.
+/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
+pub fn settle_rp_records<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<()> {
+    let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
+    slot_map(fs, EF_CRED, &mut occupied);
+    let mut prefixes = [None::<[u8; SETTLE_KEY_LEN]>; MAX_RESIDENT_CREDENTIALS as usize];
+    for ((i, &live), prefix) in (0..MAX_RESIDENT_CREDENTIALS)
+        .zip(&occupied)
+        .zip(&mut prefixes)
+    {
+        let mut head = [0u8; SETTLE_KEY_LEN];
+        if live && matches!(fs.try_read(EF_CRED + i, &mut head)?, Some(n) if n >= RECORD_PREFIX) {
+            *prefix = Some(head);
+        }
+    }
+    slot_map(fs, EF_RP, &mut occupied);
+    let mut rp = [0u8; RP_REC_MAX];
+    for (j, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
+        let Ok(Some(n)) = (if live {
+            fs.try_read(EF_RP + j, &mut rp)
+        } else {
+            Ok(None)
+        }) else {
+            continue;
+        };
+        let Some(record) = rp
+            .get_mut(..n.min(RP_REC_MAX))
+            .filter(|r| r.len() >= RP_PREFIX)
+        else {
+            continue;
+        };
+        let named = prefixes
+            .iter()
+            .filter(|p| p.is_some_and(|p| record.get(1..=SETTLE_KEY_LEN) == Some(&p[..])))
+            .count();
+        match u8::try_from(named) {
+            Ok(0) => {
+                fs.delete(EF_RP + j)?;
+                // As in `decrement_rp`: the nickname goes with its RP, best-effort.
+                let _ = fs.delete(crate::consts::EF_RPNICK + j);
+            }
+            Ok(count) if record.first() != Some(&count) => {
+                if let Some(c) = record.first_mut() {
+                    *c = count;
+                }
+                fs.put(EF_RP + j, record)?;
+            }
+            _ => {}
         }
     }
     Ok(())
