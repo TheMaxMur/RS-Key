@@ -9,15 +9,13 @@ use super::*;
 /// The on-screen presence backend — what the firmware's `presence::Presence`
 /// alias names on the `display` build. Holds the shared [`Ui`]; renders a
 /// trusted Approve/Deny prompt and block-waits a tap.
-pub struct TouchPresence<'a, P, T, H, S, R>
+pub struct TouchPresence<'a, P, T, H>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_sdk::Rng,
 {
-    ui: &'a RefCell<Ui<'a, P, T, H, S, R>>,
+    ui: &'a RefCell<Ui<'a, P, T, H>>,
 }
 
 /// Outcome of a confirm wait. Unlike the BOOTSEL button, the screen has a real
@@ -29,13 +27,11 @@ enum Outcome {
     Cancelled,
 }
 
-impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+impl<'a, P, T, H> Ui<'a, P, T, H>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_sdk::Rng,
 {
     /// Common entry for a touch ceremony: switch the LED to the touch indicator,
     /// drop any stale cancel left from an earlier wait, and arm the up-pending flag
@@ -65,15 +61,13 @@ where
     }
 }
 
-impl<'a, P, T, H, S, R> TouchPresence<'a, P, T, H, S, R>
+impl<'a, P, T, H> TouchPresence<'a, P, T, H>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_sdk::Rng,
 {
-    pub fn new(ui: &'a RefCell<Ui<'a, P, T, H, S, R>>) -> Self {
+    pub fn new(ui: &'a RefCell<Ui<'a, P, T, H>>) -> Self {
         Self { ui }
     }
 
@@ -228,7 +222,7 @@ where
     /// Collect a PIN on the on-screen pad for the host built-in-UV path (clientPIN 0x06).
     /// The pad loop lives on [`Ui`] (which owns the panel + touch); borrow the shared
     /// `Ui` and run it there, so the host path and a display-initiated gate
-    /// ([`Ui::run_delete`]) share one implementation.
+    /// ([`Local::run_delete`]) share one implementation.
     fn collect_pin_impl(&mut self, min_len: usize, out: &mut [u8]) -> rsk_sdk::PinEntry {
         // No up-front "N tries remaining" caption here, unlike the local unlock gate: the
         // worker holds `fs` *and* `rng` (and `presence`, and `fido_state`) borrowed across
@@ -256,9 +250,9 @@ where
     /// the CCID transport streaming time-extensions), so it blocks to the presence
     /// timeout (`yield_to_host = false`), exactly like the FIDO built-in-UV path. The
     /// worker holds `fs`, `rng`, `presence` and `fido_state` borrowed across this call,
-    /// so this — like `collect_pin_impl` — must never read any of them (it touches only
-    /// the panel's `Ui` RefCell). `scripts/display_borrow_gate.py` holds the whole
-    /// reachable set to that; the `rng` half of it is #107.
+    /// so this — like `collect_pin_impl` — must never read any of them. The `Ui` it holds
+    /// keeps none of them but a [`crate::PinBit`] try-borrow of the store, which cannot
+    /// wait: the `rng` half of that is #107.
     pub fn collect_pin_titled(
         &mut self,
         title: &'static str,
@@ -272,13 +266,11 @@ where
     }
 }
 
-impl<'a, P, T, H, S, R> rsk_sdk::UserPresence for TouchPresence<'a, P, T, H, S, R>
+impl<'a, P, T, H> rsk_sdk::UserPresence for TouchPresence<'a, P, T, H>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
     H: Hooks,
-    S: rsk_fs::Storage,
-    R: rsk_sdk::Rng,
 {
     /// A smartcard touch policy: the trusted Approve/Deny prompt and nothing
     /// else. No closing "Approved" card — OpenPGP/PIV call this once per

@@ -17,10 +17,20 @@
 //! answers on bulk IN, routing APDUs to an [`ApduHandler`]. A single command is
 //! handled per transfer (PC/SC waits for each response).
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use embassy_futures::select::{Either, select};
 use embassy_time::Timer;
 use embassy_usb::Builder;
 use embassy_usb::driver::{Driver, Endpoint, EndpointError, EndpointIn, EndpointOut};
+use rsk_secret::WipeGuard;
 
 // CCID bulk-OUT message types (Bulk-OUT, PC → reader). The message vocabulary
 // and the framing helpers below are public for the same reason CTAPHID's are:
@@ -89,7 +99,7 @@ pub const MAX_CCID_MSG: usize = 3072;
 /// `wMaxPacketSize` of the three CCID endpoints (full-speed USB). A bulk-IN
 /// transfer whose length is an exact multiple needs a terminating ZLP — keep
 /// the `is_multiple_of` modulus and the endpoint allocations in lockstep.
-const EP_PACKET_SIZE: usize = 64;
+const EP_PACKET_SIZE: u16 = 64;
 
 /// ATR presented on the Yubico-identity build (effective VID == Yubico): a real
 /// YubiKey 5's answer-to-reset, byte-for-byte, so `ykman`/`ykmd` and the Windows
@@ -141,10 +151,11 @@ const CCID_FUNCTIONAL_DESC: &[u8] = &[
     0x00, // bPINSupport (none)
     0x01, // bMaxCCIDBusySlots
 ];
-const _: () = {
-    let d = CCID_FUNCTIONAL_DESC;
-    assert!(u32::from_le_bytes([d[42], d[43], d[44], d[45]]) as usize == MAX_CCID_MSG);
-};
+// `dwMaxCCIDMessageLength` is bytes 42..46 of the class descriptor.
+const _: () = assert!(matches!(
+    CCID_FUNCTIONAL_DESC.split_at(42).1.first_chunk::<4>(),
+    Some(len) if u32::from_le_bytes(*len) as usize == MAX_CCID_MSG
+));
 const CCID_DESC_TYPE: u8 = 0x21;
 
 /// USB class for smart-card / CCID devices.
@@ -204,10 +215,10 @@ pub struct SecureResult {
 
 /// If `msg` is an `XfrBlock`, the `(start, end)` byte range of its APDU payload.
 pub fn xfr_apdu(msg: &[u8]) -> Option<(usize, usize)> {
-    if msg.len() < HEADER || msg[0] != CCID_XFR_BLOCK {
+    let [CCID_XFR_BLOCK, l0, l1, l2, l3, ..] = *msg.first_chunk::<HEADER>()? else {
         return None;
-    }
-    let dw = u32::from_le_bytes([msg[1], msg[2], msg[3], msg[4]]) as usize;
+    };
+    let dw = u32::from_le_bytes([l0, l1, l2, l3]) as usize;
     Some((HEADER, HEADER + dw.min(msg.len() - HEADER)))
 }
 
@@ -216,54 +227,75 @@ pub fn xfr_apdu(msg: &[u8]) -> Option<(usize, usize)> {
 /// no APDU run. Its length in `out`, or `None` for any other message.
 pub fn refuse_short_xfr(msg: &[u8], status: u8, out: &mut [u8]) -> Option<usize> {
     let (a, b) = xfr_apdu(msg)?;
-    if b - a >= APDU_HEADER || out.len() < HEADER {
+    let head = msg.first_chunk::<HEADER>()?;
+    let reply = out.first_chunk_mut::<HEADER>()?;
+    if b - a >= APDU_HEADER {
         return None;
     }
-    put_header(out, CCID_SLOT_STATUS_RET, 0, msg[6], STATUS_FAILED | status);
-    out[8] = ERR_BAD_DWLENGTH;
+    put_header(
+        reply,
+        CCID_SLOT_STATUS_RET,
+        0,
+        head[6],
+        STATUS_FAILED | status,
+    );
+    reply[8] = ERR_BAD_DWLENGTH;
     Some(HEADER)
 }
 
 /// If `msg` is a `PC_to_RDR_Secure`, the `(start, end)` byte range of its
 /// `abPINDataStructure` payload (the CCID pinpad VERIFY request).
 pub fn secure_apdu(msg: &[u8]) -> Option<(usize, usize)> {
-    if msg.len() < HEADER || msg[0] != CCID_SECURE {
+    let [CCID_SECURE, l0, l1, l2, l3, ..] = *msg.first_chunk::<HEADER>()? else {
         return None;
-    }
-    let dw = u32::from_le_bytes([msg[1], msg[2], msg[3], msg[4]]) as usize;
+    };
+    let dw = u32::from_le_bytes([l0, l1, l2, l3]) as usize;
     Some((HEADER, HEADER + dw.min(msg.len() - HEADER)))
 }
 
 /// Write the 10-byte CCID response header.
 pub fn put_header(out: &mut [u8], msg_type: u8, length: u32, seq: u8, status: u8) {
-    out[0] = msg_type;
-    out[1..5].copy_from_slice(&length.to_le_bytes());
-    out[5] = 0; // bSlot
-    out[6] = seq; // bSeq (echoed)
-    out[7] = status; // bStatus
-    out[8] = 0; // bError
-    out[9] = 0; // bChainParameter
+    let [l0, l1, l2, l3] = length.to_le_bytes();
+    if let Some(header) = out.first_chunk_mut::<HEADER>() {
+        // bSlot 0, bSeq echoed, bStatus, then bError and bChainParameter 0.
+        *header = [msg_type, l0, l1, l2, l3, 0, seq, status, 0, 0];
+    }
+}
+
+/// `n` as the header's `dwLength`: every buffer here is far below `u32::MAX`.
+fn dw_length(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// Copy `body` in after the header, as much of it as `out` holds; the count copied.
+fn put_body(out: &mut [u8], body: &[u8]) -> usize {
+    let room = out.get_mut(HEADER..).unwrap_or_default();
+    let n = body.len().min(room.len());
+    for (dst, src) in room.iter_mut().zip(body) {
+        *dst = *src;
+    }
+    n
 }
 
 /// Handle one complete CCID message (header + payload) and write the response
 /// into `out`, returning its length. `status` is the slot's `bStatus`, updated
 /// by power on/off. Returns 0 (no response) for an unknown message type.
 pub fn process_message(msg: &[u8], atr: &[u8], status: &mut u8, out: &mut [u8]) -> usize {
-    if msg.len() < HEADER || out.len() < HEADER {
+    let Some(&[kind, _, _, _, _, _, seq, ..]) = msg.first_chunk::<HEADER>() else {
+        return 0;
+    };
+    if out.len() < HEADER {
         return 0;
     }
-    let seq = msg[6];
-    let cap = out.len() - HEADER;
 
-    match msg[0] {
+    match kind {
         CCID_SLOT_STATUS => {
             put_header(out, CCID_SLOT_STATUS_RET, 0, seq, *status);
             HEADER
         }
         CCID_POWER_ON => {
-            let n = atr.len().min(cap);
-            put_header(out, CCID_DATA_BLOCK_RET, n as u32, seq, STATUS_ACTIVE);
-            out[HEADER..HEADER + n].copy_from_slice(&atr[..n]);
+            let n = put_body(out, atr);
+            put_header(out, CCID_DATA_BLOCK_RET, dw_length(n), seq, STATUS_ACTIVE);
             *status = STATUS_ACTIVE;
             HEADER + n
         }
@@ -273,15 +305,17 @@ pub fn process_message(msg: &[u8], atr: &[u8], status: &mut u8, out: &mut [u8]) 
             HEADER
         }
         CCID_SET_PARAMS | CCID_GET_PARAMS | CCID_RESET_PARAMS => {
-            put_header(out, CCID_PARAMS_RET, T1_PARAMS.len() as u32, seq, *status);
-            out[9] = 0x01; // bProtocolNum = T=1
-            out[HEADER..HEADER + T1_PARAMS.len()].copy_from_slice(&T1_PARAMS);
-            HEADER + T1_PARAMS.len()
+            let n = put_body(out, &T1_PARAMS);
+            put_header(out, CCID_PARAMS_RET, dw_length(n), seq, *status);
+            if let Some(protocol) = out.get_mut(9) {
+                *protocol = 0x01; // bProtocolNum = T=1
+            }
+            HEADER + n
         }
         CCID_SET_RATE => {
-            put_header(out, CCID_SET_RATE_RET, 8, seq, *status);
-            out[HEADER..HEADER + 8].fill(0);
-            HEADER + 8
+            let n = put_body(out, &[0; 8]);
+            put_header(out, CCID_SET_RATE_RET, dw_length(n), seq, *status);
+            HEADER + n
         }
         // XfrBlock needs the worker, so `Ccid::run` handles it asynchronously
         // (`run_xfr` frames the response with `put_header`); it never reaches here.
@@ -326,9 +360,9 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         desc.copy_from_slice(CCID_FUNCTIONAL_DESC);
         desc[50] = pin_support;
         alt.descriptor(CCID_DESC_TYPE, &desc);
-        let read_ep = alt.endpoint_bulk_out(None, EP_PACKET_SIZE as u16);
-        let write_ep = alt.endpoint_bulk_in(None, EP_PACKET_SIZE as u16);
-        let int_ep = alt.endpoint_interrupt_in(None, EP_PACKET_SIZE as u16, 10);
+        let read_ep = alt.endpoint_bulk_out(None, EP_PACKET_SIZE);
+        let write_ep = alt.endpoint_bulk_in(None, EP_PACKET_SIZE);
+        let int_ep = alt.endpoint_interrupt_in(None, EP_PACKET_SIZE, 10);
         drop(func);
 
         Self {
@@ -361,16 +395,17 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                     // An XfrBlock too short for an APDU is refused inline, any other
                     // goes to the worker (async) with a streamed CCID time-extension;
                     // the protocol messages (power/params/…) are answered inline.
-                    if let Some(n) = refuse_short_xfr(&self.rx[..total], self.status, &mut self.tx)
-                    {
+                    let msg = self.rx.get(..total).unwrap_or_default();
+                    if let Some(n) = refuse_short_xfr(msg, self.status, &mut self.tx) {
                         let _ = select(
-                            self.write_ep.write_transfer(&self.tx[..n], false),
+                            self.write_ep
+                                .write_transfer(self.tx.get(..n).unwrap_or_default(), false),
                             Timer::after_millis(TX_TIMEOUT_MS),
                         )
                         .await;
-                    } else if let Some((a, b)) = xfr_apdu(&self.rx[..total]) {
+                    } else if let Some((a, b)) = xfr_apdu(msg) {
                         self.run_xfr(a, b).await;
-                    } else if let Some((a, b)) = secure_apdu(&self.rx[..total]) {
+                    } else if let Some((a, b)) = secure_apdu(msg) {
                         self.run_secure(a, b).await;
                     } else {
                         // A power transition is the host asking for a clean card;
@@ -380,7 +415,7 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                             self.handler.reset_card().await;
                         }
                         let n = process_message(
-                            &self.rx[..total],
+                            self.rx.get(..total).unwrap_or_default(),
                             self.atr,
                             &mut self.status,
                             &mut self.tx,
@@ -388,9 +423,10 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                         if n > 0 {
                             // A short packet (or ZLP on an exact multiple) ends the
                             // bulk IN transfer for the host.
-                            let zlp = n.is_multiple_of(EP_PACKET_SIZE);
+                            let zlp = n.is_multiple_of(usize::from(EP_PACKET_SIZE));
                             let _ = select(
-                                self.write_ep.write_transfer(&self.tx[..n], zlp),
+                                self.write_ep
+                                    .write_transfer(self.tx.get(..n).unwrap_or_default(), zlp),
                                 Timer::after_millis(TX_TIMEOUT_MS),
                             )
                             .await;
@@ -435,7 +471,10 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         } = self;
         let seq = rx[6];
         let n = {
-            let mut fut = core::pin::pin!(handler.handle_apdu(&rx[a..b], &mut tx[HEADER..]));
+            // The APDU can carry an imported private key: wiped once the handler is
+            // done with it, before the reply goes out.
+            let req = WipeGuard::new(rx.get_mut(a..b).unwrap_or_default());
+            let mut fut = core::pin::pin!(handler.handle_apdu(&req, &mut tx[HEADER..]));
             loop {
                 match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
                     Either::First(n) => break n,
@@ -453,19 +492,16 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         };
         // handle_apdu wrote the body into tx[HEADER..]; frame the response header.
         let n = n.min(tx.len() - HEADER);
-        put_header(tx, CCID_DATA_BLOCK_RET, n as u32, seq, *status);
+        put_header(tx, CCID_DATA_BLOCK_RET, dw_length(n), seq, *status);
         let total = HEADER + n;
-        let zlp = total.is_multiple_of(EP_PACKET_SIZE);
+        let zlp = total.is_multiple_of(usize::from(EP_PACKET_SIZE));
+        // The reply (a deciphered session key, a card status) is wiped once sent.
+        let resp = WipeGuard::new(tx.get_mut(..total).unwrap_or_default());
         let _ = select(
-            write_ep.write_transfer(&tx[..total], zlp),
+            write_ep.write_transfer(&resp, zlp),
             Timer::after_millis(TX_TIMEOUT_MS),
         )
         .await;
-        // The APDU can carry an imported private key; the response a deciphered
-        // session key. Wipe both once the transfer is on the wire.
-        use zeroize::Zeroize;
-        rx[a..b].zeroize();
-        tx[..total].zeroize();
     }
 
     /// Run a `PC_to_RDR_Secure` (`self.rx[a..b]` = the `abPINDataStructure`) via the
@@ -486,7 +522,9 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         } = self;
         let seq = rx[6];
         let result = {
-            let mut fut = core::pin::pin!(handler.handle_secure(&rx[a..b], &mut tx[HEADER..]));
+            // No PIN in here (the pad collects it on-device); wiped as `run_xfr`'s is.
+            let req = WipeGuard::new(rx.get_mut(a..b).unwrap_or_default());
+            let mut fut = core::pin::pin!(handler.handle_secure(&req, &mut tx[HEADER..]));
             loop {
                 match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
                     Either::First(r) => break r,
@@ -510,20 +548,17 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         } else {
             result.status
         };
-        put_header(tx, CCID_DATA_BLOCK_RET, n as u32, seq, hdr_status);
+        put_header(tx, CCID_DATA_BLOCK_RET, dw_length(n), seq, hdr_status);
         tx[8] = result.error; // bError (put_header clears it; set the pad cancel/timeout code)
         let total = HEADER + n;
-        let zlp = total.is_multiple_of(EP_PACKET_SIZE);
+        let zlp = total.is_multiple_of(usize::from(EP_PACKET_SIZE));
+        // The reply (a deciphered session key, a card status) is wiped once sent.
+        let resp = WipeGuard::new(tx.get_mut(..total).unwrap_or_default());
         let _ = select(
-            write_ep.write_transfer(&tx[..total], zlp),
+            write_ep.write_transfer(&resp, zlp),
             Timer::after_millis(TX_TIMEOUT_MS),
         )
         .await;
-        // The request carries no PIN (collected on-device), but the response holds
-        // the card status; wipe both buffers once the reply is on the wire.
-        use zeroize::Zeroize;
-        rx[a..b].zeroize();
-        tx[..total].zeroize();
     }
 
     /// Accumulate bulk OUT packets into `self.rx` until a full CCID message is
@@ -547,7 +582,7 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
                 self.read_ep.read(&mut self.rx[..]).await
             } else {
                 match select(
-                    self.read_ep.read(&mut self.rx[w..]),
+                    self.read_ep.read(self.rx.get_mut(w..).unwrap_or_default()),
                     Timer::after_millis(RX_TIMEOUT_MS),
                 )
                 .await
@@ -597,5 +632,13 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
 mod proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "ccid_tests.rs"]
 mod tests;

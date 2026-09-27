@@ -9,6 +9,7 @@
 //! search while the transports keep the host alive.
 #![no_std]
 #![no_main]
+#![expect(unsafe_code, reason = "board glue; docs/unsafe.md lists every site")]
 
 use core::cell::RefCell;
 
@@ -55,6 +56,7 @@ mod otp_keys;
 mod pin_lock;
 mod presence;
 mod rescue_platform;
+mod sweep;
 mod usb_attach;
 mod vendor;
 mod worker;
@@ -78,10 +80,49 @@ use worker::{ClientCcid, ClientCtap, Worker};
 
 use panic_halt as _;
 
+use core::alloc::{GlobalAlloc, Layout};
 use embedded_alloc::LlffHeap as Heap;
 
+/// The heap `rsk-rsa`'s big integers and the ML-DSA keys live on, zeroing each
+/// block as it is freed: `num-bigint-dig` frees its limbs unwiped. `realloc` stays
+/// the default alloc-copy-free, so a grown `Vec`'s old block is wiped too.
+struct ZeroingHeap(Heap);
+
+// SAFETY: both methods forward to `Heap` under the caller's own contract, and
+// `dealloc` writes only into the block the caller is handing back.
+unsafe impl GlobalAlloc for ZeroingHeap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: the caller's `alloc` contract, passed through unchanged.
+        unsafe { self.0.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        // Words over the aligned body, bytes at the ends: an RSA keygen frees tens
+        // of megabytes, and a byte loop is four times the stores.
+        let len = layout.size();
+        let head = ptr.align_offset(size_of::<u32>()).min(len);
+        let words = (len - head) / size_of::<u32>();
+        // SAFETY: `ptr` is a live block of `len` bytes this allocator handed out
+        // (the caller's contract), so every store lands inside it, and `body` is
+        // 4-aligned by `head`. Volatile, so no dead-store elimination drops them.
+        unsafe {
+            for i in 0..head {
+                ptr.add(i).write_volatile(0);
+            }
+            let body = ptr.add(head).cast::<u32>();
+            for i in 0..words {
+                body.add(i).write_volatile(0);
+            }
+            for i in head + words * size_of::<u32>()..len {
+                ptr.add(i).write_volatile(0);
+            }
+            self.0.dealloc(ptr, layout);
+        }
+    }
+}
+
 #[global_allocator]
-static HEAP: Heap = Heap::empty();
+static HEAP: ZeroingHeap = ZeroingHeap(Heap::empty());
 
 const HEAP_SIZE: usize = 128 * 1024;
 
@@ -297,6 +338,10 @@ const _: () = {
     }
 
     if BUILD_WAKE_ENABLED {
+        assert!(
+            !contains(HW_PINS, BUILD_WAKE_PIN),
+            "WAKE_PIN overlaps hard-wired PIO/I2C1 pin 6/7/10/11"
+        );
         let mut i = 0;
         while i < DISPLAY_CTLS.len() {
             assert!(
@@ -395,6 +440,8 @@ static EXECUTOR_HIGH: InterruptExecutor = InterruptExecutor::new();
 
 #[interrupt]
 unsafe fn SWI_IRQ_1() {
+    // SAFETY: SWI_IRQ_1 is the interrupt `EXECUTOR_HIGH.start` was given, and this
+    // handler is its only caller.
     unsafe { EXECUTOR_HIGH.on_interrupt() }
 }
 
@@ -450,8 +497,14 @@ static PHY_MANUFACTURER: StaticCell<[u8; 64]> = StaticCell::new();
 /// invariant as FS/RNG above — borrows never span `.await`.
 #[cfg(feature = "display")]
 static UI: StaticCell<RefCell<display::Ui>> = StaticCell::new();
+/// The device identity the display's own screens unbox the resident-credential seed
+/// with, behind the `'static` reference their [`display::Parked`] cells carry.
+#[cfg(feature = "display")]
+static DISPLAY_KEYS: StaticCell<display::DeviceKeys> = StaticCell::new();
 
 struct SendUsb(UsbDevice<'static, Drv>);
+// SAFETY: moved once into `usb_task` and never touched elsewhere; the handlers it
+// carries reach only critical-section and atomic statics (docs/unsafe.md §3).
 unsafe impl Send for SendUsb {}
 
 /// Hold core0's stack to the floor the linker gave it.
@@ -541,7 +594,12 @@ async fn main(spawner: Spawner) {
     {
         use core::mem::MaybeUninit;
         static mut HEAP_MEM: [MaybeUninit<u8>; HEAP_SIZE] = [MaybeUninit::uninit(); HEAP_SIZE];
-        unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
+        // SAFETY: runs once, before any allocation, over memory declared in this
+        // block and so nameable by nothing else.
+        unsafe {
+            HEAP.0
+                .init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE)
+        }
     }
 
     let serial_id = embassy_rp::otp::get_chipid().unwrap_or(0).to_le_bytes();
@@ -624,7 +682,7 @@ async fn main(spawner: Spawner) {
         let dev = Device {
             serial_hash: &serial_hash,
             serial_id: &serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         let _ = rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs);
         rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng);
@@ -687,7 +745,7 @@ async fn main(spawner: Spawner) {
         let dev = Device {
             serial_hash: &serial_hash,
             serial_id: &serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         rsk_otp::power_up_bump(&dev, &mut fs, &mut rng);
     }
@@ -720,7 +778,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A16;
+    let device_release: u16 = 0x0A4E;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1061,22 +1119,25 @@ async fn main(spawner: Spawner) {
         let i2c = I2c::new_blocking(p.I2C1, p.PIN_7, p.PIN_6, i2c_cfg);
 
         let cs = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_CS) },
             Level::High,
         );
         let dc = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_DC) },
             Level::Low,
         );
         let rst = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_RST) },
             Level::High,
         );
         // Display-sleep wake button (default the BAT_PWR / KEY_BAT button on GPIO25).
         // Active-low with an internal pull-up by default (`WAKE_ACTIVE_HIGH` flips it);
         // `WAKE_PIN=none` leaves it unwired so only a touch wakes. Stealing the pin is
-        // sound: it is never handed to another driver, and a compile-time assert rejects
-        // a `WAKE_PIN` in the LCD/touch range.
+        // sound: it is never handed to another driver — the const asserts above keep it
+        // off the LCD range, the hard-wired PIO/I2C1 pins and the panel control lines.
         let wake_btn = if BUILD_WAKE_ENABLED {
             use embassy_rp::gpio::{Input, Pull};
             let pull = if BUILD_WAKE_ACTIVE_HIGH {
@@ -1086,6 +1147,7 @@ async fn main(spawner: Spawner) {
             };
             Some((
                 Input::new(
+                    // SAFETY: sound for the reason given above — no other driver gets it.
                     unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_WAKE_PIN) },
                     pull,
                 ),
@@ -1116,6 +1178,7 @@ async fn main(spawner: Spawner) {
             }
         };
         let tp_rst = Output::new(
+            // SAFETY: a board-config panel pin that `main` hands to no other driver.
             unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_DISPLAY_TP_RST) },
             Level::High,
         );
@@ -1135,19 +1198,21 @@ async fn main(spawner: Spawner) {
         // The device key material the read-only Passkeys tab needs to unbox the
         // resident-credential seed on demand (the same identity the worker's `Ctx`
         // carries). Copied — these are all `Copy`, so the worker below still gets them.
-        let keys = display::DeviceKeys {
+        let keys: &'static display::DeviceKeys = DISPLAY_KEYS.init(display::DeviceKeys {
             serial_id,
             serial_hash,
             mkek_source,
-        };
+        });
+        // The worker's `fs_ref` and `rng_ref`, for the panel's own screens only: the
+        // `TouchPresence` backend below gets the `Ui` alone.
+        let cells = display::Parked::new(fs_ref, keys, rng_ref);
         // Reborrow the `&'static mut` from the cell as a shared `&'static` so both
         // `status_task` and the `TouchPresence` backend can hold it (a shared
-        // reference is `Copy`; the `RefCell` provides the interior mutability). The
-        // panel also shares the worker's `fs_ref` to enumerate resident credentials.
+        // reference is `Copy`; the `RefCell` provides the interior mutability).
         let ui: &'static RefCell<display::Ui> = UI.init(RefCell::new(display::build(
-            panel, touch, info, fs_ref, keys, rng_ref, wake_btn,
+            panel, touch, info, cells, rng_ref, wake_btn,
         )));
-        spawner.spawn(display::status_task(ui).unwrap());
+        spawner.spawn(display::status_task(ui, cells).unwrap());
         ui
     };
     core1::spawn(p.CORE1);

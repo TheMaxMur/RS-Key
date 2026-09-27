@@ -4,6 +4,15 @@
 //! Data-object builders. Each `emit_*` appends BER-TLV to the [`DoWriter`]
 //! output cursor, reading sub-objects from flash or the ROM table.
 
+// Host-written DOs and attributes: a panic here is a board that answers nothing.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use rsk_fs::{Fs, Storage};
 
 use crate::consts::*;
@@ -81,6 +90,17 @@ pub(crate) const ALGO_AUT_SUPPORTED: &[&[u8]] = ALGO_SIG_SUPPORTED;
 /// The attestation key's one algorithm: the card mints it, and `DA` takes no write.
 pub(crate) const ALGO_ATT_SUPPORTED: &[&[u8]] = &[ATTR_P384R1];
 
+/// A short BER-TLV length byte for a size fixed at build time: a build error past 127.
+const fn short_len(n: usize) -> u8 {
+    assert!(n < 0x80, "a short BER-TLV length");
+    let [low, ..] = n.to_le_bytes();
+    low
+}
+const FP_LIST_LEN: u8 = short_len(FP_DOS.len() * FP_LEN);
+const CA_FP_LIST_LEN: u8 = short_len(CA_FP_DOS.len() * FP_LEN);
+const TS_LIST_LEN: u8 = short_len(TS_DOS.len() * TS_LEN);
+const KEY_INFO_LEN: u8 = short_len(2 * (KEY_SLOTS + 1));
+
 /// Whether `data`, a C1/C2/C3 value, is an attribute DO `0xFA` advertises for `fid`:
 /// matched against `attr[1..]` after [`DoWriter::emit_algo`]'s ECDSA→ECDH rewrite, and
 /// with an RSA exponent length from 17 bits up read as the 17 it is stored as.
@@ -92,7 +112,12 @@ pub(crate) fn advertised_algo(fid: u16, data: &[u8]) -> bool {
         _ => return false,
     };
     set.iter().any(|a| {
-        let val = &a[1..a[0] as usize + 1];
+        let Some((&n, rest)) = a.split_first() else {
+            return false;
+        };
+        let Some(val) = rest.get(..n as usize) else {
+            return false;
+        };
         match (val.split_first(), data.split_first()) {
             // ECDSA (0x13) and ECDH (0x12) over the same OID name the same curve —
             // which one a slot carries depends on how the key is used, and MSE can
@@ -105,10 +130,15 @@ pub(crate) fn advertised_algo(fid: u16, data: &[u8]) -> bool {
             // A YubiKey 5.8.0 takes any e length from 17 bits and stores 17
             // ([`canonical_algo`]); the size and the import format must match.
             (Some((&ALGO_RSA, lhs)), Some((&ALGO_RSA, rhs))) => {
-                rhs.len() == lhs.len()
-                    && lhs[..2] == rhs[..2]
-                    && lhs[4] == rhs[4]
-                    && u16::from_be_bytes([rhs[2], rhs[3]]) >= RSA_E_BITS
+                match (lhs.first_chunk::<5>(), rhs.first_chunk::<5>()) {
+                    (Some(l), Some(r)) => {
+                        rhs.len() == lhs.len()
+                            && l[..2] == r[..2]
+                            && l[4] == r[4]
+                            && u16::from_be_bytes([r[2], r[3]]) >= RSA_E_BITS
+                    }
+                    _ => false,
+                }
             }
             _ => val == data,
         }
@@ -164,38 +194,43 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     }
 
     pub fn bytes(&self) -> &[u8] {
-        &self.out[..self.pos]
+        self.out.get(..self.pos).unwrap_or_default()
     }
 
     fn push(&mut self, b: u8) {
-        if self.pos < self.out.len() {
-            self.out[self.pos] = b;
+        if let Some(slot) = self.out.get_mut(self.pos) {
+            *slot = b;
             self.pos += 1;
         }
     }
 
     fn extend(&mut self, s: &[u8]) {
-        let n = s.len().min(self.out.len() - self.pos);
-        self.out[self.pos..self.pos + n].copy_from_slice(&s[..n]);
+        let room = self.out.get_mut(self.pos..).unwrap_or_default();
+        let n = s.len().min(room.len());
+        for (dst, src) in room.iter_mut().zip(s) {
+            *dst = *src;
+        }
         self.pos += n;
     }
 
     /// BER-TLV length encoding: 1 byte (<128), `81 LL` (<256), or `82 HH LL`.
     fn fmt_len(&mut self, len: usize) {
+        // Past 65,535 the DO outgrows any reply, and GET DATA refuses it on its size.
+        let [hi, lo] = u16::try_from(len).unwrap_or(u16::MAX).to_be_bytes();
         if len < 0x80 {
-            self.push(len as u8);
+            self.push(lo);
         } else if len < 0x100 {
             self.push(0x81);
-            self.push(len as u8);
+            self.push(lo);
         } else {
             self.push(0x82);
-            self.push((len >> 8) as u8);
-            self.push((len & 0xff) as u8);
+            self.push(hi);
+            self.push(lo);
         }
     }
 
     fn read_flash(&mut self, fid: u16) {
-        let cap = &mut self.out[self.pos..];
+        let cap = self.out.get_mut(self.pos..).unwrap_or_default();
         if let Some(n) = self.fs.read(fid, cap) {
             // `fs.read` returns the value's FULL stored length while it copies only
             // `min(len, cap.len())`; advance by what actually fit, or an over-long
@@ -213,9 +248,11 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     /// constructed DO) each child is tag + length prefixed.
     fn emit_do(&mut self, fids: &[u16], mode: i32) -> usize {
         let mut len = 0usize;
-        let count = fids[0] as usize;
-        for i in 0..count {
-            let fid = fids[i + 1];
+        let Some((&count, list)) = fids.split_first() else {
+            return 0;
+        };
+        let count = count as usize;
+        for &fid in list.iter().take(count) {
             match source(fid) {
                 DoSource::Func(f) => len += self.emit_func(f, fid, mode),
                 DoSource::None | DoSource::Internal => {}
@@ -293,10 +330,16 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     fn close(&mut self, lp: usize) -> usize {
         let body = self.pos - lp - 2;
         let mut head = [0u8; 3];
-        let n = rsk_sdk::tlv::format_len(body as u16, &mut head);
+        let n = rsk_sdk::tlv::format_len(u16::try_from(body).unwrap_or(u16::MAX), &mut head);
         let at = lp - 1;
-        self.out.copy_within(lp + 2..self.pos, at + n);
-        self.out[at..at + n].copy_from_slice(&head[..n]);
+        // Only what was written moves: `open` reserves its two bytes even when full.
+        let written = self.pos.min(self.out.len());
+        if lp + 2 <= written && at + n + (written - lp - 2) <= self.out.len() {
+            self.out.copy_within(lp + 2..written, at + n);
+        }
+        if let (Some(dst), Some(src)) = (self.out.get_mut(at..at + n), head.get(..n)) {
+            dst.copy_from_slice(src);
+        }
         self.pos = at + n + body;
         1 + n + body
     }
@@ -321,7 +364,9 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             mode,
         );
         // DA is served here and nowhere else: GET DATA DA is `6B00` on a YubiKey.
-        self.emit_algo(ALGO_ATT_SUPPORTED[0], EF_ALGO_ATT);
+        if let Some(att) = ALGO_ATT_SUPPORTED.first() {
+            self.emit_algo(att, EF_ALGO_ATT);
+        }
         let fids = [
             10,
             EF_PW_STATUS,
@@ -377,19 +422,19 @@ impl<'a, S: Storage> DoWriter<'a, S> {
 
     fn emit_fp(&mut self) -> usize {
         self.push((EF_FP & 0xff) as u8);
-        self.push((FP_DOS.len() * FP_LEN) as u8);
+        self.push(FP_LIST_LEN);
         self.emit_fixed(&FP_DOS, FP_LEN) + 2
     }
 
     fn emit_cafp(&mut self) -> usize {
         self.push((EF_CA_FP & 0xff) as u8);
-        self.push((CA_FP_DOS.len() * FP_LEN) as u8);
+        self.push(CA_FP_LIST_LEN);
         self.emit_fixed(&CA_FP_DOS, FP_LEN) + 2
     }
 
     fn emit_ts(&mut self) -> usize {
         self.push((EF_TS_ALL & 0xff) as u8);
-        self.push((TS_DOS.len() * TS_LEN) as u8);
+        self.push(TS_LIST_LEN);
         self.emit_fixed(&TS_DOS, TS_LEN) + 2
     }
 
@@ -397,7 +442,7 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         let init = self.pos;
         if self.pos > 0 {
             self.push((EF_KEY_INFO & 0xff) as u8);
-            self.push(2 * (KEY_SLOTS + 1) as u8);
+            self.push(KEY_INFO_LEN);
         }
         // OpenPGP Card 3.4 §4.4.3.8: key-ref 01=SIG, 02=DEC, 03=AUT, then a status
         // byte — 00 not present, 01 generated on card, 02 imported. ykman >= 5.2
@@ -442,17 +487,20 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     /// Append `tag | length-prefixed-template`.
     fn emit_algo(&mut self, algo: &[u8], tag: u16) -> usize {
         self.push((tag & 0xff) as u8);
-        let n = algo[0] as usize + 1;
+        let Some(&len) = algo.first() else {
+            return 2;
+        };
+        let n = len as usize + 1;
         // The DEC list carries the same curve OIDs as SIG/AUT but as ECDH (0x12),
         // not ECDSA (0x13): a decryption key does key agreement (matches YubiKey).
         if tag == EF_ALGO_DEC && algo.get(1) == Some(&ALGO_ECDSA) {
-            self.push(algo[0]);
+            self.push(len);
             self.push(ALGO_ECDH);
-            self.extend(&algo[2..n]);
+            self.extend(algo.get(2..n).unwrap_or_default());
         } else {
-            self.extend(&algo[..n]);
+            self.extend(algo.get(..n).unwrap_or_default());
         }
-        algo[0] as usize + 2
+        len as usize + 2
     }
 
     fn emit_algoinfo(&mut self, fid: u16) -> usize {
@@ -474,8 +522,13 @@ impl<'a, S: Storage> DoWriter<'a, S> {
                 self.emit_algo(a, EF_ALGO_ATT);
             }
             let lpdif = self.pos - lp - 2;
-            self.out[lp] = (lpdif >> 8) as u8;
-            self.out[lp + 1] = (lpdif & 0xff) as u8;
+            let [hi, lo] = u16::try_from(lpdif).unwrap_or(u16::MAX).to_be_bytes();
+            if let Some(slot) = self.out.get_mut(lp) {
+                *slot = hi;
+            }
+            if let Some(slot) = self.out.get_mut(lp + 1) {
+                *slot = lo;
+            }
             lpdif + 4
         } else {
             // C1/C2/C3: the stored algorithm attributes, or rsa2k by default, always
@@ -487,12 +540,19 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             } else {
                 let len = self.fs.size(priv_fid).unwrap_or(0);
                 self.push((fid & 0xff) as u8);
-                self.push((len & 0xff) as u8);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "PUT DATA stores no attribute near 255 bytes; a longer one, from \
+                              corrupt flash, has always kept its low byte here"
+                )]
+                self.push(len as u8);
                 let at = self.pos;
                 self.read_flash(priv_fid);
                 // An older build stored the e length it was sent.
-                if let Some(attr) = canonical_algo(&self.out[at..self.pos]) {
-                    self.out[at..self.pos].copy_from_slice(&attr);
+                if let Some(stored) = self.out.get_mut(at..self.pos)
+                    && let Some(attr) = canonical_algo(stored)
+                {
+                    stored.copy_from_slice(&attr);
                 }
                 2 + len
             }
@@ -501,5 +561,13 @@ impl<'a, S: Storage> DoWriter<'a, S> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "dobj_tests.rs"]
 mod tests;

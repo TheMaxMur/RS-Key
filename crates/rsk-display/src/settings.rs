@@ -9,7 +9,7 @@ use super::*;
 
 /// Persisted display-settings record: the backlight level and display-sleep timeout
 /// edited in Settings → Display, read at boot ([`Ui::new`]) and rewritten on
-/// Settings exit ([`Ui::persist_settings`]) so they survive a reboot. In the system
+/// Settings exit ([`Local::persist_settings`]) so they survive a reboot. In the system
 /// config FID range next to `EF_PHY` (`0xE020`) / `EF_META`, outside every applet's
 /// reset scope; not reachable by any host APDU. The touch timeout is *not* here — it
 /// rides `EF_PHY`'s `PresenceTimeout` tag, the same record `rsk hw --touch-timeout`
@@ -76,7 +76,7 @@ fn settings_sleep(p: rsk_ui::Point, dirty: &mut bool) -> Nav {
     Nav::Stay
 }
 
-impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+impl<'a, P, T, H, S, R> Local<'_, 'a, P, T, H, S, R>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
@@ -88,11 +88,11 @@ where
     /// the view. Clears `shown` so the ambient loop repaints once the menu releases
     /// the panel.
     fn render_settings(&mut self, page: SettingsPage) {
-        // Read every store-backed flag under ONE borrow: multiple `self.fs.borrow_mut()`
+        // Read every store-backed flag under ONE borrow: multiple `self.cells.fs.borrow_mut()`
         // temporaries in a single expression all live to the end of the statement, so a
         // second one would panic the RefCell (`already borrowed`).
         let (device_pin_set, fido_pin_set, backup_sealed) = {
-            let mut fs = self.fs.borrow_mut();
+            let mut fs = self.cells.fs.borrow_mut();
             (
                 rsk_fido::passkeys::device_pin_is_set(&mut fs),
                 rsk_fido::passkeys::pin_is_set(&mut fs),
@@ -281,7 +281,8 @@ where
             return adjust_exit(p);
         };
         let was = self.brightness;
-        self.set_brightness(rsk_ui::step_brightness(self.brightness, step));
+        let level = rsk_ui::step_brightness(self.brightness, step);
+        self.set_brightness(level);
         *dirty |= self.brightness != was;
         Nav::Stay
     }
@@ -312,7 +313,7 @@ where
         }
         if save_presence {
             let secs = (self.hooks.presence_timeout_ms() / 1000) as u8;
-            let mut fs = self.fs.borrow_mut();
+            let mut fs = self.cells.fs.borrow_mut();
             let _ = rsk_phy::update(&mut fs, |phy| phy.presence_timeout = Some(secs));
         }
     }
@@ -328,7 +329,7 @@ where
             pin_declined: self.pin_declined,
             scramble_pin: self.scramble_pin,
         };
-        let _ = self.fs.borrow_mut().put(EF_DISPLAY, &cfg.encode());
+        let _ = self.cells.fs.borrow_mut().put(EF_DISPLAY, &cfg.encode());
     }
 }
 

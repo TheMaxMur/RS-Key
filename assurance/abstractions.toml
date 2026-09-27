@@ -122,12 +122,12 @@ body = '''
 - **A registration with a PIN set and no token — CLOSED, and what is left of it
   is one conjunct.** CTAP 2.1 §6.1.2 steps 7/10 serve a NON-discoverable
   credential on presence alone even where a PIN is set
-  (`makecredential.rs:589-591`), and `Next` carries it now:
+  (`makecredential.rs:600-602`), and `Next` carries it now:
   `RegisterNdStart` / `RegisterNdTouched` / `RegisterNdRefused`, guarded by
   `McTokenlessGuard(FALSE)`. It writes nothing, because
-  `makecredential.rs:823-824` stores only under `req.rk`, so it carries no `rp`
+  `makecredential.rs:828-829` stores only under `req.rk`, so it carries no `rp`
   either. What stays narrow is the `~tok.live` conjunct in that guard: above
-  `state.rs:547` the same touch SPENDS a live token without binding it, and tier
+  `state.rs:638` the same touch SPENDS a live token without binding it, and tier
   A has no word for that edge — its `UseMc` admits an authorized event only
   under `~pinSet \/ (live /\ permissionMc)` and its `Consumed` requires the rpId
   binding this path never makes. So the model takes the states where B and the
@@ -155,7 +155,7 @@ row says which of the two kinds of not-closed each one is.
 body = '''
 - **`largeBlobs`, `getNextAssertion`, the MSE seed-backup channel and built-in
   UV are absent.** They carry their own channel-ownership rules
-  (`state.rs:33-51`, `:326-333`) that this model does not check — the most
+  (`state.rs:33-51`, `:376-385`) that this model does not check — the most
   obvious place to extend it. The trusted-display ceremony is NOT on that list
   and used to be: `RSKeyTrustedDisplay` models the panel's Approve/Deny with
   its own configurations in the safety tier. What stays absent is its meeting
@@ -194,7 +194,7 @@ body = '''
   `oathCode` exemption fires exactly when `~oathCodeSet` — the very state the
   removal produces. The repair is therefore a recorder at the STEP, not a change
   to the exemption: `OathRemoveCode` carries the gate
-  (`crates/rsk-oath/src/lib.rs:343-345`) as a Guard/Policy pair and
+  (`crates/rsk-oath/src/lib.rs:365-367`) as a Guard/Policy pair and
   `AccessCodeRemovalNeedsTheCode` is its own invariant. Measured exactly as the
   diagnosis predicted: the action adds no new kind of state, while
   `BugRemoveCodeUnvalidated` falls RED in 71 — a violation no state
@@ -315,9 +315,11 @@ mutant of the roster fires at the recorded minimum of each, so the arithmetic
 is checked at a domain the firmware's own is far wider than. What no scope of
 this model reaches is bounded at source instead:
 use_counter_climbs_and_stops_at_the_ceiling quantifies over every session byte
-and both stepped writers across the whole 0x7FFF domain, and which writers it
-does NOT reach is the derived roster of assurance/otp_counter_writers.toml
-rather than a sentence anywhere.
+and both stepped writers across the whole 0x7FFF domain. Only SlotRecord's
+methods write the counter, since its tail is private: a CONFIGURE zeroes it,
+the boot bump steps it through one of those two rules, and a press through the
+other, after promoting an unused counter to 1. A raw write to a slot FID is
+below the type, and outside this bound.
 '''
 body = '''
 - **The OTP use counter runs to a handful of steps** (`CounterMax`) where the

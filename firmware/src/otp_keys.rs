@@ -32,7 +32,7 @@ const KEY_ROWS: usize = 16;
 /// The OTP page holding both keys and their chaff (0xE80 >> 6).
 const KEY_PAGE: usize = 58;
 
-/// Read the provisioned MKEK. `None` when unprovisioned.
+/// Read the provisioned MKEK into `out`. `false` when unprovisioned.
 ///
 /// Handed to the applets as a `fn` and called per operation rather than held: the
 /// root every sealed record hangs off had eight resident copies, and the derived
@@ -40,24 +40,24 @@ const KEY_PAGE: usize = 58;
 /// 48 µs against the milliseconds of crypto it precedes. Reading it late is only
 /// possible because [`sw_lock_key_page`] leaves the page's secure side open; see
 /// the note there.
-pub fn read_mkek() -> Option<[u8; 32]> {
+pub fn read_mkek(out: &mut [u8; 32]) -> bool {
     match option_env!("PK_FAKE_MKEK") {
-        Some(hex) => Some(parse_hex32(hex)),
-        None => read_key(MKEK_ROW),
+        Some(hex) => parse_hex32(hex, out),
+        None => read_key(MKEK_ROW, out),
     }
 }
 
-/// Read the provisioned DEVK. `None` when unprovisioned.
+/// Read the provisioned DEVK into `out`. `false` when unprovisioned.
 ///
 /// Fetched per use rather than held: three rarely-run commands want it (the two
 /// rescue keydev ones and the opt-in audit checkpoint), and it is the one secret
 /// on the device that can never be rotated — it is fused. Passed around as this
 /// `fn` so no caller has to keep a copy. Reading it late is only possible because
 /// [`sw_lock_key_page`] leaves the page's secure side open; see the note there.
-pub fn read_devk() -> Option<[u8; 32]> {
+pub fn read_devk(out: &mut [u8; 32]) -> bool {
     match option_env!("PK_FAKE_DEVK") {
-        Some(hex) => Some(parse_hex32(hex)),
-        None => read_key(DEVK_ROW),
+        Some(hex) => parse_hex32(hex, out),
+        None => read_key(DEVK_ROW, out),
     }
 }
 
@@ -185,31 +185,32 @@ pub fn apply_rollback_required() -> bool {
 
 /// One 32-byte key at `row`: presence test first (all 16 raw rows zero =
 /// unprovisioned), then the ECC-corrected data. Read errors (a page locked away
-/// even from secure reads — a misconfiguration, not a factory state) also yield
-/// `None`: fail to the pre-OTP arm, never panic at boot.
-fn read_key(row: usize) -> Option<[u8; 32]> {
+/// even from secure reads — a misconfiguration, not a factory state) also answer
+/// `false`: fail to the pre-OTP arm, never panic at boot.
+fn read_key(row: usize, key: &mut [u8; 32]) -> bool {
     let mut any = false;
     for i in 0..KEY_ROWS {
         match otp::read_raw_word(row + i) {
             Ok(w) => any |= w & 0x00FF_FFFF != 0,
-            Err(_) => return None,
+            Err(_) => return false,
         }
     }
     if !any {
-        return None;
+        return false;
     }
-    let mut key = [0u8; 32];
     for i in 0..KEY_ROWS {
-        let w = otp::read_ecc_word(row + i).ok()?;
+        let Ok(w) = otp::read_ecc_word(row + i) else {
+            return false;
+        };
         key[2 * i] = w as u8;
         key[2 * i + 1] = (w >> 8) as u8;
     }
-    Some(key)
+    true
 }
 
 /// Decode a build.rs-validated 64-char hex string; build.rs rejects anything
 /// else at compile time, so the panic arms are unreachable in a real image.
-fn parse_hex32(hex: &str) -> [u8; 32] {
+fn parse_hex32(hex: &str, out: &mut [u8; 32]) -> bool {
     fn nib(b: u8) -> u8 {
         match b {
             b'0'..=b'9' => b - b'0',
@@ -218,9 +219,8 @@ fn parse_hex32(hex: &str) -> [u8; 32] {
         }
     }
     let bytes = hex.as_bytes();
-    let mut out = [0u8; 32];
     for (i, o) in out.iter_mut().enumerate() {
         *o = (nib(bytes[2 * i]) << 4) | nib(bytes[2 * i + 1]);
     }
-    out
+    true
 }

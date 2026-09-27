@@ -290,7 +290,7 @@ fn a_mismatched_confirmation_stores_nothing() {
     let mut taps = pin_entry(PIN);
     taps.extend(pin_entry(WRONG_PIN));
     let mut ui = env.ui(Pad::taps(&taps));
-    ui.run_set_pin(PinScope::Device);
+    env.local(&mut ui).run_set_pin(PinScope::Device);
     assert!(!rsk_fido::passkeys::device_pin_is_set(
         &mut env.fs.borrow_mut()
     ));
@@ -304,7 +304,7 @@ fn a_new_device_pin_replaces_the_old_one() {
     taps.extend(pin_entry(NEW_PIN));
     taps.extend(pin_entry(NEW_PIN));
     let mut ui = env.ui(Pad::taps(&taps));
-    ui.run_set_pin(PinScope::Device);
+    env.local(&mut ui).run_set_pin(PinScope::Device);
     assert!(matches!(
         rsk_fido::passkeys::spend_and_verify_device_pin(&dev(), &mut env.fs.borrow_mut(), NEW_PIN),
         rsk_fido::passkeys::LocalPin::Ok
@@ -369,7 +369,7 @@ fn a_pin_typed_on_the_scrambled_pad_is_the_pin_that_gets_stored() {
     taps.extend(pin_entry_on(NEW_PIN, &laid[1]));
     taps.extend(pin_entry_on(NEW_PIN, &laid[2]));
     let mut ui = env.ui(Pad::taps(&taps));
-    ui.run_set_pin(PinScope::Device);
+    env.local(&mut ui).run_set_pin(PinScope::Device);
 
     // Asserted narrowest first, so a red run names the side that broke. The shared DRBG is
     // touched once, at construction, and never per pad: that borrow is what #107 turned
@@ -439,7 +439,7 @@ fn changing_the_device_pin_needs_the_current_one() {
     env.set_device_pin(PIN);
     // The gate in front is declined, so New / Confirm are never reached.
     let mut ui = env.ui(Pad::taps(&[center(rsk_ui::PIN_CANCEL_RECT)]));
-    ui.run_set_pin(PinScope::Device);
+    env.local(&mut ui).run_set_pin(PinScope::Device);
     assert!(
         matches!(
             rsk_fido::passkeys::spend_and_verify_device_pin(&dev(), &mut env.fs.borrow_mut(), PIN),
@@ -460,7 +460,7 @@ fn setting_the_fido_pin_from_the_panel_revokes_live_tokens() {
     let mut taps = pin_entry(PIN);
     taps.extend(pin_entry(PIN));
     let mut ui = env.ui(Pad::taps(&taps));
-    ui.run_set_pin(PinScope::Fido);
+    env.local(&mut ui).run_set_pin(PinScope::Fido);
     assert!(rsk_fido::passkeys::pin_is_set(&mut env.fs.borrow_mut()));
     assert_eq!(ui.hooks.pin_changed, 1);
     // Which PIN, not just that one exists: revoking the live tokens is worth nothing if
@@ -563,5 +563,9 @@ fn the_pad_shuffle_does_not_repeat() {
     let mut ui = env.ui(Pad::taps(&[]));
     let first = ui.shuffle_entropy();
     let second = ui.shuffle_entropy();
-    assert_ne!(first, second, "consecutive pads share a layout");
+    assert_ne!(
+        first.expose(),
+        second.expose(),
+        "consecutive pads share a layout"
+    );
 }

@@ -12,7 +12,7 @@ use rsk_crypto::pinproto::{self, PinProto, public_xy};
 
 use crate::Rng;
 use crate::consts::{
-    CTAP_CREDENTIAL_MGMT, CTAP_GET_NEXT_ASSERTION, CTAP_LARGE_BLOBS, MAX_CREDENTIAL_COUNT_IN_LIST,
+    CTAP_CREDENTIAL_MGMT, CTAP_GET_NEXT_ASSERTION, CTAP_LARGE_BLOBS, MAX_CREDENTIAL_LIST_LEN,
     MAX_LARGE_BLOB_SIZE, MAX_RESIDENT_CREDENTIALS, PUAT_INITIAL_USAGE_LIMIT_MS,
     PUAT_MAX_USAGE_PERIOD_MS, STATEFUL_WALK_IDLE_MS,
 };
@@ -28,7 +28,7 @@ pub const PERM_ACFG: u8 = 0x20; // authenticatorConfiguration
 pub const PERM_PCMR: u8 = 0x40; // per-credential-management read-only
 
 /// Max credentials tracked for `getNextAssertion` (`MAX_CREDENTIAL_COUNT_IN_LIST`).
-pub const MAX_ASSERTION_CREDS: usize = MAX_CREDENTIAL_COUNT_IN_LIST as usize;
+pub const MAX_ASSERTION_CREDS: usize = MAX_CREDENTIAL_LIST_LEN;
 
 /// State carried between `getAssertion` and `getNextAssertion` when resident
 /// discovery finds more than one credential. Holds EF_CRED slot offsets (newest
@@ -39,7 +39,7 @@ pub struct AssertionState {
     /// carries that request's clientDataHash and its presence/UV decision, so a
     /// second process asking for the next leg on its own channel would collect an
     /// assertion over a hash it never sent, behind a touch it never gave — the
-    /// scoping `mse_cid` below already applies, for the same reason.
+    /// scoping the MSE channel's `cid` below already applies, for the same reason.
     pub channel: u32,
     pub rp_id_hash: [u8; 32],
     pub client_data_hash: [u8; 32],
@@ -292,6 +292,61 @@ pub struct PinLock {
     pub mismatches: u8,
 }
 
+/// The seed-backup channel an `MSE` handshake established: the ChaCha20-Poly1305
+/// key, the device ephemeral public key its AEAD binds, and the CTAPHID channel the
+/// handshake ran on. Read only through [`FidoState::take_mse`], which spends it; the
+/// slot that holds it is private (this must NOT build):
+///
+/// ```compile_fail,E0616
+/// let st = rsk_fido::FidoState::new();
+/// let _live = st.mse.is_some();
+/// ```
+///
+/// and its twin does:
+///
+/// ```
+/// let mut st = rsk_fido::FidoState::new();
+/// assert!(st.take_mse().is_none());
+/// ```
+pub struct MseChannel {
+    cid: u32,
+    key: rsk_secret::Secret<[u8; 32]>,
+    device_pub: [u8; 65],
+}
+
+impl MseChannel {
+    /// The channel key.
+    pub fn key(&self) -> &[u8; 32] {
+        self.key.expose()
+    }
+
+    /// The device ephemeral public key: the channel's AEAD associated data.
+    pub fn device_pub(&self) -> &[u8; 65] {
+        &self.device_pub
+    }
+}
+
+/// A vacancy [`FidoState::vacate_mse`] found (a live channel it drops and refuses),
+/// which [`FidoState::establish_mse`] takes: a channel is installed only behind a
+/// vacate, though not pinned to it — a second vacate mints another (must NOT build):
+///
+/// ```compile_fail,E0603
+/// let mut st = rsk_fido::FidoState::new();
+/// let key = rsk_secret::Secret::new([0u8; 32]);
+/// st.establish_mse(rsk_fido::state::VacantMse(()), &key, [4; 65]);
+/// ```
+///
+/// and its twin does:
+///
+/// ```
+/// let mut st = rsk_fido::FidoState::new();
+/// let key = rsk_secret::Secret::new([0u8; 32]);
+/// if let Some(vacant) = st.vacate_mse() {
+///     st.establish_mse(vacant, &key, [4; 65]);
+/// }
+/// ```
+pub struct VacantMse(());
+
 /// All clientPIN state that must survive between CBOR commands within one power
 /// cycle.
 pub struct FidoState {
@@ -315,36 +370,30 @@ pub struct FidoState {
     /// `reset()`; a write resuming across an interleaved reset (no real platform
     /// does this) restarts from `offset == 0`.
     pub lba: LargeBlobState,
-    /// MSE seed-backup channel: once a `VENDOR_MSE` key agreement succeeds,
-    /// `mse_active` is set and `mse_key`/`mse_pub` hold the derived
-    /// ChaCha20-Poly1305 channel key and the device ephemeral public key (the
-    /// AEAD AAD). RAM-only; the key is zeroized on `Drop` and a reset.
+    /// MSE seed-backup channel, set once a `VENDOR_MSE` key agreement succeeds.
+    /// RAM-only; its key wipes itself on `Drop` and when the channel is spent.
     ///
     /// **One-shot.** `MSE` and its consumer are separate CTAPHID transactions, so
     /// the worker lock does not span them, and the channel id cannot identify the
     /// party in between. A second `MSE` while this is set therefore refuses *and*
-    /// drops the channel, and every gated consumer spends it — so an interloper
-    /// can deny a handshake but can never redirect one. Fail closed both ways.
-    pub mse_active: bool,
-    /// The channel [`Self::channel`] held when that handshake ran — defence in
-    /// depth only, **not** the boundary. A CTAPHID channel id is a routing label
-    /// the sender writes into its own frame header (CTAP 2.1 §11.2.5), so it
-    /// cannot tell the owner from an interloper forging it; what actually keeps
-    /// the seed from being encrypted to a second process is that the channel is
-    /// one-shot ([`Self::mse_active`]). Checked through [`Self::mse_ready`].
-    pub mse_cid: u32,
-    pub mse_key: [u8; 32],
-    pub mse_pub: [u8; 65],
+    /// drops the channel ([`Self::vacate_mse`]), and every gated consumer spends it
+    /// ([`Self::take_mse`]) — so an interloper can deny a handshake but can never
+    /// redirect one. Fail closed both ways. The channel's `cid` is defence in depth
+    /// only, **not** the boundary: a CTAPHID channel id is a routing label the sender
+    /// writes into its own frame header (CTAP 2.1 §11.2.5), so it cannot tell the
+    /// owner from an interloper forging it. What keeps the seed from being encrypted
+    /// to a second process is that the channel is one-shot.
+    mse: Option<MseChannel>,
     /// Soft-lock: the seed decrypted by a vendor `UNLOCK`. RAM-only — held until
     /// power-off, a reset, or an `AUT_DISABLE`; zeroized on `Drop` and on overwrite.
-    pub keydev_dec: Option<[u8; 32]>,
+    pub keydev_dec: Option<rsk_secret::Secret<[u8; 32]>>,
     /// How to fetch the OTP DEVK (the reset-stable attestation root), rather than
     /// the key itself: it is wanted by one opt-in command, and holding it would
     /// park an unrotatable signing key in RAM for the whole power cycle. `None` on
     /// an unprovisioned device and in most tests. A bare `fn` because there is no
     /// state to carry — the same shape the transport's touch/cancel hooks use.
     /// Device identity, not session state — it survives [`Self::reset`].
-    pub devk_source: Option<fn() -> Option<[u8; 32]>>,
+    pub devk_source: Option<rsk_crypto::FusedKey>,
     /// Whether this power cycle's `EV_BOOT` journal entry has been written
     /// ([`crate::journal`]). Survives [`Self::reset`] — the cycle did not end.
     pub audit_boot_logged: bool,
@@ -384,10 +433,7 @@ impl FidoState {
             gna: AssertionState::new(),
             cm: CredMgmtState::new(),
             lba: LargeBlobState::new(),
-            mse_active: false,
-            mse_cid: 0,
-            mse_key: [0; 32],
-            mse_pub: [0; 65],
+            mse: None,
             keydev_dec: None,
             devk_source: None,
             audit_boot_logged: false,
@@ -408,29 +454,74 @@ impl FidoState {
         core::mem::take(&mut self.phy_written)
     }
 
-    /// Whether the seed-backup channel is live **and** owned by the channel this
-    /// request arrived on. Every consumer of `mse_key`/`mse_pub` gates on this,
-    /// never on `mse_active` alone.
-    pub fn mse_ready(&self) -> bool {
-        self.mse_active && self.mse_cid == self.channel
+    /// A handshake's first step: `Some` when no channel is live. A live one is
+    /// dropped instead, and `None` refuses the re-key.
+    pub fn vacate_mse(&mut self) -> Option<VacantMse> {
+        if self.mse.is_some() {
+            self.mse = None;
+            return None;
+        }
+        Some(VacantMse(()))
     }
 
-    /// Spend or drop the seed-backup channel, zeroizing the key.
-    ///
-    /// Called after every gated consumer (whatever its outcome) and on a refused
-    /// re-key, so a channel is usable exactly once by the party that established it.
-    pub fn clear_mse(&mut self) {
-        self.mse_active = false;
-        self.mse_cid = 0;
-        self.mse_key.zeroize();
-        self.mse_pub = [0; 65];
+    /// Install the channel a handshake derived, for the channel this request came on.
+    pub fn establish_mse(
+        &mut self,
+        _vacant: VacantMse,
+        key: &rsk_secret::Secret<[u8; 32]>,
+        device_pub: [u8; 65],
+    ) {
+        let channel = self.mse.insert(MseChannel {
+            cid: self.channel,
+            key: rsk_secret::Secret::zeroed(),
+            device_pub,
+        });
+        channel.key.expose_mut().copy_from_slice(key.expose());
+    }
+
+    /// Spend the channel: the slot is empty afterwards, whatever the answer, and
+    /// `Some` is only for the channel this request arrived on. Copied out, then the
+    /// slot set to `None`, so the old key is wiped where it lay — `take` would not.
+    pub fn take_mse(&mut self) -> Option<MseChannel> {
+        let mine = self
+            .mse
+            .as_ref()
+            .filter(|live| live.cid == self.channel)
+            .map(|live| {
+                let mut key = rsk_secret::Secret::<[u8; 32]>::zeroed();
+                key.expose_mut().copy_from_slice(live.key.expose());
+                MseChannel {
+                    cid: live.cid,
+                    key,
+                    device_pub: live.device_pub,
+                }
+            });
+        self.mse = None;
+        mine
+    }
+
+    /// Whether a channel is live, for the tests that watch it spent.
+    #[cfg(test)]
+    pub fn mse_live(&self) -> bool {
+        self.mse.is_some()
+    }
+
+    /// The live channel's key, for the tests that check which handshake made it.
+    #[cfg(test)]
+    pub fn mse_key_for_test(&self) -> Option<[u8; 32]> {
+        self.mse.as_ref().map(|live| *live.key())
+    }
+
+    /// A live channel with `key`, as if a handshake on this request's channel had
+    /// made it — for the fuzz targets and tests that start past the handshake.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn establish_mse_for_test(&mut self, key: [u8; 32], device_pub: [u8; 65]) {
+        let vacant = self.vacate_mse().expect("no live channel");
+        self.establish_mse(vacant, &rsk_secret::Secret::new(key), device_pub);
     }
 
     /// Drop the unlocked seed copy (disable / reset), zeroizing it first.
     pub fn clear_keydev_dec(&mut self) {
-        if let Some(k) = self.keydev_dec.as_mut() {
-            k.zeroize();
-        }
         self.keydev_dec = None;
     }
 
@@ -548,16 +639,6 @@ impl FidoState {
             self.paut.permissions &= PERM_LBW;
             self.paut.user_present = false;
             self.paut.user_verified = false;
-        }
-    }
-
-    /// [`Self::consume_after_user_presence`], run only when `user_present`. The
-    /// getAssertion call sites key on the raw `up`, so a silent up:false pre-flight
-    /// stays inert (GHSA-wqjm-653g-hgw3); folding the guard in here keeps the caller
-    /// (`get_assertion_inner`) under the cognitive-complexity ceiling.
-    pub fn consume_after_user_presence_if(&mut self, user_present: bool) {
-        if user_present {
-            self.consume_after_user_presence();
         }
     }
 
@@ -697,15 +778,13 @@ impl Drop for FidoState {
             // under the platform's key, and the enumerate positions are slot numbers.
             gna: _,
             cm: _,
-            // Large-blob fragments — CTAP 2.1 §11.5 makes the array the platform's
-            // ciphertext, keyed by a largeBlobKey this device never holds in RAM.
+            // Large-blob fragments: the platform's ciphertext (CTAP 2.1 §11.5), or under
+            // largeblob-ext a read's plaintext, which the reset that drops this overwrites.
             lba: _,
-            mse_active: _,
-            mse_cid: _,
-            mse_key,
-            // The device ephemeral public key, sent to the host as the AEAD AAD.
-            mse_pub: _,
-            keydev_dec,
+            // Its key is a Secret: it wipes itself when the state drops.
+            mse: _,
+            // A Secret: it wipes itself when the state drops.
+            keydev_dec: _,
             // How to fetch the DEVK, not the DEVK.
             devk_source: _,
             audit_boot_logged: _,
@@ -715,11 +794,13 @@ impl Drop for FidoState {
             led_written: _,
             phy_written: _,
         } = self;
-        ephemeral.zeroize();
-        paut.token.zeroize();
-        mse_key.zeroize();
-        if let Some(k) = keydev_dec.as_mut() {
-            k.zeroize();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the key-agreement key and the token are session state; drop is their wipe point"
+        )]
+        {
+            ephemeral.zeroize();
+            paut.token.zeroize();
         }
     }
 }

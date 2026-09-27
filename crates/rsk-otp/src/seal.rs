@@ -18,11 +18,11 @@
 //! pre-existing plaintext slot at boot.
 
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
-use rsk_fs::{Fs, KeyFid, Sealed, Storage};
+use rsk_fs::{Fs, KeyFid, Rearmed, Sealed, Storage};
 use rsk_sdk::error::Result;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
-use crate::{CONFIG_SIZE, Rng, SLOT_SIZE};
+use crate::{CONFIG_SIZE, Rng, SLOT_SIZE, SlotRecord};
 
 const NONCE_LEN: usize = 12;
 const TAG_LEN: usize = 16;
@@ -41,44 +41,70 @@ const _: () = assert!(NONCE_LEN + CONFIG_SIZE + TAG_LEN > SLOT_SIZE);
 
 const INFO_OTP_SLOT: &[u8] = b"OTP/SLOT";
 
-fn kenc(dev: &Device) -> [u8; 32] {
+fn kenc(dev: &Device) -> Secret<[u8; 32]> {
     let mut kbase = dev.derive_kbase();
-    let mut out = [0u8; 32];
-    hkdf_sha256(dev.serial_hash, &kbase, INFO_OTP_SLOT, &mut out)
-        .expect("32-byte HKDF output is in range");
-    kbase.zeroize();
+    let mut out = Secret::<[u8; 32]>::zeroed();
+    #[expect(
+        clippy::expect_used,
+        reason = "HKDF-SHA256 refuses only an output past 255 × 32 bytes, and this one is 32"
+    )]
+    hkdf_sha256(
+        dev.serial_hash,
+        kbase.expose(),
+        INFO_OTP_SLOT,
+        out.expose_mut(),
+    )
+    .expect("32-byte HKDF output is in range");
+    kbase.wipe();
     out
 }
 
-/// Seal `plain` and write it to `fid` as `nonce ‖ ct ‖ tag`. `false` on an
-/// over-length plaintext or a storage failure.
+/// Seal `rec` at its stored length and write it to `fid` as `nonce ‖ ct ‖ tag`.
+/// `false` on a storage failure. A record is the only plaintext this takes, so
+/// no writer chooses the tail's bytes ([`SlotRecord`] says who does).
 pub fn seal_put<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     rng: &mut dyn Rng,
     fid: KeyFid,
-    plain: &[u8],
+    rec: &SlotRecord,
 ) -> bool {
-    if plain.len() > MAX_PLAIN {
-        return false;
-    }
-    let mut blob = [0u8; MAX_BLOB];
+    seal_put_over(dev, fs, rng, fid, rec, None)
+}
+
+/// [`seal_put`] over a record another root sealed; see [`Fs::put_key_over`].
+pub fn seal_put_over<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    rng: &mut dyn Rng,
+    fid: KeyFid,
+    rec: &SlotRecord,
+    rearmed: Option<&Rearmed>,
+) -> bool {
+    let plain = rec.stored();
+    let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
     let n = NONCE_LEN + plain.len() + TAG_LEN;
-    rng.fill(&mut blob[..NONCE_LEN]);
+    rng.fill(&mut blob.expose_mut()[..NONCE_LEN]);
     let mut nonce = [0u8; NONCE_LEN];
-    nonce.copy_from_slice(&blob[..NONCE_LEN]);
-    blob[NONCE_LEN..NONCE_LEN + plain.len()].copy_from_slice(plain);
+    nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
+    // A record is at most `MAX_PLAIN` long, so its seal fits the blob.
+    let Some((ct, tag_out)) = blob
+        .expose_mut()
+        .get_mut(NONCE_LEN..n)
+        .map(|body| body.split_at_mut(plain.len()))
+    else {
+        return false;
+    };
+    ct.copy_from_slice(plain);
     let mut key = kenc(dev);
-    let tag = aes256gcm_encrypt(
-        &key,
-        &nonce,
-        dev.serial_hash,
-        &mut blob[NONCE_LEN..NONCE_LEN + plain.len()],
-    );
-    key.zeroize();
-    blob[NONCE_LEN + plain.len()..n].copy_from_slice(&tag);
-    let ok = fs.put_key(fid, Sealed::wrap(&blob[..n])).is_ok();
-    blob.zeroize();
+    let tag = aes256gcm_encrypt(key.expose(), &nonce, dev.serial_hash, ct);
+    key.wipe();
+    tag_out.copy_from_slice(&tag);
+    let ok = blob
+        .expose()
+        .get(..n)
+        .is_some_and(|sealed| fs.put_key_over(fid, Sealed::wrap(sealed), rearmed).is_ok());
+    blob.wipe();
     ok
 }
 
@@ -88,11 +114,27 @@ pub fn seal_put<S: Storage>(
 ///
 /// A read the medium REFUSED folds into that same `None`; [`try_seal_read`] is
 /// the twin for the callers where it may not.
-pub fn seal_read<S: Storage>(
+///
+/// The plaintext is a slot's secrets, so it goes only into a buffer that wipes
+/// itself; a bare array is refused at compile time:
+///
+/// ```compile_fail,E0308
+/// # fn read<S: rsk_fs::Storage>(dev: &rsk_crypto::Device, fs: &mut rsk_fs::Fs<S>) {
+/// let mut out = [0u8; 64];
+/// rsk_otp::seal::seal_read(dev, fs, rsk_fs::KeyFid::new(0xC100), &mut out);
+/// # }
+/// ```
+/// ```
+/// # fn read<S: rsk_fs::Storage>(dev: &rsk_crypto::Device, fs: &mut rsk_fs::Fs<S>) {
+/// let mut out = rsk_secret::Secret::<[u8; 64]>::zeroed();
+/// rsk_otp::seal::seal_read(dev, fs, rsk_fs::KeyFid::new(0xC100), &mut out);
+/// # }
+/// ```
+pub fn seal_read<S: Storage, const N: usize>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: KeyFid,
-    out: &mut [u8],
+    out: &mut Secret<[u8; N]>,
 ) -> Option<usize> {
     try_seal_read(dev, fs, fid, out).ok().flatten()
 }
@@ -100,47 +142,59 @@ pub fn seal_read<S: Storage>(
 /// [`seal_read`], fallible: `Err` is "the medium could not answer", `Ok(None)` a
 /// slot that is genuinely absent, malformed, or unauthenticated. The fold the
 /// plain one does is what lets a faulted read spell *unprogrammed* at a gate.
-pub fn try_seal_read<S: Storage>(
+pub fn try_seal_read<S: Storage, const N: usize>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: KeyFid,
-    out: &mut [u8],
+    out: &mut Secret<[u8; N]>,
 ) -> Result<Option<usize>> {
-    let mut blob = [0u8; MAX_BLOB];
-    let Some(n) = fs.try_read_key(fid, &mut blob)? else {
+    let out = out.expose_mut();
+    let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
+    let Some(n) = fs.try_read_key(fid, blob.expose_mut())? else {
         return Ok(None);
     };
     if !(NONCE_LEN + TAG_LEN..=MAX_BLOB).contains(&n) {
-        blob.zeroize();
+        blob.wipe();
         return Ok(None);
     }
     let pt_len = n - NONCE_LEN - TAG_LEN;
     if out.len() < pt_len {
-        blob.zeroize();
+        blob.wipe();
         return Ok(None);
     }
     let mut nonce = [0u8; NONCE_LEN];
-    nonce.copy_from_slice(&blob[..NONCE_LEN]);
+    nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
+    let (Some((ct, stored_tag)), Some(pt)) = (
+        blob.expose_mut()
+            .get_mut(NONCE_LEN..n)
+            .map(|body| body.split_at_mut(pt_len)),
+        out.get_mut(..pt_len),
+    ) else {
+        blob.wipe();
+        return Ok(None);
+    };
     let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&blob[n - TAG_LEN..n]);
+    tag.copy_from_slice(stored_tag);
     let mut key = kenc(dev);
-    let r = aes256gcm_decrypt(
-        &key,
-        &nonce,
-        dev.serial_hash,
-        &mut blob[NONCE_LEN..NONCE_LEN + pt_len],
-        &tag,
-    );
-    key.zeroize();
+    let r = aes256gcm_decrypt(key.expose(), &nonce, dev.serial_hash, ct, &tag);
+    key.wipe();
     if r.is_err() {
-        blob.zeroize();
+        blob.wipe();
         return Ok(None);
     }
-    out[..pt_len].copy_from_slice(&blob[NONCE_LEN..NONCE_LEN + pt_len]);
-    blob.zeroize();
+    pt.copy_from_slice(ct);
+    blob.wipe();
     Ok(Some(pt_len))
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "seal_tests.rs"]
 mod tests;

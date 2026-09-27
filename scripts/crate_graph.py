@@ -100,6 +100,8 @@ TIERS = [
     ("CRYPTO FACADE", "the one crate that names a primitive", "#37877E", ["rsk-crypto"]),
     ("ALGORITHMS", "reached by an allowlist, never by every applet", "#4C9086",
      ["rsk-rsa", "rsk-ec", "rsk-sha512", "rsk-mldsa"]),
+    ("SECRETS", "key-grade bytes that wipe themselves on every exit", "#5E9A92",
+     ["rsk-secret"]),
 ]
 
 APPLET_LABEL = "APPLETS"
@@ -295,10 +297,37 @@ def band_svg(y, label, sub, colour, crates, gated):
 NOTE_BUDGET = 108
 
 
+def break_at_commas(plain, markup):
+    """One `crates ← a, b, …` note too long for a line, broken after its commas.
+
+    Only the allowlist grows with the workspace: every crate that takes a secret
+    joins the bottom tier's parent list, so that list outruns the card first.
+    """
+    head_plain, _, rest = plain.partition(" ← ")
+    head_markup = markup.partition(" ← ")[0]
+    items = rest.split(", ")
+    lines, cur_plain, cur = [], head_plain + " ←", head_markup + " ←"
+    for i, item in enumerate(items):
+        piece = item + ("," if i + 1 < len(items) else "")
+        if len(cur_plain) + 1 + len(piece) > NOTE_BUDGET:
+            lines.append(cur)
+            cur_plain, cur = "  " + piece, "  " + piece
+        else:
+            cur_plain, cur = cur_plain + " " + piece, cur + " " + piece
+    lines.append(cur)
+    return lines
+
+
 def wrap(chunks, sep):
     """Greedily pack (plain, markup) chunks into lines that fit the card."""
     lines, plain, markup = [], "", []
     for chunk_plain, chunk_markup in chunks:
+        if len(chunk_plain) > NOTE_BUDGET and " ← " in chunk_plain:
+            if markup:
+                lines.append(sep.join(markup))
+                plain, markup = "", []
+            lines += break_at_commas(chunk_plain, chunk_markup)
+            continue
         joined = chunk_plain if not markup else plain + sep + chunk_plain
         if markup and len(joined) > NOTE_BUDGET:
             lines.append(sep.join(markup))
@@ -313,12 +342,14 @@ def wrap(chunks, sep):
 def render(members, edges, firm):
     gated = members - firm
     sideways, head, allow, mark = notes(members, edges, gated)
+    bottom, n = TIERS[-1][0].lower(), len(TIERS[-1][3])
     desc = (
         f"Crate dependency layers: {len(members)} crates in {len(TIERS)} tiers, from the "
         f"{len(TIERS[0][3])} flashable binaries at the top, down through the "
-        f"{len(TIERS[applet_tier()][3])} applets, to the {len(TIERS[-1][3])} algorithm "
-        f"crates. All {len(edges)} in-workspace dependencies point strictly downward, and "
-        f"applet-to-applet edges number {sideways}."
+        f"{len(TIERS[applet_tier()][3])} applets, to the {n} {bottom} "
+        f"crate{'s' if n != 1 else ''} at the bottom. All {len(edges)} in-workspace "
+        f"dependencies point strictly downward, and applet-to-applet edges number "
+        f"{sideways}."
     )
     body, y = [], 118
     for i, (label, sub, colour, crates) in enumerate(TIERS):

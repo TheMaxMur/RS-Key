@@ -28,8 +28,9 @@ const SERIAL_HASH: [u8; 32] = [0x22; 32];
 
 /// A provisioned MKEK for the tests. The applet holds a way to READ the fuses, not
 /// the key, so a test source has to be a plain `fn`.
-fn test_mkek() -> Option<[u8; 32]> {
-    Some([0x66; 32])
+fn test_mkek(out: &mut [u8; 32]) -> bool {
+    *out = [0x66; 32];
+    true
 }
 
 fn make_fs() -> Fs<RamStorage> {
@@ -818,6 +819,35 @@ fn import_p256_dec_then_pso_decipher_ecdh() {
     let peer = p256::PublicKey::from_sec1_bytes(eph_pub.as_bytes()).unwrap();
     let shared = p256::ecdh::diffie_hellman(sk.to_nonzero_scalar(), peer.as_affine());
     assert_eq!(&z, shared.raw_secret_bytes().as_slice());
+}
+
+/// PSO builds its result in the applet's scratch, which lives as long as the applet;
+/// a deciphered secret must be gone from it once the command has answered.
+#[test]
+fn pso_decipher_leaves_no_secret_in_the_scratch() {
+    let rng = RefCell::new(CountRng(7));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    put(&mut app, &mut fs, 0x00, 0xC2, ATTR_P256_ECDH);
+    let (_, sw) = run(&mut app, &mut fs, &ec_import(0xB8, &[0x22u8; 32]));
+    assert_eq!(sw, Sw::OK);
+    verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
+
+    let eph_pub = p256_vk(&[0x33u8; 32]).to_sec1_point(false);
+    let f86 = [&[0x86, eph_pub.as_bytes().len() as u8], eph_pub.as_bytes()].concat();
+    let f7f49 = [&[0x7F, 0x49, f86.len() as u8], f86.as_slice()].concat();
+    let a6 = [&[0xA6, f7f49.len() as u8], f7f49.as_slice()].concat();
+    let mut a = vec![0x00, consts::INS_PSO, 0x80, 0x86, a6.len() as u8];
+    a.extend_from_slice(&a6);
+    let (z, sw) = run(&mut app, &mut fs, &a);
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(z.len(), 32);
+    assert!(
+        app.scratch.iter().all(|&b| b == 0),
+        "the shared secret outlived PSO:DECIPHER in the scratch"
+    );
 }
 
 #[test]

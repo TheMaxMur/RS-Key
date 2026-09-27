@@ -52,11 +52,11 @@ is nothing left in it to recover. That is a property of this silicon and boot
 configuration, not of the firmware; re-run it when either changes.
 
 Should a configuration ever keep SRAM, `residue` is what measures the scrub, and
-it takes two runs. No scrub reaches the stack today, so the shipping build is
-already the "before": it must show `present` first, and only that licenses reading
-a later `absent` as the fix working rather than as a dump that read nothing. A
-single `absent` run proves nothing; that is the mistake this file exists to stop
-repeating.
+it takes two runs. Core0's dead stack is zeroed after every request now
+(`firmware/src/sweep.rs`), so the "before" is a build without that sweep: it must
+show `present` first, and only that licenses reading a later `absent` as the fix
+working rather than as a dump that read nothing. A single `absent` run proves
+nothing; that is the mistake this file exists to stop repeating.
 
 Both subcommands leave the board in BOOTSEL — reflash it afterwards. They need a
 finger on the button (or a no-touch board) and picotool on PATH. `residue` also

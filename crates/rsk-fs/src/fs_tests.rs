@@ -381,7 +381,7 @@ fn requesting_a_rescrub_clears_the_hardened_marker() {
     let mut fs = fs();
     fs.put(crate::EF_HARDENED, b"\x01").unwrap();
     assert!(fs.has_data(crate::EF_HARDENED));
-    crate::request_rescrub(&mut fs).expect("a healthy medium re-arms and says so");
+    let _rearmed = crate::request_rescrub(&mut fs).expect("a healthy medium re-arms and says so");
     assert!(
         !fs.has_data(crate::EF_HARDENED),
         "a rescrub request must clear the marker, or the lap never runs again"
@@ -434,8 +434,8 @@ fn a_reset_between_a_re_key_and_its_rescrub_leaves_the_marker_lying() {
     fs.put(REKEYED, b"pre-otp").unwrap();
     fs.put(crate::EF_HARDENED, b"\x01").unwrap();
     medium.arm(1);
-    crate::request_rescrub(&mut fs).expect("the re-arm is what the cut let through");
-    let _ = fs.put(REKEYED, b"otp");
+    let rearmed = crate::request_rescrub(&mut fs).expect("the re-arm is what the cut let through");
+    let _ = fs.put_over(REKEYED, b"otp", Some(&rearmed));
     assert_eq!(
         medium.value(REKEYED).as_deref(),
         Some(&b"pre-otp"[..]),
@@ -1662,8 +1662,8 @@ fn a_marker_probe_that_cannot_answer_is_a_refusal_too() {
     medium.stick(Some(crate::EF_HARDENED));
 
     assert_eq!(
-        crate::request_rescrub(&mut fs),
-        Err(Error::MemoryFatal),
+        crate::request_rescrub(&mut fs).err(),
+        Some(Error::MemoryFatal),
         "fixture: the probe faulted rather than reading the marker back"
     );
     assert!(

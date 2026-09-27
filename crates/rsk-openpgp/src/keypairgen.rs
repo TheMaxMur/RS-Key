@@ -220,11 +220,10 @@ fn keygen_tail<S: Storage>(
     // under it then deciphered to garbage at `9000`. Skipping the seed is the cheap
     // wrong answer — the next DEC generate makes it again.
     } else if fid == EF_PK_DEC && matches!(fs.try_has_key(EF_AES_KEY), Ok(false)) {
-        let mut aes = [0u8; 32];
-        rng.fill(&mut aes);
-        let _ = store_aes_key(dev, fs, sess, &aes);
-        use zeroize::Zeroize;
-        aes.zeroize();
+        let mut aes = rsk_secret::Secret::<[u8; 32]>::zeroed();
+        rng.fill(aes.expose_mut());
+        let _ = store_aes_key(dev, fs, sess, aes.expose());
+        aes.wipe();
     }
     Ok(())
 }

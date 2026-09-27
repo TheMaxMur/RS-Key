@@ -131,11 +131,13 @@ fn an_unchanged_ambient_screen_is_not_repainted() {
     let mut ui = env.ui(Pad::idle());
     ui.onboarding = false;
     let (mut spin, mut breathe) = (rsk_ui::STATUS_ARC_START, 0u8);
-    ui.ambient_repaint(1, &mut spin, &mut breathe);
+    env.local(&mut ui)
+        .ambient_repaint(1, &mut spin, &mut breathe);
     assert_eq!(ui.shown, Some(home(StatusKind::Idle, false, 0)));
     let frames = ui.panel.frames;
     let damage = ui.panel.damage_presentations;
-    ui.ambient_repaint(2, &mut spin, &mut breathe);
+    env.local(&mut ui)
+        .ambient_repaint(2, &mut spin, &mut breathe);
     assert_eq!(ui.panel.frames, frames);
     assert_eq!(ui.panel.damage_presentations, damage);
 }
@@ -146,13 +148,15 @@ fn a_status_glyph_change_repaints_without_disarming_the_panel() {
     let mut ui = env.ui(Pad::idle());
     ui.onboarding = false;
     let (mut spin, mut breathe) = (rsk_ui::STATUS_ARC_START, 0u8);
-    ui.ambient_repaint(1, &mut spin, &mut breathe);
+    env.local(&mut ui)
+        .ambient_repaint(1, &mut spin, &mut breathe);
     ui.touch_armed = true;
     let writes = ui.panel.writes;
     let damage = ui.panel.damage_presentations;
     let rects = ui.panel.damage_rects.len();
     ui.hooks.led = rsk_led::STATUS_PROCESSING;
-    ui.ambient_repaint(2, &mut spin, &mut breathe);
+    env.local(&mut ui)
+        .ambient_repaint(2, &mut spin, &mut breathe);
     assert!(ui.panel.writes > writes, "the glyph did change");
     assert_eq!(ui.panel.damage_presentations, damage + 1);
     assert_eq!(ui.panel.damage_rects.len(), rects + 1);
@@ -188,10 +192,12 @@ fn a_new_surface_disarms_the_panel() {
     let mut ui = env.ui(Pad::idle());
     ui.onboarding = false;
     let (mut spin, mut breathe) = (rsk_ui::STATUS_ARC_START, 0u8);
-    ui.ambient_repaint(1, &mut spin, &mut breathe);
+    env.local(&mut ui)
+        .ambient_repaint(1, &mut spin, &mut breathe);
     ui.touch_armed = true;
     ui.locked = true;
-    ui.ambient_repaint(2, &mut spin, &mut breathe);
+    env.local(&mut ui)
+        .ambient_repaint(2, &mut spin, &mut breathe);
     assert_eq!(ui.shown, Some(Screen::Locked));
     assert!(!ui.touch_armed, "a screen that just appeared is untouched");
 }
@@ -204,7 +210,8 @@ fn a_busy_device_never_falls_asleep_mid_operation() {
     ui.hooks.led = rsk_led::STATUS_PROCESSING;
     backdate(DEFAULT_SLEEP_MS);
     let (mut spin, mut breathe) = (rsk_ui::STATUS_ARC_START, 0u8);
-    ui.ambient_repaint(1, &mut spin, &mut breathe);
+    env.local(&mut ui)
+        .ambient_repaint(1, &mut spin, &mut breathe);
     ui.tick_deadlines();
     assert!(!ui.asleep, "working counts as activity");
 }
@@ -217,14 +224,17 @@ fn touch_is_read_before_a_host_has_configured_the_device() {
     let env = Env::new();
     let mut ui = env.ui(Pad::taps(&[center(rsk_ui::nav_tab_rect(0))]));
     ui.onboarding = false;
-    assert!(!ui.handle_local_input(StatusKind::Processing));
-    assert!(!ui.handle_local_input(StatusKind::Touch));
+    assert!(
+        !env.local(&mut ui)
+            .handle_local_input(StatusKind::Processing)
+    );
+    assert!(!env.local(&mut ui).handle_local_input(StatusKind::Touch));
     assert_eq!(
         ui.touch.reads, 0,
         "a busy device never even samples the pad"
     );
     assert!(
-        (0..8).any(|_| ui.handle_local_input(StatusKind::Boot)),
+        (0..8).any(|_| env.local(&mut ui).handle_local_input(StatusKind::Boot)),
         "a tap on an unconfigured device is still input"
     );
 }
@@ -236,11 +246,27 @@ fn a_tap_that_hits_nothing_is_still_a_local_interaction() {
     let env = Env::new();
     let mut ui = env.ui(Pad::taps(&[nowhere()]));
     ui.onboarding = false;
-    ui.handle_local_input(StatusKind::Idle); // arms the pad
+    env.local(&mut ui).handle_local_input(StatusKind::Idle); // arms the pad
     backdate_local(DEFAULT_SLEEP_MS);
     let stale = LAST_LOCAL_MS.load(Ordering::Relaxed);
-    assert!((0..8).any(|_| ui.handle_local_input(StatusKind::Idle)));
+    assert!((0..8).any(|_| env.local(&mut ui).handle_local_input(StatusKind::Idle)));
     assert_ne!(LAST_LOCAL_MS.load(Ordering::Relaxed), stale);
+}
+
+/// A flow the panel runs leaves its frames dead when it returns, and no host request
+/// may follow to sweep them: the tick that ran it asks the board to, a quiet one not.
+#[test]
+fn a_returned_panel_flow_asks_for_the_dead_stack_sweep() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::taps(&[nowhere()]));
+    ui.onboarding = false;
+    env.local(&mut ui).handle_local_input(StatusKind::Idle); // arms the pad
+    assert_eq!(ui.hooks.sweeps, 0, "a tick with no gesture ran no flow");
+    assert!((0..8).any(|_| env.local(&mut ui).handle_local_input(StatusKind::Idle)));
+    assert_eq!(
+        ui.hooks.sweeps, 1,
+        "the tap's flow returned, and its frames were swept"
+    );
 }
 
 #[test]
@@ -288,7 +314,7 @@ fn a_touch_wakes_the_panel_without_tapping_what_it_woke_to() {
     let mut ui = env.ui(Pad::script(&[Some(nowhere()), None]));
     ui.enter_sleep();
     assert!(ui.asleep);
-    ui.tick_asleep();
+    env.local(&mut ui).tick_asleep();
     assert!(!ui.asleep);
     assert_eq!(
         ui.shown,
@@ -307,7 +333,7 @@ fn a_sleeping_panel_ignores_everything_but_a_wake_source() {
     let mut ui = env.ui(Pad::idle());
     ui.enter_sleep();
     let frames = ui.panel.frames;
-    ui.tick_asleep();
+    env.local(&mut ui).tick_asleep();
     assert!(ui.asleep);
     assert_eq!(ui.panel.frames, frames, "a blanked panel stays blank");
 }
@@ -364,9 +390,9 @@ fn a_panel_reset_leaves_no_input_or_session_until_the_reset() {
         let hooks = &ui.hooks;
         (mode, ui.asleep, hooks.wake_polls.get(), hooks.pin_changed)
     };
-    let embassy_futures::select::Either::Second(at_reset) =
-        embassy_futures::block_on(embassy_futures::select::select(status_loop(&ui), worker))
-    else {
+    let embassy_futures::select::Either::Second(at_reset) = embassy_futures::block_on(
+        embassy_futures::select::select(status_loop(&ui, env.cells()), worker),
+    ) else {
         unreachable!("the status loop never returns");
     };
     assert_eq!(
@@ -388,8 +414,8 @@ fn a_finger_still_down_when_a_tab_closes_is_not_a_second_tap() {
     ));
     ui.onboarding = false;
     // The lead-in samples arm the panel; the tap then runs Settings until Home is held.
-    let opened = (0..3).any(|_| ui.handle_local_input(StatusKind::Idle));
-    let again = ui.handle_local_input(StatusKind::Idle);
+    let opened = (0..3).any(|_| env.local(&mut ui).handle_local_input(StatusKind::Idle));
+    let again = env.local(&mut ui).handle_local_input(StatusKind::Idle);
     assert_eq!(
         (opened, again),
         (true, false),
@@ -407,9 +433,9 @@ fn a_contact_resting_on_the_panel_cannot_hold_the_lock_off() {
     let mut ui = env.ui(Pad::held(nowhere()));
     ui.locked = false;
     ui.touch_armed = true;
-    let landed = ui.handle_local_input(StatusKind::Idle);
+    let landed = env.local(&mut ui).handle_local_input(StatusKind::Idle);
     backdate_local(lock_after_ms(SLEEP_TIMEOUT_MS.load(Ordering::Relaxed)));
-    let rested = ui.handle_local_input(StatusKind::Idle);
+    let rested = env.local(&mut ui).handle_local_input(StatusKind::Idle);
     ui.tick_deadlines();
     assert_eq!(
         (landed, rested, ui.locked),

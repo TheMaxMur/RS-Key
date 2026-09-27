@@ -3,14 +3,15 @@
 
 //! Typed-ticket generation — what a button press "types" as keystrokes: a
 //! 44-char modhex Yubico OTP (6-byte public id ‖ AES-128-ECB private block), an
-//! OATH-HOTP 6/8-digit code, or a static password of raw scancodes. [`build`] is pure.
+//! OATH-HOTP 6/8-digit code, or a static password of raw scancodes. [`build`] does no I/O.
 
 use rsk_crypto::{aes128_encrypt_block, hmac_sha1};
+use rsk_secret::Secret;
 
 use crate::{
-    CFG_OATH_HOTP8, CFG_SHORT_TICKET, CFG_STATIC_TICKET, CONFIG_SIZE, FIXED_SIZE, KEY_SIZE,
-    OFF_AES_KEY, OFF_CFG_FLAGS, OFF_TKT_FLAGS, OFF_UID, SLOT_SIZE, TKT_APPEND_CR, TKT_OATH_HOTP,
-    UID_SIZE, counter::next_use_counter, crc16,
+    CFG_OATH_HOTP8, CFG_SHORT_TICKET, CFG_STATIC_TICKET, FIXED_SIZE, KEY_SIZE, OFF_AES_KEY,
+    OFF_CFG_FLAGS, OFF_TKT_FLAGS, OFF_UID, SlotRecord, TKT_APPEND_CR, TKT_OATH_HOTP, UID_SIZE,
+    crc16,
 };
 
 /// The YubiKey modhex alphabet (keyboard-layout-independent).
@@ -19,29 +20,26 @@ const MODHEX: &[u8; 16] = b"cbdefghijklnrtuv";
 /// Largest typed ticket: a 44-char Yubico-OTP modhex string plus a trailing CR.
 pub const MAX_TICKET: usize = 64;
 
-/// The outcome of [`build`]: the bytes to type and how, plus any slot state to
-/// persist (the bumped use counter / HOTP moving factor) and the new RAM session
-/// counter for this slot.
+/// The outcome of [`build`]: the bytes to type and how, whether the slot record's
+/// tail moved (the use counter / HOTP moving factor) and so has to be persisted, and
+/// the new RAM session counter for this slot.
 pub struct Typed {
     /// Number of valid bytes in the caller's `out` buffer.
     pub len: usize,
     /// `true` → `out` is ASCII to be mapped through the keycode table; `false` →
     /// `out` holds raw HID scancodes (a static password).
     pub encode: bool,
-    /// New 8-byte slot tail to persist, or `None` if the counter is unchanged.
-    pub new_tail: Option<[u8; SLOT_TAIL]>,
+    /// The record's tail moved: persist it before typing, or the ticket repeats.
+    pub persist: bool,
     /// The session counter to keep in RAM for this slot after this press.
     pub new_session: u8,
 }
 
-/// The dynamic counter tail appended to a slot file.
-pub const SLOT_TAIL: usize = SLOT_SIZE - CONFIG_SIZE; // 8
-
 fn encode_modhex(input: &[u8], out: &mut [u8]) -> usize {
     let mut n = 0;
-    for &b in input {
-        out[n] = MODHEX[(b >> 4) as usize];
-        out[n + 1] = MODHEX[(b & 0xF) as usize];
+    for (&b, pair) in input.iter().zip(out.chunks_exact_mut(2)) {
+        let digit = |nibble: u8| MODHEX.get(usize::from(nibble)).copied().unwrap_or_default();
+        pair.copy_from_slice(&[digit(b >> 4), digit(b & 0xF)]);
         n += 2;
     }
     n
@@ -51,35 +49,33 @@ fn encode_modhex(input: &[u8], out: &mut [u8]) -> usize {
 /// code (zero-padded to `digits`) into `out`, returning its length.
 fn hotp(key: &[u8], counter: u64, digits: u32, out: &mut [u8]) -> usize {
     let mac = hmac_sha1(key, &counter.to_be_bytes());
-    let off = (mac[19] & 0x0F) as usize;
-    let bin = ((mac[off] & 0x7F) as u32) << 24
-        | (mac[off + 1] as u32) << 16
-        | (mac[off + 2] as u32) << 8
-        | (mac[off + 3] as u32);
+    // §5.3's offset is at most 15, so its four bytes always sit inside the 20.
+    let off = usize::from(mac[19] & 0x0F);
+    let Some(&dbc) = mac.get(off..).and_then(<[u8]>::first_chunk::<4>) else {
+        return 0;
+    };
+    let bin = u32::from_be_bytes(dbc) & 0x7FFF_FFFF;
     let modulo = 10u32.pow(digits);
     let mut code = bin % modulo;
     let n = digits as usize;
-    for i in (0..n).rev() {
-        out[i] = b'0' + (code % 10) as u8;
+    for digit in out.iter_mut().take(n).rev() {
+        *digit = b'0' + (code % 10) as u8;
         code /= 10;
     }
     n
 }
 
-/// Build the ticket for slot `cfg`+`tail`. Returns `None` for slots that type
-/// nothing (challenge-response slots — the button only gates the CCID/HID
-/// calculate for those). `ts_secs` is the device uptime in seconds, `rnd` two
-/// fresh random bytes (Yubico-OTP only), `session` the current RAM session
-/// counter for this slot.
+/// Build the ticket a press on `slot` types, moving its tail as the press owes it;
+/// a challenge-response slot types nothing, so the caller does not ask. `session` is
+/// the slot's RAM session counter, `ts_secs` the uptime, `rnd` two fresh random bytes.
 pub fn build(
-    slot: &[u8; SLOT_SIZE],
+    slot: &mut SlotRecord,
     session: u8,
     ts_secs: u32,
     rnd: [u8; 2],
     out: &mut [u8; MAX_TICKET],
-) -> Option<Typed> {
-    let cfg = &slot[..CONFIG_SIZE];
-    let tail = &slot[CONFIG_SIZE..];
+) -> Typed {
+    let cfg = slot.expose();
     let tkt = cfg[OFF_TKT_FLAGS];
     let cfgf = cfg[OFF_CFG_FLAGS];
     let append_cr = tkt & TKT_APPEND_CR != 0;
@@ -87,100 +83,83 @@ pub fn build(
     if tkt & TKT_OATH_HOTP != 0 {
         // OATH-HOTP: the 20-byte key ykman packs = AES field ‖ first 4 UID
         // bytes. HMAC zero-padding makes shorter keys equivalent.
-        let mut key = [0u8; KEY_SIZE + 4];
-        key[..KEY_SIZE].copy_from_slice(&cfg[OFF_AES_KEY..OFF_AES_KEY + KEY_SIZE]);
-        key[KEY_SIZE..].copy_from_slice(&cfg[OFF_UID..OFF_UID + 4]);
-        // Moving factor: the 64-bit tail, or the programmed initial IMF in the
-        // last two UID bytes when the tail is still zero.
-        let mut imf = u64::from_be_bytes(tail.try_into().ok()?);
-        if imf == 0 {
-            imf = u16::from_be_bytes([cfg[OFF_UID + 4], cfg[OFF_UID + 5]]) as u64;
-        }
+        let mut key = Secret::<[u8; KEY_SIZE + 4]>::zeroed();
+        key.expose_mut()[..KEY_SIZE].copy_from_slice(&cfg[OFF_AES_KEY..OFF_AES_KEY + KEY_SIZE]);
+        key.expose_mut()[KEY_SIZE..].copy_from_slice(&cfg[OFF_UID..OFF_UID + 4]);
+        let imf = slot.press_hotp();
         let digits = if cfgf & CFG_OATH_HOTP8 != 0 { 8 } else { 6 };
-        let mut len = hotp(&key, imf, digits, out);
-        if append_cr {
-            out[len] = b'\r';
+        let mut len = hotp(key.expose(), imf, digits, out);
+        if append_cr && let Some(cr) = out.get_mut(len) {
+            *cr = b'\r';
             len += 1;
         }
-        // Roll the HOTP counter; `wrapping_add` matches the sibling config_seq
-        // bumps and removes a debug-panic/release-wrap asymmetry at the
-        // (unreachable) u64::MAX counter.
-        let new_tail = imf.wrapping_add(1).to_be_bytes();
-        return Some(Typed {
+        return Typed {
             len,
             encode: true,
-            new_tail: Some(new_tail),
+            persist: true,
             new_session: session,
-        });
+        };
     }
 
     if cfgf & (CFG_SHORT_TICKET | CFG_STATIC_TICKET) != 0 {
         // Static password: the fixed ‖ uid ‖ key bytes are HID scancodes, typed
         // verbatim (SHORT_TICKET applies no truncation).
-        let n = FIXED_SIZE + UID_SIZE + KEY_SIZE; // 38
-        out[..n].copy_from_slice(&cfg[..n]);
-        let mut len = n;
-        if append_cr {
-            out[len] = 0x28; // HID Enter scancode
+        const N: usize = FIXED_SIZE + UID_SIZE + KEY_SIZE; // 38
+        out[..N].copy_from_slice(&cfg[..N]);
+        let mut len = N;
+        if append_cr && let Some(enter) = out.get_mut(len) {
+            *enter = 0x28; // HID Enter scancode
             len += 1;
         }
-        return Some(Typed {
+        return Typed {
             len,
             encode: false,
-            new_tail: None,
+            persist: false,
             new_session: session,
-        });
+        };
     }
 
     // Yubico OTP. otpk = public id (6, clear) ‖ AES-ECB( private block 16 ).
-    let mut counter = u16::from_be_bytes([tail[0], tail[1]]);
-    let mut update = false;
-    if counter == 0 {
-        counter = 1;
-        update = true;
-    }
+    let (counter, new_session, persist) = slot.press_yubico(session);
+    let cfg = slot.expose();
     let mut otpk = [0u8; 22];
     otpk[..6].copy_from_slice(&cfg[..6]); // public id prefix
     otpk[6..12].copy_from_slice(&cfg[OFF_UID..OFF_UID + UID_SIZE]);
     otpk[12..14].copy_from_slice(&counter.to_le_bytes());
-    let ts = ts_secs >> 1;
-    otpk[14] = ts as u8;
-    otpk[15] = (ts >> 8) as u8;
-    otpk[16] = (ts >> 16) as u8;
+    let [t0, t1, t2, _] = (ts_secs >> 1).to_le_bytes();
+    otpk[14..17].copy_from_slice(&[t0, t1, t2]);
     otpk[17] = session;
     otpk[18..20].copy_from_slice(&rnd);
     let crc = !crc16(&otpk[6..20]);
     otpk[20..22].copy_from_slice(&crc.to_le_bytes());
-    let mut key = [0u8; KEY_SIZE];
-    key.copy_from_slice(&cfg[OFF_AES_KEY..OFF_AES_KEY + KEY_SIZE]);
+    let mut key = Secret::<[u8; KEY_SIZE]>::zeroed();
+    key.expose_mut()
+        .copy_from_slice(&cfg[OFF_AES_KEY..OFF_AES_KEY + KEY_SIZE]);
     let mut block = [0u8; 16];
     block.copy_from_slice(&otpk[6..22]);
-    aes128_encrypt_block(&key, &mut block);
+    aes128_encrypt_block(key.expose(), &mut block);
     otpk[6..22].copy_from_slice(&block);
     let mut len = encode_modhex(&otpk, out);
-    if append_cr {
-        out[len] = b'\r';
+    if append_cr && let Some(cr) = out.get_mut(len) {
+        *cr = b'\r';
         len += 1;
     }
-
-    let (counter, new_session, bumped) = next_use_counter(counter, session);
-    update |= bumped;
-    let new_tail = if update {
-        let mut t = [0u8; SLOT_TAIL];
-        t.copy_from_slice(tail);
-        t[..2].copy_from_slice(&counter.to_be_bytes());
-        Some(t)
-    } else {
-        None
-    };
-    Some(Typed {
+    Typed {
         len,
         encode: true,
-        new_tail,
+        persist,
         new_session,
-    })
+    }
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "ticket_tests.rs"]
 mod tests;

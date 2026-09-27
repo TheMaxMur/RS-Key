@@ -8,6 +8,7 @@
 use alloc::boxed::Box;
 use num_bigint_dig::BigUint;
 use num_bigint_dig::prime::probably_prime_lucas;
+use rsk_secret::{Secret, WipeGuard};
 use zeroize::Zeroize;
 
 use crate::{
@@ -19,8 +20,8 @@ use crate::{
 /// 0x91/0x92/0x93, PIV's `01`/`02` import template).
 pub fn rsa_from_pqe(e: &[u8], p: &[u8], q: &[u8]) -> Option<RsaKey> {
     RsaKey::from_p_q(
-        BigUint::from_bytes_be(p),
-        BigUint::from_bytes_be(q),
+        crate::key::from_secret_be(p),
+        crate::key::from_secret_be(q),
         BigUint::from_bytes_be(e),
     )
 }
@@ -53,6 +54,10 @@ pub struct RsaKeygen {
 
 // A keygen abandoned between steps still holds the first found prime.
 impl Drop for RsaKeygen {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the held prime's drop is its wipe"
+    )]
     fn drop(&mut self) {
         if let Some(p) = &mut self.p {
             p.zeroize();
@@ -122,10 +127,10 @@ impl RsaKeygen {
             None => {
                 // Window exhausted (or never seeded) — draw a fresh random odd
                 // top-two-bits start; this call yields no candidate.
-                let mut seed = [0u8; MAX_RSA_BYTES / 2];
-                rng.fill(&mut seed[..half_bytes]);
-                sieve.reseed(half_bytes, &seed[..half_bytes]);
-                seed.zeroize();
+                let mut seed = Secret::<[u8; MAX_RSA_BYTES / 2]>::zeroed();
+                rng.fill(&mut seed.expose_mut()[..half_bytes]);
+                sieve.reseed(half_bytes, &seed.expose()[..half_bytes]);
+                seed.wipe();
                 return None;
             }
             Some(false) => return None, // composite by a small prime — cheap
@@ -162,6 +167,10 @@ impl RsaKeygen {
             }
             Some(p) if p == cand => {
                 self.p = Some(p);
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "a by-value prime the caller handed over, dropped as a duplicate"
+                )]
                 cand.zeroize();
                 RsaStep::More
             }
@@ -183,12 +192,12 @@ impl RsaKeygen {
         half_bytes: usize,
         out: &mut [u8],
     ) -> Option<usize> {
-        let mut p = Self::try_candidate(sieve, rng, half_bytes)?;
-        let mut v = p.to_bytes_le();
-        p.zeroize();
-        let n = v.len();
-        out[..n].copy_from_slice(&v);
-        v.zeroize();
+        let mut p = Secret::new(Self::try_candidate(sieve, rng, half_bytes)?);
+        let mut v = Secret::new(p.expose().to_bytes_le());
+        p.wipe();
+        let n = v.expose().len();
+        out[..n].copy_from_slice(v.expose());
+        v.wipe();
         Some(n)
     }
 
@@ -198,12 +207,15 @@ impl RsaKeygen {
         // Belt-and-suspenders: a byte-transport find must be exactly this key's
         // half size — a wrong length is a stale prime from a prior different-size
         // job (mailbox scrubbed on engage, so never fires today); pooling corrupts n.
-        if bytes.len() != self.half_bytes {
-            bytes.zeroize();
-            return RsaStep::More;
-        }
-        let cand = BigUint::from_bytes_le(bytes);
-        bytes.zeroize();
+        let cand = {
+            // Wiped when this block is left, the early return included, and
+            // before `offer` runs the key assembly.
+            let bytes = WipeGuard::new(bytes);
+            if bytes.len() != self.half_bytes {
+                return RsaStep::More;
+            }
+            BigUint::from_bytes_le(&bytes)
+        };
         self.offer(cand)
     }
 

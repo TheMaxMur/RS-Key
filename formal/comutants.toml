@@ -105,7 +105,11 @@ replace = """
     let _defer_bump = new_record;
 """
 find2 = """
-    if let Err(e) = fs.put(EF_CRED + slot, &rec[..total]) {
+    if let Err(e) = rec
+        .get(..total)
+        .ok_or(Error::NoMemory)
+        .and_then(|record| fs.put(EF_CRED + slot, record))
+    {
         if new_record {
             let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
         }
@@ -113,7 +117,9 @@ find2 = """
     }
 """
 replace2 = """
-    fs.put(EF_CRED + slot, &rec[..total])?;
+    rec.get(..total)
+        .ok_or(Error::NoMemory)
+        .and_then(|record| fs.put(EF_CRED + slot, record))?;
     if _defer_bump {
         bump_rp(fs, seed, rp_id_hash, rp_id)?;
     }
@@ -196,11 +202,11 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-fido"]
 expect = "killed"
-note = "THE VERDICT THIS ROW CARRIED WAS MEASURED IN THE MODEL AND WRITTEN ABOUT THE CODE. `unreachable` said the defect is not falsifiable on its own, and that is true of the MODEL: with the seed leading the wipe unconditionally (0x08BF) the window this re-opens is over a seed already gone, which is why `Mut_BugBackupSealedNotAGate.cfg` has to arm `BugSeedDoesNotLead` beside it. Nothing had asked the code the same question, and a model measurement is evidence about the model. WHAT THE CODE ANSWERS, AND WHAT THAT ANSWER IS WORTH -- both halves, because the first draft of this note got the second one wrong. Two tests fall deterministically, and BOTH TRANSCRIBE THE MATCH ARM this patch edits: `the_gate_set_defers_every_record_whose_absence_is_permissive` (crates/rsk-fido/src/reset_tests.rs:638) iterates the same five-member list, and `reset_projection_finishes_only_after_every_ordered_phase` (crates/rsk-fido/src/reset_assurance_tests.rs:76) asserts the Gate phase may delete it. Control measured, not argued: demoting `EF_MINPINLEN` instead -- which crates/rsk-fido/src/reset.rs:237-243 says out loud is in the phase and in NO clause -- kills the slice identically, 3 of 3 runs. So on their own these two answer `did somebody edit the list`, not `is the defect caught`. THE BEHAVIOURAL TEST THAT EXISTED WAS A COIN FLIP, and the mechanism is measured: `RamStorage` is a `HashMap` and `for_each_key` iterates it (crates/rsk-fs/src/storage.rs:78 and :105), so whether the sweep reaches 0xCC02 before it aborts on the refused 0xCC00 is a fresh permutation per process. Over 400 fixtures the marker survived 233 times and was lost 167. `a_seed_the_medium_kept_stops_the_wipe_before_the_gates` is therefore ~42% and reads deterministic-green on the shipped tree, which is where it looks trustworthy. SO A DETERMINISTIC ONE WAS ADDED IN THE SAME DIFF: `a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window` (crates/rsk-fido/src/reset_assurance_tests.rs:130) drives the projection, whose `delete` takes its phase from the production `reset_phase`, and asserts `reset_keeps_the_backup_seal` over a seed still reachable. Measured in all three directions: shipped GREEN, this mutant RED 5 of 5, the `EF_MINPINLEN` control GREEN 3 of 3. That is the test this row`s `killed` should be read against; the two transcribers are the reason it is not read against them."
+note = "THE VERDICT THIS ROW CARRIED WAS MEASURED IN THE MODEL AND WRITTEN ABOUT THE CODE. `unreachable` said the defect is not falsifiable on its own, and that is true of the MODEL: with the seed leading the wipe unconditionally (0x08BF) the window this re-opens is over a seed already gone, which is why `Mut_BugBackupSealedNotAGate.cfg` has to arm `BugSeedDoesNotLead` beside it. Nothing had asked the code the same question, and a model measurement is evidence about the model. WHAT THE CODE ANSWERS, AND WHAT THAT ANSWER IS WORTH -- both halves, because the first draft of this note got the second one wrong. Two tests fall deterministically, and BOTH TRANSCRIBE THE MATCH ARM this patch edits: `the_gate_set_defers_every_record_whose_absence_is_permissive` (crates/rsk-fido/src/reset_tests.rs:638) iterates the same five-member list, and `reset_projection_finishes_only_after_every_ordered_phase` (crates/rsk-fido/src/reset_assurance_tests.rs:76) asserts the Gate phase may delete it. Control measured, not argued: demoting `EF_MINPINLEN` instead -- which crates/rsk-fido/src/reset.rs:240-246 says out loud is in the phase and in NO clause -- kills the slice identically, 3 of 3 runs. So on their own these two answer `did somebody edit the list`, not `is the defect caught`. THE BEHAVIOURAL TEST THAT EXISTED WAS A COIN FLIP, and the mechanism is measured: `RamStorage` is a `HashMap` and `for_each_key` iterates it (crates/rsk-fs/src/storage.rs:78 and :105), so whether the sweep reaches 0xCC02 before it aborts on the refused 0xCC00 is a fresh permutation per process. Over 400 fixtures the marker survived 233 times and was lost 167. `a_seed_the_medium_kept_stops_the_wipe_before_the_gates` is therefore ~42% and reads deterministic-green on the shipped tree, which is where it looks trustworthy. SO A DETERMINISTIC ONE WAS ADDED IN THE SAME DIFF: `a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window` (crates/rsk-fido/src/reset_assurance_tests.rs:130) drives the projection, whose `delete` takes its phase from the production `reset_phase`, and asserts `reset_keeps_the_backup_seal` over a seed still reachable. Measured in all three directions: shipped GREEN, this mutant RED 5 of 5, the `EF_MINPINLEN` control GREEN 3 of 3. That is the test this row`s `killed` should be read against; the two transcribers are the reason it is not read against them."
 
 [comutant.BugSetPinKeepsPpuat]
 status = "unreachable"
-evidence = "MEASURED AT THE CODE LEVEL, after its sibling BugBackupSealedNotAGate was found carrying a model measurement written about the code. The model half stands: under eab4b5c the grant is swept in phase 1 and EF_PIN in phase 2, so `~pin.set /\\ gate.ppuat` is unreachable and the mutant explored 40M+ states without a counterexample (E171). The CODE half is different and is why this stays without a patch: there is no site whose removal reproduces `setPIN keeps the grant` ALONE. `set_pin`s own `clear_ppuat` (crates/rsk-fido/src/clientpin.rs:220) is REDUNDANT — deleting it leaves all 668 rsk-fido tests green, three runs — because `write_pin_verifier` (crates/rsk-fido/src/clientpin.rs:845-847) clears the grant before the EF_PIN write, which is where the ordering guarantee actually lives. Deleting THAT one is red at once (`every_ef_pin_verifier_write_revokes_the_persistent_token` and `local_pin_change_revokes_the_persistent_token`), but it is the site changePIN and the panel share, so it is BugChangePinKeepsPpuats twin as much as this ones. A shared chokepoint has no per-caller mutant, and saying so is the measurement."
+evidence = "MEASURED AT THE CODE LEVEL, after its sibling BugBackupSealedNotAGate was found carrying a model measurement written about the code. The model half stands: under eab4b5c the grant is swept in phase 1 and EF_PIN in phase 2, so `~pin.set /\\ gate.ppuat` is unreachable and the mutant explored 40M+ states without a counterexample (E171). The CODE half is different and is why this stays without a patch: there is no site whose removal reproduces `setPIN keeps the grant` ALONE. `set_pin`s own `clear_ppuat` (crates/rsk-fido/src/clientpin.rs:230) is REDUNDANT — deleting it leaves all 668 rsk-fido tests green, three runs — because `write_pin_verifier` (crates/rsk-fido/src/clientpin.rs:893-895) clears the grant before the EF_PIN write, which is where the ordering guarantee actually lives. Deleting THAT one is red at once (`every_ef_pin_verifier_write_revokes_the_persistent_token` and `local_pin_change_revokes_the_persistent_token`), but it is the site changePIN and the panel share, so it is BugChangePinKeepsPpuats twin as much as this ones. A shared chokepoint has no per-caller mutant, and saying so is the measurement."
 
 # ---- batch 2: the rest, floor now 0 ----------------------------------------
 
@@ -209,14 +215,14 @@ status = "patch"
 file = "crates/rsk-fido/src/clientpin.rs"
 find = """
     clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
-    let res = store_new_pin(ctx, &padded);
-    padded.zeroize();
+    let res = store_new_pin(ctx, padded.expose());
+    padded.wipe();
     res?;
     // The new PIN met minPINLength (store_new_pin), so the change satisfies a
 """
 replace = """
-    let res = store_new_pin(ctx, &padded);
-    padded.zeroize();
+    let res = store_new_pin(ctx, padded.expose());
+    padded.wipe();
     res?;
     // The new PIN met minPINLength (store_new_pin), so the change satisfies a
 """
@@ -241,14 +247,14 @@ status = "patch"
 file = "crates/rsk-fido/src/clientpin.rs"
 find = """
     clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
-    let res = store_new_pin(ctx, &padded);
-    padded.zeroize();
+    let res = store_new_pin(ctx, padded.expose());
+    padded.wipe();
     res?;
     // The new PIN met minPINLength (store_new_pin), so the change satisfies a
 """
 replace = """
-    let res = store_new_pin(ctx, &padded);
-    padded.zeroize();
+    let res = store_new_pin(ctx, padded.expose());
+    padded.wipe();
     res?;
     // The new PIN met minPINLength (store_new_pin), so the change satisfies a
 """
@@ -625,7 +631,7 @@ tree can tear a write. Enumerated: every fault backend in
 answers `Ok(())` and cannot fail, and so does every local backend in
 `fs_tests.rs`. The one write-failing medium in the tree,
 `crates/rsk-openpgp/src/dying_storage.rs`, refuses ATOMICALLY — before writing —
-so it drives `crates/rsk-fs/src/fs.rs:786`'s `?` and cannot leave a partial
+so it drives `crates/rsk-fs/src/fs.rs:847`'s `?` and cannot leave a partial
 blob. So there IS a
 line of `rsk-fs` that decides what a failed metadata write costs, and there is no
 way to make one TEAR: the assumption belongs to the medium, and
@@ -637,8 +643,8 @@ DENIABLE — `StoreSolo_BugMetaWriteTearsBlob.cfg` goes RED on
 [comutant.BugMetaDeleteTearsBlob]
 status = "unreachable"
 evidence = """the same backend assumption its sibling denies, at
-`meta_delete`'s own rewrite (`crates/rsk-fs/src/fs.rs:827`) instead of
-`meta_add`'s (`crates/rsk-fs/src/fs.rs:786`), and no `Storage` in this tree
+`meta_delete`'s own rewrite (`crates/rsk-fs/src/fs.rs:888`) instead of
+`meta_add`'s (`crates/rsk-fs/src/fs.rs:847`), and no `Storage` in this tree
 can tear either.
 Re-enumerated rather than inherited, because the roster grew: FIVE fault
 backends in `crates/rsk-fs/src/storage.rs` now — `MetaStuck`, `ProbeStuck`,
@@ -783,17 +789,13 @@ status = "patch"
 file = "crates/rsk-devconf/src/lib.rs"
 find = """
     let mut merged = [0u8; DEV_CONF_MERGE_MAX];
-    let m = merged_dev_conf(fs, &stripped[..n], &mut merged)?;
-    if m > EF_DEV_CONF_MAX {
-        return Err(DevConfError::TooLong);
-    }
+    let m = merged_dev_conf(fs, stripped.get(..n).unwrap_or_default(), &mut merged)?;
+    let Some(record) = merged.get(..m).filter(|_| m <= EF_DEV_CONF_MAX) else {
 """
 replace = """
     let merged = stripped;
     let m = n;
-    if m > EF_DEV_CONF_MAX {
-        return Err(DevConfError::TooLong);
-    }
+    let Some(record) = merged.get(..m).filter(|_| m <= EF_DEV_CONF_MAX) else {
 """
 slice = ["cargo", "test", "-p", "rsk-devconf"]
 expect = "killed"
@@ -986,7 +988,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:234-238) is the same switch's other half and is not in this entry — one entry, one file."
+note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:259-263) is the same switch's other half and is not in this entry — one entry, one file."
 
 [comutant.BugWrongDoesNotSpend]
 status = "patch"
@@ -1000,7 +1002,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1309."
+note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1359."
 
 [comutant.BugRecoveryWithoutSecret]
 status = "patch"
@@ -1016,7 +1018,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:901."
+note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:955."
 
 # ---- RSKeyAppletPolicies: slot policy, attributes, gates, counter ----------
 
@@ -1101,12 +1103,12 @@ status = "patch"
 file = "crates/rsk-otp/src/lib.rs"
 find = """
             // Existing config: the host must present its access code.
-            if data.len() < CONFIG_SIZE + ACC_CODE_SIZE {
+            let Some(code) = data.get(CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE) else {
                 return Sw::WRONG_LENGTH;
-            }
+            };
             if !ct_eq(
-                &data[CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE],
-                &stored[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE],
+                code,
+                &stored.expose()[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE],
             ) {
                 return Sw::SECURITY_STATUS_NOT_SATISFIED;
             }
@@ -1116,12 +1118,12 @@ replace = """
 """
 find2 = """
         if programmed.is_some() {
-            if data.len() < CONFIG_SIZE + ACC_CODE_SIZE {
+            let Some(code) = data.get(CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE) else {
                 return Sw::WRONG_LENGTH;
-            }
+            };
             if !ct_eq(
-                &data[CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE],
-                &stored[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE],
+                code,
+                &stored.expose()[OFF_ACC_CODE..OFF_ACC_CODE + ACC_CODE_SIZE],
             ) {
                 return Sw::SECURITY_STATUS_NOT_SATISFIED;
             }
@@ -1131,7 +1133,7 @@ replace2 = """
 """
 slice = ["cargo", "test", "-p", "rsk-otp"]
 expect = "killed"
-note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states the same rule a THIRD time, at crates/rsk-otp/src/lib.rs:611-615, and is left unpatched: its gate is a swap's own move/delete rule rather than the configure/update pair OtpMutate models."
+note = "a programmed slot is overwritten (find) or updated (find2) without its six-byte access code. Two anchors because the gate is written twice — the model has ONE OtpMutate switch, so patching one site would leave the other half of the switch unmeasured. The swap path states the same rule a THIRD time, at crates/rsk-otp/src/lib.rs:644-648, and is left unpatched: its gate is a swap's own move/delete rule rather than the configure/update pair OtpMutate models."
 
 [comutant.BugOtpCounterRepeats]
 status = "patch"
@@ -1152,7 +1154,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-otp"]
 expect = "killed"
-note = "E36's shape: NEITHER half of the (use, session) position advances on a press, so two tokens carry the same pair and a validation server cannot tell a replay from a use. The anchor is the whole body, and that is the correction: freezing only the session — the previous patch — is not this defect at all, because the wrap test then reads true on every press and the USE half advances instead, so the position goes on moving. The model switch encodes the frozen PAIR, and the patch has to encode the same arm or the kill is a kill for another reason. Measured rather than argued: the previous patch IS killed too, and its failures read the wrong way round — `the_press_bump_stops_below_the_reserved_high_bit` answers `(6, 0, true)` where `(5, 1, false)` was owed (crates/rsk-otp/src/counter_tests.rs:9), so the USE half advanced AND demanded a flash write, and `a_press_types_nothing_when_it_cannot_persist_the_counter` falls at crates/rsk-otp/src/tests.rs:2176 on `the wrap press did not resume` with the counter run away to 256. Its single repeat is a re-CONFIGURE zeroing a counter that had already reached 3 — a position that had been MOVING. Under THIS patch three tests say `re-typed` instead, and `swap_carries_the_session_counter_with_its_record` goes from green to red."
+note = "E36's shape: NEITHER half of the (use, session) position advances on a press, so two tokens carry the same pair and a validation server cannot tell a replay from a use. The anchor is the whole body, and that is the correction: freezing only the session — the previous patch — is not this defect at all, because the wrap test then reads true on every press and the USE half advances instead, so the position goes on moving. The model switch encodes the frozen PAIR, and the patch has to encode the same arm or the kill is a kill for another reason. Measured rather than argued: the previous patch IS killed too, and its failures read the wrong way round — `the_press_bump_stops_below_the_reserved_high_bit` answers `(6, 0, true)` where `(5, 1, false)` was owed (crates/rsk-otp/src/counter_tests.rs:9), so the USE half advanced AND demanded a flash write, and `a_press_types_nothing_when_it_cannot_persist_the_counter` falls at crates/rsk-otp/src/tests.rs:2202 on `the wrap press did not resume` with the counter run away to 256. Its single repeat is a re-CONFIGURE zeroing a counter that had already reached 3 — a position that had been MOVING. Under THIS patch three tests say `re-typed` instead, and `swap_carries_the_session_counter_with_its_record` goes from green to red."
 
 [comutant.BugOtpPressTypesUnpersisted]
 status = "patch"
@@ -1166,32 +1168,31 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-otp"]
 expect = "killed"
-note = "a press types its ticket while the persisted half of the position never moves, and the RAM session rolls anyway — so the press after the wrap reads the old counter back and pairs it with session 0, this power cycle's FIRST position. An in-cycle repeat at the very next press, which is the replay a validation server has no way to tell from a use. ONE host test falls and its direction was read rather than counted: `a_press_types_nothing_when_it_cannot_persist_the_counter` (crates/rsk-otp/src/tests.rs:2124) reports `the press after a refused counter write re-typed Some(([112, 117, 98, 108, 105, 99], 1, 0)), already emitted this power cycle` at crates/rsk-otp/src/tests.rs:2161 — a position REPEATED, not a press mis-refused, which is the half of that test the model switch is about."
+note = "a press types its ticket while the persisted half of the position never moves, and the RAM session rolls anyway — so the press after the wrap reads the old counter back and pairs it with session 0, this power cycle's FIRST position. An in-cycle repeat at the very next press, which is the replay a validation server has no way to tell from a use. ONE host test falls and its direction was read rather than counted: `a_press_types_nothing_when_it_cannot_persist_the_counter` (crates/rsk-otp/src/tests.rs:2150) reports `the press after a refused counter write re-typed Some(([112, 117, 98, 108, 105, 99], 1, 0)), already emitted this power cycle` at crates/rsk-otp/src/tests.rs:2187 — a position REPEATED, not a press mis-refused, which is the half of that test the model switch is about."
 
 [comutant.BugOtpBootKeepsPosition]
 status = "patch"
 file = "crates/rsk-otp/src/lib.rs"
 find = """
-        if let Some(counter) = counter::boot_use_counter(stored) {
-            rec[CONFIG_SIZE..CONFIG_SIZE + 2].copy_from_slice(&counter.to_be_bytes());
+        if slot.boot_bump() {
             // The write half of the same window, and it is the more reachable one:
             // nothing has to fault for it to open, and the old record goes on
             // reading perfectly. A retry is all this frame can do — boot has no one
             // to report to, and the press cannot tell a stale counter from a fresh
             // one — so the persistent case stays a residual rather than a guard.
             for _ in 0..BUMP_TRIES {
-                if seal::seal_put(dev, fs, rng, KeyFid::new(fid), &rec) {
+                if seal::seal_put(dev, fs, rng, KeyFid::new(fid), &slot) {
                     break;
                 }
             }
         }
 """
 replace = """
-        let _ = (counter::boot_use_counter(stored), &rng);
+        let _ = (slot.boot_bump(), &rng);
 """
 slice = ["cargo", "test", "-p", "rsk-otp"]
 expect = "killed"
-note = "a cold boot leaves the persisted half where the last power cycle left it while the RAM session restarts at 0, so every pair that cycle typed is typeable again: the counter that exists to make a position unique ACROSS reboots stops crossing the reboot. Three host tests fall and all three say that — `boot_bump_retries_a_refused_write_and_pins_what_it_cannot_close` (crates/rsk-otp/src/tests.rs:2184) reports `one refused boot write re-typed the last cycle's position` with both sides `([112, 117, 98, 108, 105, 99], 1, 0)` at crates/rsk-otp/src/tests.rs:2217, and `power_up_bump_retries_a_slot_the_medium_refused` reads the stored counter back at 0 where 1 was owed (crates/rsk-otp/src/tests.rs:1985). The anchor is the whole `if let` and the replacement keeps the `boot_use_counter` call, so the patch is the WRITE and nothing else: dropping the call too left the function dead, and a slice run under -D warnings would then score build-broke instead of a kill."
+note = "a cold boot leaves the persisted half where the last power cycle left it while the RAM session restarts at 0, so every pair that cycle typed is typeable again: the counter that exists to make a position unique ACROSS reboots stops crossing the reboot. Three host tests fall and all three say that — `boot_bump_retries_a_refused_write_and_pins_what_it_cannot_close` (crates/rsk-otp/src/tests.rs:2210) reports `one refused boot write re-typed the last cycle's position` with both sides `([112, 117, 98, 108, 105, 99], 1, 0)` at crates/rsk-otp/src/tests.rs:2243, and `power_up_bump_retries_a_slot_the_medium_refused` reads the stored counter back at 0 where 1 was owed (crates/rsk-otp/src/tests.rs:2011). The anchor is the whole `if` and the replacement keeps the `boot_bump` call, so the patch is the WRITE and nothing else: dropping the call too left the method dead, and a slice run under -D warnings would then score build-broke instead of a kill."
 
 [comutant.BugOtpSwapKeepsSession]
 status = "patch"
@@ -1206,7 +1207,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-otp"]
 expect = "killed"
-note = "SLOT_SWAP moves the record and its persisted use counter and leaves the RAM session counter behind, so the record is re-paired with a session counter used FEWER times: the replay position goes BACKWARDS and the swapped slot re-types a pair already emitted this power cycle. ONE host test falls, `swap_carries_the_session_counter_with_its_record` (crates/rsk-otp/src/tests.rs:1414), through the `press_once` helper at crates/rsk-otp/src/tests.rs:1405: `slot 2 re-typed the replay position ([97, 97, 97, 97, 97, 97], 1, 1), already emitted this power cycle` — a repeat, which is what OtpCounterNeverRepeats is about, and not a swap refused or a record mislaid."
+note = "SLOT_SWAP moves the record and its persisted use counter and leaves the RAM session counter behind, so the record is re-paired with a session counter used FEWER times: the replay position goes BACKWARDS and the swapped slot re-types a pair already emitted this power cycle. ONE host test falls, `swap_carries_the_session_counter_with_its_record` (crates/rsk-otp/src/tests.rs:1439), through the `press_once` helper at crates/rsk-otp/src/tests.rs:1430: `slot 2 re-typed the replay position ([97, 97, 97, 97, 97, 97], 1, 1), already emitted this power cycle` — a repeat, which is what OtpCounterNeverRepeats is about, and not a swap refused or a record mislaid."
 
 # ---- RSKeyAppletSeams: what a status costs, and who may hold it ------------
 # The old exclusion said these are "exercised at the wire, not by a cargo test on
@@ -1222,7 +1223,7 @@ find = """
                     if let Some(c) = self.current
                         && c != i
                     {
-                        applets[c].deselect(ctx);
+                        deselect_slot(applets, c, ctx);
                     }
 """
 replace = ""
@@ -1234,7 +1235,7 @@ note = "selecting a different AID no longer deselects the applet that was curren
 status = "patch"
 slice = ["cargo", "test", "-p", "rsk-piv", "-p", "rsk-oath"]
 expect = "killed"
-note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:356-359. The OATH site joined with bcdDevice 0x09ED, when a YubiKey 5.8.0 was measured keeping an OATH VALIDATE through a re-SELECT too: reverting it is killed by crates/rsk-oath/src/reselect_tests.rs."
+note = "637ed98 taken back out on the PIV half: every SELECT resets, including the re-SELECT SP 800-73-4 pt2 §3.1.1 says shall leave every indicator unchanged. OpenPGP's twin is crates/rsk-openpgp/src/lib.rs:358-361. The OATH site joined with bcdDevice 0x09ED, when a YubiKey 5.8.0 was measured keeping an OATH VALIDATE through a re-SELECT too: reverting it is killed by crates/rsk-oath/src/reselect_tests.rs."
 
 [[comutant.BugReselectResetsStatus.site]]
 file = "crates/rsk-piv/src/lib.rs"
@@ -1276,13 +1277,13 @@ note = "OATH's exemption taken out of the IMPLEMENTATION, the model switch takin
 status = "unreachable"
 evidence = """the applets' deselect is redundant with their own fresh SELECT, so
 removing it from the ICC power transition changes nothing observable. Three
-applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:387-389
-(sess.reset), crates/rsk-openpgp/src/lib.rs:335-337 (reset_session), crates/rsk-oath/src/lib.rs:1159-1166
+applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:401-403
+(sess.reset), crates/rsk-openpgp/src/lib.rs:337-339 (reset_session), crates/rsk-oath/src/lib.rs:1240-1247
 (validated + otp_pin_verified) — and all three ALSO re-lock in select on a
 select that is not a re-SELECT: piv and openpgp on `if !reselect`, oath by
 recomputing `validated = !code_set` there and clearing otp_pin_verified on every
-SELECT (crates/rsk-oath/src/lib.rs:1199-1200). After Dispatcher::reset_card
-takes `self.current` (crates/rsk-sdk/src/applet.rs:253) every route back to an applet is a
+SELECT (crates/rsk-oath/src/lib.rs:1280-1281). After Dispatcher::reset_card
+takes `self.current` (crates/rsk-sdk/src/applet.rs:279) every route back to an applet is a
 `select(reselect = false)`, so no reachable command sees an inherited status.
 The first patch here neutered the WHOLE reset_card call and scored a false kill:
 the only test that fell was `a_card_reset_drops_the_selection`, which asserts the
@@ -1389,7 +1390,7 @@ note = "both layers, as the model's switch has them: the ALWAYS arm stops readin
 
 [comutant.BugPinFreshOutlivesPin]
 status = "unreachable"
-evidence = "the clamp is unobservable in today's Rust. `pin_fresh` has exactly one reader — crates/rsk-piv/src/auth.rs:63, `PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh` — and it is CONJOINED with the status it refines, so a freshness that outlives `has_pin` authorises nothing: the guard is already false on the other half. `Session::set_pin` (crates/rsk-piv/src/lib.rs:184-187) is the only writer that sets it TRUE, and `GenAuth::spend_pin` (crates/rsk-piv/src/auth.rs:115-119) only ever sets it false. The first patch here scored a false kill by taking `self.pin_fresh = verified` out of `set_pin`, which is the INVERSE defect — it makes freshness unreachable rather than immortal, fail-closed rather than fail-open, and all 11 failures were 9000-expected-got-6982. The faithful mutant (`if verified { self.pin_fresh = true; }` — grant kept, clamp dropped) measures GREEN over 130 tests. The model keeps `pfresh` as a second requirement-side copy precisely to expose a split the Rust does not have."
+evidence = "the clamp is unobservable in today's Rust. `pin_fresh` has exactly one reader — crates/rsk-piv/src/auth.rs:63, `PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh` — and it is CONJOINED with the status it refines, so a freshness that outlives `has_pin` authorises nothing: the guard is already false on the other half. `Session::set_pin` (crates/rsk-piv/src/lib.rs:193-196) is the only writer that sets it TRUE, and `GenAuth::spend_pin` (crates/rsk-piv/src/auth.rs:115-119) only ever sets it false. The first patch here scored a false kill by taking `self.pin_fresh = verified` out of `set_pin`, which is the INVERSE defect — it makes freshness unreachable rather than immortal, fail-closed rather than fail-open, and all 11 failures were 9000-expected-got-6982. The faithful mutant (`if verified { self.pin_fresh = true; }` — grant kept, clamp dropped) measures GREEN over 130 tests. The model keeps `pfresh` as a second requirement-side copy precisely to expose a split the Rust does not have."
 
 [comutant.BugSigPinNotSpent]
 status = "patch"
@@ -1446,18 +1447,18 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:289, 584, 666, 800, 1017, 1111 and crates/rsk-piv/src/keygen.rs:570), none of them patched here."
+note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:302, 598, 680, 824, 1062, 1154 and crates/rsk-piv/src/keygen.rs:597), none of them patched here."
 
 [comutant.BugRefusedValidateGrants]
 status = "patch"
 file = "crates/rsk-oath/src/lib.rs"
 find = """
-        if !ct_eq(resp, &mac[..size]) {
+        if !ct_eq(resp, proof) {
             return Sw::WRONG_DATA;
         }
 """
 replace = """
-        if !ct_eq(resp, &mac[..size]) {
+        if !ct_eq(resp, proof) {
             self.validated = true;
             return Sw::WRONG_DATA;
         }
@@ -1495,7 +1496,7 @@ pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) ->
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "PUT DATA C4 taken off PW3: a user status clears the one-shot flag and then signs for ever on a single PW1 VERIFY — BugSigPinNotSpent's requirement removed from underneath rather than through the door it watches. BOTH layers, because C4 is double-gated: the model's own comment names `write_authorized` (called at crates/rsk-openpgp/src/lib.rs:258-260) as the guard, and widening only put_pw_status's inner restatement left the wire command still answering 6982 — a kill that measured a defence in depth rather than the modelled defect. Its sibling BugUserStatusOpensAdmin widens the same function's whole else-arm; this one widens the C4 case alone, which is the door PgpSetPwStatus watches."
+note = "PUT DATA C4 taken off PW3: a user status clears the one-shot flag and then signs for ever on a single PW1 VERIFY — BugSigPinNotSpent's requirement removed from underneath rather than through the door it watches. BOTH layers, because C4 is double-gated: the model's own comment names `write_authorized` (called at crates/rsk-openpgp/src/lib.rs:260-262) as the guard, and widening only put_pw_status's inner restatement left the wire command still answering 6982 — a kill that measured a defence in depth rather than the modelled defect. Its sibling BugUserStatusOpensAdmin widens the same function's whole else-arm; this one widens the C4 case alone, which is the door PgpSetPwStatus watches."
 
 [comutant.BugPivChangeResetsStatus]
 status = "patch"
@@ -1518,12 +1519,12 @@ note = "an EXEMPT refusal taken back out: CHANGE REFERENCE DATA clears the stand
 status = "patch"
 file = "crates/rsk-oath/src/lib.rs"
 find = """
-        if !ct_eq(resp, &mac[..size]) {
+        if !ct_eq(resp, proof) {
             return Sw::WRONG_DATA;
         }
 """
 replace = """
-        if !ct_eq(resp, &mac[..size]) {
+        if !ct_eq(resp, proof) {
             self.validated = false;
             return Sw::WRONG_DATA;
         }
@@ -1540,11 +1541,15 @@ find = """
         if !self.validated {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
 """
 replace = """
     fn cmd_set_code<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
-        let data = &apdu.data[..apdu.nc];
+        let Some(data) = apdu.data.get(..apdu.nc) else {
+            return Sw::WRONG_LENGTH;
+        };
         let removing = matches!(parse_exact(data, [TAG_KEY]), Some([key]) if key.is_empty());
         if !self.validated && !removing {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
@@ -1577,7 +1582,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-fido"]
 expect = "killed"
-note = "makeCredUvNotRqd widened to every credential: §6.1.2 step 10 carves the token out for a NON-discoverable credential only, and without `req.rk` a resident one is created with a PIN set and no token. `crates/rsk-fido/src/makecredential.rs:589-591` — the direction matters and BOTH levels were read for it rather than for their colour: TLC's counterexample has RegisterStart firing at `pin.set` with no token, and the host test reports `Ok(770)` against `Err(PuatRequired)` — a credential minted, not a refusal wearing a different code. It said `Err(Other)` until the test's `out` was sized for a served response; the encoder ran out of room AFTER the gate had already let it through, which is the shape of a kill that reads like the inverse defect."
+note = "makeCredUvNotRqd widened to every credential: §6.1.2 step 10 carves the token out for a NON-discoverable credential only, and without `req.rk` a resident one is created with a PIN set and no token. `crates/rsk-fido/src/makecredential.rs:600-602` — the direction matters and BOTH levels were read for it rather than for their colour: TLC's counterexample has RegisterStart firing at `pin.set` with no token, and the host test reports `Ok(770)` against `Err(PuatRequired)` — a credential minted, not a refusal wearing a different code. It said `Err(Other)` until the test's `out` was sized for a served response; the encoder ran out of room AFTER the gate had already let it through, which is the shape of a kill that reads like the inverse defect."
 
 [comutant.BugTokenlessIgnoresAlwaysUv]
 status = "patch"
@@ -1591,7 +1596,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-fido"]
 expect = "killed"
-note = "the other half, §6.1.2 steps 6.2/6.4: alwaysUv with no way to verify refuses whatever `rk` says. Dropped, a token-less request falls through to `Ok(UvOutcome::NONE)` and alwaysUv is served on the touch alone. `crates/rsk-fido/src/makecredential.rs:583-585`. Two switches and not one because a single widened guard cannot say which half was load-bearing — the same split TraceSecurity draws with MutateUvNotRqd / MutateAlwaysUvArm. Two host tests fall, both reporting `Ok(802)` against `Err(PuatRequired)`, so this one is served and not merely mis-refused either."
+note = "the other half, §6.1.2 steps 6.2/6.4: alwaysUv with no way to verify refuses whatever `rk` says. Dropped, a token-less request falls through to `Ok(UvOutcome::NONE)` and alwaysUv is served on the touch alone. `crates/rsk-fido/src/makecredential.rs:594-596`. Two switches and not one because a single widened guard cannot say which half was load-bearing — the same split TraceSecurity draws with MutateUvNotRqd / MutateAlwaysUvArm. Two host tests fall, both reporting `Ok(802)` against `Err(PuatRequired)`, so this one is served and not merely mis-refused either."
 
 # ---- batch 7: the gate the module did not carry ----------------------------
 
@@ -1611,7 +1616,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-fido"]
 expect = "killed"
-note = "EF_MINPINLEN[1], and the only mutant here whose MODEL half had to be built before the code half could be compared: `RSKeySecurityState` carried three conjuncts where `clientpin.rs` has four, so until `gate.forceChange` existed there was nothing for this patch to be the twin of (PLAT-MODEL-010). The direction was read at both levels rather than taken from the colour. TLC: setPIN, a token with `acfg`, ConfigOp sets the flag, and GetPinToken fires AGAIN at depth 8 — a token ISSUED over a standing gate, not a refusal wearing another code. The host tests fall the same way and were read rather than counted: FOUR fall, and both named ones report `Ok(52)` — a 52-byte token response SERVED — against `Err(PinInvalid)` (`forced_pin_change_blocks_tokens_until_change_pin`, crates/rsk-fido/src/clientpin_tests.rs:1251) and `Err(PinPolicyViolation)` (`forced_pin_change_0x09_is_policy_violation`, crates/rsk-fido/src/clientpin_tests.rs:1315). The other two are the faulted-probe twins of the same door. The UV door at crates/rsk-fido/src/clientpin.rs:493-495 is a SECOND site this patch leaves standing, so the kill is attributed to the PIN doors alone."
+note = "EF_MINPINLEN[1], and the only mutant here whose MODEL half had to be built before the code half could be compared: `RSKeySecurityState` carried three conjuncts where `clientpin.rs` has four, so until `gate.forceChange` existed there was nothing for this patch to be the twin of (PLAT-MODEL-010). The direction was read at both levels rather than taken from the colour. TLC: setPIN, a token with `acfg`, ConfigOp sets the flag, and GetPinToken fires AGAIN at depth 8 — a token ISSUED over a standing gate, not a refusal wearing another code. The host tests fall the same way and were read rather than counted: FOUR fall, and both named ones report `Ok(52)` — a 52-byte token response SERVED — against `Err(PinInvalid)` (`forced_pin_change_blocks_tokens_until_change_pin`, crates/rsk-fido/src/clientpin_tests.rs:1251) and `Err(PinPolicyViolation)` (`forced_pin_change_0x09_is_policy_violation`, crates/rsk-fido/src/clientpin_tests.rs:1315). The other two are the faulted-probe twins of the same door. The UV door at crates/rsk-fido/src/clientpin.rs:530-532 is a SECOND site this patch leaves standing, so the kill is attributed to the PIN doors alone."
 
 # ---- batch 8: the boot family, and the exclusion that covered it -------------
 #
@@ -1629,14 +1634,14 @@ note = "EF_MINPINLEN[1], and the only mutant here whose MODEL half had to be bui
 status = "patch"
 file = "crates/rsk-fs/src/lib.rs"
 find = """
-pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
+pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<Rearmed> {
     let _ = fs.delete(EF_HARDENED);
     // Not `delete`'s own answer: it reports the METADATA drop (EF_HARDENED, a one-byte
     // flag, keeps none) and answers `Ok` where the present bit is clear over a live
     // marker — what a read-fault-truncated `Fs::scan` leaves. Ask the lap's own gate.
     let answer = match fs.try_has_data(EF_HARDENED) {
         Ok(true) => Err(Error::MemoryFatal),
-        Ok(false) => Ok(()),
+        Ok(false) => Ok(Rearmed(())),
         Err(e) => Err(e),
     };
     // Both arms, and before the caller can drop it: an unreadable probe is a re-arm
@@ -1649,9 +1654,9 @@ pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
 }
 """
 replace = """
-pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
+pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<Rearmed> {
     let _ = fs;
-    Ok(())
+    Ok(Rearmed(()))
 }
 """
 slice = ["cargo", "test", "-p", "rsk-fs"]
@@ -1772,4 +1777,4 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-oath"]
 expect = "killed"
-note = "The exemption removed from the IMPLEMENTATION, where the model switch removes it from the requirement: `select` locks a code-less applet instead of computing `!code_set`. Its model twin is the only one in this batch that edits an invariant rather than a step, so the code twin is the same fact's other side — if `NoStatusOutsideItsSelection` may not exempt a code-less OATH, a code-less OATH must not be open, and the tests say what that costs. 122 passed, 20 failed (re-measured with bcdDevice 0x09ED). Direction read: `crates/rsk-oath/src/tests.rs:1328` is `lock_with_code`'s own `assert_eq!(SET CODE, Sw::OK)` failing — the helper cannot install a code because the applet it must install it on is now locked — and `crates/rsk-oath/src/increasing_tests.rs:36` is \"a refusal must read as 6A80\" over a CALCULATE answered 6982. Every one fell in the REFUSED direction, which is the defect this models; none said something was served."
+note = "The exemption removed from the IMPLEMENTATION, where the model switch removes it from the requirement: `select` locks a code-less applet instead of computing `!code_set`. Its model twin is the only one in this batch that edits an invariant rather than a step, so the code twin is the same fact's other side — if `NoStatusOutsideItsSelection` may not exempt a code-less OATH, a code-less OATH must not be open, and the tests say what that costs. 122 passed, 20 failed (re-measured with bcdDevice 0x09ED). Direction read: `crates/rsk-oath/src/tests.rs:1329` is `lock_with_code`'s own `assert_eq!(SET CODE, Sw::OK)` failing — the helper cannot install a code because the applet it must install it on is now locked — and `crates/rsk-oath/src/increasing_tests.rs:36` is \"a refusal must read as 6A80\" over a CALCULATE answered 6982. Every one fell in the REFUSED direction, which is the defect this models; none said something was served."

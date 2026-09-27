@@ -14,20 +14,13 @@ use super::*;
 /// is its induction step and only that: `cmd_configure` writes a whole zeroed
 /// record, which is the base case, and Kani never sees it.
 ///
-/// Which sites persist those two bytes, and which of them these proofs reach, is
-/// derived from the tree into `assurance/otp_counter_writers.toml` rather than
-/// counted here. The sentence that stood in this place named four writers and
-/// called them every one; there are eight, and the two it missed — `cmd_swap`
-/// and `migrate_seal` — write the bytes twice each, per command and per boot.
+/// Only [`SlotRecord`](crate::SlotRecord)'s methods write those two bytes: a press
+/// (`press_yubico`) and the boot bump step them through these rules, CONFIGURE zeroes
+/// them (the base case above), and UPDATE, a swap or the re-seal carry them.
 ///
-/// What that scope stops proving, said plainly: nothing here bounds the six
-/// writers that do not step through `counter.rs`, nor the two paths inside the
-/// one it only partly reaches — `ticket::build`'s OATH-HOTP branch, and its
-/// 0 -> 1 promotion of an unused counter before `next_use_counter` is called.
-/// Unproved here is not unsound: a slot is HOTP or Yubico and cannot be updated
-/// across (`TKTFLAG_UPDATE_MASK` excludes `TKT_OATH_HOTP`), and the promotion
-/// moves forward. They need the store, not this solver; the ledger accounts for
-/// them instead of a sentence doing it silently.
+/// Not proved here: `press_yubico`'s 0 -> 1 promotion (it moves forward), the HOTP
+/// factor (`TKTFLAG_UPDATE_MASK` cannot turn a slot HOTP), and that a carried tail is
+/// the newest — a stale record put back is the store's question, not this solver's.
 #[kani::proof]
 fn use_counter_climbs_and_stops_at_the_ceiling() {
     let stored: u16 = kani::any();

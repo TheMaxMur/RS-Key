@@ -26,7 +26,7 @@ const RESP_CAP: usize = rsk_usb::ctaphid::CTAP_MAX_MESSAGE;
 // largeBlobs ceiling) is derived from the same literal and rides on this too.
 // `cfg(not(kani))` for the reason its sibling in `rsk-usb` carries: this is about
 // the SHIPPED width, and `CTAP_MAX_MESSAGE` deliberately shrinks to two
-// continuation frames under Kani (ctaphid.rs:218), where CBMC runs out of memory
+// continuation frames under Kani (ctaphid.rs:228), where CBMC runs out of memory
 // at the real one. Unguarded it does not fail a proof — it stops `rsk-device`
 // COMPILING, so every harness in the crate goes with it.
 #[cfg(not(kani))]
@@ -111,7 +111,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         serial_id: [u8; 8],
         serial_hash: [u8; 32],
         mkek_source: Option<FusedKey>,
-        devk: Option<fn() -> Option<[u8; 32]>>,
+        devk: Option<FusedKey>,
     ) -> Self {
         // The OTP DEVK signs audit-journal checkpoints (rsk_fido::journal); it
         // rides in FidoState so the pure FIDO logic stays caller-supplied.
@@ -152,6 +152,10 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// Wipe the response buffer — it can hold a PIN token or other secrets after
     /// a dispatch. Called by the worker once the response has been handed off.
     pub fn scrub(&mut self) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the response buffer outlives every dispatch; the worker wipes it after each hand-off"
+        )]
         self.resp.zeroize();
     }
 
@@ -159,6 +163,10 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// auth state — `reset` zeroizes the PIN/UV token, session key and ephemeral
     /// ECDH scalar via their `Drop` impls.
     pub fn scrub_secrets(&mut self) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the response buffer outlives every dispatch; the secure reboot wipes it with the FIDO auth state"
+        )]
         self.resp.zeroize();
         self.fido_state.borrow_mut().reset();
     }
@@ -238,7 +246,7 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
     }
 
     /// Whether §6.1.2 step 6.3's built-in-UV upgrade is available on this build —
-    /// the first conjunct of `crates/rsk-fido/src/clientpin.rs:612`. An INPUT to
+    /// the first conjunct of `crates/rsk-fido/src/clientpin.rs:656`. An INPUT to
     /// the token-less makeCredential gate the phase-4 replay states, not state:
     /// with a pad, `alwaysUv` upgrades a token-less request instead of refusing
     /// it, so a recording that did not carry this could not tell the two apart.
@@ -271,7 +279,7 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
                 let dev = Device {
                     serial_hash: &self.serial_hash,
                     serial_id: &self.serial_id,
-                    otp_key: mkek.as_deref(),
+                    otp_key: mkek.as_ref().map(|k| k.expose()),
                 };
                 let (sw, n) = {
                     let mut fsb = self.fs.borrow_mut();
@@ -322,11 +330,11 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         // Which CTAPHID channel is asking. Cross-message state a second process on
         // its own channel must not be able to ride — the seed-backup MSE key —
-        // binds to this (see `FidoState::mse_ready`).
+        // binds to this (see `FidoState::take_mse`).
         self.fido_state.borrow_mut().channel = cid;
         let n = {
             let mut fsb = self.fs.borrow_mut();

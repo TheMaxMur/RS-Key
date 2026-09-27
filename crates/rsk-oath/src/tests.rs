@@ -77,8 +77,9 @@ const SERIAL: [u8; 8] = [0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0];
 /// the key, so a test source has to be a plain `fn` — a closure over a local could
 /// not coerce to one.
 const TEST_MKEK: [u8; 32] = [0x55; 32];
-fn test_mkek() -> Option<[u8; 32]> {
-    Some(TEST_MKEK)
+fn test_mkek(out: &mut [u8; 32]) -> bool {
+    *out = TEST_MKEK;
+    true
 }
 
 fn new_fs() -> Fs<RamStorage> {
@@ -497,7 +498,7 @@ fn cred_secret_is_sealed_on_flash() {
     );
 
     let mut fids = [0u16; MAX_OATH_CRED as usize];
-    assert_eq!(present_creds(&mut fs, &mut fids), 1);
+    assert_eq!(present_creds(&mut fs, &mut fids).len(), 1);
     let mut raw = [0u8; CRED_MAX];
     let len = fs.read(fids[0], &mut raw).unwrap();
     assert!(
@@ -542,7 +543,7 @@ fn present_creds_matches_for_each_key_occupancy() {
     );
 
     let mut fids = [0u16; MAX_OATH_CRED as usize];
-    let n = present_creds(&mut fs, &mut fids);
+    let n = present_creds(&mut fs, &mut fids).len();
 
     // Independent occupancy oracle: a fresh whole-partition scan of the range.
     let mut want = Vec::new();
@@ -1024,13 +1025,13 @@ fn cred_sealed_before_otp_burn_survives_the_burn() {
     assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, secret));
 
     // The OTP-armed device cannot read it yet…
-    let mut buf = [0u8; CRED_MAX];
+    let mut buf = Secret::<[u8; CRED_MAX]>::zeroed();
     assert!(seal::seal_read(&otp, &mut fs, fid, &mut buf).is_none());
 
     // …migrate_seal recovers and re-seals it under the OTP arm, byte-identical.
     migrate_seal(&otp, &mut fs, &mut rng);
     let n = seal::seal_read(&otp, &mut fs, fid, &mut buf).expect("cred survives the burn");
-    assert_eq!(&buf[..n], secret);
+    assert_eq!(&buf.expose()[..n], secret);
 
     // Idempotent, and it is no longer readable under the pre-OTP arm.
     migrate_seal(&otp, &mut fs, &mut rng);
@@ -1057,7 +1058,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_cred() {
     let secret = b"a-totp-cred-tlv-blob\x00\x01\x02";
     let fid = KeyFid::new(EF_OATH_CRED);
     let mut rng = CountRng(7);
-    let mut buf = [0u8; CRED_MAX];
+    let mut buf = Secret::<[u8; CRED_MAX]>::zeroed();
 
     // The ORDER, on the one medium that can tell the two orderings apart.
     let (mut fs, medium) = new_cut_fs();
@@ -1181,7 +1182,7 @@ fn foreign_sealed(fs: &mut Fs<RamStorage>, fid: KeyFid, plain: &[u8]) -> Device<
         ..dev
     };
     assert!(seal::seal_put(&foreign, fs, &mut CountRng(7), fid, plain));
-    let mut buf = [0u8; seal::MAX_BLOB];
+    let mut buf = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
     assert!(seal::seal_read(&dev, fs, fid, &mut buf).is_none());
     dev
 }
@@ -1298,7 +1299,7 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
     assert_eq!(rec[1], OTP_PIN_FMT_V1);
     assert_eq!(
         &rec[2..],
-        &otp_dev.pin_derive_verifier(b"1234")[..],
+        &otp_dev.pin_derive_verifier(b"1234").expose()[..],
         "verifier re-stored under the OTP arm"
     );
     assert!(
@@ -1505,7 +1506,7 @@ fn legacy_otp_pin_verifies_and_upgrades_to_otp_rooted() {
     // Legacy record straight to flash (what old firmware wrote).
     let mut legacy = [0u8; 33];
     legacy[0] = MAX_OTP_COUNTER;
-    legacy[1..].copy_from_slice(&dev.double_hash_pin(b"1234"));
+    legacy[1..].copy_from_slice(dev.double_hash_pin(b"1234").expose());
     fs.put(EF_OTP_PIN, &legacy).unwrap();
 
     // The legacy PIN still verifies…
@@ -1520,10 +1521,10 @@ fn legacy_otp_pin_verifies_and_upgrades_to_otp_rooted() {
     let mut rec = [0u8; 34];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(34));
     assert_eq!(rec[1], OTP_PIN_FMT_V1);
-    assert_eq!(&rec[2..], &dev.pin_derive_verifier(b"1234")[..]);
+    assert_eq!(&rec[2..], &dev.pin_derive_verifier(b"1234").expose()[..]);
     assert_ne!(
         &rec[2..],
-        &dev.double_hash_pin(b"1234")[..],
+        &dev.double_hash_pin(b"1234").expose()[..],
         "must not store the legacy hash after upgrade"
     );
 

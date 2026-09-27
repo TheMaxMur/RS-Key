@@ -273,7 +273,7 @@ fn an_idle_enumerate_walk_retires_on_its_own_timer() {
     let ppuat = crate::seed::ensure_ppuat(&dev(), &mut a.fs, &mut a.rng).unwrap();
     let begin = cm(
         CM_ENUMERATE_RPS_BEGIN,
-        Some(&pin_auth(&ppuat, &[CM_ENUMERATE_RPS_BEGIN as u8])),
+        Some(&pin_auth(ppuat.expose(), &[CM_ENUMERATE_RPS_BEGIN as u8])),
     );
 
     let r = a.send(CTAP_CREDENTIAL_MGMT, &begin);

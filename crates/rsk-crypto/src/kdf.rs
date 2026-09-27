@@ -6,7 +6,7 @@
 //! the GCM nonce is caller-supplied, so the module is pure and host-testable.
 //! Intermediate keys (`kbase`, `kver`, `kenc`) are zeroized after use.
 
-use zeroize::{Zeroize, Zeroizing};
+use rsk_secret::Secret;
 
 use crate::aes::{aes256gcm_decrypt, aes256gcm_encrypt};
 use crate::mac::{hkdf_sha256, hmac_sha256};
@@ -37,19 +37,21 @@ pub enum PinKdf {
 /// How a holder obtains a fused device key at the moment it needs one: a read of
 /// the OTP fuses, not a copy kept in RAM. Carried instead of the key itself so a
 /// bug that discloses adjacent memory has nothing to disclose — the OTP window is
-/// not RAM. `None` on an unprovisioned device.
-pub type FusedKey = fn() -> Option<[u8; 32]>;
+/// not RAM. It fills the caller's buffer; `false` on an unprovisioned device.
+pub type FusedKey = fn(&mut [u8; 32]) -> bool;
 
 /// One operation's copy of a fused key, or `None` when unprovisioned. Zeroized
 /// when the binding drops, so it must be a local of whoever builds the [`Device`]
 /// that borrows it — that lifetime IS the exposure window.
-pub type FusedRead = Option<Zeroizing<[u8; 32]>>;
+pub type FusedRead = Option<Secret<[u8; 32]>>;
 
-/// Read a fused key for one operation. The result is the only copy in RAM and is
-/// zeroized when the caller's binding drops, which is the whole point of holding a
-/// [`FusedKey`]: keep the live window as short as the operation that needs it.
+/// Read a fused key for one operation, zeroized when the caller's binding drops:
+/// holding a [`FusedKey`] keeps the live window as short as that operation. The
+/// return is a move, and a move can leave its source bytes in this frame.
 pub fn read_fused(src: Option<FusedKey>) -> FusedRead {
-    src.and_then(|read| read()).map(Zeroizing::new)
+    let read = src?;
+    let mut key = Secret::<[u8; 32]>::zeroed();
+    read(key.expose_mut()).then_some(key)
 }
 
 /// Device-specific key-derivation inputs, borrowed for the call.
@@ -79,65 +81,54 @@ impl Device<'_> {
     /// The device root key: HKDF(salt = serial_hash, ikm = otp_key) with the
     /// `"DEVICE/ROOT"` info, or HKDF(salt = `"NO-OTP"`, ikm = serial_hash)
     /// when no OTP key is provisioned.
-    pub fn derive_kbase(&self) -> [u8; 32] {
-        let mut kbase = [0u8; 32];
+    pub fn derive_kbase(&self) -> Secret<[u8; 32]> {
+        let mut kbase = Secret::<[u8; 32]>::zeroed();
         match self.otp_key {
-            Some(otp) => hkdf_sha256(self.serial_hash, otp, INFO_ROOT, &mut kbase),
-            None => hkdf_sha256(SALT_NOOTP, self.serial_hash, INFO_ROOT, &mut kbase),
+            Some(otp) => hkdf_sha256(self.serial_hash, otp, INFO_ROOT, kbase.expose_mut()),
+            None => hkdf_sha256(SALT_NOOTP, self.serial_hash, INFO_ROOT, kbase.expose_mut()),
         }
         .expect("32-byte HKDF output is in range");
         kbase
     }
 
     /// The PIN verification key: HMAC-SHA256(kbase, pin).
-    pub fn derive_kver(&self, pin: &[u8]) -> [u8; 32] {
-        let mut kbase = self.derive_kbase();
-        let kver = hmac_sha256(&kbase, pin);
-        kbase.zeroize();
-        kver
+    pub fn derive_kver(&self, pin: &[u8]) -> Secret<[u8; 32]> {
+        Secret::new(hmac_sha256(self.derive_kbase().expose(), pin))
     }
 
     /// The stored PIN verifier: HKDF(serial_hash, kver, "PIN/VERIFY").
-    pub fn pin_derive_verifier(&self, pin: &[u8]) -> [u8; 32] {
-        let mut kver = self.derive_kver(pin);
-        let out = self.expand(&kver, INFO_VERIFY);
-        kver.zeroize();
-        out
+    pub fn pin_derive_verifier(&self, pin: &[u8]) -> Secret<[u8; 32]> {
+        self.expand(self.derive_kver(pin).expose(), INFO_VERIFY)
     }
 
     /// The session token: HKDF(serial_hash, kver, "PIN/TOKEN").
-    pub fn pin_derive_session(&self, pin: &[u8]) -> [u8; 32] {
-        let mut kver = self.derive_kver(pin);
-        let out = self.expand(&kver, INFO_TOKEN);
-        kver.zeroize();
-        out
+    pub fn pin_derive_session(&self, pin: &[u8]) -> Secret<[u8; 32]> {
+        self.expand(self.derive_kver(pin).expose(), INFO_TOKEN)
     }
 
     /// The V1 encryption key: HKDF(serial_hash, pin_token, "PIN/ENC").
-    pub fn pin_derive_kenc(&self, token: &[u8; 32]) -> [u8; 32] {
+    pub fn pin_derive_kenc(&self, token: &[u8; 32]) -> Secret<[u8; 32]> {
         self.expand(token, INFO_ENC)
     }
 
     /// The V2 encryption key: HKDF(serial_hash, kbase || pin_token, "PIN/ENC2").
-    pub fn pin_derive_kenc2(&self, token: &[u8; 32]) -> [u8; 32] {
-        let mut ikm = [0u8; 64];
-        let mut kbase = self.derive_kbase();
-        ikm[..32].copy_from_slice(&kbase);
-        ikm[32..].copy_from_slice(token);
-        kbase.zeroize();
-        let mut out = [0u8; 32];
-        hkdf_sha256(self.serial_hash, &ikm, INFO_ENC2, &mut out).expect("32-byte HKDF output");
-        ikm.zeroize();
+    pub fn pin_derive_kenc2(&self, token: &[u8; 32]) -> Secret<[u8; 32]> {
+        let mut ikm = Secret::<[u8; 64]>::zeroed();
+        ikm.expose_mut()[..32].copy_from_slice(self.derive_kbase().expose());
+        ikm.expose_mut()[32..].copy_from_slice(token);
+        let mut out = Secret::<[u8; 32]>::zeroed();
+        hkdf_sha256(self.serial_hash, ikm.expose(), INFO_ENC2, out.expose_mut())
+            .expect("32-byte HKDF output");
         out
     }
 
-    fn expand(&self, ikm: &[u8], info: &[u8]) -> [u8; 32] {
-        let mut out = [0u8; 32];
-        hkdf_sha256(self.serial_hash, ikm, info, &mut out).expect("32-byte HKDF output");
+    fn expand(&self, ikm: &[u8], info: &[u8]) -> Secret<[u8; 32]> {
+        let mut out = Secret::<[u8; 32]>::zeroed();
+        hkdf_sha256(self.serial_hash, ikm, info, out.expose_mut()).expect("32-byte HKDF output");
         out
     }
 
-    fn derive_kenc(&self, token: &[u8; 32], version: PinKdf) -> [u8; 32] {
+    fn derive_kenc(&self, token: &[u8; 32], version: PinKdf) -> Secret<[u8; 32]> {
         match version {
             PinKdf::V2 => self.pin_derive_kenc2(token),
             PinKdf::V1 => self.pin_derive_kenc(token),
@@ -159,12 +150,11 @@ impl Device<'_> {
         if out.len() < total {
             return Err(Error::BadLength);
         }
-        let mut kenc = self.derive_kenc(token, version);
+        let kenc = self.derive_kenc(token, version);
         out[..NONCE_LEN].copy_from_slice(nonce);
         let ct = &mut out[NONCE_LEN..NONCE_LEN + plaintext.len()];
         ct.copy_from_slice(plaintext);
-        let tag = aes256gcm_encrypt(&kenc, nonce, self.serial_hash, ct);
-        kenc.zeroize();
+        let tag = aes256gcm_encrypt(kenc.expose(), nonce, self.serial_hash, ct);
         out[NONCE_LEN + plaintext.len()..total].copy_from_slice(&tag);
         Ok(total)
     }
@@ -191,10 +181,14 @@ impl Device<'_> {
         tag.copy_from_slice(&input[input.len() - TAG_LEN..]);
         out[..pt_len].copy_from_slice(&input[NONCE_LEN..NONCE_LEN + pt_len]);
 
-        let mut kenc = self.derive_kenc(token, version);
-        let res = aes256gcm_decrypt(&kenc, &nonce, self.serial_hash, &mut out[..pt_len], &tag);
-        kenc.zeroize();
-        res?;
+        let kenc = self.derive_kenc(token, version);
+        aes256gcm_decrypt(
+            kenc.expose(),
+            &nonce,
+            self.serial_hash,
+            &mut out[..pt_len],
+            &tag,
+        )?;
         Ok(pt_len)
     }
 
@@ -222,16 +216,14 @@ impl Device<'_> {
 
     /// Legacy double PIN hash, kept only for compatibility — not a secure KDF.
     /// Empty input skips the XOR step instead of dividing by zero.
-    pub fn double_hash_pin(&self, pin: &[u8]) -> [u8; 32] {
-        let mut o1 = self.hash_multi(pin);
+    pub fn double_hash_pin(&self, pin: &[u8]) -> Secret<[u8; 32]> {
+        let mut o1 = Secret::new(self.hash_multi(pin));
         if !pin.is_empty() {
-            for (i, b) in o1.iter_mut().enumerate() {
+            for (i, b) in o1.expose_mut().iter_mut().enumerate() {
                 *b ^= pin[i % pin.len()];
             }
         }
-        let out = self.hash_multi(&o1);
-        o1.zeroize();
-        out
+        Secret::new(self.hash_multi(o1.expose()))
     }
 }
 

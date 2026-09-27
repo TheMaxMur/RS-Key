@@ -16,7 +16,8 @@
 use alloc::vec::Vec;
 use num_bigint_dig::{BigUint, ModInverse};
 use num_integer::Integer;
-use zeroize::{Zeroize, Zeroizing};
+use rsk_secret::Secret;
+use zeroize::Zeroize;
 
 use crate::{MAX_RSA_BYTES, Rng, RsaError};
 
@@ -37,6 +38,7 @@ struct CrtParams {
 }
 
 impl Drop for CrtParams {
+    #[expect(clippy::disallowed_methods, reason = "a CrtParams's drop is its wipe")]
     fn drop(&mut self) {
         self.dp.zeroize();
         self.dq.zeroize();
@@ -58,6 +60,7 @@ pub struct RsaKey {
 }
 
 impl Drop for RsaKey {
+    #[expect(clippy::disallowed_methods, reason = "a RsaKey's drop is its wipe")]
     fn drop(&mut self) {
         self.d.zeroize();
         self.p.zeroize();
@@ -78,12 +81,14 @@ impl RsaKey {
             return None;
         }
         let n = &p * &q;
-        let p1 = Zeroizing::new(&p - &one);
-        let q1 = Zeroizing::new(&q - &one);
-        let lam = Zeroizing::new(p1.lcm(&q1));
+        let p1 = Secret::new(&p - &one);
+        let q1 = Secret::new(&q - &one);
+        let lam = Secret::new(p1.expose().lcm(q1.expose()));
         // num-bigint's `mod_inverse` hands back a signed intermediate with no
         // scrubbing `Drop` of its own, and this one is `d`.
-        let d = Zeroizing::new((&e).mod_inverse(&*lam)?).to_biguint()?;
+        let d = Secret::new((&e).mod_inverse(lam.expose())?)
+            .expose()
+            .to_biguint()?;
         // The `rsa` crate's `check_public` and `validate`, both of which every
         // key it built had passed: an exponent in range, odd and below an odd
         // modulus, and `d·e ≡ 1` modulo each prime less one.
@@ -93,17 +98,17 @@ impl RsaKey {
         if e >= n || n.is_even() || e.is_even() {
             return None;
         }
-        let de = Zeroizing::new(&d * &e);
-        if &*de % &*p1 != one || &*de % &*q1 != one {
+        let de = Secret::new(&d * &e);
+        if de.expose() % p1.expose() != one || de.expose() % q1.expose() != one {
             return None;
         }
         let crt = (&q)
             .mod_inverse(&p)
-            .map(Zeroizing::new)
-            .and_then(|i| i.to_biguint())
+            .map(Secret::new)
+            .and_then(|i| i.expose().to_biguint())
             .map(|qinv| CrtParams {
-                dp: &d % &*p1,
-                dq: &d % &*q1,
+                dp: &d % p1.expose(),
+                dq: &d % q1.expose(),
                 qinv,
             });
         Some(RsaKey { n, e, d, p, q, crt })
@@ -173,34 +178,50 @@ impl RsaKey {
             return Err(RsaError::BadBlock);
         }
         let (r, r_inv) = blind_pair(&self.n, k, rng);
-        let blinded = Zeroizing::new((&c * r.modpow(&self.e, &self.n)) % &self.n);
+        let re = Secret::new(r.expose().modpow(&self.e, &self.n));
+        let cre = Secret::new(&c * re.expose());
+        let blinded = Secret::new(cre.expose() % &self.n);
         let m = match &self.crt {
             Some(crt) => {
-                let m1 = Zeroizing::new(blinded.modpow(&crt.dp, &self.p));
-                let m2 = Zeroizing::new(blinded.modpow(&crt.dq, &self.q));
-                // Garner's recombination, in unsigned arithmetic where the
-                // `rsa` crate used signed. `m1 < p` and `m2 % p < p` by
-                // construction, so `m1 + p - (m2 % p)` cannot underflow — for
-                // any `p` and `q`, not only a balanced pair.
-                let diff = Zeroizing::new((&*m1 + &self.p - (&*m2 % &self.p)) % &self.p);
-                let h = Zeroizing::new((&crt.qinv * &*diff) % &self.p);
-                Zeroizing::new(&*m2 + &*h * &self.q)
+                let m1 = Secret::new(blinded.expose().modpow(&crt.dp, &self.p));
+                let m2 = Secret::new(blinded.expose().modpow(&crt.dq, &self.q));
+                // Garner, unsigned where the `rsa` crate was signed: `m1 < p` and
+                // `m2 % p < p`, so `m1 + p - m2 % p` cannot underflow for any `p`, `q`.
+                // Each step is a CRT half or follows from one, so each is a `Secret`.
+                let m2p = Secret::new(m2.expose() % &self.p);
+                let sum = Secret::new(m1.expose() + &self.p);
+                let dif = Secret::new(sum.expose() - m2p.expose());
+                let diff = Secret::new(dif.expose() % &self.p);
+                let hq = Secret::new(&crt.qinv * diff.expose());
+                let h = Secret::new(hq.expose() % &self.p);
+                let hqq = Secret::new(h.expose() * &self.q);
+                Secret::new(m2.expose() + hqq.expose())
             }
-            None => Zeroizing::new(blinded.modpow(&self.d, &self.n)),
+            None => Secret::new(blinded.expose().modpow(&self.d, &self.n)),
         };
-        let m = Zeroizing::new((&*m * &*r_inv) % &self.n);
-        if m.modpow(&self.e, &self.n) != c {
+        let prod = Secret::new(m.expose() * r_inv.expose());
+        let m = Secret::new(prod.expose() % &self.n);
+        if m.expose().modpow(&self.e, &self.n) != c {
             return Err(RsaError::Failed);
         }
-        let mb = Zeroizing::new(m.to_bytes_be());
-        if mb.len() > k {
+        let mb = Secret::new(m.expose().to_bytes_be());
+        if mb.expose().len() > k {
             return Err(RsaError::Failed);
         }
-        let off = k - mb.len();
+        let off = k - mb.expose().len();
         out[..off].fill(0);
-        out[off..k].copy_from_slice(&mb);
+        out[off..k].copy_from_slice(mb.expose());
         Ok(k)
     }
+}
+
+/// `BigUint::from_bytes_be` for a secret: that one reverses its input in a `Vec`
+/// it frees unwiped. This reverses it in a `Secret` and reads it little-endian,
+/// which copies nothing more.
+pub(crate) fn from_secret_be(be: &[u8]) -> BigUint {
+    let mut le = Secret::new(be.to_vec());
+    le.expose_mut().reverse();
+    BigUint::from_bytes_le(le.expose())
 }
 
 /// A fresh blinding pair `(r, r⁻¹ mod n)`, `width` random bytes drawn per
@@ -210,19 +231,21 @@ pub(crate) fn blind_pair(
     n: &BigUint,
     width: usize,
     rng: &mut dyn Rng,
-) -> (Zeroizing<BigUint>, Zeroizing<BigUint>) {
+) -> (Secret<BigUint>, Secret<BigUint>) {
     loop {
-        let mut rb = [0u8; MAX_RSA_BYTES];
-        rng.fill(&mut rb[..width]);
-        let mut cand = BigUint::from_bytes_be(&rb[..width]) % n;
-        rb.zeroize();
-        match (&cand)
+        let mut rb = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
+        rng.fill(&mut rb.expose_mut()[..width]);
+        let raw = Secret::new(from_secret_be(&rb.expose()[..width]));
+        let mut cand = Secret::new(raw.expose() % n);
+        rb.wipe();
+        match cand
+            .expose()
             .mod_inverse(n)
-            .map(Zeroizing::new)
-            .and_then(|i| i.to_biguint())
+            .map(Secret::new)
+            .and_then(|i| i.expose().to_biguint())
         {
-            Some(inv) => return (Zeroizing::new(cand), Zeroizing::new(inv)),
-            None => cand.zeroize(),
+            Some(inv) => return (cand, Secret::new(inv)),
+            None => cand.wipe(),
         }
     }
 }
@@ -232,9 +255,9 @@ pub(crate) fn blind_pair(
 /// the key assembly — `dP`/`dQ`/`qInv` are two modular inversions, ~50 ms on
 /// RSA-4096 — and is byte-identical to `rsa_from_pqe(..)?.n_be()`.
 pub fn modulus_be(p: &[u8], q: &[u8], out: &mut [u8]) -> Result<usize, RsaError> {
-    let p = Zeroizing::new(BigUint::from_bytes_be(p));
-    let q = Zeroizing::new(BigUint::from_bytes_be(q));
-    let nb = (&*p * &*q).to_bytes_be();
+    let p = Secret::new(from_secret_be(p));
+    let q = Secret::new(from_secret_be(q));
+    let nb = (p.expose() * q.expose()).to_bytes_be();
     if nb.len() > out.len() {
         return Err(RsaError::BadWidth);
     }

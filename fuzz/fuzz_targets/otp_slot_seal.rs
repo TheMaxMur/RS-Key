@@ -14,8 +14,9 @@ use libfuzzer_sys::fuzz_target;
 use rsk_crypto::Device;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_fs::{Fs, KeyFid};
-use rsk_otp::Rng;
 use rsk_otp::seal::{seal_put, seal_read};
+use rsk_otp::{Rng, SlotRecord};
+use rsk_secret::Secret;
 
 /// First OTP slot FID (crate-private `EF_OTP_SLOT1`; the four slots are
 /// `0xBB00..=0xBB03`), the one `migrate_seal` scans.
@@ -46,29 +47,29 @@ fuzz_target!(|data: &[u8]| {
     };
     let mut rng = CountRng(1);
     let fid = KeyFid::new(SLOT_FID);
-    let mut out = [0u8; 256];
+    let mut out = Secret::<[u8; 256]>::zeroed();
 
     // Round-trip + pre-OTP→OTP survival: seal the fuzz bytes under the pre-OTP arm
-    // (skipped when over-length), then the OTP boot migration must recover and
-    // re-seal them — never orphan (drop) or double-seal (corrupt).
-    {
+    // (skipped when longer than a record), then the OTP boot migration must recover
+    // and re-seal them — never orphan (drop) or double-seal (corrupt).
+    if let Some(rec) = SlotRecord::from_bytes(data) {
         let mut fs = Fs::new(RamStorage::new());
         fs.scan();
-        if seal_put(&dev_old, &mut fs, &mut rng, fid, data) {
+        if seal_put(&dev_old, &mut fs, &mut rng, fid, &rec) {
             let n = seal_read(&dev_old, &mut fs, fid, &mut out).expect("a fresh seal must unseal");
-            assert_eq!(&out[..n], data);
+            assert_eq!(&out.expose()[..n], data);
             // The OTP arm can't read a pre-OTP-sealed record yet…
             assert!(seal_read(&dev_new, &mut fs, fid, &mut out).is_none());
             // …migrate_seal recovers it under the OTP arm, byte-identical…
             rsk_otp::migrate_seal(&dev_new, &mut fs, &mut rng);
             let m =
                 seal_read(&dev_new, &mut fs, fid, &mut out).expect("slot must survive the burn");
-            assert_eq!(&out[..m], data);
+            assert_eq!(&out.expose()[..m], data);
             // …and a second pass is a no-op (idempotent).
             rsk_otp::migrate_seal(&dev_new, &mut fs, &mut rng);
-            let mut out2 = [0u8; 256];
+            let mut out2 = Secret::<[u8; 256]>::zeroed();
             let m2 = seal_read(&dev_new, &mut fs, fid, &mut out2).expect("idempotent");
-            assert_eq!(&out[..m], &out2[..m2]);
+            assert_eq!(&out.expose()[..m], &out2.expose()[..m2]);
         }
     }
 

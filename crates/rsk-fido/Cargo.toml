@@ -8,9 +8,8 @@ publish = false
 # The FIDO2 (CTAP2) + U2F (CTAP1) applet. Pure and host-testable: device seed /
 # serial / RNG and flash come from the caller.
 
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 [dependencies]
 minicbor = { workspace = true }
@@ -27,6 +26,9 @@ rsk-led = { workspace = true }
 rsk-devconf = { workspace = true }
 rsk-phy = { workspace = true }
 rsk-sdk = { workspace = true }
+# The seed, every key derived from it and the PIN-protocol secrets held in a
+# type that wipes itself; `zeroize` stays for the session state wiped in place.
+rsk-secret = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
@@ -38,6 +40,9 @@ rsk-fs = { workspace = true, features = ["test-util"] }
 rsk-devconf = { workspace = true, features = ["test-util"] }
 
 [features]
+# `FidoState::establish_mse_for_test`, for the fuzz targets that start past the
+# MSE handshake. Never in the firmware: it installs a channel key.
+test-util = []
 # Verification-only α/domain/table surface used by the emulator trace and the
 # phase-5 Kani bridge. Additive and never enabled by the shipping firmware.
 assurance-trace = []

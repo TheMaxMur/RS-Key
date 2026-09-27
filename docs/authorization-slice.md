@@ -247,7 +247,7 @@ last pilot died, so the callers are written down first and the projection second
 | `authorized_by_ppuat` | one — `authorize_cm`, `credmgmt.rs` | no |
 | `authenticator_config` | one — the CBOR dispatch in `crates/rsk-fido/src/lib.rs` | no |
 | `vendor::pin_gate` | six sites in `crates/rsk-fido/src/vendor.rs` | no |
-| `consume_after_user_presence` | three direct — two in `makecredential.rs`, one in `state.rs` — plus two more in `getassertion.rs` that reach it through the `…_if` wrapper. In a table about call-site fidelity the wrapper is the wrong thing to hide | no |
+| `consume_after_user_presence` | one — `Ctx::user_presence_test` in `crates/rsk-fido/src/up.rs`, which the four makeCredential / getAssertion user-presence tests (two in `makecredential.rs`, two in `getassertion.rs`) go through; the two success paths build their UP bit from the `UpFlag` it returns | no |
 
 **What the one existing harness actually proves.**
 `no_authorization_bypass_walk_owner` in `crates/rsk-fido/src/state_kani.rs` runs a

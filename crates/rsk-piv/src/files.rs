@@ -9,10 +9,10 @@
 
 use rsk_crypto::Device;
 use rsk_ec::{Curve, PrivKey};
-use rsk_fs::{Fs, KeyFid, Storage};
+use rsk_fs::{Fs, KeyFid, RearmAttempted, Rearmed, Storage};
 use rsk_sdk::Rng;
 use rsk_sdk::Sw;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::seal;
 use crate::x509;
@@ -261,19 +261,23 @@ pub const DEFAULT_RETRIES: u8 = 3;
 /// PIN/PUK verifier record length: `[len, fmt=0x01, verifier(32)]`.
 pub(crate) const PIN_REC_LEN: usize = 34;
 
-/// Write a PIN/PUK verifier file: `[len, 0x01, pin_derive_verifier(pin)]`.
+/// Write a PIN/PUK verifier file: `[len, 0x01, pin_derive_verifier(pin)]`, over a
+/// pre-OTP one when `rearmed` says so.
 pub fn put_pin_verifier<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: u16,
     pin: &[u8],
+    rearmed: Option<&Rearmed>,
 ) -> Result<(), Sw> {
-    let mut rec = [0u8; PIN_REC_LEN];
-    rec[0] = pin.len() as u8;
-    rec[1] = 0x01;
-    rec[2..].copy_from_slice(&dev.pin_derive_verifier(pin));
-    let r = fs.put(fid, &rec).map_err(|_| Sw::MEMORY_FAILURE);
-    rec.zeroize();
+    let mut rec = Secret::<[u8; PIN_REC_LEN]>::zeroed();
+    rec.expose_mut()[0] = u8::try_from(pin.len()).map_err(|_| Sw::WRONG_LENGTH)?;
+    rec.expose_mut()[1] = 0x01;
+    rec.expose_mut()[2..].copy_from_slice(dev.pin_derive_verifier(pin).expose());
+    let r = fs
+        .put_over(fid, rec.expose(), rearmed)
+        .map_err(|_| Sw::MEMORY_FAILURE);
+    rec.wipe();
     r
 }
 
@@ -290,10 +294,10 @@ fn provisioned<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<bool, Sw> {
 /// Idempotent — every step is guarded by a has-data check.
 pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Result<(), Sw> {
     if !provisioned(fs, EF_PIN)? {
-        put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN)?;
+        put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN, None)?;
     }
     if !provisioned(fs, EF_PUK)? {
-        put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK)?;
+        put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK, None)?;
     }
     if !provisioned(fs, EF_RETRIES)? {
         let d = DEFAULT_RETRIES;
@@ -302,9 +306,9 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
     }
     let minted_mgm = !provisioned(fs, key_fid(SLOT_CARDMGM).get())?;
     if minted_mgm {
-        let mut key = DEFAULT_MGM;
-        let r = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), &key);
-        key.zeroize();
+        let mut key = Secret::new(DEFAULT_MGM);
+        let r = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), key.expose());
+        key.wipe();
         r?;
     }
     // The key and its meta head are written as a pair but not deleted as one, so
@@ -335,9 +339,9 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
             // `meta[0] != algo`. Its touch policy is not recoverable, so it takes the
             // published default like every other record here (E95): inventing ALWAYS
             // gated management behind a touch whose only exit needs that same touch.
-            let mut key = [0u8; 32];
+            let mut key = Secret::<[u8; 32]>::zeroed();
             let n = seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key);
-            key.zeroize();
+            key.wipe();
             match n {
                 Ok(16) => Some((ALGO_AES128, TOUCHPOLICY_NEVER)),
                 Ok(24) => Some((ALGO_AES192, TOUCHPOLICY_NEVER)),
@@ -360,7 +364,8 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
         seal::store_ec_key(dev, fs, rng, key_fid(SLOT_ATTESTATION), &key)?;
         let mut point = [0u8; MAX_EC_POINT];
         let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
-        let _ = fs.put(pubkey_fid(SLOT_ATTESTATION), &point[..plen]);
+        let point = point.get(..plen).ok_or(Sw::EXEC_ERROR)?;
+        let _ = fs.put(pubkey_fid(SLOT_ATTESTATION), point);
         let mut cert = [0u8; x509::MAX_CERT];
         let n = x509::build_cert(
             &x509::CertParams {
@@ -368,7 +373,7 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
                 algo: ALGO_ECCP384,
                 spki: x509::Spki::Ec {
                     curve: Curve::P384,
-                    point: &point[..plen],
+                    point,
                 },
                 attestation: None,
                 ca_pathlen: Some(1),
@@ -378,8 +383,8 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
             &mut cert,
         )?;
         let mut obj = [0u8; x509::MAX_CERT + 16];
-        let on = crate::wrap_cert_object(&cert[..n], &mut obj);
-        fs.put(EF_ATTESTATION_CERT, &obj[..on])
+        let on = crate::wrap_cert_object(cert.get(..n).ok_or(Sw::EXEC_ERROR)?, &mut obj);
+        fs.put(EF_ATTESTATION_CERT, obj.get(..on).ok_or(Sw::EXEC_ERROR)?)
             .map_err(|_| Sw::MEMORY_FAILURE)?;
     }
     Ok(())
@@ -447,8 +452,8 @@ fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     //
     // The failure does NOT stop the write, unlike the gated sites: "leave the
     // record in force" means, on a wipe, leave the secrets live.
-    let _ = rsk_fs::request_rescrub(fs);
-    let swept = sweep_phases(fs);
+    let attempted = rsk_fs::attempt_rescrub(fs);
+    let swept = sweep_phases(fs, &attempted);
     // Retry, BETWEEN the sweeps and their `?` rather than after their last one: a
     // refused head leaves the marker latched over every tombstone [`sweep_phases`]
     // appended, and a sweep that faults on the way is exactly when that is true and
@@ -457,7 +462,7 @@ fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     // A single-shot refusal is the only kind either call recovers from (`rsk_otp`'s
     // BUMP_TRIES states the same), and where the head landed this costs no append at
     // all — `Fs::delete` skips a backend it already marked absent.
-    let _ = rsk_fs::request_rescrub(fs);
+    let _retried = rsk_fs::attempt_rescrub(fs);
     swept
 }
 
@@ -472,7 +477,7 @@ fn wipe_piv<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
 /// Its own function so the at-rest re-arm can stand between it and its caller's
 /// answer: every early return in here is one a re-arm written BELOW them would be
 /// skipped by, which is the case that re-arm exists for.
-fn sweep_phases<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
+fn sweep_phases<S: Storage>(fs: &mut Fs<S>, _attempted: &RearmAttempted) -> Result<(), Sw> {
     let secrets = sweep(fs, is_piv_secret_fid)?;
     let gates = sweep(fs, is_piv_gate_fid)?;
     if secrets || gates {
@@ -497,8 +502,12 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
         let mut fids = [0u16; SWEEP_BATCH];
         let mut n = 0;
         let complete = fs.for_each_key(&mut |fid| {
-            if pred(fid) && n < fids.len() && !fids[..n].contains(&fid) {
-                fids[n] = fid;
+            let (seen, free) = fids.split_at_mut(n);
+            if pred(fid)
+                && !seen.contains(&fid)
+                && let Some(slot) = free.first_mut()
+            {
+                *slot = fid;
                 n += 1;
             }
         });
@@ -513,11 +522,12 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
         }
         // Liveness measured as PROGRESS, not as a pass count: each pass deletes
         // `n` distinct fids, so a converging sweep can never exceed the budget.
-        deleted += n as u32;
+        // `n` is at most `SWEEP_BATCH`, far inside a `u32`.
+        deleted = deleted.saturating_add(u32::try_from(n).unwrap_or(u32::MAX));
         if deleted > RESET_MAX_DELETES {
             return Err(Sw::MEMORY_FAILURE);
         }
-        for &fid in &fids[..n] {
+        for &fid in fids.iter().take(n) {
             // force_delete (unconditional, and it drops the meta record itself):
             // `delete` skips a false-absent file that `for_each_key` keeps
             // yielding, so the sweep would spin instead of converging.
@@ -529,5 +539,13 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, pred: fn(u16) -> bool) -> Result<bool, Sw> 
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "files_tests.rs"]
 mod tests;

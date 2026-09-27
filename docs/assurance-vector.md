@@ -220,7 +220,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-TOOLCHAIN-001` | The compiler on the path is the pinned rustc and its output is what th |
 | platform | `PLAT-TOOLCHAIN-002` | docs/unsafe.md is the enumeration of the first-party `unsafe` sites: e |
 | platform | `PLAT-UNSAFE-002` | `SendUsb` is sound: `embassy_usb::UsbDevice` is `!Send` only for the ` |
-| platform | `PLAT-UNSAFE-003` | `HEAP.init` runs exactly once, over a static buffer nothing else touch |
+| platform | `PLAT-UNSAFE-003` | `HEAP.0.init` runs exactly once, over a static buffer nothing else tou |
 | platform | `PLAT-UNSAFE-004` | Each of the eight build-selected GPIOs handed to `AnyPin::steal` has e |
 | platform | `PLAT-UNSAFE-005` | The two `static mut` prime sieves are single-core-exclusive: `CORE0_SI |
 | platform | `PLAT-UNSAFE-006` | Each core programs MSPLIM once, on the core that owns that stack, befo |
@@ -229,6 +229,8 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-UNSAFE-010` | The two `link_section` image-definition statics are placed by the link |
 | platform | `PLAT-UNSAFE-011` | The small-prime table and the sieve step are placed in `.data.small_pr |
 | platform | `PLAT-UNSAFE-012` | The three `unsafe extern` blocks declare what they name: the RSA assem |
+| platform | `PLAT-UNSAFE-013` | `ZeroingHeap` hands `alloc` and `dealloc` to `LlffHeap` under the call |
+| platform | `PLAT-UNSAFE-014` | The dead-stack sweep writes, and the measurement build's probe reads,  |
 | platform | `PLAT-CRYPTO-001` | The HMAC-SHA-256 under `pinUvAuthProtocol` is correct as a MAC; the ha |
 | platform | `PLAT-BUILD-002` | `ea-conformance-rpid`'s enterprise-attestation allowlist is a conforma |
 | platform | `PLAT-BUILD-003` | The `display` build implements the one-hold-one-ceremony latch SOMEWHE |

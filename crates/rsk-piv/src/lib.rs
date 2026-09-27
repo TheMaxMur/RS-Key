@@ -2,6 +2,14 @@
 // Copyright (C) 2026 RS-Key contributors
 
 #![cfg_attr(not(test), no_std)]
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
 
 //! `rsk-piv` — the PIV card applet: the NIST SP 800-73-4 command subset plus the
 //! Yubico extensions `ykman piv` / `yubico-piv-tool` exercise (metadata, serial,
@@ -33,6 +41,7 @@ use rsk_rsa::{MAX_RSA_BYTES, MAX_RSA_PUBDO, RSA_PUB_EXP_BE, RsaError, RsaKey, ma
 use rsk_sdk::tlv::{find_tag, format_len};
 pub use rsk_sdk::{AlwaysConfirm, Presence, Rng, UserPresence};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
+use rsk_secret::Secret;
 use zeroize::Zeroize;
 
 use files::*;
@@ -191,6 +200,10 @@ impl Session {
         self.has_challenge = false;
         self.chal_kind = ChallengeKind::None;
         self.chal_algo = 0;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the challenge lives in the applet between GENERAL AUTHENTICATE's two halves; this is its wipe point"
+        )]
         self.challenge.zeroize();
     }
 
@@ -313,7 +326,7 @@ impl<'a> PivApplet<'a> {
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         let mut res = ResBuf::new(resp);
         let sw = keygen::finish_rsa(&dev, fs, rng, slot, algo, pol, key, &mut res);
@@ -332,7 +345,8 @@ fn apt(res: &mut ResBuf) -> Sw {
         0x79, 0x07, 0x4F, 0x05, 0xA0, 0x00, 0x00, 0x03,
         0x08, // tag alloc authority → NIST RID
     ];
-    if !res.push(0x61) || !res.push(BODY.len() as u8) || !res.extend(BODY) {
+    let len = u8::try_from(BODY.len()).unwrap_or(u8::MAX);
+    if !res.push(0x61) || !res.push(len) || !res.extend(BODY) {
         return Sw::WRONG_LENGTH;
     }
     Sw::OK
@@ -373,7 +387,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
             let dev = Device {
                 serial_hash: &serial_hash,
                 serial_id: &serial_id,
-                otp_key: mkek.as_deref(),
+                otp_key: mkek.as_ref().map(|k| k.expose()),
             };
             let mut rng = self.rng.borrow_mut();
             if files::scan_files(&dev, fs, &mut *rng).is_err() {
@@ -404,7 +418,7 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         let dev = Device {
             serial_hash: &serial_hash,
             serial_id: &serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
         match apdu.ins {
             INS_VERSION => {
@@ -606,11 +620,11 @@ impl PivApplet<'_> {
         // keyed under the pre-OTP arm. Before them and gating them — a reset between
         // the two appends keeps whichever landed, and a REFUSED re-arm reaches that
         // same end state with no reset in it, so the re-seed must not go ahead.
-        if rsk_fs::request_rescrub(fs).is_err() {
+        let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
             return Sw::MEMORY_FAILURE;
-        }
-        let stored = put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN)
-            .and_then(|()| put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK));
+        };
+        let stored = put_pin_verifier(dev, fs, EF_PIN, &DEFAULT_PIN, Some(&rearmed))
+            .and_then(|()| put_pin_verifier(dev, fs, EF_PUK, &DEFAULT_PUK, Some(&rearmed)));
         if stored.is_err() {
             return Sw::MEMORY_FAILURE;
         }
@@ -668,7 +682,7 @@ impl PivApplet<'_> {
         }
         // A missing body is a bad request rather than a length error, the
         // spelling the reference uses for every framing refusal on this command.
-        if apdu.nc == 0 || apdu.data[0] != TAG_GEN_TEMPLATE {
+        if apdu.data.first() != Some(&TAG_GEN_TEMPLATE) {
             return Sw::WRONG_DATA;
         }
         if apdu.p1 != 0x00 || !is_key(apdu.p2) {
@@ -698,16 +712,19 @@ impl PivApplet<'_> {
             return Sw::FILE_NOT_FOUND;
         }
         let d = apdu.data;
-        if d.len() < 3 || d[0] != TAG_DATA_PATH {
+        if d.len() < 3 || d.first() != Some(&TAG_DATA_PATH) {
             return Sw::FILE_NOT_FOUND;
         }
-        let l = d[1] as usize;
-        if l == 0 || l > 3 || d.len() < 2 + l {
+        let l = usize::from(d.get(1).copied().unwrap_or_default());
+        if l == 0 || l > 3 {
             return Sw::FILE_NOT_FOUND;
         }
+        let Some(path) = d.get(2..2 + l) else {
+            return Sw::FILE_NOT_FOUND;
+        };
         let mut id: u32 = 0;
-        for &b in &d[2..2 + l] {
-            id = id << 8 | b as u32;
+        for &b in path {
+            id = id << 8 | u32::from(b);
         }
         // Before the object is looked up: an absent one must answer the same
         // 6982 a present one does, or the gate becomes a probe for what the card
@@ -737,8 +754,8 @@ impl PivApplet<'_> {
                 // persists at this same fid and wins the read above.
                 _ if id == CHUID_ID => {
                     let synth = chuid::default_chuid(&self.serial_hash);
-                    obj[..synth.len()].copy_from_slice(&synth);
-                    synth.len()
+                    obj[..chuid::CHUID_LEN].copy_from_slice(&synth);
+                    chuid::CHUID_LEN
                 }
                 _ => return Sw::FILE_NOT_FOUND,
             },
@@ -749,7 +766,10 @@ impl PivApplet<'_> {
             },
             None => return Sw::FILE_NOT_FOUND,
         };
-        if push_tlv(res, TAG_DATA_OBJECT, &obj[..n]).is_err() {
+        let Some(object) = obj.get(..n) else {
+            return Sw::EXEC_ERROR;
+        };
+        if push_tlv(res, TAG_DATA_OBJECT, object).is_err() {
             return Sw::WRONG_LENGTH;
         }
         Sw::OK
@@ -768,27 +788,31 @@ impl PivApplet<'_> {
         let dev = Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         };
-        let mut key = [0u8; 32];
+        let mut key = Secret::<[u8; 32]>::zeroed();
         let klen = match seal::seal_read(&dev, fs, key_fid(SLOT_CARDMGM), &mut key) {
             Ok(n) => n,
             Err(sw) => return sw,
         };
         // PivmanProtectedData: 88 { 89 <key> }, wrapped in the 53 response object.
-        let mut body = [0u8; 4 + 32];
-        body[0] = PROTECTED_TAG;
-        body[1] = (2 + klen) as u8;
-        body[2] = PROTECTED_MGM_TAG;
-        body[3] = klen as u8;
-        body[4..4 + klen].copy_from_slice(&key[..klen]);
-        key.zeroize();
-        let r = if push_tlv(res, TAG_DATA_OBJECT, &body[..4 + klen]).is_err() {
-            Sw::WRONG_LENGTH
-        } else {
-            Sw::OK
+        let mut body = Secret::<[u8; 4 + 32]>::zeroed();
+        let (Some(k), Some(dst), Ok(len)) = (
+            key.expose().get(..klen),
+            body.expose_mut().get_mut(4..4 + klen),
+            u8::try_from(klen),
+        ) else {
+            key.wipe();
+            return Sw::EXEC_ERROR;
         };
-        body.zeroize();
+        dst.copy_from_slice(k);
+        key.wipe();
+        body.expose_mut()[..4].copy_from_slice(&[PROTECTED_TAG, len + 2, PROTECTED_MGM_TAG, len]);
+        let r = match body.expose().get(..4 + klen) {
+            Some(object) if push_tlv(res, TAG_DATA_OBJECT, object).is_ok() => Sw::OK,
+            _ => Sw::WRONG_LENGTH,
+        };
+        body.wipe();
         r
     }
 
@@ -888,7 +912,10 @@ impl PivApplet<'_> {
                 let Some(PIN_REC_LEN) = fs.read(fid, &mut rec) else {
                     return Sw::REFERENCE_NOT_FOUND;
                 };
-                let is_default = ct_eq(&rec[2..PIN_REC_LEN], &dev.pin_derive_verifier(default));
+                let is_default = ct_eq(
+                    &rec[2..PIN_REC_LEN],
+                    dev.pin_derive_verifier(default).expose(),
+                );
                 let (total, left) = match retries(fs, retry) {
                     Ok(t) => t,
                     Err(sw) => return sw,
@@ -908,13 +935,13 @@ impl PivApplet<'_> {
                 if n < 3 {
                     return Sw::REFERENCE_NOT_FOUND;
                 }
-                let mut key = [0u8; 32];
+                let mut key = Secret::<[u8; 32]>::zeroed();
                 let is_default = match seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut key) {
-                    Ok(24) => ct_eq(&key[..24], &DEFAULT_MGM),
+                    Ok(24) => ct_eq(&key.expose()[..24], &DEFAULT_MGM),
                     Ok(_) => false,
                     Err(sw) => return sw,
                 };
-                key.zeroize();
+                key.wipe();
                 // Tag `05` answers "is this slot as it left the factory", not
                 // "are these the factory key bytes" — a YubiKey 5.7.4 clears it
                 // when the FACTORY key is written back with `P2 = 0xFE`,
@@ -954,7 +981,10 @@ impl PivApplet<'_> {
                 res.extend(&[0x01, 0x01, meta[0]]);
                 res.extend(&[0x02, 0x02, meta[1], meta[2]]);
                 res.extend(&[0x03, 0x01, meta[3]]);
-                self.slot_pubkey_tlv(dev, fs, s, &meta[..n], res)
+                let Some(head) = meta.get(..n) else {
+                    return Sw::REFERENCE_NOT_FOUND;
+                };
+                self.slot_pubkey_tlv(dev, fs, s, head, res)
             }
             // F9 keeps no metadata record — `scan_files` mints the key, its
             // cached point and its certificate, and nothing needed a head. The
@@ -986,19 +1016,34 @@ impl PivApplet<'_> {
             Ok(n) => n,
             Err(sw) => return sw,
         };
+        let (Some(&algo), Some(public)) = (meta.first(), public.get(..pn)) else {
+            return Sw::EXEC_ERROR;
+        };
         let mut body = [0u8; MAX_RSA_PUBDO];
-        let n = match meta[0] {
+        let n = match algo {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
-                make_rsa_pub_body(&public[..pn], RSA_PUB_EXP_BE, &mut body)
+                make_rsa_pub_body(public, RSA_PUB_EXP_BE, &mut body)
             }
             _ => {
-                body[0] = 0x86;
-                let ll = format_len(pn as u16, &mut body[1..4]);
-                body[1 + ll..1 + ll + pn].copy_from_slice(&public[..pn]);
-                1 + ll + pn
+                let Ok(pn) = u16::try_from(public.len()) else {
+                    return Sw::EXEC_ERROR;
+                };
+                let mut len = [0u8; 3];
+                let ll = format_len(pn, &mut len);
+                // `86 <len> <point>`, as many bytes as `body` holds.
+                let tlv = [0x86].iter().chain(len.iter().take(ll)).chain(public);
+                let mut n = 0;
+                for (dst, &b) in body.iter_mut().zip(tlv) {
+                    *dst = b;
+                    n += 1;
+                }
+                n
             }
         };
-        if push_tlv(res, 0x04, &body[..n]).is_err() {
+        let Some(tlv) = body.get(..n) else {
+            return Sw::EXEC_ERROR;
+        };
+        if push_tlv(res, 0x04, tlv).is_err() {
             return Sw::WRONG_LENGTH;
         }
         Sw::OK
@@ -1020,7 +1065,10 @@ impl PivApplet<'_> {
         if apdu.nc < 5 {
             return Sw::WRONG_LENGTH;
         }
-        let (algo, key_ref, klen) = (apdu.data[0], apdu.data[1], apdu.data[2] as usize);
+        let Some(&[algo, key_ref, klen]) = apdu.data.first_chunk::<3>() else {
+            return Sw::WRONG_LENGTH;
+        };
+        let klen = usize::from(klen);
         // The FIPS-style profile refuses *new* 3DES management keys
         // (SP 800-131A); an existing 3DES key still authenticates, so a
         // reflashed device can migrate itself to AES.
@@ -1032,16 +1080,11 @@ impl PivApplet<'_> {
         if apdu.nc != 3 + klen {
             return Sw::WRONG_LENGTH;
         }
+        let Some(key) = apdu.data.get(3..3 + klen) else {
+            return Sw::WRONG_LENGTH;
+        };
         let mut rng = self.rng.borrow_mut();
-        if seal::seal_put(
-            dev,
-            fs,
-            &mut *rng,
-            key_fid(SLOT_CARDMGM),
-            &apdu.data[3..3 + klen],
-        )
-        .is_err()
-        {
+        if seal::seal_put(dev, fs, &mut *rng, key_fid(SLOT_CARDMGM), key).is_err() {
             return Sw::MEMORY_FAILURE;
         }
         let mut meta = [0u8; 8];
@@ -1118,10 +1161,10 @@ impl PivApplet<'_> {
         // The sealed blob is bound to the device, not the fid, so it moves
         // verbatim. Sized to the largest sealed record (RSA-4096 `P ‖ Q`); a
         // smaller buffer would truncate/overrun-slice a 3072/4096 key's blob.
-        let mut blob = [0u8; seal::MAX_BLOB];
+        let mut blob = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
         // `try_read_key`: the empty-slot answer over a slot the medium merely could
         // not read tells the host the slot is EMPTY, and its next move is to fill it.
-        let blob_n = match fs.try_read_key(key_fid(from), &mut blob) {
+        let blob_n = match fs.try_read_key(key_fid(from), blob.expose_mut()) {
             Ok(Some(n)) => n,
             Ok(None) => return Sw::REFERENCE_NOT_FOUND,
             Err(_) => return Sw::MEMORY_FAILURE,
@@ -1131,14 +1174,15 @@ impl PivApplet<'_> {
             // record goes before its new key, so a tear can never leave the moved
             // key wearing the destination's provenance.
             if let Err(sw) = keygen::drop_slot_meta(fs, key_fid(to).get()) {
-                blob.zeroize();
+                blob.wipe();
                 return sw;
             }
-            if fs
-                .put_key(key_fid(to), Sealed::wrap(&blob[..blob_n]))
-                .is_err()
-            {
-                blob.zeroize();
+            let Some(sealed) = blob.expose().get(..blob_n) else {
+                blob.wipe();
+                return Sw::MEMORY_FAILURE;
+            };
+            if fs.put_key(key_fid(to), Sealed::wrap(sealed)).is_err() {
+                blob.wipe();
                 return Sw::MEMORY_FAILURE;
             }
             // Sized to read the full source record (head + any cached point).
@@ -1151,14 +1195,14 @@ impl PivApplet<'_> {
             let head = match fs.try_meta_find(key_fid(from).get(), &mut meta) {
                 Ok(n) => n,
                 Err(_) => {
-                    blob.zeroize();
+                    blob.wipe();
                     return Sw::MEMORY_FAILURE;
                 }
             };
             if let Some(n) = head {
-                let n = n.min(meta.len());
-                if let Err(e) = keygen::meta_add_slot(fs, key_fid(to).get(), &meta[..n]) {
-                    blob.zeroize();
+                let record = meta.get(..n).unwrap_or(&meta);
+                if let Err(e) = keygen::meta_add_slot(fs, key_fid(to).get(), record) {
+                    blob.wipe();
                     return e;
                 }
             }
@@ -1170,10 +1214,10 @@ impl PivApplet<'_> {
         if to != 0xFF {
             let mut pk = [0u8; MAX_EC_POINT];
             if let Some(pn) = fs.read(pubkey_fid(from), &mut pk) {
-                let _ = fs.put(pubkey_fid(to), &pk[..pn.min(pk.len())]);
+                let _ = fs.put(pubkey_fid(to), pk.get(..pn).unwrap_or(&pk));
             }
         }
-        blob.zeroize();
+        blob.wipe();
         let dropped = fs.delete_key(key_fid(from));
         let _ = fs.delete(pubkey_fid(from));
         // A head left over a key that is GONE is what GET METADATA, and the
@@ -1216,9 +1260,9 @@ fn put_pooled<S: Storage>(fs: &mut Fs<S>, id: u32, obj: &[u8]) -> Sw {
 /// The `5C` path and the `53` object of a PUT DATA body, read as a YubiKey 5.8.0
 /// reads them: `5C 03` first, `53` straight after in its shortest length form, and
 /// anything past the object ignored. `None` is its `6A80`.
-fn put_data_parts(data: &[u8]) -> Option<(&[u8], &[u8])> {
+fn put_data_parts(data: &[u8]) -> Option<(&[u8; 3], &[u8])> {
     let rest = data.strip_prefix(&[TAG_DATA_PATH, 3])?;
-    let (path, rest) = rest.split_at_checked(3)?;
+    let (path, rest) = rest.split_first_chunk::<3>()?;
     let (len, rest) = match rest.strip_prefix(&[TAG_DATA_OBJECT])? {
         [n @ 0..=0x7F, rest @ ..] => (usize::from(*n), rest),
         [0x81, n @ 0x80..=0xFF, rest @ ..] => (usize::from(*n), rest),
@@ -1236,7 +1280,10 @@ fn retries<S: Storage>(fs: &mut Fs<S>, idx: usize) -> Result<(u8, u8), Sw> {
     let Some(4) = fs.read(EF_RETRIES, &mut r) else {
         return Err(Sw::REFERENCE_NOT_FOUND);
     };
-    Ok((r[idx], r[idx + 1]))
+    match (r.get(idx), r.get(idx + 1)) {
+        (Some(&total), Some(&left)) => Ok((total, left)),
+        _ => Err(Sw::REFERENCE_NOT_FOUND),
+    }
 }
 
 fn retries_left<S: Storage>(fs: &mut Fs<S>, idx: usize) -> Result<u8, Sw> {
@@ -1248,7 +1295,10 @@ fn set_retries_left<S: Storage>(fs: &mut Fs<S>, idx: usize, left: u8) -> Result<
     let Some(4) = fs.read(EF_RETRIES, &mut r) else {
         return Err(Sw::REFERENCE_NOT_FOUND);
     };
-    r[idx + 1] = left;
+    let Some(slot) = r.get_mut(idx + 1) else {
+        return Err(Sw::REFERENCE_NOT_FOUND);
+    };
+    *slot = left;
     fs.put(EF_RETRIES, &r).map_err(|_| Sw::MEMORY_FAILURE)
 }
 
@@ -1314,11 +1364,11 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
         _ => return Sw::MEMORY_FAILURE,
     }
     let ver = dev.pin_derive_verifier(pin);
-    let mut matched = ct_eq(&ver, &rec[2..PIN_REC_LEN]);
+    let mut matched = ct_eq(ver.expose(), &rec[2..PIN_REC_LEN]);
     if !matched
         && dev.otp_key.is_some()
         && ct_eq(
-            &dev.without_otp().pin_derive_verifier(pin),
+            dev.without_otp().pin_derive_verifier(pin).expose(),
             &rec[2..PIN_REC_LEN],
         )
     {
@@ -1330,10 +1380,10 @@ fn check_ref<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: u16, retry: usize, p
         // (rsk-fs `EF_HARDENED` invariant; audit run-35). Ahead of the write and
         // gating it — the two are separate appends, and neither a reset between them
         // nor a medium that refuses the re-arm may leave the marker over the copy.
-        if rsk_fs::request_rescrub(fs).is_err() {
+        let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
             return Sw::MEMORY_FAILURE;
-        }
-        if put_pin_verifier(dev, fs, fid, pin).is_err() {
+        };
+        if put_pin_verifier(dev, fs, fid, pin, Some(&rearmed)).is_err() {
             return Sw::MEMORY_FAILURE;
         }
         matched = true;
@@ -1372,12 +1422,14 @@ impl PinRef {
 /// (trailing `0xFF`), matching ykman / yubico-piv-tool. On-device (panel) entry
 /// MUST store the verifier over this padded form, or a host `VERIFY` — which
 /// always pads — will not match. `None` for empty / over-long input.
-pub fn pad_pin(entered: &[u8]) -> Option<[u8; PIN_WIRE_LEN]> {
+pub fn pad_pin(entered: &[u8]) -> Option<Secret<[u8; PIN_WIRE_LEN]>> {
     if entered.is_empty() || entered.len() > PIN_WIRE_LEN {
         return None;
     }
-    let mut out = [0xFFu8; PIN_WIRE_LEN];
-    out[..entered.len()].copy_from_slice(entered);
+    let mut out = Secret::new([0xFFu8; PIN_WIRE_LEN]);
+    out.expose_mut()
+        .get_mut(..entered.len())?
+        .copy_from_slice(entered);
     Some(out)
 }
 
@@ -1429,7 +1481,7 @@ pub fn change_reference<S: Storage>(
     if let Err(sw) = check_new_reference(new) {
         return sw;
     }
-    if put_pin_verifier(dev, fs, fid, new).is_err() {
+    if put_pin_verifier(dev, fs, fid, new, None).is_err() {
         return Sw::MEMORY_FAILURE;
     }
     Sw::OK
@@ -1456,10 +1508,10 @@ pub fn unblock_pin_with_puk<S: Storage>(
     // still keyed under the pre-OTP arm. Before the write and gating it — a reset
     // between the two appends must not be able to keep the marker, and a medium that
     // refuses the re-arm reaches that state outright.
-    if rsk_fs::request_rescrub(fs).is_err() {
+    let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
         return Sw::MEMORY_FAILURE;
-    }
-    let stored = put_pin_verifier(dev, fs, EF_PIN, new);
+    };
+    let stored = put_pin_verifier(dev, fs, EF_PIN, new, Some(&rearmed));
     if stored.is_err() {
         return Sw::MEMORY_FAILURE;
     }
@@ -1533,15 +1585,10 @@ fn try_mgm_is_protected<S: Storage>(fs: &mut Fs<S>) -> Result<bool, Sw> {
     else {
         return Ok(false);
     };
-    let body = &obj[..n.min(obj.len())];
-    if body.len() < 2 || body[0] != PIVMAN_TAG {
-        return Ok(false);
-    }
-    let inner_len = (body[1] as usize).min(body.len() - 2);
-    Ok(matches!(
-        find_tag(&body[2..2 + inner_len], PIVMAN_FLAGS_TAG as u16),
-        Some(f) if !f.is_empty() && f[0] & PIVMAN_FLAG_MGM_PROTECTED != 0
-    ))
+    let body = obj.get(..n).unwrap_or(&obj);
+    Ok(find_tag(pivman_inner(body), PIVMAN_FLAGS_TAG as u16)
+        .and_then(|f| f.first())
+        .is_some_and(|flags| flags & PIVMAN_FLAG_MGM_PROTECTED != 0))
 }
 
 /// Revoke the PIN-readable escrow: clear the ADMIN-DATA `0x02` flag, carrying
@@ -1565,8 +1612,8 @@ fn mgm_clear_protected<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
         return Ok(());
     };
     let mut admin = [0u8; PIVMAN_MAX];
-    let len = pivman_rebuild(&prior[..n.min(prior.len())], false, &mut admin);
-    fs.put(EF_PIVMAN_DATA, &admin[..len])
+    let len = pivman_rebuild(prior.get(..n).unwrap_or(&prior), false, &mut admin);
+    fs.put(EF_PIVMAN_DATA, admin.get(..len).ok_or(Sw::MEMORY_FAILURE)?)
         .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
@@ -1598,7 +1645,7 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
         return Sw::MEMORY_FAILURE;
     };
     let prior = match prior_len {
-        Some(n) => &prior_buf[..n.min(prior_buf.len())],
+        Some(n) => prior_buf.get(..n).unwrap_or(&prior_buf),
         None => &[][..],
     };
     let mut admin = [0u8; PIVMAN_MAX];
@@ -1622,10 +1669,10 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
         _ => TOUCHPOLICY_NEVER,
     };
 
-    let mut key = [0u8; 32];
-    rng.fill(&mut key);
-    let sealed = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), &key);
-    key.zeroize();
+    let mut key = Secret::<[u8; 32]>::zeroed();
+    rng.fill(key.expose_mut());
+    let sealed = seal::seal_put(dev, fs, rng, key_fid(SLOT_CARDMGM), key.expose());
+    key.wipe();
     if sealed.is_err() {
         return Sw::MEMORY_FAILURE;
     }
@@ -1638,7 +1685,10 @@ pub fn protect_mgm_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn R
     {
         return Sw::MEMORY_FAILURE;
     }
-    if fs.put(EF_PIVMAN_DATA, &admin[..admin_len]).is_err() {
+    let Some(record) = admin.get(..admin_len) else {
+        return Sw::MEMORY_FAILURE;
+    };
+    if fs.put(EF_PIVMAN_DATA, record).is_err() {
         return Sw::MEMORY_FAILURE;
     }
     Sw::OK
@@ -1662,13 +1712,7 @@ pub(crate) fn pivman_set_protected(prior: &[u8], out: &mut [u8; PIVMAN_MAX]) -> 
 /// `prior` contributes nothing (flags default to 0, no timestamp) and never
 /// panics — the record is always a well-formed `80 { 81 .. }`.
 fn pivman_rebuild(prior: &[u8], protected: bool, out: &mut [u8; PIVMAN_MAX]) -> usize {
-    // Parse the prior record's inner TLV run, if it is a `80 <len> { .. }`.
-    let inner = if prior.len() >= 2 && prior[0] == PIVMAN_TAG {
-        let l = (prior[1] as usize).min(prior.len() - 2);
-        &prior[2..2 + l]
-    } else {
-        &[][..]
-    };
+    let inner = pivman_inner(prior);
     let prior_flags = find_tag(inner, PIVMAN_FLAGS_TAG as u16)
         .and_then(|f| f.first().copied())
         .unwrap_or(0);
@@ -1678,26 +1722,36 @@ fn pivman_rebuild(prior: &[u8], protected: bool, out: &mut [u8; PIVMAN_MAX]) -> 
         prior_flags & !PIVMAN_FLAG_MGM_PROTECTED
     };
     let ts = find_tag(inner, PIVMAN_TS_TAG as u16)
-        .map(|t| &t[..t.len().min(PIVMAN_TS_MAX)])
+        .map(|t| t.get(..PIVMAN_TS_MAX).unwrap_or(t))
         .unwrap_or(&[]);
 
     // Body = 81 01 <flags> [83 <len> <ts>]; outer = 80 <body_len> <body>.
     let mut body = [0u8; 3 + 2 + PIVMAN_TS_MAX];
-    let mut n = 0;
-    body[n] = PIVMAN_FLAGS_TAG;
-    body[n + 1] = 0x01;
-    body[n + 2] = flags;
-    n += 3;
-    if !ts.is_empty() {
-        body[n] = PIVMAN_TS_TAG;
-        body[n + 1] = ts.len() as u8;
-        body[n + 2..n + 2 + ts.len()].copy_from_slice(ts);
+    body[..3].copy_from_slice(&[PIVMAN_FLAGS_TAG, 0x01, flags]);
+    let mut n = 3;
+    if !ts.is_empty()
+        && let Some(value) = body.get_mut(5..5 + ts.len())
+    {
+        value.copy_from_slice(ts);
+        body[3] = PIVMAN_TS_TAG;
+        body[4] = u8::try_from(ts.len()).unwrap_or(u8::MAX);
         n += 2 + ts.len();
     }
     out[0] = PIVMAN_TAG;
-    out[1] = n as u8;
-    out[2..2 + n].copy_from_slice(&body[..n]);
+    out[1] = u8::try_from(n).unwrap_or(u8::MAX);
+    if let (Some(dst), Some(src)) = (out.get_mut(2..2 + n), body.get(..n)) {
+        dst.copy_from_slice(src);
+    }
     2 + n
+}
+
+/// The inner TLV run of a `80 <len> { .. }` PivmanData record, clamped to what `record`
+/// holds; empty for anything else.
+fn pivman_inner(record: &[u8]) -> &[u8] {
+    match (record.first(), record.get(1), record.get(2..)) {
+        (Some(&PIVMAN_TAG), Some(&len), Some(rest)) => rest.get(..usize::from(len)).unwrap_or(rest),
+        _ => &[],
+    }
 }
 
 /// Constant-time slice equality (length public).
@@ -1707,9 +1761,11 @@ pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 
 /// Append `tag { payload }` with a DER length to `res`.
 pub(crate) fn push_tlv(res: &mut ResBuf, tag: u8, payload: &[u8]) -> Result<(), Sw> {
+    let len = u16::try_from(payload.len()).map_err(|_| Sw::WRONG_LENGTH)?;
     let mut ll = [0u8; 3];
-    let n = format_len(payload.len() as u16, &mut ll);
-    if !res.push(tag) || !res.extend(&ll[..n]) || !res.extend(payload) {
+    let n = format_len(len, &mut ll);
+    let head = ll.get(..n).ok_or(Sw::WRONG_LENGTH)?;
+    if !res.push(tag) || !res.extend(head) || !res.extend(payload) {
         return Err(Sw::WRONG_LENGTH);
     }
     Ok(())
@@ -1717,11 +1773,14 @@ pub(crate) fn push_tlv(res: &mut ResBuf, tag: u8, payload: &[u8]) -> Result<(), 
 
 /// Build the GENERAL AUTHENTICATE response `7C { tag payload }`.
 pub(crate) fn dyn_auth_resp(res: &mut ResBuf, tag: u8, payload: &[u8]) -> Result<(), Sw> {
+    let len = u16::try_from(payload.len()).map_err(|_| Sw::WRONG_LENGTH)?;
     let mut ll = [0u8; 3];
-    let inner = 1 + format_len(payload.len() as u16, &mut ll) as u16 + payload.len() as u16;
+    let inner = u16::try_from(1 + format_len(len, &mut ll) + payload.len())
+        .map_err(|_| Sw::WRONG_LENGTH)?;
     let mut oll = [0u8; 3];
     let on = format_len(inner, &mut oll);
-    if !res.push(TAG_DYN_AUTH) || !res.extend(&oll[..on]) {
+    let head = oll.get(..on).ok_or(Sw::WRONG_LENGTH)?;
+    if !res.push(TAG_DYN_AUTH) || !res.extend(head) {
         return Err(Sw::WRONG_LENGTH);
     }
     push_tlv(res, tag, payload)
@@ -1730,17 +1789,20 @@ pub(crate) fn dyn_auth_resp(res: &mut ResBuf, tag: u8, payload: &[u8]) -> Result
 /// Wrap a DER certificate as the Yubico certificate object
 /// `70 { cert } 71 { 0 } FE { }` (uncompressed).
 pub fn wrap_cert_object(cert: &[u8], out: &mut [u8]) -> usize {
-    let mut p = 0;
-    out[p] = 0x70;
-    p += 1;
+    // A certificate is at most `x509::MAX_CERT`, far below the 65,535 a length holds.
     let mut ll = [0u8; 3];
-    let n = format_len(cert.len() as u16, &mut ll);
-    out[p..p + n].copy_from_slice(&ll[..n]);
-    p += n;
-    out[p..p + cert.len()].copy_from_slice(cert);
-    p += cert.len();
-    out[p..p + 5].copy_from_slice(&[0x71, 0x01, 0x00, 0xFE, 0x00]);
-    p + 5
+    let n = format_len(u16::try_from(cert.len()).unwrap_or(u16::MAX), &mut ll);
+    let object = [0x70]
+        .iter()
+        .chain(ll.iter().take(n))
+        .chain(cert)
+        .chain(&[0x71, 0x01, 0x00, 0xFE, 0x00]);
+    let mut p = 0;
+    for (dst, &b) in out.iter_mut().zip(object) {
+        *dst = b;
+        p += 1;
+    }
+    p
 }
 
 /// Kani proof harnesses (`cargo kani -p rsk-piv`): exhaustive over every input up
@@ -1750,16 +1812,48 @@ pub fn wrap_cert_object(cert: &[u8], out: &mut [u8]) -> usize {
 mod proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 mod tests;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "reselect_tests.rs"]
 mod reselect_tests;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "challenge_tests.rs"]
 mod challenge_tests;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "dying_tests.rs"]
 mod dying_tests;

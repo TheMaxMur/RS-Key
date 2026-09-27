@@ -9,9 +9,8 @@ publish = false
 # speaks), reached over CCID. Pure and host-testable like the other applet
 # crates; RSA comes from rsk-rsa and the EC key type from rsk-ec, both under
 # this applet's own kbase-rooted sealing.
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 [dependencies]
 rsk-sdk = { workspace = true }
@@ -23,6 +22,9 @@ rsk-ec = { workspace = true }
 # The RSA family: keygen, the sealed CRT layout and its blinded, fault-checked
 # private op (UMAAL asm on device), PKCS#1 v1.5, the public-key DO.
 rsk-rsa = { workspace = true }
+# Keys, management keys and the unsealed plaintext held in a type that wipes
+# itself; `zeroize` stays for the one struct field wiped in place.
+rsk-secret = { workspace = true }
 zeroize = { workspace = true }
 # The certificate builder the slot, F9 and attestation certificates share with
 # OpenPGP's attestation statements.

@@ -247,9 +247,9 @@ assurance_trace_is_image_neutral() {
   echo "assurance sources are absent from firmware; poisoned/default images are byte-identical"
 }
 
-# The vendor AID's three debug commands (INS 12/13/14) are timing oracles — over
-# the RSA keygen prime search and the EC/KDF hot paths — so each is feature-gated
-# and none may reach a shipped image. A `#[cfg]` is only as good as the default
+# The vendor AID's four debug commands (INS 12/13/14/15) are oracles — timing ones
+# over the RSA keygen prime search and the EC/KDF hot paths, and a read of the dead
+# stack the sweep zeroes — so each is feature-gated and none may reach a shipped image. A `#[cfg]` is only as good as the default
 # feature set, and nothing else here reads the artifact, so read it: `opt-level=s`
 # inlines the method away but `debug = 2` keeps its linkage name. `led_block` is
 # the positive control — the same `impl Platform for VendorPlatform` produces it —
@@ -257,15 +257,15 @@ assurance_trace_is_image_neutral() {
 # Mutation table, each observed red — and note a bare `#[cfg]` removal is a COMPILE
 # error (the bodies need feature-gated items), so the mutations are whole builds:
 # the pre-gate image → `core1_stats` fires; `--features bench,keygen-bench,core1-stats`
-# → all three names present, row red; `strip --strip-debug` → the control fires.
-DEBUG_VENDOR_METHODS=(core1_stats keygen_bench latency_bench)
+# → all four names present, row red; `strip --strip-debug` → the control fires.
+DEBUG_VENDOR_METHODS=(core1_stats keygen_bench latency_bench stack_residue)
 debug_vendor_commands_absent() {
   local elf="target/thumbv8m.main-none-eabihf/release/firmware" m
   if [ ! -f "$elf" ]; then
     echo "FAIL: $elf was not built, so there is nothing to check." >&2
     exit 1
   fi
-  if [ "${#DEBUG_VENDOR_METHODS[@]}" -ne 3 ]; then
+  if [ "${#DEBUG_VENDOR_METHODS[@]}" -ne 4 ]; then
     echo "FAIL: the debug-command list lost an entry; an empty loop reads as a pass." >&2
     exit 1
   fi
@@ -277,7 +277,7 @@ debug_vendor_commands_absent() {
   for m in "${DEBUG_VENDOR_METHODS[@]}"; do
     if LC_ALL=C grep -qa "$m" "$elf"; then
       echo "FAIL: the debug vendor command \`$m\` is compiled into the default image." >&2
-      echo "      It is a timing oracle; keep it behind its feature. Matched:" >&2
+      echo "      It is an oracle over secrets; keep it behind its feature. Matched:" >&2
       # An unanchored match over 17 MB of .debug_str: print it, so an unrelated
       # name colliding with one of these is diagnosable rather than just red.
       LC_ALL=C grep -ao ".\{0,60\}$m.\{0,20\}" "$elf" | head -3 >&2
@@ -785,78 +785,6 @@ run "threat-model traceability" python scripts/threat_gate.py
 # wrote them found `force_delete` hiding a faulted metadata drop on the reset
 # path, behind a doc sentence that named the wrong caller as the only one.
 run "delete-caller dispositions" python scripts/deleter_gate.py
-# A dispatch holds four RefCells across the whole CBOR command and then calls the
-# trusted display through them, so a `borrow_mut()` anywhere a host ceremony can
-# reach is a BorrowMutError -- under `panic-halt`, a key that answers nothing
-# until it is unplugged, from one unauthenticated command (issue #107). The
-# comment that would have stopped it existed and said `fs`; the pad drew from
-# `rng`. Cells derived from the dispatch, roots from the handle, reach by call
-# walk. The table is scripts/test_display_borrow_gate.py, driven through THIS row.
-run "display borrows vs dispatch" python scripts/display_borrow_gate.py
-# The same question about RAM rather than flash, and it had no register at all.
-# The threat model has always said key-grade material is wiped "at end of scope
-# including error paths" and nothing held that sentence: 300 of the 444 wipes in
-# the image sit below an early exit of their own function, and the one exit the
-# clause never mentions is the one where nothing runs -- `panic-halt` spins with
-# no unwinding, no Drop, every secret in the frame resident, and that was
-# recorded nowhere. This derives the roster (wipes, `Zeroizing`, self-wiping
-# types -- ELEVEN, not the two a ZeroizeOnDrop grep finds), derives the panic
-# strategy and the reboot's own scrubs, and holds the register both ways.
-# Driven through THIS row, exit taken with no pipe, 48 clauses x 2 arms: each
-# defect -> rc 1 with the message naming THAT defect, and the same defect with
-# that clause alone disabled -> rc 0, which is what makes each one load-bearing
-# rather than decorative. An adversarial review then found nine ways past it,
-# five overclaiming: `n/a` on an exit nothing derives it for (the master seed's
-# row could answer "the error exit cannot happen here"), `explicit` on the reboot
-# exit (escaping the wiper rule and the residual rule at once), a `wiper` row
-# naming ANY of the five scrubs rather than its own, a register-wide residual
-# discharging a per-row `not-wiped`, and `28 of its 22` in the prose. All five
-# redden now. Two more were derivation holes: an inline `#[cfg(test)]` counted as
-# shipped (the highest-value row read 37 where the image has 35) and a `return
-# Sw::…` invisible as an early exit, which is how `rsk-piv/src/lib.rs` derived
-# ZERO over eleven. The table is scripts/test_secrets_gate.py.
-run "secret lifetimes"         python scripts/secrets_gate.py
-# The same shape one crate over, and the finding that asked for it: the OTP use
-# counter's own two files each stated a roster of its writers from memory and
-# each was wrong. `counter.rs` said "both writers … take their step from here"
-# and `counter_kani.rs` said four sites "are every writer of the first two tail
-# bytes". There are eight — `cmd_swap` writes them twice per command and
-# `migrate_seal` twice per boot, and neither sentence mentioned either. A proof
-# whose scope is a sentence has no way to notice a ninth arriving; this derives
-# the roster and the harness cites it. Driven through THIS row, exit taken with
-# no pipe: a ninth writer in a new `crates/rsk-otp/src/*.rs` -> rc 1 naming that
-# file and function; removed -> rc 0. An adversarial review then found four ways
-# past it, three overclaiming: a BARE `seal_put(` (the receiver test), a grouped
-# `use rsk_otp::{…, seal}`, a ledger entry certifying its own coverage through a
-# `via` hop it never calls, and a same-named stepper in another file. All four
-# redden now. A fifth was measured later and is the one every other clause was
-# blind to by construction: they all read PRODUCTION code, so deleting both
-# `#[kani::proof]`s from counter_kani.rs left this row at rc 0 still printing
-# "2 functions take their step from counter.rs" over an empty proof. A rule the
-# ledger's `proved` column is about must now be called by a harness in that file.
-# The table is scripts/test_counter_writers_gate.py, 32 cases, three of them
-# controls that must stay GREEN: twelve lines inserted above every site, a local
-# renamed at one call site, and the harness itself renamed. The second is why the
-# key is (file, fn, ordinal) — keyed on the call TEXT, a rename or a rustfmt
-# reflow was a false red; the third says what this row does NOT measure, since
-# assurance_gate.py forces BOUNDED from a harness NAME.
-run "OTP counter writers"      python scripts/counter_writers_gate.py
-# The same shape one crate down, and the set that has drifted twice already.
-# `rsk_store::is_counter_fid` routes a record to the counter partition or the
-# main one, and it is a `matches!` over four bare literals whose named homes are
-# in rsk-fido, rsk-openpgp and rsk-vendor — so the table and the constants drift
-# with no compile error. `EF_CRED_CTR` joined the table at 0x0821 after 0x081D
-# had been writing it to main, and the `power_cut` mirror listed three of the
-# four with a `& 7` selector over nine entries, so the counter FID could never be
-# written by any input while the sweep asserted it absent on every one. A record
-# on the wrong side reads absent while its old value stays live in the other
-# ring, and every `for_each_key` yields a copy nothing can delete. The values are
-# derived from the applet crates now and all four copies are held to them.
-# Driven through THIS row, exit taken with no pipe: a literal changed in any one
-# of the four -> rc 1 naming that copy and the direction; the constant renamed at
-# its home -> rc 1 saying the name resolves nowhere. The table is
-# scripts/test_partition_routing_gate.py.
-run "partition routing"        python scripts/partition_routing_gate.py
 # A model constant that stands for a fact about the world, not a defect switch.
 # `PowerOnClearsScratch2` was TRUE in all seven Boot configurations and read by
 # no action: deleting its `ASSUME` left every run bit-identical.

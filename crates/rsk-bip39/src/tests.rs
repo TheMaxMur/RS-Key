@@ -37,6 +37,7 @@ fn wordlist_matches_the_canonical_checksum() {
 
 fn phrase(entropy: &[u8; 32]) -> String {
     entropy_to_indices(entropy)
+        .expose()
         .iter()
         .map(|&i| word(i))
         .collect::<Vec<_>>()
@@ -79,6 +80,6 @@ fn matches_host_bip39_vectors() {
 #[test]
 fn always_24_words_and_in_range() {
     let idx = entropy_to_indices(&[0x5a; 32]);
-    assert_eq!(idx.len(), WORD_COUNT);
-    assert!(idx.iter().all(|&i| (i as usize) < WORDS.len()));
+    assert_eq!(idx.expose().len(), WORD_COUNT);
+    assert!(idx.expose().iter().all(|&i| (i as usize) < WORDS.len()));
 }

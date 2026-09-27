@@ -7,13 +7,13 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 22.** Twelve in the firmware proper (`main.rs` + `presence.rs`):
-the interrupt-handler pair (2), the `Send` impl, the heap init, and the eight
-GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
+**Runtime sites: 29.** Seventeen in the firmware proper (`main.rs` + `presence.rs`):
+the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
+allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
-CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves and one
-stack limit per core, three in the RSA assembly FFI, two in the standalone
-flash-wipe tool.
+CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves; one
+stack limit per core, core0's in `main.rs` too; two for the dead-stack sweep and
+its probe; three in the RSA assembly FFI; two in the standalone flash-wipe tool.
 
 ```mermaid
 flowchart TB
@@ -21,12 +21,17 @@ flowchart TB
       a["interrupt executor (×2)"]
       b["Send for SendUsb"]
       c["heap init"]
+      c2["zeroing allocator (×5)"]
       d["GPIO pin steal ×8 (presence, LED power, USR LED, display wake + CS/DC/RST/TP_RST)"]
       d2["core0 stack limit (MSPLIM)"]
     end
     subgraph kg["firmware/src/core1.rs"]
       e["per-core prime sieves (×3)"]
       e2["core1 stack limit (MSPLIM)"]
+    end
+    subgraph sw["firmware/src/sweep.rs"]
+      s1["dead-stack sweep"]
+      s2["residue probe (bench builds)"]
     end
     subgraph asm["rsk-rsa"]
       f["modexp / sign_crt / modexp_pub FFI (×3)"]
@@ -38,6 +43,15 @@ flowchart TB
 
 The `unsafe` lives only in plumbing. None of it is in a parser, applet, crypto
 wrapper, or the filesystem.
+
+The compiler holds the crate boundary: the workspace denies `unsafe_code`, and
+only `firmware`, `rsk-wipe` and — on the device target, where it links the
+assembly — `rsk-rsa` lift the denial at their crate root; the two build scripts
+lift it at their one `set_var` statement. Which file and site inside those
+crates is this page's business, held against the tree by
+`scripts/platform_gate.py`. Every `unsafe` block and `unsafe impl` also carries a
+`// SAFETY:` comment, which `clippy::undocumented_unsafe_blocks` refuses to build
+without.
 
 ## Firmware (`firmware/src/main.rs`, `firmware/src/presence.rs`)
 
@@ -75,17 +89,64 @@ executor and embassy keeps the trait object `!Send`.
 ### 4. Heap initialization — `PLAT-UNSAFE-003`
 
 ```rust
-unsafe { HEAP.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
+unsafe { HEAP.0.init(core::ptr::addr_of_mut!(HEAP_MEM) as usize, HEAP_SIZE) }
 ```
 
-A 128 KiB heap exists solely for `rsk-rsa`'s big integers (`num-bigint-dig`,
-the only allocating dependency). `init`'s contract (call once, with exclusive access
+A 128 KiB heap exists for `rsk-rsa`'s big integers (`num-bigint-dig`, the only
+allocating dependency) and for FIDO's boxed ML-DSA keys. `init`'s contract (call once, with exclusive access
 to the region) is met: it runs once at the top of `main`, on a dedicated
 static buffer used by nothing else.
 *Safe alternative:* none; every embedded allocator initializes this way.
 *Containment:* one call, before any allocation can happen.
 
-### 5–12. GPIO pin type-erasure (presence button, LED power rail, USR-LED-off, display wake + control pins, ×8) — `PLAT-UNSAFE-004`
+### 5–9. The zeroing allocator — `PLAT-UNSAFE-013`
+
+```rust
+unsafe impl GlobalAlloc for ZeroingHeap {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe { self.0.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        let len = layout.size();
+        let head = ptr.align_offset(size_of::<u32>()).min(len);
+        let words = (len - head) / size_of::<u32>();
+        unsafe {
+            for i in 0..head {
+                ptr.add(i).write_volatile(0);
+            }
+            let body = ptr.add(head).cast::<u32>();
+            for i in 0..words {
+                body.add(i).write_volatile(0);
+            }
+            for i in head + words * size_of::<u32>()..len {
+                ptr.add(i).write_volatile(0);
+            }
+            self.0.dealloc(ptr, layout);
+        }
+    }
+}
+```
+
+The global allocator is `LlffHeap` behind a wrapper that zeroes each block as it
+is freed. `num-bigint-dig` frees the limbs of its own working buffers unwiped —
+a division's, an inverse's, a modular exponentiation's — `rsk-rsa` drops the
+primes of a key `RsaKey::from_p_q` refuses, and a freed block keeps its bytes
+until an allocation reuses it.
+`alloc` forwards unchanged. `dealloc` writes zeroes over exactly the
+`layout.size()` bytes the caller hands back, which `GlobalAlloc`'s contract
+makes a live block this allocator returned for that layout, then forwards. It
+stores words over the block's 4-aligned body and bytes only at its unaligned
+ends: an RSA key generation frees tens of megabytes through this path, and a
+byte loop is four times the stores.
+`realloc` is the trait's default, an alloc, a copy and a dealloc through these
+two, so a grown vector's old block is wiped as well. The writes are volatile,
+so no optimisation can drop them as stores into memory about to be freed.
+*Safe alternative:* none; `GlobalAlloc` is an `unsafe` trait with `unsafe fn`
+methods, and each forwarding call is an `unsafe` operation.
+*Containment:* two forwarding calls and three loops bounded by the caller's own
+layout.
+
+### 10–17. GPIO pin type-erasure (presence button, LED power rail, USR-LED-off, display wake + control pins, ×8) — `PLAT-UNSAFE-004`
 
 ```rust
 let any = unsafe { AnyPin::steal(pin) };
@@ -116,7 +177,8 @@ build default — so a host cannot aim the data pin at a pad another driver owns
 On top of that, compile-time `assert!`s reject a
 build that collides `LED_POWER_PIN` or `USR_LED_PIN` with the LED data pin or a GPIO
 `PRESENCE_PIN` (and refuse `USR_LED_PIN` outright on a display build, whose panel
-owns those pads), rejects a `WAKE_PIN` in the LCD/touch range (`10..=18`),
+owns those pads), rejects a `WAKE_PIN` in the LCD range (`10..=18`) or on the
+hard-wired touch I2C1 pair (PIN_6/7) — which a `WAKE_PIN=6` build did not, until 0x0A10 —
 **and rejects any of CS/DC/RST/TP_RST/BL colliding with each other, with the
 hard-wired PIO serial output (PIN_10/11) or I2C1 (PIN_6/7) lines, an enabled `WAKE_PIN`,
 or `LED_PIN`/`LED_POWER_PIN` when their LED driver is built** — a collision
@@ -124,7 +186,7 @@ silently drives one pad from two owners at runtime, so it is checked at build ti
 
 ## Firmware dual-core keygen (`firmware/src/core1.rs`)
 
-### 13–15. The per-core prime sieves — `PLAT-UNSAFE-005`
+### 18–20. The per-core prime sieves — `PLAT-UNSAFE-005`
 
 ```rust
 static mut CORE0_SIEVE: IncrementalSieve = IncrementalSieve::new();
@@ -156,7 +218,7 @@ on core0; the partition (which core touches which sieve) is structural, and the 
 a candidate, scrubbed at the top of every keygen). A wrong residue can only let
 a composite through to the strong-MR/Lucas test, which still rejects it.
 
-### 16–17. The per-core stack limits (`main.rs`, `core1.rs`) — `PLAT-UNSAFE-006`
+### 21–22. The per-core stack limits (`main.rs`, `core1.rs`) — `PLAT-UNSAFE-006`
 
 ```rust
 unsafe { cortex_m::register::msplim::write(&raw const _stack_end as u32) }; // core0, entering `main`
@@ -177,7 +239,9 @@ runs off into unmapped space and faults with or without this — there is no gap
 here to close. What the write buys is independence from the linker. Drop
 `flip-link` and that floor disappears silently, along with the only thing keeping
 this stack out of `.bss`; `MSPLIM` states the bound in code, where it can be read
-and where removing it is a visible edit.
+and where removing it is a visible edit. It is also where the dead-stack sweep
+(sections 23–24) reads core0's floor: without the write it reads 0 and sweeps
+nothing.
 *Safe alternative:* none. `cortex-m` offers no checked form, and the MPU route is
 both weaker (above) and more `unsafe`, not less.
 *Containment:* one write per core, on the core that owns that stack, before anything has
@@ -189,9 +253,39 @@ the device until it is replugged. That is the trade being made — a wedge a rep
 clears, rather than a silent write into whatever `.bss` the linker put below,
 issued by the routine that is at that moment generating and storing a key.
 
+## Dead-stack sweep (`firmware/src/sweep.rs`)
+
+### 23–24. The sweep and its probe — `PLAT-UNSAFE-014`
+
+```rust
+unsafe { core::ptr::with_exposed_provenance_mut::<u32>(word).write_volatile(0) }; // the sweep, either core
+unsafe { core::ptr::with_exposed_provenance::<u8>(addr).read_volatile() }         // the probe, `bench` only
+```
+
+What a request's crypto leaves below the stack pointer — a RustCrypto `Copy`
+temporary, the `hmac` crate's padded key block, a SHAKE reader's state — no
+`Drop` or `Secret` can reach, because the frame that held it has returned. So
+core0's dead stack is zeroed after every request, keyboard OTP frame and typed
+ticket (by the worker) and every flow the panel runs (through the display's
+hooks), and core1 zeroes its own after every prime search: every word from the
+floor that core's `MSPLIM` holds (sections 21–22) up to its stack pointer, both
+read by the code on that core, eight stores a pass. Nothing under the live
+pointer is a value: the stack grows down, and what is below belongs to frames
+that have returned. An interrupt taken mid-sweep pushes its frame below the
+pointer and returns before the loop runs again, so no store lands under a live
+frame; what a handler leaves in the part already swept waits for the next sweep.
+A measurement build (`--features bench`) adds vendor `INS 0x15`, which reads the
+same region to count a pattern in it and can stop the sweep for a positive
+control; `check.sh` holds it out of the default image with the other debug
+commands.
+*Safe alternative:* none; memory no Rust value owns has no safe handle.
+*Containment:* one function, bounded by two registers of the core it runs on,
+called at three points in the worker, from the display's hooks and in core1's job
+loop, each after the work's frames have returned; the probe only reads.
+
 ## RSA assembly FFI (`crates/rsk-rsa/src/lib.rs`)
 
-### 18–20. The modexp / CRT-sign calls — `PLAT-UNSAFE-007`
+### 25–27. The modexp / CRT-sign calls — `PLAT-UNSAFE-007`
 
 On-card RSA key generation needs hundreds of modular exponentiations over
 1024–2048-bit candidates. The pure-Rust path was ~7× too slow on the
@@ -210,7 +304,7 @@ all host tests exercise the same API safely.
 
 ## Flash wiper (`rsk-wipe/src/main.rs`)
 
-### 21–22. Raw flash erase/program in a critical section — `PLAT-UNSAFE-008`
+### 28–29. Raw flash erase/program in a critical section — `PLAT-UNSAFE-008`
 
 The wiper's entire job is to erase the flash the firmware lives on, from a
 RAM-resident image. It calls the ROM flash-erase/program routines inside

@@ -21,7 +21,7 @@ fn kbase_otp_vs_nootp_differ() {
         ..dev()
     }
     .derive_kbase();
-    assert_ne!(no, with);
+    assert_ne!(no.expose(), with.expose());
     // No-OTP path: HKDF(salt="NO-OTP", ikm=serial_hash, info="DEVICE/ROOT\0").
     let mut expected = [0u8; 32];
     hkdf_sha256(
@@ -31,7 +31,7 @@ fn kbase_otp_vs_nootp_differ() {
         &mut expected,
     )
     .unwrap();
-    assert_eq!(no, expected);
+    assert_eq!(no.expose(), &expected);
 }
 
 // Each KDF must wire exactly the documented salt / ikm / info.
@@ -41,24 +41,24 @@ fn compositions_match_primitives() {
     let pin = b"123456";
 
     let kver = d.derive_kver(pin);
-    assert_eq!(kver, hmac_sha256(&d.derive_kbase(), pin));
+    assert_eq!(kver.expose(), &hmac_sha256(d.derive_kbase().expose(), pin));
 
     let mut want = [0u8; 32];
-    hkdf_sha256(d.serial_hash, &kver, b"PIN/VERIFY", &mut want).unwrap();
-    assert_eq!(d.pin_derive_verifier(pin), want);
+    hkdf_sha256(d.serial_hash, kver.expose(), b"PIN/VERIFY", &mut want).unwrap();
+    assert_eq!(d.pin_derive_verifier(pin).expose(), &want);
 
-    hkdf_sha256(d.serial_hash, &kver, b"PIN/TOKEN", &mut want).unwrap();
-    assert_eq!(d.pin_derive_session(pin), want);
+    hkdf_sha256(d.serial_hash, kver.expose(), b"PIN/TOKEN", &mut want).unwrap();
+    assert_eq!(d.pin_derive_session(pin).expose(), &want);
 
     let token = [0x77u8; 32];
     hkdf_sha256(d.serial_hash, &token, b"PIN/ENC", &mut want).unwrap();
-    assert_eq!(d.pin_derive_kenc(&token), want);
+    assert_eq!(d.pin_derive_kenc(&token).expose(), &want);
 
     let mut ikm = [0u8; 64];
-    ikm[..32].copy_from_slice(&d.derive_kbase());
+    ikm[..32].copy_from_slice(d.derive_kbase().expose());
     ikm[32..].copy_from_slice(&token);
     hkdf_sha256(d.serial_hash, &ikm, b"PIN/ENC2", &mut want).unwrap();
-    assert_eq!(d.pin_derive_kenc2(&token), want);
+    assert_eq!(d.pin_derive_kenc2(&token).expose(), &want);
 }
 
 #[test]
@@ -72,8 +72,8 @@ fn kbase_otp_arm_reference_vector() {
     }
     .derive_kbase();
     assert_eq!(
-        with,
-        [
+        with.expose(),
+        &[
             0xD3, 0x83, 0x07, 0xA2, 0xB9, 0xF0, 0xD4, 0xEF, 0x44, 0xE8, 0x01, 0x3D, 0x95, 0x4A,
             0x89, 0x4A, 0xE0, 0x90, 0x3C, 0xAA, 0xAC, 0xFD, 0x68, 0xFA, 0x61, 0xC1, 0x46, 0x8A,
             0x1F, 0x0B, 0xCD, 0xA7
@@ -91,7 +91,7 @@ fn without_otp_drops_only_the_key() {
     assert!(old.otp_key.is_none());
     assert_eq!(old.serial_hash, d.serial_hash);
     assert_eq!(old.serial_id, d.serial_id);
-    assert_eq!(old.derive_kbase(), dev().derive_kbase());
+    assert_eq!(old.derive_kbase().expose(), dev().derive_kbase().expose());
 }
 
 #[test]
@@ -109,7 +109,7 @@ fn info_root_nul_matters() {
     .unwrap();
     hkdf_sha256(SALT_NOOTP, dev().serial_hash, b"DEVICE/ROOT", &mut without).unwrap();
     assert_ne!(with_nul, without);
-    assert_eq!(dev().derive_kbase(), with_nul);
+    assert_eq!(dev().derive_kbase().expose(), &with_nul);
 }
 
 #[test]
@@ -171,7 +171,10 @@ fn aead_tamper_fails() {
 fn hash_funcs_deterministic_and_empty_safe() {
     let d = dev();
     assert_eq!(d.hash_multi(b"pin"), d.hash_multi(b"pin"));
-    assert_eq!(d.double_hash_pin(b"pin"), d.double_hash_pin(b"pin"));
+    assert_eq!(
+        d.double_hash_pin(b"pin").expose(),
+        d.double_hash_pin(b"pin").expose()
+    );
     // Must not hang / panic on empty input.
     let _ = d.hash_multi(b"");
     let _ = d.double_hash_pin(b"");

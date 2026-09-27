@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::consts::{ALG_ED25519, ALG_ESP256, ALG_ESP384, ALG_ESP512, EF_ALWAYS_UV};
+use crate::consts::{ALG_ED25519, ALG_ESP256, ALG_ESP384, ALG_ESP512, EF_ALWAYS_UV, FLAG_UP};
 use crate::seed::ensure_seed;
 use crate::test_pins::PIN;
 use minicbor::Decoder;
@@ -877,7 +877,7 @@ fn make_credential_extensions_stored_and_emitted() {
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
     let mut scratch = [0u8; 1024];
     let c = crate::credential::credential_load(
-        &seed,
+        seed.expose(),
         crate::credential::cred_record_box(&rec[..n]),
         &sha256(b"example.com"),
         &mut scratch,
@@ -1156,7 +1156,7 @@ fn large_blob_key_in_make_credential() {
     // v2 resident: largeBlobKey keys off the stable resident id (rec[32..74]),
     // not the box.
     let resident_id = &rec[32..crate::credential::RECORD_PREFIX];
-    let expected = crate::credential::derive_large_blob_key(&seed, resident_id);
+    let expected = crate::credential::derive_large_blob_key(seed.expose(), resident_id);
     assert_eq!(lbk.as_deref(), Some(&expected[..]));
 }
 
@@ -1367,6 +1367,103 @@ fn excluded_makecredential_confirms_then_spends_token() {
         crate::state::PERM_LBW,
         "the excluded-registration touch spends the token too"
     );
+}
+
+/// A presence source that answers what it was built with.
+struct Answer(crate::Presence);
+impl crate::UserPresence for Answer {
+    fn request(&mut self, _confirm: crate::Confirm<'_>) -> crate::Presence {
+        self.0
+    }
+}
+
+/// The three ways a user-presence test fails, and the status each answers.
+const REFUSALS: [(crate::Presence, CtapError); 3] = [
+    (crate::Presence::Declined, CtapError::OperationDenied),
+    (crate::Presence::Timeout, CtapError::OperationDenied),
+    (crate::Presence::Cancelled, CtapError::KeepAliveCancel),
+];
+
+// CTAP 2.1 §6.5.5.7 spends the token once the user-presence test SUCCEEDS, so a
+// refused touch -- declined, timed out or cancelled -- spends nothing, on the
+// registration path and on the excludeList hit: the same token can retry.
+#[test]
+fn a_refused_touch_leaves_the_token_unspent() {
+    for (answer, status) in REFUSALS {
+        for excluded in [false, true] {
+            let mut fs = Fs::new(RamStorage::new());
+            let mut rng = SeqRng(1);
+            ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+            let mut state = crate::FidoState::new();
+            let cred_id = register_and_get_cred_id(&mut fs, &mut rng, &mut state);
+            let token = arm_pin(&mut fs, &mut state);
+            let armed = PERM_MC | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+            state.paut.permissions = armed;
+            let cdh = [0xCDu8; 32];
+            let mut param = [0u8; 32];
+            let plen = rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &cdh, &mut param)
+                .unwrap();
+            let req = if excluded {
+                mc_build(7, |e| {
+                    good_params(e);
+                    e.u8(5).unwrap().array(1).unwrap().map(2).unwrap();
+                    e.str("id").unwrap().bytes(&cred_id).unwrap();
+                    e.str("type").unwrap().str("public-key").unwrap();
+                    e.u8(8).unwrap().bytes(&param[..plen]).unwrap();
+                    e.u8(9).unwrap().u64(2).unwrap();
+                })
+            } else {
+                build_request_pin(&param[..plen], 2)
+            };
+            let mut out = [0u8; 1024];
+            let got = {
+                let mut presence = Answer(answer);
+                let mut ctx = Ctx {
+                    presence: &mut presence,
+                    dev: dev(),
+                    fs: &mut fs,
+                    rng: &mut rng,
+                    state: &mut state,
+                    now_ms: 1000,
+                };
+                make_credential(&mut ctx, &req, &mut out)
+            };
+            let case = if excluded { "excluded" } else { "registration" };
+            assert_eq!(got, Err(status), "{answer:?}, {case}");
+            assert_eq!(state.paut.permissions, armed, "{answer:?}, {case}");
+            assert!(state.user_verified(), "{answer:?}, {case}");
+        }
+    }
+}
+
+// The zero-length pinUvAuthParam probe takes a touch of its own (§6.1.2 step 1)
+// and is not a user-presence test in §6.5.5.7's sense: a live token survives it.
+#[test]
+fn the_selection_probe_touch_leaves_the_token_unspent() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let _token = arm_pin(&mut fs, &mut state);
+    let armed = PERM_MC | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+    state.paut.permissions = armed;
+    let req = build_request_pin(&[], 2);
+    let mut out = [0u8; 1024];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 1000,
+    };
+    assert_eq!(
+        make_credential(&mut ctx, &req, &mut out),
+        Err(CtapError::PinInvalid)
+    );
+    assert_eq!(state.paut.permissions, armed);
+    assert!(state.user_verified());
 }
 
 #[test]
@@ -1609,6 +1706,45 @@ fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
         pad.touches, 0,
         "built-in UV must not ask for a second touch"
     );
+}
+
+// Built-in UV supplies the user-presence gesture itself (§6.1.2 step 13), so the test
+// polls nothing and must still spend a live token: a pad-verified registration that
+// hits its excludeList leaves no acfg token usable without a touch either.
+#[test]
+fn a_builtin_uv_presence_test_spends_a_live_token_without_polling() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut state = crate::FidoState::new();
+    let cred_id = register_and_get_cred_id(&mut fs, &mut rng, &mut state);
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
+    state.paut.permissions = PERM_MC | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+    state.begin_using_token(false, 0);
+    let req = mc_build(6, |e| {
+        good_params(e);
+        e.u8(5).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&cred_id).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(7).unwrap().map(1).unwrap();
+        e.str("uv").unwrap().bool(true).unwrap();
+    });
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad::typing();
+    let got = {
+        let mut ctx = Ctx {
+            presence: &mut pad,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        make_credential(&mut ctx, &req, &mut out)
+    };
+    assert_eq!(got, Err(CtapError::CredentialExcluded));
+    assert_eq!(pad.touches, 0, "the pad was the gesture");
+    assert_eq!(state.paut.permissions, crate::state::PERM_LBW);
 }
 
 #[test]
@@ -1893,7 +2029,7 @@ fn enterprise_attestation_level2_full_attestation() {
 
     // The attestation signature verifies under the DEVICE key (the seed
     // scalar), not the credential key.
-    let device_key = P256Key::from_scalar(&seed).unwrap();
+    let device_key = P256Key::from_scalar(seed.expose()).unwrap();
     let (x, y) = device_key.public_xy();
     let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
     let vk = VerifyingKey::from_sec1_point(&pt).unwrap();

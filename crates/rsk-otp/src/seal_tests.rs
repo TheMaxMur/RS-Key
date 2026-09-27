@@ -47,16 +47,6 @@ fn fixture() -> (Device<'static>, Fs<rsk_fs::storage::ram::RamStorage>) {
     )
 }
 
-/// The cap is checked before the nonce is drawn, so an over-long plaintext costs
-/// no randomness and leaves no half-written slot for the next read to find.
-#[test]
-fn a_plaintext_over_the_slot_is_refused_and_writes_nothing() {
-    let (dev, mut fs) = fixture();
-    let over = [0x5Au8; MAX_PLAIN + 1];
-    assert!(!seal_put(&dev, &mut fs, &mut TestRng(1), FID, &over));
-    assert!(!fs.has_key(FID), "a refused seal left a slot behind");
-}
-
 /// A record too short to hold its own `nonce ‖ tag` framing cannot be a slot this
 /// applet wrote, and `try_seal_read` must fold it to "not programmed" rather than
 /// underflow `pt_len`. `Ok(None)`, never `Err`: the medium answered fine.
@@ -66,7 +56,7 @@ fn a_record_shorter_than_its_framing_reads_as_unprogrammed() {
     for n in [1usize, NONCE_LEN + TAG_LEN - 1] {
         let junk = std::vec![0xEEu8; n];
         fs.put_key(FID, Sealed::wrap(&junk)).unwrap();
-        let mut out = [0u8; MAX_PLAIN];
+        let mut out = Secret::<[u8; MAX_PLAIN]>::zeroed();
         assert_eq!(
             try_seal_read(&dev, &mut fs, FID, &mut out),
             Ok(None),
@@ -81,13 +71,14 @@ fn a_record_shorter_than_its_framing_reads_as_unprogrammed() {
 fn an_output_buffer_under_the_plaintext_reads_as_unprogrammed() {
     let (dev, mut fs) = fixture();
     let plain = [0x11u8; CONFIG_SIZE];
-    assert!(seal_put(&dev, &mut fs, &mut TestRng(2), FID, &plain));
-    let mut small = [0u8; CONFIG_SIZE - 1];
+    let rec = SlotRecord::from_bytes(&plain).unwrap();
+    assert!(seal_put(&dev, &mut fs, &mut TestRng(2), FID, &rec));
+    let mut small = Secret::<[u8; CONFIG_SIZE - 1]>::zeroed();
     assert_eq!(try_seal_read(&dev, &mut fs, FID, &mut small), Ok(None));
-    let mut exact = [0u8; CONFIG_SIZE];
+    let mut exact = Secret::<[u8; CONFIG_SIZE]>::zeroed();
     assert_eq!(
         try_seal_read(&dev, &mut fs, FID, &mut exact),
         Ok(Some(CONFIG_SIZE))
     );
-    assert_eq!(exact, plain);
+    assert_eq!(*exact.expose(), plain);
 }

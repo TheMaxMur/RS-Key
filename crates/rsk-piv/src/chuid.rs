@@ -41,9 +41,13 @@ pub(crate) fn default_chuid(serial_hash: &[u8; 32]) -> [u8; CHUID_LEN] {
     let mut out = [0u8; CHUID_LEN];
     let mut i = 0;
     let mut push = |tag: u8, val: &[u8]| {
-        out[i] = tag;
-        out[i + 1] = val.len() as u8;
-        out[i + 2..i + 2 + val.len()].copy_from_slice(val);
+        let len = u8::try_from(val.len()).unwrap_or(u8::MAX);
+        if let Some(entry) = out.get_mut(i..i + 2 + val.len())
+            && let Some((head, body)) = entry.split_first_chunk_mut::<2>()
+        {
+            *head = [tag, len];
+            body.copy_from_slice(val);
+        }
         i += 2 + val.len();
     };
     push(0x30, &FASC_N);
@@ -56,5 +60,13 @@ pub(crate) fn default_chuid(serial_hash: &[u8; 32]) -> [u8; CHUID_LEN] {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "chuid_tests.rs"]
 mod tests;

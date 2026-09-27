@@ -47,15 +47,16 @@ fn slot_label(attestation: bool, slot: u8) -> ([u8; 40], usize) {
     } else {
         b"RS-Key PIV Slot "
     };
-    buf[..prefix.len()].copy_from_slice(prefix);
-    let mut n = prefix.len();
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    if slot >= 0x10 {
-        buf[n] = HEX[(slot >> 4) as usize];
+    let digit = |nibble: u8| HEX.get(usize::from(nibble)).copied().unwrap_or_default();
+    let hex = [digit(slot >> 4), digit(slot & 0xF)];
+    let digits = if slot >= 0x10 { &hex[..] } else { &hex[1..] };
+    let mut n = 0;
+    for (dst, &b) in buf.iter_mut().zip(prefix.iter().chain(digits)) {
+        *dst = b;
         n += 1;
     }
-    buf[n] = HEX[(slot & 0xF) as usize];
-    (buf, n + 1)
+    (buf, n)
 }
 
 fn x509_sw(e: rsk_x509::Error) -> Sw {
@@ -90,8 +91,8 @@ pub fn build_cert(
         None => &[],
     };
     let cert = rsk_x509::Cert {
-        subject_cn: &subject_cn[..subject_cn_len],
-        issuer_cn: &issuer_cn[..issuer_cn_len],
+        subject_cn: subject_cn.get(..subject_cn_len).unwrap_or_default(),
+        issuer_cn: issuer_cn.get(..issuer_cn_len).unwrap_or_default(),
         spki: p.spki,
         sha384: p.algo == ALGO_ECCP384,
         ca_pathlen: p.ca_pathlen,

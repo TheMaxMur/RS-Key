@@ -35,8 +35,8 @@ const SECTOR: usize = 4096;
 //   slowly and a (cold, expensive) page migration is rare. The `KVMAIN` build knob
 //   shrinks it to free code space on a small flash (a 2 MB board); the size is baked as
 //   `PK_KVMAIN_LEN` and MUST match `memory.x`'s KVMAIN LENGTH (build.rs writes both).
-// * **counter** (128 KiB) — the per-operation counters (FIDO `EF_COUNTER`, OpenPGP
-//   `EF_SIG_COUNT`, the vendor counter), rewritten on *every* signature/assertion.
+// * **counter** (128 KiB) — the counters in `rsk_fs::counter` (FIDO's two, OpenPGP's
+//   `EF_SIG_COUNT`, the vendor's), rewritten on *every* signature/assertion.
 //   That churn is what fills flash; isolating it here means it reclaims only its own
 //   small pages (cheap — a handful of always-cached keys) instead of advancing the
 //   main partition's ring into the credential pages (a multi-second cold-migration

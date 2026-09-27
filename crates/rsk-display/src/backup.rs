@@ -11,7 +11,7 @@ use super::*;
 /// digits lit for the whole presence timeout.
 pub(super) const REVEAL_MASK_MS: u64 = 4_000;
 
-impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+impl<'a, P, T, H, S, R> Local<'_, 'a, P, T, H, S, R>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
@@ -30,7 +30,7 @@ where
     fn load_backup(&self) -> BackupView {
         // Both reads under ONE borrow (multiple `borrow_mut()` in one statement would panic).
         let (st, device_pin_set) = {
-            let mut fs = self.fs.borrow_mut();
+            let mut fs = self.cells.fs.borrow_mut();
             (
                 rsk_fido::passkeys::backup_status(&mut fs),
                 rsk_fido::passkeys::device_pin_is_set(&mut fs),
@@ -153,29 +153,25 @@ where
             return;
         }
         // Read + derive. The seed lives only long enough to compute the indices, then is wiped.
-        let mkek = read_fused(self.keys.mkek_source);
-        let dev = self.keys.device(&mkek);
-        let mut seed_opt = {
-            let mut fs = self.fs.borrow_mut();
-            rsk_fido::passkeys::load_keydev(&dev, &mut fs)
-        };
-        let mut indices = match seed_opt {
-            // `Option<[u8;32]>` is `Copy`, so this copies the seed out — derive, then wipe BOTH
-            // the copy here and the original `seed_opt` below, or a seed remnant lingers.
-            Some(mut seed) => {
-                let idx = rsk_bip39::entropy_to_indices(&seed);
-                seed.zeroize();
-                idx
+        let mkek = read_fused(self.cells.keys.mkek_source);
+        let dev = self.cells.keys.device(&mkek);
+        let mut indices = {
+            // A `Secret`: the end of this block wipes it, the moment the indices exist.
+            let seed = {
+                let mut fs = self.cells.fs.borrow_mut();
+                rsk_fido::passkeys::load_keydev(&dev, &mut fs)
+            };
+            match &seed {
+                Some(seed) => rsk_bip39::entropy_to_indices(seed.expose()),
+                None => return, // no seed / soft-locked — nothing to show
             }
-            None => return, // no seed / soft-locked — nothing to show
         };
-        seed_opt.zeroize();
         // The seed left the device's own keeping — the same event `BACKUP_EXPORT`
         // records over USB, and the higher-value half of the pair, since nothing on
         // the host can attest that it happened (audit run-34 #17).
         self.journal_local(rsk_fido::journal::EV_BACKUP_EXPORT);
         let mut words: [&str; rsk_bip39::WORD_COUNT] = [""; rsk_bip39::WORD_COUNT];
-        for (w, &i) in words.iter_mut().zip(indices.iter()) {
+        for (w, &i) in words.iter_mut().zip(indices.expose().iter()) {
             *w = rsk_bip39::word(i);
         }
         let pages: u16 = rsk_bip39::WORD_COUNT.div_ceil(rsk_ui::SEED_WORDS_PER_PAGE) as u16;
@@ -213,9 +209,9 @@ where
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
         }
-        // Wipe both secrets from RAM: the indices (the canonical secret) via `Zeroize`, and the
-        // word slots (which also encode the order) via a black-boxed fill so it isn't elided.
-        indices.zeroize();
+        // Wipe both secrets from RAM: the indices (the canonical secret) in their `Secret`, and
+        // the word slots (which also encode the order) via a black-boxed fill so it isn't elided.
+        indices.wipe();
         words.fill("");
         let _ = core::hint::black_box(&words);
         note_activity();
@@ -272,32 +268,37 @@ where
         }
 
         // Read the seed and split it on-device; the seed lives only long enough to generate the
-        // shares, then is wiped (both the copied-out seed and the original `Option`).
-        let mkek = read_fused(self.keys.mkek_source);
-        let dev = self.keys.device(&mkek);
-        let mut seed_opt = {
-            let mut fs = self.fs.borrow_mut();
-            rsk_fido::passkeys::load_keydev(&dev, &mut fs)
-        };
-        let mut shares = [[0u16; rsk_slip39::WORDS_PER_SHARE]; rsk_slip39::MAX_SHARES];
-        let ok = match seed_opt {
-            Some(mut seed) => {
-                let r = {
-                    let mut rng = self.rng.borrow_mut();
+        // shares, then its `Secret` is wiped as the block that holds it ends.
+        let mkek = read_fused(self.cells.keys.mkek_source);
+        let dev = self.cells.keys.device(&mkek);
+        let mut shares = Secret::new([[0u16; rsk_slip39::WORDS_PER_SHARE]; rsk_slip39::MAX_SHARES]);
+        let ok = {
+            // A `Secret`: the end of this block wipes it, the moment the shares exist.
+            let seed = {
+                let mut fs = self.cells.fs.borrow_mut();
+                rsk_fido::passkeys::load_keydev(&dev, &mut fs)
+            };
+            match &seed {
+                Some(seed) => {
+                    let mut rng = self.cells.rng.borrow_mut();
                     let mut fill = |b: &mut [u8]| rsk_sdk::Rng::fill(&mut *rng, b);
-                    rsk_slip39::generate(&seed, threshold, total, &mut fill, &mut shares)
-                };
-                seed.zeroize();
-                r.is_ok()
+                    rsk_slip39::generate(
+                        seed.expose(),
+                        threshold,
+                        total,
+                        &mut fill,
+                        shares.expose_mut(),
+                    )
+                    .is_ok()
+                }
+                None => false, // no seed / soft-locked — nothing to show
             }
-            None => false, // no seed / soft-locked — nothing to show
         };
-        seed_opt.zeroize();
         if ok {
             self.journal_local(rsk_fido::journal::EV_BACKUP_EXPORT);
-            self.show_shares(&shares, total);
+            self.show_shares(shares.expose(), total);
         }
-        shares.zeroize();
+        shares.wipe();
         note_activity();
         self.end_modal();
     }
@@ -372,7 +373,7 @@ where
     /// device PIN, then a deliberate hold, then write the seal marker so the seed can no
     /// longer be shown or exported until a factory reset. The PIN gate is not about
     /// exposing a secret — it is about the change being *irreversible*, the same rule
-    /// [`Ui::run_delete`] and [`Ui::run_factory_reset`] follow. Relying on "Settings is
+    /// [`Local::run_delete`] and [`Local::run_factory_reset`] follow. Relying on "Settings is
     /// already locked" would be wrong twice over: the button only renders when a device
     /// PIN exists, and the host equivalent (`BACKUP_FINALIZE`) carries its own PIN gate.
     fn run_seal_backup(&mut self) {
@@ -386,7 +387,7 @@ where
         self.shown = None;
         self.touch.wait_release(Instant::now(), idle_limit);
         if self.hold_to_confirm("Hold to seal", rsk_ui::theme::DANGER_FILL) {
-            let _ = rsk_fido::passkeys::mark_backup_sealed(&mut self.fs.borrow_mut());
+            let _ = rsk_fido::passkeys::mark_backup_sealed(&mut self.cells.fs.borrow_mut());
             self.journal_local(rsk_fido::journal::EV_BACKUP_FINALIZE);
         }
         self.end_modal();

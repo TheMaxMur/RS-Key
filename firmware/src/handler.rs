@@ -10,7 +10,7 @@ use embassy_rp::trng::Trng;
 
 use rsk_crypto::HmacDrbg;
 use rsk_fs::Fs;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::flash_storage::FlashStorage;
 use crate::vendor::VendorPlatform;
@@ -61,10 +61,10 @@ impl FidoRng {
     /// 16 B nonce, SP 800-90A 10.1.2.3), drawn through the `Trng` the caller
     /// configured — `sample_count` only; the ROSC settings are the driver's.
     pub fn new(mut trng: Trng<'static, TRNG>) -> Self {
-        let mut seed = [0u8; 48];
-        trng.blocking_fill_bytes(&mut seed);
-        let drbg = HmacDrbg::new(&seed);
-        seed.zeroize();
+        let mut seed = Secret::<[u8; 48]>::zeroed();
+        trng.blocking_fill_bytes(seed.expose_mut());
+        let drbg = HmacDrbg::new(seed.expose());
+        seed.wipe();
         Self {
             trng,
             drbg,
@@ -74,10 +74,10 @@ impl FidoRng {
 
     fn draw(&mut self, buf: &mut [u8]) {
         if self.since_reseed >= RESEED_INTERVAL {
-            let mut e = [0u8; 32];
-            self.trng.blocking_fill_bytes(&mut e);
-            self.drbg.reseed(&e);
-            e.zeroize();
+            let mut e = Secret::<[u8; 32]>::zeroed();
+            self.trng.blocking_fill_bytes(e.expose_mut());
+            self.drbg.reseed(e.expose());
+            e.wipe();
             self.since_reseed = 0;
         }
         self.drbg.fill(buf);

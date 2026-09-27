@@ -41,7 +41,7 @@ pub fn piv_ref_title(which: rsk_piv::PinRef) -> &'static str {
     }
 }
 
-impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+impl<'a, P, T, H, S, R> Local<'_, 'a, P, T, H, S, R>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
@@ -83,7 +83,7 @@ where
                 // `run_set_pin` waits for the opening finger to lift, gates (a no-op with no
                 // PIN set yet), then collects New + Confirm; it writes only on a match.
                 self.run_set_pin(PinScope::Device);
-                if rsk_fido::passkeys::device_pin_is_set(&mut self.fs.borrow_mut()) {
+                if rsk_fido::passkeys::device_pin_is_set(&mut self.cells.fs.borrow_mut()) {
                     self.onboarding = false;
                     self.refresh_home_stats();
                 }
@@ -117,7 +117,7 @@ where
     pub(super) fn local_pin_gate(&mut self, scope: PinScope) -> bool {
         let title = scope.pin_title();
         let (retries, expected) = {
-            let mut fs = self.fs.borrow_mut();
+            let mut fs = self.cells.fs.borrow_mut();
             let is_set = match scope {
                 PinScope::Device => rsk_fido::passkeys::device_pin_is_set(&mut fs),
                 PinScope::Fido => rsk_fido::passkeys::pin_is_set(&mut fs),
@@ -139,7 +139,7 @@ where
             };
             (retries, expected)
         };
-        let mut pin = [0u8; 64];
+        let mut pin = Secret::<[u8; 64]>::zeroed();
         // A clientPIN refused here is `changePIN`'s failed old-PIN check performed
         // at the pad, and over USB that check ends the host's outstanding
         // pinUvAuthToken. Only this scope: the device PIN is no CTAP credential.
@@ -155,20 +155,20 @@ where
             // CTAP's 4-digit floor; the verify checks the exact PIN regardless, so a higher
             // `minPINLength` policy is still satisfied by typing it in full. (A PIN set
             // before the policy was raised may be shorter than `expected`.)
-            match self.collect_pin(title, caption, 4, expected, &mut pin, true) {
+            match self.collect_pin(title, caption, 4, expected, pin.expose_mut(), true) {
                 rsk_sdk::PinEntry::Entered(len) => {
-                    let mkek = read_fused(self.keys.mkek_source);
-                    let dev = self.keys.device(&mkek);
+                    let mkek = read_fused(self.cells.keys.mkek_source);
+                    let dev = self.cells.keys.device(&mkek);
                     let verdict = match scope {
                         PinScope::Device => rsk_fido::passkeys::spend_and_verify_device_pin(
                             &dev,
-                            &mut self.fs.borrow_mut(),
-                            &pin[..len.min(pin.len())],
+                            &mut self.cells.fs.borrow_mut(),
+                            &pin.expose()[..len.min(pin.expose().len())],
                         ),
                         PinScope::Fido => rsk_fido::passkeys::spend_and_verify_local_pin(
                             &dev,
-                            &mut self.fs.borrow_mut(),
-                            &pin[..len.min(pin.len())],
+                            &mut self.cells.fs.borrow_mut(),
+                            &pin.expose()[..len.min(pin.expose().len())],
                         ),
                     };
                     match verdict {
@@ -195,7 +195,7 @@ where
                 _ => break false,
             }
         };
-        pin.zeroize();
+        pin.wipe();
         if blocked {
             self.show_pin_blocked();
         }

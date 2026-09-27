@@ -353,6 +353,21 @@ def test_a_newly_added_cfg_hook(tree):
     assert tree.problems() == []
 
 
+def test_a_sibling_gated_above_a_multi_line_attribute(tree):
+    """rustfmt breaks a long `#[allow(…)]` over lines, and the `cfg` above it is
+    what gates the module: a test-only change behind it owes no bump."""
+    tree.append(
+        "crates/rsk-a/src/lib.rs",
+        '\n#[cfg(test)]\n#[allow(\n    clippy::panic,\n    reason = "a fixture"\n)]\n'
+        '#[path = "lib_tests.rs"]\nmod more;\n',
+    )
+    tree.bump()
+    tree.note()
+    tree.commit("hook the sibling in, and 0x0101")
+    tree.append("crates/rsk-a/src/lib_tests.rs", "\n#[test]\nfn more() {}\n")
+    assert tree.problems() == []
+
+
 def test_a_dev_dependency(tree):
     tree.edit("crates/rsk-a/Cargo.toml", 'hex-literal = "1"', 'hex-literal = "2"')
     assert tree.problems() == []

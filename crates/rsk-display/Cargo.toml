@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 # The trusted display's *flow* — which screen is shown when, the PIN pad's state
 # machine, the browse modals, the Approve/Deny wait. `rsk-ui` already held the
 # *rendering* (host-tested + Kani); this held everything that decides what to
@@ -41,7 +44,9 @@ embedded-graphics = { workspace = true }
 # Deadlines, debounce windows and the busy-wait polls the flow is built from.
 # Host builds supply the `std` driver; the firmware's comes from embassy-rp.
 embassy-time = { workspace = true }
-zeroize = { workspace = true }
+# The panel's PINs, the scramble entropy and the seed's words held in a type
+# that wipes itself.
+rsk-secret = { workspace = true }
 
 [dev-dependencies]
 # The tests drive the flow's real deadlines, debounces and busy-waits, so the

@@ -16,7 +16,7 @@ use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::{Signature, SigningKey};
 use rsk_crypto::{Device, Mode, aes_decrypt, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
 use rsk_fs::{Fs, KeyFid, Sealed, Storage};
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::Rng;
 
@@ -41,11 +41,17 @@ const GCM_LEN: usize = 1 + NONCE_LEN + 32 + TAG_LEN;
 const INFO_KEYDEV: &[u8] = b"KEYDEV/SEAL";
 
 /// The GCM sealing key for `arm`: HKDF-SHA256(serial_hash, kbase(arm), info).
-fn kenc(arm: &Device) -> [u8; 32] {
+fn kenc(arm: &Device) -> Secret<[u8; 32]> {
     let mut kbase = arm.derive_kbase();
-    let mut out = [0u8; 32];
-    hkdf_sha256(arm.serial_hash, &kbase, INFO_KEYDEV, &mut out).expect("32-byte HKDF output");
-    kbase.zeroize();
+    let mut out = Secret::<[u8; 32]>::zeroed();
+    hkdf_sha256(
+        arm.serial_hash,
+        kbase.expose(),
+        INFO_KEYDEV,
+        out.expose_mut(),
+    )
+    .expect("32-byte HKDF output");
+    kbase.wipe();
     out
 }
 
@@ -60,15 +66,20 @@ fn seal_gcm(dev: &Device, rng: &mut dyn Rng, scalar: &[u8; 32]) -> [u8; GCM_LEN]
     let ctpos = 1 + NONCE_LEN;
     rec[ctpos..ctpos + 32].copy_from_slice(scalar);
     let mut key = kenc(dev);
-    let tag = aes256gcm_encrypt(&key, &nonce, dev.serial_hash, &mut rec[ctpos..ctpos + 32]);
-    key.zeroize();
+    let tag = aes256gcm_encrypt(
+        key.expose(),
+        &nonce,
+        dev.serial_hash,
+        &mut rec[ctpos..ctpos + 32],
+    );
+    key.wipe();
     rec[ctpos + 32..].copy_from_slice(&tag);
     rec
 }
 
 /// GCM-open a keydev blob, deriving the key from `arm` and authenticating with
 /// `dev.serial_hash` as AAD. `None` on a malformed blob or auth failure.
-fn gcm_open(dev: &Device, arm: &Device, buf: &[u8]) -> Option<[u8; 32]> {
+fn gcm_open(dev: &Device, arm: &Device, buf: &[u8]) -> Option<Secret<[u8; 32]>> {
     if buf.len() != GCM_LEN || buf[0] != FMT_GCM {
         return None;
     }
@@ -77,15 +88,21 @@ fn gcm_open(dev: &Device, arm: &Device, buf: &[u8]) -> Option<[u8; 32]> {
     nonce.copy_from_slice(&buf[1..ctpos]);
     let mut tag = [0u8; TAG_LEN];
     tag.copy_from_slice(&buf[ctpos + 32..]);
-    let mut scalar = [0u8; 32];
-    scalar.copy_from_slice(&buf[ctpos..ctpos + 32]);
+    let mut scalar = Secret::<[u8; 32]>::zeroed();
+    scalar.expose_mut().copy_from_slice(&buf[ctpos..ctpos + 32]);
     let mut key = kenc(arm);
-    let r = aes256gcm_decrypt(&key, &nonce, dev.serial_hash, &mut scalar, &tag);
-    key.zeroize();
+    let r = aes256gcm_decrypt(
+        key.expose(),
+        &nonce,
+        dev.serial_hash,
+        scalar.expose_mut(),
+        &tag,
+    );
+    key.wipe();
     if r.is_ok() {
         Some(scalar)
     } else {
-        scalar.zeroize();
+        scalar.wipe();
         None
     }
 }
@@ -93,28 +110,28 @@ fn gcm_open(dev: &Device, arm: &Device, buf: &[u8]) -> Option<[u8; 32]> {
 /// Decrypt a legacy AES-CBC keydev record (fixed serial-hash IV, no MAC): a bare
 /// 32-byte pre-OTP blob or the tagged 33-byte OTP-arm blob. Kept for load +
 /// migration of devices provisioned before the GCM format.
-fn cbc_open(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
+fn cbc_open(dev: &Device, buf: &[u8]) -> Option<Secret<[u8; 32]>> {
     let mut iv = [0u8; 16];
     iv.copy_from_slice(&dev.serial_hash[..16]);
-    let mut scalar = [0u8; 32];
+    let mut scalar = Secret::<[u8; 32]>::zeroed();
     let mut kbase = match buf.len() {
         32 => {
-            scalar.copy_from_slice(&buf[..32]);
+            scalar.expose_mut().copy_from_slice(&buf[..32]);
             dev.without_otp().derive_kbase()
         }
         33 if buf[0] == TAG_OTP => {
             dev.otp_key?;
-            scalar.copy_from_slice(&buf[1..33]);
+            scalar.expose_mut().copy_from_slice(&buf[1..33]);
             dev.derive_kbase()
         }
         _ => return None,
     };
-    let r = aes_decrypt(&kbase, &iv, Mode::Cbc, &mut scalar);
-    kbase.zeroize();
+    let r = aes_decrypt(kbase.expose(), &iv, Mode::Cbc, scalar.expose_mut());
+    kbase.wipe();
     if r.is_ok() {
         Some(scalar)
     } else {
-        scalar.zeroize();
+        scalar.wipe();
         None
     }
 }
@@ -122,7 +139,7 @@ fn cbc_open(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
 /// Recover the keydev scalar from any supported on-flash form: GCM under the
 /// current arm, GCM under the pre-OTP arm (a key sealed before provisioning),
 /// or a legacy CBC record.
-fn unseal_scalar(dev: &Device, buf: &[u8]) -> Option<[u8; 32]> {
+fn unseal_scalar(dev: &Device, buf: &[u8]) -> Option<Secret<[u8; 32]>> {
     if let Some(s) = gcm_open(dev, dev, buf) {
         return Some(s);
     }
@@ -146,12 +163,12 @@ pub fn load_or_generate<S: Storage>(
     if let Some(devk) = devk {
         return SigningKey::from_bytes(devk.into()).ok();
     }
-    let mut buf = [0u8; GCM_LEN];
-    let key = match fs.try_read_key(EF_DEVCERT_KEY, &mut buf) {
+    let mut buf = Secret::<[u8; GCM_LEN]>::zeroed();
+    let key = match fs.try_read_key(EF_DEVCERT_KEY, buf.expose_mut()) {
         Ok(Some(n)) => {
-            let mut scalar = unseal_scalar(dev, &buf[..n.min(GCM_LEN)])?;
-            let k = SigningKey::from_bytes(&scalar.into()).ok();
-            scalar.zeroize();
+            let mut scalar = unseal_scalar(dev, &buf.expose()[..n.min(GCM_LEN)])?;
+            let k = SigningKey::from_bytes(scalar.expose().into()).ok();
+            scalar.wipe();
             k
         }
         // Only a CONFIRMED absence mints. A probe the flash could not answer is not
@@ -162,22 +179,22 @@ pub fn load_or_generate<S: Storage>(
         Ok(None) => {
             // Draw until the scalar is a valid non-zero field element
             // (overwhelmingly the first draw), then persist it GCM-sealed.
-            let mut scalar = [0u8; 32];
+            let mut scalar = Secret::<[u8; 32]>::zeroed();
             let key = loop {
-                rng.fill(&mut scalar);
-                if let Ok(k) = SigningKey::from_bytes(&scalar.into()) {
+                rng.fill(scalar.expose_mut());
+                if let Ok(k) = SigningKey::from_bytes(scalar.expose().into()) {
                     break k;
                 }
             };
-            let rec = seal_gcm(dev, rng, &scalar);
-            scalar.zeroize();
+            let rec = seal_gcm(dev, rng, scalar.expose());
+            scalar.wipe();
             if fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&rec)).is_err() {
                 return None;
             }
             Some(key)
         }
     };
-    buf.zeroize();
+    buf.wipe();
     key
 }
 
@@ -187,16 +204,16 @@ pub fn load_or_generate<S: Storage>(
 /// fuse key is present. No-op when the key is absent or already current;
 /// idempotent (the re-seal is one atomic record write).
 pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
-    let mut buf = [0u8; GCM_LEN];
-    let Some(n) = fs.read_key(EF_DEVCERT_KEY, &mut buf) else {
-        buf.zeroize();
+    let mut buf = Secret::<[u8; GCM_LEN]>::zeroed();
+    let Some(n) = fs.read_key(EF_DEVCERT_KEY, buf.expose_mut()) else {
+        buf.wipe();
         return;
     };
     let n = n.min(GCM_LEN);
     // Already GCM under the current arm? Nothing to do.
-    if let Some(mut s) = gcm_open(dev, dev, &buf[..n]) {
-        s.zeroize();
-        buf.zeroize();
+    if let Some(mut s) = gcm_open(dev, dev, &buf.expose()[..n]) {
+        s.wipe();
+        buf.wipe();
         return;
     }
     // The current-arm GCM case returned above, so a GCM-length blob here opened
@@ -205,17 +222,17 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
     let weak = dev.otp_key.is_some() && matches!(n, GCM_LEN | 32);
     // Otherwise recover via the pre-OTP GCM arm or a legacy CBC record and
     // re-seal as GCM under the current arm.
-    if let Some(mut scalar) = unseal_scalar(dev, &buf[..n]) {
-        let rec = seal_gcm(dev, rng, &scalar);
-        scalar.zeroize();
+    if let Some(mut scalar) = unseal_scalar(dev, &buf.expose()[..n]) {
+        let rec = seal_gcm(dev, rng, scalar.expose());
+        scalar.wipe();
         // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: this pass
         // runs before the boot's lap, but a boot that could not read this slot has
         // already latched the marker, and the lap gates on it and nothing else.
-        if !weak || rsk_fs::request_rescrub(fs).is_ok() {
-            let _ = fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&rec));
+        if let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, weak) {
+            let _ = fs.put_key_over(EF_DEVCERT_KEY, Sealed::wrap(&rec), rearmed.as_ref());
         }
     }
-    buf.zeroize();
+    buf.wipe();
 }
 
 /// ECDSA over a host-supplied 32-byte digest; returns r || s (64 bytes), with

@@ -79,7 +79,7 @@ fn dek_decrypts_under_default_pin() {
     let session = d.pin_derive_session(PW1_DEFAULT);
     let mut dek = [0u8; DEK_SIZE];
     let m = d
-        .decrypt_with_aad(&session, &blob[1..n], PinKdf::V2, &mut dek)
+        .decrypt_with_aad(session.expose(), &blob[1..n], PinKdf::V2, &mut dek)
         .unwrap();
     assert_eq!(m, DEK_SIZE);
     // RC and PW3 are the same blob sealed under PW3 and decrypt to the same DEK.
@@ -87,7 +87,7 @@ fn dek_decrypts_under_default_pin() {
     fs.read(EF_DEK_PW3.get(), &mut blob3);
     let session3 = d.pin_derive_session(PW3_DEFAULT);
     let mut dek3 = [0u8; DEK_SIZE];
-    d.decrypt_with_aad(&session3, &blob3[1..], PinKdf::V2, &mut dek3)
+    d.decrypt_with_aad(session3.expose(), &blob3[1..], PinKdf::V2, &mut dek3)
         .unwrap();
     assert_eq!(dek, dek3);
 }

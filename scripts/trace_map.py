@@ -16,7 +16,7 @@ silent stutter, because a mapper that skips what it does not understand is a
 checker that stopped checking. The one piece of state the mapper keeps is the
 current selection: the wire says only "SELECT piv", and whether that is the
 model's `Reselect` or `SelectOther` depends on what was selected before — the
-same `reselect` flag the Dispatcher computes (crates/rsk-sdk/src/applet.rs:422).
+same `reselect` flag the Dispatcher computes (crates/rsk-sdk/src/applet.rs:449).
 
 The default mode is the gate's: re-map the committed trace and hold the result
 against the committed `TraceSeamsData.tla`, so the two cannot drift apart

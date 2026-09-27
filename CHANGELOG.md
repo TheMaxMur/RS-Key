@@ -83,6 +83,176 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- What a request's crypto left below the stack pointer stayed there until a
+  later frame overwrote it. RustCrypto's `Copy` temporaries, the `hmac` crate's
+  key XORed with its pads, `aes`'s key schedule and a SHAKE reader's state are
+  in no value a `Secret` or a `Drop` can reach: the frame that held them has
+  returned. Core0's dead stack, every word from the stack's floor to its live
+  frames, is now zeroed after each request, each keyboard OTP frame, each typed
+  ticket and each flow the panel runs, and core1 zeroes its own after each prime
+  search (`firmware/src/sweep.rs`). A `--features bench` build adds a vendor
+  probe (INS 0x15) that counts a pattern in that region and can stop the sweep,
+  and `tests/55_stack_residue.py` uses it to find an OATH key's HMAC residue
+  there with the sweep stopped and none with it running; that run, and what the
+  sweep adds to a request, are still to be measured on the board. Reading any of
+  it took a memory read on the live device. **bcdDevice → 0x0A4D.**
+
+- Freed heap blocks kept key material until an allocation reused them. The heap
+  serves `rsk-rsa`'s big integers, and `num-bigint-dig` frees the limbs of its
+  own working buffers without wiping them: a key rebuild's arithmetic (import,
+  OpenPGP ATTEST, key generation) and a key `RsaKey::from_p_q` refuses left
+  primes, `d` and CRT values in freed blocks. The allocator now zeroes every
+  block as it frees it (`ZeroingHeap` in `firmware/src/main.rs`), and a grown
+  vector's old block with it, so a freed buffer's bytes do not outlive the free.
+  It stores words, not bytes: an RSA key generation frees tens of megabytes of
+  big-integer temporaries. What that costs RSA key generation and signing is
+  still to be measured on the board. Reading any of it took a memory read on the
+  live device. **bcdDevice → 0x0A4A, then 0x0A4C.**
+
+- OpenPGP PSO:DECIPHER left the deciphered secret in the applet's memory. The
+  applet builds every PSO result in a 1 KiB scratch buffer that lives as long
+  as the applet, copies it into the response and never cleared it, so what a
+  decipher returned — the message's session key under `gpg --decrypt` (RSA),
+  the ECDH shared secret, or an AES decipher's plaintext — stayed in RAM
+  across commands; a later command overwrote only the length of its own
+  answer. The scratch is now wiped whenever PSO returns, on every exit.
+  Reading it took a memory read on the live device.
+  **bcdDevice → 0x0A2B.**
+
+- PIV GET METADATA and ATTEST on an RSA slot left the key's primes in freed
+  RAM, and neither needs a PIN. GET METADATA multiplies the two stored primes
+  for the modulus, and `num-bigint-dig`'s `from_bytes_be` reverses each prime
+  in a buffer it frees without wiping: in a host replay of the device's
+  allocator the second prime stayed in freed heap after every call, all but the
+  eight bytes the allocator's header overwrites, which is enough of a prime to
+  factor the modulus. ATTEST rebuilt the whole private key only to certify its
+  modulus, and that arithmetic's working buffers kept both primes and `dQ`.
+  `rsk-rsa` now reads a secret big-endian value through a reversed copy it
+  holds in a `rsk_secret::Secret`, which the library reads little-endian
+  without a copy of its own — every private operation, key load and import
+  reads its primes that way — and PIV ATTEST reads the modulus alone, as GET
+  METADATA does. The replay finds no prime after either command now. A key
+  rebuild's own arithmetic (import, OpenPGP ATTEST, key generation) freed
+  working copies unwiped until the heap wiped what it frees (0x0A4A). Reading
+  any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A24.**
+
+- Yubico OTP left a slot's secrets in RAM after most commands. Every command
+  that reads a slot — the keyboard ticket, CALCULATE (challenge-response),
+  SWAP, UPDATE, CONFIGURE, the status reads and the boot counter bump — unseals
+  the record, with its AES or HMAC key, private UID and access code, into a
+  buffer in its own frame and returned without wiping it; CALCULATE and the
+  keyboard ticket also copied the key out into bare arrays, three handlers held
+  the presented access code in one, and a keyboard slot write passed the whole
+  frame through two more copies on its way to the applet. `rsk-otp`'s unseal
+  now writes only into a `rsk_secret::Secret`, which the compiler holds every
+  reader to, the key, code and request copies are `Secret`s, and the keyboard
+  frame is copied straight into the request buffer that wipes itself. The
+  `hmac` and `aes` crates left the key in their own dead frames, as a padded
+  block or a key schedule, until the dead-stack sweep (0x0A4D). Reading any of
+  it takes a memory read on the live device.
+  **bcdDevice → 0x0A23.**
+
+- OATH left a credential's secret in RAM after most commands. PUT, DELETE,
+  RENAME, CALCULATE, CALCULATE ALL, LIST (and its SEND REMAINING pages),
+  VERIFY CODE and GET CREDENTIAL unseal a credential — its name, HMAC key and
+  counter, and for a password-safe entry the login and password — into a
+  buffer in their own frame, and returned without wiping it; PUT and RENAME
+  also built the record they store in one, and VALIDATE held the access-code
+  key the same way. A failed VALIDATE also left the right answer to the
+  session's challenge, which unlocks the applet until the next SELECT, and
+  VERIFY CODE the HOTP code the next CALCULATE returns. Only the credential
+  walk and the boot pass that reseals legacy records wiped theirs. `rsk-oath`'s
+  unseal now writes only into a `rsk_secret::Secret`, which the compiler holds
+  every reader to, and the builders' buffers and those two MACs are `Secret`s
+  too, so each is wiped on every exit. The `hmac` crate left the key, XORed
+  with its pad, in its own dead frame after every MAC until the dead-stack sweep
+  (0x0A4D). Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A21.**
+
+- An RSA decipher left the deciphered block in freed RAM. OpenPGP's
+  PSO:DECIPHER and PIV's GENERAL AUTHENTICATE both run
+  `rsk_rsa::crt::private_op`, whose unblinded result — for a decipher, the
+  PKCS#1 block that carries the session key — was a plain bignum, reduced from
+  a product equal to it modulo the public n and copied into two byte vectors on
+  its way out, one for the fault check and one for the answer. All four were
+  freed unwiped, and the heap did not clear what it freed. The software path,
+  `RsaKey::private_op` (the legacy decipher, and the signature on the PIV
+  key-generation certificate), freed its product the same way and every step
+  of its CRT recombination too — a CRT half, which with the blinded input
+  factors the key — and both paths their blinding temporaries. All of them are
+  `rsk_secret::Secret`s now, wiped before they are freed. What is left is
+  `num-bigint-dig`'s own working buffers — the reduction's, and on the
+  software path the fault check's — each freed holding the result, less the
+  eight bytes the allocator's free-list header takes, until the heap wiped what
+  it frees (0x0A4A). Reading any of it takes a memory read on the live
+  device. **bcdDevice → 0x0A1F.**
+
+- An ML-DSA credential key was copied into its box through the stack, leaving
+  the whole expanded key behind each time it was derived. `rsk-fido` boxed
+  `MlDsa*::from_seed(&xi)`, which built the key — the NTT-domain s1, s2 and
+  t0, the signing seed K — on the stack; the copy into the box left that stack
+  image unwiped. The key is now expanded field by field into a zeroed box
+  (`zeroed()` + `expand()`), and a zeroed key refuses to sign until then.
+  Measured in an emulator on the release image, the secret bytes a derivation
+  leaves in dead stack fall from 36.0 / 49.4 / 65.7 KB to 8.3 / 10.4 / 14.5 KB
+  (ML-DSA-44 / -65 / -87), and its stack depth from 77.6 / 105.3 / 140.1 KB to
+  42.6 / 53.8 / 70.2 KB. What remained still rebuilt the key — ρ′ and K sat in
+  the SHAKE256 reader's state, which `sha3` never wipes — until the dead-stack
+  sweep (0x0A4D). Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A1C.**
+
+- An RSA key generation could leave the key's primes on core0's stack. A prime
+  core1 found was handed back by value on its way to the key, and each frame it
+  passed through kept a copy nothing wiped, so with core1 engaged one factor of
+  the new modulus, or both when core1 posted both before core0 polled, could
+  stay in core0's dead stack after the key was built. Core1's copy of the job's DRBG seed, which replays every candidate it
+  tried, stayed on its own stack until the next job the same way, and posting
+  the job left two short-lived copies on core0's. Primes and seed are now copied
+  into zeroed slots inside the mailbox lock and never moved; checked in the
+  release image, where the search's frame shrank from 1180 to 900 bytes.
+  Reading any of it takes a memory read on the live device.
+  **bcdDevice → 0x0A19.**
+
+- OpenPGP's first boot left both PIN session keys in RAM when a write failed.
+  `scan_files` derives the PW1 and PW3 session keys to seal the new DEK and
+  wiped them only after its last write, so a failed flash write before that
+  returned past the wipe. A fused-key read that
+  failed part-way — an OTP ECC error while reading the MKEK or DEVK — likewise
+  left the bytes read so far in the reader's frame. Both are wiped on every
+  exit now: key derivation hands out `rsk_secret::Secret`s and the fused read
+  writes straight into one (see Internal). A session key opens the DEK only
+  together with the device root key. **bcdDevice → 0x0A17.**
+
+- A Yubico OTP slot write over the keyboard interface left the slot's secrets in
+  RAM. The firmware took its own copy of the request — for a slot configure,
+  the AES key, the private UID and the access code — and never wiped it, and
+  the response body (for a challenge-response, the HMAC under the slot secret)
+  likewise; only the transport's buffer was cleared. `rsk-otp` now hands the
+  request over as a `rsk_secret::Secret`, copied straight into it, and the
+  worker wipes the response in place. **bcdDevice → 0x0A14.**
+
+- OpenPGP left PIN-derived session keys in RAM unwiped. The session key a new
+  PW1, PW3 or resetting code derives — the key that, with the device root key,
+  opens the DEK every private key is sealed under — was returned as a bare
+  array by the staging and re-wrap steps, and dropped without a wipe wherever
+  a caller discarded it: on SUCCESS when `PUT DATA D3` sets a resetting code
+  and when a pre-OTP DEK copy is migrated at VERIFY, and on every flash-error
+  path after staging (CHANGE, RESET RETRY, the KDF-DO write). VERIFY's derived
+  verifier was never wiped either. They are held in `rsk_secret::Secret` now,
+  which wipes on every exit, and the KDF-DO write hands its two new keys over by
+  reference instead of by value. Exposure needs a memory read on a live device,
+  and a session key opens the DEK only together with the device root key, which
+  a fused board keeps in OTP.
+  **bcdDevice → 0x0A13.**
+
+- A display build with `WAKE_PIN=6` or `WAKE_PIN=7` compiled, and handed the
+  touch controller's I2C1 data or clock pad to the wake button as well: the
+  firmware stole that GPIO for a second driver while I2C1 still owned it. The
+  build checked the wake pin against the LCD range (`10..=18`) and the panel's
+  control lines but not against the hard-wired pins beside them; it now refuses
+  6, 7, 10 and 11 like every other panel pin. No board preset uses either
+  value (the Touch-LCD board wakes on GPIO25). **bcdDevice → 0x0A10.**
 - An `XfrBlock` of one or three bytes, too short for `CLA INS P1 P2`, is refused
   by the reader as a YubiKey 5.8.0 refuses one: a failed `RDR_to_PC_SlotStatus`,
   `bStatus` `40` with the slot powered, whose `bError` `01` names `dwLength`, and
@@ -642,6 +812,323 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The type-contracts line lands on develop** — merge. Its commits (the entries
+  from the host-bytes deny down to the one lint policy below, and the zeroing heap
+  and the dead-stack sweep under Fixed) meet develop's own since 0x0A0E here, and
+  where develop's parity fixes land in a module under the host-bytes deny they are
+  written as it asks: `refuse_short_xfr`, the dispatcher's frame limit, and PIV
+  GENERATE without its certificate. Both lines numbered their builds from 0x0A0F,
+  so 0x0A0F–0x0A16 each name one build on either line; the merge is the next.
+  `bcdDevice` 0x0A16 and 0x0A4D → 0x0A4E.
+
+- **The parsers of host bytes cannot index, unwrap or truncate unchecked** —
+  refactor; the same bytes out for the same bytes in. A module that reads what a
+  host sent denies `clippy::indexing_slicing`, `unwrap_used`, `expect_used`,
+  `panic` and `cast_possible_truncation`, so every access there is one whose
+  failure the code handles: under `panic-halt` a panic on a host's bytes is a
+  board that answers nothing until it is unplugged. So far: `rsk-sdk`'s TLV walk,
+  whose `format_len` now takes the `[u8; 3]` it writes at most, its APDU
+  parser and applet dispatcher, `rsk-usb`'s CTAPHID and CCID transports,
+  `rsk-fido`'s credential-descriptor list decoder, `rsk-openpgp`'s data-object
+  writer, the two record codecs, `rsk-devconf` (the device configuration) and
+  `rsk-phy` (the board record the boot path reads), and the whole OTP applet,
+  `rsk-otp`, whose slot configure/update now takes the 52-byte config as a
+  `[u8; 52]` it cannot be handed short. A length narrowed into a byte is a
+  checked conversion, or a cast under a stated `#[expect]`, rather than a byte
+  picked out of a wider integer. The PIV applet, `rsk-piv`, whole crate,
+  follows the OTP one; its data-object reader takes the `[u8; RECORD_MAX]` it
+  fills. The OATH applet, `rsk-oath`, follows too; its PUT keeps a HOTP
+  credential's initial moving factor as the `[u8; 4]` it was checked to be.
+  In `rsk-fido` the CTAP handlers follow, a module at a time: `credential.rs`,
+  the credential-id box codec, `getassertion.rs`, `makecredential.rs`,
+  `u2f.rs`, `credmgmt.rs` and `clientpin.rs`. The allowList and excludeList take
+  their length from the constant `getNextAssertion`'s list does, not a cast each.
+  `bcdDevice` 0x0A35 → 0x0A49, then 0x0A4B.
+
+- **The trusted display a host ceremony reaches holds no cell its dispatch
+  borrows** — refactor; the same screens, touches and store writes. The panel's
+  `Ui` no longer carries the store, the device keys or the DRBG: the device's own
+  screens get them as `Parked` cells, handed to the status loop only, and run as
+  methods of a `Local` view, while `TouchPresence` holds the `Ui` alone. A borrow
+  of a cell the host dispatch is holding (issue #107) no longer compiles from
+  anything a ceremony can reach; the one store read left there, the device-PIN bit
+  a mid-ceremony sleep locks on, goes through a try-borrow that cannot wait. The
+  gate that walked the call graph for such borrows,
+  `scripts/display_borrow_gate.py`, is gone.
+  `bcdDevice` 0x0A34 → 0x0A35.
+
+- **A response's UP bit and the token's spend come from one presence test** — refactor;
+  the same status words, flags and token state. makeCredential's and
+  getAssertion's four user-presence tests (the matched and the no-match
+  assertion, the registration, the excludeList hit) go through one producer,
+  `Ctx::user_presence_test`: it polls the touch when there is one, runs CTAP
+  2.1 §6.5.5.7's triad when the request asserts `up`, and answers the `UpFlag`
+  the two success paths build their authenticator data's UP bit from. Only
+  those two commands' requests can ask it (a sealed trait).
+  `bcdDevice` 0x0A33 → 0x0A34.
+
+- **The MSE seed-backup channel is spent by taking it** — refactor; the same
+  status words in the same order. The channel a `VENDOR_MSE` handshake
+  establishes is one private `Option<MseChannel>` in the FIDO state, where a
+  live flag, the key, the device public key and the CTAPHID channel were four
+  public fields: a consumer (`BACKUP_EXPORT`, `BACKUP_LOAD`, `UNLOCK`, `ATT_IMPORT`,
+  `ATT_CLEAR`, and `authenticatorConfig`'s `AUT_ENABLE`) reaches the key only
+  through the channel `take_mse` hands it, which empties the slot whatever it
+  answers, and a handshake installs one only with the token `vacate_mse` gives
+  when no channel is live.
+  `bcdDevice` 0x0A32 → 0x0A33.
+
+- **A write over a pre-OTP copy takes the at-rest re-arm's token** — refactor;
+  the same appends in the same order. `rsk_fs::request_rescrub` answers
+  `Result<Rearmed>`, and the writes that supersede or tombstone a record the
+  chip serial alone keys (`Fs::put_over`, `put_key_over`, `delete_over`,
+  `delete_key_over`, and the applets' seal and verifier writers above them)
+  take it, so a write that passes it comes neither before the re-arm nor after
+  a refused one; which writes supersede such a copy stays the caller's call. The wipe
+  sweeps take the `RearmAttempted` that `rsk_fs::attempt_rescrub` returns, so
+  none runs without the best-effort re-arm ahead of it.
+  `bcdDevice` 0x0A31 → 0x0A32.
+
+- **An OTP slot's use counter moves only by the record's own methods** —
+  refactor; the same bytes reach flash for every command. `rsk-otp`'s slot
+  record is a type, `SlotRecord`, whose tail (the Yubico-OTP use counter or the
+  OATH-HOTP moving factor) is private: it is read from a slot, zeroed by a
+  CONFIGURE, carried by an UPDATE, or moved by a press or the boot bump, and
+  `seal::seal_put` seals a record and nothing else. The
+  gate that listed the sites persisting a record,
+  `scripts/counter_writers_gate.py`, is gone with its ledger.
+  `bcdDevice` 0x0A30 → 0x0A31.
+
+- **The counter partition's FIDs are written once** — refactor; the records stay
+  where they are on flash. `rsk-fs` declares the four counters (FIDO's global
+  and per-credential signature counters, OpenPGP's signature counter, the vendor
+  test counter) as `rsk_fs::counter::CounterFid`s with the one list
+  `COUNTER_FIDS`, which `rsk_store::is_counter_fid`, its test and the
+  `power_cut` fuzz target now read instead of their own copies of the four
+  numbers; a counter is written and read through `Fs::put_counter` and its
+  readers, since the plaintext `Fs::put` does not take one. The gate that held
+  the copies to each other, `scripts/partition_routing_gate.py`, is gone.
+  `bcdDevice` 0x0A2F → 0x0A30.
+
+- **Clippy refuses a reset outside the secure reboot** — a lint-policy change;
+  the code is the same. `clippy.toml` refuses `SCB::sys_reset`,
+  `rom_data::reset_to_usb_boot`, `reboot`, `reboot_ns` and
+  `Watchdog::trigger_reset`; the secure reboot, which scrubs the RAM secrets
+  first, and `rsk-wipe`, which holds none, keep their calls under an
+  `#[expect]`. `bcdDevice` 0x0A2E → 0x0A2F.
+
+- **The zeroize ban covers every crate** — a lint-policy change; the code is
+  the same. The workspace's clippy table now refuses a bare `Zeroize::zeroize`
+  and a `Zeroizing` everywhere, where each crate used to switch the ban on at
+  its own root as its secrets moved into `rsk_secret`; with every crate moved,
+  those per-crate switches are gone. `bcdDevice` 0x0A2D → 0x0A2E.
+
+- **The panel's PINs and backup words are typed** — refactor; nothing on the
+  panel or the wire changes. `rsk-display`'s PIN buffers (the device, FIDO and
+  PIV PIN and PUK flows), the pad-scramble entropy and the SLIP-39 share
+  indices are `rsk_secret::Secret`s, wiped where the hand wipes were and
+  again when dropped, and `rsk_piv::pad_pin` hands the padded PIN out in one.
+  The crate takes the zeroize ban at its root. `bcdDevice` 0x0A2C → 0x0A2D.
+
+- **The recovery phrase's word indices are typed** — refactor; the phrase is
+  the same, word for word. `rsk-bip39` builds the 24 indices, which
+  reconstruct the seed, in a `rsk_secret::Secret` and hands them out in it,
+  so the display's seed-phrase screen can only hold them in a type that wipes
+  itself. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A2B → 0x0A2C.
+
+- **FIDO's seed and the keys derived from it are typed** — refactor; nothing a
+  host sees changes. `rsk-fido`'s seed loaders, the credential, hmac-secret and
+  key-handle derivations, the ratchet, the persistent token and the vendor
+  channel key hand their bytes out in `rsk_secret::Secret`s instead of bare
+  arrays their callers wiped, and the PIN-protocol shared secrets, PIN hashes,
+  unsealed records and field bytes are `Secret`s too, wiped in place where the
+  hand wipes were and on every other exit — three callers that never wiped a
+  derived key now do. The largeBlobKey, which CTAP hands to the platform, is
+  still returned as a plain array, but the chain it is derived through is a
+  `Secret`. The unlocked seed copy in RAM is an `Option<Secret>` that wipes
+  itself when cleared. The session's token, key-agreement key and channel key,
+  and a credential key's own `Drop`, keep their bare wipes under an
+  `#[expect]`. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A29 → 0x0A2A.
+
+- **OpenPGP's DEK and sealed keys are typed** — refactor; nothing a host sees
+  changes. `rsk-openpgp`'s DEK load and its unseal write only into a
+  `rsk_secret::Secret`, the DEK's split keys and the AES key are handed out in
+  `Secret`s, and every DEK, staged DEK record, key-data and sealed-blob buffer
+  it wiped by hand is one, wiped in place where the hand wipes were and on
+  every other exit — which now includes a failed DEK load in six callers and
+  a staged DEK's early return after an unauthenticated decrypt. Six functions
+  that wrapped their body in a closure only so the wipe would run after a `?`
+  are plain code again. The `Session`'s PIN-derived keys keep their bare
+  wipes in `reset` and `Drop` under an `#[expect]`. The crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A28 → 0x0A29.
+
+- **PIV's keys and sealed plaintext are typed** — refactor; nothing a host
+  sees changes. `rsk-piv`'s unseal writes only into a `rsk_secret::Secret`,
+  and the seal key, the sealing blob, every unsealed key buffer, the
+  management key in GENERAL AUTHENTICATE and its reads, the RSA decipher
+  output, the ECDH secret, the PIN record a PIN change writes and the X25519
+  import buffer are `Secret`s, wiped in place where the hand wipes were and on
+  every other exit — which now includes GENERAL AUTHENTICATE's `?` on a
+  response that does not fit, where the decipher output and the ECDH secret
+  were left. The three loaders and stores that wrapped their body in a
+  closure only so the wipe would run after a `?` are plain code again. The
+  challenge between GENERAL
+  AUTHENTICATE's two halves keeps its bare wipe under an `#[expect]`. The
+  crate takes the zeroize ban at its root. `bcdDevice` 0x0A27 → 0x0A28.
+
+- **SLIP-39's working buffers are typed** — refactor; the shares are the same,
+  byte for byte. `rsk-slip39`'s Feistel halves, round outputs, PBKDF2 state,
+  the random part, the Shamir base points and the split shares are
+  `rsk_secret::Secret`s, wiped where the hand wipes were and again when
+  dropped; the Feistel swap copies bytes into the halves rather than moving
+  arrays between them. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A26 → 0x0A27.
+
+- **The device key's scalar is typed** — refactor; nothing a host sees
+  changes. `rsk-rescue`'s keydev unseal hands the scalar out in a
+  `rsk_secret::Secret` instead of a bare array its callers wiped, its seal key
+  and the sealed record's buffers are `Secret`s, and the signing key is built
+  from a reference to the scalar rather than a copy of it. The crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A25 → 0x0A26.
+
+- **The dispatchers' response buffers take the zeroize ban** — refactor;
+  nothing a host sees changes. `rsk-device`'s CTAP and CCID handlers keep their
+  response buffer for their whole life and wipe it after each hand-off and on
+  a secure reboot, so those three wipes stay bare under an `#[expect]` that
+  names the wipe point; the crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A24 → 0x0A25.
+
+- **Yubico OTP's seal and frame buffers are typed** — refactor; nothing a host
+  sees changes. `rsk-otp`'s seal key, the sealing and unsealing blob, the
+  reseal pass's two buffers, the keyboard frame's reassembly buffer and the
+  taken request's payload are `rsk_secret::Secret`s, wiped in place where the
+  hand wipes were and on every other exit. The crate takes the zeroize ban at
+  its root, and `zeroize` is left to its tests. `bcdDevice` 0x0A21 → 0x0A22.
+
+- **OATH's seal buffers are typed** — refactor; nothing a host sees changes.
+  `rsk-oath`'s seal key, the sealing and unsealing blob, the credential walk's
+  scratch and the reseal pass's two buffers are `rsk_secret::Secret`s, wiped in
+  place where the hand wipes were and on every other exit. The crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A1F → 0x0A20.
+
+- **RSA's working buffers and bignums are typed** — refactor; nothing a host
+  sees changes. `rsk-rsa`'s modexp and CRT buffers (the assembly's limb arrays,
+  a prime candidate among them), the CRT field bytes, the blinding factor, the
+  keygen's transport bytes and the software decryption's padded plaintext are
+  `rsk_secret::Secret`s or sit under a `WipeGuard`, wiped in place where the
+  hand wipes were and on every other exit; its 29 `Zeroizing` uses are
+  `Secret`s.
+  `RsaKey`, its CRT parameters, `RsaCrt` and the keygen state keep their
+  hand-written wiping `Drop`, the prime sieve its `scrub` and the keygen's
+  duplicate-prime refusal its wipe of a by-value prime: six `#[expect]`s. The
+  assembly wrappers' stack frames are unchanged; the drops wiping again what
+  `.wipe()` already cleared add 936 bytes of code. The crate takes the zeroize
+  ban at its root.
+  `bcdDevice` 0x0A1D → 0x0A1E.
+
+- **The EC key's scalars are typed** — refactor; nothing a host sees changes.
+  `rsk-ec`'s key generation draws each candidate scalar into a
+  `rsk_secret::Secret` and wipes it in place where the hand wipe was; the
+  scalars signing and public-point derivation lift out of the stored key, and
+  the X25519 little-endian scalar and ECDH shared secret, are `Secret`s instead
+  of `Zeroizing` or plain arrays. `PrivKey` keeps its hand-written wiping
+  `Drop` under an `#[expect]`. The crate takes the zeroize ban at its root.
+  `bcdDevice` 0x0A1C → 0x0A1D.
+
+- **ML-DSA's secrets are typed, and it drops its zeroize proc-macro** —
+  refactor; nothing a host sees changes. The two 64-byte seeds `rsk-mldsa`
+  wiped by hand — ρ′, which expands to the whole secret key, and ρ″, the
+  per-signature mask seed — are `rsk_secret::Secret`s, wiped in place where the
+  hand wipe was and on every other exit. `Poly` and `ExpandedKey` keep wiping
+  themselves on drop through hand-written `Drop` impls instead of
+  `derive(Zeroize, ZeroizeOnDrop)`, whose generated field wipes the zeroize ban
+  would refuse; `ExpandedKey` loses `Clone`, which nothing used, so the expanded
+  key cannot be duplicated. The crate takes the ban at its root; `zeroize_derive`
+  leaves the dependency graph. `bcdDevice` 0x0A1A → 0x0A1B.
+
+- **The transports and the dispatcher wipe through guards** — refactor; nothing
+  a host sees changes. CCID's request is wiped by a `WipeGuard` as soon as the
+  handler is done with it, before the reply goes out rather than after, and its
+  reply, like CTAPHID's response scratch, once sent; a guard would also cover a
+  future dropped mid-transfer, which nothing in the tree does today. The APDU
+  dispatcher wipes a reassembled chained command under a guard across its
+  dispatch, and its four inline chain drops call `clear_chaining`. What stays
+  bare, under `#[expect(clippy::disallowed_methods)]` with the reason, are wipes
+  of buffers that outlive a call: the dispatcher's held chain and GET RESPONSE
+  tail, and CTAPHID's reassembly buffer. `rsk-usb` and `rsk-sdk` take the
+  zeroize ban at their roots. `bcdDevice` 0x0A19 → 0x0A1A.
+
+- **The firmware's own secrets are typed too** — refactor; nothing a host sees
+  changes. The core1 mailbox holds the keygen's DRBG seed and each prime in
+  transit as `rsk_secret::Secret`, so assigning a slot wipes the static in
+  place; the TRNG seed and reseed buffers, and the pinpad's PIN and assembled
+  VERIFY, are `Secret`s wiped in place where the hand wipes were; the three
+  transport round trips copy the response out through one `WipeGuard`. The two
+  wipes whose point no scope spans — the request buffer after dispatch and the
+  keyboard queue at reboot — carry `#[expect(clippy::disallowed_methods)]` and
+  the reason, so a stale one fails the build. The firmware crate takes the
+  zeroize ban at its root. `bcdDevice` 0x0A17 → 0x0A18.
+
+- **Derived keys leave `rsk-crypto` as `Secret`s** — refactor; nothing a host
+  sees changes. The PIN KDF (`derive_kbase`, `derive_kver`,
+  `pin_derive_verifier`, `pin_derive_session`, `pin_derive_kenc`,
+  `pin_derive_kenc2`, `double_hash_pin`), the pinUvAuth ECDH shared secret and
+  the HMAC-DRBG's state are `rsk_secret::Secret` now, so a caller's copy is
+  wiped when it goes out of scope. Of the 31 hand wipes that followed them at
+  call sites, the 16 that sat before a scope's end are `Secret::wipe()`, which
+  zeroizes in place: `drop(secret)` would move the value and wipe only the
+  copy. The PIN verifiers that clientPIN, OATH, OpenPGP and PIV
+  derive to check a PIN were never wiped; they are now. A `FusedKey` fills the
+  caller's buffer instead of returning the key, so the OTP read lands in a
+  `Secret`. `rsk-crypto` takes the zeroize ban at its root and no longer
+  depends on `zeroize` itself. `bcdDevice` 0x0A16 → 0x0A17.
+
+- **The reboot's scrubs are held by the compiler** — refactor, no behaviour
+  change. `Worker::reboot` destructures the worker exhaustively before it wipes,
+  so a new field cannot join it without a decision about the secrets it holds,
+  and deleting one of the three scrubs leaves its binding unused, which the
+  build refuses. The register that used to derive that list went with
+  `secrets_gate.py`. `bcdDevice` 0x0A15 → 0x0A16.
+
+- **A bare wipe no longer compiles** — build, no behaviour change. The root
+  `clippy.toml` refuses `Zeroize::zeroize` and `Zeroizing` outside
+  `rsk-secret`'s two `Drop` impls, so a new secret has to live in `Secret` or
+  under a `WipeGuard` and is wiped on every exit, a `?` included. It is on per
+  crate: `rsk-secret` takes it now, and each crate takes it at its root as its
+  secrets move over, the workspace leaving it at allow until the last one
+  does. `scripts/secrets_gate.py` and
+  `assurance/secrets.toml` are gone: they counted wipes, and could not see a
+  secret nobody wiped, which is the case the ban and the type now refuse; the
+  threat model states the two exits no type reaches, a panic and a move.
+  `bcdDevice` 0x0A14 → 0x0A15.
+
+- **`rsk-secret`: a type for key-grade bytes that wipes itself** — new crate,
+  nothing uses it yet. `Secret<T>` has no `Copy`, `Clone`, `Debug` or
+  `PartialEq`, so a secret cannot be duplicated, printed or compared in variable
+  time by accident, and its `Drop` zeroizes it on every exit — a `?` included,
+  which the explicit `.zeroize()` at the end of a function the tree relies on
+  today does not cover. `WipeGuard` does the same for a borrowed buffer that
+  outlives the scope. It sits in a new bottom tier of the crate graph, below the
+  algorithm crates, so every crate that holds a secret can name it.
+  `bcdDevice` 0x0A11 → 0x0A12.
+
+- **`unsafe` compiles only in the three crates docs/unsafe.md names** — build, no
+  behaviour change. The workspace denies `unsafe_code`; `firmware`, `rsk-wipe`
+  and `rsk-rsa` (on the device target, where it links the assembly) lift it at
+  their crate root, the two build scripts at their one `set_var`. In the other
+  twenty-six crates a new `unsafe` now fails to compile instead of failing
+  `platform_gate.py`'s census afterwards. `clippy::undocumented_unsafe_blocks`
+  refuses a block or `unsafe impl` without its `// SAFETY:` comment; eleven sites
+  lacked one, five of them compiled into the display build only, and writing
+  them found the `WAKE_PIN` gap fixed above. `bcdDevice` 0x0A10 → 0x0A11.
+
+- **One lint policy for the workspace** — build, no behaviour change. Twenty
+  crates each carried the same `[lints.rust]` table (the `cfg(kani)` check-cfg)
+  and nine carried none; the table now lives once, as `[workspace.lints]` in the
+  root `Cargo.toml`, and all 29 members inherit it. It is where the lints the
+  crates must share will go. `bcdDevice` 0x0A0E → 0x0A0F.
 - **A TLC run past an hour could not be recorded.** TLC prints
   `Finished in 01h 12min` past an hour and drops the seconds, and
   `run_count_gate.py` read that line as minutes and seconds only, so `--record`

@@ -29,7 +29,7 @@ code-owning configurations must have a production tag.
 
 ## What is decidable, and what is not
 
-That `clientpin.rs:35` still *means* what the model says is a review question.
+That `clientpin.rs:44` still *means* what the model says is a review question.
 That the file exists, that the line is inside it, and that a range runs forwards
 are not, so those are the rules — plus one drift signal that costs nothing: a
 citation whose first or last line is **blank**. Measured over every citation the
@@ -213,7 +213,7 @@ PAGES = (
     pathlib.Path("formal/comutants.toml"),
     # Not a model page but the config generator, and it makes the same kind of
     # model-to-code claim: the two firmware constants its SYMMETRY argument is
-    # priced against. Both had moved — `consts.rs:361,334` named `EF_LARGEBLOB`
+    # priced against. Both had moved — `consts.rs:364,337` named `EF_LARGEBLOB`
     # and a doc comment, not MAX_PIN_RETRIES and PIN_MISMATCH_LIMIT.
     pathlib.Path("formal/gen-configs.sh"),
 )

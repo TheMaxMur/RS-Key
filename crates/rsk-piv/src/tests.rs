@@ -438,12 +438,13 @@ fn a_wrong_pin_is_refused_on_the_kbase_fallback_path() {
     // wrong PIN accepted AND stored as the new one. Killed by no test, because
     // the fallback is only reachable on an OTP-provisioned device and every PIV
     // test that offers a wrong PIN runs without one (found by the reverse
-    // mutation pass, D2). Its FIDO twin at `clientpin.rs:764` is not the same
+    // mutation pass, D2). Its FIDO twin at `clientpin.rs:814` is not the same
     // shape: there the `ct_eq` sits inside the block, so a widened guard still
     // cannot write.
     const OTP: [u8; 32] = [0x44; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -1100,7 +1101,7 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     let mut fs = new_fs();
     select(&mut app, &mut fs);
-    put_pin_verifier(&dev, &mut fs, EF_PIN, short).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PIN, short, None).unwrap();
     assert_eq!(
         run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
         Sw::retries(2),
@@ -1129,7 +1130,7 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
     let mut fs = new_fs();
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     select(&mut app, &mut fs);
-    put_pin_verifier(&dev, &mut fs, EF_PUK, short).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PUK, short, None).unwrap();
     auth_mgm(&mut app, &mut fs);
     verify_pin(&mut app, &mut fs);
     assert_eq!(run(&mut app, &mut fs, INS_SET_RETRIES, 3, 3, &[]).0, Sw::OK);
@@ -1145,8 +1146,8 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
     let mut fs = new_fs();
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     select(&mut app, &mut fs);
-    put_pin_verifier(&dev, &mut fs, EF_PIN, short).unwrap();
-    put_pin_verifier(&dev, &mut fs, EF_PUK, short).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PIN, short, None).unwrap();
+    put_pin_verifier(&dev, &mut fs, EF_PUK, short, None).unwrap();
     assert_eq!(
         run(&mut app, &mut fs, INS_RESET, 0, 0, &[]).0,
         Sw::WRONG_DATA,
@@ -1187,14 +1188,14 @@ fn panel_pin_ops_match_host_wire() {
     };
 
     // pad_pin builds the 8-byte PIV wire form (matches the stored defaults).
-    assert_eq!(pad_pin(b"123456"), Some(DEFAULT_PIN));
-    assert_eq!(pad_pin(b"12345678"), Some(DEFAULT_PUK));
-    assert_eq!(pad_pin(b""), None);
-    assert_eq!(pad_pin(b"123456789"), None);
+    assert_eq!(pad_pin(b"123456").map(|p| *p.expose()), Some(DEFAULT_PIN));
+    assert_eq!(pad_pin(b"12345678").map(|p| *p.expose()), Some(DEFAULT_PUK));
+    assert!(pad_pin(b"").is_none());
+    assert!(pad_pin(b"123456789").is_none());
 
     // Panel change-PIN: "123456" -> "654321", both padded as the panel will.
-    let old = pad_pin(b"123456").unwrap();
-    let new = pad_pin(b"654321").unwrap();
+    let old = *pad_pin(b"123456").unwrap().expose();
+    let new = *pad_pin(b"654321").unwrap().expose();
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Pin, &old, &new),
         Sw::OK
@@ -1211,7 +1212,7 @@ fn panel_pin_ops_match_host_wire() {
     assert_eq!(sw, Sw::OK);
 
     // Wrong old PIN burns a retry and leaves the PIN unchanged.
-    let wrong = pad_pin(b"000000").unwrap();
+    let wrong = *pad_pin(b"000000").unwrap().expose();
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Pin, &wrong, &old),
         Sw::new(0x63, 0xC2)
@@ -1221,7 +1222,7 @@ fn panel_pin_ops_match_host_wire() {
     assert_eq!(sw, Sw::OK);
 
     // Panel change-PUK.
-    let newpuk = pad_pin(b"87654321").unwrap();
+    let newpuk = *pad_pin(b"87654321").unwrap().expose();
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Puk, &DEFAULT_PUK, &newpuk),
         Sw::OK
@@ -1233,12 +1234,12 @@ fn panel_pin_ops_match_host_wire() {
     }
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &new);
     assert_eq!(sw, Sw::PIN_BLOCKED);
-    let fresh = pad_pin(b"111111").unwrap();
+    let fresh = *pad_pin(b"111111").unwrap().expose();
     assert_eq!(unblock_pin_with_puk(&dev, &mut fs, &newpuk, &fresh), Sw::OK);
     let (sw, _) = run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &fresh);
     assert_eq!(sw, Sw::OK);
     // Wrong PUK on unblock burns a PUK retry.
-    let badpuk = pad_pin(b"00000000").unwrap();
+    let badpuk = *pad_pin(b"00000000").unwrap().expose();
     assert_eq!(
         unblock_pin_with_puk(&dev, &mut fs, &badpuk, &fresh),
         Sw::new(0x63, 0xC2)
@@ -1299,12 +1300,12 @@ fn pin_protected_mgm_key_roundtrip() {
     let host_key: [u8; 32] = printed[6..38].try_into().unwrap();
 
     // The synthesized key equals the sealed 0x9B auth key (single source).
-    let mut sealed = [0u8; 32];
+    let mut sealed = Secret::<[u8; 32]>::zeroed();
     assert_eq!(
         seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed),
         Ok(32)
     );
-    assert_eq!(host_key, sealed);
+    assert_eq!(host_key, *sealed.expose());
 
     // And the host-read key authenticates via AES-256 mutual auth.
     let (sw, wit) = run(
@@ -1656,9 +1657,9 @@ fn printed_information_round_trips_but_an_escrow_body_is_never_stored() {
             0x20
         ]
     );
-    let mut sealed = [0u8; 32];
+    let mut sealed = Secret::<[u8; 32]>::zeroed();
     let n = seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed).unwrap();
-    assert_eq!(&body[6..6 + n], &sealed[..n]);
+    assert_eq!(&body[6..6 + n], &sealed.expose()[..n]);
     // …so a write of anything else is refused while it is live, rather than
     // acknowledged and hidden under it. (A YubiKey takes the write and loses the
     // escrowed key with it; that is the data loss we do not copy.)
@@ -5826,8 +5827,9 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
     const OTP: [u8; 32] = [0x44; 32];
     // The applet holds a way to READ the fuses, not the key, so its test source has
     // to be a plain `fn` — a closure over `OTP` could not coerce to one.
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     // Provision under a pre-OTP device: defaults + a generated 9A key.
     let rng = RefCell::new(TestRng(7));
@@ -5909,8 +5911,9 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
 #[test]
 fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     const OTP: [u8; 32] = [0x55; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     const NEW_PIN: [u8; PIN_WIRE_LEN] = [0x39, 0x39, 0x39, 0x39, 0x39, 0x39, PIN_PAD, PIN_PAD];
     let dev_pre = Device {
@@ -5934,7 +5937,7 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PIN)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PIN).expose()[..],
         "fixture: EF_PIN starts rooted in the public chip serial"
     );
 
@@ -5973,7 +5976,7 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PIN)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PIN).expose()[..],
         "fixture: a blocked PIN never migrated"
     );
 
@@ -5986,7 +5989,7 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PIN, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_otp.pin_derive_verifier(&NEW_PIN)[..],
+        &dev_otp.pin_derive_verifier(&NEW_PIN).expose()[..],
         "the unblock re-keyed EF_PIN under the OTP arm"
     );
     assert!(
@@ -6002,8 +6005,9 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
 #[test]
 fn set_retries_re_arms_the_at_rest_lap() {
     const OTP: [u8; 32] = [0x66; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     let dev_pre = Device {
         serial_hash: &HASH,
@@ -6038,7 +6042,7 @@ fn set_retries_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PUK, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PUK)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PUK).expose()[..],
         "fixture: EF_PUK is still rooted in the public chip serial"
     );
 
@@ -6049,7 +6053,7 @@ fn set_retries_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PUK, &mut rec), Some(PIN_REC_LEN));
     assert_eq!(
         &rec[2..],
-        &dev_otp.pin_derive_verifier(&DEFAULT_PUK)[..],
+        &dev_otp.pin_derive_verifier(&DEFAULT_PUK).expose()[..],
         "SET RETRIES re-keyed EF_PUK under the OTP arm"
     );
     assert!(
@@ -6066,8 +6070,9 @@ fn set_retries_re_arms_the_at_rest_lap() {
 #[test]
 fn a_set_retries_whose_re_arm_the_medium_refuses_resets_neither_reference() {
     const OTP: [u8; 32] = [0x66; 32];
-    fn otp_source() -> Option<[u8; 32]> {
-        Some(OTP)
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
     }
     let dev_pre = Device {
         serial_hash: &HASH,
@@ -6101,7 +6106,7 @@ fn a_set_retries_whose_re_arm_the_medium_refuses_resets_neither_reference() {
     assert_eq!(fs.read(EF_PUK, &mut before), Some(PIN_REC_LEN));
     assert_eq!(
         &before[2..],
-        &dev_pre.pin_derive_verifier(&DEFAULT_PUK)[..],
+        &dev_pre.pin_derive_verifier(&DEFAULT_PUK).expose()[..],
         "fixture: EF_PUK is still rooted in the public chip serial"
     );
 
@@ -6396,7 +6401,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_key_slot() {
     let fid = crate::files::key_fid(SLOT_AUTHENTICATION);
     let plain = [0x5Au8; 33];
     let mut rng = TestRng(21);
-    let mut out = [0u8; 64];
+    let mut out = Secret::<[u8; 64]>::zeroed();
 
     // The ORDER, on the one medium that can tell the two orderings apart.
     let (mut fs, medium) = new_cut_fs();
@@ -6620,11 +6625,11 @@ fn pivman_printed_codec_property_fuzz() {
                 &out[..6],
                 &[0x53, 0x24, PROTECTED_TAG, 0x22, PROTECTED_MGM_TAG, 0x20]
             );
-            let mut sealed = [0u8; 32];
+            let mut sealed = Secret::<[u8; 32]>::zeroed();
             let klen = seal::seal_read(&dev, &mut fs, key_fid(SLOT_CARDMGM), &mut sealed)
                 .expect("sealed mgmt key present");
             assert_eq!(klen, 32);
-            assert_eq!(&out[6..38], &sealed[..]);
+            assert_eq!(&out[6..38], &sealed.expose()[..]);
         } else {
             assert_eq!(sw_pin, Sw::FILE_NOT_FOUND);
         }
@@ -7833,9 +7838,9 @@ fn only_a_failed_verify_revokes_the_standing_one() {
         "the control: it signs"
     );
 
-    let wrong = pad_pin(b"999999").unwrap();
-    let wrong_puk = pad_pin(b"99999999").unwrap();
-    let new = pad_pin(b"654321").unwrap();
+    let wrong = *pad_pin(b"999999").unwrap().expose();
+    let wrong_puk = *pad_pin(b"99999999").unwrap().expose();
+    let new = *pad_pin(b"654321").unwrap().expose();
 
     // The panel's gate (`rsk-display`'s `gate_piv_ref`) is this call: the old-secret
     // check of a CHANGE, never a VERIFY. It cannot go red — E45's fix has to add a

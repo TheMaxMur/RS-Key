@@ -412,8 +412,8 @@ fn register_then_authenticate() {
 
     // Verify the registration signature under the device (attestation) key.
     let mut seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
-    let device_key = P256Key::from_scalar(&seed).unwrap();
-    seed.zeroize();
+    let device_key = P256Key::from_scalar(seed.expose()).unwrap();
+    seed.wipe();
     let (dx, dy) = device_key.public_xy();
     let mut base = std::vec![0x00u8];
     base.extend_from_slice(&APP);
@@ -810,8 +810,8 @@ fn a_faulted_counter_probe_does_not_sign_a_fabricated_u2f_counter() {
     let key_handle = out[67..67 + KEY_HANDLE_LEN].to_vec();
 
     // Off a first boot's zero, so a roll-back shows in the reported counter too.
-    fs.put(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
-    let before = medium.value(EF_COUNTER).expect("on the medium");
+    fs.put_counter(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
+    let before = medium.value(EF_COUNTER.get()).expect("on the medium");
 
     let mut ad = std::vec::Vec::new();
     ad.extend_from_slice(&CHAL);
@@ -821,11 +821,11 @@ fn a_faulted_counter_probe_does_not_sign_a_fabricated_u2f_counter() {
     let auth_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &ad);
     let auth_apdu = Apdu::parse(&auth_bytes).unwrap();
     let mut out2 = [0u8; 256];
-    medium.stick(Some(EF_COUNTER));
+    medium.stick(Some(EF_COUNTER.get()));
     let (sw, n) = authenticate(&mut fs, &mut rng, &auth_apdu, &mut out2);
     medium.stick(None);
     assert_eq!(
-        medium.value(EF_COUNTER).as_deref(),
+        medium.value(EF_COUNTER.get()).as_deref(),
         Some(&before[..]),
         "a faulted probe rolled the U2F signature counter back"
     );
@@ -892,7 +892,7 @@ fn a_refused_counter_advance_signs_nothing() {
     ad.extend_from_slice(&out[67..67 + KEY_HANDLE_LEN]);
     let auth_bytes = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &ad);
     let auth_apdu = Apdu::parse(&auth_bytes).unwrap();
-    fs.put(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
+    fs.put_counter(EF_COUNTER, &500u32.to_le_bytes()).unwrap();
 
     // Each answer as the RP sees it: the status, and the counter a body carried.
     let mut signed = |fs: &mut Fs<rsk_fs::storage::faults::Cut>| {
@@ -917,4 +917,38 @@ fn a_refused_counter_advance_signs_nothing() {
         ],
         "a refused advance must sign nothing, and the counter must not repeat"
     );
+}
+
+// A U2F REGISTER's touch is not the CTAP2 user-presence test CTAP 2.1 §6.5.5.7
+// spends a pinUvAuthToken on: a live one survives it.
+#[test]
+fn a_u2f_register_touch_leaves_a_live_token_unspent() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut data = std::vec::Vec::new();
+    data.extend_from_slice(&CHAL);
+    data.extend_from_slice(&APP);
+    let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &data);
+    let reg_apdu = Apdu::parse(&reg_bytes).unwrap();
+    let mut out = [0u8; 1024];
+    let mut state = crate::FidoState::new();
+    let armed = crate::state::PERM_MC | crate::state::PERM_GA | crate::state::PERM_ACFG;
+    state.paut.permissions = armed;
+    state.begin_using_token(false, 0);
+    let (sw, _) = {
+        let mut presence = Fixed(crate::Presence::Confirmed);
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        process_u2f(&mut ctx, &reg_apdu, &mut out)
+    };
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(state.paut.permissions, armed);
+    assert!(state.user_verified());
 }

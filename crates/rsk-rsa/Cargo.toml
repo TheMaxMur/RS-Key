@@ -14,9 +14,8 @@ build = "build.rs"
 # pure-Rust bignum, turning a ~150 s keygen into a few seconds. On the host (no
 # ARM asm) it falls back to num-bigint-dig so the logic stays testable. Used by
 # the OpenPGP and PIV applets, which add their own APDU framing and seal I/O.
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 [features]
 # `scripts/kani.sh` only, and empty here — this crate pulls no hashing
@@ -32,6 +31,8 @@ test-util = []
 # The modexp working buffers and the CRT fields hold prime-candidate / key state;
 # `alloc` for the bignum `Vec`s the key paths marshal through.
 zeroize = { workspace = true, features = ["alloc"] }
+# Those buffers and bignums held in a type that wipes itself on every exit.
+rsk-secret = { workspace = true }
 # The bignum the whole crate is arithmetic over: key assembly, the blinding and
 # fault-check arithmetic, the strong-Lucas half of the prime test, and — on the
 # host, where there is no ARM assembler — the modexp fallback itself.

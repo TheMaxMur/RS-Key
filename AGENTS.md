@@ -32,10 +32,34 @@ project — see [README.md](README.md) and
   "Firmware changes bump bcdDevice".)
 - **`no_std`, no alloc.** If a firmware change needs a heap, it's the wrong
   change. Clippy runs `-D warnings`; justify any `#[allow]` inline at the
-  smallest scope.
-- **`unsafe` and new dependencies are not free.** A new `unsafe` site needs an
-  entry in [docs/unsafe.md](docs/unsafe.md); a new dependency needs a stated
-  reason — it's joining an authenticator's trust base.
+  smallest scope. The lint policy is `[workspace.lints]` in the root
+  `Cargo.toml`; a new crate opts in with `[lints] workspace = true`.
+- **`unsafe` and new dependencies are not free.** `unsafe` compiles only in
+  `firmware`, `rsk-wipe` and — on the device target — `rsk-rsa`; a new site
+  there needs an entry in [docs/unsafe.md](docs/unsafe.md), and a new `unsafe`
+  block or `unsafe impl` a `// SAFETY:` comment (clippy refuses it otherwise). A
+  new dependency needs a stated reason — it's joining an authenticator's trust
+  base.
+- **Secrets live in `rsk_secret::Secret`.** Key-grade bytes go in a `Secret`,
+  or under a `WipeGuard` when the buffer outlives the scope: both wipe on every
+  exit, a `?` included. The root `clippy.toml` refuses a bare
+  `Zeroize::zeroize` or a `Zeroizing` in every crate; a wipe no `Secret` can
+  make (state that outlives a command, a key type's own `Drop`) stays bare
+  under an `#[expect]` that names its wipe point. Wipe early with `.wipe()`,
+  never `drop(secret)`: that moves the bytes and wipes the copy.
+- **A reset goes through `Worker::reboot`**, which scrubs the RAM secrets
+  first. Clippy refuses a direct `SCB::sys_reset`,
+  `rom_data::reset_to_usb_boot` / `reboot` / `reboot_ns` or
+  `Watchdog::trigger_reset`; the secure reboot and `rsk-wipe` keep theirs under
+  an `#[expect]`.
+- **Host bytes cannot panic a parser.** A module that reads what a host sent —
+  a transport, an APDU / TLV / CBOR parser, a record codec, an applet crate, a
+  CTAP handler — denies `clippy::indexing_slicing`, `unwrap_used`,
+  `expect_used`, `panic` and `cast_possible_truncation` at its top (an applet
+  crate on its root). An access there is checked and fails to the error its
+  path already answers; an exemption is an `#[expect(…, reason = …)]` on the
+  smallest item, never a byte picked out of `to_le_bytes()`. A new parser module
+  starts with the block (CONTRIBUTING.md → "Code").
 - **Every new file starts with the SPDX header** (`AGPL-3.0-only` — copy it from
   any neighbouring source file).
 - **Don't commit, push, flash, sign, or write OTP fuses unless asked.** The

@@ -130,7 +130,7 @@ impl<'a> RescueApplet<'a> {
         Device {
             serial_hash: &self.serial_hash,
             serial_id: &self.serial_id,
-            otp_key: mkek.as_deref(),
+            otp_key: mkek.as_ref().map(|k| k.expose()),
         }
     }
 
@@ -155,12 +155,17 @@ impl<'a> RescueApplet<'a> {
                     return Sw::CONDITIONS_NOT_SATISFIED;
                 }
                 let mut rng = self.rng.borrow_mut();
-                // Both fuses are read for this command alone: each local is the
-                // only copy in RAM and dies at the end of this arm.
+                // Both fuses are read for this command alone, into locals wiped at
+                // the end of this arm.
                 let fused = read_fused(self.devk);
                 let mkek = read_fused(self.mkek_source);
                 let dev = self.device(&mkek);
-                let key = keydev::load_or_generate(&dev, fused.as_deref(), fs, &mut *rng);
+                let key = keydev::load_or_generate(
+                    &dev,
+                    fused.as_ref().map(|k| k.expose()),
+                    fs,
+                    &mut *rng,
+                );
                 let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
@@ -179,12 +184,17 @@ impl<'a> RescueApplet<'a> {
                     return Sw::WRONG_LENGTH;
                 }
                 let mut rng = self.rng.borrow_mut();
-                // Both fuses are read for this command alone: each local is the
-                // only copy in RAM and dies at the end of this arm.
+                // Both fuses are read for this command alone, into locals wiped at
+                // the end of this arm.
                 let fused = read_fused(self.devk);
                 let mkek = read_fused(self.mkek_source);
                 let dev = self.device(&mkek);
-                let key = keydev::load_or_generate(&dev, fused.as_deref(), fs, &mut *rng);
+                let key = keydev::load_or_generate(
+                    &dev,
+                    fused.as_ref().map(|k| k.expose()),
+                    fs,
+                    &mut *rng,
+                );
                 let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };

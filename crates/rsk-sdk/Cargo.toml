@@ -8,9 +8,8 @@ publish = false
 # Core smartcard machinery: APDU, status words, BER-TLV, AID applet registry.
 # Pure logic, no HAL — `no_std` on target, but unit-tested on the host.
 
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 [features]
 # `scripts/kani.sh` only, and empty here — this crate pulls no hashing
@@ -19,5 +18,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 kani-soft = []
 
 [dependencies]
-# The dispatcher's chaining buffer can hold private-key import data.
+# The dispatcher's long-lived buffers (a held chain, a GET RESPONSE tail) are
+# wiped by hand, each under an `#[expect]`.
 zeroize = { workspace = true }
+# A dispatched chain, which can hold private-key IMPORT data, under a WipeGuard.
+rsk-secret = { workspace = true }

@@ -7,7 +7,7 @@
 //! see [`crate::pin`]). EC blobs are `[curve_id] ‖ scalar`; signatures are raw
 //! `r ‖ s` (fixed field width), NOT DER.
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::aes::aes_decrypt_cfb_256;
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hmac_sha256};
@@ -195,26 +195,26 @@ fn legacy_rsa_len(n: usize) -> bool {
     (n.is_multiple_of(2) && half_ok(n / 2)) || (n.is_multiple_of(5) && half_ok(n / 5))
 }
 
+/// The DEK's GCM key and nonce-PRF key, as [`split_dek`] hands them out.
+type DekKeys = (Secret<[u8; 32]>, Secret<[u8; IV_SIZE]>);
+
 /// Split the DEK into the GCM key (`dek[16..48]`) and the nonce-PRF key
 /// (`dek[0..16]`, also the legacy CFB IV) — disjoint bytes of one random DEK.
-fn split_dek(dek: &[u8; DEK_SIZE]) -> ([u8; 32], [u8; IV_SIZE]) {
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&dek[IV_SIZE..IV_SIZE + 32]);
-    let mut nk = [0u8; IV_SIZE];
-    nk.copy_from_slice(&dek[..IV_SIZE]);
+fn split_dek(dek: &[u8; DEK_SIZE]) -> DekKeys {
+    let mut key = Secret::<[u8; 32]>::zeroed();
+    key.expose_mut()
+        .copy_from_slice(&dek[IV_SIZE..IV_SIZE + 32]);
+    let mut nk = Secret::<[u8; IV_SIZE]>::zeroed();
+    nk.expose_mut().copy_from_slice(&dek[..IV_SIZE]);
     (key, nk)
 }
 
 /// Load the DEK and [`split_dek`] it.
-fn load_dek_keys<S: Storage>(
-    dev: &Device,
-    fs: &mut Fs<S>,
-    sess: &Session,
-) -> Result<([u8; 32], [u8; IV_SIZE]), Sw> {
-    let mut dek = [0u8; DEK_SIZE];
+fn load_dek_keys<S: Storage>(dev: &Device, fs: &mut Fs<S>, sess: &Session) -> Result<DekKeys, Sw> {
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(dev, fs, sess, &mut dek)?;
-    let keys = split_dek(&dek);
-    dek.zeroize();
+    let keys = split_dek(dek.expose());
+    dek.wipe();
     Ok(keys)
 }
 
@@ -228,27 +228,35 @@ fn dek_seal<S: Storage>(
     out: &mut [u8],
 ) -> Result<usize, Sw> {
     let (mut key, mut nk) = load_dek_keys(dev, fs, sess)?;
-    let r = seal_with(&key, &nk, dev.serial_hash, fid, plain, out);
-    key.zeroize();
-    nk.zeroize();
+    let r = seal_with(key.expose(), nk.expose(), dev.serial_hash, fid, plain, out);
+    key.wipe();
+    nk.wipe();
     r
 }
 
 /// Unseal a DEK `blob` into `out`; returns `(plaintext_len, was_legacy)`.
 /// `is_legacy_len` names the widths a pre-GCM record for this slot could have —
-/// see [`unseal_with`] for why the fallback must not be shape-blind.
-fn dek_unseal<S: Storage>(
+/// see [`unseal_with`] for why the fallback must not be shape-blind. The
+/// plaintext is a key, so it goes only into a buffer that wipes itself.
+fn dek_unseal<S: Storage, const N: usize>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
     blob: &[u8],
-    out: &mut [u8],
+    out: &mut Secret<[u8; N]>,
     is_legacy_len: fn(usize) -> bool,
 ) -> Result<(usize, bool), Sw> {
     let (mut key, mut nk) = load_dek_keys(dev, fs, sess)?;
-    let r = unseal_with(&key, &nk, dev.serial_hash, blob, out, is_legacy_len);
-    key.zeroize();
-    nk.zeroize();
+    let r = unseal_with(
+        key.expose(),
+        nk.expose(),
+        dev.serial_hash,
+        blob,
+        out.expose_mut(),
+        is_legacy_len,
+    );
+    key.wipe();
+    nk.wipe();
     r
 }
 
@@ -295,10 +303,10 @@ pub fn store_ec_key<S: Storage>(
     fid: KeyFid,
     key: &PrivKey,
 ) -> Result<(), Sw> {
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(dev, fs, sess, &mut dek)?;
-    let r = store_ec_key_under(dev, fs, &dek, fid, key);
-    dek.zeroize();
+    let r = store_ec_key_under(dev, fs, dek.expose(), fid, key);
+    dek.wipe();
     r
 }
 
@@ -313,21 +321,21 @@ pub(crate) fn store_ec_key_under<S: Storage>(
 ) -> Result<(), Sw> {
     let scalar = key.scalar();
     let n = 1 + scalar.len();
-    let mut kdata = [0u8; MAX_EC_KDATA];
-    kdata[0] = key.curve().id();
-    kdata[1..n].copy_from_slice(scalar);
-    let mut blob = [0u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD];
-    let (mut gcm, mut nk) = split_dek(dek);
-    let r = (|| {
-        let bn = seal_with(&gcm, &nk, dev.serial_hash, fid, &kdata[..n], &mut blob)?;
-        fs.put_key(fid, Sealed::wrap(&blob[..bn]))
-            .map_err(|_| Sw::MEMORY_FAILURE)
-    })();
-    kdata.zeroize();
-    blob.zeroize();
-    gcm.zeroize();
-    nk.zeroize();
-    r
+    let mut kdata = Secret::<[u8; MAX_EC_KDATA]>::zeroed();
+    kdata.expose_mut()[0] = key.curve().id();
+    kdata.expose_mut()[1..n].copy_from_slice(scalar);
+    let mut blob = Secret::<[u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD]>::zeroed();
+    let (gcm, nk) = split_dek(dek);
+    let bn = seal_with(
+        gcm.expose(),
+        nk.expose(),
+        dev.serial_hash,
+        fid,
+        &kdata.expose()[..n],
+        blob.expose_mut(),
+    )?;
+    fs.put_key(fid, Sealed::wrap(&blob.expose()[..bn]))
+        .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
 /// What PSO:CDS, PSO:DECIPHER's RSA and ECDH arms and INTERNAL AUTHENTICATE answer
@@ -343,22 +351,25 @@ pub fn load_ec_key<S: Storage>(
     sess: &Session,
     fid: KeyFid,
 ) -> Result<PrivKey, Sw> {
-    let mut blob = [0u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD];
-    let n = fs.read_key(fid, &mut blob).ok_or(KEY_ABSENT)?;
-    let n = n.min(blob.len());
-    let mut kdata = [0u8; MAX_EC_KDATA];
-    let r = (|| {
-        let (pt, legacy) = dek_unseal(dev, fs, sess, &blob[..n], &mut kdata, legacy_ec_len)?;
-        if pt < 2 {
-            return Err(Sw::WRONG_DATA);
-        }
-        let curve = Curve::from_id(kdata[0]).ok_or(Sw::WRONG_DATA)?;
-        let key = PrivKey::from_scalar(curve, &kdata[1..pt]).ok_or(Sw::WRONG_DATA)?;
-        Ok((key, legacy))
-    })();
-    kdata.zeroize();
-    blob.zeroize();
-    let (key, legacy) = r?;
+    let mut blob = Secret::<[u8; MAX_EC_KDATA + DEK_SEAL_OVERHEAD]>::zeroed();
+    let n = fs.read_key(fid, blob.expose_mut()).ok_or(KEY_ABSENT)?;
+    let n = n.min(MAX_EC_KDATA + DEK_SEAL_OVERHEAD);
+    let mut kdata = Secret::<[u8; MAX_EC_KDATA]>::zeroed();
+    let (pt, legacy) = dek_unseal(
+        dev,
+        fs,
+        sess,
+        &blob.expose()[..n],
+        &mut kdata,
+        legacy_ec_len,
+    )?;
+    if pt < 2 {
+        return Err(Sw::WRONG_DATA);
+    }
+    let curve = Curve::from_id(kdata.expose()[0]).ok_or(Sw::WRONG_DATA)?;
+    let key = PrivKey::from_scalar(curve, &kdata.expose()[1..pt]).ok_or(Sw::WRONG_DATA)?;
+    kdata.wipe();
+    blob.wipe();
     if legacy {
         let _ = store_ec_key(dev, fs, sess, fid, &key);
     }
@@ -383,44 +394,40 @@ pub fn store_aes_key<S: Storage>(
     if !AES_KEY_LENS.contains(&key.len()) {
         return Err(Sw::WRONG_DATA);
     }
-    let mut blob = [0u8; 32 + DEK_SEAL_OVERHEAD];
-    let r = (|| {
-        let bn = dek_seal(dev, fs, sess, EF_AES_KEY, key, &mut blob)?;
-        fs.put_key(EF_AES_KEY, Sealed::wrap(&blob[..bn]))
-            .map_err(|_| Sw::MEMORY_FAILURE)
-    })();
-    blob.zeroize();
-    r
+    let mut blob = Secret::<[u8; 32 + DEK_SEAL_OVERHEAD]>::zeroed();
+    let bn = dek_seal(dev, fs, sess, EF_AES_KEY, key, blob.expose_mut())?;
+    fs.put_key(EF_AES_KEY, Sealed::wrap(&blob.expose()[..bn]))
+        .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
 /// Load + DEK-unseal the symmetric AES key (`EF_AES_KEY`) for the AES PSO
-/// operations. Returns the key bytes in a 32-byte buffer plus the real length
-/// (16/24/32 → AES-128/192/256); the caller zeroizes the buffer after use.
+/// operations. Returns the key bytes in a 32-byte buffer that wipes itself,
+/// plus the real length (16/24/32 → AES-128/192/256).
 pub fn load_aes_key<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
-) -> Result<([u8; 32], usize), Sw> {
-    let mut blob = [0u8; 32 + DEK_SEAL_OVERHEAD];
+) -> Result<(Secret<[u8; 32]>, usize), Sw> {
+    let mut blob = Secret::<[u8; 32 + DEK_SEAL_OVERHEAD]>::zeroed();
     let bn = fs
-        .read_key(EF_AES_KEY, &mut blob)
+        .read_key(EF_AES_KEY, blob.expose_mut())
         .filter(|&n| n > 0)
         .ok_or(Sw::REFERENCE_NOT_FOUND)?;
-    let bn = bn.min(blob.len());
-    let mut kdata = [0u8; 32];
-    let (n, legacy) = match dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_aes_len) {
-        Ok(v) => v,
-        Err(e) => {
-            blob.zeroize();
-            kdata.zeroize();
-            return Err(e);
-        }
-    };
-    blob.zeroize();
+    let bn = bn.min(32 + DEK_SEAL_OVERHEAD);
+    let mut kdata = Secret::<[u8; 32]>::zeroed();
+    let (n, legacy) = dek_unseal(
+        dev,
+        fs,
+        sess,
+        &blob.expose()[..bn],
+        &mut kdata,
+        legacy_aes_len,
+    )?;
+    blob.wipe();
     // No legacy record can be narrower: GENERATE only ever minted 32 bytes, and
     // `PUT DATA D5` (which can write 16) has always sealed under GCM.
     if legacy && n == 32 {
-        let _ = store_aes_key(dev, fs, sess, &kdata);
+        let _ = store_aes_key(dev, fs, sess, kdata.expose());
     }
     Ok((kdata, n))
 }
@@ -493,17 +500,12 @@ pub fn store_rsa_key<S: Storage>(
     fid: KeyFid,
     key: &RsaKey,
 ) -> Result<(), Sw> {
-    let mut kdata = [0u8; MAX_CRT_PLAIN];
-    let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
-    let r = (|| {
-        let n = rsk_rsa::crt::crt_plaintext(key, &mut kdata).map_err(rsa_sw)?;
-        let bn = dek_seal(dev, fs, sess, fid, &kdata[..n], &mut blob)?;
-        fs.put_key(fid, Sealed::wrap(&blob[..bn]))
-            .map_err(|_| Sw::MEMORY_FAILURE)
-    })();
-    kdata.zeroize();
-    blob.zeroize();
-    r
+    let mut kdata = Secret::<[u8; MAX_CRT_PLAIN]>::zeroed();
+    let mut blob = Secret::<[u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD]>::zeroed();
+    let n = rsk_rsa::crt::crt_plaintext(key, kdata.expose_mut()).map_err(rsa_sw)?;
+    let bn = dek_seal(dev, fs, sess, fid, &kdata.expose()[..n], blob.expose_mut())?;
+    fs.put_key(fid, Sealed::wrap(&blob.expose()[..bn]))
+        .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
 /// Read and unseal the RSA key at `fid`, rebuilding it from `P ‖ Q` (present at
@@ -517,24 +519,24 @@ pub fn load_rsa_key<S: Storage>(
     sess: &Session,
     fid: KeyFid,
 ) -> Result<RsaKey, Sw> {
-    let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
-    let bn = fs.read_key(fid, &mut blob).ok_or(KEY_ABSENT)?;
-    let bn = bn.min(blob.len());
-    let mut kdata = [0u8; MAX_CRT_PLAIN];
-    let res = (|| {
-        let (n, legacy) = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len)?;
-        let (half, _) = rsk_rsa::crt::parse_rsa_blob(&kdata[..n]).map_err(|_| Sw::WRONG_DATA)?;
-        let key = rsk_rsa::rsa_from_pqe(
-            rsk_rsa::RSA_PUB_EXP_BE,
-            &kdata[..half],
-            &kdata[half..2 * half],
-        )
+    let mut blob = Secret::<[u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD]>::zeroed();
+    let bn = fs.read_key(fid, blob.expose_mut()).ok_or(KEY_ABSENT)?;
+    let bn = bn.min(MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD);
+    let mut kdata = Secret::<[u8; MAX_CRT_PLAIN]>::zeroed();
+    let (n, legacy) = dek_unseal(
+        dev,
+        fs,
+        sess,
+        &blob.expose()[..bn],
+        &mut kdata,
+        legacy_rsa_len,
+    )?;
+    let kd = kdata.expose();
+    let (half, _) = rsk_rsa::crt::parse_rsa_blob(&kd[..n]).map_err(|_| Sw::WRONG_DATA)?;
+    let key = rsk_rsa::rsa_from_pqe(rsk_rsa::RSA_PUB_EXP_BE, &kd[..half], &kd[half..2 * half])
         .ok_or(Sw::WRONG_DATA)?;
-        Ok((key, legacy))
-    })();
-    kdata.zeroize();
-    blob.zeroize();
-    let (key, legacy) = res?;
+    kdata.wipe();
+    blob.wipe();
     if legacy {
         let _ = store_rsa_key(dev, fs, sess, fid, &key);
     }
@@ -551,33 +553,32 @@ pub fn load_rsa_crt<S: Storage>(
     sess: &Session,
     fid: KeyFid,
 ) -> Result<RsaCrt, Sw> {
-    let mut blob = [0u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD];
-    let bn = fs.read_key(fid, &mut blob).ok_or(KEY_ABSENT)?;
-    let bn = bn.min(blob.len());
-    let mut kdata = [0u8; MAX_CRT_PLAIN];
-    let unsealed = dek_unseal(dev, fs, sess, &blob[..bn], &mut kdata, legacy_rsa_len);
-    blob.zeroize();
-    let (n, legacy) = match unsealed {
-        Ok(v) => v,
-        Err(e) => {
-            kdata.zeroize();
-            return Err(e);
-        }
-    };
-    let crt = rsk_rsa::crt::crt_from_plain(&kdata[..n]);
+    let mut blob = Secret::<[u8; MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD]>::zeroed();
+    let bn = fs.read_key(fid, blob.expose_mut()).ok_or(KEY_ABSENT)?;
+    let bn = bn.min(MAX_CRT_PLAIN + DEK_SEAL_OVERHEAD);
+    let mut kdata = Secret::<[u8; MAX_CRT_PLAIN]>::zeroed();
+    let unsealed = dek_unseal(
+        dev,
+        fs,
+        sess,
+        &blob.expose()[..bn],
+        &mut kdata,
+        legacy_rsa_len,
+    );
+    blob.wipe();
+    let (n, legacy) = unsealed?;
+    let kd = kdata.expose();
+    let crt = rsk_rsa::crt::crt_from_plain(&kd[..n]);
     // Migrate a legacy CFB key forward — now straight to the 5-field GCM layout.
     if legacy
         && crt.is_ok()
-        && let Ok((half, _)) = rsk_rsa::crt::parse_rsa_blob(&kdata[..n])
-        && let Some(key) = rsk_rsa::rsa_from_pqe(
-            rsk_rsa::RSA_PUB_EXP_BE,
-            &kdata[..half],
-            &kdata[half..2 * half],
-        )
+        && let Ok((half, _)) = rsk_rsa::crt::parse_rsa_blob(&kd[..n])
+        && let Some(key) =
+            rsk_rsa::rsa_from_pqe(rsk_rsa::RSA_PUB_EXP_BE, &kd[..half], &kd[half..2 * half])
     {
         let _ = store_rsa_key(dev, fs, sess, fid, &key);
     }
-    kdata.zeroize();
+    kdata.wipe();
     crt.map_err(rsa_sw)
 }
 
@@ -593,13 +594,13 @@ pub fn rsa_decipher(
 ) -> Result<usize, Sw> {
     let key_size = crt.modulus_len();
     let ct = cryptogram(data, key_size)?;
-    let mut em = [0u8; MAX_RSA_BYTES];
+    let mut em = Secret::<[u8; MAX_RSA_BYTES]>::zeroed();
     // `MEMORY_FAILURE` for every refusal, whichever step it came from: a YubiKey
     // 5.8.0 answers it to bad padding in any position, to c = 0, n - 1 and n.
-    let res = rsk_rsa::crt::private_op(crt, ct, &mut RsaRng(rng), &mut em[..key_size])
-        .and_then(|_| rsk_rsa::pkcs1v15::unpad_encrypt(&em[..key_size], out))
+    let res = rsk_rsa::crt::private_op(crt, ct, &mut RsaRng(rng), &mut em.expose_mut()[..key_size])
+        .and_then(|_| rsk_rsa::pkcs1v15::unpad_encrypt(&em.expose()[..key_size], out))
         .map_err(|_| Sw::MEMORY_FAILURE);
-    em.zeroize();
+    em.wipe();
     res
 }
 

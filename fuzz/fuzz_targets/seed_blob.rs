@@ -42,10 +42,10 @@ fuzz_target!(|data: &[u8]| {
     // An OTP-generation tag must be unreadable without the OTP key; legacy
     // PIN-wrapped tags must never load directly under either generation.
     if matches!(data[0], 0x03 | 0x11 | 0x13) {
-        assert_eq!(load_keydev(&dev_old, &mut fs), None);
+        assert!(load_keydev(&dev_old, &mut fs).is_none());
     }
     if data[0] == 0x13 {
-        assert_eq!(load_keydev(&dev_new, &mut fs), None);
+        assert!(load_keydev(&dev_new, &mut fs).is_none());
     }
     let _ = load_keydev(&dev_old, &mut fs);
     let _ = load_keydev(&dev_new, &mut fs);
@@ -57,7 +57,10 @@ fuzz_target!(|data: &[u8]| {
 
     // The boot pass must tolerate any stored shape and be idempotent.
     let _ = migrate_keydev_boot(&dev_new, &mut fs);
-    let after_one = load_keydev(&dev_new, &mut fs);
+    let after_one = load_keydev(&dev_new, &mut fs).map(|s| *s.expose());
     let _ = migrate_keydev_boot(&dev_new, &mut fs);
-    assert_eq!(after_one, load_keydev(&dev_new, &mut fs));
+    assert_eq!(
+        after_one,
+        load_keydev(&dev_new, &mut fs).map(|s| *s.expose())
+    );
 });

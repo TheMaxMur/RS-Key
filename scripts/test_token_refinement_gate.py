@@ -407,7 +407,7 @@ def test_an_unowned_concrete_site_fails(tree: Tree, body: str, finding: str):
         # CONTROL. A local bound from a fid this projection does not own.
         "fn stray() { let fid = EF_ALWAYS_UV; let _ = fs.put(fid, &[]); }\n",
         # CONTROL. A fid built from a RUNTIME value folds to nothing —
-        # `credential.rs:919` really is `let fid = EF_RP + i`, and a rule that
+        # `credential.rs:942` really is `let fid = EF_RP + i`, and a rule that
         # guessed from the mention would own it.
         "fn stray(i: u16) { let fid = EF_PIN_BASE + i; let _ = fs.put(fid, &[]); }\n",
         # CONTROL. A gate that masks its own PARAMETER and that nobody hands the
@@ -438,7 +438,7 @@ def test_an_unowned_concrete_site_fails(tree: Tree, body: str, finding: str):
         "fn stray(gna: &RefCell<AssertionState>) {\n"
         "    let mut st = gna.borrow_mut();\n    *st = Default::default();\n}\n",
         # CONTROL for the swap clause: BUILDING a fresh state replaces nothing.
-        # `firmware/src/main.rs:1173` is exactly this, and a rule reading
+        # `firmware/src/main.rs:1238` is exactly this, and a rule reading
         # `FidoState::new` anywhere would own the boot that makes the one cell.
         "fn stray() { let cell = RefCell::new(FidoState::new()); hand(cell); }\n",
     ],

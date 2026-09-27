@@ -17,7 +17,7 @@ fn protected() -> ResetPersistentView {
 #[test]
 fn reset_projection_stitches_a_torn_epoch_to_the_next_boot() {
     let mut state = FidoState::new();
-    state.keydev_dec = Some([0x5a; 32]);
+    state.keydev_dec = Some(rsk_secret::Secret::new([0x5a; 32]));
     state.paut.in_use = true;
     let mut volatile = ResetVolatileView::from_state(&state);
     let mut reset = ResetRefinement::new(protected());
@@ -111,7 +111,7 @@ fn the_secret_sweep_is_where_a_seed_the_medium_kept_stops_the_wipe() {
 ///
 /// The two tests that fall when `EF_BACKUP_SEALED` leaves `is_fido_gate_record`
 /// both transcribe that function's match arm, so they answer "did somebody edit
-/// the list" — measured: demoting `EF_MINPINLEN`, which `crates/rsk-fido/src/reset.rs:237-243` says
+/// the list" — measured: demoting `EF_MINPINLEN`, which `crates/rsk-fido/src/reset.rs:240-246` says
 /// out loud is in the phase and in no clause, kills the slice the same way,
 /// 3 of 3 runs. And the one test that states the defect behaviourally,
 /// `reset_tests.rs::a_seed_the_medium_kept_stops_the_wipe_before_the_gates`, is a

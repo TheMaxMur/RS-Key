@@ -111,7 +111,7 @@ fn pin_and_dek_migrate_to_otp_kbase_at_verify() {
         "migrate_pin_kbase re-keyed the verifier and the DEK off the chip-serial \
          root and must re-arm the at-rest lap",
     );
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
 
     // The stored verifier is now the OTP-arm one: a fresh session verifies
@@ -153,10 +153,10 @@ fn pin_and_dek_migrate_to_otp_kbase_at_verify() {
     // The fallback arm is a SUCCESS: it must not take the wrong-password exit
     // that clears the addressed status, nor a sibling's.
     assert!(sess.has_pw3 && sess.has_pw1);
-    let mut dek3 = [0u8; DEK_SIZE];
+    let mut dek3 = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek3).unwrap();
     // Same underlying DEK either way.
-    assert_eq!(dek, dek3);
+    assert_eq!(dek.expose(), dek3.expose());
 
     // A pre-OTP device can no longer verify against the migrated verifier
     // (counter sits at 2 after the sess3 miss, so this burns it to 1).
@@ -191,7 +191,7 @@ fn verify_default_pw1_and_load_dek() {
     );
     assert_eq!(sw, Sw::OK);
     assert!(sess.has_pw1);
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&dev(), &mut fs, &sess, &mut dek).unwrap();
 }
 
@@ -386,7 +386,7 @@ fn pw1_modes_are_independent_latches_issue25() {
         "PW1.82 must survive a later PW1.81 verify (else DECIPHER → 6982)"
     );
     // The DEK still unwraps under the surviving PW1 session.
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
 }
 
@@ -406,7 +406,7 @@ fn change_pw1_then_new_pin_works_and_dek_survives() {
         PW1_MODE81,
         PW1_DEFAULT,
     );
-    let mut dek_before = [0u8; DEK_SIZE];
+    let mut dek_before = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek_before).unwrap();
     sess.reset();
 
@@ -451,9 +451,9 @@ fn change_pw1_then_new_pin_works_and_dek_survives() {
         ),
         Sw::OK
     );
-    let mut dek_after = [0u8; DEK_SIZE];
+    let mut dek_after = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek_after).unwrap();
-    assert_eq!(dek_before, dek_after);
+    assert_eq!(dek_before.expose(), dek_after.expose());
 }
 
 #[test]
@@ -557,7 +557,7 @@ fn reset_retry_via_pw3_unblocks_pw1() {
         ),
         Sw::OK
     );
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
 }
 
@@ -625,7 +625,7 @@ fn scan_files_neutralizes_a_legacy_default_reset_code() {
     let mut fs = setup();
     // Recreate the legacy-vulnerable state: RC verifier = default admin PIN with
     // an enabled retry counter (what firmware <= 0x07F6 wrote at init).
-    put_verifier(&d, &mut fs, EF_RC, PW3_DEFAULT).unwrap();
+    put_verifier(&d, &mut fs, EF_RC, PW3_DEFAULT, None).unwrap();
     set_pin_retry_counter(&mut fs, EF_RC, PW_RETRIES_DEFAULT).unwrap();
     // Re-run init (reboot): the migration must delete the default RC.
     scan_files(&d, &mut fs, &mut CountRng(0)).unwrap();
@@ -680,7 +680,7 @@ fn scan_files_preserves_a_custom_reset_code() {
         ),
         Sw::OK
     );
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
 }
 
@@ -719,7 +719,7 @@ fn put_reset_code_then_reset_retry_via_rc() {
         ),
         Sw::OK
     );
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
 }
 
@@ -750,11 +750,12 @@ fn deactivating_the_reset_code_takes_its_staged_dek_copy_with_it() {
         put_reset_code(&d, &mut fs, &mut sess, &mut rng, b"resetme0"),
         Sw::OK
     );
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
 
     // An update that staged and then did not land.
-    stage_dek(&d, &mut fs, &mut rng, EF_DEK_RC, b"resetme0", &dek).unwrap();
+    let (_session, _rearmed) =
+        stage_dek(&d, &mut fs, &mut rng, EF_DEK_RC, b"resetme0", dek.expose()).unwrap();
     assert!(fs.has_key(EF_DEK_STAGE_RC), "fixture: the stage is live");
 
     assert_eq!(
@@ -814,7 +815,7 @@ fn a_faulted_dek_read_does_not_migrate_the_verifier_alone() {
         ),
         Sw::OK
     );
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess2, &mut dek).expect("the DEK copy is still reachable");
 }
 
@@ -869,23 +870,23 @@ fn a_reset_code_set_before_the_burn_stays_on_the_chip_serial_root() {
     let mut rec = [0u8; 64];
     fs.read(EF_PW1, &mut rec).unwrap();
     assert!(
-        ct_eq(&rec[2..34], &d.pin_derive_verifier(PW1_DEFAULT)),
+        ct_eq(&rec[2..34], d.pin_derive_verifier(PW1_DEFAULT).expose()),
         "fixture: PW1 moved to the fused root at its first verify"
     );
     assert!(
-        !ct_eq(&rec[2..34], &pre.pin_derive_verifier(PW1_DEFAULT)),
+        !ct_eq(&rec[2..34], pre.pin_derive_verifier(PW1_DEFAULT).expose()),
         "fixture: the two arms really do derive different verifiers"
     );
     fs.read(EF_RC, &mut rec).unwrap();
     assert!(
-        ct_eq(&rec[2..34], &pre.pin_derive_verifier(b"resetme0")),
+        ct_eq(&rec[2..34], pre.pin_derive_verifier(b"resetme0").expose()),
         "the resetting code is still rooted in the public chip serial"
     );
     // And PW3 with it — the likelier member of the same class, since ordinary use
     // presents PW1 and the admin surface may not be touched again after the burn.
     fs.read(EF_PW3, &mut rec).unwrap();
     assert!(
-        ct_eq(&rec[2..34], &pre.pin_derive_verifier(PW3_DEFAULT)),
+        ct_eq(&rec[2..34], pre.pin_derive_verifier(PW3_DEFAULT).expose()),
         "PW3 has not been presented since the burn, so it has not moved either"
     );
 
@@ -895,7 +896,7 @@ fn a_reset_code_set_before_the_burn_stays_on_the_chip_serial_root() {
     let n = fs.read_key(EF_DEK_RC, &mut blob).unwrap().min(blob.len());
     let session = pre.pin_derive_session(b"resetme0");
     let mut from_flash = [0u8; DEK_SIZE];
-    pre.decrypt_with_aad(&session, &blob[1..n], PinKdf::V2, &mut from_flash)
+    pre.decrypt_with_aad(session.expose(), &blob[1..n], PinKdf::V2, &mut from_flash)
         .expect("the DEK copy behind the resetting code is on the pre-burn root");
     let mut sess_pw1 = Session::new();
     assert_eq!(
@@ -910,9 +911,13 @@ fn a_reset_code_set_before_the_burn_stays_on_the_chip_serial_root() {
         ),
         Sw::OK
     );
-    let mut live = [0u8; DEK_SIZE];
+    let mut live = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess_pw1, &mut live).unwrap();
-    assert_eq!(from_flash, live, "and it is the same DEK the card uses");
+    assert_eq!(
+        &from_flash,
+        live.expose(),
+        "and it is the same DEK the card uses"
+    );
 
     // And the cure the card has: USING the code is what re-keys it, both records.
     sess.reset();
@@ -925,7 +930,7 @@ fn a_reset_code_set_before_the_burn_stays_on_the_chip_serial_root() {
     );
     fs.read(EF_RC, &mut rec).unwrap();
     assert!(
-        ct_eq(&rec[2..34], &d.pin_derive_verifier(b"resetme0")),
+        ct_eq(&rec[2..34], d.pin_derive_verifier(b"resetme0").expose()),
         "the RESET RETRY that presented the code is what moves it to the fused root"
     );
 }
@@ -1037,7 +1042,7 @@ fn change_pin_is_recoverable_at_every_write_it_makes() {
             ),
             Sw::OK
         );
-        let mut want = [0u8; DEK_SIZE];
+        let mut want = Secret::<[u8; DEK_SIZE]>::zeroed();
         load_dek(&d, &mut fs, &sess, &mut want).unwrap();
 
         tap.set(budget);
@@ -1082,11 +1087,15 @@ fn change_pin_is_recoverable_at_every_write_it_makes() {
                 "budget {budget}: neither PIN verifies — the card is unusable"
             );
         }
-        let mut got = [0u8; DEK_SIZE];
+        let mut got = Secret::<[u8; DEK_SIZE]>::zeroed();
         load_dek(&d, &mut fs, &after, &mut got).unwrap_or_else(|e| {
             panic!("budget {budget} (change returned {sw:?}): the standing PIN cannot open the DEK: {e:?}")
         });
-        assert_eq!(got, want, "budget {budget}: recovered a different key");
+        assert_eq!(
+            got.expose(),
+            want.expose(),
+            "budget {budget}: recovered a different key"
+        );
         assert!(
             !fs.has_key(EF_DEK_STAGE_PW3),
             "budget {budget}: a stage survived a recovered card"
@@ -1111,14 +1120,22 @@ fn a_pending_stage_survives_an_unrelated_pin_update() {
         PW3_MODE83,
         PW3_DEFAULT,
     );
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
 
     // A PW3 update torn after its verifier: PW3 stands on b"87654321", its copy
     // is still sealed under the default, and the stage holds the new one.
     const NEW3: &[u8] = b"87654321";
-    stage_dek(&d, &mut fs, &mut CountRng(9), EF_DEK_PW3, NEW3, &dek).unwrap();
-    put_verifier(&d, &mut fs, EF_PW3, NEW3).unwrap();
+    let (_session, _rearmed) = stage_dek(
+        &d,
+        &mut fs,
+        &mut CountRng(9),
+        EF_DEK_PW3,
+        NEW3,
+        dek.expose(),
+    )
+    .unwrap();
+    put_verifier(&d, &mut fs, EF_PW3, NEW3, None).unwrap();
 
     // Now a completely unrelated PW1 change, and a refused one for good measure.
     let mut s1 = Session::new();
@@ -1178,11 +1195,11 @@ fn a_pending_stage_survives_an_unrelated_pin_update() {
         fs.has_data(rsk_fs::EF_HARDENED),
         "fixture: the lap has latched"
     );
-    let mut got = [0u8; DEK_SIZE];
+    let mut got = Secret::<[u8; DEK_SIZE]>::zeroed();
     medium.clear_ops();
     load_dek(&d, &mut fs, &s3, &mut got)
         .expect("the PW3 stage was destroyed by an unrelated PW1 update");
-    assert_eq!(got, dek);
+    assert_eq!(got.expose(), dek.expose());
     medium.assert_re_armed_before(EF_DEK_PW3.get(), |_| false, "recover_staged_dek");
     assert!(
         !fs.has_data(rsk_fs::EF_HARDENED),
@@ -1212,12 +1229,20 @@ fn a_stale_stage_is_retired_and_re_arms_the_at_rest_lap() {
         ),
         Sw::OK
     );
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
 
     // An update that staged under a new PW3 and died before `put_verifier`: the
     // committed copy still opens under the standing PIN, so the stage is garbage.
-    stage_dek(&d, &mut fs, &mut CountRng(9), EF_DEK_PW3, b"87654321", &dek).unwrap();
+    let (_session, _rearmed) = stage_dek(
+        &d,
+        &mut fs,
+        &mut CountRng(9),
+        EF_DEK_PW3,
+        b"87654321",
+        dek.expose(),
+    )
+    .unwrap();
     assert!(fs.has_key(EF_DEK_STAGE_PW3), "the fixture staged nothing");
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     assert!(
@@ -1225,7 +1250,7 @@ fn a_stale_stage_is_retired_and_re_arms_the_at_rest_lap() {
         "fixture: the lap has latched"
     );
 
-    let mut got = [0u8; DEK_SIZE];
+    let mut got = Secret::<[u8; DEK_SIZE]>::zeroed();
     medium.clear_ops();
     load_dek(&d, &mut fs, &sess, &mut got).unwrap();
     assert!(
@@ -1242,7 +1267,7 @@ fn a_stale_stage_is_retired_and_re_arms_the_at_rest_lap() {
         "retiring a stale stage supersedes a copy sealed under a PIN nobody \
          holds and must re-arm the at-rest lap",
     );
-    assert_eq!(got, dek);
+    assert_eq!(got.expose(), dek.expose());
 }
 
 /// A refused new PIN must leave nothing behind. Staging before the value is
@@ -1291,7 +1316,7 @@ fn a_refused_new_pin_leaves_no_staged_record() {
         ),
         Sw::OK
     );
-    let mut got = [0u8; DEK_SIZE];
+    let mut got = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d, &mut fs, &s2, &mut got).unwrap();
 }
 
@@ -1659,7 +1684,7 @@ fn a_stored_reference_outside_the_policy_still_verifies() {
     let mut fs = setup();
     let mut sess = Session::new();
     let d = dev();
-    store_verifier(&d, &mut fs, EF_PW1, b"abc").unwrap();
+    store_verifier(&d, &mut fs, EF_PW1, b"abc", None).unwrap();
 
     assert_eq!(
         verify(
@@ -1717,7 +1742,10 @@ fn provisioning_is_recoverable_at_every_write_it_makes() {
             .unwrap_or_else(|e| panic!("budget {budget}: the second boot failed: {e:?}"));
 
         // Both defaults verify, and both open the SAME DEK.
-        let mut deks = [[0u8; DEK_SIZE]; 2];
+        let mut deks = [
+            Secret::<[u8; DEK_SIZE]>::zeroed(),
+            Secret::<[u8; DEK_SIZE]>::zeroed(),
+        ];
         for (i, (p2, pw)) in [(PW1_MODE81, PW1_DEFAULT), (PW3_MODE83, PW3_DEFAULT)]
             .into_iter()
             .enumerate()
@@ -1733,7 +1761,8 @@ fn provisioning_is_recoverable_at_every_write_it_makes() {
             });
         }
         assert_eq!(
-            deks[0], deks[1],
+            deks[0].expose(),
+            deks[1].expose(),
             "budget {budget}: the two PINs unwrap different keys"
         );
     }
@@ -1941,13 +1970,13 @@ fn neutralizing_a_pre_otp_default_reset_code_re_arms_the_at_rest_lap() {
     let d_otp = otp_dev();
 
     // The legacy state, rooted where firmware <= 0x07F6 wrote it: the chip serial.
-    put_verifier(&d_pre, &mut fs, EF_RC, PW3_DEFAULT).unwrap();
+    put_verifier(&d_pre, &mut fs, EF_RC, PW3_DEFAULT, None).unwrap();
     set_pin_retry_counter(&mut fs, EF_RC, PW_RETRIES_DEFAULT).unwrap();
     let mut rc_rec = [0u8; 34];
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
     assert_eq!(
         &rc_rec[2..],
-        &d_pre.pin_derive_verifier(PW3_DEFAULT)[..],
+        &d_pre.pin_derive_verifier(PW3_DEFAULT).expose()[..],
         "fixture: the record about to be tombstoned is chip-serial-rooted",
     );
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -1983,7 +2012,7 @@ fn a_refused_re_arm_still_closes_the_default_reset_code_backdoor() {
     let d_pre = dev();
     let d_otp = otp_dev();
 
-    put_verifier(&d_pre, &mut fs, EF_RC, PW3_DEFAULT).unwrap();
+    put_verifier(&d_pre, &mut fs, EF_RC, PW3_DEFAULT, None).unwrap();
     set_pin_retry_counter(&mut fs, EF_RC, PW_RETRIES_DEFAULT).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
@@ -2049,7 +2078,7 @@ fn clearing_a_pre_otp_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
     assert_eq!(
         &rc_rec[2..],
-        &d_pre.pin_derive_verifier(RC)[..],
+        &d_pre.pin_derive_verifier(RC).expose()[..],
         "fixture: EF_RC is rooted in the public chip serial",
     );
 
@@ -2063,7 +2092,7 @@ fn clearing_a_pre_otp_reset_code_re_arms_the_at_rest_lap() {
     let mut dek_from_rc = [0u8; DEK_SIZE];
     d_pre
         .decrypt_with_aad(
-            &d_pre.pin_derive_session(RC),
+            d_pre.pin_derive_session(RC).expose(),
             &blob[1..n],
             PinKdf::V2,
             &mut dek_from_rc,
@@ -2098,7 +2127,7 @@ fn clearing_a_pre_otp_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
     assert_eq!(
         &rc_rec[2..],
-        &d_pre.pin_derive_verifier(RC)[..],
+        &d_pre.pin_derive_verifier(RC).expose()[..],
         "fixture: the PW3 migration did not touch EF_RC",
     );
     assert!(fs.has_key(EF_DEK_RC), "fixture: EF_DEK_RC is still there");
@@ -2123,10 +2152,11 @@ fn clearing_a_pre_otp_reset_code_re_arms_the_at_rest_lap() {
 
     // The load-bearing half: the clear did NOT rotate the DEK, so the copy it
     // tombstoned still opens the card's keys.
-    let mut dek_live = [0u8; DEK_SIZE];
+    let mut dek_live = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(&d_otp, &mut fs, &sess, &mut dek_live).unwrap();
     assert_eq!(
-        dek_live, dek_from_rc,
+        dek_live.expose(),
+        &dek_from_rc,
         "the DEK recoverable from the tombstoned RC copy is still the live one",
     );
 
@@ -2168,7 +2198,7 @@ fn reset_retry_via_the_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PW1, &mut rec), Some(34));
     assert_eq!(
         &rec[2..],
-        &dev().pin_derive_verifier(PW1_DEFAULT)[..],
+        &dev().pin_derive_verifier(PW1_DEFAULT).expose()[..],
         "fixture: EF_PW1 is rooted in the public chip serial",
     );
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2188,7 +2218,7 @@ fn reset_retry_via_the_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PW1, &mut rec), Some(34));
     assert_eq!(
         &rec[2..],
-        &d_otp.pin_derive_verifier(b"222222")[..],
+        &d_otp.pin_derive_verifier(b"222222").expose()[..],
         "fixture: the reset re-keyed EF_PW1 under the OTP arm",
     );
     assert!(!fs.has_data(rsk_fs::EF_HARDENED));
@@ -2226,7 +2256,7 @@ fn setting_a_new_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
     assert_eq!(
         &rc_rec[2..],
-        &d_pre.pin_derive_verifier(b"resetme0")[..],
+        &d_pre.pin_derive_verifier(b"resetme0").expose()[..],
         "fixture: the RC the SET below supersedes is chip-serial-rooted",
     );
 
@@ -2247,7 +2277,7 @@ fn setting_a_new_reset_code_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_RC, &mut rc_rec), Some(34));
     assert_eq!(
         &rc_rec[2..],
-        &d_pre.pin_derive_verifier(b"resetme0")[..],
+        &d_pre.pin_derive_verifier(b"resetme0").expose()[..],
         "fixture: the PW3 migration did not touch EF_RC",
     );
 
@@ -2336,7 +2366,7 @@ fn reset_retry_via_pw3_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PW1, &mut rec), Some(34));
     assert_eq!(
         &rec[2..],
-        &dev().pin_derive_verifier(PW1_DEFAULT)[..],
+        &dev().pin_derive_verifier(PW1_DEFAULT).expose()[..],
         "fixture: EF_PW1 is rooted in the public chip serial",
     );
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2360,11 +2390,62 @@ fn reset_retry_via_pw3_re_arms_the_at_rest_lap() {
     assert_eq!(fs.read(EF_PW1, &mut rec), Some(34));
     assert_eq!(
         &rec[2..],
-        &d_otp.pin_derive_verifier(b"222222")[..],
+        &d_otp.pin_derive_verifier(b"222222").expose()[..],
         "fixture: the reset re-keyed EF_PW1 under the OTP arm",
     );
     assert!(
         !fs.has_data(rsk_fs::EF_HARDENED),
         "RESET RETRY superseded a chip-serial-rooted verifier and must re-arm the lap",
     );
+}
+
+/// Every session key this module hands back wipes itself when it drops: a caller
+/// that discards one (`stage_dek(..)?;`) or loses it to a `?` leaves nothing.
+#[test]
+fn every_session_key_handed_back_wipes_itself() {
+    fn wipes_on_drop<T: zeroize::ZeroizeOnDrop>(_: &T) {}
+    let d = dev();
+    let mut fs = setup();
+    let mut sess = Session::new();
+    verify(
+        &d,
+        &mut fs,
+        &mut sess,
+        &mut CountRng(0),
+        0x00,
+        PW3_MODE83,
+        PW3_DEFAULT,
+    );
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
+    load_dek(&d, &mut fs, &sess, &mut dek).unwrap();
+
+    let staged = stage_dek(
+        &d,
+        &mut fs,
+        &mut CountRng(9),
+        EF_DEK_PW3,
+        b"87654321",
+        dek.expose(),
+    );
+    wipes_on_drop(&staged.unwrap().0);
+    let rearmed = rsk_fs::request_rescrub(&mut fs).unwrap();
+    let rewrapped = rewrap_dek(
+        &d,
+        &mut fs,
+        &mut CountRng(9),
+        EF_DEK_PW1,
+        b"123456",
+        dek.expose(),
+        &rearmed,
+    );
+    wipes_on_drop(&rewrapped.unwrap());
+    let reseeded = reseed_pin(
+        &d,
+        &mut fs,
+        &mut CountRng(9),
+        EF_PW3,
+        b"87654321",
+        dek.expose(),
+    );
+    wipes_on_drop(&reseeded.unwrap());
 }

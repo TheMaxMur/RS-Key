@@ -829,7 +829,7 @@ def test_a_caller_outside_the_writer_axes_three_directories_is_still_a_caller():
 
 def test_the_default_images_closure_is_walked_and_leaves_the_optional_crates_out():
     """`unlinked-crate` rests on this walk. Cross-checked against
-    `cargo tree -p firmware -e normal`: the same 22 crates, and the five it
+    `cargo tree -p firmware -e normal`: the same 23 crates, and the five it
     leaves out are the `display`/`bench` optionals nothing turns on."""
     linked = gate.linked_crates(ROOT)
     assert "firmware" in linked and "crates/rsk-fido" in linked

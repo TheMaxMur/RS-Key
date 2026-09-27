@@ -12,9 +12,17 @@
 //! enumerateCredentials emits the core 0x06–0x09 plus the extension fields
 //! 0x0A credProtect / 0x0B largeBlobKey (derived) / 0x0C thirdPartyPayment.
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
-use zeroize::Zeroize;
 
 use rsk_crypto::pinproto::{self, PinProto};
 use rsk_fs::{Fs, Storage};
@@ -133,7 +141,9 @@ fn parse_subpara<'a>(
             _ => skip_value(d)?,
         }
     }
-    req.raw_subpara = &data[start..d.position()];
+    req.raw_subpara = data
+        .get(start..d.position())
+        .ok_or(CtapError::InvalidCbor)?;
     Ok(())
 }
 
@@ -173,11 +183,13 @@ pub fn cred_mgmt<S: Storage, R: Rng>(
 
     match req.subcommand {
         CM_GET_CREDS_METADATA => {
-            authorize_cm(ctx, proto, &[CM_GET_CREDS_METADATA as u8], param, None)?;
+            let subcommand = u8::try_from(CM_GET_CREDS_METADATA).unwrap_or(u8::MAX);
+            authorize_cm(ctx, proto, &[subcommand], param, None)?;
             creds_metadata(ctx, out)
         }
         CM_ENUMERATE_RPS_BEGIN => {
-            authorize_cm(ctx, proto, &[CM_ENUMERATE_RPS_BEGIN as u8], param, None)?;
+            let subcommand = u8::try_from(CM_ENUMERATE_RPS_BEGIN).unwrap_or(u8::MAX);
+            authorize_cm(ctx, proto, &[subcommand], param, None)?;
             enumerate_rps(ctx, true, out)
         }
         CM_ENUMERATE_CREDS_BEGIN => {
@@ -266,8 +278,8 @@ fn authorized_by_ppuat<S: Storage, R: Rng>(
     let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
         return false;
     };
-    let ok = pinproto::verify(proto, &tok, payload, param);
-    tok.zeroize();
+    let ok = pinproto::verify(proto, tok.expose(), payload, param);
+    tok.wipe();
     ok
 }
 
@@ -306,21 +318,23 @@ fn check_rp_binding(state: &FidoState, rp_id_hash: Option<&[u8; 32]>) -> Result<
 fn payload_with_subpara<'a>(
     subcmd: u64,
     raw: &[u8],
-    buf: &'a mut [u8],
+    buf: &'a mut [u8; 1 + MAX_RAW_SUBPARA],
 ) -> Result<&'a [u8], CtapError> {
-    if 1 + raw.len() > buf.len() {
+    let end = 1 + raw.len();
+    let Some(tail) = buf.get_mut(1..end) else {
         return Err(CtapError::RequestTooLarge);
-    }
-    buf[0] = subcmd as u8;
-    buf[1..1 + raw.len()].copy_from_slice(raw);
-    Ok(&buf[..1 + raw.len()])
+    };
+    tail.copy_from_slice(raw);
+    buf[0] = u8::try_from(subcmd).map_err(|_| CtapError::RequestTooLarge)?;
+    buf.get(..end).ok_or(CtapError::RequestTooLarge)
 }
 
 /// 0x01 getCredsMetadata: count populated EF_CRED slots.
 fn creds_metadata<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) -> CtapResult {
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(ctx.fs, EF_CRED, &mut occupied);
-    let existing = occupied.iter().filter(|&&b| b).count() as u16;
+    let existing =
+        u16::try_from(occupied.iter().filter(|&&b| b).count()).map_err(|_| CtapError::Other)?;
     let remaining = remaining_rk(ctx.fs, existing);
     let mut enc = Encoder::new(Cursor::new(out));
     enc.map(2)
@@ -357,8 +371,11 @@ fn enumerate_rps<S: Storage, R: Rng>(
     // Resume at rp_next_slot (0 on Begin, past the last match on getNext) so a
     // getNext is O(gap-to-next) not O(scan-from-0); Begin still makes one full
     // pass to count rp_total.
-    for i in ctx.state.cm.rp_next_slot..MAX_RESIDENT_CREDENTIALS {
-        if !occupied[i as usize] {
+    for (i, &live) in (0..MAX_RESIDENT_CREDENTIALS)
+        .zip(&occupied)
+        .skip(usize::from(ctx.state.cm.rp_next_slot))
+    {
+        if !live {
             continue;
         }
         let Some(n) = ctx.fs.read(EF_RP + i, &mut buf) else {
@@ -368,7 +385,7 @@ fn enumerate_rps<S: Storage, R: Rng>(
         if n >= RP_PREFIX && buf[0] > 0 {
             if !found {
                 found = true;
-                rp[..n].copy_from_slice(&buf[..n]);
+                rp = buf;
                 rp_len = n;
                 ctx.state.cm.rp_next_slot = i + 1;
                 if !begin {
@@ -397,8 +414,9 @@ fn enumerate_rps<S: Storage, R: Rng>(
     rp_id_hash.copy_from_slice(&rp[1..RP_PREFIX]);
     let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
     let mut scratch = [0u8; RP_REC_MAX];
-    let unsealed = unseal_rp_id(&seed, &rp_id_hash, &rp[RP_PREFIX..rp_len], &mut scratch);
-    seed.zeroize();
+    let tail = rp.get(RP_PREFIX..rp_len).ok_or(CtapError::Other)?;
+    let unsealed = unseal_rp_id(seed.expose(), &rp_id_hash, tail, &mut scratch);
+    seed.wipe();
     let (rp_id, _) = unsealed.ok_or(CtapError::Other)?;
 
     let mut enc = Encoder::new(Cursor::new(out));
@@ -447,8 +465,11 @@ fn enumerate_creds<S: Storage, R: Rng>(
     // any put/delete, so a mid-walk mutation forces a rebuild rather than a stale
     // read. See `CredMgmtState::rp_index`.
     if !ctx.state.cm.rp_index_valid || ctx.state.cm.rp_index_gen != ctx.fs.write_gen() {
-        for i in 0..MAX_RESIDENT_CREDENTIALS {
-            let prefix = if occupied[i as usize] {
+        for ((i, &live), entry) in (0..MAX_RESIDENT_CREDENTIALS)
+            .zip(&occupied)
+            .zip(&mut ctx.state.cm.rp_index)
+        {
+            let prefix = if live {
                 match ctx.fs.read(EF_CRED + i, &mut buf) {
                     Some(n) if n >= 4 => u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]),
                     _ => 0,
@@ -456,7 +477,7 @@ fn enumerate_creds<S: Storage, R: Rng>(
             } else {
                 0
             };
-            ctx.state.cm.rp_index[i as usize] = prefix;
+            *entry = prefix;
         }
         ctx.state.cm.rp_index_gen = ctx.fs.write_gen();
         ctx.state.cm.rp_index_valid = true;
@@ -466,13 +487,17 @@ fn enumerate_creds<S: Storage, R: Rng>(
     // Resume at cred_next_slot (0 on Begin, past the last match on getNext) so a
     // getNext is O(gap-to-next) not O(scan-from-0); Begin still makes one full
     // pass to count cred_total for this rp.
-    for i in ctx.state.cm.cred_next_slot..MAX_RESIDENT_CREDENTIALS {
-        if !occupied[i as usize] {
+    for ((i, &live), &prefix) in (0..MAX_RESIDENT_CREDENTIALS)
+        .zip(&occupied)
+        .zip(&ctx.state.cm.rp_index)
+        .skip(usize::from(ctx.state.cm.cred_next_slot))
+    {
+        if !live {
             continue;
         }
         // Skip a slot whose cached rpId-hash prefix can't match — the read below is
         // the store's costliest op. The full 32-byte compare still confirms a hit.
-        if ctx.state.cm.rp_index[i as usize] != want_prefix {
+        if prefix != want_prefix {
             continue;
         }
         let Some(n) = ctx.fs.read(EF_CRED + i, &mut buf) else {
@@ -482,7 +507,7 @@ fn enumerate_creds<S: Storage, R: Rng>(
         if n >= RECORD_PREFIX && buf[..32] == *rp_id_hash {
             if !found {
                 found = true;
-                rec[..n].copy_from_slice(&buf[..n]);
+                rec = buf;
                 rec_len = n;
                 ctx.state.cm.cred_next_slot = i + 1;
                 if !begin {
@@ -499,8 +524,9 @@ fn enumerate_creds<S: Storage, R: Rng>(
     }
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
-    let result = enumerate_creds_response(&rec[..rec_len], rp_id_hash, begin, total, &seed, out);
-    seed.zeroize();
+    let rec = rec.get(..rec_len).ok_or(CtapError::NotAllowed)?;
+    let result = enumerate_creds_response(rec, rp_id_hash, begin, total, seed.expose(), out);
+    seed.wipe();
     let resp_len = result?;
 
     if begin {
@@ -520,7 +546,7 @@ fn enumerate_creds_response(
     seed: &[u8; 32],
     out: &mut [u8],
 ) -> CtapResult {
-    let resident_id = &rec[32..RECORD_PREFIX];
+    let resident_id = rec.get(32..RECORD_PREFIX).ok_or(CtapError::NotAllowed)?;
     let cred_box = cred_record_box(rec);
     let cached_pubkey = cred_record_pubkey(rec);
     // The enumerated pubkey must be the one getAssertion signs with: a v2/v3
@@ -539,8 +565,8 @@ fn enumerate_creds_response(
         None
     } else {
         let mut raw = fido_load_key(seed, key_input).ok_or(CtapError::NotAllowed)?;
-        let k = CredKey::from_raw(cred.curve, &raw).ok_or(CtapError::NotAllowed)?;
-        raw.zeroize();
+        let k = CredKey::from_raw(cred.curve, raw.expose()).ok_or(CtapError::NotAllowed)?;
+        raw.wipe();
         Some(k)
     };
 
@@ -644,8 +670,8 @@ fn find_resident<S: Storage>(fs: &mut Fs<S>, cred_id: &[u8]) -> Option<(u16, [u8
     let mut buf = [0u8; CRED_REC_MAX];
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(fs, EF_CRED, &mut occupied);
-    for i in 0..MAX_RESIDENT_CREDENTIALS {
-        if !occupied[i as usize] {
+    for (i, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
+        if !live {
             continue;
         }
         let Some(n) = fs.read(EF_CRED + i, &mut buf) else {
@@ -692,8 +718,8 @@ pub(crate) fn decrement_rp<S: Storage>(
     let mut rp = [0u8; RP_REC_MAX];
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(fs, EF_RP, &mut occupied);
-    for j in 0..MAX_RESIDENT_CREDENTIALS {
-        if !occupied[j as usize] {
+    for (j, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
+        if !live {
             continue;
         }
         let Some(m) = fs.read(EF_RP + j, &mut rp) else {
@@ -710,7 +736,8 @@ pub(crate) fn decrement_rp<S: Storage>(
                 // rpIdHash-AAD binding rejects it if the slot is reused, so reset reclaims it.
                 let _ = fs.delete(crate::consts::EF_RPNICK + j);
             } else {
-                fs.put(EF_RP + j, &rp[..m])
+                let record = rp.get(..m).ok_or(CtapError::NotAllowed)?;
+                fs.put(EF_RP + j, record)
                     .map_err(|_| CtapError::NotAllowed)?;
             }
             break;
@@ -738,16 +765,17 @@ fn update_user<S: Storage, R: Rng>(
     };
     let n = n.min(buf.len());
     let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
+    let record = buf.get(..n).ok_or(CtapError::NoCredentials)?;
     let r = reseal_user(
         ctx,
         slot,
-        &buf[..n],
+        record,
         user_id,
         user_name,
         user_display_name,
-        &seed,
+        seed.expose(),
     );
-    seed.zeroize();
+    seed.wipe();
     r
 }
 
@@ -778,9 +806,12 @@ fn reseal_user<S: Storage, R: Rng>(
     user_display_name: &str,
     seed: &[u8; 32],
 ) -> CtapResult {
+    let Some(prefix) = record.first_chunk::<RECORD_PREFIX>() else {
+        return Err(CtapError::NotAllowed);
+    };
     let mut rp_id_hash = [0u8; 32];
-    rp_id_hash.copy_from_slice(&record[..32]);
-    let resident_id = &record[32..RECORD_PREFIX];
+    rp_id_hash.copy_from_slice(&prefix[..32]);
+    let resident_id = &prefix[32..];
     let cred_box = cred_record_box(record);
     // The cached public point is stable across a reseal (v2/v3 keys off the
     // preserved resident id), so carry the trailer forward verbatim.
@@ -816,25 +847,29 @@ fn reseal_user<S: Storage, R: Rng>(
     let mut new_box = [0u8; CRED_BOX_MAX];
     let len = credential_create(seed, &ctx.dev, &input, &rp_id_hash, &iv, &mut new_box)
         .map_err(|_| CtapError::NotAllowed)?;
+    let new_box = new_box.get(..len).ok_or(CtapError::NotAllowed)?;
 
     // Rewrite the slot: rp_id_hash ‖ (preserved) resident_id ‖ [pubkey] ‖ new box.
     let mut rec = [0u8; CRED_REC_MAX];
-    let total = compose_cred_record(
-        &rp_id_hash,
-        resident_id,
-        cached_pubkey,
-        &new_box[..len],
-        &mut rec,
-    )
-    .ok_or(CtapError::KeyStoreFull)?;
+    let total = compose_cred_record(&rp_id_hash, resident_id, cached_pubkey, new_box, &mut rec)
+        .ok_or(CtapError::KeyStoreFull)?;
     crate::credential::bump_cred_store_state(ctx.fs).map_err(|_| CtapError::NotAllowed)?;
+    let rec = rec.get(..total).ok_or(CtapError::KeyStoreFull)?;
     ctx.fs
-        .put(EF_CRED + slot, &rec[..total])
+        .put(EF_CRED + slot, rec)
         .map_err(|_| CtapError::NotAllowed)?;
     Ok(0)
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "credmgmt_tests.rs"]
 mod tests;
 

@@ -5,7 +5,7 @@
 //! ‖ slot ‖ CRC ‖ pad) carried 7 payload bytes per 8-byte FEATURE report, written
 //! via SET_REPORT and polled via GET_REPORT — the transport `ykman otp` speaks.
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use crate::{VERSION, crc16};
 
@@ -40,11 +40,9 @@ pub enum RxOutcome {
     None,
     /// The host asked to reset the transfer (clear any pending response).
     Reset,
-    /// A complete, CRC-valid frame: run `slot_id` with `payload` as the APDU.
-    Frame {
-        slot: u8,
-        payload: [u8; PAYLOAD_SIZE],
-    },
+    /// A complete, CRC-valid frame for `slot`; its payload went into the
+    /// caller's buffer.
+    Frame { slot: u8 },
     /// A complete frame whose CRC did not match — dropped.
     BadCrc,
 }
@@ -56,7 +54,7 @@ pub enum RxOutcome {
 /// 70-byte frame, whose stored CRC (a plain CRC-16 over the 64-byte payload) is
 /// checked before the frame is released.
 pub struct FrameRx {
-    buf: [u8; FRAME_SIZE],
+    buf: Secret<[u8; FRAME_SIZE]>,
 }
 
 impl Default for FrameRx {
@@ -68,12 +66,18 @@ impl Default for FrameRx {
 impl FrameRx {
     pub const fn new() -> Self {
         Self {
-            buf: [0; FRAME_SIZE],
+            buf: Secret::zeroed(),
         }
     }
 
-    /// Consume one 8-byte feature report.
-    pub fn feed(&mut self, report: &[u8; REPORT_SIZE]) -> RxOutcome {
+    /// Consume one 8-byte feature report. A frame that completes with a good CRC
+    /// is copied straight into `into`, a buffer that wipes itself, and the
+    /// reassembly buffer is wiped at once; `into` is left alone otherwise.
+    pub fn feed(
+        &mut self,
+        report: &[u8; REPORT_SIZE],
+        into: &mut Secret<[u8; PAYLOAD_SIZE]>,
+    ) -> RxOutcome {
         let flag = report[REPORT_DATA];
         if flag == FLAG_RESET {
             self.scrub();
@@ -93,31 +97,35 @@ impl FrameRx {
         if seq == 0 {
             self.scrub();
         }
-        self.buf[seq * REPORT_DATA..seq * REPORT_DATA + REPORT_DATA]
-            .copy_from_slice(&report[..REPORT_DATA]);
+        // `seq` is at most 9 by now, and the frame holds ten reports' data.
+        let Some(slice) = self.buf.expose_mut().chunks_exact_mut(REPORT_DATA).nth(seq) else {
+            self.scrub();
+            return RxOutcome::Reset;
+        };
+        slice.copy_from_slice(&report[..REPORT_DATA]);
         if seq != 9 {
             return RxOutcome::None;
         }
         // Final slice: validate the frame CRC (plain CRC-16 over the payload).
-        let want = u16::from_le_bytes([self.buf[FRAME_CRC_OFF], self.buf[FRAME_CRC_OFF + 1]]);
-        if crc16(&self.buf[..PAYLOAD_SIZE]) != want {
+        let buf = self.buf.expose();
+        let want = u16::from_le_bytes([buf[FRAME_CRC_OFF], buf[FRAME_CRC_OFF + 1]]);
+        if crc16(&buf[..PAYLOAD_SIZE]) != want {
             self.scrub();
             return RxOutcome::BadCrc;
         }
-        let mut payload = [0u8; PAYLOAD_SIZE];
-        payload.copy_from_slice(&self.buf[..PAYLOAD_SIZE]);
-        let slot = self.buf[PAYLOAD_SIZE];
+        into.expose_mut().copy_from_slice(&buf[..PAYLOAD_SIZE]);
+        let slot = buf[PAYLOAD_SIZE];
         // The caller owns the bytes now. A slot-configure frame holds the AES key,
         // the private UID and the presented access code, and nothing else clears
         // this buffer until some later frame happens to reuse it — so wipe it here.
         self.scrub();
-        RxOutcome::Frame { slot, payload }
+        RxOutcome::Frame { slot }
     }
 
     /// Wipe the reassembly buffer. Called after a frame is handed off, on an abort,
     /// and before the device drops to the bootloader.
     pub fn scrub(&mut self) {
-        self.buf.zeroize();
+        self.buf.wipe();
     }
 }
 
@@ -157,14 +165,17 @@ impl FrameTx {
 
     /// Load a response body (≤ 64 bytes); the CRC suffix is appended here.
     pub fn load(&mut self, body: &[u8]) {
-        let n = body.len().min(PAYLOAD_SIZE);
+        let body = body.get(..PAYLOAD_SIZE).unwrap_or(body);
+        let n = body.len();
         self.buf = [0; FRAME_SIZE + 2];
-        self.buf[..n].copy_from_slice(&body[..n]);
-        let crc = !crc16(&body[..n]);
-        self.buf[n..n + 2].copy_from_slice(&crc.to_le_bytes());
+        let crc = !crc16(body);
+        if let Some((head, tail)) = self.buf.get_mut(..n + 2).map(|f| f.split_at_mut(n)) {
+            head.copy_from_slice(body);
+            tail.copy_from_slice(&crc.to_le_bytes());
+        }
         let total = n + 2;
         self.remaining = total;
-        self.expected = total.div_ceil(REPORT_DATA) as u8;
+        self.expected = u8::try_from(total.div_ceil(REPORT_DATA)).unwrap_or(u8::MAX);
         self.seq = 0;
     }
 
@@ -175,7 +186,9 @@ impl FrameTx {
             let off = self.seq as usize * REPORT_DATA;
             let n = self.remaining.min(REPORT_DATA);
             *out = [0; REPORT_SIZE];
-            out[..n].copy_from_slice(&self.buf[off..off + n]);
+            if let (Some(dst), Some(src)) = (out.get_mut(..n), self.buf.get(off..off + n)) {
+                dst.copy_from_slice(src);
+            }
             out[REPORT_DATA] = FLAG_RESP_PENDING | self.seq;
             self.remaining -= n;
             self.seq += 1;
@@ -292,7 +305,7 @@ pub struct OtpHid {
     /// Cached idle status frame, refreshed after each command.
     status: [u8; REPORT_SIZE],
     req_slot: u8,
-    req_payload: [u8; PAYLOAD_SIZE],
+    req_payload: Secret<[u8; PAYLOAD_SIZE]>,
     req_ready: bool,
 }
 
@@ -314,7 +327,7 @@ impl OtpHid {
             // build (panel and touch init), so an early host poll may read this one.
             status: [0, VERSION.0, VERSION.1, VERSION.2, 0, 0, 0, 0],
             req_slot: 0,
-            req_payload: [0; PAYLOAD_SIZE],
+            req_payload: Secret::zeroed(),
             req_ready: false,
         }
     }
@@ -323,12 +336,12 @@ impl OtpHid {
     /// truncated, because the report size is the protocol's and not the host's.
     pub fn set_report(&mut self, data: &[u8]) -> SetOutcome {
         let mut report = [0u8; REPORT_SIZE];
-        let n = data.len().min(REPORT_SIZE);
-        report[..n].copy_from_slice(&data[..n]);
-        match self.rx.feed(&report) {
-            RxOutcome::Frame { slot, payload } => {
+        for (dst, src) in report.iter_mut().zip(data) {
+            *dst = *src;
+        }
+        match self.rx.feed(&report, &mut self.req_payload) {
+            RxOutcome::Frame { slot } => {
                 self.req_slot = slot;
-                self.req_payload = payload;
                 self.req_ready = true;
                 self.processing.reset();
                 self.state = State::Processing;
@@ -364,17 +377,19 @@ impl OtpHid {
     }
 
     /// Take the frame waiting to be run, if any.
-    pub fn take_request(&mut self) -> Option<(u8, [u8; PAYLOAD_SIZE])> {
+    pub fn take_request(&mut self) -> Option<(u8, Secret<[u8; PAYLOAD_SIZE]>)> {
         if !self.req_ready {
             return None;
         }
         self.req_ready = false;
-        let req = (self.req_slot, self.req_payload);
         // A slot-configure frame carries the AES key, the private UID and the
-        // presented access code; don't leave them here once the caller holds its
-        // own copy. Same rule the CTAP/CCID exchange buffers follow.
-        self.req_payload.zeroize();
-        Some(req)
+        // presented access code: the caller's copy wipes itself, and none stays here.
+        let mut payload = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
+        payload
+            .expose_mut()
+            .copy_from_slice(self.req_payload.expose());
+        self.req_payload.wipe();
+        Some((self.req_slot, payload))
     }
 
     /// Store a command's result: refresh the cached status frame and, if `body` is
@@ -410,7 +425,7 @@ impl OtpHid {
     pub fn scrub(&mut self) {
         self.rx.scrub();
         self.tx = FrameTx::new();
-        self.req_payload.zeroize();
+        self.req_payload.wipe();
         self.req_slot = 0;
     }
 }
@@ -425,14 +440,22 @@ pub fn split_frame(payload: &[u8; PAYLOAD_SIZE], slot: u8) -> [[u8; REPORT_SIZE]
     let crc = crc16(payload);
     frame[FRAME_CRC_OFF..FRAME_CRC_OFF + 2].copy_from_slice(&crc.to_le_bytes());
     let mut reports = [[0u8; REPORT_SIZE]; 10];
-    for (seq, rep) in reports.iter_mut().enumerate() {
-        rep[..REPORT_DATA]
-            .copy_from_slice(&frame[seq * REPORT_DATA..seq * REPORT_DATA + REPORT_DATA]);
-        rep[REPORT_DATA] = FLAG_WRITE | seq as u8;
+    let chunks = frame.chunks_exact(REPORT_DATA);
+    for ((rep, chunk), seq) in reports.iter_mut().zip(chunks).zip(0u8..) {
+        rep[..REPORT_DATA].copy_from_slice(chunk);
+        rep[REPORT_DATA] = FLAG_WRITE | seq;
     }
     reports
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "hid_tests.rs"]
 mod tests;

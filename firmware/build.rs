@@ -238,7 +238,12 @@ fn main() {
     if let Some(ref b) = board {
         let set = |k: &str, v: &str| {
             if env::var(k).is_err() {
-                unsafe { env::set_var(k, v) }
+                // SAFETY: a build script is single-threaded; nothing reads the
+                // environment concurrently.
+                #[expect(unsafe_code, reason = "edition 2024 makes set_var unsafe")]
+                unsafe {
+                    env::set_var(k, v)
+                };
             }
         };
         if let Some(ref v) = b.vidpid {

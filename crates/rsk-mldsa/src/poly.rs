@@ -14,9 +14,21 @@ use crate::reduce::mont_reduce;
 
 /// A ring element: 256 signed coefficients. Zeroizes on drop — secret
 /// polynomials (s1/s2/y/z and the expanded key's NTT halves) pass through here.
-#[derive(Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone)]
 #[repr(align(8))]
 pub struct Poly(pub [i32; N]);
+
+impl Drop for Poly {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "a Poly's drop is its wipe, as a Secret's is"
+    )]
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for Poly {}
 
 impl Poly {
     /// The zero polynomial.

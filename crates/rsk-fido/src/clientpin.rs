@@ -12,9 +12,18 @@
 //! successful verify only migrates legacy PIN-wrapped blobs back to plain
 //! ([`migrate_keydev_pin`]).
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::pinproto::{self, PinProto};
 use rsk_crypto::{Device, sha256};
@@ -188,7 +197,7 @@ fn set_pin<S: Storage, R: Rng>(
     if ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)? {
         return Err(CtapError::PinAuthInvalid);
     }
-    let new_pin_enc = req.new_pin_enc.unwrap();
+    let new_pin_enc = req.new_pin_enc.ok_or(CtapError::MissingParameter)?;
     let want = PADDED_PIN_LEN + proto.iv_overhead();
     // A padded new PIN longer than 64 bytes means the PIN exceeds the 63-byte
     // maximum → a policy violation, not a malformed request (conformance
@@ -200,17 +209,18 @@ fn set_pin<S: Storage, R: Rng>(
     if new_pin_enc.len() != want {
         return Err(CtapError::InvalidParameter);
     }
-    let mut shared = [0u8; 64];
-    let slen = derive_shared(ctx, req, proto, &mut shared)?;
-    let secret = &shared[..slen];
+    let mut shared = Secret::<[u8; 64]>::zeroed();
+    let slen = derive_shared(ctx, req, proto, shared.expose_mut())?;
+    let secret = shared_secret(shared.expose(), slen)?;
 
-    if !pinproto::verify(proto, secret, new_pin_enc, req.pin_uv_auth_param.unwrap()) {
-        shared.zeroize();
+    let pin_uv_auth_param = req.pin_uv_auth_param.ok_or(CtapError::MissingParameter)?;
+    if !pinproto::verify(proto, secret, new_pin_enc, pin_uv_auth_param) {
+        shared.wipe();
         return Err(CtapError::PinAuthInvalid);
     }
-    let mut padded = [0u8; PADDED_PIN_LEN];
-    let dec = pinproto::decrypt(proto, secret, new_pin_enc, &mut padded);
-    shared.zeroize();
+    let mut padded = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();
+    let dec = pinproto::decrypt(proto, secret, new_pin_enc, padded.expose_mut());
+    shared.wipe();
     if dec.is_err() {
         return Err(CtapError::PinAuthInvalid);
     }
@@ -218,8 +228,8 @@ fn set_pin<S: Storage, R: Rng>(
     // whose wipe still deferred EF_PAUTHTOKEN left behind. Establishing a PIN over
     // that leftover would hand the old holder the credentials created next.
     clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
-    let res = store_new_pin(ctx, &padded);
-    padded.zeroize();
+    let res = store_new_pin(ctx, padded.expose());
+    padded.wipe();
     res?;
     journal::append(ctx, journal::EV_PIN_SET, 0, &[]);
     Ok(0)
@@ -234,8 +244,8 @@ fn change_pin<S: Storage, R: Rng>(
 ) -> CtapResult {
     let _ = out;
     require_pin_inputs(req, true, true)?;
-    let pin_hash_enc = req.pin_hash_enc.unwrap();
-    let new_pin_enc = req.new_pin_enc.unwrap();
+    let pin_hash_enc = req.pin_hash_enc.ok_or(CtapError::MissingParameter)?;
+    let new_pin_enc = req.new_pin_enc.ok_or(CtapError::MissingParameter)?;
     pin_set_and_unblocked(ctx)?;
     // An over-long padded new PIN is a policy violation (see `set_pin`).
     if new_pin_enc.len() > PADDED_PIN_LEN + proto.iv_overhead() {
@@ -249,43 +259,47 @@ fn change_pin<S: Storage, R: Rng>(
     if ctx.state.needs_power_cycle {
         return Err(CtapError::PinAuthBlocked);
     }
-    let mut shared = [0u8; 64];
-    let slen = derive_shared(ctx, req, proto, &mut shared)?;
-    let secret = &shared[..slen];
+    let mut shared = Secret::<[u8; 64]>::zeroed();
+    let slen = derive_shared(ctx, req, proto, shared.expose_mut())?;
+    let secret = shared_secret(shared.expose(), slen)?;
 
     // The MAC covers newPinEnc ‖ pinHashEnc (≤ 80 + 32 for protocol 2).
     let mut macd = [0u8; 112];
-    macd[..new_pin_enc.len()].copy_from_slice(new_pin_enc);
-    macd[new_pin_enc.len()..new_pin_enc.len() + pin_hash_enc.len()].copy_from_slice(pin_hash_enc);
+    let macd = macd
+        .get_mut(..new_pin_enc.len() + pin_hash_enc.len())
+        .ok_or(CtapError::InvalidParameter)?;
+    for (dst, &b) in macd.iter_mut().zip(new_pin_enc.iter().chain(pin_hash_enc)) {
+        *dst = b;
+    }
     if !pinproto::verify(
         proto,
         secret,
-        &macd[..new_pin_enc.len() + pin_hash_enc.len()],
-        req.pin_uv_auth_param.unwrap(),
+        macd,
+        req.pin_uv_auth_param.ok_or(CtapError::MissingParameter)?,
     ) {
-        shared.zeroize();
+        shared.wipe();
         return Err(CtapError::PinAuthInvalid);
     }
 
     // Verify the old PIN (decrements the counter; mismatch path regenerates).
-    let mut old_hash = [0u8; PADDED_PIN_LEN];
-    if pinproto::decrypt(proto, secret, pin_hash_enc, &mut old_hash).is_err() {
-        shared.zeroize();
+    let mut old_hash = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();
+    if pinproto::decrypt(proto, secret, pin_hash_enc, old_hash.expose_mut()).is_err() {
+        shared.wipe();
         return Err(CtapError::PinAuthInvalid);
     }
-    if let Err(e) = spend_and_verify_pin_hash(ctx, &old_hash[..16]) {
-        shared.zeroize();
-        old_hash.zeroize();
+    if let Err(e) = spend_and_verify_pin_hash(ctx, &old_hash.expose()[..16]) {
+        shared.wipe();
+        old_hash.wipe();
         return Err(e);
     }
     // The verify migrated any legacy PIN-wrapped seed; the seed itself is
     // PIN-independent, so changing the PIN only swaps the verifier.
-    old_hash.zeroize();
+    old_hash.wipe();
 
     // Decrypt + install the new PIN.
-    let mut padded = [0u8; PADDED_PIN_LEN];
-    let dec = pinproto::decrypt(proto, secret, new_pin_enc, &mut padded);
-    shared.zeroize();
+    let mut padded = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();
+    let dec = pinproto::decrypt(proto, secret, new_pin_enc, padded.expose_mut());
+    shared.wipe();
     if dec.is_err() {
         return Err(CtapError::PinAuthInvalid);
     }
@@ -293,11 +307,16 @@ fn change_pin<S: Storage, R: Rng>(
     // otherwise re-entering the old one would clear the flag and satisfy nothing.
     if force_change_pending(ctx) {
         let pin_len = padded
+            .expose()
             .iter()
             .position(|&b| b == 0)
             .unwrap_or(PADDED_PIN_LEN);
-        if pin_verifier_matches(ctx, &padded[..pin_len]) {
-            padded.zeroize();
+        let pin = padded
+            .expose()
+            .get(..pin_len)
+            .ok_or(CtapError::PinPolicyViolation)?;
+        if pin_verifier_matches(ctx, pin) {
+            padded.wipe();
             return Err(CtapError::PinPolicyViolation);
         }
     }
@@ -306,8 +325,8 @@ fn change_pin<S: Storage, R: Rng>(
     // `pcmr` grant live against a PIN they no longer know. A rejected change then
     // costs a re-fetch, which is the cheap direction.
     clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
-    let res = store_new_pin(ctx, &padded);
-    padded.zeroize();
+    let res = store_new_pin(ctx, padded.expose());
+    padded.wipe();
     res?;
     // The new PIN met minPINLength (store_new_pin), so the change satisfies a
     // pending forced-PIN-change policy.
@@ -325,6 +344,11 @@ fn get_pin_token<S: Storage, R: Rng>(
     out: &mut [u8],
 ) -> CtapResult {
     require_pin_inputs(req, false, true)?;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "bits past the low byte name no permission and have always been dropped \
+                  here; a checked form would refuse a request this door serves"
+    )]
     let permissions = req.permissions as u8;
     if req.subcommand == CP_GET_PIN_TOKEN {
         if req.permissions != 0 || req.rp_id.is_some() {
@@ -346,28 +370,35 @@ fn get_pin_token<S: Storage, R: Rng>(
     if ctx.state.needs_power_cycle {
         return Err(CtapError::PinAuthBlocked);
     }
-    let mut shared = [0u8; 64];
-    let slen = derive_shared(ctx, req, proto, &mut shared)?;
+    let mut shared = Secret::<[u8; 64]>::zeroed();
+    let slen = derive_shared(ctx, req, proto, shared.expose_mut())?;
     // §6.5.5.7.1/.2 place the display's consent between the key agreement and the
     // PIN check, so a decline costs no retry.
     if let Err(e) = consent_for_permissions(ctx, permissions) {
-        shared.zeroize();
+        shared.wipe();
         return Err(e);
     }
-    let secret = &shared[..slen];
+    let secret = shared_secret(shared.expose(), slen)?;
 
-    let mut pin_hash = [0u8; PADDED_PIN_LEN];
-    if pinproto::decrypt(proto, secret, req.pin_hash_enc.unwrap(), &mut pin_hash).is_err() {
-        shared.zeroize();
+    let mut pin_hash = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();
+    if pinproto::decrypt(
+        proto,
+        secret,
+        req.pin_hash_enc.ok_or(CtapError::MissingParameter)?,
+        pin_hash.expose_mut(),
+    )
+    .is_err()
+    {
+        shared.wipe();
         return Err(CtapError::PinAuthInvalid);
     }
-    if let Err(e) = spend_and_verify_pin_hash(ctx, &pin_hash[..16]) {
-        shared.zeroize();
-        pin_hash.zeroize();
+    if let Err(e) = spend_and_verify_pin_hash(ctx, &pin_hash.expose()[..16]) {
+        shared.wipe();
+        pin_hash.wipe();
         return Err(e);
     }
 
-    pin_hash.zeroize();
+    pin_hash.wipe();
 
     // CTAP 2.1 forced PIN change: while EF_MINPINLEN[1] is set, a successful PIN
     // check still refuses the token until changePIN lifts the flag. The FIDO
@@ -393,7 +424,7 @@ fn get_pin_token<S: Storage, R: Rng>(
         permissions
     };
     let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);
-    shared.zeroize();
+    shared.wipe();
     res
 }
 
@@ -431,7 +462,7 @@ fn issue_token<S: Storage, R: Rng>(
             }
             None => ctx.state.paut.has_rp_id = false,
         }
-        ctx.state.paut.token
+        Secret::new(ctx.state.paut.token)
     };
 
     let mut token_enc = [0u8; 32 + 16];
@@ -442,12 +473,13 @@ fn issue_token<S: Storage, R: Rng>(
     // encrypted identically and were linkable on the wire (audit run-34 #37).
     let mut iv = [0u8; 16];
     ctx.rng.fill(&mut iv);
-    let enc = pinproto::encrypt(proto, secret, &iv, &pdata, &mut token_enc);
-    pdata.zeroize();
+    let enc = pinproto::encrypt(proto, secret, &iv, pdata.expose(), &mut token_enc);
+    pdata.wipe();
     let enc_len = enc.map_err(|_| CtapError::Other)?;
     ctx.state.needs_power_cycle = false;
+    let token_enc = token_enc.get(..enc_len).ok_or(CtapError::Other)?;
     let len = encode(out, |e| {
-        e.map(1)?.u8(2)?.bytes(&token_enc[..enc_len])?;
+        e.map(1)?.u8(2)?.bytes(token_enc)?;
         Ok(())
     })?;
     Ok(len)
@@ -465,6 +497,11 @@ fn get_uv_token<S: Storage, R: Rng>(
     out: &mut [u8],
 ) -> CtapResult {
     require_pin_inputs(req, false, false)?;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "bits past the low byte name no permission and have always been dropped \
+                  here; a checked form would refuse a request this door serves"
+    )]
     let permissions = req.permissions as u8;
     // WithPermissions: a non-zero permission set is mandatory; bio-enrollment (be)
     // is unsupported, and pcm-readonly (pcmr) may not be combined with anything else.
@@ -494,10 +531,17 @@ fn get_uv_token<S: Storage, R: Rng>(
         return Err(CtapError::PinPolicyViolation);
     }
 
-    let mut shared = [0u8; 64];
-    let slen = derive_shared(ctx, req, proto, &mut shared)?;
-    let res = issue_token(ctx, proto, &shared[..slen], permissions, req.rp_id, out);
-    shared.zeroize();
+    let mut shared = Secret::<[u8; 64]>::zeroed();
+    let slen = derive_shared(ctx, req, proto, shared.expose_mut())?;
+    let res = issue_token(
+        ctx,
+        proto,
+        shared_secret(shared.expose(), slen)?,
+        permissions,
+        req.rp_id,
+        out,
+    );
+    shared.wipe();
     res
 }
 
@@ -621,10 +665,10 @@ pub(crate) fn builtin_uv_enabled<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> boo
 fn builtin_uv<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {
     builtin_uv_ready(ctx)?;
     let min = min_pin_length(ctx.fs) as usize;
-    let mut pin = [0u8; PADDED_PIN_LEN];
-    let entry = ctx.presence.collect_pin(min, &mut pin);
-    let verified = perform_builtin_uv(ctx, entry, &pin);
-    pin.zeroize();
+    let mut pin = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();
+    let entry = ctx.presence.collect_pin(min, pin.expose_mut());
+    let verified = perform_builtin_uv(ctx, entry, pin.expose());
+    pin.wipe();
     verified
 }
 
@@ -639,15 +683,15 @@ fn perform_builtin_uv<S: Storage, R: Rng>(
     pin: &[u8],
 ) -> Result<(), CtapError> {
     let len = match entry {
-        PinEntry::Entered(len) => len.min(pin.len()),
+        PinEntry::Entered(len) => len,
         PinEntry::Declined => return Err(CtapError::OperationDenied),
         PinEntry::Timeout => return Err(CtapError::UserActionTimeout),
         PinEntry::Cancelled => return Err(CtapError::KeepAliveCancel),
         PinEntry::Unsupported => return Err(CtapError::UnsupportedOption),
     };
-    let mut dhash = sha256(&pin[..len]);
-    let res = spend_and_verify_pin_hash(ctx, &dhash[..16]);
-    dhash.zeroize();
+    let mut dhash = Secret::new(sha256(pin.get(..len).unwrap_or(pin)));
+    let res = spend_and_verify_pin_hash(ctx, &dhash.expose()[..16]);
+    dhash.wipe();
     res.map_err(|e| match e {
         CtapError::PinInvalid => CtapError::UvInvalid,
         CtapError::PinBlocked | CtapError::PinAuthBlocked => CtapError::UvBlocked,
@@ -719,6 +763,12 @@ fn derive_shared<S: Storage, R: Rng>(
         .map_err(|_| CtapError::InvalidParameter)
 }
 
+/// The `len`-byte secret [`derive_shared`] wrote. A length past the buffer is the
+/// `BadLength` its ECDH already answers `InvalidParameter` for.
+fn shared_secret(shared: &[u8; 64], len: usize) -> Result<&[u8], CtapError> {
+    shared.get(..len).ok_or(CtapError::InvalidParameter)
+}
+
 /// Compare a candidate 16-byte PIN hash against the stored verifier. Decrements
 /// the retry counter first; on mismatch applies the lockout ladder.
 /// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
@@ -759,7 +809,7 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
     let retries = pin_data[0];
 
     let cand = ctx.dev.pin_derive_verifier(pin_hash);
-    let mut matched = pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN]);
+    let mut matched = pinproto_ct_eq(cand.expose(), &pin_data[3..PIN_FILE_LEN]);
     let mut migrated = false;
     if !matched && ctx.dev.otp_key.is_some() {
         // Kbase-migration fallback: a verifier stored before the OTP key was
@@ -767,8 +817,8 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
         // seed migrates below before the verifier is rewritten, so a crash
         // between the two re-runs this path on the next verify.
         let cand_old = ctx.dev.without_otp().pin_derive_verifier(pin_hash);
-        if pinproto_ct_eq(&cand_old, &pin_data[3..PIN_FILE_LEN]) {
-            pin_data[3..PIN_FILE_LEN].copy_from_slice(&cand);
+        if pinproto_ct_eq(cand_old.expose(), &pin_data[3..PIN_FILE_LEN]) {
+            pin_data[3..PIN_FILE_LEN].copy_from_slice(cand.expose());
             matched = true;
             migrated = true;
         }
@@ -808,16 +858,14 @@ fn spend_and_verify_pin_hash<S: Storage, R: Rng>(
     // force — where the other loses the re-arm and no later boot ever laps again.
     // Gated on it too: a medium that refuses the re-arm reaches the losing state
     // with no reset at all, and the flash failures below already answer `Other`.
-    if migrated && rsk_fs::request_rescrub(ctx.fs).is_err() {
-        return Err(CtapError::Other);
-    }
+    let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;
     // Correct PIN: migrate a legacy PIN-wrapped seed to the plain format (the
     // only moment its outer layer is open), then reset the counter.
     migrate_keydev_pin(&ctx.dev, ctx.fs, pin_hash).map_err(|_| CtapError::Other)?;
     pin_data[0] = MAX_PIN_RETRIES;
     ctx.state.new_pin_mismatches = 0;
     ctx.fs
-        .put(EF_PIN, &pin_data)
+        .put_over(EF_PIN, &pin_data, rearmed.as_ref())
         .map_err(|_| CtapError::Other)?;
     Ok(())
 }
@@ -845,15 +893,15 @@ fn write_pin_verifier<S: Storage>(
     if fid == EF_PIN {
         clear_ppuat(fs).map_err(|_| CtapError::Other)?;
     }
-    let mut dhash = sha256(pin);
+    let mut dhash = Secret::new(sha256(pin));
     let mut pin_data = [0u8; PIN_FILE_LEN];
     pin_data[0] = MAX_PIN_RETRIES;
     // PINCodePointLength (§6.5.5.5) — what `setMinPINLength` compares its new floor
     // against, so it must be code points like the floor itself.
-    pin_data[1] = code_points as u8;
+    pin_data[1] = u8::try_from(code_points).map_err(|_| CtapError::Other)?;
     pin_data[2] = 1; // verifier format 1
-    pin_data[3..].copy_from_slice(&dev.pin_derive_verifier(&dhash[..16]));
-    dhash.zeroize();
+    pin_data[3..].copy_from_slice(dev.pin_derive_verifier(&dhash.expose()[..16]).expose());
+    dhash.wipe();
     fs.put(fid, &pin_data).map_err(|_| CtapError::Other)
 }
 
@@ -866,10 +914,10 @@ fn pin_verifier_matches<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pin: &[u8]) -> 
     if ctx.fs.read(EF_PIN, &mut pin_data) != Some(PIN_FILE_LEN) {
         return false;
     }
-    let mut dhash = sha256(pin);
-    let cand = ctx.dev.pin_derive_verifier(&dhash[..16]);
-    dhash.zeroize();
-    pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN])
+    let mut dhash = Secret::new(sha256(pin));
+    let cand = ctx.dev.pin_derive_verifier(&dhash.expose()[..16]);
+    dhash.wipe();
+    pinproto_ct_eq(cand.expose(), &pin_data[3..PIN_FILE_LEN])
 }
 
 /// The PIN's length in Unicode code points — the unit `minPINLength` (getInfo 0x0D)
@@ -920,26 +968,30 @@ pub fn pin_is_trivial(pin: &[u8]) -> bool {
     let mut cp = ['\0'; PADDED_PIN_LEN];
     let mut n = 0;
     for c in text.chars() {
-        if n == cp.len() {
+        let Some(slot) = cp.get_mut(n) else {
             return true; // longer than a PIN can be; refuse rather than measure a prefix
-        }
-        cp[n] = c;
+        };
+        *slot = c;
         n += 1;
     }
-    let cp = &cp[..n];
+    let Some(cp) = cp.get(..n) else {
+        return true;
+    };
     if n < 2 {
         return true;
     }
 
-    let periodic = (1..=n / 2).any(|p| (p..n).all(|i| cp[i] == cp[i % p]));
+    // A length-`p` prefix fills the PIN exactly when each code point repeats the one `p` back.
+    let periodic = (1..=n / 2).any(|p| cp.iter().skip(p).zip(cp).all(|(a, b)| a == b));
     let step = |d: i32| {
-        cp.windows(2)
-            .all(|w| (w[0] as i32).checked_add(d) == Some(w[1] as i32))
+        cp.iter()
+            .zip(cp.iter().skip(1))
+            .all(|(&a, &b)| (a as i32).checked_add(d) == Some(b as i32))
     };
     let distinct = cp
         .iter()
         .enumerate()
-        .filter(|(i, c)| !cp[..*i].contains(c))
+        .filter(|&(i, c)| !cp.iter().take(i).any(|seen| seen == c))
         .count();
 
     periodic || step(1) || step(-1) || distinct <= 2 || PIN_DENYLIST.contains(&text)
@@ -958,19 +1010,20 @@ fn store_new_pin<S: Storage, R: Rng>(
         .iter()
         .position(|&b| b == 0)
         .unwrap_or(PADDED_PIN_LEN);
+    let pin = padded.get(..pin_len).ok_or(CtapError::PinPolicyViolation)?;
     // minPINLength is counted in Unicode code points (getInfo 0x0D), not UTF-8 bytes:
     // measuring bytes lets a 2-character CJK PIN clear a floor of 4. A PIN that is not
     // UTF-8 cannot be counted at all — refused under §6.5.5.5's "arbitrary, additional
     // constraints" allowance.
-    let cps = pin_code_points(&padded[..pin_len]).ok_or(CtapError::PinPolicyViolation)?;
+    let cps = pin_code_points(pin).ok_or(CtapError::PinPolicyViolation)?;
     if cps < try_min_pin_length(ctx.fs).map_err(|_| CtapError::Other)? as usize {
         return Err(CtapError::PinPolicyViolation);
     }
     #[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
-    if pin_is_trivial(&padded[..pin_len]) {
+    if pin_is_trivial(pin) {
         return Err(CtapError::PinPolicyViolation);
     }
-    write_pin_verifier(EF_PIN, &ctx.dev, ctx.fs, &padded[..pin_len], cps)?;
+    write_pin_verifier(EF_PIN, &ctx.dev, ctx.fs, pin, cps)?;
     ctx.state.needs_power_cycle = false;
     Ok(())
 }
@@ -1029,8 +1082,9 @@ fn clear_force_change<S: Storage>(fs: &mut Fs<S>) -> Result<(), CtapError> {
         && buf[1] != 0
     {
         buf[1] = 0;
-        fs.put(EF_MINPINLEN, &buf[..n])
-            .map_err(|_| CtapError::Other)?;
+        if let Some(rec) = buf.get(..n) {
+            fs.put(EF_MINPINLEN, rec).map_err(|_| CtapError::Other)?;
+        }
     }
     Ok(())
 }
@@ -1106,12 +1160,12 @@ pub fn device_pin_retries_left<S: Storage>(fs: &mut Fs<S>) -> Option<u8> {
 
 /// Read the retry counter from a PIN record (`fid`'s byte 0) without decrementing it.
 fn retries_left_at<S: Storage>(fid: u16, fs: &mut Fs<S>) -> Option<u8> {
-    let mut pin_data = [0u8; PIN_FILE_LEN];
-    let out = match fs.read(fid, &mut pin_data) {
-        Some(PIN_FILE_LEN) => Some(pin_data[0]),
+    let mut pin_data = Secret::<[u8; PIN_FILE_LEN]>::zeroed();
+    let out = match fs.read(fid, pin_data.expose_mut()) {
+        Some(PIN_FILE_LEN) => Some(pin_data.expose()[0]),
         _ => None,
     };
-    pin_data.zeroize();
+    pin_data.wipe();
     out
 }
 
@@ -1179,21 +1233,23 @@ fn spend_and_verify_pin_at<S: Storage>(
     }
     let retries = pin_data[0];
 
-    let mut pin_hash = sha256(pin);
-    let cand = dev.pin_derive_verifier(&pin_hash[..16]);
-    let mut matched = pinproto_ct_eq(&cand, &pin_data[3..PIN_FILE_LEN]);
+    let mut pin_hash = Secret::new(sha256(pin));
+    let cand = dev.pin_derive_verifier(&pin_hash.expose()[..16]);
+    let mut matched = pinproto_ct_eq(cand.expose(), &pin_data[3..PIN_FILE_LEN]);
     let mut migrated = false;
     if !matched && dev.otp_key.is_some() {
         // Pre-OTP verifier fallback, identical to `spend_and_verify_pin_hash`.
-        let cand_old = dev.without_otp().pin_derive_verifier(&pin_hash[..16]);
-        if pinproto_ct_eq(&cand_old, &pin_data[3..PIN_FILE_LEN]) {
-            pin_data[3..PIN_FILE_LEN].copy_from_slice(&cand);
+        let cand_old = dev
+            .without_otp()
+            .pin_derive_verifier(&pin_hash.expose()[..16]);
+        if pinproto_ct_eq(cand_old.expose(), &pin_data[3..PIN_FILE_LEN]) {
+            pin_data[3..PIN_FILE_LEN].copy_from_slice(cand.expose());
             matched = true;
             migrated = true;
         }
     }
     if !matched {
-        pin_hash.zeroize();
+        pin_hash.wipe();
         if retries == 0 {
             return LocalPin::Blocked;
         }
@@ -1207,24 +1263,24 @@ fn spend_and_verify_pin_at<S: Storage>(
     // has already run, and the re-arm goes BEFORE them and gates them — a reset in
     // the window then costs an idempotent lap, and a medium that refuses the re-arm
     // is turned away instead of superseding under a marker nothing will clear.
-    if migrated && rsk_fs::request_rescrub(fs).is_err() {
-        pin_hash.zeroize();
+    let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, migrated) else {
+        pin_hash.wipe();
         return LocalPin::Blocked;
-    }
+    };
     // Correct PIN: for the FIDO clientPIN, migrate a legacy PIN-wrapped seed (only
     // openable now) before resetting the counter; the device PIN has no seed to migrate.
     // Fail closed if a required flash write fails.
     if migrate_seed {
-        let seed_ok = migrate_keydev_pin(dev, fs, &pin_hash[..16]).is_ok();
-        pin_hash.zeroize();
+        let seed_ok = migrate_keydev_pin(dev, fs, &pin_hash.expose()[..16]).is_ok();
+        pin_hash.wipe();
         if !seed_ok {
             return LocalPin::Blocked;
         }
     } else {
-        pin_hash.zeroize();
+        pin_hash.wipe();
     }
     pin_data[0] = MAX_PIN_RETRIES;
-    if fs.put(fid, &pin_data).is_err() {
+    if fs.put_over(fid, &pin_data, rearmed.as_ref()).is_err() {
         return LocalPin::Blocked;
     }
     LocalPin::Ok
@@ -1254,12 +1310,18 @@ pub fn store_local_pin<S: Storage>(
     // Counted in code points, like the host path — the pad types ASCII digits today,
     // but the floor is defined that way and the two must not drift apart.
     let cps = pin_code_points(pin).ok_or(SetPinError::TooShort { min })?;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a PIN past 255 code points wraps here and can answer TooShort where TooLong \
+                  is meant; no caller's pad holds that many, and a checked form would move \
+                  that answer"
+    )]
     if (cps as u8) < min {
         return Err(SetPinError::TooShort { min });
     }
     if pin.len() > MAX_PIN_LENGTH {
         return Err(SetPinError::TooLong {
-            max: MAX_PIN_LENGTH as u8,
+            max: u8::try_from(MAX_PIN_LENGTH).unwrap_or(u8::MAX),
         });
     }
     write_pin_verifier(EF_PIN, dev, fs, pin, cps).map_err(|_| SetPinError::Storage)?;
@@ -1283,6 +1345,12 @@ pub fn store_device_pin<S: Storage>(
     let cps = pin_code_points(pin).ok_or(SetPinError::TooShort {
         min: MIN_PIN_LENGTH,
     })?;
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a PIN past 255 code points wraps here and can answer TooShort where TooLong \
+                  is meant; no caller's pad holds that many, and a checked form would move \
+                  that answer"
+    )]
     if (cps as u8) < MIN_PIN_LENGTH {
         return Err(SetPinError::TooShort {
             min: MIN_PIN_LENGTH,
@@ -1290,7 +1358,7 @@ pub fn store_device_pin<S: Storage>(
     }
     if pin.len() > MAX_PIN_LENGTH {
         return Err(SetPinError::TooLong {
-            max: MAX_PIN_LENGTH as u8,
+            max: u8::try_from(MAX_PIN_LENGTH).unwrap_or(u8::MAX),
         });
     }
     write_pin_verifier(EF_DEVICE_PIN, dev, fs, pin, cps).map_err(|_| SetPinError::Storage)
@@ -1313,5 +1381,13 @@ where
 pub mod assurance;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "clientpin_tests.rs"]
 mod tests;

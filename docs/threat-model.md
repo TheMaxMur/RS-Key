@@ -542,11 +542,35 @@ the MKEK exist in RAM only inside the operation that asked for one and are wiped
 when it returns. That is what puts them out of reach of a parser bug — parsing
 runs before any store access, so at that moment neither key is anywhere in
 memory. It buys nothing against code execution, which can drive the same reads.
-Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic, digest
-internals, and heap limbs inside `num-bigint-dig` (which has no zeroizing `Drop`
-of its own — every value `rsk-rsa` owns rides in a `Zeroizing`, but a temporary
-the library allocates internally does not). Short-lived, library-internal, not
-wipeable without forking the crates.
+Accepted residuals: `Copy` temporaries inside RustCrypto curve arithmetic and
+digest internals, in stack slots until the work that made them is done: core0's
+dead stack is zeroed after each request, keyboard OTP frame, typed ticket and
+panel flow, and core1's after each prime search (`firmware/src/sweep.rs`). The
+few hundred bytes above the shallowest of those callers — the tasks' own poll
+frames, interrupt frames taken while the worker idles — no sweep reaches. The
+working buffers `num-bigint-dig` allocates inside its own
+arithmetic — a division's, a modular inverse's, a modular exponentiation's — it
+frees unwiped; `rsk-rsa` holds a key's values, its blinding values and a private
+operation's result and intermediates in a `Secret` or a key type whose `Drop`
+wipes them, except the primes and `d` of a key `RsaKey::from_p_q` refuses. The
+heap closes both for what it holds: it wipes each block as it frees it
+(`ZeroingHeap` in `firmware/src/main.rs`), so a freed buffer's bytes do not
+outlive the free. A `num-bigint-dig` value of eight limbs or fewer is held inline,
+not on the heap, and a local one stays in its stack slot like those temporaries.
+
+What holds the first sentence is a type, not a habit. Key-grade bytes live in
+`rsk_secret::Secret` — or, for a buffer that outlives the scope, under a
+`WipeGuard` — whose `Drop` runs on every exit a scope has, a `?` included, and
+the root `clippy.toml` refuses a bare `Zeroize::zeroize` or a `Zeroizing` in
+every crate. A wipe no `Secret` can make — state that outlives a command, a key
+type's own `Drop` — stays bare under an `#[expect]` that names its wipe point,
+and rustc holds that list both ways. Two exits no type reaches. A panic runs
+nothing — `panic-halt` spins with no unwinding and no `Drop`, so a panic reached
+with a key unsealed leaves it in SRAM until power is cut; what bounds that is
+keeping a panic unreachable from host input, which is what the fuzz targets are
+for. And a move is a `memcpy` whose source nothing wipes: a secret is built in
+place and handed on by reference, and the compiler's own copies stay the
+residual named above.
 
 A WebAuthn **large-blob key is obtainable without user interaction**. CTAP 2.1
 §12.3 puts no UP/UV precondition on the `largeBlobKey` extension output — unlike
@@ -587,6 +611,15 @@ the image it ran on. This is a property of the silicon revision and boot
 configuration, so it is re-measured when either moves; the explicit wipes stay as
 depth in case a future one keeps SRAM.
 
+Every reset goes through `worker::reboot`. `clippy.toml` refuses `SCB::sys_reset`,
+`rom_data::reset_to_usb_boot`, `rom_data::reboot` / `reboot_ns` and
+`Watchdog::trigger_reset` anywhere else, so a new path to a reset cannot skip the
+wipe without an `#[expect]` that says why. Not covered, and none of it in the
+tree today: a watchdog started and left unfed (`Watchdog::start`), a raw write
+to the watchdog or power-manager registers through `rp_pac`, an `AIRCR` write
+through `SCB::PTR`, a ROM function called through its `ptr()`, and the ROM's
+`chain_image`.
+
 ## Supply chain & process
 
 - `cargo audit` + `cargo deny` (advisories, license allow-list, source
@@ -608,8 +641,8 @@ ML-DSA-44 (COSE −48), ML-DSA-65 (−49) and ML-DSA-87 (−50) FIDO2 credential
 (all three the in-tree `rsk-mldsa` crate) with hedged signing (32 fresh DRBG
 bytes per signature; the hedge and expanded keys are zeroized). `rsk-mldsa`
 streams the FIPS 204 matrix A on the fly so even ML-DSA-87's keygen+sign fit
-the RP2350 stack — measured, its keygen frame is the largest in the image at
-123 KiB against a 205 KiB ceiling. It is hand-written, so its constant-time posture is a source-level
+the RP2350 stack — measured, ML-DSA-87's keygen runs 69 KiB deep and its
+signing frame is 65 KiB, against a 205 KiB ceiling. It is hand-written, so its constant-time posture is a source-level
 claim (branch-free reductions, masked norm checks, no secret division), not
 proven at machine code. It is checked byte-for-byte against NIST ACVP KATs,
 with Kani proofs over the reductions and rounding. ML-KEM-768 is compiled in as

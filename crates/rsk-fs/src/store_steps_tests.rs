@@ -81,7 +81,7 @@ fn drive<S: Storage>(
     let before: StoreView = fs.read_store_view();
     // A fault is armed only for the actions the model gives one, and `Delete`
     // is one of them now: its second disjunct is the EF_META read failing, where
-    // the value goes and the record cannot follow it (`fs.rs:597`). `dead` in the
+    // the value goes and the record cannot follow it (`fs.rs:598`). `dead` in the
     // first disjunct is still a power CUT and not a medium error — the two are
     // different transitions, which is why the mutant that hides the answer
     // (`BugDeleteHidesFaultedDrop`) targets `NoSilentOrphan` and not the order's

@@ -5,8 +5,8 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 # The OpenPGP card applet, reached over the CCID transport. Pure and
 # host-testable: device seed / serial / RNG and flash come from the caller,
@@ -19,6 +19,7 @@ kani-soft = ["rsk-crypto/kani-soft"]
 
 [dependencies]
 rsk-sdk = { workspace = true }
+rsk-secret = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
 # `alloc` for the Vec impls (RSA prime bytes + decipher plaintext).

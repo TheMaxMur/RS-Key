@@ -92,7 +92,7 @@ Three things stop being proved:
   whose subject is EF_META itself is a state the shipped store cannot reach — so
   `store_meta_kani.rs` assumes the collision away and says so;
 - that `scan` registers every file it is handed. Its `fid == EF_META` skip
-  (`fs.rs:286`) is compiled under `cfg(kani)` too, so under the alias it refuses
+  (`fs.rs:287`) is compiled under `cfg(kani)` too, so under the alias it refuses
   FID 23 — a FID the harnesses' own domain draws from. Inert today, because no
   harness in the tree reaches `scan`; it is what the `Scan` bullet below would
   have to deal with.

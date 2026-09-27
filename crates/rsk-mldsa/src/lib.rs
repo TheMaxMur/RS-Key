@@ -54,17 +54,32 @@ pub enum Error {
     /// The signature output buffer was shorter than the parameter set's
     /// signature length.
     BufferTooSmall,
+    /// The key was never expanded: a `zeroed()` key has a known secret.
+    NotExpanded,
 }
 
 /// An ML-DSA-44 keypair expanded from a 32-byte seed. Holds the NTT-domain
-/// precomputes (~13 KB); derive, use and drop within one request. Zeroizes on
+/// precomputes (~16.5 KB); derive, use and drop within one request. Zeroizes on
 /// drop. Signs with an empty FIPS 204 context (the COSE/WebAuthn profile).
 pub struct MlDsa44(ExpandedKey<4, 4>);
 
 impl MlDsa44 {
-    /// Deterministically expand the keypair from ξ.
+    /// Deterministically expand the keypair from ξ. Returned by value, so every
+    /// frame it crosses keeps a copy: the firmware boxes [`Self::zeroed`] and
+    /// calls [`Self::expand`] instead.
     pub fn from_seed(xi: &[u8; SEED_LEN]) -> Self {
         Self(ExpandedKey::from_seed(&ML_DSA_44, xi))
+    }
+
+    /// An all-zero key, to [`Self::expand`] where it already lives; it refuses to
+    /// sign until then.
+    pub fn zeroed() -> Self {
+        Self(ExpandedKey::zeroed())
+    }
+
+    /// Expand the keypair from ξ into this key, in place.
+    pub fn expand(&mut self, xi: &[u8; SEED_LEN]) {
+        self.0.expand(&ML_DSA_44, xi);
     }
 
     /// The serialized public key (the COSE `pub` parameter).
@@ -81,6 +96,9 @@ impl MlDsa44 {
         if out.len() < MLDSA44_SIG_LEN {
             return Err(Error::BufferTooSmall);
         }
+        if !self.0.is_expanded() {
+            return Err(Error::NotExpanded);
+        }
         self.0
             .sign(&ML_DSA_44, msg, &[], rnd, &mut out[..MLDSA44_SIG_LEN]);
         Ok(MLDSA44_SIG_LEN)
@@ -88,14 +106,27 @@ impl MlDsa44 {
 }
 
 /// An ML-DSA-65 keypair expanded from a 32-byte seed. Holds the NTT-domain
-/// precomputes (~23 KB); derive, use and drop within one request. Zeroizes on
+/// precomputes (~23.7 KB); derive, use and drop within one request. Zeroizes on
 /// drop. Signs with an empty FIPS 204 context (the COSE/WebAuthn profile).
 pub struct MlDsa65(ExpandedKey<6, 5>);
 
 impl MlDsa65 {
-    /// Deterministically expand the keypair from ξ.
+    /// Deterministically expand the keypair from ξ. Returned by value, so every
+    /// frame it crosses keeps a copy: the firmware boxes [`Self::zeroed`] and
+    /// calls [`Self::expand`] instead.
     pub fn from_seed(xi: &[u8; SEED_LEN]) -> Self {
         Self(ExpandedKey::from_seed(&ML_DSA_65, xi))
+    }
+
+    /// An all-zero key, to [`Self::expand`] where it already lives; it refuses to
+    /// sign until then.
+    pub fn zeroed() -> Self {
+        Self(ExpandedKey::zeroed())
+    }
+
+    /// Expand the keypair from ξ into this key, in place.
+    pub fn expand(&mut self, xi: &[u8; SEED_LEN]) {
+        self.0.expand(&ML_DSA_65, xi);
     }
 
     /// The serialized public key (the COSE `pub` parameter).
@@ -110,6 +141,9 @@ impl MlDsa65 {
         if out.len() < MLDSA65_SIG_LEN {
             return Err(Error::BufferTooSmall);
         }
+        if !self.0.is_expanded() {
+            return Err(Error::NotExpanded);
+        }
         self.0
             .sign(&ML_DSA_65, msg, &[], rnd, &mut out[..MLDSA65_SIG_LEN]);
         Ok(MLDSA65_SIG_LEN)
@@ -117,14 +151,27 @@ impl MlDsa65 {
 }
 
 /// An ML-DSA-87 keypair expanded from a 32-byte seed. Holds the NTT-domain
-/// precomputes (~31 KB); derive, use and drop within one request. Zeroizes on
+/// precomputes (~31.9 KB); derive, use and drop within one request. Zeroizes on
 /// drop. Signs with an empty FIPS 204 context (the COSE/WebAuthn profile).
 pub struct MlDsa87(ExpandedKey<8, 7>);
 
 impl MlDsa87 {
-    /// Deterministically expand the keypair from ξ.
+    /// Deterministically expand the keypair from ξ. Returned by value, so every
+    /// frame it crosses keeps a copy: the firmware boxes [`Self::zeroed`] and
+    /// calls [`Self::expand`] instead.
     pub fn from_seed(xi: &[u8; SEED_LEN]) -> Self {
         Self(ExpandedKey::from_seed(&ML_DSA_87, xi))
+    }
+
+    /// An all-zero key, to [`Self::expand`] where it already lives; it refuses to
+    /// sign until then.
+    pub fn zeroed() -> Self {
+        Self(ExpandedKey::zeroed())
+    }
+
+    /// Expand the keypair from ξ into this key, in place.
+    pub fn expand(&mut self, xi: &[u8; SEED_LEN]) {
+        self.0.expand(&ML_DSA_87, xi);
     }
 
     /// The serialized public key (the COSE `pub` parameter).
@@ -138,6 +185,9 @@ impl MlDsa87 {
     pub fn sign(&self, msg: &[u8], rnd: &[u8; 32], out: &mut [u8]) -> Result<usize, Error> {
         if out.len() < MLDSA87_SIG_LEN {
             return Err(Error::BufferTooSmall);
+        }
+        if !self.0.is_expanded() {
+            return Err(Error::NotExpanded);
         }
         self.0
             .sign(&ML_DSA_87, msg, &[], rnd, &mut out[..MLDSA87_SIG_LEN]);
@@ -162,3 +212,7 @@ pub fn mldsa65_verify(pk: &[u8; MLDSA65_PK_LEN], msg: &[u8], sig: &[u8; MLDSA65_
 pub fn mldsa87_verify(pk: &[u8; MLDSA87_PK_LEN], msg: &[u8], sig: &[u8; MLDSA87_SIG_LEN]) -> bool {
     verify::<8, 7>(&ML_DSA_87, pk, msg, &[], sig)
 }
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;

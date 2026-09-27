@@ -149,7 +149,7 @@ fn handshake<S: Storage>(fs: &mut Fs<S>, rng: &mut SeqRng, state: &mut FidoState
     aad[1..33].copy_from_slice(&dx);
     aad[33..].copy_from_slice(&dy);
     let mut key = [0u8; 32];
-    hkdf_sha256(&[], &z, &aad, &mut key).unwrap();
+    hkdf_sha256(&[], z.expose(), &aad, &mut key).unwrap();
     Host { key, aad }
 }
 
@@ -241,7 +241,7 @@ fn handshake_pq(fs: &mut Fs<RamStorage>, rng: &mut SeqRng, state: &mut FidoState
     aad[33..].copy_from_slice(&dy);
 
     let mut ikm = [0u8; 64];
-    ikm[..32].copy_from_slice(&z);
+    ikm[..32].copy_from_slice(z.expose());
     ikm[32..].copy_from_slice(&ss);
     let mut info = [0u8; 65 + MLKEM768_CT_LEN];
     info[..65].copy_from_slice(&aad);
@@ -287,7 +287,8 @@ fn setup() -> (Fs<RamStorage>, SeqRng, FidoState) {
 #[test]
 fn fips_backup_export_refused() {
     let (mut fs, mut rng, mut st) = setup();
-    st.mse_active = true; // even over a live channel the seed is sealed in
+    // Even over a live channel the seed is sealed in.
+    st.establish_mse_for_test([0x5A; 32], [0x04; 65]);
     let mut req = [0u8; 16];
     let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
     let mut out = [0u8; 64];
@@ -354,8 +355,8 @@ fn att_import_state_clear_roundtrip() {
 
     // The stored key decrypts back to the imported scalar; STATE says so.
     assert_eq!(
-        crate::seed::load_att_key(&dev(), &mut fs).unwrap(),
-        org_scalar
+        crate::bare(crate::seed::load_att_key(&dev(), &mut fs).unwrap()),
+        crate::bare(&org_scalar)
     );
     let n = one_byte_req(&mut req, VENDOR_ATT_STATE);
     let r = call(
@@ -563,7 +564,7 @@ fn mse_then_export_roundtrips_seed() {
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&blob[44..]);
     chacha20poly1305_decrypt(&host.key, &nonce, &host.aad, &mut buf, &tag).unwrap();
-    assert_eq!(buf, seed);
+    assert_eq!(crate::bare(&buf), crate::bare(&seed));
 }
 
 // Audit run-33: `MSE` and `BACKUP_EXPORT` are separate CTAPHID transactions, so a
@@ -575,16 +576,17 @@ fn mse_then_export_roundtrips_seed() {
 fn export_refused_after_another_channel_rekeys_the_mse() {
     // A CTAPHID channel id is written by the sender into its own frame header, so
     // an interloper forges the victim's CID rather than using its own — binding to
-    // `mse_cid` alone would compare the attacker's bytes against themselves. What
-    // holds is that the channel is one-shot: the re-key is refused and the channel
-    // dropped, so the export can never encrypt under the interloper's key.
+    // the channel's `cid` alone would compare the attacker's bytes against
+    // themselves. What holds is that the channel is one-shot: the re-key is refused
+    // and the channel dropped, so the export can never encrypt under the
+    // interloper's key.
     for interloper_cid in [1u32, 2] {
         let (mut fs, mut rng, mut st) = setup();
 
         // The victim's tool runs its handshake on channel 1.
         st.channel = 1;
         let host = handshake(&mut fs, &mut rng, &mut st);
-        let victim_key = st.mse_key;
+        let victim_key = st.mse_key_for_test().expect("the handshake made a channel");
         assert_eq!(victim_key, host.key);
 
         // The interloper re-keys — on its own CID, or forging the victim's.
@@ -607,8 +609,8 @@ fn export_refused_after_another_channel_rekeys_the_mse() {
             "a live channel must never be re-keyed (interloper cid {interloper_cid})"
         );
         // Refused *and* dropped: neither party can spend it.
-        assert!(!st.mse_active);
-        assert_ne!(st.mse_key, victim_key);
+        assert!(!st.mse_live());
+        assert_ne!(st.mse_key_for_test(), Some(victim_key));
 
         // The victim's export, still on channel 1, now fails closed rather than
         // encrypting the seed to whoever re-keyed.
@@ -638,7 +640,7 @@ fn export_refused_after_another_channel_rekeys_the_mse() {
 fn fips_refuses_the_export_and_still_spends_the_channel() {
     let (mut fs, mut rng, mut st) = setup();
     handshake(&mut fs, &mut rng, &mut st);
-    assert!(st.mse_active);
+    assert!(st.mse_live());
 
     let mut req = [0u8; 32];
     let n = one_byte_req(&mut req, VENDOR_BACKUP_EXPORT);
@@ -656,10 +658,10 @@ fn fips_refuses_the_export_and_still_spends_the_channel() {
         "the profile seals the seed in"
     );
     assert!(
-        !st.mse_active,
+        !st.mse_live(),
         "a refused export must not leave the channel live"
     );
-    assert_eq!(st.mse_key, [0u8; 32]);
+    assert_eq!(st.mse_key_for_test(), None);
 }
 
 #[test]
@@ -674,7 +676,7 @@ fn a_gated_subcommand_spends_the_mse_channel() {
     // actually runs is what makes the case mean the same thing on all of them.
     let (mut fs, mut rng, mut st) = setup();
     handshake(&mut fs, &mut rng, &mut st);
-    assert!(st.mse_active);
+    assert!(st.mse_live());
 
     let mut req = [0u8; 32];
     let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
@@ -687,13 +689,13 @@ fn a_gated_subcommand_spends_the_mse_channel() {
         &req[..n],
         &mut out,
     );
-    assert!(!st.mse_active, "the consumer must spend the channel");
-    assert_eq!(st.mse_key, [0u8; 32]);
+    assert!(!st.mse_live(), "the consumer must spend the channel");
+    assert_eq!(st.mse_key_for_test(), None);
 
     // A declined touch spends it too — a failed ceremony must not leave the
     // channel live for the next caller to pick up.
     handshake(&mut fs, &mut rng, &mut st);
-    assert!(st.mse_active);
+    assert!(st.mse_live());
     assert_eq!(
         call(
             &mut fs,
@@ -705,7 +707,38 @@ fn a_gated_subcommand_spends_the_mse_channel() {
         ),
         Err(CtapError::OperationDenied)
     );
-    assert!(!st.mse_active);
+    assert!(!st.mse_live());
+}
+
+/// A consumer on another channel is refused, and spends the channel anyway: its
+/// `cid` cannot tell a second process from the owner forging it, so a refusal that
+/// left the key live would hand the owner's next call to whoever squats it.
+#[test]
+fn a_consumer_on_another_channel_is_refused_and_spends_the_mse() {
+    let (mut fs, mut rng, mut st) = setup();
+    st.channel = 1;
+    handshake(&mut fs, &mut rng, &mut st);
+    assert!(st.mse_live());
+
+    let mut req = [0u8; 32];
+    let n = one_byte_req(&mut req, VENDOR_ATT_CLEAR);
+    let mut out = [0u8; 128];
+    for (channel, what) in [(2, "the other channel"), (1, "the owner, after")] {
+        st.channel = channel;
+        assert_eq!(
+            call(
+                &mut fs,
+                &mut rng,
+                &mut st,
+                &mut AlwaysConfirm,
+                &req[..n],
+                &mut out
+            ),
+            Err(CtapError::NotAllowed),
+            "{what}"
+        );
+        assert!(!st.mse_live(), "{what}");
+    }
 }
 
 // Off the fips profile only: fips refuses export outright (see `fips_backup_export_refused`).
@@ -744,7 +777,7 @@ fn mse_hybrid_then_export_roundtrips_seed() {
     let mut tag = [0u8; 16];
     tag.copy_from_slice(&blob[44..]);
     chacha20poly1305_decrypt(&host.key, &nonce, &host.aad, &mut buf, &tag).unwrap();
-    assert_eq!(buf, seed);
+    assert_eq!(crate::bare(&buf), crate::bare(&seed));
 }
 
 #[test]
@@ -778,7 +811,7 @@ fn mse_rejects_short_mlkem_ek() {
         &mut out,
     );
     assert_eq!(e, Err(CtapError::InvalidParameter));
-    assert!(!st.mse_active);
+    assert!(!st.mse_live());
 }
 
 #[test]
@@ -800,7 +833,7 @@ fn mse_rejects_unreduced_mlkem_ek() {
         &mut out,
     );
     assert_eq!(e, Err(CtapError::InvalidParameter));
-    assert!(!st.mse_active);
+    assert!(!st.mse_live());
 }
 
 #[test]
@@ -832,8 +865,11 @@ fn load_installs_seed_and_rebuilds_attestation() {
     )
     .unwrap();
 
-    assert_ne!(new_seed, old);
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(new_seed));
+    assert_ne!(crate::bare(&new_seed), crate::bare(&old));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&new_seed))
+    );
     assert!(fs.has_data(EF_EE_DEV)); // attestation rebuilt over the new seed
 }
 
@@ -1165,7 +1201,7 @@ fn locked_setup() -> (Fs<RamStorage>, SeqRng, FidoState, Host, [u8; 32]) {
     // AUT_ENABLE spends the channel (it is one-shot), so hand callers a fresh one
     // — every one of them goes on to run another gated subcommand.
     let host = handshake(&mut fs, &mut rng, &mut st);
-    (fs, rng, st, host, seed)
+    (fs, rng, st, host, *seed.expose())
 }
 
 #[test]
@@ -1175,7 +1211,7 @@ fn lock_enable_wraps_seed_and_drops_plain() {
     assert_eq!(fs.size(EF_KEY_DEV_ENC.get()), Some(LOCK_BLOB_LEN));
     // No RAM copy after enable — operations are locked out immediately.
     assert!(st.keydev_dec.is_none());
-    assert_eq!(load_keydev(&dev(), &mut fs), None);
+    assert!((load_keydev(&dev(), &mut fs)).is_none());
     assert_eq!(
         state_flags(&mut fs, &mut rng, &mut st),
         (false, false, true, false, false)
@@ -1186,7 +1222,10 @@ fn lock_enable_wraps_seed_and_drops_plain() {
 fn unlock_restores_operations_for_the_session() {
     let (mut fs, mut rng, mut st, host, seed) = locked_setup();
     run_unlock(&mut fs, &mut rng, &mut st, &LOCK_KEY, &host, 0x22).unwrap();
-    assert_eq!(st.keydev_dec, Some(seed));
+    assert_eq!(
+        crate::bare(st.keydev_dec.as_ref()),
+        Some(crate::bare(&seed))
+    );
     // The op-level loader sees the RAM copy; flash stays wrapped.
     let mut presence = AlwaysConfirm;
     let mut ctx = Ctx {
@@ -1197,7 +1236,7 @@ fn unlock_restores_operations_for_the_session() {
         now_ms: 0,
         presence: &mut presence,
     };
-    assert_eq!(ctx.load_keydev(), Some(seed));
+    assert_eq!(crate::bare(ctx.load_keydev()), Some(crate::bare(&seed)));
     assert!(!fs.has_data(EF_KEY_DEV.get()));
     assert_eq!(
         state_flags(&mut fs, &mut rng, &mut st),
@@ -1230,7 +1269,10 @@ fn disable_restores_plain_seed() {
     run_config(&mut fs, &mut rng, &mut st, &mut AlwaysConfirm, &req[..n]).unwrap();
     assert!(!fs.has_data(EF_KEY_DEV_ENC.get()));
     assert!(st.keydev_dec.is_none()); // no stale RAM copy
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(seed));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&seed))
+    );
     assert_eq!(
         state_flags(&mut fs, &mut rng, &mut st),
         (false, true, false, false, false)
@@ -1360,7 +1402,7 @@ fn reset_clears_the_lock_and_regenerates() {
     crate::reset::reset(&mut ctx).unwrap();
     assert!(!fs.has_data(EF_KEY_DEV_ENC.get()));
     let new_seed = load_keydev(&dev(), &mut fs).unwrap();
-    assert_ne!(new_seed, old_seed); // fresh identity — the recovery path
+    assert_ne!(crate::bare(&new_seed), crate::bare(&old_seed)); // fresh identity — the recovery path
 }
 
 #[test]
@@ -1369,7 +1411,10 @@ fn ensure_seed_does_not_regenerate_under_lock() {
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     assert!(!fs.has_data(EF_KEY_DEV.get())); // boot on a locked device: no regen
     run_unlock(&mut fs, &mut rng, &mut st, &LOCK_KEY, &host, 0x27).unwrap();
-    assert_eq!(st.keydev_dec, Some(seed)); // blob untouched, same seed
+    assert_eq!(
+        crate::bare(st.keydev_dec.as_ref()),
+        Some(crate::bare(&seed))
+    ); // blob untouched, same seed
 }
 
 // ---- CONFIG_WRITE (0x0C): device config over the FIDO vendor channel ----
@@ -2834,8 +2879,8 @@ fn load_without_pin_demands_the_named_confirmation() {
         Err(CtapError::OperationDenied)
     );
     assert_eq!(
-        load_keydev(&dev(), &mut fs),
-        Some(old),
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old)),
         "a declined load replaced the seed"
     );
 
@@ -2856,7 +2901,10 @@ fn load_without_pin_demands_the_named_confirmation() {
         counting.calls, 2,
         "the seed was replaced on gate's generic touch alone"
     );
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(new_seed));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&new_seed))
+    );
 }
 
 /// A LOAD blob that is not `nonce ‖ seed ‖ tag` is refused before any prompt, and the
@@ -2881,7 +2929,10 @@ fn load_of_a_short_blob_is_refused() {
         ),
         Err(CtapError::MissingParameter)
     );
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(old));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old))
+    );
 }
 
 /// A seed that decrypts but is no P-256 scalar (zero here) is refused, and the seed
@@ -2905,7 +2956,10 @@ fn load_of_a_seed_that_is_no_scalar_is_refused() {
         ),
         Err(CtapError::InvalidParameter)
     );
-    assert_eq!(load_keydev(&dev(), &mut fs), Some(old));
+    assert_eq!(
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old))
+    );
 }
 
 /// LOAD drops the old attestation certificate before the new seed commits (audit
@@ -2943,8 +2997,8 @@ fn load_is_refused_when_the_old_certificate_cannot_be_dropped() {
         Err(CtapError::Other)
     );
     assert_eq!(
-        load_keydev(&dev(), &mut fs),
-        Some(old),
+        crate::bare(load_keydev(&dev(), &mut fs)),
+        Some(crate::bare(&old)),
         "the seed moved under a certificate that did not"
     );
 }
@@ -3145,7 +3199,7 @@ fn mse_without_a_coordinate_is_missing_parameter() {
         ),
         Err(CtapError::MissingParameter)
     );
-    assert!(!st.mse_ready(), "a refused MSE left a channel open");
+    assert!(!st.mse_live(), "a refused MSE left a channel open");
 }
 
 /// `{1: subcmd, 3: 2, 4: mac}`: a vendor subcommand with no parameters, carrying a
@@ -3228,7 +3282,10 @@ fn a_gated_read_with_a_pin_takes_only_a_valid_acfg_token() {
 fn audit_checkpoint_without_touch_signs_nothing() {
     let (mut fs, mut rng, mut st) = setup();
     fs.put(crate::consts::EF_AUDIT_ENABLED, &[1]).unwrap();
-    st.devk_source = Some(|| Some([7; 32]));
+    st.devk_source = Some(|out: &mut [u8; 32]| {
+        *out = [7; 32];
+        true
+    });
     let mut req = [0u8; 64];
     let n = {
         let mut e = Encoder::new(Cursor::new(&mut req[..]));

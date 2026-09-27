@@ -8,8 +8,9 @@
 use zeroize::Zeroize;
 
 use rsk_crypto::{Device, PinKdf};
-use rsk_fs::{Fs, KeyFid, Sealed, Storage};
+use rsk_fs::{Fs, KeyFid, Rearmed, Sealed, Storage};
 use rsk_sdk::Sw;
+use rsk_secret::Secret;
 
 use crate::Rng;
 use crate::consts::*;
@@ -71,9 +72,9 @@ impl Session {
     /// too: the session key a VERIFY derived is the one that opens the DEK, and
     /// the re-seed has just sealed it under a different password. So the status
     /// survives and the key it carries is replaced.
-    pub(crate) fn adopt_reseeded(&mut self, pw1: [u8; 32], pw3: [u8; 32]) {
-        self.session_pw1 = pw1;
-        self.session_pw3 = pw3;
+    pub(crate) fn adopt_reseeded(&mut self, pw1: &Secret<[u8; 32]>, pw3: &Secret<[u8; 32]>) {
+        self.session_pw1.copy_from_slice(pw1.expose());
+        self.session_pw3.copy_from_slice(pw3.expose());
     }
 
     /// Clear all auth state (applet deselect) and restore the default MSE key
@@ -88,16 +89,40 @@ impl Session {
         self.algo_aut = EF_ALGO_PRIV3;
         self.pk_aut = EF_PK_AUT;
         self.cert_occ = 0;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
+        )]
         self.session_pw1.zeroize();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
+        )]
         self.session_pw3.zeroize();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
+        )]
         self.session_rc.zeroize();
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
+        )]
         self.session_pw1.zeroize();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
+        )]
         self.session_pw3.zeroize();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
+        )]
         self.session_rc.zeroize();
     }
 }
@@ -252,7 +277,7 @@ pub fn check_pin<S: Storage>(
         Err(sw) => return sw,
     };
     let verifier = dev.pin_derive_verifier(data);
-    if !ct_eq(&rec[off..off + 32], &verifier) {
+    if !ct_eq(&rec[off..off + 32], verifier.expose()) {
         // kbase-migration fallback: a verifier stored before the OTP key was
         // provisioned. A match under the pre-OTP arm is the correct PIN — re-wrap
         // this PIN's DEK copy and re-store the verifier under the OTP generation;
@@ -260,7 +285,7 @@ pub fn check_pin<S: Storage>(
         let migrated = dev.otp_key.is_some()
             && ct_eq(
                 &rec[off..off + 32],
-                &dev.without_otp().pin_derive_verifier(data),
+                dev.without_otp().pin_derive_verifier(data).expose(),
             );
         if !migrated {
             // §4.2's list of what invalidates an access status omits a failed
@@ -293,10 +318,12 @@ pub fn check_pin<S: Storage>(
         } else {
             sess.has_pw2 = true;
         }
-        sess.session_pw1 = dev.pin_derive_session(data);
+        sess.session_pw1
+            .copy_from_slice(dev.pin_derive_session(data).expose());
     } else if fid == EF_PW3 {
         sess.has_pw3 = true;
-        sess.session_pw3 = dev.pin_derive_session(data);
+        sess.session_pw3
+            .copy_from_slice(dev.pin_derive_session(data).expose());
     }
     Sw::OK
 }
@@ -327,7 +354,7 @@ fn migrate_pin_kbase<S: Storage>(
     // brute-forceable offline). Re-arm the scrub AHEAD of them and gate them on it:
     // the re-arm is its own append, so a reset between the two keeps whichever landed,
     // and a medium that refuses it reaches the losing state with no reset at all.
-    rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;
+    let rearmed = rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;
     let mut blob = [0u8; DEK_FILE_SIZE];
     // `try_read_key`: a read this medium could not serve is not a copy that was
     // never written. Skipping the re-wrap and storing the verifier anyway leaves a
@@ -342,27 +369,33 @@ fn migrate_pin_kbase<S: Storage>(
         }
         let old = dev.without_otp();
         let mut old_session = old.pin_derive_session(pin);
-        let mut dek = [0u8; DEK_SIZE];
+        let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
         let opened_old = old
-            .decrypt_with_aad(&old_session, &blob[1..n], PinKdf::V2, &mut dek)
+            .decrypt_with_aad(
+                old_session.expose(),
+                &blob[1..n],
+                PinKdf::V2,
+                dek.expose_mut(),
+            )
             .is_ok();
-        old_session.zeroize();
+        old_session.wipe();
         if opened_old {
-            let r = rewrap_dek(dev, fs, rng, dek_fid, pin, &dek);
-            dek.zeroize();
+            let r = rewrap_dek(dev, fs, rng, dek_fid, pin, dek.expose(), &rearmed);
+            dek.wipe();
             r?;
         } else {
             // Crash recovery: an earlier attempt re-wrapped the DEK but died
             // before the verifier write — the copy must open under the OTP
             // generation, else the blob is corrupt and we fail closed.
             let mut session = dev.pin_derive_session(pin);
-            let r = dev.decrypt_with_aad(&session, &blob[1..n], PinKdf::V2, &mut dek);
-            session.zeroize();
-            dek.zeroize();
+            let r =
+                dev.decrypt_with_aad(session.expose(), &blob[1..n], PinKdf::V2, dek.expose_mut());
+            session.wipe();
+            dek.wipe();
             r.map_err(|_| Sw::EXEC_ERROR)?;
         }
     }
-    store_verifier(dev, fs, fid, pin)?;
+    store_verifier(dev, fs, fid, pin, Some(&rearmed))?;
     Ok(())
 }
 
@@ -373,7 +406,7 @@ pub fn load_dek<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     sess: &Session,
-    out: &mut [u8; DEK_SIZE],
+    out: &mut Secret<[u8; DEK_SIZE]>,
 ) -> Result<(), Sw> {
     let (fid, key) = if sess.has_pw1 || sess.has_pw2 {
         (EF_DEK_PW1, &sess.session_pw1)
@@ -393,7 +426,7 @@ pub fn load_dek<S: Storage>(
             n >= 1
                 && blob[0] == DEK_FORMAT_V3
                 && dev
-                    .decrypt_with_aad(key, &blob[1..n], PinKdf::V2, out)
+                    .decrypt_with_aad(key, &blob[1..n], PinKdf::V2, out.expose_mut())
                     .is_ok()
         }
         // Absent, not merely unopenable. `EF_DEK_RC` legitimately does not exist
@@ -416,8 +449,8 @@ pub fn load_dek<S: Storage>(
             // The re-arm leads, as at every lazy re-key: a tombstone is an append
             // like any other. A refused one skips this retirement rather than failing
             // the load — it is already best-effort, and a later load retries it.
-            if rsk_fs::request_rescrub(fs).is_ok() {
-                let _ = fs.delete_key(stage);
+            if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {
+                let _ = fs.delete_key_over(stage, Some(&rearmed));
             }
         }
         return Ok(());
@@ -454,49 +487,49 @@ fn recover_staged_dek<S: Storage>(
     fs: &mut Fs<S>,
     fid: KeyFid,
     key: &[u8; 32],
-    out: &mut [u8; DEK_SIZE],
+    out: &mut Secret<[u8; DEK_SIZE]>,
 ) -> Result<(), Sw> {
     let stage = stage_fid(fid).ok_or(Sw::EXEC_ERROR)?;
-    let mut staged = [0u8; 1 + DEK_FILE_SIZE];
-    let n = match fs.read_key(stage, &mut staged) {
-        Some(n) => n.min(staged.len()),
+    let mut staged = Secret::<[u8; 1 + DEK_FILE_SIZE]>::zeroed();
+    let n = match fs.read_key(stage, staged.expose_mut()) {
+        Some(n) => n.min(1 + DEK_FILE_SIZE),
         None => return Err(Sw::EXEC_ERROR),
     };
-    if !staged_is_for(&staged[..n], fid) {
-        staged.zeroize();
+    if !staged_is_for(&staged.expose()[..n], fid) {
+        staged.wipe();
         return Err(Sw::EXEC_ERROR);
     }
     let opened = dev
-        .decrypt_with_aad(key, &staged[2..n], PinKdf::V2, out)
+        .decrypt_with_aad(key, &staged.expose()[2..n], PinKdf::V2, out.expose_mut())
         .is_ok();
     // The copy the commit below supersedes is rooted in a PIN the owner has
     // replaced; the same reasoning as `migrate_pin_kbase`'s re-arm applies, and so
     // do its order and its gate — ahead of the write, and the write only if it landed.
-    let re_armed = rsk_fs::request_rescrub(fs).is_ok();
-    let commit = if !re_armed {
-        Err(Sw::MEMORY_FAILURE)
-    } else if opened {
-        fs.put_key(fid, Sealed::wrap(&staged[1..n]))
-            .map_err(|_| Sw::MEMORY_FAILURE)
-    } else {
-        Err(Sw::EXEC_ERROR)
+    let rearmed = rsk_fs::request_rescrub(fs);
+    let commit = match &rearmed {
+        Err(_) => Err(Sw::MEMORY_FAILURE),
+        Ok(rearmed) if opened => fs
+            .put_key_over(fid, Sealed::wrap(&staged.expose()[1..n]), Some(rearmed))
+            .map_err(|_| Sw::MEMORY_FAILURE),
+        Ok(_) => Err(Sw::EXEC_ERROR),
     };
-    staged.zeroize();
+    staged.wipe();
     if let Err(sw) = commit {
         // `decrypt_with_aad` writes the plaintext before it checks the tag, and
         // on this path it may have *succeeded* — so an error return can leave the
         // real DEK in the caller's buffer, which no caller of `load_dek` expects
         // to have to scrub.
-        out.zeroize();
+        out.wipe();
         return Err(sw);
     }
-    let _ = fs.delete_key(stage);
+    let _ = fs.delete_key_over(stage, rearmed.as_ref().ok());
     Ok(())
 }
 
 /// Seal `dek` under `pin` into `dek_fid`'s staging slot, ahead of the verifier
 /// write that makes `pin` the one a host presents. Returns the session key the
-/// caller keeps, exactly as [`rewrap_dek`] does — a caller stages, writes the
+/// caller keeps, as [`rewrap_dek`] does, and the re-arm its verifier and commit
+/// writes take — a caller stages, writes the
 /// verifier, then [`commit_staged_dek`]s, and a power cut at any point leaves a
 /// state [`load_dek`] can finish. **Validate the new PIN before calling this**:
 /// staging first would leave an orphan record behind a refused value.
@@ -507,7 +540,7 @@ fn stage_dek<S: Storage>(
     dek_fid: KeyFid,
     pin: &[u8],
     dek: &[u8; DEK_SIZE],
-) -> Result<[u8; 32], Sw> {
+) -> Result<(Secret<[u8; 32]>, Rearmed), Sw> {
     let stage = stage_fid(dek_fid).ok_or(Sw::EXEC_ERROR)?;
     // The ONLY re-arm on `change_pin`, both `reset_retry` arms and `put_reset_code`'s
     // set arm: each verifies one reference and re-keys ANOTHER its `check_pin` never
@@ -515,42 +548,52 @@ fn stage_dek<S: Storage>(
     // sequence, rather than at the commit that ends it — every one of those three is
     // its own append, so a re-arm at the end is one a reset can take while the
     // superseded copies stand. Make it conditional and all four open silently.
-    rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;
+    let rearmed = rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;
     let session = dev.pin_derive_session(pin);
-    let mut rec = [0u8; 1 + DEK_FILE_SIZE];
-    rec[0] = dek_fid.get() as u8;
-    rec[1] = DEK_FORMAT_V3;
+    let mut rec = Secret::<[u8; 1 + DEK_FILE_SIZE]>::zeroed();
+    rec.expose_mut()[0] = dek_fid.get() as u8;
+    rec.expose_mut()[1] = DEK_FORMAT_V3;
     let mut nonce = [0u8; 12];
     rng.fill(&mut nonce);
-    let r = match dev.encrypt_with_aad(&session, dek, PinKdf::V2, &nonce, &mut rec[2..]) {
+    let r = match dev.encrypt_with_aad(
+        session.expose(),
+        dek,
+        PinKdf::V2,
+        &nonce,
+        &mut rec.expose_mut()[2..],
+    ) {
         Ok(_) => fs
-            .put_key(stage, Sealed::wrap(&rec))
+            .put_key_over(stage, Sealed::wrap(rec.expose()), Some(&rearmed))
             .map_err(|_| Sw::MEMORY_FAILURE),
         Err(_) => Err(Sw::EXEC_ERROR),
     };
-    rec.zeroize();
-    r.map(|()| session)
+    rec.wipe();
+    r.map(|()| (session, rearmed))
 }
 
 /// Move the staged copy onto its target and retire the stage. Called after the
 /// verifier write; a power cut before it leaves the work for [`load_dek`].
-fn commit_staged_dek<S: Storage>(fs: &mut Fs<S>, dek_fid: KeyFid) -> Result<(), Sw> {
+fn commit_staged_dek<S: Storage>(
+    fs: &mut Fs<S>,
+    dek_fid: KeyFid,
+    rearmed: &Rearmed,
+) -> Result<(), Sw> {
     let stage = stage_fid(dek_fid).ok_or(Sw::EXEC_ERROR)?;
-    let mut staged = [0u8; 1 + DEK_FILE_SIZE];
-    let n = match fs.read_key(stage, &mut staged) {
-        Some(n) => n.min(staged.len()),
+    let mut staged = Secret::<[u8; 1 + DEK_FILE_SIZE]>::zeroed();
+    let n = match fs.read_key(stage, staged.expose_mut()) {
+        Some(n) => n.min(1 + DEK_FILE_SIZE),
         None => return Err(Sw::EXEC_ERROR),
     };
-    if !staged_is_for(&staged[..n], dek_fid) {
-        staged.zeroize();
+    if !staged_is_for(&staged.expose()[..n], dek_fid) {
+        staged.wipe();
         return Err(Sw::EXEC_ERROR);
     }
     let r = fs
-        .put_key(dek_fid, Sealed::wrap(&staged[1..n]))
+        .put_key_over(dek_fid, Sealed::wrap(&staged.expose()[1..n]), Some(rearmed))
         .map_err(|_| Sw::MEMORY_FAILURE);
-    staged.zeroize();
+    staged.wipe();
     r?;
-    let _ = fs.delete_key(stage);
+    let _ = fs.delete_key_over(stage, Some(rearmed));
     Ok(())
 }
 
@@ -577,16 +620,16 @@ pub(crate) fn reseed_pin<S: Storage>(
     fid: u16,
     new: &[u8],
     dek: &[u8; DEK_SIZE],
-) -> Result<[u8; 32], Sw> {
+) -> Result<Secret<[u8; 32]>, Sw> {
     let dek_fid = match fid {
         EF_PW1 => EF_DEK_PW1,
         EF_PW3 => EF_DEK_PW3,
         _ => return Err(Sw::EXEC_ERROR),
     };
     check_pin_len(fid, new.len())?;
-    let session = stage_dek(dev, fs, rng, dek_fid, new, dek)?;
-    put_verifier(dev, fs, fid, new)?;
-    commit_staged_dek(fs, dek_fid)?;
+    let (session, rearmed) = stage_dek(dev, fs, rng, dek_fid, new, dek)?;
+    put_verifier(dev, fs, fid, new, Some(&rearmed))?;
+    commit_staged_dek(fs, dek_fid, &rearmed)?;
     pin_reset_retries(fs, fid, true)?;
     Ok(session)
 }
@@ -617,10 +660,10 @@ pub(crate) fn clear_reset_code<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -
     // under the pre-OTP arm — and clearing the code does not rotate the DEK. Ahead
     // of the tombstones, which are appends of their own, and gating them: a reset
     // between them and a trailing re-arm would leave the marker standing over both.
-    rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;
-    let verifier = fs.delete(EF_RC).is_ok();
-    let dek = fs.delete_key(EF_DEK_RC).is_ok();
-    let staged = fs.delete_key(EF_DEK_STAGE_RC).is_ok();
+    let rearmed = rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;
+    let verifier = fs.delete_over(EF_RC, Some(&rearmed)).is_ok();
+    let dek = fs.delete_key_over(EF_DEK_RC, Some(&rearmed)).is_ok();
+    let staged = fs.delete_key_over(EF_DEK_STAGE_RC, Some(&rearmed)).is_ok();
     let counter = set_pin_retry_counter(fs, EF_RC, 0).is_ok();
     if verifier && dek && staged && counter {
         Ok(())
@@ -753,12 +796,13 @@ pub(crate) fn put_verifier<S: Storage>(
     fs: &mut Fs<S>,
     fid: u16,
     pin: &[u8],
+    rearmed: Option<&Rearmed>,
 ) -> Result<(), Sw> {
     // A zero-length verifier is unrecoverable: check_pin's `rec[0] != 0` shape test
     // short-circuits before spend_pin_retry, so the reference can neither be
     // verified nor blocked, and terminate.rs' escape hatch is refused forever.
     check_pin_len(fid, pin.len())?;
-    store_verifier(dev, fs, fid, pin)
+    store_verifier(dev, fs, fid, pin, rearmed)
 }
 
 /// Store the verifier record without the length check — for re-storing a reference
@@ -769,13 +813,16 @@ fn store_verifier<S: Storage>(
     fs: &mut Fs<S>,
     fid: u16,
     pin: &[u8],
+    rearmed: Option<&Rearmed>,
 ) -> Result<(), Sw> {
-    let mut rec = [0u8; 34];
-    rec[0] = pin.len() as u8;
-    rec[1] = PIN_FORMAT_V1;
-    rec[2..].copy_from_slice(&dev.pin_derive_verifier(pin));
-    let r = fs.put(fid, &rec).map_err(|_| Sw::MEMORY_FAILURE);
-    rec.zeroize();
+    let mut rec = Secret::<[u8; 34]>::zeroed();
+    rec.expose_mut()[0] = pin.len() as u8;
+    rec.expose_mut()[1] = PIN_FORMAT_V1;
+    rec.expose_mut()[2..].copy_from_slice(dev.pin_derive_verifier(pin).expose());
+    let r = fs
+        .put_over(fid, rec.expose(), rearmed)
+        .map_err(|_| Sw::MEMORY_FAILURE);
+    rec.wipe();
     r
 }
 
@@ -788,18 +835,25 @@ fn rewrap_dek<S: Storage>(
     dek_fid: KeyFid,
     pin: &[u8],
     dek: &[u8; DEK_SIZE],
-) -> Result<[u8; 32], Sw> {
+    rearmed: &Rearmed,
+) -> Result<Secret<[u8; 32]>, Sw> {
     let session = dev.pin_derive_session(pin);
-    let mut def = [0u8; DEK_FILE_SIZE];
-    def[0] = DEK_FORMAT_V3;
+    let mut def = Secret::<[u8; DEK_FILE_SIZE]>::zeroed();
+    def.expose_mut()[0] = DEK_FORMAT_V3;
     let mut nonce = [0u8; 12];
     rng.fill(&mut nonce);
-    dev.encrypt_with_aad(&session, dek, PinKdf::V2, &nonce, &mut def[1..])
-        .map_err(|_| Sw::EXEC_ERROR)?;
+    dev.encrypt_with_aad(
+        session.expose(),
+        dek,
+        PinKdf::V2,
+        &nonce,
+        &mut def.expose_mut()[1..],
+    )
+    .map_err(|_| Sw::EXEC_ERROR)?;
     let r = fs
-        .put_key(dek_fid, Sealed::wrap(&def))
+        .put_key_over(dek_fid, Sealed::wrap(def.expose()), Some(rearmed))
         .map_err(|_| Sw::MEMORY_FAILURE);
-    def.zeroize();
+    def.wipe();
     r.map(|()| session)
 }
 
@@ -836,7 +890,7 @@ pub fn change_pin<S: Storage>(
     if !sw.is_ok() {
         return sw;
     }
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     if let Err(sw) = load_dek(dev, fs, sess, &mut dek) {
         return sw;
     }
@@ -855,16 +909,16 @@ pub fn change_pin<S: Storage>(
         // it, and staging is exactly that. Otherwise a refused PIN leaves an
         // orphan stage behind, which is a live record nothing ever retires.
         check_pin_len(fid, new_pin.len())?;
-        let session = stage_dek(dev, fs, rng, dek_fid, new_pin, &dek)?;
-        put_verifier(dev, fs, fid, new_pin)?;
-        commit_staged_dek(fs, dek_fid)?;
+        let (session, rearmed) = stage_dek(dev, fs, rng, dek_fid, new_pin, dek.expose())?;
+        put_verifier(dev, fs, fid, new_pin, Some(&rearmed))?;
+        commit_staged_dek(fs, dek_fid, &rearmed)?;
         match p2 {
-            PW1_MODE81 => sess.session_pw1 = session,
-            _ => sess.session_pw3 = session,
+            PW1_MODE81 => sess.session_pw1.copy_from_slice(session.expose()),
+            _ => sess.session_pw3.copy_from_slice(session.expose()),
         }
         Ok(())
     })();
-    dek.zeroize();
+    dek.wipe();
     match result {
         Ok(()) => Sw::OK,
         Err(sw) => sw,
@@ -907,21 +961,22 @@ pub fn reset_retry<S: Storage>(
         sess.has_pw2 = false;
         sess.has_pw3 = false;
         sess.has_rc = true;
-        sess.session_rc = dev.pin_derive_session(&data[..rc_len]);
+        sess.session_rc
+            .copy_from_slice(dev.pin_derive_session(&data[..rc_len]).expose());
         let new_pin = &data[rc_len..];
-        let mut dek = [0u8; DEK_SIZE];
+        let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
         if let Err(sw) = load_dek(dev, fs, sess, &mut dek) {
             return sw;
         }
         let result = (|| {
             check_pin_len(EF_PW1, new_pin.len())?;
-            let session = stage_dek(dev, fs, rng, EF_DEK_PW1, new_pin, &dek)?;
-            put_verifier(dev, fs, EF_PW1, new_pin)?;
-            commit_staged_dek(fs, EF_DEK_PW1)?;
-            sess.session_pw1 = session;
+            let (session, rearmed) = stage_dek(dev, fs, rng, EF_DEK_PW1, new_pin, dek.expose())?;
+            put_verifier(dev, fs, EF_PW1, new_pin, Some(&rearmed))?;
+            commit_staged_dek(fs, EF_DEK_PW1, &rearmed)?;
+            sess.session_pw1.copy_from_slice(session.expose());
             pin_reset_retries(fs, EF_PW1, true)
         })();
-        dek.zeroize();
+        dek.wipe();
         return match result {
             Ok(()) => Sw::OK,
             Err(sw) => sw,
@@ -934,19 +989,19 @@ pub fn reset_retry<S: Storage>(
         return Sw::CONDITIONS_NOT_SATISFIED;
     }
     let new_pin = data;
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     if let Err(sw) = load_dek(dev, fs, sess, &mut dek) {
         return sw;
     }
     let result = (|| {
         check_pin_len(EF_PW1, new_pin.len())?;
-        let session = stage_dek(dev, fs, rng, EF_DEK_PW1, new_pin, &dek)?;
-        put_verifier(dev, fs, EF_PW1, new_pin)?;
-        commit_staged_dek(fs, EF_DEK_PW1)?;
-        sess.session_pw1 = session;
+        let (session, rearmed) = stage_dek(dev, fs, rng, EF_DEK_PW1, new_pin, dek.expose())?;
+        put_verifier(dev, fs, EF_PW1, new_pin, Some(&rearmed))?;
+        commit_staged_dek(fs, EF_DEK_PW1, &rearmed)?;
+        sess.session_pw1.copy_from_slice(session.expose());
         pin_reset_retries(fs, EF_PW1, true)
     })();
-    dek.zeroize();
+    dek.wipe();
     match result {
         Ok(()) => Sw::OK,
         Err(sw) => sw,
@@ -975,7 +1030,7 @@ pub fn put_reset_code<S: Storage>(
         };
     }
     sess.has_rc = false;
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     if let Err(sw) = load_dek(dev, fs, sess, &mut dek) {
         return sw;
     }
@@ -984,15 +1039,15 @@ pub fn put_reset_code<S: Storage>(
         // DATA's data field, and a YubiKey 5.7.4 answers `6A80` there (3/3, at 1,
         // 5, 6, 7 and 128) where CHANGE and RESET RETRY both answer `6985`.
         check_pin_len(EF_RC, data.len()).map_err(|_| Sw::WRONG_DATA)?;
-        stage_dek(dev, fs, rng, EF_DEK_RC, data, &dek)?;
-        put_verifier(dev, fs, EF_RC, data)?;
-        commit_staged_dek(fs, EF_DEK_RC)?;
+        let (_, rearmed) = stage_dek(dev, fs, rng, EF_DEK_RC, data, dek.expose())?;
+        put_verifier(dev, fs, EF_RC, data, Some(&rearmed))?;
+        commit_staged_dek(fs, EF_DEK_RC, &rearmed)?;
         // Activate the resetting code: it ships deactivated (counter 0), so
         // enable its retry counter now that a real RC exists.
         pin_reset_retries(fs, EF_RC, true)?;
         Ok::<(), Sw>(())
     })();
-    dek.zeroize();
+    dek.wipe();
     match result {
         Ok(()) => Sw::OK,
         Err(sw) => sw,

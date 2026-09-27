@@ -30,7 +30,8 @@ pub(crate) fn in_pool(id: u32) -> bool {
 }
 
 fn tag(id: u32) -> [u8; TAG_LEN] {
-    [(id >> 8) as u8, id as u8]
+    let [_, _, hi, lo] = id.to_be_bytes();
+    [hi, lo]
 }
 
 /// One walk of the pool for `id`.
@@ -72,17 +73,16 @@ fn scan<S: Storage>(fs: &mut Fs<S>, id: u32) -> Result<Scan, Sw> {
     Ok(s)
 }
 
-/// Read `id`'s body to the front of `out` (at least [`RECORD_MAX`] long): its length,
-/// or `None` when the pool does not hold it.
+/// Read `id`'s body to the front of `out`: its length, or `None` when the pool does not
+/// hold it.
 pub(crate) fn read<S: Storage>(
     fs: &mut Fs<S>,
     id: u32,
-    out: &mut [u8],
+    out: &mut [u8; RECORD_MAX],
 ) -> Result<Option<usize>, Sw> {
     let Some((fid, _)) = scan(fs, id)?.held else {
         return Ok(None);
     };
-    let out = &mut out[..RECORD_MAX];
     let n = fs
         .try_read(fid, out)
         .map_err(|_| Sw::MEMORY_FAILURE)?
@@ -106,9 +106,13 @@ pub(crate) fn write<S: Storage>(fs: &mut Fs<S>, id: u32, obj: &[u8]) -> Result<(
     }
     let fid = s.held.map(|(fid, _)| fid).or(s.free).ok_or(Sw::FILE_FULL)?;
     let mut rec = [0u8; RECORD_MAX];
-    rec[..TAG_LEN].copy_from_slice(&tag(id));
-    rec[TAG_LEN..TAG_LEN + obj.len()].copy_from_slice(obj);
-    fs.put(fid, &rec[..TAG_LEN + obj.len()]).map_err(put_sw)
+    let Some(record) = rec.get_mut(..TAG_LEN + obj.len()) else {
+        return Err(Sw::WRONG_LENGTH);
+    };
+    let (head, body) = record.split_at_mut(TAG_LEN);
+    head.copy_from_slice(&tag(id));
+    body.copy_from_slice(obj);
+    fs.put(fid, record).map_err(put_sw)
 }
 
 /// Drop `id`. An object the pool does not hold is already gone: a YubiKey answers

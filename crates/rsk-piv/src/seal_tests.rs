@@ -62,7 +62,7 @@ fn a_record_shorter_than_its_framing_is_memory_failure() {
     for n in [1usize, NONCE_LEN + TAG_LEN - 1] {
         let junk = vec![0xEEu8; n];
         fs.put_key(fid, Sealed::wrap(&junk)).unwrap();
-        let mut out = [0u8; MAX_PLAIN];
+        let mut out = Secret::<[u8; MAX_PLAIN]>::zeroed();
         assert_eq!(
             seal_read(&dev(None), &mut fs, fid, &mut out),
             Err(Sw::MEMORY_FAILURE),
@@ -79,14 +79,14 @@ fn an_output_buffer_under_the_plaintext_is_refused() {
     let fid = key_fid(SLOT_AUTHENTICATION);
     let plain = [0x11u8; 40];
     seal_put(&dev(None), &mut fs, &mut TestRng(2), fid, &plain).unwrap();
-    let mut small = [0u8; 39];
+    let mut small = Secret::<[u8; 39]>::zeroed();
     assert_eq!(
         seal_read(&dev(None), &mut fs, fid, &mut small),
         Err(Sw::WRONG_LENGTH)
     );
-    let mut exact = [0u8; 40];
+    let mut exact = Secret::<[u8; 40]>::zeroed();
     assert_eq!(seal_read(&dev(None), &mut fs, fid, &mut exact), Ok(40));
-    assert_eq!(exact, plain);
+    assert_eq!(*exact.expose(), plain);
 }
 
 /// A blob that opens under neither generation is corrupt, and the migration pass
@@ -138,7 +138,7 @@ fn a_slot_is_not_re_sealed_while_the_lap_stays_armed_shut() {
     seal_put(&dev(None), &mut fs, &mut TestRng(5), fid, &plain).unwrap();
     medium.refuse(Some(rsk_fs::EF_HARDENED));
     migrate_kbase(&dev(Some(&OTP)), &mut fs, &mut TestRng(6));
-    let mut out = [0u8; MAX_PLAIN];
+    let mut out = Secret::<[u8; MAX_PLAIN]>::zeroed();
     assert_eq!(
         seal_read(&dev(None), &mut fs, fid, &mut out),
         Ok(32),

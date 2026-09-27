@@ -26,13 +26,15 @@ elf = "target/thumbv8m.main-none-eabihf/release/firmware"
 writable_executable = [".data"]
 
 # The image HAS a heap. `firmware/src/main.rs` declares
-# `#[global_allocator] static HEAP: embedded_alloc::LlffHeap` over 128 KiB and
-# docs/unsafe.md site 4 is its initialisation. AGENTS.md's "no_std, no alloc" is
+# `#[global_allocator] static HEAP: ZeroingHeap` over 128 KiB — `LlffHeap` behind
+# a wrapper that wipes each block as it is freed — and docs/unsafe.md site 4 is
+# its initialisation, sites 5–9 the wrapper. AGENTS.md's "no_std, no alloc" is
 # a rule about new code, not a description of the tree, and until this row
 # nothing held the surface: a second allocator or a `malloc` arriving through a
-# dependency was invisible. `__rust_dealloc` is deliberately absent from the
-# list because the image does not define it — the allocations this heap serves
-# are never freed, and a `__rust_dealloc` appearing is a change worth reading.
+# dependency was invisible. `__rust_dealloc` is not on the list, and its absence
+# says nothing about frees: the shim is emitted only where the inliner keeps it.
+# The first, byte-wise wrapper kept one; the word-wise wrapper is called from its
+# 148 call sites directly, as the bare `LlffHeap` was before either.
 allocator = ["__rust_alloc", "__rust_realloc", "__rust_alloc_error_handler"]
 
 vector_section = ".vector_table"

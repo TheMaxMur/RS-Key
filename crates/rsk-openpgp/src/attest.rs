@@ -5,7 +5,7 @@
 //! generated with the attestation key (reference `81`), which the card minted under its
 //! DEK, and DO `FC` holds that key's self-signed certificate: the root a verifier pins.
 
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::Device;
 use rsk_ec::{Curve, MAX_EC_POINT, MAX_EC_PUBDO, PrivKey, make_ec_pubkey_do};
@@ -154,9 +154,10 @@ fn write_statement<S: Storage>(
     // A card provisioned before this build has no attestation key, and only a
     // verified PIN can open the DEK it must be sealed under.
     if !provisioned(fs)? {
-        let mut dek = [0u8; DEK_SIZE];
-        let r = load_dek(dev, fs, sess, &mut dek).and_then(|()| provision(dev, fs, rng, &dek));
-        dek.zeroize();
+        let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
+        let r =
+            load_dek(dev, fs, sess, &mut dek).and_then(|()| provision(dev, fs, rng, dek.expose()));
+        dek.wipe();
         r?;
     }
     let signer = load_ec_key(dev, fs, sess, EF_PK_ATT)?;

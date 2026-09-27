@@ -9,6 +9,7 @@
 //! present-cache plus a metadata side-store sit on top; applets own their own FID
 //! ranges and access control, so `Fs` is a plain typed KV store.
 
+pub mod counter;
 pub mod fs;
 // The power-cut oracle. Its rules are `no_std` so `cargo kani` can prove them;
 // the driver that runs them against a real `Fs` needs a heap and is behind
@@ -52,20 +53,21 @@ pub const EF_HARDENED: u16 = 0xCE14;
 /// for the life of the key, because [`run_at_rest_lap`] gates on it and nothing else.
 /// Order does NOT cover a medium that refuses the re-arm and serves the write: that
 /// reaches the same end state with no reset in it at all. So this answers rather than
-/// swallowing, and `Ok` means what the caller needs — the lap WILL run.
+/// swallowing, and `Ok` means what the caller needs — the lap WILL run. Its
+/// [`Rearmed`] is what the writes over a pre-OTP copy take, which holds both halves.
 /// Every caller shipped the second order until 0x09BD and the swallow until 0x09BE.
 /// A refusal is ALSO latched in RAM for [`Fs::rescrub_refused`], because the wipe
 /// paths take this best-effort and their refusal reaches nobody: the latch says the
 /// medium refused a re-arm this power cycle, never that the marker lies.
 /// Refines `RSKeyBootHardening!MarkerNeverLies` — SEC-BOOT-001.
-pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
+pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<Rearmed> {
     let _ = fs.delete(EF_HARDENED);
     // Not `delete`'s own answer: it reports the METADATA drop (EF_HARDENED, a one-byte
     // flag, keeps none) and answers `Ok` where the present bit is clear over a live
     // marker — what a read-fault-truncated `Fs::scan` leaves. Ask the lap's own gate.
     let answer = match fs.try_has_data(EF_HARDENED) {
         Ok(true) => Err(Error::MemoryFatal),
-        Ok(false) => Ok(()),
+        Ok(false) => Ok(Rearmed(())),
         Err(e) => Err(e),
     };
     // Both arms, and before the caller can drop it: an unreadable probe is a re-arm
@@ -75,6 +77,50 @@ pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
         fs.note_rescrub_refused();
     }
     answer
+}
+
+/// A re-arm that landed: only [`request_rescrub`] makes one, and only on `Ok`, so a write
+/// that passes it ([`Fs::put_over`] and its siblings) follows a landed re-arm; which
+/// writes supersede a pre-OTP copy is the caller's to know (this must NOT build):
+///
+/// ```compile_fail,E0603
+/// # fn f<S: rsk_fs::Storage>(fs: &mut rsk_fs::Fs<S>) {
+/// let _ = fs.put_over(0x1234, &[1], Some(&rsk_fs::Rearmed(())));
+/// # }
+/// ```
+///
+/// and its twin does:
+///
+/// ```
+/// # fn f<S: rsk_fs::Storage>(fs: &mut rsk_fs::Fs<S>) {
+/// if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {
+///     let _ = fs.put_over(0x1234, &[1], Some(&rearmed));
+/// }
+/// # }
+/// ```
+#[must_use]
+pub struct Rearmed(());
+
+/// [`request_rescrub`] for a write that supersedes a pre-OTP copy only when `pre_otp`:
+/// `Ok(None)` is a write that owes the lap nothing.
+pub fn request_rescrub_if<S: Storage>(fs: &mut Fs<S>, pre_otp: bool) -> Result<Option<Rearmed>> {
+    if pre_otp {
+        request_rescrub(fs).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+/// A re-arm attempted ahead of a wipe, landed or not: a wipe goes on over a refusal,
+/// since stopping would leave the secrets live, and [`Fs::rescrub_refused`] keeps it.
+/// The sweeps take one, so none runs without the attempt ahead of it.
+#[must_use]
+pub struct RearmAttempted(());
+
+/// [`request_rescrub`] ahead of a wipe: best-effort, its refusal latched, never lost.
+pub fn attempt_rescrub<S: Storage>(fs: &mut Fs<S>) -> RearmAttempted {
+    let _refused = request_rescrub(fs).is_err();
+    RearmAttempted(())
 }
 
 /// Run the one-shot at-rest scrub lap: iff [`EF_HARDENED`] is absent, drive a full

@@ -59,3 +59,20 @@ fn to_mont_then_mont_reduce_is_identity() {
         );
     }
 }
+
+#[test]
+fn to_mont_inplace_is_to_mont() {
+    let mut p = Poly::zero();
+    for n in 0..crate::params::N {
+        // Inputs across (−q, q); the body is `to_mont`'s, expression for expression.
+        p.0[n] = match n % 4 {
+            0 => (n as i32) * 32_749,
+            1 => crate::params::Q - 1 - n as i32,
+            2 => -(n as i32) * 12_345,
+            _ => (n as i32) << 13,
+        };
+    }
+    let want = to_mont(&p);
+    to_mont_inplace(&mut p);
+    assert_eq!(p.0, want.0);
+}

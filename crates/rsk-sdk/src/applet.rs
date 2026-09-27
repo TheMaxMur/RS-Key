@@ -3,6 +3,16 @@
 
 //! The `Applet` trait plus AID-based SELECT and APDU dispatch.
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
+use rsk_secret::WipeGuard;
 use zeroize::Zeroize;
 
 use crate::apdu::{Apdu, INS_GET_RESPONSE};
@@ -43,23 +53,28 @@ impl<'a> ResBuf<'a> {
     }
     /// Append one byte; returns false if the buffer is full.
     pub fn push(&mut self, b: u8) -> bool {
-        if self.len < self.cap {
-            self.buf[self.len] = b;
-            self.len += 1;
-            true
-        } else {
-            false
+        if self.len >= self.cap {
+            return false;
         }
+        let Some(slot) = self.buf.get_mut(self.len) else {
+            return false;
+        };
+        *slot = b;
+        self.len += 1;
+        true
     }
     /// Append a slice; returns false (and writes nothing) if it would overflow.
     pub fn extend(&mut self, data: &[u8]) -> bool {
-        if self.len + data.len() <= self.cap {
-            self.buf[self.len..self.len + data.len()].copy_from_slice(data);
-            self.len += data.len();
-            true
-        } else {
-            false
+        let end = self.len + data.len();
+        if end > self.cap {
+            return false;
         }
+        let Some(dst) = self.buf.get_mut(self.len..end) else {
+            return false;
+        };
+        dst.copy_from_slice(data);
+        self.len = end;
+        true
     }
     /// The unwritten tail, so a producer can fill the response **in place**
     /// instead of building the body in a buffer of its own and copying it in.
@@ -67,7 +82,7 @@ impl<'a> ResBuf<'a> {
     /// it may return, which on a 520 KiB part is the difference between serving
     /// a 2 KiB data object and not. Commit what was written with [`Self::commit`].
     pub fn spare_mut(&mut self) -> &mut [u8] {
-        &mut self.buf[self.len..self.cap]
+        self.buf.get_mut(self.len..self.cap).unwrap_or_default()
     }
     /// Take `n` bytes written through [`Self::spare_mut`] into the body.
     ///
@@ -80,7 +95,7 @@ impl<'a> ResBuf<'a> {
         self.len = self.cap.min(self.len + n);
     }
     pub fn as_slice(&self) -> &[u8] {
-        &self.buf[..self.len]
+        self.buf.get(..self.len).unwrap_or_default()
     }
     /// Shorten the body to `n` bytes (no-op when already `≤ n`).
     pub fn truncate(&mut self, n: usize) {
@@ -156,7 +171,18 @@ fn frame_room(chaining_ok: bool) -> usize {
 
 /// `61 XX` bytes-remaining; SW2 saturates to `00` (= 256+ left) per ISO 7816-4.
 pub const fn bytes_remaining(left: usize) -> Sw {
-    Sw::new(0x61, if left > 0xFF { 0 } else { left as u8 })
+    let [low, ..] = left.to_le_bytes();
+    Sw::new(0x61, if left > 0xFF { 0 } else { low })
+}
+
+/// Deselect the applet in slot `c`, by a walk rather than `get_mut(c)`: Kani's CBMC
+/// does not converge on a virtual call through a symbolically indexed slot (measured).
+fn deselect_slot<C>(applets: &mut [&mut dyn Applet<C>], c: usize, ctx: &mut C) {
+    for (k, prev) in applets.iter_mut().enumerate() {
+        if k == c {
+            prev.deselect(ctx);
+        }
+    }
 }
 
 /// Routes APDUs to applets: SELECT-by-AID, command chaining (CLA bit 0x10),
@@ -314,22 +340,22 @@ impl Dispatcher {
                 // Only the terminator was ever bound to the opener, so a second
                 // process could splice its own segments into a live chain and have
                 // the opener's own final APDU dispatch them (audit run-37).
-                self.chain[..self.chain_len].zeroize();
-                self.chain_len = 0;
-                self.chaining = false;
+                self.clear_chaining();
                 return Sw::LAST_CHAIN_EXPECTED;
             }
             if self.chain_len + apdu.nc >= self.chain.len() {
                 // The accumulated segments may already hold key material.
-                self.chain[..self.chain_len].zeroize();
-                self.chain_len = 0;
-                self.chaining = false;
+                self.clear_chaining();
                 // The same length error the final segment's overflow gives
                 // below: the command is too long, and the class byte that
                 // carried it was right. A YubiKey 5.7.4 answers `6700` here too.
                 return Sw::WRONG_LENGTH;
             }
-            self.chain[self.chain_len..self.chain_len + apdu.nc].copy_from_slice(apdu.data);
+            let Some(segment) = self.chain.get_mut(self.chain_len..self.chain_len + apdu.nc) else {
+                self.clear_chaining();
+                return Sw::WRONG_LENGTH;
+            };
+            segment.copy_from_slice(apdu.data);
             self.chain_len += apdu.nc;
             self.chaining = true;
             return Sw::OK;
@@ -354,9 +380,7 @@ impl Dispatcher {
         if self.chaining
             && (select || (apdu.cla & !0x10, apdu.ins, apdu.p1, apdu.p2) != self.chain_hdr)
         {
-            self.chain[..self.chain_len].zeroize();
-            self.chain_len = 0;
-            self.chaining = false;
+            self.clear_chaining();
             // Dropping the chain and letting the SELECT run is the carve-out from
             // audit run-34 #26; everything else is refused, because absorbing it is
             // what let one process prefix another's command.
@@ -369,36 +393,39 @@ impl Dispatcher {
         // data and dispatch the reassembled command (needed by OpenPGP RSA IMPORT,
         // whose extended header list exceeds 255 bytes).
         if self.chaining {
-            if self.chain_len + apdu.nc > self.chain.len() {
-                self.chain[..self.chain_len].zeroize();
-                self.chain_len = 0;
-                self.chaining = false;
-                return Sw::WRONG_LENGTH;
-            }
-            self.chain[self.chain_len..self.chain_len + apdu.nc].copy_from_slice(apdu.data);
             let total = self.chain_len + apdu.nc;
+            let Some(segment) = self.chain.get_mut(self.chain_len..total) else {
+                self.clear_chaining();
+                return Sw::WRONG_LENGTH;
+            };
+            segment.copy_from_slice(apdu.data);
             self.chaining = false;
             self.chain_len = 0;
-            let combined = Apdu {
-                cla: apdu.cla,
-                ins: apdu.ins,
-                p1: apdu.p1,
-                p2: apdu.p2,
-                nc: total,
-                ne: apdu.ne,
-                data: &self.chain[..total],
-                extended: apdu.extended,
-            };
             // A disabled current applet is unreachable, like a dropped selection.
             let cur = self.current.filter(|&i| self.selectable(i));
-            let chain_ok = cur.map(|i| applets[i].response_chaining()).unwrap_or(false);
+            let chain_ok = cur
+                .and_then(|i| applets.get(i))
+                .is_some_and(|app| app.response_chaining());
             res.limit(frame_room(chain_ok));
-            let sw = match cur {
-                Some(i) => applets[i].process(&combined, ctx, res),
-                None => Sw::FILE_NOT_FOUND,
+            let sw = {
+                // A chained command can carry private-key IMPORT data: wiped when
+                // this block is left, however it is left.
+                let data = WipeGuard::new(self.chain.get_mut(..total).unwrap_or_default());
+                let combined = Apdu {
+                    cla: apdu.cla,
+                    ins: apdu.ins,
+                    p1: apdu.p1,
+                    p2: apdu.p2,
+                    nc: total,
+                    ne: apdu.ne,
+                    data: &data,
+                    extended: apdu.extended,
+                };
+                match cur.and_then(|i| applets.get_mut(i)) {
+                    Some(app) => app.process(&combined, ctx, res),
+                    None => Sw::FILE_NOT_FOUND,
+                }
             };
-            // A chained command can carry private-key IMPORT data.
-            self.chain[..total].zeroize();
             return self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res);
         }
 
@@ -423,12 +450,15 @@ impl Dispatcher {
                     if let Some(c) = self.current
                         && c != i
                     {
-                        applets[c].deselect(ctx);
+                        deselect_slot(applets, c, ctx);
                     }
                     self.current = Some(i);
-                    let chain_ok = applets[i].response_chaining();
+                    let Some(app) = applets.get_mut(i) else {
+                        return Sw::FILE_NOT_FOUND;
+                    };
+                    let chain_ok = app.response_chaining();
                     res.limit(frame_room(chain_ok));
-                    let sw = applets[i].select(reselect, ctx, res);
+                    let sw = app.select(reselect, ctx, res);
                     self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res)
                 }
                 None => Sw::FILE_NOT_FOUND,
@@ -445,14 +475,15 @@ impl Dispatcher {
         }
 
         // Dispatch to the selected applet (unless it was disabled since SELECT).
-        match self.current {
-            Some(i) if self.selectable(i) => {
-                let chain_ok = applets[i].response_chaining();
+        let current = self.current.filter(|&i| self.selectable(i));
+        match current.and_then(|i| applets.get_mut(i)) {
+            Some(app) => {
+                let chain_ok = app.response_chaining();
                 res.limit(frame_room(chain_ok));
-                let sw = applets[i].process(&apdu, ctx, res);
+                let sw = app.process(&apdu, ctx, res);
                 self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res)
             }
-            _ => Sw::FILE_NOT_FOUND,
+            None => Sw::FILE_NOT_FOUND,
         }
     }
 
@@ -461,8 +492,12 @@ impl Dispatcher {
     /// pinpad's out-of-band VERIFY) can drop a stale chained-response tail the way
     /// a normal dispatch would.
     pub fn clear_pending(&mut self) {
-        if self.pending_len > 0 {
-            self.pending[..self.pending_len].zeroize();
+        if let Some(held) = self.pending.get_mut(..self.pending_len) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dispatcher's held GET RESPONSE tail: dropping it is its wipe point"
+            )]
+            held.zeroize();
         }
         self.pending_len = 0;
         self.pending_off = 0;
@@ -474,8 +509,12 @@ impl Dispatcher {
     /// must reset the incoming chaining state too, so a stale chain cannot
     /// concatenate onto a later command.
     pub fn clear_chaining(&mut self) {
-        if self.chain_len > 0 {
-            self.chain[..self.chain_len].zeroize();
+        if let Some(held) = self.chain.get_mut(..self.chain_len) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "the dispatcher's own chain buffer: dropping a chain is its wipe point"
+            )]
+            held.zeroize();
         }
         self.chain_len = 0;
         self.chaining = false;
@@ -518,7 +557,8 @@ impl Dispatcher {
             .min(FRAME_BODY)
             .min(remaining)
             .min(res.capacity() - res.len());
-        res.extend(&self.pending[self.pending_off..self.pending_off + take]);
+        let chunk = self.pending.get(self.pending_off..self.pending_off + take);
+        res.extend(chunk.unwrap_or_default());
         self.pending_off += take;
         let left = self.pending_len - self.pending_off;
         if left > 0 {
@@ -542,8 +582,13 @@ impl Dispatcher {
     fn maybe_chain(&mut self, sw: Sw, cap: usize, chaining_ok: bool, res: &mut ResBuf) -> Sw {
         let cap = cap.min(FRAME_BODY);
         let tail_len = res.len().saturating_sub(cap);
-        if chaining_ok && sw.is_ok() && tail_len > 0 && tail_len <= self.pending.len() {
-            self.pending[..tail_len].copy_from_slice(&res.as_slice()[cap..]);
+        if chaining_ok
+            && sw.is_ok()
+            && tail_len > 0
+            && let (Some(dst), Some(src)) =
+                (self.pending.get_mut(..tail_len), res.as_slice().get(cap..))
+        {
+            dst.copy_from_slice(src);
             self.pending_len = tail_len;
             self.pending_off = 0;
             self.pending_sw = sw;
@@ -565,5 +610,13 @@ impl Dispatcher {
 mod proofs;
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "applet_tests.rs"]
 mod tests;

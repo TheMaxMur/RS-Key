@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 # The `rsk_fs::Storage` backend the device actually runs: two `sequential-storage`
 # map partitions over one flash, counter FIDs routed away from the credential
 # pages, and the scrub lap that physically destroys superseded secrets. It was

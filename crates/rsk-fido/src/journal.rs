@@ -31,7 +31,7 @@
 
 use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::mac::hkdf_sha256;
 use rsk_crypto::{Device, sha256};
@@ -455,18 +455,18 @@ pub fn attestation_key(devk: &[u8; 32], serial_hash: &[u8]) -> Option<P256Key> {
     const INFO_TAG: &[u8] = b"RSK audit attestation v1";
     let mut info = [0u8; 25];
     info[..INFO_TAG.len()].copy_from_slice(INFO_TAG);
-    let mut scalar = [0u8; 32];
+    let mut scalar = Secret::<[u8; 32]>::zeroed();
     for i in 0u8..8 {
         info[INFO_TAG.len()] = i;
-        if hkdf_sha256(serial_hash, devk, &info, &mut scalar).is_err() {
+        if hkdf_sha256(serial_hash, devk, &info, scalar.expose_mut()).is_err() {
             return None;
         }
-        if let Some(k) = P256Key::from_scalar(&scalar) {
-            scalar.zeroize();
+        if let Some(k) = P256Key::from_scalar(scalar.expose()) {
+            scalar.wipe();
             return Some(k);
         }
     }
-    scalar.zeroize();
+    scalar.wipe();
     None
 }
 
@@ -515,12 +515,11 @@ pub fn vendor_checkpoint<S: Storage, R: Rng>(
         return Err(CtapError::InvalidParameter);
     }
     // Fetched here rather than held: the DEVK is unrotatable, and this is the one
-    // command that wants it. Zeroize before the `?` so a failed derivation still
-    // wipes the copy.
-    let mut devk =
-        ctx.state.devk_source.ok_or(CtapError::NotAllowed)?().ok_or(CtapError::NotAllowed)?;
-    let key = attestation_key(&devk, ctx.dev.serial_hash);
-    devk.zeroize();
+    // command that wants it. Dropped as soon as the key is derived, not at the end
+    // of the command.
+    let mut devk = rsk_crypto::read_fused(ctx.state.devk_source).ok_or(CtapError::NotAllowed)?;
+    let key = attestation_key(devk.expose(), ctx.dev.serial_hash);
+    devk.wipe();
     let key = key.ok_or(CtapError::Other)?;
     let (head, m) = chain_head(&ctx.dev, ctx.fs).map_err(|_| CtapError::Other)?;
 

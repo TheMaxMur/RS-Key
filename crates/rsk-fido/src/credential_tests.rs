@@ -200,7 +200,7 @@ fn legacy_is22_box_still_loads() {
     let mut old = [0u8; 512];
     old[..PROTO_LEN].copy_from_slice(CRED_PROTO);
     old[PROTO_LEN..PROTO_LEN + core].copy_from_slice(&newbox[..core]);
-    let st = silent_tag(&d, &old[..PROTO_LEN + core], &rp_hash);
+    let st = silent_tag(&d, &old[..PROTO_LEN + core], &rp_hash).unwrap();
     old[PROTO_LEN + core..PROTO_LEN + core + SILENT_TAG_LEN].copy_from_slice(&st);
     let olen = PROTO_LEN + core + SILENT_TAG_LEN;
     assert_eq!(&old[..PROTO_LEN], CRED_PROTO); // it IS the legacy framing
@@ -227,8 +227,13 @@ fn legacy_non_silent_box_still_loads() {
         enc.writer().position()
     };
     let mut key = derive_chacha_key(&SEED, older_proto);
-    let tag = chacha20poly1305_encrypt(&key, &IV, &rp_hash, &mut boxbuf[HEAD_LEN..HEAD_LEN + rs]);
-    key.zeroize();
+    let tag = chacha20poly1305_encrypt(
+        key.expose(),
+        &IV,
+        &rp_hash,
+        &mut boxbuf[HEAD_LEN..HEAD_LEN + rs],
+    );
+    key.wipe();
     boxbuf[HEAD_LEN + rs..HEAD_LEN + rs + TAG_LEN].copy_from_slice(&tag);
     let blen = HEAD_LEN + rs + TAG_LEN;
 
@@ -244,15 +249,19 @@ fn hmac_key_deterministic_uv_halves_differ() {
     let mut box2 = box1;
     box2[40] ^= 0xFF;
     let k1 = derive_hmac_key(&SEED, &box1);
-    assert_eq!(k1, derive_hmac_key(&SEED, &box1), "deterministic");
+    assert_eq!(
+        crate::bare(&k1),
+        crate::bare(derive_hmac_key(&SEED, &box1)),
+        "deterministic"
+    );
     // The CredRandomWithUV ([32..64]) and CredRandomWithoutUV ([0..32]) differ.
-    assert_ne!(&k1[..32], &k1[32..]);
+    assert_ne!(&k1.expose()[..32], &k1.expose()[32..]);
     // A different box yields a different cred_random.
-    assert_ne!(k1, derive_hmac_key(&SEED, &box2));
+    assert_ne!(crate::bare(&k1), crate::bare(derive_hmac_key(&SEED, &box2)));
     // The proto prefix (first 4 bytes) is folded in, so it is path-sensitive.
     assert_ne!(
-        derive_hmac_key(&SEED, &box1),
-        derive_hmac_key(&[0x43; 32], &box1)
+        crate::bare(derive_hmac_key(&SEED, &box1)),
+        crate::bare(derive_hmac_key(&[0x43; 32], &box1))
     );
 }
 
@@ -264,7 +273,7 @@ fn large_blob_key_deterministic_and_box_sensitive() {
     let k1 = derive_large_blob_key(&SEED, &box1);
     assert_eq!(k1, derive_large_blob_key(&SEED, &box1));
     assert_ne!(k1, derive_large_blob_key(&SEED, &box2));
-    assert_ne!(k1, derive_hmac_key(&SEED, &box1)[..32]);
+    assert_ne!(k1, derive_hmac_key(&SEED, &box1).expose()[..32]);
 }
 
 /// A pre-v4 (v1/v2/v3) resident id, as older firmware wrote it:
@@ -378,13 +387,13 @@ fn resident_key_input_reseal_stable_and_v1_follows_box() {
     assert_eq!(ki1, &rid[..]);
     assert_eq!(ki2, &rid[..]);
     assert_eq!(
-        fido_load_key(&SEED, ki1),
-        fido_load_key(&SEED, ki2),
+        crate::bare(fido_load_key(&SEED, ki1)),
+        crate::bare(fido_load_key(&SEED, ki2)),
         "signing key stable across reseal"
     );
     assert_eq!(
-        derive_hmac_key(&SEED, ki1),
-        derive_hmac_key(&SEED, ki2),
+        crate::bare(derive_hmac_key(&SEED, ki1)),
+        crate::bare(derive_hmac_key(&SEED, ki2)),
         "hmac-secret stable across reseal"
     );
     assert_eq!(
@@ -406,8 +415,8 @@ fn resident_key_input_reseal_stable_and_v1_follows_box() {
     let rid_other = derive_resident(&box2, &d);
     assert_ne!(rid, rid_other);
     assert_ne!(
-        fido_load_key(&SEED, &rid[..]),
-        fido_load_key(&SEED, &rid_other[..])
+        crate::bare(fido_load_key(&SEED, &rid[..])),
+        crate::bare(fido_load_key(&SEED, &rid_other[..]))
     );
 }
 

@@ -25,7 +25,6 @@ use minicbor::encode::{Error, Write};
 use minicbor::{Decoder, Encoder};
 use rsk_crypto::{chacha20poly1305_decrypt, chacha20poly1305_encrypt};
 use rsk_fs::{Fs, Storage};
-use zeroize::Zeroize;
 
 use crate::cbordec::def_map;
 use crate::consts::{EF_CRED_BLOB, MAX_LARGE_BLOB_SIZE};
@@ -213,8 +212,13 @@ pub fn write<S: Storage, R: Rng>(
     scratch[IV_LEN..IV_LEN + SIZE_LEN].copy_from_slice(&original_size.to_le_bytes());
     scratch[IV_LEN + SIZE_LEN..IV_LEN + body].copy_from_slice(blob);
     let mut key = derive_chacha_key(seed, BLOB_PROTO);
-    let tag = chacha20poly1305_encrypt(&key, &iv, cred_id, &mut scratch[IV_LEN..IV_LEN + body]);
-    key.zeroize();
+    let tag = chacha20poly1305_encrypt(
+        key.expose(),
+        &iv,
+        cred_id,
+        &mut scratch[IV_LEN..IV_LEN + body],
+    );
+    key.wipe();
     scratch[IV_LEN + body..IV_LEN + body + TAG_LEN].copy_from_slice(&tag);
     let stored = ctx
         .fs
@@ -255,8 +259,9 @@ pub fn read<S: Storage, R: Rng>(
     tag.copy_from_slice(&scratch[n - TAG_LEN..n]);
     let body = IV_LEN..n - TAG_LEN;
     let mut key = derive_chacha_key(seed, BLOB_PROTO);
-    let ok = chacha20poly1305_decrypt(&key, &iv, cred_id, &mut scratch[body.clone()], &tag).is_ok();
-    key.zeroize();
+    let ok = chacha20poly1305_decrypt(key.expose(), &iv, cred_id, &mut scratch[body.clone()], &tag)
+        .is_ok();
+    key.wipe();
     if !ok {
         return None;
     }

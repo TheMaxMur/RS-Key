@@ -191,7 +191,7 @@ fn the_dek_opens_under_both_new_references() {
             verify(&dev(), &mut fs, &mut s, &mut CountRng(0), 0x00, p2, pin),
             Sw::OK
         );
-        let mut dek = [0u8; DEK_SIZE];
+        let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
         assert_eq!(
             pin::load_dek(&dev(), &mut fs, &s, &mut dek),
             Ok(()),
@@ -505,7 +505,7 @@ fn the_access_status_survives_and_still_opens_the_dek() {
     assert_eq!(write(&mut fs, &mut sess, &three_salts()), Sw::OK);
     assert!(sess.has_pw3, "a YubiKey keeps PW3 standing here");
 
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     assert_eq!(
         pin::load_dek(&dev(), &mut fs, &sess, &mut dek),
         Ok(()),
@@ -541,7 +541,7 @@ fn a_standing_pw1_session_follows_the_re_seed_too() {
     assert!(sess.has_pw1 && sess.has_pw3);
     // `load_dek` prefers the PW1 copy when PW1/PW2 stand, so this reads the one
     // that would still be sealed under the old password if PW1 had been skipped.
-    let mut dek = [0u8; DEK_SIZE];
+    let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     assert_eq!(pin::load_dek(&dev(), &mut fs, &sess, &mut dek), Ok(()));
 }
 

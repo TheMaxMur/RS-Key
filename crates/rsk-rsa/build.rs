@@ -26,7 +26,10 @@ fn main() {
     // CC_<target> var takes precedence over CC in cc-rs.
     // SAFETY: build scripts run single-threaded at this point; no concurrent
     // env access.
-    unsafe { std::env::set_var("CC_thumbv8m_main_none_eabihf", "arm-none-eabi-gcc") };
+    #[expect(unsafe_code, reason = "edition 2024 makes set_var unsafe")]
+    unsafe {
+        std::env::set_var("CC_thumbv8m_main_none_eabihf", "arm-none-eabi-gcc")
+    };
 
     // Explicit flags (no_default_flags): cortex-m33 enables the DSP extension the
     // assembly requires; hardfloat matches the firmware's eabihf ABI so the object

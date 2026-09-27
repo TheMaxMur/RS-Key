@@ -5,6 +5,9 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
+[lints]
+workspace = true
+
 [dependencies]
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
@@ -13,7 +16,8 @@ rsk-crypto = { workspace = true }
 # codec left, because FIDO, rsk-device, rsk-display and the boot path read it too.
 rsk-phy = { workspace = true }
 k256 = { workspace = true }
-zeroize = { workspace = true }
+# The device key's scalar and its seal key held in a type that wipes itself.
+rsk-secret = { workspace = true }
 
 [dev-dependencies]
 # RamStorage for the host tests (the same backend the other applet crates use).

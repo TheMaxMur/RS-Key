@@ -309,6 +309,10 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// secrets after a dispatch. Called by the worker after the hand-off.
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the response buffer outlives every dispatch; the worker wipes it after each hand-off"
+        )]
         self.resp.zeroize();
     }
 

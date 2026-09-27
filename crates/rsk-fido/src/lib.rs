@@ -7,7 +7,7 @@
 //! host-testable: the device seed, serial, RNG and flash come from the caller
 //! ([`Ctx`]), never from globals; `firmware` wires in the RP2350 TRNG and flash.
 
-// The ML-DSA credential keys are heap-boxed (their ~13–23 KB `rsk-mldsa` expanded
+// The ML-DSA credential keys are heap-boxed (their ~16–32 KB `rsk-mldsa` expanded
 // keys would otherwise sit on the worker stack right below the stack-heavy sign;
 // see `ec::CredKey`). The firmware provides the heap; everything else stays
 // no-alloc.
@@ -37,6 +37,7 @@ pub mod seed;
 pub mod selection;
 pub mod state;
 pub mod u2f;
+mod up;
 pub mod vendor;
 
 #[cfg(any(test, kani, feature = "assurance-trace"))]
@@ -101,10 +102,15 @@ impl<S: Storage, R: Rng> Ctx<'_, S, R> {
     /// behind wins over flash; on a soft-locked device with no unlock this
     /// session, both fail and the operation errors out — that is the lock.
     /// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
-    pub fn load_keydev(&mut self) -> Option<[u8; 32]> {
-        self.state
-            .keydev_dec
-            .or_else(|| seed::load_keydev(&self.dev, self.fs))
+    pub fn load_keydev(&mut self) -> Option<rsk_secret::Secret<[u8; 32]>> {
+        match &self.state.keydev_dec {
+            Some(k) => {
+                let mut copy = rsk_secret::Secret::<[u8; 32]>::zeroed();
+                copy.expose_mut().copy_from_slice(k.expose());
+                Some(copy)
+            }
+            None => seed::load_keydev(&self.dev, self.fs),
+        }
     }
 }
 
@@ -216,6 +222,8 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+use tests::bare;
 
 #[cfg(test)]
 mod conformance;

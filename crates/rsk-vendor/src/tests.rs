@@ -128,6 +128,7 @@ fn a_build_without_the_hardware_says_so() {
         INS_CORE1_STATS,
         INS_KEYGEN_BENCH,
         INS_BENCH,
+        INS_STACK_RESIDUE,
     ] {
         let (sw, body) = run(&mut app, &mut fs, &apdu(ins, 0, 0, &[]));
         assert_eq!(sw, Sw::INS_NOT_SUPPORTED, "ins {ins:#04x}");
@@ -324,7 +325,7 @@ fn incrementing_the_counter_needs_the_operator() {
     assert_eq!(sw, Sw::CONDITIONS_NOT_SATISFIED);
     assert!(body.is_empty(), "a refused increment answered with a value");
     assert!(
-        !fs.has_data(COUNTER_FID),
+        !fs.has_counter(COUNTER_FID),
         "a declined touch wrote flash anyway — the wear this gate exists to close"
     );
 

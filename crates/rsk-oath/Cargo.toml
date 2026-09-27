@@ -8,9 +8,8 @@ publish = false
 # YKOATH applet: TOTP/HOTP credential store + calculate over CCID; what Yubico
 # Authenticator's OATH tab and `ykman oath` speak to.
 
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 [features]
 # `scripts/kani.sh` only: forwards to the dependency that carries the switch.
@@ -22,7 +21,7 @@ kani-soft = ["rsk-crypto/kani-soft"]
 rsk-sdk = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
-zeroize = { workspace = true }
+rsk-secret = { workspace = true }
 
 [dev-dependencies]
 # RamStorage for the host tests (the same backend rsk-fido/rsk-openpgp use).

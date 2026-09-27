@@ -81,11 +81,11 @@ Program Headers:
 #: regex that matched everything with "alloc" in it.
 DEFINED = """1000053a t _RNvCsGIExRX8pES_7___rustc12___rust_alloc
 1000054c t _RNvCsGIExRX8pES_7___rustc14___rust_realloc
-1003e75e t _RNvCsGIExRX8pES_7___rustc25___rdl_alloc_error_handler
-10039edc t _RNvCsGIExRX8pES_7___rustc26___rust_alloc_error_handler
-1003e7b6 t _RNvNtCs1bu0FZYAZ3A_5alloc5alloc18handle_alloc_error
-1009b8ea t _ZN5alloc7raw_vec20RawVecInner$LT$A$GT$10deallocate17hc19c12af1fa0878eE
-1004ad98 t _ZN79_$LT$embedded_alloc..llff..Heap$u20$as$u20$core..alloc..global..GlobalAlloc$GT$7dealloc17h0e3c912a2475acbcE
+10041ff6 t _RNvCsGIExRX8pES_7___rustc25___rdl_alloc_error_handler
+1003d774 t _RNvCsGIExRX8pES_7___rustc26___rust_alloc_error_handler
+1004204e t _RNvNtCs1bu0FZYAZ3A_5alloc5alloc18handle_alloc_error
+1009e850 t _ZN5alloc7raw_vec20RawVecInner$LT$A$GT$10deallocate17hd6fb662329047188E
+1001789c t _ZN74_$LT$firmware..ZeroingHeap$u20$as$u20$core..alloc..global..GlobalAlloc$GT$7dealloc17h0cd100f08afe843fE
 """
 
 #: `arm-none-eabi-nm -u`. Empty, and that is the measurement: a fully linked

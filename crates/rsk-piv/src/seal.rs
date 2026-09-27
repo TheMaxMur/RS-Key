@@ -10,11 +10,11 @@
 
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
 use rsk_ec::{Curve, PrivKey};
-use rsk_fs::{Fs, KeyFid, Sealed, Storage};
-use rsk_rsa::{RSA_PUB_EXP_BE, RsaKey, crt};
+use rsk_fs::{Fs, KeyFid, Rearmed, Sealed, Storage};
+use rsk_rsa::{RsaKey, crt};
 use rsk_sdk::Rng;
 use rsk_sdk::Sw;
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 pub use rsk_rsa::RsaCrt;
 
@@ -36,12 +36,21 @@ pub const MAX_BLOB: usize = NONCE_LEN + MAX_PLAIN + TAG_LEN;
 
 const INFO_PIV_KEYS: &[u8] = b"PIV/KEYS";
 
-fn kenc(dev: &Device) -> [u8; 32] {
+fn kenc(dev: &Device) -> Secret<[u8; 32]> {
     let mut kbase = dev.derive_kbase();
-    let mut out = [0u8; 32];
-    hkdf_sha256(dev.serial_hash, &kbase, INFO_PIV_KEYS, &mut out)
-        .expect("32-byte HKDF output is in range");
-    kbase.zeroize();
+    let mut out = Secret::<[u8; 32]>::zeroed();
+    #[expect(
+        clippy::expect_used,
+        reason = "HKDF-SHA256 refuses only an output past 255 × 32 bytes, and this one is 32"
+    )]
+    hkdf_sha256(
+        dev.serial_hash,
+        kbase.expose(),
+        INFO_PIV_KEYS,
+        out.expose_mut(),
+    )
+    .expect("32-byte HKDF output is in range");
+    kbase.wipe();
     out
 }
 
@@ -53,41 +62,63 @@ pub fn seal_put<S: Storage>(
     fid: KeyFid,
     plain: &[u8],
 ) -> Result<(), Sw> {
+    seal_put_over(dev, fs, rng, fid, plain, None)
+}
+
+/// [`seal_put`] over a record another root sealed; see [`Fs::put_key_over`].
+pub fn seal_put_over<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    rng: &mut dyn Rng,
+    fid: KeyFid,
+    plain: &[u8],
+    rearmed: Option<&Rearmed>,
+) -> Result<(), Sw> {
     if plain.len() > MAX_PLAIN {
         return Err(Sw::WRONG_LENGTH);
     }
-    let mut blob = [0u8; MAX_BLOB];
+    let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
     let n = NONCE_LEN + plain.len() + TAG_LEN;
-    rng.fill(&mut blob[..NONCE_LEN]);
+    rng.fill(&mut blob.expose_mut()[..NONCE_LEN]);
     let mut nonce = [0u8; NONCE_LEN];
-    nonce.copy_from_slice(&blob[..NONCE_LEN]);
-    blob[NONCE_LEN..NONCE_LEN + plain.len()].copy_from_slice(plain);
+    nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
+    // `plain` is at most `MAX_PLAIN` (tested above), so its seal fits the blob.
+    let Some((ct, tag_out)) = blob
+        .expose_mut()
+        .get_mut(NONCE_LEN..n)
+        .map(|body| body.split_at_mut(plain.len()))
+    else {
+        return Err(Sw::WRONG_LENGTH);
+    };
+    ct.copy_from_slice(plain);
     let mut key = kenc(dev);
-    let tag = aes256gcm_encrypt(
-        &key,
-        &nonce,
-        dev.serial_hash,
-        &mut blob[NONCE_LEN..NONCE_LEN + plain.len()],
-    );
-    key.zeroize();
-    blob[NONCE_LEN + plain.len()..n].copy_from_slice(&tag);
-    let r = fs
-        .put_key(fid, Sealed::wrap(&blob[..n]))
-        .map_err(|_| Sw::MEMORY_FAILURE);
-    blob.zeroize();
+    let tag = aes256gcm_encrypt(key.expose(), &nonce, dev.serial_hash, ct);
+    key.wipe();
+    tag_out.copy_from_slice(&tag);
+    let r = match blob.expose().get(..n) {
+        Some(sealed) => fs
+            .put_key_over(fid, Sealed::wrap(sealed), rearmed)
+            .map_err(|_| Sw::MEMORY_FAILURE),
+        None => Err(Sw::WRONG_LENGTH),
+    };
+    blob.wipe();
     r
 }
 
 /// Read and unseal `fid` into `out`; returns the plaintext length.
-/// `REFERENCE_NOT_FOUND` when the file is missing or empty.
-pub fn seal_read<S: Storage>(
+/// `REFERENCE_NOT_FOUND` when the file is missing or empty. The plaintext is a
+/// key, so it goes only into a buffer that wipes itself.
+pub fn seal_read<S: Storage, const N: usize>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: KeyFid,
-    out: &mut [u8],
+    out: &mut Secret<[u8; N]>,
 ) -> Result<usize, Sw> {
-    let mut blob = [0u8; MAX_BLOB];
-    let n = fs.read_key(fid, &mut blob).ok_or(Sw::REFERENCE_NOT_FOUND)?;
+    let out = out.expose_mut();
+    let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
+    let n = fs
+        .read_key(fid, blob.expose_mut())
+        .ok_or(Sw::REFERENCE_NOT_FOUND)?;
     if !(NONCE_LEN + TAG_LEN..=MAX_BLOB).contains(&n) {
         return Err(Sw::MEMORY_FAILURE);
     }
@@ -96,24 +127,27 @@ pub fn seal_read<S: Storage>(
         return Err(Sw::WRONG_LENGTH);
     }
     let mut nonce = [0u8; NONCE_LEN];
-    nonce.copy_from_slice(&blob[..NONCE_LEN]);
+    nonce.copy_from_slice(&blob.expose()[..NONCE_LEN]);
+    let (Some((ct, stored_tag)), Some(pt)) = (
+        blob.expose_mut()
+            .get_mut(NONCE_LEN..n)
+            .map(|body| body.split_at_mut(pt_len)),
+        out.get_mut(..pt_len),
+    ) else {
+        blob.wipe();
+        return Err(Sw::WRONG_LENGTH);
+    };
     let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&blob[n - TAG_LEN..n]);
+    tag.copy_from_slice(stored_tag);
     let mut key = kenc(dev);
-    let r = aes256gcm_decrypt(
-        &key,
-        &nonce,
-        dev.serial_hash,
-        &mut blob[NONCE_LEN..NONCE_LEN + pt_len],
-        &tag,
-    );
-    key.zeroize();
+    let r = aes256gcm_decrypt(key.expose(), &nonce, dev.serial_hash, ct, &tag);
+    key.wipe();
     if r.is_err() {
-        blob.zeroize();
+        blob.wipe();
         return Err(Sw::MEMORY_FAILURE);
     }
-    out[..pt_len].copy_from_slice(&blob[NONCE_LEN..NONCE_LEN + pt_len]);
-    blob.zeroize();
+    pt.copy_from_slice(ct);
+    blob.wipe();
     Ok(pt_len)
 }
 
@@ -137,9 +171,9 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
         if !fs.has_key(fid) {
             continue;
         }
-        let mut plain = [0u8; MAX_PLAIN];
+        let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
         if seal_read(dev, fs, fid, &mut plain).is_ok() {
-            plain.zeroize();
+            plain.wipe();
             continue;
         }
         // The copy this re-seal supersedes opened under `old`, i.e. the public chip
@@ -151,11 +185,12 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
         // A reader fallback would re-admit the chip-serial arm at every command,
         // which is the at-rest widening this class exists to prevent.
         if let Ok(n) = seal_read(&old, fs, fid, &mut plain)
-            && rsk_fs::request_rescrub(fs).is_ok()
+            && let Some(opened) = plain.expose().get(..n)
+            && let Ok(rearmed) = rsk_fs::request_rescrub(fs)
         {
-            let _ = seal_put(dev, fs, rng, fid, &plain[..n]);
+            let _ = seal_put_over(dev, fs, rng, fid, opened, Some(&rearmed));
         }
-        plain.zeroize();
+        plain.wipe();
     }
 }
 
@@ -169,27 +204,36 @@ pub fn store_ec_key<S: Storage>(
     key: &PrivKey,
 ) -> Result<(), Sw> {
     let scalar = key.scalar();
-    let mut plain = [0u8; 1 + 66];
-    plain[0] = key.curve().id();
-    plain[1..1 + scalar.len()].copy_from_slice(scalar);
-    let r = seal_put(dev, fs, rng, fid, &plain[..1 + scalar.len()]);
-    plain.zeroize();
+    let mut plain = Secret::<[u8; 1 + 66]>::zeroed();
+    let len = 1 + scalar.len();
+    let Some((id, body)) = plain
+        .expose_mut()
+        .get_mut(..len)
+        .and_then(<[u8]>::split_first_mut)
+    else {
+        return Err(Sw::EXEC_ERROR);
+    };
+    *id = key.curve().id();
+    body.copy_from_slice(scalar);
+    let r = match plain.expose().get(..len) {
+        Some(blob) => seal_put(dev, fs, rng, fid, blob),
+        None => Err(Sw::EXEC_ERROR),
+    };
+    plain.wipe();
     r
 }
 
 /// Load an EC key sealed by [`store_ec_key`].
 pub fn load_ec_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<PrivKey, Sw> {
-    let mut plain = [0u8; 1 + 66];
+    let mut plain = Secret::<[u8; 1 + 66]>::zeroed();
     let n = seal_read(dev, fs, fid, &mut plain)?;
-    let r = (|| {
-        if n < 2 {
-            return Err(Sw::MEMORY_FAILURE);
-        }
-        let curve = curve_from_id(plain[0]).ok_or(Sw::MEMORY_FAILURE)?;
-        PrivKey::from_scalar(curve, &plain[1..n]).ok_or(Sw::MEMORY_FAILURE)
-    })();
-    plain.zeroize();
-    r
+    let plain = plain.expose();
+    if n < 2 {
+        return Err(Sw::MEMORY_FAILURE);
+    }
+    let curve = curve_from_id(plain[0]).ok_or(Sw::MEMORY_FAILURE)?;
+    let scalar = plain.get(1..n).ok_or(Sw::MEMORY_FAILURE)?;
+    PrivKey::from_scalar(curve, scalar).ok_or(Sw::MEMORY_FAILURE)
 }
 
 /// Seal an RSA key as `P ‖ Q ‖ dP ‖ dQ ‖ qInv` (the shared CRT layout — see
@@ -202,63 +246,50 @@ pub fn store_rsa_key<S: Storage>(
     fid: KeyFid,
     key: &RsaKey,
 ) -> Result<(), Sw> {
-    let mut plain = [0u8; MAX_PLAIN];
-    let r = (|| {
-        let n = crt::crt_plaintext(key, &mut plain).map_err(rsa_sw)?;
-        seal_put(dev, fs, rng, fid, &plain[..n])
-    })();
-    plain.zeroize();
-    r
+    let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
+    let n = crt::crt_plaintext(key, plain.expose_mut()).map_err(rsa_sw)?;
+    seal_put(
+        dev,
+        fs,
+        rng,
+        fid,
+        plain.expose().get(..n).ok_or(Sw::EXEC_ERROR)?,
+    )
 }
 
 /// Load a sealed RSA key and return ONLY its public modulus `N = p·q`, big-endian
 /// into `out`, returning `N`'s length. Skips the CRT precompute a key rebuild
 /// pays — the `dP/dQ/qInv` modular inverses cost ~50 ms on RSA-4096 — because GET
-/// METADATA needs only `N` and the fixed 65537 exponent, never the private key.
-/// Byte-identical to `load_rsa_key(..)?.n_be()`, just without the key rebuild.
+/// METADATA and ATTEST need only `N` and the fixed 65537 exponent, never the
+/// private key.
+/// Byte-identical to `rsa_from_pqe(..)?.n_be()`, just without the key rebuild
+/// and the working copies of the primes it makes.
 pub fn load_rsa_modulus<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
     fid: KeyFid,
     out: &mut [u8],
 ) -> Result<usize, Sw> {
-    let mut plain = [0u8; MAX_PLAIN];
+    let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
     let n = seal_read(dev, fs, fid, &mut plain)?;
-    let r = (|| {
-        // Only `half` and the first `2*half` bytes are read, so the 2-vs-5-field
-        // length classification (the `_` bool) cannot change `N` — collision-immune.
-        let (half, _) = crt::parse_rsa_blob(&plain[..n]).map_err(rsa_sw)?;
-        rsk_rsa::modulus_be(&plain[..half], &plain[half..2 * half], out).map_err(rsa_sw)
-    })();
-    plain.zeroize();
-    r
-}
-
-/// Load an RSA key sealed by [`store_rsa_key`] (either layout) into an
-/// [`RsaKey`] (`E` fixed at 65537). Used by the cert-build path (the retired
-/// on-device RSA finish); signing uses [`load_rsa_crt`] and GET METADATA uses
-/// [`load_rsa_modulus`], both of which skip the full key rebuild.
-pub fn load_rsa_key<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<RsaKey, Sw> {
-    let mut plain = [0u8; MAX_PLAIN];
-    let n = seal_read(dev, fs, fid, &mut plain)?;
-    let r = (|| {
-        let (half, _) = crt::parse_rsa_blob(&plain[..n]).map_err(rsa_sw)?;
-        rsk_rsa::rsa_from_pqe(RSA_PUB_EXP_BE, &plain[..half], &plain[half..2 * half])
-            .ok_or(Sw::MEMORY_FAILURE)
-    })();
-    plain.zeroize();
-    r
+    let plain = plain.expose();
+    // Only `half` and the first `2*half` bytes are read, so the 2-vs-5-field
+    // length classification (the `_` bool) cannot change `N` — collision-immune.
+    let blob = plain.get(..n).ok_or(Sw::MEMORY_FAILURE)?;
+    let (half, _) = crt::parse_rsa_blob(blob).map_err(rsa_sw)?;
+    let (Some(p), Some(q)) = (blob.get(..half), blob.get(half..2 * half)) else {
+        return Err(Sw::MEMORY_FAILURE);
+    };
+    rsk_rsa::modulus_be(p, q, out).map_err(rsa_sw)
 }
 
 /// Load the CRT signing parameters of an RSA key — new `P‖Q‖dP‖dQ‖qInv` blobs
 /// slice directly, older `P‖Q` blobs recompute once (see
 /// [`crt::crt_from_plain`]).
 pub fn load_rsa_crt<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result<RsaCrt, Sw> {
-    let mut plain = [0u8; MAX_PLAIN];
+    let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
     let n = seal_read(dev, fs, fid, &mut plain)?;
-    let r = crt::crt_from_plain(&plain[..n]).map_err(rsa_sw);
-    plain.zeroize();
-    r
+    crt::crt_from_plain(plain.expose().get(..n).ok_or(Sw::MEMORY_FAILURE)?).map_err(rsa_sw)
 }
 
 /// The read side is narrower than [`Curve::id`] on purpose: PIV stores only
@@ -275,5 +306,13 @@ pub(crate) fn curve_from_id(b: u8) -> Option<Curve> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "seal_tests.rs"]
 mod tests;

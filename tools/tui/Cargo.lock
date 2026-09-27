@@ -1903,17 +1903,25 @@ dependencies = [
  "ml-kem",
  "p256 0.14.0",
  "rsk-mldsa",
+ "rsk-secret",
  "rsk-sha512",
  "sha1",
  "sha2 0.10.9",
- "zeroize",
 ]
 
 [[package]]
 name = "rsk-mldsa"
 version = "0.1.0"
 dependencies = [
+ "rsk-secret",
  "sha3 0.10.9",
+ "zeroize",
+]
+
+[[package]]
+name = "rsk-secret"
+version = "0.1.0"
+dependencies = [
  "zeroize",
 ]
 
@@ -1929,7 +1937,7 @@ name = "rsk-slip39"
 version = "0.1.0"
 dependencies = [
  "rsk-crypto",
- "zeroize",
+ "rsk-secret",
 ]
 
 [[package]]

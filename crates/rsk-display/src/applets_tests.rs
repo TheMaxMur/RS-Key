@@ -36,7 +36,9 @@ fn a_list_poll_reports_the_row_that_was_tapped() {
     let target = rows - 1;
     let tap = center(rsk_ui::row_rect(rsk_ui::PK_LIST_TOP, target));
     let mut ui = env.ui(Pad::taps(&[tap]));
-    assert!(matches!(ui.pick_row(rsk_ui::PK_LIST_TOP, rows), Pick::Row(i) if i == target));
+    assert!(
+        matches!(env.local(&mut ui).pick_row(rsk_ui::PK_LIST_TOP, rows), Pick::Row(i) if i == target)
+    );
 }
 
 #[test]
@@ -44,7 +46,8 @@ fn a_list_poll_reports_the_back_chevron() {
     let env = Env::new();
     let mut ui = env.ui(Pad::taps(&[center(rsk_ui::TITLE_BACK_RECT)]));
     assert!(matches!(
-        ui.pick_row(rsk_ui::PK_LIST_TOP, rsk_ui::PK_ROWS_MAX as u16),
+        env.local(&mut ui)
+            .pick_row(rsk_ui::PK_LIST_TOP, rsk_ui::PK_ROWS_MAX as u16),
         Pick::Back
     ));
 }
@@ -58,7 +61,8 @@ fn a_queued_host_command_closes_an_open_list() {
     let mut ui = env.ui(Pad::taps(&[nowhere()]));
     ui.hooks.host_pending = true;
     assert!(matches!(
-        ui.pick_row(rsk_ui::PK_LIST_TOP, rsk_ui::PK_ROWS_MAX as u16),
+        env.local(&mut ui)
+            .pick_row(rsk_ui::PK_LIST_TOP, rsk_ui::PK_ROWS_MAX as u16),
         Pick::Leave
     ));
 }
@@ -69,7 +73,8 @@ fn the_power_button_closes_an_open_list() {
     let mut ui = env.ui(Pad::idle());
     ui.hooks.press_wake(1);
     assert!(matches!(
-        ui.pick_row(rsk_ui::PK_LIST_TOP, rsk_ui::PK_ROWS_MAX as u16),
+        env.local(&mut ui)
+            .pick_row(rsk_ui::PK_LIST_TOP, rsk_ui::PK_ROWS_MAX as u16),
         Pick::Leave
     ));
     assert!(ui.asleep, "and the panel is blanked on the way out");
@@ -85,7 +90,7 @@ fn a_tap_past_the_last_loaded_row_selects_nothing() {
     let mut ui = env.ui(Pad::taps(&[tap]));
     ui.hooks.host_pending = true; // so the poll ends instead of idling out
     assert!(matches!(
-        ui.pick_row(rsk_ui::PK_LIST_TOP, loaded),
+        env.local(&mut ui).pick_row(rsk_ui::PK_LIST_TOP, loaded),
         Pick::Leave
     ));
 }

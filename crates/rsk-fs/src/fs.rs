@@ -6,9 +6,10 @@
 use heapless::Vec;
 use rsk_sdk::error::{Error, Result};
 
+use crate::counter::CounterFid;
 use crate::sealed::{KeyFid, Sealed};
 use crate::storage::Storage;
-use crate::{EF_META, EF_SCRUB_FILLER, MAX_DYNAMIC_FILES};
+use crate::{EF_META, EF_SCRUB_FILLER, MAX_DYNAMIC_FILES, Rearmed};
 
 /// Max size of the meta side-store blob.
 const META_MAX: usize = 1024;
@@ -483,7 +484,7 @@ impl<S: Storage> Fs<S> {
         // Every tombstone below appends like a re-seal, so the at-rest lap owes a
         // re-arm ahead of the first — best-effort, because on a wipe a stopped
         // re-arm means live secrets. Phase 1 removes EF_HARDENED itself, retrying it.
-        let _ = crate::request_rescrub(self);
+        let _attempted = crate::attempt_rescrub(self);
         // `first` wins over `last` if a caller ever hands in overlapping predicates:
         // deleting a record early can only ever be safe, deleting it late cannot.
         let phase_of = |fid: u16| {
@@ -699,6 +700,66 @@ impl<S: Storage> Fs<S> {
     /// Delete a key slot.
     pub fn delete_key(&mut self, fid: KeyFid) -> Result<()> {
         self.delete(fid.get())
+    }
+
+    // ---- writes over a record another root sealed ----
+    // `rearmed` is `Some` where the record superseded (or tombstoned) was sealed under
+    // the pre-OTP root, and only a landed re-arm can stand there ([`crate::Rearmed`]).
+
+    /// [`put`](Self::put) over a record: see [`crate::Rearmed`].
+    pub fn put_over(&mut self, fid: u16, data: &[u8], _rearmed: Option<&Rearmed>) -> Result<()> {
+        self.put(fid, data)
+    }
+
+    /// [`put_key`](Self::put_key) over a record: see [`crate::Rearmed`].
+    pub fn put_key_over(
+        &mut self,
+        fid: KeyFid,
+        sealed: Sealed,
+        _rearmed: Option<&Rearmed>,
+    ) -> Result<()> {
+        self.put_key(fid, sealed)
+    }
+
+    /// [`delete`](Self::delete) of a record: see [`crate::Rearmed`].
+    pub fn delete_over(&mut self, fid: u16, _rearmed: Option<&Rearmed>) -> Result<()> {
+        self.delete(fid)
+    }
+
+    /// [`delete_key`](Self::delete_key) of a record: see [`crate::Rearmed`].
+    pub fn delete_key_over(&mut self, fid: KeyFid, _rearmed: Option<&Rearmed>) -> Result<()> {
+        self.delete_key(fid)
+    }
+
+    // ---- typed counter API ----
+    // A [`CounterFid`] is not a `u16` either, so a counter record is written and
+    // read only through these; the storage backend routes it to its partition by
+    // the value, from the one list in [`crate::counter`].
+
+    /// Store a counter record.
+    pub fn put_counter(&mut self, fid: CounterFid, data: &[u8]) -> Result<()> {
+        self.put(fid.get(), data)
+    }
+
+    /// Copy a counter record into `buf`; its full length, or `None` if absent (or
+    /// unreadable — see [`try_read`](Self::try_read)).
+    pub fn read_counter(&mut self, fid: CounterFid, buf: &mut [u8]) -> Option<usize> {
+        self.read(fid.get(), buf)
+    }
+
+    /// [`read_counter`](Self::read_counter), fallible — see [`try_read`](Self::try_read).
+    pub fn try_read_counter(&mut self, fid: CounterFid, buf: &mut [u8]) -> Result<Option<usize>> {
+        self.try_read(fid.get(), buf)
+    }
+
+    /// Whether the counter record holds non-empty data.
+    pub fn has_counter(&mut self, fid: CounterFid) -> bool {
+        self.has_data(fid.get())
+    }
+
+    /// [`has_counter`](Self::has_counter), fallible — see [`try_read`](Self::try_read).
+    pub fn try_has_counter(&mut self, fid: CounterFid) -> Result<bool> {
+        self.try_has_data(fid.get())
     }
 
     // ---- meta side-store ----

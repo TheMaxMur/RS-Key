@@ -312,6 +312,8 @@ pub struct Board {
     pub pin_changed: usize,
     /// …and how many times a failed clientPIN comparison at the pad did.
     pub pin_failed: usize,
+    /// How many times a returned panel flow asked for the dead stack to be swept.
+    pub sweeps: usize,
 }
 
 impl Board {
@@ -333,6 +335,7 @@ impl Board {
             attach_ms: 0,
             pin_changed: 0,
             pin_failed: 0,
+            sweeps: 0,
         }
     }
 
@@ -378,6 +381,9 @@ impl Hooks for Board {
     }
     fn note_local_pin_failed(&mut self) {
         self.pin_failed += 1;
+    }
+    fn sweep_dead_stack(&mut self) {
+        self.sweeps += 1;
     }
     fn secure_boot_enabled(&self) -> bool {
         self.secure_boot
@@ -512,6 +518,7 @@ static GLOBALS: Mutex<()> = Mutex::new(());
 pub struct Env<S: Storage = RamStorage> {
     pub fs: RefCell<Fs<S>>,
     pub rng: RefCell<TestRng>,
+    pub keys: DeviceKeys,
     // A failed assertion unwinds while this is held, which poisons the mutex; the
     // guard is taken with the poison ignored, so one failing case reports its own
     // failure instead of turning every later one into a `PoisonError`.
@@ -543,6 +550,7 @@ impl<S: Storage> Env<S> {
         Self {
             fs: RefCell::new(Fs::new(storage)),
             rng: RefCell::new(TestRng::new(0x0DDB_A11C_0FFE_E1E5)),
+            keys: keys(),
             _globals: guard,
         }
     }
@@ -554,8 +562,13 @@ impl<S: Storage> Env<S> {
             .expect("the fixture PIN must satisfy the build's floor");
     }
 
+    /// The cells the device's own screens borrow, as `status_loop` is handed them.
+    pub fn cells(&self) -> Parked<'_, S, TestRng> {
+        Parked::new(&self.fs, &self.keys, &self.rng)
+    }
+
     /// The flow, wired to `pad` — panel, board and store as a fresh boot sees them.
-    pub fn ui(&self, pad: Pad) -> Ui<'_, Panel, Pad, Board, S, TestRng> {
+    pub fn ui(&self, pad: Pad) -> Ui<'_, Panel, Pad, Board> {
         Ui::new(
             Panel::new(),
             pad,
@@ -564,14 +577,20 @@ impl<S: Storage> Env<S> {
                 version: 0x0875,
                 chipid: 0x0123_4567_89AB_CDEF,
             },
-            &self.fs,
-            keys(),
-            &self.rng,
+            self.cells(),
         )
+    }
+
+    /// `ui` as a screen the device raises, with the cells beside it.
+    pub fn local<'u, 'a>(
+        &'a self,
+        ui: &'u mut Ui<'a, Panel, Pad, Board>,
+    ) -> Local<'u, 'a, Panel, Pad, Board, S, TestRng> {
+        Local::new(ui, self.cells())
     }
 }
 
-pub type TestUi<'a> = Ui<'a, Panel, Pad, Board, RamStorage, TestRng>;
+pub type TestUi<'a> = Ui<'a, Panel, Pad, Board>;
 
 /// The middle of a control, so a tap is expressed as the thing it lands on rather
 /// than as a pair of numbers that have to be kept in step with `rsk-ui`.

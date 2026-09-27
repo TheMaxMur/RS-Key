@@ -53,7 +53,7 @@ fn service_title(rp_id: &Label, view: &ServiceView) -> Label {
     }
 }
 
-impl<'a, P, T, H, S, R> Ui<'a, P, T, H, S, R>
+impl<'a, P, T, H, S, R> Local<'_, 'a, P, T, H, S, R>
 where
     P: rsk_ui::scene::FrameTarget,
     T: TouchPad,
@@ -332,9 +332,9 @@ where
     /// three reads (the device is taken first, so the OATH unseal-walk and the `fs` borrow
     /// don't overlap). Borrow-safe like [`Self::load_rps`] — the worker is parked here.
     fn load_apps(&self) -> rsk_ui::AppsView {
-        let mkek = read_fused(self.keys.mkek_source);
-        let dev = self.keys.device(&mkek);
-        let mut fs = self.fs.borrow_mut();
+        let mkek = read_fused(self.cells.keys.mkek_source);
+        let dev = self.cells.keys.device(&mkek);
+        let mut fs = self.cells.fs.borrow_mut();
         let openpgp_keys = rsk_openpgp::info::read_info(&mut fs).key_count();
         let piv_slots = rsk_piv::info::read_info(&mut fs).populated();
         let oath_codes =
@@ -405,7 +405,7 @@ where
 
     /// Build the OpenPGP overview from the applet's plaintext metadata (no PIN / DEK).
     fn load_openpgp(&self) -> rsk_ui::OpenpgpView {
-        let mut fs = self.fs.borrow_mut();
+        let mut fs = self.cells.fs.borrow_mut();
         let info = rsk_openpgp::info::read_info(&mut fs);
         let mut slots = [rsk_ui::PgpSlotRow::default(); 3];
         for (i, s) in info.slots.iter().enumerate() {
@@ -431,7 +431,7 @@ where
 
     /// Build the OpenPGP card-holder detail (name / login / URL / language), all plaintext.
     fn load_openpgp_cardholder(&self) -> rsk_ui::CardholderView {
-        let mut fs = self.fs.borrow_mut();
+        let mut fs = self.cells.fs.borrow_mut();
         let ch = rsk_openpgp::info::read_cardholder(&mut fs);
         rsk_ui::CardholderView {
             name: Label::clamp(ch.name()),
@@ -444,7 +444,7 @@ where
 
     /// Build one OpenPGP key's detail (algorithm / touch / fingerprint).
     fn load_openpgp_key(&self, slot: usize) -> rsk_ui::PgpKeyView {
-        let mut fs = self.fs.borrow_mut();
+        let mut fs = self.cells.fs.borrow_mut();
         let s = rsk_openpgp::info::read_info(&mut fs).slots[slot];
         rsk_ui::PgpKeyView {
             slot: slot as u8,
@@ -572,7 +572,7 @@ where
 
     /// Build the PIV overview from the applet's slot metadata (no PIN / management key).
     fn load_piv(&self) -> rsk_ui::PivView {
-        let mut fs = self.fs.borrow_mut();
+        let mut fs = self.cells.fs.borrow_mut();
         let info = rsk_piv::info::read_info(&mut fs);
         let mut slots = [rsk_ui::PivSlotRow::default(); 4];
         for (i, s) in info.slots.iter().enumerate() {
@@ -599,7 +599,7 @@ where
     /// Build one PIV slot's detail (algorithm / policies / origin / cert) by wire slot —
     /// any slot, primary or retired / F9.
     fn load_piv_slot(&self, slot: u8) -> rsk_ui::PivSlotView {
-        let mut fs = self.fs.borrow_mut();
+        let mut fs = self.cells.fs.borrow_mut();
         let s = rsk_piv::info::read_slot(&mut fs, slot);
         rsk_ui::PivSlotView {
             slot: s.slot,
@@ -700,7 +700,7 @@ where
     /// trailing "Generate key" action row when a retired slot is free. Returns the kept count
     /// and the true total (slots + the optional action).
     fn load_piv_extra(&self, rows: &mut [rsk_ui::PivExtraRow], page: u16) -> (usize, u16) {
-        let mut fs = self.fs.borrow_mut();
+        let mut fs = self.cells.fs.borrow_mut();
         let mut slots = [rsk_piv::info::PivSlot::default(); rsk_piv::info::MAX_EXTRA_SLOTS];
         let nslots = rsk_piv::info::read_extra(&mut fs, &mut slots);
         let can_gen = rsk_piv::info::next_free_retired(&mut fs).is_some();
@@ -810,7 +810,7 @@ where
     fn run_piv_generate(&mut self) {
         let idle_limit = Duration::from_millis(MENU_INACTIVITY_MS);
         self.touch.wait_release(Instant::now(), idle_limit);
-        let Some(slot) = rsk_piv::info::next_free_retired(&mut self.fs.borrow_mut()) else {
+        let Some(slot) = rsk_piv::info::next_free_retired(&mut self.cells.fs.borrow_mut()) else {
             return;
         };
         // PIN gate first (when set) so the chooser doesn't flash behind the pad.
@@ -908,10 +908,10 @@ where
         };
         let Some(nbits) = rsa_nbits else {
             // EC / Ed25519 / X25519 are instant.
-            let mkek = read_fused(self.keys.mkek_source);
-            let dev = self.keys.device(&mkek);
-            let mut rng = self.rng.borrow_mut();
-            let mut fs = self.fs.borrow_mut();
+            let mkek = read_fused(self.cells.keys.mkek_source);
+            let dev = self.cells.keys.device(&mkek);
+            let mut rng = self.cells.rng.borrow_mut();
+            let mut fs = self.cells.fs.borrow_mut();
             return match rsk_piv::info::next_free_retired(&mut fs) {
                 Some(s) => {
                     rsk_piv::info::generate_slot_key(&dev, &mut fs, &mut *rng, s, algo).is_ok()
@@ -922,10 +922,10 @@ where
         let Some(key) = self.piv_search_rsa(nbits) else {
             return false;
         };
-        let mkek = read_fused(self.keys.mkek_source);
-        let dev = self.keys.device(&mkek);
-        let mut rng = self.rng.borrow_mut();
-        let mut fs = self.fs.borrow_mut();
+        let mkek = read_fused(self.cells.keys.mkek_source);
+        let dev = self.cells.keys.device(&mkek);
+        let mut rng = self.cells.rng.borrow_mut();
+        let mut fs = self.cells.fs.borrow_mut();
         match rsk_piv::info::next_free_retired(&mut fs) {
             Some(s) => rsk_piv::info::store_retired_rsa(&dev, &mut fs, &mut *rng, s, &key).is_ok(),
             None => false,
@@ -944,11 +944,10 @@ where
     ) -> Option<alloc::boxed::Box<rsk_openpgp::keys::RsaKey>> {
         let _ = rsk_ui::render_piv_keygen_working(&mut self.frame());
         self.shown = None;
-        let mut rng = self.rng.borrow_mut();
-        let panel = &mut self.panel;
+        let mut rng = self.cells.rng.borrow_mut();
+        let Ui { panel, hooks, .. } = &mut *self.ui;
         let mut spin = rsk_ui::STATUS_ARC_START;
         let mut last_paint = Instant::now();
-        let hooks = &mut self.hooks;
         let mut tick = || {
             if last_paint.elapsed() >= Duration::from_millis(KEYGEN_SPIN_MS) {
                 spin = spin.wrapping_add(SPIN_STEP_DEG);
@@ -966,10 +965,10 @@ where
     /// and the true total. Each credential is device-unsealed inside the enumerator (the
     /// display never holds the secret); borrow-safe like [`Self::load_rps`].
     fn load_oath(&self, rows: &mut [rsk_ui::OathRow], page: u16) -> (usize, u16) {
-        let mkek = read_fused(self.keys.mkek_source);
-        let dev = self.keys.device(&mkek);
+        let mkek = read_fused(self.cells.keys.mkek_source);
+        let dev = self.cells.keys.device(&mkek);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
-        let mut fs = self.fs.borrow_mut();
+        let mut fs = self.cells.fs.borrow_mut();
         let mut idx = 0usize;
         let mut n = 0usize;
         let total = rsk_oath::for_each_cred(&dev, &mut fs, |c| {
@@ -1063,9 +1062,9 @@ where
     /// Build one OATH credential's detail by its global list position. Re-enumerates (the
     /// display holds no secret), clamps the picked credential's metadata for display.
     fn load_oath_cred(&self, idx: usize) -> rsk_ui::OathDetailView {
-        let mkek = read_fused(self.keys.mkek_source);
-        let dev = self.keys.device(&mkek);
-        let mut fs = self.fs.borrow_mut();
+        let mkek = read_fused(self.cells.keys.mkek_source);
+        let dev = self.cells.keys.device(&mkek);
+        let mut fs = self.cells.fs.borrow_mut();
         let mut view = rsk_ui::OathDetailView::default();
         let mut i = 0usize;
         rsk_oath::for_each_cred(&dev, &mut fs, |c| {
@@ -1124,10 +1123,10 @@ where
     /// the kept count and the true total. Reads + decrypts from the shared store; the
     /// seed is loaded and zeroized inside the enumerator (the display never holds it).
     fn load_rps(&self, rows: &mut [RpRow], hashes: &mut [[u8; 32]], page: u16) -> (usize, u16) {
-        let mkek = read_fused(self.keys.mkek_source);
-        let dev = self.keys.device(&mkek);
+        let mkek = read_fused(self.cells.keys.mkek_source);
+        let dev = self.cells.keys.device(&mkek);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
-        let mut store = self.fs.borrow_mut();
+        let mut store = self.cells.fs.borrow_mut();
         let mut idx = 0usize;
         let mut n = 0usize;
         let total = rsk_fido::passkeys::for_each_rp(&dev, &mut *store, |rp| {
@@ -1158,15 +1157,15 @@ where
     /// entry marks the session boundary and older rows show no time (no wall clock).
     /// Borrow-safe like [`Self::load_rps`] (the worker is parked while this modal runs).
     fn load_events(&self, rows: &mut [AuditRow], page: u16) -> (usize, u16) {
-        let mkek = read_fused(self.keys.mkek_source);
-        let dev = self.keys.device(&mkek);
+        let mkek = read_fused(self.cells.keys.mkek_source);
+        let dev = self.cells.keys.device(&mkek);
         // Cap the live clock at the journal's own resolution: `build_entry` saturates the
         // stored `uptime_ms` to `u32::MAX`, so after ~49.7 days of continuous uptime both
         // sides saturate together and a just-logged event still reads "now" rather than a
         // delta measured from the saturation point.
         let now_ms = self.hooks.attach_elapsed_ms().min(u32::MAX as u64);
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
-        let mut store = self.fs.borrow_mut();
+        let mut store = self.cells.fs.borrow_mut();
         let mut idx = 0usize;
         let mut n = 0usize;
         let mut current_session = true;
@@ -1209,6 +1208,7 @@ where
         // marker `journal::is_enabled` keys off and let the screen tell an idle journal
         // from one that was never running. Fixed here: only the host can toggle it.
         let logging = self
+            .cells
             .fs
             .borrow_mut()
             .has_data(rsk_fido::consts::EF_AUDIT_ENABLED);

@@ -21,9 +21,18 @@
 //! Resident credentials additionally derive a 42-byte "resident id" that is what
 //! the authenticator returns to the RP; the full box is kept in flash.
 
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
 use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
-use zeroize::Zeroize;
+use rsk_secret::Secret;
 
 use rsk_crypto::{
     Device, chacha20poly1305_decrypt, chacha20poly1305_encrypt, hmac_sha256, hmac_sha512, sha256,
@@ -208,30 +217,34 @@ pub struct Credential<'a> {
 }
 
 /// The box encryption key: a SLIP-0022 HMAC chain over the device seed.
-pub(crate) fn derive_chacha_key(seed: &[u8; 32], proto: &[u8]) -> [u8; 32] {
-    let mut k = hmac_sha256(seed, b"SLIP-0022");
-    k = hmac_sha256(&k, proto);
-    hmac_sha256(&k, b"Encryption key")
+pub(crate) fn derive_chacha_key(seed: &[u8; 32], proto: &[u8]) -> Secret<[u8; 32]> {
+    let mut k = Secret::new(hmac_sha256(seed, b"SLIP-0022"));
+    *k.expose_mut() = hmac_sha256(k.expose(), proto);
+    *k.expose_mut() = hmac_sha256(k.expose(), b"Encryption key");
+    k
 }
 
 /// The silent tag: HMAC(SHA256(serial‖rpIdHash), prefix)[..16] where `prefix`
-/// is the whole box except the silent tag.
+/// is the whole box except the silent tag. `None` for a key source past 32 bytes
+/// (the serial is 8, the OTP key 32).
 ///
 /// Write-only: boxes are verified by decrypting (the chacha key comes from the
 /// seed), never by this tag, so OTP-MKEK provisioning switching the tag source
 /// from `serial_id` to `otp_key` cannot orphan old boxes. Any future change
 /// that starts CHECKING the tag must accept both sources — pre-OTP credentials
 /// carry serial-keyed tags.
-fn silent_tag(dev: &Device, prefix: &[u8], rp_id_hash: &[u8; 32]) -> [u8; SILENT_TAG_LEN] {
+fn silent_tag(dev: &Device, prefix: &[u8], rp_id_hash: &[u8; 32]) -> Option<[u8; SILENT_TAG_LEN]> {
     let src = dev.otp_key.map(|o| &o[..]).unwrap_or(dev.serial_id);
     let mut buf = [0u8; 64];
-    buf[..src.len()].copy_from_slice(src);
-    buf[src.len()..src.len() + 32].copy_from_slice(rp_id_hash);
-    let k = sha256(&buf[..src.len() + 32]);
+    let keyed = buf.get_mut(..src.len() + 32)?;
+    let (head, hash) = keyed.split_last_chunk_mut::<32>()?;
+    head.copy_from_slice(src);
+    *hash = *rp_id_hash;
+    let k = sha256(keyed);
     let full = hmac_sha256(&k, prefix);
     let mut tag = [0u8; SILENT_TAG_LEN];
     tag.copy_from_slice(&full[..SILENT_TAG_LEN]);
-    tag
+    Some(tag)
 }
 
 /// Does this id carry the legacy `f1d00203` resident marker at `[4..8]`? Only
@@ -239,7 +252,7 @@ fn silent_tag(dev: &Device, prefix: &[u8], rp_id_hash: &[u8; 32]) -> [u8; SILENT
 /// so this drives the v1/v2/v3-vs-v4 format dispatch, not the allowList routing —
 /// which is length-based ([`CRED_RESIDENT_LEN`]) so it catches both.
 pub fn is_resident(data: &[u8]) -> bool {
-    data.len() >= PROTO_LEN + 4 && &data[4..8] == CRED_PROTO_RESIDENT
+    data.get(4..8) == Some(&CRED_PROTO_RESIDENT[..])
 }
 
 /// Seal `input` into a credential box written to `out`. `iv` is
@@ -259,24 +272,31 @@ pub fn credential_create(
     // after the iv — no cleartext prefix).
     let body_end = out.len() - TAG_LEN - SILENT_TAG_LEN;
     let rs = {
-        let mut enc = Encoder::new(Cursor::new(&mut out[IV_LEN..body_end]));
+        let slot = out.get_mut(IV_LEN..body_end).ok_or(Error::NoMemory)?;
+        let mut enc = Encoder::new(Cursor::new(slot));
         encode_body(&mut enc, input).map_err(|_| Error::NoMemory)?;
         enc.writer().position()
     };
 
+    let ct = out.get_mut(IV_LEN..IV_LEN + rs).ok_or(Error::NoMemory)?;
     // The key label is a fixed internal constant, decoupled from the wire bytes,
     // so the box need not carry it. `verify_decrypt` re-derives from the same
     // label for the prefix-free trial.
     let mut key = derive_chacha_key(seed, CRED_PROTO);
-    let tag = chacha20poly1305_encrypt(&key, iv, rp_id_hash, &mut out[IV_LEN..IV_LEN + rs]);
-    key.zeroize();
+    let tag = chacha20poly1305_encrypt(key.expose(), iv, rp_id_hash, ct);
+    key.wipe();
 
-    out[..IV_LEN].copy_from_slice(iv);
-    out[IV_LEN + rs..IV_LEN + rs + TAG_LEN].copy_from_slice(&tag);
+    *out.first_chunk_mut::<IV_LEN>().ok_or(Error::NoMemory)? = *iv;
+    out.get_mut(IV_LEN + rs..IV_LEN + rs + TAG_LEN)
+        .ok_or(Error::NoMemory)?
+        .copy_from_slice(&tag);
 
     let prefix_len = IV_LEN + rs + TAG_LEN;
-    let st = silent_tag(dev, &out[..prefix_len], rp_id_hash);
-    out[prefix_len..prefix_len + SILENT_TAG_LEN].copy_from_slice(&st);
+    let prefix = out.get(..prefix_len).ok_or(Error::NoMemory)?;
+    let st = silent_tag(dev, prefix, rp_id_hash).ok_or(Error::NoMemory)?;
+    out.get_mut(prefix_len..prefix_len + SILENT_TAG_LEN)
+        .ok_or(Error::NoMemory)?
+        .copy_from_slice(&st);
     Ok(prefix_len + SILENT_TAG_LEN)
 }
 
@@ -361,24 +381,17 @@ fn try_format(
 ) -> Option<usize> {
     let len = orig.len();
     let ct_off = iv_off + IV_LEN;
-    if len < ct_off + trailing || len > scratch.len() {
+    if len < ct_off + trailing {
         return None;
     }
     let ct_len = len - ct_off - trailing;
-    scratch[..len].copy_from_slice(orig);
-    let mut iv = [0u8; IV_LEN];
-    iv.copy_from_slice(&scratch[iv_off..ct_off]);
-    let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&scratch[ct_off + ct_len..ct_off + ct_len + TAG_LEN]);
+    scratch.get_mut(..len)?.copy_from_slice(orig);
+    let iv = *scratch.get(iv_off..)?.first_chunk::<IV_LEN>()?;
+    let tag = *scratch.get(ct_off + ct_len..)?.first_chunk::<TAG_LEN>()?;
+    let ct = scratch.get_mut(ct_off..ct_off + ct_len)?;
     let mut key = derive_chacha_key(seed, key_label);
-    let res = chacha20poly1305_decrypt(
-        &key,
-        &iv,
-        rp_id_hash,
-        &mut scratch[ct_off..ct_off + ct_len],
-        &tag,
-    );
-    key.zeroize();
+    let res = chacha20poly1305_decrypt(key.expose(), &iv, rp_id_hash, ct, &tag);
+    key.wipe();
     res.ok()?;
     Some(ct_len)
 }
@@ -409,10 +422,8 @@ fn verify_decrypt(
     ) {
         return Some((IV_LEN, pt));
     }
-    if cred_id.len() < PROTO_LEN {
-        return None;
-    }
-    if &cred_id[..PROTO_LEN] == CRED_PROTO {
+    let proto = cred_id.first_chunk::<PROTO_LEN>()?;
+    if proto == CRED_PROTO {
         // Legacy proto-0x02: f1d00202 ‖ iv ‖ ct ‖ poly ‖ silent.
         if let Some(pt) = try_format(
             seed,
@@ -426,13 +437,7 @@ fn verify_decrypt(
             return Some((HEAD_LEN, pt));
         }
     } else if let Some(pt) = try_format(
-        seed,
-        cred_id,
-        rp_id_hash,
-        scratch,
-        PROTO_LEN,
-        &cred_id[..PROTO_LEN],
-        TAG_LEN,
+        seed, cred_id, rp_id_hash, scratch, PROTO_LEN, proto, TAG_LEN,
     ) {
         // Even older: proto ‖ iv ‖ ct ‖ poly (no silent tag), key from the proto.
         return Some((HEAD_LEN, pt));
@@ -452,7 +457,7 @@ pub fn credential_load<'a>(
         return None;
     }
     if let Some((off, pt_len)) = verify_decrypt(seed, cred_id, rp_id_hash, scratch) {
-        return parse_body(&scratch[off..off + pt_len]);
+        return parse_body(scratch.get(off..off + pt_len)?);
     }
     // U2F fallback: a 64-byte path‖tag handle that verifies against this rp
     // loads as a minimal P-256 credential with no sealed body.
@@ -560,39 +565,39 @@ pub fn derive_resident(cred_id: &[u8], dev: &Device) -> [u8; CRED_RESIDENT_LEN] 
 /// (legacy v1 only). A v4 id never carries the [`is_resident`] marker, so it is
 /// never mistaken for v1 and keyed off the box.
 fn resident_keys_off_id(rid: &[u8]) -> bool {
-    rid.len() == CRED_RESIDENT_LEN
-        && (!is_resident(rid) || rid[RESIDENT_VERSION_IDX] >= RESIDENT_VERSION_V2)
+    <&[u8; CRED_RESIDENT_LEN]>::try_from(rid)
+        .is_ok_and(|rid| !is_resident(rid) || rid[RESIDENT_VERSION_IDX] >= RESIDENT_VERSION_V2)
 }
 
 /// Whether the stored record carries the length-prefixed cached-pubkey trailer —
 /// legacy v3, or any v4. `rid` is the record's 42-byte resident-id field.
 fn resident_has_trailer(rid: &[u8]) -> bool {
-    rid.len() == CRED_RESIDENT_LEN
-        && (!is_resident(rid) || rid[RESIDENT_VERSION_IDX] == RESIDENT_VERSION_V3)
+    <&[u8; CRED_RESIDENT_LEN]>::try_from(rid)
+        .is_ok_and(|rid| !is_resident(rid) || rid[RESIDENT_VERSION_IDX] == RESIDENT_VERSION_V3)
 }
 
 /// The 64-byte cred_random (`CredRandomWithUV ‖ CredRandomWithoutUV`) for the
 /// hmac-secret extension — an HMAC-SHA512 ratchet over the device seed, keyed
 /// each round by the previous output's first 32 bytes. The caller picks the UV
 /// half: `[32..64]` with UV, `[0..32]` without.
-pub fn derive_hmac_key(seed: &[u8; 32], cred_id: &[u8]) -> [u8; 64] {
-    let proto = &cred_id[..PROTO_LEN.min(cred_id.len())];
-    let mut k = hmac_sha512(seed, b"SLIP-0022");
-    k = hmac_sha512(&k[..32], proto);
-    k = hmac_sha512(&k[..32], b"hmac-secret");
-    k = hmac_sha512(&k[..32], cred_id);
+pub fn derive_hmac_key(seed: &[u8; 32], cred_id: &[u8]) -> Secret<[u8; 64]> {
+    let proto = cred_id.get(..PROTO_LEN).unwrap_or(cred_id);
+    let mut k = Secret::new(hmac_sha512(seed, b"SLIP-0022"));
+    *k.expose_mut() = hmac_sha512(&k.expose()[..32], proto);
+    *k.expose_mut() = hmac_sha512(&k.expose()[..32], b"hmac-secret");
+    *k.expose_mut() = hmac_sha512(&k.expose()[..32], cred_id);
     k
 }
 
 /// The 32-byte largeBlobKey for a credential — an HMAC-SHA256 ratchet over the
 /// device seed (same shape as the chacha key).
 pub fn derive_large_blob_key(seed: &[u8; 32], cred_id: &[u8]) -> [u8; 32] {
-    let proto = &cred_id[..PROTO_LEN.min(cred_id.len())];
-    let mut k = hmac_sha256(seed, b"SLIP-0022");
-    k = hmac_sha256(&k, proto);
-    k = hmac_sha256(&k, b"largeBlobKey");
-    k = hmac_sha256(&k, cred_id);
-    k
+    let proto = cred_id.get(..PROTO_LEN).unwrap_or(cred_id);
+    let mut k = Secret::new(hmac_sha256(seed, b"SLIP-0022"));
+    *k.expose_mut() = hmac_sha256(k.expose(), proto);
+    *k.expose_mut() = hmac_sha256(k.expose(), b"largeBlobKey");
+    *k.expose_mut() = hmac_sha256(k.expose(), cred_id);
+    *k.expose()
 }
 
 /// The key-derivation input for a credential's signing key ([`crate::keyderiv::fido_load_key`]),
@@ -639,13 +644,21 @@ pub(crate) const CRED_REC_MAX: usize = 1024;
 // once (the max box is a lattice cred, which caches no point).
 const _: () = assert!(RECORD_PREFIX + 1 + CRED_PUBKEY_MAX + CRED_BOX_MAX <= CRED_REC_MAX);
 
+/// The `pubkey_len` byte of a v3/v4 record's trailer, or `None` for a v1/v2
+/// record or one with nothing past [`RECORD_PREFIX`].
+fn trailer_pubkey_len(rec: &[u8]) -> Option<u8> {
+    let (rid, rest) = rec.get(32..)?.split_first_chunk::<CRED_RESIDENT_LEN>()?;
+    let &len = rest.first()?;
+    resident_has_trailer(rid).then_some(len)
+}
+
 /// Offset at which the credential box begins in a stored record, skipping the v3
 /// length-prefixed public-key trailer. Total (never panics): a corrupt v3 length
 /// is clamped to the record end, so the box then fails to decrypt and the
 /// credential is skipped rather than mis-sliced.
 fn cred_box_offset(rec: &[u8]) -> usize {
-    if rec.len() > RECORD_PREFIX && resident_has_trailer(&rec[32..RECORD_PREFIX]) {
-        (RECORD_PREFIX + 1 + rec[RECORD_PREFIX] as usize).min(rec.len())
+    if let Some(len) = trailer_pubkey_len(rec) {
+        (RECORD_PREFIX + 1 + usize::from(len)).min(rec.len())
     } else {
         RECORD_PREFIX
     }
@@ -656,14 +669,16 @@ fn cred_box_offset(rec: &[u8]) -> usize {
 /// it starts at [`RECORD_PREFIX`]. Every reader of a stored EF_CRED record MUST
 /// go through this, or a v3 trailer would be fed into the box and break decrypt.
 pub(crate) fn cred_record_box(rec: &[u8]) -> &[u8] {
-    &rec[cred_box_offset(rec)..]
+    // Shorter than its prefix (every caller skips one first): the empty box a
+    // clamped v3 length already yields, which no framing opens.
+    rec.get(cred_box_offset(rec)..).unwrap_or(&[])
 }
 
 /// The cached public point stored in a v3 record, or `None` for a v1/v2 record
 /// or a v3 record with an empty (uncacheable-curve) trailer.
 pub(crate) fn cred_record_pubkey(rec: &[u8]) -> Option<&[u8]> {
-    if rec.len() > RECORD_PREFIX && resident_has_trailer(&rec[32..RECORD_PREFIX]) {
-        let len = rec[RECORD_PREFIX] as usize;
+    if let Some(len) = trailer_pubkey_len(rec) {
+        let len = usize::from(len);
         if len == 0 {
             return None;
         }
@@ -694,16 +709,17 @@ pub(crate) fn compose_cred_record(
     if total > out.len() {
         return None;
     }
-    out[..32].copy_from_slice(rp_id_hash);
-    out[32..RECORD_PREFIX].copy_from_slice(resident_id);
+    *out.first_chunk_mut::<32>()? = *rp_id_hash;
+    out.get_mut(32..RECORD_PREFIX)?.copy_from_slice(resident_id);
     let mut p = RECORD_PREFIX;
     if has_trailer {
-        out[p] = pubkey.len() as u8;
+        *out.get_mut(p)? = u8::try_from(pubkey.len()).ok()?;
         p += 1;
-        out[p..p + pubkey.len()].copy_from_slice(pubkey);
+        out.get_mut(p..p + pubkey.len())?.copy_from_slice(pubkey);
         p += pubkey.len();
     }
-    out[p..p + cred_box.len()].copy_from_slice(cred_box);
+    out.get_mut(p..p + cred_box.len())?
+        .copy_from_slice(cred_box);
     Some(p + cred_box.len())
 }
 
@@ -766,7 +782,7 @@ pub(crate) fn bump_cred_store_state<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
 pub(crate) fn remaining_discoverable<S: Storage>(fs: &mut Fs<S>) -> u16 {
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(fs, EF_CRED, &mut occupied);
-    let used = occupied.iter().filter(|&&b| b).count() as u16;
+    let used = u16::try_from(occupied.iter().filter(|&&b| b).count()).unwrap_or(u16::MAX);
     remaining_rk(fs, used)
 }
 
@@ -779,7 +795,8 @@ pub(crate) fn remaining_discoverable<S: Storage>(fs: &mut Fs<S>) -> u16 {
 /// fields are CTAP 2.1 *estimates*, so clamping down is spec-compliant.
 pub(crate) fn remaining_rk<S: Storage>(fs: &mut Fs<S>, used_ef_cred: u16) -> u16 {
     let by_slots = MAX_RESIDENT_CREDENTIALS.saturating_sub(used_ef_cred);
-    let by_files = (fs.free_dynamic() / 2) as u16;
+    // `free_dynamic` is at most `rsk_fs::MAX_DYNAMIC_FILES` (1280): the half fits.
+    let by_files = u16::try_from(fs.free_dynamic() / 2).unwrap_or(u16::MAX);
     by_slots.min(by_files)
 }
 
@@ -810,8 +827,8 @@ pub fn credential_store<S: Storage>(
 
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(fs, EF_CRED, &mut occupied);
-    for i in 0..MAX_RESIDENT_CREDENTIALS {
-        if !occupied[i as usize] {
+    for (i, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
+        if !live {
             if slot.is_none() {
                 slot = Some(i);
             }
@@ -824,7 +841,9 @@ pub fn credential_store<S: Storage>(
         if n < RECORD_PREFIX || rec[..32] != *rp_id_hash {
             continue;
         }
-        if let Some(c) = credential_load(seed, cred_record_box(&rec[..n]), rp_id_hash, &mut scratch)
+        if let Some(stored) = rec.get(..n)
+            && let Some(c) =
+                credential_load(seed, cred_record_box(stored), rp_id_hash, &mut scratch)
             && c.user_id == user_id
         {
             slot = Some(i);
@@ -885,7 +904,11 @@ pub fn credential_store<S: Storage>(
         }
         return Err(e);
     }
-    if let Err(e) = fs.put(EF_CRED + slot, &rec[..total]) {
+    if let Err(e) = rec
+        .get(..total)
+        .ok_or(Error::NoMemory)
+        .and_then(|record| fs.put(EF_CRED + slot, record))
+    {
         if new_record {
             let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
         }
@@ -909,8 +932,8 @@ fn bump_rp<S: Storage>(
     let mut unread = false;
     let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
     slot_map(fs, EF_RP, &mut occupied);
-    for i in 0..MAX_RESIDENT_CREDENTIALS {
-        if !occupied[i as usize] {
+    for (i, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
+        if !live {
             if free.is_none() {
                 free = Some(i);
             }
@@ -943,7 +966,7 @@ fn bump_rp<S: Storage>(
             let n = n.min(rec.len());
             let bumped = rec[0].checked_add(1).ok_or(Error::NoMemory)?;
             rec[0] = bumped;
-            return fs.put(fid, &rec[..n]);
+            return fs.put(fid, rec.get(..n).ok_or(Error::NoMemory)?);
         }
     }
     // Only here does an unread slot matter: it could have held this rpIdHash, and
@@ -955,7 +978,10 @@ fn bump_rp<S: Storage>(
     rec[0] = 1;
     rec[1..RP_PREFIX].copy_from_slice(rp_id_hash);
     let blen = seal_rp_id(seed, rp_id, rp_id_hash, &mut rec[RP_PREFIX..])?;
-    fs.put(EF_RP + slot, &rec[..RP_PREFIX + blen])
+    fs.put(
+        EF_RP + slot,
+        rec.get(..RP_PREFIX + blen).ok_or(Error::NoMemory)?,
+    )
 }
 
 /// Box the rpId domain under the device seed. Layout written to `out`:
@@ -972,19 +998,38 @@ pub(crate) fn seal_rp_id(
 ) -> Result<usize> {
     let id = rp_id.as_bytes();
     let total = IV_LEN + id.len() + TAG_LEN;
-    if total > out.len() {
+    let Some((iv_out, ct, tag_out)) = box_windows(out, id.len()) else {
         return Err(Error::NoMemory);
-    }
+    };
     let mut key = derive_chacha_key(seed, RP_PROTO);
-    let iv_full = hmac_sha256(&key, rp_id_hash);
+    let iv_full = hmac_sha256(key.expose(), rp_id_hash);
     let mut iv = [0u8; IV_LEN];
     iv.copy_from_slice(&iv_full[..IV_LEN]);
-    out[..IV_LEN].copy_from_slice(&iv);
-    out[IV_LEN..IV_LEN + id.len()].copy_from_slice(id);
-    let tag = chacha20poly1305_encrypt(&key, &iv, rp_id_hash, &mut out[IV_LEN..IV_LEN + id.len()]);
-    out[IV_LEN + id.len()..total].copy_from_slice(&tag);
-    key.zeroize();
+    *iv_out = iv;
+    ct.copy_from_slice(id);
+    let tag = chacha20poly1305_encrypt(key.expose(), &iv, rp_id_hash, ct);
+    *tag_out = tag;
+    key.wipe();
     Ok(total)
+}
+
+/// The `iv ‖ ct ‖ tag` windows of a box with a `ct_len`-byte ciphertext at the
+/// head of `out`, or `None` if it does not fit.
+fn box_windows(
+    out: &mut [u8],
+    ct_len: usize,
+) -> Option<(&mut [u8; IV_LEN], &mut [u8], &mut [u8; TAG_LEN])> {
+    let (iv, rest) = out.split_first_chunk_mut::<IV_LEN>()?;
+    let (ct, rest) = rest.split_at_mut_checked(ct_len)?;
+    Some((iv, ct, rest.first_chunk_mut::<TAG_LEN>()?))
+}
+
+/// A stored `iv ‖ ct ‖ tag` box split into its parts, or `None` if it is shorter
+/// than `IV_LEN + TAG_LEN`.
+fn box_parts(sealed: &[u8]) -> Option<(&[u8; IV_LEN], &[u8], &[u8; TAG_LEN])> {
+    let (iv, rest) = sealed.split_first_chunk::<IV_LEN>()?;
+    let (ct, tag) = rest.split_last_chunk::<TAG_LEN>()?;
+    Some((iv, ct, tag))
 }
 
 /// Recover the rpId domain from an EF_RP `tail`, whether it is a box (written by
@@ -1001,27 +1046,26 @@ pub(crate) fn unseal_rp_id<'a>(
 ) -> Option<(&'a str, bool)> {
     let n = tail.len();
     // A box is iv(12) ‖ ct ‖ tag(16): at least 28 bytes, and it authenticates.
-    if n >= IV_LEN + TAG_LEN && n <= out.len() {
-        let ct_len = n - IV_LEN - TAG_LEN;
-        let mut iv = [0u8; IV_LEN];
-        iv.copy_from_slice(&tail[..IV_LEN]);
-        let mut tag = [0u8; TAG_LEN];
-        tag.copy_from_slice(&tail[n - TAG_LEN..]);
-        out[..ct_len].copy_from_slice(&tail[IV_LEN..IV_LEN + ct_len]);
+    if n <= out.len()
+        && let Some((iv, ct, tag)) = box_parts(tail)
+    {
+        let ct_len = ct.len();
+        let pt = out.get_mut(..ct_len)?;
+        pt.copy_from_slice(ct);
         let mut key = derive_chacha_key(seed, RP_PROTO);
-        let ok = chacha20poly1305_decrypt(&key, &iv, rp_id_hash, &mut out[..ct_len], &tag).is_ok();
-        key.zeroize();
+        let ok = chacha20poly1305_decrypt(key.expose(), iv, rp_id_hash, pt, tag).is_ok();
+        key.wipe();
         if ok {
-            return core::str::from_utf8(&out[..ct_len]).ok().map(|s| (s, true));
+            return core::str::from_utf8(out.get(..ct_len)?)
+                .ok()
+                .map(|s| (s, true));
         }
     }
     // Legacy cleartext domain (the failed decrypt above left `out` garbled, so
     // re-copy the raw tail here).
-    if n <= out.len() {
-        out[..n].copy_from_slice(tail);
-        return core::str::from_utf8(&out[..n]).ok().map(|s| (s, false));
-    }
-    None
+    let plain = out.get_mut(..n)?;
+    plain.copy_from_slice(tail);
+    core::str::from_utf8(plain).ok().map(|s| (s, false))
 }
 
 /// Box a device-local RP nickname under the device seed. Layout written to `out`:
@@ -1049,21 +1093,27 @@ pub(crate) fn seal_nick(
         return Err(Error::NoMemory);
     }
     let total = IV_LEN + id.len() + TAG_LEN;
-    if total > out.len() {
+    let Some((iv_out, ct, tag_out)) = box_windows(out, id.len()) else {
         return Err(Error::NoMemory);
-    }
+    };
     let mut key = derive_chacha_key(seed, NICK_PROTO);
     let mut iv_src = [0u8; 32 + RP_NICK_MAX_LEN];
     iv_src[..32].copy_from_slice(rp_id_hash);
-    iv_src[32..32 + id.len()].copy_from_slice(id);
-    let iv_full = hmac_sha256(&key, &iv_src[..32 + id.len()]);
+    iv_src
+        .get_mut(32..32 + id.len())
+        .ok_or(Error::NoMemory)?
+        .copy_from_slice(id);
+    let iv_full = hmac_sha256(
+        key.expose(),
+        iv_src.get(..32 + id.len()).ok_or(Error::NoMemory)?,
+    );
     let mut iv = [0u8; IV_LEN];
     iv.copy_from_slice(&iv_full[..IV_LEN]);
-    out[..IV_LEN].copy_from_slice(&iv);
-    out[IV_LEN..IV_LEN + id.len()].copy_from_slice(id);
-    let tag = chacha20poly1305_encrypt(&key, &iv, rp_id_hash, &mut out[IV_LEN..IV_LEN + id.len()]);
-    out[IV_LEN + id.len()..total].copy_from_slice(&tag);
-    key.zeroize();
+    *iv_out = iv;
+    ct.copy_from_slice(id);
+    let tag = chacha20poly1305_encrypt(key.expose(), &iv, rp_id_hash, ct);
+    *tag_out = tag;
+    key.wipe();
     Ok(total)
 }
 
@@ -1076,24 +1126,15 @@ pub(crate) fn unseal_nick<'a>(
     tail: &[u8],
     out: &'a mut [u8],
 ) -> Option<&'a str> {
-    let n = tail.len();
-    if n < IV_LEN + TAG_LEN {
-        return None;
-    }
-    let ct_len = n - IV_LEN - TAG_LEN;
-    if ct_len > out.len() {
-        return None; // `out` holds only the plaintext nickname, not the whole box
-    }
-    let mut iv = [0u8; IV_LEN];
-    iv.copy_from_slice(&tail[..IV_LEN]);
-    let mut tag = [0u8; TAG_LEN];
-    tag.copy_from_slice(&tail[n - TAG_LEN..]);
-    out[..ct_len].copy_from_slice(&tail[IV_LEN..IV_LEN + ct_len]);
+    let (iv, ct, tag) = box_parts(tail)?;
+    // `out` holds only the plaintext nickname, not the whole box
+    let pt = out.get_mut(..ct.len())?;
+    pt.copy_from_slice(ct);
     let mut key = derive_chacha_key(seed, NICK_PROTO);
-    let ok = chacha20poly1305_decrypt(&key, &iv, rp_id_hash, &mut out[..ct_len], &tag).is_ok();
-    key.zeroize();
+    let ok = chacha20poly1305_decrypt(key.expose(), iv, rp_id_hash, pt, tag).is_ok();
+    key.wipe();
     if ok {
-        core::str::from_utf8(&out[..ct_len]).ok()
+        core::str::from_utf8(pt).ok()
     } else {
         None
     }
@@ -1116,8 +1157,8 @@ pub fn migrate_rp_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>) {
     let mut buf = [0u8; RP_REC_MAX];
     let mut plain = [0u8; RP_REC_MAX];
     let mut out = [0u8; RP_REC_MAX];
-    for i in 0..MAX_RESIDENT_CREDENTIALS {
-        if !occupied[i as usize] {
+    for (i, &live) in (0..MAX_RESIDENT_CREDENTIALS).zip(&occupied) {
+        if !live {
             continue;
         }
         let fid = EF_RP + i;
@@ -1135,13 +1176,12 @@ pub fn migrate_rp_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>) {
             continue;
         };
         let n = n.min(buf.len());
-        if n < RP_PREFIX {
+        let Some(tail) = buf.get(RP_PREFIX..n) else {
             continue;
-        }
+        };
         let mut rp_id_hash = [0u8; 32];
         rp_id_hash.copy_from_slice(&buf[1..RP_PREFIX]);
-        let Some((domain, was_boxed)) =
-            unseal_rp_id(&seed, &rp_id_hash, &buf[RP_PREFIX..n], &mut plain)
+        let Some((domain, was_boxed)) = unseal_rp_id(seed.expose(), &rp_id_hash, tail, &mut plain)
         else {
             continue;
         };
@@ -1153,15 +1193,24 @@ pub fn migrate_rp_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>) {
         // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: the copy
         // it supersedes is the cleartext domain, and this pass is skipped whole
         // whenever the seed is PIN-wrapped or locked — boots that latched already.
-        if let Ok(blen) = seal_rp_id(&seed, domain, &rp_id_hash, &mut out[RP_PREFIX..])
-            && (dev.otp_key.is_none() || rsk_fs::request_rescrub(fs).is_ok())
+        if let Ok(blen) = seal_rp_id(seed.expose(), domain, &rp_id_hash, &mut out[RP_PREFIX..])
+            && let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, dev.otp_key.is_some())
+            && let Some(record) = out.get(..RP_PREFIX + blen)
         {
-            let _ = fs.put(fid, &out[..RP_PREFIX + blen]);
+            let _ = fs.put_over(fid, record, rearmed.as_ref());
         }
     }
-    seed.zeroize();
+    seed.wipe();
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "credential_tests.rs"]
 mod tests;

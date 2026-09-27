@@ -5,8 +5,6 @@
 //! working DOs). Idempotent — every write is guarded by an emptiness check —
 //! and run once at boot.
 
-use zeroize::Zeroize;
-
 use rsk_crypto::{Device, PinKdf};
 use rsk_fs::{Fs, Sealed, Storage};
 
@@ -62,7 +60,7 @@ fn put_pin_verifier<S: Storage>(
     fid: u16,
     pin: &[u8],
 ) -> Result<(), Error> {
-    crate::pin::put_verifier(dev, fs, fid, pin).map_err(|_| Error::Storage)
+    crate::pin::put_verifier(dev, fs, fid, pin, None).map_err(|_| Error::Storage)
 }
 
 /// Initialise the OpenPGP EFs: the DEK (sealed under the default PINs), the PIN
@@ -90,38 +88,50 @@ pub fn scan_files<S: Storage>(
         && !provisioned(fs, EF_DEK_RC.get())?
         && !provisioned(fs, EF_DEK)?
     {
-        let mut random_dek = [0u8; DEK_SIZE];
-        rng.fill(&mut random_dek);
+        let mut random_dek = rsk_secret::Secret::<[u8; DEK_SIZE]>::zeroed();
+        rng.fill(random_dek.expose_mut());
         let mut session_pw1 = dev.pin_derive_session(PW1_DEFAULT);
         let mut session_pw3 = dev.pin_derive_session(PW3_DEFAULT);
-        let mut def = [0u8; DEK_FILE_SIZE];
-        def[0] = DEK_FORMAT_V3;
+        let mut def = rsk_secret::Secret::<[u8; DEK_FILE_SIZE]>::zeroed();
+        def.expose_mut()[0] = DEK_FORMAT_V3;
         let mut nonce = [0u8; 12];
 
         rng.fill(&mut nonce);
-        dev.encrypt_with_aad(&session_pw1, &random_dek, PinKdf::V2, &nonce, &mut def[1..])
-            .map_err(|_| Error::Crypto)?;
-        fs.put_key(EF_DEK_PW1, Sealed::wrap(&def))
+        dev.encrypt_with_aad(
+            session_pw1.expose(),
+            random_dek.expose(),
+            PinKdf::V2,
+            &nonce,
+            &mut def.expose_mut()[1..],
+        )
+        .map_err(|_| Error::Crypto)?;
+        fs.put_key(EF_DEK_PW1, Sealed::wrap(def.expose()))
             .map_err(|_| Error::Storage)?;
 
         // PW3's DEK copy, sealed under the PW3 session. No `EF_DEK_RC` is created:
         // the resetting code is deactivated until `PUT DATA 0xD3` (put_reset_code)
         // seals its own copy under the admin-chosen RC.
         rng.fill(&mut nonce);
-        dev.encrypt_with_aad(&session_pw3, &random_dek, PinKdf::V2, &nonce, &mut def[1..])
-            .map_err(|_| Error::Crypto)?;
-        fs.put_key(EF_DEK_PW3, Sealed::wrap(&def))
+        dev.encrypt_with_aad(
+            session_pw3.expose(),
+            random_dek.expose(),
+            PinKdf::V2,
+            &nonce,
+            &mut def.expose_mut()[1..],
+        )
+        .map_err(|_| Error::Crypto)?;
+        fs.put_key(EF_DEK_PW3, Sealed::wrap(def.expose()))
             .map_err(|_| Error::Storage)?;
 
         // The attestation key is sealed under this DEK, so now is the one moment
         // before a PIN that can mint it. Best effort: what a failure leaves out,
         // the first ATTEST mints under the verified PIN's DEK.
-        let _ = crate::attest::provision(dev, fs, rng, &random_dek);
+        let _ = crate::attest::provision(dev, fs, rng, random_dek.expose());
 
-        random_dek.zeroize();
-        session_pw1.zeroize();
-        session_pw3.zeroize();
-        def.zeroize();
+        random_dek.wipe();
+        session_pw1.wipe();
+        session_pw3.wipe();
+        def.wipe();
         reset_dek = true;
     }
 
@@ -174,9 +184,12 @@ fn neutralize_default_reset_code<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Re
         Some(n) if n >= 34 && rec[0] != 0 => &rec[2..34],
         _ => return Ok(()),
     };
-    let is_default = rsk_crypto::ct_eq(stored, &dev.pin_derive_verifier(PW3_DEFAULT))
+    let is_default = rsk_crypto::ct_eq(stored, dev.pin_derive_verifier(PW3_DEFAULT).expose())
         || (dev.otp_key.is_some()
-            && rsk_crypto::ct_eq(stored, &dev.without_otp().pin_derive_verifier(PW3_DEFAULT)));
+            && rsk_crypto::ct_eq(
+                stored,
+                dev.without_otp().pin_derive_verifier(PW3_DEFAULT).expose(),
+            ));
     if !is_default {
         return Ok(());
     }
@@ -187,7 +200,7 @@ fn neutralize_default_reset_code<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Re
     // The one re-arm whose failure does NOT stop the write: "leave the record in
     // force" means, here, a live unauthenticated `RESET RETRY P1=0` path, and
     // refusing would abort `scan_files` before `settle_rc_retry_counter` too.
-    let _ = rsk_fs::request_rescrub(fs);
+    let _attempted = rsk_fs::attempt_rescrub(fs);
     let _ = fs.delete(EF_RC);
     let _ = fs.delete_key(EF_DEK_RC);
     Ok(())

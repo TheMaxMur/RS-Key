@@ -6,7 +6,16 @@
 //! the attestation certificate and a signature by the device key;
 //! authentication signs a challenge with the credential key.
 
-use zeroize::Zeroize;
+// Host bytes: a panic here is a board that answers nothing until unplugged.
+#![deny(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation
+)]
+
+use rsk_secret::Secret;
 
 use rsk_fs::Storage;
 use rsk_sdk::apdu::Apdu;
@@ -46,7 +55,10 @@ pub fn process_u2f<S: Storage, R: Rng>(
         CTAP_AUTHENTICATE => cmd_authenticate(ctx, apdu, out),
         CTAP_VERSION => {
             let v = crate::consts::U2F_VERSION;
-            out[..v.len()].copy_from_slice(v);
+            let Some(dst) = out.get_mut(..v.len()) else {
+                return (Sw::EXEC_ERROR, 0);
+            };
+            dst.copy_from_slice(v);
             (Sw::OK, v.len())
         }
         _ => (Sw::INS_NOT_SUPPORTED, 0),
@@ -115,17 +127,20 @@ fn cmd_register<S: Storage, R: Rng>(
     // U2F register request is challenge(32) ‖ application(32). The key handle
     // binds to the application and the signature base is
     // 0x00 ‖ application ‖ challenge ‖ … (note the swap).
-    let chal = &apdu.data[..32];
+    let Some(body) = apdu.data.first_chunk::<64>() else {
+        return (Sw::WRONG_LENGTH, 0);
+    };
+    let chal = &body[..32];
     let mut app = [0u8; 32];
-    app.copy_from_slice(&apdu.data[32..64]);
+    app.copy_from_slice(&body[32..64]);
 
     let mut seed = match ctx.load_keydev() {
         Some(s) => s,
         None => return (Sw::EXEC_ERROR, 0),
     };
-    let (key_handle, mut scalar) = derive_new(&seed, &app, ctx.rng);
-    let cred_key = P256Key::from_scalar(&scalar);
-    scalar.zeroize();
+    let (key_handle, mut scalar) = derive_new(seed.expose(), &app, ctx.rng);
+    let cred_key = P256Key::from_scalar(scalar.expose());
+    scalar.wipe();
     // Org-provisioned attestation (vendor ATT_IMPORT) wins — classic U2F batch
     // attestation; otherwise the per-device key (the seed scalar) with its
     // self-signed EF_EE_DEV cert.
@@ -133,13 +148,13 @@ fn cmd_register<S: Storage, R: Rng>(
     let org = att_scalar.is_some();
     let device_key = match att_scalar.as_mut() {
         Some(s) => {
-            let k = P256Key::from_scalar(s);
-            s.zeroize();
+            let k = P256Key::from_scalar(s.expose());
+            s.wipe();
             k
         }
-        None => P256Key::from_scalar(&seed),
+        None => P256Key::from_scalar(seed.expose()),
     };
-    seed.zeroize();
+    seed.wipe();
     let (cred_key, device_key) = match (cred_key, device_key) {
         (Some(c), Some(d)) => (c, d),
         _ => return (Sw::EXEC_ERROR, 0),
@@ -148,34 +163,33 @@ fn cmd_register<S: Storage, R: Rng>(
 
     // sign base: 0x00 ‖ appId ‖ chal ‖ keyHandle ‖ (0x04 ‖ x ‖ y)
     let mut base = [0u8; 1 + 32 + 32 + KEY_HANDLE_LEN + 65];
-    let mut p = 0;
-    base[p] = 0x00;
-    p += 1;
-    base[p..p + 32].copy_from_slice(&app);
-    p += 32;
-    base[p..p + 32].copy_from_slice(chal);
-    p += 32;
-    base[p..p + KEY_HANDLE_LEN].copy_from_slice(&key_handle);
-    p += KEY_HANDLE_LEN;
-    base[p] = 0x04;
-    p += 1;
-    base[p..p + 32].copy_from_slice(&x);
-    p += 32;
-    base[p..p + 32].copy_from_slice(&y);
-    p += 32;
+    let fields = [0x00]
+        .iter()
+        .chain(&app)
+        .chain(chal)
+        .chain(&key_handle)
+        .chain(&[0x04])
+        .chain(&x)
+        .chain(&y);
+    for (dst, &b) in base.iter_mut().zip(fields) {
+        *dst = b;
+    }
     let mut sig = [0u8; MAX_DER_SIG];
-    let sl = device_key.sign_der(&base[..p], &mut sig);
+    let sl = device_key.sign_der(&base, &mut sig);
 
     let mut cert = [0u8; crate::cert::ATT_CHAIN_REC_MAX];
     let clen = if org {
         // The chain's leaf — a U2F response carries exactly one certificate.
         let n = match ctx.fs.read(EF_ATT_CHAIN, &mut cert) {
-            // Fs::read returns the full stored length; clamp to the buffer before
-            // slicing cert[..n] below, matching the EF_EE_DEV branch.
+            // Fs::read returns the full stored length; clamp it to what was copied,
+            // matching the EF_EE_DEV branch.
             Some(n) if n > 3 => n.min(cert.len()),
             _ => return (Sw::EXEC_ERROR, 0),
         };
-        let Some((off, len)) = crate::cert::att_chain_cert_range(&cert[..n], 0) else {
+        let Some((off, len)) = cert
+            .get(..n)
+            .and_then(|chain| crate::cert::att_chain_cert_range(chain, 0))
+        else {
             return (Sw::EXEC_ERROR, 0);
         };
         cert.copy_within(off..off + len, 0);
@@ -189,28 +203,25 @@ fn cmd_register<S: Storage, R: Rng>(
 
     // response: 0x05 ‖ (0x04 ‖ x ‖ y) ‖ 64 ‖ keyHandle ‖ cert ‖ sig
     let total = 1 + 65 + 1 + KEY_HANDLE_LEN + clen + sl;
-    if out.len() < total {
+    let (Some(resp), Some(cert), Some(sig)) =
+        (out.get_mut(..total), cert.get(..clen), sig.get(..sl))
+    else {
         return (Sw::EXEC_ERROR, 0);
+    };
+    let kh_len = [u8::try_from(KEY_HANDLE_LEN).unwrap_or(u8::MAX)];
+    let fields = [U2F_REGISTER_ID, 0x04]
+        .iter()
+        .chain(&x)
+        .chain(&y)
+        .chain(&kh_len)
+        .chain(&key_handle)
+        .chain(cert)
+        .chain(sig);
+    for (dst, &b) in resp.iter_mut().zip(fields) {
+        *dst = b;
     }
-    let mut q = 0;
-    out[q] = U2F_REGISTER_ID;
-    q += 1;
-    out[q] = 0x04;
-    q += 1;
-    out[q..q + 32].copy_from_slice(&x);
-    q += 32;
-    out[q..q + 32].copy_from_slice(&y);
-    q += 32;
-    out[q] = KEY_HANDLE_LEN as u8;
-    q += 1;
-    out[q..q + KEY_HANDLE_LEN].copy_from_slice(&key_handle);
-    q += KEY_HANDLE_LEN;
-    out[q..q + clen].copy_from_slice(&cert[..clen]);
-    q += clen;
-    out[q..q + sl].copy_from_slice(&sig[..sl]);
-    q += sl;
-    journal::append(ctx, journal::EV_U2F_REGISTER, 0, &apdu.data[32..40]);
-    (Sw::OK, q)
+    journal::append(ctx, journal::EV_U2F_REGISTER, 0, &app[..8]);
+    (Sw::OK, total)
 }
 
 fn cmd_authenticate<S: Storage, R: Rng>(
@@ -232,14 +243,19 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     if apdu.nc < 32 + 32 + 1 + 1 {
         return (Sw::WRONG_DATA, 0);
     }
-    let chal = &apdu.data[..32];
+    let Some((head, rest)) = apdu.data.split_first_chunk::<65>() else {
+        return (Sw::WRONG_DATA, 0);
+    };
+    let chal = &head[..32];
     let mut app = [0u8; 32];
-    app.copy_from_slice(&apdu.data[32..64]);
-    let kh_len = apdu.data[64] as usize;
+    app.copy_from_slice(&head[32..64]);
+    let kh_len = head[64] as usize;
     if kh_len < KEY_HANDLE_LEN || 65 + kh_len > apdu.nc {
         return (Sw::WRONG_DATA, 0);
     }
-    let key_handle = &apdu.data[65..65 + kh_len];
+    let Some(key_handle) = rest.get(..kh_len) else {
+        return (Sw::WRONG_DATA, 0);
+    };
 
     let mut seed = match ctx.load_keydev() {
         Some(s) => s,
@@ -257,7 +273,7 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     // scalar (verify_key, which fido_load_key would clobber by rewriting path[0]).
     // U2F is P-256 only, so take the leading 32 bytes of the ratchet as the scalar.
     let mut scratch = [0u8; CRED_REC_MAX];
-    let scalar: Option<[u8; 32]> = match credential_load(&seed, key_handle, &app, &mut scratch) {
+    let scalar = match credential_load(seed.expose(), key_handle, &app, &mut scratch) {
         // A CTAP2 credential box. credProtect=userVerificationRequired (L3) must
         // NOT be usable over U2F, which performs no user verification — only CTAP2
         // getAssertion (with a PIN/UV) may exercise it. L1/L2 stay usable: the RP
@@ -266,21 +282,19 @@ fn cmd_authenticate<S: Storage, R: Rng>(
             if c.ext.cred_protect == CRED_PROT_UV_REQUIRED {
                 None
             } else {
-                fido_load_key(&seed, key_handle).map(|raw| {
-                    let mut s = [0u8; 32];
-                    s.copy_from_slice(&raw[..32]);
+                fido_load_key(seed.expose(), key_handle).map(|raw| {
+                    let mut s = Secret::<[u8; 32]>::zeroed();
+                    s.expose_mut().copy_from_slice(&raw.expose()[..32]);
                     s
                 })
             }
         }
-        Some(_) => {
-            let mut kh = [0u8; KEY_HANDLE_LEN];
-            kh.copy_from_slice(&key_handle[..KEY_HANDLE_LEN]);
-            verify_key(&seed, &app, &kh)
-        }
+        Some(_) => key_handle
+            .first_chunk::<KEY_HANDLE_LEN>()
+            .and_then(|kh| verify_key(seed.expose(), &app, kh)),
         None => None,
     };
-    seed.zeroize();
+    seed.wipe();
     let mut scalar = match scalar {
         Some(s) => s,
         None => return (Sw::WRONG_DATA, 0), // 0x6A80 — handle not ours
@@ -289,7 +303,7 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     // check-only (P1=0x07): a valid handle reports "would require user presence".
     // No touch.
     if apdu.p1 == U2F_AUTH_CHECK_ONLY {
-        scalar.zeroize();
+        scalar.wipe();
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
 
@@ -302,11 +316,11 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     // TUP flag still follows the raw `tup`, so the wire meaning is unchanged.
     let owes = tup || u2f_gate(ctx) == U2fGate::BuiltinUv;
     if owes && !u2f_interaction(ctx, crate::Confirm::titled("Sign in?")) {
-        scalar.zeroize();
+        scalar.wipe();
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
-    let key = P256Key::from_scalar(&scalar);
-    scalar.zeroize();
+    let key = P256Key::from_scalar(scalar.expose());
+    scalar.wipe();
     let key = match key {
         Some(k) => k,
         None => return (Sw::EXEC_ERROR, 0),
@@ -330,9 +344,15 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     let sl = key.sign_der(&base, &mut sig);
 
     // response: flags ‖ counter(BE) ‖ signature
-    out[0] = flags;
-    out[1..5].copy_from_slice(&ctr.to_be_bytes());
-    out[5..5 + sl].copy_from_slice(&sig[..sl]);
+    let (Some(resp), Some(sig)) = (out.get_mut(..5 + sl), sig.get(..sl)) else {
+        return (Sw::EXEC_ERROR, 0);
+    };
+    for (dst, &b) in resp
+        .iter_mut()
+        .zip([flags].iter().chain(&ctr.to_be_bytes()).chain(sig))
+    {
+        *dst = b;
+    }
     // `owes` is whether this AUTHENTICATE actually collected a gesture: without one
     // (P1 = don't-enforce, alwaysUv off) it is ungated and drivable on demand, so a run
     // of those costs one ring entry rather than one each — see `journal::append_run`.
@@ -345,5 +365,13 @@ fn cmd_authenticate<S: Storage, R: Rng>(
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::cast_possible_truncation,
+    reason = "a test's fixture is its own bound, and a panic is its failure report"
+)]
 #[path = "u2f_tests.rs"]
 mod tests;

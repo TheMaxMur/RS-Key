@@ -11,11 +11,11 @@ use super::*;
 fn ecdh_selector_runs_the_real_agreement() {
     // The peer point is the P-256 generator (a valid public key) and FIXED_SCALAR
     // is a valid nonzero secret key, so ecdh_raw MUST succeed — else run(0) would
-    // time the `unwrap_or([0;32])` error path instead of a scalar multiply.
+    // time the error arm (checksum 0) instead of a scalar multiply.
     let z = rsk_crypto::pinproto::ecdh_raw(&FIXED_SCALAR, &G_X, &G_Y)
         .expect("bench ECDH inputs must be valid so the real agreement is timed");
-    assert_ne!(z, [0u8; 32]);
-    assert_eq!(run(0), checksum(&z));
+    assert_ne!(*z.expose(), [0u8; 32]);
+    assert_eq!(run(0), checksum(z.expose()));
 }
 
 #[test]
@@ -37,7 +37,7 @@ fn sign_selector_produces_a_der_signature() {
 #[test]
 fn ratchet_selector_matches_the_kdf() {
     let r = crate::keyderiv::ratchet(&FIXED_SEED, &FIXED_PATH);
-    assert_eq!(run(2), checksum(&r));
+    assert_eq!(run(2), checksum(r.expose()));
 }
 
 #[test]

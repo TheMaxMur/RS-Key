@@ -81,10 +81,16 @@ fn roundtrip(proto: PinProto, two_salts: bool) {
     let mut dec = [0u8; 64];
     let ndec = pinproto::decrypt(proto, &shared, &out[..nout], &mut dec).unwrap();
     let cr = derive_hmac_key(&SEED, &CRED_ID);
-    assert_eq!(&dec[..32], &hmac_sha256(&cr[..32], &salt[..32])[..]);
+    assert_eq!(
+        &dec[..32],
+        &hmac_sha256(&cr.expose()[..32], &salt[..32])[..]
+    );
     if two_salts {
         assert_eq!(ndec, 64);
-        assert_eq!(&dec[32..64], &hmac_sha256(&cr[..32], &salt[32..64])[..]);
+        assert_eq!(
+            &dec[32..64],
+            &hmac_sha256(&cr.expose()[..32], &salt[32..64])[..]
+        );
     } else {
         assert_eq!(ndec, 32);
     }
@@ -126,8 +132,8 @@ fn uv_half_differs_from_non_uv() {
     let cr = derive_hmac_key(&SEED, &CRED_ID);
     let without = decrypt_out(false);
     let with = decrypt_out(true);
-    assert_eq!(&without[..32], &hmac_sha256(&cr[..32], &salt)[..]);
-    assert_eq!(&with[..32], &hmac_sha256(&cr[32..], &salt)[..]);
+    assert_eq!(&without[..32], &hmac_sha256(&cr.expose()[..32], &salt)[..]);
+    assert_eq!(&with[..32], &hmac_sha256(&cr.expose()[32..], &salt)[..]);
     assert_ne!(&without[..32], &with[..32]);
 }
 

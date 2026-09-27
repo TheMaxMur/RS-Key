@@ -7,7 +7,9 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use rsk_fs::KeyFid;
+use rsk_otp::SlotRecord;
 use rsk_otp::seal::{seal_put, seal_read};
+use rsk_secret::Secret;
 
 use super::*;
 
@@ -57,8 +59,9 @@ fn use_counter(path: &Path) -> Option<u16> {
         serial_id: &serial_id,
         otp_key: None,
     };
-    let mut rec = [0u8; SLOT_RECORD];
+    let mut rec = Secret::<[u8; SLOT_RECORD]>::zeroed();
     let n = seal_read(&dev, &mut mount(path), KeyFid::new(SLOT1_FID), &mut rec)?;
+    let rec = rec.expose();
     (n == SLOT_RECORD).then(|| u16::from_be_bytes([rec[USE_COUNTER], rec[USE_COUNTER + 1]]))
 }
 
@@ -88,7 +91,7 @@ fn bench_with(name: &str, presence: PresenceMode) -> (PathBuf, Jobs, Arc<Signals
             &mut mount(&path),
             &mut rng,
             KeyFid::new(SLOT1_FID),
-            &[0u8; SLOT_RECORD],
+            &SlotRecord::from_bytes(&[0u8; SLOT_RECORD]).unwrap(),
         ),
         "seal a slot into the image"
     );

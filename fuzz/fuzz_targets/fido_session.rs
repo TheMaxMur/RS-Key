@@ -301,12 +301,17 @@ fn provisioned() -> &'static Provisioned {
                 },
             };
             let mut cred_box = [0u8; 512];
-            if let Ok(len) =
-                credential_create(&seed, &d, &input, &rp_hash, &[0x11; 12], &mut cred_box)
-            {
+            if let Ok(len) = credential_create(
+                seed.expose(),
+                &d,
+                &input,
+                &rp_hash,
+                &[0x11; 12],
+                &mut cred_box,
+            ) {
                 resident_id = derive_resident(&cred_box[..len], &d);
                 let _ = credential_store(
-                    &seed,
+                    seed.expose(),
                     &d,
                     &mut fs,
                     &cred_box[..len],
@@ -1419,7 +1424,7 @@ impl Sess {
         //
         // It is also this tree's one fuzz instance of a `formal/` invariant, and
         // the assertion carries the name so the trace is greppable end to end:
-        // `NoTokenAfterInvalidation` -> `reset_pin_uv_auth_token` (state.rs:505-519,
+        // `NoTokenAfterInvalidation` -> `reset_pin_uv_auth_token` (state.rs:596-610,
         // the owner `formal/README.md` names first) -> here. A re-issued token is a
         // grant the mint invalidated going on authorizing.
         let Some(first) = self.issued_token(&msg[..n], proto, secret) else {

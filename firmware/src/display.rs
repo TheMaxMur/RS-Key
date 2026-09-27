@@ -26,7 +26,7 @@ use rsk_display::{BL_TOP, TouchPad};
 use rsk_rsa::RsaKey;
 
 use crate::flash_storage::FlashStorage;
-use crate::handler::{FidoRng, Store};
+use crate::handler::FidoRng;
 
 #[path = "display_panel.rs"]
 mod display_panel;
@@ -39,10 +39,11 @@ pub use rsk_display::{DeviceInfo, DeviceKeys, UI_YIELD_FLOOR_MS, piv_ref_title};
 const CST328_ADDR: u16 = 0x1A;
 
 /// This board's instance of the flow.
-pub type Ui = rsk_display::Ui<'static, Panel, Touch, DisplayHooks, FlashStorage, FidoRng>;
+pub type Ui = rsk_display::Ui<'static, Panel, Touch, DisplayHooks>;
 /// The on-screen presence backend over this board's panel.
-pub type TouchPresence =
-    rsk_display::TouchPresence<'static, Panel, Touch, DisplayHooks, FlashStorage, FidoRng>;
+pub type TouchPresence = rsk_display::TouchPresence<'static, Panel, Touch, DisplayHooks>;
+/// The cells this board's own screens borrow, handed to `build` and `status_task` only.
+pub type Parked = rsk_display::Parked<'static, FlashStorage, FidoRng>;
 
 /// The panel's SPI bus + control pins, bundled so `main` stays
 /// within embassy's argument cap when it hands the peripherals over.
@@ -125,6 +126,10 @@ pub struct DisplayHooks {
 impl rsk_display::Hooks for DisplayHooks {
     fn set_backlight(&mut self, duty: u16) {
         self.bl.set_config(&backlight_cfg(duty));
+    }
+
+    fn sweep_dead_stack(&mut self) {
+        crate::sweep::dead_stack();
     }
 
     fn wake_pressed(&self) -> bool {
@@ -228,8 +233,7 @@ pub fn build(
     panel: PanelHw,
     touch: TouchHw,
     info: DeviceInfo,
-    fs: &'static RefCell<Store>,
-    keys: DeviceKeys,
+    cells: Parked,
     rng: &'static RefCell<FidoRng>,
     wake_btn: Option<(Input<'static>, bool)>,
 ) -> Ui {
@@ -278,13 +282,13 @@ pub fn build(
         tp_rst,
         wake_btn,
     };
-    Ui::new(panel, touch, hooks, info, fs, keys, rng)
+    Ui::new(panel, touch, hooks, info, cells)
 }
 
 /// The ambient status screen. `#[embassy_executor::task]` cannot be generic, so
 /// this monomorphic wrapper is what the spawner takes; the loop itself is
 /// [`rsk_display::status_loop`].
 #[embassy_executor::task]
-pub async fn status_task(ui: &'static RefCell<Ui>) {
-    rsk_display::status_loop(ui).await;
+pub async fn status_task(ui: &'static RefCell<Ui>, cells: Parked) {
+    rsk_display::status_loop(ui, cells).await;
 }

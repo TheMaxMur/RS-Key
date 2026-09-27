@@ -44,8 +44,8 @@ Two things worth reading carefully:
   asks for `-47` anyway, `makeCredential` maps it to "unsupported" and
   declines. There is no path to a *new* secp256k1 FIDO credential.
 - **RSA-1024 is blocked on two independent gates**: the generation template
-  parser (`crates/rsk-piv/src/keygen.rs:46-49`) and the separate import path
-  (`crates/rsk-piv/src/keygen.rs:583-585`), which does not go through that parser. So neither
+  parser (`crates/rsk-piv/src/keygen.rs:48-51`) and the separate import path
+  (`crates/rsk-piv/src/keygen.rs:610-612`), which does not go through that parser. So neither
   `ykman piv keys generate ... RSA1024` nor importing an external 1024-bit
   key onto a slot succeeds. Both return `6A 80` (incorrect data).
 

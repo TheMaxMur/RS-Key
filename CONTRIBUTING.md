@@ -75,12 +75,54 @@ change is wrong.
 
 Clippy runs with `-D warnings` on both profiles. Don't silence a lint without
 saying why on the `#[allow]` line — and silence it at the smallest scope that
-works.
+works. The policy itself lives once, in `[workspace.lints]` of the root
+`Cargo.toml`; a new crate opts in with `[lints] workspace = true`.
 
-`unsafe` is the expensive keyword. There are currently two audited exception
-areas, both documented in [docs/unsafe.md](docs/unsafe.md); a new `unsafe`
-site needs an entry there explaining why safe Rust can't do the job. PRs that
-add undocumented `unsafe` don't get merged, full stop.
+`unsafe` is the expensive keyword. The workspace denies it everywhere but the
+three crates that need it — `firmware`, `rsk-wipe` and `rsk-rsa` — and each
+of their sites is documented in [docs/unsafe.md](docs/unsafe.md); a new
+`unsafe` site needs an entry there explaining why safe Rust can't do the job,
+and a new `unsafe` block or `unsafe impl` a `// SAFETY:` comment, which clippy
+refuses to build without. PRs that add undocumented `unsafe` don't get merged,
+full stop.
+
+Key-grade bytes live in `rsk_secret::Secret` (or under a `WipeGuard` when the
+buffer outlives the scope), which wipes on every exit, a `?` included; the root
+`clippy.toml` refuses a bare `Zeroize::zeroize` or a `Zeroizing` in every crate.
+A wipe written by hand at the end of a function is the bug that type exists to
+remove. The rest follows from what the type can and cannot see:
+
+- A function that produces key-grade bytes hands them out in a `Secret`, or
+  writes them into the caller's `&mut Secret<[u8; N]>`, so a caller that brings
+  a bare array does not compile.
+- A move is a `memcpy` whose source is not wiped: build a secret in place
+  (`Secret::zeroed()`, then `expose_mut()`) and hand it on by reference.
+  `drop(secret)` is such a move; `.wipe()` wipes in place.
+- A wipe no `Secret` can make — state that outlives a command (a struct field,
+  a static), a key type's own `Drop` — stays bare at its wipe point under
+  `#[expect(clippy::disallowed_methods, reason = "…")]` naming that point, and
+  rustc holds the list both ways: a new bare wipe fails clippy, and so does an
+  `#[expect]` whose wipe is gone.
+
+Resets are held the same way: `clippy.toml` refuses `SCB::sys_reset`,
+`rom_data::reset_to_usb_boot`, `reboot`, `reboot_ns` and
+`Watchdog::trigger_reset`, because a reset that skips `Worker::reboot` skips its
+scrub of the RAM secrets. The secure reboot and `rsk-wipe` (a RAM-only image with
+no secret to lose) keep their calls under an `#[expect]`.
+
+Host bytes cannot panic a parser: under `panic-halt` a panic is a board that
+answers nothing until it is unplugged. A module that reads what a host sent —
+the CTAPHID and CCID transports, the APDU, TLV and CBOR parsers, the record
+codecs, each applet crate and each CTAP command handler — denies
+`clippy::indexing_slicing`, `unwrap_used`, `expect_used`, `panic` and
+`cast_possible_truncation` at its top; an applet crate does it on its root, so
+the whole crate. An access there is checked — `get`, `first_chunk`, a fixed-size
+array, `try_from` — and fails to the status word or CTAP error its path already
+answers, never to a silent default. The test modules keep their fixtures'
+indexing under an `#[allow]` with a reason. An exemption is an
+`#[expect(…, reason = …)]` on the smallest item, where the truncation is the
+behaviour kept or a checked form costs a proof; a byte picked out of
+`to_le_bytes()` is not one, because it hides the narrowing from the lint.
 
 Every file starts with the SPDX header:
 

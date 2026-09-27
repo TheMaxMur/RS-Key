@@ -30,7 +30,7 @@ use rsk_openpgp::consts::{PW1_DEFAULT, PW1_MODE81, PW1_MODE82, PW3_DEFAULT, PW3_
 use rsk_openpgp::keys::curve_from_attr;
 use rsk_openpgp::pso::parse_ecdh_point;
 use rsk_openpgp::{OpenpgpApplet, scan_files};
-use rsk_otp::hid::{FrameRx, FrameTx, REPORT_SIZE, RxOutcome};
+use rsk_otp::hid::{FrameRx, FrameTx, PAYLOAD_SIZE, REPORT_SIZE, RxOutcome};
 use rsk_phy::{PHY_MAX_SIZE, PhyData};
 use rsk_rsa::MAX_RSA_DIGESTINFO;
 use rsk_rsa::pkcs1v15::rsa_sign_em;
@@ -38,6 +38,7 @@ use rsk_sdk::apdu::Apdu;
 use rsk_sdk::applet::RESP_BUILD;
 use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{Applet, ResBuf, Sw};
+use rsk_secret::Secret;
 use rsk_usb::ccid::process_message;
 use rsk_usb::ctaphid::{CTAP_MAX_MESSAGE, HID_RPT_SIZE, Outcome, Reassembler, TxFrames};
 
@@ -371,9 +372,7 @@ fn miri_fido_vendor() {
             let _ = fs.delete(rsk_fido::consts::EF_KEY_DEV.get());
         }
         let mut state = FidoState::new();
-        state.mse_active = true;
-        state.mse_key = [0x5A; 32];
-        state.mse_pub = [0x04; 65];
+        state.establish_mse_for_test([0x5A; 32], [0x04; 65]);
         let mut out = [0u8; 2048];
         let mut presence = rsk_fido::AlwaysConfirm;
         let mut ctx = Ctx {
@@ -508,11 +507,16 @@ fn miri_fido_credmgmt() {
                 },
             };
             let mut cred_box = [0u8; 512];
-            if let Ok(len) =
-                credential_create(&seed, &d, &input, &rp_hash, &[0x11; 12], &mut cred_box)
-            {
+            if let Ok(len) = credential_create(
+                seed.expose(),
+                &d,
+                &input,
+                &rp_hash,
+                &[0x11; 12],
+                &mut cred_box,
+            ) {
                 let _ = credential_store(
-                    &seed,
+                    seed.expose(),
                     &d,
                     &mut fs,
                     &cred_box[..len],
@@ -1154,13 +1158,14 @@ fn miri_otp_hid() {
         &[0xFF; 16],
     ] {
         let mut rx = FrameRx::new();
+        let mut payload = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
         let mut tx = FrameTx::new();
         for chunk in data.chunks(REPORT_SIZE) {
             let mut report = [0u8; REPORT_SIZE];
             report[..chunk.len()].copy_from_slice(chunk);
-            match rx.feed(&report) {
-                RxOutcome::Frame { slot: _, payload } => {
-                    tx.load(&payload);
+            match rx.feed(&report, &mut payload) {
+                RxOutcome::Frame { slot: _ } => {
+                    tx.load(payload.expose());
                     let mut out = [0u8; REPORT_SIZE];
                     let mut guard = 0;
                     while tx.next(&mut out) {
@@ -1405,19 +1410,22 @@ fn miri_seed_blob() {
             continue;
         }
         if matches!(data[0], 0x03 | 0x11 | 0x13) {
-            assert_eq!(load_keydev(&dev_old, &mut fs), None);
+            assert!(load_keydev(&dev_old, &mut fs).is_none());
         }
         if data[0] == 0x13 {
-            assert_eq!(load_keydev(&dev_new, &mut fs), None);
+            assert!(load_keydev(&dev_new, &mut fs).is_none());
         }
         let _ = load_keydev(&dev_old, &mut fs);
         let _ = load_keydev(&dev_new, &mut fs);
         let _ = migrate_keydev_pin(&dev_old, &mut fs, &[0x42; 16]);
         let _ = migrate_keydev_pin(&dev_new, &mut fs, &[0x42; 16]);
         let _ = migrate_keydev_boot(&dev_new, &mut fs);
-        let after_one = load_keydev(&dev_new, &mut fs);
+        let after_one = load_keydev(&dev_new, &mut fs).map(|s| *s.expose());
         let _ = migrate_keydev_boot(&dev_new, &mut fs);
-        assert_eq!(after_one, load_keydev(&dev_new, &mut fs));
+        assert_eq!(
+            after_one,
+            load_keydev(&dev_new, &mut fs).map(|s| *s.expose())
+        );
     }
 }
 
@@ -1463,10 +1471,16 @@ fn miri_fido_session() {
             },
         };
         let mut cred_box = [0u8; 512];
-        if let Ok(len) = credential_create(&seed, &d, &input, &rp_hash, &[0x11; 12], &mut cred_box)
-        {
+        if let Ok(len) = credential_create(
+            seed.expose(),
+            &d,
+            &input,
+            &rp_hash,
+            &[0x11; 12],
+            &mut cred_box,
+        ) {
             let _ = credential_store(
-                &seed,
+                seed.expose(),
                 &d,
                 &mut fs,
                 &cred_box[..len],

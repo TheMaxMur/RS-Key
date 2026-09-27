@@ -2,7 +2,28 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+use crate::CONFIG_SIZE;
 use crate::tests_support::*;
+
+/// A slot record as stored: `cfg`, then `tail`.
+fn record(cfg: &[u8; CONFIG_SIZE], tail: [u8; 8]) -> SlotRecord {
+    let mut stored = [0u8; CONFIG_SIZE + 8];
+    stored[..CONFIG_SIZE].copy_from_slice(cfg);
+    stored[CONFIG_SIZE..].copy_from_slice(&tail);
+    SlotRecord::from_bytes(&stored).unwrap()
+}
+
+/// The record's tail, as a press left it.
+fn tail(slot: &SlotRecord) -> &[u8] {
+    &slot.expose()[CONFIG_SIZE..]
+}
+
+/// A tail holding `counter` as its use counter.
+fn use_counter(counter: u16) -> [u8; 8] {
+    let mut tail = [0u8; 8];
+    tail[..2].copy_from_slice(&counter.to_be_bytes());
+    tail
+}
 
 #[test]
 fn hotp_matches_rfc4226_vectors() {
@@ -29,21 +50,21 @@ fn hotp_slot_uses_20_byte_key_and_bumps_imf() {
     cfg[OFF_AES_KEY..OFF_AES_KEY + 16].copy_from_slice(&key20[..16]);
     cfg[OFF_UID..OFF_UID + 4].copy_from_slice(&key20[16..]);
     cfg[OFF_TKT_FLAGS] = TKT_OATH_HOTP | TKT_APPEND_CR;
-    let mut slot = [0u8; SLOT_SIZE];
-    slot[..CONFIG_SIZE].copy_from_slice(&cfg);
+    let mut slot = record(&cfg, [0; 8]);
 
     let mut out = [0u8; MAX_TICKET];
-    let t = build(&slot, 0, 0, [0, 0], &mut out).unwrap();
+    let t = build(&mut slot, 0, 0, [0, 0], &mut out);
     assert!(t.encode);
     assert_eq!(&out[..t.len], b"755224\r"); // RFC 4226 counter 0 + CR
     // IMF advanced 0 → 1.
-    assert_eq!(t.new_tail.unwrap(), 1u64.to_be_bytes());
+    assert!(t.persist);
+    assert_eq!(tail(&slot), 1u64.to_be_bytes());
 
-    // Replay at IMF 1 → the next RFC 4226 code.
-    slot[CONFIG_SIZE..].copy_from_slice(&1u64.to_be_bytes());
-    let t = build(&slot, 0, 0, [0, 0], &mut out).unwrap();
+    // The next press, at IMF 1 → the next RFC 4226 code.
+    let t = build(&mut slot, 0, 0, [0, 0], &mut out);
     assert_eq!(&out[..6], b"287082");
-    assert_eq!(t.new_tail.unwrap(), 2u64.to_be_bytes());
+    assert!(t.persist);
+    assert_eq!(tail(&slot), 2u64.to_be_bytes());
 }
 
 #[test]
@@ -54,10 +75,9 @@ fn hotp8_digits() {
     cfg[OFF_UID..OFF_UID + 4].copy_from_slice(&key20[16..]);
     cfg[OFF_TKT_FLAGS] = TKT_OATH_HOTP;
     cfg[OFF_CFG_FLAGS] = CFG_OATH_HOTP8;
-    let mut slot = [0u8; SLOT_SIZE];
-    slot[..CONFIG_SIZE].copy_from_slice(&cfg);
+    let mut slot = record(&cfg, [0; 8]);
     let mut out = [0u8; MAX_TICKET];
-    let t = build(&slot, 0, 0, [0, 0], &mut out).unwrap();
+    let t = build(&mut slot, 0, 0, [0, 0], &mut out);
     // RFC 4226 8-digit truncation of counter 0 = 84755224.
     assert_eq!(&out[..t.len], b"84755224");
 }
@@ -73,17 +93,17 @@ fn yubico_otp_is_decryptable_and_bumps_counter() {
     cfg[OFF_UID..OFF_UID + 6].copy_from_slice(&uid);
     cfg[OFF_AES_KEY..OFF_AES_KEY + 16].copy_from_slice(&aes);
     cfg[OFF_TKT_FLAGS] = TKT_APPEND_CR;
-    let mut slot = [0u8; SLOT_SIZE];
-    slot[..CONFIG_SIZE].copy_from_slice(&cfg);
+    let mut slot = record(&cfg, [0; 8]);
 
     let mut out = [0u8; MAX_TICKET];
-    let t = build(&slot, 0, 100, [0xAA, 0xBB], &mut out).unwrap();
+    let t = build(&mut slot, 0, 100, [0xAA, 0xBB], &mut out);
     assert!(t.encode);
     assert_eq!(t.len, 44 + 1); // 44 modhex + CR
     assert_eq!(out[44], b'\r');
     assert_eq!(t.new_session, 1);
     // Counter was 0 → set to 1 and persisted.
-    assert_eq!(t.new_tail.unwrap()[..2], 1u16.to_be_bytes());
+    assert!(t.persist);
+    assert_eq!(tail(&slot)[..2], 1u16.to_be_bytes());
 
     // Decode modhex → 22 bytes; the first 6 are the clear public id.
     let raw = demodhex(&out[..44]);
@@ -104,29 +124,27 @@ fn yubico_otp_is_decryptable_and_bumps_counter() {
 fn yubico_session_wrap_bumps_counter() {
     let mut cfg = [0u8; CONFIG_SIZE];
     cfg[OFF_AES_KEY..OFF_AES_KEY + 16].copy_from_slice(&[0x22; 16]);
-    let mut slot = [0u8; SLOT_SIZE];
-    slot[..CONFIG_SIZE].copy_from_slice(&cfg);
-    slot[CONFIG_SIZE..CONFIG_SIZE + 2].copy_from_slice(&5u16.to_be_bytes());
+    let mut slot = record(&cfg, use_counter(5));
     let mut out = [0u8; MAX_TICKET];
     // session 255 → wraps to 0 → counter 5 → 6.
-    let t = build(&slot, 255, 0, [0, 0], &mut out).unwrap();
+    let t = build(&mut slot, 255, 0, [0, 0], &mut out);
     assert_eq!(t.new_session, 0);
-    assert_eq!(t.new_tail.unwrap()[..2], 6u16.to_be_bytes());
+    assert!(t.persist);
+    assert_eq!(tail(&slot)[..2], 6u16.to_be_bytes());
 }
 
 #[test]
 fn yubico_use_counter_stops_at_the_ceiling() {
     let mut cfg = [0u8; CONFIG_SIZE];
     cfg[OFF_AES_KEY..OFF_AES_KEY + 16].copy_from_slice(&[0x22; 16]);
-    let mut slot = [0u8; SLOT_SIZE];
-    slot[..CONFIG_SIZE].copy_from_slice(&cfg);
-    slot[CONFIG_SIZE..CONFIG_SIZE + 2].copy_from_slice(&crate::USE_COUNTER_MAX.to_be_bytes());
+    let mut slot = record(&cfg, use_counter(crate::USE_COUNTER_MAX));
     let mut out = [0u8; MAX_TICKET];
     // The wrapping press at the ceiling must store nothing: 0x8000 sets the
     // reserved high bit, and power_up_bump would then decline forever after.
-    let t = build(&slot, 255, 0, [0, 0], &mut out).unwrap();
+    let t = build(&mut slot, 255, 0, [0, 0], &mut out);
     assert_eq!(t.new_session, 0);
-    assert!(t.new_tail.is_none());
+    assert!(!t.persist);
+    assert_eq!(tail(&slot), use_counter(crate::USE_COUNTER_MAX));
 }
 
 #[test]
@@ -137,13 +155,13 @@ fn static_password_types_scancodes_verbatim() {
     }
     cfg[OFF_TKT_FLAGS] = TKT_APPEND_CR;
     cfg[OFF_CFG_FLAGS] = CFG_STATIC_TICKET;
-    let mut slot = [0u8; SLOT_SIZE];
-    slot[..CONFIG_SIZE].copy_from_slice(&cfg);
+    let mut slot = record(&cfg, [0; 8]);
     let mut out = [0u8; MAX_TICKET];
-    let t = build(&slot, 0, 0, [0, 0], &mut out).unwrap();
+    let t = build(&mut slot, 0, 0, [0, 0], &mut out);
     assert!(!t.encode); // raw scancodes
     assert_eq!(t.len, 38 + 1);
     assert_eq!(&out[..38], &cfg[..38]);
     assert_eq!(out[38], 0x28); // Enter scancode
-    assert!(t.new_tail.is_none());
+    assert!(!t.persist);
+    assert_eq!(tail(&slot), [0; 8]);
 }

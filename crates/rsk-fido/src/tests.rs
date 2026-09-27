@@ -135,3 +135,55 @@ fn dispatch_get_info_carries_the_encrypted_members_once_a_token_exists() {
         "the declared count must consume the map"
     );
 }
+
+/// Tests compare secrets by value: the bytes of a `Secret`, an `Option` of one or a
+/// reference to one, and plain arrays passed through as they are. Test-only.
+pub(crate) trait Bare {
+    type Out: PartialEq + core::fmt::Debug;
+    fn bare(self) -> Self::Out;
+}
+impl<const N: usize> Bare for rsk_secret::Secret<[u8; N]> {
+    type Out = [u8; N];
+    fn bare(self) -> [u8; N] {
+        *self.expose()
+    }
+}
+impl<const N: usize> Bare for &rsk_secret::Secret<[u8; N]> {
+    type Out = [u8; N];
+    fn bare(self) -> [u8; N] {
+        *self.expose()
+    }
+}
+impl<const N: usize> Bare for Option<rsk_secret::Secret<[u8; N]>> {
+    type Out = Option<[u8; N]>;
+    fn bare(self) -> Option<[u8; N]> {
+        self.map(|s| *s.expose())
+    }
+}
+impl<const N: usize> Bare for Option<&rsk_secret::Secret<[u8; N]>> {
+    type Out = Option<[u8; N]>;
+    fn bare(self) -> Option<[u8; N]> {
+        self.map(|s| *s.expose())
+    }
+}
+impl<const N: usize> Bare for [u8; N] {
+    type Out = [u8; N];
+    fn bare(self) -> [u8; N] {
+        self
+    }
+}
+impl<const N: usize> Bare for &[u8; N] {
+    type Out = [u8; N];
+    fn bare(self) -> [u8; N] {
+        *self
+    }
+}
+impl<const N: usize> Bare for Option<[u8; N]> {
+    type Out = Option<[u8; N]>;
+    fn bare(self) -> Option<[u8; N]> {
+        self
+    }
+}
+pub(crate) fn bare<T: Bare>(x: T) -> T::Out {
+    x.bare()
+}

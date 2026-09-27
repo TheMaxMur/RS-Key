@@ -5,8 +5,8 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 # Crypto surface over RustCrypto: hashes, HMAC/HKDF, CRC-32, base64url, AES
 # CBC/CFB + AES-256-GCM, ChaCha20-Poly1305, PIN KDF, CTAP2 PIN protocol, PQC.
@@ -26,7 +26,7 @@ cfb-mode = { workspace = true }
 aes-gcm = { workspace = true }
 chacha20poly1305 = { workspace = true }
 p256 = { workspace = true }
-zeroize = { workspace = true }
+rsk-secret = { workspace = true }
 ml-kem = { workspace = true }
 # Stack-optimized ML-DSA (FIPS 204) — the ML-DSA-44 and -65 credential signing,
 # re-exported below.

@@ -5,9 +5,8 @@ license = "AGPL-3.0-only"
 edition = "2024"
 publish = false
 
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+[lints]
+workspace = true
 
 # Yubico OTP applet: the CCID side (slot configure/update/swap/delete, status,
 # HMAC-SHA1 / Yubico-mode challenge-response) plus the keyboard HID interface —
@@ -22,14 +21,17 @@ kani-soft = ["rsk-crypto/kani-soft"]
 # OTP-HID admin writes (SET_DEVICE_INFO/DEVICE_CONFIG/SCAN_MAP/NDEF) as a real
 # YubiKey does; `--features strict-config` restores today's silent-OK no-op.
 strict-config = []
+# `SlotRecord::from_bytes`, for the fuzz targets and the emulator's tests, which
+# seed a slot as it was stored. Never in the firmware: it is the one way to pick a
+# record's tail.
+test-util = []
 
 [dependencies]
 rsk-sdk = { workspace = true }
+rsk-secret = { workspace = true }
 rsk-fs = { workspace = true }
 rsk-crypto = { workspace = true }
 rsk-devconf = { workspace = true }
-# At-rest sealing of slot secrets: zeroize scrubs the plaintext scratch buffers.
-zeroize = { workspace = true }
 
 [dev-dependencies]
 # RamStorage for the host tests (the same backend the other applets use).
@@ -37,3 +39,5 @@ rsk-fs = { workspace = true, features = ["test-util"] }
 # An independent AES-128 for the typed Yubico-OTP round-trip test (decrypt the
 # emitted modhex token and check its embedded fields).
 aes = { workspace = true }
+# hid_tests.rs asserts the request copy is ZeroizeOnDrop.
+zeroize = { workspace = true }

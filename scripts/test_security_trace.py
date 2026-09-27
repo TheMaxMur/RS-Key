@@ -839,7 +839,7 @@ def test_an_unexcused_shrug_names_the_event_and_the_direction_c_answered():
 
 
 def test_a_power_cycle_carrying_a_status_is_not_the_pseudo_command_excused():
-    """`tools/emu/src/device.rs:816-817` passes the literal 0 as the status of a
+    """`tools/emu/src/device.rs:817-818` passes the literal 0 as the status of a
     replug, so `delta_c` of it is a placeholder, not the device answering — and
     THAT is the class's whole reason, so the arm asserts it.
 

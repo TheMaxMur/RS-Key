@@ -348,6 +348,105 @@ fn assertion_no_match_spends_token_permissions_except_lbw() {
     );
 }
 
+/// A presence source that answers what it was built with.
+struct Answer(crate::Presence);
+impl crate::UserPresence for Answer {
+    fn request(&mut self, _confirm: crate::Confirm<'_>) -> crate::Presence {
+        self.0
+    }
+}
+
+/// The three ways a user-presence test fails, and the status each answers.
+const REFUSALS: [(crate::Presence, CtapError); 3] = [
+    (crate::Presence::Declined, CtapError::OperationDenied),
+    (crate::Presence::Timeout, CtapError::OperationDenied),
+    (crate::Presence::Cancelled, CtapError::KeepAliveCancel),
+];
+
+// CTAP 2.1 §6.5.5.7 spends the token once the user-presence test SUCCEEDS, so a
+// refused touch -- declined, timed out or cancelled -- spends nothing, on the
+// matched path and on the no-match one: the same token can retry the ceremony.
+#[test]
+fn a_refused_touch_leaves_the_token_unspent() {
+    for (answer, status) in REFUSALS {
+        for matched in [true, false] {
+            let (mut fs, mut rng) = setup();
+            let mut state = crate::FidoState::new();
+            let mut out = [0u8; 1024];
+            let cred_id = {
+                let mut presence = crate::AlwaysConfirm;
+                let mut ctx = Ctx {
+                    presence: &mut presence,
+                    dev: dev(),
+                    fs: &mut fs,
+                    rng: &mut rng,
+                    state: &mut state,
+                    now_ms: 10,
+                };
+                let n = make_credential(&mut ctx, &mc_request(false), &mut out).unwrap();
+                parse_mc(&out[..n]).0
+            };
+            let token = arm_pin(&mut fs, &mut state);
+            let armed = PERM_GA | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+            state.paut.permissions = armed;
+            let mut param = [0u8; 32];
+            let plen = rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &CDH, &mut param)
+                .unwrap();
+            let allow = if matched {
+                cred_id
+            } else {
+                std::vec![0x77u8; 42]
+            };
+            let req = ga_request_pin(&allow, &param[..plen], 2);
+            let mut o = [0u8; 1024];
+            let got = {
+                let mut presence = Answer(answer);
+                let mut ctx = Ctx {
+                    presence: &mut presence,
+                    dev: dev(),
+                    fs: &mut fs,
+                    rng: &mut rng,
+                    state: &mut state,
+                    now_ms: 20,
+                };
+                get_assertion(&mut ctx, &req, &mut o)
+            };
+            let case = if matched { "matched" } else { "no match" };
+            assert_eq!(got, Err(status), "{answer:?}, {case}");
+            assert_eq!(state.paut.permissions, armed, "{answer:?}, {case}");
+            assert!(state.user_verified(), "{answer:?}, {case}");
+        }
+    }
+}
+
+// The zero-length pinUvAuthParam probe takes a touch of its own (§6.2.2 step 1)
+// and is not a user-presence test in §6.5.5.7's sense: a live token survives it.
+#[test]
+fn the_selection_probe_touch_leaves_the_token_unspent() {
+    let (mut fs, mut rng) = setup();
+    let mut state = crate::FidoState::new();
+    let _token = arm_pin(&mut fs, &mut state);
+    let armed = PERM_GA | crate::state::PERM_ACFG | crate::state::PERM_LBW;
+    state.paut.permissions = armed;
+    let req = ga_request_pin(&[0x77u8; 42], &[], 2);
+    let mut o = [0u8; 1024];
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 20,
+    };
+    assert_eq!(
+        get_assertion(&mut ctx, &req, &mut o),
+        Err(CtapError::PinInvalid)
+    );
+    assert_eq!(state.paut.permissions, armed);
+    assert!(state.user_verified());
+}
+
 #[test]
 fn unscoped_pin_token_binds_rpid_on_first_getassertion() {
     // A GA-capable token minted without an rpId (legacy getPinToken) must bind
@@ -1128,8 +1227,8 @@ fn u2f_handle_usable_via_ctap2_allowlist() {
     let rp_id_hash = sha256(b"example.com");
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
     // cmd_register would derive this handle + scalar from the device seed.
-    let (kh, scalar) = derive_new(&seed, &rp_id_hash, &mut rng);
-    let (x, y) = public_xy(&scalar).unwrap();
+    let (kh, scalar) = derive_new(seed.expose(), &rp_id_hash, &mut rng);
+    let (x, y) = public_xy(scalar.expose()).unwrap();
 
     let mut out = [0u8; 1024];
     let mut state = crate::FidoState::new();
@@ -1398,7 +1497,7 @@ fn a_faulted_cred_counter_probe_does_not_fabricate_a_sign_count() {
     let r = run_assert(&mut fs, &mut rng, &ga_request(Some(&b)));
     assert_eq!(assertion_sign_count(&r), 1);
 
-    medium.stick(Some(crate::consts::EF_CRED_CTR));
+    medium.stick(Some(crate::consts::EF_CRED_CTR.get()));
     let faulted = try_assert(&mut fs, &mut rng, &ga_request(Some(&a)));
     medium.stick(None);
     // B was never named by that request; its counter is pure collateral.
@@ -1439,13 +1538,13 @@ fn a_transient_cred_counter_fault_does_not_reach_the_signature() {
         assert_eq!(assertion_sign_count(&r), want);
     }
     let before = medium
-        .value(crate::consts::EF_CRED_CTR)
+        .value(crate::consts::EF_CRED_CTR.get())
         .expect("the packed file is on the medium");
 
-    medium.stick_once(crate::consts::EF_CRED_CTR);
+    medium.stick_once(crate::consts::EF_CRED_CTR.get());
     let faulted = try_assert(&mut fs, &mut rng, &ga_request(Some(&a)));
     assert_eq!(
-        medium.value(crate::consts::EF_CRED_CTR).as_deref(),
+        medium.value(crate::consts::EF_CRED_CTR.get()).as_deref(),
         Some(&before[..]),
         "the counter was rewritten from a value that was never read"
     );
@@ -1501,11 +1600,11 @@ fn a_transient_cred_counter_fault_does_not_reach_the_next_signature() {
         }
     }
     let before = medium
-        .value(crate::consts::EF_CRED_CTR)
+        .value(crate::consts::EF_CRED_CTR.get())
         .expect("the packed file is on the medium");
 
     let mut o2 = [0u8; 1024];
-    medium.stick_once(crate::consts::EF_CRED_CTR);
+    medium.stick_once(crate::consts::EF_CRED_CTR.get());
     let r = {
         let mut presence = crate::AlwaysConfirm;
         let mut ctx = Ctx {
@@ -1519,7 +1618,7 @@ fn a_transient_cred_counter_fault_does_not_reach_the_next_signature() {
         get_next_assertion(&mut ctx, &mut o2)
     };
     assert_eq!(
-        medium.value(crate::consts::EF_CRED_CTR).as_deref(),
+        medium.value(crate::consts::EF_CRED_CTR.get()).as_deref(),
         Some(&before[..]),
         "the counter was rewritten from a value that was never read"
     );
@@ -1599,9 +1698,9 @@ fn legacy_resident_credential_seeds_from_global_counter() {
     ))
     .0;
     // Recreate a pre-upgrade device: a non-trivial global counter and no per-cred entry.
-    fs.put(crate::consts::EF_COUNTER, &100u32.to_le_bytes())
+    fs.put_counter(crate::consts::EF_COUNTER, &100u32.to_le_bytes())
         .unwrap();
-    fs.delete(crate::consts::EF_CRED_CTR).unwrap();
+    fs.delete(crate::consts::EF_CRED_CTR.get()).unwrap();
 
     let r1 = run_assert(&mut fs, &mut rng, &ga_request(Some(&cred_id)));
     assert_eq!(
@@ -1634,9 +1733,9 @@ fn legacy_credential_survives_gap_zerofill() {
     ))
     .0;
     // Recreate a pre-upgrade device: a live global and NO per-credential file at all.
-    fs.put(crate::consts::EF_COUNTER, &50u32.to_le_bytes())
+    fs.put_counter(crate::consts::EF_COUNTER, &50u32.to_le_bytes())
         .unwrap();
-    fs.delete(crate::consts::EF_CRED_CTR).unwrap();
+    fs.delete(crate::consts::EF_CRED_CTR.get()).unwrap();
 
     // Assert H (slot 1) first: this materializes slot 1 and zero-extends the packed
     // file over slot 0.
@@ -2210,9 +2309,9 @@ fn get_next_assertion_expires_after_a_quiet_thirty_seconds() {
 /// FIRST channel's clientDataHash, under the first request's presence decision,
 /// having neither supplied the one nor satisfied the other.
 ///
-/// Ported from OpenSK's `test_channel_interleaving`; the same scoping this state
-/// struct's neighbour `mse_cid` already applies, and the unscoped version of it
-/// is what audit run-31 filed as HIGH.
+/// Ported from OpenSK's `test_channel_interleaving`; the same scoping the MSE
+/// channel in this state struct already applies to its `cid`, and the unscoped
+/// version of it is what audit run-31 filed as HIGH.
 #[test]
 fn get_next_assertion_refuses_a_second_channel() {
     const CHANNEL_A: u32 = 0x0100_0000;
@@ -2765,7 +2864,7 @@ fn stored_box_and_seed(fs: &mut Fs<RamStorage>) -> (std::vec::Vec<u8>, [u8; 32])
     let mut rec = [0u8; 1024];
     let n = fs.read(EF_CRED, &mut rec).unwrap();
     let seed = crate::seed::load_keydev(&dev(), fs).unwrap();
-    (cred_record_box(&rec[..n]).to_vec(), seed)
+    (cred_record_box(&rec[..n]).to_vec(), *seed.expose())
 }
 
 fn cose_xy(e: &mut Encoder<Cursor<&mut [u8]>>, x: &[u8], y: &[u8]) {
@@ -2858,7 +2957,10 @@ fn hmac_secret_assertion_end_to_end() {
     // the box, so the reseal-stable id is the expected derivation input.
     let (_cred_box, seed) = stored_box_and_seed(&mut fs);
     let cr = crate::credential::derive_hmac_key(&seed, &resident_id[..]);
-    assert_eq!(&dec[..], &rsk_crypto::hmac_sha256(&cr[..32], &salt)[..]);
+    assert_eq!(
+        &dec[..],
+        &rsk_crypto::hmac_sha256(&cr.expose()[..32], &salt)[..]
+    );
 }
 
 fn run_mc_state(
@@ -3070,8 +3172,11 @@ fn hmac_secret_survives_updateuserinfo_reseal_end_to_end() {
     // And it is the correct HMAC(CredRandomWithoutUV, salt), keyed off the STABLE
     // resident id rather than the rotated box.
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
-    let cr = crate::credential::derive_hmac_key(&seed, &resident_id[..]);
-    assert_eq!(dec1, rsk_crypto::hmac_sha256(&cr[..32], &salt).to_vec());
+    let cr = crate::credential::derive_hmac_key(seed.expose(), &resident_id[..]);
+    assert_eq!(
+        dec1,
+        rsk_crypto::hmac_sha256(&cr.expose()[..32], &salt).to_vec()
+    );
 }
 
 // The CTAP 2.1 large-blob design, which a `largeblob-ext` build withdraws
@@ -4330,8 +4435,8 @@ fn getnextassertion_hmac_secret_keys_off_resident_id() {
 
     let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
     let expected = |cred_id: &[u8]| {
-        let cr = crate::credential::derive_hmac_key(&seed, cred_id);
-        rsk_crypto::hmac_sha256(&cr[..32], &salt).to_vec()
+        let cr = crate::credential::derive_hmac_key(seed.expose(), cred_id);
+        rsk_crypto::hmac_sha256(&cr.expose()[..32], &salt).to_vec()
     };
 
     // Discovery getAssertion → newest credential; its hmac output keys off its id.
