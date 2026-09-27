@@ -132,7 +132,7 @@ fn verify_assertion(resp: &[u8], x: &[u8; 32], y: &[u8; 32]) -> usize {
 
 /// Arm a PIN + live token (GA permission) over an already-seeded device.
 /// The seed stays plain — PIN ops never wrap it.
-fn arm_pin(fs: &mut Fs<RamStorage>, state: &mut crate::FidoState) -> [u8; 32] {
+fn arm_pin<S: rsk_fs::Storage>(fs: &mut Fs<S>, state: &mut crate::FidoState) -> [u8; 32] {
     let mut pin_file = [0u8; 35];
     pin_file[0] = 8;
     pin_file[1] = 4;
@@ -617,7 +617,10 @@ fn ga_request_up(allow: &[u8], up: bool) -> std::vec::Vec<u8> {
     buf[..n].to_vec()
 }
 
-fn register_non_resident(fs: &mut Fs<RamStorage>, rng: &mut SeqRng) -> std::vec::Vec<u8> {
+fn register_non_resident<S: rsk_fs::Storage>(
+    fs: &mut Fs<S>,
+    rng: &mut SeqRng,
+) -> std::vec::Vec<u8> {
     let mut out = [0u8; 1024];
     let mut state = crate::FidoState::new();
     let mut presence = crate::AlwaysConfirm;
@@ -5146,3 +5149,7 @@ fn hmac_secret_length_and_mac_codes() {
         .unwrap();
     }
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "getassertion_reads_tests.rs"]
+mod reads;

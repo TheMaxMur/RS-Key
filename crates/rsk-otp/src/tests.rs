@@ -35,14 +35,14 @@ fn new_fs() -> Fs<RamStorage> {
     fs
 }
 
-fn select(app: &mut OtpApplet, fs: &mut Fs<RamStorage>) -> (Sw, Vec<u8>) {
+fn select<S: Storage>(app: &mut OtpApplet, fs: &mut Fs<S>) -> (Sw, Vec<u8>) {
     let mut out = [0u8; 256];
     let mut res = ResBuf::new(&mut out);
     let sw = Applet::select(app, false, fs, &mut res);
     (sw, res.as_slice().to_vec())
 }
 
-fn run(app: &mut OtpApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) -> (Sw, Vec<u8>) {
+fn run<S: Storage>(app: &mut OtpApplet, fs: &mut Fs<S>, raw: &[u8]) -> (Sw, Vec<u8>) {
     let mut out = [0u8; 1024];
     let mut res = ResBuf::new(&mut out);
     let apdu = Apdu::parse(raw).unwrap();
@@ -301,9 +301,9 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_slot() {
     assert!(!medium.live(rsk_fs::EF_HARDENED));
 }
 
-fn configure(
+fn configure<S: Storage>(
     app: &mut OtpApplet,
-    fs: &mut Fs<RamStorage>,
+    fs: &mut Fs<S>,
     p1: u8,
     p2: u8,
     config: &[u8; CONFIG_SIZE],
@@ -2508,3 +2508,7 @@ fn a_faulted_read_of_a_pre_otp_slot_is_never_reported_clear() {
         );
     }
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "reads_tests.rs"]
+mod reads;

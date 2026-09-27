@@ -10859,3 +10859,7 @@ fn a_torn_move_key_never_loses_the_key_or_serves_it_headless() {
         },
     );
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "reads_tests.rs"]
+mod reads;

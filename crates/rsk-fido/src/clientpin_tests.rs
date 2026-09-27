@@ -3804,3 +3804,7 @@ fn change_pin_with_a_bad_pin_auth_param_changes_nothing() {
     assert_eq!(fs.read(EF_PIN, &mut after), Some(PIN_FILE_LEN));
     assert_eq!(after, before, "a refused changePIN touched the PIN record");
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "clientpin_reads_tests.rs"]
+mod reads;

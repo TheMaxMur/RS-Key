@@ -2674,3 +2674,7 @@ fn a_faulted_read_of_a_pre_otp_record_is_never_reported_clear() {
         "an OTP-PIN the pass could not look at is not a v1 one"
     );
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "reads_tests.rs"]
+mod reads;

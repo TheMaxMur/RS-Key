@@ -189,3 +189,8 @@ pub const MAX_DYNAMIC_FILES: usize = 1280;
 #[cfg(any(test, feature = "test-util"))]
 #[path = "cut.rs"]
 pub mod cut;
+
+/// Its read half: every flash read a command makes, failed one at a time.
+#[cfg(any(test, feature = "test-util"))]
+#[path = "probe.rs"]
+pub mod probe;

@@ -1027,3 +1027,7 @@ fn read_record<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Option<std::vec::Vec<u8>
     let mut buf = [0u8; 32 * MAX_EA_RPIDS];
     fs.read(fid, &mut buf).map(|n| buf[..n].to_vec())
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "config_reads_tests.rs"]
+mod reads;

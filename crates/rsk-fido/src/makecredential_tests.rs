@@ -762,7 +762,7 @@ fn dev() -> Device<'static> {
 /// EF_PIN present (the seed stays plain — PIN ops never wrap it), a live
 /// token with MC|GA permissions. Returns the token so the test can compute
 /// a valid pinUvAuthParam.
-fn arm_pin(fs: &mut Fs<RamStorage>, state: &mut crate::FidoState) -> [u8; 32] {
+fn arm_pin<S: rsk_fs::Storage>(fs: &mut Fs<S>, state: &mut crate::FidoState) -> [u8; 32] {
     let mut pin_file = [0u8; 35];
     pin_file[0] = 8; // retries
     pin_file[1] = 4; // length
@@ -2931,3 +2931,7 @@ fn an_ea_list_wider_than_this_build_matches_what_it_holds_and_declines_the_rest(
         "an entry past the buffer declines; it must never grant"
     );
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "makecredential_reads_tests.rs"]
+mod reads;

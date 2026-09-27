@@ -3858,3 +3858,7 @@ fn a_refused_rsa_import_keeps_the_slot_and_its_origin() {
     assert_eq!(sw, Sw::OK);
     assert_eq!(of(&mut fs, consts::EF_PK_SIG), ORIGIN_IMPORTED);
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "reads_tests.rs"]
+mod reads;

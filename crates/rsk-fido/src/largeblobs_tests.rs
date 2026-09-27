@@ -669,3 +669,7 @@ fn a_torn_large_blob_write_leaves_a_whole_array() {
         },
     );
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "largeblobs_reads_tests.rs"]
+mod reads;

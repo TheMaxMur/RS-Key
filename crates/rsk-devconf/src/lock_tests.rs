@@ -346,3 +346,7 @@ fn both_records_are_gates_for_the_device_wide_wipe() {
     assert!(crate::is_devconf_gate_fid(EF_DEV_CONF));
     assert!(crate::is_devconf_gate_fid(EF_DEV_LOCK));
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "lock_reads_tests.rs"]
+mod reads;

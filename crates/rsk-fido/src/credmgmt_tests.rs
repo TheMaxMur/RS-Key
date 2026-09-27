@@ -2473,3 +2473,7 @@ fn a_credential_that_cannot_be_read_settles_nothing() {
         "an unreadable credential's RP was settled away"
     );
 }
+
+// The read-fault sweep lives in its own file; it needs this module's fixtures.
+#[path = "credmgmt_reads_tests.rs"]
+mod reads;
