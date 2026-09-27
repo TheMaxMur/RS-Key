@@ -38,11 +38,11 @@ fn crt_parameters_are_the_carmichael_ones() {
     // against a second copy of the same derivation.
     let k = test_key();
     let (dp, dq, qinv) = k.crt().unwrap();
-    assert_eq!(*dp, k.d() % (p() - big(1)));
-    assert_eq!(*dq, k.d() % (q() - big(1)));
+    assert_eq!(*dp, &k.d % (p() - big(1)));
+    assert_eq!(*dq, &k.d % (q() - big(1)));
     assert_eq!((qinv * q()) % p(), big(1));
     // And d is the Carmichael exponent, not Euler's: d < λ(n) = lcm(p−1, q−1).
-    assert!(*k.d() < (p() - big(1)).lcm(&(q() - big(1))));
+    assert!(k.d < (p() - big(1)).lcm(&(q() - big(1))));
 }
 
 #[test]
@@ -92,12 +92,12 @@ fn private_op_reproduces_openssl_signatures() {
     for (i, (digest, want)) in SIGN_SHA256.iter().enumerate() {
         let hash = hex(digest);
         let mlen = k.size();
-        let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
+        let dlen = crate::fixtures::DI_SHA256.len() + hash.len();
         let mut em = [0xffu8; MAX_RSA_BYTES];
         em[0] = 0x00;
         em[1] = 0x01;
         em[mlen - dlen - 1] = 0x00;
-        em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::pkcs1v15::DI_SHA256);
+        em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::fixtures::DI_SHA256);
         em[mlen - hash.len()..mlen].copy_from_slice(&hash);
         let mut out = [0u8; MAX_RSA_BYTES];
         let n = k
@@ -113,7 +113,7 @@ fn private_op_takes_the_non_crt_branch_to_the_same_answer() {
     // one operation; a key with no CRT form exercises the second, so a bug in
     // either shows up as the two disagreeing on the same input.
     let k = test_key();
-    let (n, e, d) = (k.n().clone(), k.e().clone(), k.d().clone());
+    let (n, e, d) = (k.n.clone(), k.e.clone(), k.d.clone());
     let plain = RsaKey {
         n,
         e,
@@ -125,12 +125,12 @@ fn private_op_takes_the_non_crt_branch_to_the_same_answer() {
     let (digest, want) = SIGN_SHA256[1];
     let hash = hex(digest);
     let mlen = plain.size();
-    let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
+    let dlen = crate::fixtures::DI_SHA256.len() + hash.len();
     let mut em = [0xffu8; MAX_RSA_BYTES];
     em[0] = 0x00;
     em[1] = 0x01;
     em[mlen - dlen - 1] = 0x00;
-    em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::pkcs1v15::DI_SHA256);
+    em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::fixtures::DI_SHA256);
     em[mlen - hash.len()..mlen].copy_from_slice(&hash);
     let mut out = [0u8; MAX_RSA_BYTES];
     let n = plain

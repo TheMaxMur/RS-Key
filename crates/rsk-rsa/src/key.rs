@@ -131,18 +131,6 @@ impl RsaKey {
         self.e.to_bytes_be()
     }
 
-    pub(crate) fn n(&self) -> &BigUint {
-        &self.n
-    }
-
-    pub(crate) fn e(&self) -> &BigUint {
-        &self.e
-    }
-
-    pub(crate) fn d(&self) -> &BigUint {
-        &self.d
-    }
-
     pub(crate) fn p(&self) -> &BigUint {
         &self.p
     }

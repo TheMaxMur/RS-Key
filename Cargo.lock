@@ -2422,12 +2422,10 @@ dependencies = [
 name = "rsk-x509"
 version = "0.1.0"
 dependencies = [
- "ed25519-dalek",
  "p256",
  "p384",
  "rsk-crypto",
  "rsk-ec",
- "rsk-rsa",
  "rsk-sdk",
  "x509-parser",
 ]

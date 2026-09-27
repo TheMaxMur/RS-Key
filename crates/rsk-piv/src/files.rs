@@ -378,7 +378,7 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
                 attestation: None,
                 ca_pathlen: Some(1),
             },
-            &x509::Signer::Ec(&key),
+            &key,
             rng,
             &mut cert,
         )?;

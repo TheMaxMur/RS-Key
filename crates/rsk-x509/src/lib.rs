@@ -9,21 +9,23 @@
 //!
 //! Profile: X.509 v3, 20-byte random serial, validity 2024-03-25 → 2074-12-31,
 //! names `C=ES, O=RS-Key, CN=<caller's>`, basicConstraints (CA when the caller
-//! asks), a critical keyUsage unless the caller leaves it out (digitalSignature,
-//! plus keyCertSign on a CA; keyAgreement alone for X25519), SKI/AKI (SHA-1, RFC
-//! 5280 method 1), and any further non-critical extensions the caller names — PIV's
-//! attestation statement is one such set.
+//! asks), a critical keyUsage on a CA (digitalSignature and keyCertSign) and none
+//! on a leaf, SKI/AKI (SHA-1, RFC 5280 method 1), and any further non-critical
+//! extensions the caller names — PIV's attestation statement is one such set. The
+//! signer is an EC key, ECDSA over SHA-256 or SHA-384.
 #![cfg_attr(not(test), no_std)]
 
 use rsk_crypto::{sha1, sha256, sha384};
 use rsk_ec::{Curve, EcError, MAX_EC_POINT, MAX_EC_SIG, PrivKey};
-use rsk_rsa::pkcs1v15::rsa_sign;
-use rsk_rsa::{RsaError, RsaKey};
 use rsk_sdk::{Rng, Sw};
 
-/// Largest certificate the builder emits (RSA-4096 SPKI + a 512-byte signature
-/// + extensions ≈ 1.4 KB, with margin).
+/// Largest certificate the builder emits (an RSA-4096 SPKI + extensions + the
+/// signature ≈ 1 KB, with margin).
 pub const MAX_CERT: usize = 1536;
+
+/// Largest DER ECDSA signature: `SEQ { INTEGER r, INTEGER s }` adds a tag and up to
+/// two length bytes, and each INTEGER a tag, a length byte and a sign pad.
+const MAX_ECDSA_DER: usize = MAX_EC_SIG + 9;
 
 // OID content bytes.
 const OID_EC_PUBKEY: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x02, 0x01];
@@ -36,10 +38,8 @@ const OID_BP384R1: &[u8] = &[0x2B, 0x24, 0x03, 0x03, 0x02, 0x08, 0x01, 0x01, 0x0
 const OID_ECDSA_SHA256: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02];
 const OID_ECDSA_SHA384: &[u8] = &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03];
 const OID_RSA_ENC: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x01];
-const OID_RSA_SHA256: &[u8] = &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B];
-// RFC 8410 algorithm OIDs (id-Ed25519 1.3.101.112, id-X25519 1.3.101.110); each
-// is both the SPKI algorithm and, for Ed25519, the signatureAlgorithm — with
-// absent parameters in either role.
+// RFC 8410 algorithm OIDs (id-Ed25519 1.3.101.112, id-X25519 1.3.101.110), the
+// SPKI algorithm with absent parameters.
 const OID_ED25519: &[u8] = &[0x2B, 0x65, 0x70];
 const OID_X25519: &[u8] = &[0x2B, 0x65, 0x6E];
 const OID_AT_COUNTRY: &[u8] = &[0x55, 0x04, 0x06];
@@ -56,17 +56,15 @@ const OID_AKI: &[u8] = &[0x55, 0x1D, 0x23];
 pub enum Error {
     Encoding,
     Ec(EcError),
-    Rsa(RsaError),
 }
 
 impl Error {
     /// What a card applet answers: `EXEC_ERROR` for what the profile cannot encode,
     /// else its own status word for its signer's refusal.
-    pub fn sw(self, ec: fn(EcError) -> Sw, rsa: fn(RsaError) -> Sw) -> Sw {
+    pub fn sw(self, ec: fn(EcError) -> Sw) -> Sw {
         match self {
             Error::Encoding => Sw::EXEC_ERROR,
             Error::Ec(e) => ec(e),
-            Error::Rsa(e) => rsa(e),
         }
     }
 }
@@ -162,14 +160,6 @@ pub enum Spki<'a> {
     },
 }
 
-/// Who signs: the subject's own key (self-signed) or an issuer's.
-pub enum Signer<'a> {
-    Ec(&'a PrivKey),
-    Rsa(&'a RsaKey),
-    /// A pure-Ed25519 signer (PureEdDSA over the whole TBS, never a digest).
-    Ed25519(&'a PrivKey),
-}
-
 /// What goes into one certificate besides its signer.
 pub struct Cert<'a> {
     /// The subject's and the issuer's common names; the rest of each name is
@@ -177,14 +167,12 @@ pub struct Cert<'a> {
     pub subject_cn: &'a [u8],
     pub issuer_cn: &'a [u8],
     pub spki: Spki<'a>,
-    /// An EC signer signs over SHA-384 rather than SHA-256; an RSA signer always
-    /// signs PKCS#1 v1.5 over SHA-256.
+    /// The signer signs over SHA-384 rather than SHA-256.
     pub sha384: bool,
-    /// `Some(pathlen)` marks a CA certificate.
+    /// `Some(pathlen)` marks a CA certificate, the only kind with a keyUsage. An
+    /// attestation statement goes without, as a YubiKey's does: it says where a
+    /// key came from, not what it is for.
     pub ca_pathlen: Option<u8>,
-    /// Whether the keyUsage goes in. An attestation statement leaves it out, as a
-    /// YubiKey's does: it says where a key came from, not what it is for.
-    pub key_usage: bool,
     /// Further non-critical extensions, `(OID content, extnValue content)` in DER
     /// order; they precede the profile's own.
     pub extra: &'a [(&'a [u8], &'a [u8])],
@@ -312,25 +300,12 @@ fn extensions(
 ) -> Result<(), Error> {
     let m_outer = w.mark();
     // DER order: [extra…,] BC, SKI, AKI[, KU] — written backward.
-    if c.key_usage {
-        // keyUsage, critical: keyAgreement for X25519, else digitalSignature, and
-        // keyCertSign only on a CA — RFC 5280 §4.2.1.3: "if keyCertSign is asserted,
-        // cA MUST also be asserted", which every leaf broke once (audit run-34 #36).
+    if c.ca_pathlen.is_some() {
+        // keyUsage, critical, and on a CA only — RFC 5280 §4.2.1.3: "if keyCertSign
+        // is asserted, cA MUST also be asserted", which every leaf broke once
+        // (audit run-34 #36).
         let m = w.mark();
-        let ku: &[u8] = if matches!(
-            c.spki,
-            Spki::Rfc8410 {
-                curve: Curve::X25519,
-                ..
-            }
-        ) {
-            &[0x03, 0x02, 0x03, 0x08] // keyAgreement
-        } else if c.ca_pathlen.is_some() {
-            &[0x03, 0x02, 0x02, 0x84] // digitalSignature | keyCertSign
-        } else {
-            &[0x03, 0x02, 0x07, 0x80] // digitalSignature
-        };
-        w.raw(ku)?;
+        w.raw(&[0x03, 0x02, 0x02, 0x84])?; // digitalSignature | keyCertSign
         finish_ext(w, OID_KEY_USAGE, true, m)?;
     }
     {
@@ -368,57 +343,33 @@ fn extensions(
     w.close(0xA3, m_outer) // [3] EXPLICIT
 }
 
-fn sigalg(w: &mut DerRev, signer: &Signer, sha384sig: bool) -> Result<(), Error> {
+fn sigalg(w: &mut DerRev, sha384: bool) -> Result<(), Error> {
     let m = w.mark();
-    match signer {
-        Signer::Ec(_) => {
-            w.oid(if sha384sig {
-                OID_ECDSA_SHA384
-            } else {
-                OID_ECDSA_SHA256
-            })?;
-        }
-        Signer::Rsa(_) => {
-            w.raw(&[0x05, 0x00])?;
-            w.oid(OID_RSA_SHA256)?;
-        }
-        // RFC 8410 §6: Ed25519 signatures carry id-Ed25519 with absent parameters.
-        Signer::Ed25519(_) => {
-            w.oid(OID_ED25519)?;
-        }
-    }
+    w.oid(if sha384 {
+        OID_ECDSA_SHA384
+    } else {
+        OID_ECDSA_SHA256
+    })?;
     w.close(0x30, m)
 }
 
-/// Hands the applet-tier randomness seam to `rsk-rsa`, which declares its own.
-struct RsaRng<'a>(&'a mut dyn Rng);
-
-impl rsk_rsa::Rng for RsaRng<'_> {
-    fn fill(&mut self, buf: &mut [u8]) {
-        self.0.fill(buf);
-    }
-}
-
-/// Build and sign the certificate into `out` (front-aligned); returns its
-/// length.
-pub fn build(c: &Cert, signer: &Signer, rng: &mut dyn Rng, out: &mut [u8]) -> Result<usize, Error> {
+/// Build the certificate and sign it with `signer`, the subject's own key
+/// (self-signed) or an issuer's, into `out` (front-aligned); returns its length.
+pub fn build(
+    c: &Cert,
+    signer: &PrivKey,
+    rng: &mut dyn Rng,
+    out: &mut [u8],
+) -> Result<usize, Error> {
     if out.len() < MAX_CERT {
         return Err(Error::Encoding);
     }
-    let sha384sig = c.sha384 && !matches!(signer, Signer::Rsa(_));
 
     let subject_hash = pub_hash(&c.spki)?;
-    let issuer_hash = match signer {
-        Signer::Ec(k) | Signer::Ed25519(k) => {
-            let mut pt = [0u8; MAX_EC_POINT];
-            let n = k.public_point(&mut pt).map_err(Error::Ec)?;
-            sha1(&pt[..n])
-        }
-        Signer::Rsa(k) => {
-            let n = k.n_be();
-            let e = k.e_be();
-            pub_hash(&Spki::Rsa { n: &n, e: &e })?
-        }
+    let issuer_hash = {
+        let mut pt = [0u8; MAX_EC_POINT];
+        let n = signer.public_point(&mut pt).map_err(Error::Ec)?;
+        sha1(&pt[..n])
     };
 
     let mut serial = [0u8; 20];
@@ -444,7 +395,7 @@ pub fn build(c: &Cert, signer: &Signer, rng: &mut dyn Rng, out: &mut [u8]) -> Re
             w.close(0x30, mv)?;
         }
         name(&mut w, c.issuer_cn)?;
-        sigalg(&mut w, signer, sha384sig)?;
+        sigalg(&mut w, c.sha384)?;
         w.uint(&serial)?;
         w.raw(&[0xA0, 0x03, 0x02, 0x01, 0x02])?; // [0] { INTEGER 2 } — v3
         w.close(0x30, m)?;
@@ -454,26 +405,18 @@ pub fn build(c: &Cert, signer: &Signer, rng: &mut dyn Rng, out: &mut [u8]) -> Re
 
     // --- Signature over the TBS digest.
     let mut digest = [0u8; 48];
-    let digest = if sha384sig {
+    let digest = if c.sha384 {
         digest.copy_from_slice(&sha384(tbs_bytes));
         &digest[..48]
     } else {
         digest[..32].copy_from_slice(&sha256(tbs_bytes));
         &digest[..32]
     };
-    let mut sig = [0u8; 512];
-    let sig_len = match signer {
-        Signer::Ec(k) => {
-            let mut raw = [0u8; MAX_EC_SIG];
-            let rn = k.sign(digest, &mut raw).map_err(Error::Ec)?;
-            ecdsa_der(&raw[..rn], &mut sig)?
-        }
-        Signer::Rsa(k) => {
-            rsa_sign(k, digest, &mut RsaRng(&mut *rng), &mut sig).map_err(Error::Rsa)?
-        }
-        // PureEdDSA signs the whole TBS, not a digest; the 64-byte signature
-        // goes straight into the BIT STRING (no ASN.1 wrapping).
-        Signer::Ed25519(k) => k.sign(tbs_bytes, &mut sig).map_err(Error::Ec)?,
+    let mut sig = [0u8; MAX_ECDSA_DER];
+    let sig_len = {
+        let mut raw = [0u8; MAX_EC_SIG];
+        let rn = signer.sign(digest, &mut raw).map_err(Error::Ec)?;
+        ecdsa_der(&raw[..rn], &mut sig)?
     };
 
     // --- Certificate = SEQ { tbs, sigalg, BIT STRING sig }.
@@ -484,7 +427,7 @@ pub fn build(c: &Cert, signer: &Signer, rng: &mut dyn Rng, out: &mut [u8]) -> Re
         w.raw(&sig[..sig_len])?;
         w.byte(0x00)?;
         w.close(0x03, mb)?;
-        sigalg(&mut w, signer, sha384sig)?;
+        sigalg(&mut w, c.sha384)?;
         w.raw(tbs_bytes)?;
         w.close(0x30, m)?;
         (w.p, w.buf.len())

@@ -141,13 +141,13 @@ fn private_op_reproduces_an_openssl_signature() {
 
     for (i, (digest, want)) in SIGN_SHA256.iter().enumerate() {
         let hash = hex(digest);
-        let dlen = crate::pkcs1v15::DI_SHA256.len() + hash.len();
+        let dlen = crate::fixtures::DI_SHA256.len() + hash.len();
         let mlen = 256;
         let mut em = [0xffu8; MAX_RSA_BYTES];
         em[0] = 0x00;
         em[1] = 0x01;
         em[mlen - dlen - 1] = 0x00;
-        em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::pkcs1v15::DI_SHA256);
+        em[mlen - dlen..mlen - hash.len()].copy_from_slice(crate::fixtures::DI_SHA256);
         em[mlen - hash.len()..mlen].copy_from_slice(&hash);
 
         let mut sig = [0u8; MAX_RSA_BYTES];

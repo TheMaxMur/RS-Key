@@ -12,13 +12,13 @@ use rsk_ec::{Curve, MAX_EC_POINT, MAX_EC_PUBDO, PrivKey, make_ec_pubkey_do};
 use rsk_fs::{Fs, KeyFid, Storage};
 use rsk_sdk::apdu::CLA_PROPRIETARY;
 use rsk_sdk::{Apdu, Sw, UserPresence};
-use rsk_x509::{Cert, MAX_CERT, Signer, Spki};
+use rsk_x509::{Cert, MAX_CERT, Spki};
 
 use crate::Rng;
 use crate::consts::*;
 use crate::keypairgen::read_advertised_algo;
 use crate::keys::{
-    EcRng, ec_sw, load_ec_key, load_rsa_key, rsa_sw, spend_one_shot_pw1, store_ec_key_under,
+    EcRng, ec_sw, load_ec_key, load_rsa_key, spend_one_shot_pw1, store_ec_key_under,
 };
 use crate::origin;
 use crate::pin::{Session, load_dek};
@@ -44,7 +44,7 @@ const OID_FORM_FACTOR: [u8; 10] = yubico_oid(9);
 const SOURCE_GENERATED: &[u8] = &[0x02, 0x01, 0x01];
 
 fn x509_sw(e: rsk_x509::Error) -> Sw {
-    e.sw(ec_sw, rsa_sw)
+    e.sw(ec_sw)
 }
 
 /// Mint the attestation key under `dek`, its public-key DO and its self-signed
@@ -70,10 +70,9 @@ pub(crate) fn provision<S: Storage>(
         },
         sha384: true,
         ca_pathlen: Some(0),
-        key_usage: true,
         extra: &[],
     };
-    let n = rsk_x509::build(&root, &Signer::Ec(&key), rng, &mut cert).map_err(x509_sw)?;
+    let n = rsk_x509::build(&root, &key, rng, &mut cert).map_err(x509_sw)?;
     store_ec_key_under(dev, fs, dek, EF_PK_ATT, &key)?;
     let mut pub_do = [0u8; MAX_EC_PUBDO];
     let pn = make_ec_pubkey_do(point, &mut pub_do);
@@ -233,7 +232,6 @@ fn write_statement<S: Storage>(
         spki,
         sha384: true,
         ca_pathlen: None,
-        key_usage: false,
         extra,
     };
     let mut algo = [0u8; 16];
@@ -242,12 +240,7 @@ fn write_statement<S: Storage>(
     let built = if rsa {
         let key = load_rsa_key(dev, fs, sess, pk)?;
         let (n, e) = (key.n_be(), key.e_be());
-        rsk_x509::build(
-            &leaf(Spki::Rsa { n: &n, e: &e }),
-            &Signer::Ec(&signer),
-            rng,
-            &mut cert,
-        )
+        rsk_x509::build(&leaf(Spki::Rsa { n: &n, e: &e }), &signer, rng, &mut cert)
     } else {
         let key = load_ec_key(dev, fs, sess, pk)?;
         let mut point = [0u8; MAX_EC_POINT];
@@ -258,7 +251,7 @@ fn write_statement<S: Storage>(
             Curve::Ed25519 | Curve::X25519 => Spki::Rfc8410 { curve, point },
             _ => Spki::Ec { curve, point },
         };
-        rsk_x509::build(&leaf(spki), &Signer::Ec(&signer), rng, &mut cert)
+        rsk_x509::build(&leaf(spki), &signer, rng, &mut cert)
     };
     let n = built.map_err(x509_sw)?;
     fs.put(EF_CH_1 + occurrence, &cert[..n])

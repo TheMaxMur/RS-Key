@@ -110,9 +110,9 @@ RSA-1024 to -4096. All 201 decryption cases run through both PSO:DECIPHER arms
 behind the padding indicator a host sends: a valid one must give its message
 back, an invalid one must be answered `6581`, which is what a YubiKey 5.8.0
 answers every such shape. All 152 signing cases the card can hold (e = 65537)
-run through both signers, byte for byte: the CRT one OpenPGP signs with, fed the
-DigestInfo a host sends, and the full-key one PIV certificates used until 0x0A15,
-fed that and the bare hash it infers the DigestInfo from.
+run through both private operations, byte for byte: the asm CRT signer OpenPGP
+signs with, fed the DigestInfo a host sends, and the software one a legacy key's
+PSO:DECIPHER takes, fed the same PKCS#1 v1.5 block.
 
 Key agreement gets the same treatment. Wycheproof's ECDH cases for P-256, P-384,
 P-521, secp256k1 and brainpoolP256r1/P384r1 (points off the curve, compressed,

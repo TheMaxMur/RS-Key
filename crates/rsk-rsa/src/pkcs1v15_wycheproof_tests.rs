@@ -9,11 +9,11 @@ use crate::vectors::hex;
 use crate::verify::verify_pkcs1v15;
 use crate::wycheproof::{Outcome, Sign, sign};
 
-/// Every Wycheproof signing case through both of the card's PKCS#1 v1.5 signers —
-/// the asm CRT one OpenPGP signs with, fed the DigestInfo a host sends, and the
-/// full-key one PIV certificates use, fed that and the bare hash it infers the
-/// DigestInfo from — byte for byte. The acceptable cases are a small modulus or
-/// SHA-1, which the card signs, so they are held to the same bytes.
+/// Every Wycheproof signing case through both private operations, byte for byte:
+/// the asm CRT signer OpenPGP signs with, fed the DigestInfo a host sends, and the
+/// software one a legacy key's PSO:DECIPHER takes, fed the same PKCS#1 v1.5 block.
+/// The acceptable cases are a small modulus or SHA-1, which the card signs, so
+/// they are held to the same bytes.
 #[test]
 fn wycheproof_signatures_are_byte_exact() {
     let cases = sign();
@@ -30,20 +30,18 @@ fn wycheproof_signatures_are_byte_exact() {
         let key = rsa_from_pqe(crate::RSA_PUB_EXP_BE, &hex(case.crt[0]), &hex(case.crt[1]))
             .unwrap_or_else(|| panic!("{at}: the key"));
         let di = hex(case.digest_info);
-        let bare = &di[di.len() - hash_len(case.hash)..];
         let want = hex(case.sig);
         let mut out = [0u8; MAX_RSA_BYTES];
         let n = rsa_sign_crt(&crt, &di, &mut SeqRng(1), &mut out)
             .unwrap_or_else(|e| panic!("{at}: the CRT signer: {e:?}"));
         assert!(out[..n] == want[..], "{at}: the CRT signer");
-        for (input, data) in [("DigestInfo", &di[..]), ("bare hash", bare)] {
-            let n = rsa_sign(&key, data, &mut SeqRng(2), &mut out)
-                .unwrap_or_else(|e| panic!("{at}: the full-key signer over the {input}: {e:?}"));
-            assert!(
-                out[..n] == want[..],
-                "{at}: the full-key signer over the {input}"
-            );
-        }
+        let mlen = key.size();
+        let mut em = [0u8; MAX_RSA_BYTES];
+        emsa_block(&di, mlen, &mut em).unwrap_or_else(|e| panic!("{at}: the block: {e:?}"));
+        let n = key
+            .private_op(&em[..mlen], &mut SeqRng(2), &mut out)
+            .unwrap_or_else(|e| panic!("{at}: the software private operation: {e:?}"));
+        assert!(out[..n] == want[..], "{at}: the software private operation");
     }
 }
 
@@ -80,15 +78,4 @@ fn wycheproof_keys_sign_up_to_k_minus_11_bytes_at_every_width() {
 fn name(case: &Sign) -> String {
     let (bits, tc, hash, comment) = (case.bits, case.tc_id, case.hash, case.comment);
     format!("RSA-{bits} {hash} tcId {tc} ({comment})")
-}
-
-fn hash_len(hash: &str) -> usize {
-    match hash {
-        "SHA-1" => 20,
-        "SHA-224" => 28,
-        "SHA-256" => 32,
-        "SHA-384" => 48,
-        "SHA-512" => 64,
-        h => panic!("a hash the signer does not recognise: {h}"),
-    }
 }

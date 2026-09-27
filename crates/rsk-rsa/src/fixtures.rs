@@ -18,6 +18,13 @@ pub(crate) use crate::vectors::{
 
 const E_BE: &[u8] = crate::RSA_PUB_EXP_BE;
 
+/// The SHA-256 DigestInfo prefix (`SEQ { SEQ { OID, NULL }, OCTET STRING }`
+/// header, without the hash): what a host wraps a digest in before it signs.
+pub(crate) const DI_SHA256: &[u8] = &[
+    0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01, 0x05,
+    0x00, 0x04, 0x20,
+];
+
 pub(crate) struct SeqRng(pub(crate) u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {

@@ -812,6 +812,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The certificate builder signs with an EC key and nothing else** — refactor,
+  no behaviour change. Since GENERATE stopped writing a self-signed certificate
+  (0x0A15), every certificate the card makes is signed by an EC key, PIV's F9
+  and attestation ones and OpenPGP's attestation root and statements, and each
+  carries a keyUsage exactly when it is a CA. What only that self-signed
+  certificate used is gone: `rsk-x509`'s RSA and Ed25519 signers (`build` takes
+  the EC `PrivKey`), its keyUsage for a leaf, and with them its dependency on
+  `rsk-rsa`; in `rsk-rsa`, the full-key `rsa_sign`, the DigestInfo recogniser
+  `rsa_sign_em` and the unpadded `rsa_raw` it fell back to, with the
+  `openpgp_rsa_sign` fuzz target that drove the recogniser. The Wycheproof and
+  OpenSSL signing vectors still run through `rsa_sign_crt`, the signer OpenPGP
+  uses, and Wycheproof's through the software private operation a legacy key's
+  PSO:DECIPHER takes. `bcdDevice` 0x0A4E → 0x0A4F.
+
 - **The type-contracts line lands on develop** — merge. Its entries (the thirteen
   under Fixed from the dead-stack sweep down to the `WAKE_PIN` build, and those
   here from the host-bytes deny down to the one lint policy) meet develop's own

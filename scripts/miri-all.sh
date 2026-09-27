@@ -22,11 +22,11 @@ MANIFEST=fuzz/Cargo.toml
 # returns 0, which is why the shard below is expressed as `--skip` (repeatable,
 # and verified to subtract) and not as a list of names to run.
 #
-# 49 distinct tests over the workspace's three test targets — `tests/miri.rs` (43),
-# `tests/apdu_frame.rs` and `tests/churn_compaction.rs` — measured 2026-08-15.
-# A literal, not `${MIRI_TEST_FLOOR:-49}`: a floor the environment can lower is
+# 48 distinct tests over the workspace's three test targets — `tests/miri.rs` (42),
+# `tests/apdu_frame.rs` and `tests/churn_compaction.rs` — measured 2026-09-27.
+# A literal, not `${MIRI_TEST_FLOOR:-48}`: a floor the environment can lower is
 # not a floor. Raise it in the commit that adds a test.
-MIRI_TEST_FLOOR=49
+MIRI_TEST_FLOOR=48
 
 # FUZZ_CONFIG=flavours builds the shipped flavours' on side — the `flavours`
 # union feature in fuzz/Cargo.toml — instead of the default image's off side.

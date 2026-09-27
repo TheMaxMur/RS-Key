@@ -32,8 +32,6 @@ use rsk_openpgp::pso::parse_ecdh_point;
 use rsk_openpgp::{OpenpgpApplet, scan_files};
 use rsk_otp::hid::{FrameRx, FrameTx, PAYLOAD_SIZE, REPORT_SIZE, RxOutcome};
 use rsk_phy::{PHY_MAX_SIZE, PhyData};
-use rsk_rsa::MAX_RSA_DIGESTINFO;
-use rsk_rsa::pkcs1v15::rsa_sign_em;
 use rsk_sdk::apdu::Apdu;
 use rsk_sdk::applet::RESP_BUILD;
 use rsk_sdk::tlv::{Tlv, find_tag};
@@ -805,25 +803,6 @@ fn miri_openpgp_ec_key() {
         if let Some(key) = PrivKey::from_scalar(curve, &data[1..]) {
             let mut pt = [0u8; 200];
             let _ = key.public_point(&mut pt);
-        }
-    }
-}
-
-// =========================================================================
-// openpgp_rsa_sign
-// =========================================================================
-
-#[test]
-fn miri_openpgp_rsa_sign() {
-    for data in [
-        &b""[..],
-        b"\x00",
-        b"\x30\x21\x30\x09\x06\x05\x2b\x0e\x03\x02\x1a\x05\x00\x04\x14\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00",
-        b"\x00\x00\x00\x00\x00\x00",
-    ] {
-        let mut em = [0u8; MAX_RSA_DIGESTINFO];
-        if let Some(n) = rsa_sign_em(data, &mut em) {
-            assert!(n <= MAX_RSA_DIGESTINFO);
         }
     }
 }

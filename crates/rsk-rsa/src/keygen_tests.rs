@@ -40,7 +40,7 @@ fn keygen_pool_assembles_in_either_order() {
         assert_eq!(kg.half_bytes(), 128);
         assert!(matches!(kg.offer(first), RsaStep::More));
         match kg.offer(second) {
-            RsaStep::Done(k) => assert_eq!(k.n().to_bytes_be(), hex(N_HEX)),
+            RsaStep::Done(k) => assert_eq!(k.n_be(), hex(N_HEX)),
             _ => panic!("two distinct primes must complete the key"),
         }
     }
@@ -59,7 +59,7 @@ fn keygen_pool_le_transport() {
         "transport buffer not scrubbed"
     );
     match kg.offer_le(&mut q_le) {
-        RsaStep::Done(k) => assert_eq!(k.n().to_bytes_be(), hex(N_HEX)),
+        RsaStep::Done(k) => assert_eq!(k.n_be(), hex(N_HEX)),
         _ => panic!("two distinct primes must complete the key"),
     }
 }
@@ -132,7 +132,7 @@ fn keygen_pool_le_rejects_wrong_size_prime() {
     q_le.reverse();
     assert!(matches!(kg.offer_le(&mut p_le), RsaStep::More));
     match kg.offer_le(&mut q_le) {
-        RsaStep::Done(k) => assert_eq!(k.n().to_bytes_be(), hex(N_HEX)),
+        RsaStep::Done(k) => assert_eq!(k.n_be(), hex(N_HEX)),
         _ => panic!("correct-size primes must complete the key after a reject"),
     }
 }

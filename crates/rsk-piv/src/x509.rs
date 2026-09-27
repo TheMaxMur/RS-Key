@@ -6,9 +6,10 @@
 //! 1.3.6.1.4.1.41482.3.3 (firmware version), .3.7 (serial, raw little-endian), .3.8
 //! (pin/touch policy) and .3.9 (form factor), as a YubiKey's PIV attestation carries.
 
+use rsk_ec::PrivKey;
 use rsk_sdk::Rng;
 use rsk_sdk::Sw;
-pub use rsk_x509::{MAX_CERT, Signer, Spki};
+pub use rsk_x509::{MAX_CERT, Spki};
 
 use crate::files::{ALGO_ECCP384, SLOT_ATTESTATION};
 
@@ -33,10 +34,10 @@ pub struct CertParams<'a> {
     pub algo: u8,
     pub spki: Spki<'a>,
     /// `Some` ⇒ an attestation certificate (subject "Attestation %X", issuer
-    /// "Slot F9", Yubico extensions, no keyUsage); `None` ⇒ the F9 CA's own,
-    /// self-signed.
+    /// "Slot F9", Yubico extensions); `None` ⇒ the F9 CA's own, self-signed.
     pub attestation: Option<AttestExt>,
-    /// `Some(pathlen)` marks a CA certificate (the F9 self-cert uses 1).
+    /// `Some(pathlen)` marks a CA certificate, the only kind with a keyUsage (the
+    /// F9 self-cert uses 1).
     pub ca_pathlen: Option<u8>,
 }
 
@@ -60,14 +61,14 @@ fn slot_label(attestation: bool, slot: u8) -> ([u8; 40], usize) {
 }
 
 fn x509_sw(e: rsk_x509::Error) -> Sw {
-    e.sw(crate::ec_sw, crate::rsa_sw)
+    e.sw(crate::ec_sw)
 }
 
 /// Build and sign the certificate into `out` (front-aligned); returns its
 /// length.
 pub fn build_cert(
     p: &CertParams,
-    signer: &Signer,
+    signer: &PrivKey,
     rng: &mut dyn Rng,
     out: &mut [u8],
 ) -> Result<usize, Sw> {
@@ -96,7 +97,6 @@ pub fn build_cert(
         spki: p.spki,
         sha384: p.algo == ALGO_ECCP384,
         ca_pathlen: p.ca_pathlen,
-        key_usage: p.attestation.is_none(),
         extra,
     };
     rsk_x509::build(&cert, signer, rng, out).map_err(x509_sw)

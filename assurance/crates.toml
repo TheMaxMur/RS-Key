@@ -124,7 +124,7 @@ gap = "the enabled-set lifecycle is modelled (mask writes, the lock-code-only wr
 [crate.rsk-x509]
 class = "pure"
 evidence = ["crates/rsk-x509/src/tests.rs"]
-note = "the certificate builder both card applets sign with, moved out of rsk-piv. Pure — no flash, no session; its errors become status words at each caller. Zero Kani proofs and NOT a gap: every certificate shape is re-parsed by x509-parser and its signature verified by an independent verifier (p256, p384, ed25519-dalek, rsk-rsa's PKCS#1 v1.5 check), and rsk-piv's own certificate tests run over it unchanged."
+note = "the certificate builder both card applets sign with, moved out of rsk-piv. Pure — no flash, no session; its errors become status words at each caller. Zero Kani proofs and NOT a gap: every certificate shape is re-parsed by x509-parser and its signature verified by an independent verifier (p256, p384), and rsk-piv's own certificate tests run over it unchanged."
 
 [crate.rsk-crypto]
 class = "pure"

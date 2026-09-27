@@ -5,7 +5,7 @@ use super::*;
 use crate::vectors::{N_HEX, N1024_HEX, SIGN_SHA256, hex};
 
 /// The SHA-256 DigestInfo header, so a KAT digest becomes what gpg signs.
-const DI_SHA256: &[u8] = crate::pkcs1v15::DI_SHA256;
+const DI_SHA256: &[u8] = crate::fixtures::DI_SHA256;
 const E: &[u8] = crate::RSA_PUB_EXP_BE;
 
 fn signed(i: usize) -> (Vec<u8>, Vec<u8>) {

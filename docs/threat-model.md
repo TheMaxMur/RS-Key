@@ -631,9 +631,9 @@ through `SCB::PTR`, a ROM function called through its `ptr()`, and the ROM's
   has no fixed release — went away with the crate itself in 0.4.12; `rsk-rsa`
   owns the key type and both private paths now. The mitigation that carve-out
   rested on is still in force and is now the whole defence: per-operation base
-  blinding on **every** private-key path (PKCS#1 v1.5 sign, decipher, and the
-  raw fallback `rsa_raw`). The [constant-time audit](ct-audit.md) verified that
-  this blinding leaves no unblinded private-exponent path.
+  blinding on **every** private-key path (PKCS#1 v1.5 sign and decipher). The
+  [constant-time audit](ct-audit.md) verified that this blinding leaves no
+  unblinded private-exponent path.
 
 ## Post-quantum notes
 

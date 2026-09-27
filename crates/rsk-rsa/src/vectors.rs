@@ -54,8 +54,8 @@ pub const ENCRYPT: &[(&str, &str)] = &[
 ];
 
 /// `(SHA-256 digest, signature)` under the [`P_HEX`] key — RSASSA-PKCS1-v1_5.
-/// Prefixed with the SHA-256 DigestInfo header it is what gpg sends, and both
-/// signers owe this signature for that; `rsa_sign` owes it for the bare digest too.
+/// Prefixed with the SHA-256 DigestInfo header it is what gpg sends, and the CRT
+/// signer owes this signature for that.
 pub const SIGN_SHA256: &[(&str, &str)] = &[
     (
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

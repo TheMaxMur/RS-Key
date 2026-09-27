@@ -48,7 +48,6 @@ pub use crt::{MAX_CRT_PLAIN, RsaCrt};
 pub use error::RsaError;
 pub use key::{RsaKey, modulus_be};
 pub use keygen::{RsaKeygen, RsaStep, generate_rsa, rsa_from_pqe};
-pub use pkcs1v15::MAX_RSA_DIGESTINFO;
 pub use pubdo::{MAX_RSA_PUBDO, make_rsa_pub_body, make_rsa_response};
 pub use rng::Rng;
 

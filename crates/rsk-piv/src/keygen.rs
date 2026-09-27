@@ -717,7 +717,7 @@ pub(crate) fn attest<S: Storage>(
                     attestation: Some(att),
                     ca_pathlen: None,
                 },
-                &x509::Signer::Ec(&f9),
+                &f9,
                 rng,
                 cert.expose_mut(),
             )
@@ -746,7 +746,7 @@ pub(crate) fn attest<S: Storage>(
                     attestation: Some(att),
                     ca_pathlen: None,
                 },
-                &x509::Signer::Ec(&f9),
+                &f9,
                 rng,
                 cert.expose_mut(),
             )
@@ -775,7 +775,7 @@ pub(crate) fn attest<S: Storage>(
                     attestation: Some(att),
                     ca_pathlen: None,
                 },
-                &x509::Signer::Ec(&f9),
+                &f9,
                 rng,
                 cert.expose_mut(),
             )
