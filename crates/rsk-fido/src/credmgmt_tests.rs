@@ -2477,3 +2477,8 @@ fn a_credential_that_cannot_be_read_settles_nothing() {
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "credmgmt_reads_tests.rs"]
 mod reads;
+
+// The compound sweep (a cut during the recovery of a cut) has its own file; it
+// needs this module's fixtures.
+#[path = "credmgmt_recovery_tests.rs"]
+mod recovery;

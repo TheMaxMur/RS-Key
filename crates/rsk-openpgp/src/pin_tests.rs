@@ -2464,3 +2464,8 @@ fn every_session_key_handed_back_wipes_itself() {
     );
     wipes_on_drop(&reseeded.unwrap());
 }
+
+// The compound sweep (a cut during the recovery of a cut) has its own file; it
+// needs this module's fixtures.
+#[path = "pin_recovery_tests.rs"]
+mod recovery;
