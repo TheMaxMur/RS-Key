@@ -119,7 +119,7 @@ gap = "what is left after the EF_DEV_CONF codec moved to rsk-devconf: the CCID c
 [crate.rsk-devconf]
 class = "state-partial"
 model = "RSKeyAdminSurface"
-gap = "the enabled-set lifecycle is modelled (mask writes, the lock-code-only write, the clamp as a construction). This crate DOES touch flash — it owns EF_DEV_CONF end to end (validate, merge onto the stored record, trim to cap, put) and the DEV_CONF_DIRTY latch the composition roots drain to reload their cached mask; who may drive a write is the four callers' gate, not this crate's. The TLV codec itself — well-formedness, merge widths, the two-parsers refusal — is single-step and carried by the crate's tests; still zero Kani proofs."
+gap = "the enabled-set lifecycle is modelled (mask writes, the lock-code-only write, the clamp as a construction). This crate DOES touch flash — it owns EF_DEV_CONF end to end (validate, merge onto the stored record, trim to cap, put) and the DEV_CONF_DIRTY latch the composition roots drain to reload their cached mask; who may drive a write is the four callers' gate, plus the configuration lock this crate enforces for all four. The lock is not modelled: it only removes WriteConfig transitions, which leaves every invariant here standing, but it narrows what AdminSurfaceAlwaysReachable promises in English — the channel stays open, and a device locked with a code its owner does not hold is re-enabled only through a factory wipe. Its tests are the crate's own and ykman's lock-code test. The TLV codec itself — well-formedness, merge widths, the two-parsers refusal — is single-step and carried by the crate's tests; still zero Kani proofs."
 
 [crate.rsk-x509]
 class = "pure"

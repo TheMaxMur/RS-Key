@@ -22,6 +22,11 @@ test-util = []
 # take.
 rsk-fs = { workspace = true }
 rsk-sdk = { workspace = true }
+# The configuration lock keeps a SHA-256 verifier of the owner's code and compares
+# a candidate against it in constant time, with the code itself in a `Secret`.
+# Both crates sit below this tier, so the edges point down.
+rsk-crypto = { workspace = true }
+rsk-secret = { workspace = true }
 
 [dev-dependencies]
 # RamStorage for the host tests (the same backend the applet crates use).

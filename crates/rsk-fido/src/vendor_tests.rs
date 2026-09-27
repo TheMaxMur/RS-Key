@@ -1420,7 +1420,7 @@ fn ensure_seed_does_not_regenerate_under_lock() {
 // ---- CONFIG_WRITE (0x0C): device config over the FIDO vendor channel ----
 
 /// A small, opaque device-config TLV. READ CONFIG echoes it (minus any config-lock
-/// tag) and then appends the unset CONFIG_LOCK, so its bytes appear in the body of
+/// tag) and then appends the CONFIG_LOCK byte, so its bytes appear in the body of
 /// the DeviceInfo TLV — see [`dev_conf_readback`] / [`dev_conf_contains`].
 const DEV_CONF_BLOB: &[u8] = &[0x03, 0x02, 0x02, 0x00];
 
@@ -1480,8 +1480,8 @@ fn dev_conf_readback(fs: &mut Fs<RamStorage>) -> std::vec::Vec<u8> {
 }
 
 /// Whether the READ CONFIG TLV carries `blob` anywhere in its body. The persisted
-/// blob is no longer the TLV suffix — READ CONFIG now always reports CONFIG_LOCK
-/// unset after it (audit run-30) — so match a window, not the tail.
+/// blob is no longer the TLV suffix — READ CONFIG always reports CONFIG_LOCK after
+/// it (audit run-30) — so match a window, not the tail.
 fn dev_conf_contains(fs: &mut Fs<RamStorage>, blob: &[u8]) -> bool {
     dev_conf_readback(fs).windows(blob.len()).any(|w| w == blob)
 }
@@ -1612,6 +1612,53 @@ fn config_write_default_ungated_persists_without_touch_or_token() {
         Ok(0)
     );
     assert!(dev_conf_contains(&mut fs, DEV_CONF_BLOB));
+}
+
+/// Over the vendor channel a locked configuration answers `NOT_ALLOWED` without its
+/// code and `OPERATION_DENIED` with another. The idempotent-replay check runs first,
+/// and a write the lock refuses must not pass it as "nothing to do".
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn config_write_honours_the_configuration_lock() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut write = |fs: &mut Fs<RamStorage>, blob: &[u8]| {
+        let mut req = [0u8; 96];
+        let n = config_write_req(CONFIG_TARGET_DEV_CONF, blob, false, &mut req);
+        let mut out = [0u8; 16];
+        call(
+            fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out,
+        )
+    };
+    let code = [0xA5; 16];
+    let unlock = |code: &[u8; 16], fields: &[u8]| {
+        let mut blob = std::vec![0x0B, 0x10];
+        blob.extend_from_slice(code);
+        blob.extend_from_slice(fields);
+        blob
+    };
+    assert_eq!(write(&mut fs, DEV_CONF_BLOB), Ok(0));
+    let mut set = std::vec![0x0A, 0x10];
+    set.extend_from_slice(&code);
+    assert_eq!(write(&mut fs, &set), Ok(0));
+
+    // The stored config again: a replay, which only the lock may refuse.
+    assert_eq!(write(&mut fs, DEV_CONF_BLOB), Err(CtapError::NotAllowed));
+    let fido_u2f = [0x03, 0x02, 0x02, 0x02];
+    assert_eq!(
+        write(&mut fs, &unlock(&[0x5A; 16], &fido_u2f)),
+        Err(CtapError::OperationDenied)
+    );
+    assert!(
+        dev_conf_contains(&mut fs, DEV_CONF_BLOB),
+        "a refused write landed"
+    );
+    assert_eq!(write(&mut fs, &unlock(&code, &fido_u2f)), Ok(0));
+    assert!(dev_conf_contains(&mut fs, &fido_u2f));
 }
 
 #[test]
@@ -2668,7 +2715,7 @@ fn a_faulted_dev_conf_probe_over_fido_neither_acks_nor_replaces() {
 
     for (skip, want) in [(0u32, Ok(0)), (2, Err(CtapError::Other))] {
         let (mut fs, medium, mut rng, mut st) = setup_stuck();
-        rsk_devconf::persist_dev_conf(&mut fs, owner).unwrap();
+        rsk_devconf::persist_dev_conf(&[0; 4], &mut fs, owner).unwrap();
         let before = medium.value(EF_DEV_CONF).expect("record written");
 
         let mut req = [0u8; 96];

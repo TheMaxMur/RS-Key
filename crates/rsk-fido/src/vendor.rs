@@ -313,13 +313,19 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
     }
     match req.target {
         CONFIG_TARGET_DEV_CONF => {
-            if rsk_devconf::dev_conf_unchanged(ctx.fs, req.blob) {
+            // The DeviceInfo serial, which salts the configuration lock's verifier on
+            // every transport that writes this record.
+            let id = <[u8; 8]>::try_from(ctx.dev.serial_id).map_err(|_| CtapError::Other)?;
+            let serial = rsk_sdk::serial4(id);
+            if rsk_devconf::dev_conf_unchanged(&serial, ctx.fs, req.blob) {
                 return Ok(0);
             }
-            persist_dev_conf(ctx.fs, req.blob).map_err(|e| match e {
+            persist_dev_conf(&serial, ctx.fs, req.blob).map_err(|e| match e {
                 DevConfError::TooLong => CtapError::InvalidLength,
                 DevConfError::BadTlv => CtapError::InvalidParameter,
                 DevConfError::Store => CtapError::Other,
+                DevConfError::Locked => CtapError::NotAllowed,
+                DevConfError::WrongCode => CtapError::OperationDenied,
             })?
         }
         // The phy record (VID/PID, USB interfaces, LED, presence-timeout) — a

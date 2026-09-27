@@ -31,7 +31,7 @@
 (*                                                                           *)
 (* WHAT IS ABSTRACTED. The mask is a set of opaque capabilities, not the     *)
 (* 16-bit USB_ENABLED bitmask -- the clamp to SUPPORTED_CAPS                 *)
-(* (crates/rsk-devconf/src/lib.rs:621) is modelled as "the mask stays a      *)
+(* (crates/rsk-devconf/src/lib.rs:674) is modelled as "the mask stays a      *)
 (* subset of the gateable caps" and enforced by construction. The            *)
 (* config-lock TLV is present only as the class of write that carries no     *)
 (* capability change (`LockCodeWrite`); its unsealed-disclosure hole (audit  *)
@@ -66,7 +66,7 @@ CONSTANTS
     \* zero bytes; storing that verbatim left an EMPTY record, and
     \* `read_enabled_caps` reads empty as SUPPORTED_CAPS, so a lock-code write
     \* silently re-enabled every disabled application. The fix MERGES onto the
-    \* stored record (crates/rsk-devconf/src/lib.rs:263-277); the switch
+    \* stored record (crates/rsk-devconf/src/lib.rs:293-307); the switch
     \* replaces it.
     BugLockWriteResetsCaps,
     \* The pre-0x084A tree, shipped and fixed: USB_ENABLED was REPORTING-ONLY --
@@ -74,7 +74,7 @@ CONSTANTS
     \* consulted it, so `ykman config usb --disable PIV` disabled nothing. The
     \* enforcement is Dispatcher::set_enabled (crates/rsk-sdk/src/applet.rs:254-256)
     \* fed from the mask (crates/rsk-device/src/ccid.rs:255-263) and consulted at
-    \* select AND dispatch-to-current (crates/rsk-device/src/ccid.rs:337). The
+    \* select AND dispatch-to-current (crates/rsk-device/src/ccid.rs:340). The
     \* switch removes exactly that consultation.
     BugMaskIsCosmetic
 
@@ -99,7 +99,7 @@ TypeOK ==
     /\ viol \in SUBSET InvNames
 
 \* A factory device: every gateable application enabled (the default record's
-\* USB_ENABLED is SUPPORTED_CAPS, crates/rsk-devconf/src/lib.rs:625).
+\* USB_ENABLED is SUPPORTED_CAPS, crates/rsk-devconf/src/lib.rs:678).
 Init ==
     /\ enabled = Caps
     /\ viol = {}
@@ -112,7 +112,7 @@ AdminChannelOpen ==
     IF BugAdminGateable THEN enabled # {} ELSE TRUE
 
 (***************************************************************************)
-(* WRITE CONFIG. crates/rsk-devconf/src/lib.rs:252 (persist_dev_conf) via    *)
+(* WRITE CONFIG. crates/rsk-devconf/src/lib.rs:273 (persist_dev_conf) via    *)
 (* the CCID applet and the FIDO vendor config-write. Sets the enabled set to *)
 (* any subset of the gateable caps. Modelled UNCONDITIONALLY enabled: the    *)
 (* default build does not presence-gate it (a documented, reversible DoS),   *)
@@ -188,6 +188,8 @@ Spec == Init /\ [][Next]_vars
 \* `APPLET_CAPS` cap-`0` carve-out (crates/rsk-device/src/ccid.rs:80-87) as an
 \* invariant: management/vendor/rescue are never gated by the mask, so `enabled =
 \* {}` (everything off) is not a dead end -- READ/WRITE CONFIG still answer there.
+\* A configuration lock narrows WHO can re-enable: the channel still answers, but
+\* a write without the code is refused, an authorization this module does not model.
 AdminSurfaceAlwaysReachable == AdminChannelOpen
 
 \* No privileged rescue command completes without a Confirmed operator presence.

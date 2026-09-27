@@ -6,7 +6,8 @@
 //! CONFIG response built around it. Four command surfaces read or write the same
 //! record (CCID `0x1C`/`0x1D`, the OTP keyboard slots `0x13`/`0x15`, the CTAPHID
 //! vendor pair, the FIDO vendor `CONFIG_WRITE`), so the codec sits below all of
-//! them instead of inside the management applet that needed it first.
+//! them instead of inside the management applet that needed it first — and so does
+//! the configuration lock that guards it (`lock.rs`), which all four then enforce.
 #![cfg_attr(not(test), no_std)]
 // Host-written records: a panic here is a board that answers nothing until unplugged.
 #![deny(
@@ -19,6 +20,10 @@
 
 use rsk_fs::{Fs, Storage};
 use rsk_sdk::{FIRMWARE_VERSION, ResBuf, Sw};
+
+mod lock;
+
+use lock::{LOCK_CODE_LEN, LockChange, lock_change, lock_reported};
 
 // Capability bits (YubiKey `CAPABILITY.*`) — the USB_ENABLED bitmask vocabulary,
 // also the applet-gate keys the firmware maps each applet to.
@@ -164,11 +169,11 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
             // when it exceeds the buffer, so bound `len` before slicing — WRITE
             // CONFIG caps new writes, but a blob from an older build or corrupt
             // flash could be over-length and must not slice past `conf`/`buf`;
-            // (2) strip any config-lock tag before echoing — we do not enforce the
-            // lock and must never hand a user-entered 16-byte code to an
-            // unauthenticated reader (audit run-30); (3) mask USB_ENABLED down to
-            // what this firmware supports, so READ CONFIG never reports enabled ⊄
-            // supported.
+            // (2) strip any config-lock tag before echoing — a record a build
+            // before 0.4.5 wrote can still carry the 16-byte code the user typed,
+            // which must never reach an unauthenticated reader (audit run-30);
+            // (3) mask USB_ENABLED down to what this firmware supports, so READ
+            // CONFIG never reports enabled ⊄ supported.
             let len = full.min(conf.len());
             let mut echoed = [0u8; EF_DEV_CONF_READ_MAX];
             // Bound the echo by the caller's buffer as well as ours: `ResBuf::extend`
@@ -192,9 +197,8 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
                 clamp_usb_enabled(dst);
             }
             n += elen;
-            // The stored blob never carries a lock tag; report it unset on read, as
-            // real hardware does.
-            push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[0x00]);
+            // Whether a code is set, never the code, as a YubiKey reports it.
+            push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[lock_reported(fs)]);
         }
         _ => {
             // No record, or one this firmware's writer would refuse. Either way the
@@ -211,7 +215,7 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
                 &read_enabled_caps(fs).to_be_bytes(),
             );
             push_tlv(&mut buf, &mut n, TAG_DEVICE_FLAGS, &[DEVICE_FLAGS_FACTORY]);
-            push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[0x00]);
+            push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[lock_reported(fs)]);
         }
     }
 
@@ -242,26 +246,52 @@ pub enum DevConfError {
     /// store a blob that makes the DeviceInfo response unparseable.
     BadTlv,
     /// The flash access failed — the write, or the read of the record it merges
-    /// onto (see `overlay_dev_conf`).
+    /// onto (see `overlay_dev_conf`), or of the lock.
     Store,
+    /// A configuration lock is set and the write carried no `UNLOCK` code.
+    Locked,
+    /// The write's `UNLOCK` code is not the one the lock was set with.
+    WrongCode,
+}
+
+impl DevConfError {
+    /// The status word a CCID or OTP-slot write answers: a YubiKey 5.8.0's `6986`
+    /// for a locked device written without its code, `63C0` for a wrong one.
+    pub fn sw(self) -> Sw {
+        match self {
+            Self::TooLong | Self::BadTlv => Sw::WRONG_DATA,
+            Self::Store => Sw::MEMORY_FAILURE,
+            Self::Locked => Sw::COMMAND_NOT_ALLOWED,
+            Self::WrongCode => Sw::retries(0),
+        }
+    }
 }
 
 /// Validate and persist the device-config TLV to `EF_DEV_CONF` — the
 /// transport-agnostic core of WRITE CONFIG, shared by the CCID applet and the
 /// FIDO vendor config-write (`rsk-mgmt` / `rsk-fido`). `blob` is
 /// the enabled-applications TLV *without* any transport length prefix; the caller
-/// applies its own auth gate (CCID presence, FIDO PIN + touch) before this.
+/// applies its own auth gate (CCID presence, FIDO PIN + touch) before this; the
+/// configuration lock is checked here, for all four. `serial` is the DeviceInfo
+/// serial, which salts the lock's verifier.
 /// Refines `RSKeyAdminSurface!DisableSetSurvivesLockWrite` — SEC-ADM-003.
-pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), DevConfError> {
+pub fn persist_dev_conf<S: Storage>(
+    serial: &[u8; 4],
+    fs: &mut Fs<S>,
+    blob: &[u8],
+) -> Result<(), DevConfError> {
     if blob.len() > DEV_CONF_WRITE_MAX {
         return Err(DevConfError::TooLong);
     }
     if !well_formed_writable(blob) {
         return Err(DevConfError::BadTlv);
     }
-    // Never retain the config-lock tags (see `strip_config_lock`): we do not enforce
-    // the lock, and READ CONFIG echoes this blob to any unauthenticated host, so a
-    // 16-byte 0x0A would sit unsealed in flash and be disclosed (audit run-30).
+    // Asked before anything is compared or stored: a locked device refuses a write
+    // without its code even when the write would change nothing.
+    let lock = lock_change(serial, fs, blob)?;
+    // Never retain the lock tags (see `strip_config_lock`): the lock keeps only a
+    // verifier, and READ CONFIG echoes this blob to any unauthenticated host (audit
+    // run-30).
     let mut stripped = [0u8; DEV_CONF_WRITE_MAX];
     let n = strip_config_lock(blob, &mut stripped);
     // Bound what is actually STORED, not what was sent: the two lock tags carry
@@ -283,15 +313,17 @@ pub fn persist_dev_conf<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> Result<(), D
     // rather than left to the caller: only one of the four call sites ever ran the
     // check, and after the merge landed it could not recognise a partial replay at
     // all, which is the only shape ykman sends (audit run-36).
-    if stored_matches(fs, record) {
-        return Ok(());
+    if !stored_matches(fs, record) {
+        fs.put(EF_DEV_CONF, record)
+            .map_err(|_| DevConfError::Store)?;
+        // The enabled-applications set changed; the firmware reloads its cached mask
+        // (which gates applet dispatch) before the next command it guards.
+        DEV_CONF_DIRTY.store(true, core::sync::atomic::Ordering::Relaxed);
     }
-    fs.put(EF_DEV_CONF, record)
-        .map_err(|_| DevConfError::Store)?;
-    // The enabled-applications set changed; the firmware reloads its cached mask
-    // (which gates applet dispatch) before the next command it guards.
-    DEV_CONF_DIRTY.store(true, core::sync::atomic::Ordering::Relaxed);
-    Ok(())
+    // The record lands before the lock moves, so a cut between the two leaves a state
+    // the same request completes when retried: lock first, the retry would meet a
+    // lock the host does not know it set.
+    lock.apply(fs)
 }
 
 /// Drop the configuration-lock code a build before 0.4.5 stored verbatim in
@@ -436,14 +468,19 @@ fn overlay_dev_conf<S: Storage>(
 
 /// Whether a well-formed TLV run carries an entry with `tag`.
 fn has_tag(blob: &[u8], tag: u8) -> bool {
+    tag_value(blob, tag).is_some()
+}
+
+/// The value of the first entry with `tag` in a TLV run.
+fn tag_value(blob: &[u8], tag: u8) -> Option<&[u8]> {
     let mut i = 0;
     while let Some((t, end)) = entry_at(blob, i) {
         if t == tag {
-            return true;
+            return blob.get(i + 2..end);
         }
         i = end;
     }
-    false
+    None
 }
 
 /// The short-form TLV entry at `i`: its tag and the offset just past its value, or
@@ -490,6 +527,11 @@ fn well_formed_writable(blob: &[u8]) -> bool {
         if tag == TAG_USB_ENABLED && len != 2 {
             return false;
         }
+        // A lock code is exact too. The lock hashes what it is given, so a shorter
+        // one would set a lock ykman, which always sends sixteen bytes, cannot open.
+        if (tag == TAG_CONFIG_LOCK || tag == TAG_CONFIG_UNLOCK) && len as usize != LOCK_CODE_LEN {
+            return false;
+        }
         // Every other writable tag gets a width bound too. Only `USB_ENABLED` had
         // one, so an ungated 38-byte `AUTO_EJECT_TIMEOUT` stored fine and then made
         // every later *partial* write — the only shape ykman sends — exceed the
@@ -503,10 +545,9 @@ fn well_formed_writable(blob: &[u8]) -> bool {
     true
 }
 
-/// The widest value ykman can put in each writable tag, or `None` where no bound
-/// applies (the two lock tags carry 16-byte codes, and `strip_config_lock` drops
-/// them before storage either way). `USB_ENABLED` keeps its own EXACT-width rule at
-/// the call site: relaxing it to a maximum would let a stored `03 00` be echoed by
+/// The widest value ykman can put in each writable tag, or `None` where the width is
+/// EXACT instead, a rule kept at the call site: the two lock tags' 16-byte codes, and
+/// `USB_ENABLED`, which relaxed to a maximum would let a stored `03 00` be echoed by
 /// `config_tlv` while `enabled_from_conf` ignores it, reintroducing the
 /// report-vs-enforcement divergence of audit run-34 #25.
 fn max_value_len(tag: u8) -> Option<usize> {
@@ -531,13 +572,13 @@ fn whole_tlvs(blob: &[u8]) -> usize {
 }
 
 /// Copy `blob` minus any CONFIG_LOCK (0x0A) / UNLOCK (0x0B) TLV entry into `out`,
-/// returning the stripped length. We do not implement the config lock, and READ
-/// CONFIG echoes this blob verbatim to any unauthenticated host over three transports,
-/// so retaining a 16-byte lock code would hand back a secret the user typed — real
-/// hardware treats 0x0A as write-only. If the TLV does not parse cleanly the blob is
-/// copied unchanged, so a config we do not understand is never corrupted (an attacker's
-/// own malformed write is readable by them regardless). `out` must be at least
-/// `blob.len()` bytes.
+/// returning the stripped length. The lock keeps a verifier of its code in its own
+/// record ([`lock`]), and READ CONFIG echoes this blob verbatim to any unauthenticated
+/// host over three transports, so retaining a 16-byte lock code here would hand back
+/// a secret the user typed — real hardware treats 0x0A as write-only. If the TLV does
+/// not parse cleanly the blob is copied unchanged, so a config we do not understand is
+/// never corrupted (an attacker's own malformed write is readable by them regardless).
+/// `out` must be at least `blob.len()` bytes.
 fn strip_config_lock(blob: &[u8], out: &mut [u8]) -> usize {
     let mut i = 0;
     let mut n = 0;
@@ -563,10 +604,15 @@ fn strip_config_lock(blob: &[u8], out: &mut [u8]) -> usize {
 /// it would change nothing. The FIDO vendor `CONFIG_WRITE` asks here rather than
 /// comparing for itself: it skips the flash write *and* its audit-journal entry on
 /// an idempotent replay, which a silent host could otherwise use to evict the whole
-/// ring.
-pub fn dev_conf_unchanged<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> bool {
+/// ring. `serial` salts the lock's verifier, as for [`persist_dev_conf`].
+pub fn dev_conf_unchanged<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, blob: &[u8]) -> bool {
     // Request-side bound: this takes the blob as sent, lock tags included.
     if blob.len() > DEV_CONF_WRITE_MAX {
+        return false;
+    }
+    // A write the lock refuses, or one that moves it, is never a replay: the writer
+    // must see it, to answer the refusal or to store the new verifier.
+    if !matches!(lock_change(serial, fs, blob), Ok(LockChange::Keep)) {
         return false;
     }
     // Deliberately NOT gated on `well_formed_writable`: a legacy record an older,
@@ -600,6 +646,13 @@ pub fn dev_conf_unchanged<S: Storage>(fs: &mut Fs<S>, blob: &[u8]) -> bool {
 /// latch as the device-reset request; enforcement is build-agnostic (a
 /// `strict-config` build still honours a persisted config), so this is ungated.
 static DEV_CONF_DIRTY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Whether `fid` decides which applets a host may reach, so the device-wide wipe
+/// removes it last: once a lock code is set these records are the only gate on the
+/// OTP slots, whose secrets type on a touch as soon as `CAP_OTP` is back.
+pub fn is_devconf_gate_fid(fid: u16) -> bool {
+    fid == EF_DEV_CONF || fid == lock::EF_DEV_LOCK
+}
 
 /// Take (and clear) the "enabled-applications config changed" latch.
 pub fn take_dev_conf_dirty() -> bool {
@@ -713,6 +766,7 @@ fn push_tlv(buf: &mut [u8], n: &mut usize, tag: u8, val: &[u8]) {
 #[cfg(any(test, feature = "test-util"))]
 pub mod raw {
     pub const EF_DEV_CONF: u16 = super::EF_DEV_CONF;
+    pub const EF_DEV_LOCK: u16 = super::lock::EF_DEV_LOCK;
     pub const EF_DEV_CONF_MAX: usize = super::EF_DEV_CONF_MAX;
     pub const TAG_USB_SUPPORTED: u8 = super::TAG_USB_SUPPORTED;
     pub const TAG_SERIAL: u8 = super::TAG_SERIAL;

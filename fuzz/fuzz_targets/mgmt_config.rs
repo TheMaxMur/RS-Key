@@ -24,6 +24,11 @@
 //! live path serves is the one a cold boot would serve. The last two are the
 //! generic detector for the silent-corruption class this target was born from — a
 //! command that stores or serves less than it claims and still reports success.
+//!
+//! Two more hold the configuration lock: a refused write changes nothing READ
+//! CONFIG reports, and while it reports a lock set, a write carrying no `UNLOCK`
+//! code is refused. A code is sixteen bytes no generated run invents (no lock in
+//! 1.17M runs), so each write's control byte picks its lock tags from [`CODES`].
 
 use core::cell::RefCell;
 use libfuzzer_sys::fuzz_target;
@@ -36,6 +41,19 @@ use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 
 const INS_WRITE_CONFIG: u8 = 0x1C;
 const INS_READ_CONFIG: u8 = 0x1D;
+const TAG_CONFIG_LOCK: u8 = 0x0A;
+const TAG_CONFIG_UNLOCK: u8 = 0x0B;
+
+/// The codes a control byte can name: two to lock and open with, and ykman's clear.
+const CODES: [[u8; 16]; 3] = [[0xA5; 16], [0x5A; 16], [0; 16]];
+
+/// Append `tag` carrying the code `sel` picks, `0` being none.
+fn lock_tlv(tag: u8, sel: u8, blob: &mut Vec<u8>) {
+    if let Some(code) = sel.checked_sub(1).and_then(|k| CODES.get(usize::from(k))) {
+        blob.extend_from_slice(&[tag, 16]);
+        blob.extend_from_slice(code);
+    }
+}
 
 /// The CCID short-APDU response budget — what the dispatch path gets.
 const CCID_RES_CAP: usize = 256;
@@ -86,6 +104,21 @@ fn assert_parseable(sw: Sw, body: &[u8]) {
     );
 }
 
+/// The value of the first `tag` entry of a short-form TLV run, walked as the
+/// device's codec walks it: a truncated entry ends the run.
+fn tlv_value(blob: &[u8], tag: u8) -> Option<&[u8]> {
+    let mut i = 0;
+    while let Some(&[t, len]) = blob.get(i..).and_then(<[u8]>::first_chunk::<2>) {
+        let end = i + 2 + len as usize;
+        let value = blob.get(i + 2..end)?;
+        if t == tag {
+            return Some(value);
+        }
+        i = end;
+    }
+    None
+}
+
 fuzz_target!(|data: &[u8]| {
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();
@@ -104,13 +137,18 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    // Consume the rest as a sequence of `(len, blob)` writes; after each one,
-    // read the config back. State persists in `fs` across the whole sequence.
-    while i < data.len() {
-        let inner = data[i] as usize; // 0..=255 — short Lc fits, may exceed 64
-        i += 1;
+    // Consume the rest as a sequence of `(ctl, len, blob)` writes; after each one,
+    // read the config back. State persists in `fs` across the whole sequence. The
+    // control byte's low two bits pick an `UNLOCK` code, the next two a new one.
+    while i + 1 < data.len() {
+        let ctl = data[i];
+        let inner = data[i + 1] as usize; // 0..=255 — short Lc fits, may exceed 64
+        i += 2;
         let end = (i + inner).min(data.len());
-        let blob = &data[i..end];
+        let mut blob = Vec::new();
+        lock_tlv(TAG_CONFIG_UNLOCK, ctl & 3, &mut blob);
+        blob.extend_from_slice(&data[i..end]);
+        lock_tlv(TAG_CONFIG_LOCK, (ctl >> 2) & 3, &mut blob);
         i = end;
 
         // A valid WRITE CONFIG: leading length byte = inner length, then blob.
@@ -122,7 +160,12 @@ fuzz_target!(|data: &[u8]| {
             (blob.len() + 1) as u8,
             blob.len() as u8,
         ];
-        cmd.extend_from_slice(blob);
+        cmd.extend_from_slice(&blob);
+        let (_, before) = read_back(&app, &mut fs);
+        let locked = before
+            .get(1..)
+            .and_then(|b| tlv_value(b, TAG_CONFIG_LOCK))
+            .is_some_and(|v| v != [0x00]);
         let wrote = run(&mut app, &mut fs, &cmd);
 
         // One cap, not two: `EF_DEV_CONF_MAX` is *derived* from the 64-byte one,
@@ -135,6 +178,15 @@ fuzz_target!(|data: &[u8]| {
         // A refused one changed nothing, so it carries no such obligation.
         if wrote == Some(Sw::OK) {
             assert_eq!(sw, Sw::OK, "READ CONFIG failed after an accepted write");
+        } else {
+            assert_eq!(body, before, "a refused write changed READ CONFIG");
+        }
+        if locked && tlv_value(&blob, TAG_CONFIG_UNLOCK).is_none() {
+            assert_ne!(
+                wrote,
+                Some(Sw::OK),
+                "a locked device took a write without its code"
+            );
         }
         assert_parseable(sw, &body);
     }

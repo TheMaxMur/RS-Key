@@ -4,9 +4,9 @@
 use super::*;
 use rsk_devconf::SUPPORTED_CAPS;
 use rsk_devconf::raw::{
-    EF_DEV_CONF, EF_DEV_CONF_MAX, TAG_AUTO_EJECT_TIMEOUT, TAG_CHALRESP_TIMEOUT, TAG_CONFIG_LOCK,
-    TAG_CONFIG_UNLOCK, TAG_DEVICE_FLAGS, TAG_FORM_FACTOR, TAG_NFC_ENABLED, TAG_NFC_RESTRICTED,
-    TAG_REBOOT, TAG_SERIAL, TAG_USB_ENABLED, TAG_USB_SUPPORTED, TAG_VERSION,
+    EF_DEV_CONF, EF_DEV_CONF_MAX, EF_DEV_LOCK, TAG_AUTO_EJECT_TIMEOUT, TAG_CHALRESP_TIMEOUT,
+    TAG_CONFIG_LOCK, TAG_CONFIG_UNLOCK, TAG_DEVICE_FLAGS, TAG_FORM_FACTOR, TAG_NFC_ENABLED,
+    TAG_NFC_RESTRICTED, TAG_REBOOT, TAG_SERIAL, TAG_USB_ENABLED, TAG_USB_SUPPORTED, TAG_VERSION,
 };
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
@@ -36,6 +36,20 @@ fn process(app: &mut ManagementApplet<'_>, fs: &mut Fs<RamStorage>, raw: &[u8]) 
     let apdu = Apdu::parse(raw).unwrap();
     let sw = Applet::process(app, &apdu, fs, &mut res);
     (sw, res.as_slice().to_vec())
+}
+
+/// WRITE CONFIG of `blob` behind its inner length byte, as ykman frames it.
+fn write_config(app: &mut ManagementApplet<'_>, fs: &mut Fs<RamStorage>, blob: &[u8]) -> Sw {
+    let mut cmd = std::vec![
+        0x00,
+        INS_WRITE_CONFIG,
+        0,
+        0,
+        (blob.len() + 1) as u8,
+        blob.len() as u8
+    ];
+    cmd.extend_from_slice(blob);
+    process(app, fs, &cmd).0
 }
 
 /// Walk a TLV blob, returning the value for `tag`.
@@ -138,10 +152,10 @@ fn write_then_read_config_roundtrips() {
 
 #[test]
 fn config_lock_code_is_stripped_and_not_echoed() {
-    // ykman `config set-lock-code` sends a 16-byte code under tag 0x0A. We do not
-    // implement the lock, and READ CONFIG echoes to any unauthenticated host over
-    // three transports, so the code must never be stored or returned — otherwise a
-    // secret the user typed leaks in cleartext (audit run-30).
+    // ykman `config set-lock-code` sends a 16-byte code under tag 0x0A. READ CONFIG
+    // echoes to any unauthenticated host over three transports, so the code must never
+    // be stored or returned — otherwise a secret the user typed leaks in cleartext
+    // (audit run-30). The lock keeps a verifier, and READ CONFIG says only that it is set.
     let presence = RefCell::new(AlwaysConfirm);
     let mut app = ManagementApplet::new([0; 8], &presence);
     let mut fs = fs();
@@ -161,18 +175,57 @@ fn config_lock_code_is_stripped_and_not_echoed() {
     let (sw, _) = process(&mut app, &mut fs, &cmd);
     assert_eq!(sw, Sw::OK);
 
-    // Nothing carrying the code is retained in flash.
-    let mut stored = [0u8; EF_DEV_CONF_MAX];
-    let n = fs.read(EF_DEV_CONF, &mut stored).unwrap_or(0);
-    assert!(!stored[..n].windows(16).any(|w| w == [0xAB; 16]));
+    // Nothing carrying the code is retained in flash, in the record or the lock.
+    for fid in [EF_DEV_CONF, EF_DEV_LOCK] {
+        let mut stored = [0u8; 64];
+        let n = fs.read(fid, &mut stored).unwrap_or(0);
+        assert!(
+            !stored[..n].windows(16).any(|w| w == [0xAB; 16]),
+            "{fid:#06x}"
+        );
+    }
 
     let (sw, body) = process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]);
     assert_eq!(sw, Sw::OK);
     let tlv = &body[1..];
-    // The USB_ENABLED tag survives; the lock reads back unset; the raw code is gone.
+    // The USB_ENABLED tag survives; the lock reads back set; the raw code is gone.
     assert_eq!(tlv_get(tlv, TAG_USB_ENABLED), Some(&[0x02, 0x02][..]));
-    assert_eq!(tlv_get(tlv, TAG_CONFIG_LOCK), Some(&[0x00][..]));
+    assert_eq!(tlv_get(tlv, TAG_CONFIG_LOCK), Some(&[0x01][..]));
     assert!(!body.windows(16).any(|w| w == [0xAB; 16]));
+}
+
+/// Once a code is set, WRITE CONFIG answers as a YubiKey 5.8.0 does: `6986` without
+/// the code, `63C0` with another, and the write itself with the right one.
+#[test]
+fn a_locked_write_config_answers_as_a_yubikey() {
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    let code = [0xA5; 16];
+    let mut set = std::vec![TAG_CONFIG_LOCK, 0x10];
+    set.extend_from_slice(&code);
+    assert_eq!(write_config(&mut app, &mut fs, &set), Sw::OK);
+
+    let fido_only = [TAG_USB_ENABLED, 0x02, 0x02, 0x00];
+    assert_eq!(
+        write_config(&mut app, &mut fs, &fido_only),
+        Sw::COMMAND_NOT_ALLOWED
+    );
+    for (unlock, want) in [([0x5A; 16], Sw::new(0x63, 0xC0)), (code, Sw::OK)] {
+        let mut blob = std::vec![TAG_CONFIG_UNLOCK, 0x10];
+        blob.extend_from_slice(&unlock);
+        blob.extend_from_slice(&fido_only);
+        assert_eq!(
+            write_config(&mut app, &mut fs, &blob),
+            want,
+            "{unlock:02x?}"
+        );
+    }
+    let (_, body) = process(&mut app, &mut fs, &[0x00, INS_READ_CONFIG, 0, 0, 0x00]);
+    assert_eq!(
+        tlv_get(&body[1..], TAG_USB_ENABLED),
+        Some(&[0x02, 0x00][..])
+    );
 }
 
 #[test]
@@ -350,8 +403,14 @@ fn set_lock_code_sized_request_is_accepted() {
     let mut stored = [0u8; EF_DEV_CONF_MAX];
     let n = fs.read(EF_DEV_CONF, &mut stored).unwrap();
     assert!(n <= EF_DEV_CONF_MAX);
+    let mut lock = [0u8; 64];
+    let l = fs.read(EF_DEV_LOCK, &mut lock).unwrap();
     assert!(
         !stored[..n]
+            .iter()
+            .chain(&lock[..l])
+            .copied()
+            .collect::<Vec<u8>>()
             .windows(16)
             .any(|w| w == [0x11; 16] || w == [0x22; 16]),
         "neither lock code may reach flash"

@@ -1128,6 +1128,64 @@ fn hid_frame_set_device_info_bumps_program_sequence() {
     );
 }
 
+/// A locked configuration refuses a SET_DEVICE_INFO without its code the way the
+/// keyboard transport can say so: the sequence stays put, which yubikit reads as a
+/// rejected write, and nothing is stored.
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn hid_frame_set_device_info_honours_the_configuration_lock() {
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let code = [0xA5; 16];
+    let frame = |body: &[u8]| {
+        let mut payload = [0u8; hid::PAYLOAD_SIZE];
+        payload[0] = body.len() as u8;
+        payload[1..=body.len()].copy_from_slice(body);
+        payload
+    };
+    let mut out = [0u8; 64];
+    let mut set = vec![0x0A, 0x10];
+    set.extend_from_slice(&code);
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        app.process_hid(0x15, &frame(&set), &mut fs, &mut res),
+        Sw::OK
+    );
+
+    let fido_only = [0x03, 0x02, 0x02, 0x00];
+    let seq = app.hid_status_frame(&mut fs)[4];
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        app.process_hid(0x15, &frame(&fido_only), &mut fs, &mut res),
+        Sw::COMMAND_NOT_ALLOWED
+    );
+    assert_eq!(
+        app.hid_status_frame(&mut fs)[4],
+        seq,
+        "a refused write advanced pgmSeq"
+    );
+    assert_eq!(
+        rsk_devconf::read_enabled_caps(&mut fs),
+        rsk_devconf::SUPPORTED_CAPS
+    );
+
+    let mut opened = vec![0x0B, 0x10];
+    opened.extend_from_slice(&code);
+    opened.extend_from_slice(&fido_only);
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        app.process_hid(0x15, &frame(&opened), &mut fs, &mut res),
+        Sw::OK
+    );
+    assert_eq!(app.hid_status_frame(&mut fs)[4], seq.wrapping_add(1));
+    assert_eq!(
+        rsk_devconf::read_enabled_caps(&mut fs),
+        rsk_devconf::CAP_FIDO2
+    );
+}
+
 #[cfg(feature = "strict-config")]
 #[test]
 fn hid_frame_set_device_info_ignored_under_strict() {

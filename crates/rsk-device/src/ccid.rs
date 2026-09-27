@@ -141,15 +141,14 @@ pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor
 /// leaves a factory value beside a key still on the card — and for the KDF that is a
 /// lockout, since the PW verifiers are taken over its output.
 ///
-/// `EF_DEV_CONF` is deliberately **not** here, though its absence also resolves to a
-/// published default ("every supported application enabled"). It gates which applets
-/// are reachable, not whether a surviving secret is protected: for FIDO, PIV, OATH
-/// and OpenPGP the applet's own credential gate is in this set, so re-enabling one
-/// buys nothing. That argument does **not** cover OTP — its slot records are phase 1
-/// with no gate of their own, and a surviving static-password or HOTP slot emits on
-/// touch alone once `CAP_OTP` is back. What decides it is the other half: the record
-/// is host-writable ungated on the default build, so deferring it denies an attacker
-/// nothing they cannot simply write back.
+/// `EF_DEV_CONF` and its configuration lock are here too. They gate which applets are
+/// reachable rather than whether a surviving secret is protected, and for FIDO, PIV,
+/// OATH and OpenPGP the applet's own credential gate is in this set anyway. OTP is
+/// the exception: its slot records are phase 1 with no gate of their own, and a
+/// surviving static-password or HOTP slot emits on touch alone once `CAP_OTP` is
+/// back. While no lock code is set the record is host-writable ungated and deferring
+/// it denies nothing; once one is, a prefix that took the lock first would hand any
+/// host the re-enable the owner locked away.
 ///
 /// **This must stay a plain fold over the applets' own exported predicates.** The one
 /// arm that was ever open-coded here is the one that went missing: OATH's
@@ -162,6 +161,7 @@ pub fn gates_wiped_last(fid: u16) -> bool {
         || rsk_piv::files::is_piv_gate_fid(fid)
         || rsk_oath::is_oath_lock_fid(fid)
         || rsk_openpgp::terminate::is_openpgp_gate_fid(fid)
+        || rsk_devconf::is_devconf_gate_fid(fid)
 }
 
 impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
@@ -283,8 +283,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
             // DEFAULT build only: ykman's WRITE CONFIG over FIDO. The payload is
             // the DeviceConfig `get_bytes()` blob — a leading length byte then the
             // TLV — the same store CCID WRITE CONFIG / OTP-HID SET_DEVICE_INFO use,
-            // so it round-trips into every READ CONFIG. Ungated for parity (a
-            // strict build never defines this arm; the write stays gated elsewhere).
+            // so it round-trips into every READ CONFIG. Gated only by the lock, for
+            // parity (a strict build never defines this arm; the write stays gated
+            // elsewhere).
             #[cfg(not(feature = "strict-config"))]
             CTAP_WRITE_CONFIG => {
                 if _data.is_empty() {
@@ -296,7 +297,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
                 }
                 let ok = {
                     let mut fsb = self.fs.borrow_mut();
-                    rsk_devconf::persist_dev_conf(&mut *fsb, &_data[1..1 + len]).is_ok()
+                    self.management
+                        .persist_config(&mut *fsb, &_data[1..1 + len])
+                        .is_ok()
                 };
                 // An empty body is the ykman-expected acknowledgement.
                 if ok { Some(&self.resp[..0]) } else { None }

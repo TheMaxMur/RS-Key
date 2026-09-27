@@ -1471,8 +1471,10 @@ dependencies = [
 name = "rsk-devconf"
 version = "0.1.0"
 dependencies = [
+ "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-secret",
 ]
 
 [[package]]

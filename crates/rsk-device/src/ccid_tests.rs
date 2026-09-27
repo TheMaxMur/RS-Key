@@ -6,6 +6,11 @@ use super::*;
 use crate::tests::WriteStuck;
 use crate::tests::{Env, TestRng, VendorBoard, apdu, dev_conf, get_creds_metadata, select, sw};
 
+/// The DeviceInfo serial the management applet reports for [`crate::tests::SERIAL_ID`].
+fn serial() -> [u8; 4] {
+    rsk_sdk::serial4(crate::tests::SERIAL_ID)
+}
+
 /// The eight AIDs in registration order, so a test can walk the whole set.
 const AIDS: [(&str, &[u8]); 8] = [
     ("vendor", rsk_vendor::VENDOR_AID),
@@ -49,7 +54,7 @@ fn a_disabled_application_is_invisible_not_just_unreported() {
         assert_eq!(sw(ccid.handle_apdu(&select(aid), 0)), rsk_sdk::Sw::OK);
 
         let blob = dev_conf(rsk_devconf::CAP_FIDO2); // everything else off
-        rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+        rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
         assert!(!ccid.refresh_enabled() & cap != 0 || !ccid.caps_enabled(cap));
 
         let res = ccid.handle_apdu(&select(aid), 0).to_vec();
@@ -69,7 +74,7 @@ fn the_recovery_applets_can_never_be_disabled() {
     let env = Env::new();
     let mut ccid = env.ccid();
     let blob = dev_conf(0); // every capability off
-    rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
     for (name, aid) in [
         ("management", rsk_mgmt::MANAGEMENT_AID),
@@ -101,7 +106,7 @@ fn a_config_write_is_only_seen_after_a_refresh() {
     let mut ccid = env.ccid();
     assert!(ccid.caps_enabled(rsk_devconf::CAP_OATH));
     let blob = dev_conf(rsk_devconf::CAP_FIDO2);
-    rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     assert!(
         ccid.caps_enabled(rsk_devconf::CAP_OATH),
         "still the cached mask"
@@ -123,11 +128,12 @@ fn the_wipe_defers_every_applets_own_gate_records() {
     /// One applet's "is this a gate record?" predicate, named so the array of
     /// them stays readable.
     type Gate = fn(u16) -> bool;
-    let predicates: [(&str, Gate); 4] = [
+    let predicates: [(&str, Gate); 5] = [
         ("fido", rsk_fido::is_fido_gate_fid),
         ("piv", rsk_piv::files::is_piv_gate_fid),
         ("oath", rsk_oath::is_oath_lock_fid),
         ("openpgp", rsk_openpgp::terminate::is_openpgp_gate_fid),
+        ("devconf", rsk_devconf::is_devconf_gate_fid),
     ];
     for (name, owns) in predicates {
         let mine: std::vec::Vec<u16> = (0..=u16::MAX).filter(|&f| owns(f)).collect();
@@ -148,11 +154,12 @@ fn no_applet_defers_another_applets_record() {
     // it deferred if a neighbour's predicate claims it. FIDO and OpenPGP interleave
     // in the 0x10xx band, so this is not hypothetical.
     type Gate = fn(u16) -> bool;
-    let predicates: [(&str, Gate); 4] = [
+    let predicates: [(&str, Gate); 5] = [
         ("fido", rsk_fido::is_fido_gate_fid),
         ("piv", rsk_piv::files::is_piv_gate_fid),
         ("oath", rsk_oath::is_oath_lock_fid),
         ("openpgp", rsk_openpgp::terminate::is_openpgp_gate_fid),
+        ("devconf", rsk_devconf::is_devconf_gate_fid),
     ];
     for fid in 0..=u16::MAX {
         let owners: std::vec::Vec<&str> = predicates
@@ -169,7 +176,7 @@ fn no_applet_defers_another_applets_record() {
 
 #[test]
 fn the_wipe_defers_nothing_it_was_not_asked_to() {
-    // The other direction: everything deferred belongs to one of the four. A wipe
+    // The other direction: everything deferred belongs to one of the five. A wipe
     // that holds back a record nobody owns leaves it behind for ever.
     for fid in 0..=u16::MAX {
         if gates_wiped_last(fid) {
@@ -177,7 +184,8 @@ fn the_wipe_defers_nothing_it_was_not_asked_to() {
                 rsk_fido::is_fido_gate_fid(fid)
                     || rsk_piv::files::is_piv_gate_fid(fid)
                     || rsk_oath::is_oath_lock_fid(fid)
-                    || rsk_openpgp::terminate::is_openpgp_gate_fid(fid),
+                    || rsk_openpgp::terminate::is_openpgp_gate_fid(fid)
+                    || rsk_devconf::is_devconf_gate_fid(fid),
                 "{fid:#06x} is deferred but owned by no applet"
             );
         }
@@ -251,6 +259,81 @@ fn a_refused_config_write_is_never_acked_as_a_written_one() {
     );
 }
 
+/// A code set over CCID locks the other three writers too: the CTAPHID `0x43`, the
+/// vendor `CONFIG_WRITE` and the OTP keyboard's `0x15` each salt the verifier with
+/// the serial they derive for themselves, and one lock needs them to agree.
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn a_code_set_over_ccid_locks_every_transport() {
+    use rsk_devconf::raw::{TAG_CONFIG_LOCK, TAG_CONFIG_UNLOCK};
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let code = [0xA5; 16];
+    let with_code = |fields: &[u8]| {
+        let mut blob = std::vec![TAG_CONFIG_UNLOCK, 16];
+        blob.extend_from_slice(&code);
+        blob.extend_from_slice(fields);
+        blob
+    };
+    let framed = |blob: &[u8]| {
+        let mut out = std::vec![blob.len() as u8];
+        out.extend_from_slice(blob);
+        out
+    };
+    let caps = || rsk_devconf::read_enabled_caps(&mut env.fs.borrow_mut());
+    let mut set = std::vec![TAG_CONFIG_LOCK, 16];
+    set.extend_from_slice(&code);
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_mgmt::MANAGEMENT_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    assert_eq!(
+        sw(ccid.handle_apdu(&apdu(0x00, 0x1C, 0, 0, &framed(&set)), 0)),
+        rsk_sdk::Sw::OK
+    );
+
+    // CTAPHID 0x43.
+    let fido = dev_conf(rsk_devconf::CAP_FIDO2);
+    assert!(
+        ccid.ctap_mgmt(0x43, &fido).is_none(),
+        "0x43 without the code"
+    );
+    assert_eq!(caps(), rsk_devconf::SUPPORTED_CAPS);
+    assert!(
+        ccid.ctap_mgmt(0x43, &framed(&with_code(&fido[1..])))
+            .is_some()
+    );
+    assert_eq!(caps(), rsk_devconf::CAP_FIDO2);
+
+    // The vendor CONFIG_WRITE.
+    let mut ctap = env.ctap();
+    let piv = dev_conf(rsk_devconf::CAP_PIV);
+    let target = rsk_fido::consts::CONFIG_TARGET_DEV_CONF;
+    let refused = ctap.handle_cbor(1, &crate::tests::vendor_config_write(target, &piv[1..]), 0);
+    assert_eq!(refused[0], rsk_fido::CtapError::NotAllowed.as_u8());
+    assert_eq!(caps(), rsk_devconf::CAP_FIDO2);
+    let opened = crate::tests::vendor_config_write(target, &with_code(&piv[1..]));
+    assert_eq!(ctap.handle_cbor(1, &opened, 0)[0], rsk_fido::CTAP2_OK);
+    assert_eq!(caps(), rsk_devconf::CAP_PIV);
+
+    // The OTP keyboard's SET_DEVICE_INFO, which answers through the sequence byte.
+    let all = dev_conf(rsk_devconf::SUPPORTED_CAPS);
+    let frame = |blob: &[u8]| {
+        let mut payload = [0u8; 64];
+        payload[..blob.len()].copy_from_slice(blob);
+        payload
+    };
+    let (_, _, before) = ccid.handle_otp_hid(0x15, &frame(&all));
+    assert_eq!(caps(), rsk_devconf::CAP_PIV, "0x15 without the code");
+    let (_, _, after) = ccid.handle_otp_hid(0x15, &frame(&framed(&with_code(&all[1..]))));
+    assert_eq!(caps(), rsk_devconf::SUPPORTED_CAPS);
+    assert_eq!(
+        after[4],
+        before[4].wrapping_add(1),
+        "the opened write advanced pgmSeq"
+    );
+}
+
 #[cfg(not(feature = "strict-config"))]
 #[test]
 fn a_write_config_whose_length_byte_lies_is_refused() {
@@ -278,7 +361,7 @@ fn disabling_otp_stops_the_function_slots_but_not_the_identify_ones() {
     let env = Env::new();
     let mut ccid = env.ccid();
     let blob = dev_conf(rsk_devconf::CAP_FIDO2);
-    rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
 
     let payload = [0u8; 64];
@@ -298,7 +381,7 @@ fn a_button_press_types_nothing_while_otp_is_disabled() {
     let env = Env::new();
     let mut ccid = env.ccid();
     let blob = dev_conf(rsk_devconf::CAP_FIDO2);
-    rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
     assert!(ccid.otp_button_ticket(1, 0).is_none());
     assert!(ccid.otp_button_ticket(2, 0).is_none());
@@ -827,7 +910,7 @@ mod pinpad {
         assert!(ccid.pin_ref_ready(rsk_openpgp::consts::PW1_MODE81));
 
         let blob = dev_conf(rsk_devconf::CAP_FIDO2);
-        rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+        rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
         ccid.refresh_enabled();
         assert!(!ccid.pin_ref_ready(rsk_openpgp::consts::PW1_MODE81));
     }
@@ -1280,7 +1363,7 @@ fn disabling_one_fido_application_does_not_leave_the_other_reachable() {
         let mut ccid = env.ccid();
         // Everything on except this one.
         let blob = dev_conf(rsk_devconf::SUPPORTED_CAPS & !cap);
-        rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+        rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
         ccid.refresh_enabled();
 
         // The AID still selects — its sibling application is still on.
@@ -1312,7 +1395,7 @@ fn disabling_both_fido_applications_removes_the_aid() {
     let mut ccid = env.ccid();
     let blob =
         dev_conf(rsk_devconf::SUPPORTED_CAPS & !(rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_U2F));
-    rsk_devconf::persist_dev_conf(&mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
     assert_eq!(
         sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),

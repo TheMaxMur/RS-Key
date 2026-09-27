@@ -37,6 +37,10 @@ symbol = "rsk_crypto::pinproto::verify"
 surface = "CTAP pinUvAuthProtocol MAC verify"
 
 [[caller]]
+symbol = "rsk_devconf::lock::lock_change"
+surface = "management configuration lock code verify"
+
+[[caller]]
 symbol = "rsk_fido::clientpin::pin_verifier_matches"
 surface = "FIDO device-local PIN verify"
 

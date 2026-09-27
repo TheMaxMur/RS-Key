@@ -22,7 +22,7 @@
 #
 # Scope, matching the roadmap's §3.4 so the counts reproduce: callers outside
 # `crates/rsk-fs` (which defines the family), outside `fuzz/`, and outside the
-# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 43 — 21 `delete`,
+# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 44 — 22 `delete`,
 # 5 `delete_key`, 2 `delete_over`, 5 `delete_key_over`, 5 `force_delete`,
 # 5 `force_delete_halves`.
 #
@@ -93,6 +93,17 @@
 # is how that premise stops holding while every entry still reads as if it does.
 head_minters = ["crates/rsk-piv"]
 
+
+[[site]]
+file = "crates/rsk-devconf/src/lock.rs"
+line = 118
+call = "Self::Clear => fs.delete(EF_DEV_LOCK),"
+verb = "delete"
+answer = "read"
+class = "secret-or-gate"
+metadata = "none"
+disposition = "must-read"
+why = "the record IS the configuration lock; a verifier that survives a clear keeps refusing the config writes the host was just told it may make."
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
@@ -257,11 +268,11 @@ answer = "read"
 class = "secret-or-gate"
 metadata = "none"
 disposition = "must-read"
-why = "resetPersistentPinUvAuthToken revokes a capability (SEC-FIDO-003); all four callers map the error to CTAP2_ERR_OTHER rather than report a token cleared. The folded answer is kept deliberately (reviewed 0x0989): the record half here is only ever the shared blob being unreadable, but that is equally true of vendor.rs:427/429 and crates/rsk-openpgp/src/putdata.rs:176/182, and splitting the halves for this caller alone would re-open the swallowed drop 0x0987 closed. One-shot commands lose the command, not a sweep's range."
+why = "resetPersistentPinUvAuthToken revokes a capability (SEC-FIDO-003); all four callers map the error to CTAP2_ERR_OTHER rather than report a token cleared. The folded answer is kept deliberately (reviewed 0x0989): the record half here is only ever the shared blob being unreadable, but that is equally true of vendor.rs:433/435 and crates/rsk-openpgp/src/putdata.rs:176/182, and splitting the halves for this caller alone would re-open the swallowed drop 0x0987 closed. One-shot commands lose the command, not a sweep's range."
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 435
+line = 441
 call = ".force_delete(EF_ATT_KEY.get())"
 verb = "force_delete"
 answer = "read"
@@ -272,7 +283,7 @@ why = "ATT_CLEAR, measured: discarding these two reported 'org attestation remov
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 438
+line = 444
 call = ".force_delete(EF_ATT_CHAIN)"
 verb = "force_delete"
 answer = "read"
@@ -283,7 +294,7 @@ why = "the chain half of the same erase, ordered after the key so the surviving 
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 945
+line = 951
 call = "if ctx.fs.delete(EF_EE_DEV).is_err() {"
 verb = "delete"
 answer = "read"

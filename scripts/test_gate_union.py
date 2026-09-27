@@ -34,6 +34,7 @@ UNION = "crates/rsk-device/src/ccid.rs"
 #: it recites — the missing `is_oath_lock_fid` was a bare `fn` — so the fixture
 #: carries a bare one, and the arm that drops it is what says the fix holds.
 APPLETS = {
+    "rsk-devconf": ("pub ", "is_devconf_gate_fid"),
     "rsk-fido": ("pub ", "is_fido_gate_fid"),
     "rsk-oath": ("", "is_oath_lock_fid"),
     "rsk-openpgp": ("pub(crate) ", "is_pgp_gate_fid"),
@@ -62,7 +63,7 @@ def arms(names):
 
 
 class Tree:
-    """A checkout shaped like this one: four applets that gate secrets behind a
+    """A checkout shaped like this one: five crates that gate secrets behind a
     record, the device crate whose union deletes those records last, and a
     firmware that is scanned for predicates but holds none."""
 
@@ -320,7 +321,7 @@ def test_deleting_the_roster_takes_the_absent_predicate_finding_with_it(tree):
     tree.write("crates/rsk-oath/src/lib.rs", "pub fn nothing_to_see(fid: u16) -> bool { false }\n")
     tree.edit(UNION, " || is_oath_lock_fid(fid)", "")
     assert tree.run().returncode == 1
-    cut = ('APPLETS_OWING_A_GATE = ("rsk-fido", "rsk-oath", "rsk-openpgp", "rsk-piv")',
+    cut = ('APPLETS_OWING_A_GATE = ("rsk-devconf", "rsk-fido", "rsk-oath", "rsk-openpgp", "rsk-piv")',
            "APPLETS_OWING_A_GATE = ()")
     assert tree.run(cut).returncode == 0
 
@@ -355,7 +356,7 @@ def test_requiring_pub_again_takes_the_run_37_finding_with_it(tree):
     assert partly.returncode == 1
     assert "does not name:" not in partly.stdout
     assert "no gate predicate found in: ['rsk-oath']" in partly.stdout
-    roster = ('APPLETS_OWING_A_GATE = ("rsk-fido", "rsk-oath", "rsk-openpgp", "rsk-piv")',
+    roster = ('APPLETS_OWING_A_GATE = ("rsk-devconf", "rsk-fido", "rsk-oath", "rsk-openpgp", "rsk-piv")',
               "APPLETS_OWING_A_GATE = ()")
     assert tree.run(pub, roster).returncode == 0
 

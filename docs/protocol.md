@@ -301,6 +301,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | SW | Name | Meaning |
 |---|---|---|
 | `9000` | OK | success |
+| `63C0` | — | WRITE CONFIG (§6) with a configuration lock code that is not the one set, as a YubiKey 5.8.0 answers it |
 | `6400` | EXEC_ERROR | execution error (internal) |
 | `6581` | MEMORY_FAILURE | flash access failed — a write, or a read whose answer the command must not guess (`1E/01` READ phy, `1C/01` WRITE phy, WRITE CONFIG's merge); and OpenPGP PSO:DECIPHER's answer to an ECDH peer point that decodes but is unusable (off the field or curve, X25519 small order), or to an RSA cryptogram it cannot decrypt (any width but the modulus's, bad padding, c = 0, n − 1 or n); RSA PSO:CDS and INTERNAL AUTHENTICATE over more than k − 11 bytes; GENERATE's `P1 = 81` read of a slot with no key; and an RSA IMPORT whose primes have the right widths and make no working key (`p = q`, composite primes, a short modulus) — as a YubiKey 5.8.0 answers each, though it also deletes the slot's key on that last one and RS-Key keeps it |
 | `6700` | WRONG_LENGTH | bad `Lc`/`Le` for this command |
@@ -308,6 +309,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | `6982` | SECURITY_STATUS_NOT_SATISFIED | auth/precondition missing |
 | `6984` | DATA_INVALID | malformed payload (e.g. bad guard magic) |
 | `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset); OpenPGP PSO:CDS, the RSA and ECDH arms of PSO:DECIPHER and INTERNAL AUTHENTICATE with no key in the slot, and ATTEST of an empty slot or an imported key, as a YubiKey 5.8.0 answers them |
+| `6986` | COMMAND_NOT_ALLOWED | WRITE CONFIG (§6) with no lock code while a configuration lock is set, as a YubiKey 5.8.0 answers it |
 | `6A80` | WRONG_DATA | bad data field; PIV `MOVE KEY` onto a slot that holds a key or takes none, or onto itself; PIV `PUT DATA` with a P1-P2 other than `3FFF`; OpenPGP GENERATE and IMPORT with a control-reference template they cannot read or whose key reference `84 01 xx` names another slot, and GENERATE `P1 = 80` and IMPORT under Yubico's attestation-key template `B6 { 84 01 81 }`; OpenPGP ATTEST with a P1-P2 or a body it does not take; OpenPGP SELECT DATA with any body but `60 04 5C 02 7F 21` |
 | `6A86` | INCORRECT_P1P2 | unsupported P1/P2 |
 | `6A88` | REFERENCE_NOT_FOUND | the object, key or PIN the request names is absent (PIV `GET METADATA`, `MOVE KEY`, the PIN commands' key reference) |
@@ -327,8 +329,8 @@ surface returns:
 | `0x02` | INVALID_PARAMETER | malformed param / bad key / wrong blob length |
 | `0x12` | INVALID_CBOR | the body is not exactly one CBOR item (trailing bytes) |
 | `0x14` | MISSING_PARAMETER | required field absent (e.g. blob/`pinUvAuthParam`) |
-| `0x27` | OPERATION_DENIED | touch declined / timed out |
-| `0x30` | NOT_ALLOWED | precondition unmet (no MSE channel, one already spent or owned by another CTAPHID channel, an `MSE` while one is live (§9.1), sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
+| `0x27` | OPERATION_DENIED | touch declined / timed out; a `CONFIG_WRITE` of `EF_DEV_CONF` whose lock code is wrong (§6.2) |
+| `0x30` | NOT_ALLOWED | precondition unmet (a `CONFIG_WRITE` of `EF_DEV_CONF` with no lock code while a lock is set (§6.2), no MSE channel, one already spent or owned by another CTAPHID channel, an `MSE` while one is live (§9.1), sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
 | `0x33` | PIN_AUTH_INVALID | `pinUvAuthParam` MAC or `acfg` permission wrong |
 | `0x36` | PUAT_REQUIRED | a PIN is set but no `pinUvAuthToken` was supplied |
 | `0x39` | REQUEST_TOO_LARGE | `subCommandParams` over the limit |
@@ -706,7 +708,7 @@ and writes.
 | INS | Name | Request | Response |
 |---|---|---|---|
 | `1D` | READ CONFIG | — | DeviceInfo TLV (see below) |
-| `1C` | WRITE CONFIG | `data[0]` = inner length `n`, then `n` bytes of enabled-apps TLV (`n ≤ 64`) | — (ungated by default; presence-gated under `strict-config`) |
+| `1C` | WRITE CONFIG | `data[0]` = inner length `n`, then `n` bytes of enabled-apps TLV (`n ≤ 128`) | — (gated by the configuration lock once a code is set, §6.2; presence-gated as well under `strict-config`) |
 | `1E` | — | anything | `9000` with no body, and nothing is done — as a YubiKey 5.8.0 answers it |
 
 ### 6.1 DeviceInfo TLV (READ CONFIG `0x1D`)
@@ -721,23 +723,51 @@ Response = one **leading overall-length byte**, then concatenated `TAG LEN VALUE
 | `05` | VERSION | 3 | `major, minor, patch` (`05 07 04`) |
 | `03` | USB_ENABLED | 2 | currently-enabled capability bitmask (BE16) |
 | `08` | DEVICE_FLAGS | 1 | `80` = touch-eject, `40` = remote wakeup; `00` unless a host set them |
-| `0A` | CONFIG_LOCK | 1 | `00` = unlocked |
+| `0A` | CONFIG_LOCK | 1 | `00` = unlocked, `01` = a lock code is set (§6.2) |
 
 When no host config has been written, the device returns the **defaults**:
 `USB_ENABLED` = all-supported, `DEVICE_FLAGS = 00`, `CONFIG_LOCK = 00`. Once
 WRITE CONFIG has stored a blob, READ CONFIG echoes that blob after the fixed
 `USB_SUPPORTED/SERIAL/FORM_FACTOR/VERSION` prefix, then always appends
-`CONFIG_LOCK = 00`.
+`CONFIG_LOCK`.
 
 A stored blob is echoed **only if it still satisfies the WRITE CONFIG rules** —
 each tag at most once, `USB_ENABLED` exactly two bytes. One that does not (a record
 an older, laxer build accepted) is not echoed verbatim; the response instead
 carries a synthesised `USB_ENABLED` equal to the mask the device actually enforces.
 So READ CONFIG is always parseable and never contradicts enforcement, whatever is
-in flash (audit run-34 #25). The config-lock tags (`0A` set-code, `0B` unlock) are **write-
-only on real hardware**; RS-Key does not implement the lock, so it strips them on
-write and never stores or echoes a lock code (audit run-30) — `0A` on read is
-always the 1-byte `00`. A code a build before 0.4.5 stored is dropped at boot.
+in flash (audit run-34 #25). The config-lock tags (`0A` set-code, `0B` unlock) are
+**write-only**: a code is never stored in `EF_DEV_CONF` or echoed (audit run-30),
+and `0A` on read is the 1-byte lock state (§6.2). A code a build before 0.4.5
+stored in the record is dropped at boot and never honoured as a lock.
+
+### 6.2 Configuration lock
+
+`ykman config set-lock-code` locks the configuration as it does a YubiKey 5.8.0.
+While a code is set, every write of `EF_DEV_CONF` — CCID WRITE CONFIG, OTP-HID
+SET_DEVICE_INFO `0x15`, CTAPHID `0x43` and the FIDO vendor `CONFIG_WRITE` target
+`0` (§9) — lands only if it carries that code in `0B` (UNLOCK). Without one it is
+refused (`6986`; `0x30` over `CONFIG_WRITE`), with another code likewise (`63C0`;
+`0x27`), and nothing is stored either way, even for a write that would change
+nothing. OTP-HID refuses by leaving the program-sequence byte where it was, and
+CTAPHID `0x43` answers `CTAPHID_ERROR`. There is no retry counter, as there is
+none on a YubiKey.
+
+- **Set**: `0A` with a 16-byte code, on an unlocked device or with the current code
+  in `0B`. **Clear**: `0A` of 16 zero bytes, with the current code (ykman's
+  `--clear`). A code of any other width, in either tag, is refused as malformed
+  (`6A80`; `0x02` over `CONFIG_WRITE`).
+- **Who can set one**: any host that can reach one of the four writers, on a
+  device with no code yet, as on a YubiKey. A code its owner does not hold then
+  keeps every config change behind a factory wipe
+  ([threat-model.md](threat-model.md) §1); a code set at provisioning prevents it.
+- **At rest**: `EF_DEV_LOCK` (`0x1124`) holds `01 ‖ SHA-256("RS-Key/CONFIG-LOCK" ‖
+  serial ‖ code)`, the serial being DeviceInfo's four bytes; absent is unlocked.
+  A record in any other form reads locked and opens for no code.
+- **Scope**: it survives `authenticatorReset`, like `EF_DEV_CONF`. The display
+  build's factory reset or an `rsk-wipe` erase clears it, which is how a lost
+  code is recovered. It gates `EF_DEV_CONF` only: the RS-Key phy and LED records
+  (§7, §8) have no YubiKey counterpart and stay outside it.
 
 **Capability bits** (`USB_SUPPORTED` / `USB_ENABLED`):
 
@@ -778,9 +808,8 @@ builds.
 > occurrence, so a stored duplicate would override the real identity and a
 > malformed one would make the whole DeviceInfo unparseable — permanently, since
 > this record survives `authenticatorReset`. **On the default build the write is
-> ungated** (full
-> ykman parity — any USB host can rewrite the reported config, matching a stock
-> YubiKey with no config-lock code). Building `--features strict-config` restores
+> ungated** until a lock code is set (§6.2) — full ykman parity: any USB host can
+> rewrite the reported config, matching a stock YubiKey with no config-lock code. Building `--features strict-config` restores
 > an **on-device user-presence confirmation** (Approve on the trusted-display
 > build, a BOOTSEL press otherwise), so a hostile host cannot rewrite it
 > unattended (declined/timed-out → `6985`). Either way the identity is cosmetic,
@@ -1099,7 +1128,7 @@ Keys 3/4 are present only when a PIN is set (see gating).
 | `09` | ATT_IMPORT | `{1: blob(60), 2: DER chain}` | — | MSE + touch + PIN-token. With **no PIN set** it additionally takes a distinct "Replace this identity?" confirmation — the PIN-token half is waived in that state, and an import replaces the identity every later U2F REGISTER signs with |
 | `0A` | ATT_CLEAR | — | — | MSE + touch + PIN-token |
 | `0B` | ATT_STATE | — | `{1: present, 2: sha256(chain)?}` | **ungated** |
-| `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**; touch + PIN-token under `strict-config`; no MSE. A write that changes nothing is a no-op: no flash write, no journal entry, and for PHY no reboot latch |
+| `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**, but for DEV_CONF's configuration lock (§6.2); touch + PIN-token under `strict-config`; no MSE. A write that changes nothing is a no-op: no flash write, no journal entry, and for PHY no reboot latch |
 | `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | `{1: blob(bstr)[, 2: {phy_tag: uint}]}` | **ungated**; `CTAP2_ERR_OTHER` if the record cannot be read — an empty blob means *absent*, never *unreadable*, because the host read-modify-writes on this answer |
 | `0E` | AUDIT_CONFIG | `{1: op(uint)}` — `0`=disable, `1`=enable, `2`=status | `{1: enabled(bool)}` | set: PIN-token + touch; status (`2`): **ungated** |
 
@@ -1135,8 +1164,8 @@ Keys 3/4 are present only when a PIN is set (see gating).
 > The pcscd-free twin of the CCID device-config writes (§6 WRITE CONFIG and the
 > `§7`/`§8` phy/LED records): a host that cannot reach the CCID interface writes
 > the same config over CTAPHID. `target` selects the record: `0x00` = the
-> management enabled-apps TLV (`EF_DEV_CONF`, the §6 blob, `≤ 64` bytes → the same
-> `CTAP1_ERR_INVALID_LENGTH 0x03` cap); `0x01` = the phy record (`EF_PHY`, §7.1:
+> management enabled-apps TLV (`EF_DEV_CONF`, the §6 blob, `≤ 128` bytes → the same
+> `CTAP1_ERR_INVALID_LENGTH 0x03` cap, under the §6.2 lock); `0x01` = the phy record (`EF_PHY`, §7.1:
 > VID/PID, USB interfaces, LED wiring, presence-timeout; a **read-modify-write
 > merge** — only the TLV tags in the blob are updated, the rest preserved (the same
 > `merge_save` the CCID path uses), effective on the next boot); `0x02` = the LED config block

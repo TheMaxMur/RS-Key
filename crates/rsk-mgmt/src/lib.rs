@@ -61,6 +61,17 @@ impl<'a> ManagementApplet<'a> {
         config_tlv(&self.serial, fs, res)
     }
 
+    /// Serve WRITE CONFIG to a non-CCID transport (the CTAPHID vendor command): the
+    /// same record under the same configuration lock, without the presence gate —
+    /// a `strict-config` build does not route that command here at all.
+    pub fn persist_config<S: Storage>(
+        &self,
+        fs: &mut Fs<S>,
+        blob: &[u8],
+    ) -> Result<(), DevConfError> {
+        persist_dev_conf(&self.serial, fs, blob)
+    }
+
     /// WRITE CONFIG: the first data byte is the length of the rest; persist that
     /// TLV blob as `EF_DEV_CONF`.
     fn write_config<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
@@ -75,19 +86,17 @@ impl<'a> ManagementApplet<'a> {
             return Sw::WRONG_DATA;
         }
         // Rewriting the reported DeviceInfo is a privileged, sticky change. Under
-        // `strict-config` gate it on operator presence (the CONFIG_LOCK byte is
-        // only reported, never enforced, so presence is the authentication of
-        // record). The DEFAULT build is ungated for full YubiKey/ykman parity —
-        // any USB host can rewrite DeviceInfo (docs/threat-model.md).
+        // `strict-config` gate it on operator presence as well as the lock. The
+        // DEFAULT build has the lock alone, as a YubiKey does: with no code set, any
+        // USB host can rewrite DeviceInfo (docs/threat-model.md).
         if cfg!(feature = "strict-config")
             && !self.require_presence(Confirm::titled("Write device config?"))
         {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
-        match persist_dev_conf(fs, &apdu.data[1..apdu.nc]) {
+        match persist_dev_conf(&self.serial, fs, &apdu.data[1..apdu.nc]) {
             Ok(()) => Sw::OK,
-            Err(DevConfError::TooLong | DevConfError::BadTlv) => Sw::WRONG_DATA,
-            Err(DevConfError::Store) => Sw::MEMORY_FAILURE,
+            Err(e) => e.sw(),
         }
     }
 }

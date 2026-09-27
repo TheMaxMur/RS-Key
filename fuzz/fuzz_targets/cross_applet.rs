@@ -354,7 +354,11 @@ fuzz_target!(|data: &[u8]| {
                 // the record goes in through the function it calls. Without this the
                 // mask is stuck on and the SELECT gate above only ever checks one side.
                 #[cfg(feature = "strict-config")]
-                let _ = rsk_devconf::persist_dev_conf(&mut fs.borrow_mut(), &blob[1..]);
+                let _ = rsk_devconf::persist_dev_conf(
+                    &rsk_sdk::serial4(SERIAL_ID),
+                    &mut fs.borrow_mut(),
+                    &blob[1..],
+                );
             }
             // A raw APDU. The length is its own byte rather than the opcode's:
             // reserving `0x00`–`0x06` would otherwise make every 4-, 5- and

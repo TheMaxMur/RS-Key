@@ -201,7 +201,7 @@ that types), `ykman config usb --disable otp` now genuinely turns OTP off:
 ```sh
 ykman config usb --disable otp        # disables the OTP application (enforced)
 ykman config usb --list               # confirm what is on
-ykman config usb --enable otp         # reversible — turns it back on
+ykman config usb --enable otp         # reversible — turns it back on (-L <code> once a lock code is set)
 ```
 
 The write persists to the Yubico management capability blob (`EF_DEV_CONF`) and

@@ -79,7 +79,7 @@ threat_clause = "docs/threat-model.md#TM-HOST-TWO-TRANSPORTS"
 # cannot be skipped by changing transport, where this property says a touch
 # produced for one transport may not be consumed by another. Its pinned test,
 # `both_transports_answer_from_one_session_state`
-# (crates/rsk-device/src/ccid_tests.rs:1004), is about `&RefCell<FidoState>` —
+# (crates/rsk-device/src/ccid_tests.rs:1087), is about `&RefCell<FidoState>` —
 # and presence arbitration is not in `FidoState` at all; it is a `static
 # Arbiter` in `rsk-device`. The clause also names TWO transports where the
 # invariant ranges over four owners:

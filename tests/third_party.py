@@ -284,7 +284,6 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # Yubico extensions RS-Key does not implement, xfailed rather than removed so
         # an implementation shows up as a strict XPASS.
         "test_openpgp.py::test_change_pin_retries": "Yubico's SET PIN RETRIES (INS F2) is not implemented (6D00)",
-        "cli/test_config.py::TestConfigLockCode::test_set_lock_code": "the configuration lock is not implemented: its codes are stripped, never stored (docs/protocol.md)",
         # A capacity RS-Key keeps on purpose: more accounts than a YubiKey holds.
         "cli/test_oath.py::TestOATH::test_add_max_creds": "RS-Key holds 255 OATH accounts; the suite wants a YubiKey 5.7's 64, the 65th refused",
         # brainpoolP512r1 (OID tail 01 01 0D): no no_std arithmetic for it yet.

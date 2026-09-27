@@ -92,6 +92,26 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **`ykman config set-lock-code` locks the configuration, as on a YubiKey.** The
+  code was accepted and ignored: ykman printed "Lock code updated", DeviceInfo
+  went on reporting the device unlocked, and any host could still change which
+  applications are enabled. Once a code is set, every write of the DeviceInfo
+  record needs it, over all four transports that carry one: `6986` without it and
+  `63C0` with another over CCID, as a YubiKey 5.8.0 answers; an unmoved program
+  sequence over the OTP keyboard; an error over CTAPHID `0x43`; `0x30` and `0x27`
+  over the vendor `CONFIG_WRITE`. DeviceInfo reports `CONFIG_LOCK = 01`, and a new
+  code of 16 zero bytes clears it (`--clear`). The code is never stored: a new
+  record, `EF_DEV_LOCK`, holds its SHA-256 salted with the serial. No retry
+  counter, as on a YubiKey. The lock survives `authenticatorReset`; the display
+  build's factory reset or an `rsk-wipe` erase clears it. The phy and LED records
+  stay outside it. A device upgrades unlocked, as every older build reported it,
+  and a code one stored in plaintext is not honoured (below). As on a YubiKey, any
+  host can set a code on a key that has none, and one its owner does not hold
+  keeps every config change behind a factory wipe: set your own at provisioning
+  (docs/threat-model.md). The device-wide wipe now removes both records last, so a
+  torn one cannot open the configuration before the OTP slots are gone.
+  `bcdDevice` 0x0A53 → 0x0A54.
+
 - **A configuration-lock code an old build stored in plaintext is erased.** Up
   to 0.4.4, `ykman config set-lock-code` left the 16-byte code verbatim in the
   device-config record; 0.4.5 stopped storing and echoing it (audit run-30) but

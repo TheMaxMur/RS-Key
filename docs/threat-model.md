@@ -220,7 +220,13 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   full-ykman/YubiKey-compatible admin surface: a hostile USB host can silently
   rewrite the DeviceInfo / enabled-applications / USB identity — over CCID
   Management `WRITE CONFIG`, the FIDO vendor `CONFIG_WRITE`, and the CTAPHID
-  (`0x43`) and OTP-HID (`0x15`) transport writes — with **no** touch or PIN. The
+  (`0x43`) and OTP-HID (`0x15`) transport writes — with **no** touch or PIN.
+  A configuration lock code (`ykman config set-lock-code`) closes the DeviceInfo
+  half, as on a YubiKey: once one is set, all four writes need it
+  ([protocol.md §6.2](protocol.md#62-configuration-lock)). It keeps no retry
+  counter, a YubiKey keeping none either, so a code a person could remember can be
+  guessed online — use `--generate`. It does not reach the phy and LED records,
+  which are RS-Key's own and stay writable over `CONFIG_WRITE`. The
   USB *identity* (serial, strings) is cosmetic — never proof a device is genuine,
   attestation is (§3). The **enabled-applications mask is enforced**, though: a
   disabled application's applet stops answering (PIV/OpenPGP/OATH/OTP over CCID,
@@ -228,8 +234,16 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   can turn one off.
   That is a **reversible denial-of-service**, not a confidentiality or integrity
   break — the Management applet, the FIDO vendor command, and the OTP-HID
-  identify/config slots are never gated, so any single transport can re-enable it,
-  and no secret is exposed. **Reversible describes the mask, not the flash it is
+  identify/config slots are never gated by the mask, so any single transport can
+  re-enable it (with the code, once a lock is set), and no secret is exposed.
+  **A lock code the attacker sets ends that.** The same ungated write can set a
+  code on a device that has none, beside an empty mask; after it nothing turns an
+  application back on without that code, and the display build's factory reset or
+  an `rsk-wipe` erase, both of which destroy every credential, is the only way
+  back. A YubiKey 5.8.0 has the same exposure and no way back at all. A build with
+  `strict-config` closes it, since every config write there needs a touch, and so
+  does setting a code of your own at provisioning: changing one needs the current
+  one. **Reversible describes the mask, not the flash it is
   written to.** The same ungated commands persist their records, and a host that
   replays one indefinitely spends erase cycles that nothing gives back: measured
   on the device's own store geometry, a `SET LED` replay at a nearly full ring

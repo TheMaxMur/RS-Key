@@ -314,6 +314,34 @@ device's own OTP DEVK. A wipe tool cannot forge it.
 - **`head-mismatch` in `notes`** means the signed head did not fold from the
   window the device exported. Treat that as tampering or a broken device, not as
   a retryable error.
+- **A configuration lock code stays.** Offboarding leaves the enabled-applications
+  set and its [lock](#configuration-lock) as they were. Clear the code before the
+  key leaves (`ykman config set-lock-code -l <code> --clear`), or the next holder
+  cannot change which applications are on without it.
+
+## Configuration lock
+
+`ykman config set-lock-code` works as on a YubiKey 5.8.0. Once a code is set,
+changing which applications are enabled needs it, on every transport:
+
+```sh
+ykman config set-lock-code --generate          # prints the code; keep it
+ykman config usb --disable otp -L <code>       # later changes pass it
+ykman config set-lock-code -l <code> --clear   # remove the lock
+```
+
+Set one at provisioning even if nobody will change the configuration: any host
+can set a code on a key that has none, as on a YubiKey, and a code you do not hold
+keeps every later change behind a wipe. Changing a code needs the current one.
+
+`ykman info` reports "Configured capabilities are protected by a lock code". The
+key keeps only a salted hash of the code, and counts no wrong tries, as a
+YubiKey counts none: `--generate` gives a code nobody can guess, and a code a
+person made up can be. A factory reset from the [trusted display](display.md) or an
+[`rsk-wipe`](https://github.com/TheMaxMur/RS-Key/blob/main/rsk-wipe/README.md)
+erase clears a lost code; a YubiKey has no such way back. The lock covers the
+enabled-applications set only, not RS-Key's own USB identity and LED records
+([protocol.md §6.2](../protocol.md#62-configuration-lock)).
 
 ## See also
 

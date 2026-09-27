@@ -73,13 +73,13 @@ owners_tagged = ["crates/rsk-fido/src/seed.rs:649 seed::ensure_seed", "crates/rs
 # is 0, and `ensure_seed` takes no `FidoState` at all, so it structurally cannot
 # touch the antecedent: it writes `EF_KEY_DEV`, which is `store.seed`. It can
 # never falsify `ram => store.seed`; it can only make the right side true.
-owners_tag_reading = "an independent measurement REFUTED the reading this bundle first wrote. The three SEC-FIDO-006 tags at reset.rs:35, state.rs:533 and crates/rsk-fido/src/lib.rs:104 are NOT a sibling's tag standing in this one's place: SEC-FIDO-006 is ResetNeverWeakensSurvivingState, two of whose three clauses contain SeedReachable == store.seed \\/ ram — the same `ram`. All three functions legitimately own BOTH properties, and crates/rsk-fido/src/lib.rs:105-114 `Ctx::load_keydev` IS SeedReachable's disjunction in Rust, cited for exactly that twice in RSKeySecurityState.tla. The defect is a MISSING SECOND TAG, not a wrong first one. The one genuinely untagged owner is vendor.rs:559 `unlock`, which the model names as `ram`'s only producer"
+owners_tag_reading = "an independent measurement REFUTED the reading this bundle first wrote. The three SEC-FIDO-006 tags at reset.rs:35, state.rs:533 and crates/rsk-fido/src/lib.rs:104 are NOT a sibling's tag standing in this one's place: SEC-FIDO-006 is ResetNeverWeakensSurvivingState, two of whose three clauses contain SeedReachable == store.seed \\/ ram — the same `ram`. All three functions legitimately own BOTH properties, and crates/rsk-fido/src/lib.rs:105-114 `Ctx::load_keydev` IS SeedReachable's disjunction in Rust, cited for exactly that twice in RSKeySecurityState.tla. The defect is a MISSING SECOND TAG, not a wrong first one. The one genuinely untagged owner is vendor.rs:565 `unlock`, which the model names as `ram`'s only producer"
 # Every production site that writes or reads the RAM copy, enumerated over five
 # spellings because one under-approximates: the field, `clear_keydev_dec`,
 # `ctx.state.reset()`, `*self = Self::new()` and the destructuring `Drop`.
 owners_writers = [
-  "crates/rsk-fido/src/vendor.rs:597 — `ctx.state.keydev_dec = Some(seed)`, the SOLE producer (model: DeviceUnlock)",
-  "crates/rsk-fido/src/vendor.rs:596 — the clear before it, so an unlock cannot stack two copies",
+  "crates/rsk-fido/src/vendor.rs:603 — `ctx.state.keydev_dec = Some(seed)`, the SOLE producer (model: DeviceUnlock)",
+  "crates/rsk-fido/src/vendor.rs:602 — the clear before it, so an unlock cannot stack two copies",
   "crates/rsk-fido/src/state.rs:437 — `keydev_dec: None` in `FidoState::new`",
   "crates/rsk-fido/src/state.rs:524 — `clear_keydev_dec`: the assignment drops the `Secret`, which wipes it, then None",
   "crates/rsk-fido/src/state.rs:539 — `*self = Self::new()` inside `FidoState::reset`, which drops the old value",
@@ -91,7 +91,7 @@ owners_readers = [
   "crates/rsk-fido/src/lib.rs:106 — `Ctx::load_keydev`, RAM first then flash: the concrete SeedReachable, and the chokepoint nine call sites reach it through",
   "crates/rsk-fido/src/config.rs:416 — AUT_DISABLE's authorization gate",
   "crates/rsk-fido/src/config.rs:422 — the borrow that re-seals it",
-  "crates/rsk-fido/src/vendor.rs:988 — BACKUP_STATE's ungated `unlocked` bit",
+  "crates/rsk-fido/src/vendor.rs:994 — BACKUP_STATE's ungated `unlocked` bit",
   "crates/rsk-device/src/ctap.rs:229 — the trace projection, cfg-gated",
   "crates/rsk-fido/src/reset_assurance.rs:49 — the verification projection, cfg-gated",
 ]
@@ -200,7 +200,7 @@ bound_files_in_argument = 6
 stops_files_in_argument = "anything in a seventh file — and the measurement is the point: the slice page estimated three files, named the tag's file, and missed both writers and the ordering site"
 bound_crates = 2
 stops_crates = "a site outside the two crates. A holder of the RAM copy in a third would be outside the argument"
-shipped_relation = "the four writers are one producer (vendor.rs:597) and three destroyers (vendor.rs:596, config.rs:430, and reset.rs:107 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:106, config.rs:416, config.rs:422 and vendor.rs:988; the two projection sites are crates/rsk-device/src/ctap.rs:229 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit"
+shipped_relation = "the four writers are one producer (vendor.rs:603) and three destroyers (vendor.rs:602, config.rs:430, and reset.rs:107 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:106, config.rs:416, config.rs:422 and vendor.rs:994; the two projection sites are crates/rsk-device/src/ctap.rs:229 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit"
 cfg = "none — every writer and reader above is unconditional production code; the two projection sites are not, and the bound counts them apart for that reason"
 features = "none"
 
@@ -255,7 +255,7 @@ registered = "yes — assurance/platform.toml PLAT-MODEL-004, pending. Written B
 id = "AS-RAM-3"
 statement = "`DeviceUnlock` may not create the RAM copy without a live flash seed — the `store.seed` conjunct at RSKeySecurityState.tla:1071 is what makes this invariant true, and the production unlock has no such conjunct."
 kind = "model fidelity"
-discharger = "running the other arm. crates/rsk-fido/src/vendor.rs:559-586 gates the unlock on the one-shot MSE channel (`take_mse`), a 32-byte lock key and `lock_engaged(fs)` — which requires the PLAIN record ABSENT — so the code's guard is the wrapped record and the model's is a disjunction of both (AS-RAM-2). A boolean pinning the conjunct and generated both ways would settle it; by construction the FALSE arm goes RED, because `Idle /\\ ~store.seed /\\ ~ram` is reachable through ResetAborts (:1392-1397) after ResetSweepSecrets has deleted the record (:1297-1303). ARGUED FROM THE MODULE TEXT AND NOT RUN — no configuration in this draft was executed"
+discharger = "running the other arm. crates/rsk-fido/src/vendor.rs:565-592 gates the unlock on the one-shot MSE channel (`take_mse`), a 32-byte lock key and `lock_engaged(fs)` — which requires the PLAIN record ABSENT — so the code's guard is the wrapped record and the model's is a disjunction of both (AS-RAM-2). A boolean pinning the conjunct and generated both ways would settle it; by construction the FALSE arm goes RED, because `Idle /\\ ~store.seed /\\ ~ram` is reachable through ResetAborts (:1392-1397) after ResetSweepSecrets has deleted the record (:1297-1303). ARGUED FROM THE MODULE TEXT AND NOT RUN — no configuration in this draft was executed"
 expressible = "yes, with work — a boolean `UnlockNeedsFlashSeed` read by DeviceUnlock and emitted both ways by formal/gen-configs.sh is the shape AlwaysUvShipped already has; the obstacle is writing the constant and its two arms, not the gate"
 registered = "yes — assurance/platform.toml PLAT-MODEL-005, pending, and it is the one row here that can LEAVE this registry: a boolean emitted both ways moves it to assurance/assumptions.toml"
 

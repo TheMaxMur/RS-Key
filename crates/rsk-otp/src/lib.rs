@@ -855,7 +855,7 @@ impl<'a> OtpApplet<'a> {
         let Some(conf) = rest.get(..usize::from(len)) else {
             return Sw::WRONG_DATA;
         };
-        match rsk_devconf::persist_dev_conf(fs, conf) {
+        match rsk_devconf::persist_dev_conf(&rsk_sdk::serial4(self.serial_id), fs, conf) {
             Ok(()) => {
                 // ykman/yubikit confirm an OTP-transport write by the program-
                 // sequence byte in the status frame advancing (`_is_sequence_updated`),
@@ -864,10 +864,9 @@ impl<'a> OtpApplet<'a> {
                 self.config_seq = self.config_seq.wrapping_add(1);
                 Sw::OK
             }
-            Err(rsk_devconf::DevConfError::TooLong | rsk_devconf::DevConfError::BadTlv) => {
-                Sw::WRONG_DATA
-            }
-            Err(rsk_devconf::DevConfError::Store) => Sw::MEMORY_FAILURE,
+            // A refusal, a locked configuration's included, leaves the sequence
+            // where it was, which is how yubikit reads a rejected write.
+            Err(e) => e.sw(),
         }
     }
 

@@ -9,6 +9,9 @@ fn fs() -> Fs<RamStorage> {
     Fs::new(RamStorage::new())
 }
 
+/// The DeviceInfo serial every write here salts the lock's verifier with.
+const SERIAL: [u8; 4] = [0x01, 0x23, 0x45, 0x67];
+
 /// Walk a TLV blob, returning the value for `tag`.
 fn tlv_get(blob: &[u8], tag: u8) -> Option<&[u8]> {
     let mut i = 0;
@@ -41,7 +44,7 @@ fn read_config_body_fits_the_smallest_transport_buffer() {
     // branch. The room is slack at 64 bytes, so the buffer then shrinks to one byte
     // short of the whole body, where the room binds and must cut whole entries.
     let widest = widest_storable_record();
-    persist_dev_conf(&mut fs, &widest).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &widest).unwrap();
     for cap in [MIN_CONFIG_RES_CAP, CONFIG_TLV_FIXED + widest.len() - 1] {
         let mut body = std::vec![0u8; cap];
         let mut res = ResBuf::new(&mut body);
@@ -200,7 +203,7 @@ fn cap_enabled_treats_zero_as_always_on() {
 fn read_enabled_caps_roundtrips_via_flash() {
     let mut fs = fs();
     assert_eq!(read_enabled_caps(&mut fs), SUPPORTED_CAPS); // absent → default
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 0x02, 0x02, 0x2B]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 0x02, 0x02, 0x2B]).unwrap();
     assert_eq!(read_enabled_caps(&mut fs), 0x022B); // "disable PIV" round-trips
 }
 
@@ -211,7 +214,7 @@ fn persist_dev_conf_sets_dirty_latch() {
     // assert; the negative "take clears it" is left out to stay race-free.
     let mut fs = fs();
     let _ = take_dev_conf_dirty();
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 0x02, 0x02, 0x2B]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 0x02, 0x02, 0x2B]).unwrap();
     assert!(
         take_dev_conf_dirty(),
         "a successful config write sets the latch"
@@ -287,7 +290,7 @@ fn dev_conf_unchanged_recognises_a_record_wider_than_the_write_cap() {
         }
         fs.put(EF_DEV_CONF, &blob).unwrap();
         assert!(
-            dev_conf_unchanged(&mut fs, &blob),
+            dev_conf_unchanged(&SERIAL, &mut fs, &blob),
             "a stored {len}-byte record must be recognised as already present"
         );
     }
@@ -345,7 +348,7 @@ fn a_partial_write_config_keeps_the_fields_it_does_not_mention() {
     let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
 
     // The owner disables everything but FIDO2/U2F.
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x02]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x02]).unwrap();
     let hardened = read_enabled_caps(&mut fs);
     assert_ne!(
         hardened, SUPPORTED_CAPS,
@@ -355,7 +358,7 @@ fn a_partial_write_config_keeps_the_fields_it_does_not_mention() {
     // …then sets a lock code, which sends the 0x0A TLV and nothing else.
     let mut lock = vec![TAG_CONFIG_LOCK, 16];
     lock.extend_from_slice(&[0xAB; 16]);
-    persist_dev_conf(&mut fs, &lock).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &lock).unwrap();
 
     assert_eq!(
         read_enabled_caps(&mut fs),
@@ -369,8 +372,8 @@ fn a_partial_write_config_keeps_the_fields_it_does_not_mention() {
 #[test]
 fn a_write_config_replaces_only_the_tags_it_carries() {
     let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x02]).unwrap();
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x3B]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x02]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x3B]).unwrap();
     let mut buf = [0u8; 64];
     let n = fs.read(EF_DEV_CONF, &mut buf).unwrap();
     assert_eq!(
@@ -391,11 +394,11 @@ fn an_oversized_config_entry_is_refused_so_it_cannot_wedge_the_owner() {
     let mut bloat = vec![TAG_AUTO_EJECT_TIMEOUT, 38];
     bloat.extend(core::iter::repeat_n(0u8, 38));
     assert!(
-        persist_dev_conf(&mut fs, &bloat).is_err(),
+        persist_dev_conf(&SERIAL, &mut fs, &bloat).is_err(),
         "a 38-byte value for a 2-byte tag must be refused, not stored"
     );
     // And the owner's own write still lands.
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]).unwrap();
 }
 
 /// The same lockout with no attacker at all: released firmware bounded writes at
@@ -409,7 +412,7 @@ fn a_legacy_oversized_record_cannot_veto_the_owners_write() {
     legacy.extend(core::iter::repeat_n(0u8, 42));
     fs.put(EF_DEV_CONF, &legacy).unwrap();
 
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x01]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x01]).unwrap();
 
     assert_eq!(
         read_enabled_caps(&mut fs),
@@ -425,15 +428,15 @@ fn a_legacy_oversized_record_cannot_veto_the_owners_write() {
 #[test]
 fn an_idempotent_partial_write_is_recognised_as_unchanged() {
     let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
-    persist_dev_conf(&mut fs, &[TAG_DEVICE_FLAGS, 1, 0x80]).unwrap();
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_DEVICE_FLAGS, 1, 0x80]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]).unwrap();
 
     assert!(
-        dev_conf_unchanged(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]),
+        dev_conf_unchanged(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x1B]),
         "a replay whose merge is byte-identical still read as changed"
     );
     assert!(
-        !dev_conf_unchanged(&mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x01]),
+        !dev_conf_unchanged(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x00, 0x01]),
         "a genuine change must still be seen as a change"
     );
 }
@@ -464,7 +467,7 @@ fn trimming_an_over_cap_record_never_evicts_the_enabled_applications_policy() {
         fs.put(EF_DEV_CONF, &legacy).unwrap();
         assert_eq!(read_enabled_caps(&mut fs), CAP_OATH, "precondition");
 
-        persist_dev_conf(&mut fs, request).unwrap();
+        persist_dev_conf(&SERIAL, &mut fs, request).unwrap();
         assert_eq!(
             read_enabled_caps(&mut fs),
             CAP_OATH,
@@ -488,7 +491,7 @@ fn a_full_width_legacy_record_still_accepts_a_write_that_adds_a_tag() {
 
     let mut want = vec![TAG_USB_ENABLED, 2];
     want.extend_from_slice(&CAP_OTP.to_be_bytes());
-    persist_dev_conf(&mut fs, &want).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &want).unwrap();
 
     assert_eq!(
         read_enabled_caps(&mut fs),
@@ -541,7 +544,7 @@ fn the_widest_record_the_validator_accepts_is_stored_and_echoed_whole() {
     );
 
     let mut fs = fs();
-    persist_dev_conf(&mut fs, &widest).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &widest).unwrap();
     let mut stored = [0u8; EF_DEV_CONF_READ_MAX];
     let n = fs.read(EF_DEV_CONF, &mut stored).unwrap();
     assert_eq!(
@@ -578,7 +581,7 @@ fn a_faulted_dev_conf_probe_does_not_re_enable_disabled_applets() {
     let mut fs = Fs::new(backend);
     fs.scan();
     // The owner's config: FIDO2 only — U2F, OTP, OpenPGP, PIV and OATH off.
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x00]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x00]).unwrap();
     assert_eq!(read_enabled_caps(&mut fs), CAP_FIDO2);
 
     medium.stick_once(EF_DEV_CONF);
@@ -610,6 +613,7 @@ fn a_faulted_dev_conf_probe_does_not_replace_the_owners_record() {
     let mut fs = Fs::new(backend);
     fs.scan();
     persist_dev_conf(
+        &SERIAL,
         &mut fs,
         &[
             TAG_USB_ENABLED,
@@ -631,7 +635,7 @@ fn a_faulted_dev_conf_probe_does_not_replace_the_owners_record() {
 
     // `ykman config usb --enable OATH`: the one tag it changes, nothing else.
     medium.stick_once(EF_DEV_CONF);
-    let r = persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x20]);
+    let r = persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x20]);
     assert_eq!(
         medium.value(EF_DEV_CONF).as_deref(),
         Some(&before[..]),
@@ -653,7 +657,7 @@ fn a_faulted_probe_reports_the_mask_it_enforces() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
     fs.scan();
-    persist_dev_conf(&mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x00]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x00]).unwrap();
 
     medium.stick(Some(EF_DEV_CONF));
     let mut body = [0u8; MIN_CONFIG_RES_CAP];
@@ -743,7 +747,7 @@ fn a_faulted_probe_is_not_a_record_without_a_lock_code() {
 fn a_write_config_does_not_carry_a_legacy_lock_code_forward() {
     let mut fs = fs();
     fs.put(EF_DEV_CONF, &legacy_locked_record()).unwrap();
-    persist_dev_conf(&mut fs, &[TAG_CHALRESP_TIMEOUT, 1, 0x0F]).unwrap();
+    persist_dev_conf(&SERIAL, &mut fs, &[TAG_CHALRESP_TIMEOUT, 1, 0x0F]).unwrap();
     let mut rec = [0u8; EF_DEV_CONF_READ_MAX];
     let n = fs.read(EF_DEV_CONF, &mut rec).unwrap();
     assert_eq!(
