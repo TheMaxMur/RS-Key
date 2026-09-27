@@ -926,3 +926,113 @@ fn force_change_pin_alone_keeps_the_floor() {
     assert_eq!(fs.read(EF_MINPINLEN, &mut buf), Some(2));
     assert_eq!(buf, [MIN_PIN_LENGTH, 1]);
 }
+
+/// Whether the live audit window records `ev`, read as the panel reads it.
+fn journals<S: Storage>(fs: &mut Fs<S>, ev: u8) -> bool {
+    let mut seen = false;
+    journal::for_each_event(&dev(), fs, |e| {
+        seen |= e.event == ev;
+        !seen
+    });
+    seen
+}
+
+/// The one-record config commands, cut at every mutation with the audit journal on:
+/// enableEnterpriseAttestation, the enterprise RP list set and cleared, and
+/// toggleAlwaysUv both ways. Each record is written before its journal entry, so a
+/// cut leaves the old record or the new one, and the journal never records a change
+/// whose record did not land. The journal swallows its own write failures, so a
+/// command counts as done only once its entry is in the window.
+#[test]
+fn a_torn_one_record_config_write_never_journals_a_change_that_did_not_land() {
+    let kept = sha256(b"kept.example").to_vec();
+    let flipped = std::vec![u8::from(!DEFAULT_ALWAYS_UV)];
+    let toggle = config_request(CONFIG_TOGGLE_ALWAYS_UV as u8, &[], &TOKEN);
+    let cases = [
+        (
+            "enableEnterpriseAttestation",
+            EF_EA_ENABLED,
+            None,
+            config_request(CONFIG_ENABLE_EA as u8, &[], &TOKEN),
+            journal::EV_CFG_EA,
+        ),
+        (
+            "set the enterprise RP list",
+            EF_EA_RPIDS,
+            None,
+            vendor_req(&subpara_ea_rpids(&["corp.example.com"]), &TOKEN),
+            journal::EV_CFG_EA_RPIDS,
+        ),
+        (
+            "clear the enterprise RP list",
+            EF_EA_RPIDS,
+            Some(kept),
+            vendor_req(&subpara_ea_rpids(&[]), &TOKEN),
+            journal::EV_CFG_EA_RPIDS,
+        ),
+        (
+            "toggleAlwaysUv",
+            EF_ALWAYS_UV,
+            None,
+            toggle.clone(),
+            journal::EV_CFG_ALWAYS_UV,
+        ),
+        (
+            "toggleAlwaysUv back",
+            EF_ALWAYS_UV,
+            Some(flipped),
+            toggle,
+            journal::EV_CFG_ALWAYS_UV,
+        ),
+    ];
+    for (name, fid, before, req, ev) in cases {
+        let provision = || {
+            let (cut, medium) = rsk_fs::storage::faults::Cut::new();
+            let mut fs = Fs::new(cut);
+            journal::set_enabled(&mut fs, true).unwrap();
+            if let Some(v) = &before {
+                fs.put(fid, v).unwrap();
+            }
+            (fs, medium)
+        };
+        let (mut healthy, _) = provision();
+        assert_eq!(
+            run_fs(&mut healthy, &mut armed(PERM_ACFG), &req),
+            Ok(0),
+            "{name}"
+        );
+        let after = read_record(&mut healthy, fid);
+        assert_ne!(
+            after, before,
+            "{name}: the command changes nothing to sweep"
+        );
+        rsk_fs::cut::sweep(
+            provision,
+            |fs| run_fs(fs, &mut armed(PERM_ACFG), &req).is_ok() && journals(fs, ev),
+            |fs, budget, completed, medium| {
+                let now = read_record(fs, fid);
+                assert!(
+                    now == before || now == after,
+                    "{name}, budget {budget}: {now:02x?} is neither record — {:?}",
+                    medium.ops()
+                );
+                if journals(fs, ev) {
+                    assert_eq!(
+                        now,
+                        after,
+                        "{name}, budget {budget}: journalled a change that did not land — {:?}",
+                        medium.ops()
+                    );
+                }
+                if completed {
+                    assert_eq!(now, after, "{name}, budget {budget}: reported done, is not");
+                }
+            },
+        );
+    }
+}
+
+fn read_record<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Option<std::vec::Vec<u8>> {
+    let mut buf = [0u8; 32 * MAX_EA_RPIDS];
+    fs.read(fid, &mut buf).map(|n| buf[..n].to_vec())
+}
