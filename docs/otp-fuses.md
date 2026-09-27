@@ -148,7 +148,9 @@ That failure is the lock working, not a fault.
   that (like laser fault injection and power/EM analysis) is out of scope
   ([threat-model.md](threat-model.md)). The antifuse readout is not fixed by any
   silicon stepping. Use A4 for the fault and boot-ROM fixes (our own boards are
-  A2, the stepping broken in the public challenge).
+  A2, the stepping broken in the public challenge). The chaff does nothing
+  against a read through debug that a laser turned back on: that reads the rows
+  the way the chip does ([threat-model.md](threat-model.md)).
 - **It is finite.** The rollback thermometer is 48 bits for the board's life.
   There are 4 key slots. Neither resets. See [anti-rollback.md](anti-rollback.md).
 - **It is per-chip.** None of this carries to another board. A new board is a

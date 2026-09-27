@@ -74,9 +74,14 @@ firmware:
 | Chain size | ≤ 2048 bytes total |
 | Certs in chain | ≤ 4 |
 
+**Give each device its own key.** The key is sealed like the master seed, so an
+attack that reads a device's OTP ([threat model](../threat-model.md)) opens it,
+and a key the whole fleet shares would then attest any authenticator as one of
+yours. Issue every device its own leaf under your CA.
+
 `status` is ungated and prints whether a chain is installed plus the
-SHA-256 of the packed chain (so you can confirm a fleet is on the right CA
-without moving any secret):
+SHA-256 of the packed chain (so you can confirm a device carries the chain you
+issued it, without moving any secret):
 
 ```sh
 $ rsk fido attestation status

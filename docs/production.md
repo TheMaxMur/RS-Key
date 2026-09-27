@@ -155,7 +155,8 @@ can always drag a correctly-signed UF2 (recovery path).
 - **Losing the signing key bricks the board for new firmware** (the current
   signed image keeps booting). Back the key up before enabling enforcement.
 - `DEBUG_DISABLE` is burned along the way. SWD is gone (flashing is BOOTSEL
-  anyway).
+  anyway), for anyone short of a lab: a laser on a decapped A4 turns it back on
+  ([threat model](threat-model.md)).
 
 ### 2a. Generate a signing key (once, off-repo)
 

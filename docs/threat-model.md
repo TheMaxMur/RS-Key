@@ -466,11 +466,27 @@ in OTP, the chaffing RS-Key applies (see [otp-fuses.md](otp-fuses.md)). A third
 challenge (power side-channel analysis of the secure-boot AES) is open with no
 break reported ([challenge 2][c2]).
 
+**A4 does not stop a laser from turning debug back on** ([Ledger Donjon][donjon]).
+On a decapped A4, photon-emission imaging located the `DEBUGEN` register and
+laser pulses set the bits that restore Secure debug, despite
+`CRIT1.DEBUG_DISABLE` and `DEBUGEN_LOCK`; a rescue reset then stops the chip in
+the boot ROM before any firmware runs, and the OTP reads out. About $250k of
+equipment. Raspberry Pi will not respin: the attack is destructive, and with
+per-device keys it has single-device scope ([response][rpi-laser]).
+
 **What this means for RS-Key.** Our development boards are **A2**: the broken
 stepping, kept as the conservative worst case. The firmware is **A4-compatible**,
 and A4 is recommended for the fault / boot-ROM attacks above. Against the antifuse
 readout (which no stepping fixes), RS-Key applies the chaffing mitigation
-directly ([otp-fuses.md](otp-fuses.md)). What remains out of scope is unchanged: a
+directly ([otp-fuses.md](otp-fuses.md)). The laser attack applies to RS-Key as
+it is: page 58's lock is the one the challenge used, and a read through debug
+sees the rows as the chip does, so the chaff does not help. It yields that
+device's MKEK and DEVK and, with them, every record sealed under the key base:
+the FIDO seed, PIV and OATH keys, an org attestation key. The PIN verifiers are
+not stretched, so the PINs then fall to an offline guess. The off-chip key of
+[soft-lock](guides/soft-lock.md) survives it, for the FIDO seed only. Per-device
+keys keep the damage to the device in hand; an org attestation key shared by a
+fleet does not ([attestation](guides/attestation.md)). What remains out of scope is unchanged: a
 funded lab with FIB/PVC, laser fault injection, or power/EM analysis against a
 device in hand. No software or provisioning choice on a general-purpose die closes
 those. That is what a dedicated secure element is for ([limitations.md](limitations.md)).
@@ -482,6 +498,8 @@ those. That is what a dedicated secure element is for ([limitations.md](limitati
 [c38c3]: https://media.ccc.de/v/38c3-hacking-the-rp2350
 [courk]: https://courk.cc/rp2350-challenge-laser
 [ioactive]: https://www.ioactive.com/raspberry-pi-2350-hacking-challenge/
+[donjon]: https://donjon.ledger.com/blog/rp2350-secure-debug-laser-fault-injection/
+[rpi-laser]: https://www.raspberrypi.com/news/everything-is-better-with-lasers/
 
 ## Seed backup (the deliberate exception)
 

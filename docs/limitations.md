@@ -123,7 +123,9 @@ covers the security boundary. This page covers feature and hardware gaps.
   remain out of scope. The public RP2350 hacking challenge broke the **A2**
   stepping. The **A4** stepping fixes the boot-ROM and OTP power-glitch attacks
   in silicon, but **not** the antifuse-array readout (mitigated only by how
-  secrets are stored: the chaffing RS-Key applies). Our development boards are
+  secrets are stored: the chaffing RS-Key applies), and **not** a laser that sets
+  `DEBUGEN` on a decapped A4 and reads the OTP through debug, which the chaffing
+  does not touch ([threat model](threat-model.md)). Our development boards are
   A2. The firmware is A4-compatible and A4 is recommended. *Status: never. These
   are silicon properties, not firmware ones; closing them fully is what a
   dedicated secure element is for.*
