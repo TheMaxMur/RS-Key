@@ -293,10 +293,12 @@ pub fn check_pin<S: Storage>(
             // reference here — in VERIFY and CHANGE alike — so a wrong password
             // stops PSO:CDS and the admin surface instead of leaving them open.
             clear_access_status(sess, fid, p2);
+            // 6982 where OpenPGP 3.4 §7.2.2 says 63Cx: a YubiKey 5.8.0's answer, the
+            // one yubikit reads as a wrong PIN. The count stays on the empty VERIFY.
             return if remaining == 0 {
                 Sw::PIN_BLOCKED
             } else {
-                Sw::retries(remaining)
+                Sw::SECURITY_STATUS_NOT_SATISFIED
             };
         }
         if let Err(sw) = migrate_pin_kbase(dev, fs, rng, fid, data) {

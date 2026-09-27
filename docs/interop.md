@@ -167,9 +167,9 @@ nowhere else:
 
 Each entry states its reason in a line: a spec clause, or the measurement it
 rests on — a YubiKey 5.8.0 reading, a Gnuk expectation, a capacity RS-Key keeps
-larger on purpose (255 OATH accounts against a YubiKey's 64), a decision still
-open with the maintainer (a wrong OpenPGP password is `63Cx` here per OpenPGP
-3.4 §7.2.2, `6982` on a YubiKey). This page deliberately does not copy them out:
+larger on purpose (255 OATH accounts against a YubiKey's 64), a YubiKey answer
+a spec-following suite does not expect (a wrong OpenPGP password is `6982` here,
+as on a YubiKey 5.8.0, where OpenPGP 3.4 §7.2.2 says `63Cx`). This page deliberately does not copy them out:
 a hand table of fields was what went stale the last time, and the triage prose
 below was the time before that.
 

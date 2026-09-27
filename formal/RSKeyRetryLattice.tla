@@ -52,13 +52,13 @@ CONSTANTS
     BugWrongDoesNotSpend,
     \* The recovery reference verified BEFORE the target is refilled:
     \* crates/rsk-piv/src/lib.rs:1496 (`check_ref(EF_PUK, ..)` opens
-    \* unblock_pin_with_puk) and crates/rsk-openpgp/src/pin.rs:952 (`check_pin(EF_RC,
+    \* unblock_pin_with_puk) and crates/rsk-openpgp/src/pin.rs:954 (`check_pin(EF_RC,
     \* ..)` opens reset_retry's P1=0 branch). Removing it refills the target on a
     \* WRONG recovery secret.
     BugRecoveryWithoutSecret
 
 \* Every reference that carries a retry counter. PW2 (PW1 mode 0x82) is NOT here:
-\* it shares PW1's verifier and counter (crates/rsk-openpgp/src/pin.rs:712), so it
+\* it shares PW1's verifier and counter (crates/rsk-openpgp/src/pin.rs:714), so it
 \* is PW1's counter under another name. The OATH access code and the OTP slot code
 \* are NOT here either: a MAC / equality challenge-response has NO retry counter
 \* (a wrong answer costs nothing), so they are the seam module's exempt-refusal
@@ -67,14 +67,14 @@ Refs == {"pivPin", "pivPuk", "pw1", "pw3", "rc"}
 
 \* The references a host VERIFY targets directly. `pivPuk` and `rc` are absent:
 \* neither is verified on its own, only PRESENTED as the recovery secret inside a
-\* RESET RETRY (crates/rsk-piv/src/lib.rs:584-591, crates/rsk-openpgp/src/pin.rs:929-980),
+\* RESET RETRY (crates/rsk-piv/src/lib.rs:584-591, crates/rsk-openpgp/src/pin.rs:931-982),
 \* where a wrong one still spends its counter.
 VerifyTargets == {"pivPin", "pw1", "pw3"}
 
 \* The recovery graph: which reference's correct presentation refills the target's
 \* counter. PIV's PUK unblocks the PIN (RESET RETRY COUNTER); OpenPGP's RC unblocks
 \* PW1 (RESET RETRY, P1=0). PW3's admin path to PW1 (P1=0x02) is DELIBERATELY out:
-\* it gates on a live PW3 SESSION (`sess.has_pw3`, crates/rsk-openpgp/src/pin.rs:985),
+\* it gates on a live PW3 SESSION (`sess.has_pw3`, crates/rsk-openpgp/src/pin.rs:987),
 \* which is the seam
 \* module's status, not a secret presented in the call. `pivPuk`, `pw3` and `rc`
 \* have no recovery -- blocked is terminal for them, TERMINATE DF / factory RESET
@@ -104,7 +104,7 @@ Init ==
 
 (***************************************************************************)
 (* VERIFY. crates/rsk-piv/src/lib.rs:1334-1401 (check_ref) and              *)
-(* crates/rsk-openpgp/src/pin.rs:234-327 (check_pin): refuse at zero, spend  *)
+(* crates/rsk-openpgp/src/pin.rs:234-329 (check_pin): refuse at zero, spend  *)
 (* on a wrong value, refill on a correct one.                              *)
 (***************************************************************************)
 \* Always enabled: a blocked card still ANSWERS every VERIFY -- it returns

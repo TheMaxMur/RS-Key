@@ -136,7 +136,7 @@ fn kdf_setup_moves_both_references_to_the_do_hashes() {
             PW3_MODE83,
             PW3_DEFAULT
         ),
-        Sw::retries(2)
+        Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 }
 
@@ -574,7 +574,7 @@ fn the_retry_counters_are_restored() {
             PW1_MODE81,
             b"wrong1"
         ),
-        Sw::retries(2)
+        Sw::SECURITY_STATUS_NOT_SATISFIED
     );
     admin(&mut fs, &mut sess);
     assert_eq!(write(&mut fs, &mut sess, &three_salts()), Sw::OK);

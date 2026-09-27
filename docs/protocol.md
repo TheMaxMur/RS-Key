@@ -276,9 +276,10 @@ builds the real VERIFY APDU (`00 20 P1 P2 Lc <ASCII PIN>`; PIV pads with `0xFF` 
 `RDR_to_PC_DataBlock` (`0x80`) carrying only the status word:
 
 - **success** → `90 00`, `bStatus = 0`, `bError = 0`.
-- **wrong PIN** → the card's real `63 Cx` (tries left, reported saturated at `x = F`
-  so a larger configured retry total cannot wrap into `63 C0` = blocked) / `69 83`
-  (blocked),
+- **wrong PIN** → the card's real answer: PIV's `63 Cx` (tries left, reported
+  saturated at `x = F` so a larger configured retry total cannot wrap into
+  `63 C0` = blocked), OpenPGP's `69 82` as a YubiKey 5.8.0 answers (its tries are
+  on an empty VERIFY) / `69 83` (blocked),
   `bStatus = 0`, `bError = 0` (the command succeeded; the card said wrong).
 - **user cancel** → `bStatus = 0x40` (failed), `bError = 0xEF` → `SCARD_W_CANCELLED_BY_USER`.
 - **pad timeout** → `bStatus = 0x40`, `bError = 0xF0` → `SCARD_E_TIMEOUT`.

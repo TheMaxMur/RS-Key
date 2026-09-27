@@ -134,7 +134,7 @@ fn pin_and_dek_migrate_to_otp_kbase_at_verify() {
         verify(
             &d, &mut fs, &mut sess3, &mut rng, 0x00, PW1_MODE81, b"000000"
         ),
-        Sw::new(0x63, 0xC2)
+        Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 
     // PW3 migrates independently at its own verify.
@@ -170,6 +170,18 @@ fn pin_and_dek_migrate_to_otp_kbase_at_verify() {
             0x00,
             PW1_MODE81,
             PW1_DEFAULT
+        ),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    assert_eq!(
+        verify(
+            &dev(),
+            &mut fs,
+            &mut sess4,
+            &mut CountRng(0),
+            0x00,
+            PW1_MODE81,
+            &[]
         ),
         Sw::new(0x63, 0xC1)
     );
@@ -265,7 +277,10 @@ fn verify_wrong_pin_decrements_then_blocks() {
         if expect == 0 {
             assert_eq!(sw, Sw::PIN_BLOCKED);
         } else {
-            assert_eq!(sw, Sw::new(0x63, expect));
+            assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+            // The count a wrong password no longer carries, on the empty VERIFY.
+            let probe = verify(&d, &mut fs, &mut sess, &mut rng, 0x00, PW3_MODE83, &[]);
+            assert_eq!(probe, Sw::new(0x63, expect));
         }
     }
     assert!(!sess.has_pw3);
@@ -318,7 +333,7 @@ fn verify_resets_counter_on_success() {
             PW3_MODE83,
             b"00000000"
         ),
-        Sw::new(0x63, 0xC2)
+        Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 }
 
@@ -1408,7 +1423,7 @@ fn wrong_password_drops_only_the_addressed_access_status() {
         arm_all(&d, &mut fs, &mut sess);
         assert_eq!(
             verify(&d, &mut fs, &mut sess, &mut rng, 0x00, p2, wrong),
-            Sw::new(0x63, 0xC2),
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
             "VERIFY {p2:#04x} wrong"
         );
         assert_eq!(
@@ -1437,7 +1452,7 @@ fn change_pin_wrong_old_drops_only_the_addressed_access_status() {
         arm_all(&d, &mut fs, &mut sess);
         assert_eq!(
             change_pin(&d, &mut fs, &mut sess, &mut rng, 0x00, p2, data),
-            Sw::new(0x63, 0xC2),
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
             "CHANGE {p2:#04x} wrong old"
         );
         assert_eq!(
@@ -1481,7 +1496,7 @@ fn wrong_reset_code_keeps_every_access_status() {
             PW1_MODE81,
             b"99999999111111"
         ),
-        Sw::new(0x63, 0xC2)
+        Sw::SECURITY_STATUS_NOT_SATISFIED
     );
     assert!(sess.has_pw1 && sess.has_pw2 && sess.has_pw3);
 }
@@ -1498,8 +1513,8 @@ fn blocking_pw1_through_mode81_leaves_mode82_standing() {
     let mut rng = CountRng(0);
     arm_all(&d, &mut fs, &mut sess);
     for expect in [
-        Sw::new(0x63, 0xC2),
-        Sw::new(0x63, 0xC1),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
         Sw::PIN_BLOCKED,
         // The fourth is refused by the blocked floor, before any comparison: it
         // must not clear anything either.
@@ -1664,7 +1679,7 @@ fn a_password_of_an_impossible_length_is_not_a_wrong_password() {
                 p2,
                 &vec![b'A'; *len],
             );
-            assert_eq!(sw, Sw::retries(PW_RETRIES_DEFAULT - 1), "{p2:02X}/{len}");
+            assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED, "{p2:02X}/{len}");
             assert_eq!(
                 state(&mut fs, &mut sess, p2, fid).1,
                 Sw::retries(PW_RETRIES_DEFAULT - 1),
@@ -1711,7 +1726,7 @@ fn a_stored_reference_outside_the_policy_still_verifies() {
             PW1_MODE81,
             b"abd"
         ),
-        Sw::retries(PW_RETRIES_DEFAULT - 1)
+        Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 }
 

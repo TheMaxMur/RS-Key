@@ -245,6 +245,14 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # because a YubiKey 5.7.4 does — measured, 3 runs. RS-Key answers 6B00 for
         # OpenPGP's 82 and 84 alike.
         "::test_openpgp_reset_code_and_pw_status": "§7.2.3 defines P2 81/83 only, so 82 is 6B00 (wrong P1-P2), not 6A88",
+        # A wrong password is 6982, a YubiKey 5.8.0's answer, where OpenPGP 3.4 §7.2.2
+        # says 63Cx. The suite's verify_pw1/verify_pw3 fall back to the factory
+        # password only on 63cx, so the first raises; the three after it sign on the
+        # PW1 status it would have left behind, and meet 6982 there.
+        "::test_openpgp_pin_put_data_and_change": "a wrong PW1 is 6982 as on a YubiKey 5.8.0; the suite's verify_pw1 falls back only on 63Cx (§7.2.2)",
+        "::test_openpgp_imported_ec_crypto": "PSO:CDS 6982: no PW1 status, which test_openpgp_pin_put_data_and_change leaves before its wrong-password 6982 stops it",
+        "::test_openpgp_imported_rsa_crypto": "PSO:CDS 6982: no PW1 status, which test_openpgp_pin_put_data_and_change leaves before its wrong-password 6982 stops it",
+        "::test_openpgp_keygen_public_key_round_trip": "PSO:CDS 6982: no PW1 status, which test_openpgp_pin_put_data_and_change leaves before its wrong-password 6982 stops it",
         # Reported firmware version. RS-Key reports `FW_VERSION` — a current YubiKey 5's
         # by default, `FW_VERSION=X.Y.Z` at build time — and the suite hardcodes its own
         # device's 5.7.0. One number, read through the Management DeviceInfo TLV and
@@ -273,13 +281,9 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_091_reset_attr.py::Test_Reset_ATTRS::test_keyattr_reset_": "the PUT restores the attribute; C1-C3 read alone after it are 6B00, as on a YubiKey 5.8.0, where the suite skips the read; past it the card stores 0011 for the 0020 it was sent",
     },
     "ykman": {
-        # OpenPGP 3.4 §7.2.2 answers a wrong password 63Cx, as RS-Key does; a YubiKey
-        # answers 6982, the only one yubikit turns into InvalidPinError. The maintainer's call.
-        "test_openpgp.py::test_change_pin": "a wrong PIN is 63Cx per OpenPGP 3.4 §7.2.2; a YubiKey 5.8.0 answers 6982, which yubikit reads as InvalidPinError",
-        "test_openpgp.py::test_change_admin": "a wrong PIN is 63Cx per OpenPGP 3.4 §7.2.2; a YubiKey 5.8.0 answers 6982, which yubikit reads as InvalidPinError",
         # Yubico extensions RS-Key does not implement, xfailed rather than removed so
         # an implementation shows up as a strict XPASS.
-        "test_openpgp.py::test_change_pin_retries": "Yubico's SET PIN RETRIES (INS F2) is not implemented (6D00); past it the test also wants 6982 for a wrong PIN, where RS-Key answers 63Cx",
+        "test_openpgp.py::test_change_pin_retries": "Yubico's SET PIN RETRIES (INS F2) is not implemented (6D00)",
         "cli/test_config.py::TestConfigLockCode::test_set_lock_code": "the configuration lock is not implemented: its codes are stripped, never stored (docs/protocol.md)",
         # A capacity RS-Key keeps on purpose: more accounts than a YubiKey holds.
         "cli/test_oath.py::TestOATH::test_add_max_creds": "RS-Key holds 255 OATH accounts; the suite wants a YubiKey 5.7's 64, the 65th refused",

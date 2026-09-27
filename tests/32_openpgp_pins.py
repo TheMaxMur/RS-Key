@@ -101,8 +101,12 @@ def main():
         "VERIFY PW1 (wrong)",
         expect=None,
     )
-    if sw1 != 0x63 or (sw2 & 0xF0) != 0xC0:
-        fail(f"wrong PIN should return 63Cx, got {sw1:02X}{sw2:02X}")
+    if (sw1, sw2) != (0x69, 0x82):
+        fail(f"wrong PIN should return 6982, as a YubiKey does, got {sw1:02X}{sw2:02X}")
+    # The count a wrong PIN no longer carries is on the empty VERIFY: 2 left of 3.
+    _, sw1, sw2 = tx([0x00, INS_VERIFY, 0x00, MODE_PW1], "VERIFY PW1 (count)", expect=None)
+    if (sw1, sw2) != (0x63, 0xC2):
+        fail(f"a wrong PIN should cost one try, got {sw1:02X}{sw2:02X}")
     # A correct verify resets the counter (leaves the card clean).
     tx(apdu(INS_VERIFY, 0x00, MODE_PW1, PW1_DEFAULT), "VERIFY PW1 (reset counter)")
 

@@ -22,7 +22,7 @@
 (*    crates/rsk-fido/src/clientpin.rs:861,                                  *)
 (*    crates/rsk-fido/src/clientpin.rs:1266-1269,                            *)
 (*    crates/rsk-piv/src/lib.rs:1383, crates/rsk-oath/src/lib.rs:1211,       *)
-(*    crates/rsk-openpgp/src/pin.rs:357 -- three of those five used to name  *)
+(*    crates/rsk-openpgp/src/pin.rs:359 -- three of those five used to name  *)
 (*    the comment or the write ABOVE the call, which is what a mechanical    *)
 (*    re-number leaves behind. Run-35's five is a HISTORICAL set, not        *)
 (*    today's: `git grep -nE '(request|attempt)_rescrub'` outside rsk-fs's   *)

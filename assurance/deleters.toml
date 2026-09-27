@@ -371,7 +371,7 @@ why = "one instance of the cardholder certificate: a public data object the host
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 453
+line = 455
 call = "let _ = fs.delete_key_over(stage, Some(&rearmed));"
 verb = "delete_key_over"
 answer = "discarded"
@@ -382,7 +382,7 @@ why = "load_dek re-runs this retirement on every PIN use, so a failed one is ret
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 525
+line = 527
 call = "let _ = fs.delete_key_over(stage, rearmed.as_ref().ok());"
 verb = "delete_key_over"
 answer = "discarded"
@@ -393,7 +393,7 @@ why = "the same retirement after a recovered update commits; the same next-load_
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 596
+line = 598
 call = "let _ = fs.delete_key_over(stage, Some(rearmed));"
 verb = "delete_key_over"
 answer = "discarded"
@@ -404,7 +404,7 @@ why = "and after an ordinary staged commit. All three are the one record load_de
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 664
+line = 666
 call = "let verifier = fs.delete_over(EF_RC, Some(&rearmed)).is_ok();"
 verb = "delete_over"
 answer = "read"
@@ -415,7 +415,7 @@ why = "the RC verifier is what RESET RETRY P1=0 walks in through, and init's rep
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 665
+line = 667
 call = "let dek = fs.delete_key_over(EF_DEK_RC, Some(&rearmed)).is_ok();"
 verb = "delete_key_over"
 answer = "read"
@@ -426,7 +426,7 @@ why = "the DEK sealed under that reset code. A survivor of any of the three leav
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 666
+line = 668
 call = "let staged = fs.delete_key_over(EF_DEK_STAGE_RC, Some(&rearmed)).is_ok();"
 verb = "delete_key_over"
 answer = "read"

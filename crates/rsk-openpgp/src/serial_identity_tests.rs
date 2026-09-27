@@ -134,11 +134,11 @@ fn serial_change_rejects_the_correct_pin() {
     );
 
     // A boot whose serial differs (modelled as the unwrap_or(0) fallback), same
-    // flash, same correct PIN → rejected as 63 C2 (gpg: "Bad PIN").
+    // flash, same correct PIN → rejected as a wrong PIN, 6982 (gpg: "Bad PIN").
     let mut app_b = applet(id_b, hash_b, &rng, &presence);
     assert_eq!(
         verify_pw1(&mut app_b, &mut fs, consts::PW1_DEFAULT),
-        Sw::new(0x63, 0xC2),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
         "a changed serial rejects the correct PIN (the verifier is serial-bound)"
     );
 
@@ -285,11 +285,11 @@ fn serial_change_burns_retries_and_blocks_the_good_boot() {
     let mut app_b = applet(id_b, hash_b, &rng, &presence);
     assert_eq!(
         verify_pw1(&mut app_b, &mut fs, consts::PW1_DEFAULT),
-        Sw::new(0x63, 0xC2)
+        Sw::SECURITY_STATUS_NOT_SATISFIED
     );
     assert_eq!(
         verify_pw1(&mut app_b, &mut fs, consts::PW1_DEFAULT),
-        Sw::new(0x63, 0xC1)
+        Sw::SECURITY_STATUS_NOT_SATISFIED
     );
     assert_eq!(
         verify_pw1(&mut app_b, &mut fs, consts::PW1_DEFAULT),

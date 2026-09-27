@@ -222,7 +222,7 @@ def main():
             f"VERIFY PW3 with the raw passphrase ({label})",
             expect=None,
         )
-        if sw1 != 0x63 or (sw2 & 0xF0) != 0xC0:
+        if (sw1, sw2) != (0x69, 0x82):
             fail(f"the raw passphrase should no longer verify, got {sw1:02X}{sw2:02X}")
 
         # gpg's `passwd` under KDF sends hash(old) ‖ hash(new), split at the stored

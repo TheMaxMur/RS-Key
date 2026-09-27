@@ -65,6 +65,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **A wrong OpenPGP password answers `6982`, as a YubiKey 5.8.0 does**, in
+  VERIFY, CHANGE REFERENCE DATA and a RESET RETRY COUNTER with the reset code.
+  It was `63Cx` with the tries left, which is what OpenPGP 3.4 §7.2.2 says, but
+  yubikit reads only `6982` as a wrong PIN, so ykman met one with a raw APDU error
+  instead of its wrong-PIN message. The tries left stay on the empty VERIFY, which still
+  answers `63Cx`, and the attempt that blocks a reference still answers `6983`.
+  A card suite written to the specification now diverges where a YubiKey does,
+  and says so in tests/third_party.py. `bcdDevice` 0x0A50 → 0x0A51.
+
 - PIV GENERATE writes no certificate, from the host or the panel, as a YubiKey
   5.8.0's writes none. RS-Key wrote a self-signed one into the slot's certificate
   object for every key but X25519, so a slot showed a certificate the host never
