@@ -90,10 +90,14 @@ const ASK_CENSUS: &[(&str, usize, usize)] = &[
     ("crates/rsk-fido/src/lib.rs", 2, 0),
     ("crates/rsk-fido/src/reset.rs", 1, 0),
     ("crates/rsk-fido/src/selection.rs", 1, 0),
+    // Arming the config lock over the vendor CONFIG_WRITE: a CTAPHID command, so a
+    // CANCEL must be able to end it, as the strict build's write touch there does.
+    ("crates/rsk-fido/src/vendor.rs", 1, 0),
     ("crates/rsk-mgmt/src/lib.rs", 0, 1),
     ("crates/rsk-oath/src/lib.rs", 0, 3),
     ("crates/rsk-openpgp/src/lib.rs", 0, 1),
-    ("crates/rsk-otp/src/lib.rs", 0, 1),
+    // The slot touch policy and arming the config lock over the keyboard's `0x15`.
+    ("crates/rsk-otp/src/lib.rs", 0, 2),
     ("crates/rsk-piv/src/auth.rs", 0, 1),
     ("crates/rsk-rescue/src/lib.rs", 0, 1),
     // The default body's own forward, not a call site.
