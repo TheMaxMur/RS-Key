@@ -621,30 +621,30 @@ arm	crates/rsk-usb/src/ctaphid.rs:175	12	decides	D4	takes and releases CTAPHID_L
 refuses	crates/rsk-usb/src/ctaphid.rs:188	17	decides	D5	permission predicate: a foreign channel is rejected, and the only carve-out is INIT on broadcast	SEC-TRANS-001
 blocks	crates/rsk-usb/src/ctaphid.rs:206	4	decides	D5	lock ownership and expiry are the second half of the same permission	SEC-TRANS-001
 handle_vendor	crates/rsk-usb/src/ctaphid.rs:277	9	marshals	M	default trait body, overridden by firmware/src/worker.rs:219 — does not reach the image	-
-reset_app_selection	crates/rsk-usb/src/ctaphid.rs:287	6	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:216	-
-can_wink	crates/rsk-usb/src/ctaphid.rs:294	8	marshals	M	the same: default false, overridden by firmware/src/worker.rs:225	-
-wink	crates/rsk-usb/src/ctaphid.rs:303	4	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:230	-
-init_capabilities	crates/rsk-usb/src/ctaphid.rs:309	11	marshals	M	assembles the capabilities byte for the INIT response	-
-perform_wink	crates/rsk-usb/src/ctaphid.rs:321	12	marshals	M	blinking the indicator: no gate, no secret, no write	-
-default	crates/rsk-usb/src/ctaphid.rs:362	3	marshals	M	delegates to new	-
-new	crates/rsk-usb/src/ctaphid.rs:368	11	marshals	M	zero initialization of the buffer and the transaction fields	-
-message	crates/rsk-usb/src/ctaphid.rs:380	5	decides	M	slice of the assembled message	-
-in_progress	crates/rsk-usb/src/ctaphid.rs:386	4	marshals	M	a read of the in_tx flag	-
-current_cid	crates/rsk-usb/src/ctaphid.rs:391	4	marshals	M	a read of the transaction channel	-
-abort	crates/rsk-usb/src/ctaphid.rs:396	4	marshals	M	clearing in_tx; the abort decision is made by run on timeout	-
-scrub	crates/rsk-usb/src/ctaphid.rs:401	7	decides	D2	zeroes the message buffer, otherwise the PIN and key material stay in RAM until the next message	-
-feed	crates/rsk-usb/src/ctaphid.rs:420	73	decides	D5	all three transport refusals: a foreign channel, a seq gap and a length larger than the buffer	SEC-TRANS-001,SEC-TRANS-002,SEC-TRANS-003
-new	crates/rsk-usb/src/ctaphid.rs:516	10	marshals	M	frame iterator constructor	-
-next	crates/rsk-usb/src/ctaphid.rs:531	27	marshals	M	slicing the response into INIT and CONT frames	-
-new	crates/rsk-usb/src/ctaphid.rs:596	19	marshals	M	assembly of the transport from the reader, writer and hooks	-
-run	crates/rsk-usb/src/ctaphid.rs:616	34	decides	D5	drops short reads, otherwise feed would parse the buffer tail as payload, and breaks off the transaction on RX timeout	SEC-TRANS-003
-on_frame	crates/rsk-usb/src/ctaphid.rs:657	14	decides	D5	the only place in the image where Outcome turns into a response and where lock.refuses is applied	SEC-TRANS-001
-dispatch	crates/rsk-usb/src/ctaphid.rs:676	89	decides	D4	the table carries not only an address: INIT resets the selected applet, LOCK arms the lock, an empty CBOR is rejected	SEC-TRANS-001,SEC-TRANS-002
-run_with_keepalive	crates/rsk-usb/src/ctaphid.rs:768	84	decides	D1	opens the CANCEL watch window only while a touch is awaited, and zeroes the request together with the response	SEC-FIDO-002
+reset_app_selection	crates/rsk-usb/src/ctaphid.rs:295	6	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:216	-
+can_wink	crates/rsk-usb/src/ctaphid.rs:302	8	marshals	M	the same: default false, overridden by firmware/src/worker.rs:233	-
+wink	crates/rsk-usb/src/ctaphid.rs:311	4	marshals	M	the same: empty default, overridden by firmware/src/worker.rs:238	-
+init_capabilities	crates/rsk-usb/src/ctaphid.rs:317	11	marshals	M	assembles the capabilities byte for the INIT response	-
+perform_wink	crates/rsk-usb/src/ctaphid.rs:329	12	marshals	M	blinking the indicator: no gate, no secret, no write	-
+default	crates/rsk-usb/src/ctaphid.rs:370	3	marshals	M	delegates to new	-
+new	crates/rsk-usb/src/ctaphid.rs:376	11	marshals	M	zero initialization of the buffer and the transaction fields	-
+message	crates/rsk-usb/src/ctaphid.rs:388	5	decides	M	slice of the assembled message	-
+in_progress	crates/rsk-usb/src/ctaphid.rs:394	4	marshals	M	a read of the in_tx flag	-
+current_cid	crates/rsk-usb/src/ctaphid.rs:399	4	marshals	M	a read of the transaction channel	-
+abort	crates/rsk-usb/src/ctaphid.rs:404	4	marshals	M	clearing in_tx; the abort decision is made by run on timeout	-
+scrub	crates/rsk-usb/src/ctaphid.rs:409	7	decides	D2	zeroes the message buffer, otherwise the PIN and key material stay in RAM until the next message	-
+feed	crates/rsk-usb/src/ctaphid.rs:428	73	decides	D5	all three transport refusals: a foreign channel, a seq gap and a length larger than the buffer	SEC-TRANS-001,SEC-TRANS-002,SEC-TRANS-003
+new	crates/rsk-usb/src/ctaphid.rs:524	10	marshals	M	frame iterator constructor	-
+next	crates/rsk-usb/src/ctaphid.rs:539	27	marshals	M	slicing the response into INIT and CONT frames	-
+new	crates/rsk-usb/src/ctaphid.rs:604	19	marshals	M	assembly of the transport from the reader, writer and hooks	-
+run	crates/rsk-usb/src/ctaphid.rs:624	34	decides	D5	drops short reads, otherwise feed would parse the buffer tail as payload, and breaks off the transaction on RX timeout	SEC-TRANS-003
+on_frame	crates/rsk-usb/src/ctaphid.rs:665	14	decides	D5	the only place in the image where Outcome turns into a response and where lock.refuses is applied	SEC-TRANS-001
+dispatch	crates/rsk-usb/src/ctaphid.rs:684	89	decides	D4	the table carries not only an address: INIT resets the selected applet, LOCK arms the lock, an empty CBOR is rejected	SEC-TRANS-001,SEC-TRANS-002
+run_with_keepalive	crates/rsk-usb/src/ctaphid.rs:776	84	decides	D1	opens the CANCEL watch window only while a touch is awaited, and zeroes the request together with the response	SEC-FIDO-002
 run_vendor	crates/rsk-usb/src/ctaphid.rs:852	28	decides	D2	zeroes scratch and the message buffer after a vendor command	-
-write_frame	crates/rsk-usb/src/ctaphid.rs:892	5	marshals	M	one write of a report to the endpoint	-
-write_frames	crates/rsk-usb/src/ctaphid.rs:899	25	marshals	M	slicing and writing, abandoning the response on a host timeout	-
-write_message	crates/rsk-usb/src/ctaphid.rs:925	13	marshals	M	write_frames with the production timeout	-
+write_frame	crates/rsk-usb/src/ctaphid.rs:898	5	marshals	M	one write of a report to the endpoint	-
+write_frames	crates/rsk-usb/src/ctaphid.rs:905	25	marshals	M	slicing and writing, abandoning the response on a host timeout	-
+write_message	crates/rsk-usb/src/ctaphid.rs:931	13	marshals	M	write_frames with the production timeout	-
 set	firmware/src/pin_lock.rs:51	5	decides	D4	stores the soft lock in scratch2 so that it survives a warm reboot	SEC-BOOT-002
 was_warm_boot	firmware/src/pin_lock.rs:57	6	decides	D5	tells a warm reset from a cold one without consuming the tag — the §6.6 window rests on this	SEC-BOOT-002
 restore_and_arm	firmware/src/pin_lock.rs:57	8	decides	D4	brings the lock back into this power cycle and re-arms the tag exactly once	SEC-BOOT-002

@@ -99,7 +99,7 @@ CONSTANTS
 (* listing them in the safety matrix would mean 3 mutants nothing catches.       *)
 CONSTANTS
     BugAssertWedgesOnTimeout,     \* getassertion.rs: only a confirm completes it
-    BugWaitScopeNotCleared,       \* worker.rs:519  set_wait_scope(SCOPE_NONE)
+    BugWaitScopeNotCleared,       \* worker.rs:527  set_wait_scope(SCOPE_NONE)
     BugWalkNeverExpires           \* state.rs:755-761 expire_stale_sequences
 
 (* A switch on the SHAPE of the fairness assumption rather than on a behaviour: *)
@@ -383,7 +383,7 @@ PressUp ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* CTAPHID_CANCEL for the channel being processed. rsk-usb ctaphid.rs:805-810
+\* CTAPHID_CANCEL for the channel being processed. rsk-usb ctaphid.rs:819-824
 \* raises it; crates/rsk-device/src/presence.rs:118-122 is the scope check that decides
 \* whether it may end THIS wait. Only the CTAPHID transport can send one.
 \* E45's ruling in one line: request_cancel accepts ONLY while the wait it would
@@ -401,7 +401,7 @@ HostCancel ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:420, :519), not around
+\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:428, :519), not around
 \* the touch wait, so Arbiter::request_cancel accepts a cancel during a FIDO
 \* command that never opens one -- getInfo, a denied CBOR, getAssertion up:false.
 \* Nothing clears `cancel_requested` when that dispatch ends, so the latch
@@ -463,8 +463,8 @@ TouchTimeout ==
 \* THE PANEL AND THE OTP FRAME PROTOCOL ALSO OPEN WAITS, and neither is a host's
 \* to cancel. An on-panel ceremony -- Settings, Backup's reveal-recovery hold,
 \* the Passkeys delete -- runs BETWEEN dispatches, where the worker has left
-\* WAIT_SCOPE at SCOPE_NONE (firmware/src/worker.rs:517-519); an OTP frame's wait
-\* runs under SCOPE_OTP (firmware/src/worker.rs:655-657). Both clear a stale
+\* WAIT_SCOPE at SCOPE_NONE (firmware/src/worker.rs:525-527); an OTP frame's wait
+\* runs under SCOPE_OTP (firmware/src/worker.rs:663-665). Both clear a stale
 \* cancel at their own wait's entry -- the panel in its own loop
 \* (crates/rsk-display/src/presence.rs:41-44), not in ButtonWait::wait -- so
 \* OpenWaitFor stands for two different drops here and
@@ -1516,7 +1516,7 @@ VolatileCleared ==
     /\ upSpent' = FALSE
 
 \* EVERY boot runs ensure_seed, not just the one at the end of a reset:
-\* firmware/src/main.rs:722 and tools/emu/src/device.rs:508; one that cannot read
+\* firmware/src/main.rs:722 and tools/emu/src/device.rs:509; one that cannot read
 \* the fused key runs none, which this action, allowing more, over-approximates. A cut that stranded
 \* the device mid-wipe therefore comes back WITH a seed and can hold usable
 \* credentials again. Leaving it out made the model less permissive than the
@@ -1634,7 +1634,7 @@ TokenOutcomeActions ==
 \* strong fairness would buy nothing and would assert more than the code does.
 \*
 \* The worker is synchronous -- one `Exchange` at a time, under a lock, and the
-\* dispatch runs to completion before the next is accepted (worker.rs:640-665).
+\* dispatch runs to completion before the next is accepted (worker.rs:648-673).
 \* So every step that ADVANCES an in-flight sequence eventually happens: nothing
 \* in the firmware can park one. What it cannot survive is a power cut, and
 \* PowerCut is not fair, so "eventually" here still admits the cut.
@@ -1676,7 +1676,7 @@ OpAdvances ==
 \* button, but setPIN and changePIN need only `Idle`. So a panel wait that had
 \* taken its confirm sat open for ever while the PIN ladder kept OpAdvances
 \* satisfied on its own, and EveryWaitReleases failed in 423 900 states.
-\* Justified the same way worker.rs:517-519 justifies the FIDO half: the
+\* Justified the same way worker.rs:525-527 justifies the FIDO half: the
 \* ceremony's own dispatch runs to completion and puts WAIT_SCOPE back.
 FairSpec == Spec /\ WF_vars(OpAdvances)
                  /\ WF_vars(TouchTimeout)

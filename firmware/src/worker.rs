@@ -216,7 +216,15 @@ impl MsgHandler for ClientCtap {
     fn reset_app_selection(&mut self) {
         MSG_DESELECT.store(true, core::sync::atomic::Ordering::Release);
     }
-    async fn handle_vendor(&mut self, cmd: u8, data: &[u8], out: &mut [u8]) -> Option<usize> {
+    // The cancel is `SCOPE_FIDO`'s, and `CtapHid` only raises one for the channel
+    // in flight, so the worker needs no channel of its own.
+    async fn handle_vendor(
+        &mut self,
+        _cid: u32,
+        cmd: u8,
+        data: &[u8],
+        out: &mut [u8],
+    ) -> Option<usize> {
         roundtrip_vendor(cmd, data, out).await
     }
     /// Only a build with an indicator claims WINK; a `LED_KIND=none` board (and the

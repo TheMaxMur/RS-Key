@@ -47,7 +47,7 @@ pub struct Shared {
 // Refines `RSKeyTransport!NoSequenceGap` — SEC-TRANS-002.
 // Refines `RSKeyTransport!NoBufferOverrun` — SEC-TRANS-003.
 /// The emulator's dispatcher, and the SECOND consumer of the same `Reassembler`:
-/// arm for arm what `CtapHid::on_frame` (`crates/rsk-usb/src/ctaphid.rs:657-670`)
+/// arm for arm what `CtapHid::on_frame` (`crates/rsk-usb/src/ctaphid.rs:665-678`)
 /// does in the image, `lock.refuses` included — and the one `tests/*.py` runs.
 pub fn serve(mut stream: TcpStream, shared: Arc<Shared>) -> io::Result<()> {
     let mut asm = Reassembler::new();
@@ -243,6 +243,7 @@ fn dispatch(
         cmd if cmd >= CTAPHID_VENDOR_FIRST => {
             let data = asm.message().to_vec();
             let job = Job::Vendor {
+                cid,
                 cmd: cmd & !0x80,
                 data,
             };

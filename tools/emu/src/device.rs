@@ -136,8 +136,9 @@ pub enum Job {
     /// REGISTER or AUTHENTICATE waits for a touch, and only the owning channel's
     /// `CTAPHID_CANCEL` may end that wait (CTAP 2.1 §11.2.9.1.4).
     Msg { cid: u32, data: Vec<u8> },
-    /// A CTAPHID vendor command (the ykman Management reads).
-    Vendor { cmd: u8, data: Vec<u8> },
+    /// A CTAPHID vendor command (the ykman Management read and write) on channel
+    /// `cid`: arming the config lock waits for a touch its channel may cancel.
+    Vendor { cid: u32, cmd: u8, data: Vec<u8> },
     /// A CCID APDU.
     Apdu(Vec<u8>),
     /// One keyboard-interface OTP frame: `slot` is the command, `payload` its
@@ -717,11 +718,12 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                 ctap.scrub();
                 Some(body)
             }
-            // No `begin`/`end`: no vendor command is presence-gated, and
-            // `rsk_usb::ctaphid::run_vendor` streams no keepalive and watches for
-            // no CANCEL — so a board cannot cancel one either.
-            Job::Vendor { cmd, data } => {
+            // Bracketed as CBOR and MSG are: arming the config lock over `0x43`
+            // waits for a touch, which only this channel's CANCEL may end.
+            Job::Vendor { cid, cmd, data } => {
+                signals.begin(cid);
                 let body = ccid.ctap_mgmt(cmd, &data).map(<[u8]>::to_vec);
+                signals.end();
                 ccid.scrub();
                 body
             }

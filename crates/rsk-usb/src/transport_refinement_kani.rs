@@ -11,7 +11,7 @@
 //! whether a declared length can walk the copy past the array.
 //!
 //! The `Outcome` each one reads is what the production dispatcher branches on —
-//! `CtapHid::on_frame` (`crates/rsk-usb/src/ctaphid.rs:657-670`) is the only
+//! `CtapHid::on_frame` (`crates/rsk-usb/src/ctaphid.rs:665-678`) is the only
 //! caller of `feed` in the image, so a refusal proved here is a refusal there.
 
 use super::transport_assurance::{PROBE_MAX, cont_frame, init_frame};
@@ -35,7 +35,7 @@ fn posed() -> Reassembler {
 }
 
 /// `NoCrossChannelSplice`: a stranger's continuation is refused
-/// (`crates/rsk-usb/src/ctaphid.rs:472-474`) and changes nothing the owner's
+/// (`crates/rsk-usb/src/ctaphid.rs:480-482`) and changes nothing the owner's
 /// transaction depends on.
 #[kani::proof]
 fn no_cross_channel_splice_from_a_continuation() {
@@ -59,7 +59,7 @@ fn no_cross_channel_splice_from_a_continuation() {
 }
 
 /// `NoCrossChannelSplice`, the init-type half: a stranger's non-`CTAPHID_INIT`
-/// frame mid-transaction is BUSY (`crates/rsk-usb/src/ctaphid.rs:442-446`), and
+/// frame mid-transaction is BUSY (`crates/rsk-usb/src/ctaphid.rs:450-454`), and
 /// the owner's transaction survives it.
 #[kani::proof]
 fn no_cross_channel_splice_from_an_init_type_frame() {
@@ -81,7 +81,7 @@ fn no_cross_channel_splice_from_an_init_type_frame() {
 }
 
 /// `NoSequenceGap`: a continuation carrying the wrong sequence byte aborts the
-/// transaction (`crates/rsk-usb/src/ctaphid.rs:476-479`) instead of filling the
+/// transaction (`crates/rsk-usb/src/ctaphid.rs:484-487`) instead of filling the
 /// gap. What must NOT happen is an append.
 #[kani::proof]
 fn no_sequence_gap_fills_a_hole() {
@@ -109,7 +109,7 @@ fn no_sequence_gap_fills_a_hole() {
 
 /// `NoBufferOverrun`: whatever one frame does, the assembled length stays inside
 /// the declared one and the declared one inside the buffer — the state the copy
-/// at `msg[cur..cur + n]` (`crates/rsk-usb/src/ctaphid.rs:483-489`) indexes
+/// at `msg[cur..cur + n]` (`crates/rsk-usb/src/ctaphid.rs:491-497`) indexes
 /// through.
 #[kani::proof]
 fn no_buffer_overrun_after_any_single_frame() {
@@ -129,7 +129,7 @@ fn no_buffer_overrun_after_any_single_frame() {
 }
 
 /// The declared length is refused before it is trusted
-/// (`crates/rsk-usb/src/ctaphid.rs:453-455`), at any value a frame can carry —
+/// (`crates/rsk-usb/src/ctaphid.rs:461-463`), at any value a frame can carry —
 /// the arm that needs no bound on the pre-state, since nothing indexes.
 #[kani::proof]
 fn an_over_length_init_is_refused_before_it_is_stored() {

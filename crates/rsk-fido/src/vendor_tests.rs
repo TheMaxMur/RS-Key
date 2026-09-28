@@ -1529,6 +1529,34 @@ fn config_write_requires_touch() {
     assert!(!dev_conf_contains(&mut fs, DEV_CONF_BLOB)); // declined → nothing persisted
 }
 
+/// Under `strict-config` the write's own touch covers a lock it arms: one ask.
+#[cfg(feature = "strict-config")]
+#[test]
+fn a_strict_lock_write_asks_for_one_touch() {
+    let (mut fs, mut rng, mut st) = setup();
+    let mut set = std::vec![0x0A, 0x10];
+    set.extend_from_slice(&[0xA5; 16]);
+    let mut req = [0u8; 96];
+    let n = config_write_req(CONFIG_TARGET_DEV_CONF, &set, false, &mut req);
+    let mut out = [0u8; 16];
+    let mut presence = CountingPresence { calls: 0 };
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut presence,
+            &req[..n],
+            &mut out
+        ),
+        Ok(0)
+    );
+    assert_eq!(
+        presence.calls, 1,
+        "a strict lock write asked for a second touch"
+    );
+}
+
 #[test]
 fn config_write_rejects_oversized_blob() {
     let (mut fs, mut rng, mut st) = setup();

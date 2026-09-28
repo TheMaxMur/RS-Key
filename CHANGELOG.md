@@ -69,10 +69,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   could set one on a key that had none, as on a YubiKey, and a code its owner
   does not hold keeps every later config change behind a factory wipe. All four
   writers (CCID WRITE CONFIG, the vendor `CONFIG_WRITE`, CTAPHID `0x43` and the
-  OTP keyboard's `0x15`) now ask for a touch before they arm a lock, and a
-  declined or timed-out one answers `6985` (`0x27` over `CONFIG_WRITE`) and
-  stores nothing. Changing or clearing a code still takes only the current code,
-  and no other write asks. `bcdDevice` 0x0A60 → 0x0A61.
+  OTP keyboard's `0x15`) now ask for a touch before they arm a lock. A declined
+  or timed-out one refuses the write whole and stores nothing: `6985` over CCID,
+  `0x27` over `CONFIG_WRITE`, `CTAPHID_ERROR` over `0x43`, an unmoved program
+  sequence over the OTP keyboard. Changing or clearing a code still takes only
+  the current code, and no other write asks. `bcdDevice` 0x0A60 → 0x0A61. Over
+  CTAPHID `0x43` that wait now streams UPNEEDED keepalives and a `CTAPHID_CANCEL`
+  ends it, as for a CBOR command: a vendor command had neither, so a host gave up
+  in silence while a later touch still armed the lock. `bcdDevice` 0x0A64 → 0x0A65.
 
 - **`rsk otp lock-page58` burns only over a device the migration has finished.**
   A record sealed under the pre-burn key derives from the public chip serial, so
@@ -279,9 +283,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   counter, as on a YubiKey. The lock survives `authenticatorReset`; the display
   build's factory reset or an `rsk-wipe` erase clears it. The phy and LED records
   stay outside it. A device upgrades unlocked, as every older build reported it,
-  and a code one stored in plaintext is not honoured (below). As on a YubiKey, any
-  host can set a code on a key that has none, and one its owner does not hold
-  keeps every config change behind a factory wipe: set your own at provisioning
+  and a code one stored in plaintext is not honoured (below). Setting a code on a
+  key that has none takes a touch (above), and one its owner does not hold keeps
+  every config change behind a factory wipe: set your own at provisioning
   (docs/threat-model.md). The device-wide wipe now removes both records last, so a
   torn one cannot open the configuration before the OTP slots are gone.
   `bcdDevice` 0x0A53 → 0x0A54.

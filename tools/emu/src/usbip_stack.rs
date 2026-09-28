@@ -165,8 +165,15 @@ impl MsgHandler for HidJobs {
         }
     }
 
-    async fn handle_vendor(&mut self, cmd: u8, data: &[u8], out: &mut [u8]) -> Option<usize> {
+    async fn handle_vendor(
+        &mut self,
+        cid: u32,
+        cmd: u8,
+        data: &[u8],
+        out: &mut [u8],
+    ) -> Option<usize> {
         let job = Job::Vendor {
+            cid,
             cmd,
             data: data.to_vec(),
         };

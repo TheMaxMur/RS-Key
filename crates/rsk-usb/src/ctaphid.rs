@@ -276,11 +276,19 @@ pub trait MsgHandler {
 
     /// Handle a vendor-specific CTAPHID command — `cmd` is the *logical* command
     /// number (the `TYPE_INIT` bit already stripped). Used for the YubiKey
-    /// Management DeviceInfo read that `ykman` / Yubico Authenticator issue over
-    /// the FIDO interface. Write the response body into `out` and return its
-    /// length, or `None` to reject with `CTAPHID_ERROR(ERR_INVALID_CMD)`. The
-    /// default rejects every vendor command.
-    async fn handle_vendor(&mut self, _cmd: u8, _data: &[u8], _out: &mut [u8]) -> Option<usize> {
+    /// Management DeviceInfo read and write that `ykman` / Yubico Authenticator
+    /// issue over the FIDO interface. `cid` is the channel it arrived on: arming the
+    /// config lock waits for a touch, which only that channel's CANCEL may end.
+    /// Write the response body into `out` and return its length, or `None` to
+    /// reject with `CTAPHID_ERROR(ERR_INVALID_CMD)`. The default rejects every
+    /// vendor command.
+    async fn handle_vendor(
+        &mut self,
+        _cid: u32,
+        _cmd: u8,
+        _data: &[u8],
+        _out: &mut [u8],
+    ) -> Option<usize> {
         None
     }
 
@@ -742,22 +750,22 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 // A CANCEL is never acknowledged (CTAPHID spec). With no
                 // transaction in flight it is simply ignored; one that arrives
                 // mid-transaction is observed inside `run_with_keepalive`, which
-                // aborts the worker's touch wait so the in-flight CBOR/MSG
-                // command answers CTAP2_ERR_KEEPALIVE_CANCEL itself.
+                // aborts the worker's touch wait so the in-flight command answers
+                // for itself (CBOR/MSG with CTAP2_ERR_KEEPALIVE_CANCEL).
             }
             CTAPHID_MSG => {
-                self.run_with_keepalive(cid, false).await;
+                self.run_with_keepalive(cid, Call::Msg).await;
             }
             CTAPHID_CBOR => {
                 // A CBOR message must carry at least the command byte.
                 if self.asm.message().is_empty() {
                     write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_LEN]).await;
                 } else {
-                    self.run_with_keepalive(cid, true).await;
+                    self.run_with_keepalive(cid, Call::Cbor).await;
                 }
             }
             cmd if cmd >= CTAPHID_VENDOR_FIRST => {
-                self.run_vendor(cid, cmd).await;
+                self.run_with_keepalive(cid, Call::Vendor(cmd)).await;
             }
             _ => {
                 write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_INVALID_CMD]).await;
@@ -768,11 +776,12 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
     /// Hand the reassembled message to the (async) handler — which forwards it to
     /// the compute worker on a lower-priority executor — streaming a
     /// `CTAPHID_KEEPALIVE` every [`KEEPALIVE_MS`] while it runs, then frame the
-    /// response. `is_cbor` selects CBOR vs MSG (U2F). The handler future borrows
-    /// `handler`/`asm`/`scratch`; the keepalive uses `writer` — disjoint fields, so
-    /// `select` drives both concurrently and the keepalive keeps flowing while the
-    /// worker blocks on slow crypto / flash GC.
-    async fn run_with_keepalive(&mut self, cid: u32, is_cbor: bool) {
+    /// response. `call` selects CBOR, MSG (U2F) or a vendor command; a vendor
+    /// command the handler rejects answers `CTAPHID_ERROR(ERR_INVALID_CMD)`. The
+    /// handler future borrows `handler`/`asm`/`scratch`; the keepalive uses
+    /// `writer` — disjoint fields, so `select` drives both concurrently and the
+    /// keepalive keeps flowing while the worker blocks on slow crypto / flash GC.
+    async fn run_with_keepalive(&mut self, cid: u32, call: Call) {
         let Self {
             reader,
             handler,
@@ -790,12 +799,17 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         // never reassembled (the message buffer is in use), so a scratch buffer
         // disjoint from `asm` is enough.
         let mut watch = [0u8; HID_RPT_SIZE];
+        let is_cbor = matches!(call, Call::Cbor);
         let n = {
             let mut fut = core::pin::pin!(async {
-                if is_cbor {
-                    handler.handle_cbor(cid, data, scratch).await
-                } else {
-                    handler.handle_msg(cid, data, scratch).await
+                match call {
+                    Call::Cbor => Some(handler.handle_cbor(cid, data, scratch).await),
+                    Call::Msg => Some(handler.handle_msg(cid, data, scratch).await),
+                    Call::Vendor(cmd) => {
+                        handler
+                            .handle_vendor(cid, cmd & !TYPE_INIT, data, scratch)
+                            .await
+                    }
                 }
             });
             loop {
@@ -842,33 +856,14 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 }
             }
         };
-        let cmd = if is_cbor { CTAPHID_CBOR } else { CTAPHID_MSG };
-        // Request and response both carried secrets (PINs, tokens, key blobs).
-        let resp = WipeGuard::new(scratch.get_mut(..n).unwrap_or_default());
-        write_message(writer, cid, cmd, &resp).await;
-        asm.scrub();
-    }
-
-    /// Serve a vendor CTAPHID command through the handler (the worker, which owns
-    /// flash). Mirrors [`Self::run_with_keepalive`]'s field split; vendor commands
-    /// are quick flash reads and none of them is presence-gated, so no keepalive is
-    /// streamed — one that ever gains a touch gate belongs in `run_with_keepalive`,
-    /// which is also where CTAPHID_CANCEL is observed. The handler sees the logical
-    /// command number (`TYPE_INIT` stripped); on success we reply with the original
-    /// command byte, otherwise `CTAPHID_ERROR(ERR_INVALID_CMD)`.
-    async fn run_vendor(&mut self, cid: u32, cmd: u8) {
-        let Self {
-            handler,
-            writer,
-            asm,
-            scratch,
-            ..
-        } = self;
-        let data = asm.message();
-        match handler.handle_vendor(cmd & !TYPE_INIT, data, scratch).await {
+        let cmd = match call {
+            Call::Cbor => CTAPHID_CBOR,
+            Call::Msg => CTAPHID_MSG,
+            Call::Vendor(cmd) => cmd,
+        };
+        match n {
             Some(n) => {
-                // Same discipline as `run_with_keepalive`: neither the request nor
-                // the response stays resident past the frame that carried it.
+                // Request and response both carried secrets (PINs, tokens, key blobs).
                 let resp = WipeGuard::new(scratch.get_mut(..n).unwrap_or_default());
                 write_message(writer, cid, cmd, &resp).await;
             }
@@ -876,6 +871,17 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         }
         asm.scrub();
     }
+}
+
+/// What the handler is asked to do with a reassembled message. A vendor command
+/// shares the CBOR/MSG loop because one can wait for a touch — arming the config
+/// lock over `0x43` does — and only that loop streams UPNEEDED and hears a CANCEL.
+#[derive(Clone, Copy)]
+enum Call {
+    Cbor,
+    Msg,
+    /// A vendor command, by its wire byte (`TYPE_INIT` still set).
+    Vendor(u8),
 }
 
 /// One outgoing 64-byte HID report. The future completes only once the host

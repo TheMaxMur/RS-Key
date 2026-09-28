@@ -460,6 +460,7 @@ fn every_job() -> Vec<(Job, bool, bool, &'static str)> {
         ),
         (
             Job::Vendor {
+                cid: CID,
                 cmd: 0x01,
                 data: Vec::new(),
             },
@@ -628,6 +629,8 @@ fn cancel_bound() -> Duration {
 /// (`rsk_device::ccid`'s crate-private `CTAP_READ_CONFIG`), named here as the
 /// other applet-private constants above are.
 const CTAP_READ_CONFIG: u8 = 0x42;
+/// …and its WRITE CONFIG (`CTAP_WRITE_CONFIG` there).
+const CTAP_WRITE_CONFIG: u8 = 0x43;
 
 /// A U2F REGISTER as `tests/13_u2f.py` sends it: the extended-length APDU whose
 /// 64-byte body is challenge ‖ application. Registration is the U2F command that
@@ -824,13 +827,11 @@ fn a_u2f_command_on_another_channel_drops_the_selection() {
     shut_down(path, jobs, device);
 }
 
-/// Why `Job::Vendor` is deliberately *not* bracketed with `begin`/`end`: no
-/// vendor command is presence-gated, so there is no wait to own, and
-/// `rsk_usb::ctaphid::run_vendor` streams no keepalive and watches for no CANCEL
-/// — a board cannot cancel one either. This is that assumption, pinned: a vendor
-/// command that ever grows a touch gate reds this and has to be given a channel.
+/// A vendor READ asks for no touch. Only arming the config lock over `0x43` waits
+/// for one, which is why `Job::Vendor` is bracketed with `begin`/`end` now; a read
+/// that ever grows a touch gate reds this.
 #[test]
-fn a_vendor_command_asks_for_no_touch() {
+fn a_vendor_read_asks_for_no_touch() {
     let (path, jobs, _signals, device) =
         bench_with("vendor-no-touch", PresenceMode::Delayed(touch_hold()));
 
@@ -838,6 +839,7 @@ fn a_vendor_command_asks_for_no_touch() {
     ask(
         &jobs,
         Job::Vendor {
+            cid: CID,
             cmd: CTAP_READ_CONFIG,
             data: Vec::new(),
         },
@@ -848,6 +850,65 @@ fn a_vendor_command_asks_for_no_touch() {
         took < Duration::from_millis(NO_TOUCH_BOUND_MS),
         "the vendor read waited {took:?} — something on that path asked for a touch"
     );
+
+    shut_down(path, jobs, device);
+}
+
+/// A `CTAPHID_CANCEL` ends the touch a `0x43` write waits for when it arms the
+/// config lock, and the lock stays unset. Unbracketed, the cancel the transport
+/// raised met no channel, and a touch given after the host had given up armed a
+/// lock it had reported as failed.
+#[test]
+fn a_cancel_ends_a_config_lock_touch_on_its_own_channel() {
+    let (path, jobs, signals, device) =
+        bench_with("vendor-cancel", PresenceMode::Delayed(touch_hold()));
+
+    let mut arm = vec![18, 0x0A, 16];
+    arm.extend_from_slice(&[0xA5; 16]);
+    let answer = queue(
+        &jobs,
+        Job::Vendor {
+            cid: CID,
+            cmd: CTAP_WRITE_CONFIG,
+            data: arm,
+        },
+    );
+    assert!(
+        wait_for_touch(&signals),
+        "arming the lock never asked for a touch"
+    );
+
+    signals.request_cancel(CID);
+    let sent = Instant::now();
+    let body = answer
+        .recv_timeout(touch_hold() * 3)
+        .expect("the device answered");
+    let took = sent.elapsed();
+
+    assert_eq!(body, None, "a cancelled lock write was answered as done");
+    assert!(
+        took < cancel_bound(),
+        "the wait took {took:?} to notice the cancel"
+    );
+    let config = ask(
+        &jobs,
+        Job::Vendor {
+            cid: CID,
+            cmd: CTAP_READ_CONFIG,
+            data: Vec::new(),
+        },
+    );
+    // DeviceInfo is `len ‖ TLVs`; CONFIG_LOCK (`0A`) is one byte, `01` when set.
+    let mut tlv = &config[1..];
+    let mut lock = None;
+    while let [tag, len, rest @ ..] = tlv {
+        let (value, next) = rest.split_at(usize::from(*len).min(rest.len()));
+        if *tag == 0x0A {
+            lock = value.first().copied();
+        }
+        tlv = next;
+    }
+    assert_eq!(lock, Some(0), "a cancelled write armed the lock");
 
     shut_down(path, jobs, device);
 }

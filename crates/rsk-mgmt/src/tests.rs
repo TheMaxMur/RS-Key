@@ -507,6 +507,30 @@ fn write_config_requires_user_presence() {
     );
 }
 
+/// …and the touch it takes covers a lock the write arms: one ask, not two.
+#[cfg(feature = "strict-config")]
+#[test]
+fn a_strict_lock_write_asks_for_one_touch() {
+    struct Count(usize);
+    impl UserPresence for Count {
+        fn request(&mut self, _c: Confirm<'_>) -> Presence {
+            self.0 += 1;
+            Presence::Confirmed
+        }
+    }
+    let presence = RefCell::new(Count(0));
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    let mut set = std::vec![TAG_CONFIG_LOCK, 0x10];
+    set.extend_from_slice(&[0xA5; 16]);
+    assert_eq!(write_config(&mut app, &mut fs, &set), Sw::OK);
+    assert_eq!(
+        presence.borrow().0,
+        1,
+        "a strict lock write asked for a second touch"
+    );
+}
+
 #[cfg(not(feature = "strict-config"))]
 #[test]
 fn write_config_default_is_ungated_and_persists() {
