@@ -194,7 +194,8 @@ fn a_tampered_handle_aborts() {
     assert!(derive_private_key(&seed, &compressed, ctx).is_none());
 }
 
-/// Only an uncompressed point on the curve reaches the multiplication.
+/// Only an uncompressed point on the curve, spelled canonically, reaches the
+/// multiplication.
 #[test]
 fn ecdh_takes_only_uncompressed_points_on_the_curve() {
     let seed = a1_seed();
@@ -207,6 +208,21 @@ fn ecdh_takes_only_uncompressed_points_on_the_curve() {
     assert!(
         ecdh(&seed.kem, &[0; POINT_LEN]).is_none(),
         "not an encoding"
+    );
+    for tag in [0x06, 0x07] {
+        let mut hybrid = bl;
+        hybrid[0] = tag;
+        assert!(ecdh(&seed.kem, &hybrid).is_none(), "hybrid tag {tag:#04x}");
+    }
+    // The point with x = 5, and the same point with x written as x + p.
+    let y = "459243b9aa581806fe913bce99817ade11ca503c64d9a3c533415c083248fbcc";
+    let point = |x: &str| <[u8; POINT_LEN]>::try_from(unhex(&std::format!("04{x}{y}"))).unwrap();
+    let five = "0000000000000000000000000000000000000000000000000000000000000005";
+    let five_plus_p = "ffffffff00000001000000000000000000000001000000000000000000000004";
+    assert!(ecdh(&seed.kem, &point(five)).is_some());
+    assert!(
+        ecdh(&seed.kem, &point(five_plus_p)).is_none(),
+        "x not reduced"
     );
 }
 

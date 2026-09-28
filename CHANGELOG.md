@@ -78,7 +78,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   response having no room for a second attestation object. The default image
   compiles none of it and getInfo does not advertise it
   ([the FIDO guide](docs/guides/fido2.md#previewsign-experimental-off-by-default)).
-  `bcdDevice` 0x0A65 → 0x0A66.
+  `bcdDevice` 0x0A65 → 0x0A66. On a display build the touch that releases a
+  signature asks "Sign data?" where it asked "Sign in?", since the host chose what
+  it signs. `bcdDevice` 0x0A67 → 0x0A68.
 
 ### Changed
 

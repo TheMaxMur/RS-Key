@@ -792,7 +792,17 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // hidden rp, and the user sees which stored credential signs in. Empty for a
     // credential with no stored user name (older / U2F).
     let account = sel.as_ref().map(|c| c.user_name.as_bytes()).unwrap_or(&[]);
-    let ask = want_up.then(|| crate::Confirm::new("Sign in?", req.rp_id.as_bytes(), account));
+    // A previewSign signature is over bytes the host chose, and this touch releases
+    // it: the screen asks to sign data, which "Sign in?" would not have said.
+    #[cfg(feature = "preview-sign")]
+    let title = if preview.is_some() {
+        "Sign data?"
+    } else {
+        "Sign in?"
+    };
+    #[cfg(not(feature = "preview-sign"))]
+    let title = "Sign in?";
+    let ask = want_up.then(|| crate::Confirm::new(title, req.rp_id.as_bytes(), account));
     let up = ctx.user_presence_test(req, ask)?;
 
     // CTAP 2.3 §12.4 largeBlob, run here so the gesture the assertion asked for is

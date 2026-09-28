@@ -32,9 +32,11 @@ impl Rng for SeqRng {
     }
 }
 
-/// Counts what it is asked, and answers each ask the same way.
+/// Counts what it is asked and the titles it is shown, and answers each ask the
+/// same way.
 struct Button {
     asked: u32,
+    titles: Vec<&'static str>,
     answer: Presence,
 }
 
@@ -42,20 +44,23 @@ impl Button {
     fn touching() -> Self {
         Self {
             asked: 0,
+            titles: Vec::new(),
             answer: Presence::Confirmed,
         }
     }
     fn untouched() -> Self {
         Self {
             asked: 0,
+            titles: Vec::new(),
             answer: Presence::Timeout,
         }
     }
 }
 
 impl UserPresence for Button {
-    fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
+    fn request(&mut self, confirm: Confirm<'_>) -> Presence {
         self.asked += 1;
+        self.titles.push(confirm.title);
         self.answer
     }
 }
@@ -787,6 +792,24 @@ fn an_unattended_key_still_asks_for_presence() {
     verify_signature(&pk, &sig.unwrap());
 }
 
+/// The touch that releases a previewSign signature signs bytes the host chose, so a
+/// trusted screen asks to sign data; an assertion without the extension still asks
+/// to sign in.
+#[test]
+fn a_signing_assertion_asks_to_sign_data() {
+    let mut board = Board::new();
+    let (cred, key) = register(&mut board, Some(1), false);
+    let (_, args) = relying_party(&key, b"title");
+    let mut button = Button::touching();
+    let req = signing_request(&cred, &key, &args, Some(true));
+    board.run(false, &req, &mut button).unwrap();
+    assert_eq!(button.titles, ["Sign data?"]);
+    let mut button = Button::touching();
+    let req = ga_req(Allow::Of(&cred), None, Some(true), None);
+    board.run(false, &req, &mut button).unwrap();
+    assert_eq!(button.titles, ["Sign in?"]);
+}
+
 /// `require-uv`: no verified user, no signature — `PUAT_REQUIRED`; with a PIN
 /// token the assertion carries UV and signs.
 #[test]
@@ -885,6 +908,15 @@ fn assertion_refusals_come_in_the_draft_order() {
             "a handle a byte short",
             true,
             Some(handle[..HANDLE_LEN - 1].to_vec()),
+            Some(tbs.clone()),
+            Some(args.clone()),
+            None,
+            InvalidCredential
+        ),
+        (
+            "a handle with bytes past its end",
+            true,
+            Some([&handle[..], &[0u8; 16]].concat()),
             Some(tbs.clone()),
             Some(args.clone()),
             None,
@@ -1417,6 +1449,59 @@ fn registration_attests_an_arkg_seed_beside_the_credential() {
         (RT_PK_BL.to_string(), RT_PK_KEM.to_string()),
         "the fixed device's ARKG public seed"
     );
+}
+
+/// Under enterprise attestation the signing key is attested as the credential is:
+/// by the organisation's key, with its chain. `attestation_key` makes that choice a
+/// second time, apart from the credential's, so this holds the two together.
+#[test]
+fn an_enterprise_registration_attests_the_signing_key_with_the_org_key() {
+    use crate::consts::{EF_ATT_CHAIN, EF_EA_ENABLED};
+    let mut board = Board::new();
+    let org = [0x21u8; 32];
+    crate::seed::store_att_key(&dev(), &mut board.fs, &org).unwrap();
+    let (c1, c2) = ([0x30u8, 0x03, 1, 2, 3], [0x30u8, 0x02, 7, 7]);
+    let mut chain = [0u8; 64];
+    let n = crate::cert::att_chain_pack(&[&c1[..], &c2[..]].concat(), &mut chain).unwrap();
+    board.fs.put(EF_ATT_CHAIN, &chain[..n]).unwrap();
+    board.fs.put(EF_EA_ENABLED, &[1]).unwrap();
+    let input = generate_key(&[ALG_ESP256_SPLIT_ARKG], Some(1));
+    let req = enc(|e| {
+        e.map(6).unwrap();
+        e.u8(1).unwrap().bytes(&CDH).unwrap();
+        e.u8(2)
+            .unwrap()
+            .map(1)
+            .unwrap()
+            .str("id")
+            .unwrap()
+            .str(RP)
+            .unwrap();
+        e.u8(3).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+        e.str("name").unwrap().str("alice").unwrap();
+        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(6).unwrap().map(1).unwrap().str(NAME).unwrap();
+        e.writer_mut().write_all(&input).unwrap();
+        // enterpriseAttestation 2, the platform-managed kind.
+        e.u8(0x0A).unwrap().u8(2).unwrap();
+    });
+    let reg = registered(&board.mc(&req).unwrap());
+    assert!(reg.fields.contains(&4), "epAtt: {:?}", reg.fields);
+    let key = attested_key(reg.att_obj.as_deref().unwrap());
+    let (sig, x5c) = packed(&key.att_stmt);
+    assert_eq!(x5c, packed(&reg.att_stmt).1, "the credential's chain");
+    assert_eq!(x5c, std::vec![c1.to_vec(), c2.to_vec()]);
+    let (x, y) = P256Key::from_scalar(&org).unwrap().public_xy();
+    let point = p256::Sec1Point::from_bytes(crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let mut signed = key.auth_data.clone();
+    signed.extend_from_slice(&CDH);
+    VerifyingKey::from_sec1_point(&point)
+        .unwrap()
+        .verify(&signed, &Signature::from_der(&sig).unwrap())
+        .expect("the org key attests the signing key");
 }
 
 fn hex(b: &[u8]) -> String {
