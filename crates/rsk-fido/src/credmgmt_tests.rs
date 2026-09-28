@@ -30,6 +30,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 

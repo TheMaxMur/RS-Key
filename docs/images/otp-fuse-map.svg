@@ -91,7 +91,7 @@
 
     <text class="addr" x="150" y="446" text-anchor="end">0xFF5</text>
     <rect x="158" y="432" width="392" height="26" rx="6" fill="#2F7E75"/>
-    <text class="row" x="170" y="449">page-58 lock — BOOTSEL-unreadable, secure r/w</text>
+    <text class="row" x="170" y="449">page-58 lock — BOOTSEL-unreadable, secure r/o</text>
     <text class="who" x="562" y="449">lock-page58</text>
   </g>
 

@@ -391,7 +391,7 @@ r_owners = "6 tagged owners over 3 files, covering the session conjunct at three
 r_column = "the `rust` column is not a count of tags: `grep_word` matches the bare invariant name anywhere in a production file and returns file names, so tagging `write_pin_verifier` would move nothing and tagging `crates/rsk-display/src/gates.rs` would move it 3 -> 4"
 r_citations = "23 references read by hand; 16 land on their subject, 3 distinct citations (5 occurrences) do not, and 2 more sit one line past the line the mutant they describe deletes. All are green under citation-gate — two because the lock was regenerated over the drift, one because the module's spelling is unmatched by CITE"
 t_trace = "0 of 0, and it is the honest value rather than a gap: no `TraceSecurity*` configuration checks this invariant, so nothing in this bundle is evidence about a recorded device session. `formal/traces/security-phase4.jsonl` is the recording that exists and it performs no changePIN, no stopUsingPinUvAuthToken and no panel PIN entry"
-f_fuzz = "1, and it is one FILE. `fuzz/fuzz_targets/fido_session.rs:1436-1439` asserts that getPinToken never re-issues the standing token, carrying the invariant's name so the trace is greppable; the axis is a `grep_word` over `fuzz/fuzz_targets/*.rs` and counts no execution"
+f_fuzz = "1, and it is one FILE. `fuzz/fuzz_targets/fido_session.rs:1437-1440` asserts that getPinToken never re-issues the standing token, carrying the invariant's name so the trace is greppable; the axis is a `grep_word` over `fuzz/fuzz_targets/*.rs` and counts no execution"
 
 # The gates, each with the number it derives today. Derived live, not copied.
 gate_ghost = "ghost-gate: ok — 21 action(s) record NoAuthorizationBypass over 24 route(s), consulting 11 guard(s) — unchanged by this bundle and transcribed because the roster demands every gate line. The ghost THIS property is about is a second name in the same mechanism: TokenBypass, SetPinWrite, ChangePinWrite and CmBeginViaPpuat write it, and no gate derives that count at all"
@@ -513,7 +513,7 @@ registered = "yes — assurance/platform.toml PLAT-SOURCE-001, pending"
 id = "AS-NTAI-3"
 statement = "Both Kani harnesses cover the SESSION token only. The persistent `pcmr` grant lives in EF_PAUTHTOKEN, needs a `Ctx` with flash behind it, and both harness headers say so."
 kind = "model fidelity"
-discharger = "a harness over clear_ppuat and write_pin_verifier with a Ctx — which is the `p256`-in-the-reachable-set problem credmgmt_kani.rs's own header records, where Kani 0.67.0 aborts in codegen on crypto-bigint 0.7.5. Until then the persistent half is held by the model and by host tests (crates/rsk-fido/src/clientpin_tests.rs:2331 and its neighbours), not by a proof — so `kani = 2` is two harnesses over one of three conjuncts, and BOUNDED keys on a harness NAME"
+discharger = "a harness over clear_ppuat and write_pin_verifier with a Ctx — which is the `p256`-in-the-reachable-set problem credmgmt_kani.rs's own header records, where Kani 0.67.0 aborts in codegen on crypto-bigint 0.7.5. Until then the persistent half is held by the model and by host tests (crates/rsk-fido/src/clientpin_tests.rs:2332 and its neighbours), not by a proof — so `kani = 2` is two harnesses over one of three conjuncts, and BOUNDED keys on a harness NAME"
 expressible = "no — a scope statement about two existing proofs"
 registered = "yes — assurance/platform.toml PLAT-MODEL-013, pending"
 

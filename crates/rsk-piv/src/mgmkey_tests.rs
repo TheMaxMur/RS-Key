@@ -26,6 +26,7 @@ fn dev() -> Device<'static> {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     }
 }
 

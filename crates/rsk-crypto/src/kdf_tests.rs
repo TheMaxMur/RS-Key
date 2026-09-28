@@ -8,6 +8,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -92,6 +93,66 @@ fn without_otp_drops_only_the_key() {
     assert_eq!(old.serial_hash, d.serial_hash);
     assert_eq!(old.serial_id, d.serial_id);
     assert_eq!(old.derive_kbase().expose(), dev().derive_kbase().expose());
+}
+
+/// The latch closes the arms below the fused root and nothing else: the pre-OTP
+/// arm and the clear answer no, while the current arm and PIN verifiers'
+/// [`Device::without_otp`] stay as they were.
+#[test]
+fn the_latch_closes_the_arms_below_the_fused_root() {
+    let open = Device {
+        otp_key: Some(&OTP),
+        ..dev()
+    };
+    let latched = Device {
+        latched: true,
+        ..open
+    };
+    let old = open
+        .pre_otp_arm()
+        .expect("an unlatched device keeps its pre-OTP arm");
+    assert_eq!(
+        old.derive_kbase().expose(),
+        open.without_otp().derive_kbase().expose()
+    );
+    assert!(open.clear_arm_open());
+    assert!(latched.pre_otp_arm().is_none());
+    assert!(!latched.clear_arm_open());
+    assert_eq!(
+        latched.derive_kbase().expose(),
+        open.derive_kbase().expose()
+    );
+    assert!(latched.without_otp().otp_key.is_none());
+}
+
+/// A fused-key source carries the boot's latch into every device built from a read.
+#[test]
+fn a_fused_read_carries_the_latch_into_its_device() {
+    fn read(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
+    }
+    fn blank(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let (hash, id) = ([0xAB; 32], [1u8, 2, 3, 4, 5, 6, 7, 8]);
+    for (src, latched) in [
+        (FusedKey::open(read), false),
+        (FusedKey::latched(read), true),
+    ] {
+        let fused = read_fused(Some(src));
+        let dev = Device::fused(&hash, &id, &fused).expect("a key that read");
+        assert_eq!((dev.otp_key, dev.latched), (Some(&OTP), latched));
+    }
+    // Before the latch a key that does not read leaves the chip-serial arm, as on
+    // an unprovisioned device; past it no arm is left, so there is no device.
+    let open = read_fused(Some(FusedKey::open(blank)));
+    let dev = Device::fused(&hash, &id, &open).expect("the pre-OTP device");
+    assert_eq!((dev.otp_key, dev.latched), (None, false));
+    let shut = read_fused(Some(FusedKey::latched(blank)));
+    assert!(Device::fused(&hash, &id, &shut).is_none());
+    let absent = read_fused(None);
+    assert!(Device::fused(&hash, &id, &absent).is_some_and(|d| d.otp_key.is_none()));
 }
 
 #[test]

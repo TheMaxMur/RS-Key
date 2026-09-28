@@ -58,6 +58,7 @@ fn use_counter(path: &Path) -> Option<u16> {
         serial_hash: &serial_hash,
         serial_id: &serial_id,
         otp_key: None,
+        latched: false,
     };
     let mut rec = Secret::<[u8; SLOT_RECORD]>::zeroed();
     let n = seal_read(&dev, &mut mount(path), KeyFid::new(SLOT1_FID), &mut rec)?;
@@ -83,6 +84,7 @@ fn bench_with(name: &str, presence: PresenceMode) -> (PathBuf, Jobs, Arc<Signals
         serial_hash: &serial_hash,
         serial_id: &serial_id,
         otp_key: None,
+        latched: false,
     };
     let mut rng = EmuRng::from_seed(&[0xa7; 32]);
     assert!(

@@ -51,7 +51,7 @@ requirement = [
 ]
 threat_clause = "docs/threat-model.md#TM-ZEROIZATION"
 # AND THE CLAUSE DOES NOT SAY WHAT THE PROPERTY IS ABOUT. Read at
-# docs/threat-model.md:386-401, `## Zeroization` makes one rule — key-grade
+# docs/threat-model.md:391-406, `## Zeroization` makes one rule — key-grade
 # material in RAM is wiped WHEN ITS USE ENDS, "on drop", "at end of scope",
 # "as soon as a message completes" — and names session state, PIN/UV tokens,
 # transient key copies, transport buffers, the DEVK and the MKEK. It never names
@@ -68,7 +68,7 @@ threat_clause_reading = "the anchor is topical and not the claim: TM-ZEROIZATION
 # file and returns FILE NAMES, so the column counts files that MENTION it, not
 # sites that own it — and a second tag in an already-counted file adds nothing.
 # The `Refines` regex belongs to a different function, which only validates.
-owners_tagged = ["crates/rsk-fido/src/seed.rs:657 seed::ensure_seed", "crates/rsk-fido/src/vendor.rs::unlock — the producer, tagged after this bundle measured that it was not"]
+owners_tagged = ["crates/rsk-fido/src/seed.rs:659 seed::ensure_seed", "crates/rsk-fido/src/vendor.rs::unlock — the producer, tagged after this bundle measured that it was not"]
 # AND THE TAG IS ON THE CONSEQUENT. `grep -c keydev_dec crates/rsk-fido/src/seed.rs`
 # is 0, and `ensure_seed` takes no `FidoState` at all, so it structurally cannot
 # touch the antecedent: it writes `EF_KEY_DEV`, which is `store.seed`. It can
@@ -101,7 +101,7 @@ owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 # The unit test that kills that twin, recorded here because it counts in NO
 # derived column: `assurance_gate.py`'s `rust` axis drops filenames containing
 # `tests`, and its `test` axis reads only `tests/**/*.py`.
-owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1203 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed"
+owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1204 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed"
 
 # ---- 2. Commit, build and features -------------------------------------------
 

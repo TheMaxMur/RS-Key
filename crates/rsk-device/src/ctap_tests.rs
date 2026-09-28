@@ -288,6 +288,25 @@ fn a_secure_reboot_drops_the_auth_state_but_not_the_boot_verdict() {
     assert!(ctap.fido_state.borrow().warm_boot);
 }
 
+/// Past the latch a fused key that did not read leaves FIDO no arm to open or seal
+/// under: a CBOR command answers `CTAP1_ERR_OTHER` and a U2F one `6400`, before
+/// either reaches the applet.
+#[test]
+fn past_the_latch_an_unread_key_refuses_before_the_applet() {
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let env = Env::new();
+    let mut ctap = env.ctap_fused(Some(rsk_crypto::FusedKey::latched(unread)));
+    let resp = ctap.handle_cbor(0xABCD, &GET_INFO, 0).to_vec();
+    assert_eq!(resp, [rsk_fido::CtapError::FUSED_KEY_UNREAD.as_u8()]);
+    let res = ctap.handle_msg(&u2f_version(), 0).to_vec();
+    assert_eq!(res, rsk_sdk::Sw::FUSED_KEY_UNREAD.to_bytes());
+    // The same device before the latch still answers getInfo.
+    let mut open = env.ctap_fused(Some(rsk_crypto::FusedKey::open(unread)));
+    assert_eq!(open.handle_cbor(0xABCD, &GET_INFO, 0)[0], 0);
+}
+
 /// The number getInfo puts ON THE WIRE has to be the number the transport
 /// enforces. A YubiKey 5.7.4 demonstrates the invariant: it advertises 1536 and
 /// its largest accepted CTAPHID payload is exactly 1536, with 1537 killed by an

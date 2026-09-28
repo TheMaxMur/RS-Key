@@ -1000,10 +1000,10 @@ Every one of the 17 is a `p0-launch` row of `assurance/configurations.toml`, all
 |---|---|---|
 | `bound_oracle_conjuncts` | `2` | any verdict finer than the two. The oracle at fuzz/fuzz_targets/power_cut.rs:220-230 is one boolean expression whose first conjunct folds the two sibling clauses and whose second is this one, so a failure names the function and the reader has to know which conjunct is which |
 | `bound_separable_asserts` | `1` | the separation the two tiers above have. One assertion covers all three clauses, so a passing run cannot distinguish a clause that was exercised from one the fixture made vacuously true |
-| `bound_snapshot_valuations` | `1` | the other snapshot valuations. `reset_probe` writes `EF_CRED`, `EF_PIN`, `EF_ALWAYS_UV` and `EF_BACKUP_SEALED` before the reset at fuzz/fuzz_targets/power_cut.rs:255-258, so `snap.sealed` is TRUE by construction and the symbolic draw the Kani harness makes over it never happens here |
-| `bound_cut_budget_bytes` | `1048575` | a power cut later in the write stream than the budget allows. The cut point is `u32::from_be_bytes([0, data[1] & 0x0f, data[2], data[3]])` at fuzz/fuzz_targets/power_cut.rs:262-267, so a tear further in than that is not a prefix this target can produce |
+| `bound_snapshot_valuations` | `1` | the other snapshot valuations. `reset_probe` writes `EF_CRED`, `EF_PIN`, `EF_ALWAYS_UV` and `EF_BACKUP_SEALED` before the reset at fuzz/fuzz_targets/power_cut.rs:256-259, so `snap.sealed` is TRUE by construction and the symbolic draw the Kani harness makes over it never happens here |
+| `bound_cut_budget_bytes` | `1048575` | a power cut later in the write stream than the budget allows. The cut point is `u32::from_be_bytes([0, data[1] & 0x0f, data[2], data[3]])` at fuzz/fuzz_targets/power_cut.rs:263-268, so a tear further in than that is not a prefix this target can produce |
 
-> **Row note (`shipped_relation`).** the probe drives the REAL `rsk_fido::reset::reset` over a cuttable mock NOR, then mounts a fresh store, runs boot-time seed provisioning and boots a second time. It is the strongest rung below the board, and it is the ONLY rung of this clause's ladder where the RAM copy of the seed is drawn: `data[4] & 1` loads `state.keydev_dec` at fuzz/fuzz_targets/power_cut.rs:270-272, which is what makes `owner_reachable` in the oracle mean more than the flash record. No log of any run is in the tree and none is in this bundle
+> **Row note (`shipped_relation`).** the probe drives the REAL `rsk_fido::reset::reset` over a cuttable mock NOR, then mounts a fresh store, runs boot-time seed provisioning and boots a second time. It is the strongest rung below the board, and it is the ONLY rung of this clause's ladder where the RAM copy of the seed is drawn: `data[4] & 1` loads `state.keydev_dec` at fuzz/fuzz_targets/power_cut.rs:271-273, which is what makes `owner_reachable` in the oracle mean more than the flash record. No log of any run is in the tree and none is in this bundle
 
 #### Method 8 — the board rung, and what its column is worth: this clause OWNS an assertion on hardware, and no run of it has ever been recorded
 
@@ -1166,7 +1166,7 @@ Every one of the 17 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 #### Method 6 — the production side: which sites own each half of the implication, and whether the one tag is on a half that can falsify it
 
-`review` over crates/rsk-fido/src/clientpin.rs::issue_token + crates/rsk-fido/src/state.rs::begin_using_token + crates/rsk-fido/src/reset.rs::reset. cfg: none — every site above is unconditional production code except crates/rsk-fido/src/conformance/mod.rs:165, which is cfg(test) and is counted apart in `owners_antecedent` rather than in these bounds. features: none.
+`review` over crates/rsk-fido/src/clientpin.rs::issue_token + crates/rsk-fido/src/state.rs::begin_using_token + crates/rsk-fido/src/reset.rs::reset. cfg: none — every site above is unconditional production code except crates/rsk-fido/src/conformance/mod.rs:166, which is cfg(test) and is counted apart in `owners_antecedent` rather than in these bounds. features: none.
 
 | Bound | Value | What stops being proved |
 |---|---|---|

@@ -19,7 +19,7 @@
 //! builds only.
 
 use embassy_rp::otp;
-use rsk_rescue::otp_lock::{KeyRows, PAGE58_LOCK_VALUE, PAGE58_LOCK1_ROW, key_rows};
+use rsk_rescue::otp_lock::{KeyRows, PAGE58_LATCH_VALUE, PAGE58_LOCK1_ROW, key_rows};
 use rsk_rescue::rollback::{
     BOOT_FLAGS0_ROW, DEFAULT_BOOT_VERSION0_ROW, DEFAULT_BOOT_VERSION1_ROW, ROLLBACK_REQUIRED_BIT,
     RollbackRaw,
@@ -116,18 +116,20 @@ pub fn read_page58_lock() -> Option<u32> {
         .map(|w| w & 0x00FF_FFFF)
 }
 
-/// Burn the permanent page-58 access lock (PAGE58_LOCK_VALUE → PAGE58_LOCK1)
+/// Burn the permanent page-58 access lock and fuse latch (PAGE58_LATCH_VALUE →
+/// PAGE58_LOCK1, over a blank row or an older build's lock)
 /// from secure firmware — the half the host burn ritual cannot do, since that
 /// lock row lives in bootloader-read-only OTP page 63 (page 63 `LOCK_S` = rw, so
 /// secure code can). The row and value are fixed constants here, so this call
 /// can only ever write that one lock; it is reached only after the rescue applet
-/// has confirmed the row is blank and the keys are provisioned. IRREVERSIBLE.
+/// has confirmed the row is blank or an older build's lock, the keys are
+/// provisioned and the migration is finished. IRREVERSIBLE.
 /// Returns whether the bootrom write succeeded.
 pub fn apply_page58_lock() -> bool {
     if faked_keys() {
         return false;
     }
-    otp::write_raw_word(PAGE58_LOCK1_ROW, PAGE58_LOCK_VALUE).is_ok()
+    otp::write_raw_word(PAGE58_LOCK1_ROW, PAGE58_LATCH_VALUE).is_ok()
 }
 
 /// Whether this image carries a baked test key instead of reading OTP.

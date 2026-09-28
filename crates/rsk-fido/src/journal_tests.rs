@@ -20,6 +20,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -372,10 +373,10 @@ fn checkpoint_requires_devk_and_signature_verifies() {
     });
     assert_eq!(err, Err(CtapError::NotAllowed));
 
-    state.devk_source = Some(|out: &mut [u8; 32]| {
+    state.devk_source = Some(rsk_crypto::FusedKey::open(|out: &mut [u8; 32]| {
         *out = [7; 32];
         true
-    });
+    }));
     run_ctx(&mut fs, &mut state, |ctx| {
         append(ctx, EV_MAKE_CRED, 0, &[1; 8]);
     });
@@ -494,7 +495,7 @@ fn the_checkpoint_reads_the_devk_per_call() {
 
     let mut fs = Fs::new(RamStorage::new());
     let mut state = FidoState::new();
-    state.devk_source = Some(source);
+    state.devk_source = Some(rsk_crypto::FusedKey::open(source));
     let mut out = [0u8; 512];
 
     run_ctx(&mut fs, &mut state, |ctx| {

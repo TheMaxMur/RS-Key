@@ -270,6 +270,14 @@ impl<S: Storage> Env<S> {
 
     /// The CCID side: the full eight-applet set behind the dispatcher.
     pub fn ccid(&self) -> CcidApplets<'_, S, TestRng, VendorBoard> {
+        self.ccid_fused(None)
+    }
+
+    /// [`Self::ccid`] reading its fused key through `mkek_source`.
+    pub fn ccid_fused(
+        &self,
+        mkek_source: Option<rsk_crypto::FusedKey>,
+    ) -> CcidApplets<'_, S, TestRng, VendorBoard> {
         CcidApplets::new(
             &self.fs,
             &self.rng,
@@ -280,7 +288,7 @@ impl<S: Storage> Env<S> {
             VendorBoard,
             SERIAL_ID,
             SERIAL_HASH,
-            None,
+            mkek_source,
             None,
             KV_TOTAL,
             FLASH_SIZE,
@@ -290,6 +298,14 @@ impl<S: Storage> Env<S> {
 
     /// The CTAPHID side: FIDO/U2F plus the vendor AID.
     pub fn ctap(&self) -> AppletHandler<'_, S, TestRng, VendorBoard> {
+        self.ctap_fused(None)
+    }
+
+    /// [`Self::ctap`] reading its fused key through `mkek_source`.
+    pub fn ctap_fused(
+        &self,
+        mkek_source: Option<rsk_crypto::FusedKey>,
+    ) -> AppletHandler<'_, S, TestRng, VendorBoard> {
         AppletHandler::new(
             &self.fs,
             &self.rng,
@@ -299,7 +315,7 @@ impl<S: Storage> Env<S> {
             VendorBoard,
             SERIAL_ID,
             SERIAL_HASH,
-            None,
+            mkek_source,
             None,
         )
     }
@@ -312,6 +328,7 @@ pub fn dev() -> rsk_crypto::Device<'static> {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     }
 }
 

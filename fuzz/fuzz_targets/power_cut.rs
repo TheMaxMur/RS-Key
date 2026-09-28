@@ -250,6 +250,7 @@ fn reset_probe(data: &[u8]) {
         serial_hash: &[0xa5; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     rsk_fido::seed::ensure_seed(&identity, &mut fs, &mut rng).unwrap();
     fs.put(EF_CRED, &[0x5a; 96]).unwrap();

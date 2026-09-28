@@ -45,6 +45,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -3365,10 +3366,10 @@ fn a_gated_read_with_a_pin_takes_only_a_valid_acfg_token() {
 fn audit_checkpoint_without_touch_signs_nothing() {
     let (mut fs, mut rng, mut st) = setup();
     fs.put(crate::consts::EF_AUDIT_ENABLED, &[1]).unwrap();
-    st.devk_source = Some(|out: &mut [u8; 32]| {
+    st.devk_source = Some(rsk_crypto::FusedKey::open(|out: &mut [u8; 32]| {
         *out = [7; 32];
         true
-    });
+    }));
     let mut req = [0u8; 64];
     let n = {
         let mut e = Encoder::new(Cursor::new(&mut req[..]));

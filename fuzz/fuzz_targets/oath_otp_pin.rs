@@ -74,7 +74,7 @@ fuzz_target!(|data: &[u8]| {
 
     // Both generations: None exercises the legacy/serial arm, Some exercises the
     // v1 OTP-rooted verifier and its without_otp() fallback.
-    let generations: [Option<FusedKey>; 2] = [None, Some(fused_mkek)];
+    let generations: [Option<FusedKey>; 2] = [None, Some(FusedKey::open(fused_mkek))];
     for otp in generations {
         let mut fs = Fs::new(RamStorage::new());
         fs.scan();

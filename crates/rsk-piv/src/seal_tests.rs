@@ -35,6 +35,7 @@ fn dev(otp: Option<&'static [u8; 32]>) -> Device<'static> {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: otp,
+        latched: false,
     }
 }
 

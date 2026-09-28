@@ -33,6 +33,7 @@ fn run(presence: &mut dyn crate::UserPresence) -> CtapResult {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut ctx = Ctx {
         presence,
@@ -92,6 +93,7 @@ fn a_selection_touch_leaves_a_live_token_unspent() {
             serial_hash: &[0xAB; 32],
             serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
             otp_key: None,
+            latched: false,
         },
         fs: &mut fs,
         rng: &mut rng,

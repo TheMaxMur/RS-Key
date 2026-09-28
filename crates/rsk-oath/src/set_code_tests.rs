@@ -280,6 +280,7 @@ fn a_code_an_older_build_stored_still_opens_the_applet() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let secret = [0x5Au8; OATH_CODE_MAX - 1];
     let mut stored = vec![ALG_HMAC_SHA1];
@@ -423,6 +424,7 @@ fn set_code_keeps_the_otp_pin_and_re_arms_the_lap_before_its_seal() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut rec = [0u8; OTP_PIN_REC_V1];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
@@ -433,7 +435,13 @@ fn set_code_keeps_the_otp_pin_and_re_arms_the_lap_before_its_seal() {
     );
 
     // The OTP build, and the lap has already run.
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     assert!(
@@ -483,7 +491,13 @@ fn a_set_code_whose_re_arm_the_medium_refuses_installs_no_code() {
     assert!(fs.has_data(EF_OTP_PIN), "fixture: the OTP PIN is set");
 
     // The OTP build, unlocked (no code yet), and the lap has already run.
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     assert!(
@@ -537,7 +551,13 @@ fn a_refused_re_arm_leaves_the_session_exactly_as_it_found_it() {
     fs.scan();
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     assert_eq!(set_code(&mut app, &mut fs, &[0xCDu8; 20]), Sw::OK);
     let (_, sel) = select(&mut app, &mut fs);
     let chal = find_tag(&sel, TAG_CHALLENGE as u16).unwrap().to_vec();

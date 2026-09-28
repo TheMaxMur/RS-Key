@@ -42,6 +42,7 @@ fn fixture() -> (Device<'static>, Fs<rsk_fs::storage::ram::RamStorage>) {
             serial_hash: &HASH,
             serial_id: &SERIAL,
             otp_key: None,
+            latched: false,
         },
         fs,
     )

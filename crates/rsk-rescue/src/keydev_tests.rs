@@ -27,6 +27,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -103,6 +104,41 @@ fn gcm_keydev_migrates_from_preotp_to_otp_arm() {
     let migrated = load_or_generate(&otp_dev(), None, &mut fs, &mut rng).unwrap();
     assert_eq!(migrated.to_bytes(), key.to_bytes());
     assert!(load_or_generate(&dev(), None, &mut fs, &mut rng).is_none());
+}
+
+/// Past the fuse latch a device key only the pre-OTP arm opens was planted, GCM or
+/// legacy CBC: it neither loads nor moves, and nothing mints over it.
+#[test]
+fn past_the_latch_no_pre_otp_keydev_opens_or_moves() {
+    let latched = Device {
+        latched: true,
+        ..otp_dev()
+    };
+    type Plant = fn(&mut Fs<RamStorage>);
+    let plants: [(&str, Plant); 2] = [
+        ("GCM", |fs| {
+            load_or_generate(&dev(), None, fs, &mut LcgRng(5)).unwrap();
+        }),
+        ("CBC", |fs| write_legacy_cbc(&dev(), fs, &[0x33; 32])),
+    ];
+    for (shape, plant) in plants {
+        let mut fs = fs();
+        let mut rng = LcgRng(7);
+        plant(&mut fs);
+        let mut before = [0u8; GCM_LEN];
+        let n = fs.read(EF_DEVCERT_KEY.get(), &mut before).unwrap();
+        assert!(
+            load_or_generate(&latched, None, &mut fs, &mut rng).is_none(),
+            "{shape}: a planted device key loaded past the latch"
+        );
+        assert!(!migrate_kbase(&latched, &mut fs, &mut rng), "{shape}");
+        let mut after = [0u8; GCM_LEN];
+        assert_eq!(fs.read(EF_DEVCERT_KEY.get(), &mut after), Some(n));
+        assert_eq!(
+            after, before,
+            "{shape}: a planted device key moved past the latch"
+        );
+    }
 }
 
 #[test]

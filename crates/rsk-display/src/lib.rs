@@ -274,12 +274,9 @@ pub struct DeviceKeys {
 }
 
 impl DeviceKeys {
-    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
-        Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_ref().map(|k| k.expose()),
-        }
+    /// `None` past the latch when the fused key did not read ([`Device::fused`]).
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Option<Device<'k>> {
+        Device::fused(&self.serial_hash, &self.serial_id, mkek)
     }
 }
 
@@ -634,9 +631,11 @@ where
         let mut store = self.cells.fs.borrow_mut();
         self.home_pin_set = rsk_fido::passkeys::device_pin_is_set(&mut store);
         let mut creds = 0u16;
-        let _ = rsk_fido::passkeys::for_each_rp(&dev, &mut store, |rp| {
-            creds = creds.saturating_add(rp.count as u16);
-        });
+        if let Some(dev) = dev {
+            let _ = rsk_fido::passkeys::for_each_rp(&dev, &mut store, |rp| {
+                creds = creds.saturating_add(rp.count as u16);
+            });
+        }
         self.home_passkeys = creds;
     }
 }
@@ -700,7 +699,9 @@ where
     /// highest-value actions from the log of a user who deliberately turned it on.
     fn journal_local(&self, ev: u8) {
         let mkek = read_fused(self.cells.keys.mkek_source);
-        let dev = self.cells.keys.device(&mkek);
+        let Some(dev) = self.cells.keys.device(&mkek) else {
+            return;
+        };
         let now = self.hooks.attach_elapsed_ms();
         rsk_fido::journal::append_local(&dev, &mut self.cells.fs.borrow_mut(), now, ev, 0);
     }

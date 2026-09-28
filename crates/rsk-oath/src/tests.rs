@@ -204,6 +204,7 @@ fn for_each_cred_lists_public_metadata() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut seen: Vec<(Vec<u8>, bool, u8, u8, u16, bool)> = Vec::new();
     let n = for_each_cred(&dev, &mut fs, |c| {
@@ -311,6 +312,7 @@ fn totp_with_period_prefix_reports_period_and_strips_prefix() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut got = None;
     for_each_cred(&dev, &mut fs, |c| {
@@ -597,6 +599,7 @@ fn legacy_plaintext_cred_migrates_and_stays_usable() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut mrng = CountRng(1);
     migrate_seal(&dev, &mut fs, &mut mrng);
@@ -1013,6 +1016,7 @@ fn cred_sealed_before_otp_burn_survives_the_burn() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp = Device {
         otp_key: Some(&TEST_MKEK),
@@ -1045,6 +1049,100 @@ fn cred_sealed_before_otp_burn_survives_the_burn() {
     assert!(seal::seal_read(&nootp, &mut fs, fid, &mut buf).is_none());
 }
 
+/// Past the fuse latch a credential only the pre-OTP arm or the clear opens was
+/// planted: the boot pass leaves it where it is instead of sealing it onto the
+/// fused root.
+#[test]
+fn past_the_latch_no_pre_otp_or_clear_cred_moves() {
+    let nootp = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let latched = Device {
+        otp_key: Some(&TEST_MKEK),
+        latched: true,
+        ..nootp
+    };
+    let fid = KeyFid::new(EF_OATH_CRED);
+    let mut rng = CountRng(7);
+    let mut clear = tlv(TAG_NAME, b"acct");
+    let mut key = vec![0x21u8, 8];
+    key.extend_from_slice(SECRET_SHA1);
+    clear.extend(tlv(TAG_KEY, &key));
+    for shape in ["pre-OTP", "clear"] {
+        let mut fs = new_fs();
+        if shape == "clear" {
+            fs.put(EF_OATH_CRED, &clear).unwrap();
+        } else {
+            assert!(seal::seal_put(&nootp, &mut fs, &mut rng, fid, &clear));
+        }
+        let mut before = [0u8; CRED_MAX];
+        let n = fs.read(EF_OATH_CRED, &mut before).unwrap();
+        assert!(!migrate_seal(&latched, &mut fs, &mut rng), "{shape}");
+        let mut after = [0u8; CRED_MAX];
+        assert_eq!(fs.read(EF_OATH_CRED, &mut after), Some(n));
+        assert_eq!(
+            after, before,
+            "{shape}: a planted credential moved past the latch"
+        );
+    }
+}
+
+/// Past the latch a fused key that did not read leaves no arm to seal or open
+/// under: every command that needs it refuses, stores nothing, and a VERIFY PIN
+/// spends no retry, since the fuse refused it and not the PIN.
+#[test]
+fn past_the_latch_an_unread_key_refuses_and_stores_nothing() {
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
+    let cred = put_data(b"acct", 0x21, 6, SECRET_SHA1, false, None);
+    assert_eq!(put(&mut app, &mut fs, &cred), Sw::OK);
+    let pin = apdu(INS_SET_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"));
+    assert_eq!(run(&mut app, &mut fs, &pin).0, Sw::OK);
+    let records = |fs: &mut Fs<RamStorage>| {
+        let (mut cred, mut pin) = ([0u8; CRED_MAX], [0u8; OTP_PIN_REC_V1]);
+        let cred = fs.read(EF_OATH_CRED, &mut cred).map(|n| cred[..n].to_vec());
+        let pin = fs.read(EF_OTP_PIN, &mut pin).map(|n| pin[..n].to_vec());
+        (cred, pin)
+    };
+    let before = records(&mut fs);
+
+    let mut shut = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::latched(unread)),
+        &rng,
+        &touch,
+    );
+    assert_eq!(select(&mut shut, &mut fs).0, Sw::OK);
+    let other = put_data(b"other", 0x21, 6, SECRET_SHA1, false, None);
+    assert_eq!(put(&mut shut, &mut fs, &other), Sw::FUSED_KEY_UNREAD);
+    let verify = apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"));
+    assert_eq!(run(&mut shut, &mut fs, &verify).0, Sw::FUSED_KEY_UNREAD);
+    let mut pins = tlv(TAG_PASSWORD, b"1234");
+    pins.extend(tlv(TAG_NEW_PASSWORD, b"5678"));
+    let change = apdu(INS_CHANGE_PIN, 0, 0, &pins);
+    assert_eq!(run(&mut shut, &mut fs, &change).0, Sw::FUSED_KEY_UNREAD);
+    let mut calc = tlv(TAG_NAME, b"acct");
+    calc.extend(tlv(TAG_CHALLENGE, &[0; 8]));
+    let calc = apdu(INS_CALCULATE, 0, 0x01, &calc);
+    assert_eq!(run(&mut shut, &mut fs, &calc).0, Sw::FUSED_KEY_UNREAD);
+    assert_eq!(records(&mut fs), before, "stored or spent past the latch");
+}
+
 #[test]
 fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_cred() {
     // Standing before `run_at_rest_lap` in `firmware/src/main.rs` is not the same as
@@ -1056,6 +1154,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_cred() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp = Device {
         otp_key: Some(&TEST_MKEK),
@@ -1124,6 +1223,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_cred() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: Some(&TEST_MKEK),
+        latched: false,
     };
     // Pre-seal layout: NAME ‖ KEY(type|alg, digits, secret), written raw.
     let mut blob = tlv(TAG_NAME, b"acct");
@@ -1191,6 +1291,7 @@ fn foreign_sealed(fs: &mut Fs<RamStorage>, fid: KeyFid, plain: &[u8]) -> Device<
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let foreign = Device {
         serial_hash: &[0x77; 32],
@@ -1290,7 +1391,13 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
         .value(EF_OTP_PIN)
         .expect("fixture: EF_OTP_PIN is on the medium");
     medium.clear_ops();
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     let (sw, _) = run(
         &mut app,
         &mut fs,
@@ -1308,6 +1415,7 @@ fn otp_pin_set_before_burn_still_verifies_after_burn() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: Some(&TEST_MKEK),
+        latched: false,
     };
     let mut rec = [0u8; 34];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(34));
@@ -1519,6 +1627,7 @@ fn legacy_otp_pin_verifies_and_upgrades_to_otp_rooted() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     // Legacy record straight to flash (what old firmware wrote).
     let mut legacy = [0u8; 33];
@@ -1717,6 +1826,7 @@ fn validate_fails_closed_on_unreadable_code() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let big = [0x21u8; OATH_CODE_MAX + 8];
     assert!(seal::seal_put(
@@ -1853,6 +1963,7 @@ fn calculate_rejects_unknowns() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut blob = tlv(TAG_NAME, b"bad");
     let mut key = vec![0x29u8, 6];
@@ -2226,7 +2337,13 @@ fn a_reset_re_arms_the_at_rest_lap_before_the_first_tombstone() {
     let (mut fs, medium) = new_cut_fs();
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     fs.put(EF_OTP_PIN, &[MAX_OTP_COUNTER; 33]).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2250,7 +2367,13 @@ fn a_reset_re_arms_the_at_rest_lap_before_the_first_tombstone() {
     let (stuck, medium) = RemoveStuck::new();
     let mut fs = Fs::new(stuck);
     fs.scan();
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     fs.put(EF_OTP_PIN, &[MAX_OTP_COUNTER; 33]).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2279,7 +2402,13 @@ fn a_reset_retries_the_re_arm_after_the_sweep() {
     fs.scan();
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     fs.put(EF_OTP_PIN, &[MAX_OTP_COUNTER; 33]).unwrap();
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -2373,7 +2502,13 @@ fn reset_under(refuse_once: Option<u16>, truncate_after: Option<u16>) -> Residue
     fs.scan();
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(AlwaysConfirm);
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     fs.put(EF_OATH_CRED, &[0x11; 24]).unwrap();
     fs.put(EF_OTP_PIN, &[MAX_OTP_COUNTER; 33]).unwrap();
@@ -2498,7 +2633,13 @@ fn an_otp_pin_is_required_before_the_password_safe_is_served() {
     let mut fs = new_fs();
     let rng = RefCell::new(CountRng(3));
     let touch = RefCell::new(AlwaysConfirm);
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
 
     let mut cred = put_data(b"bank", 0x21, 6, SECRET_SHA1, false, None);
@@ -2524,7 +2665,13 @@ fn an_otp_pin_is_required_before_the_password_safe_is_served() {
 
     // A new session: SELECT re-opens the code-less applet, but the PIN now exists
     // and has not been presented.
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     select(&mut app, &mut fs);
     let (sw, body) = run(&mut app, &mut fs, &get);
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
@@ -2609,6 +2756,7 @@ fn a_legacy_otp_pin_is_reported_as_left_until_it_is_verified() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp = Device {
         otp_key: Some(&TEST_MKEK),
@@ -2641,6 +2789,7 @@ fn a_faulted_read_of_a_pre_otp_record_is_never_reported_clear() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp = Device {
         otp_key: Some(&TEST_MKEK),

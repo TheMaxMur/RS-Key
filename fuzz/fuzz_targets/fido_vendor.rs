@@ -41,6 +41,7 @@ fuzz_target!(|data: &[u8]| {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);
@@ -61,7 +62,7 @@ fuzz_target!(|data: &[u8]| {
     // A DEVK so AUDIT_CHECKPOINT's derive-and-sign path is reachable too. The state
     // holds a READER, not the key: the OTP row is read on demand so an unrotatable
     // signing key never sits in RAM for the whole power cycle.
-    state.devk_source = Some(devk);
+    state.devk_source = Some(rsk_crypto::FusedKey::open(devk));
 
     let mut out = [0u8; 2048];
     let mut presence = rsk_fido::AlwaysConfirm;

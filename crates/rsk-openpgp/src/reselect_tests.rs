@@ -54,6 +54,7 @@ fn status_after(sel: &[&[u8]]) -> [Sw; 3] {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     };
     crate::init::scan_files(&dev, &mut fs, &mut CountRng(0)).unwrap();
     let rng = RefCell::new(CountRng(0));

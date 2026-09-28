@@ -53,6 +53,9 @@ impl Sw {
     pub const WARNING_EOF: Sw = Sw::new(0x62, 0x82);
     pub const WARNING_NOINFO: Sw = Sw::new(0x63, 0x00);
     pub const EXEC_ERROR: Sw = Sw::new(0x64, 0x00);
+    /// Past the fuse latch the fused key did not read: nothing opens or seals, so
+    /// the command refuses as a failed OTP read does.
+    pub const FUSED_KEY_UNREAD: Sw = Sw::EXEC_ERROR;
     pub const MEMORY_FAILURE: Sw = Sw::new(0x65, 0x81);
     pub const SECURE_MESSAGE_EXEC_ERROR: Sw = Sw::new(0x66, 0x00);
     pub const WRONG_LENGTH: Sw = Sw::new(0x67, 0x00);

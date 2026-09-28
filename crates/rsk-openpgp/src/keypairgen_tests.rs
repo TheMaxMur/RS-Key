@@ -99,6 +99,7 @@ fn with_card(f: impl FnOnce(&mut crate::OpenpgpApplet, &mut Fs<RamStorage>)) {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     };
     crate::init::scan_files(&dev, &mut fs, &mut Lcg(1)).unwrap();
     let rng = core::cell::RefCell::new(Lcg(2));

@@ -35,23 +35,71 @@ pub enum PinKdf {
 }
 
 /// How a holder obtains a fused device key at the moment it needs one: a read of
-/// the OTP fuses, not a copy kept in RAM. Carried instead of the key itself so a
-/// bug that discloses adjacent memory has nothing to disclose — the OTP window is
-/// not RAM. It fills the caller's buffer; `false` on an unprovisioned device.
-pub type FusedKey = fn(&mut [u8; 32]) -> bool;
+/// the OTP fuses, not a copy kept in RAM, so a bug that discloses adjacent memory
+/// has nothing to disclose. `latched` is the boot's reading of the fuse latch.
+#[derive(Clone, Copy)]
+pub struct FusedKey {
+    read: fn(&mut [u8; 32]) -> bool,
+    latched: bool,
+}
 
-/// One operation's copy of a fused key, or `None` when unprovisioned. Zeroized
-/// when the binding drops, so it must be a local of whoever builds the [`Device`]
-/// that borrows it — that lifetime IS the exposure window.
-pub type FusedRead = Option<Secret<[u8; 32]>>;
+impl FusedKey {
+    /// A key that leaves the pre-OTP arms open: no latch is burnt, or no seal
+    /// derives from the key (the DEVK).
+    pub const fn open(read: fn(&mut [u8; 32]) -> bool) -> Self {
+        Self {
+            read,
+            latched: false,
+        }
+    }
+
+    /// A key the fuse latch has closed the arms below.
+    pub const fn latched(read: fn(&mut [u8; 32]) -> bool) -> Self {
+        Self {
+            read,
+            latched: true,
+        }
+    }
+}
+
+/// One operation's read of a fused key, zeroized when the binding drops: it must be
+/// a local of whoever builds the [`Device`] that borrows it, as that lifetime IS the
+/// exposure window. It keeps the latch when the key did not read ([`Device::fused`]).
+pub struct FusedRead {
+    key: Option<Secret<[u8; 32]>>,
+    latched: bool,
+}
+
+impl FusedRead {
+    /// The key, or `None` when none is fused or it did not read.
+    pub fn key(&self) -> Option<&[u8; 32]> {
+        self.key.as_ref().map(Secret::expose)
+    }
+
+    /// Wipe the key before the binding drops, as [`Secret::wipe`] does.
+    pub fn wipe(&mut self) {
+        if let Some(key) = self.key.as_mut() {
+            key.wipe();
+        }
+    }
+}
 
 /// Read a fused key for one operation, zeroized when the caller's binding drops:
 /// holding a [`FusedKey`] keeps the live window as short as that operation. The
 /// return is a move, and a move can leave its source bytes in this frame.
 pub fn read_fused(src: Option<FusedKey>) -> FusedRead {
-    let read = src?;
+    let Some(src) = src else {
+        return FusedRead {
+            key: None,
+            latched: false,
+        };
+    };
     let mut key = Secret::<[u8; 32]>::zeroed();
-    read(key.expose_mut()).then_some(key)
+    let read = (src.read)(key.expose_mut());
+    FusedRead {
+        key: read.then_some(key),
+        latched: src.latched,
+    }
 }
 
 /// Device-specific key-derivation inputs, borrowed for the call.
@@ -63,17 +111,46 @@ pub struct Device<'a> {
     pub serial_id: &'a [u8],
     /// The OTP root key, if one is provisioned.
     pub otp_key: Option<&'a [u8; 32]>,
+    /// Whether the fuse latch has closed the arms below the OTP root: a
+    /// device-sealed record one of them opens was planted, and nothing opens or
+    /// moves it. PIN verifiers keep their pre-OTP arm (nothing dates them).
+    pub latched: bool,
 }
 
 impl<'a> Device<'a> {
+    /// The device for one operation's fused-key read, or `None` past the latch when
+    /// the key did not read: every arm below the fused root is closed then, so the
+    /// operation has nothing to open or seal under and refuses.
+    pub fn fused(serial_hash: &'a [u8], serial_id: &'a [u8], read: &'a FusedRead) -> Option<Self> {
+        let otp_key = read.key();
+        (otp_key.is_some() || !read.latched).then_some(Device {
+            serial_hash,
+            serial_id,
+            otp_key,
+            latched: read.latched,
+        })
+    }
+
     /// The same device with the OTP root key dropped — the pre-provisioning
-    /// derivation context. Migration code decrypts old blobs under this and
-    /// re-seals them under `self`.
+    /// derivation context. PIN verifiers are re-derived under this; a
+    /// device-sealed record takes [`Self::pre_otp_arm`], which the latch closes.
     pub fn without_otp(&self) -> Device<'a> {
         Device {
             otp_key: None,
             ..*self
         }
+    }
+
+    /// The pre-OTP arm a device-sealed record written before the burn opens
+    /// under, or `None` once the fuse latch has closed it.
+    pub fn pre_otp_arm(&self) -> Option<Device<'a>> {
+        (!self.latched).then(|| self.without_otp())
+    }
+
+    /// Whether a legacy record stored in the clear may still be read and sealed:
+    /// past the latch one is planted, like a pre-OTP record.
+    pub fn clear_arm_open(&self) -> bool {
+        !self.latched
     }
 }
 

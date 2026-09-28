@@ -154,7 +154,9 @@ where
         }
         // Read + derive. The seed lives only long enough to compute the indices, then is wiped.
         let mkek = read_fused(self.cells.keys.mkek_source);
-        let dev = self.cells.keys.device(&mkek);
+        let Some(dev) = self.cells.keys.device(&mkek) else {
+            return; // no seed opens without the fused key past the latch
+        };
         let mut indices = {
             // A `Secret`: the end of this block wipes it, the moment the indices exist.
             let seed = {
@@ -270,7 +272,9 @@ where
         // Read the seed and split it on-device; the seed lives only long enough to generate the
         // shares, then its `Secret` is wiped as the block that holds it ends.
         let mkek = read_fused(self.cells.keys.mkek_source);
-        let dev = self.cells.keys.device(&mkek);
+        let Some(dev) = self.cells.keys.device(&mkek) else {
+            return; // no seed opens without the fused key past the latch
+        };
         let mut shares = Secret::new([[0u16; rsk_slip39::WORDS_PER_SHARE]; rsk_slip39::MAX_SHARES]);
         let ok = {
             // A `Secret`: the end of this block wipes it, the moment the shares exist.

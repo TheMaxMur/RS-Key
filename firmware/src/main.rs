@@ -605,11 +605,19 @@ async fn main(spawner: Spawner) {
     let serial_id = embassy_rp::otp::get_chipid().unwrap_or(0).to_le_bytes();
     let serial_hash = rsk_crypto::sha256(&serial_id);
 
+    // The fuse latch: a page-58 lock burnt over a finished migration closes the
+    // arms below the OTP root. A row that will not read counts as open: closed, the
+    // passes would call an unlatched device's pre-burn records gone and free the burn.
+    let latched = otp_keys::read_page58_lock().is_some_and(rsk_rescue::otp_lock::arms_closed);
     // The applets carry these readers, not the keys: a fused key exists in RAM only
     // for the operation that asked for it, so a bug that discloses adjacent memory
     // has nothing to disclose — the OTP window is not RAM.
-    let mkek_source: Option<FusedKey> = Some(otp_keys::read_mkek);
-    let devk_source: Option<FusedKey> = Some(otp_keys::read_devk);
+    let mkek_source: Option<FusedKey> = Some(if latched {
+        FusedKey::latched(otp_keys::read_mkek)
+    } else {
+        FusedKey::open(otp_keys::read_mkek)
+    });
+    let devk_source: Option<FusedKey> = Some(FusedKey::open(otp_keys::read_devk));
     otp_keys::sw_lock_key_page();
 
     let flash = Flash::<_, Blocking, FLASH_SIZE>::new_blocking(p.FLASH);
@@ -683,12 +691,18 @@ async fn main(spawner: Spawner) {
             PRE_OTP_OTP, PRE_OTP_PIV,
         };
         let mut key = rsk_secret::Secret::<[u8; 32]>::zeroed();
-        let rows = otp_keys::read_boot_mkek(key.expose_mut());
+        let rows = match otp_keys::read_boot_mkek(key.expose_mut()) {
+            // The latch burns only over fused keys, so blank rows past it are a fault
+            // too: taken for a blank page, the passes would provision under the serial.
+            KeyRows::Blank if latched => KeyRows::Unreadable,
+            rows => rows,
+        };
         let mkek = (rows == KeyRows::Fused).then_some(&key);
         let dev = Device {
             serial_hash: &serial_hash,
             serial_id: &serial_id,
             otp_key: mkek.map(|k| k.expose()),
+            latched,
         };
         // A fused key the boot cannot read is no blank page: each step in the else
         // would re-seal, provision or migrate under the chip-serial arm what only the
@@ -796,7 +810,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A66;
+    let device_release: u16 = 0x0A67;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

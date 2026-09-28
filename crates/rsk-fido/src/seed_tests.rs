@@ -49,6 +49,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -300,6 +301,58 @@ fn boot_migration_reseals_plain_seed_to_otp_kbase() {
 
     // Idempotent: a second pass is a no-op (tag already 0x12).
     migrate_keydev_boot(&otp_dev(), &mut fs).unwrap();
+    assert_eq!(
+        crate::bare(load_keydev(&otp_dev(), &mut fs)),
+        Some(crate::bare(&seed))
+    );
+}
+
+/// Past the fuse latch a record only the pre-OTP arm opens was planted: a seed a
+/// flash writer sealed under the public chip serial is neither loaded nor moved
+/// onto the fused root, in any of its three pre-OTP shapes. The same records open
+/// and move on an unlatched device; the tests above hold that half.
+#[test]
+fn past_the_latch_no_pre_otp_seed_opens_or_moves() {
+    let latched = Device {
+        latched: true,
+        ..otp_dev()
+    };
+    let seed = [0x5A; 32];
+    let pin_hash = [0x99u8; 16];
+    type Plant = fn(&mut Fs<RamStorage>);
+    let plants: [(&str, Plant); 3] = [
+        ("ChaCha 0x02", |fs| {
+            encrypt_keydev_f1(&dev(), fs, &[0x5A; 32]).unwrap()
+        }),
+        ("CBC 0x01", |fs| {
+            write_legacy_cbc(&dev(), fs, EF_KEY_DEV, &[0x5A; 32])
+        }),
+        ("PIN-wrapped 0x03", |fs| {
+            wrap_keydev_legacy(&dev(), fs, &[0x5A; 32], &[0x99; 16])
+        }),
+    ];
+    for (shape, plant) in plants {
+        let mut fs = fs();
+        plant(&mut fs);
+        let mut before = [0u8; 64];
+        let n = fs.read(EF_KEY_DEV.get(), &mut before).unwrap();
+        assert!(
+            load_keydev(&latched, &mut fs).is_none(),
+            "{shape}: a planted seed loaded past the latch"
+        );
+        assert_eq!(migrate_keydev_boot(&latched, &mut fs), Ok(false), "{shape}");
+        migrate_keydev_pin(&latched, &mut fs, &pin_hash).unwrap();
+        let mut after = [0u8; 64];
+        assert_eq!(fs.read(EF_KEY_DEV.get(), &mut after), Some(n));
+        assert_eq!(
+            after, before,
+            "{shape}: a planted seed moved past the latch"
+        );
+        assert!(load_keydev(&latched, &mut fs).is_none(), "{shape}");
+    }
+    // The control: unlatched, the same plant opens.
+    let mut fs = fs();
+    encrypt_keydev_f1(&dev(), &mut fs, &seed).unwrap();
     assert_eq!(
         crate::bare(load_keydev(&otp_dev(), &mut fs)),
         Some(crate::bare(&seed))

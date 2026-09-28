@@ -276,10 +276,9 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
             if self.disp.current().is_none() && parsed.ins != INS_SELECT {
                 // Borrow only the serial fields so rng/state/resp stay free.
                 let mkek = read_fused(self.mkek_source);
-                let dev = Device {
-                    serial_hash: &self.serial_hash,
-                    serial_id: &self.serial_id,
-                    otp_key: mkek.as_ref().map(|k| k.expose()),
+                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                    self.resp[..2].copy_from_slice(&rsk_sdk::Sw::FUSED_KEY_UNREAD.to_bytes());
+                    return &self.resp[..2];
                 };
                 let (sw, n) = {
                     let mut fsb = self.fs.borrow_mut();
@@ -327,10 +326,9 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
         // now revoked inside the write that installs the new verifier.
         crate::reset_token_on_local_pin_change(self.hooks, self.fido_state, self.rng);
         let mkek = read_fused(self.mkek_source);
-        let dev = Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_ref().map(|k| k.expose()),
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            self.resp[0] = rsk_fido::CtapError::FUSED_KEY_UNREAD.as_u8();
+            return &self.resp[..1];
         };
         // Which CTAPHID channel is asking. Cross-message state a second process on
         // its own channel must not be able to ride — the seed-backup MSE key —

@@ -20,6 +20,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -400,7 +401,7 @@ fn a_blocked_pw3_neither_migrates_nor_writes() {
     let mut app = OpenpgpApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        Some(test_mkek as FusedKey),
+        Some(FusedKey::open(test_mkek)),
         &rng,
         &presence,
     );
@@ -432,7 +433,7 @@ fn an_unblocked_legacy_verifier_still_migrates() {
     let mut app = OpenpgpApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        Some(test_mkek as FusedKey),
+        Some(FusedKey::open(test_mkek)),
         &rng,
         &presence,
     );
@@ -449,11 +450,93 @@ fn an_unblocked_legacy_verifier_still_migrates() {
     let mut app2 = OpenpgpApplet::new(
         SERIAL_ID,
         SERIAL_HASH,
-        Some(test_mkek as FusedKey),
+        Some(FusedKey::open(test_mkek)),
         &rng,
         &presence,
     );
     verify_pin(&mut app2, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+}
+
+/// Past the latch a fused key that did not read leaves no arm to open or seal
+/// under: VERIFY and CHANGE refuse before a retry is spent or a verifier moves,
+/// since the fuse refused them and not the PIN.
+#[test]
+fn past_the_latch_an_unread_key_refuses_and_spends_nothing() {
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(FusedKey::open(test_mkek)),
+        &rng,
+        &presence,
+    );
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    let records = |fs: &mut Fs<RamStorage>| {
+        [consts::EF_PW1, consts::EF_PW3, consts::EF_PW_RETRIES].map(|fid| {
+            let mut buf = [0u8; 64];
+            fs.read(fid, &mut buf).map(|n| buf[..n].to_vec())
+        })
+    };
+    let before = records(&mut fs);
+
+    let mut shut = OpenpgpApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(FusedKey::latched(unread)),
+        &rng,
+        &presence,
+    );
+    for (mode, pin) in [
+        (consts::PW1_MODE81, consts::PW1_DEFAULT),
+        (consts::PW3_MODE83, consts::PW3_DEFAULT),
+    ] {
+        let mut v = vec![0x00, consts::INS_VERIFY, 0x00, mode, pin.len() as u8];
+        v.extend_from_slice(pin);
+        assert_eq!(run(&mut shut, &mut fs, &v).1, Sw::FUSED_KEY_UNREAD);
+    }
+    let body = [consts::PW3_DEFAULT, b"87654321"].concat();
+    let mut change = vec![0x00, consts::INS_CHANGE_PIN, 0x00, consts::PW3_MODE83];
+    change.push(body.len() as u8);
+    change.extend_from_slice(&body);
+    assert_eq!(run(&mut shut, &mut fs, &change).1, Sw::FUSED_KEY_UNREAD);
+    assert_eq!(records(&mut fs), before, "a retry spent past the latch");
+}
+
+/// A password verified before the fused key stopped reading stays droppable: a
+/// logout needs no key, so it clears the status past the latch rather than refuse.
+#[test]
+fn past_the_latch_a_logout_needs_no_key() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static READS: AtomicBool = AtomicBool::new(true);
+    fn flaky(out: &mut [u8; 32]) -> bool {
+        *out = [0x66; 32];
+        READS.load(Ordering::SeqCst)
+    }
+    let rng = RefCell::new(CountRng(0));
+    let mut fs = make_fs();
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        Some(FusedKey::latched(flaky)),
+        &rng,
+        &presence,
+    );
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0x00, 0x5B, b"bob"), Sw::OK);
+    READS.store(false, Ordering::SeqCst);
+    let logout = [0x00, consts::INS_VERIFY, 0xFF, consts::PW3_MODE83];
+    assert_eq!(run(&mut app, &mut fs, &logout).1, Sw::OK);
+    assert_eq!(
+        put(&mut app, &mut fs, 0x00, 0x5B, b"eve"),
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "PW3 outlived its logout"
+    );
 }
 
 #[test]

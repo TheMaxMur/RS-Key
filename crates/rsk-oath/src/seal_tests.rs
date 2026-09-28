@@ -25,6 +25,7 @@ fn fixture() -> (Device<'static>, Fs<rsk_fs::storage::ram::RamStorage>) {
             serial_hash: &HASH,
             serial_id: &SERIAL,
             otp_key: None,
+            latched: false,
         },
         fs,
     )
@@ -83,6 +84,7 @@ fn a_faulted_read_at_boot_never_re_seals_a_sealed_code_as_its_key() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp = Device {
         otp_key: Some(&mkek),

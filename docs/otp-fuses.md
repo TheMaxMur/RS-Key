@@ -63,8 +63,8 @@ Two paths write OTP, and the difference is central to how RS-Key stays safe:
 Each OTP page lock is a byte encoding three independent levels: `LOCK_BL`
 (bootloader), `LOCK_NS` (non-secure), `LOCK_S` (secure), each of `read-write` /
 `read-only` / `inaccessible`. That three-way split is what lets a page be
-**unreadable to BOOTSEL but still readable/writable by secure firmware** (see
-page 58 below).
+**unreadable to BOOTSEL but still readable by secure firmware** (see page 58
+below).
 
 ## What RS-Key burns
 
@@ -75,7 +75,7 @@ authoritative source is the code (`tools/rsk/otp.py`, `tools/rsk/secureboot.py`,
 | Region | Rows | What it holds | Written by |
 |---|---|---|---|
 | **Page 58** | `0xE80…` | `DEVK` (device attestation key), `MKEK` (master sealing key), anti-imaging chaff | `rsk otp burn` (BOOTSEL) |
-| Page-58 lock | `0xFF5` | makes page 58 **BOOTSEL-unreadable, secure read/write** | `rsk otp lock-page58` (firmware; only once a boot migrated every device-sealed record) |
+| Page-58 lock | `0xFF5` | makes page 58 **BOOTSEL-unreadable, secure read-only**, and latches the migration shut | `rsk otp lock-page58` (firmware; only once a boot migrated every device-sealed record) |
 | **Boot key** | `0x80…` | `SHA-256` fingerprint of your secure-boot public key (slot 0 of 4) | `rsk secure-boot load-key <otp.json>` |
 | `BOOT_FLAGS1` | `0x4B` | `KEY_VALID` / `KEY_INVALID` (which key slots are live / revoked) | `load-key`, `lock` |
 | `CRIT1` | `0x40` | `SECURE_BOOT_ENABLE`, `DEBUG_DISABLE`, `GLITCH_DETECTOR_ENABLE/SENS` | `harden`, `enable` |
@@ -85,10 +85,15 @@ authoritative source is the code (`tools/rsk/otp.py`, `tools/rsk/secureboot.py`,
 
 A few notes that matter:
 
-- **Page 58 is read-write to secure firmware even after the lock.** The lock
-  value (`0x3C3C3C`) sets BL and NS to *inaccessible* but leaves S
-  *read-write*. So only secure-mode firmware can ever read the MKEK/DEVK again,
-  and a BOOTSEL flash dump cannot.
+- **Page 58 stays readable to secure firmware after the lock.** The lock value
+  (`0x3D3D3D`) sets BL and NS to *inaccessible* and S to *read-only*. So only
+  secure-mode firmware can ever read the MKEK/DEVK again, and a BOOTSEL flash
+  dump cannot.
+- **S read-only is also a latch.** A boot that reads it opens no device-sealed
+  record under the pre-burn key or in the clear, so a record planted there over
+  BOOTSEL stays shut ([threat model](threat-model.md)). A lock burnt by a build
+  before 0x0A67, or by the host ritual, is `0x3C3C3C` (S *read-write*) and
+  carries no latch: run `rsk otp lock-page58` again to add it.
 - **The MKEK/DEVK are generated randomly and forgotten.** `rsk otp burn` does not
   keep a copy. The fuses *are* the key. There is nothing to back up and nothing
   to lose.

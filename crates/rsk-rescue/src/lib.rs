@@ -70,10 +70,10 @@ pub trait Platform {
     /// `otp_lock::PRE_OTP_*` bits; `None` when they ran without the fused key and
     /// so checked nothing. [`otp_lock`]'s page-58 burn waits for `Some(0)`.
     fn pre_otp_left(&self) -> Option<u16>;
-    /// Burn the page-58 access lock ([`otp_lock::PAGE58_LOCK_VALUE`] into
-    /// [`otp_lock::PAGE58_LOCK1_ROW`]). The implementation fixes both the row
-    /// and the value, so a caller can never redirect this write. IRREVERSIBLE;
-    /// returns whether it succeeded.
+    /// Burn the page-58 access lock and fuse latch ([`otp_lock::PAGE58_LATCH_VALUE`]
+    /// into [`otp_lock::PAGE58_LOCK1_ROW`], over a blank row or an older build's
+    /// lock). The implementation fixes both the row and the value, so a caller can
+    /// never redirect this write. IRREVERSIBLE; returns whether it succeeded.
     fn lock_page58(&mut self) -> bool;
     /// Raw RBIT-3 copies of the anti-rollback rows ([`rollback`]); `None` on
     /// any read error. Drives the idempotency decision and the READ report.
@@ -130,12 +130,9 @@ impl<'a> RescueApplet<'a> {
         }
     }
 
-    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
-        Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_ref().map(|k| k.expose()),
-        }
+    /// `None` past the latch when the fused key did not read ([`Device::fused`]).
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Option<Device<'k>> {
+        Device::fused(&self.serial_hash, &self.serial_id, mkek)
     }
 
     /// Require a physical user-presence confirmation before a privileged
@@ -163,13 +160,10 @@ impl<'a> RescueApplet<'a> {
                 // the end of this arm.
                 let fused = read_fused(self.devk);
                 let mkek = read_fused(self.mkek_source);
-                let dev = self.device(&mkek);
-                let key = keydev::load_or_generate(
-                    &dev,
-                    fused.as_ref().map(|k| k.expose()),
-                    fs,
-                    &mut *rng,
-                );
+                let Some(dev) = self.device(&mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
+                };
+                let key = keydev::load_or_generate(&dev, fused.key(), fs, &mut *rng);
                 let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
@@ -192,13 +186,10 @@ impl<'a> RescueApplet<'a> {
                 // the end of this arm.
                 let fused = read_fused(self.devk);
                 let mkek = read_fused(self.mkek_source);
-                let dev = self.device(&mkek);
-                let key = keydev::load_or_generate(
-                    &dev,
-                    fused.as_ref().map(|k| k.expose()),
-                    fs,
-                    &mut *rng,
-                );
+                let Some(dev) = self.device(&mkek) else {
+                    return Sw::FUSED_KEY_UNREAD;
+                };
+                let key = keydev::load_or_generate(&dev, fused.key(), fs, &mut *rng);
                 let Some(key) = key else {
                     return Sw::EXEC_ERROR;
                 };
@@ -409,7 +400,7 @@ impl<'a> RescueApplet<'a> {
         // testing the `Option` would answer "is a reader present" instead of "are
         // the keys provisioned" — and this guard is the whole reason the lock
         // cannot be burnt over a blank page (audit run-36).
-        if read_fused(self.mkek_source).is_none() {
+        if read_fused(self.mkek_source).key().is_none() {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
         let Some(cur) = self.platform.borrow().read_page58_lock_raw() else {
@@ -418,10 +409,12 @@ impl<'a> RescueApplet<'a> {
         match otp_lock::lock_decision(cur) {
             otp_lock::LockDecision::AlreadyLocked => Sw::OK,
             otp_lock::LockDecision::Unexpected => Sw::CONDITIONS_NOT_SATISFIED,
-            otp_lock::LockDecision::Write => {
+            // An older build's lock takes the latch under the same guards as a blank
+            // row: the latch closes the arms below the fused root for good.
+            otp_lock::LockDecision::Write | otp_lock::LockDecision::Latch => {
                 // Only over a device whose boot moved every device-sealed record to the
-                // fused root, and before the touch: the lock is what a later build will
-                // read as "migrated", so it must not be burnt over one that is not.
+                // fused root, and before the touch: the latch is what every later boot
+                // reads as "migrated", so it must not be burnt over one that is not.
                 if self.platform.borrow().pre_otp_left() != Some(0) {
                     return Sw::CONDITIONS_NOT_SATISFIED;
                 }
@@ -436,7 +429,7 @@ impl<'a> RescueApplet<'a> {
                 }
                 // Confirm the fuse took with a raw read-back.
                 match self.platform.borrow().read_page58_lock_raw() {
-                    Some(otp_lock::PAGE58_LOCK_VALUE) => Sw::OK,
+                    Some(otp_lock::PAGE58_LATCH_VALUE) => Sw::OK,
                     _ => Sw::EXEC_ERROR,
                 }
             }

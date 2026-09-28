@@ -155,7 +155,7 @@ where
                             t9.commit();
                             let committed = t9.value();
                             let mkek = read_fused(self.cells.keys.mkek_source);
-                            let dev = self.cells.keys.device(&mkek);
+                            let dev = self.cells.keys.device(&mkek)?;
                             let saved = rsk_fido::passkeys::set_rp_nickname(
                                 &dev,
                                 &mut self.cells.fs.borrow_mut(),
@@ -262,7 +262,9 @@ where
         page: u16,
     ) -> (usize, u16) {
         let mkek = read_fused(self.cells.keys.mkek_source);
-        let dev = self.cells.keys.device(&mkek);
+        let Some(dev) = self.cells.keys.device(&mkek) else {
+            return (0, 0);
+        };
         let offset = page as usize * rsk_ui::PK_ROWS_MAX;
         let mut store = self.cells.fs.borrow_mut();
         let mut idx = 0usize;
@@ -861,7 +863,9 @@ where
             };
             if n1 == n2 && rsk_crypto::ct_eq(&new.expose()[..n1], &confirm.expose()[..n2]) {
                 let mkek = read_fused(self.cells.keys.mkek_source);
-                let dev = self.cells.keys.device(&mkek);
+                let Some(dev) = self.cells.keys.device(&mkek) else {
+                    break; // past the latch with the fused key unread: nothing is set
+                };
                 // The pad already enforced the length floor; a flash error is the only
                 // realistic failure and leaves no PIN set — abandon either way. Route to the
                 // device PIN's own record or the FIDO clientPIN's by target.
@@ -922,10 +926,11 @@ where
         // missing retry counter). Idempotent: every step is has-data guarded.
         {
             let mkek = read_fused(self.cells.keys.mkek_source);
-            let dev = self.cells.keys.device(&mkek);
-            let mut rng = self.cells.rng.borrow_mut();
-            let mut fs = self.cells.fs.borrow_mut();
-            let _ = rsk_piv::files::scan_files(&dev, &mut fs, &mut *rng);
+            if let Some(dev) = self.cells.keys.device(&mkek) {
+                let mut rng = self.cells.rng.borrow_mut();
+                let mut fs = self.cells.fs.borrow_mut();
+                let _ = rsk_piv::files::scan_files(&dev, &mut fs, &mut *rng);
+            }
         }
         loop {
             let _ = rsk_ui::render_piv_pin_menu(&mut self.frame());
@@ -994,7 +999,8 @@ where
             let mut pad = rsk_piv::pad_pin(&buf[..n])?;
             let sw = {
                 let mkek = read_fused(self.cells.keys.mkek_source);
-                let dev = self.cells.keys.device(&mkek);
+                // No attempt without the fused key past the latch; `pad` wipes on drop.
+                let dev = self.cells.keys.device(&mkek)?;
                 rsk_piv::verify_reference(
                     &dev,
                     &mut self.cells.fs.borrow_mut(),
@@ -1098,14 +1104,16 @@ where
             Some(mut new_pad) => {
                 let sw = {
                     let mkek = read_fused(self.cells.keys.mkek_source);
-                    let dev = self.cells.keys.device(&mkek);
-                    rsk_piv::change_reference(
-                        &dev,
-                        &mut self.cells.fs.borrow_mut(),
-                        which,
-                        cur_pad.expose(),
-                        new_pad.expose(),
-                    )
+                    match self.cells.keys.device(&mkek) {
+                        Some(dev) => rsk_piv::change_reference(
+                            &dev,
+                            &mut self.cells.fs.borrow_mut(),
+                            which,
+                            cur_pad.expose(),
+                            new_pad.expose(),
+                        ),
+                        None => rsk_sdk::Sw::FUSED_KEY_UNREAD,
+                    }
                 };
                 new_pad.wipe();
                 sw == rsk_sdk::Sw::OK
@@ -1140,13 +1148,15 @@ where
             Some(mut new_pad) => {
                 let sw = {
                     let mkek = read_fused(self.cells.keys.mkek_source);
-                    let dev = self.cells.keys.device(&mkek);
-                    rsk_piv::unblock_pin_with_puk(
-                        &dev,
-                        &mut self.cells.fs.borrow_mut(),
-                        puk_pad.expose(),
-                        new_pad.expose(),
-                    )
+                    match self.cells.keys.device(&mkek) {
+                        Some(dev) => rsk_piv::unblock_pin_with_puk(
+                            &dev,
+                            &mut self.cells.fs.borrow_mut(),
+                            puk_pad.expose(),
+                            new_pad.expose(),
+                        ),
+                        None => rsk_sdk::Sw::FUSED_KEY_UNREAD,
+                    }
                 };
                 new_pad.wipe();
                 sw == rsk_sdk::Sw::OK
@@ -1174,10 +1184,11 @@ where
         // can later VERIFY the PIN to read the protected key. Idempotent.
         {
             let mkek = read_fused(self.cells.keys.mkek_source);
-            let dev = self.cells.keys.device(&mkek);
-            let mut rng = self.cells.rng.borrow_mut();
-            let mut fs = self.cells.fs.borrow_mut();
-            let _ = rsk_piv::files::scan_files(&dev, &mut fs, &mut *rng);
+            if let Some(dev) = self.cells.keys.device(&mkek) {
+                let mut rng = self.cells.rng.borrow_mut();
+                let mut fs = self.cells.fs.borrow_mut();
+                let _ = rsk_piv::files::scan_files(&dev, &mut fs, &mut *rng);
+            }
         }
         if !self.local_pin_gate(PinScope::Device) {
             return;
@@ -1192,7 +1203,10 @@ where
         // (no key search — AES key gen is instant), so the worker can't preempt.
         let ok = {
             let mkek = read_fused(self.cells.keys.mkek_source);
-            let dev = self.cells.keys.device(&mkek);
+            let Some(dev) = self.cells.keys.device(&mkek) else {
+                self.end_modal();
+                return;
+            };
             let mut rng = self.cells.rng.borrow_mut();
             let mut fs = self.cells.fs.borrow_mut();
             rsk_piv::protect_mgm_key(&dev, &mut fs, &mut *rng) == rsk_sdk::Sw::OK

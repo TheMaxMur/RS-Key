@@ -1057,6 +1057,30 @@ fn selecting_fido_over_ccid_answers_the_u2f_version_string() {
     assert_eq!(&res[..res.len() - 2], rsk_fido::consts::U2F_VERSION);
 }
 
+/// Past the latch a fused key that did not read leaves FIDO no arm to open or seal
+/// under over CCID too: a CTAP2 command answers `CTAP1_ERR_OTHER` under `9000` and
+/// a U2F one `6400`, before either reaches the applet.
+#[test]
+fn past_the_latch_an_unread_key_refuses_fido_over_ccid() {
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let env = Env::new();
+    let mut ccid = env.ccid_fused(Some(rsk_crypto::FusedKey::latched(unread)));
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    let (body, status) = exchange_chained(&mut ccid, &ctap_msg(GET_INFO));
+    assert_eq!(status, rsk_sdk::Sw::OK);
+    assert_eq!(body, [rsk_fido::CtapError::FUSED_KEY_UNREAD.as_u8()]);
+    let version = apdu(0x00, rsk_fido::consts::CTAP_VERSION, 0x00, 0x00, &[]);
+    assert_eq!(
+        sw(ccid.handle_apdu(&version, 0)),
+        rsk_sdk::Sw::FUSED_KEY_UNREAD
+    );
+}
+
 #[test]
 fn a_ctap2_command_over_ccid_reaches_the_real_applet() {
     let env = Env::new();

@@ -120,6 +120,7 @@ fn slot_sealed_before_otp_burn_survives_the_burn() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp_key = [0x55u8; 32];
     let otp = Device {
@@ -173,6 +174,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_slot() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp_key = [0x55u8; 32];
     let otp = Device {
@@ -263,6 +265,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_seals_a_cleartext_slot() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: Some(&otp_key),
+        latched: false,
     };
     let cfg = chalresp_config(&[0x0B; 20], &[0; 6], 0);
     let mut rng = CountRng(1);
@@ -803,6 +806,7 @@ fn update_preserves_use_counter_tail() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
 
     // A plain Yubico-OTP typed slot (tkt = cfg = 0) — the kind a boot's first press advances.
@@ -1269,6 +1273,90 @@ fn configure_seals_secret_at_rest() {
     );
 }
 
+/// Past the latch a fused key that did not read leaves no arm to open or seal
+/// under: a press types nothing and moves no counter, and CONFIGURE refuses and
+/// writes nothing.
+#[test]
+fn past_the_latch_an_unread_key_types_and_stores_nothing() {
+    fn fused(out: &mut [u8; 32]) -> bool {
+        *out = [0x77; 32];
+        true
+    }
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let open = Some(rsk_crypto::FusedKey::open(fused));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, open, &rng, &presence);
+    let cfg = build_config(&[0, 1, 2, 3, 4, 5], &[1; 6], &[2; 16], &[0; 6], 0, 0, 0);
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 0, &cfg, &[0; 6]).0,
+        Sw::OK
+    );
+    let slot = |fs: &mut Fs<RamStorage>| {
+        let mut buf = [0u8; 128];
+        let n = fs.read_key(KeyFid::new(EF_OTP_SLOT1), &mut buf);
+        n.map(|n| buf[..n].to_vec())
+    };
+    let before = slot(&mut fs);
+
+    let shut = Some(rsk_crypto::FusedKey::latched(unread));
+    let mut shut = OtpApplet::new(SERIAL, SERIAL_HASH, shut, &rng, &presence);
+    let mut out = [0u8; ticket::MAX_TICKET];
+    assert!(
+        shut.button_ticket(1, 0, [0, 0], &mut fs, &mut out)
+            .is_none()
+    );
+    let (sw, _) = configure(&mut shut, &mut fs, 0x01, 0, &cfg, &[0; 6]);
+    assert_eq!(sw, Sw::FUSED_KEY_UNREAD);
+    assert_eq!(slot(&mut fs), before, "typed or stored past the latch");
+}
+
+/// Past the fuse latch a slot only the pre-OTP arm or the clear opens was planted:
+/// the boot pass leaves it where it is instead of sealing it onto the fused root.
+#[test]
+fn past_the_latch_no_pre_otp_or_clear_slot_moves() {
+    let nootp = Device {
+        serial_hash: &SERIAL_HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let latched = Device {
+        otp_key: Some(&[0x55; 32]),
+        latched: true,
+        ..nootp
+    };
+    let cfg = chalresp_config(&[0x0B; 20], &[0; 6], 0);
+    let fid = KeyFid::new(EF_OTP_SLOT1);
+    let mut rng = CountRng(1);
+    for shape in ["pre-OTP", "clear"] {
+        let mut fs = new_fs();
+        if shape == "clear" {
+            fs.put(EF_OTP_SLOT1, &cfg).unwrap();
+        } else {
+            assert!(seal::seal_put(
+                &nootp,
+                &mut fs,
+                &mut rng,
+                fid,
+                &record(&cfg)
+            ));
+        }
+        let mut before = [0u8; seal::MAX_BLOB];
+        let n = fs.read_key(fid, &mut before).unwrap();
+        assert!(!migrate_seal(&latched, &mut fs, &mut rng), "{shape}");
+        let mut after = [0u8; seal::MAX_BLOB];
+        assert_eq!(fs.read_key(fid, &mut after), Some(n));
+        assert_eq!(
+            after, before,
+            "{shape}: a planted slot moved past the latch"
+        );
+    }
+}
+
 #[test]
 fn legacy_plaintext_slot_migrates_and_stays_usable() {
     // A pre-seal device stored the 52-byte config in the clear via fs.put.
@@ -1284,6 +1372,7 @@ fn legacy_plaintext_slot_migrates_and_stays_usable() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut mrng = CountRng(1);
     migrate_seal(&dev, &mut fs, &mut mrng);
@@ -2114,6 +2203,7 @@ fn a_first_press_the_medium_refused_leaves_the_advance_owed() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let (pid, key) = (b"public", [2u8; 16]);
     let cfg = build_config(pid, &[1; 6], &key, &[0; 6], 0, 0, 0);
@@ -2158,6 +2248,7 @@ fn a_boots_first_press_advances_only_a_yubico_otp_counter() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let hotp = build_config(b"", &[1; 6], &[2; 16], &[0; 6], 0, TKT_OATH_HOTP, 0);
     let fixed = build_config(
@@ -2520,6 +2611,7 @@ fn a_legacy_hotp_slot_types_a_new_code_on_every_press() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let cfg = build_config(&[], &[0; 6], &[0x5C; 16], &[0; 6], 0, TKT_OATH_HOTP, 0);
     let fid = KeyFid::new(EF_OTP_SLOT1);
@@ -2555,6 +2647,7 @@ fn a_legacy_record_keeps_its_length_until_something_moves_it() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp_key = [0x55u8; 32];
     let otp = Device {
@@ -2586,7 +2679,13 @@ fn a_legacy_record_keeps_its_length_until_something_moves_it() {
     }
     let presence = RefCell::new(AlwaysConfirm);
     let app_rng = RefCell::new(CountRng(7));
-    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, Some(fused), &app_rng, &presence);
+    let mut app = OtpApplet::new(
+        SERIAL,
+        SERIAL_HASH,
+        Some(rsk_crypto::FusedKey::open(fused)),
+        &app_rng,
+        &presence,
+    );
     assert_eq!(run(&mut app, &mut fs, &otp_apdu(0x06, 0, &[])).0, Sw::OK);
     let mut rec = SlotRecord::vacant();
     for (slot, n) in [(1, CONFIG_SIZE), (2, CONFIG_SIZE), (3, CONFIG_SIZE)] {
@@ -2618,6 +2717,7 @@ fn a_faulted_read_of_a_pre_otp_slot_is_never_reported_clear() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let otp_key = [0x55u8; 32];
     let otp = Device {

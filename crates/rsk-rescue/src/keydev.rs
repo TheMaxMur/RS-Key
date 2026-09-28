@@ -117,7 +117,7 @@ fn cbc_open(dev: &Device, buf: &[u8]) -> Option<Secret<[u8; 32]>> {
     let mut kbase = match buf.len() {
         32 => {
             scalar.expose_mut().copy_from_slice(&buf[..32]);
-            dev.without_otp().derive_kbase()
+            dev.pre_otp_arm()?.derive_kbase()
         }
         33 if buf[0] == TAG_OTP => {
             dev.otp_key?;
@@ -144,7 +144,8 @@ fn unseal_scalar(dev: &Device, buf: &[u8]) -> Option<Secret<[u8; 32]>> {
         return Some(s);
     }
     if dev.otp_key.is_some()
-        && let Some(s) = gcm_open(dev, &dev.without_otp(), buf)
+        && let Some(old) = dev.pre_otp_arm()
+        && let Some(s) = gcm_open(dev, &old, buf)
     {
         return Some(s);
     }

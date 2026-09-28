@@ -79,7 +79,7 @@ owner_of_the_overlap = "crates/rsk-fido/src/reset.rs:230-233 — `is_fido_gate_f
 # The Rust that would notice a defect in the clause itself.
 owners_of_the_kills = [
   "crates/rsk-fido/src/reset_assurance_tests.rs:46 reset_property_controls_go_red_on_each_early_gate_mutant — three mutants, one per clause, each asserted to fail its OWN clause method; the only per-clause negative control anywhere outside formal/",
-  "crates/rsk-fido/src/reset_tests.rs:626 the_gate_set_defers_every_record_whose_absence_is_permissive — a transcriber of the match arm at reset.rs:251-256, so it answers `did somebody edit the list` and not `is the order right`",
+  "crates/rsk-fido/src/reset_tests.rs:627 the_gate_set_defers_every_record_whose_absence_is_permissive — a transcriber of the match arm at reset.rs:251-256, so it answers `did somebody edit the list` and not `is the order right`",
 ]
 
 # ---- 2. Commit, build and features -------------------------------------------

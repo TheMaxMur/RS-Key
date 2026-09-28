@@ -67,6 +67,7 @@ fn run(req: &[u8]) -> (std::vec::Vec<u8>, Fs<RamStorage>) {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -93,6 +94,7 @@ fn run_err(req: &[u8]) -> CtapError {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -125,6 +127,7 @@ fn run_err_no_touch(req: &[u8]) -> CtapError {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -283,6 +286,7 @@ fn makecred_cancel_maps_keepalive_cancel() {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -431,6 +435,7 @@ fn unsupported_alg_rejected() {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -524,6 +529,7 @@ fn enterprise_attestation_uses_org_chain_when_provisioned() {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -639,6 +645,7 @@ fn missing_mandatory_param_rejected() {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     let mut out = [0u8; 64];
@@ -755,6 +762,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -1883,6 +1891,7 @@ fn selected_alg(algs: &[i64]) -> Result<i64, CtapError> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();
@@ -2988,6 +2997,7 @@ fn a_faulted_pin_probe_does_not_drop_the_makecredential_uv_gate() {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     ensure_seed(&dev, &mut fs, &mut rng).unwrap();

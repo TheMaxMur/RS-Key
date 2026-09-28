@@ -674,6 +674,28 @@ pub(crate) fn clear_reset_code<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) -
     }
 }
 
+/// VERIFY (INS 0x20) with P1 = FF: drop a password's security status. It needs no
+/// key, so the dispatcher runs it before the fused one is read: a status stays
+/// droppable while that key does not read past the latch.
+pub fn logout(sess: &mut Session, p2: u8, data: &[u8]) -> Sw {
+    if !data.is_empty() {
+        return Sw::WRONG_DATA;
+    }
+    // §7.2.2 defines P2 = 81 / 82 / 83 and nothing else, so an undefined one
+    // names a password reference that does not exist and there is nothing to
+    // reset. Falling through to OK reported success for a security-status
+    // reset that never happened — and the SAME undefined P2 on the P1=00 path
+    // below already answered 6B00, so the one command disagreed with itself.
+    // A YubiKey 5.7.4 answers 6B00 to every undefined P2 here, measured.
+    match p2 {
+        PW1_MODE81 => sess.has_pw1 = false,
+        PW1_MODE82 => sess.has_pw2 = false,
+        PW3_MODE83 => sess.has_pw3 = false,
+        _ => return Sw::WRONG_P1P2,
+    }
+    Sw::OK
+}
+
 /// VERIFY (INS 0x20).
 pub fn verify<S: Storage>(
     dev: &Device,
@@ -685,22 +707,7 @@ pub fn verify<S: Storage>(
     data: &[u8],
 ) -> Sw {
     if p1 == 0xFF {
-        if !data.is_empty() {
-            return Sw::WRONG_DATA;
-        }
-        // §7.2.2 defines P2 = 81 / 82 / 83 and nothing else, so an undefined one
-        // names a password reference that does not exist and there is nothing to
-        // reset. Falling through to OK reported success for a security-status
-        // reset that never happened — and the SAME undefined P2 on the P1=00 path
-        // below already answered 6B00, so the one command disagreed with itself.
-        // A YubiKey 5.7.4 answers 6B00 to every undefined P2 here, measured.
-        match p2 {
-            PW1_MODE81 => sess.has_pw1 = false,
-            PW1_MODE82 => sess.has_pw2 = false,
-            PW3_MODE83 => sess.has_pw3 = false,
-            _ => return Sw::WRONG_P1P2,
-        }
-        return Sw::OK;
+        return logout(sess, p2, data);
     }
     // Enumerate the three defined modes, the way `change_pin` already does. The
     // bit filter `(p2 & 0x60) != 0` let 64 values through, and `pw_fid` turns each

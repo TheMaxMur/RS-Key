@@ -245,7 +245,7 @@ without its secret, so it waits for its own reference to be presented; see \
 [[clause]]
 id = "TM-THIEF-SEAL-FORGERY"
 kind = "defence"
-where = "- **The seals give confidentiality, not authenticity.** Records written before"
+where = "- **The seals give authenticity only past the page-58 latch.** Records written"
 
 [[clause]]
 id = "TM-THIEF-SOFTLOCK"

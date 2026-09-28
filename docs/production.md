@@ -133,6 +133,11 @@ Facts to internalize first:
 - After `lock-page58`, `picotool otp get` on page 58 fails with a permission
   error forever. Only the secure-mode firmware can read the keys. That failure
   is the lock working.
+- The lock is also a latch. From the next boot on, the firmware opens no
+  device-sealed record under the pre-burn key or in the clear, so one planted
+  over BOOTSEL stays shut. A device locked by a build before 0x0A67 has the lock
+  without the latch: update it, then run `lock-page58` again, which checks the
+  same migration first.
 - `lock-page58` waits for the migration. The firmware refuses the burn (`6985`,
   before any touch) until a boot has moved every device-sealed record to the
   fused key, and the tool says which are left. A replug is the usual fix; a FIDO

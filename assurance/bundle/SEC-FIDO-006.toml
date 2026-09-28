@@ -85,8 +85,8 @@ owner_of_the_alpha = "crates/rsk-fido/src/reset_assurance.rs:106-134 — `reset_
 # three killing tests are.
 owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 owners_of_the_kills = [
-  "crates/rsk-fido/src/reset_tests.rs:723 a_torn_reset_never_unseals_a_surviving_seed — the shipped twin RSKeySecurityState.tla:1827 names",
-  "crates/rsk-fido/src/reset_tests.rs:1203 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed",
+  "crates/rsk-fido/src/reset_tests.rs:724 a_torn_reset_never_unseals_a_surviving_seed — the shipped twin RSKeySecurityState.tla:1827 names",
+  "crates/rsk-fido/src/reset_tests.rs:1204 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed",
   "crates/rsk-fido/src/reset_assurance_tests.rs:130 a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window",
   "crates/rsk-fido/src/reset_assurance_tests.rs:46 reset_property_controls_go_red_on_each_early_gate_mutant — three mutants, one per clause, and the only per-clause negative control anywhere in the tree outside `formal/`",
 ]

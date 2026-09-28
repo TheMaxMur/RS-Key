@@ -185,7 +185,7 @@ PgpDelete ==
 (***************************************************************************)
 (* OATH. `cmd_calculate` first requires the access-code session, then a    *)
 (* confirmed touch for PROP_TOUCH credentials                              *)
-(* (crates/rsk-oath/src/lib.rs:642-672).                                   *)
+(* (crates/rsk-oath/src/lib.rs:653-683).                                   *)
 (***************************************************************************)
 OathSetCode ==
     /\ oathCodeSet' = TRUE
@@ -224,7 +224,7 @@ OathCalculate(touched) ==
 (***************************************************************************)
 (* Yubico OTP. Existing-slot configure, update and swap each state the     *)
 (* stored-six-byte-code rule at their OWN gate, so the citation names all  *)
-(* three (crates/rsk-otp/src/lib.rs:488-505, 552-566, 648-656): a range    *)
+(* three (crates/rsk-otp/src/lib.rs:486-504, 551-566, 657-665): a range    *)
 (* resolving to a prologue reads as a gate nothing checks.                 *)
 (*                                                                         *)
 (* The position is a PAIR, per slot, because the two halves live in        *)
@@ -250,7 +250,7 @@ OathCalculate(touched) ==
 (* it is why the model reaches a re-configure as delete-then-              *)
 (* configure rather than as one step -- the device's one-step form         *)
 (* differs only in leaving the RAM session alone, which the two-step       *)
-(* form does too (crates/rsk-otp/src/tests.rs:1632).                       *)
+(* form does too (crates/rsk-otp/src/tests.rs:1721).                       *)
 (***************************************************************************)
 
 (***************************************************************************)
@@ -295,12 +295,12 @@ OtpMutate(k, codeMatches, keep) ==
 (***************************************************************************)
 (* SLOT_SWAP moves the record; the volatile half of the position has to    *)
 (* travel with it, or the moved record is re-paired with a session used    *)
-(* fewer times (crates/rsk-otp/src/lib.rs:692-700). The mark and the boot  *)
+(* fewer times (crates/rsk-otp/src/lib.rs:701-709). The mark and the boot  *)
 (* advance travel for the same reason: they are the RECORD's, not the      *)
 (* slot's. A                                                               *)
 (* programmed slot's stored code gates its move exactly as it gates an     *)
 (* overwrite, so an absent slot imposes no gate                            *)
-(* (crates/rsk-otp/src/lib.rs:652-656).                                    *)
+(* (crates/rsk-otp/src/lib.rs:661-665).                                    *)
 (***************************************************************************)
 OtpSwap(j, k, codeMatches) ==
     LET gated(s) == otpPresent[s] /\ otpProtected[s]
@@ -330,7 +330,7 @@ OtpSwap(j, k, codeMatches) ==
 (***************************************************************************)
 (* A boot, warm or cold: the RAM session restarts at zero and every record *)
 (* owes its persisted half an advance again, which its first press takes   *)
-(* before it types (crates/rsk-otp/src/lib.rs:349-354). That is what keeps *)
+(* before it types (crates/rsk-otp/src/lib.rs:347-352). That is what keeps *)
 (* one boot's pairs out of the next one's, so the mark deliberately        *)
 (* SURVIVES the boot.                                                      *)
 (***************************************************************************)
@@ -353,7 +353,7 @@ OtpUse(k) ==
                     ELSE IF wrapped THEN 0 ELSE otpSess[k] + 1
         (* The press that owes flash an advance and types without it: the RAM *)
         (* half rolls anyway, so the next press re-pairs the old counter with *)
-        (* this cycle's first session (crates/rsk-otp/src/lib.rs:357-369).    *)
+        (* this cycle's first session (crates/rsk-otp/src/lib.rs:355-367).    *)
         nextUse  == IF BugOtpPressTypesUnpersisted THEN otpUse[k]
                     ELSE IF persist /\ ~frozen THEN use + 1 ELSE use
         repeat   == otpMarked[k] /\ otpMark[k] = pos

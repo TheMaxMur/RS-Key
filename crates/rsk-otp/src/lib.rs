@@ -257,20 +257,18 @@ impl<'a> OtpApplet<'a> {
         }
     }
 
-    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
-        Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_ref().map(|k| k.expose()),
-        }
+    /// `None` past the latch when the fused key did not read ([`Device::fused`]).
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Option<Device<'k>> {
+        Device::fused(&self.serial_hash, &self.serial_id, mkek)
     }
 
     /// Read+unseal a slot into `rec`; `Some(len)` only when it holds at least a
     /// full config. A `&self` helper so the `&mut self` command handlers read a
     /// slot without pinning a device borrow across their own mutations.
     ///
-    /// A read the medium refused reads as an absent slot here. The four gates
-    /// that decide on the answer take [`try_read_slot_m`](Self::try_read_slot_m).
+    /// A read the medium refused, or a fused key that did not read past the latch,
+    /// reads as an absent slot here. The four gates that decide on the answer read
+    /// fallibly: [`try_read_slot_m`](Self::try_read_slot_m), and SWAP's own device.
     ///
     /// **6 functions / 8 probes keep the collapse on purpose** — 7 under
     /// `strict-config`, where `apply_scanmap` is compiled out. The list is written
@@ -294,28 +292,28 @@ impl<'a> OtpApplet<'a> {
         self.try_read_slot_m(fs, fid, rec).ok().flatten()
     }
 
-    /// [`read_slot_m`](Self::read_slot_m), fallible: `Err` is a medium that could
-    /// not answer, which at an access-code gate is not an unprogrammed slot.
+    /// [`read_slot_m`](Self::read_slot_m), fallible: `Err` is the refusal for a
+    /// medium that could not answer, or a fused key that did not read past the
+    /// latch, which at an access-code gate is not an unprogrammed slot.
     fn try_read_slot_m<S: Storage>(
         &self,
         fs: &mut Fs<S>,
         fid: u16,
         rec: &mut SlotRecord,
-    ) -> Result<Option<usize>> {
+    ) -> core::result::Result<Option<usize>, Sw> {
         let mkek = read_fused(self.mkek_source);
-        try_read_slot(&self.device(&mkek), fs, fid, rec)
+        let dev = self.device(&mkek).ok_or(Sw::FUSED_KEY_UNREAD)?;
+        try_read_slot(&dev, fs, fid, rec).map_err(|_| Sw::MEMORY_FAILURE)
     }
 
-    /// Seal+write a slot record. `false` on a storage failure.
+    /// Seal+write a slot record. `false` on a storage failure, or past the latch
+    /// when the fused key did not read.
     fn put_slot<S: Storage>(&self, fs: &mut Fs<S>, fid: u16, rec: &SlotRecord) -> bool {
         let mkek = read_fused(self.mkek_source);
-        seal::seal_put(
-            &self.device(&mkek),
-            fs,
-            &mut *self.rng.borrow_mut(),
-            KeyFid::new(fid),
-            rec,
-        )
+        let Some(dev) = self.device(&mkek) else {
+            return false;
+        };
+        seal::seal_put(&dev, fs, &mut *self.rng.borrow_mut(), KeyFid::new(fid), rec)
     }
 
     /// Generate the typed ticket for a physical button press on `slot` (1–4: one
@@ -489,8 +487,9 @@ impl<'a> OtpApplet<'a> {
         // skipped the access-code check below, and this command's other arm
         // DELETES the record — so one faulted probe overwrote or erased a
         // protected slot for a host that presented nothing.
-        let Ok(programmed) = self.try_read_slot_m(fs, fid, &mut stored) else {
-            return Sw::MEMORY_FAILURE;
+        let programmed = match self.try_read_slot_m(fs, fid, &mut stored) {
+            Ok(programmed) => programmed,
+            Err(sw) => return sw,
         };
         if programmed.is_some() {
             // Existing config: the host must present its access code.
@@ -551,8 +550,9 @@ impl<'a> OtpApplet<'a> {
         let mut stored = SlotRecord::vacant();
         // An absent slot is updated by doing nothing, under an OK — so a read the
         // medium refused took that arm and reported a mutation that never ran.
-        let Ok(programmed) = self.try_read_slot_m(fs, fid, &mut stored) else {
-            return Sw::MEMORY_FAILURE;
+        let programmed = match self.try_read_slot_m(fs, fid, &mut stored) {
+            Ok(programmed) => programmed,
+            Err(sw) => return sw,
         };
         if programmed.is_some() {
             let Some(code) = data.get(CONFIG_SIZE..CONFIG_SIZE + ACC_CODE_SIZE) else {
@@ -633,6 +633,15 @@ impl<'a> OtpApplet<'a> {
         if fid1 > EF_OTP_SLOT_LAST || fid2 > EF_OTP_SLOT_LAST {
             return Sw::INCORRECT_P1P2;
         }
+        // One read of the fused key for the whole swap: one that stopped reading
+        // between the two writes would leave the second slot's record in both.
+        let mkek = read_fused(self.mkek_source);
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
+        let put = |fs: &mut Fs<S>, fid: u16, rec: &SlotRecord| {
+            seal::seal_put(&dev, fs, &mut *self.rng.borrow_mut(), KeyFid::new(fid), rec)
+        };
         let mut a = SlotRecord::vacant();
         let mut b = SlotRecord::vacant();
         // Fallibly, and before anything moves. A slot read as absent where the
@@ -640,8 +649,8 @@ impl<'a> OtpApplet<'a> {
         // `unmatched` gate below is skipped, the OTHER slot's `None` arm deletes
         // it, and the other slot's record is written over it.
         let (Ok(na), Ok(nb)) = (
-            self.try_read_slot_m(fs, fid1, &mut a),
-            self.try_read_slot_m(fs, fid2, &mut b),
+            try_read_slot(&dev, fs, fid1, &mut a),
+            try_read_slot(&dev, fs, fid2, &mut b),
         ) else {
             return Sw::MEMORY_FAILURE;
         };
@@ -664,7 +673,7 @@ impl<'a> OtpApplet<'a> {
         let taken = [ia, ib].map(|i| self.advanced.get_mut(i).is_some_and(core::mem::take));
         match nb {
             Some(_) => {
-                if !self.put_slot(fs, fid1, &b) {
+                if !put(fs, fid1, &b) {
                     return Sw::MEMORY_FAILURE;
                 }
             }
@@ -676,7 +685,7 @@ impl<'a> OtpApplet<'a> {
         }
         match na {
             Some(_) => {
-                if !self.put_slot(fs, fid2, &a) {
+                if !put(fs, fid2, &a) {
                     return Sw::MEMORY_FAILURE;
                 }
             }
@@ -1106,8 +1115,10 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
         // A slot sealed before the OTP MKEK was burned is under the NO-OTP kbase;
         // recover it via the pre-OTP arm and re-seal under the current (OTP) arm,
         // so a burn never silently orphans an existing slot.
-        if dev.otp_key.is_some() {
-            match rec.try_read(&dev.without_otp(), fs, fid) {
+        if dev.otp_key.is_some()
+            && let Some(old) = dev.pre_otp_arm()
+        {
+            match rec.try_read(&old, fs, fid) {
                 Ok(Some(_)) => {
                     // Ahead of the write and gating it, per `rsk_fs::request_rescrub`:
                     // the copy it supersedes is the pre-OTP one. The `continue` stays
@@ -1125,6 +1136,9 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
                     continue;
                 }
             }
+        }
+        if !dev.clear_arm_open() {
+            continue; // past the latch a slot in the clear was planted
         }
         // Only re-seal a genuine plaintext config; anything longer is not a
         // legacy record — the smallest sealed blob is already > SLOT_SIZE,

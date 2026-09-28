@@ -25,6 +25,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -141,10 +142,10 @@ fn warm_boot_survives_reset_but_session_state_does_not() {
     // Power-cycle facts.
     st.warm_boot = true;
     st.audit_boot_logged = true;
-    st.devk_source = Some(|out: &mut [u8; 32]| {
+    st.devk_source = Some(rsk_crypto::FusedKey::open(|out: &mut [u8; 32]| {
         *out = [0x7C; 32];
         true
-    });
+    }));
     // Session state.
     st.paut.permissions = PERM_ACFG;
     st.begin_using_token(true, 0);
@@ -160,8 +161,8 @@ fn warm_boot_survives_reset_but_session_state_does_not() {
         "the reset window keys on how the cycle started"
     );
     assert!(st.audit_boot_logged);
-    let devk = rsk_crypto::read_fused(st.devk_source).expect("the source survives");
-    assert_eq!(devk.expose(), &[0x7C; 32]);
+    let devk = rsk_crypto::read_fused(st.devk_source);
+    assert_eq!(devk.key(), Some(&[0x7C; 32]), "the source survives");
     assert!(!st.paut.in_use);
     assert_eq!(st.paut.permissions, 0);
     assert!(!st.user_verified());

@@ -327,7 +327,7 @@ why = "BACKUP_LOAD drops the old certificate BEFORE the new seed commits: a surv
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 357
+line = 358
 call = "Ok(Some((fid, _))) => match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
@@ -338,7 +338,7 @@ why = "DELETE's only effect. Discarded until 0x0988, so a refused removal answer
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 383
+line = 384
 call = "let dropped = fs.delete_key(EF_OATH_CODE);"
 verb = "delete_key"
 answer = "read"
@@ -349,7 +349,7 @@ why = "SET CODE's 73 00: select derives validated from !code_set, so a 9000 over
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 1736
+line = 1774
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -382,7 +382,7 @@ why = "the DEK half of the same idempotent repair, retried on the next boot rath
 
 [[site]]
 file = "crates/rsk-openpgp/src/lib.rs"
-line = 287
+line = 285
 call = "let _ = fs.delete(stor);"
 verb = "delete"
 answer = "discarded"
@@ -503,7 +503,7 @@ why = "TERMINATE DF's sweep, secrets before every record scan_files re-seeds. Op
 
 [[site]]
 file = "crates/rsk-otp/src/lib.rs"
-line = 516
+line = 515
 call = "} else if fs.delete(fid).is_err() && slot_still_live(fs, fid) {"
 verb = "delete"
 answer = "read"
@@ -514,7 +514,7 @@ why = "the reply is status(), recomputed from flash in the same response — so 
 
 [[site]]
 file = "crates/rsk-otp/src/lib.rs"
-line = 672
+line = 681
 call = "if fs.delete(fid1).is_err() && slot_still_live(fs, fid1) {"
 verb = "delete"
 answer = "read"
@@ -525,7 +525,7 @@ why = "the swap's first half, under the same self-reporting status() reply. It s
 
 [[site]]
 file = "crates/rsk-otp/src/lib.rs"
-line = 687
+line = 696
 call = "if fs.delete(fid2).is_err() && slot_still_live(fs, fid2) {"
 verb = "delete"
 answer = "read"

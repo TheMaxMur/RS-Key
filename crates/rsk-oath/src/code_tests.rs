@@ -125,6 +125,7 @@ fn a_width_from_before_put_bounded_it_still_answers() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     migrate_seal(&dev, &mut fs, &mut CountRng(1));
 

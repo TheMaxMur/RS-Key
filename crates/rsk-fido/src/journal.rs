@@ -517,8 +517,11 @@ pub fn vendor_checkpoint<S: Storage, R: Rng>(
     // Fetched here rather than held: the DEVK is unrotatable, and this is the one
     // command that wants it. Dropped as soon as the key is derived, not at the end
     // of the command.
-    let mut devk = rsk_crypto::read_fused(ctx.state.devk_source).ok_or(CtapError::NotAllowed)?;
-    let key = attestation_key(devk.expose(), ctx.dev.serial_hash);
+    let mut devk = rsk_crypto::read_fused(ctx.state.devk_source);
+    let key = attestation_key(
+        devk.key().ok_or(CtapError::NotAllowed)?,
+        ctx.dev.serial_hash,
+    );
     devk.wipe();
     let key = key.ok_or(CtapError::Other)?;
     let (head, m) = chain_head(&ctx.dev, ctx.fs).map_err(|_| CtapError::Other)?;

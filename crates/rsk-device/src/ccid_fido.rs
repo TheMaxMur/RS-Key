@@ -93,17 +93,14 @@ impl<'a, R: rsk_sdk::Rng + 'static> FidoCcidApplet<'a, R> {
 
     /// Run `f` against a fully-built FIDO context. Every borrow is taken here and
     /// released with the closure, so no `RefCell` is held across two commands.
+    /// `None` past the latch when the fused key did not read ([`Device::fused`]).
     fn with_ctx<S: Storage, T>(
         &mut self,
         fs: &mut Fs<S>,
         f: impl FnOnce(&mut rsk_fido::Ctx<'_, S, R>) -> T,
-    ) -> T {
+    ) -> Option<T> {
         let mkek = read_fused(self.mkek_source);
-        let dev = Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_ref().map(|k| k.expose()),
-        };
+        let dev = Device::fused(&self.serial_hash, &self.serial_id, &mkek)?;
         let mut rngb = self.rng.borrow_mut();
         let mut presence = self.presence.borrow_mut();
         let mut stb = self.state.borrow_mut();
@@ -115,7 +112,7 @@ impl<'a, R: rsk_sdk::Rng + 'static> FidoCcidApplet<'a, R> {
             now_ms: self.now_ms,
             presence: &mut *presence,
         };
-        f(&mut ctx)
+        Some(f(&mut ctx))
     }
 }
 
@@ -161,9 +158,12 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_,
                 Sw::COMMAND_NOT_ALLOWED
             }
             (true, INS_CTAP_MSG) => {
-                let n = self.with_ctx(fs, |ctx| {
+                let Some(n) = self.with_ctx(fs, |ctx| {
                     rsk_fido::process_cbor(ctx, apdu.data, res.spare_mut())
-                });
+                }) else {
+                    res.push(CtapError::FUSED_KEY_UNREAD.as_u8());
+                    return Sw::OK;
+                };
                 res.commit(n);
                 Sw::OK
             }
@@ -187,10 +187,12 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_,
                 Sw::COMMAND_NOT_ALLOWED
             }
             _ => {
-                let (sw, n) = self.with_ctx(fs, |ctx| {
+                let Some((sw, n)) = self.with_ctx(fs, |ctx| {
                     let spare = res.spare_mut();
                     rsk_fido::u2f::process_u2f(ctx, apdu, spare)
-                });
+                }) else {
+                    return Sw::FUSED_KEY_UNREAD;
+                };
                 res.commit(n);
                 sw
             }

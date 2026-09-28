@@ -70,6 +70,7 @@ fn a_key_sealed_under_a_held_dek_opens_with_its_gcm_half() {
         serial_hash: &[0x33; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();

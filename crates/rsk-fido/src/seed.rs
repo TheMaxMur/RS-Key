@@ -154,7 +154,7 @@ fn plain_tag(dev: &Device) -> u8 {
 /// orphaned and must fail cleanly, never yield a wrong-key result).
 fn gcm_arm<'a>(dev: &Device<'a>, tag: u8) -> Option<Device<'a>> {
     match tag {
-        FORMAT_G1 => Some(dev.without_otp()),
+        FORMAT_G1 => dev.pre_otp_arm(),
         FORMAT_G1_OTP => dev.otp_key.map(|_| *dev),
         _ => None,
     }
@@ -268,7 +268,7 @@ fn cbc_open(dev: &Device, buf: &[u8]) -> Option<Secret<[u8; 32]>> {
         return None;
     }
     let arm = match buf[0] {
-        FORMAT_F1 => dev.without_otp(),
+        FORMAT_F1 => dev.pre_otp_arm()?,
         FORMAT_F1_OTP => {
             dev.otp_key?;
             *dev
@@ -569,7 +569,9 @@ fn migrate_slot<S: Storage>(dev: &Device, fs: &mut Fs<S>, fid: KeyFid) -> Result
     // under the OTP arm, so a flash dump alone cannot open it. That is a second
     // at-rest weakness this re-seal repairs and the lap owes nothing for.
     let weak = matches!(buf.expose()[0], FORMAT_F1 | FORMAT_G1) && dev.otp_key.is_some();
-    let pin_wrapped = buf.expose()[0] == FORMAT_F3 && dev.otp_key.is_some();
+    // Past the latch a PIN-wrapped pre-OTP seed was planted and no PIN use moves it.
+    let pin_wrapped =
+        buf.expose()[0] == FORMAT_F3 && dev.otp_key.is_some() && dev.pre_otp_arm().is_some();
     let recovered = open_any(dev, &buf.expose()[..n]);
     buf.wipe();
     match recovered {
@@ -604,9 +606,9 @@ pub fn migrate_keydev_pin<S: Storage>(dev: &Device, fs: &mut Fs<S>, pin_hash: &[
     // `weak`: a 0x03 record on an OTP card is sealed under the chip-serial arm, so
     // the re-seal below supersedes a copy the public serial alone derives. 0x13 is
     // already OTP-rooted, and a card with no OTP key has no lap to re-arm.
-    let (seal_dev, cbc_tag, weak) = match buf.expose()[0] {
-        FORMAT_F3 => (dev.without_otp(), FORMAT_F1, dev.otp_key.is_some()),
-        FORMAT_F3_OTP if dev.otp_key.is_some() => (*dev, FORMAT_F1_OTP, false),
+    let (seal_dev, cbc_tag, weak) = match (buf.expose()[0], dev.pre_otp_arm()) {
+        (FORMAT_F3, Some(old)) => (old, FORMAT_F1, dev.otp_key.is_some()),
+        (FORMAT_F3_OTP, _) if dev.otp_key.is_some() => (*dev, FORMAT_F1_OTP, false),
         _ => return Ok(()),
     };
     // Strip the outer PIN AEAD, leaving the inner CBC record the seed was sealed

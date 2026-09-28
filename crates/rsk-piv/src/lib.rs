@@ -322,10 +322,8 @@ impl<'a> PivApplet<'a> {
             return (0, Sw::EXEC_ERROR);
         };
         let mkek = read_fused(self.mkek_source);
-        let dev = Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_ref().map(|k| k.expose()),
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return (0, Sw::FUSED_KEY_UNREAD);
         };
         let mut res = ResBuf::new(resp);
         let sw = keygen::finish_rsa(&dev, fs, rng, slot, algo, pol, key, &mut res);
@@ -383,10 +381,8 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
         // otherwise repeat on every re-SELECT, unless it left the 9B head owed.
         if !self.files_ensured {
             let (serial_hash, serial_id, mkek) = self.device_ids();
-            let dev = Device {
-                serial_hash: &serial_hash,
-                serial_id: &serial_id,
-                otp_key: mkek.as_ref().map(|k| k.expose()),
+            let Some(dev) = Device::fused(&serial_hash, &serial_id, &mkek) else {
+                return Sw::FUSED_KEY_UNREAD;
             };
             let mut rng = self.rng.borrow_mut();
             match files::scan_files(&dev, fs, &mut *rng) {
@@ -414,10 +410,12 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
             return Sw::WRONG_DATA;
         }
         let (serial_hash, serial_id, mkek) = self.device_ids();
-        let dev = Device {
-            serial_hash: &serial_hash,
-            serial_id: &serial_id,
-            otp_key: mkek.as_ref().map(|k| k.expose()),
+        let dev = Device::fused(&serial_hash, &serial_id, &mkek);
+        if apdu.ins == INS_VERIFY {
+            return self.verify(dev.as_ref(), fs, apdu, res);
+        }
+        let Some(dev) = dev else {
+            return Sw::FUSED_KEY_UNREAD;
         };
         match apdu.ins {
             INS_VERSION => {
@@ -428,7 +426,6 @@ impl<S: Storage> Applet<Fs<S>> for PivApplet<'_> {
                 res.extend(&rsk_sdk::serial4(self.serial_id));
                 Sw::OK
             }
-            INS_VERIFY => self.verify(&dev, fs, apdu, res),
             INS_CHANGE_PIN => self.change_pin(&dev, fs, apdu),
             INS_RESET_RETRY => self.reset_retry(&dev, fs, apdu),
             INS_AUTHENTICATE => {
@@ -484,7 +481,7 @@ impl PivApplet<'_> {
     /// VERIFY (INS 0x20): the PIV application PIN, reference 0x80.
     fn verify<S: Storage>(
         &mut self,
-        dev: &Device,
+        dev: Option<&Device>,
         fs: &mut Fs<S>,
         apdu: &Apdu,
         _res: &mut ResBuf,
@@ -549,6 +546,11 @@ impl PivApplet<'_> {
         // wrong PINs — the human reflex, and the standard advice for a card they
         // think is compromised — did not stop an attacker who already had a live
         // verified session.
+        // Only the compare needs the key: a logout or a status query still answers
+        // while it does not read past the latch, and a refusal here is no attempt.
+        let Some(dev) = dev else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         let sw = check_ref(dev, fs, EF_PIN, RETRY_PIN, apdu.data);
         self.sess.set_pin(sw.is_ok());
         sw
@@ -784,10 +786,8 @@ impl PivApplet<'_> {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
         let mkek = read_fused(self.mkek_source);
-        let dev = Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_ref().map(|k| k.expose()),
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
         };
         let mut mgm = match mgm_read(&dev, fs) {
             Ok(k) => k,

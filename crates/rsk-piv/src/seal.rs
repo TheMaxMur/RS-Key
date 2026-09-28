@@ -159,11 +159,12 @@ pub fn seal_read<S: Storage, const N: usize>(
 /// Idempotent and crash-safe per slot. Answers whether a slot the pre-OTP arm
 /// opened is left under it, a re-seal the medium refused, or a slot is unread.
 pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> bool {
+    // Without the fused key there is nothing to move to.
     if dev.otp_key.is_none() {
         return false;
     }
+    let old = dev.pre_otp_arm();
     let mut left = false;
-    let old = dev.without_otp();
     // Retired (82–95), active (9A–9E incl. the 9B management key), attestation.
     let slots = (SLOT_RETIRED_FIRST..=SLOT_RETIRED_LAST)
         .chain(SLOT_AUTHENTICATION..=SLOT_CARDAUTH)
@@ -180,10 +181,18 @@ pub fn migrate_kbase<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng
             }
         }
         let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
-        if seal_read(dev, fs, fid, &mut plain).is_ok() {
+        let current = seal_read(dev, fs, fid, &mut plain);
+        if current.is_ok() {
             plain.wipe();
             continue;
         }
+        // Past the latch a record only the pre-OTP arm opens was planted, and nothing
+        // may move it; a slot gone since its probe is still a read the flash failed.
+        let Some(old) = old else {
+            left |= current == Err(Sw::REFERENCE_NOT_FOUND);
+            plain.wipe();
+            continue;
+        };
         // The copy this re-seal supersedes opened under `old`, i.e. the public chip
         // serial alone. Ahead of the write and gating it, per
         // `rsk_fs::request_rescrub` — a boot that skipped this slot already latched.

@@ -68,6 +68,7 @@ fn dev<'a>(serial_id: &'a [u8; 8], serial_hash: &'a [u8; 32]) -> Device<'a> {
         serial_hash,
         serial_id,
         otp_key: None,
+        latched: false,
     }
 }
 

@@ -158,7 +158,10 @@ where
             match self.collect_pin(title, caption, 4, expected, pin.expose_mut(), true) {
                 rsk_sdk::PinEntry::Entered(len) => {
                     let mkek = read_fused(self.cells.keys.mkek_source);
-                    let dev = self.cells.keys.device(&mkek);
+                    // A fused key that did not read past the latch is no attempt.
+                    let Some(dev) = self.cells.keys.device(&mkek) else {
+                        break false;
+                    };
                     let verdict = match scope {
                         PinScope::Device => rsk_fido::passkeys::spend_and_verify_device_pin(
                             &dev,

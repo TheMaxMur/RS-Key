@@ -276,7 +276,7 @@ Init ==
     \* alwaysUv's COMPILED default, not a state choice: `--features always-uv`
     \* is what the device comes up on and what a reset restores it to.
     \* The record exists from provisioning: `ensure_seed` mints it beside the seed
-    \* (seed.rs:686-689), and no platform has been handed it yet.
+    \* (seed.rs:688-691), and no platform has been handed it yet.
     /\ gate  = [ppuat |-> FALSE, ppuatRec |-> TRUE, ppuatStale |-> FALSE,
                 alwaysUv |-> AlwaysUvShipped, backupSealed |-> FALSE,
                 forceChange |-> FALSE]
@@ -737,7 +737,7 @@ MintPpuat ==
 
 (***************************************************************************)
 (* THE PANEL'S PIN PAD IS A FOURTH DOOR ONTO EF_PIN.                       *)
-(* crates/rsk-display/src/gates.rs:117-203 (`local_pin_gate`).             *)
+(* crates/rsk-display/src/gates.rs:117-206 (`local_pin_gate`).             *)
 (***************************************************************************)
 
 \* It spends the SAME persistent retry counter the wire path spends -- a correct
@@ -1516,7 +1516,7 @@ VolatileCleared ==
     /\ upSpent' = FALSE
 
 \* EVERY boot runs ensure_seed, not just the one at the end of a reset:
-\* firmware/src/main.rs:722 and tools/emu/src/device.rs:509; one that cannot read
+\* firmware/src/main.rs:736 and tools/emu/src/device.rs:510; one that cannot read
 \* the fused key runs none, which this action, allowing more, over-approximates. A cut that stranded
 \* the device mid-wipe therefore comes back WITH a seed and can hold usable
 \* credentials again. Leaving it out made the model less permissive than the
@@ -1528,7 +1528,7 @@ VolatileCleared ==
 \*
 \* And it MAY mint the grant record if none stands (`ensure_ppuat`), which is how a
 \* grant a PIN change revoked comes back -- as a record, issued to nobody. May,
-\* because `ensure_seed` skips the mint on a vendor-soft-locked key (seed.rs:681)
+\* because `ensure_seed` skips the mint on a vendor-soft-locked key (seed.rs:683)
 \* and main.rs drops its error: a boot that leaves no record is the firmware's too.
 BootEnsuresSeed ==
     /\ store' = [KeepOpen(store, store.seed) EXCEPT !.seed = TRUE]

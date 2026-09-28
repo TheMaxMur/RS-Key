@@ -483,6 +483,7 @@ pub fn dev() -> rsk_crypto::Device<'static> {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     }
 }
 

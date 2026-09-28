@@ -133,6 +133,7 @@ fn on_device_generate_fills_an_empty_retired_slot() {
         serial_hash: &[0x22; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = TestRng(0xC0FFEE);
     assert!(generate_slot_key(&dev, &mut fs, &mut rng, 0x82, ALGO_ECCP256).is_ok());
@@ -157,6 +158,7 @@ fn a_faulted_head_refuses_the_panel_generate_before_it_writes() {
         serial_hash: &[0x22; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let rsa = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 1024).unwrap();
     for via_rsa in [false, true] {
@@ -198,6 +200,7 @@ fn a_faulted_retired_probe_does_not_overwrite_a_populated_slot() {
         serial_hash: &[0x22; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     // (slot, the fid to fault, the fid whose contents must not change, what it holds)
     for (slot, faulted, guarded, what) in [

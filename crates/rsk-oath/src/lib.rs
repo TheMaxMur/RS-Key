@@ -241,12 +241,9 @@ impl<'a> OathApplet<'a> {
         }
     }
 
-    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Device<'k> {
-        Device {
-            serial_hash: &self.serial_hash,
-            serial_id: &self.serial_id,
-            otp_key: mkek.as_ref().map(|k| k.expose()),
-        }
+    /// `None` past the latch when the fused key did not read ([`Device::fused`]).
+    fn device<'k>(&'k self, mkek: &'k FusedRead) -> Option<Device<'k>> {
+        Device::fused(&self.serial_hash, &self.serial_id, mkek)
     }
 
     /// The 8-byte OATH device id — the salt ykman folds into its PBKDF2 access-code
@@ -321,7 +318,9 @@ impl<'a> OathApplet<'a> {
 
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
         let mkek = read_fused(self.mkek_source);
-        let dev = self.device(&mkek);
+        let Some(dev) = self.device(&mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         let fid = match find_cred(&dev, fs, f.name, &mut scratch) {
             Ok(Some((fid, _))) => fid,
             Ok(None) => match free_slot(fs) {
@@ -349,7 +348,9 @@ impl<'a> OathApplet<'a> {
         };
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
         let mkek = read_fused(self.mkek_source);
-        let dev = self.device(&mkek);
+        let Some(dev) = self.device(&mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         match find_cred(&dev, fs, name, &mut scratch) {
             // Read the answer: this command's whole effect is the removal, and a
             // `9000` over a TOTP secret still in flash is what the host prints as
@@ -418,6 +419,12 @@ impl<'a> OathApplet<'a> {
         if !ct_eq(resp, proof) {
             return Sw::DATA_INVALID;
         }
+        // From the fields, not `self.device`: the challenge below is written while
+        // it lives, and a key that did not read refuses before anything is.
+        let mkek = read_fused(self.mkek_source);
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         // Re-arm the one-shot at-rest lap (rsk-fs `EF_HARDENED`) ahead of the seal and
         // gating it: the code this supersedes can still be keyed under the pre-OTP
         // arm, the public chip serial's, where a boot could not move it.
@@ -425,8 +432,6 @@ impl<'a> OathApplet<'a> {
             return Sw::MEMORY_FAILURE;
         };
         self.rng.borrow_mut().fill(&mut self.challenge);
-        let mkek = read_fused(self.mkek_source);
-        let dev = self.device(&mkek);
         if !seal::seal_put_over(
             &dev,
             fs,
@@ -479,7 +484,9 @@ impl<'a> OathApplet<'a> {
         let budget = cap.min(res.capacity() - res.len());
         let stop = {
             let mkek = read_fused(self.mkek_source);
-            let dev = self.device(&mkek);
+            let Some(dev) = self.device(&mkek) else {
+                return Sw::FUSED_KEY_UNREAD;
+            };
             let mut buf = [0u16; MAX_OATH_CRED as usize];
             let fids = present_creds(fs, &mut buf);
             let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
@@ -559,7 +566,9 @@ impl<'a> OathApplet<'a> {
         };
         let mut code = Secret::<[u8; OATH_CODE_MAX]>::zeroed();
         let mkek = read_fused(self.mkek_source);
-        let dev = self.device(&mkek);
+        let Some(dev) = self.device(&mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         // A present-but-unreadable code (over-long or corrupt) must keep the applet
         // LOCKED — a fail-open here unlocked it without the access code. A truly
         // absent code leaves the applet as select() set it (unlocked, no code).
@@ -620,7 +629,9 @@ impl<'a> OathApplet<'a> {
         };
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
         let mkek = read_fused(self.mkek_source);
-        let dev = self.device(&mkek);
+        let Some(dev) = self.device(&mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         let (fid, mut n) = match find_cred(&dev, fs, name, &mut scratch) {
             Ok(Some(found)) => found,
             Ok(None) => return Sw::DATA_INVALID,
@@ -760,7 +771,7 @@ impl<'a> OathApplet<'a> {
     /// refuse the press it just asked for.
     fn advance_marks<S: Storage>(&self, fs: &mut Fs<S>, chal: &[u8]) -> Result<(), Sw> {
         let mkek = read_fused(self.mkek_source);
-        let dev = self.device(&mkek);
+        let dev = self.device(&mkek).ok_or(Sw::FUSED_KEY_UNREAD)?;
         let mut buf = [0u16; MAX_OATH_CRED as usize];
         let fids = present_creds(fs, &mut buf);
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
@@ -817,7 +828,9 @@ impl<'a> OathApplet<'a> {
         // The named credential is ignored — slot 0 is always the one verified.
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
         let mkek = read_fused(self.mkek_source);
-        let dev = self.device(&mkek);
+        let Some(dev) = self.device(&mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         let Some(n) = seal::seal_read(&dev, fs, KeyFid::new(EF_OATH_CRED), &mut scratch) else {
             return Sw::DATA_INVALID;
         };
@@ -889,7 +902,9 @@ impl<'a> OathApplet<'a> {
         }
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
         let mkek = read_fused(self.mkek_source);
-        let dev = self.device(&mkek);
+        let Some(dev) = self.device(&mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         // One credential per name: PUT holds it by overwriting, RENAME by refusing
         // a taken target (self-rename included, as on a YubiKey 5.7.4). Judged
         // before the source, which stays invisible only while both answer this.
@@ -962,7 +977,9 @@ impl<'a> OathApplet<'a> {
         };
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
         let mkek = read_fused(self.mkek_source);
-        let dev = self.device(&mkek);
+        let Some(dev) = self.device(&mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         let n = match find_cred(&dev, fs, name, &mut scratch) {
             Ok(Some((_, n))) => n,
             Ok(None) => return Sw::DATA_INVALID,
@@ -994,9 +1011,7 @@ impl<'a> OathApplet<'a> {
     /// Handles both the v1 OTP-rooted verifier and the legacy serial-only double
     /// hash (which [`Self::cmd_verify_otp_pin`] / [`Self::cmd_change_otp_pin`]
     /// upgrade to v1 on success).
-    fn otp_pin_matches(&self, rec: &[u8], pw: &[u8]) -> bool {
-        let mkek = read_fused(self.mkek_source);
-        let dev = self.device(&mkek);
+    fn otp_pin_matches(dev: &Device, rec: &[u8], pw: &[u8]) -> bool {
         match (rec.len(), rec) {
             (OTP_PIN_REC_V1, [_, OTP_PIN_FMT_V1, stored @ ..]) => {
                 ct_eq(dev.pin_derive_verifier(pw).expose(), stored)
@@ -1017,12 +1032,11 @@ impl<'a> OathApplet<'a> {
     }
 
     /// A fresh v1 record: `[MAX_OTP_COUNTER, 0x01, pin_derive_verifier(pw)]`.
-    fn otp_pin_record_v1(&self, pw: &[u8]) -> [u8; OTP_PIN_REC_V1] {
+    fn otp_pin_record_v1(dev: &Device, pw: &[u8]) -> [u8; OTP_PIN_REC_V1] {
         let mut rec = [0u8; OTP_PIN_REC_V1];
         rec[0] = MAX_OTP_COUNTER;
         rec[1] = OTP_PIN_FMT_V1;
-        let mkek = read_fused(self.mkek_source);
-        rec[2..].copy_from_slice(self.device(&mkek).pin_derive_verifier(pw).expose());
+        rec[2..].copy_from_slice(dev.pin_derive_verifier(pw).expose());
         rec
     }
 
@@ -1073,6 +1087,11 @@ impl<'a> OathApplet<'a> {
         {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        // Read after the touch, so the key is not held across the wait.
+        let mkek = read_fused(self.mkek_source);
+        let Some(dev) = self.device(&mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         // A faulted probe must not read as "no PIN yet": that arm overwrites the
         // owner's OTP-PIN with the caller's.
         match fs.try_has_data(EF_OTP_PIN) {
@@ -1086,7 +1105,7 @@ impl<'a> OathApplet<'a> {
         let Some(pw) = find_tag(data, TAG_PASSWORD as u16) else {
             return Sw::WRONG_DATA;
         };
-        match fs.put(EF_OTP_PIN, &self.otp_pin_record_v1(pw)) {
+        match fs.put(EF_OTP_PIN, &Self::otp_pin_record_v1(&dev, pw)) {
             Ok(()) => Sw::OK,
             Err(_) => Sw::MEMORY_FAILURE,
         }
@@ -1119,7 +1138,7 @@ impl<'a> OathApplet<'a> {
     /// the caller resets the counter on success. This is the sole caller of
     /// `spend_otp_retry`, so a future command cannot reintroduce the gap by forgetting the gate.
     fn spend_and_match_otp_pin<S: Storage>(
-        &self,
+        dev: &Device,
         fs: &mut Fs<S>,
         rec: &mut [u8],
         pw: &[u8],
@@ -1130,7 +1149,7 @@ impl<'a> OathApplet<'a> {
         if !Self::spend_otp_retry(fs, rec) {
             return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
         }
-        if !self.otp_pin_matches(rec, pw) {
+        if !Self::otp_pin_matches(dev, rec, pw) {
             return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
         }
         Ok(())
@@ -1150,6 +1169,12 @@ impl<'a> OathApplet<'a> {
         let Some(new_pw) = find_tag(data, TAG_NEW_PASSWORD as u16) else {
             return Sw::WRONG_DATA;
         };
+        // Built from the fields, not `self.device`: the flags below are written
+        // while it lives. A key that did not read is no attempt, like bad TLV.
+        let mkek = read_fused(self.mkek_source);
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         // A failed authentication drops the standing one — the rule E38 shipped
         // for OpenPGP and PIV, and the one this command's own sibling
         // (`cmd_verify_otp_pin`) already holds. Both flags, because `validated`
@@ -1163,7 +1188,7 @@ impl<'a> OathApplet<'a> {
         // Same anti-bruteforce gate as VERIFY: refuse at the counter floor. After a
         // lock-out even a correct old-PIN cannot CHANGE (that floor "recovery" was
         // the run-6 unlimited-guessing oracle); recover with RESET instead.
-        if let Err(sw) = self.spend_and_match_otp_pin(fs, rec, pw) {
+        if let Err(sw) = Self::spend_and_match_otp_pin(&dev, fs, rec, pw) {
             return sw;
         }
         // Re-arm the one-shot at-rest lap (rsk-fs `EF_HARDENED`; audit run-35): the
@@ -1173,7 +1198,11 @@ impl<'a> OathApplet<'a> {
         let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
             return Sw::MEMORY_FAILURE;
         };
-        match fs.put_over(EF_OTP_PIN, &self.otp_pin_record_v1(new_pw), Some(&rearmed)) {
+        match fs.put_over(
+            EF_OTP_PIN,
+            &Self::otp_pin_record_v1(&dev, new_pw),
+            Some(&rearmed),
+        ) {
             Ok(()) => Sw::OK,
             Err(_) => Sw::MEMORY_FAILURE,
         }
@@ -1190,6 +1219,11 @@ impl<'a> OathApplet<'a> {
         let Some(pw) = find_tag(data, TAG_PASSWORD as u16) else {
             return Sw::WRONG_DATA;
         };
+        // From the fields, as in CHANGE: a key that did not read is no attempt.
+        let mkek = read_fused(self.mkek_source);
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return Sw::FUSED_KEY_UNREAD;
+        };
         // Any attempt clears a prior unlock; only a correct PIN restores one below. A
         // probe the flash failed reads as a code set, whose lock the PIN cannot open.
         let code_set = fs.try_has_key(EF_OATH_CODE).unwrap_or(true);
@@ -1198,7 +1232,7 @@ impl<'a> OathApplet<'a> {
         self.otp_pin_verified = false;
         // Shared anti-bruteforce chokepoint: refuse at the counter floor, spend the
         // retry (persist + read-back), then constant-time compare.
-        if let Err(sw) = self.spend_and_match_otp_pin(fs, rec, pw) {
+        if let Err(sw) = Self::spend_and_match_otp_pin(&dev, fs, rec, pw) {
             return sw;
         }
         // The record the upgrade below supersedes may be keyed under the pre-OTP
@@ -1212,7 +1246,11 @@ impl<'a> OathApplet<'a> {
         if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {
             // Success: reset the counter and (lazily) upgrade a legacy record to the
             // OTP-rooted v1 verifier. The OTP PIN doubles as VALIDATE (nitropy flow).
-            let _ = fs.put_over(EF_OTP_PIN, &self.otp_pin_record_v1(pw), Some(&rearmed));
+            let _ = fs.put_over(
+                EF_OTP_PIN,
+                &Self::otp_pin_record_v1(&dev, pw),
+                Some(&rearmed),
+            );
         }
         // A code-less applet opens on its PIN (the nitropy flow); a coded one keeps
         // only the unlock its code gave, and the PIN opens the password safe alone.
@@ -1953,7 +1991,8 @@ fn reseal_if_plaintext<S: Storage>(
     // unlike the OTP applet this cannot be a size guard — it must be the AEAD
     // trial-decrypt. Mirrors keydev/PIV/seed.
     if dev.otp_key.is_some()
-        && let Some(n) = seal::open(&dev.without_otp(), blob, out)
+        && let Some(old) = dev.pre_otp_arm()
+        && let Some(n) = seal::open(&old, blob, out)
     {
         // Ahead of the write and gating it, per `rsk_fs::request_rescrub`: the copy
         // it supersedes is the pre-OTP one. The `return` stays outside — falling
@@ -1971,8 +2010,8 @@ fn reseal_if_plaintext<S: Storage>(
     }
     // The re-arm is the pre-OTP arm's, for a copy weaker still: this record's HMAC
     // secret is in the clear on the medium. Gated on the OTP key because that is
-    // what `run_at_rest_lap`'s caller gates the lap on.
-    if is_legacy_plaintext(fid, blob) {
+    // what `run_at_rest_lap`'s caller gates the lap on. Past the latch it was planted.
+    if dev.clear_arm_open() && is_legacy_plaintext(fid, blob) {
         let moved = rsk_fs::request_rescrub_if(fs, dev.otp_key.is_some())
             .is_ok_and(|rearmed| seal::seal_put_over(dev, fs, rng, fid, blob, rearmed.as_ref()));
         return !moved && dev.otp_key.is_some();

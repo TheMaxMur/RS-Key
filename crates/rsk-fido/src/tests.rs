@@ -27,6 +27,7 @@ fn dispatch_seeded(data: &[u8], out: &mut [u8], with_token: bool) -> usize {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut rng = SeqRng(1);
     if with_token {

@@ -297,6 +297,7 @@ fn plant(fs: &mut Fs<RamStorage>, slot: u16, blob: &[u8]) {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     assert!(seal::seal_put(
         &dev,

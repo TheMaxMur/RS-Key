@@ -70,6 +70,7 @@ fn dev() -> Device<'static> {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     }
 }
 
@@ -693,6 +694,7 @@ fn miri_openpgp_apdu() {
         serial_hash: &SERIAL_HASH,
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();
@@ -1370,6 +1372,7 @@ fn miri_seed_blob() {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let dev_new = Device {
         otp_key: Some(&OTP),
@@ -1428,6 +1431,7 @@ fn miri_fido_session() {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(RamStorage::new());
     let mut rng = SeqRng(1);

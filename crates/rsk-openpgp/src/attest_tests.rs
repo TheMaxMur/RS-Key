@@ -67,6 +67,7 @@ fn provisioned_fs<S: Storage>(storage: S) -> Fs<S> {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL_ID,
         otp_key: None,
+        latched: false,
     };
     crate::init::scan_files(&dev, &mut fs, &mut Lcg(1)).unwrap();
     fs

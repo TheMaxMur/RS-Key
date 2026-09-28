@@ -247,6 +247,7 @@ fn a_change_after_the_otp_burn_rearms_the_at_rest_lap() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut rec = [0u8; OTP_PIN_REC_V1];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
@@ -270,7 +271,13 @@ fn a_change_after_the_otp_burn_rearms_the_at_rest_lap() {
         .value(EF_OTP_PIN)
         .expect("fixture: EF_OTP_PIN is on the medium");
     medium.clear_ops();
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     assert_eq!(change(&mut app, &mut fs, b"1234", b"5678"), Sw::OK);
     medium.assert_re_armed_before(
         EF_OTP_PIN,
@@ -326,6 +333,7 @@ fn a_change_whose_re_arm_the_medium_refuses_does_not_re_key() {
         serial_hash: &[0x22; 32],
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut rec = [0u8; OTP_PIN_REC_V1];
     assert_eq!(fs.read(EF_OTP_PIN, &mut rec), Some(OTP_PIN_REC_V1));
@@ -341,7 +349,13 @@ fn a_change_whose_re_arm_the_medium_refuses_does_not_re_key() {
     );
     medium.refuse(Some(rsk_fs::EF_HARDENED));
 
-    let mut app = OathApplet::new(SERIAL, [0x22; 32], Some(test_mkek), &rng, &touch);
+    let mut app = OathApplet::new(
+        SERIAL,
+        [0x22; 32],
+        Some(rsk_crypto::FusedKey::open(test_mkek)),
+        &rng,
+        &touch,
+    );
     let sw = change(&mut app, &mut fs, b"1234", b"5678");
     assert!(
         medium.live(rsk_fs::EF_HARDENED),

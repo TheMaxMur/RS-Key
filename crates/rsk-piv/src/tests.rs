@@ -258,6 +258,7 @@ fn keys_sealed_by_the_previous_build_still_load() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let fid = key_fid(SLOT_AUTHENTICATION);
     let cases: [(&str, Curve, &[u8]); 4] = [
@@ -455,10 +456,11 @@ fn a_wrong_pin_is_refused_on_the_kbase_fallback_path() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
     migrate_kbase(&dev_new, &mut fs, &mut TestRng(9));
 
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     let wrong: [u8; 8] = [b'9', b'9', b'9', b'9', b'9', b'9', 0xFF, 0xFF];
     // Twice, because the retry counter moves between them — what must NOT move
@@ -1055,6 +1057,7 @@ fn a_reference_change_takes_two_wire_forms_or_nothing() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     assert_eq!(
         change_reference(&dev, &mut fs, PinRef::Pin, &DEFAULT_PIN, short),
@@ -1081,6 +1084,7 @@ fn a_poisoned_reference_keeps_every_exit_it_had() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -1185,6 +1189,7 @@ fn panel_pin_ops_match_host_wire() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
 
     // pad_pin builds the 8-byte PIV wire form (matches the stored defaults).
@@ -1260,6 +1265,7 @@ fn pin_protected_mgm_key_roundtrip() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let get = |id: [u8; 3]| [0x5C, 0x03, id[0], id[1], id[2]];
     const PRINTED: [u8; 3] = [0x5F, 0xC1, 0x09];
@@ -1357,6 +1363,7 @@ fn protect_mgm_preserves_timestamp_and_flags_drops_salt() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut fs = new_fs();
     let mut inner = vec![PIVMAN_FLAGS_TAG, 0x01, 0x01];
@@ -1591,6 +1598,7 @@ fn printed_information_round_trips_but_an_escrow_body_is_never_stored() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let get = [0x5C, 0x03, 0x5F, 0xC1, 0x09];
     let printed = [TAG_DATA_OBJECT, 0x03, 0x41, 0x42, 0x43];
@@ -4096,6 +4104,7 @@ fn on_device_rsa_stores_into_empty_retired_slot() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let key = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 1024).unwrap();
     let slot = info::next_free_retired(&mut fs).unwrap();
@@ -4130,6 +4139,7 @@ fn on_device_rsa4096_buffers_round_trip() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let key = rsk_rsa::generate_rsa(&mut crate::RsaRng(&mut TestRng(99)), 4096).unwrap();
     let slot = info::next_free_retired(&mut fs).unwrap();
@@ -4487,6 +4497,7 @@ fn the_management_slot_reports_one_pin_policy_in_every_state() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     select(&mut app, &mut fs);
     let policy = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Vec<u8> {
@@ -4549,6 +4560,7 @@ fn the_management_slot_reports_one_touch_policy_in_every_state() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
     let mut fs = new_fs();
@@ -4643,6 +4655,7 @@ fn protecting_the_management_key_keeps_a_gate_the_owner_raised() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let touch = |md: &[u8]| find_tag(md, 0x02).unwrap()[1];
     let meta = |app: &mut PivApplet, fs: &mut Fs<RamStorage>| -> Vec<u8> {
@@ -5430,6 +5443,7 @@ fn reset_reports_failure_when_the_sweep_cannot_converge() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(StubbornStorage(RamStorage::new()));
     fs.scan();
@@ -5626,6 +5640,7 @@ fn reset_fails_when_the_enumeration_is_truncated() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(rsk_fs::storage::faults::TruncatedWalk::new());
     fs.scan();
@@ -5758,6 +5773,7 @@ fn torn_import_leaves_no_attestable_origin() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let budget = Rc::new(Cell::new(usize::MAX));
     let mut fs = Fs::new(TornMeta {
@@ -5820,6 +5836,139 @@ fn torn_import_leaves_no_attestable_origin() {
     );
 }
 
+/// Past the fuse latch a key slot only the pre-OTP arm opens was planted: the boot
+/// pass leaves it where it is instead of moving it onto the fused root.
+#[test]
+fn past_the_latch_no_pre_otp_key_slot_moves() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(
+        &mut app,
+        &mut fs,
+        INS_ASYM_KEYGEN,
+        0,
+        0x9A,
+        &gen_template(ALGO_ECCP256),
+    );
+    assert_eq!(sw, Sw::OK);
+    let fid = crate::files::key_fid(0x9A);
+    let mut before = [0u8; 128];
+    let n = fs.read(fid.get(), &mut before).unwrap();
+
+    let latched = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: Some(&[0x44; 32]),
+        latched: true,
+    };
+    assert!(!migrate_kbase(&latched, &mut fs, &mut TestRng(9)));
+    let mut after = [0u8; 128];
+    assert_eq!(fs.read(fid.get(), &mut after), Some(n));
+    assert_eq!(after, before, "a planted key slot moved past the latch");
+}
+
+/// Past the latch the pass still counts a slot the medium did not read, as every
+/// other pass does, so READ 1E/07 keeps saying what a boot could not check.
+#[test]
+fn past_the_latch_an_unread_slot_is_still_reported() {
+    let (backend, medium) = ProbeStuck::new();
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let template = gen_template(ALGO_ECCP256);
+    let (sw, _) = run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template);
+    assert_eq!(sw, Sw::OK);
+    let latched = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: Some(&[0x44; 32]),
+        latched: true,
+    };
+    medium.stick(Some(crate::files::key_fid(0x9A).get()));
+    assert!(
+        migrate_kbase(&latched, &mut fs, &mut TestRng(9)),
+        "a slot the medium did not read counted as checked past the latch"
+    );
+}
+
+/// Past the latch a fused key that did not read leaves no arm to open or seal
+/// under: SELECT and every command refuse, and a VERIFY spends no retry, since the
+/// fuse refused it and not the PIN.
+#[test]
+fn past_the_latch_an_unread_key_refuses_and_spends_nothing() {
+    fn otp_source(out: &mut [u8; 32]) -> bool {
+        *out = [0x44; 32];
+        true
+    }
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut fs = new_fs();
+    let mut app = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
+    select(&mut app, &mut fs);
+    let retries =
+        |app: &mut PivApplet, fs: &mut Fs<RamStorage>| run(app, fs, INS_VERIFY, 0, 0x80, &[]).0;
+    let before = retries(&mut app, &mut fs);
+
+    let mut shut = PivApplet::new(SERIAL, HASH, Some(FusedKey::latched(unread)), &rng, &pres);
+    let mut out = [0u8; 256];
+    let sw = Applet::select(&mut shut, false, &mut fs, &mut ResBuf::new(&mut out));
+    assert_eq!(sw, Sw::FUSED_KEY_UNREAD);
+    let verify = run(&mut shut, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0;
+    assert_eq!(verify, Sw::FUSED_KEY_UNREAD);
+    let template = gen_template(ALGO_ECCP256);
+    let keygen = run(&mut shut, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &template).0;
+    assert_eq!(keygen, Sw::FUSED_KEY_UNREAD);
+    assert_eq!(
+        retries(&mut app, &mut fs),
+        before,
+        "a retry spent past the latch"
+    );
+    assert_eq!(
+        fs.read(crate::files::key_fid(0x9A).get(), &mut [0u8; 128]),
+        None
+    );
+}
+
+/// A PIN verified before the fused key stopped reading stays droppable: a logout
+/// needs no key, so it clears the status past the latch rather than refuse.
+#[test]
+fn past_the_latch_a_logout_needs_no_key() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static READS: AtomicBool = AtomicBool::new(true);
+    fn flaky(out: &mut [u8; 32]) -> bool {
+        *out = [0x44; 32];
+        READS.load(Ordering::SeqCst)
+    }
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut fs = new_fs();
+    let mut app = PivApplet::new(SERIAL, HASH, Some(FusedKey::latched(flaky)), &rng, &pres);
+    select(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    READS.store(false, Ordering::SeqCst);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_VERIFY, 0xFF, 0x80, &[]).0,
+        Sw::OK
+    );
+    assert_ne!(
+        run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &[]).0,
+        Sw::OK,
+        "the PIN status outlived its logout"
+    );
+}
+
 #[test]
 fn kbase_migration_reseals_slots_and_pin_falls_back() {
     const OTP: [u8; 32] = [0x44; 32];
@@ -5853,6 +6002,7 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
     migrate_kbase(&dev_new, &mut fs, &mut TestRng(9));
     migrate_kbase(&dev_new, &mut fs, &mut TestRng(11));
@@ -5869,7 +6019,7 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
         fs.has_data(rsk_fs::EF_HARDENED),
         "fixture: the lap has latched"
     );
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     auth_mgm(&mut app2, &mut fs);
     verify_pin(&mut app2, &mut fs);
@@ -5918,11 +6068,13 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let dev_otp = Device {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
 
     // Provision pre-OTP: both references are rooted in the public chip serial.
@@ -5941,7 +6093,7 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
 
     // The OTP build. The PUK migrates on its own first use and re-arms the lap;
     // a boot then runs the lap and re-latches the marker.
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     assert!(
@@ -6011,11 +6163,13 @@ fn set_retries_re_arms_the_at_rest_lap() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let dev_otp = Device {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
 
     let rng = RefCell::new(TestRng(5));
@@ -6027,7 +6181,7 @@ fn set_retries_re_arms_the_at_rest_lap() {
 
     // The PIN migrates on its own verify and re-arms; a boot re-latches the marker.
     // The PUK is untouched by that path, so it is still chip-serial-rooted.
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     auth_mgm(&mut app2, &mut fs);
     verify_pin(&mut app2, &mut fs);
@@ -6076,6 +6230,7 @@ fn a_set_retries_whose_re_arm_the_medium_refuses_resets_neither_reference() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let rng = RefCell::new(TestRng(5));
     let pres = RefCell::new(AlwaysConfirm);
@@ -6095,7 +6250,7 @@ fn a_set_retries_whose_re_arm_the_medium_refuses_resets_neither_reference() {
         &mut fs,
         &mut TestRng(13),
     );
-    let mut app2 = PivApplet::new(SERIAL, HASH, Some(otp_source as FusedKey), &rng, &pres);
+    let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     auth_mgm(&mut app2, &mut fs);
     verify_pin(&mut app2, &mut fs);
@@ -6154,6 +6309,7 @@ fn a_reset_re_arms_the_at_rest_lap_before_the_first_tombstone() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
     let rng = RefCell::new(TestRng(5));
     let pres = RefCell::new(AlwaysConfirm);
@@ -6214,6 +6370,7 @@ fn a_reset_retries_the_re_arm_after_the_sweep() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
     let rng = RefCell::new(TestRng(5));
     let pres = RefCell::new(AlwaysConfirm);
@@ -6312,6 +6469,7 @@ fn reset_under(refuse_once: Option<u16>, truncate_after: Option<u16>) -> Residue
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: Some(&OTP),
+        latched: false,
     };
     let mut fs = Fs::new(RefusedThenTruncated {
         inner: RamStorage::new(),
@@ -6391,6 +6549,7 @@ fn the_boot_pass_re_arms_the_lap_before_it_supersedes_a_pre_otp_key_slot() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let dev_otp = Device {
         otp_key: Some(&OTP),
@@ -6574,6 +6733,7 @@ fn pivman_printed_codec_property_fuzz() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
 
     for body in inputs {
@@ -7277,6 +7437,7 @@ fn a_torn_reset_never_leaves_a_key_behind_the_default_pin() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -7346,6 +7507,7 @@ fn a_torn_reset_never_leaves_a_key_behind_the_default_mgm() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let rng = RefCell::new(TestRng(11));
     let pres = RefCell::new(AlwaysConfirm);
@@ -7417,6 +7579,7 @@ fn scan_files_repairs_the_mgm_metadata_when_only_it_is_missing() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();
@@ -7529,6 +7692,7 @@ fn scan_files_rewrites_a_stale_mgm_head_when_the_key_is_re_minted() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mgm = files::key_fid(SLOT_CARDMGM);
     let mut fs = Fs::new(RamStorage::new());
@@ -7569,6 +7733,7 @@ fn the_mgm_metadata_repair_reads_the_surviving_keys_algorithm() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mgm_fid = files::key_fid(SLOT_CARDMGM);
     for (key, want) in [
@@ -7812,6 +7977,7 @@ fn only_a_failed_verify_revokes_the_standing_one() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     select(&mut app, &mut fs);
     auth_mgm(&mut app, &mut fs);
@@ -8010,6 +8176,7 @@ fn the_management_slots_default_flag_answers_for_the_slots_touch_policy() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let flag_for = |planted: [u8; 3]| -> u8 {
         let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
@@ -8760,6 +8927,7 @@ fn reset_with_ef_meta_stuck(stuck: bool) -> (Result<(), Sw>, bool, Vec<&'static 
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let answered = files::reset_files(&dev, &mut fs, &mut *rng.borrow_mut());
     unremovable.set(0);
@@ -8996,6 +9164,7 @@ fn a_faulted_meta_probe_does_not_retire_the_management_touch_gate() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     // ONE faulted EF_META read, not a stuck one: `meta_add` further down refuses a
     // persistently unreadable blob on its own, which would mask this guard entirely.
@@ -9254,6 +9423,7 @@ fn every_scan_files_guard_refuses_its_own_faulted_probe() {
             serial_hash: &HASH,
             serial_id: &SERIAL,
             otp_key: None,
+            latched: false,
         };
         let sw = crate::files::scan_files(&dev, &mut fs, &mut TestRng(3));
         medium.stick(None);
@@ -9281,6 +9451,7 @@ fn a_faulted_pivman_probe_does_not_discard_the_host_record() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let (backend, medium) = ProbeStuck::new();
     let mut fs = Fs::new(backend);
@@ -9346,6 +9517,7 @@ fn a_faulted_meta_probe_at_select_does_not_retire_the_management_touch_gate() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     medium.stick_once(rsk_fs::EF_META);
     let sw = crate::files::scan_files(&dev, &mut fs, &mut TestRng(3));
@@ -9380,6 +9552,7 @@ fn a_faulted_pivman_probe_does_not_report_an_escrow_revoked() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let printed_id = [0x5C, 0x03, 0x5F, 0xC1, 0x09];
     let new_key = [0x5Au8; 32];
@@ -9463,6 +9636,7 @@ fn a_faulted_pivman_probe_does_not_admit_a_hidden_printed_write() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
@@ -10419,6 +10593,7 @@ fn a_piv_reset_takes_the_pool() {
         serial_hash: &HASH,
         serial_id: &SERIAL,
         otp_key: None,
+        latched: false,
     };
     let mut fs = new_fs();
     for fid in (0xD100..=0xD17F)

@@ -76,6 +76,25 @@ fn a_declined_pad_leaves_the_gate_shut() {
     );
 }
 
+/// Past the latch a fused key that did not read shuts the gate before the PIN is
+/// compared: the fuse refused it, so no retry is spent and nothing opens.
+#[test]
+fn past_the_latch_an_unread_key_shuts_the_gate_without_an_attempt() {
+    fn unread(_: &mut [u8; 32]) -> bool {
+        false
+    }
+    let mut env = Env::new();
+    env.set_device_pin(PIN);
+    env.keys.mkek_source = Some(rsk_crypto::FusedKey::latched(unread));
+    let mut ui = env.ui(Pad::taps(&pin_entry(PIN)));
+    assert!(!env.local(&mut ui).local_pin_gate(PinScope::Device));
+    assert_eq!(
+        rsk_fido::passkeys::device_pin_retries_left(&mut env.fs.borrow_mut()),
+        Some(rsk_fido::consts::MAX_PIN_RETRIES),
+        "a refusal of the fuse is not an attempt"
+    );
+}
+
 #[test]
 fn a_spent_retry_budget_shuts_the_gate_for_good() {
     // The persistent counter is the real anti-bruteforce gate, and the panel is

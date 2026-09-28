@@ -93,7 +93,7 @@ owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 # derived column: the `rust` axis drops filenames containing `tests`, and the
 # `test` axis reads only `tests/**/*.py`.
 owner_of_the_kill = [
-  "crates/rsk-fido/src/reset_tests.rs:626 the_gate_set_defers_every_record_whose_absence_is_permissive",
+  "crates/rsk-fido/src/reset_tests.rs:627 the_gate_set_defers_every_record_whose_absence_is_permissive",
 ]
 # It used to be these three. The two torn-wipe tests stopped owning this kill when
 # provisioning began minting the grant (bcdDevice 0x09CB): `ensure_seed` runs at the
@@ -104,8 +104,8 @@ owner_of_the_kill = [
 # from three tests to one. The survivor is the structural test that reads the gate
 # set itself, which is what the patch actually changes.
 retired_owners_of_the_kill = [
-  "crates/rsk-fido/src/reset_tests.rs:1164 a_torn_reset_never_leaves_a_grant_without_its_pin",
-  "crates/rsk-fido/src/reset_tests.rs:1185 a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin",
+  "crates/rsk-fido/src/reset_tests.rs:1165 a_torn_reset_never_leaves_a_grant_without_its_pin",
+  "crates/rsk-fido/src/reset_tests.rs:1186 a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin",
 ]
 # AND THE SECOND FINDING. Five configurations report this invariant RED. Every
 # one of them falls on clause 3.

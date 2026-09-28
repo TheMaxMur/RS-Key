@@ -27,9 +27,39 @@ fn blank_row_writes() {
 #[test]
 fn our_value_is_idempotent() {
     assert_eq!(
-        lock_decision(PAGE58_LOCK_VALUE),
+        lock_decision(PAGE58_LATCH_VALUE),
         LockDecision::AlreadyLocked
     );
+}
+
+#[test]
+fn an_older_builds_lock_takes_the_latch() {
+    assert_eq!(lock_decision(PAGE58_LOCK_VALUE), LockDecision::Latch);
+    // A burn only sets bits, so the latch is the old lock plus bits, never minus.
+    assert_eq!(PAGE58_LATCH_VALUE & PAGE58_LOCK_VALUE, PAGE58_LOCK_VALUE);
+}
+
+#[test]
+fn the_latch_keeps_the_keys_readable_to_secure_code() {
+    let byte = PAGE58_LATCH_VALUE & 0xFF;
+    assert_eq!(byte & 0b11, 1, "LOCK_S must be 1 = secure read-only");
+    assert_eq!(
+        byte & !0b11,
+        PAGE58_LOCK_VALUE & 0xFF,
+        "NS and BL as the lock"
+    );
+    assert_eq!(PAGE58_LATCH_VALUE, byte | (byte << 8) | (byte << 16));
+}
+
+#[test]
+fn the_arms_close_on_the_latch_alone_by_majority() {
+    assert!(arms_closed(PAGE58_LATCH_VALUE));
+    // One copy short of its bit still reads latched; two do not.
+    assert!(arms_closed(0x3D_3D_3C));
+    assert!(!arms_closed(0x3D_3C_3C));
+    for raw in [0, PAGE58_LOCK_VALUE, 0x14_14_14, 0x3F_3F_3F] {
+        assert!(!arms_closed(raw), "{raw:#08x} closed the arms");
+    }
 }
 
 #[test]

@@ -95,14 +95,14 @@ owners_tagged = ["crates/rsk-fido/src/clientpin.rs:435 clientpin::issue_token �
 # implication. `issue_token` makes `tok.live` TRUE (`begin_using_token` at
 # :456), so an unguarded issuance IS a falsifying step, and the model's
 # `GetPinToken` (RSKeySecurityState.tla:694-703) is exactly this function.
-owners_tag_reading = "the tag is correct and the coverage is half. `git grep -n begin_using_token` gives two non-test callers, `clientpin.rs:456` inside the tagged function and `crates/rsk-fido/src/conformance/mod.rs:165`, and the second is not in any image — `assurance_gate.cfg_excluded` reports `lib.rs declares mod conformance under cfg(test)`, measured by running that derivation. So the antecedent has exactly ONE production maker and it is tagged. The consequent's DESTROYER is not: `crates/rsk-fido/src/reset.rs:107` `ctx.state.reset()`, ahead of the flash phases that delete EF_PIN, is what makes this invariant true, and reset.rs carries seven Refines tags — 006 four times, 004, 006A, 006B, 006C — and none for 008. formal/README.md:122 records that this invariant was refuted once by modelling ONLY the `keydev_dec` half of that call, so the untagged half is the half with the history"
+owners_tag_reading = "the tag is correct and the coverage is half. `git grep -n begin_using_token` gives two non-test callers, `clientpin.rs:456` inside the tagged function and `crates/rsk-fido/src/conformance/mod.rs:166`, and the second is not in any image — `assurance_gate.cfg_excluded` reports `lib.rs declares mod conformance under cfg(test)`, measured by running that derivation. So the antecedent has exactly ONE production maker and it is tagged. The consequent's DESTROYER is not: `crates/rsk-fido/src/reset.rs:107` `ctx.state.reset()`, ahead of the flash phases that delete EF_PIN, is what makes this invariant true, and reset.rs carries seven Refines tags — 006 four times, 004, 006A, 006B, 006C — and none for 008. formal/README.md:122 records that this invariant was refuted once by modelling ONLY the `keydev_dec` half of that call, so the untagged half is the half with the history"
 # The antecedent: every production site that can make `tok.live` true.
 owners_antecedent = [
   "crates/rsk-fido/src/state.rs:614 `begin_using_token` — the definition, `paut.in_use = true`; the model's `tok' = [live |-> TRUE, …]`",
   "crates/rsk-fido/src/clientpin.rs:456 — the ONLY call site in a buildable image, inside the tagged `issue_token`",
   "crates/rsk-fido/src/clientpin.rs:369 `get_pin_token` — the door, and where `pin_set_and_unblocked` gates issuance on the record",
   "crates/rsk-fido/src/clientpin.rs:729-737 `pin_set_and_unblocked` — §6.5's rule in Rust: `PinNotSet` when EF_PIN has no data",
-  "crates/rsk-fido/src/conformance/mod.rs:165 — the second caller, and NOT one: `mod conformance` is `#[cfg(test)]`, so it is in `assurance_gate.cfg_excluded` and reaches no image",
+  "crates/rsk-fido/src/conformance/mod.rs:166 — the second caller, and NOT one: `mod conformance` is `#[cfg(test)]`, so it is in `assurance_gate.cfg_excluded` and reaches no image",
 ]
 # The consequent: every production site that can make `pin.set` false, and the
 # one that must kill the token before it does.
@@ -119,11 +119,11 @@ owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 # The test that falls when that twin is applied — and it asserts about the RAM
 # SEED, not about the token. Recorded because the `co = 1` column says nothing
 # about which half of which invariant the killing assertion is about.
-owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1203 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed — its assertion is `state.keydev_dec.is_none()`, which is `SEC-FIDO-007`'s consequent and not this one's antecedent"
+owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1204 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed — its assertion is `state.keydev_dec.is_none()`, which is `SEC-FIDO-007`'s consequent and not this one's antecedent"
 # The nearest thing in the suite to a shipped twin of THIS implication, and why
 # it is not one: it drives an UNTORN reset, where the twin's patch still runs
 # `ctx.state.reset()` before returning, so the assertion holds under the mutant.
-owner_of_the_near_miss = "crates/rsk-fido/src/reset_tests.rs:32 reset_wipes_state_and_regenerates — asserts `!fs.has_data(EF_PIN)` at :76 and `state.paut.permissions == 0` at :95, which is both halves in one test; it tears nothing, so the ordering the invariant is about is exactly what it cannot see"
+owner_of_the_near_miss = "crates/rsk-fido/src/reset_tests.rs:33 reset_wipes_state_and_regenerates — asserts `!fs.has_data(EF_PIN)` at :77 and `state.paut.permissions == 0` at :96, which is both halves in one test; it tears nothing, so the ordering the invariant is about is exactly what it cannot see"
 # The sibling that owns the OTHER kind of grant. Written down because a reader
 # who finds no `gate.ppuat` clause here should not conclude the model has none.
 sibling_clause = "the persistent grant's half of the same shape is `NoAccessibleSecretWithoutGate`'s third clause, `Idle => (gate.ppuat => pin.set)` at formal/RSKeySecurityState.tla:1788 — SEC-FIDO-004's, not this one's. This invariant is the SESSION token's half and carries no `Idle` guard, so it also holds mid-operation, which the sibling clause does not claim"
@@ -264,7 +264,7 @@ stops_files_in_argument = "anything in a sixth file — and the measurement is t
 bound_crates = 2
 stops_crates = "a site outside the two crates, including any other holder of the record the consequent names"
 shipped_relation = "the four antecedent sites are the definition (state.rs:614), its one in-image caller (clientpin.rs:456), the door above it (clientpin.rs:369) and the record gate that door runs first (clientpin.rs:729-737); the five consequent sites are reset.rs:107, the phase-2 sweep at :124, the membership predicate at :231-255, `Fs::factory_wipe` at crates/rsk-fs/src/fs.rs:478 and the overwriting writer at clientpin.rs:893-894. Five files over two crates, against the ONE file `docs/authorization-slice.md:462-467` estimated (`crates/rsk-fido/src/clientpin.rs`) — the estimate named the tag's file, which is the antecedent half only, and the half with the recorded history is in a file it did not name. THIS BOUND IS A COUNT OF SITES, not a shrink of a shipped constant, because a review has no other unit; the same weakness the counterpart recorded, at the same group"
-cfg = "none — every site above is unconditional production code except crates/rsk-fido/src/conformance/mod.rs:165, which is cfg(test) and is counted apart in `owners_antecedent` rather than in these bounds"
+cfg = "none — every site above is unconditional production code except crates/rsk-fido/src/conformance/mod.rs:166, which is cfg(test) and is counted apart in `owners_antecedent` rather than in these bounds"
 features = "none"
 
 [[method]]
@@ -468,7 +468,7 @@ registered = "yes — assurance/platform.toml PLAT-TOKEN-001, pending, class mod
 id = "AS-TOK-2"
 statement = "One `pin.set` boolean stands for one record, and the display build's second PIN verifier `EF_DEVICE_PIN` is not it: a state where the device PIN exists and `EF_PIN` does not is a state this invariant cannot distinguish from a factory-fresh one."
 kind = "model abstraction"
-discharger = "reading the two records apart. crates/rsk-display/src/gates.rs:11 states in as many words that the backing record and the floor differ between the two PINs; crates/rsk-display/src/pin.rs:804 says the FIDO PIN goes to EF_PIN as the same verifier the host uses, and :498 that a host authenticatorReset clears both. Built-in UV verifies EF_PIN and not the device PIN (crates/rsk-fido/src/clientpin.rs:618, :656), so the antecedent's second door is gated on the same record the model has — which is what makes the single boolean sound TODAY and is exactly what a new pad-only issuance path would break"
+discharger = "reading the two records apart. crates/rsk-display/src/gates.rs:11 states in as many words that the backing record and the floor differ between the two PINs; crates/rsk-display/src/pin.rs:806 says the FIDO PIN goes to EF_PIN as the same verifier the host uses, and :500 that a host authenticatorReset clears both. Built-in UV verifies EF_PIN and not the device PIN (crates/rsk-fido/src/clientpin.rs:618, :656), so the antecedent's second door is gated on the same record the model has — which is what makes the single boolean sound TODAY and is exactly what a new pad-only issuance path would break"
 expressible = "no — the model has one `pin` record and expressing the alternative needs a second field, and scripts/assumption_gate.py accepts a boolean CONSTANT and nothing else"
 registered = "yes — assurance/platform.toml PLAT-TOKEN-002, pending, class model-abstraction"
 
@@ -476,7 +476,7 @@ registered = "yes — assurance/platform.toml PLAT-TOKEN-002, pending, class mod
 id = "AS-TOK-3"
 statement = "`issue_token` is the only production maker of the antecedent: every other caller of `begin_using_token` is outside every buildable image, so the one tagged owner is the whole antecedent side."
 kind = "model fidelity"
-discharger = "an enumeration that a derivation already in the tree can re-run, and it was re-run here rather than read. `git grep -n begin_using_token` gives 28 hits; all but two are in files `assurance_gate.production_rust` drops by name, and of the two remaining, `crates/rsk-fido/src/conformance/mod.rs:165` is reported by `assurance_gate.cfg_excluded` as `lib.rs declares mod conformance under cfg(test)`. That leaves `crates/rsk-fido/src/clientpin.rs:456`, inside the tagged function. What ends this row is a second in-image caller, and the derivation that would find it is the one just named"
+discharger = "an enumeration that a derivation already in the tree can re-run, and it was re-run here rather than read. `git grep -n begin_using_token` gives 28 hits; all but two are in files `assurance_gate.production_rust` drops by name, and of the two remaining, `crates/rsk-fido/src/conformance/mod.rs:166` is reported by `assurance_gate.cfg_excluded` as `lib.rs declares mod conformance under cfg(test)`. That leaves `crates/rsk-fido/src/clientpin.rs:456`, inside the tagged function. What ends this row is a second in-image caller, and the derivation that would find it is the one just named"
 expressible = "no — a fact about the call graph of one method, not about the model"
 registered = "yes — assurance/platform.toml PLAT-TOKEN-003, pending, class model-abstraction"
 
@@ -484,7 +484,7 @@ registered = "yes — assurance/platform.toml PLAT-TOKEN-003, pending, class mod
 id = "AS-TOK-4"
 statement = "`reset()` is the only modelled deleter of `EF_PIN`, and it is not the only deleter: `Fs::factory_wipe` bypasses `reset()` entirely and no configuration runs it, so the second path to a device with no PIN record is outside every verdict in this bundle."
 kind = "model abstraction"
-discharger = "reading the second path. crates/rsk-fido/src/reset.rs:183 and :216 both say in as many words that `Fs::factory_wipe` bypasses this file and needs the same rule; the entry point is crates/rsk-fs/src/fs.rs:478 and its one live caller is crates/rsk-display/src/pin.rs:769, the trusted display's factory reset (the Management reset that also called it was removed in bcdDevice 0x0A01). The model has no action for it. It is the SAME unmodelled path formal/README.md names as what would make the counterpart's invariant bite, reached here from the other side: for this property the question is whether the wipe kills the session, and the display answers it with a queued reboot that the model does not represent either"
+discharger = "reading the second path. crates/rsk-fido/src/reset.rs:183 and :216 both say in as many words that `Fs::factory_wipe` bypasses this file and needs the same rule; the entry point is crates/rsk-fs/src/fs.rs:478 and its one live caller is crates/rsk-display/src/pin.rs:771, the trusted display's factory reset (the Management reset that also called it was removed in bcdDevice 0x0A01). The model has no action for it. It is the SAME unmodelled path formal/README.md names as what would make the counterpart's invariant bite, reached here from the other side: for this property the question is whether the wipe kills the session, and the display answers it with a queued reboot that the model does not represent either"
 expressible = "no — a missing model action, not a constant; the alternative is writing the action"
 registered = "yes — assurance/platform.toml PLAT-TOKEN-004, pending, class model-abstraction"
 

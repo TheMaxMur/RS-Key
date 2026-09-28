@@ -144,19 +144,34 @@ covers the security boundary. This page covers feature and hardware gaps.
   notice. *Status: accepted. The desk-conditions measurement that IS reachable is
   `PLAT-TRNG-002`, and this corner gap is `PLAT-TRNG-003`, both in
   [platform assumptions](platform-assumptions.md).*
-- **The at-rest seals are not authenticated against a flash writer.** They keep a
-  flash *dump* from yielding key material, which is what the OTP burn buys. They
-  do not stop someone who can *write* flash over BOOTSEL from planting a record:
-  the pre-OTP key base derives from the public chip serial, and those arms stay
-  readable after the burn so an already-provisioned device survives the upgrade.
-  The boot migration then re-seals the planted record under the fused root.
-  *Status: needs a fuse-rooted latch that closes the migration window once the
-  device is provisioned; the analysis is audit run-27 #8, the decision is the
-  maintainer's because it makes `lock-page58` load-bearing for boot correctness.
-  The interim step is in: the page-58 lock burns only over a device whose boot
-  read every device-sealed record and left none on the pre-burn key (READ
-  `1E/07`). A PIN verifier cannot be told apart by arm, so it does not hold the
-  lock back.*
+- **A PIN verifier is not authenticated against a flash writer.** The at-rest
+  seals keep a flash *dump* from yielding key material, which is what the OTP
+  burn buys. Before the page-58 latch they do not stop someone who can *write*
+  flash over BOOTSEL from planting a record either: the pre-OTP key base derives
+  from the public chip serial, and those arms stay readable after the burn so an
+  already-provisioned device survives the upgrade. The latch closes them for
+  every device-sealed record: `rsk otp lock-page58` burns it only over a device
+  whose boot read every such record and left none on the pre-burn key (READ
+  `1E/07`), and from the next boot on none opens under that key or in the clear.
+  A PIN verifier, and an OpenPGP DEK copy wrapped under a PIN, keep that arm:
+  their format does not say which key made them, so one set before the burn may
+  still be there. A flash writer can plant one, which sets a PIN of their
+  choosing, and a FIDO PIN reaches past the PIN itself: with a touch and the
+  backup channel it exports the seed (unless `BACKUP_FINALIZE` sealed export off)
+  and loads a seed or an attestation key of the planter's (`BACKUP_LOAD`,
+  `ATT_IMPORT`), which then lands under the fused root. A legacy RP record an
+  older build stored in the clear still opens too, so a flash writer can also
+  rename the domain the credential manager lists for a credential the device
+  holds. *Status: the device-sealed half shipped in 0x0A67, for a device locked
+  by it; one an older build locked takes the latch at a second `lock-page58`.
+  Closing the PIN-derived half needs a format that says which key made a
+  verifier, a persistent-format decision and the maintainer's. The latch is read
+  once per boot, and a lock row that boot cannot read counts as no latch: closing
+  on a fault could strand a record a device never latched still holds. A latched
+  device whose fused key does not read at a command opens and seals nothing
+  rather than fall back to the chip-serial arm: most commands refuse (`6400`,
+  CTAP `0x7F`), and the OTP applet answers as if its slots were empty. The next
+  command reads the key again.*
 - **A PIN-derived record stays on the weaker root until its own reference is
   presented after the burn.** Every record sealed under the key base alone is
   moved to the fused root by a boot pass, but re-keying a PIN-derived one needs

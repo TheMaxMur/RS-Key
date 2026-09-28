@@ -113,6 +113,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   do not hold it back. It never burns what it would not have burnt before.
   `bcdDevice` 0x0A56 → 0x0A57; `rsk` 0.3.38.
 
+- **`rsk otp lock-page58` now also latches the migration shut** (audit run-27
+  #8). It burns `0x3D3D3D` where it burnt `0x3C3C3C`: the same lock against
+  BOOTSEL, with the secure side read-only too, which still reads the keys. A boot
+  that finds it opens no FIDO seed, attestation key or grant, device key, PIV
+  key, or OATH or OTP record under the pre-burn key or in the clear, so a record
+  planted there over BOOTSEL stays shut instead of moving under the fused key.
+  Past the latch a command that cannot read the fused key opens and seals
+  nothing, where it used to fall back to the chip-serial key: most refuse
+  (`6400` over CCID, `CTAP1_ERR_OTHER` over CTAP) before they spend a PIN retry
+  or write, a logout still answers, and the OTP applet answers as if its slots
+  were empty. The burn keeps its guards:
+  provisioned keys, a finished migration (READ `1E/07` = `0000`) and a touch. A
+  device an older build locked works as before, and `lock-page58` run again
+  burns the latch over its lock under the same guards. PIN verifiers and the
+  OpenPGP DEK copies wrapped under a PIN keep their pre-burn arm
+  ([limitations](docs/limitations.md)).
+  `bcdDevice` 0x0A66 → 0x0A67; `rsk` 0.3.40.
+
 - **A wrong OpenPGP password answers `6982`, as a YubiKey 5.8.0 does**, in
   VERIFY, CHANGE REFERENCE DATA and a RESET RETRY COUNTER with the reset code.
   It was `63Cx` with the tries left, which is what OpenPGP 3.4 §7.2.2 says, but

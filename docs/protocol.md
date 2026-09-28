@@ -858,7 +858,7 @@ firmware predates the rescue applet.
 | `1E` | `04` | `02` | — | epoch seconds (BE4) | READ RTC (Unix); `6985` if unset |
 | `1E` | `06` | `00` | — | `required(1) ‖ version(1) ‖ capacity(1)` | READ anti-rollback state |
 | `1E` | `07` | `00` | — | `left(2)` BE16 | READ what this boot's seal passes left under the pre-burn key or could not read: `01` FIDO seed/attestation key/grant, `02` device key, `04` PIV, `08` OATH (a legacy OTP-PIN too), `10` OTP; `FFFF` when the boot had no fused key to check with; `FFFE` when it could not read the fused key and so ran no seal pass (a page closed even to secure code; a replug reopens it) |
-| `1B` | `58` | `00` | `"LOCK58"` | — | ⚠️ **IRREVERSIBLE** — burn page-58 access lock (user-presence-gated; `6985` before the touch while `1E/07` is not `0000`) |
+| `1B` | `58` | `00` | `"LOCK58"` | — | ⚠️ **IRREVERSIBLE** — burn the page-58 access lock and migration latch, `3D3D3D` into row `0xFF5`, over a blank row or an older build's `3C3C3C` lock; `9000` with nothing burnt when the latch is there, `6985` over any other value (user-presence-gated; `6985` before the touch while `1E/07` is not `0000`). From the next boot on no device-sealed record opens under the pre-burn key or in the clear |
 | `1B` | `48` | `00` | `"ROLLBK"` | — | ⚠️ **IRREVERSIBLE** — set ROLLBACK_REQUIRED fuse (user-presence-gated) |
 | `1F` | `00` | `00` | — | — | REBOOT (warm; device drops off bus) |
 | `1F` | `01` | `00` | — | — | REBOOT to BOOTSEL bootloader |

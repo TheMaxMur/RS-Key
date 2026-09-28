@@ -491,6 +491,7 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
         serial_hash: &serial_hash,
         serial_id: &serial_id,
         otp_key: None,
+        latched: false,
     };
 
     let mut fido_state = rsk_fido::FidoState::new();

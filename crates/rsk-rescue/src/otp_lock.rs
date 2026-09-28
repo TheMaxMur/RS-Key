@@ -8,18 +8,26 @@
 /// OTP row of PAGE58_LOCK1 (= PAGE0_LOCK0 0xF80 + 58*2 + 1).
 pub const PAGE58_LOCK1_ROW: usize = 0xFF5;
 
-/// The only value the firmware will ever write to that row: byte 0x3C in each
-/// of the row's three majority-vote copies. 0x3C = LOCK_S 0 (secure read-write —
-/// the firmware keeps reading the keys), LOCK_NS 3 and LOCK_BL 3 (inaccessible).
-/// Once it lands, `picotool otp get` can no longer read the page-58 keys.
+/// The lock an older build burnt, and the host ritual still tries: byte 0x3C in
+/// each of the row's three majority-vote copies. 0x3C = LOCK_S 0 (secure
+/// read-write — the firmware keeps reading the keys), LOCK_NS 3 and LOCK_BL 3
+/// (inaccessible). Once it lands, `picotool otp get` can no longer read the keys.
 pub const PAGE58_LOCK_VALUE: u32 = 0x3C_3C_3C;
+
+/// The lock this build burns, and the fuse latch: 0x3D is 0x3C with LOCK_S 1
+/// (secure read-only, still reads the keys). Burnt only over a finished migration,
+/// it closes the arms below the OTP root ([`arms_closed`]); 0x3C to 0x3D sets bits.
+pub const PAGE58_LATCH_VALUE: u32 = 0x3D_3D_3D;
 
 /// What to do given the current raw value of PAGE58_LOCK1.
 #[derive(Debug, PartialEq, Eq)]
 pub enum LockDecision {
-    /// Row is blank — write the lock.
+    /// Row is blank — write the latch.
     Write,
-    /// Row already holds exactly our value — idempotent no-op.
+    /// Row holds an older build's lock — burn the latch over it, under the same
+    /// guards as a first lock.
+    Latch,
+    /// Row already holds the latch — idempotent no-op.
     AlreadyLocked,
     /// Row holds some other (partial / foreign) value — refuse. OTP bits only
     /// ever go 0→1, so ORing our value into a non-zero row could land a
@@ -73,9 +81,17 @@ pub fn key_rows(raw: impl IntoIterator<Item = Option<u32>>) -> KeyRows {
 pub fn lock_decision(current_raw: u32) -> LockDecision {
     match current_raw {
         0 => LockDecision::Write,
-        PAGE58_LOCK_VALUE => LockDecision::AlreadyLocked,
+        PAGE58_LOCK_VALUE => LockDecision::Latch,
+        PAGE58_LATCH_VALUE => LockDecision::AlreadyLocked,
         _ => LockDecision::Unexpected,
     }
+}
+
+/// Whether PAGE58_LOCK1 carries the latch, the row's three copies voting as the
+/// hardware reads them: the boot then closes every arm below the OTP root.
+pub fn arms_closed(raw: u32) -> bool {
+    let byte = |i: u32| (raw >> (8 * i)) & 0xFF;
+    crate::rollback::majority([byte(0), byte(1), byte(2)]) == PAGE58_LATCH_VALUE & 0xFF
 }
 
 #[cfg(test)]
