@@ -80,7 +80,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   ([the FIDO guide](docs/guides/fido2.md#previewsign-experimental-off-by-default)).
   `bcdDevice` 0x0A65 → 0x0A66. On a display build the touch that releases a
   signature asks "Sign data?" where it asked "Sign in?", since the host chose what
-  it signs. `bcdDevice` 0x0A67 → 0x0A68.
+  it signs. `bcdDevice` 0x0A67 → 0x0A68. The two titles are literals again, where
+  the display's title census reads them: refactor, no behaviour change.
+  `bcdDevice` 0x0A68 → 0x0A69.
 
 ### Changed
 

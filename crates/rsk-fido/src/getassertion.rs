@@ -793,16 +793,17 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // credential with no stored user name (older / U2F).
     let account = sel.as_ref().map(|c| c.user_name.as_bytes()).unwrap_or(&[]);
     // A previewSign signature is over bytes the host chose, and this touch releases
-    // it: the screen asks to sign data, which "Sign in?" would not have said.
+    // it: the screen asks to sign data. Titles stay literals for rsk-ui's census.
     #[cfg(feature = "preview-sign")]
-    let title = if preview.is_some() {
-        "Sign data?"
-    } else {
-        "Sign in?"
-    };
+    let ask = want_up.then(|| {
+        if preview.is_some() {
+            crate::Confirm::new("Sign data?", req.rp_id.as_bytes(), account)
+        } else {
+            crate::Confirm::new("Sign in?", req.rp_id.as_bytes(), account)
+        }
+    });
     #[cfg(not(feature = "preview-sign"))]
-    let title = "Sign in?";
-    let ask = want_up.then(|| crate::Confirm::new(title, req.rp_id.as_bytes(), account));
+    let ask = want_up.then(|| crate::Confirm::new("Sign in?", req.rp_id.as_bytes(), account));
     let up = ctx.user_presence_test(req, ask)?;
 
     // CTAP 2.3 §12.4 largeBlob, run here so the gesture the assertion asked for is
