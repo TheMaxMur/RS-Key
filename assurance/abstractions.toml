@@ -122,10 +122,10 @@ body = '''
 - **A registration with a PIN set and no token — CLOSED, and what is left of it
   is one conjunct.** CTAP 2.1 §6.1.2 steps 7/10 serve a NON-discoverable
   credential on presence alone even where a PIN is set
-  (`makecredential.rs:600-602`), and `Next` carries it now:
+  (`makecredential.rs:622-624`), and `Next` carries it now:
   `RegisterNdStart` / `RegisterNdTouched` / `RegisterNdRefused`, guarded by
   `McTokenlessGuard(FALSE)`. It writes nothing, because
-  `makecredential.rs:833-834` stores only under `req.rk`, so it carries no `rp`
+  `makecredential.rs:896-897` stores only under `req.rk`, so it carries no `rp`
   either. What stays narrow is the `~tok.live` conjunct in that guard: above
   `state.rs:638` the same touch SPENDS a live token without binding it, and tier
   A has no word for that edge — its `UseMc` admits an authorized event only

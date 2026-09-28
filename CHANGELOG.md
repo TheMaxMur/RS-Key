@@ -62,6 +62,23 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   at its first ATTEST. No host can replace the key or its certificate
   ([limitations](docs/limitations.md)).
   `bcdDevice` 0x0A06 → 0x0A07.
+- **`previewSign`, experimental and off by default** — Yubico's draft WebAuthn
+  extension for signing a site's own data, in the draft v4 shape python-fido2
+  2.2.1 speaks (`4-SNAPSHOT-2025-08-21`), behind the `preview-sign` build
+  feature. A registration that asks for ESP256-split-ARKG (COSE `-65539`) mints an
+  ARKG-P256 seed beside the credential and returns its attestation object in
+  `unsignedExtensionOutputs`; an assertion then signs the site's SHA-256 digest
+  with a key the site derived from that seed. Nothing is stored: the signing key
+  handle is the draft's example MAC encoding, so no flash record changes shape.
+  Refusals come in a YubiKey 5.8.0's order, all before the touch: `flags` outside
+  the draft's three (`0x2C`), then an `alg` that is not a negative integer
+  (`0x11`), then no supported algorithm (`0x26`). Two deliberate deviations: a key
+  asked for `unattended` is made and attested `require-up`, so every signature
+  takes a touch; and an ML-DSA credential refuses the extension (`0x26`), its
+  response having no room for a second attestation object. The default image
+  compiles none of it and getInfo does not advertise it
+  ([the FIDO guide](docs/guides/fido2.md#previewsign-experimental-off-by-default)).
+  `bcdDevice` 0x0A65 → 0x0A66.
 
 ### Changed
 

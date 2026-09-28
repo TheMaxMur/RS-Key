@@ -102,7 +102,7 @@ fn get_info_fields() {
 
     // 0x02 extensions
     assert_eq!(d.u8().unwrap(), 0x02);
-    assert_eq!(d.array().unwrap().unwrap(), 7);
+    assert_eq!(d.array().unwrap().unwrap(), EXTENSIONS);
     assert_eq!(d.str().unwrap(), "credBlob");
     assert_eq!(d.str().unwrap(), "credProtect");
     assert_eq!(d.str().unwrap(), "hmac-secret");
@@ -110,6 +110,8 @@ fn get_info_fields() {
     assert_eq!(d.str().unwrap(), "minPinLength");
     assert_eq!(d.str().unwrap(), "hmac-secret-mc");
     assert_eq!(d.str().unwrap(), "thirdPartyPayment");
+    #[cfg(feature = "preview-sign")]
+    assert_eq!(d.str().unwrap(), "previewSign");
 
     // 0x03 aaguid
     assert_eq!(d.u8().unwrap(), 0x03);
@@ -291,6 +293,30 @@ fn str_member(key: u32) -> std::vec::Vec<std::string::String> {
         d.skip().unwrap();
     }
     std::vec::Vec::new()
+}
+
+/// previewSign is advertised by its own build and by no other: the default list is
+/// the seven it always was, name for name.
+#[test]
+fn preview_sign_is_advertised_only_on_its_build() {
+    let large_blob = if LARGE_BLOB_EXT {
+        "largeBlob"
+    } else {
+        "largeBlobKey"
+    };
+    let mut want = std::vec![
+        "credBlob",
+        "credProtect",
+        "hmac-secret",
+        large_blob,
+        "minPinLength",
+        "hmac-secret-mc",
+        "thirdPartyPayment",
+    ];
+    if cfg!(feature = "preview-sign") {
+        want.push("previewSign");
+    }
+    assert_eq!(str_member(0x02), want);
 }
 
 /// `transportsForReset` (0x1A) tells a platform where a reset can be driven. One

@@ -94,7 +94,7 @@ match more than one file in the tree.
 
 | Invariant | What it asserts here | The Rust construct that owns it |
 |---|---|---|
-| `NoAuthorizationBypass` | No protected operation completes without the live authorization its own gate requires | `crates/rsk-fido/src/`: `getassertion.rs:431-434` · `makecredential.rs:570-573` · `config.rs:242-244` · `credmgmt.rs:300` · retry ladder `clientpin.rs:776-869` · soft lock `state.rs:285-293` + `crates/rsk-device/src/ctap.rs:242-249` · reset window `reset.rs:258-264` · walk owner `state.rs:169-180`, `credmgmt.rs:363` |
+| `NoAuthorizationBypass` | No protected operation completes without the live authorization its own gate requires | `crates/rsk-fido/src/`: `getassertion.rs:449-452` · `makecredential.rs:592-595` · `config.rs:242-244` · `credmgmt.rs:300` · retry ladder `clientpin.rs:776-869` · soft lock `state.rs:285-293` + `crates/rsk-device/src/ctap.rs:242-249` · reset window `reset.rs:258-264` · walk owner `state.rs:169-180`, `credmgmt.rs:363` |
 | `NoCrossTransportTouchConsumption` | A presence decision produced for one transport is never applied to another — neither a confirm nor a cancel | `crates/rsk-device/src/presence.rs`: `Arbiter::pending_for` · `::request_cancel` / `::cancel_otp_wait` (the scope guards) · `ButtonWait::wait` (the `spent` latch). `firmware/src/presence.rs` keeps only the board half. **The stale-cancel drop that carries this property is the one at the wait's ENTRY.** The exit clear cannot substitute for it — a cancel latched by a dispatch that never entered `wait` is never seen by the exit — see "The cancel that no wait was open for" |
 | `NoTokenAfterInvalidation` | A grant invalidated by a PIN change, PIN set, reset, `stopUsingPinUvAuthToken` or power cycle never authorizes again | `crates/rsk-fido/src/`: `state.rs:596-610` (`reset_pin_uv_auth_token`) · `state.rs:645-660` (`stop_using_token`) · `state.rs:694-707` (`expire_stale_token`) · `clientpin.rs:324-335` · `seed.rs:346-347` (`clear_ppuat`) |
 | `NoAccessibleSecretWithoutGate` | No live secret is reachable while the gate record that protects it is gone | `crates/rsk-fido/src/`: `reset.rs:213-256` (`is_fido_gate_fid`) · `reset.rs:98-120` (phase order) · `credmgmt.rs:271-288` (`authorized_by_ppuat`) · `clientpin.rs:227-231`, `:880-884` |
@@ -755,7 +755,7 @@ still red, on the same mutant as before the repair.**
 One mutant was **not** caught on the first attempt, and that mattered more than
 the eleven that were. `BugStopUsingKeepsPerms` ran green over 6 275 376 distinct states
 because the model gave every call site one uniform guard including "the token
-is in use". The code does not: `getassertion.rs:432` and `makecredential.rs:573`
+is in use". The code does not: `getassertion.rs:450` and `makecredential.rs:595`
 test `user_verified()`, but `config.rs:242-244` and `credmgmt.rs:300` test the
 MAC and the permission bits **only**. For those two the single thing standing
 between a stopped or expired token and a live authorization is that
@@ -1892,7 +1892,7 @@ what the registry refuses:
   completes only through the card that names it. The PIN pad cannot substitute:
   its title is `'static`, *never* RP data
   (`crates/rsk-fido/src/clientpin.rs:583-584`, consumed at
-  `getassertion.rs:667-668`, `makecredential.rs:727-728`, `u2f.rs:106`);
+  `getassertion.rs:685-686`, `makecredential.rs:768-769`, `u2f.rs:106`);
 - `StaleTouchApprovesNothing` — the touch controller reports *level, not
   edges*, so a finger already down when the card paints would read as a tap on
   it; the release edge is the whole defence, and it is two layers — the ambient
@@ -2261,11 +2261,11 @@ carrying no `pinUvAuthParam`, and the reason is structural rather than a want of
 cleverness: **the model expresses a refusal by DISABLING an action**, so a
 refused command reaches a replay as a stutter — and a *successful* one that
 stores nothing is the same stutter. `rk` is the only thing that separates them,
-CTAP 2.1 §6.1.2 step 10 being the whole rule (`makecredential.rs:597-603`): a
+CTAP 2.1 §6.1.2 step 10 being the whole rule (`makecredential.rs:619-625`): a
 discoverable credential still needs a token where a PIN is set, a non-discoverable
 one is served on presence alone. Step 6's `alwaysUv` arm was deliberately NOT in
 `McTokenlessRefused`: it refuses only where built-in UV is unavailable
-(`makecredential.rs:585-593`), which would need `req.uv` and the pad's
+(`makecredential.rs:607-615`), which would need `req.uv` and the pad's
 availability recorded, and asserting it from `gate.alwaysUv` alone would be an
 uncited claim the code does not make. **That argument is wrong about the rule and
 the recording refuted it — see "The arm that was left out was wrong" below;** the
@@ -2714,7 +2714,7 @@ and only the gated copy had followed the code:
 
 | Call site | `formal/README.md` | `state_kani.rs` / `credmgmt_kani.rs` | out by |
 |---|---|---|---|
-| getAssertion's UV gate | `getassertion.rs:431-434` | `376`–`379` — the zero-length-probe error mapping | 8 |
+| getAssertion's UV gate | `getassertion.rs:449-452` | `376`–`379` — the zero-length-probe error mapping | 8 |
 | authenticatorConfig's gate | `config.rs:242-244` | `222-224` — a comment about `pinUvAuthProtocol: 0` | 21 |
 | credentialManagement's gate | `credmgmt.rs:300`, the item | `277` — the doc comment line `/// has been located.`, repaired to `284`, the condition | 7 |
 
@@ -3148,10 +3148,10 @@ than a settled abstraction.
 - **A registration with a PIN set and no token — CLOSED, and what is left of it
   is one conjunct.** CTAP 2.1 §6.1.2 steps 7/10 serve a NON-discoverable
   credential on presence alone even where a PIN is set
-  (`makecredential.rs:600-602`), and `Next` carries it now:
+  (`makecredential.rs:622-624`), and `Next` carries it now:
   `RegisterNdStart` / `RegisterNdTouched` / `RegisterNdRefused`, guarded by
   `McTokenlessGuard(FALSE)`. It writes nothing, because
-  `makecredential.rs:833-834` stores only under `req.rk`, so it carries no `rp`
+  `makecredential.rs:896-897` stores only under `req.rk`, so it carries no `rp`
   either. What stays narrow is the `~tok.live` conjunct in that guard: above
   `state.rs:638` the same touch SPENDS a live token without binding it, and tier
   A has no word for that edge — its `UseMc` admits an authorized event only

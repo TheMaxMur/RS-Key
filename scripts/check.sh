@@ -522,6 +522,11 @@ run "clippy (largeblob-ext fw)"   cargo clippy -p firmware --features largeblob-
 run "clippy (largeblob-ext host)" cargo clippy -p rsk-fido --features largeblob-ext --target "$HOST" --all-targets -- -D warnings
 run_tests "test (largeblob-ext)"        cargo test -p rsk-fido --features largeblob-ext --target "$HOST"
 run "clippy (emu largeblob-ext)"  cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets --features largeblob-ext -- -D warnings
+# `preview-sign` compiles Yubico's draft previewSign extension, off by default: a
+# feature no default row builds is code nothing reads, so it gets its own rows.
+run "clippy (preview-sign fw)"    cargo clippy -p firmware --features preview-sign -- -D warnings
+run "clippy (preview-sign host)"  cargo clippy -p rsk-fido --features preview-sign --target "$HOST" --all-targets -- -D warnings
+run_tests "test (preview-sign)"         cargo test -p rsk-fido --features preview-sign --target "$HOST"
 # The `bench` latency-harness vendor command (never shipped) is only compiled with
 # its feature on, so gate that build here — otherwise a signature change to the EC /
 # KDF hot paths it times would rot the bench module unseen (keep it compiling). The

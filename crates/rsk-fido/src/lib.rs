@@ -234,6 +234,13 @@ mod conformance;
 #[cfg(feature = "bench")]
 pub mod bench;
 
+// The experimental `previewSign` extension and the ARKG-P256 half it runs on. The
+// `preview-sign` feature gates both, so a default build carries none of it.
+#[cfg(feature = "preview-sign")]
+mod arkg;
+#[cfg(feature = "preview-sign")]
+pub mod previewsign;
+
 #[cfg(test)]
 #[path = "test_pins.rs"]
 mod test_pins;

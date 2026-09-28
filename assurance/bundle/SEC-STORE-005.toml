@@ -222,7 +222,7 @@ r_column = "the firmware column. assurance/configurations.toml records that SEC-
 gate_ghost = "ghost-gate: ok — 21 action(s) record NoAuthorizationBypass over 24 route(s), consulting 11 guard(s)"
 gate_ledger = "token-refinement-gate: GREEN keys=2 api=16 volatile=11/10 persistent=14/5 outcomes=7/6 walk=4 softlock=12 window=2 testonly=1"
 gate_assumption = "5 standing assumption(s) AlwaysUvShipped TRUE=5 FALSE=91 ForceChangeModelled TRUE=3 FALSE=93 PowerOnClearsScratch2 TRUE=11 FALSE=4 RekeyOrderModelled TRUE=2 FALSE=13 WidePerms TRUE=3 FALSE=93"
-gate_matrix = "matrix-gate: ok — 40 P0-family properties × 31 build configurations = 1240 cells (37 covered, 143 equivalent, 0 conditional, 106 out-of-scope, 954 gap)"
+gate_matrix = "matrix-gate: ok — 40 P0-family properties × 32 build configurations = 1280 cells (37 covered, 143 equivalent, 0 conditional, 109 out-of-scope, 991 gap)"
 gate_registry = "SEC-STORE-005 CacheHonest MODELLED-ONLY cfgs=4 mut=1 co=1 kani=0 fuzz=0 rust=1 test=0"
 
 [[artifact]]

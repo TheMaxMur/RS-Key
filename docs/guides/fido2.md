@@ -196,6 +196,44 @@ this device with no smart card involved. See [age.md](age.md).
 Enterprise attestation is supported but off until enabled. The `ep` option flips
 to true once an org key is installed. See [attestation.md](attestation.md).
 
+## previewSign (experimental, off by default)
+
+A build option, not part of the default image:
+
+```sh
+cargo build --release -p firmware --features preview-sign
+```
+
+The default image carries none of it, and its getInfo does not list it.
+
+`previewSign` is Yubico's draft WebAuthn extension for signing a site's own data,
+not a login challenge, with a key the device holds. This build speaks draft v4,
+the shape python-fido2 2.2.1's `PreviewSignExtension` sends. At registration the
+site asks for ESP256-split-ARKG (COSE `-65539`). The device then mints an ARKG-P256
+seed for the credential and returns its public half inside a second attestation
+object. The site derives signing keys from that seed on its own, as many as it
+likes. To sign, it sends the SHA-256 digest of its data plus the derived key's
+ARKG arguments. The device derives the matching private key, and the signature
+verifies as plain ESP256 over the data.
+
+Nothing is stored. The signing key handle ties the seed to its credential with a
+MAC, so the extension changes no flash record.
+
+Deliberate deviations from the draft:
+
+- **An `unattended` key still needs a touch.** The draft lets a site ask for
+  signatures without user presence (`flags` `0b000`). Here that key is created as
+  `require-up` and its attestation says so. A signature request with `up: false`
+  answers `CTAP2_ERR_UP_REQUIRED` (`0x3B`).
+- **Not with an ML-DSA credential.** Asking for previewSign on a credential whose
+  algorithm is ML-DSA is refused with `CTAP2_ERR_UNSUPPORTED_ALGORITHM` (`0x26`).
+  That response would carry two attestation objects beside a multi-kilobyte key,
+  and it would not fit one CTAPHID message.
+
+Only ESP256-split-ARKG is served. The other algorithms the drafts named (ESP256,
+ES256, ESP256-split) are refused with `0x26`, as the draft says. The COSE ids are
+the ARKG draft's placeholders, so expect a later build to change them.
+
 ## Factory reset
 
 ```sh

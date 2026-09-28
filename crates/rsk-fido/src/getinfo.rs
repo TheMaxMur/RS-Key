@@ -28,6 +28,9 @@ use crate::consts::{
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
 
+/// How many extensions getInfo names (0x02).
+const EXTENSIONS: u64 = 7 + if cfg!(feature = "preview-sign") { 1 } else { 0 };
+
 /// Encode the getInfo response map into `out`; returns the byte length.
 /// `pin_set` reflects whether a PIN is configured (`options.clientPin`);
 /// `min_pin_len` / `force_change` mirror EF_MINPINLEN (0x0D / 0x0C).
@@ -128,9 +131,10 @@ fn write_info<W: Write>(
     enc.str("FIDO_2_0")?.str("FIDO_2_1")?.str("FIDO_2_3")?;
 
     // 0x02 extensions — exactly one of the two large-blob designs (CTAP 2.3
-    // §12.4 forbids both), so the list length does not change either way.
+    // §12.4 forbids both), so the list length does not change either way; only a
+    // `preview-sign` build lengthens it, by previewSign.
     enc.u8(0x02)?
-        .array(7)?
+        .array(EXTENSIONS)?
         .str("credBlob")?
         .str("credProtect")?
         .str("hmac-secret")?
@@ -142,6 +146,8 @@ fn write_info<W: Write>(
         .str("minPinLength")?
         .str("hmac-secret-mc")?
         .str("thirdPartyPayment")?;
+    #[cfg(feature = "preview-sign")]
+    enc.str(crate::previewsign::NAME)?;
 
     // 0x03 aaguid
     enc.u8(0x03)?.bytes(&AAGUID)?;

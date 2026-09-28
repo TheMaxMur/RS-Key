@@ -232,8 +232,8 @@ columns = [
   "firmware-strict-up", "firmware-strict-up-pqc", "firmware-pico",
   "firmware-2mb", "firmware-16mb", "firmware-strict-config", "keygen-bench",
   "core1-stats", "bench", "fido-conformance", "ea-conformance-rpid",
-  "largeblob-ext", "abrobot-16m", "abrobot-4m", "seeed-xiao", "tenstar-usb",
-  "waveshare-one", "waveshare-touch-lcd",
+  "largeblob-ext", "preview-sign", "abrobot-16m", "abrobot-4m", "seeed-xiao",
+  "tenstar-usb", "waveshare-one", "waveshare-touch-lcd",
 ]
 disposition = "out-of-scope"
 basis = "crate-absent"
@@ -924,6 +924,16 @@ forbids both), it carries four `check.sh` rows, and it has zero flake packages \
 — so nothing in the release axis would ever have given it a cell. Does the \
 swapped surface move any credential-management or authorization transition the \
 P0-launch models name?"""
+
+[[question]]
+column = "preview-sign"
+owner = "contributor"
+settled_by = "evidence"
+text = """
+Yubico's draft previewSign extension, off by default: a registration that asks \
+for it gains an ARKG seed and a second attestation object, and an assertion \
+signs the site's digest behind the same UP and UV gates, storing nothing. Does \
+either path move a gate, a counter or a record a P0-launch model names?"""
 
 [[question]]
 column = "abrobot-16m"

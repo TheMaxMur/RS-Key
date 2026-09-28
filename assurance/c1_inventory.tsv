@@ -221,7 +221,7 @@ needs_confirm	crates/rsk-fido/src/clientpin.rs:575	11	decides	D5	decides whether
 builtin_uv_step	crates/rsk-fido/src/clientpin.rs:588	24	decides	D1	returns UvOutcome::BUILTIN (uv=true, up_collected=true) — i.e. covers both uv and the second gesture; Deny stays final	SEC-FIDO-001,SEC-DISP-003
 builtin_uv_ready	crates/rsk-fido/src/clientpin.rs:613	13	decides	D1	the lockout floor before entry on the panel: no EF_PIN → NotAllowed, zero budget or soft-lock → UvBlocked	SEC-LAT-001
 consent_for_permissions	crates/rsk-fido/src/clientpin.rs:627	24	decides	D1	spends the confirmation gesture and (:641) names pcmr under its own heading, because it is not a session grant	SEC-DISP-001
-builtin_uv_enabled	crates/rsk-fido/src/clientpin.rs:652	6	decides	D5	the uv option predicate that makecredential.rs:455/:589 and getassertion.rs:333/:459 read as the condition to refuse/start the ceremony	SEC-FIDO-001
+builtin_uv_enabled	crates/rsk-fido/src/clientpin.rs:652	6	decides	D5	the uv option predicate that makecredential.rs:464/:589 and getassertion.rs:348/:459 read as the condition to refuse/start the ceremony	SEC-FIDO-001
 builtin_uv	crates/rsk-fido/src/clientpin.rs:659	15	decides	D1	starts the ceremony on the panel; the panel rejects a short entry without verify, so no attempt is spent	SEC-LAT-002
 perform_builtin_uv	crates/rsk-fido/src/clientpin.rs:675	26	decides	D1	a non-entry (Declined/Timeout/Cancelled) returns BEFORE verify and spends no attempt; a real mismatch spends one	SEC-LAT-002
 get_uv_retries	crates/rsk-fido/src/clientpin.rs:702	15	marshals	M	encodes the same counter as getPINRetries, under key 0x05	-
@@ -283,7 +283,7 @@ stop_using_token	crates/rsk-fido/src/state.rs:645	16	decides	D4	the registered R
 retire_sequences_except	crates/rsk-fido/src/state.rs:662	31	decides	D4	clears every multi-step sequence the command does not continue — §6 "exclusively preceded"	SEC-FIDO-003
 expire_stale_token	crates/rsk-fido/src/state.rs:694	14	decides	D1	token expiry on the inactivity window or the absolute ceiling — checked before every CBOR command	SEC-FIDO-003
 expire_stale_sequences	crates/rsk-fido/src/state.rs:709	17	decides	D4	the only bound on a walk opened by a pcmr token (it has no timer), and on largeBlob on a key without a PIN	SEC-FIDO-003
-user_verified	crates/rsk-fido/src/state.rs:727	4	decides	D5	the uv predicate on which makecredential.rs:573 and getassertion.rs:432 decide to refuse	SEC-FIDO-001
+user_verified	crates/rsk-fido/src/state.rs:727	4	decides	D5	the uv predicate on which makecredential.rs:595 and getassertion.rs:450 decide to refuse	SEC-FIDO-001
 user_present	crates/rsk-fido/src/state.rs:732	8	decides	D5	getUserPresentFlagValue §6.5.5.7; measured: there are no production callers — into the core by rule 1	SEC-FIDO-001
 verify_token	crates/rsk-fido/src/state.rs:741	4	decides	D1	the check of the pinUvAuthParam MAC under the current token is itself the §6.5.5.7 token door	SEC-FIDO-001,SEC-FIDO-003
 idle_past	crates/rsk-fido/src/state.rs:747	5	decides	D5	the §6 window between walk steps: the predicate on which expire_stale_sequences decides to clear the cursor	SEC-FIDO-003
@@ -485,7 +485,7 @@ encode_body	crates/rsk-fido/src/credential.rs:303	64	marshals	M	CBOR encoding of
 try_format	crates/rsk-fido/src/credential.rs:368	37	decides	D2	poly1305 tag check under AAD=rpIdHash: its res.ok()? is exactly the moment the plaintext becomes reachable	SEC-FIDO-004
 verify_decrypt	crates/rsk-fido/src/credential.rs:399	56	decides	D2	selects the key label — for the oldest format it takes it FROM THE WIRE (cred_id[..4]), i.e. decides which key to open with	SEC-FIDO-004
 credential_load	crates/rsk-fido/src/credential.rs:448	35	decides	D2	Some(..) means "this credential belongs to this rp on this device"; the U2F branch authorizes by the verify_key MAC	SEC-FIDO-004
-parse_body	crates/rsk-fido/src/credential.rs:484	45	decides	D5	the default credProtect is set here (field absent → 0), and that is the condition of the uv gate in getassertion.rs:266 and u2f.rs:282	SEC-FIDO-001
+parse_body	crates/rsk-fido/src/credential.rs:484	45	decides	D5	the default credProtect is set here (field absent → 0), and that is the condition of the uv gate in getassertion.rs:281 and u2f.rs:282	SEC-FIDO-001
 resident_keys_off_id	crates/rsk-fido/src/credential.rs:563	8	decides	D5	decides what the signing key is derived from — the stable resident id or the box	-
 resident_has_trailer	crates/rsk-fido/src/credential.rs:572	6	decides	M	record layout test: whether there is a prefix with the cached point	-
 resident_key_input	crates/rsk-fido/src/credential.rs:603	23	decides	D2	returns the key-derivation input: exactly which key answers for the signature, hmac-secret and largeBlobKey	SEC-FIDO-004

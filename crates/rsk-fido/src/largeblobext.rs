@@ -303,10 +303,19 @@ impl GaOutput {
 }
 
 /// Write the whole `unsignedExtensionOutputs` map (makeCredential response field
-/// `0x06`): `{"largeBlob": {"supported": true}}`. One entry, because this is the
-/// only extension on this device with an unsigned output.
+/// `0x06`): `{"largeBlob": {"supported": true}}`. One entry: the only other unsigned
+/// output, previewSign's, is a `preview-sign` build's, which writes the map itself.
 pub fn write_mc_output<W: Write>(enc: &mut Encoder<W>) -> Result<(), Error<W::Error>> {
     enc.map(1)?.str("largeBlob")?.map(1)?;
+    enc.str("supported")?.bool(true)?;
+    Ok(())
+}
+
+/// That map's `"largeBlob": {"supported": true}` entry, for the `preview-sign`
+/// build's map, which has previewSign's entry too.
+#[cfg(feature = "preview-sign")]
+pub fn write_mc_entry<W: Write>(enc: &mut Encoder<W>) -> Result<(), Error<W::Error>> {
+    enc.str("largeBlob")?.map(1)?;
     enc.str("supported")?.bool(true)?;
     Ok(())
 }

@@ -43,6 +43,8 @@ use crate::hmacsecret::{self, HmacSecretReq, SALT_AUTH_MAX, SALT_ENC_MAX};
 use crate::journal;
 use crate::keyderiv::{KEY_HANDLE_LEN, fido_load_key, verify_key};
 use crate::largeblobext::{self, GaInput};
+#[cfg(feature = "preview-sign")]
+use crate::previewsign;
 use crate::seed::{report_sign_counter, set_cred_sign_counter};
 use crate::state::{AssertionState, MAX_ASSERTION_CREDS, PERM_GA};
 use crate::{Ctx, Rng};
@@ -54,6 +56,12 @@ const MAX_ALLOW: usize = MAX_CREDENTIAL_LIST_LEN;
 const MAX_CRED_ID: usize = CRED_BOX_MAX;
 /// The stored user.id is capped at create, so echoing this many is lossless.
 const MAX_USER_ID: usize = USER_ID_MAX;
+/// Ceiling of getAssertion's authData extension map: credBlob, hmac-secret and
+/// thirdPartyPayment together, plus previewSign's signature on a `preview-sign` build.
+#[cfg(not(feature = "preview-sign"))]
+const GA_EXT_MAX: usize = 320;
+#[cfg(feature = "preview-sign")]
+const GA_EXT_MAX: usize = 320 + previewsign::GA_EXT_MAX;
 
 pub(crate) struct Request<'a> {
     rp_id: &'a str,
@@ -81,6 +89,9 @@ pub(crate) struct Request<'a> {
     ext_large_blob_key: Option<bool>,
     /// The CTAP 2.3 `largeBlob` extension input, on a `largeblob-ext` build.
     ext_large_blob: GaInput<'a>,
+    /// The `previewSign` extension input, on a `preview-sign` build.
+    #[cfg(feature = "preview-sign")]
+    ext_preview_sign: previewsign::GaInput<'a>,
     hmac_secret: HmacSecretReq<'a>,
 }
 
@@ -101,6 +112,8 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         ext_third_party_payment: false,
         ext_large_blob_key: None,
         ext_large_blob: GaInput::Absent,
+        #[cfg(feature = "preview-sign")]
+        ext_preview_sign: previewsign::GaInput::default(),
         hmac_secret: HmacSecretReq::default(),
     };
     let n = def_map(&mut d)?;
@@ -153,6 +166,8 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
             // any unknown one, so its downstream checks stay inert.
             "largeBlobKey" if !LARGE_BLOB_EXT => req.ext_large_blob_key = Some(cbor(d.bool())?),
             "largeBlob" if LARGE_BLOB_EXT => req.ext_large_blob = largeblobext::parse_ga(d)?,
+            #[cfg(feature = "preview-sign")]
+            previewsign::NAME => req.ext_preview_sign = previewsign::parse_ga(d)?,
             "hmac-secret" => req.hmac_secret = hmacsecret::parse(d)?,
             // A name this device ADVERTISES is type-checked wherever it appears,
             // including on the command it does not apply to; an unknown name is
@@ -365,6 +380,9 @@ pub fn get_assertion<S: Storage, R: Rng>(
     if req.hmac_secret.present && !req.up {
         return Err(CtapError::UpRequired);
     }
+    // previewSign's credential-free refusals, ahead of the PIN/UV gate.
+    #[cfg(feature = "preview-sign")]
+    previewsign::check_ga(&req.ext_preview_sign, req.allow_len)?;
 
     let rp_id_hash = sha256(req.rp_id.as_bytes());
     let verified = enforce_pin(ctx, &req, &rp_id_hash, proto)?;
@@ -710,13 +728,28 @@ fn get_assertion_inner<S: Storage, R: Rng>(
         0
     };
 
+    // previewSign's signature, made here like the hmac-secret output: ahead of the
+    // touch, released only with the assertion. `req.up` and `uv` are what its
+    // authData will say.
+    #[cfg(feature = "preview-sign")]
+    let preview = previewsign::sign(
+        &req.ext_preview_sign,
+        seed,
+        key_input,
+        rp_id_hash,
+        req.up,
+        uv,
+    )?;
+
     // authData extension output (credBlob / hmac-secret / thirdPartyPayment).
-    let mut ext = [0u8; 320];
+    let mut ext = [0u8; GA_EXT_MAX];
     let ext_len = encode_ga_extensions(
         req.ext_cred_blob,
         req.ext_third_party_payment,
         sel.as_ref(),
         hs.get(..hs_len).ok_or(CtapError::Other)?,
+        #[cfg(feature = "preview-sign")]
+        preview.as_ref(),
         &mut ext,
     )?;
     let ed = if ext_len > 0 { FLAG_ED } else { 0 };
@@ -785,7 +818,7 @@ fn get_assertion_inner<S: Storage, R: Rng>(
         Some(slot) => report_sign_counter(ctx.fs, slot).map_err(|_| CtapError::Other)?,
         None => 0,
     };
-    let mut ad = [0u8; 37 + 320 + 32];
+    let mut ad = [0u8; 37 + GA_EXT_MAX + 32];
     ad[..32].copy_from_slice(rp_id_hash);
     // UP follows the request's raw `up`, NOT want_up: strict-up still polls the button
     // (above) but an up:false pre-flight must stay inert (UP=0), else the alwaysUv
@@ -904,9 +937,12 @@ fn encode_ga_extensions(
     third_party_payment: bool,
     sel: Option<&Credential>,
     hmac: &[u8],
+    #[cfg(feature = "preview-sign")] preview: Option<&previewsign::DerSig>,
     out: &mut [u8],
 ) -> Result<usize, CtapError> {
     let l = u64::from(get_cred_blob) + u64::from(!hmac.is_empty()) + u64::from(third_party_payment);
+    #[cfg(feature = "preview-sign")]
+    let l = l + u64::from(preview.is_some());
     if l == 0 {
         return Ok(0);
     }
@@ -923,6 +959,11 @@ fn encode_ga_extensions(
         enc.str("hmac-secret")
             .and_then(|e| e.bytes(hmac))
             .map_err(|_| CtapError::Other)?;
+    }
+    // Canonical: "previewSign" sorts after "hmac-secret", its length's other key.
+    #[cfg(feature = "preview-sign")]
+    if let Some(sig) = preview {
+        previewsign::write_ga_ext(&mut enc, sig)?;
     }
     if third_party_payment {
         let tpp = sel.map(|c| c.ext.third_party_payment).unwrap_or(false);
@@ -1070,11 +1111,14 @@ fn next_assertion_response<S: Storage, R: Rng>(
 
     // authData extension output (credBlob / hmac-secret / thirdPartyPayment).
     let mut ext = [0u8; 320];
+    // previewSign never reaches here: it needs an allowList, and this walk has none.
     let ext_len = encode_ga_extensions(
         ctx.state.gna.ext_cred_blob,
         ctx.state.gna.ext_third_party_payment,
         Some(&cred),
         hs.get(..hs_len).ok_or(CtapError::Other)?,
+        #[cfg(feature = "preview-sign")]
+        None,
         &mut ext,
     )?;
     let ed = if ext_len > 0 { FLAG_ED } else { 0 };

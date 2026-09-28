@@ -178,6 +178,10 @@ strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/st
 # firmware --features display` (the panel is the status indicator, so there is no
 # addressable LED, which also frees GPIO16 for the backlight).
 display = ["rsk-device/display", "dep:rsk-display", "dep:rsk-ui", "dep:rsk-bip39", "dep:rsk-slip39", "dep:mipidsi", "dep:embedded-graphics"]
+# Serve Yubico's experimental `previewSign` WebAuthn extension (see rsk-fido's
+# feature docs). OFF by default: the default image carries none of it. Build
+# `--features preview-sign`.
+preview-sign = ["rsk-fido/preview-sign"]
 
 [[bin]]
 name = "firmware"

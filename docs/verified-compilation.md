@@ -40,7 +40,7 @@ subset, one is already C, and three are not code a C compiler could accept.
 | linker-generated boundaries | five of the ten `[[boundary]]` rows in `assurance/toolchain.toml` | 5 symbols | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
 
 The genericity is the load-bearing number. Across the production modules of
-`crates/rsk-fido/src/`, 218 of 416 functions are generic and 171 of those carry
+`crates/rsk-fido/src/`, 237 of 454 functions are generic and 172 of those carry
 `<S: Storage`. C has no traits and no monomorphisation, so "port the gate" means
 "hand-instantiate and rewrite it", and the rewrite is the risk the verification
 was meant to remove.
@@ -154,7 +154,7 @@ checksums, provenance, signing, notes, publication — are language-agnostic.
 
 ## What it costs the gate
 
-`scripts/check.sh` runs 93 rows: 55 invoke `cargo`, 18 are Python, 20 are
+`scripts/check.sh` runs 96 rows: 58 invoke `cargo`, 18 are Python, 20 are
 neither. A kernel outside Rust is invisible to a measured nine of them, and
 would need a twin for many more.
 
@@ -165,7 +165,7 @@ would need a twin for many more.
 workspace manifests, `scripts/kani_gate.py` from files with an `.rs` suffix —
 so a C or extracted-C kernel is not a thing they can fail about.
 
-**Would need a twin:** 19 clippy rows, 8 rustdoc rows, 4 fmt rows and 14
+**Would need a twin:** 21 clippy rows, 8 rustdoc rows, 4 fmt rows and 15
 `cargo test` rows. A second language does not inherit `-D warnings`, a
 formatter the gate can run, a doc build, or a test harness whose empty
 selection is already caught.
@@ -195,7 +195,7 @@ A decision with no falsifier is a preference. Any one of these overturns it:
   generation, verifying that C would cover the whole kernel instead of a
   quarter of it.
 - **The gate stops being Rust-shaped.** If the tree acquires a second language
-  for an unrelated reason and pays the 19-clippy-row-shaped cost anyway, the
+  for an unrelated reason and pays the 21-clippy-row-shaped cost anyway, the
   marginal cost of this decision falls to the toolchain delta alone.
 
 None of the five is close. The first two are outside this project's control.

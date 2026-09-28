@@ -124,3 +124,9 @@ largeblob-ext = []
 # inputs so `firmware --features bench` can time them via the RP2350 timer and
 # report a robust median/MAD + a cold-cache sample. See `rsk bench`.
 bench = []
+# Yubico's `previewSign` WebAuthn extension (draft v4, the shape python-fido2
+# 2.2.1 speaks): a credential gets an ARKG-P256 signing seed and signs RP data
+# (ESP256-split-ARKG). OFF by default — the default build compiles none of it and
+# getInfo does not advertise it. Experimental, a draft with placeholder COSE ids;
+# the deviations from it are in docs/guides/fido2.md. Build `--features preview-sign`.
+preview-sign = []

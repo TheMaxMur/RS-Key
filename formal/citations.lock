@@ -4,8 +4,8 @@
 # it points at, which is the thing this file exists to make visible.
 assurance/abstractions.toml	crates/rsk-device/src/presence.rs	196-196	arb.set_cancel_requested(false);	arb.set_cancel_requested(false);
 assurance/abstractions.toml	crates/rsk-device/src/presence.rs	230-230	arb.set_up_pending(false);	arb.set_up_pending(false);
-assurance/abstractions.toml	crates/rsk-fido/src/makecredential.rs	600-602	if pin_set && req.rk {	}
-assurance/abstractions.toml	crates/rsk-fido/src/makecredential.rs	833-834	if req.rk	&& let Err(err) = credential_store(
+assurance/abstractions.toml	crates/rsk-fido/src/makecredential.rs	622-624	if pin_set && req.rk {	}
+assurance/abstractions.toml	crates/rsk-fido/src/makecredential.rs	896-897	if req.rk	&& let Err(err) = credential_store(
 assurance/abstractions.toml	crates/rsk-fido/src/reset.rs	37-37	if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {	if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {
 assurance/abstractions.toml	crates/rsk-fido/src/state.rs	33-51	/// State carried between `getAssertion` and `getNextAssertion` when resident	pub slots: [u16; MAX_ASSERTION_CREDS],
 assurance/abstractions.toml	crates/rsk-fido/src/state.rs	376-385	/// **One-shot.** `MSE` and its consumer are separate CTAPHID transactions, so	/// to a second process is that the channel is one-shot.
@@ -244,7 +244,7 @@ assurance/bundle/SEC-FIDO-006.toml	formal/gen-configs.sh	171-176	if [ "$b" = "$o
 assurance/bundle/SEC-FIDO-006.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-006.toml	fuzz/fuzz_targets/power_cut.rs	228-230	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	}
 assurance/bundle/SEC-FIDO-006.toml	scripts/assurance_gate.py	122-142	def cfg_checked(path: pathlib.Path) -> list[str]:	return out
-assurance/bundle/SEC-FIDO-006.toml	scripts/check.sh	549-549	run "assurance-trace image identity" assurance_trace_is_image_neutral	run "assurance-trace image identity" assurance_trace_is_image_neutral
+assurance/bundle/SEC-FIDO-006.toml	scripts/check.sh	554-554	run "assurance-trace image identity" assurance_trace_is_image_neutral	run "assurance-trace image identity" assurance_trace_is_image_neutral
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/consts.rs	361-361	pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]	pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset.rs	6-6	//! physical touch gates the wipe, inside the CTAP 2.1 §6.6 power-up window	//! physical touch gates the wipe, inside the CTAP 2.1 §6.6 power-up window
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset.rs	37-51	if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {	}
@@ -609,8 +609,8 @@ crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	533-535	if 
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	537-537	let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;	let mut seed = ctx.load_keydev().ok_or(CtapError::NotAllowed)?;
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	543-546	if begin {	}
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/credmgmt.rs	545-545	ctx.state.cm.rp_id_hash = *rp_id_hash;	ctx.state.cm.rp_id_hash = *rp_id_hash;
-crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/getassertion.rs	431-431	if !ctx.state.verify_token(proto, req.client_data_hash, param)	if !ctx.state.verify_token(proto, req.client_data_hash, param)
-crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/makecredential.rs	570-570	if !ctx.state.verify_token(proto, req.client_data_hash, param)	if !ctx.state.verify_token(proto, req.client_data_hash, param)
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/getassertion.rs	449-449	if !ctx.state.verify_token(proto, req.client_data_hash, param)	if !ctx.state.verify_token(proto, req.client_data_hash, param)
+crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/makecredential.rs	592-592	if !ctx.state.verify_token(proto, req.client_data_hash, param)	if !ctx.state.verify_token(proto, req.client_data_hash, param)
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/state.rs	631-643	/// The CTAP 2.1 §6.5.5.7 post-user-presence triad — `clearUserPresentFlag()`,	}
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/state.rs	645-660	/// `stopUsingPinUvAuthToken` — drop the in-use state, permissions, and	}
 crates/rsk-fido/src/reset_assurance_tests.rs	crates/rsk-fido/src/reset.rs	240-246	/// **The list is FIVE and the clauses are three.** `EF_DEVICE_PIN` and	/// of what this predicate is for.
@@ -627,11 +627,11 @@ crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	419-426	if beg
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	422-426	ctx.state.cm.rp_counter = target.saturating_add(1);	ctx.state.cm.last_leg_ms = ctx.now_ms;
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	460-464	if begin {	ctx.state.cm.cred_next_slot = 0;
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/credmgmt.rs	543-548	if begin {	ctx.state.cm.last_leg_ms = ctx.now_ms;
-crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/getassertion.rs	431-434	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| (ctx.state.paut.has_rp_id && ctx.state.paut.rp_id_hash != *rp_id_hash)
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/getassertion.rs	449-452	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| (ctx.state.paut.has_rp_id && ctx.state.paut.rp_id_hash != *rp_id_hash)
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/lib.rs	134-134	ctx.state.expire_stale_token(ctx.now_ms);	ctx.state.expire_stale_token(ctx.now_ms);
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/lib.rs	134-141	ctx.state.expire_stale_token(ctx.now_ms);	ctx.state.retire_sequences_except(cmd);
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/lib.rs	141-141	ctx.state.retire_sequences_except(cmd);	ctx.state.retire_sequences_except(cmd);
-crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/makecredential.rs	570-573	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| !ctx.state.user_verified()
+crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/makecredential.rs	592-595	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| !ctx.state.user_verified()
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	169-179	/// Whether `channel` may take the next leg of the RP walk: it opened it, and	self.channel == channel && self.cred_counter <= self.cred_total
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	381-385	/// redirect one. Fail closed both ways. The channel's `cid` is defence in depth	/// to a second process is that the channel is one-shot.
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	406-410	/// Transport channel of the request being dispatched — the CTAPHID CID, or 0	pub channel: u32,
@@ -715,17 +715,17 @@ formal/README.md	crates/rsk-fido/src/credmgmt.rs	300-300	fn verify_cm_token(	fn 
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	363-363	) -> CtapResult {	) -> CtapResult {
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	719-816	/// Locate the resident credential carrying this 42-byte stored id: its EF_CRED slot	fs.put(EF_RP + j, record)
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	759-767	/// its EF_RP record. Replies with only the status byte.	.delete(EF_CRED + slot)
-formal/README.md	crates/rsk-fido/src/getassertion.rs	431-434	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| (ctx.state.paut.has_rp_id && ctx.state.paut.rp_id_hash != *rp_id_hash)
-formal/README.md	crates/rsk-fido/src/getassertion.rs	432-432	|| !ctx.state.user_verified()	|| !ctx.state.user_verified()
-formal/README.md	crates/rsk-fido/src/getassertion.rs	667-668	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
+formal/README.md	crates/rsk-fido/src/getassertion.rs	449-452	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| (ctx.state.paut.has_rp_id && ctx.state.paut.rp_id_hash != *rp_id_hash)
+formal/README.md	crates/rsk-fido/src/getassertion.rs	450-450	|| !ctx.state.user_verified()	|| !ctx.state.user_verified()
+formal/README.md	crates/rsk-fido/src/getassertion.rs	685-686	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
 formal/README.md	crates/rsk-fido/src/lib.rs	105-114	pub fn load_keydev(&mut self) -> Option<rsk_secret::Secret<[u8; 32]>> {	}
-formal/README.md	crates/rsk-fido/src/makecredential.rs	570-573	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| !ctx.state.user_verified()
-formal/README.md	crates/rsk-fido/src/makecredential.rs	573-573	|| !ctx.state.user_verified()	|| !ctx.state.user_verified()
-formal/README.md	crates/rsk-fido/src/makecredential.rs	585-593	let always_uv = crate::config::always_uv_enabled(ctx.fs);	// always an advertised option ID here, so the code is PUAT_REQUIRED.
-formal/README.md	crates/rsk-fido/src/makecredential.rs	597-603	// makeCredUvNotRqd (§6.1.2 steps 7/10): with a PIN configured a	Ok(UvOutcome::NONE)
-formal/README.md	crates/rsk-fido/src/makecredential.rs	600-602	if pin_set && req.rk {	}
-formal/README.md	crates/rsk-fido/src/makecredential.rs	727-728	let ask = verified	.needs_confirm(ctx.presence.shows_confirm())
-formal/README.md	crates/rsk-fido/src/makecredential.rs	833-834	if req.rk	&& let Err(err) = credential_store(
+formal/README.md	crates/rsk-fido/src/makecredential.rs	592-595	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| !ctx.state.user_verified()
+formal/README.md	crates/rsk-fido/src/makecredential.rs	595-595	|| !ctx.state.user_verified()	|| !ctx.state.user_verified()
+formal/README.md	crates/rsk-fido/src/makecredential.rs	607-615	let always_uv = crate::config::always_uv_enabled(ctx.fs);	// always an advertised option ID here, so the code is PUAT_REQUIRED.
+formal/README.md	crates/rsk-fido/src/makecredential.rs	619-625	// makeCredUvNotRqd (§6.1.2 steps 7/10): with a PIN configured a	Ok(UvOutcome::NONE)
+formal/README.md	crates/rsk-fido/src/makecredential.rs	622-624	if pin_set && req.rk {	}
+formal/README.md	crates/rsk-fido/src/makecredential.rs	768-769	let ask = verified	.needs_confirm(ctx.presence.shows_confirm())
+formal/README.md	crates/rsk-fido/src/makecredential.rs	896-897	if req.rk	&& let Err(err) = credential_store(
 formal/README.md	crates/rsk-fido/src/passkeys.rs	90-156	pub fn for_each_rp<S, F>(dev: &Device, fs: &mut Fs<S>, mut f: F) -> usize	}
 formal/README.md	crates/rsk-fido/src/reset.rs	36-126	pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {	}
 formal/README.md	crates/rsk-fido/src/reset.rs	37-37	if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {	if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {
@@ -1010,20 +1010,20 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	352-364	.and_then(
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	719-817	/// Locate the resident credential carrying this 42-byte stored id: its EF_CRED slot	.map_err(|_| CtapError::NotAllowed)?;
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	759-761	/// its EF_RP record. Replies with only the status byte.	ctx: &mut Ctx<S, R>,
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	759-767	/// its EF_RP record. Replies with only the status byte.	.delete(EF_CRED + slot)
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	425-428	} else {	}
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	426-426	CtapError::PinNotSet	CtapError::PinNotSet
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	428-428	}	}
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	429-437	Some(param) => {	}
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	435-437	{	}
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	443-446	} else {	}
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	444-444	CtapError::PinNotSet	CtapError::PinNotSet
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	446-446	}	}
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	447-455	Some(param) => {	}
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/getassertion.rs	453-455	{	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/lib.rs	105-114	pub fn load_keydev(&mut self) -> Option<rsk_secret::Secret<[u8; 32]>> {	}
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	568-576	Some(param) => {	}
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	570-573	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| !ctx.state.user_verified()
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	578-580	if !ctx.state.paut.has_rp_id {	ctx.state.paut.has_rp_id = true;
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	584-603	None => {	Ok(UvOutcome::NONE)
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	594-596	if always_uv {	}
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	600-602	if pin_set && req.rk {	}
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	808-810	// resident record. A non-discoverable credential keeps no on-device state at	// an absent input returns nothing, the "MUST NOT return unsolicited output".
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	833-834	if req.rk	&& let Err(err) = credential_store(
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	590-598	Some(param) => {	}
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	592-595	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| !ctx.state.user_verified()
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	600-602	if !ctx.state.paut.has_rp_id {	ctx.state.paut.has_rp_id = true;
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	606-625	None => {	Ok(UvOutcome::NONE)
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	616-618	if always_uv {	}
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	622-624	if pin_set && req.rk {	}
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	869-871	// resident record. A non-discoverable credential keeps no on-device state at	// an absent input returns nothing, the "MUST NOT return unsolicited output".
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/makecredential.rs	896-897	if req.rk	&& let Err(err) = credential_store(
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/reset.rs	36-126	pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/reset.rs	43-51	match ctx	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/reset.rs	71-72	let unproven = wiped?;	ensure_seed(&ctx.dev, ctx.fs, ctx.rng).map_err(|_| CtapError::Other)?;
@@ -1122,13 +1122,13 @@ formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	85-85	/// Refi
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	114-118	let mut last_num: u16 = 0;	// no signature is ever produced without the deliberate on-screen hold.
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	192-192	// a release wait a finger already down approves the card in the same	// a release wait a finger already down approves the card in the same
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/clientpin.rs	583-584	pub fn needs_confirm(self, shows_confirm: bool) -> bool {	!self.up_collected || shows_confirm
-formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/getassertion.rs	667-668	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
-formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/makecredential.rs	727-728	let ask = verified	.needs_confirm(ctx.presence.shows_confirm())
+formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/getassertion.rs	685-686	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
+formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/makecredential.rs	768-769	let ask = verified	.needs_confirm(ctx.presence.shows_confirm())
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/u2f.rs	106-106	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
 formal/RSKeyTrustedDisplay.tla	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
 formal/TraceSecurity.tla	crates/rsk-fido/src/clientpin.rs	656-656	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
 formal/TraceSecurity.tla	crates/rsk-fido/src/config.rs	312-312	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");
-formal/TraceSecurity.tla	crates/rsk-fido/src/makecredential.rs	585-603	let always_uv = crate::config::always_uv_enabled(ctx.fs);	Ok(UvOutcome::NONE)
+formal/TraceSecurity.tla	crates/rsk-fido/src/makecredential.rs	607-625	let always_uv = crate::config::always_uv_enabled(ctx.fs);	Ok(UvOutcome::NONE)
 formal/TraceSecurity.tla	crates/rsk-fido/src/reset.rs	263-263	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS
 formal/comutants.toml	crates/rsk-device/src/ctap.rs	127-128	let boot = hooks.borrow_mut().boot_state();	st.restore_pin_lock(boot.lock);
 formal/comutants.toml	crates/rsk-device/src/ctap_tests.rs	101-123	#[test]	}
@@ -1139,8 +1139,8 @@ formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	530-532	if force_change_p
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	893-895	if fid == EF_PIN {	}
 formal/comutants.toml	crates/rsk-fido/src/clientpin_tests.rs	1251-1251	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-fido/src/clientpin_tests.rs	1315-1315	assert_eq!(	assert_eq!(
-formal/comutants.toml	crates/rsk-fido/src/makecredential.rs	594-596	if always_uv {	}
-formal/comutants.toml	crates/rsk-fido/src/makecredential.rs	600-602	if pin_set && req.rk {	}
+formal/comutants.toml	crates/rsk-fido/src/makecredential.rs	616-618	if always_uv {	}
+formal/comutants.toml	crates/rsk-fido/src/makecredential.rs	622-624	if pin_set && req.rk {	}
 formal/comutants.toml	crates/rsk-fido/src/reset.rs	240-246	/// **The list is FIVE and the clauses are three.** `EF_DEVICE_PIN` and	/// of what this predicate is for.
 formal/comutants.toml	crates/rsk-fido/src/reset_assurance_tests.rs	76-76	assert!(reset.delete(EF_BACKUP_SEALED));	assert!(reset.delete(EF_BACKUP_SEALED));
 formal/comutants.toml	crates/rsk-fido/src/reset_assurance_tests.rs	130-130	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {

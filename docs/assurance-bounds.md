@@ -660,7 +660,7 @@ Every one of the 17 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 #### Method 6 — the production side: which sites own the ordering, and what the five tags and the three columns actually count
 
-`review` over crates/rsk-fido/src/reset.rs::reset crates/rsk-fido/src/reset.rs::sweep crates/rsk-fido/src/reset.rs::is_fido_gate_record crates/rsk-fido/src/state.rs::reset crates/rsk-fido/src/lib.rs::load_keydev crates/rsk-fido/src/reset_assurance.rs::well_formed. cfg: none — every site above is unconditional production code; `reset_assurance.rs` is the exception and is proved absent from every image by `scripts/check.sh:549`. features: none.
+`review` over crates/rsk-fido/src/reset.rs::reset crates/rsk-fido/src/reset.rs::sweep crates/rsk-fido/src/reset.rs::is_fido_gate_record crates/rsk-fido/src/state.rs::reset crates/rsk-fido/src/lib.rs::load_keydev crates/rsk-fido/src/reset_assurance.rs::well_formed. cfg: none — every site above is unconditional production code; `reset_assurance.rs` is the exception and is proved absent from every image by `scripts/check.sh:554`. features: none.
 
 | Bound | Value | What stops being proved |
 |---|---|---|

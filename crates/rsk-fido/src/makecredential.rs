@@ -58,6 +58,8 @@ use crate::hmacsecret::{self, HmacSecretReq, SALT_ENC_MAX};
 use crate::journal;
 use crate::keyderiv::fido_load_key;
 use crate::largeblobext::{self, McInput};
+#[cfg(feature = "preview-sign")]
+use crate::previewsign;
 use crate::seed::load_att_key;
 use crate::state::PERM_MC;
 use crate::{Ctx, Rng};
@@ -162,6 +164,9 @@ pub(crate) struct Request<'a> {
     ext_large_blob_key: Option<bool>,
     /// The CTAP 2.3 `largeBlob` extension input, on a `largeblob-ext` build.
     ext_large_blob: McInput,
+    /// The `previewSign` extension input, on a `preview-sign` build.
+    #[cfg(feature = "preview-sign")]
+    ext_preview_sign: previewsign::McInput<'a>,
     hmac_secret_mc: HmacSecretReq<'a>,
     /// enterpriseAttestation (request field 0x0A): 1 vendor-facilitated, 2
     /// platform-managed (full attestation by the device key). §6.1.2 step 9 keys
@@ -209,6 +214,8 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         ext_hmac_secret: false,
         ext_large_blob_key: None,
         ext_large_blob: McInput::Absent,
+        #[cfg(feature = "preview-sign")]
+        ext_preview_sign: previewsign::McInput::default(),
         hmac_secret_mc: HmacSecretReq::default(),
         enterprise_attestation: None,
         att_fmt_pref: AttFmtPref::Packed,
@@ -363,6 +370,8 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
             // any unknown one, so its downstream checks stay inert.
             "largeBlobKey" if !LARGE_BLOB_EXT => req.ext_large_blob_key = Some(cbor(d.bool())?),
             "largeBlob" if LARGE_BLOB_EXT => req.ext_large_blob = largeblobext::parse_mc(d)?,
+            #[cfg(feature = "preview-sign")]
+            previewsign::NAME => req.ext_preview_sign = previewsign::parse_mc(d)?,
             _ => skip_value(d)?,
         }
     }
@@ -490,6 +499,10 @@ pub fn make_credential<S: Storage, R: Rng>(
     {
         return Err(CtapError::InvalidParameter);
     }
+    // previewSign is judged with the other extensions: ahead of the PIN/UV gate and
+    // the touch, which is where a YubiKey 5.8.0 refuses it.
+    #[cfg(feature = "preview-sign")]
+    let preview = previewsign::negotiate(&req.ext_preview_sign, req.sel_curve)?;
     // Enterprise attestation (§6.1.2 step 9) keys on the field being PRESENT: with
     // EA disabled every present value is INVALID_PARAMETER — `0` included, measured
     // — and with it enabled only 1/2 pass. Whether attestation is actually performed
@@ -508,7 +521,16 @@ pub fn make_credential<S: Storage, R: Rng>(
     let verified = enforce_pin(ctx, &req, &rp_id_hash, proto)?;
 
     let mut seed = ctx.load_keydev().ok_or(CtapError::Other)?;
-    let result = make_credential_inner(ctx, &req, &rp_id_hash, seed.expose(), verified, out);
+    let result = make_credential_inner(
+        ctx,
+        &req,
+        &rp_id_hash,
+        seed.expose(),
+        verified,
+        #[cfg(feature = "preview-sign")]
+        preview,
+        out,
+    );
     seed.wipe();
     result
 }
@@ -611,6 +633,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
     rp_id_hash: &[u8; 32],
     seed: &[u8; 32],
     verified: UvOutcome,
+    #[cfg(feature = "preview-sign")] preview: Option<previewsign::KeyRequest>,
     out: &mut [u8],
 ) -> CtapResult {
     let uv = verified.uv;
@@ -688,6 +711,16 @@ fn make_credential_inner<S: Storage, R: Rng>(
     let mut cached_pubkey = [0u8; CRED_PUBKEY_MAX];
     let cached_pubkey_len = key.public_point(&mut cached_pubkey).unwrap_or(0);
 
+    // previewSign's signing key keys off `key_input` like every per-credential key,
+    // so a resident credential's survives an updateUserInformation reseal.
+    #[cfg(feature = "preview-sign")]
+    let preview_key = match preview {
+        Some(request) => Some(previewsign::generate(
+            seed, key_input, rp_id_hash, request, ctx.rng,
+        )?),
+        None => None,
+    };
+
     // hmac-secret-mc output (an hmac-secret evaluation at registration time).
     let mut hs = [0u8; SALT_ENC_MAX];
     let hs_len = if req.hmac_secret_mc.present {
@@ -708,7 +741,15 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // authData extension output (credBlob / credProtect / hmac-secret / minPinLength / hmac-secret-mc).
     let mut ext = [0u8; MC_EXT_MAX];
     let hmac_mc = hs.get(..hs_len).ok_or(CtapError::Other)?;
-    let ext_len = encode_mc_extensions(ctx.fs, req, rp_id_hash, hmac_mc, &mut ext)?;
+    let ext_len = encode_mc_extensions(
+        ctx.fs,
+        req,
+        rp_id_hash,
+        hmac_mc,
+        #[cfg(feature = "preview-sign")]
+        preview_key.as_ref(),
+        &mut ext,
+    )?;
     let ed = if ext_len > 0 { FLAG_ED } else { 0 };
 
     // §6.1.2 user presence: makeCredential's `up` is implicitly true and cannot
@@ -794,6 +835,26 @@ fn make_credential_inner<S: Storage, R: Rng>(
         let signed = ad.get(..ad_len + 32).ok_or(CtapError::Other)?;
         make_attestation(ctx, seed, signed, ea_performed, &mut att)?
     };
+    // The signing key's attestation object takes the credential's format and signer
+    // (v4 registration step 9) — and, when it is encoded, the credential's chain.
+    #[cfg(feature = "preview-sign")]
+    let preview_att = match &preview_key {
+        Some(key) => {
+            let signer = if omit_att {
+                None
+            } else {
+                Some(attestation_key(ctx, seed, ea_performed)?)
+            };
+            Some(previewsign::attest(
+                key,
+                rp_id_hash,
+                flags,
+                req.client_data_hash,
+                signer.as_ref(),
+            )?)
+        }
+        None => None,
+    };
 
     // largeBlobKey response field (0x05) — resident credentials only.
     let large_blob_key = if req.ext_large_blob_key == Some(true) && req.rk {
@@ -828,6 +889,8 @@ fn make_credential_inner<S: Storage, R: Rng>(
         },
         large_blob_key,
         large_blob_supported,
+        #[cfg(feature = "preview-sign")]
+        preview_att.as_ref(),
     )?;
 
     if req.rk
@@ -890,7 +953,8 @@ struct AttShape {
 /// an incomplete attestation object rather than a none-format one. The three keys
 /// are already in CTAP2 canonical order. `ep` appears only when EA was actually
 /// performed. Fields 5 and 6 are the two mutually exclusive large-blob
-/// designs, so at most one of them is ever present.
+/// designs, so at most one of them is ever present — except that a
+/// `preview-sign` build also carries previewSign's attestation in field 6.
 fn encode_mc_response(
     out: &mut [u8],
     ad: &[u8],
@@ -898,12 +962,17 @@ fn encode_mc_response(
     shape: AttShape,
     large_blob_key: Option<[u8; 32]>,
     large_blob_supported: bool,
+    #[cfg(feature = "preview-sign")] preview: Option<&previewsign::Attested<'_>>,
 ) -> CtapResult {
+    #[cfg(feature = "preview-sign")]
+    let unsigned_outputs = large_blob_supported || preview.is_some();
+    #[cfg(not(feature = "preview-sign"))]
+    let unsigned_outputs = large_blob_supported;
     let mut enc = Encoder::new(Cursor::new(out));
     enc.map(
         3 + u64::from(shape.ea_performed)
             + u64::from(large_blob_key.is_some())
-            + u64::from(large_blob_supported),
+            + u64::from(unsigned_outputs),
     )
     .and_then(|e| {
         e.u8(1)?.str(if shape.omitted {
@@ -936,12 +1005,124 @@ fn encode_mc_response(
             .and_then(|e| e.bytes(&lbk))
             .map_err(|_| CtapError::Other)?;
     }
+    #[cfg(not(feature = "preview-sign"))]
     if large_blob_supported {
         enc.u8(6).map_err(|_| CtapError::Other)?;
         largeblobext::write_mc_output(&mut enc).map_err(|_| CtapError::Other)?;
     }
+    #[cfg(feature = "preview-sign")]
+    if unsigned_outputs {
+        encode_unsigned_outputs(&mut enc, large_blob_supported, preview, att, &shape)?;
+    }
     Ok(enc.writer().position())
 }
+
+/// Field 6, `unsignedExtensionOutputs`, on a `preview-sign` build: largeBlob's
+/// entry, then previewSign's — canonical, the shorter key first.
+#[cfg(feature = "preview-sign")]
+fn encode_unsigned_outputs<W: Write>(
+    enc: &mut Encoder<W>,
+    large_blob_supported: bool,
+    preview: Option<&previewsign::Attested<'_>>,
+    att: &AttBufs,
+    shape: &AttShape,
+) -> Result<(), CtapError> {
+    let entries = u64::from(large_blob_supported) + u64::from(preview.is_some());
+    enc.u8(6)
+        .and_then(|e| e.map(entries))
+        .map_err(|_| CtapError::Other)?;
+    if large_blob_supported {
+        largeblobext::write_mc_entry(enc).map_err(|_| CtapError::Other)?;
+    }
+    if let Some(preview) = preview {
+        let chain = att.chain.get(..shape.chain_len).ok_or(CtapError::Other)?;
+        let len =
+            previewsign::encoded_len(|e| encode_preview_att_obj(e, preview, chain, shape.certs))?;
+        previewsign::write_unsigned_head(enc, len)?;
+        encode_preview_att_obj(enc, preview, chain, shape.certs)?;
+    }
+    Ok(())
+}
+
+/// The signing key's attestation object as previewSign carries it: `{1: fmt, 2:
+/// authData, 3: attStmt}` with integer keys (v4 CDDL), `packed` with the same
+/// ES256 statement and chain as the credential's, or `none` and an empty one.
+#[cfg(feature = "preview-sign")]
+fn encode_preview_att_obj<W: Write>(
+    enc: &mut Encoder<W>,
+    preview: &previewsign::Attested<'_>,
+    chain: &[u8],
+    certs: u8,
+) -> Result<(), CtapError> {
+    let sig = previewsign::attestation_sig(preview)?;
+    let fmt = if sig.is_some() {
+        ATT_FMT_PACKED
+    } else {
+        ATT_FMT_NONE
+    };
+    enc.map(3)
+        .and_then(|e| e.u8(1)?.str(fmt)?.u8(2))
+        .map_err(|_| CtapError::Other)?;
+    previewsign::write_attested_auth_data(enc, preview)?;
+    enc.u8(3).map_err(|_| CtapError::Other)?;
+    match sig {
+        None => {
+            enc.map(0).map_err(|_| CtapError::Other)?;
+        }
+        Some(sig) => {
+            enc.map(3)
+                .and_then(|e| e.str("alg")?.i64(ALG_ES256))
+                .and_then(|e| e.str("sig")?.bytes(sig))
+                .map_err(|_| CtapError::Other)?;
+            encode_x5c(enc, chain, certs)?;
+        }
+    }
+    Ok(())
+}
+
+/// The key [`make_attestation`] signs with, chosen the same way: the org key when
+/// enterprise attestation was performed and one is installed, else the device key.
+#[cfg(feature = "preview-sign")]
+fn attestation_key<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    seed: &[u8; 32],
+    ea_performed: bool,
+) -> Result<P256Key, CtapError> {
+    let org_key = if ea_performed {
+        load_att_key(&ctx.dev, ctx.fs)
+    } else {
+        None
+    };
+    let key = match org_key {
+        Some(mut scalar) => {
+            let k = P256Key::from_scalar(scalar.expose());
+            scalar.wipe();
+            k
+        }
+        None => P256Key::from_scalar(seed),
+    };
+    key.ok_or(CtapError::Other)
+}
+
+/// The fields that can ride beside the attestation: `ep` (4), largeBlobKey (5), and
+/// largeBlob's `{"supported": true}` entry in field 6.
+#[cfg(feature = "preview-sign")]
+const MC_OPTIONAL_FIELDS_MAX: usize = (1 + 1) + (1 + 2 + 32) + (10 + 1 + 10 + 1);
+
+/// With previewSign, the response carries a second attestation object on the
+/// same chain — room only a classic credential leaves, which is why an ML-DSA
+/// one refuses the extension (`previewsign::negotiate`).
+#[cfg(feature = "preview-sign")]
+const _: () = assert!(
+    (MC_RESPONSE_SANS_CHAIN - COSE_AKP_MLDSA87_MAX
+        + previewsign::COSE_EC2_MAX
+        + cert::ATT_CHAIN_MAX
+        + MC_OPTIONAL_FIELDS_MAX
+        + previewsign::UNSIGNED_SANS_CHAIN_MAX
+        + cert::ATT_CHAIN_MAX) as u64
+        <= crate::consts::MAX_MSG_SIZE,
+    "a classic credential with previewSign no longer fits the CTAPHID message ceiling",
+);
 
 /// The `x5c` array of the packed attestation statement, sliced out of the stored
 /// chain record one DER cert at a time.
@@ -1101,6 +1282,7 @@ fn encode_mc_extensions<S: Storage>(
     req: &Request,
     rp_id_hash: &[u8; 32],
     hmac_mc: &[u8],
+    #[cfg(feature = "preview-sign")] preview: Option<&previewsign::GeneratedKey>,
     out: &mut [u8],
 ) -> Result<usize, CtapError> {
     let blob_present = !req.ext_cred_blob.is_empty();
@@ -1114,6 +1296,8 @@ fn encode_mc_extensions<S: Storage>(
         + u64::from(req.ext_hmac_secret)
         + u64::from(min_pin > 0)
         + u64::from(!hmac_mc.is_empty());
+    #[cfg(feature = "preview-sign")]
+    let l = l + u64::from(preview.is_some());
     if l == 0 {
         return Ok(0);
     }
@@ -1135,6 +1319,11 @@ fn encode_mc_extensions<S: Storage>(
         enc.str("hmac-secret")
             .and_then(|e| e.bool(true))
             .map_err(|_| CtapError::Other)?;
+    }
+    // Canonical: "previewSign" sorts after "hmac-secret", its length's other key.
+    #[cfg(feature = "preview-sign")]
+    if let Some(key) = preview {
+        previewsign::write_mc_ext(&mut enc, key).map_err(|_| CtapError::Other)?;
     }
     if min_pin > 0 {
         enc.str("minPinLength")

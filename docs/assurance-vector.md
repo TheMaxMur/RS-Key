@@ -105,9 +105,9 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-ADM-002` | `PrivilegedOpNeedsPresence` | 1 of 6 | 1 | 0 of 0 | 0 | 0 | 3 | 4 | — | MODELLED-ONLY |
 | `SEC-ADM-003` | `DisableSetSurvivesLockWrite` | 1 of 6 | 1 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-ADM-004` | `DisabledAppletNeverDispatches` | 1 of 6 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-DISP-001` | `ConfirmNamesTheOperation` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 30 | — | MODELLED-ONLY |
-| `SEC-DISP-002` | `StaleTouchApprovesNothing` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 30 | — | MODELLED-ONLY |
-| `SEC-DISP-003` | `OnlyAllowConfirms` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 30 | — | MODELLED-ONLY |
+| `SEC-DISP-001` | `ConfirmNamesTheOperation` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 31 | — | MODELLED-ONLY |
+| `SEC-DISP-002` | `StaleTouchApprovesNothing` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 31 | — | MODELLED-ONLY |
+| `SEC-DISP-003` | `OnlyAllowConfirms` | 1 of 5 | 1 | 0 of 0 | 0 | 0 | 0 | 31 | — | MODELLED-ONLY |
 | `SEC-BOOT-001` | `MarkerNeverLies` | 4 of 13 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-BOOT-002` | `TheWholeLockRides` | 3 of 8 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-TRANS-001` | `NoCrossChannelSplice` | 1 of 5 | 1 | 0 of 0 | 2 | 0 | 10 | 0 | — | BOUNDED |
@@ -151,6 +151,7 @@ The same 40 P0-family rows, counted the other way round: per column rather than 
 | `fido-conformance` | feature | no | 3 | 37 |
 | `ea-conformance-rpid` | feature | no | 3 | 37 |
 | `largeblob-ext` | feature | no | 3 | 37 |
+| `preview-sign` | feature | no | 3 | 37 |
 | `abrobot-16m` | board | no | 9 | 31 |
 | `abrobot-4m` | board | no | 36 | 4 |
 | `seeed-xiao` | board | no | 9 | 31 |

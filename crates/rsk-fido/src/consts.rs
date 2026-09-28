@@ -416,3 +416,15 @@ pub const U2F_REGISTER_ID: u8 = 0x05; // registration response leading byte
 /// How much of an rpIdHash `credmgmt::settle_rp_records` matches a credential to
 /// its RP record on: a collision can only count a record high, never delete it.
 pub const SETTLE_KEY_LEN: usize = 8;
+
+// The `previewSign` extension's COSE identifiers. All three are the ARKG draft's
+// placeholder values — the ones python-fido2 2.2.1 speaks — not registered ids.
+/// ESP256-split-ARKG: ESP256 signing, split, with an ARKG-P256-derived key.
+#[cfg(feature = "preview-sign")]
+pub const ALG_ESP256_SPLIT_ARKG: i64 = -65539;
+/// ARKG-P256, the ARKG instance an ARKG-pub key is for (its `alg`).
+#[cfg(feature = "preview-sign")]
+pub const ALG_ARKG_P256: i64 = -65700;
+/// The ARKG-pub key type: an ARKG public seed `{-1: pk_bl, -2: pk_kem, -3: dkalg}`.
+#[cfg(feature = "preview-sign")]
+pub const KTY_ARKG_PUB: i64 = -65537;

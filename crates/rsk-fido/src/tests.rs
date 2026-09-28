@@ -199,3 +199,12 @@ impl<const N: usize> Bare for Option<[u8; N]> {
 pub(crate) fn bare<T: Bare>(x: T) -> T::Out {
     x.bare()
 }
+
+/// Bytes from a hex vector — how the ARKG and previewSign references are written.
+#[cfg(feature = "preview-sign")]
+pub(crate) fn unhex(s: &str) -> std::vec::Vec<u8> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+        .collect()
+}
