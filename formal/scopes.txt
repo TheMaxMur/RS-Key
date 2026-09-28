@@ -86,9 +86,10 @@ RSKeyTransport         Cap                    2   NoBufferOverrun
 
 \* --- RSKeyAppletPolicies ----------------------------------------------------
 \* The Yubico OTP position is a PAIR over a SET of slots, and each half has its
-\* own witness. Every one of the four OTP mutants still falls with the use
-\* counter reduced to one, which is why that row does not move.
-RSKeyAppletPolicies    CounterMax             1   OtpCounterNeverRepeats
+\* own witness. A boot's first press takes a step of the counter before it types,
+\* so at one only BugOtpBootKeepsPosition falls: measured, the other three explore
+\* their whole space with no counterexample there, and all four fall at two.
+RSKeyAppletPolicies    CounterMax             2   OtpCounterNeverRepeats
 \* The session has to be able to WRAP, because the wrap is the only place a
 \* press past a boot's first moves the persisted half, and the only thing a boot
 \* rewinds. Measured, one

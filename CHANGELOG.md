@@ -369,7 +369,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 - Yubico OTP left a slot's secrets in RAM after most commands. Every command
   that reads a slot — the keyboard ticket, CALCULATE (challenge-response),
-  SWAP, UPDATE, CONFIGURE, the status reads and the boot counter bump — unseals
+  SWAP, UPDATE, CONFIGURE and the status reads — unseals
   the record, with its AES or HMAC key, private UID and access code, into a
   buffer in its own frame and returned without wiping it; CALCULATE and the
   keyboard ticket also copied the key out into bare arrays, three handlers held
@@ -1171,7 +1171,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   refactor; the same bytes reach flash for every command. `rsk-otp`'s slot
   record is a type, `SlotRecord`, whose tail (the Yubico-OTP use counter or the
   OATH-HOTP moving factor) is private: it is read from a slot, zeroed by a
-  CONFIGURE, carried by an UPDATE, or moved by a press or the boot bump, and
+  CONFIGURE, carried by an UPDATE, or moved by a press, and
   `seal::seal_put` seals a record and nothing else. The
   gate that listed the sites persisting a record,
   `scripts/counter_writers_gate.py`, is gone with its ledger.

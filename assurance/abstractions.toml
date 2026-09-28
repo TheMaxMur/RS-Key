@@ -328,9 +328,9 @@ body = '''
   no state to appear in now do — a session beside the counter, and a second
   slot (`Slots`) to move a record to — and a mutant falls on each. The third
   does not: `OtpUse` types and steps in one action, so a press whose advance
-  the store REFUSES has no failing arm here, and neither has the warm reset,
-  which restarts the session over an unchanged counter and is a real repeat
-  the source page carries as a residual. Nor does the top of the range: a
+  the store REFUSES has no failing arm here. A warm reboot needs none: it is
+  `OtpPowerCycle`, as a cold one is, since both restart the session and owe each
+  record the step its first press takes. Nor does the top of the range: a
   defect needing the real ceiling, or more sessions than one wrap, still has
   nowhere here to appear.
 '''

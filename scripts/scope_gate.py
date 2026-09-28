@@ -121,6 +121,10 @@ MEASURED_MINIMA = {
     # a second slot to have somewhere to move a record to. Re-measured at one
     # slot: the witness explores its whole space with no counterexample.
     ("RSKeyAppletPolicies", "Slots"): (2, "PolicySolo_BugOtpSwapKeepsSession.cfg"),
+    # The first press of a boot steps the use counter before it types, so a
+    # counter of one is spent there and no press follows it. Re-measured at one:
+    # the witness explores its whole space with no counterexample.
+    ("RSKeyAppletPolicies", "CounterMax"): (2, "PolicySolo_BugOtpCounterRepeats.cfg"),
 }
 
 
