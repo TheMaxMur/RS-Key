@@ -1451,11 +1451,9 @@ fn registration_attests_an_arkg_seed_beside_the_credential() {
     );
 }
 
-/// Under enterprise attestation the signing key is attested as the credential is:
-/// by the organisation's key, with its chain. `attestation_key` makes that choice a
-/// second time, apart from the credential's, so this holds the two together.
-#[test]
-fn an_enterprise_registration_attests_the_signing_key_with_the_org_key() {
+/// A board with an organisation key and a two-certificate chain installed and
+/// enterprise attestation enabled: the org key's scalar and the chain.
+fn enterprise_board() -> (Board, [u8; 32], Vec<Vec<u8>>) {
     use crate::consts::{EF_ATT_CHAIN, EF_EA_ENABLED};
     let mut board = Board::new();
     let org = [0x21u8; 32];
@@ -1465,6 +1463,29 @@ fn an_enterprise_registration_attests_the_signing_key_with_the_org_key() {
     let n = crate::cert::att_chain_pack(&[&c1[..], &c2[..]].concat(), &mut chain).unwrap();
     board.fs.put(EF_ATT_CHAIN, &chain[..n]).unwrap();
     board.fs.put(EF_EA_ENABLED, &[1]).unwrap();
+    (board, org, std::vec![c1.to_vec(), c2.to_vec()])
+}
+
+/// Whether `sig` over `auth_data ‖ CDH` verifies under `key`.
+fn attests(key: &VerifyingKey, auth_data: &[u8], sig: &[u8]) -> bool {
+    let mut signed = auth_data.to_vec();
+    signed.extend_from_slice(&CDH);
+    key.verify(&signed, &Signature::from_der(sig).unwrap())
+        .is_ok()
+}
+
+fn org_key(scalar: &[u8; 32]) -> VerifyingKey {
+    let (x, y) = P256Key::from_scalar(scalar).unwrap().public_xy();
+    let point = p256::Sec1Point::from_bytes(crate::ec::sec1_uncompressed(x, y)).unwrap();
+    VerifyingKey::from_sec1_point(&point).unwrap()
+}
+
+/// Under enterprise attestation the signing key is attested as the credential is:
+/// by the organisation's key, with its chain. `attestation_key` makes that choice a
+/// second time, apart from the credential's, so this holds the two together.
+#[test]
+fn an_enterprise_registration_attests_the_signing_key_with_the_org_key() {
+    let (mut board, org, chain) = enterprise_board();
     let input = generate_key(&[ALG_ESP256_SPLIT_ARKG], Some(1));
     let req = enc(|e| {
         e.map(6).unwrap();
@@ -1493,15 +1514,35 @@ fn an_enterprise_registration_attests_the_signing_key_with_the_org_key() {
     let key = attested_key(reg.att_obj.as_deref().unwrap());
     let (sig, x5c) = packed(&key.att_stmt);
     assert_eq!(x5c, packed(&reg.att_stmt).1, "the credential's chain");
-    assert_eq!(x5c, std::vec![c1.to_vec(), c2.to_vec()]);
-    let (x, y) = P256Key::from_scalar(&org).unwrap().public_xy();
-    let point = p256::Sec1Point::from_bytes(crate::ec::sec1_uncompressed(x, y)).unwrap();
-    let mut signed = key.auth_data.clone();
-    signed.extend_from_slice(&CDH);
-    VerifyingKey::from_sec1_point(&point)
-        .unwrap()
-        .verify(&signed, &Signature::from_der(&sig).unwrap())
-        .expect("the org key attests the signing key");
+    assert_eq!(x5c, chain);
+    assert!(
+        attests(&org_key(&org), &key.auth_data, &sig),
+        "the org key attests the signing key"
+    );
+}
+
+/// The other half: with the org key installed but enterprise attestation not asked
+/// for, the device's own key attests the signing key and the org key vouches for
+/// nothing, since a signature under it names the organisation to the site.
+#[test]
+fn a_registration_without_enterprise_attestation_keeps_the_org_key_out() {
+    let (mut board, org, chain) = enterprise_board();
+    let input = generate_key(&[ALG_ESP256_SPLIT_ARKG], Some(1));
+    let reg = registered(
+        &board
+            .mc(&mc_req(ALG_ES256, Some(&input), false, false))
+            .unwrap(),
+    );
+    assert!(!reg.fields.contains(&4), "epAtt: {:?}", reg.fields);
+    let key = attested_key(reg.att_obj.as_deref().unwrap());
+    let (sig, x5c) = packed(&key.att_stmt);
+    assert_ne!(x5c, chain, "the org chain rode a registration without EA");
+    assert!(!attests(&org_key(&org), &key.auth_data, &sig));
+    let device = board.attestation_key();
+    assert!(
+        attests(&device, &key.auth_data, &sig),
+        "the device key attests it"
+    );
 }
 
 fn hex(b: &[u8]) -> String {

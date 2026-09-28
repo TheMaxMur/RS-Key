@@ -220,8 +220,8 @@ Nothing is stored. The signing key handle ties the seed to its credential with a
 MAC, so the extension changes no flash record.
 
 On a build with the trusted display, the touch that releases a signature asks
-*Sign data?*, not *Sign in?*: the digest is the site's data, chosen by the host,
-and the touch approves signing it.
+*Sign data?*, not *Sign in?*: the digest the site asked for is what gets signed,
+and a compromised host could have put its own there.
 
 Deliberate deviations from the draft:
 
