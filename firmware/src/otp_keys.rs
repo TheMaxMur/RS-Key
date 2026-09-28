@@ -19,7 +19,7 @@
 //! builds only.
 
 use embassy_rp::otp;
-use rsk_rescue::otp_lock::{PAGE58_LOCK_VALUE, PAGE58_LOCK1_ROW};
+use rsk_rescue::otp_lock::{KeyRows, PAGE58_LOCK_VALUE, PAGE58_LOCK1_ROW, key_rows};
 use rsk_rescue::rollback::{
     BOOT_FLAGS0_ROW, DEFAULT_BOOT_VERSION0_ROW, DEFAULT_BOOT_VERSION1_ROW, ROLLBACK_REQUIRED_BIT,
     RollbackRaw,
@@ -41,8 +41,16 @@ const KEY_PAGE: usize = 58;
 /// possible because [`sw_lock_key_page`] leaves the page's secure side open; see
 /// the note there.
 pub fn read_mkek(out: &mut [u8; 32]) -> bool {
+    read_boot_mkek(out) == KeyRows::Fused
+}
+
+/// [`read_mkek`], and why there is no key when there is none: the boot runs its seal
+/// passes only over a page it could read, since a blank one is a board never
+/// provisioned and an unreadable one is not.
+pub fn read_boot_mkek(out: &mut [u8; 32]) -> KeyRows {
     match option_env!("PK_FAKE_MKEK") {
-        Some(hex) => parse_hex32(hex, out),
+        Some(hex) if parse_hex32(hex, out) => KeyRows::Fused,
+        Some(_) => KeyRows::Blank,
         None => read_key(MKEK_ROW, out),
     }
 }
@@ -57,7 +65,7 @@ pub fn read_mkek(out: &mut [u8; 32]) -> bool {
 pub fn read_devk(out: &mut [u8; 32]) -> bool {
     match option_env!("PK_FAKE_DEVK") {
         Some(hex) => parse_hex32(hex, out),
-        None => read_key(DEVK_ROW, out),
+        None => read_key(DEVK_ROW, out) == KeyRows::Fused,
     }
 }
 
@@ -184,28 +192,22 @@ pub fn apply_rollback_required() -> bool {
 }
 
 /// One 32-byte key at `row`: presence test first (all 16 raw rows zero =
-/// unprovisioned), then the ECC-corrected data. Read errors (a page locked away
-/// even from secure reads — a misconfiguration, not a factory state) also answer
-/// `false`: fail to the pre-OTP arm, never panic at boot.
-fn read_key(row: usize, key: &mut [u8; 32]) -> bool {
-    let mut any = false;
-    for i in 0..KEY_ROWS {
-        match otp::read_raw_word(row + i) {
-            Ok(w) => any |= w & 0x00FF_FFFF != 0,
-            Err(_) => return false,
-        }
-    }
-    if !any {
-        return false;
+/// unprovisioned), then the ECC-corrected data, which lands in `key` only when the
+/// answer is [`KeyRows::Fused`]. A row that does not read — a page locked away even
+/// from secure reads — answers [`KeyRows::Unreadable`], never a panic at boot.
+fn read_key(row: usize, key: &mut [u8; 32]) -> KeyRows {
+    let rows = key_rows((0..KEY_ROWS).map(|i| otp::read_raw_word(row + i).ok()));
+    if rows != KeyRows::Fused {
+        return rows;
     }
     for i in 0..KEY_ROWS {
         let Ok(w) = otp::read_ecc_word(row + i) else {
-            return false;
+            return KeyRows::Unreadable;
         };
         key[2 * i] = w as u8;
         key[2 * i + 1] = (w >> 8) as u8;
     }
-    true
+    KeyRows::Fused
 }
 
 /// Decode a build.rs-validated 64-char hex string; build.rs rejects anything

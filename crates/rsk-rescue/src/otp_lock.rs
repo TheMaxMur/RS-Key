@@ -40,6 +40,35 @@ pub const PRE_OTP_OTP: u16 = 1 << 4;
 /// so checked nothing: every bit set.
 pub const PRE_OTP_UNCHECKED: u16 = u16::MAX;
 
+/// READ `1E/07`'s answer for a boot that could not read the fused key and so ran no
+/// seal pass: under the chip-serial arm each would re-seal, provision or migrate
+/// what only the fused root should hold.
+pub const PRE_OTP_KEY_UNREADABLE: u16 = 0xFFFE;
+
+/// What a fused key's rows read as.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum KeyRows {
+    /// Every row reads zero: the factory state, a board never provisioned.
+    Blank,
+    /// A row holds data: the key is fused.
+    Fused,
+    /// A row did not read: the page is closed even to secure code, which is a
+    /// misconfiguration and never the factory state.
+    Unreadable,
+}
+
+/// Classify a key from its raw 24-bit rows, `None` for a row the OTP block refused.
+pub fn key_rows(raw: impl IntoIterator<Item = Option<u32>>) -> KeyRows {
+    let mut any = false;
+    for word in raw {
+        let Some(word) = word else {
+            return KeyRows::Unreadable;
+        };
+        any |= word & 0x00FF_FFFF != 0;
+    }
+    if any { KeyRows::Fused } else { KeyRows::Blank }
+}
+
 /// Decide the lock action purely from the row's current raw value.
 pub fn lock_decision(current_raw: u32) -> LockDecision {
     match current_raw {

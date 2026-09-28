@@ -119,6 +119,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A boot that cannot read the fused key no longer runs its seal passes.** A
+  key page closed even to secure code read as a blank one, so the boot ran every
+  seal pass, the FIDO seed and OpenPGP first-boot setup and the rest under the
+  chip-serial key a blank board uses, where it could re-seal, provision or
+  migrate what only the fused key should hold. The fused-key read now tells a
+  blank page from an unreadable one, and on an unreadable one the boot skips
+  every step that seals, reporting `FFFE` on READ `1E/07`, which keeps the
+  page-58 burn refused. `rsk otp lock-page58` names that answer and says to
+  replug (rsk 0.3.39). `bcdDevice` 0x0A61 → 0x0A62.
+
 - **A Yubico OTP typed after a warm reboot no longer repeats a position.** The
   use counter advanced once per cold boot, before USB came up. A warm reboot,
   which any host can ask for, restarted the session counter over the same use

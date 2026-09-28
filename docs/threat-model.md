@@ -294,7 +294,10 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   read counts as not moved. PIN-derived records are not counted, since their
   format does not say which key made them: a PIN verifier, and the OpenPGP DEK
   copies wrapped under the default PINs, can still be pre-burn on a locked
-  device, so a later latch must not close their arms before they move.
+  device, so a later latch must not close their arms before they move. A boot
+  that cannot read the fused key at all, a page closed even to secure code, runs
+  none of those passes and says so (READ `1E/07` = `FFFE`): taken for a blank
+  page, it would re-seal, provision and migrate under the chip-serial arm.
 - **Soft-lock** ([guides/soft-lock.md](guides/soft-lock.md)): optionally, the
   seed at rest is additionally wrapped with ChaCha20-Poly1305 under a 32-byte
   key only you hold (BIP-39/SLIP-39 words). A stolen device (even running

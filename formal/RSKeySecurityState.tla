@@ -1516,7 +1516,8 @@ VolatileCleared ==
     /\ upSpent' = FALSE
 
 \* EVERY boot runs ensure_seed, not just the one at the end of a reset:
-\* firmware/src/main.rs:713 and tools/emu/src/device.rs:508. A cut that stranded
+\* firmware/src/main.rs:722 and tools/emu/src/device.rs:508; one that cannot read
+\* the fused key runs none, which this action, allowing more, over-approximates. A cut that stranded
 \* the device mid-wipe therefore comes back WITH a seed and can hold usable
 \* credentials again. Leaving it out made the model less permissive than the
 \* firmware -- the one direction a safety argument cannot absorb.

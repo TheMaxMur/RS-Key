@@ -40,7 +40,7 @@ use embassy_usb::class::hid::{
 use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
 use static_cell::StaticCell;
 
-use rsk_crypto::{Device, FusedKey, read_fused};
+use rsk_crypto::{Device, FusedKey};
 use rsk_fs::Fs;
 use rsk_usb::ccid::{ATR_RSKEY, ATR_YUBIKEY, Ccid};
 use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR};
@@ -678,40 +678,50 @@ async fn main(spawner: Spawner) {
     // to read it, and this block is that place: the read dies at its closing brace,
     // and everything past it carries only `mkek_source`.
     {
-        let mkek = read_fused(mkek_source);
+        use rsk_rescue::otp_lock::{
+            KeyRows, PRE_OTP_DEVICE_KEY, PRE_OTP_FIDO, PRE_OTP_KEY_UNREADABLE, PRE_OTP_OATH,
+            PRE_OTP_OTP, PRE_OTP_PIV,
+        };
+        let mut key = rsk_secret::Secret::<[u8; 32]>::zeroed();
+        let rows = otp_keys::read_boot_mkek(key.expose_mut());
+        let mkek = (rows == KeyRows::Fused).then_some(&key);
         let dev = Device {
             serial_hash: &serial_hash,
             serial_id: &serial_id,
-            otp_key: mkek.as_ref().map(|k| k.expose()),
+            otp_key: mkek.map(|k| k.expose()),
         };
-        use rsk_rescue::otp_lock::{
-            PRE_OTP_DEVICE_KEY, PRE_OTP_FIDO, PRE_OTP_OATH, PRE_OTP_OTP, PRE_OTP_PIV,
-        };
-        // What each pass left under the pre-burn key is what the page-58 lock waits on.
-        let passes = [
-            (
-                rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs).unwrap_or(true),
-                PRE_OTP_FIDO,
-            ),
-            (
-                rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng),
-                PRE_OTP_DEVICE_KEY,
-            ),
-            (rsk_piv::migrate_kbase(&dev, &mut fs, &mut rng), PRE_OTP_PIV),
-            (
-                rsk_oath::migrate_seal(&dev, &mut fs, &mut rng),
-                PRE_OTP_OATH,
-            ),
-            (rsk_otp::migrate_seal(&dev, &mut fs, &mut rng), PRE_OTP_OTP),
-        ];
-        let left = passes
-            .iter()
-            .filter(|(l, _)| *l)
-            .fold(0, |m, (_, bit)| m | bit);
-        rescue_platform::record_pre_otp_left(dev.otp_key.is_some().then_some(left));
-        rsk_fido::credential::migrate_rp_seal(&dev, &mut fs);
-        let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
-        let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
+        // A fused key the boot cannot read is no blank page: each step in the else
+        // would re-seal, provision or migrate under the chip-serial arm what only the
+        // fused root should hold. None runs, and READ 1E/07 says why.
+        if rows == KeyRows::Unreadable {
+            rescue_platform::record_pre_otp_left(Some(PRE_OTP_KEY_UNREADABLE));
+        } else {
+            // What each pass left under the pre-burn key is what the page-58 lock waits on.
+            let passes = [
+                (
+                    rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs).unwrap_or(true),
+                    PRE_OTP_FIDO,
+                ),
+                (
+                    rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng),
+                    PRE_OTP_DEVICE_KEY,
+                ),
+                (rsk_piv::migrate_kbase(&dev, &mut fs, &mut rng), PRE_OTP_PIV),
+                (
+                    rsk_oath::migrate_seal(&dev, &mut fs, &mut rng),
+                    PRE_OTP_OATH,
+                ),
+                (rsk_otp::migrate_seal(&dev, &mut fs, &mut rng), PRE_OTP_OTP),
+            ];
+            let left = passes
+                .iter()
+                .filter(|(l, _)| *l)
+                .fold(0, |m, (_, bit)| m | bit);
+            rescue_platform::record_pre_otp_left(dev.otp_key.is_some().then_some(left));
+            rsk_fido::credential::migrate_rp_seal(&dev, &mut fs);
+            let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
+            let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
+        }
         let _ = rsk_devconf::scrub_legacy_lock(&mut fs);
         let _ = rsk_fido::credmgmt::settle_rp_records(&mut fs);
         // One-shot at-rest hardening: the seal migrations above leave the superseded
@@ -786,7 +796,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A61;
+    let device_release: u16 = 0x0A62;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

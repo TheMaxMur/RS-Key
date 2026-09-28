@@ -857,7 +857,7 @@ firmware predates the rescue applet.
 | `1E` | `04` | `01` | — | `YYYY(BE2) Mon Day Wday Hour Min Sec` (8 B) | READ RTC (civil); `6985` if unset |
 | `1E` | `04` | `02` | — | epoch seconds (BE4) | READ RTC (Unix); `6985` if unset |
 | `1E` | `06` | `00` | — | `required(1) ‖ version(1) ‖ capacity(1)` | READ anti-rollback state |
-| `1E` | `07` | `00` | — | `left(2)` BE16 | READ what this boot's seal passes left under the pre-burn key or could not read: `01` FIDO seed/attestation key/grant, `02` device key, `04` PIV, `08` OATH (a legacy OTP-PIN too), `10` OTP; `FFFF` when the boot had no fused key to check with |
+| `1E` | `07` | `00` | — | `left(2)` BE16 | READ what this boot's seal passes left under the pre-burn key or could not read: `01` FIDO seed/attestation key/grant, `02` device key, `04` PIV, `08` OATH (a legacy OTP-PIN too), `10` OTP; `FFFF` when the boot had no fused key to check with; `FFFE` when it could not read the fused key and so ran no seal pass (a page closed even to secure code; a replug reopens it) |
 | `1B` | `58` | `00` | `"LOCK58"` | — | ⚠️ **IRREVERSIBLE** — burn page-58 access lock (user-presence-gated; `6985` before the touch while `1E/07` is not `0000`) |
 | `1B` | `48` | `00` | `"ROLLBK"` | — | ⚠️ **IRREVERSIBLE** — set ROLLBACK_REQUIRED fuse (user-presence-gated) |
 | `1F` | `00` | `00` | — | — | REBOOT (warm; device drops off bus) |

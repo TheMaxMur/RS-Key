@@ -40,3 +40,37 @@ fn foreign_or_partial_value_refused() {
     assert_eq!(lock_decision(0x00_00_3C), LockDecision::Unexpected);
     assert_eq!(lock_decision(0x3F_3F_3F), LockDecision::Unexpected);
 }
+
+#[test]
+fn a_key_is_fused_blank_or_unreadable_by_its_rows() {
+    assert_eq!(key_rows([Some(0); 16]), KeyRows::Blank);
+    // Only the 24 data bits count; the top byte of a raw word is not a row's.
+    assert_eq!(key_rows([Some(0xFF00_0000); 16]), KeyRows::Blank);
+    let mut one = [Some(0); 16];
+    one[15] = Some(0x01);
+    assert_eq!(key_rows(one), KeyRows::Fused);
+    // A refused row is not a blank one, whatever the others read: a page closed to
+    // secure code must not pass for a board never provisioned.
+    for bad in 0..16 {
+        let mut rows = [Some(0x00AB_CDEF); 16];
+        rows[bad] = None;
+        assert_eq!(key_rows(rows), KeyRows::Unreadable, "row {bad}");
+        let mut rows = [Some(0); 16];
+        rows[bad] = None;
+        assert_eq!(key_rows(rows), KeyRows::Unreadable, "row {bad}");
+    }
+}
+
+#[test]
+fn an_unreadable_key_reads_as_neither_verdict() {
+    // `lock_page58` burns only over `0`, and the host tool names this value apart
+    // from the unchecked one.
+    assert_ne!(PRE_OTP_KEY_UNREADABLE, 0);
+    assert_ne!(PRE_OTP_KEY_UNREADABLE, PRE_OTP_UNCHECKED);
+    let passes = PRE_OTP_FIDO | PRE_OTP_DEVICE_KEY | PRE_OTP_PIV | PRE_OTP_OATH | PRE_OTP_OTP;
+    assert_ne!(
+        PRE_OTP_KEY_UNREADABLE & !passes,
+        0,
+        "reads as a set of passes"
+    );
+}

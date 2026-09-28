@@ -44,8 +44,10 @@ LOCK_SW = {
     (0x64, 0x00): "EXEC_ERROR — OTP read/write failed or did not verify",
 }
 # READ 1E/07: what the boot's seal passes left under the pre-burn key, rsk-rescue
-# `otp_lock::PRE_OTP_*` bits big-endian; all set for a boot that could not check.
+# `otp_lock::PRE_OTP_*` bits big-endian; all set for a boot that could not check,
+# and FFFE for one that could not read the fused key and so ran no pass.
 PRE_OTP_UNCHECKED = 0xFFFF
+PRE_OTP_KEY_UNREADABLE = 0xFFFE
 PRE_OTP_ACTIONS = (
     (0x0001, "FIDO seed, attestation key or grant: replug once; a seed wrapped by a PIN set "
              "before the burn moves at its first FIDO PIN use — use it, then replug (a "
@@ -64,6 +66,10 @@ def pre_otp_actions(left):
     if left == PRE_OTP_UNCHECKED:
         return ["this boot had no fused key to check with: burn it first (`rsk otp burn`); "
                 "if it is burned, the boot could not read it — replug"]
+    if left == PRE_OTP_KEY_UNREADABLE:
+        return ["this boot could not read the fused key and ran no seal pass: unplug and "
+                "replug the key (a reboot over USB keeps the key page closed); if it "
+                "persists, the page is locked away from the firmware itself"]
     return [text for bit, text in PRE_OTP_ACTIONS if left & bit]
 
 

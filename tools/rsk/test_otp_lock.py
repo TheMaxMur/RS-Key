@@ -36,6 +36,13 @@ def test_an_unchecked_boot_is_one_remedy_not_every_one():
     assert len(todo) == 1 and "rsk otp burn" in todo[0]
 
 
+def test_an_unreadable_key_is_its_own_remedy():
+    # rsk-rescue `otp_lock::PRE_OTP_KEY_UNREADABLE`: no pass ran, so no pass's remedy.
+    todo = otp.pre_otp_actions(otp.PRE_OTP_KEY_UNREADABLE)
+    assert len(todo) == 1 and "replug" in todo[0] and "rsk otp burn" not in todo[0]
+    assert otp.PRE_OTP_KEY_UNREADABLE == 0xFFFE
+
+
 def test_the_bits_are_the_firmware_s():
     # rsk-rescue `otp_lock::PRE_OTP_*`, in order: FIDO, device key, PIV, OATH, OTP.
     assert [bit for bit, _ in otp.PRE_OTP_ACTIONS] == [0x01, 0x02, 0x04, 0x08, 0x10]
