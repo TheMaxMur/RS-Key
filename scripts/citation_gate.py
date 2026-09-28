@@ -199,7 +199,7 @@ PAGES = (
     pathlib.Path("formal/RSKeyTransport.tla"),
     # The applet-policy module was the ninth `.tla` carrying citations and the
     # only one this tuple did not name, so all four of its citations were
-    # unchecked — and one had rotted: `rsk-otp/src/lib.rs:564-569` was the swap's
+    # unchecked — and one had rotted: `rsk-otp/src/lib.rs:575-580` was the swap's
     # write-back tail ending on a blank line, not the access-code gate it claims.
     pathlib.Path("formal/RSKeyAppletPolicies.tla"),
     # The replay harness cites too, and R4c's whole content is a code rule

@@ -164,12 +164,12 @@ impl SlotRecord {
         imf
     }
 
-    /// The boot bump, [`counter::boot_use_counter`]'s: `true` when the use counter
-    /// moved; at the ceiling it stays where it is.
-    pub(crate) fn boot_bump(&mut self) -> bool {
+    /// A power cycle's first press, [`counter::cycle_use_counter`]'s: `true` when the
+    /// use counter moved; at the ceiling it stays where it is.
+    pub(crate) fn cycle_bump(&mut self) -> bool {
         let rec = self.tail_to_move();
         let stored = u16::from_be_bytes([rec[TAIL], rec[TAIL + 1]]);
-        let Some(counter) = counter::boot_use_counter(stored) else {
+        let Some(counter) = counter::cycle_use_counter(stored) else {
             return false;
         };
         rec[TAIL..TAIL + 2].copy_from_slice(&counter.to_be_bytes());
@@ -177,7 +177,7 @@ impl SlotRecord {
         true
     }
 
-    /// The record whose tail (from [`TAIL`]) a press or the boot bump moves. A record
+    /// The record whose tail (from [`TAIL`]) a press or a cycle's first press moves. A record
     /// shorter than a full one holds no counter, so the move starts from zero — as
     /// it always has.
     fn tail_to_move(&mut self) -> &mut [u8; SLOT_SIZE] {

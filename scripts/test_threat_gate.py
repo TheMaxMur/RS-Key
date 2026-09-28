@@ -223,7 +223,7 @@ def test_the_voluntarily_pinned_clauses_still_carry_their_pins():
     an undemanded pin is itself deletable at exit 0, which leaves the body free
     text again by exactly the edit the pin was written to refuse. Both clauses
     here were reviewed into their current wording (the drop is conditional, the
-    residual count is six), and it is those sentences the pins hold.
+    residual count is three), and it is those sentences the pins hold.
     """
     clauses = threat_gate.load(threat_gate.ROOT, threat_gate.CLAUSES)["clause"]
     pins = {c["id"]: len(c.get("rests_on", [])) for c in clauses}

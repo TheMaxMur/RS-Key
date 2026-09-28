@@ -60,14 +60,15 @@ VARIABLES
     otpProtected,
     otpUse,
     otpSess,
+    otpAdv,
     otpMarked,
     otpMark,
     viol
 
-(* Grouped because the OTP half is six functions now and every one of the    *)
-(* ten actions outside it leaves all six alone: spelled out, that is a       *)
-(* sixty-line restatement of one fact.                                       *)
-otpVars == << otpPresent, otpProtected, otpUse, otpSess, otpMarked, otpMark >>
+(* Grouped because the OTP half is seven functions now and every one of the  *)
+(* ten actions outside it leaves all seven alone: spelled out, that is a     *)
+(* seventy-line restatement of one fact.                                     *)
+otpVars == << otpPresent, otpProtected, otpUse, otpSess, otpAdv, otpMarked, otpMark >>
 
 vars == << pivPolicy, pivVerified, pivFresh,
            pgpAttribute, pgpKeyAttribute, pgpKeyPresent,
@@ -88,6 +89,7 @@ TypeOK ==
     /\ otpProtected \in [Slots -> BOOLEAN]
     /\ otpUse \in [Slots -> 0..CounterMax]
     /\ otpSess \in [Slots -> 0..SessionMax]
+    /\ otpAdv \in [Slots -> BOOLEAN]
     /\ otpMarked \in [Slots -> BOOLEAN]
     /\ otpMark \in [Slots -> Positions]
     /\ viol \in SUBSET InvNames
@@ -106,6 +108,7 @@ Init ==
     /\ otpProtected = [k \in Slots |-> FALSE]
     /\ otpUse = [k \in Slots |-> 0]
     /\ otpSess = [k \in Slots |-> 0]
+    /\ otpAdv = [k \in Slots |-> FALSE]
     /\ otpMarked = [k \in Slots |-> FALSE]
     /\ otpMark = [k \in Slots |-> ZeroPos]
     /\ viol = {}
@@ -221,12 +224,12 @@ OathCalculate(touched) ==
 (***************************************************************************)
 (* Yubico OTP. Existing-slot configure, update and swap each state the     *)
 (* stored-six-byte-code rule at their OWN gate, so the citation names all  *)
-(* three (crates/rsk-otp/src/lib.rs:477-494, 541-555, 637-645): a range    *)
+(* three (crates/rsk-otp/src/lib.rs:488-505, 552-566, 648-656): a range    *)
 (* resolving to a prologue reads as a gate nothing checks.                 *)
 (*                                                                         *)
 (* The position is a PAIR, per slot, because the two halves live in        *)
 (* different memories and only one of them moves on a press                *)
-(* (crates/rsk-otp/src/counter.rs:16-26): the RAM session rolls every      *)
+(* (crates/rsk-otp/src/counter.rs:17-27): the RAM session rolls every      *)
 (* press and the persisted use counter advances only at its wrap. `Slots`  *)
 (* is a set and not a scalar because the two halves are also indexed       *)
 (* differently: the use counter belongs to the RECORD, the session to      *)
@@ -247,17 +250,16 @@ OathCalculate(touched) ==
 (* it is why the model reaches a re-configure as delete-then-              *)
 (* configure rather than as one step -- the device's one-step form         *)
 (* differs only in leaving the RAM session alone, which the two-step       *)
-(* form does too (crates/rsk-otp/src/tests.rs:1574).                       *)
+(* form does too (crates/rsk-otp/src/tests.rs:1620).                       *)
 (***************************************************************************)
 
 (***************************************************************************)
-(* WHAT THE `otpUse[k] < CounterMax` GUARD IS. It is a bound on the CLAIM, *)
-(* not a fact about the device. At the real ceiling the device goes on     *)
-(* typing and the pair repeats once the session rolls; the guard stops     *)
+(* WHAT `OtpUse`'s `use < CounterMax` GUARD IS. It is a bound on the       *)
+(* CLAIM, not a fact about the device. At the real ceiling the device goes *)
+(* on typing and the pair repeats once the session rolls; the guard stops  *)
 (* the model before that, so what is proved here is the claim BELOW the    *)
-(* ceiling. That residual, and the warm reset -- ungated, deliberately     *)
-(* unbumped, so a cycle's pairs are typeable again -- are stated in        *)
-(* docs/threat-model.md#TM-HOST-OTP-REPLAY, and neither is modelled.       *)
+(* ceiling. That residual is stated in                                     *)
+(* docs/threat-model.md#TM-HOST-OTP-REPLAY, and it is not modelled.        *)
 (***************************************************************************)
 OtpConfigure(k, protected) ==
     /\ ~otpPresent[k]
@@ -266,8 +268,8 @@ OtpConfigure(k, protected) ==
     /\ otpUse' = [otpUse EXCEPT ![k] = 0]
     /\ otpMarked' = [otpMarked EXCEPT ![k] = FALSE]
     /\ otpMark' = [otpMark EXCEPT ![k] = ZeroPos]
-    (* The RAM session counter is not the record's and is not rewound with it. *)
-    /\ UNCHANGED << otpSess,
+    (* The RAM halves are not the record's and are not rewound with it. *)
+    /\ UNCHANGED << otpSess, otpAdv,
                     pivPolicy, pivVerified, pivFresh,
                     pgpAttribute, pgpKeyAttribute, pgpKeyPresent,
                     oathCodeSet, oathValidated, oathTouchRequired, viol >>
@@ -285,7 +287,7 @@ OtpMutate(k, codeMatches, keep) ==
        /\ otpMark' = [otpMark EXCEPT ![k] = IF keep THEN otpMark[k] ELSE ZeroPos]
        /\ viol' = IF policy THEN viol
                             ELSE viol \cup {"OtpSlotMutationNeedsItsCode"}
-       /\ UNCHANGED << otpSess,
+       /\ UNCHANGED << otpSess, otpAdv,
                        pivPolicy, pivVerified, pivFresh,
                        pgpAttribute, pgpKeyAttribute, pgpKeyPresent,
                        oathCodeSet, oathValidated, oathTouchRequired >>
@@ -293,11 +295,12 @@ OtpMutate(k, codeMatches, keep) ==
 (***************************************************************************)
 (* SLOT_SWAP moves the record; the volatile half of the position has to    *)
 (* travel with it, or the moved record is re-paired with a session used    *)
-(* fewer times (crates/rsk-otp/src/lib.rs:673-679). The mark travels for   *)
-(* the same reason: it is the RECORD's history, not the slot's. A          *)
+(* fewer times (crates/rsk-otp/src/lib.rs:684-692). The mark and the boot  *)
+(* advance travel for the same reason: they are the RECORD's, not the      *)
+(* slot's. A                                                               *)
 (* programmed slot's stored code gates its move exactly as it gates an     *)
 (* overwrite, so an absent slot imposes no gate                            *)
-(* (crates/rsk-otp/src/lib.rs:641-645).                                    *)
+(* (crates/rsk-otp/src/lib.rs:652-656).                                    *)
 (***************************************************************************)
 OtpSwap(j, k, codeMatches) ==
     LET gated(s) == otpPresent[s] /\ otpProtected[s]
@@ -317,6 +320,7 @@ OtpSwap(j, k, codeMatches) ==
        /\ otpMark' = [otpMark EXCEPT ![j] = otpMark[k], ![k] = otpMark[j]]
        /\ otpSess' = IF BugOtpSwapKeepsSession THEN otpSess
                      ELSE [otpSess EXCEPT ![j] = otpSess[k], ![k] = otpSess[j]]
+       /\ otpAdv' = [otpAdv EXCEPT ![j] = otpAdv[k], ![k] = otpAdv[j]]
        /\ viol' = IF policy THEN viol
                             ELSE viol \cup {"OtpSlotMutationNeedsItsCode"}
        /\ UNCHANGED << pivPolicy, pivVerified, pivFresh,
@@ -324,39 +328,40 @@ OtpSwap(j, k, codeMatches) ==
                        oathCodeSet, oathValidated, oathTouchRequired >>
 
 (***************************************************************************)
-(* A cold boot: the RAM session restarts at zero, so `power_up_bump`       *)
-(* advances the persisted half of every plain slot it can read that still  *)
-(* has room, before USB is up (crates/rsk-otp/src/lib.rs:1149-1187). That  *)
-(* is what keeps one power cycle's pairs out of the next one's, so the mark*)
-(* deliberately SURVIVES the cycle.                                        *)
+(* A boot, warm or cold: the RAM session restarts at zero and every record *)
+(* owes its persisted half an advance again, which its first press takes   *)
+(* before it types (crates/rsk-otp/src/lib.rs:349-354). That is what keeps *)
+(* one boot's pairs out of the next one's, so the mark deliberately        *)
+(* SURVIVES the boot.                                                      *)
 (***************************************************************************)
 OtpPowerCycle ==
     /\ otpSess' = [k \in Slots |-> 0]
-    /\ otpUse' = IF BugOtpBootKeepsPosition THEN otpUse
-                 ELSE [k \in Slots |-> IF otpPresent[k] /\ otpUse[k] < CounterMax
-                                         THEN otpUse[k] + 1 ELSE otpUse[k]]
-    /\ UNCHANGED << otpPresent, otpProtected, otpMarked, otpMark,
+    /\ otpAdv' = [k \in Slots |-> FALSE]
+    /\ UNCHANGED << otpPresent, otpProtected, otpUse, otpMarked, otpMark,
                     pivPolicy, pivVerified, pivFresh,
                     pgpAttribute, pgpKeyAttribute, pgpKeyPresent,
                     oathCodeSet, oathValidated, oathTouchRequired, viol >>
 
 OtpUse(k) ==
-    LET pos      == << otpUse[k], otpSess[k] >>
+    LET owed     == ~otpAdv[k] /\ ~BugOtpBootKeepsPosition
+        use      == IF owed THEN otpUse[k] + 1 ELSE otpUse[k]
+        pos      == << use, otpSess[k] >>
         wrapped  == otpSess[k] = SessionMax
-        persist  == wrapped /\ otpUse[k] < CounterMax
+        persist  == wrapped /\ use < CounterMax
         frozen   == BugOtpCounterRepeats
         nextSess == IF frozen THEN otpSess[k]
                     ELSE IF wrapped THEN 0 ELSE otpSess[k] + 1
         (* The press that owes flash an advance and types without it: the RAM *)
         (* half rolls anyway, so the next press re-pairs the old counter with *)
-        (* this cycle's first session (crates/rsk-otp/src/lib.rs:346-361).    *)
-        nextUse  == IF frozen \/ BugOtpPressTypesUnpersisted THEN otpUse[k]
-                    ELSE IF persist THEN otpUse[k] + 1 ELSE otpUse[k]
+        (* this cycle's first session (crates/rsk-otp/src/lib.rs:357-369).    *)
+        nextUse  == IF BugOtpPressTypesUnpersisted THEN otpUse[k]
+                    ELSE IF persist /\ ~frozen THEN use + 1 ELSE use
         repeat   == otpMarked[k] /\ otpMark[k] = pos
     IN /\ otpPresent[k]
-       /\ otpUse[k] < CounterMax
+       /\ use < CounterMax
        /\ otpSess' = [otpSess EXCEPT ![k] = nextSess]
        /\ otpUse' = [otpUse EXCEPT ![k] = nextUse]
+       /\ otpAdv' = [otpAdv EXCEPT ![k] = TRUE]
        /\ \/ /\ ~otpMarked[k]
              /\ otpMarked' = [otpMarked EXCEPT ![k] = TRUE]
              /\ otpMark' = [otpMark EXCEPT ![k] = pos]

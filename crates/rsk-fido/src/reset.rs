@@ -61,9 +61,9 @@ pub fn reset<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {
     // head leaves the marker latched over every tombstone [`wipe`] appended, and a
     // wipe that faults on the way is exactly when that is true and unrecoverable.
     //
-    // A single-shot refusal is the only kind either call recovers from (`rsk_otp`'s
-    // BUMP_TRIES states the same), and where the head landed this costs no append at
-    // all — `Fs::delete` skips a backend it already marked absent.
+    // A single-shot refusal is the only kind either call recovers from, and where
+    // the head landed this costs no append at all — `Fs::delete` skips a backend it
+    // already marked absent.
     let _retried = rsk_fs::attempt_rescrub(ctx.fs);
     // Ahead of `ensure_seed` because `ensure_seed`'s OWN `?` would skip it — not
     // because the sweeps' does, which skips either position identically, and not

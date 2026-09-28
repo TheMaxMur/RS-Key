@@ -517,17 +517,6 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
     }
     fido_state.ensure_initialized(&mut *rng.borrow_mut());
 
-    // The other half of `main.rs`'s boot, and the half a warm reboot must not
-    // repeat: advance every plain Yubico-OTP slot's use counter, so the
-    // `(use, session)` pair a validation server orders OTPs by cannot recur —
-    // the session half restarts at 0 on every power-up. The emulator's power-ups
-    // are process start and `Job::Replug`; the warm reboot below skips this, as
-    // `!pin_lock::was_warm_boot()` makes the device skip it.
-    let power_up_bump = || {
-        rsk_otp::power_up_bump(&dev(), &mut fs.borrow_mut(), &mut *rng.borrow_mut());
-    };
-    power_up_bump();
-
     // The wiring itself: the same two handlers `firmware`'s worker owns. One vendor
     // platform handle, cloned into both, because the reboot they queue is the same
     // device's — one static there, one `Rc<Cell>` here.
@@ -791,7 +780,6 @@ async fn serve<PR: rsk_sdk::UserPresence + 'static>(
                 // `main.rs` ignores a failed `ensure_seed` too: the next command
                 // answers for whatever store the boot left.
                 let _ = boot_block();
-                power_up_bump();
                 hooks.borrow_mut().warm = false;
                 ctap = AppletHandler::new(
                     fs,

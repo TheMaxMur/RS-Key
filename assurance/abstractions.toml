@@ -317,7 +317,7 @@ this model reaches is bounded at source instead:
 use_counter_climbs_and_stops_at_the_ceiling quantifies over every session byte
 and both stepped writers across the whole 0x7FFF domain. Only SlotRecord's
 methods write the counter, since its tail is private: a CONFIGURE zeroes it,
-the boot bump steps it through one of those two rules, and a press through the
+a boot's first press steps it through one of those two rules, and a press through the
 other, after promoting an unused counter to 1. A raw write to a slot FID is
 below the type, and outside this bound.
 '''

@@ -382,7 +382,7 @@ source = ["Yubico OTP USB protocol", "docs/threat-model.md#TM-HOST-GATES"]
 id = "SEC-POL-006"
 name = "OtpCounterNeverRepeats"
 status = "MODELLED-ONLY"
-statement = "Below the use-counter ceiling, every emitted counter-based Yubico OTP advances the combined persisted-use and RAM-session replay position before the next output can reuse it — across a press, a cold boot and a slot swap alike. The qualifier is not hedging: at the ceiling neither the press nor the boot bump advances anything and the key goes on typing, so the pair repeats once the session rolls, and a host-requested warm reset restarts the session over an unchanged use counter. Both are residuals the source page states, and the model bounds itself to the same side of the ceiling rather than proving a claim the device does not make."
+statement = "Below the use-counter ceiling, every emitted counter-based Yubico OTP advances the combined persisted-use and RAM-session replay position before the next output can reuse it — across a press, a boot, warm or cold, and a slot swap alike. The qualifier is not hedging: at the ceiling neither the wrapping press nor a boot's first press advances anything and the key goes on typing, so the pair repeats once the session rolls. That is a residual the source page states, and the model bounds itself to the same side of the ceiling rather than proving a claim the device does not make."
 source = ["Yubico OTP USB protocol", "docs/threat-model.md#TM-HOST-OTP-REPLAY"]
 
 # ---- RSKeyAdminSurface — the mask, its carve-out, the rescue gate -----------

@@ -1668,9 +1668,9 @@ fn wipe_oath<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     // appended, and a sweep that faults on the way is exactly when that is true and
     // unrecoverable.
     //
-    // A single-shot refusal is the only kind either call recovers from (`rsk_otp`'s
-    // BUMP_TRIES states the same), and where the head landed this costs no append at
-    // all — `Fs::delete` skips a backend it already marked absent.
+    // A single-shot refusal is the only kind either call recovers from, and where
+    // the head landed this costs no append at all — `Fs::delete` skips a backend it
+    // already marked absent.
     let _retried = rsk_fs::attempt_rescrub(fs);
     swept
 }

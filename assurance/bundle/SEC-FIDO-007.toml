@@ -51,7 +51,7 @@ requirement = [
 ]
 threat_clause = "docs/threat-model.md#TM-ZEROIZATION"
 # AND THE CLAUSE DOES NOT SAY WHAT THE PROPERTY IS ABOUT. Read at
-# docs/threat-model.md:400-415, `## Zeroization` makes one rule — key-grade
+# docs/threat-model.md:383-398, `## Zeroization` makes one rule — key-grade
 # material in RAM is wiped WHEN ITS USE ENDS, "on drop", "at end of scope",
 # "as soon as a message completes" — and names session state, PIN/UV tokens,
 # transient key copies, transport buffers, the DEVK and the MKEK. It never names

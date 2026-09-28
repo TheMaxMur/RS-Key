@@ -66,7 +66,7 @@ fn use_counter(path: &Path) -> Option<u16> {
 }
 
 /// A blank flash image holding one plain Yubico-OTP slot — every flag byte zero,
-/// which is the kind `power_up_bump` advances (HOTP / short / static it skips) —
+/// the kind a boot's first press advances (HOTP / short / static it skips) —
 /// with the device thread running against it.
 fn bench(name: &str) -> (PathBuf, Jobs, Arc<Signals>, JoinHandle<()>) {
     bench_with(name, PresenceMode::Instant)
@@ -143,52 +143,18 @@ fn shut_down(path: PathBuf, jobs: Jobs, device: JoinHandle<()>) {
     let _ = std::fs::remove_file(path);
 }
 
-/// A power cycle advances the Yubico-OTP use counter, on the bench as on the
-/// board.
-///
-/// `firmware/src/main.rs` runs `power_up_bump` at every cold boot and its own
-/// comment says why: the RAM session counter restarts at 0 on each power-up, so
-/// a persistent use counter that stood still would let the `(use, session)` pair
-/// a Yubico validation server orders OTPs by repeat — which is the replay. The
-/// emulator had zero references to it, so `OP_REPLUG` reset the session half and
-/// left the persistent half alone: the one arrangement the defence exists to
-/// prevent, reproduced on the bench built to test it.
-///
-/// Driven through `device::run`'s real job loop over the real store image, not by
-/// calling `rsk_otp::power_up_bump` again — that function has its own tests in
-/// its own crate, and exercising it here would leave both call sites unproven.
+/// Only a press advances the Yubico-OTP use counter — the first after each boot,
+/// as a YubiKey's first use does — and a host has no button. So no boot a host can
+/// cause walks the 15-bit counter to its ceiling: not a replug, not `INS_REBOOT`.
 #[test]
-fn a_power_cycle_advances_the_yubico_otp_use_counter() {
-    let (path, jobs, _signals, device) = bench("power-cycle");
-
+fn no_boot_moves_the_yubico_otp_use_counter() {
+    let (path, jobs, _signals, device) = bench("no-boot-bump");
     // Answering anything proves the boot block is behind us.
     ask(&jobs, Job::OtpStatus);
-    assert_eq!(
-        use_counter(&path),
-        Some(1),
-        "process start is a power-up too"
-    );
+    assert_eq!(use_counter(&path), Some(0), "process start");
 
-    ask(&jobs, Job::Replug(Unplug::Operator));
-    assert_eq!(
-        use_counter(&path),
-        Some(2),
-        "the replug left the counter where the last power-up did"
-    );
-
-    shut_down(path, jobs, device);
-}
-
-/// The other half of the same rule: a host-requested warm reboot must NOT bump.
-/// `INS_REBOOT` is ungated, so a bump on that path would hand any host a way to
-/// walk the 15-bit counter to its ceiling, where it saturates while the session
-/// counter keeps restarting — the same repeated pair, reached from the other
-/// side. `main.rs` states the rule as `if !pin_lock::was_warm_boot()`.
-#[test]
-fn a_warm_reboot_is_not_a_power_cycle() {
-    let (path, jobs, _signals, device) = bench("warm-reboot");
-    ask(&jobs, Job::OtpStatus);
-    assert_eq!(use_counter(&path), Some(1), "the boot bump");
+    ask(&jobs, Job::Replug(Unplug::Host));
+    assert_eq!(use_counter(&path), Some(0), "a replug");
 
     let mut select = vec![0x00, 0xA4, 0x04, 0x00, VENDOR_AID.len() as u8];
     select.extend_from_slice(&VENDOR_AID);
@@ -196,15 +162,10 @@ fn a_warm_reboot_is_not_a_power_cycle() {
     assert_eq!(r[r.len() - 2..], SW_OK, "the vendor applet is selected");
     let r = ask(&jobs, Job::Apdu(vec![0x00, INS_REBOOT, 0x00, 0x00]));
     assert_eq!(r[r.len() - 2..], SW_OK, "the reboot was accepted");
-
     // The reboot runs after the response is out, as it does on the device, so
     // one more round trip is what proves it has happened.
     ask(&jobs, Job::OtpStatus);
-    assert_eq!(
-        use_counter(&path),
-        Some(1),
-        "a warm reboot is not a power-up"
-    );
+    assert_eq!(use_counter(&path), Some(0), "a warm reboot");
 
     shut_down(path, jobs, device);
 }

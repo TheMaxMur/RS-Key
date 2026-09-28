@@ -60,7 +60,7 @@ const EF_OTP_SLOT2: u16 = 0xBB01;
 /// Number of OTP slots (1/2 classic short/long press, 3/4 via CCID P2 offset).
 pub(crate) const SLOT_COUNT: u8 = 4;
 /// Highest addressable slot FID. Only slots 1..=4 (0xBB00..=0xBB03) are ever read
-/// back (button_ticket, status, migrate_seal, power_up_bump); every command that
+/// back (button_ticket, status, migrate_seal); every command that
 /// derives a FID from a host offset must reject anything past this, or a slot can
 /// be written/relocated to an FID no code ever reaches again.
 pub(crate) const EF_OTP_SLOT_LAST: u16 = EF_OTP_SLOT1 + SLOT_COUNT as u16 - 1;
@@ -231,6 +231,10 @@ pub struct OtpApplet<'a> {
     /// resets each power cycle. One entry per slot (1–4). It belongs to the
     /// slot's RECORD, not to the index: `cmd_swap` moves it with the record.
     session_counter: [u8; SLOT_COUNT as usize],
+    /// Whether each slot has taken this boot's use-counter advance: the session
+    /// restarts at zero with every boot, so the first Yubico-OTP press advances
+    /// it, as a YubiKey's first use does. The record's too: `cmd_swap` moves it.
+    advanced: [bool; SLOT_COUNT as usize],
 }
 
 impl<'a> OtpApplet<'a> {
@@ -249,6 +253,7 @@ impl<'a> OtpApplet<'a> {
             presence,
             config_seq: 1,
             session_counter: [0; SLOT_COUNT as usize],
+            advanced: [false; SLOT_COUNT as usize],
         }
     }
 
@@ -341,8 +346,14 @@ impl<'a> OtpApplet<'a> {
         }
         let idx = usize::from(slot - 1);
         let session = self.session_counter.get(idx).copied()?;
+        // The session restarts at zero with every boot, warm or cold, so the first
+        // Yubico-OTP press since then advances the stored counter before it types,
+        // or it pairs a position an earlier boot already typed.
+        let plain = tkt & TKT_OATH_HOTP == 0 && cfg & (CFG_SHORT_TICKET | CFG_STATIC_TICKET) == 0;
+        let first = plain && !self.advanced.get(idx).copied()?;
+        let bumped = first && rec.cycle_bump();
         let t = ticket::build(&mut rec, session, ts_secs, rnd, out);
-        if t.persist {
+        if t.persist || bumped {
             // The advance this press owes the PERSISTED half of the position. A
             // ticket typed without it is typed again: the next press reads the old
             // counter back and pairs it with a session this cycle already used —
@@ -350,18 +361,18 @@ impl<'a> OtpApplet<'a> {
             // write types nothing and leaves the RAM half where the stored one is,
             // which retries the press rather than replaying it.
             //
-            // How often this arm runs depends on the slot: a Yubico-OTP slot owes
-            // a write on its FIRST press (the stored tail is zero) and then only
-            // at each session wrap, but an OATH-HOTP slot moves its factor on
-            // EVERY press — so a store that keeps refusing denies every HOTP press
-            // for as long as it refuses. That is a denial of service and it
-            // recovers cleanly; emitting the code twice would not.
+            // A Yubico-OTP slot owes this write at its first press of each boot and
+            // each session wrap, a HOTP slot at every press: a store that keeps
+            // refusing denies those presses, which recovers; a repeat would not.
             if !self.put_slot(fs, fid, &rec) {
                 return None;
             }
         }
         if let Some(counter) = self.session_counter.get_mut(idx) {
             *counter = t.new_session;
+        }
+        if first && let Some(advanced) = self.advanced.get_mut(idx) {
+            *advanced = true;
         }
         let (len, encode) = (t.len, t.encode);
         // Functional custom scancode map (0x12): if one is stored and the whole
@@ -673,10 +684,12 @@ impl<'a> OtpApplet<'a> {
         // The replay position is a PAIR — the record's persisted use counter and
         // the slot's RAM session counter — so the volatile half moves with the
         // record, or the move re-pairs it with one used fewer times (a replay).
-        self.session_counter.swap(
+        let (a, b) = (
             (fid1 - EF_OTP_SLOT1) as usize,
             (fid2 - EF_OTP_SLOT1) as usize,
         );
+        self.session_counter.swap(a, b);
+        self.advanced.swap(a, b);
         self.config_seq = self.config_seq.wrapping_add(1);
         self.status(fs, res)
     }
@@ -1058,8 +1071,8 @@ pub(crate) fn try_read_slot<S: Storage>(
 /// recovered and re-sealed under the OTP arm once the fuse key is present; a
 /// legacy plaintext config is sealed in place. Idempotent and crash-safe per slot
 /// — GCM authentication tells the generations apart — so it runs unconditionally
-/// at every boot (see `firmware/src/main.rs`), before any host command or
-/// [`power_up_bump`] touches a slot. Closes the one applet that historically
+/// at every boot (see `firmware/src/main.rs`), before any host command or press
+/// touches a slot. Closes the one applet that historically
 /// stored its secrets in the clear, and (via the pre-OTP arm, mirroring
 /// keydev/PIV/seed) keeps an OTP burn from orphaning a slot provisioned before it.
 /// Answers whether a slot is left under the chip-serial arm or in the clear on a
@@ -1121,69 +1134,6 @@ pub fn migrate_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng)
         }
     }
     left
-}
-
-/// Attempts the boot bump spends on one slot, per side, before giving up on it.
-/// What the retry is for is a SINGLE-SHOT refusal — the fault a fixture arms with
-/// one call, and the only kind either side recovers from — so the only value that
-/// is wrong is 1. Everything above it is arbitrary and nothing pins an upper
-/// bound: measured, 0 is killed by three tests while 2 and 255 both survive the
-/// whole suite. 3 is chosen because 4 slots × 3 is not a boot stall.
-///
-/// It does NOT close a refusal that persists — `Fs::put` answers `NoMemory` on a
-/// full store — and that residual is a CHOICE, not a limit this frame cannot
-/// escape. Two closures were built and measured. One carries the failure out:
-/// `power_up_bump` returns a stale-slot bitmask the applet is told about. One
-/// stays here: a per-slot "bumped this cycle" flag on `OtpApplet`, with the first
-/// press of a slot performing [`counter::boot_use_counter`]'s write itself and
-/// answering `None` if the store refuses. What ships is the other arm — keep
-/// typing — because a store that cannot be written to would otherwise silence
-/// every slot on the key. docs/threat-model.md states it that way, and a test
-/// pins the repeat so whichever arm lands is visible.
-const BUMP_TRIES: u8 = 3;
-
-/// Boot-time use-counter bump: on power-up, advance the 15-bit use counter of
-/// every plain Yubico-OTP slot (skipping HOTP / short / static slots), so a
-/// counter never repeats across reboots — the YubiKey replay defence. Runs once
-/// at startup.
-pub fn power_up_bump<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) {
-    let mut slot = SlotRecord::vacant();
-    for i in 0..u16::from(SLOT_COUNT) {
-        let fid = EF_OTP_SLOT1 + i;
-        // A read the medium REFUSED is not an unprogrammed slot: skipping it
-        // leaves the use counter where the last power cycle left it, while the RAM
-        // session counter restarts at zero — so that cycle's pairs are typed
-        // again. One transient fault must not buy a host that window.
-        let mut read = try_read_slot(dev, fs, fid, &mut slot);
-        for _ in 1..BUMP_TRIES {
-            if read.is_ok() {
-                break;
-            }
-            read = try_read_slot(dev, fs, fid, &mut slot);
-        }
-        // A slot that is genuinely absent, and one a persistently refusing medium
-        // never served, are both skipped — the residual docs/threat-model.md states.
-        let Ok(Some(_)) = read else {
-            continue;
-        };
-        let tkt = slot.expose()[OFF_TKT_FLAGS];
-        let cfg = slot.expose()[OFF_CFG_FLAGS];
-        if tkt & TKT_OATH_HOTP != 0 || cfg & (CFG_SHORT_TICKET | CFG_STATIC_TICKET) != 0 {
-            continue;
-        }
-        if slot.boot_bump() {
-            // The write half of the same window, and it is the more reachable one:
-            // nothing has to fault for it to open, and the old record goes on
-            // reading perfectly. A retry is all this frame can do — boot has no one
-            // to report to, and the press cannot tell a stale counter from a fresh
-            // one — so the persistent case stays a residual rather than a guard.
-            for _ in 0..BUMP_TRIES {
-                if seal::seal_put(dev, fs, rng, KeyFid::new(fid), &slot) {
-                    break;
-                }
-            }
-        }
-    }
 }
 
 /// CRC16 X.25 / CRC-CCITT reflected, poly 0x8408.

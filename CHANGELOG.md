@@ -110,6 +110,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A Yubico OTP typed after a warm reboot no longer repeats a position.** The
+  use counter advanced once per cold boot, before USB came up. A warm reboot,
+  which any host can ask for, restarted the session counter over the same use
+  counter, so the next presses re-typed positions a validation server had
+  already seen; a boot write the store refused did the same after a cold boot.
+  The counter now advances at the first press after every boot, warm or cold, as
+  a YubiKey advances it at its first use after power-up, and a press whose
+  advance the store will not take types nothing. A host still cannot move the
+  counter without a press. `bcdDevice` 0x0A5F → 0x0A60.
+
 - **An access code any host could set no longer opens the OATH password safe.**
   On an applet with no access code, SET CODE needs no credential, as on a
   YubiKey, and it deleted the OTP PIN that guards the password safe (the

@@ -68,7 +68,7 @@ requirement = [
   "and NOTHING states the OTP or on-panel halves: the Yubico OTP frame protocol is not a FIDO specification and an on-panel ceremony is this device's own, so two of the four owners have no external requirement to be checked against",
 ]
 threat_clause = "docs/threat-model.md#TM-HOST-TWO-TRANSPORTS"
-# AND THE CLAUSE LINKS RATHER THAN COVERS. Read at docs/threat-model.md:227-247,
+# AND THE CLAUSE LINKS RATHER THAN COVERS. Read at docs/threat-model.md:210-230,
 # the whole bullet and not the enabled-applications one that ends at :227: it
 # establishes the PREMISE this property exists for — CTAP2 and U2F are served
 # over CCID as well as CTAPHID, so a second, easier path reaches the same applet

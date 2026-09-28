@@ -157,8 +157,9 @@ clear, then an AES-128-ECB block over the private id, a 16-bit usage counter, a
 session counter, an uptime stamp, two random bytes and a CRC). A validation
 server decrypts and replay-checks them.
 
-- The usage counter advances every power-up and every session wrap, so a token
-  never repeats across reboots: the standard replay defence.
+- The usage counter advances at the first press after every power-up and at
+  every session wrap, as on a YubiKey, so a token never repeats across reboots:
+  the standard replay defence. A host cannot advance it without a press.
 - **Public validation (YubiCloud)** requires uploading the slot's AES key to
   Yubico. `--generate-key` prints the key, public id and private id at
   programming time. Capture them then, because they cannot be read back later.

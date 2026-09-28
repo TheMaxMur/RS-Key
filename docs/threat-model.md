@@ -165,46 +165,29 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   does not read that way — the first on a freshly configured slot, whose stored
   zero is written up to one *before* the ticket is built, so what it types is the
   moved value and not the zero it held. The two paths that ADVANCE the persisted
-  half are that press and the boot-time bump, and the step that can reach the
-  15-bit ceiling comes from one module for both, so the ceiling cannot be enforced
-  two different ways. The first-press `0 → 1` write sits beside it in `ticket.rs`
-  and cannot reach the ceiling. `UPDATE` and the boot seal migration carry a
-  slot's record forward and leave the counter alone. `SWAP` leaves the stored
-  counter alone too — but it moves the record to the *other* slot index, and the
-  RAM half travels with it, because the pair belongs to the public id inside the
-  record and not to the slot number that record happens to sit at. Because the
-  session counter lives in RAM and comes back at zero, a *cold* boot advances the
-  persisted counter of every plain Yubico-OTP slot it can read and re-seal and
-  that still has room to advance — never a HOTP, short or static slot, and never
-  one already at the ceiling — before USB is up and any press can be served, which
-  is what keeps one power cycle's pairs out of the next one's.
-  **Six residuals, and the rule above hides none of them.** A host-requested warm
-  reset is ungated and does not advance the counter — deliberately, since bumping
-  on every reboot a host can ask for would let it walk the 15-bit counter to the
-  ceiling — so the session counter restarts at zero over an unchanged use counter
-  and the current power cycle's pairs are typed again. At that ceiling neither
-  path advances anything and the key goes on typing, so the pair repeats every
-  256 presses. Of the two counter WRITES, the press's answer is read — a ticket
-  whose advance the store would not take is not typed at all, because typing it
-  re-emits: the next press reads the old counter back and pairs it with a session
-  this cycle has already used. The boot bump's is not, and cannot be: it is
-  retried, and a refusal that outlasts the retries is dropped, leaving the last
-  cycle's positions typeable again. **That one needs no fault at all** — `Fs::put`
-  answers `NoMemory` on a full store. **It is a choice and not a limit**, and the
-  page will not dress it as one: the device could deny the press instead of typing
-  a position it cannot move past, and two ways of doing that were built and
-  measured. One carries the boot pass's failure out to the applet; the other keeps
-  it in the applet entirely, by making the first press of each slot in a power
-  cycle perform the advance itself and refuse if the store will not take it. What
-  is shipped is the *other* arm of the same choice — keep typing — because a store
-  that cannot be written to would otherwise silence every slot on the key, and
-  which of those two costs more is a decision for the maintainer rather than a
-  fact about the code. A test pins the repeat, so whichever arm lands is visible. So is the boot *read* dropped, though only
-  where the medium keeps refusing: a sealed read that faults is retried, and a
-  slot the retries never reach is skipped by the bump entirely — which is the
-  faulted-read clause above wearing this applet's clothes. A press answers that
-  same refusal by typing nothing, so what the skip costs is a fault that clears
-  before the first press. And position is not monotone across
+  half are the wrapping press and a boot's first press, and the step that can
+  reach the 15-bit ceiling comes from one module for both, so the ceiling cannot
+  be enforced two different ways. The first-press `0 → 1` write sits beside it in
+  `ticket.rs` and cannot reach the ceiling. `UPDATE` and the boot seal migration
+  carry a slot's record forward and leave the counter alone. `SWAP` leaves the
+  stored counter alone too — but it moves the record to the *other* slot index,
+  and the RAM half travels with it, because the pair belongs to the public id
+  inside the record and not to the slot number that record happens to sit at.
+  Because the session counter lives in RAM and comes back at zero with every
+  boot, warm or cold, the first press of a plain Yubico-OTP slot after one
+  advances its persisted counter before it types, as a YubiKey advances it at its
+  first use after power-up — never a HOTP, short or static slot, and never one
+  already at the ceiling. That is what keeps one boot's pairs out of the next
+  one's, and since only a press moves it, no reboot a host can ask for walks the
+  counter toward the ceiling. Every advance's answer is read: a ticket whose
+  advance the store would not take is not typed at all, because typing it
+  re-emits — the next press reads the old counter back and pairs it with a
+  session already used — and a press whose read the medium refused types nothing
+  and leaves the advance owed. A store that keeps refusing therefore silences the
+  slot until it recovers: a denial of service, where typing on would repeat.
+  **Three residuals, and the rule above hides none of them.** At that ceiling
+  neither path advances anything and the key goes on typing, so the pair repeats
+  every 256 presses and every boot. And position is not monotone across
   re-provisioning: `CONFIGURE` writes a fresh record with a zeroed counter, gated
   by the slot access code whenever the existing slot reads back. And the move that
   carries the pair is not atomic: `SWAP` writes the two records one after the

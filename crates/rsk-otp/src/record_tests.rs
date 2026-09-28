@@ -58,7 +58,7 @@ fn counter(rec: &SlotRecord) -> u16 {
 
 #[test]
 fn a_read_leaves_nothing_of_the_record_it_replaces() {
-    // `power_up_bump` and the status readers reuse one record across slots, so a
+    // `migrate_seal` and the status readers reuse one record across slots, so a
     // legacy slot read after a full one must not inherit that one's counter.
     let mut fs = new_fs();
     seed(&mut fs, EF_OTP_SLOT1, &full(0x11, 7));
@@ -125,7 +125,7 @@ fn every_move_leaves_a_full_record() {
     assert_eq!((counter(&rec), rec.stored().len()), (1, SLOT_SIZE));
 
     let mut rec = SlotRecord::from_bytes(&[0; CONFIG_SIZE]).unwrap();
-    assert!(rec.boot_bump());
+    assert!(rec.cycle_bump());
     assert_eq!((counter(&rec), rec.stored().len()), (1, SLOT_SIZE));
 
     let mut rec = SlotRecord::from_bytes(&[0; CONFIG_SIZE]).unwrap();
@@ -141,7 +141,7 @@ fn a_short_record_moves_its_counter_from_zero() {
     let mut stored = [0u8; CONFIG_SIZE + 3];
     stored[CONFIG_SIZE..].copy_from_slice(&[0x00, 0x05, 0xAA]);
     let mut rec = SlotRecord::from_bytes(&stored).unwrap();
-    assert!(rec.boot_bump());
+    assert!(rec.cycle_bump());
     assert_eq!(rec.expose()[CONFIG_SIZE..], [0, 1, 0, 0, 0, 0, 0, 0]);
 
     let mut rec = SlotRecord::from_bytes(&stored).unwrap();

@@ -140,7 +140,7 @@ fn yubico_use_counter_stops_at_the_ceiling() {
     let mut slot = record(&cfg, use_counter(crate::USE_COUNTER_MAX));
     let mut out = [0u8; MAX_TICKET];
     // The wrapping press at the ceiling must store nothing: 0x8000 sets the
-    // reserved high bit, and power_up_bump would then decline forever after.
+    // reserved high bit, and a boot's first press would then decline forever after.
     let t = build(&mut slot, 255, 0, [0, 0], &mut out);
     assert_eq!(t.new_session, 0);
     assert!(!t.persist);

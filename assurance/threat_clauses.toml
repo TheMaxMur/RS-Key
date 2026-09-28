@@ -198,7 +198,7 @@ rests_on = ["""
 *other* slot index, and the RAM half travels with it, because the pair belongs
 to the public id inside the record and not to the slot number that record
 happens to sit at.""", """
-**Six residuals, and the rule above hides none of them.**""", """
+**Three residuals, and the rule above hides none of them.**""", """
 And the move that carries the pair is not atomic: `SWAP` writes the two records
 one after the other and swaps the RAM halves only once both are through, with
 nothing to undo a step that failed. A refused second write answers `6581` with

@@ -497,7 +497,7 @@ carried_by = "NAR-RETRY-LATTICE"
 [[exception]]
 id = "MX-POL-001"
 module = "RSKeyAppletPolicies.tla"
-line = 140
+line = 143
 shape = "clause"
 site = "PivKeyOp"
 clause = 'pivPolicy # "never"'
@@ -526,7 +526,7 @@ owed = "PolicySolo_BugNeverSlotSpendsFreshness.cfg"
 [[exception]]
 id = "MX-POL-002"
 module = "RSKeyAppletPolicies.tla"
-line = 146
+line = 149
 shape = "clause"
 site = "PivKeyOp"
 clause = 'pivPolicy = "always"'

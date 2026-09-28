@@ -4,8 +4,8 @@
 #![no_main]
 
 //! Fuzz the typed-ticket generator (`rsk_otp::ticket`, via
-//! `OtpApplet::button_ticket`) plus the boot use-counter bump (`power_up_bump`)
-//! over an ADVERSARIAL slot config sealed into flash — the kind a flash-snapshot
+//! `OtpApplet::button_ticket`) over two boots, each first press advancing a use
+//! counter, and an ADVERSARIAL slot config sealed into flash — the kind a flash-snapshot
 //! rollback can plant. The HOTP / static-password / Yubico-OTP builders must
 //! never panic and never type more than `MAX_TICKET` bytes.
 
@@ -17,7 +17,7 @@ use rsk_fs::storage::ram::RamStorage;
 use rsk_fs::{Fs, KeyFid};
 use rsk_otp::seal::seal_put;
 use rsk_otp::ticket::MAX_TICKET;
-use rsk_otp::{AlwaysConfirm, OtpApplet, Rng, SlotRecord, power_up_bump};
+use rsk_otp::{AlwaysConfirm, OtpApplet, Rng, SlotRecord};
 
 /// First OTP slot FID (crate-private `EF_OTP_SLOT1`; the four slots are 0xBB00..=0xBB03).
 const SLOT1_FID: u16 = 0xBB00;
@@ -69,16 +69,15 @@ fuzz_target!(|data: &[u8]| {
 
     let presence = RefCell::new(AlwaysConfirm);
     let rng = RefCell::new(CountRng(7));
-    let mut app = OtpApplet::new([1, 2, 3, 4, 5, 6, 7, 8], [0x22; 32], None, &rng, &presence);
-
     let mut out = [0u8; MAX_TICKET];
-    for slot_no in 1..=4u8 {
-        if let Some((len, _ascii)) = app.button_ticket(slot_no, ts, rnd, &mut fs, &mut out) {
-            assert!(len <= MAX_TICKET);
+    // A boot is a fresh applet: the second one's first presses advance counters
+    // the first one's already moved.
+    for _boot in 0..2 {
+        let mut app = OtpApplet::new([1, 2, 3, 4, 5, 6, 7, 8], [0x22; 32], None, &rng, &presence);
+        for slot_no in 1..=4u8 {
+            if let Some((len, _ascii)) = app.button_ticket(slot_no, ts, rnd, &mut fs, &mut out) {
+                assert!(len <= MAX_TICKET);
+            }
         }
     }
-
-    // The power-up bump reads + re-seals every non-typing counter slot; no panic.
-    let mut bump_rng = CountRng(9);
-    power_up_bump(&dev, &mut fs, &mut bump_rng);
 });
