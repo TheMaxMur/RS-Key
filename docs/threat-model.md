@@ -219,14 +219,14 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   break — the Management applet, the FIDO vendor command, and the OTP-HID
   identify/config slots are never gated by the mask, so any single transport can
   re-enable it (with the code, once a lock is set), and no secret is exposed.
-  **A lock code the attacker sets ends that.** The same ungated write can set a
-  code on a device that has none, beside an empty mask; after it nothing turns an
-  application back on without that code, and the display build's factory reset or
-  an `rsk-wipe` erase, both of which destroy every credential, is the only way
-  back. A YubiKey 5.8.0 has the same exposure and no way back at all. A build with
-  `strict-config` closes it, since every config write there needs a touch, and so
-  does setting a code of your own at provisioning: changing one needs the current
-  one. **Reversible describes the mask, not the flash it is
+  **A lock code the attacker set would end that**, so setting one where none is
+  set takes a touch of the key, on all four writers, where a YubiKey 5.8.0 asks
+  none: with a code nobody holds, nothing turns an application back on, and the
+  display build's factory reset or an `rsk-wipe` erase, both of which destroy
+  every credential, is the only way back. What is left is a touch given to the
+  wrong prompt, since the BOOTSEL button cannot show what it approves; setting a
+  code of your own at provisioning closes that too, as changing one needs the
+  current one. **Reversible describes the mask, not the flash it is
   written to.** The same ungated commands persist their records, and a host that
   replays one indefinitely spends erase cycles that nothing gives back: measured
   on the device's own store geometry, a `SET LED` replay at a nearly full ring

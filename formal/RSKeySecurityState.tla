@@ -1131,12 +1131,12 @@ ConfigOp ==
     /\ UNCHANGED << pin, store, lock, pres, sys, op, upSpent, ram >>
 
 (***************************************************************************)
-(* Vendor BACKUP_FINALIZE -- vendor.rs:969-976, and its on-device twin      *)
-(* mark_backup_sealed (vendor.rs:1045-1051).                                  *)
+(* Vendor BACKUP_FINALIZE -- vendor.rs:975-982, and its on-device twin      *)
+(* mark_backup_sealed (vendor.rs:1051-1057).                                  *)
 (***************************************************************************)
 
 \* Writing EF_BACKUP_SEALED closes the one-time seed-export window: after it,
-\* BACKUP_EXPORT refuses (vendor.rs:869) and the display's recovery-phrase
+\* BACKUP_EXPORT refuses (vendor.rs:875) and the display's recovery-phrase
 \* reveal is gone, until a reset reopens the window. Modelled UNGATED -- the
 \* real one carries the PIN half and a deliberate hold -- which widens only the
 \* states the marker can be SET in, never the states it can be LOST in, and it
@@ -1148,7 +1148,7 @@ BackupFinalize ==
     /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* Vendor UNLOCK (vendor.rs:583-612): the host presents the 32-byte lock key over
+\* Vendor UNLOCK (vendor.rs:589-618): the host presents the 32-byte lock key over
 \* the MSE channel, the wrapped seed on flash decrypts, and `state.keydev_dec`
 \* holds it until power-off. No PIN and no touch -- knowing the lock key IS the
 \* authorization -- so this is not modelled as a gate, only as the one door

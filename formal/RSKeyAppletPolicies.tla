@@ -250,7 +250,7 @@ OathCalculate(touched) ==
 (* it is why the model reaches a re-configure as delete-then-              *)
 (* configure rather than as one step -- the device's one-step form         *)
 (* differs only in leaving the RAM session alone, which the two-step       *)
-(* form does too (crates/rsk-otp/src/tests.rs:1620).                       *)
+(* form does too (crates/rsk-otp/src/tests.rs:1632).                       *)
 (***************************************************************************)
 
 (***************************************************************************)

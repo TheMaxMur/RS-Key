@@ -865,7 +865,11 @@ impl<'a> OtpApplet<'a> {
         let Some(conf) = rest.get(..usize::from(len)) else {
             return Sw::WRONG_DATA;
         };
-        match rsk_devconf::persist_dev_conf(&rsk_sdk::serial4(self.serial_id), fs, conf) {
+        let presence = self.presence;
+        let mut confirm =
+            || presence.borrow_mut().request(rsk_devconf::LOCK_SET_CONFIRM) == Presence::Confirmed;
+        let serial = rsk_sdk::serial4(self.serial_id);
+        match rsk_devconf::persist_dev_conf(&serial, fs, conf, &mut confirm) {
             Ok(()) => {
                 // ykman/yubikit confirm an OTP-transport write by the program-
                 // sequence byte in the status frame advancing (`_is_sequence_updated`),

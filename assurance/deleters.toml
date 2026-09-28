@@ -96,7 +96,7 @@ head_minters = ["crates/rsk-piv"]
 
 [[site]]
 file = "crates/rsk-devconf/src/lock.rs"
-line = 118
+line = 122
 call = "Self::Clear => fs.delete(EF_DEV_LOCK),"
 verb = "delete"
 answer = "read"
@@ -290,11 +290,11 @@ answer = "read"
 class = "secret-or-gate"
 metadata = "none"
 disposition = "must-read"
-why = "resetPersistentPinUvAuthToken revokes a capability (SEC-FIDO-003); all four callers map the error to CTAP2_ERR_OTHER rather than report a token cleared. The folded answer is kept deliberately (reviewed 0x0989): the record half here is only ever the shared blob being unreadable, but that is equally true of vendor.rs:433/435 and crates/rsk-openpgp/src/putdata.rs:176/182, and splitting the halves for this caller alone would re-open the swallowed drop 0x0987 closed. One-shot commands lose the command, not a sweep's range."
+why = "resetPersistentPinUvAuthToken revokes a capability (SEC-FIDO-003); all four callers map the error to CTAP2_ERR_OTHER rather than report a token cleared. The folded answer is kept deliberately (reviewed 0x0989): the record half here is only ever the shared blob being unreadable, but that is equally true of vendor.rs:439/435 and crates/rsk-openpgp/src/putdata.rs:176/182, and splitting the halves for this caller alone would re-open the swallowed drop 0x0987 closed. One-shot commands lose the command, not a sweep's range."
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 441
+line = 447
 call = ".force_delete(EF_ATT_KEY.get())"
 verb = "force_delete"
 answer = "read"
@@ -305,7 +305,7 @@ why = "ATT_CLEAR, measured: discarding these two reported 'org attestation remov
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 444
+line = 450
 call = ".force_delete(EF_ATT_CHAIN)"
 verb = "force_delete"
 answer = "read"
@@ -316,7 +316,7 @@ why = "the chain half of the same erase, ordered after the key so the surviving 
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 951
+line = 957
 call = "if ctx.fs.delete(EF_EE_DEV).is_err() {"
 verb = "delete"
 answer = "read"

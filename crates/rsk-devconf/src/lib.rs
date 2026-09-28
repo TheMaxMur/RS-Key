@@ -19,7 +19,7 @@
 )]
 
 use rsk_fs::{Fs, Storage};
-use rsk_sdk::{FIRMWARE_VERSION, ResBuf, Sw};
+use rsk_sdk::{Confirm, FIRMWARE_VERSION, ResBuf, Sw};
 
 mod lock;
 
@@ -103,6 +103,9 @@ const EF_DEV_CONF_MAX: usize = MIN_CONFIG_RES_CAP - CONFIG_TLV_FIXED;
 /// request bound is the transport's own limit and the crate-private
 /// `EF_DEV_CONF_MAX` is applied to the stripped result.
 pub const DEV_CONF_WRITE_MAX: usize = 128;
+
+/// The touch a write that sets a lock where none is set asks for, on every writer.
+pub const LOCK_SET_CONFIRM: Confirm<'static> = Confirm::titled("Set config lock?");
 
 /// Smallest `ResBuf` a READ CONFIG response is built into (the OTP-HID transport).
 const MIN_CONFIG_RES_CAP: usize = 64;
@@ -252,6 +255,9 @@ pub enum DevConfError {
     Locked,
     /// The write's `UNLOCK` code is not the one the lock was set with.
     WrongCode,
+    /// The write sets a lock where none is set, and the touch that takes was not
+    /// given.
+    NotConfirmed,
 }
 
 impl DevConfError {
@@ -263,6 +269,7 @@ impl DevConfError {
             Self::Store => Sw::MEMORY_FAILURE,
             Self::Locked => Sw::COMMAND_NOT_ALLOWED,
             Self::WrongCode => Sw::retries(0),
+            Self::NotConfirmed => Sw::CONDITIONS_NOT_SATISFIED,
         }
     }
 }
@@ -273,12 +280,14 @@ impl DevConfError {
 /// the enabled-applications TLV *without* any transport length prefix; the caller
 /// applies its own auth gate (CCID presence, FIDO PIN + touch) before this; the
 /// configuration lock is checked here, for all four. `serial` is the DeviceInfo
-/// serial, which salts the lock's verifier.
+/// serial, which salts the lock's verifier. `confirm` asks for a touch
+/// ([`LOCK_SET_CONFIRM`]), and only a write that sets a lock where none is set asks.
 /// Refines `RSKeyAdminSurface!DisableSetSurvivesLockWrite` — SEC-ADM-003.
 pub fn persist_dev_conf<S: Storage>(
     serial: &[u8; 4],
     fs: &mut Fs<S>,
     blob: &[u8],
+    confirm: &mut dyn FnMut() -> bool,
 ) -> Result<(), DevConfError> {
     if blob.len() > DEV_CONF_WRITE_MAX {
         return Err(DevConfError::TooLong);
@@ -309,6 +318,11 @@ pub fn persist_dev_conf<S: Storage>(
     let Some(record) = merged.get(..m).filter(|_| m <= EF_DEV_CONF_MAX) else {
         return Err(DevConfError::TooLong);
     };
+    // Set by a hostile host, a lock shuts its owner out of every config change until
+    // a factory wipe, and a YubiKey asks nothing here: the one step past parity.
+    if matches!(lock, LockChange::Arm(_)) && !confirm() {
+        return Err(DevConfError::NotConfirmed);
+    }
     // An idempotent write costs no flash and no audit-journal entry. Folded in here
     // rather than left to the caller: only one of the four call sites ever ran the
     // check, and after the merge landed it could not recognise a partial replay at
@@ -781,6 +795,17 @@ pub mod raw {
     pub const TAG_REBOOT: u8 = super::TAG_REBOOT;
     pub const TAG_NFC_ENABLED: u8 = super::TAG_NFC_ENABLED;
     pub const TAG_NFC_RESTRICTED: u8 = super::TAG_NFC_RESTRICTED;
+}
+
+/// [`persist_dev_conf`] with its touch given, as a present owner gives it: for the
+/// tests and harnesses that set a lock, and the many writes that never ask.
+#[cfg(any(test, feature = "test-util"))]
+pub fn persist_touched<S: Storage>(
+    serial: &[u8; 4],
+    fs: &mut Fs<S>,
+    blob: &[u8],
+) -> Result<(), DevConfError> {
+    persist_dev_conf(serial, fs, blob, &mut || true)
 }
 
 #[cfg(test)]

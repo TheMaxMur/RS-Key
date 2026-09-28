@@ -1616,23 +1616,23 @@ fn config_write_default_ungated_persists_without_touch_or_token() {
 
 /// Over the vendor channel a locked configuration answers `NOT_ALLOWED` without its
 /// code and `OPERATION_DENIED` with another. The idempotent-replay check runs first,
-/// and a write the lock refuses must not pass it as "nothing to do".
+/// and a write the lock refuses must not pass it as "nothing to do". A lock set
+/// where none is takes a touch, and only that write asks for one.
 #[cfg(not(feature = "strict-config"))]
 #[test]
 fn config_write_honours_the_configuration_lock() {
     let (mut fs, mut rng, mut st) = setup();
+    let touch = core::cell::Cell::new(false);
     let mut write = |fs: &mut Fs<RamStorage>, blob: &[u8]| {
         let mut req = [0u8; 96];
         let n = config_write_req(CONFIG_TARGET_DEV_CONF, blob, false, &mut req);
         let mut out = [0u8; 16];
-        call(
-            fs,
-            &mut rng,
-            &mut st,
-            &mut AlwaysConfirm,
-            &req[..n],
-            &mut out,
-        )
+        let presence: &mut dyn UserPresence = if touch.get() {
+            &mut AlwaysConfirm
+        } else {
+            &mut Decline
+        };
+        call(fs, &mut rng, &mut st, presence, &req[..n], &mut out)
     };
     let code = [0xA5; 16];
     let unlock = |code: &[u8; 16], fields: &[u8]| {
@@ -1644,7 +1644,15 @@ fn config_write_honours_the_configuration_lock() {
     assert_eq!(write(&mut fs, DEV_CONF_BLOB), Ok(0));
     let mut set = std::vec![0x0A, 0x10];
     set.extend_from_slice(&code);
+    assert_eq!(write(&mut fs, &set), Err(CtapError::OperationDenied));
+    assert!(
+        fs.read(rsk_devconf::raw::EF_DEV_LOCK, &mut [0u8; 64])
+            .is_none(),
+        "a declined touch set the lock"
+    );
+    touch.set(true);
     assert_eq!(write(&mut fs, &set), Ok(0));
+    touch.set(false);
 
     // The stored config again: a replay, which only the lock may refuse.
     assert_eq!(write(&mut fs, DEV_CONF_BLOB), Err(CtapError::NotAllowed));
@@ -2715,7 +2723,7 @@ fn a_faulted_dev_conf_probe_over_fido_neither_acks_nor_replaces() {
 
     for (skip, want) in [(0u32, Ok(0)), (2, Err(CtapError::Other))] {
         let (mut fs, medium, mut rng, mut st) = setup_stuck();
-        rsk_devconf::persist_dev_conf(&[0; 4], &mut fs, owner).unwrap();
+        rsk_devconf::persist_touched(&[0; 4], &mut fs, owner).unwrap();
         let before = medium.value(EF_DEV_CONF).expect("record written");
 
         let mut req = [0u8; 96];

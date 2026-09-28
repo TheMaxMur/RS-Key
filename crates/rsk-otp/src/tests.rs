@@ -1146,7 +1146,7 @@ fn hid_frame_set_device_info_bumps_program_sequence() {
 #[test]
 fn hid_frame_set_device_info_honours_the_configuration_lock() {
     let mut fs = new_fs();
-    let presence = RefCell::new(AlwaysConfirm);
+    let presence = RefCell::new(TestPresence(Presence::Declined));
     let rng = RefCell::new(CountRng(7));
     let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
     let code = [0xA5; 16];
@@ -1159,11 +1159,23 @@ fn hid_frame_set_device_info_honours_the_configuration_lock() {
     let mut out = [0u8; 64];
     let mut set = vec![0x0A, 0x10];
     set.extend_from_slice(&code);
+    // A lock set where none is takes the operator's touch; declined, the frame is
+    // refused as any other is, and the sequence stays put.
+    let seq = app.hid_status_frame(&mut fs)[4];
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        app.process_hid(0x15, &frame(&set), &mut fs, &mut res),
+        Sw::CONDITIONS_NOT_SATISFIED
+    );
+    assert_eq!(app.hid_status_frame(&mut fs)[4], seq);
+    presence.borrow_mut().0 = Presence::Confirmed;
     let mut res = ResBuf::new(&mut out);
     assert_eq!(
         app.process_hid(0x15, &frame(&set), &mut fs, &mut res),
         Sw::OK
     );
+    // Every write through the lock carries its code, and asks nothing more.
+    presence.borrow_mut().0 = Presence::Declined;
 
     let fido_only = [0x03, 0x02, 0x02, 0x00];
     let seq = app.hid_status_frame(&mut fs)[4];

@@ -7,7 +7,9 @@
 #![cfg_attr(not(test), no_std)]
 
 use core::cell::RefCell;
-use rsk_devconf::{DEV_CONF_WRITE_MAX, DevConfError, config_tlv, persist_dev_conf};
+use rsk_devconf::{
+    DEV_CONF_WRITE_MAX, DevConfError, LOCK_SET_CONFIRM, config_tlv, persist_dev_conf,
+};
 use rsk_fs::{Fs, Storage};
 // The user-presence seam gating WRITE CONFIG against a hostile USB host is
 // `rsk-sdk`'s, shared with every sibling applet — the board has one button.
@@ -62,14 +64,17 @@ impl<'a> ManagementApplet<'a> {
     }
 
     /// Serve WRITE CONFIG to a non-CCID transport (the CTAPHID vendor command): the
-    /// same record under the same configuration lock, without the presence gate —
-    /// a `strict-config` build does not route that command here at all.
+    /// same record under the same configuration lock, without the write's presence
+    /// gate — a `strict-config` build does not route that command here at all. A
+    /// lock set where none is still takes its touch.
     pub fn persist_config<S: Storage>(
         &self,
         fs: &mut Fs<S>,
         blob: &[u8],
     ) -> Result<(), DevConfError> {
-        persist_dev_conf(&self.serial, fs, blob)
+        persist_dev_conf(&self.serial, fs, blob, &mut || {
+            self.require_presence(LOCK_SET_CONFIRM)
+        })
     }
 
     /// WRITE CONFIG: the first data byte is the length of the rest; persist that
@@ -94,7 +99,10 @@ impl<'a> ManagementApplet<'a> {
         {
             return Sw::CONDITIONS_NOT_SATISFIED;
         }
-        match persist_dev_conf(&self.serial, fs, &apdu.data[1..apdu.nc]) {
+        // Under `strict-config` the touch above covers a lock the write sets.
+        let mut confirm =
+            || cfg!(feature = "strict-config") || self.require_presence(LOCK_SET_CONFIRM);
+        match persist_dev_conf(&self.serial, fs, &apdu.data[1..apdu.nc], &mut confirm) {
             Ok(()) => Sw::OK,
             Err(e) => e.sw(),
         }

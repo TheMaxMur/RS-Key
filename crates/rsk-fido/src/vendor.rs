@@ -33,7 +33,7 @@ use rsk_crypto::mac::hkdf_sha256;
 use rsk_crypto::mlkem::{MLKEM768_CT_LEN, MLKEM768_EK_LEN, mlkem768_encapsulate};
 use rsk_crypto::pinproto::ecdh_raw;
 use rsk_crypto::sha256;
-use rsk_devconf::{DevConfError, persist_dev_conf};
+use rsk_devconf::{DevConfError, LOCK_SET_CONFIRM, persist_dev_conf};
 use rsk_fs::Storage;
 use rsk_led::{CONF_LEN as LED_CONF_LEN, EF_LED_CONF};
 
@@ -54,7 +54,7 @@ use crate::seed::{
     LOCK_BLOB_LEN, encrypt_keydev_f1, ensure_seed, lock_engaged, open_seed_locked, store_att_key,
 };
 use crate::state::{MseChannel, PERM_ACFG, puat_subcommand_msg};
-use crate::{Ctx, Rng};
+use crate::{Ctx, Presence, Rng};
 
 /// Scratch for the pinUvAuth MAC message, which covers `subCommandParams`
 /// verbatim — so it caps how long those params may be. **This is a buffer guard,
@@ -320,12 +320,18 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
             if rsk_devconf::dev_conf_unchanged(&serial, ctx.fs, req.blob) {
                 return Ok(0);
             }
-            persist_dev_conf(&serial, ctx.fs, req.blob).map_err(|e| match e {
+            // Under `strict-config` the touch above covers a lock the write sets.
+            let presence = &mut *ctx.presence;
+            let mut confirm = || {
+                cfg!(feature = "strict-config")
+                    || presence.request_ceremony(LOCK_SET_CONFIRM) == Presence::Confirmed
+            };
+            persist_dev_conf(&serial, ctx.fs, req.blob, &mut confirm).map_err(|e| match e {
                 DevConfError::TooLong => CtapError::InvalidLength,
                 DevConfError::BadTlv => CtapError::InvalidParameter,
                 DevConfError::Store => CtapError::Other,
                 DevConfError::Locked => CtapError::NotAllowed,
-                DevConfError::WrongCode => CtapError::OperationDenied,
+                DevConfError::WrongCode | DevConfError::NotConfirmed => CtapError::OperationDenied,
             })?
         }
         // The phy record (VID/PID, USB interfaces, LED, presence-timeout) — a

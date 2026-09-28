@@ -308,7 +308,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | `6883` | LAST_CHAIN_EXPECTED | an APDU arrived that neither continues nor closes the open command chain |
 | `6982` | SECURITY_STATUS_NOT_SATISFIED | auth/precondition missing |
 | `6984` | DATA_INVALID | malformed payload (e.g. bad guard magic) |
-| `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset); OpenPGP PSO:CDS, the RSA and ECDH arms of PSO:DECIPHER and INTERNAL AUTHENTICATE with no key in the slot, and ATTEST of an empty slot or an imported key, as a YubiKey 5.8.0 answers them |
+| `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset); a WRITE CONFIG setting a configuration lock where none is set without its touch (§6.2); OpenPGP PSO:CDS, the RSA and ECDH arms of PSO:DECIPHER and INTERNAL AUTHENTICATE with no key in the slot, and ATTEST of an empty slot or an imported key, as a YubiKey 5.8.0 answers them |
 | `6986` | COMMAND_NOT_ALLOWED | WRITE CONFIG (§6) with no lock code while a configuration lock is set, as a YubiKey 5.8.0 answers it |
 | `6A80` | WRONG_DATA | bad data field; PIV `MOVE KEY` onto a slot that holds a key or takes none, or onto itself; PIV `PUT DATA` with a P1-P2 other than `3FFF`; OpenPGP GENERATE and IMPORT with a control-reference template they cannot read or whose key reference `84 01 xx` names another slot, and GENERATE `P1 = 80` and IMPORT under Yubico's attestation-key template `B6 { 84 01 81 }`; OpenPGP ATTEST with a P1-P2 or a body it does not take; OpenPGP SELECT DATA with any body but `60 04 5C 02 7F 21` |
 | `6A86` | INCORRECT_P1P2 | unsupported P1/P2 |
@@ -757,10 +757,13 @@ none on a YubiKey.
   in `0B`. **Clear**: `0A` of 16 zero bytes, with the current code (ykman's
   `--clear`). A code of any other width, in either tag, is refused as malformed
   (`6A80`; `0x02` over `CONFIG_WRITE`).
-- **Who can set one**: any host that can reach one of the four writers, on a
-  device with no code yet, as on a YubiKey. A code its owner does not hold then
-  keeps every config change behind a factory wipe
-  ([threat-model.md](threat-model.md) §1); a code set at provisioning prevents it.
+- **Who can set one**: a host that can reach one of the four writers, on a device
+  with no code yet, and only with a touch of the key, which a YubiKey does not ask
+  for: a code its owner does not hold would keep every config change behind a
+  factory wipe ([threat-model.md](threat-model.md) §1). Declined or timed out, the
+  write is refused whole (`6985`; `0x27` over `CONFIG_WRITE`; OTP-HID and CTAPHID
+  `0x43` as for a wrong code). Changing or clearing a code takes the current one
+  and no touch.
 - **At rest**: `EF_DEV_LOCK` (`0x1124`) holds `01 ‖ SHA-256("RS-Key/CONFIG-LOCK" ‖
   serial ‖ code)`, the serial being DeviceInfo's four bytes; absent is unlocked.
   A record in any other form reads locked and opens for no code.

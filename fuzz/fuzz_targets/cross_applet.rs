@@ -357,7 +357,7 @@ fuzz_target!(|data: &[u8]| {
                 // the record goes in through the function it calls. Without this the
                 // mask is stuck on and the SELECT gate above only ever checks one side.
                 #[cfg(feature = "strict-config")]
-                let _ = rsk_devconf::persist_dev_conf(
+                let _ = rsk_devconf::persist_touched(
                     &rsk_sdk::serial4(SERIAL_ID),
                     &mut fs.borrow_mut(),
                     &blob[1..],

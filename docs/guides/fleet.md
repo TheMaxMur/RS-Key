@@ -330,9 +330,10 @@ ykman config usb --disable otp -L <code>       # later changes pass it
 ykman config set-lock-code -l <code> --clear   # remove the lock
 ```
 
-Set one at provisioning even if nobody will change the configuration: any host
-can set a code on a key that has none, as on a YubiKey, and a code you do not hold
-keeps every later change behind a wipe. Changing a code needs the current one.
+Setting a code on a key that has none takes a touch of the key (a YubiKey asks
+none), so a host cannot set one behind your back; set one at provisioning anyway,
+since a touch given to the wrong prompt could, and a code you do not hold keeps
+every later change behind a wipe. Changing a code needs the current one.
 
 `ykman info` reports "Configured capabilities are protected by a lock code". The
 key keeps only a salted hash of the code, and counts no wrong tries, as a

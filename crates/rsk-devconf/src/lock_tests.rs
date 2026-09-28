@@ -4,7 +4,7 @@
 use super::*;
 use crate::{
     CAP_FIDO2, CAP_OATH, EF_DEV_CONF, TAG_USB_ENABLED, config_tlv, dev_conf_unchanged,
-    persist_dev_conf, read_enabled_caps,
+    persist_dev_conf, persist_touched, read_enabled_caps,
 };
 use rsk_fs::storage::ram::RamStorage;
 use rsk_sdk::{ResBuf, Sw};
@@ -39,8 +39,8 @@ fn write(unlock: Option<&[u8]>, fields: &[u8], new_code: Option<&[u8]>) -> Vec<u
 /// A device whose owner ran `ykman config usb` and then `set-lock-code`.
 fn locked_fs() -> Fs<RamStorage> {
     let mut fs = fs();
-    persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x3B]).unwrap();
-    persist_dev_conf(&SERIAL, &mut fs, &write(None, &[], Some(&CODE))).unwrap();
+    persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x3B]).unwrap();
+    persist_touched(&SERIAL, &mut fs, &write(None, &[], Some(&CODE))).unwrap();
     fs
 }
 
@@ -75,7 +75,7 @@ fn a_locked_configuration_refuses_a_write_without_its_code() {
     let mut fs = locked_fs();
     let before = records(&mut fs);
     assert_eq!(
-        persist_dev_conf(&SERIAL, &mut fs, &FIDO_ONLY),
+        persist_touched(&SERIAL, &mut fs, &FIDO_ONLY),
         Err(DevConfError::Locked)
     );
     assert_eq!(records(&mut fs), before, "a refused write moved a record");
@@ -87,7 +87,7 @@ fn a_wrong_code_is_refused_and_changes_nothing() {
     let before = records(&mut fs);
     for code in [&OTHER[..], &CLEAR[..]] {
         assert_eq!(
-            persist_dev_conf(&SERIAL, &mut fs, &write(Some(code), &FIDO_ONLY, None)),
+            persist_touched(&SERIAL, &mut fs, &write(Some(code), &FIDO_ONLY, None)),
             Err(DevConfError::WrongCode),
             "{code:02x?} opened the lock"
         );
@@ -99,7 +99,7 @@ fn a_wrong_code_is_refused_and_changes_nothing() {
 fn its_code_opens_the_lock_for_one_write_and_leaves_it_set() {
     let mut fs = locked_fs();
     let oath_only = [TAG_USB_ENABLED, 2, 0x00, 0x20];
-    persist_dev_conf(&SERIAL, &mut fs, &write(Some(&CODE), &oath_only, None)).unwrap();
+    persist_touched(&SERIAL, &mut fs, &write(Some(&CODE), &oath_only, None)).unwrap();
     assert_eq!(read_enabled_caps(&mut fs), CAP_OATH);
     assert_eq!(
         reported(&mut fs),
@@ -107,7 +107,7 @@ fn its_code_opens_the_lock_for_one_write_and_leaves_it_set() {
         "a write through the lock cleared it"
     );
     assert_eq!(
-        persist_dev_conf(&SERIAL, &mut fs, &FIDO_ONLY),
+        persist_touched(&SERIAL, &mut fs, &FIDO_ONLY),
         Err(DevConfError::Locked)
     );
 }
@@ -115,30 +115,30 @@ fn its_code_opens_the_lock_for_one_write_and_leaves_it_set() {
 #[test]
 fn a_code_of_zeroes_clears_the_lock() {
     let mut fs = locked_fs();
-    persist_dev_conf(&SERIAL, &mut fs, &write(Some(&CODE), &[], Some(&CLEAR))).unwrap();
+    persist_touched(&SERIAL, &mut fs, &write(Some(&CODE), &[], Some(&CLEAR))).unwrap();
     assert_eq!(reported(&mut fs), 0x00);
     assert_eq!(
         record(&mut fs, EF_DEV_LOCK),
         None,
         "the verifier outlived the lock"
     );
-    persist_dev_conf(&SERIAL, &mut fs, &FIDO_ONLY).unwrap();
+    persist_touched(&SERIAL, &mut fs, &FIDO_ONLY).unwrap();
 }
 
 #[test]
 fn a_new_code_takes_the_old_one_and_replaces_it() {
     let mut fs = locked_fs();
     assert_eq!(
-        persist_dev_conf(&SERIAL, &mut fs, &write(None, &[], Some(&OTHER))),
+        persist_touched(&SERIAL, &mut fs, &write(None, &[], Some(&OTHER))),
         Err(DevConfError::Locked)
     );
-    persist_dev_conf(&SERIAL, &mut fs, &write(Some(&CODE), &[], Some(&OTHER))).unwrap();
+    persist_touched(&SERIAL, &mut fs, &write(Some(&CODE), &[], Some(&OTHER))).unwrap();
     assert_eq!(
-        persist_dev_conf(&SERIAL, &mut fs, &write(Some(&CODE), &FIDO_ONLY, None)),
+        persist_touched(&SERIAL, &mut fs, &write(Some(&CODE), &FIDO_ONLY, None)),
         Err(DevConfError::WrongCode),
         "the replaced code still opens the lock"
     );
-    persist_dev_conf(&SERIAL, &mut fs, &write(Some(&OTHER), &FIDO_ONLY, None)).unwrap();
+    persist_touched(&SERIAL, &mut fs, &write(Some(&OTHER), &FIDO_ONLY, None)).unwrap();
 }
 
 /// Both arms of `config_tlv`: the tail it synthesises when no record is stored, and
@@ -147,13 +147,13 @@ fn a_new_code_takes_the_old_one_and_replaces_it() {
 fn read_config_reports_whether_a_code_is_set() {
     let mut fs = fs();
     assert_eq!(reported(&mut fs), 0x00, "a fresh device reads locked");
-    persist_dev_conf(&SERIAL, &mut fs, &write(None, &[], Some(&CODE))).unwrap();
+    persist_touched(&SERIAL, &mut fs, &write(None, &[], Some(&CODE))).unwrap();
     assert!(record(&mut fs, EF_DEV_CONF).unwrap_or_default().is_empty());
     assert_eq!(reported(&mut fs), 0x01, "synthesised tail");
-    persist_dev_conf(&SERIAL, &mut fs, &write(Some(&CODE), &FIDO_ONLY, None)).unwrap();
+    persist_touched(&SERIAL, &mut fs, &write(Some(&CODE), &FIDO_ONLY, None)).unwrap();
     assert!(!record(&mut fs, EF_DEV_CONF).unwrap_or_default().is_empty());
     assert_eq!(reported(&mut fs), 0x01, "echoed record");
-    persist_dev_conf(&SERIAL, &mut fs, &write(Some(&CODE), &[], Some(&CLEAR))).unwrap();
+    persist_touched(&SERIAL, &mut fs, &write(Some(&CODE), &[], Some(&CLEAR))).unwrap();
     assert_eq!(reported(&mut fs), 0x00);
 }
 
@@ -177,7 +177,7 @@ fn a_locked_device_refuses_even_a_write_that_changes_nothing() {
     let mut fs = locked_fs();
     let same = [TAG_USB_ENABLED, 2, 0x02, 0x3B];
     assert_eq!(
-        persist_dev_conf(&SERIAL, &mut fs, &same),
+        persist_touched(&SERIAL, &mut fs, &same),
         Err(DevConfError::Locked)
     );
     assert!(
@@ -194,13 +194,13 @@ fn a_locked_device_refuses_even_a_write_that_changes_nothing() {
 fn a_write_that_moves_the_lock_is_never_a_replay() {
     let mut fs = fs();
     // A stored record, so the config half of every request below is a replay.
-    persist_dev_conf(&SERIAL, &mut fs, &FIDO_ONLY).unwrap();
+    persist_touched(&SERIAL, &mut fs, &FIDO_ONLY).unwrap();
     let set = write(None, &[], Some(&CODE));
     assert!(
         !dev_conf_unchanged(&SERIAL, &mut fs, &set),
         "setting a code"
     );
-    persist_dev_conf(&SERIAL, &mut fs, &set).unwrap();
+    persist_touched(&SERIAL, &mut fs, &set).unwrap();
     assert!(
         dev_conf_unchanged(&SERIAL, &mut fs, &write(Some(&CODE), &[], Some(&CODE))),
         "setting the code the lock already has is a replay"
@@ -220,7 +220,7 @@ fn a_code_of_another_width_is_refused() {
         write(Some(&long), &FIDO_ONLY, None),
     ] {
         assert_eq!(
-            persist_dev_conf(&SERIAL, &mut fs, &blob),
+            persist_touched(&SERIAL, &mut fs, &blob),
             Err(DevConfError::BadTlv)
         );
     }
@@ -237,11 +237,11 @@ fn a_lock_record_no_code_can_be_checked_against_stays_locked() {
         fs.put(EF_DEV_LOCK, rec).unwrap();
         assert_eq!(reported(&mut fs), 0x01, "{rec:02x?} read unlocked");
         assert_eq!(
-            persist_dev_conf(&SERIAL, &mut fs, &FIDO_ONLY),
+            persist_touched(&SERIAL, &mut fs, &FIDO_ONLY),
             Err(DevConfError::Locked)
         );
         assert_eq!(
-            persist_dev_conf(&SERIAL, &mut fs, &write(Some(&CODE), &[], Some(&CLEAR))),
+            persist_touched(&SERIAL, &mut fs, &write(Some(&CODE), &[], Some(&CLEAR))),
             Err(DevConfError::WrongCode),
             "{rec:02x?} opened for a code"
         );
@@ -253,11 +253,11 @@ fn an_unanswered_lock_probe_refuses_the_write_and_reads_locked() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
     fs.scan();
-    persist_dev_conf(&SERIAL, &mut fs, &write(None, &[], Some(&CODE))).unwrap();
+    persist_touched(&SERIAL, &mut fs, &write(None, &[], Some(&CODE))).unwrap();
     let before = medium.value(EF_DEV_CONF);
     medium.stick(Some(EF_DEV_LOCK));
     assert_eq!(
-        persist_dev_conf(&SERIAL, &mut fs, &write(Some(&CODE), &FIDO_ONLY, None)),
+        persist_touched(&SERIAL, &mut fs, &write(Some(&CODE), &FIDO_ONLY, None)),
         Err(DevConfError::Store)
     );
     assert_eq!(
@@ -279,7 +279,7 @@ fn the_serial_salts_the_verifier() {
     let mut fs = locked_fs();
     let another_device = [0x01, 0x23, 0x45, 0x68];
     assert_eq!(
-        persist_dev_conf(
+        persist_touched(
             &another_device,
             &mut fs,
             &write(Some(&CODE), &FIDO_ONLY, None)
@@ -300,7 +300,7 @@ fn a_code_an_old_build_left_in_the_record_is_not_a_lock() {
     legacy.extend_from_slice(&[TAG_USB_ENABLED, 2, 0x02, 0x3B]);
     fs.put(EF_DEV_CONF, &legacy).unwrap();
     assert_eq!(reported(&mut fs), 0x00);
-    persist_dev_conf(&SERIAL, &mut fs, &FIDO_ONLY).unwrap();
+    persist_touched(&SERIAL, &mut fs, &FIDO_ONLY).unwrap();
 }
 
 /// A write that narrows the enabled set and sets a code, cut at every mutation. The
@@ -313,10 +313,10 @@ fn a_torn_write_never_leaves_a_lock_over_the_old_set() {
         || {
             let (cut, medium) = rsk_fs::storage::faults::Cut::new();
             let mut fs = Fs::new(cut);
-            persist_dev_conf(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x3B]).unwrap();
+            persist_touched(&SERIAL, &mut fs, &[TAG_USB_ENABLED, 2, 0x02, 0x3B]).unwrap();
             (fs, medium)
         },
-        |fs| persist_dev_conf(&SERIAL, fs, &request).is_ok(),
+        |fs| persist_touched(&SERIAL, fs, &request).is_ok(),
         |fs, budget, completed, medium| {
             let narrowed = read_enabled_caps(fs) == CAP_FIDO2;
             let locked = lock_reported(fs) == 0x01;
@@ -330,7 +330,7 @@ fn a_torn_write_never_leaves_a_lock_over_the_old_set() {
                 return;
             }
             assert_eq!(
-                persist_dev_conf(&SERIAL, fs, &request),
+                persist_touched(&SERIAL, fs, &request),
                 Ok(()),
                 "budget {budget}: the retry was refused — {:?}",
                 medium.ops()
@@ -345,6 +345,65 @@ fn a_torn_write_never_leaves_a_lock_over_the_old_set() {
 fn both_records_are_gates_for_the_device_wide_wipe() {
     assert!(crate::is_devconf_gate_fid(EF_DEV_CONF));
     assert!(crate::is_devconf_gate_fid(EF_DEV_LOCK));
+}
+
+/// A lock set where none is set takes a touch, on every writer: from a hostile host
+/// it shuts the owner out of every config change until a factory wipe. Refused, it
+/// stores neither the lock nor the fields the write carried.
+#[test]
+fn a_lock_set_where_none_is_takes_a_touch() {
+    let mut fs = fs();
+    let request = write(None, &FIDO_ONLY, Some(&CODE));
+    let mut asked = 0;
+    assert_eq!(
+        persist_dev_conf(&SERIAL, &mut fs, &request, &mut || {
+            asked += 1;
+            false
+        }),
+        Err(DevConfError::NotConfirmed)
+    );
+    assert_eq!(asked, 1);
+    assert_eq!(
+        records(&mut fs),
+        [None, None],
+        "a refused lock stored a record"
+    );
+    assert!(!dev_conf_unchanged(&SERIAL, &mut fs, &request));
+
+    persist_dev_conf(&SERIAL, &mut fs, &request, &mut || true).unwrap();
+    assert_eq!(
+        (reported(&mut fs), read_enabled_caps(&mut fs)),
+        (0x01, CAP_FIDO2)
+    );
+}
+
+/// Only arming a lock asks: a write through a set lock carries its code, and a write
+/// with no code to set asks for nothing, which is what keeps every other write
+/// YubiKey-shaped.
+#[test]
+fn no_other_write_asks_for_a_touch() {
+    let mut never = || -> bool { panic!("a write that sets no new lock asked for a touch") };
+    let mut fs = fs();
+    persist_dev_conf(&SERIAL, &mut fs, &FIDO_ONLY, &mut never).unwrap();
+    persist_dev_conf(
+        &SERIAL,
+        &mut fs,
+        &write(None, &[], Some(&CLEAR)),
+        &mut never,
+    )
+    .unwrap();
+    assert_eq!(reported(&mut fs), 0x00);
+
+    let mut fs = locked_fs();
+    for request in [
+        write(Some(&CODE), &FIDO_ONLY, None),
+        write(Some(&CODE), &[], Some(&CODE)),
+        write(Some(&CODE), &[], Some(&OTHER)),
+        write(Some(&OTHER), &[], Some(&CLEAR)),
+    ] {
+        persist_dev_conf(&SERIAL, &mut fs, &request, &mut never).unwrap();
+    }
+    assert_eq!(reported(&mut fs), 0x00);
 }
 
 // The read-fault sweep lives in its own file; it needs this module's fixtures.

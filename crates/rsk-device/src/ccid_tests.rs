@@ -54,7 +54,7 @@ fn a_disabled_application_is_invisible_not_just_unreported() {
         assert_eq!(sw(ccid.handle_apdu(&select(aid), 0)), rsk_sdk::Sw::OK);
 
         let blob = dev_conf(rsk_devconf::CAP_FIDO2); // everything else off
-        rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+        rsk_devconf::persist_touched(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
         assert!(!ccid.refresh_enabled() & cap != 0 || !ccid.caps_enabled(cap));
 
         let res = ccid.handle_apdu(&select(aid), 0).to_vec();
@@ -74,7 +74,7 @@ fn the_recovery_applets_can_never_be_disabled() {
     let env = Env::new();
     let mut ccid = env.ccid();
     let blob = dev_conf(0); // every capability off
-    rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_touched(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
     for (name, aid) in [
         ("management", rsk_mgmt::MANAGEMENT_AID),
@@ -106,7 +106,7 @@ fn a_config_write_is_only_seen_after_a_refresh() {
     let mut ccid = env.ccid();
     assert!(ccid.caps_enabled(rsk_devconf::CAP_OATH));
     let blob = dev_conf(rsk_devconf::CAP_FIDO2);
-    rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_touched(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     assert!(
         ccid.caps_enabled(rsk_devconf::CAP_OATH),
         "still the cached mask"
@@ -361,7 +361,7 @@ fn disabling_otp_stops_the_function_slots_but_not_the_identify_ones() {
     let env = Env::new();
     let mut ccid = env.ccid();
     let blob = dev_conf(rsk_devconf::CAP_FIDO2);
-    rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_touched(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
 
     let payload = [0u8; 64];
@@ -381,7 +381,7 @@ fn a_button_press_types_nothing_while_otp_is_disabled() {
     let env = Env::new();
     let mut ccid = env.ccid();
     let blob = dev_conf(rsk_devconf::CAP_FIDO2);
-    rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_touched(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
     assert!(ccid.otp_button_ticket(1, 0).is_none());
     assert!(ccid.otp_button_ticket(2, 0).is_none());
@@ -910,7 +910,7 @@ mod pinpad {
         assert!(ccid.pin_ref_ready(rsk_openpgp::consts::PW1_MODE81));
 
         let blob = dev_conf(rsk_devconf::CAP_FIDO2);
-        rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+        rsk_devconf::persist_touched(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
         ccid.refresh_enabled();
         assert!(!ccid.pin_ref_ready(rsk_openpgp::consts::PW1_MODE81));
     }
@@ -1363,7 +1363,7 @@ fn disabling_one_fido_application_does_not_leave_the_other_reachable() {
         let mut ccid = env.ccid();
         // Everything on except this one.
         let blob = dev_conf(rsk_devconf::SUPPORTED_CAPS & !cap);
-        rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+        rsk_devconf::persist_touched(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
         ccid.refresh_enabled();
 
         // The AID still selects — its sibling application is still on.
@@ -1395,7 +1395,7 @@ fn disabling_both_fido_applications_removes_the_aid() {
     let mut ccid = env.ccid();
     let blob =
         dev_conf(rsk_devconf::SUPPORTED_CAPS & !(rsk_devconf::CAP_FIDO2 | rsk_devconf::CAP_U2F));
-    rsk_devconf::persist_dev_conf(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
+    rsk_devconf::persist_touched(&serial(), &mut env.fs.borrow_mut(), &blob[1..]).unwrap();
     ccid.refresh_enabled();
     assert_eq!(
         sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),

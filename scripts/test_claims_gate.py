@@ -778,7 +778,7 @@ def test_a_claim_above_every_hard_wrap_is_the_control(tree):
     The same claim on the same page with no wrap ABOVE it keeps its line under
     the join, so its sibling going red is the wraps and not a blanket miscount.
     Measured with the join put back: this case passes while the sibling reports
-    12 lines early (`docs/protocol.md:1189` for the 1201 the file holds) — the
+    12 lines early (`docs/protocol.md:1192` for the 1201 the file holds) — the
     drift is the durable half of that, the line numbers move with the prose.
     """
     page, wraps = worst_wrapped(tree)

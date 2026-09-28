@@ -65,6 +65,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **Setting a configuration lock code where none is set takes a touch.** Any host
+  could set one on a key that had none, as on a YubiKey, and a code its owner
+  does not hold keeps every later config change behind a factory wipe. All four
+  writers (CCID WRITE CONFIG, the vendor `CONFIG_WRITE`, CTAPHID `0x43` and the
+  OTP keyboard's `0x15`) now ask for a touch before they arm a lock, and a
+  declined or timed-out one answers `6985` (`0x27` over `CONFIG_WRITE`) and
+  stores nothing. Changing or clearing a code still takes only the current code,
+  and no other write asks. `bcdDevice` 0x0A60 → 0x0A61.
+
 - **`rsk otp lock-page58` burns only over a device the migration has finished.**
   A record sealed under the pre-burn key derives from the public chip serial, so
   a flash writer can plant one and the boot pass re-seals it under the fused key

@@ -42,7 +42,10 @@ enum Lock {
 /// What a write the lock lets through does to it.
 pub(crate) enum LockChange {
     Keep,
+    /// A new code over a set one: the write carried the current code.
     Set([u8; LOCK_VERIFIER_LEN]),
+    /// A code where none is set, which no code stands behind: it takes a touch.
+    Arm([u8; LOCK_VERIFIER_LEN]),
     Clear,
 }
 
@@ -99,7 +102,8 @@ pub(crate) fn lock_change<S: Storage>(
     let new = verifier(serial, code);
     Ok(match lock {
         Lock::Locked(Some(stored)) if ct_eq(&new, &stored) => LockChange::Keep,
-        _ => LockChange::Set(new),
+        Lock::Locked(_) => LockChange::Set(new),
+        Lock::Unlocked => LockChange::Arm(new),
     })
 }
 
@@ -108,7 +112,7 @@ impl LockChange {
     pub(crate) fn apply<S: Storage>(self, fs: &mut Fs<S>) -> Result<(), DevConfError> {
         let stored = match self {
             Self::Keep => return Ok(()),
-            Self::Set(verifier) => {
+            Self::Set(verifier) | Self::Arm(verifier) => {
                 let mut rec = [LOCK_FORMAT; LOCK_RECORD_LEN];
                 for (dst, src) in rec.iter_mut().skip(1).zip(verifier) {
                     *dst = src;

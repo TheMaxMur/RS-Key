@@ -228,6 +228,34 @@ fn a_locked_write_config_answers_as_a_yubikey() {
     );
 }
 
+/// A lock set where none is takes the operator's touch on both of this applet's
+/// writers, CCID WRITE CONFIG and the CTAPHID one; declined, neither stores it.
+#[test]
+fn a_lock_set_where_none_is_takes_a_touch() {
+    let presence = RefCell::new(DenyPresence);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    let mut set = std::vec![TAG_CONFIG_LOCK, 0x10];
+    set.extend_from_slice(&[0xA5; 16]);
+    assert_eq!(
+        write_config(&mut app, &mut fs, &set),
+        Sw::CONDITIONS_NOT_SATISFIED
+    );
+    assert_eq!(
+        app.persist_config(&mut fs, &set),
+        Err(DevConfError::NotConfirmed)
+    );
+    assert!(
+        fs.read(EF_DEV_LOCK, &mut [0u8; 64]).is_none(),
+        "a declined touch set the lock"
+    );
+
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    assert_eq!(write_config(&mut app, &mut fs, &set), Sw::OK);
+    assert!(fs.read(EF_DEV_LOCK, &mut [0u8; 64]).is_some());
+}
+
 #[test]
 fn read_config_clamps_enabled_to_supported() {
     // A host can persist a USB_ENABLED mask wider than SUPPORTED_CAPS (a newer

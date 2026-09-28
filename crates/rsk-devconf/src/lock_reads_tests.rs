@@ -6,15 +6,15 @@ use rsk_fs::probe::{Traced, sweep};
 
 /// [`locked_fs`] on the sweep's medium.
 fn locked(fs: &mut Fs<Traced>) {
-    persist_dev_conf(&SERIAL, fs, &[TAG_USB_ENABLED, 2, 0x02, 0x3B]).unwrap();
-    persist_dev_conf(&SERIAL, fs, &write(None, &[], Some(&CODE))).unwrap();
+    persist_touched(&SERIAL, fs, &[TAG_USB_ENABLED, 2, 0x02, 0x3B]).unwrap();
+    persist_touched(&SERIAL, fs, &write(None, &[], Some(&CODE))).unwrap();
 }
 
 /// A configuration write answers with its status alone: a success's answer is
 /// empty and only its store is compared.
 fn writes(blob: Vec<u8>) -> impl Fn(&mut Fs<Traced>, &mut ()) -> Option<Vec<u8>> {
     move |fs, _| {
-        persist_dev_conf(&SERIAL, fs, &blob)
+        persist_touched(&SERIAL, fs, &blob)
             .ok()
             .map(|()| Vec::new())
     }
