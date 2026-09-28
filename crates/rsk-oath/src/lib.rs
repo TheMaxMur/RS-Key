@@ -418,15 +418,9 @@ impl<'a> OathApplet<'a> {
         if !ct_eq(resp, proof) {
             return Sw::DATA_INVALID;
         }
-        // Re-arm the one-shot at-rest lap (rsk-fs `EF_HARDENED`): EF_OTP_PIN is the
-        // only OATH record with no eager boot migration, so the copy the tombstone
-        // below supersedes can still be keyed under the pre-OTP arm the public chip
-        // serial derives. BEFORE the delete, and only if it LANDED: the two are
-        // separate appends, so a reset between them keeps whichever one did.
-        //
-        // Ahead of the SEAL as well, because this returns: a code sealed first is a
-        // lock the caller was told had failed, with the PIN it never reached still
-        // opening it — `validated` is per-session, and the next SELECT is not.
+        // Re-arm the one-shot at-rest lap (rsk-fs `EF_HARDENED`) ahead of the seal and
+        // gating it: the code this supersedes can still be keyed under the pre-OTP
+        // arm, the public chip serial's, where a boot could not move it.
         let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
             return Sw::MEMORY_FAILURE;
         };
@@ -443,17 +437,11 @@ impl<'a> OathApplet<'a> {
         ) {
             return Sw::MEMORY_FAILURE;
         }
-        // Installing a new access code drops any OTP-PIN: VERIFY PIN sets the same
-        // `validated` flag as VALIDATE, so a PIN minted while the applet was open
-        // would survive as a second, invisible unlock path for the store the owner
-        // is protecting right now. Re-mint it from a session that knows this code.
-        // Answered rather than discarded: a surviving PIN is that second path, and
-        // the lock-down covers both arms below, the refused drop's included.
+        // The OTP PIN stays: dropping it let any host that set a code read the
+        // password safe. VERIFY PIN opens only a code-less applet, so it is no
+        // second way past this code; the next command presents the code itself.
         self.validated = false;
-        match fs.delete_over(EF_OTP_PIN, Some(&rearmed)) {
-            Ok(()) => Sw::OK,
-            Err(_) => Sw::MEMORY_FAILURE,
-        }
+        Sw::OK
     }
 
     fn cmd_reset<S: Storage>(&mut self, _apdu: &Apdu, fs: &mut Fs<S>) -> Sw {
@@ -1202,7 +1190,10 @@ impl<'a> OathApplet<'a> {
         let Some(pw) = find_tag(data, TAG_PASSWORD as u16) else {
             return Sw::WRONG_DATA;
         };
-        // Any attempt clears a prior unlock; only a correct PIN re-validates below.
+        // Any attempt clears a prior unlock; only a correct PIN restores one below. A
+        // probe the flash failed reads as a code set, whose lock the PIN cannot open.
+        let code_set = fs.try_has_key(EF_OATH_CODE).unwrap_or(true);
+        let unlocked = self.validated;
         self.validated = false;
         self.otp_pin_verified = false;
         // Shared anti-bruteforce chokepoint: refuse at the counter floor, spend the
@@ -1223,7 +1214,9 @@ impl<'a> OathApplet<'a> {
             // OTP-rooted v1 verifier. The OTP PIN doubles as VALIDATE (nitropy flow).
             let _ = fs.put_over(EF_OTP_PIN, &self.otp_pin_record_v1(pw), Some(&rearmed));
         }
-        self.validated = true;
+        // A code-less applet opens on its PIN (the nitropy flow); a coded one keeps
+        // only the unlock its code gave, and the PIN opens the password safe alone.
+        self.validated = !code_set || unlocked;
         self.otp_pin_verified = true;
         Sw::OK
     }

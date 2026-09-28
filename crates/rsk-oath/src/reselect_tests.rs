@@ -137,10 +137,10 @@ fn a_reselect_of_the_oath_aid_drops_the_otp_pin() {
 }
 
 /// The rest of what the YubiKey was measured doing on a re-SELECT: it hands out a
-/// fresh challenge while the VALIDATE stands, and a validation the OTP PIN minted
-/// stands with it, though the password safe the PIN guards closes.
+/// fresh challenge while the VALIDATE stands, and the password safe the OTP PIN
+/// opened closes.
 #[test]
-fn a_reselect_rotates_the_challenge_and_keeps_a_pin_minted_validation() {
+fn a_reselect_rotates_the_challenge_keeps_the_validate_and_closes_the_safe() {
     let mut fs = new_fs();
     let rng = RefCell::new(CountRng(7));
     let touch = RefCell::new(StubPresence(Presence::Confirmed, 0));
@@ -150,8 +150,8 @@ fn a_reselect_rotates_the_challenge_and_keeps_a_pin_minted_validation() {
     let mut disp = Dispatcher::default();
     let mut send = |raw: &[u8]| go(&mut disp, &mut applets, &mut fs, raw);
 
-    // The code first: installing one drops any OTP PIN, so the PIN comes after a
-    // VALIDATE under that code.
+    // The code first, and the PIN under a VALIDATE: on a coded applet the code
+    // opens the applet and the PIN the password safe alone.
     assert_eq!(send(&select_apdu(OATH_AID)).0, Sw::OK);
     let mut key = vec![ALG_HMAC_SHA1];
     key.extend_from_slice(&CODE);
@@ -175,6 +175,10 @@ fn a_reselect_rotates_the_challenge_and_keeps_a_pin_minted_validation() {
 
     send(&select_apdu(OTHER_AID));
     let (_, first) = send(&select_apdu(OATH_AID));
+    let chal = find_tag(&first, TAG_CHALLENGE as u16).unwrap().to_vec();
+    let mut val = tlv(TAG_RESPONSE, &hmac_sha1(&CODE, &chal));
+    val.extend(tlv(TAG_CHALLENGE, &[9u8; 8]));
+    assert_eq!(send(&apdu(INS_VALIDATE, 0, 0, &val)).0, Sw::OK);
     assert_eq!(
         send(&apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"))).0,
         Sw::OK

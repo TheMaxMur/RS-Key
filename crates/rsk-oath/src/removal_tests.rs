@@ -102,57 +102,11 @@ fn deleting_a_credential_answers_for_one_that_survives() {
     );
 }
 
-/// SET CODE (`0x03`) installing a lock also drops any OTP-PIN, because VERIFY PIN
-/// raises the same `validated` flag VALIDATE does — so a PIN minted while the
-/// applet was open is a second, invisible way past the code being installed right
-/// now. That drop was a `let _ =` under a `9000`.
-#[test]
-fn installing_a_code_answers_for_an_otp_pin_that_survives() {
-    let (mut fs, stuck) = stuck_fs();
-    let rng = RefCell::new(CountRng(7));
-    let touch = RefCell::new(AlwaysConfirm);
-    let mut app = applet(&rng, &touch);
-
-    let mut cred = put_data(b"bank", 0x21, 6, SECRET_SHA1, false, None);
-    cred.extend(tlv(TAG_PWS_PASSWORD, b"s3cr3t"));
-    assert_eq!(
-        drive(&mut app, &mut fs, &apdu(INS_PUT, 0, 0, &cred)),
-        Sw::OK
-    );
-    assert_eq!(
-        drive(
-            &mut app,
-            &mut fs,
-            &apdu(INS_SET_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"))
-        ),
-        Sw::OK
-    );
-    stuck.set(EF_OTP_PIN);
-
-    let mut key = vec![ALG_HMAC_SHA1];
-    key.extend_from_slice(b"accesscodeaccesscode");
-    let chal = [1u8, 2, 3, 4, 5, 6, 7, 8];
-    let mut body = tlv(TAG_KEY, &key);
-    body.extend(tlv(TAG_CHALLENGE, &chal));
-    body.extend(tlv(
-        TAG_RESPONSE,
-        &hmac_sha1(b"accesscodeaccesscode", &chal),
-    ));
-    let installed = drive(&mut app, &mut fs, &apdu(INS_SET_CODE, 0, 0, &body));
-    stuck.set(0);
-
-    assert_eq!(
-        (installed, fs.has_data(EF_OTP_PIN)),
-        (Sw::MEMORY_FAILURE, true),
-        "the OTP-PIN unlock path outlived the command that says it dropped it"
-    );
-}
-
 /// SET CODE's other spelling, `73 00`: remove the access code. Fail-CLOSED — the
 /// survivor is the lock, not a secret — but `select` derives `validated` from
 /// `!code_set`, so a `9000` over a code that stayed hands the owner a card that
 /// locks itself again on the next power cycle, behind a code they were told was
-/// gone. Same shape as its two siblings above, and fixed with them by class.
+/// gone. Same shape as its sibling above, and fixed with it by class.
 #[test]
 fn removing_the_access_code_answers_for_a_code_that_survives() {
     let (mut fs, stuck) = stuck_fs();

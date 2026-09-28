@@ -110,6 +110,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **An access code any host could set no longer opens the OATH password safe.**
+  On an applet with no access code, SET CODE needs no credential, as on a
+  YubiKey, and it deleted the OTP PIN that guards the password safe (the
+  logins and passwords `nitropy` stores): any host could set its own code,
+  VALIDATE with it and read every stored password. SET CODE now keeps the OTP
+  PIN, and VERIFY PIN opens the applet only while no access code is set (the
+  nitropy flow). Where a code is set the code opens the applet and the PIN the
+  password safe alone: a right PIN keeps the unlock VALIDATE gave, a wrong one
+  drops both. A PIN planted before a code existed therefore opens no coded
+  applet either, which is what deleting it was for. Found in review.
+  `bcdDevice` 0x0A5E → 0x0A5F.
+
 - **A failed flash read no longer lets a registration past its excludeList.**
   makeCredential looks each excludeList id up among the stored passkeys, and
   skipped a record it could not read: a resident registration for the same

@@ -163,7 +163,9 @@ is always required for it** — on a fresh connection, whether or not an access
 password is also configured, and again after every re-select. `VERIFY CODE` is
 gated the same way. Set the PIN with `nitropy nk3 secrets set-pin`; the card
 demands a touch when it mints one, so a PIN cannot be planted on a key someone
-briefly picked up.
+briefly picked up. An access password set later keeps the PIN: the password
+then opens the applet and the PIN the safe, and the PIN alone opens nothing
+else.
 
 With **neither** a PIN nor an access password the store is open to anything on
 the CCID interface, exactly as the credential list is — that is the code-less

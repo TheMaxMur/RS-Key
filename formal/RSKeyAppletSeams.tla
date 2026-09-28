@@ -105,7 +105,7 @@ CONSTANTS
     \* defaulting both of OATH's flags from the one default-open rule.
     BugFreshCardOpensOtpPin,
     \* A deselect that leaves a provisioned OATH unlocked
-    \* (crates/rsk-oath/src/lib.rs:1252-1256 ignoring `code_set`).
+    \* (crates/rsk-oath/src/lib.rs:1245-1249 ignoring `code_set`).
     BugDeselectKeepsOathUnlock,
     \* The same fact one path over: a card reset or a power cycle that rebuilds
     \* the applet with the unlock still standing.
@@ -152,7 +152,7 @@ VARIABLES
     \* only status here that is a two-part thing.
     fresh,
     \* Whether OATH has an access code provisioned. It decides what a new SELECT
-    \* means: `validated = !code_set` (crates/rsk-oath/src/lib.rs:1290), so a
+    \* means: `validated = !code_set` (crates/rsk-oath/src/lib.rs:1283), so a
     \* code-less applet is unlocked by design and only a provisioned one has a
     \* status a SELECT elsewhere can take away.
     oathCodeSet,
@@ -210,7 +210,7 @@ Init ==
 \* Every status an applet owns, gone. This is `Session::reset`
 \* (crates/rsk-piv/src/lib.rs:213-217), `pin::Session::reset`
 \* (crates/rsk-openpgp/src/pin.rs:82-107) and OATH's `deselect`
-\* (crates/rsk-oath/src/lib.rs:1252-1256) -- three functions, one meaning.
+\* (crates/rsk-oath/src/lib.rs:1245-1249) -- three functions, one meaning.
 ClearedFor(h, a) ==
     [r \in Refs |-> IF RefOwner(r) = a
                       THEN (r = "oathCode"
@@ -231,7 +231,7 @@ AllCleared ==
 \* holds until a select to a DIFFERENT DF, and a YubiKey 5.7.4 was measured
 \* keeping all of it). OATH keeps its VALIDATE too, as a YubiKey 5.8.0 was measured
 \* doing, and drops only the OTP PIN: Nitrokey's, so no oracle speaks for it, and
-\* never inherited across a SELECT (crates/rsk-oath/src/lib.rs:1287-1291).
+\* never inherited across a SELECT (crates/rsk-oath/src/lib.rs:1280-1284).
 Reselect(a) ==
     /\ sel = a
     /\ held' = IF BugReselectResetsStatus THEN ClearedFor(held, a)
@@ -340,20 +340,19 @@ PgpChangeRefused(r) ==
     /\ refused' = r
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
-\* OATH VERIFY PIN (crates/rsk-oath/src/lib.rs:1205-1226) clears BOTH flags at
-\* entry and re-sets them only on success: `validated` is reachable THROUGH the
-\* OTP PIN as well as through the access code, so one bool carries two
-\* provenances and both have to fall.
+\* OATH VERIFY PIN (crates/rsk-oath/src/lib.rs:1193-1220) clears BOTH flags at
+\* entry and re-sets them only on success, the access code's only as far as it
+\* stood: the PIN opens a code-less applet and the password safe, never a code.
 OathVerifyOtpPin(ok) ==
     /\ sel = Oath
     /\ held' = [held EXCEPT !["oathOtpPin"] = ok,
-                            !["oathCode"] = ok \/ ~oathCodeSet]
+                            !["oathCode"] = ~oathCodeSet \/ (ok /\ held["oathCode"])]
     /\ refused' = IF ok THEN (IF refused = "oathOtpPin" THEN NoRef ELSE refused)
                         ELSE "oathOtpPin"
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet, viol >>
 
 \* aa47867: a refused CHANGE of the OTP PIN drops the standing authentication,
-\* both halves (crates/rsk-oath/src/lib.rs:1173-1174). Before it, `0xB2` VERIFY
+\* both halves (crates/rsk-oath/src/lib.rs:1161-1162). Before it, `0xB2` VERIFY
 \* closed the safe on a wrong PIN and `0xB3` CHANGE did not -- so the whole retry
 \* budget could be burned through CHANGE while GET CREDENTIAL went on serving
 \* the stored password.
@@ -368,7 +367,7 @@ OathChangeRefused ==
 
 \* The access code is a MAC challenge-response with NO retry counter, so a wrong
 \* answer costs nothing and keeps the standing unlock
-\* (crates/rsk-oath/src/lib.rs:599-601) -- measured on a YubiKey 5.7.4 from a
+\* (crates/rsk-oath/src/lib.rs:587-589) -- measured on a YubiKey 5.7.4 from a
 \* genuinely locked applet. Two failed-auth rules inside one applet, and this is
 \* the second: it must NOT write `refused`, because nothing was refused that had
 \* a budget to protect.
@@ -396,13 +395,14 @@ OathValidateRefused ==
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, oathCodeSet,
                     refused >>
 
-\* SET CODE provisions the access code and re-locks
-\* (crates/rsk-oath/src/lib.rs:446-452).
+\* SET CODE provisions the access code and re-locks, keeping the OTP PIN
+\* (crates/rsk-oath/src/lib.rs:440-443): VERIFY PIN no longer opens a coded
+\* applet, so the PIN is no second way past the code.
 OathSetCode ==
     /\ sel = Oath
     /\ ~oathCodeSet
     /\ oathCodeSet' = TRUE
-    /\ held' = [held EXCEPT !["oathCode"] = FALSE, !["oathOtpPin"] = FALSE]
+    /\ held' = [held EXCEPT !["oathCode"] = FALSE]
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, psig, refused, viol >>
 
 OathValidateOk ==
@@ -671,7 +671,7 @@ NoKeyOpOnTheAdminStatus ==
 \* than by a cross-applet principle. PIV's CHANGE REFERENCE DATA takes no
 \* `&mut Session` at all (crates/rsk-piv/src/lib.rs:546-580) -- SP 800-73-4 pt2
 \* 3.2.2/3.2.3, plus a measured YubiKey 5.7.4. OATH's access-code VALIDATE keeps
-\* the standing unlock (crates/rsk-oath/src/lib.rs:599-601), because a MAC
+\* the standing unlock (crates/rsk-oath/src/lib.rs:587-589), because a MAC
 \* challenge-response has no retry counter for a refusal to protect.
 \*
 \* So THREE APPLETS KEEP THREE RULES and no single one can be written: OpenPGP's

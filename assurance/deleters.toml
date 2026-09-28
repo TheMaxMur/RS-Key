@@ -349,18 +349,7 @@ why = "SET CODE's 73 00: select derives validated from !code_set, so a 9000 over
 
 [[site]]
 file = "crates/rsk-oath/src/lib.rs"
-line = 453
-call = "match fs.delete_over(EF_OTP_PIN, Some(&rearmed)) {"
-verb = "delete_over"
-answer = "read"
-class = "secret-or-gate"
-metadata = "none"
-disposition = "must-read"
-why = "VERIFY PIN raises the same validated flag VALIDATE does, so an OTP-PIN that survives installing an access code is a second and invisible way past it."
-
-[[site]]
-file = "crates/rsk-oath/src/lib.rs"
-line = 1743
+line = 1736
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"

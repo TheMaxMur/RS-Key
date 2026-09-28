@@ -1368,8 +1368,8 @@ fn set_pin_rejected_while_access_code_locked() {
 /// code exists. `select()` sets validated = !code_set, so on a factory-state applet
 /// `validated` is vacuously true and SET PIN was otherwise unauthenticated. The PIN
 /// then survived the owner setting an access code and unlocked the store through
-/// VERIFY PIN, invisibly. Two halves: the plant needs the operator, and installing
-/// a new access code drops any PIN minted without it.
+/// VERIFY PIN, invisibly. Two halves: the plant needs the operator, and a coded
+/// applet opens on its code alone, so the planted PIN is no way past it.
 #[test]
 fn otp_pin_cannot_be_planted_before_an_access_code_exists() {
     let mut fs = new_fs();
@@ -1399,16 +1399,12 @@ fn otp_pin_cannot_be_planted_before_an_access_code_exists() {
     assert_eq!(sw, Sw::OK);
     assert!(fs.has_data(EF_OTP_PIN));
 
-    // The owner now protects the applet: the pre-existing PIN must not remain as a
-    // second unlock path for the store this code is being set to guard.
+    // The owner now protects the applet. The PIN stays, guarding the password safe.
     lock_with_code(&mut app, &mut fs);
-    assert!(
-        !fs.has_data(EF_OTP_PIN),
-        "installing an access code drops an OTP-PIN minted without it"
-    );
+    assert!(fs.has_data(EF_OTP_PIN), "setting a code keeps the OTP PIN");
 
-    // And the applet really is closed: a fresh SELECT needs VALIDATE, and the old
-    // PIN no longer opens it.
+    // And the applet really is closed: a fresh SELECT needs VALIDATE, and the
+    // planted PIN, right as it is, does not open it.
     select(&mut app, &mut fs);
     let (sw, _) = run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
@@ -1417,7 +1413,13 @@ fn otp_pin_cannot_be_planted_before_an_access_code_exists() {
         &mut fs,
         &apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"0000")),
     );
-    assert_ne!(sw, Sw::OK, "the dropped PIN must not unlock the store");
+    assert_eq!(sw, Sw::OK, "control: the PIN itself is right");
+    let (sw, _) = run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[]));
+    assert_eq!(
+        sw,
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "the planted PIN opened a coded applet"
+    );
 }
 
 #[test]

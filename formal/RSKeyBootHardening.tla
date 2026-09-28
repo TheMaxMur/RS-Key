@@ -21,7 +21,7 @@
 (*    FIVE lazy re-keys skipping that, and its sweep landed the CALL at      *)
 (*    crates/rsk-fido/src/clientpin.rs:861,                                  *)
 (*    crates/rsk-fido/src/clientpin.rs:1266-1269,                            *)
-(*    crates/rsk-piv/src/lib.rs:1388, crates/rsk-oath/src/lib.rs:1221,       *)
+(*    crates/rsk-piv/src/lib.rs:1388, crates/rsk-oath/src/lib.rs:1212,       *)
 (*    crates/rsk-openpgp/src/pin.rs:359 -- three of those five used to name  *)
 (*    the comment or the write ABOVE the call, which is what a mechanical    *)
 (*    re-number leaves behind. Run-35's five is a HISTORICAL set, not        *)
