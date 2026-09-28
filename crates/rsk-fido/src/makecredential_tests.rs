@@ -2364,6 +2364,120 @@ fn an_rp_id_carrying_whitespace_is_refused() {
     assert!(!resp.is_empty(), "a plain rpId must still register");
 }
 
+/// The excludeList check fails over a record the flash would not serve only when
+/// that record could be this rp's, as the store's refusal does: another rp's leaves
+/// it answering, a record of its own fails it.
+#[test]
+fn an_exclude_check_fails_only_over_an_unread_record_of_its_own_rp() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut register = |fs: &mut Fs<_>, rp: &str| {
+        let mut buf = [0u8; 256];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(5).unwrap();
+            e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+            e.u8(2).unwrap().map(1).unwrap();
+            e.str("id").unwrap().str(rp).unwrap();
+            e.u8(3).unwrap().map(1).unwrap();
+            e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+            good_params(&mut e);
+            e.u8(7).unwrap().map(1).unwrap();
+            e.str("rk").unwrap().bool(true).unwrap();
+            e.writer().position()
+        };
+        let mut out = [0u8; 1024];
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        let n = make_credential(&mut ctx, &buf[..n], &mut out).unwrap();
+        out[..n].to_vec()
+    };
+    let ad = verify_response(&register(&mut fs, "example.com"), &[0xCD; 32]);
+    let mine = ad[55..55 + usize::from(u16::from_be_bytes([ad[53], ad[54]]))].to_vec();
+    register(&mut fs, "other.example");
+    let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
+    let hash = rsk_crypto::sha256(b"example.com");
+    let hit = |fs: &mut Fs<_>, id: &[u8]| exclude_hit(fs, seed.expose(), &hash, id, false);
+    let absent = [0x77u8; CRED_RESIDENT_LEN];
+
+    medium.stick(Some(crate::consts::EF_CRED + 1)); // other.example's
+    assert_eq!(hit(&mut fs, &mine), Ok(true));
+    assert_eq!(
+        hit(&mut fs, &absent),
+        Ok(false),
+        "another rp's unread record cannot be this one's"
+    );
+    medium.stick(Some(crate::consts::EF_CRED)); // example.com's own
+    assert_eq!(hit(&mut fs, &absent), Err(CtapError::Other));
+}
+
+/// Presence that never comes, counting how often it was asked.
+struct Unanswered(std::rc::Rc<std::cell::Cell<u32>>);
+impl crate::UserPresence for Unanswered {
+    fn request(&mut self, _confirm: crate::Confirm<'_>) -> crate::Presence {
+        self.0.set(self.0.get() + 1);
+        crate::Presence::Timeout
+    }
+}
+
+/// With one of the RP's own records unread, an excludeList id the store may hold
+/// is refused only after the same touch the healthy card asks for, or the fault
+/// would sort stored ids from others with no one at the key.
+#[test]
+fn an_exclude_check_the_flash_failed_asks_for_the_touch_first() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    {
+        let mut out = [0u8; 1024];
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        make_credential(&mut ctx, &build_request(true), &mut out).unwrap();
+    }
+    let absent = [0x77u8; CRED_RESIDENT_LEN];
+    let req = mc_build_exclude(&[("public-key", &absent[..])]);
+    let attempt = |fs: &mut Fs<_>| {
+        let asked = std::rc::Rc::new(std::cell::Cell::new(0));
+        let mut presence = Unanswered(asked.clone());
+        let mut out = [0u8; 1024];
+        let mut state = crate::FidoState::new();
+        let mut rng = SeqRng(9);
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 1000,
+        };
+        let r = make_credential(&mut ctx, &req, &mut out).map(|_| ());
+        (r, asked.get())
+    };
+    let healthy = attempt(&mut fs);
+    assert_eq!(healthy.1, 1, "control: the healthy card asks once");
+    medium.stick(Some(crate::consts::EF_CRED));
+    assert_eq!(attempt(&mut fs), healthy);
+}
+
 /// A makeCredential whose excludeList is `entries`, each a `(type, id)` descriptor.
 fn mc_build_exclude(entries: &[(&str, &[u8])]) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 8192];

@@ -117,3 +117,30 @@ fn a_faulted_read_fails_a_re_registration_or_replaces_the_credential_whole() {
         &[],
     );
 }
+
+/// A resident registration whose excludeList names the passkey the same user
+/// already has is refused, and a failed read of that passkey may not let it through
+/// to replace the credential the RP registered.
+#[test]
+fn no_faulted_read_lets_an_excluded_registration_replace_the_passkey() {
+    sweep(
+        |fs| {
+            let mut s = seeded(fs);
+            s.req = build_request(true);
+            let made = make(fs, &mut s).unwrap();
+            let ad = verify_response(&made, &[0xCD; 32]);
+            let id = ad[55..55 + usize::from(u16::from_be_bytes([ad[53], ad[54]]))].to_vec();
+            s.req = mc_build(6, |e| {
+                good_params(e);
+                e.u8(5).unwrap().array(1).unwrap().map(2).unwrap();
+                e.str("id").unwrap().bytes(&id).unwrap();
+                e.str("type").unwrap().str("public-key").unwrap();
+                e.u8(7).unwrap().map(1).unwrap();
+                e.str("rk").unwrap().bool(true).unwrap();
+            });
+            s
+        },
+        make,
+        &[],
+    );
+}

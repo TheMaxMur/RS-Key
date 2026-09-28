@@ -622,19 +622,24 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // excludeList: refuse if any listed credential is already ours and visible
     // (a UV-required credProtect credential is invisible without UV — §12.1).
     for &id in exclude {
-        if exclude_hit(ctx.fs, seed, rp_id_hash, id, uv) {
-            // §6.1.2 step 12 requires a user-presence gesture BEFORE disclosing the
-            // match, so the device isn't a silent credential-existence oracle
-            // (matches the getAssertion no-match poll and a real YubiKey) — unless
-            // built-in UV already provided it, and step 12 then terminates without
-            // waiting. No `needs_confirm` here: this card is title-only, so unlike
-            // the registration card below it names nothing a display would owe the
-            // user. `up` is implicit, so the test spends the token here too and acfg
-            // can't ride it (GHSA-wqjm class).
-            let ask = (!verified.up_collected).then(|| crate::Confirm::titled("Use this key?"));
-            let _up = ctx.user_presence_test(req, ask)?;
-            return Err(CtapError::CredentialExcluded);
-        }
+        let refusal = match exclude_hit(ctx.fs, seed, rp_id_hash, id, uv) {
+            Ok(false) => continue,
+            Ok(true) => CtapError::CredentialExcluded,
+            // A record the flash would not serve may be the match: answered after the
+            // same touch, or the fault would sort stored ids from others without one.
+            Err(e) => e,
+        };
+        // §6.1.2 step 12 requires a user-presence gesture BEFORE disclosing the
+        // match, so the device isn't a silent credential-existence oracle
+        // (matches the getAssertion no-match poll and a real YubiKey) — unless
+        // built-in UV already provided it, and step 12 then terminates without
+        // waiting. No `needs_confirm` here: this card is title-only, so unlike
+        // the registration card below it names nothing a display would owe the
+        // user. `up` is implicit, so the test spends the token here too and acfg
+        // can't ride it (GHSA-wqjm class).
+        let ask = (!verified.up_collected).then(|| crate::Confirm::titled("Use this key?"));
+        let _up = ctx.user_presence_test(req, ask)?;
+        return Err(refusal);
     }
 
     // Seal the credential.
@@ -1024,14 +1029,15 @@ fn make_attestation<S: Storage, R: Rng>(
 
 /// Is `id` an existing credential for this rp that is *visible* now? A
 /// UV-required credProtect credential is hidden without UV, so it does not
-/// count as an excludeList hit (§12.1).
+/// count as an excludeList hit (§12.1). `Err` when a record the flash would not
+/// serve could be it: a miss would let a resident request replace that passkey.
 fn exclude_hit<S: Storage>(
     fs: &mut Fs<S>,
     seed: &[u8; 32],
     rp_id_hash: &[u8; 32],
     id: &[u8],
     uv: bool,
-) -> bool {
+) -> Result<bool, CtapError> {
     let visible = |c: &Credential| c.ext.cred_protect != CRED_PROT_UV_REQUIRED || uv;
     let mut scratch = [0u8; CRED_REC_MAX];
     // A resident id is exactly 42 bytes, matched against the stored records; fall
@@ -1039,30 +1045,52 @@ fn exclude_hit<S: Storage>(
     // not stored as a resident — so no cleartext marker is needed.
     if id.len() == CRED_RESIDENT_LEN {
         let mut rec = [0u8; CRED_REC_MAX];
+        let mut unread = false;
+        let mut same_rp = 0usize;
         let mut occupied = [false; MAX_RESIDENT_CREDENTIALS as usize];
         slot_map(fs, crate::consts::EF_CRED, &mut occupied);
         for (i, used) in (0..MAX_RESIDENT_CREDENTIALS).zip(occupied) {
             if !used {
                 continue;
             }
-            let Some(n) = fs.read(crate::consts::EF_CRED + i, &mut rec) else {
-                continue;
+            let n = match fs.try_read(crate::consts::EF_CRED + i, &mut rec) {
+                Ok(Some(n)) => n.min(rec.len()),
+                Ok(None) => continue,
+                Err(_) => {
+                    unread = true;
+                    continue;
+                }
             };
-            let n = n.min(rec.len());
-            if n >= RECORD_PREFIX && rec[..32] == *rp_id_hash && rec[32..RECORD_PREFIX] == *id {
+            if n < RECORD_PREFIX || rec[..32] != *rp_id_hash {
+                continue;
+            }
+            same_rp += 1;
+            if rec[32..RECORD_PREFIX] == *id {
                 // Unloadable, as a record whose box does not open.
                 let Some(record) = rec.get(..n) else {
-                    return false;
+                    return Ok(false);
                 };
-                return credential_load(seed, cred_record_box(record), rp_id_hash, &mut scratch)
-                    .map(|c| visible(&c))
-                    .unwrap_or(false);
+                return Ok(credential_load(
+                    seed,
+                    cred_record_box(record),
+                    rp_id_hash,
+                    &mut scratch,
+                )
+                .map(|c| visible(&c))
+                .unwrap_or(false));
             }
         }
+        // As for the store's refusal: an unread record is this rp's only if its
+        // EF_RP count says more credentials than the walk found.
+        if unread
+            && crate::credential::rp_count(fs, rp_id_hash).map_err(|_| CtapError::Other)? > same_rp
+        {
+            return Err(CtapError::Other);
+        }
     }
-    credential_load(seed, id, rp_id_hash, &mut scratch)
+    Ok(credential_load(seed, id, rp_id_hash, &mut scratch)
         .map(|c| visible(&c))
-        .unwrap_or(false)
+        .unwrap_or(false))
 }
 
 /// Build the makeCredential authData extension map (credBlob bool / credProtect /

@@ -110,6 +110,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A failed flash read no longer lets a registration past its excludeList.**
+  makeCredential looks each excludeList id up among the stored passkeys, and
+  skipped a record it could not read: a resident registration for the same
+  account then went ahead and replaced the passkey the relying party had on
+  file, the credential its excludeList was sent to protect. The lookup now
+  answers `ERR_OTHER`, after the same touch a match asks for, when a record the
+  flash would not serve could be one of the RP's own, judged by its `EF_RP`
+  count as the store's refusal is. Found in review.
+  `bcdDevice` 0x0A5D → 0x0A5E.
+
 - **Changing the PIV management key can no longer lock the admin out, or leave
   a key behind another touch policy.** SET MANAGEMENT KEY wrote the new key,
   then its algorithm head, as two records. A power cut between them, or one
