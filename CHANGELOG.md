@@ -119,6 +119,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A Yubico-OTP use counter planted at `0xFFFF` no longer wraps to 0.** Only a
+  flash writer can store a counter above the 15-bit ceiling, and the power-up
+  advance took `0xFFFF` to `0`, a counter going backwards, which is the replay it
+  exists to stop. It now leaves such a counter where it is, as it does one at the
+  ceiling. `bcdDevice` 0x0A63 → 0x0A64.
+
 - **A boot that cannot read the fused key no longer runs its seal passes.** A
   key page closed even to secure code read as a blank one, so the boot ran every
   seal pass, the FIDO seed and OpenPGP first-boot setup and the rest under the

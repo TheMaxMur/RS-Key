@@ -31,8 +31,9 @@ pub(crate) fn next_use_counter(counter: u16, session: u8) -> (u16, u8, bool) {
 /// stored value alone: at the ceiling there is no next value, and a counter is never
 /// lowered, because going backwards is the replay it exists to prevent.
 pub(crate) fn cycle_use_counter(stored: u16) -> Option<u16> {
-    let next = stored.wrapping_add(1);
-    (next <= USE_COUNTER_MAX).then_some(next)
+    stored
+        .checked_add(1)
+        .filter(|&next| next <= USE_COUNTER_MAX)
 }
 
 #[cfg(test)]

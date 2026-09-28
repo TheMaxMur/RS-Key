@@ -33,3 +33,13 @@ fn both_writers_stop_at_the_same_value() {
         assert_eq!(pressed, cycled.unwrap_or(stored), "stored {stored:#06X}");
     }
 }
+
+#[test]
+fn a_planted_counter_is_never_lowered() {
+    // Only a flash writer stores a counter above the ceiling, and a boot's advance
+    // must not wrap it back to 0: going backwards is the replay the counter exists
+    // to stop.
+    for stored in [USE_COUNTER_MAX, USE_COUNTER_MAX + 1, 0xFFFE, 0xFFFF] {
+        assert_eq!(cycle_use_counter(stored), None, "stored {stored:#06X}");
+    }
+}
