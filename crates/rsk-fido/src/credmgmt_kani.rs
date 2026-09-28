@@ -41,7 +41,7 @@ const OP_STOP: u8 = 2;
 
 /// `NoTokenAfterInvalidation`, at the call site — the bounded, code-level
 /// instance of the TLA+ invariant of that name, driving the real
-/// [`verify_cm_token`] (`credmgmt.rs:290-300`) that `deleteCredential` and
+/// [`verify_cm_token`] (`credmgmt.rs:300-310`) that `deleteCredential` and
 /// `updateUserInformation` authorize with.
 ///
 /// The platform mints a genuine `pinUvAuthParam` while the grant is live, then a
@@ -59,7 +59,7 @@ const OP_STOP: u8 = 2;
 ///
 /// What this does **not** prove: only the `cm` permission and only this call
 /// site; the persistent `pcmr` grant that `authorize_cm` consults *before* this
-/// (`credmgmt.rs:252-254`) is in flash and out of reach here — finding 2 of the
+/// (`credmgmt.rs:262-264`) is in flash and out of reach here — finding 2 of the
 /// TLA+ run, closed at the consumer by `32b9fa3` and at the producer by
 /// `31c6e73`, and pinned by host tests rather than by this harness; four
 /// operations, one starting state; and
@@ -259,7 +259,7 @@ fn drive_begin(
     st.cm.reset();
 
     // THE DECISION, and it is the real one: `authorize_cm`'s session-token arm,
-    // in its own order (`credmgmt.rs:255-257`).
+    // in its own order (`credmgmt.rs:265-267`).
     let decided = verify_cm_token(st, proto, payload, param)
         .and_then(|()| check_rp_binding(st, if rps { None } else { Some(&want_rp) }));
     if decided.is_ok() {
@@ -275,8 +275,8 @@ fn drive_begin(
     let authorized = !forged && perms0 & PERM_CM != 0 && (!scoped || (!rps && mine));
 
     // The Begin's body, verbatim from its call site, run only where the gate let
-    // it — an empty scan refuses BEFORE the totals move (`credmgmt.rs:406-408`,
-    // `:538-540`), which is why a zero total opens nothing.
+    // it — an empty scan refuses BEFORE the totals move (`credmgmt.rs:416-418`,
+    // `:533-535`), which is why a zero total opens nothing.
     if authorized {
         if rps {
             st.cm.channel = st.channel;
@@ -284,8 +284,8 @@ fn drive_begin(
             st.cm.rp_total = 0;
             st.cm.rp_next_slot = 0;
             if total > 0 {
-                // `credmgmt.rs:409-416`, and every line of it is BEFORE the seed
-                // load at `:421`.
+                // `credmgmt.rs:419-426`, and every line of it is BEFORE the seed
+                // load at `:431`.
                 st.cm.rp_total = total;
                 st.cm.rp_counter = 1u16.saturating_add(1);
                 st.cm.last_leg_ms = NOW;
@@ -295,8 +295,8 @@ fn drive_begin(
             st.cm.cred_counter = 1;
             st.cm.cred_total = 0;
             st.cm.cred_next_slot = 0;
-            // `credmgmt.rs:548-551`, and every line of it is AFTER the seed load
-            // at `:542`. The opposite side from the walk above.
+            // `credmgmt.rs:543-546`, and every line of it is AFTER the seed load
+            // at `:537`. The opposite side from the walk above.
             if total > 0 && !late {
                 st.cm.cred_total = total;
                 st.cm.rp_id_hash = want_rp;
@@ -344,7 +344,7 @@ fn check_begin(st: &FidoState, begin: &Begin, rps: bool) {
 /// the rpId binding — is never evaluated. The property is about the
 /// authorization, so this drives the real one: [`verify_cm_token`] then
 /// [`check_rp_binding`] then `mark_token_used`, in `authorize_cm`'s own order
-/// (`credmgmt.rs:245-259`), behind the `cm.reset()` the subcommand demux
+/// (`credmgmt.rs:255-269`), behind the `cm.reset()` the subcommand demux
 /// performs first (`credmgmt.rs:174`).
 ///
 /// Four claims, and each is an equality:
@@ -361,14 +361,14 @@ fn check_begin(st: &FidoState, begin: &Begin, rps: bool) {
 ///   harness cost 448 s and **14.5 GiB**, over the 16 GiB a hosted runner has.
 ///   Without it D1's `forged` flag would be an assumption; with it in its own
 ///   harness the flag is a proved fact and this one costs two evaluations;
-/// - **D4** `enumerate_rps` writes `rp_total` at `credmgmt.rs:409-416`, BEFORE
-///   the seed load at `:421`, so an authorized Begin that then fails to the host
+/// - **D4** `enumerate_rps` writes `rp_total` at `credmgmt.rs:419-426`, BEFORE
+///   the seed load at `:431`, so an authorized Begin that then fails to the host
 ///   leaves a live walk cursor behind. Not a bypass — the authorization had
 ///   already succeeded — and asserted here because "checked by hand" was the
 ///   reason it was written down rather than the reason it could be omitted.
 ///
 /// What this does **not** prove: the persistent `pcmr` arm `authorize_cm` tries
-/// first (`credmgmt.rs:252-254`) is in flash behind `get_sealed32`'s AEAD and out
+/// first (`credmgmt.rs:262-264`) is in flash behind `get_sealed32`'s AEAD and out
 /// of budget here, so this is the session-token arm only; the scan is a symbolic
 /// total rather than a store, which over-approximates it past
 /// `MAX_RESIDENT_CREDENTIALS`; one Begin from one starting state, not a sequence;
@@ -430,7 +430,7 @@ fn no_authorization_bypass_rps_begin_at_call_site() {
 /// - the request NAMES an rp, so §6.8.4's binding is a match rather than a
 ///   refusal: a scoped token may use this subcommand exactly for its own rp;
 /// - **D5**, which the RP walk has no counterpart for: `enumerate_creds` writes
-///   `cm.rp_id_hash` (`credmgmt.rs:550`) and the demux reads it back to serve a
+///   `cm.rp_id_hash` (`credmgmt.rs:545`) and the demux reads it back to serve a
 ///   *Next* (`:163-164`). `state_kani.rs`'s `begin_creds` never writes it, so the
 ///   rp a *Next* is served for was outside that harness's shape entirely. Here it
 ///   is asserted to be the rp **the request named**, which is what the binding
@@ -439,7 +439,7 @@ fn no_authorization_bypass_rps_begin_at_call_site() {
 ///   rp, so the cursor legitimately holds one the token was never bound to.
 ///
 /// And **D4 in the other direction**: `enumerate_creds` writes its totals AFTER
-/// the seed load (`credmgmt.rs:542` then `:548-551`), so the same failure that
+/// the seed load (`credmgmt.rs:537` then `:543-546`), so the same failure that
 /// leaves an RP walk live leaves this one dead. The two call sites sit on
 /// opposite sides of one call, which is the kind of thing a projection over the
 /// guard alone cannot see.

@@ -151,7 +151,7 @@ why = "an empty rpId list means no RP qualifies for vendor-facilitated enterpris
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 748
+line = 767
 call = ".delete(EF_CRED + slot)"
 verb = "delete"
 answer = "read"
@@ -162,7 +162,7 @@ why = "deleteCredential's only effect. A surviving EF_CRED is an assertable cred
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 789
+line = 808
 call = "let _ = fs.delete(EF_RP + j);"
 verb = "delete"
 answer = "discarded"
@@ -173,7 +173,7 @@ why = "the RP index at count zero, and the credential it counted has already gon
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 794
+line = 813
 call = "let _ = fs.delete(crate::consts::EF_RPNICK + j);"
 verb = "delete"
 answer = "discarded"
@@ -184,7 +184,7 @@ why = "a device-local nickname sealed with the rpIdHash as AAD, never surfaced w
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 852
+line = 871
 call = "fs.delete(EF_RP + j)?;"
 verb = "delete"
 answer = "read"
@@ -195,7 +195,7 @@ why = "the boot pass removes an RP record no readable credential names, which en
 
 [[site]]
 file = "crates/rsk-fido/src/credmgmt.rs"
-line = 854
+line = 873
 call = "let _ = fs.delete(crate::consts::EF_RPNICK + j);"
 verb = "delete"
 answer = "discarded"
@@ -547,7 +547,7 @@ why = "and its second. Both slots' valid bits come off flash in the response tha
 
 [[site]]
 file = "crates/rsk-piv/src/files.rs"
-line = 630
+line = 645
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -569,7 +569,7 @@ why = "PUT DATA with an empty body deletes a pooled object, so the removal is th
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 867
+line = 866
 call = "return match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
@@ -580,7 +580,7 @@ why = "PUT DATA with an empty body IS the object delete, so the removal is the w
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1218
+line = 1225
 call = "let dropped = fs.delete_key(key_fid(from));"
 verb = "delete_key"
 answer = "read"
@@ -591,7 +591,7 @@ why = "MOVE with to = 0xFF, the slot delete. The head earns a retry because one 
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1219
+line = 1226
 call = "let _ = fs.delete(pubkey_fid(from));"
 verb = "delete"
 answer = "discarded"

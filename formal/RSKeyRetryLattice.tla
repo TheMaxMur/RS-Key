@@ -40,18 +40,18 @@ EXTENDS Naturals
 CONSTANTS
     Max,   \* the retry ceiling; models MAX_PIN_RETRIES / the per-reference default
     \* The `left == 0 => PIN_BLOCKED` floor, checked BEFORE the comparison at
-    \* crates/rsk-piv/src/lib.rs:1343-1345 (check_ref) and
+    \* crates/rsk-piv/src/lib.rs:1344-1346 (check_ref) and
     \* crates/rsk-openpgp/src/pin.rs:257-259 (check_pin). One switch: the same
     \* floor guards a direct verify AND a recovery reference (the PUK/RC that
     \* check_ref/check_pin is called on), so removing it opens both.
     BugUseWhenBlocked,
-    \* The decrement that IS the anti-bruteforce gate: crates/rsk-piv/src/lib.rs:1363
+    \* The decrement that IS the anti-bruteforce gate: crates/rsk-piv/src/lib.rs:1364
     \* (`set_retries_left(fs, retry, left - 1)`, spent BEFORE the compare) and
     \* crates/rsk-openpgp/src/pin.rs:164 (`pw[idx] -= 1`). Removing it lets a wrong
     \* attempt cost nothing -- unlimited guesses at full speed.
     BugWrongDoesNotSpend,
     \* The recovery reference verified BEFORE the target is refilled:
-    \* crates/rsk-piv/src/lib.rs:1500 (`check_ref(EF_PUK, ..)` opens
+    \* crates/rsk-piv/src/lib.rs:1501 (`check_ref(EF_PUK, ..)` opens
     \* unblock_pin_with_puk) and crates/rsk-openpgp/src/pin.rs:954 (`check_pin(EF_RC,
     \* ..)` opens reset_retry's P1=0 branch). Removing it refills the target on a
     \* WRONG recovery secret.
@@ -67,7 +67,7 @@ Refs == {"pivPin", "pivPuk", "pw1", "pw3", "rc"}
 
 \* The references a host VERIFY targets directly. `pivPuk` and `rc` are absent:
 \* neither is verified on its own, only PRESENTED as the recovery secret inside a
-\* RESET RETRY (crates/rsk-piv/src/lib.rs:584-591, crates/rsk-openpgp/src/pin.rs:931-982),
+\* RESET RETRY (crates/rsk-piv/src/lib.rs:583-590, crates/rsk-openpgp/src/pin.rs:931-982),
 \* where a wrong one still spends its counter.
 VerifyTargets == {"pivPin", "pw1", "pw3"}
 
@@ -103,7 +103,7 @@ Init ==
     /\ viol = {}
 
 (***************************************************************************)
-(* VERIFY. crates/rsk-piv/src/lib.rs:1338-1405 (check_ref) and              *)
+(* VERIFY. crates/rsk-piv/src/lib.rs:1339-1406 (check_ref) and              *)
 (* crates/rsk-openpgp/src/pin.rs:234-329 (check_pin): refuse at zero, spend  *)
 (* on a wrong value, refill on a correct one.                              *)
 (***************************************************************************)

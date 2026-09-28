@@ -98,7 +98,7 @@ fn issue_token(st: &mut FidoState, rng: &mut StepRng, permissions: u8, now_ms: u
 ///
 /// - the **UV** shape — `getassertion.rs:431-434`, `makecredential.rs:570-573` —
 ///   whose distinguishing conjunct is `user_verified()`;
-/// - the **bare** shape — `config.rs:242-244`, `credmgmt.rs:296` — which tests
+/// - the **bare** shape — `config.rs:242-244`, `credmgmt.rs:306` — which tests
 ///   the MAC and the permission bits and *nothing else*. For those two the only
 ///   thing between a stopped token and a live authorization is that
 ///   `stop_using_token` zeroes `permissions`: the token bytes stay put, so the
@@ -208,7 +208,7 @@ fn no_token_after_invalidation() {
             verified == st.user_verified(),
             "NoTokenAfterInvalidation/A1: user_verified() does not track the grant",
         );
-        // A2 — the bare-shaped call sites (config.rs:242-244, credmgmt.rs:296)
+        // A2 — the bare-shaped call sites (config.rs:242-244, credmgmt.rs:306)
         // read the permission bits and the MAC, nothing else. §6.5.5.7 keeps
         // largeBlobWrite across a consumed presence test and drops the rest.
         kani::assert(
@@ -242,8 +242,8 @@ fn no_token_after_invalidation() {
     kani::cover!(!verified && st.paut.in_use); // consumed after presence
 }
 
-/// The `enumerateRPsBegin` cursor write, `credmgmt.rs:354-358` plus the totals
-/// and the leg stamp its serving tail sets (`:409-416`). `total` is symbolic:
+/// The `enumerateRPsBegin` cursor write, `credmgmt.rs:364-368` plus the totals
+/// and the leg stamp its serving tail sets (`:419-426`). `total` is symbolic:
 /// how many RPs the store held is not this proof's business.
 ///
 /// The leading `cm.reset()` is `credmgmt.rs:174` — every credentialManagement
@@ -263,7 +263,7 @@ fn begin_rps(st: &mut FidoState, total: u16, now_ms: u64) {
     st.cm.last_leg_ms = now_ms;
 }
 
-/// `enumerateCredentialsBegin`, the same shape (`credmgmt.rs:174`, `:450-454`, `:548-553`).
+/// `enumerateCredentialsBegin`, the same shape (`credmgmt.rs:174`, `:460-464`, `:543-548`).
 fn begin_creds(st: &mut FidoState, total: u16, now_ms: u64) {
     st.cm.reset();
     st.cm.channel = st.channel;
@@ -307,7 +307,7 @@ const W_AUTHENTICATOR_RESET: u8 = 6;
 const W_TIME_PASSES: u8 = 7;
 
 /// `NoAuthorizationBypass`, walk-owner clause — the bounded, code-level instance
-/// of the TLA+ invariant's `state.rs:169-179` / `credmgmt.rs:359` row.
+/// of the TLA+ invariant's `state.rs:169-179` / `credmgmt.rs:369` row.
 ///
 /// CTAP 2.1 §6.8 exempts `enumerateRPsGetNextRP` / `enumerateCredentialsGetNext`
 /// from carrying a `pinUvAuthParam` of their own: they inherit the *Begin*'s
@@ -386,7 +386,7 @@ fn no_authorization_bypass_walk_owner() {
             }
             W_NEXT_LEG => {
                 // A *Next* the guard admits: serve it exactly as `enumerate_rps`
-                // does (`credmgmt.rs:412-416`). The guard was just checked above,
+                // does (`credmgmt.rs:422-426`). The guard was just checked above,
                 // so an admission it should not have made is already recorded.
                 if st.cm.may_walk_rps(st.channel) {
                     st.cm.rp_counter = st.cm.rp_counter.saturating_add(1);

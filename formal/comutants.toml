@@ -1002,7 +1002,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1363."
+note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1364."
 
 [comutant.BugRecoveryWithoutSecret]
 status = "patch"
@@ -1277,7 +1277,7 @@ note = "OATH's exemption taken out of the IMPLEMENTATION, the model switch takin
 status = "unreachable"
 evidence = """the applets' deselect is redundant with their own fresh SELECT, so
 removing it from the ICC power transition changes nothing observable. Three
-applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:401-403
+applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:400-402
 (sess.reset), crates/rsk-openpgp/src/lib.rs:337-339 (reset_session), crates/rsk-oath/src/lib.rs:1250-1257
 (validated + otp_pin_verified) — and all three ALSO re-lock in select on a
 select that is not a re-SELECT: piv and openpgp on `if !reselect`, oath by
@@ -1447,7 +1447,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:302, 598, 680, 824, 1062, 1157 and crates/rsk-piv/src/keygen.rs:597), none of them patched here."
+note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:301, 597, 679, 820, 1059, 1158 and crates/rsk-piv/src/keygen.rs:597), none of them patched here."
 
 [comutant.BugRefusedValidateGrants]
 status = "patch"
