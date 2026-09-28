@@ -2148,7 +2148,8 @@ fn a_first_press_the_medium_refused_leaves_the_advance_owed() {
 #[test]
 fn a_boots_first_press_advances_only_a_yubico_otp_counter() {
     // The advance is the Yubico-OTP position's: a HOTP slot's tail is its moving
-    // factor, which each press already steps once, and a static slot has no counter.
+    // factor, which each press already steps once, and a static or short-ticket
+    // slot types a fixed string and has no counter.
     let mut fs = new_fs();
     let presence = RefCell::new(AlwaysConfirm);
     let rng = RefCell::new(CountRng(7));
@@ -2176,6 +2177,11 @@ fn a_boots_first_press_advances_only_a_yubico_otp_counter() {
         configure(&mut app, &mut fs, 0x03, 0, &fixed, &[0; 6]).0,
         Sw::OK
     );
+    let short = build_config(b"short", &[1; 6], &[2; 16], &[0; 6], 0, 0, CFG_SHORT_TICKET);
+    assert_eq!(
+        configure(&mut app, &mut fs, 0x01, 2, &short, &[0; 6]).0,
+        Sw::OK
+    );
 
     for _ in 0..2 {
         let mut booted = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
@@ -2188,6 +2194,11 @@ fn a_boots_first_press_advances_only_a_yubico_otp_counter() {
         assert!(
             booted
                 .button_ticket(2, 0, [0, 0], &mut fs, &mut out)
+                .is_some()
+        );
+        assert!(
+            booted
+                .button_ticket(3, 0, [0, 0], &mut fs, &mut out)
                 .is_some()
         );
     }
@@ -2206,6 +2217,11 @@ fn a_boots_first_press_advances_only_a_yubico_otp_counter() {
         tail(&mut fs, EF_OTP_SLOT2),
         0,
         "a press moved a static slot's tail"
+    );
+    assert_eq!(
+        tail(&mut fs, EF_OTP_SLOT1 + 2),
+        0,
+        "a press moved a short-ticket slot's tail"
     );
 }
 

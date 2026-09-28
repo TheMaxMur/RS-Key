@@ -1172,12 +1172,12 @@ formal/comutants.toml	crates/rsk-otp/src/tests.rs	1511-1511	assert!(	assert!(
 formal/comutants.toml	crates/rsk-otp/src/tests.rs	1520-1520	fn swap_carries_the_session_counter_with_its_record() {	fn swap_carries_the_session_counter_with_its_record() {
 formal/comutants.toml	crates/rsk-otp/src/tests.rs	1591-1591	fn swap_carries_the_boot_advance_with_its_record() {	fn swap_carries_the_boot_advance_with_its_record() {
 formal/comutants.toml	crates/rsk-otp/src/tests.rs	2135-2135	assert_eq!(	assert_eq!(
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2315-2315	fn a_press_types_nothing_when_it_cannot_persist_the_counter() {	fn a_press_types_nothing_when_it_cannot_persist_the_counter() {
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2352-2352	assert!(	assert!(
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2367-2367	assert_eq!(pos, (*pid, 1, 255), "the wrap press did not resume");	assert_eq!(pos, (*pid, 1, 255), "the wrap press did not resume");
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2375-2375	fn a_boot_whose_advance_is_refused_types_nothing_until_it_lands() {	fn a_boot_whose_advance_is_refused_types_nothing_until_it_lands() {
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2406-2406	assert!(	assert!(
-formal/comutants.toml	crates/rsk-otp/src/tests.rs	2526-2526	assert_ne!(first, second, "the second press re-typed the first code");	assert_ne!(first, second, "the second press re-typed the first code");
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2331-2331	fn a_press_types_nothing_when_it_cannot_persist_the_counter() {	fn a_press_types_nothing_when_it_cannot_persist_the_counter() {
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2368-2368	assert!(	assert!(
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2383-2383	assert_eq!(pos, (*pid, 1, 255), "the wrap press did not resume");	assert_eq!(pos, (*pid, 1, 255), "the wrap press did not resume");
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2391-2391	fn a_boot_whose_advance_is_refused_types_nothing_until_it_lands() {	fn a_boot_whose_advance_is_refused_types_nothing_until_it_lands() {
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2422-2422	assert!(	assert!(
+formal/comutants.toml	crates/rsk-otp/src/tests.rs	2542-2542	assert_ne!(first, second, "the second press re-typed the first code");	assert_ne!(first, second, "the second press re-typed the first code");
 formal/comutants.toml	crates/rsk-piv/src/auth.rs	63-63	PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,	PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,
 formal/comutants.toml	crates/rsk-piv/src/auth.rs	115-119	fn spend_pin(&mut self) {	}
 formal/comutants.toml	crates/rsk-piv/src/keygen.rs	597-597	if !sess.has_mgm {	if !sess.has_mgm {
