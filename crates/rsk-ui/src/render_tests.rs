@@ -1074,6 +1074,7 @@ const CEREMONY_TITLES: &[&str] = &[
     "Require anti-rollback?",
     "Seal backup forever?",
     "Set OATH PIN?",
+    "Set config lock?",
     "Show OATH code?",
     "Sign audit log?",
     "Sign data?",
