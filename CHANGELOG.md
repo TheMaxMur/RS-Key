@@ -137,7 +137,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   The counter now advances at the first press after every boot, warm or cold, as
   a YubiKey advances it at its first use after power-up, and a press whose
   advance the store will not take types nothing. A host still cannot move the
-  counter without a press. `bcdDevice` 0x0A5F → 0x0A60.
+  counter without a press. `bcdDevice` 0x0A5F → 0x0A60. A SWAP that lands only
+  half owes both slots that advance again, so the record it left under the other
+  slot's RAM half cannot re-type an earlier boot's position; `bcdDevice` 0x0A62 → 0x0A63.
 
 - **An access code any host could set no longer opens the OATH password safe.**
   On an applet with no access code, SET CODE needs no credential, as on a

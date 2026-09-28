@@ -592,7 +592,7 @@ BARRIER = re.compile(r"^(bl|blx|bx|b|pop|cbz|cbnz)$")
 #: both rules stop there — so the whole behaviour change is the unsound half.
 #:
 #: What the finer rule is FOR, since a stop that reaches nothing is not one: an
-#: `OtpApplet` branch at `crates/rsk-otp/src/lib.rs:765` and the `CFG_HMAC_LT64`
+#: `OtpApplet` branch at `crates/rsk-otp/src/lib.rs:773` and the `CFG_HMAC_LT64`
 #: test below it were reported as reading the comparator's operand load, on the
 #: strength of a walk that crossed two `b.n` into `cmd_configure`'s inlined copy.
 #: Neither operand is a byte the comparator loaded. Nothing about `ct_eq` or its

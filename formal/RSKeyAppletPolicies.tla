@@ -295,7 +295,7 @@ OtpMutate(k, codeMatches, keep) ==
 (***************************************************************************)
 (* SLOT_SWAP moves the record; the volatile half of the position has to    *)
 (* travel with it, or the moved record is re-paired with a session used    *)
-(* fewer times (crates/rsk-otp/src/lib.rs:684-692). The mark and the boot  *)
+(* fewer times (crates/rsk-otp/src/lib.rs:692-700). The mark and the boot  *)
 (* advance travel for the same reason: they are the RECORD's, not the      *)
 (* slot's. A                                                               *)
 (* programmed slot's stored code gates its move exactly as it gates an     *)

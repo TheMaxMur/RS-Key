@@ -2416,6 +2416,50 @@ fn a_boot_whose_advance_is_refused_types_nothing_until_it_lands() {
     assert_eq!(typed, [(*pid, 1, 0), (*pid, 2, 0), (*pid, 3, 0)]);
 }
 
+#[test]
+fn a_swap_that_lands_half_owes_both_slots_the_boot_advance() {
+    // The swap writes slot 1 and then slot 2, and moves the RAM halves only once
+    // both land. Refused at the second write, slot 1 holds B under A's RAM half —
+    // the advance A took this boot — so B's next press must still take its own.
+    let (mut fs, fid, budget) = write_stuck_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let (pid_a, pid_b) = (b"aaaaaa", b"bbbbbb");
+    let (key_a, key_b) = ([0xA1u8; 16], [0xB1u8; 16]);
+    let cfg_a = build_config(pid_a, &[0x0A; 6], &key_a, &[0; 6], 0, 0, 0);
+    let cfg_b = build_config(pid_b, &[0x0B; 6], &key_b, &[0; 6], 0, 0, 0);
+    assert_eq!(
+        configure_f(&mut app, &mut fs, 0x01, 0, &cfg_a, &[0; 6]),
+        Sw::OK
+    );
+    assert_eq!(
+        configure_f(&mut app, &mut fs, 0x03, 0, &cfg_b, &[0; 6]),
+        Sw::OK
+    );
+    let typed: Vec<_> = (0..3)
+        .map(|_| press_position(&mut app, &mut fs, 2, &key_b).unwrap())
+        .collect();
+
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    assert_eq!(
+        press_position(&mut app, &mut fs, 1, &key_a),
+        Some((*pid_a, 1, 0))
+    );
+    fid.set(Some(EF_OTP_SLOT2));
+    budget.set(1);
+    assert_eq!(
+        run_f(&mut app, &mut fs, &otp_apdu(0x06, 0, &[])),
+        Sw::MEMORY_FAILURE
+    );
+    let pos = press_position(&mut app, &mut fs, 1, &key_b).unwrap();
+    assert!(
+        !typed.contains(&pos),
+        "slot 1 re-typed {pos:?}, which B typed the boot before: {typed:?}"
+    );
+    assert_eq!(pos, (*pid_b, 2, 1));
+}
+
 /// INS 03 answers what SELECT does, in every CLA-00 shape a YubiKey 5.8.0 answered it;
 /// after the NDEF write, which answers nothing, it is where yubikit sees the
 /// programming sequence move. Its neighbour INS 04 stays `6D00`, as there.

@@ -654,6 +654,14 @@ impl<'a> OtpApplet<'a> {
         if (na.is_some() && unmatched(a.expose())) || (nb.is_some() && unmatched(b.expose())) {
             return Sw::SECURITY_STATUS_NOT_SATISFIED;
         }
+        // Until both writes land each slot owes the boot's advance: a move that lands
+        // half leaves a record under the other's RAM half, and its next press must
+        // still pass every position an earlier boot typed.
+        let (ia, ib) = (
+            (fid1 - EF_OTP_SLOT1) as usize,
+            (fid2 - EF_OTP_SLOT1) as usize,
+        );
+        let taken = [ia, ib].map(|i| self.advanced.get_mut(i).is_some_and(core::mem::take));
         match nb {
             Some(_) => {
                 if !self.put_slot(fs, fid1, &b) {
@@ -684,12 +692,12 @@ impl<'a> OtpApplet<'a> {
         // The replay position is a PAIR — the record's persisted use counter and
         // the slot's RAM session counter — so the volatile half moves with the
         // record, or the move re-pairs it with one used fewer times (a replay).
-        let (a, b) = (
-            (fid1 - EF_OTP_SLOT1) as usize,
-            (fid2 - EF_OTP_SLOT1) as usize,
-        );
-        self.session_counter.swap(a, b);
-        self.advanced.swap(a, b);
+        self.session_counter.swap(ia, ib);
+        for (i, took) in [(ia, taken[1]), (ib, taken[0])] {
+            if let Some(advanced) = self.advanced.get_mut(i) {
+                *advanced = took;
+            }
+        }
         self.config_seq = self.config_seq.wrapping_add(1);
         self.status(fs, res)
     }

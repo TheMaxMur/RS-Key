@@ -1168,7 +1168,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-otp"]
 expect = "killed"
-note = "a press types its ticket while the persisted half of the position never moves, and the RAM session rolls anyway — so the press after the wrap reads the old counter back and pairs it with session 0, this power cycle's FIRST position, and a boot's first press types the last boot's. Seven host tests fall, since the patch drops the write a boot's first press owes as well as the wrap's, and their directions were read rather than counted: `a_press_types_nothing_when_it_cannot_persist_the_counter` (crates/rsk-otp/src/tests.rs:2315) reports `the press after a refused counter write re-typed Some(([112, 117, 98, 108, 105, 99], 1, 0)), already emitted this power cycle` at crates/rsk-otp/src/tests.rs:2352, `a_boot_whose_advance_is_refused_types_nothing_until_it_lands` a position at or below one already typed (crates/rsk-otp/src/tests.rs:2406), `swap_carries_the_boot_advance_with_its_record` a re-typed `([98, 98, 98, 98, 98, 98], 1, 0)`, `a_legacy_hotp_slot_types_a_new_code_on_every_press` `the second press re-typed the first code` (crates/rsk-otp/src/tests.rs:2482), and three read back a counter or a HOTP factor that never moved. A position or a code REPEATED, not a press mis-refused, which is the half the model switch is about."
+note = "a press types its ticket while the persisted half of the position never moves, and the RAM session rolls anyway — so the press after the wrap reads the old counter back and pairs it with session 0, this power cycle's FIRST position, and a boot's first press types the last boot's. Seven host tests fall, since the patch drops the write a boot's first press owes as well as the wrap's, and their directions were read rather than counted: `a_press_types_nothing_when_it_cannot_persist_the_counter` (crates/rsk-otp/src/tests.rs:2315) reports `the press after a refused counter write re-typed Some(([112, 117, 98, 108, 105, 99], 1, 0)), already emitted this power cycle` at crates/rsk-otp/src/tests.rs:2352, `a_boot_whose_advance_is_refused_types_nothing_until_it_lands` a position at or below one already typed (crates/rsk-otp/src/tests.rs:2406), `swap_carries_the_boot_advance_with_its_record` a re-typed `([98, 98, 98, 98, 98, 98], 1, 0)`, `a_legacy_hotp_slot_types_a_new_code_on_every_press` `the second press re-typed the first code` (crates/rsk-otp/src/tests.rs:2526), and three read back a counter or a HOTP factor that never moved. A position or a code REPEATED, not a press mis-refused, which is the half the model switch is about."
 
 [comutant.BugOtpBootKeepsPosition]
 status = "patch"
@@ -1187,7 +1187,7 @@ note = "a boot leaves the persisted half where the last one left it while the RA
 status = "patch"
 file = "crates/rsk-otp/src/lib.rs"
 find = """
-        self.session_counter.swap(a, b);
+        self.session_counter.swap(ia, ib);
 """
 replace = """
 """
