@@ -295,10 +295,12 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   PIV key, or an OATH or OTP record under the pre-burn key or in the clear, and a
   command that finds the fused key unreadable opens and seals nothing rather
   than fall back to that key. A device locked by a build before 0x0A67 has the lock without the
-  latch until `lock-page58` runs again. PIN-derived records keep their pre-burn arm, since
-  their format does not say which key made them: a PIN verifier, and the OpenPGP
-  DEK copies wrapped under the default PINs, can still be pre-burn on a locked
-  device, so a flash writer can still plant one ([limitations](limitations.md)).
+  latch until `lock-page58` runs again. PIN verifiers keep their pre-burn arm, since
+  their format does not say which key made them: the FIDO PIN and the display's
+  device PIN, the PIV PIN and PUK, OpenPGP's PW1, PW3 and resetting code with their
+  DEK copies, and the OATH OTP PIN. So a flash writer can still plant one for a PIN
+  they know and use what that PIN unlocks; OpenPGP's keys stay behind a DEK the
+  planted PIN does not open ([limitations](limitations.md)).
   A boot that cannot read the fused key at all, a page closed even to secure
   code, runs none of those passes and says so (READ `1E/07` = `FFFE`): taken for
   a blank page, it would re-seal, provision and migrate under the chip-serial

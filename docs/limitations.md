@@ -144,34 +144,53 @@ covers the security boundary. This page covers feature and hardware gaps.
   notice. *Status: accepted. The desk-conditions measurement that IS reachable is
   `PLAT-TRNG-002`, and this corner gap is `PLAT-TRNG-003`, both in
   [platform assumptions](platform-assumptions.md).*
-- **A PIN verifier is not authenticated against a flash writer.** The at-rest
-  seals keep a flash *dump* from yielding key material, which is what the OTP
-  burn buys. Before the page-58 latch they do not stop someone who can *write*
-  flash over BOOTSEL from planting a record either: the pre-OTP key base derives
-  from the public chip serial, and those arms stay readable after the burn so an
+- **The at-rest seals authenticate a record only past the page-58 latch.** They
+  keep a flash *dump* from yielding key material, which is what the OTP burn
+  buys. Before the page-58 latch they do not stop someone who can *write* flash
+  over BOOTSEL from planting a record either: the pre-OTP key base derives from
+  the public chip serial, and those arms stay readable after the burn so an
   already-provisioned device survives the upgrade. The latch closes them for
   every device-sealed record: `rsk otp lock-page58` burns it only over a device
   whose boot read every such record and left none on the pre-burn key (READ
   `1E/07`), and from the next boot on none opens under that key or in the clear.
-  A PIN verifier, and an OpenPGP DEK copy wrapped under a PIN, keep that arm:
-  their format does not say which key made them, so one set before the burn may
-  still be there. A flash writer can plant one, which sets a PIN of their
-  choosing, and a FIDO PIN reaches past the PIN itself: with a touch and the
-  backup channel it exports the seed (unless `BACKUP_FINALIZE` sealed export off)
-  and loads a seed or an attestation key of the planter's (`BACKUP_LOAD`,
-  `ATT_IMPORT`), which then lands under the fused root. A legacy RP record an
-  older build stored in the clear still opens too, so a flash writer can also
-  rename the domain the credential manager lists for a credential the device
-  holds. *Status: the device-sealed half shipped in 0x0A67, for a device locked
-  by it; one an older build locked takes the latch at a second `lock-page58`.
-  Closing the PIN-derived half needs a format that says which key made a
-  verifier, a persistent-format decision and the maintainer's. The latch is read
-  once per boot, and a lock row that boot cannot read counts as no latch: closing
-  on a fault could strand a record a device never latched still holds. A latched
+  PIN verifiers are the exception, in the next item. A legacy RP record an older
+  build stored in the clear still opens too, so a flash writer can also rename
+  the domain the credential manager lists for a credential the device holds.
+  *Status: shipped in 0x0A67, for a device locked by it; one an older build
+  locked takes the latch at a second `lock-page58`. The latch is read once per
+  boot, and a lock row that boot cannot read counts as no latch: closing on a
+  fault could strand a record a device never latched still holds. A latched
   device whose fused key does not read at a command opens and seals nothing
   rather than fall back to the chip-serial arm: most commands refuse (`6400`,
   CTAP `0x7F`), and the OTP applet answers as if its slots were empty. The next
   command reads the key again.*
+- **A PIN verifier is not authenticated against a flash writer, even past the
+  latch.** A verifier written under the pre-burn key still verifies after
+  `lock-page58`. That holds for the FIDO PIN and the display build's device PIN,
+  the PIV PIN and PUK, OpenPGP's PW1, PW3 and resetting code with the DEK copy
+  each one wraps, and the OATH OTP PIN, whose legacy format is keyed from the chip
+  serial alone. A verifier is an opaque hash, so the device cannot tell one
+  written before the burn from one written after, and it keeps the older one
+  working so a provisioned key survives the burn. The OTP slots' access codes are
+  not on the list: they sit inside the sealed slot records the latch closes. So
+  someone who steals the board and can write its store over BOOTSEL can plant a
+  verifier for a PIN they know, then use what that PIN unlocks. That covers the
+  FIDO credentials and the PIV keys, the stored passwords of an OATH password
+  safe on an applet with no access code, and the display build's device-PIN
+  gates. A FIDO PIN reaches further: with a touch, the backup channel exports the
+  seed (unless `BACKUP_FINALIZE` sealed export off) and loads a seed or an
+  attestation key of the planter's (`BACKUP_LOAD`, `ATT_IMPORT`), which then
+  lands under the fused root. OpenPGP's private keys stay out of reach: they are
+  sealed under a DEK, and a planted verifier does not open the DEK copy the
+  owner's PIN wraps. All of it takes writing the store over BOOTSEL. A secure-boot
+  board's partition table refuses that, unless an older signed image without a
+  table still boots ([production.md](production.md)). On a board without secure
+  boot the attacker can flash firmware of their own instead, which reads the
+  fused key outright ([threat model](threat-model.md)). Presenting every PIN once
+  after the burn moves each verifier to the fused root
+  ([production.md](production.md)). That closes the at-rest gap in the next item,
+  not this one. *Status: kept, by the maintainer's decision. Closing it needs a
+  verifier format that records which key made it, a persistent-format change.*
 - **A PIN-derived record stays on the weaker root until its own reference is
   presented after the burn.** Every record sealed under the key base alone is
   moved to the fused root by a boot pass, but re-keying a PIN-derived one needs
@@ -183,10 +202,12 @@ covers the security boundary. This page covers feature and hardware gaps.
   PUK has the same shape, with no DEK behind it. The card cannot retire what it
   cannot recognise: a verifier is an opaque hash, so a record written before the
   burn and one written after are indistinguishable. *Status: registered as
-  `PLAT-THREAT-002`. After the burn, verify PW3 once and set the resetting code
-  again — presenting a reference is what moves it. Closing it for good needs the
-  DEK copies under an outer device-rooted seal a boot pass can move, which is a
-  persistent-format decision and the maintainer's.*
+  `PLAT-THREAT-002`. After the burn, present every PIN once, as the burn
+  procedure in [production.md](production.md) says: presenting a reference is
+  what moves it, and ordinary use presents neither PW3 nor the resetting code.
+  Closing it for good needs the DEK copies under an outer device-rooted seal a
+  boot pass can move, which is a persistent-format decision and the
+  maintainer's.*
 - **A flash read that fails still reads as an absent record in most of the
   tree.** The store's `read` and `size` return the same "nothing there" for a key
   that was never written and for one the medium could not serve, and an absent

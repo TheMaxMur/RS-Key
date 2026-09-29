@@ -89,11 +89,12 @@ locks the page. On the next boot the firmware notices the provisioned key and
 `pcmr` grant, PIV keys) under the new root. Anything keyed by a PIN is the
 exception — re-keying it needs the secret — so each PIN verifier and the DEK copy
 behind it moves at that reference's own next VERIFY. OpenPGP's private keys are
-sealed under that DEK and never move. **After the burn, verify PW3 once and set
-your OpenPGP resetting code again**: those are the two references ordinary use
-does not present, and until they are presented they stay on the pre-burn root
-([limitations](limitations.md)). Your enrolled credentials
-survive. That is the point of the migration layer.
+sealed under that DEK and never move. **After the burn, present every PIN once,
+before `lock-page58`** (the list is below the commands). Ordinary use presents
+most of them, but PW3, the PIV PUK and an OpenPGP resetting code may never come
+up, and until one is presented it stays on the pre-burn root
+([limitations](limitations.md)). Your enrolled credentials survive. That is the
+point of the migration layer.
 
 > **At-rest hardening pass.** The migration re-seals each secret under the new
 > root. But the flash store is append-only, so the old chip-serial-sealed
@@ -115,8 +116,31 @@ rsk reboot bootsel               # picotool needs the chip in BOOTSEL
 rsk otp burn --dry-run           # preview every step
 rsk otp burn                     # typed confirmation; keys are generated and FORGOTTEN
 picotool reboot -a               # back to the app; migration runs at boot
+# present every PIN once (the list below), then unplug and replug the key
 rsk otp lock-page58              # firmware applies the page-58 hard lock (typed confirm)
 ```
+
+Presenting a PIN moves its verifier to the fused root, and OpenPGP's DEK copy
+with it. Each of these presents one and leaves its value as it was:
+
+- **FIDO PIN**: any use of it, such as `rsk fido list-passkeys`. On the display
+  build, the device PIN moves the first time it unlocks the panel.
+- **PIV PIN**: any VERIFY, such as the one before a signature. The **PUK** has no
+  VERIFY of its own: change it to itself (`ykman piv access change-puk`, or the
+  panel's Change PUK).
+- **OpenPGP**: in `gpg --card-edit`, `verify` presents PW1, and `admin` then
+  `passwd` option 3 with the same Admin PIN presents PW3. A resetting code is
+  presented only by an unblock, so if you use one, set it again with option 4.
+- **OATH OTP PIN**, if you set one: present it once through the tool that set it
+  (`nitropy`). Its move is best-effort: a flash that refuses the rewrite leaves it
+  where it was, and the answer does not say so.
+
+The replug runs the at-rest pass again, which scrubs the pre-burn copies these
+moves superseded. The lock would wait for two of these moves in any case: a FIDO
+seed that a PIN set before the burn wraps, and a legacy OATH OTP PIN. What this
+does not close is a verifier planted over BOOTSEL later. The device still takes
+the pre-burn arm, since it cannot tell a planted verifier from a PIN nobody
+presented yet ([limitations](limitations.md)).
 
 Facts to internalize first:
 
