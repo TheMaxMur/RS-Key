@@ -527,6 +527,9 @@ run "clippy (emu largeblob-ext)"  cargo clippy --manifest-path tools/emu/Cargo.t
 run "clippy (preview-sign fw)"    cargo clippy -p firmware --features preview-sign -- -D warnings
 run "clippy (preview-sign host)"  cargo clippy -p rsk-fido --features preview-sign --target "$HOST" --all-targets -- -D warnings
 run_tests "test (preview-sign)"         cargo test -p rsk-fido --features preview-sign --target "$HOST"
+# largeBlob (CTAP 2.3 §12.4) and the previewSign draft share makeCredential's unsigned
+# outputs; the test of that sharing needs both features, which no row above sets.
+run_tests "test (preview-sign+largeblob-ext)" cargo test -p rsk-fido --features preview-sign,largeblob-ext --target "$HOST"
 # The `bench` latency-harness vendor command (never shipped) is only compiled with
 # its feature on, so gate that build here — otherwise a signature change to the EC /
 # KDF hot paths it times would rot the bench module unseen (keep it compiling). The

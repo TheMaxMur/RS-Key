@@ -1135,6 +1135,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **`check.sh` runs the rsk-fido tests with `preview-sign` and `largeblob-ext`
+  together** — host only, no `bcdDevice` bump. The previewSign test of how the two
+  extensions share makeCredential's unsigned outputs compiles only with both on,
+  and no row set both, so it had never run. It passes, and swapping the two
+  entries turns it red.
+
 - **A hand-written wipe of a whole value names every field and variant** —
   refactor; the same bytes are wiped at the same points. `CredKey`'s drop wiped
   its four curve scalars and let every other scheme through a `_ => {}` arm, so a
