@@ -142,7 +142,10 @@ Facts to internalize first:
   before any touch) until a boot has moved every device-sealed record to the
   fused key, and the tool says which are left. A replug is the usual fix; a FIDO
   seed a PIN wrapped before the burn moves at that PIN's first use, and a legacy
-  OATH OTP-PIN at its next VERIFY, each followed by a replug.
+  OATH OTP-PIN at its next VERIFY, each followed by a replug. A key that already
+  carries the latch needs none of that: the tool asks the firmware, says so and
+  exits 0. The one exception is a fused key the firmware cannot read (`FFFE`),
+  which still gets its remedy.
 - A seed backup (`rsk backup`) made before or after is unaffected. Backups
   carry the seed value, which gets re-sealed under whatever root the device
   has.

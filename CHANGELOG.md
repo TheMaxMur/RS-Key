@@ -333,6 +333,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   with no ciphertext, re-enumerate the YubiKey when the MAC is good; RS-Key answers
   them `0x02`, as it answers their neighbours. `bcdDevice` 0x0A73 → 0x0A74.
 
+- **`rsk otp lock-page58` exits 0 on a key whose lock row already holds the
+  latch** (`rsk` 0.3.43). A boot past the latch can still report a record under
+  the pre-burn key on READ `1E/07` (a legacy OATH OTP-PIN, or a record the flash
+  failed to read), and the tool then listed the remedies and exited 2 over a key
+  that needed nothing. No READ reports the lock row, but while `1E/07` is nonzero
+  the firmware refuses any burn before its touch, so the tool now sends OTP_LOCK
+  to ask: `9000` means the row already holds the latch and nothing was burnt, and
+  it says so and exits 0. A `--dry-run` sends no OTP_LOCK and says it cannot tell.
+
 - **A U2F VERSION that carries data is a wrong length, `6700`, as on a YubiKey
   5.8.0.** U2F Raw Message Formats §6.1 has VERSION take no data, and a YubiKey
   refuses one with a data field `6700` over CTAPHID and CCID alike; RS-Key

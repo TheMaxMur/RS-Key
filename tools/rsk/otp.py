@@ -13,7 +13,8 @@ lock-page58: apply the permanent BL/NS access lock from secure firmware (rescue
              off the pre-burn key (READ 1E/07); this reads that first. What it
              burns is also the migration latch: from the next boot on no
              device-sealed record opens under the pre-burn key, and on a device
-             an older build locked, running it again adds the latch.
+             an older build locked, running it again adds the latch. A device
+             whose lock row already holds the latch exits 0 whatever 1E/07 says.
 rollback-require: fuse BOOT_FLAGS0.ROLLBACK_REQUIRED from secure firmware
              (rescue INS 0x1B, P1=0x48) — after `rsk secure-boot lock` the flag
              row is bootloader-read-only, so only the firmware can. From then
@@ -221,6 +222,16 @@ def _select_rescue(conn):
     return serial
 
 
+def _already_latched(conn):
+    """Whether the lock row already holds the latch. No READ reports the row, so this
+    asks OTP_LOCK, which answers 9000 over a latched row and burns nothing. Sent only
+    while READ 1E/07 is nonzero: the firmware then refuses any burn before its touch."""
+    _, s1, s2 = ccid.transmit(conn, LOCK_APDU)
+    if (s1, s2) not in (ccid.SW_OK, ccid.SW_COND_NOT_SATISFIED):
+        print(f"OTP_LOCK → SW {s1:02X}{s2:02X}: {LOCK_SW.get((s1, s2), 'unknown status')}")
+    return (s1, s2) == ccid.SW_OK
+
+
 def lock_page58(args):
     conn = ccid.connect(exclusive=True)
     serial = _select_rescue(conn)
@@ -230,12 +241,20 @@ def lock_page58(args):
     elif (s1, s2) != ccid.SW_OK or len(d) < 2:
         die(f"pre-burn-key state read failed: SW {s1:02X}{s2:02X}")
     else:
-        todo = pre_otp_actions(int.from_bytes(d[:2], "big"))
+        left = int.from_bytes(d[:2], "big")
+        todo = pre_otp_actions(left)
+        if todo and not args.dry_run and _already_latched(conn):
+            print(f"page 58 is already locked and latched: nothing to burn "
+                  f"(READ 1E/07 = {left:04X}) ✓")
+            return
         if todo:
             print("the firmware will not lock page 58 until a boot moves these off the "
                   "pre-burn key:")
             for line in todo:
                 print(f"  - {line}")
+            if args.dry_run:
+                print("(a dry run sends no OTP_LOCK, so it cannot tell whether page 58 "
+                      "already holds the latch; without --dry-run it asks)")
             raise SystemExit(2)
         print("every device-sealed record is on the fused key ✓")
     if args.dry_run:
