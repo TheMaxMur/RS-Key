@@ -2,14 +2,19 @@
 # Copyright (C) 2026 RS-Key contributors
 
 import pathlib
+import shutil
+import subprocess
 import sys
 
 import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 import assumption_gate
+import gate_lines
 
 pytestmark = pytest.mark.assurance
+
+HERE = pathlib.Path(__file__).resolve().parent
 
 MODULE = """------------------------- MODULE Probe -------------------------
 EXTENDS Naturals
@@ -230,6 +235,75 @@ def test_a_risk_outside_the_vocabulary_is_refused(tree):
     _, registry = tree
     registry.write_text(ENTRY.replace('risk = "usability"', 'risk = "medium"'), encoding="utf-8")
     assert any("is not one of" in p for p in problems())
+
+
+def test_a_field_the_header_does_not_name_is_refused(tree):
+    """The header says HAND-WRITTEN FIELDS ONLY and nothing held it: a derived
+    column typed by hand beside the four was free, and read like evidence."""
+    _, registry = tree
+    registry.write_text(ENTRY + 'arms = "TRUE and FALSE"\n', encoding="utf-8")
+    assert any("`arms` is not a hand-written field" in p for p in problems()), problems()
+
+
+def test_a_misspelled_field_is_named_as_well_as_missed(tree):
+    """`missing` said which field was absent and not what stood in its place."""
+    _, registry = tree
+    registry.write_text(ENTRY.replace("discharged_by", "dischargd_by"), encoding="utf-8")
+    found = problems()
+    assert any("missing ['discharged_by']" in p for p in found), found
+    assert any("`dischargd_by` is not a hand-written field" in p for p in found), found
+
+
+def test_a_top_level_key_is_refused(tree):
+    """A `[derived]` table beside the entries is the same column, one door over."""
+    _, registry = tree
+    registry.write_text("[derived]\narms = 2\n\n" + ENTRY, encoding="utf-8")
+    assert any("top-level `derived`" in p for p in problems()), problems()
+
+
+def test_an_entry_with_no_constant_is_refused_not_dropped(tree):
+    """A misspelled `constant` was a KeyError out of the dict comprehension, and
+    keying entries by `.get` alone would drop the entry without a word."""
+    _, registry = tree
+    registry.write_text(ENTRY + "\n" + ENTRY.replace("constant", "constnat"), encoding="utf-8")
+    found = problems()
+    assert any("names no `constant`" in p for p in found), found
+    assert any("`constnat` is not a hand-written field" in p for p in found), found
+
+
+# --- the row that runs it -----------------------------------------------------
+
+
+def test_check_assurance_sh_runs_this_gate():
+    """Read through `gate_lines.runs`, so a `#` in front of the row is not a run."""
+    text = (HERE / "check-assurance.sh").read_text(encoding="utf-8")
+    assert gate_lines.runs(text, "python scripts/assumption_gate.py")
+
+
+def row(root):
+    """The row's own command, `python scripts/assumption_gate.py`, over `root`."""
+    return subprocess.run([sys.executable, "scripts/assumption_gate.py"],
+                          cwd=root, capture_output=True, text=True)
+
+
+def test_the_row_goes_red_on_a_planted_field_and_green_without_it(tmp_path):
+    """Through the process, not `audit()`: the row reads an exit code, and a
+    finding `main` did not turn into one leaves the row green."""
+    root = tmp_path / "tree"
+    for sub in ("scripts", "formal", "assurance"):
+        (root / sub).mkdir(parents=True)
+    shutil.copy(HERE / "assumption_gate.py", root / "scripts")
+    (root / "formal" / "Probe.tla").write_text(MODULE, encoding="utf-8")
+    (root / "formal" / "Probe.cfg").write_text(CFG.format(clears="TRUE"), encoding="utf-8")
+    (root / "formal" / "ProbeCarry.cfg").write_text(CFG.format(clears="FALSE"), encoding="utf-8")
+    registry = root / "assurance" / "assumptions.toml"
+    registry.write_text(ENTRY, encoding="utf-8")
+    clean = row(root)
+    assert clean.returncode == 0, clean.stderr
+    registry.write_text(ENTRY + 'arms = "TRUE and FALSE"\n', encoding="utf-8")
+    red = row(root)
+    assert red.returncode == 1, red.stdout
+    assert "`arms` is not a hand-written field" in red.stderr
 
 
 def test_a_defect_switch_is_not_mistaken_for_an_assumption(tree):

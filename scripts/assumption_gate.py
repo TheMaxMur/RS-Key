@@ -14,7 +14,9 @@ Three rules, and the third is why this file exists:
 * every assumption constant has exactly one registry entry, and every entry
   names a constant some configuration assigns (no orphans either way);
 * the entry carries what only a person can write — the statement, what would
-  discharge it, and which way it fails if it is wrong;
+  discharge it, and which way it fails if it is wrong — and nothing else. The
+  header has said "HAND-WRITTEN FIELDS ONLY" since it was written and nothing
+  held it, so a derived column typed by hand, or a misspelled field, was free;
 * the constant is ASSIGNED BOTH WAYS by some configuration, and READ BY A
   DEFINITION SOME CONFIGURATION REACHES. `PowerOnClearsScratch2` satisfied
   neither: it was `TRUE` in all seven Boot configurations and appeared in its
@@ -44,6 +46,9 @@ REGISTRY = ROOT / "assurance" / "assumptions.toml"
 # A defect switch is pinned per configuration by design; an assumption is not.
 SWITCH = re.compile(r"^(Bug|Fix|Mutate|Check)")
 HAND_FIELDS = {"constant", "statement", "discharged_by", "risk"}
+#: The registry's only top-level key: a `[derived]` table beside the entries is a
+#: stored column arriving through the other door, as `evidence_gate` has it.
+DOCUMENT_KEYS = {"assumption"}
 RISKS = {"security", "usability", "coverage"}
 
 
@@ -242,9 +247,26 @@ def audit() -> list[str]:
         if set(cfgs.values()) <= {"TRUE", "FALSE"} and not SWITCH.match(name)
     }
     registry = tomllib.loads(REGISTRY.read_text(encoding="utf-8"))
-    entries = {e["constant"]: e for e in registry.get("assumption", [])}
 
     problems = []
+    for key in sorted(set(registry) - DOCUMENT_KEYS):
+        problems.append(
+            f"{REGISTRY.name}: top-level `{key}` is not an [[assumption]] — the "
+            "registry holds hand-written entries and nothing else")
+    entries = {}
+    for entry in registry.get("assumption", []):
+        name = entry.get("constant")
+        for key in sorted(set(entry) - HAND_FIELDS):
+            problems.append(
+                f"{name or '?'}: `{key}` is not a hand-written field — the registry's "
+                f"are {', '.join(sorted(HAND_FIELDS))}; where a constant is pinned "
+                "and read is derived and printed, never stored")
+        # Keyed by `.get` alone, an entry with a misspelled `constant` would vanish.
+        if name is None:
+            problems.append("an [[assumption]] entry names no `constant`")
+            continue
+        entries[name] = entry
+
     for name in sorted(set(booleans) - set(entries)):
         problems.append(f"{name}: assigned by {sorted(booleans[name])[0]} but not in the registry")
     for name in sorted(set(entries) - set(booleans)):

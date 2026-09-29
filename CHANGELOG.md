@@ -1375,6 +1375,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `toggleAlwaysUv` would leave, unless the test set it first; the tests of the
   flavour's own default leave it out. All 881 pass on both builds.
 
+- **The standing-assumption gate refuses a field its registry does not name** —
+  host only, no `bcdDevice` bump. `assurance/assumptions.toml` allows four
+  hand-written fields per entry, and nothing refused a fifth: a derived column
+  typed by hand, or a misspelled field, passed the `standing assumptions` row in
+  `check-assurance.sh`. The row now fails on any other key in an entry or at the
+  top level, and on an entry with no `constant`, which used to stop the gate with
+  a traceback.
+
 - **`check.sh` runs the rsk-fido tests with `preview-sign` and `largeblob-ext`
   together** — host only, no `bcdDevice` bump. The previewSign test of how the two
   extensions share makeCredential's unsigned outputs compiles only with both on,
