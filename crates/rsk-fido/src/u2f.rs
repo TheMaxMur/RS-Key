@@ -364,6 +364,36 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     (Sw::OK, 5 + sl)
 }
 
+/// A U2F request as CTAPHID_MSG carries it. U2F HID v1.2 §2: "all raw U2F messages
+/// are encoded using extended length APDU encoding", and a YubiKey 5.8.0 reads one
+/// so — the class first (`6E00`), then a bare header or `00 Lc Lc` and that many data
+/// bytes (`6700` otherwise), whatever follows them ignored, an `Le` included.
+pub fn hid_apdu(raw: &[u8]) -> Result<Apdu<'_>, Sw> {
+    let Some((&[cla, ins, p1, p2], lengths)) = raw.split_first_chunk::<4>() else {
+        return Err(Sw::WRONG_LENGTH);
+    };
+    if cla != 0x00 {
+        return Err(Sw::CLA_NOT_SUPPORTED);
+    }
+    let data = match lengths {
+        [] => &[][..],
+        [0x00, hi, lo, rest @ ..] => rest
+            .get(..usize::from(u16::from_be_bytes([*hi, *lo])))
+            .ok_or(Sw::WRONG_LENGTH)?,
+        _ => return Err(Sw::WRONG_LENGTH),
+    };
+    Ok(Apdu {
+        cla,
+        ins,
+        p1,
+        p2,
+        nc: data.len(),
+        ne: 0,
+        data,
+        extended: true,
+    })
+}
+
 #[cfg(test)]
 #[allow(
     clippy::indexing_slicing,

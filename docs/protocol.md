@@ -637,6 +637,13 @@ three control bytes; RS-Key accepts exactly those and answers `6A86`
 | `07` | check-only | valid handle → `6985`, unknown handle → `6A80`; never touches |
 | `08` | don't-enforce-user-presence-and-sign | signs with no touch, TUP flag clear; **rejected with `6A86` under `--features strict-up`**, which promises a touch on every assertion |
 
+**U2F over CTAPHID_MSG takes the extended encoding alone.** U2F HID v1.2 §2 frames
+every raw message in extended-length encoding, and a U2F request over CTAPHID is
+read as a YubiKey 5.8.0 reads it: the class first (`6E00` past `00`), then either
+the bare four-byte header or `00 Lc Lc` and at least that many data bytes, with
+anything after them, an `Le` included, ignored. A short `Lc` or `Le` is `6700`
+whatever the instruction. Over CCID (§5.2) both encodings stay open, as there.
+
 **OpenPGP GET DATA reads a nested DO only through its template.** OpenPGP 3.4
 §4.4.1 lists `5B`, `5F2D` and `5F35` only inside `65`, `93` only inside `7A`, and
 `73` — with the `C0`–`C3`, `C5`, `C6` and `CD` it carries — only inside `6E`; the

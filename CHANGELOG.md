@@ -162,6 +162,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **U2F over CTAPHID takes U2F HID's extended-length framing alone, as a YubiKey
+  5.8.0 does.** U2F HID v1.2 §2 encodes every raw message with extended lengths,
+  but a CTAPHID_MSG request was parsed as any ISO APDU, so a short `Le` or `Lc`
+  was served: `00 03 00 00 00` answered `U2F_V2`, where a YubiKey answers `6700`.
+  Over CTAPHID a U2F request is now the bare header or `00 Lc Lc` with that many
+  data bytes, anything after them ignored; any other form is `6700`, judged after
+  the class and before the instruction, each cell as measured on the YubiKey.
+  Over CCID both encodings stay accepted, as there. `bcdDevice` 0x0A71 → 0x0A72.
+
 - **With no applet selected over CCID a command is an unknown instruction, `6D00`,
   as on a YubiKey 5.8.0.** After a card reset, or before any SELECT, every command
   but a SELECT answered `6A82` (file not found), and one under a secure-messaging

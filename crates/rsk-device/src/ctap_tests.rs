@@ -383,3 +383,76 @@ fn the_security_trace_reports_the_pad_and_not_a_constant() {
         "the recorded field is the backend's answer, not a constant"
     );
 }
+
+/// CTAPHID_MSG carries U2F in U2F HID's extended-length framing alone: a YubiKey
+/// 5.8.0 answers each of these, measured, as written here, and a malformed length
+/// is refused before the instruction is looked at.
+#[test]
+fn u2f_over_ctaphid_takes_the_extended_encoding_alone() {
+    use rsk_sdk::Sw;
+    let env = Env::new();
+    // The seed the boot lays down, which an AUTHENTICATE's key-handle check reads.
+    let seeded =
+        rsk_fido::seed::ensure_seed(&dev(), &mut env.fs.borrow_mut(), &mut *env.rng.borrow_mut());
+    seeded.expect("a blank store takes a seed");
+    let mut ctap = env.ctap();
+    let mut auth = vec![0x00, 0x02, 0x07, 0x00, 0x00, 0x00, 0x81];
+    auth.extend_from_slice(&[0u8; 64]);
+    auth.push(64);
+    auth.extend((0..64).map(|i| i as u8));
+    let cells: [(&str, Vec<u8>, Sw); 11] = [
+        ("VERSION, bare", vec![0x00, 0x03, 0x00, 0x00], Sw::OK),
+        (
+            "VERSION, short Le",
+            vec![0x00, 0x03, 0x00, 0x00, 0x00],
+            Sw::WRONG_LENGTH,
+        ),
+        (
+            "VERSION, 00 Lc 0000",
+            vec![0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00],
+            Sw::OK,
+        ),
+        (
+            "VERSION, 00 Lc 0006",
+            vec![0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x06],
+            Sw::WRONG_LENGTH,
+        ),
+        ("AUTHENTICATE, extended", auth.clone(), Sw::WRONG_DATA),
+        (
+            "AUTHENTICATE, extended + Le",
+            [&auth[..], &[0x00, 0x00]].concat(),
+            Sw::WRONG_DATA,
+        ),
+        (
+            "AUTHENTICATE, short Lc",
+            [&[0x00, 0x02, 0x07, 0x00, 0x81][..], &auth[7..]].concat(),
+            Sw::WRONG_LENGTH,
+        ),
+        (
+            "REGISTER, short Lc",
+            [&[0x00, 0x01, 0x00, 0x00, 0x40][..], &[0u8; 64]].concat(),
+            Sw::WRONG_LENGTH,
+        ),
+        (
+            "unknown, short Le",
+            vec![0x00, 0x05, 0x00, 0x00, 0x00],
+            Sw::WRONG_LENGTH,
+        ),
+        (
+            "unknown, bare",
+            vec![0x00, 0x05, 0x00, 0x00],
+            Sw::INS_NOT_SUPPORTED,
+        ),
+        (
+            "class 80, short Le",
+            vec![0x80, 0x03, 0x00, 0x00, 0x00],
+            Sw::CLA_NOT_SUPPORTED,
+        ),
+    ];
+    for (name, command, want) in cells {
+        let res = ctap.handle_msg(&command, 0).to_vec();
+        assert_eq!(sw(&res), want, "{name}");
+    }
+    let res = ctap.handle_msg(&u2f_version(), 0).to_vec();
+    assert_eq!(&res[..res.len() - 2], rsk_fido::consts::U2F_VERSION);
+}

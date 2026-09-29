@@ -771,7 +771,8 @@ fn select_vendor() -> Vec<u8> {
     apdu.extend_from_slice(&VENDOR_AID);
     apdu
 }
-const U2F_VERSION: [u8; 5] = [0x00, 0x03, 0x00, 0x00, 0x00];
+// Bare: over CTAPHID_MSG a short `Le` is a wrong length, as on a YubiKey 5.8.0.
+const U2F_VERSION: [u8; 4] = [0x00, 0x03, 0x00, 0x00];
 const U2F_V2_OK: &[u8] = b"U2F_V2\x90\x00";
 
 /// A U2F command on a channel that did not make the selection does not inherit

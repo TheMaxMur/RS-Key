@@ -289,35 +289,40 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
 
     pub fn handle_msg(&mut self, apdu: &[u8], now_ms: u64) -> &[u8] {
         // U2F (CTAP1) has no SELECT over CTAPHID: route its INS straight to the
-        // FIDO applet when nothing else is selected. A vendor AID SELECT takes
-        // the dispatcher path below.
-        if let Ok(parsed) = Apdu::parse(apdu) {
-            const INS_SELECT: u8 = 0xA4;
-            if self.disp.current().is_none() && parsed.ins != INS_SELECT {
-                // Borrow only the serial fields so rng/state/resp stay free.
-                let mkek = read_fused(self.mkek_source);
-                let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
-                    self.resp[..2].copy_from_slice(&rsk_sdk::Sw::FUSED_KEY_UNREAD.to_bytes());
+        // FIDO applet when nothing else is selected, in U2F HID's own framing. A
+        // vendor AID SELECT takes the dispatcher path below.
+        const INS_SELECT: u8 = 0xA4;
+        if self.disp.current().is_none() && apdu.get(1).is_some_and(|&ins| ins != INS_SELECT) {
+            let parsed: Apdu<'_> = match rsk_fido::u2f::hid_apdu(apdu) {
+                Ok(parsed) => parsed,
+                Err(sw) => {
+                    self.resp[..2].copy_from_slice(&sw.to_bytes());
                     return &self.resp[..2];
+                }
+            };
+            // Borrow only the serial fields so rng/state/resp stay free.
+            let mkek = read_fused(self.mkek_source);
+            let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+                self.resp[..2].copy_from_slice(&rsk_sdk::Sw::FUSED_KEY_UNREAD.to_bytes());
+                return &self.resp[..2];
+            };
+            let (sw, n) = {
+                let mut fsb = self.fs.borrow_mut();
+                let mut rngb = self.rng.borrow_mut();
+                let mut presence = self.presence.borrow_mut();
+                let mut stb = self.fido_state.borrow_mut();
+                let mut ctx = rsk_fido::Ctx {
+                    dev,
+                    fs: &mut *fsb,
+                    rng: &mut *rngb,
+                    state: &mut stb,
+                    now_ms,
+                    presence: &mut *presence,
                 };
-                let (sw, n) = {
-                    let mut fsb = self.fs.borrow_mut();
-                    let mut rngb = self.rng.borrow_mut();
-                    let mut presence = self.presence.borrow_mut();
-                    let mut stb = self.fido_state.borrow_mut();
-                    let mut ctx = rsk_fido::Ctx {
-                        dev,
-                        fs: &mut *fsb,
-                        rng: &mut *rngb,
-                        state: &mut stb,
-                        now_ms,
-                        presence: &mut *presence,
-                    };
-                    rsk_fido::u2f::process_u2f(&mut ctx, &parsed, &mut self.resp[..RESP_CAP - 2])
-                };
-                self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
-                return &self.resp[..n + 2];
-            }
+                rsk_fido::u2f::process_u2f(&mut ctx, &parsed, &mut self.resp[..RESP_CAP - 2])
+            };
+            self.resp[n..n + 2].copy_from_slice(&sw.to_bytes());
+            return &self.resp[..n + 2];
         }
 
         // The body, one CCID frame's at most (the dispatcher's limit), then the status word.

@@ -953,3 +953,42 @@ fn a_u2f_register_touch_leaves_a_live_token_unspent() {
     assert_eq!(state.paut.permissions, armed);
     assert!(state.user_verified());
 }
+
+/// U2F HID frames every request in extended-length encoding, and a YubiKey 5.8.0
+/// holds CTAPHID_MSG to it: these are the cells measured there, with what it answered.
+#[test]
+fn a_hid_request_takes_the_extended_encoding_alone() {
+    let reads = |raw: &[u8]| hid_apdu(raw).map(|a| (a.ins, a.data.to_vec()));
+    // A bare header, and `00 Lc Lc` with that many data bytes; what follows is ignored.
+    assert_eq!(reads(&[0x00, 0x03, 0x00, 0x00]), Ok((0x03, vec![])));
+    assert_eq!(
+        reads(&[0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00]),
+        Ok((0x03, vec![]))
+    );
+    let data = [0x00, 0x02, 0x07, 0x00, 0x00, 0x00, 0x02, 0xAA, 0xBB];
+    for tail in [&[][..], &[0x00, 0x00], &[0x01], &[0x00, 0x00, 0x00]] {
+        let raw = [&data[..], tail].concat();
+        assert_eq!(
+            reads(&raw),
+            Ok((0x02, vec![0xAA, 0xBB])),
+            "tail {tail:02X?}"
+        );
+    }
+    // Every short form is a wrong length, and so is an extended one with its data cut.
+    for raw in [
+        &[0x00, 0x03, 0x00, 0x00, 0x00][..],
+        &[0x00, 0x03, 0x00, 0x00, 0x06],
+        &[0x00, 0x03, 0x00, 0x00, 0x01, 0x00],
+        &[0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x06],
+        &[0x00, 0x03, 0x00, 0x00, 0x00, 0x01],
+        &[0x00, 0x02, 0x07, 0x00, 0x00, 0x00, 0x03, 0xAA, 0xBB],
+        &[0x00, 0x03, 0x00],
+    ] {
+        assert_eq!(reads(raw), Err(Sw::WRONG_LENGTH), "{raw:02X?}");
+    }
+    // The class is judged before the lengths.
+    assert_eq!(
+        reads(&[0x80, 0x03, 0x00, 0x00, 0x00]),
+        Err(Sw::CLA_NOT_SUPPORTED)
+    );
+}
