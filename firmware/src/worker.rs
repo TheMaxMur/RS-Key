@@ -693,11 +693,11 @@ impl<'a> Worker<'a> {
     }
 
     /// Secure reboot. The SW_OK has already been signalled; give it ~200 ms to
-    /// flush over USB, wipe the live RAM key material (the FIDO auth state and the
-    /// DRBG — per-dispatch buffers are already zeroized), then reset. `mode` 2
-    /// drops to the BOOTSEL bootloader so a reflash can't recover those secrets
-    /// from RAM; `mode` 1 is a warm reboot. Flash-at-rest secrets are out of
-    /// scope for this path.
+    /// flush over USB, wipe the live RAM key material (the FIDO auth state, every
+    /// smart-card session, the DRBG — per-dispatch buffers are already zeroized),
+    /// then reset. `mode` 2 drops to the BOOTSEL bootloader so a reflash can't
+    /// recover those secrets from RAM; `mode` 1 is a warm reboot. Flash-at-rest
+    /// secrets are out of scope for this path.
     ///
     /// The stack is not scrubbed here: its dead part was swept as the work that
     /// queued this returned, and `tests/54_sram_residue.py` measured the rest on
@@ -723,7 +723,7 @@ impl<'a> Worker<'a> {
             last_msg_cid: _,
         } = self;
         ctap.scrub_secrets();
-        ccid.scrub();
+        ccid.scrub_secrets();
         rng.borrow_mut().scrub();
         // The keyboard transport's statics are outside the per-dispatch buffers: the
         // frame reassembly buffer, the taken request and a queued ticket can each hold

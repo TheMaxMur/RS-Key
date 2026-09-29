@@ -92,7 +92,7 @@ owners_readers = [
   "crates/rsk-fido/src/config.rs:416 — AUT_DISABLE's authorization gate",
   "crates/rsk-fido/src/config.rs:422 — the borrow that re-seals it",
   "crates/rsk-fido/src/vendor.rs:1000 — BACKUP_STATE's ungated `unlocked` bit",
-  "crates/rsk-device/src/ctap.rs:229 — the trace projection, cfg-gated",
+  "crates/rsk-device/src/ctap.rs:249 — the trace projection, cfg-gated",
   "crates/rsk-fido/src/reset_assurance.rs:49 — the verification projection, cfg-gated",
 ]
 # The file the one killed code twin patches (formal/comutants.toml:370-393), and
@@ -200,7 +200,7 @@ bound_files_in_argument = 6
 stops_files_in_argument = "anything in a seventh file — and the measurement is the point: the slice page estimated three files, named the tag's file, and missed both writers and the ordering site"
 bound_crates = 2
 stops_crates = "a site outside the two crates. A holder of the RAM copy in a third would be outside the argument"
-shipped_relation = "the four writers are one producer (vendor.rs:609) and three destroyers (vendor.rs:608, config.rs:430, and reset.rs:107 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:106, config.rs:416, config.rs:422 and vendor.rs:1000; the two projection sites are crates/rsk-device/src/ctap.rs:229 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit"
+shipped_relation = "the four writers are one producer (vendor.rs:609) and three destroyers (vendor.rs:608, config.rs:430, and reset.rs:107 through FidoState::reset -> Drop); the four readers are crates/rsk-fido/src/lib.rs:106, config.rs:416, config.rs:422 and vendor.rs:1000; the two projection sites are crates/rsk-device/src/ctap.rs:249 and crates/rsk-fido/src/reset_assurance.rs:49 and BOTH are cfg-gated, so neither is in a shipped image. Six files and two crates against the THREE files docs/authorization-slice.md:484-487 estimated (seed.rs, state.rs, lib.rs) — the estimate named the tag's file and missed both writers and the ordering site, and seed.rs is the one of the three that contains no `keydev_dec` at all. This bound is a count of sites, not a shrink of a shipped constant, because a review has no other unit"
 cfg = "none — every writer and reader above is unconditional production code; the two projection sites are not, and the bound counts them apart for that reason"
 features = "none"
 
@@ -238,7 +238,7 @@ features = "none — the slice is `cargo test -p rsk-fido` on the default featur
 id = "AS-RAM-1"
 statement = "The model's `ram` is `FidoState::keydev_dec.is_some()`, and nothing else in the tree is a second copy of the seed the model would have to see."
 kind = "model fidelity"
-discharger = "the projection is written down once, at crates/rsk-device/src/ctap.rs:229, and the recorded replay compares it: formal/TraceSecurity.tla:49 maps `keydevRam |-> raw.keydevRamRaw`, :67 maps it to `ram`, and R4aRawRefinesB (:90-91) equates the two at every boundary. MEASURED, and this is the finding: `keydev_ram_raw` is `false` in all 40 pre and all 40 post snapshots of formal/traces/security-phase4.jsonl, so the comparison never runs its TRUE arm and the field is carried rather than checked. What would discharge it is a recording that performs a vendor UNLOCK"
+discharger = "the projection is written down once, at crates/rsk-device/src/ctap.rs:249, and the recorded replay compares it: formal/TraceSecurity.tla:49 maps `keydevRam |-> raw.keydevRamRaw`, :67 maps it to `ram`, and R4aRawRefinesB (:90-91) equates the two at every boundary. MEASURED, and this is the finding: `keydev_ram_raw` is `false` in all 40 pre and all 40 post snapshots of formal/traces/security-phase4.jsonl, so the comparison never runs its TRUE arm and the field is carried rather than checked. What would discharge it is a recording that performs a vendor UNLOCK"
 expressible = "no — a mapping between a model variable and a Rust field, not a boolean constant a configuration could assign"
 registered = "yes — assurance/platform.toml PLAT-MODEL-003, pending, refining PLAT-TOOL-002. Written BY this bundle: the entry did not exist, and its discharge route is the recording named above"
 

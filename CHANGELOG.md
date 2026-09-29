@@ -162,6 +162,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A secure reboot wipes the smart-card sessions too.** Before it resets, the
+  reboot scrubbed the FIDO state, the DRBG and the OTP and core1 buffers, but of
+  the CCID side only the response buffer: the OpenPGP session keys a VERIFY
+  derives, which open the DEK, PIV's authentication status and witness, OATH's
+  validation, and a command chain or response tail either dispatcher still held
+  stayed in RAM through it. Each applet now drops its session as a deselect does,
+  every applet rather than only the selected one, and both dispatchers drop their
+  chain, their tail and their selection. The drop to BOOTSEL clears SRAM on an
+  RP2350 A4 anyway (`tests/54_sram_residue.py`); this is the scrub a part that
+  kept it would rely on. `bcdDevice` 0x0A6B → 0x0A6C.
+
 - **An enterprise registration over a cut org chain registers on the device's
   own attestation, as the 0.4.11 notes said it would.** A chain a build before
   0.4.11 stored past the cap 0.4.11 set reads back cut; those notes promised the
@@ -1138,9 +1149,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   and an enterprise registration's org key. A field or variant added to any of
   them does not compile until its wipe is decided. The OpenPGP session's reset
   assigns a fresh session, so its drop is the one wipe. Wipes of named buffers
-  keep their shape, and so do the reboot's two handler wipes,
-  `AppletHandler::scrub_secrets` and `CcidApplets::scrub`, which wipe the buffers
-  they name. `bcdDevice` 0x0A6A → 0x0A6B.
+  keep their shape. `bcdDevice` 0x0A6A → 0x0A6B.
 
 - **cargo-mutants in three places: the fix loop, every pull request, and a
   weekly sweep that gates against a baseline** — host only, no `bcdDevice`

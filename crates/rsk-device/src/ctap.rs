@@ -159,16 +159,36 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         self.resp.zeroize();
     }
 
-    /// Secure-reboot wipe: clear the response buffer and the cross-message FIDO
-    /// auth state — `reset` zeroizes the PIN/UV token, session key and ephemeral
-    /// ECDH scalar via their `Drop` impls.
+    /// Secure-reboot wipe: the response buffer, the vendor dispatcher's chain and
+    /// held tail, and the cross-message FIDO auth state — `reset` zeroizes the
+    /// PIN/UV token, session key and ephemeral ECDH scalar via their `Drop` impls.
     pub fn scrub_secrets(&mut self) {
+        // Every field is named, so a new one does not compile until its wipe is decided.
+        let Self {
+            fs,
+            hooks: _,
+            disp,
+            vendor,
+            rng: _,
+            fido_state,
+            presence: _,
+            // The chip serial and its hash, both public.
+            serial_id: _,
+            serial_hash: _,
+            // How to read the fused key, not the key.
+            mkek_source: _,
+            resp,
+        } = self;
+        vendor.deselect(&mut *fs.borrow_mut());
+        disp.clear_selection();
+        disp.clear_pending();
+        disp.clear_chaining();
         #[expect(
             clippy::disallowed_methods,
             reason = "the response buffer outlives every dispatch; the secure reboot wipes it with the FIDO auth state"
         )]
-        self.resp.zeroize();
-        self.fido_state.borrow_mut().reset();
+        resp.zeroize();
+        fido_state.borrow_mut().reset();
     }
 }
 

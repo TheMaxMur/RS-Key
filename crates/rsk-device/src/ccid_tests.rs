@@ -430,6 +430,99 @@ fn scrub_wipes_the_response_buffer() {
     assert!(ccid.resp.iter().all(|&b| b == 0));
 }
 
+/// Whether `applet` itself reports PIN reference `p2` verified: an empty VERIFY
+/// handed to the applet, not through the dispatcher, whose next SELECT would
+/// re-lock the status and hide a wipe that missed it.
+fn verified_in<S: Storage>(applet: &mut dyn Applet<Fs<S>>, fs: &RefCell<Fs<S>>, p2: u8) -> bool {
+    let probe = apdu(0x00, 0x20, 0x00, p2, &[]);
+    let parsed = Apdu::parse(&probe).expect("a well-formed probe");
+    let mut buf = [0u8; 16];
+    let mut res = ResBuf::new(&mut buf);
+    applet.process(&parsed, &mut *fs.borrow_mut(), &mut res) == Sw::OK
+}
+
+#[test]
+fn a_secure_reboot_ends_each_applets_session_itself() {
+    // No SELECT follows a reboot, so only its own wipe ends a session there. The
+    // per-dispatch scrub leaves a verified PIN standing in the applet; the reboot's
+    // must not — OpenPGP's session key opens the DEK, PIV's status spends a key.
+    let env = Env::new();
+    rsk_openpgp::scan_files(
+        &crate::tests::dev(),
+        &mut env.fs.borrow_mut(),
+        &mut *env.rng.borrow_mut(),
+    )
+    .unwrap();
+    let mut ccid = env.ccid();
+
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0)),
+        Sw::OK
+    );
+    let pw1 = apdu(0x00, 0x20, 0x00, 0x82, rsk_openpgp::consts::PW1_DEFAULT);
+    assert_eq!(sw(ccid.handle_apdu(&pw1, 0)), Sw::OK);
+    ccid.scrub();
+    assert!(
+        verified_in(&mut ccid.openpgp, &env.fs, 0x82),
+        "the probe sees a live session"
+    );
+    ccid.scrub_secrets();
+    assert!(
+        !verified_in(&mut ccid.openpgp, &env.fs, 0x82),
+        "OpenPGP's PW1 session outlived the reboot's wipe"
+    );
+
+    assert_eq!(sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0)), Sw::OK);
+    let verify = apdu(0x00, 0x20, 0x00, 0x80, &rsk_piv::files::DEFAULT_PIN);
+    assert_eq!(sw(ccid.handle_apdu(&verify, 0)), Sw::OK);
+    assert!(
+        verified_in(&mut ccid.piv, &env.fs, 0x80),
+        "the probe sees a live session"
+    );
+    ccid.scrub_secrets();
+    assert!(
+        !verified_in(&mut ccid.piv, &env.fs, 0x80),
+        "the PIV PIN's status outlived the reboot's wipe"
+    );
+}
+
+#[test]
+fn a_secure_reboot_drops_the_dispatchers_chain_and_tail() {
+    // A chain's segments can be a private-key IMPORT and a held tail PSO output. A
+    // reboot ordered over CTAPHID or from the panel finds them with no CCID command
+    // after them to clear them, so its wipe has to.
+    let env = Env::new();
+    let mut ccid = env.ccid();
+
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0)),
+        Sw::OK
+    );
+    // GET DATA 6E asked with Le = 16: the answer is longer, so the rest is held.
+    let head = ccid
+        .handle_apdu(&[0x00, 0xCA, 0x00, 0x6E, 0x10], 0)
+        .to_vec();
+    assert_eq!(head[head.len() - 2], 0x61, "a tail is owed");
+    assert!(ccid.disp.response_owed());
+    ccid.scrub_secrets();
+    assert!(
+        !ccid.disp.response_owed(),
+        "the held tail outlived the reboot's wipe"
+    );
+
+    assert_eq!(sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0)), Sw::OK);
+    let segment = apdu(0x10, 0xDB, 0x3F, 0xFF, &[0x5C, 0x03, 0x5F, 0xC1, 0x05]);
+    assert_eq!(sw(ccid.handle_apdu(&segment, 0)), Sw::OK);
+    assert!(ccid.disp.chain_open());
+    ccid.scrub_secrets();
+    assert!(
+        !ccid.disp.chain_open(),
+        "the open chain outlived the reboot's wipe"
+    );
+    assert_eq!(ccid.disp.current(), None);
+    assert!(ccid.resp.iter().all(|&b| b == 0));
+}
+
 #[test]
 fn a_response_always_fits_one_ccid_frame() {
     // The applet body plus its two status bytes must fit a single `XfrBlock`;

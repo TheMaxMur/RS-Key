@@ -319,6 +319,46 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         self.resp.zeroize();
     }
 
+    /// Secure-reboot wipe of the smart-card side: every applet drops its session as
+    /// it does on a deselect (OpenPGP's session keys, PIV's witness, OATH's
+    /// validation), the dispatcher its chain and held tail, and the response buffer
+    /// its last answer. No SELECT follows a reboot to re-lock what this misses.
+    pub fn scrub_secrets(&mut self) {
+        use zeroize::Zeroize;
+        // Every field is named, so a new applet or buffer does not compile until its
+        // wipe is decided; each applet is deselected, not only the selected one.
+        let Self {
+            fs,
+            rng: _,
+            hooks: _,
+            disp,
+            vendor,
+            openpgp,
+            management,
+            oath,
+            otp,
+            piv,
+            rescue,
+            fido,
+            enabled_caps: _,
+            resp,
+        } = self;
+        let applets: [&mut dyn Applet<Fs<S>>; 8] =
+            [vendor, openpgp, management, oath, otp, piv, rescue, fido];
+        let mut fsb = fs.borrow_mut();
+        for applet in applets {
+            applet.deselect(&mut *fsb);
+        }
+        disp.clear_selection();
+        disp.clear_pending();
+        disp.clear_chaining();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the response buffer outlives every dispatch; the secure reboot wipes it with every session"
+        )]
+        resp.zeroize();
+    }
+
     /// Whether the applet that owns PIN reference `p2` is the one currently SELECTED
     /// and enabled.
     ///

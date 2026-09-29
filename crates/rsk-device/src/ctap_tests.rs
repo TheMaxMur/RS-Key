@@ -307,6 +307,27 @@ fn past_the_latch_an_unread_key_refuses_before_the_applet() {
     assert_eq!(open.handle_cbor(0xABCD, &GET_INFO, 0)[0], 0);
 }
 
+#[test]
+fn a_secure_reboot_drops_the_vendor_dispatchers_chain() {
+    // The vendor AID's dispatcher over CTAPHID holds a chain as the CCID one does,
+    // and nothing after the reboot's command is there to clear it.
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    let res = ctap.handle_msg(&select(rsk_vendor::VENDOR_AID), 0).to_vec();
+    assert_eq!(sw(&res), rsk_sdk::Sw::OK);
+    let res = ctap
+        .handle_msg(&apdu(0x10, 0x01, 0x00, 0x00, &[1, 2, 3]), 0)
+        .to_vec();
+    assert_eq!(sw(&res), rsk_sdk::Sw::OK);
+    assert!(ctap.disp.chain_open());
+    ctap.scrub_secrets();
+    assert!(
+        !ctap.disp.chain_open(),
+        "the open chain outlived the reboot's wipe"
+    );
+    assert_eq!(ctap.disp.current(), None);
+}
+
 /// The number getInfo puts ON THE WIRE has to be the number the transport
 /// enforces. A YubiKey 5.7.4 demonstrates the invariant: it advertises 1536 and
 /// its largest accepted CTAPHID payload is exactly 1536, with 1537 killed by an
