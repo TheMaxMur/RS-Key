@@ -192,6 +192,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   key" row read "org key installed", but `AUDIT_CHECKPOINT` always signs with
   the DEVK-derived key; the row now says so whatever is installed.
 
+- **`rsk-tui`'s hints name the commands that do the job** (`rsk-tui` 0.3.16).
+  Four named commands the CLI does not have: `rsk fido change-pin` and `rsk fido
+  reset` (the CLI changes the PIN with `rsk fido set-pin`; a FIDO reset is
+  `ykman fido reset` on the `VIDPID=Yubikey5` build, or a browser's "reset
+  security key"), `rsk lock engage | disengage` (`enable | disable`) and `rsk
+  fido attest` (`attestation`). The OTP-slot note sent users to `rsk otp`, the
+  OTP-fuse ritual, for what `ykman otp` does. A test now holds the subcommand
+  path of every `rsk …` hint in the TUI's sources to the CLI's parser.
+
 - **A Yubico-OTP use counter planted at `0xFFFF` no longer wraps to 0.** Only a
   flash writer can store a counter above the 15-bit ceiling, and the power-up
   advance took `0xFFFF` to `0`, a counter going backwards, which is the replay it

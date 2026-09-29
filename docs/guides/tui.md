@@ -219,7 +219,8 @@ These are surfaced as menu entries that, when selected, print the exact command
 to run. They are never performed from the cockpit:
 
 - **FIDO**: set/change PIN (`rsk fido set-pin`), list resident passkeys (`rsk
-  fido list-passkeys --pin …`), factory reset (`ykman fido reset`)
+  fido list-passkeys --pin …`), factory reset (`ykman fido reset` on the
+  `VIDPID=Yubikey5` build, or a browser's "reset security key" on any build)
 - **OpenPGP / PIV / OATH / OTP**: full card data and factory resets (`gpg
   --card-status`, `ykman piv info`, `ykman oath accounts`, `rsk openpgp reset`,
   `ykman piv reset`, ...). The `ykman` commands gate on the "Yubico YubiKey"
