@@ -89,6 +89,12 @@ org attestation : installed
 chain hash      : 9f2c…
 ```
 
+A chain the device cannot read back whole has no hash to show. `status` then
+says the chain is missing, unreadable or over the cap. Enterprise registrations
+fall back to the device certificate
+([below](#what-changes-once-a-chain-is-installed)), or fail while the chain
+cannot be read. Re-import the key and chain, or clear the key, to repair it.
+
 To roll back to the factory self-signed cert:
 
 ```sh
@@ -254,7 +260,7 @@ on explicit EA requests.
 
 - `attestation key must be P-256 (got …)`: the `--key` PEM is the wrong curve.
   RS-Key attests with ECDSA P-256 only. Re-issue the org key on secp256r1.
-- `chain too large (… B, max 2048)`: trim the bundle. You rarely need the root
+- `chain too large (… B, max 2132)`: trim the bundle. You rarely need the root
   CA in `x5c`; leaf + one intermediate is usually enough, and the leaf alone is
   all U2F can carry.
 - `device requires a PIN — pass --pin` (status `0x36`): import/clear are gated;

@@ -174,6 +174,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   read still fails the registration, so the host can retry it. Re-import the
   chain within the cap to restore org attestation. `bcdDevice` 0x0A69 → 0x0A6A.
 
+- **`rsk fido attestation status` reports an org key whose chain the device
+  cannot use instead of crashing** (`rsk` 0.3.41). The device leaves the chain
+  hash out of its answer for a chain that does not read back whole, as one
+  firmware before 0.4.11 stored past today's cap does, and `status` died on a
+  `KeyError`. It now says the chain is missing, unreadable or over the cap, what
+  enterprise registrations get meanwhile, and how to repair it.
+
 - **A Yubico-OTP use counter planted at `0xFFFF` no longer wraps to 0.** Only a
   flash writer can store a counter above the 15-bit ceiling, and the power-up
   advance took `0xFFFF` to `0`, a counter going backwards, which is the replay it

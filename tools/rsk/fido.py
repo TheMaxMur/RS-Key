@@ -266,7 +266,16 @@ def att_status(args):
     st, m = _vendor(dev, cid, {1: ATT_STATE})
     if st != 0:
         die(f"status failed: {st:#x}")
-    if m[1]:
-        print(f"org attestation : installed\nchain hash      : {m[2].hex()}")
-    else:
+    # ATT_STATE hashes only a chain that reads back whole (vendor.rs `att_state`).
+    chain_hash = m.get(2)
+    if not m[1]:
         print("org attestation : not installed (self-signed device cert in use)")
+    elif chain_hash:
+        print(f"org attestation : installed\nchain hash      : {chain_hash.hex()}")
+    else:
+        print("org attestation : installed\n"
+              f"chain           : missing, unreadable or over the {ATT_CHAIN_MAX}-byte cap\n"
+              "EA fallback     : device certificate, no `ep` flag (registrations fail while\n"
+              "                  the chain is unreadable, and on bcdDevice < 0x0A6A)\n"
+              "repair          : re-import key and chain with `rsk fido attestation import`,\n"
+              "                  or drop the key with `rsk fido attestation clear`")

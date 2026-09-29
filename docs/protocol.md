@@ -1135,7 +1135,7 @@ Keys 3/4 are present only when a PIN is set (see gating).
 | `08` | AUDIT_CHECKPOINT | `{1: nonce ≤32}` | DEVK signature over chain head ‖ nonce | PIN-token + touch |
 | `09` | ATT_IMPORT | `{1: blob(60), 2: DER chain}` | — | MSE + touch + PIN-token. With **no PIN set** it additionally takes a distinct "Replace this identity?" confirmation — the PIN-token half is waived in that state, and an import replaces the identity every later U2F REGISTER signs with |
 | `0A` | ATT_CLEAR | — | — | MSE + touch + PIN-token |
-| `0B` | ATT_STATE | — | `{1: present, 2: sha256(chain)?}` | **ungated** |
+| `0B` | ATT_STATE | — | `{1: present, 2: sha256(chain)?}` | **ungated**; `2` is left out under `1: true` when the stored chain is missing, unreadable or longer than the device's buffer, so a host reads it as optional |
 | `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**, but for DEV_CONF's configuration lock (§6.2); touch + PIN-token under `strict-config`; no MSE. A write that changes nothing is a no-op: no flash write, no journal entry, and for PHY no reboot latch |
 | `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | `{1: blob(bstr)[, 2: {phy_tag: uint}]}` | **ungated**; `CTAP2_ERR_OTHER` if the record cannot be read — an empty blob means *absent*, never *unreadable*, because the host read-modify-writes on this answer |
 | `0E` | AUDIT_CONFIG | `{1: op(uint)}` — `0`=disable, `1`=enable, `2`=status | `{1: enabled(bool)}` | set: PIN-token + touch; status (`2`): **ungated** |

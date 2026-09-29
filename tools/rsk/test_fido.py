@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-"""`rsk fido attestation import` — the chain-size pre-flight.
+"""`rsk fido attestation import` — the chain-size pre-flight — and `status`.
 
 Run from tools/:  python -m pytest rsk/test_fido.py
 ATT_CHAIN_MAX is a copy of a firmware constant, and it has drifted once already:
@@ -94,3 +94,30 @@ def test_a_chain_at_the_limit_is_accepted(monkeypatch):
     with pytest.raises(_Stop):
         fido.att_import(types.SimpleNamespace(key="k.pem", chain="c.pem", pin=None))
     assert bound == [True]
+
+
+def _status(monkeypatch, capsys, answer):
+    """`attestation status`'s output against a device whose ATT_STATE is `answer`;
+    a SystemExit fails the caller's test, so returning is the exit status 0."""
+    monkeypatch.setattr("rsk.common.connect_fido", lambda exclusive=False: (None, 0))
+    monkeypatch.setattr("rsk.backup._vendor", lambda dev, cid, fields: (0, answer))
+    fido.att_status(types.SimpleNamespace())
+    return capsys.readouterr().out
+
+
+def test_an_org_key_without_a_chain_hash_is_reported_not_a_crash(monkeypatch, capsys):
+    # The device leaves the hash out for a chain past today's cap, which firmware
+    # before 0.4.11 could store; reading m[2] raised KeyError at the operator.
+    out = _status(monkeypatch, capsys, {1: True})
+    assert out.startswith("org attestation : installed\nchain           : missing")
+    assert f"{fido.ATT_CHAIN_MAX}-byte cap" in out
+    assert "`rsk fido attestation import`" in out
+    assert "chain hash" not in out
+
+
+@pytest.mark.parametrize("answer, printed", [
+    ({1: True, 2: bytes.fromhex("9f2c")}, "org attestation : installed\nchain hash      : 9f2c\n"),
+    ({1: False}, "org attestation : not installed (self-signed device cert in use)\n"),
+])
+def test_the_other_answers_print_as_before(monkeypatch, capsys, answer, printed):
+    assert _status(monkeypatch, capsys, answer) == printed
