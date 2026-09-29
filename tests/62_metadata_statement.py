@@ -20,7 +20,10 @@ Part A (host-only, always runs):
     with no shareable root to publish;
   * `authenticationAlgorithms` (FIDO Registry strings) map exactly onto the
     classic COSE ids in `authenticatorGetInfo.algorithms`;
-  * `authenticatorVersion` == `authenticatorGetInfo.firmwareVersion`.
+  * `authenticatorVersion` == `authenticatorGetInfo.firmwareVersion`;
+  * `userVerificationDetails` names what the embedded getInfo's options claim:
+    presence for `up`, a verification method for `uv`, passcode_external for
+    `clientPin` (the conformance tool's Authr-Generic-1 P-2 and P-3).
 
 Part B (runs only if a FIDO HID device is plugged in):
   * decodes the live `authenticatorGetInfo` and asserts it equals the embedded
@@ -81,6 +84,12 @@ ENCRYPTED_MEMBERS = ((0x19, "encIdentifier"), (0x1E, "encCredStoreState"))
 # `makeCredUvNotRqd` tracks alwaysUv (CTAP 2.1 §6.4 requires it false while alwaysUv
 # is on), so like `alwaysUv` itself it is device state, not a statement property.
 STATEFUL_OPTIONS = {"ep", "clientPin", "makeCredUvNotRqd"}
+# Registry §3.1 methods that verify a user rather than only see one.
+UV_METHODS = {
+    "fingerprint_internal", "voiceprint_internal", "faceprint_internal", "eyeprint_internal",
+    "handprint_internal", "pattern_internal", "pattern_external", "passcode_internal",
+    "passcode_external",
+}
 
 
 def firmware_aaguid_bytes():
@@ -139,6 +148,22 @@ def part_a(stmt):
     for _, name in ENCRYPTED_MEMBERS:
         if gi.get(name, "") != "":
             fails.append(f"authenticatorGetInfo.{name} must be the empty placeholder")
+
+    # Authr-Generic-1 P-2/P-3: `up` defaults to true (CTAP 2.3 §6.4), and a clientPin
+    # the device supports, set or not, is a passcode entered on the platform.
+    opts = gi.get("options", {})
+    methods = {d.get("userVerificationMethod")
+               for combo in stmt.get("userVerificationDetails", []) for d in combo}
+    fails += [f"getInfo option {k} is not a boolean" for k, v in opts.items()
+              if not isinstance(v, bool)]
+    if opts.get("up", True) and "presence_internal" not in methods:
+        fails.append("getInfo claims up, userVerificationDetails lacks presence_internal")
+    if opts.get("uv") and not methods & UV_METHODS:
+        fails.append("getInfo claims uv, userVerificationDetails names no way to verify")
+    if not opts.get("up", True) and not opts.get("uv") and "none" not in methods:
+        fails.append("getInfo claims neither up nor uv, userVerificationDetails lacks none")
+    if "clientPin" in opts and "passcode_external" not in methods:
+        fails.append("getInfo supports clientPin, userVerificationDetails lacks passcode_external")
 
     if fails:
         for f in fails:
