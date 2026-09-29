@@ -3809,3 +3809,384 @@ fn change_pin_with_a_bad_pin_auth_param_changes_nothing() {
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "clientpin_reads_tests.rs"]
 mod reads;
+
+/// getPINRetries under `wire`, read strictly: `{3: pinRetries[, 4: powerCycleState]}`
+/// and nothing after the map (CTAP 2.3 §6.5.5.2).
+fn pin_retries_over(
+    fs: &mut Fs<RamStorage>,
+    rng: &mut SeqRng,
+    state: &mut FidoState,
+    wire: u64,
+) -> (u8, Option<bool>) {
+    let mut out = [0u8; 16];
+    let n = run(
+        fs,
+        rng,
+        state,
+        &build(&[(1, V::U(wire)), (2, V::U(1))]),
+        &mut out,
+    )
+    .unwrap_or_else(|e| panic!("getPINRetries under protocol {wire} refused: {e:?}"));
+    let mut d = Decoder::new(&out[..n]);
+    let members = d.map().unwrap().expect("a definite-length map");
+    assert_eq!(d.u8().unwrap(), 3, "pinRetries (0x03) leads the reply");
+    let retries = d.u8().unwrap();
+    let power_cycle = match members {
+        1 => None,
+        2 => {
+            assert_eq!(d.u8().unwrap(), 4, "the other member is powerCycleState");
+            Some(d.bool().unwrap())
+        }
+        _ => panic!("getPINRetries answered {members} members"),
+    };
+    assert_eq!(d.position(), n, "bytes after the getPINRetries map");
+    (retries, power_cycle)
+}
+
+/// FIDO Authr-ClientPin1-GetRetries P-1: with a PIN set over protocol one,
+/// getPINRetries under protocol one answers exactly `{3: 8}` (CTAP 2.3 §6.5.5.2).
+#[test]
+fn protocol_one_get_pin_retries_answers_the_full_budget() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::One, 1);
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(PIN),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(
+        pin_retries_over(&mut fs, &mut rng, &mut state, 1),
+        (MAX_PIN_RETRIES, None)
+    );
+}
+
+/// FIDO Authr-ClientPin1-GetRetries P-2: over protocol one each wrong pinHashEnc spends
+/// one retry, and the right PIN sets the counter back to its maximum (CTAP 2.3
+/// §6.5.5.7.1). A mismatch regenerates the key-agreement key, so each try agrees afresh.
+#[test]
+fn protocol_one_wrong_pins_spend_retries_and_the_right_pin_restores_them() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::One, 1);
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(PIN),
+        &mut out,
+    )
+    .unwrap();
+    for left in [MAX_PIN_RETRIES - 1, MAX_PIN_RETRIES - 2] {
+        let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::One, 1);
+        assert_eq!(
+            run(
+                &mut fs,
+                &mut rng,
+                &mut state,
+                &plat.get_token_req(WRONG_PIN),
+                &mut out
+            ),
+            Err(CtapError::PinInvalid)
+        );
+        assert_eq!(
+            pin_retries_over(&mut fs, &mut rng, &mut state, 1).0,
+            left,
+            "a wrong PIN spends exactly one retry"
+        );
+    }
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::One, 1);
+    let n = run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.get_token_req(PIN),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(plat.decrypt_token(&out[..n]), state.paut.token);
+    assert_eq!(
+        pin_retries_over(&mut fs, &mut rng, &mut state, 1).0,
+        MAX_PIN_RETRIES,
+        "the right PIN restores the whole budget"
+    );
+}
+
+/// FIDO Authr-ClientPin1-GetRetries P-3: the third consecutive wrong PIN in one power
+/// cycle is PIN_AUTH_BLOCKED over protocol one (CTAP 2.3 §6.5.5.7.1); getPINRetries
+/// then counts the three spent and says a power cycle is due (§6.5.5.2).
+#[test]
+fn protocol_one_third_wrong_pin_in_a_power_cycle_is_pin_auth_blocked() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::One, 1);
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(PIN),
+        &mut out,
+    )
+    .unwrap();
+    for n in 1..=PIN_MISMATCH_LIMIT {
+        let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::One, 1);
+        let want = if n == PIN_MISMATCH_LIMIT {
+            CtapError::PinAuthBlocked
+        } else {
+            CtapError::PinInvalid
+        };
+        assert_eq!(
+            run(
+                &mut fs,
+                &mut rng,
+                &mut state,
+                &plat.get_token_req(WRONG_PIN),
+                &mut out
+            ),
+            Err(want),
+            "wrong PIN {n} of {PIN_MISMATCH_LIMIT}"
+        );
+    }
+    assert_eq!(
+        pin_retries_over(&mut fs, &mut rng, &mut state, 1),
+        (MAX_PIN_RETRIES - PIN_MISMATCH_LIMIT, Some(true))
+    );
+}
+
+/// FIDO Authr-ClientPin1-PinPolicy F-1: over protocol one too, a new PIN one code
+/// point under minPINLength is PIN_POLICY_VIOLATION (CTAP 2.3 §6.5.5.5), and nothing
+/// is stored.
+#[test]
+fn protocol_one_set_pin_under_min_length_is_policy_violation() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::One, 1);
+    let mut out = [0u8; 256];
+    let short = &PIN[..usize::from(MIN_PIN_LENGTH) - 1];
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.set_pin_req(short),
+            &mut out
+        ),
+        Err(CtapError::PinPolicyViolation)
+    );
+    assert!(!fs.has_data(EF_PIN));
+}
+
+/// FIDO Authr-ClientPin1-PinPolicy F-2/F-3: protocol one prepends no IV, so a PIN
+/// filling the whole 64-byte block meets the exact-length gate and must be refused as
+/// past maxPINLength's 63 (CTAP 2.3 §6.4, §6.5.5.5) — the twin of the protocol-two case.
+#[test]
+fn protocol_one_pin_filling_the_padded_block_is_policy_violation() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::One, 1);
+    let mut out = [0u8; 256];
+    let whole = [b'7'; PADDED_PIN_LEN];
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.set_pin_req(&whole),
+            &mut out
+        ),
+        Err(CtapError::PinPolicyViolation)
+    );
+    assert!(!fs.has_data(EF_PIN));
+}
+
+/// FIDO Authr-ClientPin2-GetRetries P-5: once wrong PINs spend the budget, across the
+/// power cycles the mismatch limit forces, getPINRetries reports zero (CTAP 2.3
+/// §6.5.5.2). `the_last_wrong_pin_locks_the_pin_for_good` runs the ladder; this reads it.
+#[test]
+fn a_spent_pin_budget_reads_zero_retries() {
+    let (mut fs, mut rng) = setup();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    let mut out = [0u8; 256];
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.set_pin_req(PIN),
+        &mut out,
+    )
+    .unwrap();
+    let mut last = Ok(0);
+    for _ in 0..MAX_PIN_RETRIES {
+        let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+        last = run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.get_token_req(WRONG_PIN),
+            &mut out,
+        );
+        if state.needs_power_cycle {
+            state = FidoState::new(); // a replug: the RAM goes, the flash counter stays
+        }
+    }
+    assert_eq!(
+        last,
+        Err(CtapError::PinBlocked),
+        "fixture: the last wrong PIN blocks"
+    );
+    assert_eq!(pin_retries_over(&mut fs, &mut rng, &mut state, 2).0, 0);
+}
+
+/// A pinUvAuthParam over `msg` under a protocol-two pinUvAuthToken.
+fn token_param(token: &[u8; 32], msg: &[u8]) -> std::vec::Vec<u8> {
+    let mut out = [0u8; 32];
+    let n = pinproto::authenticate(PinProto::Two, token, msg, &mut out).unwrap();
+    out[..n].to_vec()
+}
+
+/// A non-discoverable makeCredential over example.com carrying `puap` (protocol two).
+fn mc_req_authorized(cdh: &[u8; 32], puap: &[u8]) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 256];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(6).unwrap();
+        e.u8(1).unwrap().bytes(cdh).unwrap();
+        e.u8(2)
+            .unwrap()
+            .map(1)
+            .unwrap()
+            .str("id")
+            .unwrap()
+            .str("example.com")
+            .unwrap();
+        e.u8(3).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&[5, 5, 5, 5]).unwrap();
+        e.str("name").unwrap().str("erin").unwrap();
+        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("alg").unwrap().i64(crate::consts::ALG_ES256).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(8).unwrap().bytes(puap).unwrap();
+        e.u8(9).unwrap().u64(2).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// A getAssertion over example.com for `cred_id`, carrying `puap` (protocol two).
+fn ga_req_authorized(cdh: &[u8; 32], cred_id: &[u8], puap: &[u8]) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(5).unwrap();
+        e.u8(1).unwrap().str("example.com").unwrap();
+        e.u8(2).unwrap().bytes(cdh).unwrap();
+        e.u8(3).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(cred_id).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(6).unwrap().bytes(puap).unwrap();
+        e.u8(7).unwrap().u64(2).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// authData (0x02) out of a makeCredential or getAssertion response map.
+fn response_auth_data(resp: &[u8]) -> std::vec::Vec<u8> {
+    let mut d = Decoder::new(resp);
+    let members = d.map().unwrap().unwrap();
+    for _ in 0..members {
+        if d.u8().unwrap() == 2 {
+            return d.bytes().unwrap().to_vec();
+        }
+        d.skip().unwrap();
+    }
+    panic!("no authData (0x02) in the response");
+}
+
+/// FIDO Authr-ClientPin2-GetPinUvAuthTokenUsingUvWithPermissions P-2/P-3: built-in UV's
+/// tokens (0x06) are spent like any other — an mc-only one makes a credential, a second,
+/// ga-only one asserts it, both user-verified (CTAP 2.3 §6.1.2 step 11.1, §6.2.2 6.1).
+#[test]
+fn builtin_uv_tokens_make_and_assert_a_user_verified_credential() {
+    use crate::consts::FLAG_UV;
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(PIN);
+    let mut pad = UvPad::typing(PIN);
+    let mut ctx = Ctx {
+        presence: &mut pad,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    let mut out = [0u8; 1024];
+    let cdh = [0xC3u8; 32];
+
+    let n = client_pin(&mut ctx, &plat.get_uv_token_req(PERM_MC as u64), &mut out).unwrap();
+    let token = plat.decrypt_token(&out[..n]);
+    let req = mc_req_authorized(&cdh, &token_param(&token, &cdh));
+    let n = crate::makecredential::make_credential(&mut ctx, &req, &mut out)
+        .unwrap_or_else(|e| panic!("makeCredential refused the 0x06 mc token: {e:?}"));
+    let ad = response_auth_data(&out[..n]);
+    assert_eq!(
+        ad[32] & FLAG_UV,
+        FLAG_UV,
+        "the 0x06 token's credential lacks UV"
+    );
+    let cred_len = usize::from(u16::from_be_bytes([ad[53], ad[54]]));
+    let cred_id = ad[55..55 + cred_len].to_vec();
+
+    let n = client_pin(&mut ctx, &plat.get_uv_token_req(PERM_GA as u64), &mut out).unwrap();
+    let token = plat.decrypt_token(&out[..n]);
+    let req = ga_req_authorized(&cdh, &cred_id, &token_param(&token, &cdh));
+    let n = crate::getassertion::get_assertion(&mut ctx, &req, &mut out)
+        .unwrap_or_else(|e| panic!("getAssertion refused the 0x06 ga token: {e:?}"));
+    assert_eq!(
+        response_auth_data(&out[..n])[32] & FLAG_UV,
+        FLAG_UV,
+        "the 0x06 token's assertion lacks UV"
+    );
+}
+
+/// FIDO Authr-ClientPin2-GetPinUvAuthTokenUsingUvWithPermissions P-4: built-in UV's
+/// pcmr grant is the persistent token, and it authorizes getCredsMetadata on its own
+/// (CTAP 2.3 §6.5.5.7.3, §6.8.2): this session's token carries no permission at all.
+#[test]
+fn a_builtin_uv_persistent_grant_reads_credential_metadata() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(PIN);
+    let mut pad = UvPad::typing(PIN);
+    let mut ctx = Ctx {
+        presence: &mut pad,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    let mut out = [0u8; 256];
+    let n = client_pin(&mut ctx, &plat.get_uv_token_req(PERM_PCMR as u64), &mut out).unwrap();
+    let grant = plat.decrypt_token(&out[..n]);
+
+    let get_creds_metadata = crate::consts::CM_GET_CREDS_METADATA;
+    let puap = token_param(&grant, &[get_creds_metadata as u8]);
+    let req = build(&[
+        (1, V::U(get_creds_metadata)),
+        (3, V::U(2)),
+        (4, V::B(&puap)),
+    ]);
+    let n = crate::credmgmt::cred_mgmt(&mut ctx, &req, &mut out)
+        .unwrap_or_else(|e| panic!("getCredsMetadata refused the 0x06 pcmr grant: {e:?}"));
+    // {1: existingResidentCredentialsCount, 2: maxPossibleRemainingResidentCredentialsCount}
+    let mut d = Decoder::new(&out[..n]);
+    assert_eq!(d.map().unwrap(), Some(2));
+    assert_eq!(d.u8().unwrap(), 1);
+    assert_eq!(d.u32().unwrap(), 0, "no discoverable credential was made");
+    assert_eq!(d.u8().unwrap(), 2);
+}
