@@ -198,17 +198,10 @@ fn set_pin<S: Storage, R: Rng>(
         return Err(CtapError::PinAuthInvalid);
     }
     let new_pin_enc = req.new_pin_enc.ok_or(CtapError::MissingParameter)?;
-    let want = PADDED_PIN_LEN + proto.iv_overhead();
-    // A padded new PIN longer than 64 bytes means the PIN exceeds the 63-byte
-    // maximum → a policy violation, not a malformed request (conformance
-    // ClientPin*-Policy F-2; protocol 2's 16-byte IV made this hit the strict
-    // length guard and wrongly return INVALID_PARAMETER).
-    if new_pin_enc.len() > want {
-        return Err(CtapError::PinPolicyViolation);
-    }
-    if new_pin_enc.len() != want {
-        return Err(CtapError::InvalidParameter);
-    }
+    // A YubiKey 5.8.0 (measured 2026-09-30) judges the length twice, both protocols
+    // alike: the gate before the MAC, where an over-long PIN is a policy violation
+    // (ClientPin*-Policy F-2), and the padded PIN's own length after the MAC.
+    new_pin_enc_gate(new_pin_enc)?;
     let mut shared = Secret::<[u8; 64]>::zeroed();
     let slen = derive_shared(ctx, req, proto, shared.expose_mut())?;
     let secret = shared_secret(shared.expose(), slen)?;
@@ -217,6 +210,13 @@ fn set_pin<S: Storage, R: Rng>(
     if !pinproto::verify(proto, secret, new_pin_enc, pin_uv_auth_param) {
         shared.wipe();
         return Err(CtapError::PinAuthInvalid);
+    }
+    // §6.5.5.5: a paddedNewPin that is not 64 bytes is INVALID_PARAMETER. Protocol
+    // two's IV alone is one, which re-enumerates a YubiKey 5.8.0 when its MAC is
+    // good; it is answered here as its neighbours are.
+    if new_pin_enc.len() != PADDED_PIN_LEN + proto.iv_overhead() {
+        shared.wipe();
+        return Err(CtapError::InvalidParameter);
     }
     let mut padded = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();
     let dec = pinproto::decrypt(proto, secret, new_pin_enc, padded.expose_mut());
@@ -247,13 +247,13 @@ fn change_pin<S: Storage, R: Rng>(
     let pin_hash_enc = req.pin_hash_enc.ok_or(CtapError::MissingParameter)?;
     let new_pin_enc = req.new_pin_enc.ok_or(CtapError::MissingParameter)?;
     pin_set_and_unblocked(ctx)?;
-    // An over-long padded new PIN is a policy violation (see `set_pin`).
-    if new_pin_enc.len() > PADDED_PIN_LEN + proto.iv_overhead() {
-        return Err(CtapError::PinPolicyViolation);
-    }
-    if new_pin_enc.len() != PADDED_PIN_LEN + proto.iv_overhead()
-        || pin_hash_enc.len() != 16 + proto.iv_overhead()
-    {
+    // A YubiKey 5.8.0 (measured 2026-09-30) puts `set_pin`'s newPinEnc gate ahead of
+    // every refusal below, a pinHashEnc of the wrong length included; the padded PIN's
+    // own length is judged after the current PIN, by the new PIN's decrypt.
+    new_pin_enc_gate(new_pin_enc)?;
+    // Before the MAC, so a pinHashEnc of the wrong length never reaches the decrypt:
+    // a short one would spend a retry on a hash that was never sent.
+    if pin_hash_enc.len() != 16 + proto.iv_overhead() {
         return Err(CtapError::InvalidParameter);
     }
     if ctx.state.needs_power_cycle {
@@ -296,12 +296,12 @@ fn change_pin<S: Storage, R: Rng>(
     // PIN-independent, so changing the PIN only swaps the verifier.
     old_hash.wipe();
 
-    // Decrypt + install the new PIN.
+    // Decrypt + install the new PIN; anything but 64 bytes of it is §6.5.5.6's 0x02.
     let mut padded = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();
     let dec = pinproto::decrypt(proto, secret, new_pin_enc, padded.expose_mut());
     shared.wipe();
-    if dec.is_err() {
-        return Err(CtapError::PinAuthInvalid);
+    if dec != Ok(PADDED_PIN_LEN) {
+        return Err(CtapError::InvalidParameter);
     }
     // §6.5.5.6: under a pending forced change the new PIN must actually differ —
     // otherwise re-entering the old one would clear the flag and satisfy nothing.
@@ -1373,6 +1373,25 @@ where
     let mut enc = Encoder::new(Cursor::new(out));
     f(&mut enc).map_err(|_| CtapError::Other)?;
     Ok(enc.writer().position())
+}
+
+// --- the encrypted PIN inputs' lengths (a YubiKey 5.8.0's, measured 2026-09-30) ---
+
+/// newPinEnc is ciphertext, so it is counted in AES blocks.
+const AES_BLOCK: usize = 16;
+/// The longest newPinEnc past the gate, whatever the protocol: protocol two's IV and
+/// the padded PIN.
+const NEW_PIN_ENC_MAX: usize = pinproto::IV_SIZE + PADDED_PIN_LEN;
+
+/// setPIN's and changePIN's gate ahead of the MAC: a newPinEnc that is not a whole
+/// number of blocks, from one to [`NEW_PIN_ENC_MAX`], is a policy violation, for both
+/// protocols alike, as on a YubiKey 5.8.0.
+fn new_pin_enc_gate(new_pin_enc: &[u8]) -> Result<(), CtapError> {
+    let len = new_pin_enc.len();
+    if len == 0 || !len.is_multiple_of(AES_BLOCK) || len > NEW_PIN_ENC_MAX {
+        return Err(CtapError::PinPolicyViolation);
+    }
+    Ok(())
 }
 
 /// The phase-4 trace reader (`formal/TraceSecurity.tla`).

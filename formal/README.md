@@ -376,12 +376,12 @@ those are where a hole costs the most:
 | Mutation | Verdict | Owned by |
 |---|---|---|
 | `crates/rsk-sdk/src/applet.rs:449` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
-| `clientpin.rs:251` `+` → `*` — the padded-length bound | **model-blind, real** | `change_pin_over_protocol_one` |
+| `clientpin.rs:1384` `+` → `*` — the padded-length bound, since bcd `0x0A74` the ceiling of the newPinEnc gate `set_pin` and `change_pin` share | **model-blind, real** | `set_pin_judges_the_new_pin_length_as_a_yubikey_does`, `change_pin_judges_the_new_pin_length_as_a_yubikey_does` |
 | `clientpin.rs:354` `\|\|` → `&&` — the legacy token's argument check | **model-blind, real** | `the_legacy_get_pin_token_refuses_an_rp_id` |
 | `clientpin.rs:422` `\|` → `^` on `PERM_MC \| PERM_GA` | equivalent — `0x01` and `0x02` are disjoint | — |
 | `clientpin.rs:814` `&&` → `\|\|` — the kbase-migration fallback | equivalent by construction: the inner `ct_eq` cannot match in either case the widened guard admits | — |
-| `clientpin.rs:251` `>` → `<` | conformance only — the `!=` two lines down still refuses; the status word moves from `PinPolicyViolation` to `InvalidParameter` | recorded |
-| `clientpin.rs:255` `\|\|` → `&&` | **the guard is load-bearing**: without it a short `pinHashEnc` reaches the decrypt and spends a PIN retry, and an over-long one met a slice-index panic until that copy was checked — see below | closed by `change_pin_refuses_a_pin_hash_of_the_wrong_length` |
+| `clientpin.rs:1391` `>` → `<` — the same ceiling, compared | **model-blind, real** since bcd `0x0A74`: every protocol-one setPIN and changePIN is refused, where the `!=` below the old bound still refused and only the status word moved | `change_pin_over_protocol_one` |
+| `clientpin.rs:256-258` deleted — the pinHashEnc length guard, the `\|\|` half of one guard until bcd `0x0A74` | **the guard is load-bearing**: without it a short `pinHashEnc` reaches the decrypt and spends a PIN retry, and an over-long one met a slice-index panic until that copy was checked — see below | closed by `change_pin_refuses_a_pin_hash_of_the_wrong_length` |
 
 The row that stood open longest is closed by reading where its widened guard
 leads. `pinHashEnc` comes straight from the CBOR decoder and nothing else bounds it;
@@ -402,6 +402,9 @@ Since the host-bytes deny landed, that copy (`clientpin.rs:268-273`) answers the
 guard's own `InvalidParameter`, and an over-long hash no longer tells `&&` from
 `||`. The test also sends an empty one, which the widened guard lets through to
 the MAC-checked decrypt: `PinInvalid` on both protocols, and a retry spent.
+Since bcd `0x0A74` newPinEnc has a gate of its own ahead of this guard, a
+YubiKey 5.8.0's, and the longest pair the two let through, 80 + 32, fills
+`macd` exactly.
 
 Two of those are real defects the suite could not see, and the second one names
 a whole missing dimension rather than a line: **`PinProto::One` appears once in

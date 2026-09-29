@@ -92,7 +92,7 @@ assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	184-184	fn s
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	227-229	// No PIN was set, so no `pcmr` grant can be outstanding — except one a build	// that leftover would hand the old holder the credentials created next.
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	230-230	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	239-239	fn change_pin<S: Storage, R: Rng>(	fn change_pin<S: Storage, R: Rng>(
-assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	300-304	let mut padded = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();	return Err(CtapError::PinAuthInvalid);
+assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	300-304	let mut padded = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();	return Err(CtapError::InvalidParameter);
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	306-310	// §6.5.5.6: under a pending forced change the new PIN must actually differ —	.expose()
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	317-317	.ok_or(CtapError::PinPolicyViolation)?;	.ok_or(CtapError::PinPolicyViolation)?;
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	323-327	// §6.5.5.6 step 15 calls resetPersistentPinUvAuthToken. Revoke *before* the new	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
@@ -589,7 +589,7 @@ assurance/toolchain.toml	scripts/pt.sh	107-107	if ! log=$(picotool partition cre
 crates/rsk-device/src/ctap.rs	crates/rsk-fido/src/clientpin.rs	656-656	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
 crates/rsk-device/src/ctap.rs	crates/rsk-usb/src/ctaphid.rs	228-228	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 2 * CONT_DATA;	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 2 * CONT_DATA;
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	100-100	6 => req.pin_hash_enc = Some(cbor(d.bytes())?),	6 => req.pin_hash_enc = Some(cbor(d.bytes())?),
-crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	254-256	if new_pin_enc.len() != PADDED_PIN_LEN + proto.iv_overhead()	{
+crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	256-258	if pin_hash_enc.len() != 16 + proto.iv_overhead() {	}
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	426-426	let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);	let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/clientpin.rs	451-457	ctx.state.reset_pin_uv_auth_token(ctx.rng);	ctx.state.paut.permissions = permissions;
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/clientpin.rs	451-465	ctx.state.reset_pin_uv_auth_token(ctx.rng);	Secret::new(ctx.state.paut.token)
@@ -687,8 +687,7 @@ formal/README.md	crates/rsk-display/src/presence.rs	192-192	// a release wait a 
 formal/README.md	crates/rsk-fido/src/clientpin.rs	145-145	match req.subcommand {	match req.subcommand {
 formal/README.md	crates/rsk-fido/src/clientpin.rs	197-199	if ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)? {	}
 formal/README.md	crates/rsk-fido/src/clientpin.rs	227-231	// No PIN was set, so no `pcmr` grant can be outstanding — except one a build	let res = store_new_pin(ctx, padded.expose());
-formal/README.md	crates/rsk-fido/src/clientpin.rs	251-251	if new_pin_enc.len() > PADDED_PIN_LEN + proto.iv_overhead() {	if new_pin_enc.len() > PADDED_PIN_LEN + proto.iv_overhead() {
-formal/README.md	crates/rsk-fido/src/clientpin.rs	255-255	|| pin_hash_enc.len() != 16 + proto.iv_overhead()	|| pin_hash_enc.len() != 16 + proto.iv_overhead()
+formal/README.md	crates/rsk-fido/src/clientpin.rs	256-258	if pin_hash_enc.len() != 16 + proto.iv_overhead() {	}
 formal/README.md	crates/rsk-fido/src/clientpin.rs	259-259	if ctx.state.needs_power_cycle {	if ctx.state.needs_power_cycle {
 formal/README.md	crates/rsk-fido/src/clientpin.rs	268-273	let macd = macd	}
 formal/README.md	crates/rsk-fido/src/clientpin.rs	324-328	// verifier lands: a power cut the other way round would leave the old holder's	let res = store_new_pin(ctx, padded.expose());
@@ -703,6 +702,8 @@ formal/README.md	crates/rsk-fido/src/clientpin.rs	836-836	if retries == 0 {	if r
 formal/README.md	crates/rsk-fido/src/clientpin.rs	880-884	/// here rather than in each caller: the `pcmr` grant is a flash record that no PIN	fn write_pin_verifier<S: Storage>(
 formal/README.md	crates/rsk-fido/src/clientpin.rs	1177-1181	/// at zero is a hard block — but deliberately omits the CTAP-session side effects	/// opens no faster path to grind the PIN than USB already does. The caller
 formal/README.md	crates/rsk-fido/src/clientpin.rs	1183-1189	pub fn spend_and_verify_local_pin<S: Storage>(	}
+formal/README.md	crates/rsk-fido/src/clientpin.rs	1384-1384	const NEW_PIN_ENC_MAX: usize = pinproto::IV_SIZE + PADDED_PIN_LEN;	const NEW_PIN_ENC_MAX: usize = pinproto::IV_SIZE + PADDED_PIN_LEN;
+formal/README.md	crates/rsk-fido/src/clientpin.rs	1391-1391	if len == 0 || !len.is_multiple_of(AES_BLOCK) || len > NEW_PIN_ENC_MAX {	if len == 0 || !len.is_multiple_of(AES_BLOCK) || len > NEW_PIN_ENC_MAX {
 formal/README.md	crates/rsk-fido/src/config.rs	242-244	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
 formal/README.md	crates/rsk-fido/src/config.rs	429-430	.map_err(|_| CtapError::Other)?;	ctx.state.clear_keydev_dec();
 formal/README.md	crates/rsk-fido/src/consts.rs	371-371	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
@@ -967,7 +968,7 @@ formal/RSKeySecurityState.tla	crates/rsk-display/src/presence.rs	41-44	let saved
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	44-44	pub(crate) const PIN_FILE_LEN: usize = 35; // retries(1) + len(1) + format(1) + verifier(32)	pub(crate) const PIN_FILE_LEN: usize = 35; // retries(1) + len(1) + format(1) + verifier(32)
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	197-199	if ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)? {	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	227-231	// No PIN was set, so no `pcmr` grant can be outstanding — except one a build	let res = store_new_pin(ctx, padded.expose());
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	250-295	// An over-long padded new PIN is a policy violation (see `set_pin`).	// The verify migrated any legacy PIN-wrapped seed; the seed itself is
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	250-295	// A YubiKey 5.8.0 (measured 2026-09-30) puts `set_pin`'s newPinEnc gate ahead of	// The verify migrated any legacy PIN-wrapped seed; the seed itself is
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	308-322	if force_change_pending(ctx) {	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	324-328	// verifier lands: a power cut the other way round would leave the old holder's	let res = store_new_pin(ctx, padded.expose());
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	329-329	padded.wipe();	padded.wipe();

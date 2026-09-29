@@ -2502,9 +2502,9 @@ fn cose_with_alg(x: &[u8; 32], y: &[u8; 32], alg: Option<i64>) -> std::vec::Vec<
     buf[..n].to_vec()
 }
 
-/// `pinHashEnc` arrives unbounded (`clientpin.rs:100`). Widened to `&&`, the length
-/// guard (`clientpin.rs:254-256`) lets a short one reach the decrypt and spend a PIN
-/// retry; an over-long one meets the checked `macd` copy and the same refusal.
+/// `pinHashEnc` arrives unbounded (`clientpin.rs:100`). Without its length guard
+/// (`clientpin.rs:256-258`) a short one reaches the decrypt and spends a PIN retry;
+/// an over-long one meets the checked `macd` copy and the same refusal.
 #[test]
 fn change_pin_refuses_a_pin_hash_of_the_wrong_length() {
     let mut answers = std::vec::Vec::new();
@@ -3809,6 +3809,10 @@ fn change_pin_with_a_bad_pin_auth_param_changes_nothing() {
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "clientpin_reads_tests.rs"]
 mod reads;
+
+// So do the length grids a YubiKey 5.8.0 was measured on.
+#[path = "clientpin_lengths_tests.rs"]
+mod lengths;
 
 /// getPINRetries under `wire`, read strictly: `{3: pinRetries[, 4: powerCycleState]}`
 /// and nothing after the map (CTAP 2.3 §6.5.5.2).

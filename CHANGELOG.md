@@ -162,6 +162,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **setPIN and changePIN judge newPinEnc's length as a YubiKey 5.8.0 does.** A
+  newPinEnc that is empty, not a whole number of 16-byte blocks, or longer than 80
+  bytes is `PIN_POLICY_VIOLATION` (`0x37`) before the MAC is checked, under protocol
+  one as under two. A length that passes is held to the padded PIN's only after the
+  MAC (`0x33` first), and on changePIN only after the current PIN, as
+  `INVALID_PARAMETER` (`0x02`). RS-Key judged the exact length before the MAC, `0x02`
+  below it and `0x37` above it, so a short newPinEnc with a bad MAC was never a MAC
+  failure, and an 80-byte one under protocol one was a policy violation. Measured
+  cell by cell over both protocols and both MACs. Protocol two's 16 bytes, an IV
+  with no ciphertext, re-enumerate the YubiKey when the MAC is good; RS-Key answers
+  them `0x02`, as it answers their neighbours. `bcdDevice` 0x0A73 → 0x0A74.
+
 - **A U2F VERSION that carries data is a wrong length, `6700`, as on a YubiKey
   5.8.0.** U2F Raw Message Formats §6.1 has VERSION take no data, and a YubiKey
   refuses one with a data field `6700` over CTAPHID and CCID alike; RS-Key
