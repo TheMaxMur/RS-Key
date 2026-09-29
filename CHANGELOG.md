@@ -162,6 +162,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A U2F VERSION that carries data is a wrong length, `6700`, as on a YubiKey
+  5.8.0.** U2F Raw Message Formats §6.1 has VERSION take no data, and a YubiKey
+  refuses one with a data field `6700` over CTAPHID and CCID alike; RS-Key
+  answered `U2F_V2`. It now answers `6700` on both transports. P1 and P2 are still
+  not judged, as there. `bcdDevice` 0x0A72 → 0x0A73.
+
 - **U2F over CTAPHID takes U2F HID's extended-length framing alone, as a YubiKey
   5.8.0 does.** U2F HID v1.2 §2 encodes every raw message with extended lengths,
   but a CTAPHID_MSG request was parsed as any ISO APDU, so a short `Le` or `Lc`

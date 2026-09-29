@@ -2334,3 +2334,50 @@ fn with_no_applet_selected_a_command_is_an_unknown_instruction() {
     let sm = apdu(0x84, 0xA1, 0x00, 0x00, &[]);
     assert_eq!(ccid.handle_apdu(&sm, 0), Sw::CLA_NOT_SUPPORTED.to_bytes());
 }
+
+/// U2F VERSION takes no data (U2F Raw Message Formats §6.1), whichever transport
+/// carries it: a YubiKey 5.8.0 refuses one with a data field `6700` over both.
+#[test]
+fn a_u2f_version_with_data_is_a_wrong_length_on_both_transports() {
+    use rsk_sdk::Sw;
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        Sw::OK
+    );
+    let with_data = apdu(0x00, rsk_fido::consts::CTAP_VERSION, 0x00, 0x00, &[0x00]);
+    assert_eq!(
+        ccid.handle_apdu(&with_data, 0),
+        Sw::WRONG_LENGTH.to_bytes(),
+        "over CCID"
+    );
+    let bare = apdu(0x00, rsk_fido::consts::CTAP_VERSION, 0x00, 0x00, &[]);
+    assert_eq!(
+        sw(ccid.handle_apdu(&bare, 0)),
+        Sw::OK,
+        "control: bare over CCID"
+    );
+
+    let mut ctap = env.ctap();
+    let extended = [
+        0x00,
+        rsk_fido::consts::CTAP_VERSION,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x01,
+        0x00,
+    ];
+    assert_eq!(
+        ctap.handle_msg(&extended, 0),
+        Sw::WRONG_LENGTH.to_bytes(),
+        "over CTAPHID"
+    );
+    assert_eq!(
+        sw(ctap.handle_msg(&bare, 0)),
+        Sw::OK,
+        "control: bare over CTAPHID"
+    );
+}

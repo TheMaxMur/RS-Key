@@ -53,13 +53,13 @@ pub fn process_u2f<S: Storage, R: Rng>(
         }
         CTAP_REGISTER => cmd_register(ctx, apdu, out),
         CTAP_AUTHENTICATE => cmd_authenticate(ctx, apdu, out),
+        CTAP_VERSION if apdu.nc != 0 => (Sw::WRONG_LENGTH, 0), // §6.1: "takes no data as input"
         CTAP_VERSION => {
-            let v = crate::consts::U2F_VERSION;
-            let Some(dst) = out.get_mut(..v.len()) else {
+            let Some(dst) = out.get_mut(..crate::consts::U2F_VERSION.len()) else {
                 return (Sw::EXEC_ERROR, 0);
             };
-            dst.copy_from_slice(v);
-            (Sw::OK, v.len())
+            dst.copy_from_slice(crate::consts::U2F_VERSION);
+            (Sw::OK, crate::consts::U2F_VERSION.len())
         }
         _ => (Sw::INS_NOT_SUPPORTED, 0),
     }

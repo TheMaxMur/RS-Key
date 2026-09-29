@@ -643,6 +643,8 @@ read as a YubiKey 5.8.0 reads it: the class first (`6E00` past `00`), then eithe
 the bare four-byte header or `00 Lc Lc` and at least that many data bytes, with
 anything after them, an `Le` included, ignored. A short `Lc` or `Le` is `6700`
 whatever the instruction. Over CCID (§5.2) both encodings stay open, as there.
+On either transport a VERSION that carries data is `6700`, since U2F Raw Message
+Formats §6.1 has it take none; its P1 and P2 are not judged, as on a YubiKey.
 
 **OpenPGP GET DATA reads a nested DO only through its template.** OpenPGP 3.4
 §4.4.1 lists `5B`, `5F2D` and `5F35` only inside `65`, `93` only inside `7A`, and

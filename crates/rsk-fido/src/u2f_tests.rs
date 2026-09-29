@@ -992,3 +992,40 @@ fn a_hid_request_takes_the_extended_encoding_alone() {
         Err(Sw::CLA_NOT_SUPPORTED)
     );
 }
+
+/// U2F Raw Message Formats §6.1: VERSION "takes no data as input". A YubiKey 5.8.0
+/// refuses one that carries some `6700` over CTAPHID and CCID alike, and ignores P1.
+#[test]
+fn a_version_with_data_is_a_wrong_length() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(3);
+    let mut state = crate::FidoState::new();
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    let mut o = [0u8; 16];
+    for raw in [
+        &[0x00, CTAP_VERSION, 0x00, 0x00, 0x01, 0x00][..],
+        &ext_apdu(CTAP_VERSION, 0x00, &[0x00]),
+    ] {
+        let apdu = Apdu::parse(raw).unwrap();
+        assert_eq!(
+            process_u2f(&mut ctx, &apdu, &mut o),
+            (Sw::WRONG_LENGTH, 0),
+            "{raw:02X?}"
+        );
+    }
+    let flagged = Apdu::parse(&[0x00, CTAP_VERSION, 0x01, 0x00]).unwrap();
+    let (sw, n) = process_u2f(&mut ctx, &flagged, &mut o);
+    assert_eq!(
+        (sw, &o[..n]),
+        (Sw::OK, &b"U2F_V2"[..]),
+        "a P1 is not judged"
+    );
+}
