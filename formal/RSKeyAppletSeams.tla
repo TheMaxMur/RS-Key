@@ -208,7 +208,7 @@ Init ==
     /\ viol  = {}
 
 \* Every status an applet owns, gone. This is `Session::reset`
-\* (crates/rsk-piv/src/lib.rs:224-228), `pin::Session::reset`
+\* (crates/rsk-piv/src/lib.rs:210-225), `pin::Session::reset`
 \* (crates/rsk-openpgp/src/pin.rs:83-85) and OATH's `deselect`
 \* (crates/rsk-oath/src/lib.rs:1283-1302) -- three functions, one meaning.
 ClearedFor(h, a) ==

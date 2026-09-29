@@ -263,7 +263,7 @@ registered = "yes — assurance/platform.toml PLAT-MODEL-005, pending, and it is
 id = "AS-RAM-4"
 statement = "The RAM copy dies by Rust drop-and-replace, not by an explicit clear, on the path the invariant is about: `reset.rs:107` calls `FidoState::reset`, which assigns `*self = Self::new()` and lets the field's `Secret` wipe itself as the old state drops."
 kind = "compiler"
-discharger = "stage 11's source-to-binary work, and nothing here. The model writes `ram' = FALSE` outright (RSKeySecurityState.tla:1225); the code's equivalent is state.rs:534-544 plus the exhaustive destructuring at :763-804, whose own comment says a field added later stops the pattern compiling. What no proof in this tree covers is that the emitted image does what the `Drop` says"
+discharger = "stage 11's source-to-binary work, and nothing here. The model writes `ram' = FALSE` outright (RSKeySecurityState.tla:1225); the code's equivalent is state.rs:534-544 plus the exhaustive destructuring at :763-816, whose own comment says a field added later stops the pattern compiling. What no proof in this tree covers is that the emitted image does what the `Drop` says"
 expressible = "no — a fact about a compiler, not about the model"
 registered = "yes — assurance/platform.toml PLAT-TOOLCHAIN-001, whose `covers` this bundle extended. Not a new row: the statement is that entry at one site, and a second entry would be two answers about one premise"
 
