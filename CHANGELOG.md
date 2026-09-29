@@ -162,6 +162,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **With no applet selected over CCID a command is an unknown instruction, `6D00`,
+  as on a YubiKey 5.8.0.** After a card reset, or before any SELECT, every command
+  but a SELECT answered `6A82` (file not found), and one under a secure-messaging
+  class `6E00`. A YubiKey 5.8.0 answers `6D00` to all of them, measured class by
+  class: getInfo, U2F, GET RESPONSE, GET DATA, VERIFY, a SELECT by file id or with
+  `P2 0C`, and classes `80` and `84`. A SELECT of an AID the device lacks is still
+  `6A82`, a class outside `00`, `04`, `80` and `84` still gets the empty answer, and
+  an SM class sent to a selected applet is still `6E00`. A command to an applet
+  disabled since its SELECT gets the same `6D00`. `bcdDevice` 0x0A70 → 0x0A71.
+
 - **The CTAPHID_INIT capability byte leaves bit `0x02` clear.** It carried the
   pre-standard U2FHID `CAPFLAG_LOCK` to announce that `CTAPHID_LOCK` works, but no
   FIDO specification ever defined that bit: CTAP 2.3 §11.2.9.1.3 defines `0x01`,

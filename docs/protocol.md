@@ -103,9 +103,12 @@ first, so `10`, `1C`, `90` and `FF` are all ordinary segments. Otherwise only
 answer**: a data block with no body and no status word, which a client library
 that expects one raises on (pyscard: `Card returned no valid response`). Under
 `04` and `84`, the secure-messaging classes, SELECT works as under `00` and any
-other command is `6E00` — **no applet here implements secure messaging**, and
-OpenPGP's Extended Capabilities says so. All of that is a YubiKey 5.8.0's, read
-class by class over raw USB. RS-Key's own: an unanswered command changes nothing,
+other command to a selected applet is `6E00` — **no applet here implements secure
+messaging**, and OpenPGP's Extended Capabilities says so. With **no applet
+selected**, as after a card reset, every command but a SELECT is `6D00` whatever
+its class, a SELECT by file id or with `P2 0C` included, and a SELECT of an AID
+the device lacks is `6A82`. All of that is a YubiKey 5.8.0's, read class by class
+over raw USB. RS-Key's own: an unanswered command changes nothing,
 so an open chain still takes its final segment and a held tail its
 `GET RESPONSE`. An `XfrBlock` of one or three bytes, too short for `CLA INS P1
 P2`, is refused by the reader as a YubiKey 5.8.0 refuses one, measured with the
@@ -143,9 +146,9 @@ under every class. With the chaining bit (`10`, `90`, `1C`), owed tail or not,
 it is a `9000` that opens no chain and leaves any tail for the next one; inside
 an open chain it is `6883`, like any command outside that chain, both as on a
 YubiKey 5.8.0.
-With nothing owed, a `GET RESPONSE` under `04` or `84` is `6E00`, like any
-command but SELECT there, and under a class no applet is reached by it gets the
-empty answer.
+With nothing owed, a `GET RESPONSE` under `04` or `84` is `6E00` to a selected
+applet and `6D00` with none, like any command but SELECT there, and under a class
+no applet is reached by it gets the empty answer.
 
 OATH `LIST` (`0xA1`) and `CALCULATE ALL` (`0xA4`) responses that outgrow the
 command's `Le` chain the YubiKey-OATH way instead: `61 XX` followed by **SEND

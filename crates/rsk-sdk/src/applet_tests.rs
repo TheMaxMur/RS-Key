@@ -103,7 +103,7 @@ fn select_then_dispatch() {
     // Unknown command before any selection.
     assert_eq!(
         disp.process(&[0x00, 0x10, 0, 0], &mut applets, &mut (), &mut res),
-        Sw::FILE_NOT_FOUND
+        Sw::INS_NOT_SUPPORTED
     );
 
     // SELECT by AID.
@@ -141,7 +141,7 @@ fn clear_selection_drops_the_applet() {
     let cmd = [0x00, 0x10, 0x00, 0x00, 0x03, 0xDE, 0xAD, 0xBE];
     assert_eq!(
         disp.process(&cmd, &mut applets, &mut (), &mut res),
-        Sw::FILE_NOT_FOUND
+        Sw::INS_NOT_SUPPORTED
     );
 }
 
@@ -830,7 +830,7 @@ fn disabling_the_current_applet_makes_it_unreachable() {
     let cmd = [0x00, 0x10, 0x00, 0x00, 0x03, 0xDE, 0xAD, 0xBE];
     assert_eq!(
         disp.process(&cmd, &mut applets, &mut (), &mut res),
-        Sw::FILE_NOT_FOUND
+        Sw::INS_NOT_SUPPORTED
     );
 }
 
@@ -992,7 +992,7 @@ fn reset_card_clears_selection_and_security_status() {
     let mut res = ResBuf::new(&mut out);
     assert_eq!(
         disp.process(&[0x00, 0x87, 0, 0], &mut applets, &mut (), &mut res),
-        Sw::FILE_NOT_FOUND
+        Sw::INS_NOT_SUPPORTED
     );
     // ...and re-selecting without verifying is refused: the status really is gone,
     // which `clear_selection` alone would not have achieved.
@@ -1506,3 +1506,50 @@ fn a_chain_past_the_reassembly_buffer_is_a_length_error_at_either_end() {
 
 #[path = "frames_tests.rs"]
 mod frames;
+
+/// With nothing selected every command but a SELECT is an unknown instruction,
+/// secure-messaging classes included: a YubiKey 5.8.0 answers `6D00` there and keeps
+/// its `6E00` for an SM class sent to an applet it has selected.
+#[test]
+fn with_no_applet_selected_even_an_sm_class_is_an_unknown_instruction() {
+    let mut echo = Echo { selected: false };
+    let mut applets: [&mut dyn Applet<()>; 1] = [&mut echo];
+    let mut disp = Dispatcher::new();
+    let mut out = [0u8; 64];
+    let mut res = ResBuf::new(&mut out);
+    let mut go =
+        |disp: &mut Dispatcher, apdu: &[u8]| disp.process(apdu, &mut applets, &mut (), &mut res);
+
+    for sm in [[0x84, 0x10, 0x00, 0x00], [0x04, 0xC0, 0x00, 0x00]] {
+        assert_eq!(
+            go(&mut disp, &sm),
+            Sw::INS_NOT_SUPPORTED,
+            "{sm:02X?} with none"
+        );
+    }
+    // A chain's segments are acknowledged; the command they close finds no applet.
+    assert_eq!(go(&mut disp, &[0x10, 0x10, 0x00, 0x00, 0x01, 0xAA]), Sw::OK);
+    assert_eq!(
+        go(&mut disp, &[0x00, 0x10, 0x00, 0x00, 0x01, 0xBB]),
+        Sw::INS_NOT_SUPPORTED
+    );
+
+    let mut sel = vec![0x84, 0xA4, 0x04, 0x00, 0x08];
+    sel.extend_from_slice(&[0xA0, 0x00, 0x00, 0x06, 0x47, 0x2F, 0x00, 0x01]);
+    assert_eq!(
+        go(&mut disp, &sel),
+        Sw::OK,
+        "a SELECT under 84 is served as under 00"
+    );
+    assert_eq!(
+        go(&mut disp, &[0x84, 0x10, 0x00, 0x00]),
+        Sw::CLA_NOT_SUPPORTED,
+        "with one"
+    );
+    disp.set_enabled(0);
+    assert_eq!(
+        go(&mut disp, &[0x84, 0x10, 0x00, 0x00]),
+        Sw::INS_NOT_SUPPORTED,
+        "one disabled since is none"
+    );
+}

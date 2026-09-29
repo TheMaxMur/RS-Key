@@ -246,8 +246,8 @@ impl Dispatcher {
     }
 
     /// Restrict which registered applets are selectable: bit `i` set → applet
-    /// index `i` is active; cleared → invisible (SELECT and any command to it
-    /// return `FILE_NOT_FOUND`, exactly as if it were not registered). Indices
+    /// index `i` is active; cleared → invisible (a SELECT finds nothing, `6A82`, and a
+    /// command to it gets the `6D00` of no selection, as if never registered). Indices
     /// `≥ 32` are always active. The firmware sets this from the persisted
     /// enabled-applications config, so `ykman config usb --disable X` really
     /// removes X's applet rather than only hiding it from the DeviceInfo report.
@@ -314,12 +314,12 @@ impl Dispatcher {
             return Sw::OK;
         }
 
-        // Chaining wins outright (`1C`, `90`, `FF` are plain segments); an SM class is
-        // `6E00`, bar a SELECT under `04` or `84`, which a YubiKey 5.8.0 serves as under
-        // `00`. Over CCID, rsk-device's class gate has dropped the other SM classes.
+        // Chaining wins outright (`1C`, `90`, `FF` are plain segments). Under an applet an SM
+        // class is `6E00` bar a SELECT under `04`/`84` (served as `00`); with none, `6D00` below.
         if !apdu.is_chaining()
             && apdu.is_secure_messaging()
             && !(is_select(&apdu) && apdu.is_served_over_ccid())
+            && self.current.is_some_and(|i| self.selectable(i))
         {
             return Sw::CLA_NOT_SUPPORTED;
         }
@@ -423,7 +423,7 @@ impl Dispatcher {
                 };
                 match cur.and_then(|i| applets.get_mut(i)) {
                     Some(app) => app.process(&combined, ctx, res),
-                    None => Sw::FILE_NOT_FOUND,
+                    None => Sw::INS_NOT_SUPPORTED,
                 }
             };
             return self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res);
@@ -474,7 +474,7 @@ impl Dispatcher {
             return Sw::INS_NOT_SUPPORTED;
         }
 
-        // Dispatch to the selected applet (unless it was disabled since SELECT).
+        // Dispatch to the selected applet; with none, or one disabled since, `6D00` like a YubiKey.
         let current = self.current.filter(|&i| self.selectable(i));
         match current.and_then(|i| applets.get_mut(i)) {
             Some(app) => {
@@ -483,7 +483,7 @@ impl Dispatcher {
                 let sw = app.process(&apdu, ctx, res);
                 self.maybe_chain(sw, apdu.frame_cap(), chain_ok, res)
             }
-            None => Sw::FILE_NOT_FOUND,
+            None => Sw::INS_NOT_SUPPORTED,
         }
     }
 

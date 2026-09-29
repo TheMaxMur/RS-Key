@@ -464,9 +464,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
             let chaining = Applet::<Fs<S>>::response_chaining(&self.piv);
             return self.finish_fast_path(cap, chaining, sw, n);
         }
-        // A disabled application's applet is invisible: SELECT (and any command to
-        // it) returns FILE_NOT_FOUND, so `ykman config usb --disable X` really
-        // removes X over CCID, not just from the DeviceInfo report.
+        // A disabled application's applet is invisible: a SELECT of it is 6A82 and a
+        // command to it the 6D00 of no selection, so `ykman config usb --disable X`
+        // really removes X over CCID, not just from the DeviceInfo report.
         // Refines `RSKeyAdminSurface!DisabledAppletNeverDispatches` — SEC-ADM-004.
         self.disp.set_enabled(self.applet_enable_mask());
         let (sw, n) = {

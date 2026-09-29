@@ -2292,3 +2292,45 @@ fn nfcctap_control_end_refuses_fido_until_the_applet_is_selected_again() {
         assert_eq!((status, body.first()), (Sw::OK, Some(&rsk_fido::CTAP2_OK)));
     }
 }
+
+/// Nothing selected, as after a card reset: a YubiKey 5.8.0 answers every command but
+/// a SELECT `6D00` — SELECTs by file id or with `P2 0C` included, and the classes an
+/// applet would refuse `6E00` — and only a SELECT of an AID it lacks `6A82`.
+#[test]
+fn with_no_applet_selected_a_command_is_an_unknown_instruction() {
+    use rsk_sdk::Sw;
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let unknown = [
+        ("getInfo", ctap_msg(GET_INFO)),
+        ("U2F VERSION", apdu(0x00, 0x03, 0x00, 0x00, &[])),
+        ("GET RESPONSE", apdu(0x00, 0xC0, 0x00, 0x00, &[])),
+        ("GET DATA", apdu(0x00, 0xCA, 0x00, 0x6E, &[])),
+        ("VERIFY", apdu(0x00, 0x20, 0x00, 0x81, &[])),
+        ("PIV GET VERSION", apdu(0x00, 0xFD, 0x00, 0x00, &[])),
+        ("SELECT 3F00", apdu(0x00, 0xA4, 0x00, 0x00, &[0x3F, 0x00])),
+        (
+            "SELECT by EF id",
+            apdu(0x00, 0xA4, 0x02, 0x0C, &[0x01, 0x01]),
+        ),
+        (
+            "SELECT, P2 0C",
+            apdu(0x00, 0xA4, 0x04, 0x0C, rsk_fido::consts::FIDO_AID),
+        ),
+        ("class 80", apdu(0x80, 0x50, 0x00, 0x00, &[])),
+        ("class 84", apdu(0x84, 0x10, 0x00, 0x00, GET_INFO)),
+    ];
+    for (name, command) in unknown {
+        ccid.reset_card();
+        let res = ccid.handle_apdu(&command, 0).to_vec();
+        assert_eq!(res, Sw::INS_NOT_SUPPORTED.to_bytes(), "{name}");
+    }
+    ccid.reset_card();
+    let absent = apdu(0x00, 0xA4, 0x04, 0x00, &[0xA0, 0x00, 0x00, 0x00, 0x99]);
+    assert_eq!(ccid.handle_apdu(&absent, 0), Sw::FILE_NOT_FOUND.to_bytes());
+
+    // Under a selected applet an SM class is still refused as a class.
+    assert_eq!(sw(ccid.handle_apdu(&select(rsk_oath::OATH_AID), 0)), Sw::OK);
+    let sm = apdu(0x84, 0xA1, 0x00, 0x00, &[]);
+    assert_eq!(ccid.handle_apdu(&sm, 0), Sw::CLA_NOT_SUPPORTED.to_bytes());
+}

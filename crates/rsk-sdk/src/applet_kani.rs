@@ -36,7 +36,7 @@ const STUB_AID: [u8; 2] = [0xA0, 0x01];
 /// A concrete SELECT for [`STUB_AID`]. The symbolic part of the proof starts
 /// from a *selected* card because that is the only state in which the applet
 /// can be reached at all: with nothing selected every dispatch path answers
-/// `FILE_NOT_FOUND` without calling the applet, so a two-command symbolic
+/// `6D00` (or `6A82`, a SELECT) without calling the applet, so a two-command symbolic
 /// sequence could not express a splice even in a dispatcher that permitted one.
 const SELECT_STUB: [u8; 7] = [0x00, 0xA4, 0x04, 0x00, 0x02, 0xA0, 0x01];
 
