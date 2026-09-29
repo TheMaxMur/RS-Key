@@ -1282,9 +1282,24 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
     /// present the access code again rather than inheriting an unlocked store.
     /// `select` recomputes `validated` from whether a code is set.
     fn deselect(&mut self, _fs: &mut Fs<S>) {
-        self.validated = false;
-        self.otp_pin_verified = false;
-        self.chain = Chain::None;
+        // Every field is named, as the secure reboot relies on this to end a session.
+        // The challenge is public and SELECT redraws it; the cursor dies with `chain`.
+        let Self {
+            serial_id: _,
+            serial_hash: _,
+            mkek_source: _,
+            rng: _,
+            presence: _,
+            validated,
+            otp_pin_verified,
+            challenge: _,
+            chain,
+            chain_at: _,
+            chain_skip: _,
+        } = self;
+        *validated = false;
+        *otp_pin_verified = false;
+        *chain = Chain::None;
     }
 
     /// SELECT response: version + device id, plus a fresh challenge (and its

@@ -1151,6 +1151,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   assigns a fresh session, so its drop is the one wipe. Wipes of named buffers
   keep their shape. `bcdDevice` 0x0A6A → 0x0A6B.
 
+- **OATH's deselect names every field too** — refactor, no behaviour change. The
+  secure reboot ends OATH's session through it, so a field added to the applet
+  does not compile until its reset is decided. `bcdDevice` 0x0A6C → 0x0A6D.
+
 - **cargo-mutants in three places: the fix loop, every pull request, and a
   weekly sweep that gates against a baseline** — host only, no `bcdDevice`
   bump. `scripts/mutants-all.sh --in-diff [<base>]` mutates only the lines the

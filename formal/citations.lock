@@ -790,10 +790,10 @@ formal/README.md	crates/rsk-oath/src/lib.rs	368-370	if !self.validated {	}
 formal/README.md	crates/rsk-oath/src/lib.rs	377-389	if let Some([key]) = parse_exact(data, [TAG_KEY]) {	};
 formal/README.md	crates/rsk-oath/src/lib.rs	596-598	// states left a host unable to tell a wrong password from no password.	return Sw::WRONG_DATA;
 formal/README.md	crates/rsk-oath/src/lib.rs	1186-1187	self.validated = false;	self.otp_pin_verified = false;
-formal/README.md	crates/rsk-oath/src/lib.rs	1283-1287	/// `select` recomputes `validated` from whether a code is set.	self.chain = Chain::None;
-formal/README.md	crates/rsk-oath/src/lib.rs	1285-1285	self.validated = false;	self.validated = false;
-formal/README.md	crates/rsk-oath/src/lib.rs	1321-1321	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
-formal/README.md	crates/rsk-oath/src/lib.rs	1770-1770	if deleted > RESET_MAX_DELETES {	if deleted > RESET_MAX_DELETES {
+formal/README.md	crates/rsk-oath/src/lib.rs	1283-1302	/// `select` recomputes `validated` from whether a code is set.	*chain = Chain::None;
+formal/README.md	crates/rsk-oath/src/lib.rs	1300-1300	*validated = false;	*validated = false;
+formal/README.md	crates/rsk-oath/src/lib.rs	1336-1336	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
+formal/README.md	crates/rsk-oath/src/lib.rs	1785-1785	if deleted > RESET_MAX_DELETES {	if deleted > RESET_MAX_DELETES {
 formal/README.md	crates/rsk-openpgp/src/internalaut.rs	45-48	// §7.2.13 names PW1 no. 82 and nothing else; PW3 used to stand in, and a	return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
 formal/README.md	crates/rsk-openpgp/src/keys.rs	443-458	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
 formal/README.md	crates/rsk-openpgp/src/lib.rs	349-352	/// valid AID and an ICC power cycle clear them (the dispatcher's `deselect`).	self.reset_session();
@@ -889,9 +889,9 @@ formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	445-448	// The OTP PIN st
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	596-598	// states left a host unable to tell a wrong password from no password.	return Sw::WRONG_DATA;
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1186-1187	self.validated = false;	self.otp_pin_verified = false;
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1227-1258	// Any attempt clears a prior unlock; only a correct PIN restores one below. A	self.otp_pin_verified = true;
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1283-1287	/// `select` recomputes `validated` from whether a code is set.	self.chain = Chain::None;
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1318-1322	// A code-less applet is open on every SELECT. With a code, a re-SELECT keeps a	self.otp_pin_verified = false;
-formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1321-1321	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1283-1302	/// `select` recomputes `validated` from whether a code is set.	*chain = Chain::None;
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1333-1337	// A code-less applet is open on every SELECT. With a code, a re-SELECT keeps a	self.otp_pin_verified = false;
+formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1336-1336	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/keys.rs	443-458	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/lib.rs	257-259	// moved the tag below the ACL and left this one above it.	return Sw::SECURITY_STATUS_NOT_SATISFIED;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	20-39	pub struct Session {	session_rc: [u8; 32],
@@ -1154,8 +1154,8 @@ formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	505-505	assert!(	assert!(
 formal/comutants.toml	crates/rsk-fs/src/storage.rs	78-78	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,
 formal/comutants.toml	crates/rsk-oath/src/code_tests.rs	155-155	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/increasing_tests.rs	36-36	assert_eq!(sw, Sw::WRONG_DATA, "a refusal must read as 6A80");	assert_eq!(sw, Sw::WRONG_DATA, "a refusal must read as 6A80");
-formal/comutants.toml	crates/rsk-oath/src/lib.rs	1281-1288	/// Drop the VALIDATE result on deselect / card reset, so a later session must	}
-formal/comutants.toml	crates/rsk-oath/src/lib.rs	1321-1322	self.validated = !code_set || (reselect && self.validated);	self.otp_pin_verified = false;
+formal/comutants.toml	crates/rsk-oath/src/lib.rs	1281-1303	/// Drop the VALIDATE result on deselect / card reset, so a later session must	}
+formal/comutants.toml	crates/rsk-oath/src/lib.rs	1336-1337	self.validated = !code_set || (reselect && self.validated);	self.otp_pin_verified = false;
 formal/comutants.toml	crates/rsk-oath/src/otp_pin_tests.rs	66-66	assert!(!safe_open(&mut app, &mut fs), "closed before any PIN");	assert!(!safe_open(&mut app, &mut fs), "closed before any PIN");
 formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	45-45	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	323-323	assert_eq!(	assert_eq!(

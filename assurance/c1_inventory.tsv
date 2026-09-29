@@ -72,43 +72,43 @@ cmd_set_otp_pin	crates/rsk-oath/src/lib.rs:1068	35	decides	D1,D3,D4	validated, p
 spend_otp_retry	crates/rsk-oath/src/lib.rs:1186	14	decides	D3,D4	spends one unit of the retry counter and confirms the write by reading it back; false = no comparison will happen	-
 spend_and_match_otp_pin	crates/rsk-oath/src/lib.rs:1129	26	decides	D1,D4,D5	rec[0]==0 → refusal; spend before the comparison; Ok only on a real PIN match	-
 cmd_change_otp_pin	crates/rsk-oath/src/lib.rs:1242	41	decides	D1,D3,D4	clears validated and otp_pin_verified, spends an attempt through the choke point, and only then writes the new verifier	SEC-SEAM-002
-cmd_verify_otp_pin	crates/rsk-oath/src/lib.rs:1303	34	decides	D1,D3,D4	any attempt clears validated; success sets validated=true, otp_pin_verified=true and resets the counter	SEC-SEAM-002
-aid	crates/rsk-oath/src/lib.rs:1340	3	marshals	M	returns the constant OATH_AID	-
-deselect	crates/rsk-oath/src/lib.rs:1344	8	decides	D4	clears validated, otp_pin_verified and chain on leaving the applet	SEC-SEAM-001
-select	crates/rsk-oath/src/lib.rs:1353	35	decides	D4,D5	validated = !code_set || (reselect && validated), where code_set = try_has_key(EF_OATH_CODE).unwrap_or(true) — a failed probe locks a new SELECT rather than opening it	SEC-SEAM-001,SEC-SEAM-004,SEC-STORE-002
-process	crates/rsk-oath/src/lib.rs:1389	41	decides	D4,D5	line :1330 clears chain on any non-SEND REMAINING, and :1351 routes SEND REMAINING by chain — this cursor is itself the page authorization	SEC-POL-004
-p1p2_ok	crates/rsk-oath/src/lib.rs:1377	25	marshals	M	REVIEW: `DE AD` is a magic constant any host sends — it separates a typo, it does not refuse authorization (was D5)	-
-challenge_of	crates/rsk-oath/src/lib.rs:1461	7	marshals	M	the only condition is challenge length ≤ CHALLENGE_MAX	-
-calc_all_challenge	crates/rsk-oath/src/lib.rs:1469	7	marshals	M	body grammar: challenge must be the first TLV	-
-cred_property	crates/rsk-oath/src/lib.rs:1477	8	decides	D5	the only reader of PROP_TOUCH/PROP_INCREASING; an absent tag yields 0, i.e. "no touch required"	SEC-POL-004
-raise_mark	crates/rsk-oath/src/lib.rs:1486	32	decides	D3,D5	comparison of challenge with the high-water mark: false refuses CALCULATE, true rewrites the mark for persisting	SEC-POL-004
-mark_has_room	crates/rsk-oath/src/lib.rs:1527	12	decides	D5	decides whether the mark can be kept in the blob — the condition on which the bulk path issues a code at all	SEC-POL-004
-bulk_computable	crates/rsk-oath/src/lib.rs:1540	8	decides	D5	the condition for issuing a real code in CALCULATE ALL instead of the protocol no-response	SEC-POL-004
-alg_supported	crates/rsk-oath/src/lib.rs:1549	9	marshals	M	match on three literal nibbles; the domain is exactly oath_hmac's, so a spurious true yields None, not a code	-
-code_modulus	crates/rsk-oath/src/lib.rs:1559	8	decides	D5	code width: None → DATA_INVALID in VERIFY CODE, and the value itself sets the entropy of the compared OTP	SEC-POL-004
-oath_hmac	crates/rsk-oath/src/lib.rs:1568	18	decides	D2	computes the MAC itself, from which the OTP code and the access-code check are derived; None is the refusal path of both	SEC-POL-004
-calculate	crates/rsk-oath/src/lib.rs:1589	24	marshals	M	REVIEW: the decision to hand out a code is already taken in cmd_calculate/calc_all_page; no branch here moves D1-D4 (was D2)	SEC-POL-004
-present_creds	crates/rsk-oath/src/lib.rs:1645	25	marshals	M	enumeration of the in-RAM present bits into a list of fids, no policy	-
-is_oath_cred_fid	crates/rsk-oath/src/lib.rs:1641	4	decides	D5	the range that sweep must wipe on RESET; outside it a record survives the wipe	SEC-STORE-006
-is_oath_lock_fid	crates/rsk-oath/src/lib.rs:1649	13	decides	D5	which records count as locks — deleting them last is itself the order the wipe relies on	SEC-STORE-006
-wipe_oath	crates/rsk-oath/src/lib.rs:1676	22	decides	D3,D4	returns the verdict of the whole wipe and brackets it with re-arms of the at-rest lap	SEC-STORE-006
-sweep_phases	crates/rsk-oath/src/lib.rs:1699	22	decides	D3,D5	phase order: credentials first, then locks; any orphan yields MEMORY_FAILURE	SEC-STORE-001,SEC-STORE-006
-sweep	crates/rsk-oath/src/lib.rs:1722	38	decides	D3	Ok only on a complete walk: a truncated walk returns MEMORY_FAILURE, not "range clean"	SEC-STORE-002,SEC-STORE-006
-split_period	crates/rsk-oath/src/lib.rs:1783	18	marshals	M	cuts the numeric <period>/ prefix out of the name for display	-
-algo_name	crates/rsk-oath/src/lib.rs:1802	9	marshals	M	mapping of the nibble to an ASCII label for the screen	-
-for_each_cred	crates/rsk-oath/src/lib.rs:1836	48	decides	D2	the only path that unseals all credentials with no gate at all; whatever does not make it into OathCredView does not leak	-
-find_cred	crates/rsk-oath/src/lib.rs:1864	19	decides	D5	Some/None on a TAG_NAME match selects the record that will be deleted or rewritten, and refuses RENAME to a taken name	SEC-POL-004
-migrate_seal	crates/rsk-oath/src/lib.rs:1887	23	decides	D3	a boot pass that rewrites every slot; raw sized MAX_BLOB is what keeps a truncated record from being mis-resealed	-
-reseal_if_plaintext	crates/rsk-oath/src/lib.rs:1930	50	decides	D3,D5	decides under which arm to rebuild the secret, and skips the write if request_rescrub refused	-
-is_legacy_plaintext	crates/rsk-oath/src/lib.rs:2029	14	decides	D5	the predicate whose error destroys the HMAC secret by double wrapping	-
-free_slot	crates/rsk-oath/src/lib.rs:2020	11	decides	D5	the slot number PUT will overwrite; an error means the silent loss of a live credential	SEC-STORE-002
-tlv_at	crates/rsk-oath/src/lib.rs:2032	23	decides	M	decodes one BER-TLV, None on a truncated or overflowing one	-
-find_tag_range	crates/rsk-oath/src/lib.rs:2056	13	decides	M	linear TLV walk up to the first tag match	-
-parse_put	crates/rsk-oath/src/lib.rs:2119	67	decides	D3,D5	the only path that refuses PUT on its body: secret bounds, digits, alg, tag order and duplicate tags — before a byte is written	SEC-POL-004
-new	crates/rsk-oath/src/lib.rs:2198	3	marshals	M	wraps the slice in an iterator	-
-next	crates/rsk-oath/src/lib.rs:2206	32	decides	M	TLV iteration with a special case for TAG_PROPERTY; parse_put builds the refusal itself from the remainder it.rest	-
-emit_tlv	crates/rsk-oath/src/lib.rs:2240	16	decides	M	appends a TLV to the buffer, false on overflow	-
-ct_eq	crates/rsk-oath/src/lib.rs:2254	5	decides	D5	constant-time comparison that decides VALIDATE, SET CODE and OTP-PIN; a short response must not match	-
+cmd_verify_otp_pin	crates/rsk-oath/src/lib.rs:1318	34	decides	D1,D3,D4	any attempt clears validated; success sets validated=true, otp_pin_verified=true and resets the counter	SEC-SEAM-002
+aid	crates/rsk-oath/src/lib.rs:1355	3	marshals	M	returns the constant OATH_AID	-
+deselect	crates/rsk-oath/src/lib.rs:1359	8	decides	D4	clears validated, otp_pin_verified and chain on leaving the applet	SEC-SEAM-001
+select	crates/rsk-oath/src/lib.rs:1368	35	decides	D4,D5	validated = !code_set || (reselect && validated), where code_set = try_has_key(EF_OATH_CODE).unwrap_or(true) — a failed probe locks a new SELECT rather than opening it	SEC-SEAM-001,SEC-SEAM-004,SEC-STORE-002
+process	crates/rsk-oath/src/lib.rs:1404	41	decides	D4,D5	line :1330 clears chain on any non-SEND REMAINING, and :1351 routes SEND REMAINING by chain — this cursor is itself the page authorization	SEC-POL-004
+p1p2_ok	crates/rsk-oath/src/lib.rs:1392	25	marshals	M	REVIEW: `DE AD` is a magic constant any host sends — it separates a typo, it does not refuse authorization (was D5)	-
+challenge_of	crates/rsk-oath/src/lib.rs:1476	7	marshals	M	the only condition is challenge length ≤ CHALLENGE_MAX	-
+calc_all_challenge	crates/rsk-oath/src/lib.rs:1484	7	marshals	M	body grammar: challenge must be the first TLV	-
+cred_property	crates/rsk-oath/src/lib.rs:1492	8	decides	D5	the only reader of PROP_TOUCH/PROP_INCREASING; an absent tag yields 0, i.e. "no touch required"	SEC-POL-004
+raise_mark	crates/rsk-oath/src/lib.rs:1501	32	decides	D3,D5	comparison of challenge with the high-water mark: false refuses CALCULATE, true rewrites the mark for persisting	SEC-POL-004
+mark_has_room	crates/rsk-oath/src/lib.rs:1542	12	decides	D5	decides whether the mark can be kept in the blob — the condition on which the bulk path issues a code at all	SEC-POL-004
+bulk_computable	crates/rsk-oath/src/lib.rs:1555	8	decides	D5	the condition for issuing a real code in CALCULATE ALL instead of the protocol no-response	SEC-POL-004
+alg_supported	crates/rsk-oath/src/lib.rs:1564	9	marshals	M	match on three literal nibbles; the domain is exactly oath_hmac's, so a spurious true yields None, not a code	-
+code_modulus	crates/rsk-oath/src/lib.rs:1574	8	decides	D5	code width: None → DATA_INVALID in VERIFY CODE, and the value itself sets the entropy of the compared OTP	SEC-POL-004
+oath_hmac	crates/rsk-oath/src/lib.rs:1583	18	decides	D2	computes the MAC itself, from which the OTP code and the access-code check are derived; None is the refusal path of both	SEC-POL-004
+calculate	crates/rsk-oath/src/lib.rs:1604	24	marshals	M	REVIEW: the decision to hand out a code is already taken in cmd_calculate/calc_all_page; no branch here moves D1-D4 (was D2)	SEC-POL-004
+present_creds	crates/rsk-oath/src/lib.rs:1660	25	marshals	M	enumeration of the in-RAM present bits into a list of fids, no policy	-
+is_oath_cred_fid	crates/rsk-oath/src/lib.rs:1656	4	decides	D5	the range that sweep must wipe on RESET; outside it a record survives the wipe	SEC-STORE-006
+is_oath_lock_fid	crates/rsk-oath/src/lib.rs:1664	13	decides	D5	which records count as locks — deleting them last is itself the order the wipe relies on	SEC-STORE-006
+wipe_oath	crates/rsk-oath/src/lib.rs:1691	22	decides	D3,D4	returns the verdict of the whole wipe and brackets it with re-arms of the at-rest lap	SEC-STORE-006
+sweep_phases	crates/rsk-oath/src/lib.rs:1714	22	decides	D3,D5	phase order: credentials first, then locks; any orphan yields MEMORY_FAILURE	SEC-STORE-001,SEC-STORE-006
+sweep	crates/rsk-oath/src/lib.rs:1737	38	decides	D3	Ok only on a complete walk: a truncated walk returns MEMORY_FAILURE, not "range clean"	SEC-STORE-002,SEC-STORE-006
+split_period	crates/rsk-oath/src/lib.rs:1798	18	marshals	M	cuts the numeric <period>/ prefix out of the name for display	-
+algo_name	crates/rsk-oath/src/lib.rs:1817	9	marshals	M	mapping of the nibble to an ASCII label for the screen	-
+for_each_cred	crates/rsk-oath/src/lib.rs:1851	48	decides	D2	the only path that unseals all credentials with no gate at all; whatever does not make it into OathCredView does not leak	-
+find_cred	crates/rsk-oath/src/lib.rs:1879	19	decides	D5	Some/None on a TAG_NAME match selects the record that will be deleted or rewritten, and refuses RENAME to a taken name	SEC-POL-004
+migrate_seal	crates/rsk-oath/src/lib.rs:1902	23	decides	D3	a boot pass that rewrites every slot; raw sized MAX_BLOB is what keeps a truncated record from being mis-resealed	-
+reseal_if_plaintext	crates/rsk-oath/src/lib.rs:1945	50	decides	D3,D5	decides under which arm to rebuild the secret, and skips the write if request_rescrub refused	-
+is_legacy_plaintext	crates/rsk-oath/src/lib.rs:2044	14	decides	D5	the predicate whose error destroys the HMAC secret by double wrapping	-
+free_slot	crates/rsk-oath/src/lib.rs:2035	11	decides	D5	the slot number PUT will overwrite; an error means the silent loss of a live credential	SEC-STORE-002
+tlv_at	crates/rsk-oath/src/lib.rs:2047	23	decides	M	decodes one BER-TLV, None on a truncated or overflowing one	-
+find_tag_range	crates/rsk-oath/src/lib.rs:2071	13	decides	M	linear TLV walk up to the first tag match	-
+parse_put	crates/rsk-oath/src/lib.rs:2134	67	decides	D3,D5	the only path that refuses PUT on its body: secret bounds, digits, alg, tag order and duplicate tags — before a byte is written	SEC-POL-004
+new	crates/rsk-oath/src/lib.rs:2213	3	marshals	M	wraps the slice in an iterator	-
+next	crates/rsk-oath/src/lib.rs:2221	32	decides	M	TLV iteration with a special case for TAG_PROPERTY; parse_put builds the refusal itself from the remainder it.rest	-
+emit_tlv	crates/rsk-oath/src/lib.rs:2255	16	decides	M	appends a TLV to the buffer, false on overflow	-
+ct_eq	crates/rsk-oath/src/lib.rs:2269	5	decides	D5	constant-time comparison that decides VALIDATE, SET CODE and OTP-PIN; a short response must not match	-
 otp_status_record	crates/rsk-device/src/ccid.rs:527	7	marshals	M	rearranges the bytes of an already-built status frame for boot-seeding the keyboard report; touches no gate at all	-
 coord	crates/rsk-fido/src/clientpin.rs:109	7	marshals	M	try_into of the platform's PUBLIC key coordinate into 32 bytes before ECDH (clientpin.rs:760); a refusal is the width on the wire (parity with YubiKey), not a gate verdict	-
 derive_chacha_key	crates/rsk-fido/src/credential.rs:219	6	decides	D2	computes the ChaCha box key from the seed; it opens the credential box, EF_RP, the nick and largeBlob — 9 production call sites	SEC-FIDO-004
@@ -141,7 +141,7 @@ coord	crates/rsk-fido/src/vendor.rs:170	6	marshals	M	the same try_into of a coor
 open_channel_key	crates/rsk-fido/src/vendor.rs:556	30	decides	D2	checks the Poly1305 tag under the MSE session key with the device's public key in the AAD; its Ok is the 32-byte lock key with which UNLOCK/AUT_ENABLE unseal the seed	SEC-FIDO-004,SEC-FIDO-007
 serial_name	crates/rsk-oath/src/lib.rs:239	12	decides	D2	the 8-byte id goes out in the UNauthenticated SELECT (lib.rs:1260) and serves as ykman's PBKDF2 salt: a one-way sha256 of serial_hash, which, handed out directly, would reveal the root identifier	-
 otp_pin_record_v1	crates/rsk-oath/src/lib.rs:1098	9	decides	D4	builds the gate record itself — the PIN verifier and the full MAX_OTP_COUNTER budget; the three sites (set/change/unblock) raise the budget with exactly this record	SEC-LAT-003
-parse_exact	crates/rsk-oath/src/lib.rs:2070	18	decides	D5	strict positional grammar is the only thing that separates "73 00" = clear the access code (lib.rs:374) from a body with a key and no proof: an extra byte after the tag is 6A80 here, not a deletion of the code	SEC-SEAM-006,SEC-POL-004
+parse_exact	crates/rsk-oath/src/lib.rs:2085	18	decides	D5	strict positional grammar is the only thing that separates "73 00" = clear the access code (lib.rs:374) from a body with a key and no proof: an extra byte after the tag is 6A80 here, not a deletion of the code	SEC-SEAM-006,SEC-POL-004
 stage_dek	crates/rsk-openpgp/src/pin.rs:519	37	decides	D2	derives the session key from the new PIN and re-seals the DEK under it into the stage slot; the rescrub re-arm (pin.rs:539) is also here, on the FIRST append of the sequence, otherwise a reset has time to pass over unwiped copies	-
 reseed_pin	crates/rsk-openpgp/src/pin.rs:596	30	decides	D4	makes new the reference value of PW1/PW3 and gives back the attempt budget (pin_reset_retries) without comparing A SINGLE old value — the authority rests entirely with the caller	SEC-LAT-003
 rewrap_dek	crates/rsk-openpgp/src/pin.rs:826	23	decides	D2	derives the session key from the PIN and re-seals the DEK under it: after it, the DEK opens with the new PIN and stops opening with the old one	-
