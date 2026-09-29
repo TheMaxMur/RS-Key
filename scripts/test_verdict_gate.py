@@ -884,7 +884,7 @@ def test_the_script_exits_non_zero_and_names_the_weakening(checkout):
         rewrite("SeamMut_*.cfg", "SeamMut_*.cfg GREEN 999999"), encoding="utf-8")
     done = gate(checkout)
     assert done.returncode == 1, (done.stdout, done.stderr)
-    assert "SeamMut_BugSigPinNotSpent.cfg" in done.stderr, done.stderr
+    assert "SeamMut_BugAdminOpensKeyOps.cfg" in done.stderr, done.stderr
     assert "owes RED" in done.stderr, done.stderr
 
 

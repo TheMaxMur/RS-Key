@@ -80,12 +80,12 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-TRACE-001` | `R4aRawRefinesB` | 2 of 9 | 0 | 2 of 9 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-TRACE-002` | `R4bAlphaMatchesGamma` | 1 of 8 | 0 | 1 of 8 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-TRACE-004` | `R4cGateAnswers` | 2 of 9 | 0 | 2 of 9 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
-| `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | 2 of 31 | 6 | 1 of 2 | 0 | 0 | 10 | 0 | — | MODELLED-ONLY |
-| `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | 2 of 26 | 2 | 1 of 2 | 0 | 0 | 10 | 0 | — | MODELLED-ONLY |
-| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | 2 of 31 | 6 | 1 of 2 | 0 | 0 | 10 | 0 | — | MODELLED-ONLY |
-| `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | 2 of 26 | 2 | 1 of 2 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
-| `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | 2 of 26 | 2 | 1 of 2 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
-| `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | 2 of 25 | 1 | 1 of 2 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | 2 of 35 | 6 | 1 of 2 | 0 | 0 | 10 | 0 | — | MODELLED-ONLY |
+| `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | 2 of 30 | 2 | 1 of 2 | 0 | 0 | 10 | 0 | — | MODELLED-ONLY |
+| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | 2 of 39 | 9 | 1 of 2 | 0 | 0 | 10 | 0 | — | MODELLED-ONLY |
+| `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | 2 of 30 | 2 | 1 of 2 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
+| `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | 2 of 30 | 2 | 1 of 2 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |
+| `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | 2 of 29 | 1 | 1 of 2 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-STORE-001` | `NoOrphanedMetadata` | 2 of 13 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (3 input(s) newer) | MODELLED-ONLY |
 | `SEC-STORE-002` | `NoFalseAbsent` | 2 of 13 | 2 | 0 of 0 | 3 | 0 | 4 | 0 | `982fb2f` stale (3 input(s) newer) | BOUNDED |
 | `SEC-STORE-003` | `NoRecordLostToMetaWrite` | 2 of 15 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (3 input(s) newer) | MODELLED-ONLY |
@@ -95,12 +95,12 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-LAT-001` | `NoAuthWhenBlocked` | 2 of 6 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-LAT-002` | `WrongAttemptIsCharged` | 2 of 7 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | 2 of 6 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-POL-001` | `PivOperationNeedsSlotPolicy` | 1 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-POL-002` | `PivAlwaysSpendsFreshness` | 1 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-POL-003` | `AttributeChangeInvalidatesTheKey` | 1 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-POL-004` | `OathCredentialNeedsItsGates` | 1 of 13 | 2 | 0 of 0 | 0 | 0 | 3 | 4 | — | MODELLED-ONLY |
-| `SEC-POL-005` | `OtpSlotMutationNeedsItsCode` | 1 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-POL-006` | `OtpCounterNeverRepeats` | 1 of 15 | 4 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-POL-001` | `PivOperationNeedsSlotPolicy` | 1 of 13 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-POL-002` | `PivAlwaysSpendsFreshness` | 1 of 14 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-POL-003` | `AttributeChangeInvalidatesTheKey` | 1 of 13 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-POL-004` | `OathCredentialNeedsItsGates` | 1 of 14 | 2 | 0 of 0 | 0 | 0 | 3 | 4 | — | MODELLED-ONLY |
+| `SEC-POL-005` | `OtpSlotMutationNeedsItsCode` | 1 of 13 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-POL-006` | `OtpCounterNeverRepeats` | 1 of 16 | 4 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-ADM-001` | `AdminSurfaceAlwaysReachable` | 1 of 6 | 1 | 0 of 0 | 0 | 1 | 0 | 0 | — | MODELLED-ONLY |
 | `SEC-ADM-002` | `PrivilegedOpNeedsPresence` | 1 of 6 | 1 | 0 of 0 | 0 | 0 | 3 | 4 | — | MODELLED-ONLY |
 | `SEC-ADM-003` | `DisableSetSurvivesLockWrite` | 1 of 6 | 1 | 0 of 0 | 0 | 0 | 0 | 0 | — | MODELLED-ONLY |

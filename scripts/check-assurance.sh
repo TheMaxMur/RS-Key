@@ -23,7 +23,7 @@ run "toolchain TCB registry"   python scripts/toolchain_gate.py
 # decision record whose numbers nothing re-derives is a decision that was true
 # the day it was typed, which is what the registry above exists to prevent.
 run "11C decision measurements" python scripts/level11c_gate.py
-# 235 of the 236 configurations say "do not edit by hand" in their first line,
+# 245 of the 246 configurations say "do not edit by hand" in their first line,
 # and nothing made that true: deleting a whole mutant family left every row
 # green, because run-tlc.sh lists families with `ls` so the tiers shrank with
 # them. This regenerates into a temp tree and diffs.

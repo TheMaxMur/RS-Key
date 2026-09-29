@@ -445,7 +445,10 @@ SEAM_BUGS=(BugSelectKeepsOtherApplet BugReselectResetsStatus
            BugCardResetKeepsStatus BugAdminOpensKeyOps
            BugFailedChangeKeepsStatus BugPinFreshNotSpent BugPinFreshOutlivesPin
            BugSigPinNotSpent BugDecipherGhostSpentLikeSig
-           BugUserStatusOpensAdmin BugRefusedValidateGrants
+           BugDecipherPinSpentLikeSig BugAnyPgpVerifyArmsSig
+           BugRefusedPw1ChangeKeepsSig
+           BugUserStatusOpensAdmin BugAdminPolicyIgnoresApplet
+           BugRefusedValidateGrants
            BugPwStatusIgnoresAdmin BugPivChangeResetsStatus
            BugRefusedValidateDropsUnlock BugRemoveCodeUnvalidated
            BugFreshCardOpensOtpPin BugDeselectKeepsOathUnlock
@@ -468,7 +471,14 @@ seam_target() {
     # The same invariant's STRUCTURAL clause `held["pw1"] = psig`, split the
     # other way: the ghost spends at the decipher reference, `held` does not.
     BugDecipherGhostSpentLikeSig) echo NoKeyOpOnTheAdminStatus ;;
+    # Its mirror on the implementation half, and the ghost's two per-reference
+    # answers turned: each splits `held["pw1"] = psig` from one side.
+    BugDecipherPinSpentLikeSig) echo NoKeyOpOnTheAdminStatus ;;
+    BugAnyPgpVerifyArmsSig)     echo NoKeyOpOnTheAdminStatus ;;
+    BugRefusedPw1ChangeKeepsSig) echo NoKeyOpOnTheAdminStatus ;;
     BugUserStatusOpensAdmin)    echo NoKeyOpOnTheAdminStatus ;;
+    # The requirement's per-applet dispatch collapsed: the admin recorder fires.
+    BugAdminPolicyIgnoresApplet) echo NoKeyOpOnTheAdminStatus ;;
     BugRefusedValidateGrants)   echo NoStatusAfterARefusedAuth ;;
     BugPwStatusIgnoresAdmin)    echo NoKeyOpOnTheAdminStatus ;;
     BugPivChangeResetsStatus)   echo ExemptRefusalPreservesStatus ;;
@@ -655,7 +665,7 @@ POLICY_BUGS=(BugPivPolicyIgnored BugPivAlwaysDoesNotSpend
              BugPgpAttributeKeepsKey BugOathCodeIgnored BugOathTouchIgnored
              BugOtpCodeIgnored BugOtpCounterRepeats
              BugOtpPressTypesUnpersisted BugOtpBootKeepsPosition
-             BugOtpSwapKeepsSession)
+             BugOtpSwapKeepsSession BugNeverSlotOwesASpend)
 
 policy_target() {
   case "$1" in
@@ -669,6 +679,7 @@ policy_target() {
     BugOtpPressTypesUnpersisted)  echo OtpCounterNeverRepeats ;;
     BugOtpBootKeepsPosition)      echo OtpCounterNeverRepeats ;;
     BugOtpSwapKeepsSession)       echo OtpCounterNeverRepeats ;;
+    BugNeverSlotOwesASpend)       echo PivAlwaysSpendsFreshness ;;
   esac
 }
 POLICY_INV=(PivOperationNeedsSlotPolicy PivAlwaysSpendsFreshness

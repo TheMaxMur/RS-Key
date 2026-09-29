@@ -1825,8 +1825,8 @@ so the kill measured a defence in depth rather than the modelled defect. It now
 widens both layers, and `put_data_c4_refuses_a_user_status` drives the command
 so the outer gate is asserted too.
 
-The live roster is **87 entries: 79 of the 82 executable patches killed, three
-measured gaps, five unreachable with recorded evidence.**
+The live roster is **92 entries: all 86 executable patches killed, six
+unreachable with recorded evidence.**
 
 ## The sixth module — `RSKeyAdminSurface.tla`
 
@@ -2675,7 +2675,7 @@ describes. Falsified through the row itself, exit codes taken with no pipe:
 
 | Mutation | What the row said | Exit |
 |---|---|---|
-| the tree as it stands | `235 generated configuration(s) reproduce byte-for-byte, 1 hand-written` | 0 |
+| the tree as it stands | `245 generated configuration(s) reproduce byte-for-byte, 1 hand-written` | 0 |
 | one `BootCarryMut_*.cfg` deleted | `… writes it and formal/ does not have it` | **1** |
 | `MaxWeak = 2` → `1` inside one generated file | `differs … line 5: generator writes '    MaxWeak = 2', the tree has '    MaxWeak = 1'` | **1** |
 | the same edit made in the *generator* instead | 13 rows `differs …` — every `Boot*` configuration | **1** |
@@ -2787,7 +2787,7 @@ to itself.
 
 | Mutation | What the row said | Exit |
 |---|---|---|
-| the tree as it stands | `235 configuration(s) held to 68 entries (26 wildcard families covering 193), 6 ratchets, 1 exempt, 1 counterfactual repair(s)` | 0 |
+| the tree as it stands | `245 configuration(s) held to 68 entries (26 wildcard families covering 203), 6 ratchets, 1 exempt, 1 counterfactual repair(s)` | 0 |
 | `SeamMut_*.cfg` `RED` → `GREEN` | `… requires GREEN, but the configuration switches BugAdminOpensKeyOps on and so owes RED` | **1** |
 | the `SeamSolo_*.cfg` row deleted | `no verdict entry in formal/floors.txt and no registered exemption` | **1** |
 | a broader `SeamMut*` laid above it | `` `SeamMut_*.cfg` never decides anything: … `SeamMut*` matches 19 configuration(s) first `` | **1** |
@@ -2953,7 +2953,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-TRACE-004` | `R4cGateAnswers` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 | 0 |
 | `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 7 | 6 | 0 | 0 | 0 |
 | `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
-| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 7 | 6 | 0 | 0 | 0 |
+| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 11 | 9 | 0 | 0 | 0 |
 | `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 1 | 1 | 0 | 0 | 0 |
@@ -2967,7 +2967,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-LAT-002` | `WrongAttemptIsCharged` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-POL-001` | `PivOperationNeedsSlotPolicy` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 1 | 0 | 0 | 0 |
-| `SEC-POL-002` | `PivAlwaysSpendsFreshness` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 1 | 0 | 0 | 0 |
+| `SEC-POL-002` | `PivAlwaysSpendsFreshness` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-POL-003` | `AttributeChangeInvalidatesTheKey` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-POL-004` | `OathCredentialNeedsItsGates` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-POL-005` | `OtpSlotMutationNeedsItsCode` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 1 | 0 | 0 | 0 |

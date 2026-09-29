@@ -27,7 +27,8 @@ CONSTANTS
     BugOtpCounterRepeats,
     BugOtpPressTypesUnpersisted,
     BugOtpBootKeepsPosition,
-    BugOtpSwapKeepsSession
+    BugOtpSwapKeepsSession,
+    BugNeverSlotOwesASpend
 
 PivPolicies == {"never", "once", "always"}
 Algorithms  == {"a", "b"}
@@ -146,7 +147,10 @@ PivKeyOp ==
        /\ pivFresh' = spent
        /\ viol' = viol
             \cup (IF ~PivAllowed THEN {"PivOperationNeedsSlotPolicy"} ELSE {})
-            \cup (IF pivPolicy = "always" /\ pivFresh /\ spent
+            \* The switch lifts the recorder off ALWAYS, so a NEVER slot owes the
+            \* spend the implementation rightly skips there.
+            \cup (IF (pivPolicy = "always" \/ BugNeverSlotOwesASpend)
+                     /\ pivFresh /\ spent
                     THEN {"PivAlwaysSpendsFreshness"} ELSE {})
        /\ UNCHANGED << pivPolicy, pivVerified,
                        pgpAttribute, pgpKeyAttribute, pgpKeyPresent,

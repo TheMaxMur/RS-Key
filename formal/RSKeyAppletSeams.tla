@@ -68,9 +68,18 @@ CONSTANTS
     \* says nothing about no. 82, so a DECIPHER that spent `psig` would retire a
     \* freshness the implementation still holds.
     BugDecipherGhostSpentLikeSig,
+    \* The same widening on the IMPLEMENTATION half: a PW1.82 key operation under
+    \* the one-shot status spends PW1.81 as a signature does.
+    BugDecipherPinSpentLikeSig,
+    \* The requirement ghost's two per-reference answers, each turned: `psig`
+    \* armed by a VERIFY of any reference, and kept by a refused PW1 change.
+    BugAnyPgpVerifyArmsSig,
+    BugRefusedPw1ChangeKeepsSig,
     \* A user status opening the ADMIN surface -- the reverse of
     \* BugAdminOpensKeyOps, and unfalsifiable until the surface existed.
     BugUserStatusOpensAdmin,
+    \* The admin REQUIREMENT naming one status, PW3, for both applets' surfaces.
+    BugAdminPolicyIgnoresApplet,
     \* A refused OATH access-code VALIDATE that GRANTS the unlock. The refusal
     \* rule exempts that action entirely, so nothing could tell the two apart.
     BugRefusedValidateGrants,
@@ -325,7 +334,7 @@ PgpVerify(r, ok) ==
     /\ sel = Pgp
     /\ r \in {"pw1", "pw2", "pw3"}
     /\ held' = [held EXCEPT ![r] = ok]
-    /\ psig' = IF r = "pw1" THEN ok ELSE psig
+    /\ psig' = IF r = "pw1" \/ BugAnyPgpVerifyArmsSig THEN ok ELSE psig
     /\ refused' = IF ok THEN (IF refused = r THEN NoRef ELSE refused) ELSE r
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
@@ -336,7 +345,7 @@ PgpChangeRefused(r) ==
     /\ sel = Pgp
     /\ r \in {"pw1", "pw2", "pw3"}
     /\ held' = [held EXCEPT ![r] = FALSE]
-    /\ psig' = IF r = "pw1" THEN FALSE ELSE psig
+    /\ psig' = IF r = "pw1" /\ ~BugRefusedPw1ChangeKeepsSig THEN FALSE ELSE psig
     /\ refused' = r
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
@@ -458,11 +467,12 @@ PgpKeyOp(r) ==
     /\ PgpKeyOpGuard(r)
     /\ viol' = IF PgpKeyOpPolicy(r) THEN viol
                                     ELSE viol \cup {"NoKeyOpOnTheAdminStatus"}
-    /\ held' = IF r = "pw1" /\ oneShotSig /\ ~BugSigPinNotSpent
+    \* The two decipher switches widen one half each, so `held["pw1"] = psig`
+    \* falls either way: a PW1.81 status dropped that the requirement keeps, or
+    \* kept after the requirement retired it.
+    /\ held' = IF (r = "pw1" \/ BugDecipherPinSpentLikeSig) /\ oneShotSig
+                    /\ ~BugSigPinNotSpent
                  THEN [held EXCEPT !["pw1"] = FALSE] ELSE held
-    \* The switch widens the GHOST alone: `held` still spends at PW1.81 only, so
-    \* a decipher retires the requirement's freshness while the implementation
-    \* keeps it, which is the split `held["pw1"] = psig` exists to see.
     /\ psig'  = IF (r = "pw1" \/ BugDecipherGhostSpentLikeSig) /\ oneShotSig
                   THEN FALSE ELSE psig
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, refused >>
@@ -505,7 +515,9 @@ AdminOpGuard(a) ==
       THEN (IF a = Piv THEN held["pivMgm"] \/ held["pivPin"]
                        ELSE held["pw3"] \/ held["pw1"] \/ held["pw2"])
       ELSE (IF a = Piv THEN held["pivMgm"] ELSE held["pw3"])
-AdminOpPolicy(a) == IF a = Piv THEN held["pivMgm"] ELSE held["pw3"]
+AdminOpPolicy(a) ==
+    IF BugAdminPolicyIgnoresApplet THEN held["pw3"]
+    ELSE IF a = Piv THEN held["pivMgm"] ELSE held["pw3"]
 
 AdminOp(a) ==
     /\ sel = a
