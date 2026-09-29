@@ -267,3 +267,58 @@ fn credprotect3_box_refused_on_u2f_but_level1_signs() {
     assert_eq!(sw, Sw::OK, "credProtect=1 box authenticates over U2F");
     assert!(!body.is_empty());
 }
+
+/// enumerateCredentialsBegin for `RP_ID`, MACed under `token` (protocol two) over
+/// the subcommand byte and its encoded subCommandParams (§6.8).
+fn cm_enumerate_begin(token: &[u8; 32]) -> Vec<u8> {
+    use crate::consts::CM_ENUMERATE_CREDS_BEGIN;
+    let rp_id_hash = rsk_crypto::sha256(RP_ID.as_bytes());
+    let mut params = [0u8; 40];
+    let pn = {
+        let mut e = Encoder::new(Cursor::new(&mut params[..]));
+        e.map(1).unwrap().u8(1).unwrap().bytes(&rp_id_hash).unwrap();
+        e.writer().position()
+    };
+    let mut msg = vec![CM_ENUMERATE_CREDS_BEGIN as u8];
+    msg.extend_from_slice(&params[..pn]);
+    let param = pin_auth(token, &msg);
+
+    let mut buf = [0u8; 128];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(4).unwrap();
+        e.u8(1).unwrap().u64(CM_ENUMERATE_CREDS_BEGIN).unwrap();
+        e.u8(2).unwrap().map(1).unwrap();
+        e.u8(1).unwrap().bytes(&rp_id_hash).unwrap();
+        e.u8(3).unwrap().u64(2).unwrap();
+        e.u8(4).unwrap().bytes(&param).unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// FIDO credProtect P-4 on the wire: enumerateCredentials reports (0x0A) exactly
+/// the level each credential was made with — level 2 included, which the unit
+/// rows in credmgmt_tests.rs never register.
+#[test]
+fn enumerate_credentials_reports_the_level_each_credential_was_made_with() {
+    use crate::consts::CTAP_CREDENTIAL_MGMT;
+    use crate::state::PERM_CM;
+    for level in [
+        CRED_PROT_UV_OPTIONAL,
+        CRED_PROT_UV_OPTIONAL_WITH_LIST,
+        CRED_PROT_UV_REQUIRED,
+    ] {
+        let mut a = Authr::fresh();
+        assert_ok(&a.send(CTAP_MAKE_CREDENTIAL, &mc_credprotect(level, true)));
+        let token = a.arm_token(PERM_CM);
+        let r = a.send(CTAP_CREDENTIAL_MGMT, &cm_enumerate_begin(&token));
+        assert_ok(&r);
+        let mut d = field_at(&r.body, 0x0A).expect("credProtect (0x0A) present");
+        assert_eq!(
+            d.u64().unwrap(),
+            level,
+            "a level-{level} credential must enumerate as level {level}"
+        );
+    }
+}

@@ -12,11 +12,11 @@
 use super::{Authr, assert_ok, field_at};
 use crate::consts::{
     ALG_ES256, CTAP_GET_ASSERTION, CTAP_LARGE_BLOBS, CTAP_MAKE_CREDENTIAL, MAX_LARGE_BLOB_SIZE,
+    PUBLIC_KEY_TYPE,
 };
 use crate::error::CtapError;
-use minicbor::Decoder;
-use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
+use minicbor::{Decoder, Encoder};
 
 const RP_ID: &str = "example.com";
 
@@ -357,4 +357,118 @@ fn deleting_the_credential_takes_the_blob() {
         !a.fs.has_data(crate::consts::EF_CRED_BLOB),
         "the blob must not outlive the credential it belonged to"
     );
+}
+
+/// A getAssertion naming `id` whose `largeBlob` input is a map of `members`
+/// entries written by `write`, whatever shape they make.
+fn ga_large_blob_members(
+    id: &[u8],
+    members: u64,
+    write: impl Fn(&mut Encoder<Cursor<&mut [u8]>>),
+) -> Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(4).unwrap();
+        e.u8(1).unwrap().str(RP_ID).unwrap();
+        e.u8(2).unwrap().bytes(&[0xEF; 32]).unwrap();
+        e.u8(3).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(id).unwrap();
+        e.str("type").unwrap().str(PUBLIC_KEY_TYPE).unwrap();
+        e.u8(4).unwrap().map(1).unwrap();
+        e.str("largeBlob").unwrap().map(members).unwrap();
+        write(&mut e);
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// FIDO largeBlob P-1. Every discoverable credential here gets a blob slot, so
+/// `preferred` is met exactly as `required` is and §12.4 has the registration
+/// say `supported: true`.
+#[test]
+fn a_preferred_blob_on_a_discoverable_credential_is_supported() {
+    let mut a = Authr::fresh();
+    let r = a.send(
+        CTAP_MAKE_CREDENTIAL,
+        &mc_large_blob(Some("preferred"), true),
+    );
+    assert_ok(&r);
+    let value = unsigned_large_blob(&r.body, 0x06)
+        .expect("a met `preferred` must answer in unsignedExtensionOutputs (0x06)");
+    let mut d = Decoder::new(&value);
+    assert_eq!(d.map().unwrap(), Some(1));
+    assert_eq!(d.str().unwrap(), "supported");
+    assert!(d.bool().unwrap(), "a met `preferred` must report support");
+}
+
+/// FIDO largeBlob P-7, the branch this device takes (P-6 is its opposite): §12.4
+/// lets an authenticator give every new credential large-blob capability, and
+/// this one does for each discoverable credential — asked for or not.
+#[test]
+fn a_credential_made_without_the_extension_still_takes_a_blob() {
+    let mut a = Authr::fresh();
+    let mc = a.send(CTAP_MAKE_CREDENTIAL, &mc_large_blob(None, true));
+    assert_ok(&mc);
+    let id = cred_id(&mc.body);
+
+    let blob = [0x3Cu8; 48];
+    let w = a.send(
+        CTAP_GET_ASSERTION,
+        &ga_large_blob(Some(&id), Some((&blob, 99))),
+    );
+    assert_ok(&w);
+    assert!(
+        written_flag(&w.body),
+        "a named discoverable credential must accept the blob"
+    );
+
+    let r = a.send(CTAP_GET_ASSERTION, &ga_large_blob(Some(&id), None));
+    assert_ok(&r);
+    let value = unsigned_large_blob(&r.body, 0x08).expect("unsignedExtensionOutputs (0x08)");
+    let mut d = Decoder::new(&value);
+    assert_eq!(d.map().unwrap(), Some(2));
+    assert_eq!(d.str().unwrap(), "blob");
+    assert_eq!(d.bytes().unwrap(), &blob[..]);
+    assert_eq!(d.str().unwrap(), "originalSize");
+    assert_eq!(d.u64().unwrap(), 99);
+}
+
+/// FIDO largeBlob F-2. §12.4's getAssertion input has three members and answers
+/// anything outside its CDDL with INVALID_CBOR — a stray member included, even
+/// beside a read or a write that is otherwise well formed.
+#[test]
+fn an_unknown_member_in_the_assertion_input_is_invalid_cbor() {
+    let mut a = Authr::fresh();
+    let mc = a.send(CTAP_MAKE_CREDENTIAL, &mc_large_blob(Some("required"), true));
+    assert_ok(&mc);
+    let id = cred_id(&mc.body);
+    // Without the stray member the same read is served.
+    assert_ok(&a.send(CTAP_GET_ASSERTION, &ga_large_blob(Some(&id), None)));
+
+    let alone = ga_large_blob_members(&id, 1, |e| {
+        e.str("zz-nope").unwrap().u8(1).unwrap();
+    });
+    let beside_read = ga_large_blob_members(&id, 2, |e| {
+        e.str("read").unwrap().bool(true).unwrap();
+        e.str("zz-nope").unwrap().u8(1).unwrap();
+    });
+    let beside_write = ga_large_blob_members(&id, 3, |e| {
+        e.str("write").unwrap().bytes(b"x").unwrap();
+        e.str("zz-nope").unwrap().u8(1).unwrap();
+        e.str("originalSize").unwrap().u8(1).unwrap();
+    });
+    for (shape, req) in [
+        ("alone", alone),
+        ("beside read", beside_read),
+        ("beside write", beside_write),
+    ] {
+        let r = a.send(CTAP_GET_ASSERTION, &req);
+        assert_eq!(
+            r.status,
+            CtapError::InvalidCbor.as_u8(),
+            "a stray member {shape} must be INVALID_CBOR"
+        );
+        assert!(r.body.is_empty(), "a refused assertion returns nothing");
+    }
 }
