@@ -27,11 +27,10 @@ const INS_CTAP_MSG: u8 = 0x10;
 /// `NFCCTAP_GETRESPONSE`: the poll a host issues after a `91 00`, and at
 /// `P1 = 0x11` the cancel. This device never answers `91 00` — see `process` below.
 const INS_CTAP_GETRESPONSE: u8 = 0x11;
-/// `NFCCTAP_CONTROL`, from a CTAP 2.1 draft and in no published revision. A
-/// YubiKey 5.8.0 takes `P1 01` (end of session) with `P2 00` alone.
+/// `NFCCTAP_CONTROL` (CTAP 2.3 §11.3.4). A YubiKey 5.8.0 takes `P1 01` (end of
+/// session) with `P2 00` alone.
 const INS_CTAP_CONTROL: u8 = 0x12;
-/// The end of session, answered with nothing ended: a host may send it between a
-/// ceremony and its next getInfo, which needs the applet as it was.
+/// END: the applet stops serving FIDO until it is selected again.
 const P1_CONTROL_END: u8 = 0x01;
 
 /// FIDO over CCID. Holds no FIDO state of its own; every field is a handle the
@@ -59,6 +58,10 @@ pub struct FidoCcidApplet<'a, R: rsk_sdk::Rng + 'static> {
     /// separately, so the *commands* are gated rather than only the SELECT — else
     /// disabling FIDO2 would leave every CTAP2 command reachable behind U2F's bit.
     enabled_caps: u16,
+    /// Set by NFCCTAP_CONTROL END, cleared by the next SELECT. CTAP 2.3 §11.3.4 has
+    /// the applet ignore FIDO commands in between, and a YubiKey 5.8.0 answers each
+    /// `6986`; the selection is this transport's, so CTAPHID serves on.
+    ended: bool,
 }
 
 impl<'a, R: rsk_sdk::Rng + 'static> FidoCcidApplet<'a, R> {
@@ -79,6 +82,7 @@ impl<'a, R: rsk_sdk::Rng + 'static> FidoCcidApplet<'a, R> {
             mkek_source,
             now_ms: 0,
             enabled_caps: 0,
+            ended: false,
         }
     }
 
@@ -128,11 +132,13 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_,
         true
     }
 
-    /// SELECT answers `U2F_V2`, which is how a host learns CTAP1 is served here.
-    /// A re-SELECT clears nothing: the session state is the device's, shared with
-    /// the CTAPHID transport, and dropping a PIN token because a reader re-selected
-    /// the applet would let either transport revoke the other's authorization.
+    /// SELECT answers `U2F_V2`, which is how a host learns CTAP1 is served here, and
+    /// lifts an END. A re-SELECT clears nothing else: the session state is the
+    /// device's, shared with the CTAPHID transport, and dropping a PIN token because a
+    /// reader re-selected the applet would let either transport revoke the other's
+    /// authorization.
     fn select(&mut self, _reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        self.ended = false;
         if res.extend(rsk_fido::consts::U2F_VERSION) {
             Sw::OK
         } else {
@@ -152,6 +158,8 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_,
     /// still answered, because a host that gave up on a wait sends one regardless.
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         match (apdu.is_basic_class(), apdu.ins) {
+            // Ahead of every other arm: a YubiKey refuses U2F under `80` `6986` here too.
+            _ if self.ended => Sw::COMMAND_NOT_ALLOWED,
             (true, INS_CTAP_MSG)
                 if !rsk_devconf::cap_enabled(self.enabled_caps, rsk_devconf::CAP_FIDO2) =>
             {
@@ -174,8 +182,10 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_,
                 res.push(CtapError::UserActionTimeout.as_u8());
                 Sw::OK
             }
-            // What it ends there is not documented, so nothing here changes state.
-            (true, INS_CTAP_CONTROL) if (apdu.p1, apdu.p2) == (P1_CONTROL_END, 0) => Sw::OK,
+            (true, INS_CTAP_CONTROL) if (apdu.p1, apdu.p2) == (P1_CONTROL_END, 0) => {
+                self.ended = true;
+                Sw::OK
+            }
             (true, INS_CTAP_CONTROL) => Sw::INCORRECT_P1P2,
             (_, CTAP_REGISTER | CTAP_AUTHENTICATE | CTAP_VERSION)
                 if apdu.cla == CLA_PROPRIETARY =>

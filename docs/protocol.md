@@ -658,12 +658,17 @@ interface, so this is reachable over plain USB.
 | CTAP2 | `80 10 00 00 Lc <cmd ‖ CBOR> 00` | `9000` (or `61xx`, below) with `<status ‖ CBOR>` |
 | U2F | `00 01/02/03 …` | the CTAP1 answer; `6E00` under class `80` |
 | Poll, cancel | `80 11 00 00`, `80 11 11 00` | `9000` with body `2F`, whatever the P1-P2 |
-| Control | `80 12 01 00` | `9000`; any other P1-P2 `6A86` |
+| Control | `80 12 01 00` | `9000`, then `6986` to every command until the next Select; any other P1-P2 `6A86` |
 
 The three CTAP2 instructions (`10`, `11`, `12`) are taken under class `00` as
 under `80`, as on a YubiKey 5.8.0. Anything else under `80` is `6D00`, under `00`
 it is U2F's, under `04` and `84` it is refused `6E00`, and no other class reaches
 it (above).
+
+**Control's END ends the FIDO session on this interface** (CTAP 2.3 §11.3.4).
+CTAP2 and U2F alike answer `6986` until the next Select, by the AID or a prefix of
+it. A chain's segments are still acknowledged, and CTAPHID is not affected. A
+YubiKey 5.8.0 answers each of these the same.
 
 **Chaining runs in both directions and a host needs both.** A CTAP2 command longer
 than 255 bytes arrives in `CLA|0x10` segments; a response longer than the short

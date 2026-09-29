@@ -162,6 +162,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **NFCCTAP_CONTROL END ends the FIDO session on the CCID interface, as CTAP 2.3
+  §11.3.4 has it.** `80 12 01 00` answered `9000` and changed nothing, so the
+  applet went on serving CTAP2 and U2F after a host had ended the session, where
+  the spec says to ignore FIDO commands until the next applet selection. It now
+  answers every command `6986` until the FIDO applet is selected again, by its AID
+  or a prefix of it; a chain's segments are still acknowledged, and CTAPHID is not
+  affected. A YubiKey 5.8.0 answers each of these the same, measured command by
+  command. `bcdDevice` 0x0A6E → 0x0A6F.
+
 - **The FIDO metadata statements no longer claim `upv` 1.2.** MDS 3.1.1 maps a
   FIDO2 statement's `upv` onto the CTAP versions in `versions` and reserves 1.2,
   because CTAP 2.2 was skipped. The statements listed it beside 1.0, 1.1 and 1.3

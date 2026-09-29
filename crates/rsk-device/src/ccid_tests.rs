@@ -2236,3 +2236,59 @@ fn a_ctap_msg_whose_lc_overstates_its_data_is_wrong_length() {
         );
     }
 }
+
+/// NFCCTAP_CONTROL END (CTAP 2.3 §11.3.4): the authenticator "SHALL ignore subsequent
+/// FIDO CTAP commands" until the applet is selected again. A YubiKey 5.8.0 answers
+/// each `6986` in between, U2F's and unknown ones too, and serves CTAPHID on.
+#[test]
+fn nfcctap_control_end_refuses_fido_until_the_applet_is_selected_again() {
+    use rsk_sdk::Sw;
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let fido = rsk_fido::consts::FIDO_AID;
+    let end = apdu(rsk_sdk::apdu::CLA_PROPRIETARY, 0x12, 0x01, 0x00, &[]);
+    assert_eq!(sw(ccid.handle_apdu(&select(fido), 0)), Sw::OK);
+    assert_eq!(ccid.handle_apdu(&end, 0), Sw::OK.to_bytes(), "END");
+
+    let refused = [
+        ("getInfo", ctap_msg(GET_INFO)),
+        ("getInfo under 00", apdu(0x00, 0x10, 0x00, 0x00, GET_INFO)),
+        ("poll", apdu(0x80, 0x11, 0x00, 0x00, &[])),
+        ("END again", end.clone()),
+        ("CONTROL, P1 00", apdu(0x80, 0x12, 0x00, 0x00, &[])),
+        ("unknown 75", apdu(0x80, 0x75, 0x00, 0x00, &[])),
+        ("U2F VERSION", apdu(0x00, 0x03, 0x00, 0x00, &[])),
+        ("U2F VERSION under 80", apdu(0x80, 0x03, 0x00, 0x00, &[])),
+        ("GET RESPONSE", apdu(0x00, 0xC0, 0x00, 0x00, &[])),
+        ("SELECT, P2 0C", apdu(0x00, 0xA4, 0x04, 0x0C, fido)),
+    ];
+    for (name, command) in refused {
+        let res = ccid.handle_apdu(&command, 0).to_vec();
+        assert_eq!(res, Sw::COMMAND_NOT_ALLOWED.to_bytes(), "{name}");
+    }
+    // A chain's segments are the dispatcher's, acknowledged as ever; the command
+    // they make is refused like any other.
+    let segment = apdu(0x90, 0x10, 0x00, 0x00, GET_INFO);
+    assert_eq!(ccid.handle_apdu(&segment, 0), Sw::OK.to_bytes());
+    let close = apdu(0x80, 0x10, 0x00, 0x00, &[]);
+    assert_eq!(
+        ccid.handle_apdu(&close, 0),
+        Sw::COMMAND_NOT_ALLOWED.to_bytes()
+    );
+    // CTAPHID selected nothing, so it has nothing to end.
+    assert_eq!(
+        env.ctap().handle_cbor(1, GET_INFO, 0)[0],
+        rsk_fido::CTAP2_OK
+    );
+
+    // The next SELECT, by the AID or a prefix of it, serves FIDO again.
+    for aid in [fido, &fido[..6]] {
+        ccid.handle_apdu(&select(fido), 0);
+        assert_eq!(ccid.handle_apdu(&end, 0), Sw::OK.to_bytes(), "END");
+        let res = ccid.handle_apdu(&select(aid), 0).to_vec();
+        assert_eq!(sw(&res), Sw::OK, "SELECT {aid:02X?}");
+        assert_eq!(&res[..res.len() - 2], rsk_fido::consts::U2F_VERSION);
+        let (body, status) = exchange_chained(&mut ccid, &ctap_msg(GET_INFO));
+        assert_eq!((status, body.first()), (Sw::OK, Some(&rsk_fido::CTAP2_OK)));
+    }
+}
