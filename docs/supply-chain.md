@@ -411,6 +411,28 @@ a weaker Build-L2-style check.) The provenance is a GitHub attestation
 release asset, so it stays available even though the published release is
 immutable.
 
+### Steps 2 and 3 before flashing: `rsk flash`
+
+```sh
+rsk flash rs-key-<tag>-default.uf2    # the board in BOOTSEL
+```
+
+`rsk flash` takes a release image with `SHA256SUMS` and
+`SHA256SUMS.sigstore.json` beside it. It runs step 2's `cosign verify-blob` with
+the identity and issuer above, character for character, so the certificate and
+the bundle's Rekor entry are checked as they are there. It then matches the
+image's sha256 to the one `SHA256SUMS` lists under its name, and runs step 3's
+`gh attestation verify` with the same `--signer-workflow`. Only then does it run
+`picotool load -v` and `picotool reboot`.
+
+It stops, with nothing written, when a file is missing, when cosign is not
+installed, or when any check fails. When `gh` is not installed it skips step 3
+and says so. Step 1 is yours to run. `--dry-run` runs the checks and writes
+nothing, which is the route for a secure-boot board: the image it boots is one
+you seal with your own key first (`nix run .#flash`, [production.md](production.md)).
+An image you built yourself has no release signature, so it flashes only with
+`--local-build`, which checks nothing and warns.
+
 ## Dependency review — cargo-vet
 
 `cargo-deny` already blocks bad licenses and known advisories. `cargo-vet`

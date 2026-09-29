@@ -50,6 +50,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   subcommands; a build that predates it answers `0x02`.
   `bcdDevice` 0x0A7F → 0x0A80.
 
+- **`rsk flash` checks a release image before it writes it** (`rsk` 0.3.44).
+  Give it a release `.uf2` with `SHA256SUMS` and `SHA256SUMS.sigstore.json`
+  from the same release beside it. It runs `cosign verify-blob` with the
+  identity and issuer [supply-chain.md](docs/supply-chain.md#verifying-a-download)
+  publishes, which checks the certificate and the bundle's Rekor entry, matches
+  the image's sha256 to the one `SHA256SUMS` lists under its name, and runs
+  `gh attestation verify` pinned to `release-build.yml` when the GitHub CLI is
+  installed, saying so when it is not. Only then does it run `picotool load -v`
+  and `picotool reboot`. A missing file, a missing cosign or a failed check stops
+  it with nothing written. cosign and gh are run as programs, so `rsk` gains no
+  dependency. `--dry-run` checks and writes nothing, and an image you built
+  yourself flashes only with `--local-build`, which warns that nothing was
+  checked.
 - OpenPGP key attestation, as a YubiKey 5.8.0 does it. `ATTEST`
   (`80 FB <key> 00`, what `ykman openpgp keys attest` sends) writes an X.509
   certificate for a key the card generated into that key's cardholder-certificate

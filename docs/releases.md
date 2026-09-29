@@ -75,6 +75,19 @@ sha256sum -c SHA256SUMS
 Both must pass. Step 1 proves `SHA256SUMS` was produced by this repo's release
 workflow; step 2 ties each `.uf2` (and the SBOM) to it.
 
+`rsk flash` runs these checks and flashes only when they pass. Keep
+`SHA256SUMS` and `SHA256SUMS.sigstore.json` in the folder with the image, put
+the board in BOOTSEL, and:
+
+```sh
+rsk flash rs-key-<tag>-default.uf2    # --dry-run checks and writes nothing
+```
+
+It also runs `gh attestation verify` when the GitHub CLI is installed, and says
+so when it is not. Its cosign identity is the one
+[supply-chain.md](supply-chain.md#verifying-a-download) publishes, which accepts
+`release-build.yml` at any ref of this repo, not only at a tag.
+
 ## Verify the build is reproducible
 
 The images are bit-for-bit reproducible per platform, per `flake.lock`, so you can

@@ -22,7 +22,7 @@ for the task.
 flowchart LR
     cli["rsk (host CLI)"] -->|hidapi / CTAPHID| fido["Device — FIDO<br/>backup · audit · lock · attestation"]
     cli -->|PC/SC / pcscd| ccid["Device — CCID applets<br/>OpenPGP · PIV · OATH · rescue"]
-    cli -->|USB BOOTSEL / picotool| boot["Device — bootloader<br/>secure-boot · OTP fuses"]
+    cli -->|USB BOOTSEL / picotool| boot["Device — bootloader<br/>flash · secure-boot · OTP fuses"]
 ```
 
 ## Running it
@@ -75,6 +75,7 @@ The Nix shell stays the primary, reproducible path (it also carries `picotool`,
 | `backup` | wallet-style seed export / restore / finalize (BIP-39, SLIP-39) | [Seed backup](seed-backup.md) |
 | `pair` | guided primary + backup (two independent keys) enrollment | [Backup key](backup-key.md) |
 | `lock` | at-rest soft-lock of the FIDO seed (`enable`/`unlock`/`disable`) | [Soft-lock](soft-lock.md) |
+| `flash` | check a release image (signature, checksum, provenance), then write it over BOOTSEL | [Supply chain](../supply-chain.md#verifying-a-download) |
 | `secure-boot` | secure-boot provisioning + key rotation **(irreversible)** | [Production](../production.md), [OTP fuses](../otp-fuses.md) |
 | `otp` | burn + lock the at-rest master key (MKEK) into OTP **(irreversible)** | [OTP fuses](../otp-fuses.md) |
 | `fido` | FIDO2 management: `set-pin`, `list-passkeys`, `attestation` | [FIDO2](fido2.md), [Attestation](attestation.md) |

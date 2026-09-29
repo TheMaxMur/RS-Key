@@ -83,6 +83,17 @@ To flash the firmware manually:
      the mounted drive on Linux.
    - **picotool (more reliable: it verifies and skips the mass-storage layer):**
      `picotool load -v firmware.uf2 && picotool reboot`.
+   - **`rsk flash` (checks a release image first):** put `SHA256SUMS` and
+     `SHA256SUMS.sigstore.json` from the same release next to the image, and run
+
+     ```sh
+     rsk flash rs-key-<version>-default.uf2
+     ```
+
+     It checks the signature (it needs [cosign](https://docs.sigstore.dev/)), the
+     checksum and, with the GitHub CLI installed, the build provenance. Only then
+     does it run the `picotool` command above. What each check proves is in
+     [supply-chain.md](supply-chain.md#verifying-a-download).
 
    The `RP2350` drive is a *fake* FAT volume the bootrom emulates. It only
    understands the UF2 blocks written to it, not a real filesystem. On some

@@ -1,0 +1,226 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+"""`rsk flash`: every check refuses before picotool runs, and each one is the check
+docs/supply-chain.md publishes.
+
+Run from tools/:  python -m pytest rsk/test_flash.py
+No cosign, gh, picotool or board: the three tools are stand-ins that record their
+argv, so each case asserts what ran, in which order, and that nothing was written
+past a refusal.
+"""
+import hashlib
+import pathlib
+import re
+import sys
+import types
+
+# The same reason as test_refuse_to_guess.py: nothing here touches a device.
+sys.modules.setdefault("hid", types.ModuleType("hid"))
+
+import pytest  # noqa: E402
+
+from rsk import flash  # noqa: E402
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+NAME = "rs-key-v9.9.9-default.uf2"
+IMAGE = b"UF2\nnot really an image\n"
+
+
+@pytest.fixture
+def release(tmp_path):
+    """A download directory as a release leaves it: the image, SHA256SUMS in the
+    release job's `./` form, and the bundle."""
+    (tmp_path / NAME).write_bytes(IMAGE)
+    digest = hashlib.sha256(IMAGE).hexdigest()
+    (tmp_path / flash.SUMS).write_text(
+        f"{'0' * 64}  ./rs-key-v9.9.9-sbom.cdx.json\n{digest}  ./{NAME}\n")
+    (tmp_path / flash.BUNDLE).write_text("{}")
+    return tmp_path
+
+
+class Tools:
+    """cosign, gh and picotool as stand-ins; `ran` holds each call in order."""
+
+    def __init__(self, monkeypatch, cosign=0, gh=0, have=("cosign", "gh", "picotool"),
+                 reboot=0):
+        self.ran, self.rc = [], {"cosign": cosign, "gh": gh}
+        monkeypatch.setattr(flash.shutil, "which",
+                            lambda tool: f"/bin/{tool}" if tool in have else None)
+        monkeypatch.setattr(flash, "_run", self._run)
+        monkeypatch.setattr(flash, "require_bootsel", lambda: self.ran.append(("bootsel",)))
+
+        def picotool(*argv, check=True):
+            self.ran.append(("picotool", *argv))
+            rc = reboot if argv[0] == "reboot" else 0
+            return types.SimpleNamespace(returncode=rc, stdout="", stderr="")
+
+        monkeypatch.setattr(flash, "picotool", picotool)
+
+    def _run(self, argv):
+        tool = pathlib.PurePath(argv[0]).name
+        self.ran.append((tool, *argv[1:]))
+        return types.SimpleNamespace(returncode=self.rc[tool], stdout="",
+                                     stderr=f"{tool} said no\x1b[31m")
+
+    def names(self):
+        return [call[0] for call in self.ran]
+
+    def wrote(self):
+        return [call for call in self.ran if call[0] == "picotool"]
+
+
+def flash_it(path, **kw):
+    args = {"uf2": str(path), "dry_run": False, "local_build": False, **kw}
+    flash.run(types.SimpleNamespace(**args))
+
+
+def test_a_good_release_is_verified_then_loaded_and_rebooted(release, monkeypatch, capsys):
+    tools = Tools(monkeypatch)
+    flash_it(release / NAME)
+    image, sums, bundle = (str(release / n) for n in (NAME, flash.SUMS, flash.BUNDLE))
+    assert tools.ran == [
+        ("cosign", "verify-blob", "--bundle", bundle,
+         "--certificate-identity-regexp", flash.IDENTITY_REGEXP,
+         "--certificate-oidc-issuer", flash.OIDC_ISSUER, sums),
+        ("gh", "attestation", "verify", image, "--repo", flash.REPO,
+         "--signer-workflow", flash.SIGNER_WORKFLOW),
+        ("bootsel",),
+        ("picotool", "load", "-v", image),
+        ("picotool", "reboot"),
+    ]
+    out = capsys.readouterr().out
+    assert "Rekor entry checked" in out and "sha256 matches" in out
+    assert "rebooted into the new image" in out
+
+
+def test_a_signature_that_does_not_verify_writes_nothing(release, monkeypatch, capsys):
+    tools = Tools(monkeypatch, cosign=1)
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.names() == ["cosign"]
+    err = capsys.readouterr().err
+    assert "does not verify" in err and "cosign said no" in err
+    assert "\x1b" not in err  # the verifier's words are sanitized
+
+
+def test_an_image_whose_sha_differs_writes_nothing(release, monkeypatch, capsys):
+    (release / NAME).write_bytes(IMAGE + b"one more byte")
+    tools = Tools(monkeypatch)
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.names() == ["cosign"]
+    assert "is not the" in capsys.readouterr().err
+
+
+def test_an_image_the_sums_do_not_list_writes_nothing(release, monkeypatch, capsys):
+    (release / NAME).rename(release / "firmware.uf2")
+    tools = Tools(monkeypatch)
+    with pytest.raises(SystemExit):
+        flash_it(release / "firmware.uf2")
+    assert tools.names() == ["cosign"]
+    assert "lists no firmware.uf2" in capsys.readouterr().err
+
+
+def test_a_name_listed_twice_with_two_digests_writes_nothing(release, monkeypatch, capsys):
+    with open(release / flash.SUMS, "a") as f:
+        f.write(f"{'1' * 64} *{NAME}\n")
+    tools = Tools(monkeypatch)
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.wrote() == []
+    assert "twice" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("gone", [flash.SUMS, flash.BUNDLE])
+def test_a_missing_sums_or_bundle_refuses_before_any_tool(release, monkeypatch, capsys, gone):
+    (release / gone).unlink()
+    tools = Tools(monkeypatch)
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.ran == []
+    err = capsys.readouterr().err
+    assert f"{gone} not found" in err and "--local-build" in err
+
+
+def test_a_missing_image_refuses(release, monkeypatch, capsys):
+    tools = Tools(monkeypatch)
+    with pytest.raises(SystemExit):
+        flash_it(release / "rs-key-v9.9.9-16mb.uf2")
+    assert tools.ran == []
+    assert "no such image" in capsys.readouterr().err
+
+
+def test_no_cosign_refuses_and_says_how_to_get_it(release, monkeypatch, capsys):
+    tools = Tools(monkeypatch, have=("gh", "picotool"))
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.ran == []
+    err = capsys.readouterr().err
+    assert "cosign not found" in err and flash.COSIGN_HELP in err
+
+
+def test_no_gh_skips_the_provenance_and_says_so(release, monkeypatch, capsys):
+    tools = Tools(monkeypatch, have=("cosign", "picotool"))
+    flash_it(release / NAME)
+    assert tools.names() == ["cosign", "bootsel", "picotool", "picotool"]
+    assert "provenance was NOT checked" in capsys.readouterr().err
+
+
+def test_a_failing_attestation_writes_nothing(release, monkeypatch, capsys):
+    tools = Tools(monkeypatch, gh=1)
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.names() == ["cosign", "gh"]
+    assert "gh attestation verify failed" in capsys.readouterr().err
+
+
+def test_a_local_build_needs_the_flag_and_gets_a_warning(tmp_path, monkeypatch, capsys):
+    (tmp_path / "firmware.uf2").write_bytes(IMAGE)
+    tools = Tools(monkeypatch)
+    with pytest.raises(SystemExit):
+        flash_it(tmp_path / "firmware.uf2")
+    assert tools.ran == []
+    capsys.readouterr()
+    flash_it(tmp_path / "firmware.uf2", local_build=True)
+    assert tools.names() == ["bootsel", "picotool", "picotool"]
+    assert "nothing checked" in capsys.readouterr().err
+
+
+def test_a_dry_run_verifies_and_writes_nothing(release, monkeypatch, capsys):
+    tools = Tools(monkeypatch)
+    flash_it(release / NAME, dry_run=True)
+    assert tools.names() == ["cosign", "gh"]
+    assert "picotool load -v" in capsys.readouterr().out
+
+
+def test_a_second_board_in_bootsel_writes_nothing(release, monkeypatch):
+    tools = Tools(monkeypatch)
+
+    def refuse():
+        raise SystemExit("more than one RP-series device in BOOTSEL mode")
+
+    monkeypatch.setattr(flash, "require_bootsel", refuse)
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.wrote() == []
+
+
+def test_a_failed_reboot_is_not_reported_as_done(release, monkeypatch, capsys):
+    Tools(monkeypatch, reboot=1)
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    captured = capsys.readouterr()
+    assert "written, but `picotool reboot` failed" in captured.err
+    assert "rebooted" not in captured.out
+
+
+def test_the_checks_are_the_ones_the_page_publishes():
+    """The identity, issuer, repo and signer workflow are docs/supply-chain.md's
+    verify commands, so the tool cannot check less than the page tells a reader to."""
+    page = (REPO_ROOT / "docs/supply-chain.md").read_text(encoding="utf-8")
+    assert f"--certificate-identity-regexp '{flash.IDENTITY_REGEXP}'" in page
+    assert f"--certificate-oidc-issuer {flash.OIDC_ISSUER}" in page
+    assert re.search(rf"--repo {re.escape(flash.REPO)}\s", page)
+    assert f"--signer-workflow {flash.SIGNER_WORKFLOW}" in page
+    assert f"--bundle {flash.BUNDLE}" in page
