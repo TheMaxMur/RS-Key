@@ -958,6 +958,12 @@ fn backup_load<S: Storage, R: Rng>(
         seed.wipe();
         return Err(CtapError::Other);
     }
+    // A loaded seed is a new credential store — every credential sealed under the old
+    // one is gone — so the tag moves too, ahead of the seed (CTAP 2.3 §6.6).
+    if crate::credential::renew_store_state(ctx.fs, ctx.rng).is_err() {
+        seed.wipe();
+        return Err(CtapError::Other);
+    }
     let res = encrypt_keydev_f1(&ctx.dev, ctx.fs, seed.expose());
     seed.wipe();
     res.map_err(|_| CtapError::Other)?;

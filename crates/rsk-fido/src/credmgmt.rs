@@ -762,7 +762,7 @@ fn delete_credential<S: Storage, R: Rng>(
     slot: u16,
     rp_id_hash: &[u8; 32],
 ) -> CtapResult {
-    crate::credential::bump_cred_store_state(ctx.fs).map_err(|_| CtapError::NotAllowed)?;
+    crate::credential::renew_store_state(ctx.fs, ctx.rng).map_err(|_| CtapError::NotAllowed)?;
     ctx.fs
         .delete(EF_CRED + slot)
         .map_err(|_| CtapError::NotAllowed)?;
@@ -995,7 +995,7 @@ fn reseal_user<S: Storage, R: Rng>(
     let mut rec = [0u8; CRED_REC_MAX];
     let total = compose_cred_record(&rp_id_hash, resident_id, cached_pubkey, new_box, &mut rec)
         .ok_or(CtapError::KeyStoreFull)?;
-    crate::credential::bump_cred_store_state(ctx.fs).map_err(|_| CtapError::NotAllowed)?;
+    crate::credential::renew_store_state(ctx.fs, ctx.rng).map_err(|_| CtapError::NotAllowed)?;
     let rec = rec.get(..total).ok_or(CtapError::KeyStoreFull)?;
     ctx.fs
         .put(EF_CRED + slot, rec)

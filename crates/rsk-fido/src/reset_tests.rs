@@ -44,8 +44,8 @@ fn reset_wipes_state_and_regenerates() {
     // The enterprise-attestation RP list is enterprise policy, and a reset is what
     // hands the key to someone else — it goes with the rest of the FIDO state.
     fs.put(crate::consts::EF_EA_RPIDS, &[0x11u8; 32]).unwrap();
-    // The credential-store tag summarises what the reset is erasing, so it goes too:
-    // a surviving tag would tell a platform its cache of the old store is still good.
+    // The credential-store tag summarises what the reset is erasing, so it must not
+    // survive: it would tell a platform its cache of the old store is still good.
     fs.put(crate::consts::EF_CRED_STATE, &[0x22u8; 16]).unwrap();
     // An OpenPGP file (EF_PW3 = 0x1083) shares the Fs and must survive a FIDO
     // reset — it sits in the 0x10xx range right next to FIDO's own files.
@@ -79,7 +79,7 @@ fn reset_wipes_state_and_regenerates() {
     // The device PIN is cleared by the reset (so a forgotten one is recoverable).
     assert!(!fs.has_data(EF_DEVICE_PIN));
     assert!(!fs.has_data(crate::consts::EF_EA_RPIDS));
-    assert!(!fs.has_data(crate::consts::EF_CRED_STATE));
+    assert_ne!(store_tag(&mut fs), [0x22; 16]);
     // The OpenPGP file is untouched by the FIDO reset.
     assert!(
         fs.has_data(0x1083),
@@ -809,6 +809,7 @@ fn provision_passkey<S: rsk_fs::Storage>(fs: &mut Fs<S>, seed: &[u8; 32]) -> [u8
         seed,
         &dev(),
         fs,
+        &mut SeqRng(7),
         &cred_id[..n],
         &rp_id_hash,
         "example.com",
@@ -1698,4 +1699,36 @@ fn a_reset_that_faults_mid_sweep_still_re_arms_the_lap() {
         "control: the head re-arm already landed"
     );
     assert_eq!(sweep_only.answered, Err(CtapError::Other));
+}
+
+/// The `encCredStoreState` plaintext the store holds now: a reset must not leave the
+/// old store's tag behind, or a platform would keep its cache of the wiped store.
+fn store_tag<S: rsk_fs::Storage>(fs: &mut Fs<S>) -> [u8; 16] {
+    assert!(
+        fs.has_data(crate::consts::EF_CRED_STATE),
+        "no store tag at all: absent reads as zero, not as a new state"
+    );
+    crate::credential::cred_store_state(fs).unwrap()
+}
+
+/// A wipe the medium stops part-way has still changed the store, so the tag must not
+/// read as the old one. Here the tag's own removal is refused, which also stops the
+/// reset before `ensure_seed` could mint a new one (CTAP 2.3 §6.6).
+#[test]
+fn a_wipe_stopped_part_way_does_not_keep_the_old_store_tag() {
+    let (backend, medium) = RemoveStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    ensure_seed(&dev(), &mut fs, &mut SeqRng(3)).unwrap();
+    let before = store_tag(&mut fs);
+    medium.refuse(Some(crate::consts::EF_CRED_STATE));
+    assert!(
+        run_reset(&mut fs).is_err(),
+        "control: the refused removal stops the reset"
+    );
+    assert_ne!(
+        store_tag(&mut fs),
+        before,
+        "the stopped wipe kept the old store's tag"
+    );
 }

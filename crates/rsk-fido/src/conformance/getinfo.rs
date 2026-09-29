@@ -9,8 +9,8 @@ use super::{Authr, assert_ok, assert_ok_empty, bool_map_canonical, field_at, int
 use crate::FidoState;
 use crate::consts::{
     AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_MLDSA44,
-    CP_GET_PIN_UV_TOKEN_USING_PIN, CTAP_CLIENT_PIN, CTAP_MAKE_CREDENTIAL, CTAP_RESET,
-    FIRMWARE_VERSION, MAX_CRED_ID_LENGTH, MAX_MSG_SIZE, PUBLIC_KEY_TYPE,
+    CP_GET_PIN_UV_TOKEN_USING_PIN, CTAP_CLIENT_PIN, CTAP_RESET, FIRMWARE_VERSION,
+    MAX_CRED_ID_LENGTH, MAX_MSG_SIZE,
 };
 use crate::cose::cose_key_ecdh;
 use crate::state::PERM_PCMR;
@@ -404,30 +404,12 @@ fn replug(a: &mut Authr) {
     a.clock = 0;
 }
 
-/// A discoverable makeCredential over `example.com`: a change to the credential store.
-fn mc_rk() -> Vec<u8> {
-    enc(|e| {
-        e.map(5).unwrap();
-        e.u8(1).unwrap().bytes(&[0xCD; 32]).unwrap();
-        e.u8(2).unwrap().map(1).unwrap();
-        e.str("id").unwrap().str("example.com").unwrap();
-        e.u8(3).unwrap().map(1).unwrap();
-        e.str("id").unwrap().bytes(&[7, 7]).unwrap();
-        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
-        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
-        e.str("type").unwrap().str(PUBLIC_KEY_TYPE).unwrap();
-        e.u8(7).unwrap().map(1).unwrap();
-        e.str("rk").unwrap().bool(true).unwrap();
-    })
-}
-
-/// FIDO Authr-Generic-1 P-5, as far as RS-Key meets it: §6.6 asks a reset for a fresh
-/// random store state, but `cred_store_state` reads the wiped tag as the fresh-device
-/// zero, so only a store that changed before the reset reads differently after it.
+/// FIDO Authr-Generic-1 P-5: authenticatorReset generates a new credential store state
+/// (§6.6), even for a store nothing had changed — it reads differently after the reset,
+/// under the grant taken on either side.
 #[test]
-fn a_store_changed_before_a_reset_reads_differently_after_it() {
+fn a_reset_gives_the_credential_store_a_new_state() {
     let mut a = Authr::fresh();
-    assert_ok(&a.send(CTAP_MAKE_CREDENTIAL, &mc_rk()));
     let before = pcmr_grant(&mut a);
     let state = open_member(&before, &member(&mut a, 0x1E), b"encCredStoreState");
     assert_eq!(
@@ -446,6 +428,6 @@ fn a_store_changed_before_a_reset_reads_differently_after_it() {
     );
     assert_ne!(
         new_state, state,
-        "a changed store must not read the same after a reset"
+        "authenticatorReset must generate a new store state"
     );
 }

@@ -784,7 +784,7 @@ fn delete_credential_drops_count_and_rp() {
 /// getInfo's `encCredStoreState` (0x1E) is only worth anything if the tag under it
 /// moves on **every** change to the discoverable set — a platform that trusts a
 /// stale tag keeps a cache the device has already invalidated. This drives the real
-/// commands rather than the bump helper: the helper being correct says nothing about
+/// commands rather than the renewal helper: it being correct says nothing about
 /// whether the three host paths call it. The on-device delete is the fourth path and
 /// has its own test, in `passkeys_tests.rs`.
 #[test]
@@ -793,7 +793,7 @@ fn every_credential_mutation_moves_the_store_tag() {
 
     let (mut fs, mut rng) = setup();
     let empty = cred_store_state(&mut fs).unwrap();
-    assert_eq!(empty, [0u8; 16], "a store nothing has written to is zero");
+    assert_ne!(empty, [0u8; 16], "a new store is not zero");
 
     let (id_a, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
     let after_create = cred_store_state(&mut fs).unwrap();
@@ -871,7 +871,7 @@ fn the_store_tag_survives_a_remount() {
 }
 
 /// A refused mutation must not leave the tag where a successful one would have — but
-/// it may move it, and that is the direction to be wrong in: the bump is written
+/// it may move it, and that is the direction to be wrong in: the tag is renewed
 /// ahead of the change it describes, so what a failure (or a power cut) leaves is a
 /// tag that over-reports. The platform re-enumerates once; the alternative is a
 /// cache nothing corrects.
@@ -894,8 +894,8 @@ fn a_refused_delete_never_under_reports() {
         ),
         Err(CtapError::NoCredentials)
     );
-    // It never reached the bump — the lookup refused first — so the tag stands. What
-    // matters is the direction: it must not have moved *backwards*.
+    // It never reached the renewal — the lookup refused first — so the tag stands: a
+    // refused change claims no change.
     assert_eq!(cred_store_state(&mut fs).unwrap(), before);
 }
 

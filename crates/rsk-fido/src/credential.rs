@@ -744,12 +744,12 @@ pub(crate) fn slot_map<S: Storage>(fs: &mut Fs<S>, base: u16, out: &mut [bool]) 
 
 /// The `encCredStoreState` plaintext (getInfo 0x1E): a 128-bit tag that changes
 /// whenever the discoverable-credential set does. An absent record reads as zero —
-/// the state of a store nothing has written to, which a fresh device and a
-/// just-reset one both are.
+/// a store an older build provisioned and nothing has changed since; this build
+/// writes one with every new seed ([`crate::seed::ensure_seed`]).
 ///
-/// Fallible, because that zero is a value and not a neutral one: it is the tag a
-/// fresh device publishes, so a platform can be holding it. Collapsing a failed
-/// read into it replays a prefix of the sequence — see the two callers.
+/// Fallible, because that zero is a value and not a neutral one: such a device
+/// publishes it, so a platform can be holding it. Collapsing a failed read into it
+/// could hand back a tag the platform already has — see the caller.
 pub(crate) fn cred_store_state<S: Storage>(fs: &mut Fs<S>) -> Result<[u8; CRED_STATE_LEN]> {
     let mut tag = [0u8; CRED_STATE_LEN];
     Ok(match fs.try_read(EF_CRED_STATE, &mut tag)? {
@@ -761,18 +761,18 @@ pub(crate) fn cred_store_state<S: Storage>(fs: &mut Fs<S>) -> Result<[u8; CRED_S
     })
 }
 
-/// Advance that tag. Called **before** the write it describes, so a power cut
-/// between the two leaves a state that over-reports: the platform re-enumerates
-/// once, which costs a walk. The other order leaves a changed store under an
-/// unchanged tag — a stale cache with nothing to correct it.
-///
-/// A read it cannot make is that other order by a different road: the tag would
-/// restart at 1 over the live value, so the next change hands the platform a tag it
-/// already holds. Refused instead, and refusing here aborts the store change with
-/// it — which is the point of running before the write rather than after.
-pub(crate) fn bump_cred_store_state<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
-    let next = u128::from_le_bytes(cred_store_state(fs)?).wrapping_add(1);
-    fs.put(EF_CRED_STATE, &next.to_le_bytes())
+/// Give that tag a new random value (CTAP 2.3 §6.1.2 step 17, §6.8.5, §6.8.6), ahead
+/// of the write it describes: a cut between the two over-reports (one re-enumeration),
+/// the other order under-reports (a stale cache nothing corrects). Nothing is read,
+/// so no faulted read can replay a tag; a refused write aborts the store change,
+/// which is why this runs first.
+pub(crate) fn renew_store_state<S: Storage>(
+    fs: &mut Fs<S>,
+    rng: &mut impl crate::Rng,
+) -> Result<()> {
+    let mut tag = [0u8; CRED_STATE_LEN];
+    rng.fill(&mut tag);
+    fs.put(EF_CRED_STATE, &tag)
 }
 
 /// Estimated free discoverable-credential slots (getInfo
@@ -805,15 +805,15 @@ pub(crate) fn remaining_rk<S: Storage>(fs: &mut Fs<S>, used_ef_cred: u16) -> u16
 /// (from [`crate::ec::CredKey::public_point`], already computed for authData at
 /// makeCredential), cached in the v3 record so enumeration need not recompute
 /// `d·G`; pass an empty slice for an uncacheable-curve credential.
-// Each argument is a distinct field of the resident record (seed, device, store,
-// box, rpIdHash, rpId, userId, cached pubkey); a struct would add indirection for
-// the single makeCredential call site.
+// Each argument is a record field, the store, or the RNG its tag renews from; a
+// struct would add indirection for the single makeCredential call site.
 #[allow(clippy::too_many_arguments)]
 /// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
 pub fn credential_store<S: Storage>(
     seed: &[u8; 32],
     dev: &Device,
     fs: &mut Fs<S>,
+    rng: &mut impl crate::Rng,
     cred_id: &[u8],
     rp_id_hash: &[u8; 32],
     rp_id: &str,
@@ -896,7 +896,7 @@ pub fn credential_store<S: Storage>(
     // record at count 0 alone, so an entry left over a credential that never landed
     // floors at 1 and its slot never returns. Best-effort, and that is a real
     // limit — a medium that refuses the tombstone leaves the phantom anyway.
-    if let Err(e) = bump_cred_store_state(fs) {
+    if let Err(e) = renew_store_state(fs, rng) {
         if new_record {
             let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
         }

@@ -47,7 +47,7 @@ statement = "No prefix of an authenticatorReset — torn or complete — leaves 
 subjects = ["requirement", "abstract model", "Rust source"]
 subjects_absent = ["FFI", "binary", "hardware", "integration"]
 requirement = [
-  "CTAP 2.3 §6.6 authenticatorReset — the END state and its authorization, and nothing about a PREFIX of it: every §6.6 citation in this tree is the power-up window, the touch, or the two ways the gesture can fail (crates/rsk-fido/src/reset.rs:40-42 and :258-264, crates/rsk-device/src/lib.rs:52, crates/rsk-sdk/src/presence.rs:81). None attributes an ordering or atomicity obligation to it, because the specification states none",
+  "CTAP 2.3 §6.6 authenticatorReset — the END state and its authorization, and nothing about a PREFIX of it: every §6.6 citation in this tree is the power-up window, the touch, or the two ways the gesture can fail (crates/rsk-fido/src/reset.rs:40-42 and :262-268, crates/rsk-device/src/lib.rs:52, crates/rsk-sdk/src/presence.rs:81). None attributes an ordering or atomicity obligation to it, because the specification states none",
   "docs/threat-model.md#TM-HOST-POWER-CUT — the clause that DOES state this property, in its own words: `no gate comes up softer on the next boot than it went down — a torn authenticatorReset may not drop the PIN or alwaysUv record while leaving a credential usable`. That sentence is clauses A and B",
   "docs/threat-model.md#TM-SEED-BACKUP — clause C's root, and it is a real one: `after an explicit finalize, export is refused until a full reset regenerates a new seed`. A torn reset that clears EF_BACKUP_SEALED over a seed it did not regenerate is that sentence made false",
 ]
@@ -67,17 +67,17 @@ threat_clause_reading = "the anchor is topical and not the claim, and the clause
 # names: two of the five tags move nothing.
 owners_tagged = [
   "crates/rsk-fido/src/reset.rs:35 reset — the command itself",
-  "crates/rsk-fido/src/reset.rs:136 sweep — one phase of it",
-  "crates/rsk-fido/src/reset.rs:317 survives_factory_reset — the OTHER wipe, the trusted-display one, which the model does not have at all",
+  "crates/rsk-fido/src/reset.rs:140 sweep — one phase of it",
+  "crates/rsk-fido/src/reset.rs:321 survives_factory_reset — the OTHER wipe, the trusted-display one, which the model does not have at all",
   "crates/rsk-fido/src/state.rs:533 FidoState::reset — the volatile half, and the first thing the command does",
   "crates/rsk-fido/src/lib.rs:104 Ctx::load_keydev — RAM first then flash, which is what makes the RAM copy count as surviving",
 ]
 # And the three CLAUSE tags, which are all on one function and are the reason
 # each clause row derives `rust = 1`.
-owners_tagged_clauses = "crates/rsk-fido/src/reset.rs:248-250 — all three, on `is_fido_gate_record`, whose own doc comment at :240-246 says the list is FIVE records and the clauses are three and that `EF_DEVICE_PIN` and `EF_MINPINLEN` are in the phase and in no clause"
+owners_tagged_clauses = "crates/rsk-fido/src/reset.rs:252-254 — all three, on `is_fido_gate_record`, whose own doc comment at :244-250 says the list is FIVE records and the clauses are three and that `EF_DEVICE_PIN` and `EF_MINPINLEN` are in the phase and in no clause"
 # The ordering site, which carries no tag of its own and is where the property
 # actually lives.
-owner_of_the_order = "crates/rsk-fido/src/reset.rs:107-124 — `ctx.state.reset()` first, then FIDO_SEED_FIDS in its own loop, then the secret sweep, then the gate sweep, then ensure_seed. Five steps in that order and nothing enforces it but the order; the whole property is a statement about this block"
+owner_of_the_order = "crates/rsk-fido/src/reset.rs:107-128 — `ctx.state.reset()` first, then FIDO_SEED_FIDS in its own loop, then the secret sweep, then the gate sweep, then ensure_seed. Five steps in that order and nothing enforces it but the order; the whole property is a statement about this block"
 # The verification-only Rust that MIRRORS the conjunction, which is the fact this
 # bundle is about and which no derived column mentions.
 owner_of_the_alpha = "crates/rsk-fido/src/reset_assurance.rs:106-134 — `reset_keeps_the_pin_gate`, `reset_keeps_the_always_uv_gate`, `reset_keeps_the_backup_seal` and, at :130-134, their conjunction under the parent's name. The composition is written twice, in TLA+ and in Rust, and the two agree"
@@ -86,7 +86,7 @@ owner_of_the_alpha = "crates/rsk-fido/src/reset_assurance.rs:106-134 — `reset_
 owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 owners_of_the_kills = [
   "crates/rsk-fido/src/reset_tests.rs:724 a_torn_reset_never_unseals_a_surviving_seed — the shipped twin RSKeySecurityState.tla:1827 names",
-  "crates/rsk-fido/src/reset_tests.rs:1204 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed",
+  "crates/rsk-fido/src/reset_tests.rs:1205 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed",
   "crates/rsk-fido/src/reset_assurance_tests.rs:130 a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window",
   "crates/rsk-fido/src/reset_assurance_tests.rs:46 reset_property_controls_go_red_on_each_early_gate_mutant — three mutants, one per clause, and the only per-clause negative control anywhere in the tree outside `formal/`",
 ]
@@ -349,7 +349,7 @@ c_twins = "BugResetGatesFirst, BugBackupSealedNotAGate and BugStateResetAfterWip
 c_twin_honesty = "and one of the three carries a recorded correction that belongs in any reading of it. `BugBackupSealedNotAGate` was `status = \"unreachable\"` until it was noticed that the verdict had been MEASURED IN THE MODEL AND WRITTEN ABOUT THE CODE. Driven at the code level it is killed — but the note records that the two tests which fall deterministically both TRANSCRIBE the match arm the patch edits, so on their own they answer `did somebody edit the list`; that demoting `EF_MINPINLEN` instead kills the slice identically, 3 of 3 runs; and that the one behavioural test that existed was a COIN FLIP at ~42%, because `RamStorage` is a `HashMap` and the sweep's iteration order is a fresh permutation per process — 233 of 400 fixtures kept the marker, 167 lost it. The deterministic test added in the same diff is what the `killed` should be read against"
 
 # THE PRODUCTION SIDE, by review.
-r_owners = "five `Refines` tags in three files for the parent and three more on one function for the clauses; the ordering the property IS carries no tag at all and is crates/rsk-fido/src/reset.rs:107-124. One of the five tags is on `survives_factory_reset`, the trusted-display wipe — a SECOND reset path with no action in the model, which formal/README.md names as the one that would make SEC-FIDO-007's invariant bite"
+r_owners = "five `Refines` tags in three files for the parent and three more on one function for the clauses; the ordering the property IS carries no tag at all and is crates/rsk-fido/src/reset.rs:107-128. One of the five tags is on `survives_factory_reset`, the trusted-display wipe — a SECOND reset path with no action in the model, which formal/README.md names as the one that would make SEC-FIDO-007's invariant bite"
 r_column = "`rust = 3` is a count of FILES, not of tags: `assurance_gate.grep_word` matches the bare invariant name anywhere in a production file and returns file names, so the two extra tags in reset.rs move nothing. The three clause rows each derive `rust = 1` from one file holding all three of their tags"
 r_alpha = "the conjunction is written twice and the two agree: RSKeySecurityState.tla:1851-1854 and crates/rsk-fido/src/reset_assurance.rs:130-134. The α is FINER than the model in one place — it keeps `owner_seed` and `owner_locked_seed` apart (:18-19) where the model has one `store.seed` — and WIDER in another, adding `owner_seed_reachable` to clause C's antecedent where the TLA+ clause relies on `snap.seed` being retired by `KeepSurv`"
 r_no_negative_control = "and the parent conjunction has no negative control in the unit suite. Every use of `reset_never_weakens_surviving_state` and `well_formed` in crates/rsk-fido/src/reset_assurance_tests.rs — lines 31, 32, 79 and 98 — is a POSITIVE `assert!`, and weakening a conjunction can only make those easier. The three negative controls at :46-63 call each clause method directly and never the parent. So a conjunct silently dropped from the parent is invisible to `cargo test -p rsk-fido`; §8 records which rung would see it"
@@ -469,7 +469,7 @@ registered = "yes — assurance/assumptions.toml AlwaysUvShipped, and assurance/
 id = "AS-RESET-5"
 statement = "The gate phase holds FIVE records and the clauses name three: `EF_DEVICE_PIN` and `EF_MINPINLEN` are swept in phase 2 and appear in no clause, so a torn reset that drops either early is unobserved by every configuration, every harness and every twin here."
 kind = "model abstraction"
-discharger = "the reset argument covers them and no invariant states it: phase 2 cannot begin until phase 1 has provably emptied the store, and the seed leads phase 1. Both halves are written down already — crates/rsk-fido/src/reset.rs:240-246 says the list is five and the clauses are three, and RSKeySecurityState.tla:1446-1450 repeats it at the `gate.forceChange` disjunct, adding that `snap` has no field for it. What would discharge it is a fourth clause and a fourth `snap` field, which is a model change and not a measurement"
+discharger = "the reset argument covers them and no invariant states it: phase 2 cannot begin until phase 1 has provably emptied the store, and the seed leads phase 1. Both halves are written down already — crates/rsk-fido/src/reset.rs:244-250 says the list is five and the clauses are three, and RSKeySecurityState.tla:1446-1450 repeats it at the `gate.forceChange` disjunct, adding that `snap` has no field for it. What would discharge it is a fourth clause and a fourth `snap` field, which is a model change and not a measurement"
 expressible = "no — a missing clause, not a boolean; `ForceChangeModelled` toggles whether the RECORD exists, not whether a clause names it"
 registered = "yes — assurance/platform.toml PLAT-MODEL-009, pending, which carries the EF_MINPINLEN half and supports SEC-FIDO-001 and -003; PLAT-MODEL-011 carries the EF_DEVICE_PIN half and already supports SEC-FIDO-006C. The first needs `slice:AS-RESET-5` and this property in `supports`"
 
@@ -619,7 +619,7 @@ expected = "killed, and by a test that is about the defect rather than about the
 verdict = "killed — and the recorded note is that the two tests which fall deterministically both TRANSCRIBE the match arm the patch edits, so on their own they answer `did somebody edit the list`"
 fell = "the_gate_set_defers_every_record_whose_absence_is_permissive and reset_projection_finishes_only_after_every_ordered_phase — both transcribers; the behavioural test that existed, a_seed_the_medium_kept_stops_the_wipe_before_the_gates, falls only about 42% of the time"
 direction = "modelled"
-reading = "THE CONTROL IS WHAT MAKES THIS A FINDING AND NOT A KILL: demoting `EF_MINPINLEN` instead — a record crates/rsk-fido/src/reset.rs:240-246 says out loud is in the phase and in NO clause — kills the slice identically, 3 of 3 runs. So the two transcribers cannot tell this defect from an edit that breaks nothing this property is about. The coin flip is measured too: `RamStorage` is a `HashMap` and `for_each_key` iterates it, so 233 of 400 fixtures kept the marker and 167 lost it. The deterministic replacement, a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window, drives the projection whose `delete` takes its phase from the production classifier — shipped GREEN, mutant RED 5 of 5, EF_MINPINLEN control GREEN 3 of 3."
+reading = "THE CONTROL IS WHAT MAKES THIS A FINDING AND NOT A KILL: demoting `EF_MINPINLEN` instead — a record crates/rsk-fido/src/reset.rs:244-250 says out loud is in the phase and in NO clause — kills the slice identically, 3 of 3 runs. So the two transcribers cannot tell this defect from an edit that breaks nothing this property is about. The coin flip is measured too: `RamStorage` is a `HashMap` and `for_each_key` iterates it, so 233 of 400 fixtures kept the marker and 167 lost it. The deterministic replacement, a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window, drives the projection whose `delete` takes its phase from the production classifier — shipped GREEN, mutant RED 5 of 5, EF_MINPINLEN control GREEN 3 of 3."
 
 [[mutation]]
 level = "code"
@@ -648,7 +648,7 @@ measured = "2026-08-30, Europe/Moscow"
 expires_on_prover_bump = "tlaplus 1.7.4 or its jar hash for every TLC verdict here, and cargo-kani 0.67.0 for the four solve times — the second has no hash to expire against, which AS-RESET-7 is the row about"
 expires_on_toolchain_bump = "rustc/cargo 1.96.0 — the three co-refutation slices and the unit-suite control only"
 expires_on_stepping = "nothing here is a hardware result. tests/29_reset_power_cut.py has never been recorded, `hardware` is 0, and a stepping change revalidates PLAT-FLASH-001 rather than this bundle — which is the row that would have to move before any of this became a claim about silicon"
-expires_on_owner_change = "any file in property.owners_tagged, the ordering block at crates/rsk-fido/src/reset.rs:107-124, crates/rsk-fido/src/reset_assurance.rs's three clause methods, and RSKeySecurityState.tla's ResetConfirmed, ResetSweepSecrets, ResetSweepGates, ResetFinish or ResetAborts"
+expires_on_owner_change = "any file in property.owners_tagged, the ordering block at crates/rsk-fido/src/reset.rs:107-128, crates/rsk-fido/src/reset_assurance.rs's three clause methods, and RSKeySecurityState.tla's ResetConfirmed, ResetSweepSecrets, ResetSweepGates, ResetFinish or ResetAborts"
 expires_on_model_change = "the conjunction at RSKeySecurityState.tla:1851-1854 gaining or losing a clause, a fourth `snap` field, or `SeedReachable`'s disjunction — and, in the direction this bundle is about, any configuration's INVARIANTS block gaining a clause name, which moves the reading and not the evidence"
 expires_on_schema_change = "assurance/properties.toml's field set or its `clause_of` relation, formal/comutants.toml's status vocabulary, and formal/floors.txt's verdict column"
 

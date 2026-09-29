@@ -433,6 +433,7 @@ fn store_then_dedup_and_rp_count() {
         &SEED,
         &d,
         &mut fs,
+        &mut SeqRng(7),
         &out[..len],
         &rp_hash,
         "example.com",
@@ -468,6 +469,7 @@ fn store_then_dedup_and_rp_count() {
         &SEED,
         &d,
         &mut fs,
+        &mut SeqRng(7),
         &out[..len2],
         &rp_hash,
         "example.com",
@@ -496,6 +498,7 @@ fn v3_record_roundtrips_box_and_cached_pubkey() {
         &SEED,
         &d,
         &mut fs,
+        &mut SeqRng(7),
         &boxbuf[..box_len],
         &rp_hash,
         "example.com",
@@ -671,6 +674,7 @@ fn a_failed_registration_never_leaves_a_credential_without_its_rp() {
             &SEED,
             &d,
             &mut fs,
+            &mut SeqRng(7),
             &out[..len],
             &rp_hash,
             "example.com",
@@ -725,6 +729,7 @@ fn a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry() {
             &SEED,
             &d,
             &mut fs,
+            &mut SeqRng(7),
             &out[..len],
             &rp_hash,
             "example.com",
@@ -777,6 +782,7 @@ fn a_failed_re_registration_does_not_delete_the_rp_the_first_one_created() {
             &SEED,
             &d,
             &mut warm,
+            &mut SeqRng(7),
             &out[..len],
             &rp_hash,
             "example.com",
@@ -801,6 +807,7 @@ fn a_failed_re_registration_does_not_delete_the_rp_the_first_one_created() {
             &SEED,
             &d,
             &mut fs,
+            &mut SeqRng(7),
             &out[..len],
             &rp_hash,
             "example.com",
@@ -841,6 +848,7 @@ fn a_truncated_scan_does_not_let_a_new_credential_land_on_a_live_one() {
         &SEED,
         &d,
         &mut fs,
+        &mut SeqRng(7),
         &out[..len],
         &rp_hash,
         "example.com",
@@ -862,6 +870,7 @@ fn a_truncated_scan_does_not_let_a_new_credential_land_on_a_live_one() {
             &SEED,
             &d,
             &mut fs,
+            &mut SeqRng(7),
             &out[..len2],
             &other,
             "other.example",
@@ -880,50 +889,38 @@ fn a_truncated_scan_does_not_let_a_new_credential_land_on_a_live_one() {
     );
 }
 
-/// `bump_cred_store_state` reads the tag it advances with the collapsing `Fs::read`,
-/// whose `None` covers "never written" and "the flash could not serve it" alike, and
-/// the absent arm is the ZERO tag — right for the first, a replay for the second. So
-/// a faulted probe writes 1 over the live value and starts the sequence again from a
-/// prefix the platform has already been served: it is handed a tag it is holding, so
-/// it keeps the cache this record exists to make it drop.
-///
-/// Refused rather than clamped, because the bump runs BEFORE the write it describes:
-/// its `Err` aborts the store change too, so tag and store stay in step.
+/// A store change renews the tag without reading it, so a probe the flash cannot
+/// serve has nothing to replay and nothing to refuse: the change goes ahead under a
+/// fresh random tag, none of those the platform was served before (CTAP 2.3 §6.1.2).
 #[test]
 fn a_faulted_cred_state_probe_does_not_replay_the_store_tag() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
     fs.scan();
-    // Three store changes: 1, 2 and 3 are each a tag the platform has been served.
+    let mut rng = SeqRng(11);
+    // Three store changes, each a tag the platform has been served.
     let mut seen = Vec::new();
     for _ in 0..3 {
-        bump_cred_store_state(&mut fs).unwrap();
+        renew_store_state(&mut fs, &mut rng).unwrap();
         seen.push(medium.value(EF_CRED_STATE).unwrap());
     }
-    assert_eq!(
-        seen[2],
-        3u128.to_le_bytes(),
-        "control: three changes, tag 3"
-    );
 
     medium.stick_once(EF_CRED_STATE);
-    let bumped = bump_cred_store_state(&mut fs);
+    let renewed = renew_store_state(&mut fs, &mut rng);
     medium.stick(None);
 
+    assert_eq!(
+        renewed,
+        Ok(()),
+        "a stuck probe must not stop a store change"
+    );
     let after = medium.value(EF_CRED_STATE).unwrap();
+    // Zero and one too: a probe collapsed into "absent" once restarted a count there.
+    seen.extend([0u128.to_le_bytes().to_vec(), 1u128.to_le_bytes().to_vec()]);
     assert!(
-        !seen[..2].contains(&after),
+        !seen.contains(&after),
         "a faulted probe replayed tag {} — a platform holding it is told nothing changed",
         u128::from_le_bytes(after[..].try_into().unwrap())
-    );
-    assert_eq!(
-        after, seen[2],
-        "a refused bump must leave the tag where it was"
-    );
-    assert_eq!(
-        bumped,
-        Err(Error::MemoryFatal),
-        "a bump that could not read the tag it advances must refuse"
     );
 }
 
@@ -945,7 +942,17 @@ fn a_faulted_rp_probe_does_not_file_a_second_record_for_the_same_rp() {
     fs.scan();
     let mut out = [0u8; 512];
     let store = |fs: &mut Fs<_>, out: &[u8], user: &[u8]| {
-        credential_store(&SEED, &d, fs, out, &rp_hash, "example.com", user, &[])
+        credential_store(
+            &SEED,
+            &d,
+            fs,
+            &mut SeqRng(7),
+            out,
+            &rp_hash,
+            "example.com",
+            user,
+            &[],
+        )
     };
     let records_for_rp = |medium: &rsk_fs::storage::faults::ProbeMedium| {
         (0..MAX_RESIDENT_CREDENTIALS)
@@ -1016,7 +1023,18 @@ fn a_faulted_probe_of_another_rps_slot_does_not_deny_this_registration() {
         let mut req = input();
         req.user_id = core::slice::from_ref(&user);
         let len = credential_create(&SEED, &d, &req, hash, &IV, &mut out).unwrap();
-        credential_store(&SEED, &d, &mut fs, &out[..len], hash, id, &[user], &[]).unwrap();
+        credential_store(
+            &SEED,
+            &d,
+            &mut fs,
+            &mut SeqRng(7),
+            &out[..len],
+            hash,
+            id,
+            &[user],
+            &[],
+        )
+        .unwrap();
     }
     let before = medium
         .value(EF_RP + 1)
@@ -1034,6 +1052,7 @@ fn a_faulted_probe_of_another_rps_slot_does_not_deny_this_registration() {
         &SEED,
         &d,
         &mut fs,
+        &mut SeqRng(7),
         &out[..len],
         &mine,
         "example.com",
@@ -1149,7 +1168,17 @@ fn an_unread_credential_refuses_only_a_new_account_its_own_rp_could_hide() {
         req.user_id = &user;
         let mut out = [0u8; 512];
         let len = credential_create(&SEED, &d, &req, hash, &IV, &mut out).unwrap();
-        credential_store(&SEED, &d, fs, &out[..len], hash, id, &user, &[])
+        credential_store(
+            &SEED,
+            &d,
+            fs,
+            &mut SeqRng(7),
+            &out[..len],
+            hash,
+            id,
+            &user,
+            &[],
+        )
     };
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
@@ -1197,5 +1226,34 @@ fn an_unread_credential_refuses_only_a_new_account_its_own_rp_could_hide() {
         medium.value(EF_RP).map(|v| v[0]),
         Some(1),
         "nor counted one"
+    );
+}
+
+/// Deterministic RNG (copied per test file, matching the repo convention).
+struct SeqRng(u64);
+impl crate::Rng for SeqRng {
+    fn fill(&mut self, buf: &mut [u8]) {
+        for b in buf.iter_mut() {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *b = (self.0 >> 33) as u8;
+        }
+    }
+}
+
+/// Every store change draws a fresh random tag (CTAP 2.3 §6.1.2 step 17), not the next
+/// number: a platform holding one tag learns nothing about the next from it.
+#[test]
+fn a_store_change_draws_a_random_tag_not_the_next_number() {
+    let mut fs: Fs<RamStorage> = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(13);
+    renew_store_state(&mut fs, &mut rng).unwrap();
+    let first = u128::from_le_bytes(cred_store_state(&mut fs).unwrap());
+    renew_store_state(&mut fs, &mut rng).unwrap();
+    let second = u128::from_le_bytes(cred_store_state(&mut fs).unwrap());
+    assert_ne!(second, first, "a store change must move the tag");
+    assert_ne!(
+        second,
+        first.wrapping_add(1),
+        "the tag must not count the changes"
     );
 }

@@ -431,8 +431,8 @@ pub fn enc_identifier<S: Storage>(
 /// `None` while the grant record is absent (a PIN change dropped it and nothing has
 /// minted it again): there is no key to seal under. `None` too when the tag
 /// itself cannot be read — an absent member equals no tag a platform is holding, so
-/// it re-enumerates, where the collapsed zero is exactly the tag a fresh device
-/// publishes and would tell one its cache is still good.
+/// it re-enumerates, where the collapsed zero is the tag an older build's untouched
+/// store publishes and would tell one its cache is still good.
 pub fn enc_cred_store_state<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -667,7 +667,11 @@ pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng)
                 break;
             }
         }
-        let r = encrypt_keydev_f1(dev, fs, seed.expose());
+        // A new seed starts a new credential store — a fresh device, or one just
+        // reset — and §6.6 wants a new state for it. Ahead of the seed: a cut between
+        // the two leaves no seed, so the next call runs this whole arm again.
+        let r = put_new_store_state(dev, fs, seed.expose())
+            .and_then(|()| encrypt_keydev_f1(dev, fs, seed.expose()));
         seed.wipe();
         r?;
     }
@@ -692,6 +696,18 @@ pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng)
         tok.wipe();
     }
     Ok(())
+}
+
+/// Our label for a new store's `encCredStoreState` tag, in its own domain off the seed.
+const INFO_STORE_STATE: &[u8] = b"KEYDEV/CREDSTATE";
+
+/// Writes a new store's `encCredStoreState` tag, derived from the fresh seed that starts
+/// it: as unpredictable as the seed, without a draw that would move every later value
+/// provisioning takes. A loaded seed can repeat, so `BACKUP_LOAD` draws one instead.
+fn put_new_store_state<S: Storage>(dev: &Device, fs: &mut Fs<S>, seed: &[u8; 32]) -> Result<()> {
+    let mut tag = [0u8; crate::consts::CRED_STATE_LEN];
+    hkdf_sha256(dev.serial_hash, seed, INFO_STORE_STATE, &mut tag).map_err(|_| Error::ExecError)?;
+    fs.put(crate::consts::EF_CRED_STATE, &tag)
 }
 
 /// Rebuild `EF_EE_DEV` if it does not both match the current template and certify

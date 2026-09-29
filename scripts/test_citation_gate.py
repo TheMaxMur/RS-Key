@@ -1042,7 +1042,7 @@ def test_the_derivation_reads_a_citing_script_and_only_a_citing_one(tree):
 
 
 def test_a_rotted_citation_in_a_script_is_found(tree):
-    """The measured hole: `security_trace.py` named `reset.rs:187` for a predicate
+    """The measured hole: `security_trace.py` named `reset.rs:191` for a predicate
     on `:211`, twice, while this row printed `ok`."""
     tree.edit(SCRIPT_PAGE, "clientpin.rs:4-6", "clientpin.rs:3-6")
     assert only(tree.problems(), "cited line is blank")

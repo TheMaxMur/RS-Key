@@ -711,18 +711,18 @@ fn enc_cred_store_state_is_fresh_per_call_and_carries_the_stored_tag() {
         open_enc_cred_store_state(token.expose(), &second),
         "an unchanged store must decrypt to an unchanged tag"
     );
-    assert_eq!(
+    assert_ne!(
         open_enc_cred_store_state(token.expose(), &first),
         [0u8; 16],
-        "a store nothing has written to is the zero tag"
+        "a new store starts from its seed's tag, not the zero tag older devices share"
     );
 
-    crate::credential::bump_cred_store_state(&mut f).unwrap();
+    crate::credential::renew_store_state(&mut f, &mut SeqRng(21)).unwrap();
     let after = enc_cred_store_state(&d, &mut f, &mut rng).unwrap();
     assert_ne!(
         open_enc_cred_store_state(token.expose(), &after),
         open_enc_cred_store_state(token.expose(), &first),
-        "a bumped tag must reach the platform"
+        "a renewed tag must reach the platform"
     );
     assert_eq!(
         open_enc_cred_store_state(token.expose(), &after),
@@ -1076,7 +1076,7 @@ fn a_faulted_cred_counter_probe_is_not_an_unmaterialized_slot() {
 
 /// The platform-facing half of the same probe. `encCredStoreState` is the only place
 /// the tag is published, and the collapsed answer is the ZERO tag — which is not a
-/// neutral value here but the one a fresh (or just-reset) device serves, so a
+/// neutral value here but the one a device an older build provisioned serves, so a
 /// platform that cached it is told its cache is still good while the store has
 /// gained credentials since.
 ///
@@ -1091,14 +1091,16 @@ fn a_faulted_cred_state_probe_does_not_publish_the_zero_tag() {
     fs.scan();
     ensure_seed(&d, &mut fs, &mut SeqRng(29)).unwrap();
     let token = ensure_ppuat(&d, &mut fs, &mut SeqRng(31)).unwrap();
+    // An older build provisioned without a tag, and absent reads as zero.
+    fs.delete(crate::consts::EF_CRED_STATE).unwrap();
     let fresh = enc_cred_store_state(&d, &mut fs, &mut SeqRng(33)).unwrap();
     assert_eq!(
         open_enc_cred_store_state(token.expose(), &fresh),
         [0u8; 16],
-        "control: a store nothing has written to publishes the zero tag"
+        "control: a store an older build provisioned, untouched since, publishes zero"
     );
 
-    crate::credential::bump_cred_store_state(&mut fs).unwrap();
+    crate::credential::renew_store_state(&mut fs, &mut SeqRng(21)).unwrap();
     medium.stick_once(crate::consts::EF_CRED_STATE);
     let faulted = enc_cred_store_state(&d, &mut fs, &mut SeqRng(35));
     medium.stick(None);
@@ -1269,4 +1271,45 @@ fn a_faulted_read_of_a_pre_otp_slot_is_never_reported_clear() {
             "fault {fault:?}: reported clear over the pre-OTP seed it never moved"
         );
     }
+}
+
+/// CTAP 2.3 §6.6 gives a new store a new state. The tag is written ahead of the seed,
+/// so provisioning cut anywhere — and the boot that retries it, cut again — never
+/// leaves a live seed over no tag, which would read as the zero every older store has.
+#[test]
+fn a_torn_provisioning_never_leaves_a_seed_without_its_store_state() {
+    use rsk_fs::cut::{Snap, sweep_recovery};
+    sweep_recovery(
+        |_fs| (),
+        |fs, _| {
+            let _ = ensure_seed(&dev(), fs, &mut SeqRng(41));
+        },
+        |fs| {
+            let _ = ensure_seed(&dev(), fs, &mut SeqRng(43));
+        },
+        |fs: &mut Fs<Snap>, first, second| {
+            assert!(
+                load_keydev(&dev(), fs).is_some(),
+                "cuts {first}/{second}: the boot after a cut provisions a seed"
+            );
+            assert!(
+                fs.has_data(crate::consts::EF_CRED_STATE),
+                "cuts {first}/{second}: a live seed over no store state"
+            );
+        },
+    );
+}
+
+/// An upgrade mints no tag: a seed already there is an existing store, so a platform
+/// holding an older build's zero tag keeps a valid cache until the store changes.
+#[test]
+fn an_existing_seed_keeps_its_store_state() {
+    let (d, mut f) = (dev(), fs());
+    ensure_seed(&d, &mut f, &mut SeqRng(45)).unwrap();
+    f.delete(crate::consts::EF_CRED_STATE).unwrap();
+    ensure_seed(&d, &mut f, &mut SeqRng(47)).unwrap();
+    assert!(
+        !f.has_data(crate::consts::EF_CRED_STATE),
+        "a boot over an existing seed must not mint a store state"
+    );
 }

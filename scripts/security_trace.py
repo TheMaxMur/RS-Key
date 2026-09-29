@@ -145,7 +145,7 @@ OUTCOMES_RATCHET = "@TraceSecurityOutcomesMin"
 # command space, so it cannot collide with a real command byte.
 POWER_CYCLE = 0xFF
 
-# `crates/rsk-fido/src/consts.rs:407`, applied at `crates/rsk-fido/src/reset.rs:263`
+# `crates/rsk-fido/src/consts.rs:407`, applied at `crates/rsk-fido/src/reset.rs:267`
 # as `!warm_boot && now_ms <= RESET_WINDOW_MS`. The model abstracts the clock to
 # `ResetWindow` plus a `Tick`; the mapper needs the real bound.
 RESET_WINDOW_MS = 10_000
@@ -395,7 +395,7 @@ def reset_gate(event: dict, ledger: dict) -> tuple[list[tuple[str, str]], tuple[
     A refused reset changes nothing, and over an already-empty store neither does
     a second successful one — so the raw footprint cannot tell them apart, and the
     mapper read the refusal that ends `27_reset_window` as a full successful wipe.
-    `now_ms` is what separates them (`reset.rs:263`); B's clock is advanced by
+    `now_ms` is what separates them (`reset.rs:267`); B's clock is advanced by
     `clock_ticks` before this runs, independently of the branch taken here.
     """
     before, after = event["pre"], event["post"]

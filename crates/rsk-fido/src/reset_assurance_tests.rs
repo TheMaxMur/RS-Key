@@ -111,7 +111,7 @@ fn the_secret_sweep_is_where_a_seed_the_medium_kept_stops_the_wipe() {
 ///
 /// The two tests that fall when `EF_BACKUP_SEALED` leaves `is_fido_gate_record`
 /// both transcribe that function's match arm, so they answer "did somebody edit
-/// the list" — measured: demoting `EF_MINPINLEN`, which `crates/rsk-fido/src/reset.rs:240-246` says
+/// the list" — measured: demoting `EF_MINPINLEN`, which `crates/rsk-fido/src/reset.rs:244-250` says
 /// out loud is in the phase and in no clause, kills the slice the same way,
 /// 3 of 3 runs. And the one test that states the defect behaviourally,
 /// `reset_tests.rs::a_seed_the_medium_kept_stops_the_wipe_before_the_gates`, is a

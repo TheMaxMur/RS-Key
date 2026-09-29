@@ -116,7 +116,7 @@ silent_tag	crates/rsk-fido/src/credential.rs:227	19	decides	D2	computes the key 
 derive_resident	crates/rsk-fido/src/credential.rs:530	32	decides	D2	the 42-byte id for the RP is HMAC-SHA512 under serial_id, and no byte can be recomputed from the rest; the carve-out [4..8] (credential.rs:558) keeps a v4-id from being read as legacy and rebound to the box	SEC-FIDO-005
 derive_hmac_key	crates/rsk-fido/src/credential.rs:579	12	decides	D2	computes the 64-byte cred_random hmac-secret from the seed — exactly the secret that goes out to the RP	SEC-FIDO-004
 derive_large_blob_key	crates/rsk-fido/src/credential.rs:592	10	decides	D2	computes largeBlobKey from the seed; it is issued to the RP and decrypts its blob	SEC-FIDO-004
-cred_store_state	crates/rsk-fido/src/credential.rs:745	18	decides	D5	keeps Err apart from absence: the zero tag is the tag of a FRESH device, and collapsing a failed read into it would replay a prefix of the sequence to the platform; its Err is the condition on which the getInfo member is not published	SEC-STORE-002,SEC-FIDO-005
+cred_store_state	crates/rsk-fido/src/credential.rs:745	18	decides	D5	keeps Err apart from absence: the zero tag is the tag a device an older build provisioned carries until its first change, and collapsing a failed read into it could hand the platform a tag it already holds; its Err is the condition on which the getInfo member is not published	SEC-STORE-002,SEC-FIDO-005
 load_keydev	crates/rsk-fido/src/lib.rs:101	9	decides	D2	the only access FIDO operations have to the seed: the RAM copy after vendor UNLOCK wins over flash, and the refusal of both halves is itself the soft-lock	SEC-FIDO-006,SEC-FIDO-007,SEC-FIDO-004
 seal_seed_locked	crates/rsk-fido/src/seed.rs:105	15	decides	D2	wraps the seed VALUE under the host's 32-byte key (AUT_ENABLE) — this blob stays on flash instead of the plaintext seed	SEC-FIDO-004,SEC-FIDO-007
 open_seed_locked	crates/rsk-fido/src/seed.rs:121	20	decides	D2	checks the Poly1305 tag of the lock blob; its Some is itself the clearing of the soft-lock and the seed's arrival in RAM	SEC-FIDO-004,SEC-FIDO-007
@@ -132,7 +132,7 @@ load_att_key	crates/rsk-fido/src/seed.rs:310	6	decides	D2	returns the private sc
 load_ppuat	crates/rsk-fido/src/seed.rs:321	7	decides	D2	returns the persistent pinUvAuthToken — the secret with which the platform authorizes commands; presence is necessary but not sufficient (credmgmt checks the grant)	SEC-FIDO-003,SEC-FIDO-004
 ensure_ppuat	crates/rsk-fido/src/seed.rs:329	19	decides	D3	mints the token ONLY over a confirmed Ok(None) and only after a successful write to flash; on a write error the token is zeroed and does not go out	SEC-FIDO-003,SEC-STORE-002
 enc_identifier	crates/rsk-fido/src/seed.rs:364	52	decides	D2	reads ppuat as the gate FIRST (seed.rs:390), then the seed, and hands out a value derived from both in the unauthenticated getInfo; with no grant the result is None, not a stand-in value	SEC-FIDO-004,SEC-FIDO-003
-enc_cred_store_state	crates/rsk-fido/src/seed.rs:422	32	decides	D2	the same gate on ppuat (seed.rs:441), and an Err of the tag folds into the absence of the member, not into the zero tag a fresh device already publishes	SEC-FIDO-004,SEC-STORE-002
+enc_cred_store_state	crates/rsk-fido/src/seed.rs:422	32	decides	D2	the same gate on ppuat (seed.rs:441), and an Err of the tag folds into the absence of the member, not into the zero tag an older build's untouched store publishes	SEC-FIDO-004,SEC-STORE-002
 seal_getinfo_member	crates/rsk-fido/src/seed.rs:455	23	decides	D2	encrypts the getInfo member with a FRESH IV on every call: a repeated IV would turn both members into a stable fingerprint for anyone who asks	SEC-FIDO-004
 get_sealed32	crates/rsk-fido/src/seed.rs:479	4	decides	D2	collapses Err into None on the path of all three secret loaders (seed.rs:481) — to the caller an unreadable record is indistinguishable from an absent one	SEC-STORE-002,SEC-FIDO-004
 try_get_sealed32	crates/rsk-fido/src/seed.rs:484	18	decides	D2	the only place where a sealed record turns into 32 plaintext bytes, and where confirmed absence is kept apart from a failed read (seed.rs:496) — minting is allowed only over Ok(None)	SEC-STORE-002,SEC-FIDO-004
@@ -351,14 +351,14 @@ check_user_presence	crates/rsk-fido/src/lib.rs:83	6	decides	D1	the ceremony is s
 require_presence	crates/rsk-fido/src/lib.rs:90	10	decides	D1	the same presence spend, but Cancelled is kept apart from Timeout/Declined — the outcome decides whether the platform retries	SEC-ADM-002,SEC-DISP-003
 process_cbor	crates/rsk-fido/src/lib.rs:117	105	decides	D1	expire_stale_token and retire_sequences_except run BEFORE the dispatch: token freshness is cleared here	SEC-FIDO-003
 reset	crates/rsk-fido/src/reset.rs:31	53	decides	D4	presence plus the §6.6 window, then a full factory reset; request_rescrub stands BETWEEN wipe and its `?`	SEC-FIDO-006,SEC-BOOT-001
-wipe	crates/rsk-fido/src/reset.rs:85	39	decides	D3	state.reset() clears the RAM copy, the seed FIDs go as a separate write, then two phases: secrets, then gates	SEC-FIDO-006,SEC-FIDO-007
-sweep	crates/rsk-fido/src/reset.rs:128	47	decides	D3	deletes every matching FID and decides whether the emptiness of the range is PROVEN: a truncated walk must answer Err	SEC-FIDO-006,SEC-FIDO-004
-is_fido_seed_fid	crates/rsk-fido/src/reset.rs:182	6	decides	D5	the list of seed FIDs is itself the "seed first" rule that Fs::factory_wipe uses, bypassing reset	SEC-FIDO-006,SEC-FIDO-007
-is_fido_gate_fid	crates/rsk-fido/src/reset.rs:213	21	decides	D5	which records are recognized as gates — what survives any interruption of wipe depends on it	SEC-FIDO-004,SEC-FIDO-006A
-is_fido_gate_record	crates/rsk-fido/src/reset.rs:235	22	decides	D5	five list members, of which EF_PIN, EF_ALWAYS_UV and EF_BACKUP_SEALED are exactly the three clauses 006A/B/C	SEC-FIDO-006A,SEC-FIDO-006B,SEC-FIDO-006C
-in_reset_window	crates/rsk-fido/src/reset.rs:258	7	decides	D5	a warm boot CLOSES the window: otherwise the host restarts via sys_reset and gets the window on demand	SEC-FIDO-006
-is_fido_fid	crates/rsk-fido/src/reset.rs:266	43	decides	D5	the FIDO/OpenPGP boundary in the interleaved 0x10xx range — the answer decides whether the FID is wiped at all	SEC-FIDO-006,SEC-FIDO-004
-survives_factory_reset	crates/rsk-fido/src/reset.rs:311	10	decides	D5	the only predicate by which the display path of factory_wipe leaves the att key and the chain live	SEC-FIDO-006
+wipe	crates/rsk-fido/src/reset.rs:85	39	decides	D3	state.reset() clears the RAM copy, the seed FIDs go as a separate write, then two phases: secrets, then gates; the store tag is renewed between the seed and the sweeps, so a wipe stopped part-way still moves it	SEC-FIDO-006,SEC-FIDO-007
+sweep	crates/rsk-fido/src/reset.rs:132	47	decides	D3	deletes every matching FID and decides whether the emptiness of the range is PROVEN: a truncated walk must answer Err	SEC-FIDO-006,SEC-FIDO-004
+is_fido_seed_fid	crates/rsk-fido/src/reset.rs:186	6	decides	D5	the list of seed FIDs is itself the "seed first" rule that Fs::factory_wipe uses, bypassing reset	SEC-FIDO-006,SEC-FIDO-007
+is_fido_gate_fid	crates/rsk-fido/src/reset.rs:217	21	decides	D5	which records are recognized as gates — what survives any interruption of wipe depends on it	SEC-FIDO-004,SEC-FIDO-006A
+is_fido_gate_record	crates/rsk-fido/src/reset.rs:239	22	decides	D5	five list members, of which EF_PIN, EF_ALWAYS_UV and EF_BACKUP_SEALED are exactly the three clauses 006A/B/C	SEC-FIDO-006A,SEC-FIDO-006B,SEC-FIDO-006C
+in_reset_window	crates/rsk-fido/src/reset.rs:262	7	decides	D5	a warm boot CLOSES the window: otherwise the host restarts via sys_reset and gets the window on demand	SEC-FIDO-006
+is_fido_fid	crates/rsk-fido/src/reset.rs:270	43	decides	D5	the FIDO/OpenPGP boundary in the interleaved 0x10xx range — the answer decides whether the FID is wiped at all	SEC-FIDO-006,SEC-FIDO-004
+survives_factory_reset	crates/rsk-fido/src/reset.rs:315	10	decides	D5	the only predicate by which the display path of factory_wipe leaves the att key and the chain live	SEC-FIDO-006
 lock_engaged	crates/rsk-fido/src/seed.rs:82	7	decides	D5	an unanswered probe reads as ENGAGED — every caller treats true as "refuse until unlocked"	SEC-FIDO-004
 lock_state	crates/rsk-fido/src/seed.rs:90	14	decides	D5	both halves: a torn state reads as UNLOCKED, and on this answer ensure_seed decides whether to regenerate the seed	SEC-FIDO-004,SEC-FIDO-007
 plain_tag	crates/rsk-fido/src/seed.rs:142	9	decides	D5	selects the kbase branch (0x02 versus 0x12), i.e. under which key the record lies on flash	SEC-BOOT-001
@@ -370,7 +370,7 @@ put_sealed32	crates/rsk-fido/src/seed.rs:509	12	decides	D3	seals and stores to f
 migrate_keydev_boot	crates/rsk-fido/src/seed.rs:524	16	decides	D3	three slot rewrites on every boot: the seed, the att key and the persistent grant	SEC-BOOT-001
 migrate_slot	crates/rsk-fido/src/seed.rs:546	43	decides	D3	computes weak and GATES the write on request_rescrub: a medium refusal leaves the pre-OTP record in force	SEC-BOOT-001
 migrate_keydev_pin	crates/rsk-fido/src/seed.rs:594	52	decides	D3	strips the outer PIN-AEAD at the only moment that layer is open, and re-seals the seed	SEC-BOOT-001,SEC-FIDO-004
-ensure_seed	crates/rsk-fido/src/seed.rs:651	45	decides	D3	generates the seed only when EF_KEY_DEV is absent AND the lock is not engaged — otherwise it is the destruction of every credential	SEC-FIDO-007,SEC-FIDO-006
+ensure_seed	crates/rsk-fido/src/seed.rs:651	45	decides	D3	generates the seed only when EF_KEY_DEV is absent AND the lock is not engaged — otherwise it is the destruction of every credential; with a new seed it writes the new store's tag first, so a torn provisioning re-runs whole	SEC-FIDO-007,SEC-FIDO-006
 rebuild_att_cert	crates/rsk-fido/src/seed.rs:697	51	decides	D3	a rewrite of EF_EE_DEV when the leaf does not certify the current seed; the collapsing probe is kept on purpose	-
 global_sign_counter	crates/rsk-fido/src/seed.rs:749	15	decides	D5	try_read, not read: collapsing a fault to 0 is exactly a rollback of the counter, the only evidence of cloning	-
 bump_sign_counter	crates/rsk-fido/src/seed.rs:765	8	decides	D3	persists counter+1 and returns the previous value — a counter write	-
@@ -398,13 +398,13 @@ gate	crates/rsk-fido/src/vendor.rs:758	22	decides	D1	three conditions at once: a
 pin_gate	crates/rsk-fido/src/vendor.rs:781	53	decides	D1	checks the token, requires PERM_ACFG and marks the token used; both probes are try_*, because "PIN not set" cleared the gate	SEC-ADM-002,SEC-FIDO-003
 device_pin_gate	crates/rsk-fido/src/vendor.rs:835	35	decides	D1	PIN collection on the panel: a non-entry returns BEFORE verification, so only a real mismatch spends an attempt	SEC-ADM-002
 backup_export	crates/rsk-fido/src/vendor.rs:876	39	decides	D2	returns the 32-byte master seed to the host when the window is not sealed and the gate is passed	SEC-FIDO-006C,SEC-FIDO-004
-backup_load	crates/rsk-fido/src/vendor.rs:921	59	decides	D3	sets a new seed, dropping EF_EE_DEV BEFORE the commit — otherwise the certificate outlives the key it certified	SEC-FIDO-007,SEC-FIDO-006
-backup_finalize	crates/rsk-fido/src/vendor.rs:981	17	decides	D4	writes EF_BACKUP_SEALED — irreversible until reset, closes both the export and the phrase display on the panel	SEC-FIDO-006C
-backup_state	crates/rsk-fido/src/vendor.rs:999	30	marshals	M	five ready-made flags from backup_sealed/lock_engaged in CBOR, with no gate and no write	-
-backup_status	crates/rsk-fido/src/vendor.rs:1049	11	decides	M	the same mirror without Ctx and without CBOR, for the Backup screen	-
-mark_backup_sealed	crates/rsk-fido/src/vendor.rs:1061	10	decides	D3	the panel path writes the same irreversible marker, bypassing Ctx and the journal	SEC-FIDO-006C
-backup_sealed	crates/rsk-fido/src/vendor.rs:1072	11	decides	D5	an unanswered probe reads as SEALED: a fault must not reopen the seed hand-out window	SEC-FIDO-006C,SEC-FIDO-004
-try_backup_sealed	crates/rsk-fido/src/vendor.rs:1077	8	decides	D5	the fallible probe on which backup_export refuses directly — absence here is itself the permitting state	SEC-FIDO-006C
+backup_load	crates/rsk-fido/src/vendor.rs:921	59	decides	D3	sets a new seed, dropping EF_EE_DEV BEFORE the commit — otherwise the certificate outlives the key it certified; the store tag is renewed ahead of the seed, since a loaded seed is a new store	SEC-FIDO-007,SEC-FIDO-006
+backup_finalize	crates/rsk-fido/src/vendor.rs:987	17	decides	D4	writes EF_BACKUP_SEALED — irreversible until reset, closes both the export and the phrase display on the panel	SEC-FIDO-006C
+backup_state	crates/rsk-fido/src/vendor.rs:1005	30	marshals	M	five ready-made flags from backup_sealed/lock_engaged in CBOR, with no gate and no write	-
+backup_status	crates/rsk-fido/src/vendor.rs:1055	11	decides	M	the same mirror without Ctx and without CBOR, for the Backup screen	-
+mark_backup_sealed	crates/rsk-fido/src/vendor.rs:1067	10	decides	D3	the panel path writes the same irreversible marker, bypassing Ctx and the journal	SEC-FIDO-006C
+backup_sealed	crates/rsk-fido/src/vendor.rs:1078	11	decides	D5	an unanswered probe reads as SEALED: a fault must not reopen the seed hand-out window	SEC-FIDO-006C,SEC-FIDO-004
+try_backup_sealed	crates/rsk-fido/src/vendor.rs:1083	8	decides	D5	the fallible probe on which backup_export refuses directly — absence here is itself the permitting state	SEC-FIDO-006C
 slot	crates/rsk-fs/src/fs.rs:39	10	decides	D5	cache address arithmetic: the injectivity of slot is the only thing that keeps one FID's bit from becoming another's decided absence	SEC-STORE-002
 new	crates/rsk-fs/src/fs.rs:153	11	decides	D5	sets both maps to "nothing decided" — the Init state from which known_absent cannot lie	SEC-STORE-002
 write_gen	crates/rsk-fs/src/fs.rs:165	6	marshals	M	hands out the mutation counter, compares nothing itself	-
@@ -494,7 +494,7 @@ cred_record_box	crates/rsk-fido/src/credential.rs:667	7	marshals	M	slice of the 
 cred_record_pubkey	crates/rsk-fido/src/credential.rs:677	13	marshals	M	slice of the cached point by the length prefix	-
 compose_cred_record	crates/rsk-fido/src/credential.rs:691	33	decides	D3	its None means KeyStoreFull, which keeps the record from being written; and it stores the owner prefix rp_id_hash	SEC-FIDO-005
 slot_map	crates/rsk-fido/src/credential.rs:734	10	decides	M	delegates to fs.present_slots — a read of the presence index	-
-bump_cred_store_state	crates/rsk-fido/src/credential.rs:764	13	decides	D3	writes EF_CRED_STATE, and its refusal cancels the store change (the "before the write" order)	-
+renew_store_state	crates/rsk-fido/src/credential.rs:764	13	decides	D3	writes a fresh random EF_CRED_STATE without reading the old one, and its refusal cancels the store change (the "before the write" order)	-
 remaining_discoverable	crates/rsk-fido/src/credential.rs:778	10	marshals	M	counts occupied slots for the getInfo 0x14 estimate, forbids nothing	-
 remaining_rk	crates/rsk-fido/src/credential.rs:789	12	marshals	M	min of two budgets for the report; registration is refused not by it but by the slot search	-
 credential_store	crates/rsk-fido/src/credential.rs:811	102	decides	D3	writes EF_CRED, bumps EF_RP and the signature counter; the order is chosen so that a power cut does not leave a credential without EF_RP	SEC-FIDO-005

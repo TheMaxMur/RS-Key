@@ -627,7 +627,11 @@ where
         self.touch.wait_release(Instant::now(), idle_limit);
 
         if self.hold_to_confirm("Hold to delete", rsk_ui::theme::DANGER_FILL) {
-            let removed = rsk_fido::passkeys::delete_cred(&mut self.cells.fs.borrow_mut(), fid);
+            let removed = rsk_fido::passkeys::delete_cred(
+                &mut self.cells.fs.borrow_mut(),
+                &mut *self.cells.rng.borrow_mut(),
+                fid,
+            );
             if removed {
                 self.show_success(SuccessKind::Deleted, None);
             }

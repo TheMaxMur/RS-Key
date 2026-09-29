@@ -118,6 +118,10 @@ fn wipe<S: Storage, R: Rng>(
         refused |= gone.value.is_err();
         orphaned |= gone.record.is_err();
     }
+    // Ahead of the sweeps, which can stop part-way: a store changed but not emptied
+    // still owes the platform a new tag (CTAP 2.3 §6.6). Not the wipe's result — one
+    // that completes drops this record anyway, and `ensure_seed` mints the one to keep.
+    let _renewed = crate::credential::renew_store_state(ctx.fs, ctx.rng);
     // Covers the seed fids too, so a refused seed removal stops the wipe HERE,
     // before the gate phase could drop `EF_BACKUP_SEALED` over a seed still live.
     orphaned |= sweep(ctx, |fid| is_fido_fid(fid) && !is_fido_gate_fid(fid))?;
@@ -283,8 +287,8 @@ fn is_fido_fid(fid: u16) -> bool {
             fid,
             EF_BACKUP_SEALED
                 | EF_EE_DEV
-                // Goes with the credentials it summarises: absent reads as the
-                // zero tag, which is exactly the state of the store a reset leaves.
+                // Goes with the credentials it summarises; `ensure_seed` mints the new
+                // store's tag once the sweeps are through.
                 | EF_CRED_STATE
                 | EF_PIN
                 | EF_MINPINLEN

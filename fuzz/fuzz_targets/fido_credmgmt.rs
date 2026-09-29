@@ -73,6 +73,7 @@ fuzz_target!(|data: &[u8]| {
                 seed.expose(),
                 &dev,
                 &mut fs,
+                &mut SeqRng(3),
                 &cred_box[..len],
                 &rp_hash,
                 "a.co",

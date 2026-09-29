@@ -315,6 +315,7 @@ fn provisioned() -> &'static Provisioned {
                     seed.expose(),
                     &d,
                     &mut fs,
+                    &mut SeqRng(3),
                     &cred_box[..len],
                     &rp_hash,
                     RP_IDS[0],

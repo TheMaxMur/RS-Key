@@ -3490,3 +3490,36 @@ fn a_torn_config_write_never_journals_a_record_that_did_not_land() {
         );
     }
 }
+
+/// A loaded seed is a new credential store — the credentials sealed under the old one
+/// no longer open — so `BACKUP_LOAD` moves the store tag too (CTAP 2.3 §6.6).
+#[test]
+fn load_moves_the_credential_store_tag() {
+    let (mut fs, mut rng, mut st) = setup();
+    let before = crate::credential::cred_store_state(&mut fs).unwrap();
+    let host = handshake(&mut fs, &mut rng, &mut st);
+    let nonce = [0x07u8; 12];
+    let mut sealed = [0x33u8; 32];
+    let mac = chacha20poly1305_encrypt(&host.key, &nonce, &host.aad, &mut sealed);
+    let mut blob = [0u8; LOCK_BLOB_LEN];
+    blob[..12].copy_from_slice(&nonce);
+    blob[12..44].copy_from_slice(&sealed);
+    blob[44..].copy_from_slice(&mac);
+    let mut req = [0u8; 128];
+    let n = load_req(&mut req, &blob);
+    let mut out = [0u8; 16];
+    call(
+        &mut fs,
+        &mut rng,
+        &mut st,
+        &mut AlwaysConfirm,
+        &req[..n],
+        &mut out,
+    )
+    .unwrap();
+    assert_ne!(
+        crate::credential::cred_store_state(&mut fs).unwrap(),
+        before,
+        "a loaded seed left the store tag where the old store had it"
+    );
+}

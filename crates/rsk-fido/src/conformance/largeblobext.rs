@@ -351,6 +351,7 @@ fn deleting_the_credential_takes_the_blob() {
 
     assert!(crate::passkeys::delete_cred(
         &mut a.fs,
+        &mut a.rng,
         crate::consts::EF_CRED
     ));
     assert!(

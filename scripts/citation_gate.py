@@ -257,7 +257,7 @@ CODE_PAGES_FLOOR = 1
 #: exactly the same shape a proof header does — `security_trace.py` names the two
 #: predicates its recorder stands in for — and it was the last substantive citing
 #: surface nothing read: the reset sweep found BOTH of its reset citations naming
-#: `reset.rs:187` for a predicate that is on `:211`, which `formal/README.md` had
+#: `reset.rs:191` for a predicate that is on `:215`, which `formal/README.md` had
 #: right all along.
 SCRIPT_ROOT = "scripts/"
 
@@ -446,7 +446,7 @@ AMBIGUOUS = {
 }
 
 #: The citations a row landed over, each with the commit that rotted it. Empty
-#: today: the two this guard shipped with — `reset.rs:126-132`, whose range
+#: today: the two this guard shipped with — `reset.rs:130-136`, whose range
 #: `a430f2d` had moved onto a blank line, and the bare `presence.rs`, which
 #: `4798668` made resolve two ways — were both re-pointed by `formal/` itself.
 #:

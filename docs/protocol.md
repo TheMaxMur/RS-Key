@@ -493,8 +493,8 @@ needs only the identifiers above. RS-Key implements:
   nothing. The identifier is derived from the device seed, so `authenticatorReset`
   changes it.
   **`encCredStoreState` (`0x1E`) is that same construction under the label
-  `encCredStoreState`**, over a 128-bit tag that moves whenever the set of
-  discoverable credentials does — a create, a `deleteCredential`, an
+  `encCredStoreState`**, over a 128-bit tag that takes a new random value whenever
+  the set of discoverable credentials changes — a create, a `deleteCredential`, an
   `updateUserInformation`, or a delete driven from the trusted display. Reads never
   move it. A platform holding the token caches the plaintext and re-enumerates only
   when it differs; one without the token sees bytes that change every call and learns
@@ -502,10 +502,12 @@ needs only the identifiers above. RS-Key implements:
   it — and it is written *ahead of* the change it describes, so what a torn write
   leaves is a tag that over-reports (one wasted re-enumeration) rather than one that
   under-reports (a stale cache). A tag the flash cannot serve **omits the member**
-  rather than publishing the zero one: zero is what a fresh device carries, so a
-  platform can be holding it, while an absent member matches no cached tag at all
-  and costs only the walk. `authenticatorReset` clears it back to zero along
-  with the credentials it summarises.
+  rather than publishing the zero one: zero is what a device an older build
+  provisioned carries until its first change, so a platform can be holding it, while
+  an absent member matches no cached tag at all and costs only the walk. A new store
+  starts with a new tag, as unpredictable as its seed — provisioning and
+  `authenticatorReset` derive it from the new seed, a `BACKUP_LOAD` draws one — so a
+  reset changes it even over a store nothing had changed (CTAP 2.3 §6.6).
   **makeCredential accepts `attestationFormatsPreference` (request
   `0x0B`)**: a list of exactly `["none"]` is answered with `fmt:"none"` and an
   **empty — but present —** `attStmt`, and nothing is signed. Any other list, an

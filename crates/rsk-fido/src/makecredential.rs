@@ -907,6 +907,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
             seed,
             &ctx.dev,
             ctx.fs,
+            ctx.rng,
             cred_box,
             rp_id_hash,
             req.rp_id,

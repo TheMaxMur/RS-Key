@@ -250,7 +250,7 @@ why = "clearing a display-only label: a survivor keeps the old nickname on the p
 
 [[site]]
 file = "crates/rsk-fido/src/passkeys.rs"
-line = 285
+line = 289
 call = "if fs.delete(ef_cred_fid).is_err() {"
 verb = "delete"
 answer = "read"
@@ -272,7 +272,7 @@ why = "the seed fids ahead of the batch. Both halves are read and BOTH are carri
 
 [[site]]
 file = "crates/rsk-fido/src/reset.rs"
-line = 169
+line = 173
 call = "let gone = ctx.fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"

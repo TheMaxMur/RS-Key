@@ -264,7 +264,11 @@ where
 /// This is the on-device counterpart of CTAP `deleteCredential` (0x06): the same
 /// flash effect, but keyed by slot (what the on-device walk holds) instead of by
 /// the host's resident id. Cred-first then RP-decrement matches that path's order.
-pub fn delete_cred<S: Storage>(fs: &mut Fs<S>, ef_cred_fid: u16) -> bool {
+pub fn delete_cred<S: Storage>(
+    fs: &mut Fs<S>,
+    rng: &mut impl crate::Rng,
+    ef_cred_fid: u16,
+) -> bool {
     if !(EF_CRED..EF_CRED + MAX_RESIDENT_CREDENTIALS).contains(&ef_cred_fid) {
         return false;
     }
@@ -279,7 +283,7 @@ pub fn delete_cred<S: Storage>(fs: &mut Fs<S>, ef_cred_fid: u16) -> bool {
     rp_id_hash.copy_from_slice(&buf[..32]);
     // Ahead of the delete, as on the host path: a tag that over-reports costs the
     // platform one re-enumeration, one that under-reports costs it a stale cache.
-    if crate::credential::bump_cred_store_state(fs).is_err() {
+    if crate::credential::renew_store_state(fs, rng).is_err() {
         return false;
     }
     if fs.delete(ef_cred_fid).is_err() {

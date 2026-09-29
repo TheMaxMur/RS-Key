@@ -576,14 +576,14 @@ PowerCycle ==
 \* `authenticatorReset` is FIDO's and reaches none of these: `is_fido_fid` is an
 \* explicit enumeration plus four credential ranges precisely because the applets
 \* interleave in the 0x10xx band, and 0x10A0 inside it is OATH's EF_OTP_PIN
-\* rather than OpenPGP's (crates/rsk-fido/src/reset.rs:266-309). Modelled as a
+\* rather than OpenPGP's (crates/rsk-fido/src/reset.rs:270-313). Modelled as a
 \* step that changes nothing, so a mutant that made it reach would be visible.
 FidoReset == UNCHANGED vars
 
 \* `Fs::factory_wipe` (crates/rsk-fs/src/fs.rs:463-514) is FLASH-only: it never
 \* sees an applet, so every in-RAM status here stands over freshly-defaulted
 \* verifiers until the reboot its one caller queues immediately after
-\* (crates/rsk-display/src/pin.rs:766-775).
+\* (crates/rsk-display/src/pin.rs:770-779).
 \* Modelled as the wipe AND its reboot in one step, which is what makes the
 \* window unobservable -- and that is exactly the assumption to attack if anyone
 \* ever separates them.

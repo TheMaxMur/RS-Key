@@ -162,6 +162,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **`authenticatorReset` gives the credential store a new state, as CTAP 2.3 §6.6
+  asks.** getInfo's `encCredStoreState` sealed a counter: each change added one,
+  and a reset deleted it back to the zero every fresh device started from, so a
+  store nothing had changed read the same before and after a reset. Every new store
+  now gets a new tag — derived from the new seed on a fresh device or a reset, drawn
+  at random for a `BACKUP_LOAD` — and a reset draws one again before its sweeps, so
+  a wipe stopped part-way still moves it. Every change draws a fresh random tag
+  instead of the next number, without reading the old one, so a tag the flash
+  cannot serve no longer refuses the change. A device an older build provisioned
+  keeps its tag until its first change. `bcdDevice` 0x0A6D → 0x0A6E.
+
 - **A secure reboot wipes the smart-card sessions too.** Before it resets, the
   reboot scrubbed the FIDO state, the DRBG and the OTP and core1 buffers, but of
   the CCID side only the response buffer: the OpenPGP session keys a VERIFY
@@ -6035,7 +6046,7 @@ the release carries the flag, the decision stays yours
   `Ctx::load_keydev` cited three times as `lib.rs:91-95`, which is
   `require_presence`, and `state.keydev_dec` as `state.rs:360-362`, which is
   `channel`. The last two are in `scripts/security_trace.py`, which no gate reads:
-  both name `reset.rs:187` for the reset-window predicate that is on `:211` — the
+  both name `reset.rs:191` for the reset-window predicate that is on `:215` — the
   same sentence `formal/README.md` already cited correctly, which is the tell that
   found them. Re-locked, each verified through the lock's own first/last line.
   No syntactic rule was added: "reject a citation whose first or last line is a

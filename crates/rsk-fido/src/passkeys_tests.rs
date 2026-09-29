@@ -69,7 +69,18 @@ fn add<S: Storage>(
     };
     let mut boxbuf = [0u8; 512];
     let len = credential_create(seed, &dev(), &inp, &rp_hash, &iv, &mut boxbuf).unwrap();
-    credential_store(seed, &dev(), fs, &boxbuf[..len], &rp_hash, rp_id, uid, &[]).unwrap();
+    credential_store(
+        seed,
+        &dev(),
+        fs,
+        &mut SeqRng(7),
+        &boxbuf[..len],
+        &rp_hash,
+        rp_id,
+        uid,
+        &[],
+    )
+    .unwrap();
 }
 
 #[test]
@@ -241,7 +252,7 @@ fn delete_drops_cred_and_decrements_rp() {
 
     let gh = fids_under(&mut fs, "github.com");
     assert_eq!(gh.len(), 2);
-    assert!(delete_cred(&mut fs, gh[0]));
+    assert!(delete_cred(&mut fs, &mut SeqRng(3), gh[0]));
 
     // The other github account survives, google is untouched.
     assert_eq!(fids_under(&mut fs, "github.com").len(), 1);
@@ -266,7 +277,7 @@ fn delete_last_cred_removes_rp() {
 
     let solo = fids_under(&mut fs, "solo.example");
     assert_eq!(solo.len(), 1);
-    assert!(delete_cred(&mut fs, solo[0]));
+    assert!(delete_cred(&mut fs, &mut SeqRng(3), solo[0]));
 
     // The RP record is gone with its last credential, so the walk no longer
     // surfaces it — only the untouched RP remains.
@@ -291,12 +302,12 @@ fn an_on_device_delete_moves_the_store_tag() {
 
     let gh = fids_under(&mut fs, "github.com");
     assert_eq!(gh.len(), 1);
-    assert!(delete_cred(&mut fs, gh[0]));
+    assert!(delete_cred(&mut fs, &mut SeqRng(3), gh[0]));
     assert_ne!(cred_store_state(&mut fs).unwrap(), before);
 }
 
 /// A refused on-device delete must not move the tag either way it can be refused —
-/// out of range, or an empty slot. Both return before the bump, so nothing is
+/// out of range, or an empty slot. Both return before the renewal, so nothing is
 /// written and nothing is claimed.
 #[test]
 fn a_refused_on_device_delete_leaves_the_tag_alone() {
@@ -305,8 +316,8 @@ fn a_refused_on_device_delete_leaves_the_tag_alone() {
     let (mut fs, seed) = provisioned();
     add(&mut fs, &seed, 1, "github.com", b"u", "n", "N", 0);
     let before = cred_store_state(&mut fs).unwrap();
-    assert!(!delete_cred(&mut fs, EF_CRED - 1));
-    assert!(!delete_cred(&mut fs, EF_CRED + 200));
+    assert!(!delete_cred(&mut fs, &mut SeqRng(3), EF_CRED - 1));
+    assert!(!delete_cred(&mut fs, &mut SeqRng(3), EF_CRED + 200));
     assert_eq!(cred_store_state(&mut fs).unwrap(), before);
 }
 
@@ -315,9 +326,13 @@ fn delete_bad_fid_is_noop() {
     let (mut fs, seed) = provisioned();
     add(&mut fs, &seed, 1, "github.com", b"u", "n", "N", 0);
     // Out of range below / at the EF_RP boundary, and an in-range but empty slot.
-    assert!(!delete_cred(&mut fs, EF_CRED - 1));
-    assert!(!delete_cred(&mut fs, EF_CRED + MAX_RESIDENT_CREDENTIALS));
-    assert!(!delete_cred(&mut fs, EF_CRED + 200));
+    assert!(!delete_cred(&mut fs, &mut SeqRng(3), EF_CRED - 1));
+    assert!(!delete_cred(
+        &mut fs,
+        &mut SeqRng(3),
+        EF_CRED + MAX_RESIDENT_CREDENTIALS
+    ));
+    assert!(!delete_cred(&mut fs, &mut SeqRng(3), EF_CRED + 200));
     // The real credential is still there — nothing was removed.
     assert_eq!(fids_under(&mut fs, "github.com").len(), 1);
 }
@@ -415,7 +430,7 @@ fn nickname_is_dropped_when_its_rp_disappears() {
 
     // Delete the only credential — the RP (and its nickname) go away.
     let solo = fids_under(&mut fs, "solo.example");
-    assert!(delete_cred(&mut fs, solo[0]));
+    assert!(delete_cred(&mut fs, &mut SeqRng(3), solo[0]));
 
     // Re-create the same RP; it must NOT inherit the old nickname.
     add(&mut fs, &seed, 2, "solo.example", b"u2", "n2", "N2", 0);
@@ -615,7 +630,7 @@ fn a_torn_on_device_delete_never_orphans_a_credential_or_hides_behind_the_tag() 
         let victim = fids_under(&mut fresh, rp)[0];
         rsk_fs::cut::sweep(
             provision,
-            |fs| delete_cred(fs, victim),
+            |fs| delete_cred(fs, &mut SeqRng(3), victim),
             |fs, budget, completed, medium| {
                 let live = fids_under(fs, rp).len();
                 let counted = rp_count(fs, rp);
