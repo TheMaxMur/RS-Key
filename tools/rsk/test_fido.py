@@ -115,6 +115,19 @@ def test_an_org_key_without_a_chain_hash_is_reported_not_a_crash(monkeypatch, ca
     assert "chain hash" not in out
 
 
+HASH = bytes(range(32))
+
+
+@pytest.mark.parametrize("answer, record", [
+    ({1: True, 2: HASH}, {"installed": True, "chain_unusable": False, "chain_sha256": HASH.hex()}),
+    ({1: True}, {"installed": True, "chain_unusable": True}),
+    ({1: False}, {"installed": False, "chain_unusable": False}),
+    ({1: False, 2: HASH}, {"installed": False, "chain_unusable": False}),
+])
+def test_an_att_state_answer_names_a_chain_the_device_cannot_use(answer, record):
+    assert fido._org_attestation(answer) == record
+
+
 @pytest.mark.parametrize("answer, printed", [
     ({1: True, 2: bytes.fromhex("9f2c")}, "org attestation : installed\nchain hash      : 9f2c\n"),
     ({1: False}, "org attestation : not installed (self-signed device cert in use)\n"),

@@ -69,7 +69,7 @@ record carries all of them:
 | `aaguid` | the device AAGUID (hex) |
 | `backup` | `{sealed, has_seed}` — seed-export lifecycle |
 | `lock` | `{locked, unlocked}` — [soft-lock](soft-lock.md) state |
-| `org_attestation` | `{installed, chain_sha256}` |
+| `org_attestation` | `{installed, chain_unusable, chain_sha256}` — `chain_unusable` is `true` for an installed key whose chain the device cannot read back whole, which `list` prints as `chain UNUSABLE` ([repair](attestation.md#provisioning)); `chain_sha256` comes only with a usable chain |
 | `error` | populated if an applet threw mid-read |
 
 A foreign PC/SC reader that does not answer the rescue SELECT is skipped, not

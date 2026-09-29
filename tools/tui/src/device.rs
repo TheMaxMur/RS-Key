@@ -607,15 +607,21 @@ fn read_fido(snap: &mut DeviceSnapshot) {
         Value::Map(vec![(iv(1), iv(VENDOR_ATT_STATE as i64))]),
         READ_TIMEOUT_MS,
     ) {
-        let installed = map_get(&v, 1).and_then(Value::as_bool).unwrap_or(false);
-        let chain = match map_get(&v, 2) {
-            Some(Value::Bytes(b)) if installed => Some(hex(b)),
-            _ => None,
-        };
-        snap.attestation = Some(AttestationState {
-            installed,
-            chain_sha256: chain,
-        });
+        snap.attestation = Some(attestation_state(&v));
+    }
+}
+
+/// An ATT_STATE answer. The device hashes only a chain it reads back whole, so an
+/// installed key with no hash (or an empty one) has a chain it cannot use.
+fn attestation_state(v: &Value) -> AttestationState {
+    let installed = map_get(v, 1).and_then(Value::as_bool).unwrap_or(false);
+    let chain_sha256 = match map_get(v, 2) {
+        Some(Value::Bytes(b)) if installed && !b.is_empty() => Some(hex(b)),
+        _ => None,
+    };
+    AttestationState {
+        installed,
+        chain_sha256,
     }
 }
 

@@ -27,7 +27,7 @@ from .audit import AUDIT_CHECKPOINT, _fingerprint, verify_checkpoint
 from .backup import ERR_NOT_ALLOWED, _die_pin_required, _die_touch_denied, _gated, _vendor
 from .common import (add_pin_arg, connect_fido, device_has_pin, die,
                      resolve_pin, sanitize, sanitize_join)
-from .fido import ATT_STATE  # vendor: org-attestation state (ungated)
+from .fido import ATT_STATE, _org_attestation  # vendor: org-attestation state (ungated)
 from .status import RESCUE_AID, VENDOR_STATE, _fw, rescue_read, rescue_serial
 
 
@@ -116,9 +116,7 @@ def _hid_records():
                     rec["lock"] = {"locked": bool(m.get(3)), "unlocked": bool(m.get(4))}
             st, m = _vendor(dev, cid, {1: ATT_STATE})
             if st == 0:
-                rec["org_attestation"] = {"installed": bool(m.get(1))}
-                if m.get(1) and m.get(2):
-                    rec["org_attestation"]["chain_sha256"] = m[2].hex()
+                rec["org_attestation"] = _org_attestation(m)
         except Exception as e:
             rec["error"] = str(e)
         finally:
@@ -164,8 +162,13 @@ def _print_record(rec):
         print(f"  backup     : sealed={b['sealed']} has_seed={b['has_seed']}  seed lock: {lock}")
     att = rec.get("org_attestation")
     if att:
-        chain = f"  chain sha256 {att['chain_sha256'][:16]}…" if att.get("chain_sha256") else ""
-        print(f"  org attest : {'installed' + chain if att['installed'] else 'not installed'}")
+        if not att["installed"]:
+            state = "not installed"
+        elif att["chain_unusable"]:
+            state = "installed  chain UNUSABLE (see `rsk fido attestation status`)"
+        else:
+            state = f"installed  chain sha256 {att['chain_sha256'][:16]}…"
+        print(f"  org attest : {state}")
 
 
 def cmd_list(args):

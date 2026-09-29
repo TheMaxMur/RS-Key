@@ -181,6 +181,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `KeyError`. It now says the chain is missing, unreadable or over the cap, what
   enterprise registrations get meanwhile, and how to repair it.
 
+- **`rsk inventory list` and `rsk-tui` flag an org key whose chain the device
+  cannot use** (`rsk` 0.3.42, `rsk-tui` 0.3.14). Both showed it as a healthy
+  "installed". The inventory record gains a `chain_unusable` field and `list`
+  prints the chain as `UNUSABLE`; the TUI's org-attestation row turns `WARN` and
+  reads "installed, chain unusable", and its `--json` carries the same field.
+
 - **A Yubico-OTP use counter planted at `0xFFFF` no longer wraps to 0.** Only a
   flash writer can store a counter above the 15-bit ceiling, and the power-up
   advance took `0xFFFF` to `0`, a counter going backwards, which is the replay it

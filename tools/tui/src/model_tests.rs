@@ -56,6 +56,35 @@ fn security_status_classifies_health() {
     assert_eq!(by("secure boot"), Health::Warn); // enabled, not locked
 }
 
+/// ATT_STATE leaves the chain hash out for a chain the device cannot read back
+/// whole; that key used to show as a healthy "installed".
+#[test]
+fn an_org_key_without_a_chain_hash_warns_that_the_chain_is_unusable() {
+    let att = |installed, chain: Option<&str>| AttestationState {
+        installed,
+        chain_sha256: chain.map(Into::into),
+    };
+    let mut s = DeviceSnapshot::default();
+    for (a, health, label) in [
+        (att(true, None), Health::Warn, "installed, chain unusable"),
+        (att(true, Some("9f2c")), Health::Ok, "installed"),
+        (att(false, None), Health::Unknown, "not installed"),
+    ] {
+        s.attestation = Some(a);
+        let rows = s.security_status();
+        let row = rows.iter().find(|r| r.key == "org attest").unwrap();
+        assert_eq!((row.health, row.value.as_str()), (health, label));
+    }
+    s.attestation = Some(att(true, None));
+    assert!(s.to_json().contains(
+        "\"attestation\":{\"installed\":true,\"chain_unusable\":true,\"chain_sha256\":null}"
+    ));
+    s.attestation = Some(att(true, Some("9f2c")));
+    assert!(s.to_json().contains(
+        "\"attestation\":{\"installed\":true,\"chain_unusable\":false,\"chain_sha256\":\"9f2c\"}"
+    ));
+}
+
 #[test]
 fn log_redacts_known_secret_substrings() {
     let mut log = EventLog::default();

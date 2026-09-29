@@ -258,6 +258,18 @@ def att_set_rpids(args):
         print("(enterpriseAttestation must also be enabled by the managed platform)")
 
 
+def _org_attestation(m):
+    """`{installed, chain_unusable, chain_sha256?}` from an ATT_STATE answer. The
+    device hashes only a chain it reads back whole (vendor.rs `att_state`), so an
+    installed key without a hash has a chain enterprise attestation cannot use."""
+    installed = bool(m.get(1))
+    chain = m.get(2) if installed else None
+    att = {"installed": installed, "chain_unusable": installed and not chain}
+    if chain:
+        att["chain_sha256"] = chain.hex()
+    return att
+
+
 def att_status(args):
     from .backup import _vendor
     from .common import connect_fido
@@ -266,12 +278,11 @@ def att_status(args):
     st, m = _vendor(dev, cid, {1: ATT_STATE})
     if st != 0:
         die(f"status failed: {st:#x}")
-    # ATT_STATE hashes only a chain that reads back whole (vendor.rs `att_state`).
-    chain_hash = m.get(2)
-    if not m[1]:
+    att = _org_attestation(m)
+    if not att["installed"]:
         print("org attestation : not installed (self-signed device cert in use)")
-    elif chain_hash:
-        print(f"org attestation : installed\nchain hash      : {chain_hash.hex()}")
+    elif not att["chain_unusable"]:
+        print(f"org attestation : installed\nchain hash      : {att['chain_sha256']}")
     else:
         print("org attestation : installed\n"
               f"chain           : missing, unreadable or over the {ATT_CHAIN_MAX}-byte cap\n"

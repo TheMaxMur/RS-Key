@@ -77,6 +77,25 @@ fn ber_find_handles_long_form_length_and_truncation() {
 }
 
 #[test]
+fn an_att_state_hash_counts_only_under_an_installed_key_and_when_not_empty() {
+    let att = |installed: bool, hash: &[u8]| {
+        attestation_state(&Value::Map(vec![
+            (iv(1), Value::Bool(installed)),
+            (iv(2), Value::Bytes(hash.to_vec())),
+        ]))
+    };
+    assert_eq!(
+        att(true, &[0x9f, 0x2c]).chain_sha256.as_deref(),
+        Some("9f2c")
+    );
+    assert!(att(true, &[]).chain_unusable());
+    assert!(!att(false, &[0x9f]).chain_unusable());
+    assert_eq!(att(false, &[0x9f]).chain_sha256, None);
+    let bare = attestation_state(&Value::Map(vec![(iv(1), Value::Bool(true))]));
+    assert!(bare.chain_unusable());
+}
+
+#[test]
 fn parse_led_stride2_and_stride3() {
     // stride 2: [steady, (color, brightness) × 4].
     let d2 = [1, 6, 16, 3, 32, 2, 64, 7, 8];
