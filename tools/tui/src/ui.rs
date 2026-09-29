@@ -572,12 +572,9 @@ fn section_status_lines(app: &App, theme: Theme) -> Vec<Line<'static>> {
             ));
             out.push(row(
                 theme,
-                attest_health(s),
+                Health::NotApplicable,
                 "checkpoint key",
-                match &s.attestation {
-                    Some(a) if a.installed => "org key installed",
-                    _ => "DEVK-derived (run Verify)",
-                },
+                "DEVK-derived (run Verify)",
             ));
             out.push(Line::from(""));
             out.push(Line::from(Span::styled(
@@ -628,13 +625,6 @@ fn security_lines(theme: Theme, s: &DeviceSnapshot, out: &mut Vec<Line<'static>>
 
 fn lock_text(l: LockState) -> String {
     l.describe().into()
-}
-
-fn attest_health(s: &DeviceSnapshot) -> Health {
-    match &s.attestation {
-        Some(a) if a.installed => Health::Ok,
-        _ => Health::NotApplicable,
-    }
 }
 
 /// Worst-of health for a section, shown as the sidebar dot.

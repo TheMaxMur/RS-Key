@@ -187,6 +187,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   prints the chain as `UNUSABLE`; the TUI's org-attestation row turns `WARN` and
   reads "installed, chain unusable", and its `--json` carries the same field.
 
+- **`rsk-tui`'s Audit section names the key the checkpoint signs with**
+  (`rsk-tui` 0.3.15). With an org attestation key installed its "checkpoint
+  key" row read "org key installed", but `AUDIT_CHECKPOINT` always signs with
+  the DEVK-derived key; the row now says so whatever is installed.
+
 - **A Yubico-OTP use counter planted at `0xFFFF` no longer wraps to 0.** Only a
   flash writer can store a counter above the 15-bit ceiling, and the power-up
   advance took `0xFFFF` to `0`, a counter going backwards, which is the replay it
