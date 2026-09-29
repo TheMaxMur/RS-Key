@@ -2,14 +2,23 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! CTAP 2.1 §6.4 `authenticatorGetInfo` conformance assertions, driven through
-//! the wire envelope (`process_cbor`). The pilot for the host-side conformance
-//! layer; other commands fan out from the same harness.
+//! the wire envelope (`process_cbor`), including the encrypted identifier and store
+//! state across a reset. The pilot the other command files fan out from.
 
-use super::{Authr, assert_ok, bool_map_canonical, field_at, int_map_keys};
+use super::{Authr, assert_ok, assert_ok_empty, bool_map_canonical, field_at, int_map_keys};
+use crate::FidoState;
 use crate::consts::{
-    AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_MLDSA44, FIRMWARE_VERSION,
-    MAX_CRED_ID_LENGTH, MAX_MSG_SIZE,
+    AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES256K, ALG_ES384, ALG_ES512, ALG_MLDSA44,
+    CP_GET_PIN_UV_TOKEN_USING_PIN, CTAP_CLIENT_PIN, CTAP_MAKE_CREDENTIAL, CTAP_RESET,
+    FIRMWARE_VERSION, MAX_CRED_ID_LENGTH, MAX_MSG_SIZE, PUBLIC_KEY_TYPE,
 };
+use crate::cose::cose_key_ecdh;
+use crate::state::PERM_PCMR;
+use crate::test_pins::PIN;
+use minicbor::Encoder;
+use minicbor::encode::write::Cursor;
+use rsk_crypto::pinproto::{self, PinProto, public_xy};
+use rsk_crypto::{Mode, aes_decrypt, hkdf_sha256, sha256};
 
 /// The exact set of getInfo members this build advertises, in canonical order.
 /// A new member must land here *and* in `metadata/rs-key.metadata.json` +
@@ -227,4 +236,216 @@ fn the_sealed_members_are_published_before_any_token_is_issued() {
         assert_ne!(one, two, "{key:#04x} must not repeat across calls");
         assert_ne!(one[..16], two[..16], "the IV is what must move");
     }
+}
+
+/// CBOR-encode a request body with `f`.
+fn enc(f: impl Fn(&mut Encoder<Cursor<&mut [u8]>>)) -> Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        f(&mut e);
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
+/// The platform half of clientPIN protocol two: a fixed ECDH key and the secret it
+/// shares with the authenticator.
+struct PinClient {
+    x: [u8; 32],
+    y: [u8; 32],
+    shared: Vec<u8>,
+}
+
+impl PinClient {
+    /// getKeyAgreement, then the platform's half of the ECDH.
+    fn establish(a: &mut Authr) -> Self {
+        let r = a.send(
+            CTAP_CLIENT_PIN,
+            &enc(|e| {
+                e.map(2).unwrap();
+                e.u8(1).unwrap().u64(2).unwrap();
+                e.u8(2).unwrap().u64(2).unwrap();
+            }),
+        );
+        assert_ok(&r);
+        // {1: 2, 3: -25, -1: 1, -2: x, -3: y}
+        let mut d = field_at(&r.body, 1).expect("keyAgreement (0x01) present");
+        assert_eq!(d.map().unwrap().unwrap(), 5);
+        for _ in 0..3 {
+            d.i64().unwrap();
+            d.i64().unwrap();
+        }
+        assert_eq!(d.i64().unwrap(), -2);
+        let ax: [u8; 32] = d.bytes().unwrap().try_into().unwrap();
+        assert_eq!(d.i64().unwrap(), -3);
+        let ay: [u8; 32] = d.bytes().unwrap().try_into().unwrap();
+        let s = [0x2B; 32];
+        let (x, y) = public_xy(&s).unwrap();
+        let mut shared = [0u8; 64];
+        let n = pinproto::ecdh(PinProto::Two, &s, &ax, &ay, &mut shared).unwrap();
+        PinClient {
+            x,
+            y,
+            shared: shared[..n].to_vec(),
+        }
+    }
+
+    fn encrypt(&self, pt: &[u8]) -> Vec<u8> {
+        let mut out = [0u8; 96];
+        let n = pinproto::encrypt(PinProto::Two, &self.shared, &[0x5A; 16], pt, &mut out).unwrap();
+        out[..n].to_vec()
+    }
+
+    /// setPIN `{1: 2, 2: 3, 3: keyAgreement, 4: pinUvAuthParam, 5: newPinEnc}`.
+    fn set_pin(&self, pin: &[u8]) -> Vec<u8> {
+        let mut padded = [0u8; 64];
+        padded[..pin.len()].copy_from_slice(pin);
+        let npe = self.encrypt(&padded);
+        let mut mac = [0u8; 32];
+        let n = pinproto::authenticate(PinProto::Two, &self.shared, &npe, &mut mac).unwrap();
+        enc(|e| {
+            e.map(5).unwrap();
+            e.u8(1).unwrap().u64(2).unwrap();
+            e.u8(2).unwrap().u64(3).unwrap();
+            e.u8(3).unwrap();
+            cose_key_ecdh(e, &self.x, &self.y).unwrap();
+            e.u8(4).unwrap().bytes(&mac[..n]).unwrap();
+            e.u8(5).unwrap().bytes(&npe).unwrap();
+        })
+    }
+
+    /// getPinUvAuthTokenUsingPinWithPermissions for `pcmr` alone, with no rpId:
+    /// `{1: 2, 2: 9, 3: keyAgreement, 6: pinHashEnc, 9: permissions}`.
+    fn pcmr_token(&self, pin: &[u8]) -> Vec<u8> {
+        let phe = self.encrypt(&sha256(pin)[..16]);
+        enc(|e| {
+            e.map(5).unwrap();
+            e.u8(1).unwrap().u64(2).unwrap();
+            e.u8(2).unwrap().u64(CP_GET_PIN_UV_TOKEN_USING_PIN).unwrap();
+            e.u8(3).unwrap();
+            cose_key_ecdh(e, &self.x, &self.y).unwrap();
+            e.u8(6).unwrap().bytes(&phe).unwrap();
+            e.u8(9).unwrap().u8(PERM_PCMR).unwrap();
+        })
+    }
+
+    /// The token a getPinUvAuthToken response `{2: encrypted token}` carries.
+    fn decrypt_token(&self, resp: &[u8]) -> [u8; 32] {
+        let mut d = field_at(resp, 2).expect("pinUvAuthToken (0x02) present");
+        let mut tok = [0u8; 32];
+        let n =
+            pinproto::decrypt(PinProto::Two, &self.shared, d.bytes().unwrap(), &mut tok).unwrap();
+        assert_eq!(n, 32, "a pinUvAuthToken is 32 bytes");
+        tok
+    }
+}
+
+/// Set `PIN`, then take the `pcmr` grant as a platform does (§6.5.5.7.2): the
+/// persistent pinUvAuthToken the two sealed members are keyed with.
+fn pcmr_grant(a: &mut Authr) -> [u8; 32] {
+    let pc = PinClient::establish(a);
+    assert_ok_empty(&a.send(CTAP_CLIENT_PIN, &pc.set_pin(PIN)));
+    let r = a.send(CTAP_CLIENT_PIN, &pc.pcmr_token(PIN));
+    assert_ok(&r);
+    pc.decrypt_token(&r.body)
+}
+
+/// getInfo member `key`, which must be present, as bytes.
+fn member(a: &mut Authr, key: u32) -> Vec<u8> {
+    let r = a.get_info();
+    let mut d = field_at(&r.body, key).unwrap_or_else(|| panic!("{key:#04x} present"));
+    d.bytes().unwrap().to_vec()
+}
+
+/// Open a sealed member as §6.4 tells a platform to: `iv ‖ ct`, AES-128-CBC under
+/// HKDF-SHA-256(salt = 32 zero bytes, IKM = the persistent token, info = `label`).
+fn open_member(token: &[u8; 32], blob: &[u8], label: &[u8]) -> [u8; 16] {
+    let mut key = [0u8; 16];
+    hkdf_sha256(&[0u8; 32], token, label, &mut key).unwrap();
+    let iv: [u8; 16] = blob[..16].try_into().unwrap();
+    let mut block: [u8; 16] = blob[16..].try_into().unwrap();
+    aes_decrypt(&key, &iv, Mode::Cbc, &mut block).unwrap();
+    block
+}
+
+/// FIDO Authr-Generic-1 P-4. Under the `pcmr` grant 0x19 opens to one device
+/// identifier call after call, and authenticatorReset generates a new one (§6.6),
+/// which is what the grant taken after the reset opens it to.
+#[test]
+fn a_reset_gives_the_device_a_new_identifier() {
+    let mut a = Authr::fresh();
+    let before = pcmr_grant(&mut a);
+    let id = open_member(&before, &member(&mut a, 0x19), b"encIdentifier");
+    assert_eq!(
+        open_member(&before, &member(&mut a, 0x19), b"encIdentifier"),
+        id,
+        "the identifier holds from one getInfo to the next"
+    );
+    replug(&mut a);
+    assert_ok_empty(&a.send(CTAP_RESET, &[]));
+    let after = pcmr_grant(&mut a);
+    let new_id = open_member(&after, &member(&mut a, 0x19), b"encIdentifier");
+    assert_eq!(
+        open_member(&after, &member(&mut a, 0x19), b"encIdentifier"),
+        new_id,
+        "the grant taken after the reset opens 0x19 to one value"
+    );
+    assert_ne!(
+        new_id, id,
+        "authenticatorReset must generate a new device identifier"
+    );
+}
+
+/// Power-cycle the authenticator: RAM state goes, flash stays, and the clock
+/// restarts — §6.6 honours authenticatorReset only in the first 10 s after it.
+fn replug(a: &mut Authr) {
+    a.state = FidoState::new();
+    a.clock = 0;
+}
+
+/// A discoverable makeCredential over `example.com`: a change to the credential store.
+fn mc_rk() -> Vec<u8> {
+    enc(|e| {
+        e.map(5).unwrap();
+        e.u8(1).unwrap().bytes(&[0xCD; 32]).unwrap();
+        e.u8(2).unwrap().map(1).unwrap();
+        e.str("id").unwrap().str("example.com").unwrap();
+        e.u8(3).unwrap().map(1).unwrap();
+        e.str("id").unwrap().bytes(&[7, 7]).unwrap();
+        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
+        e.str("type").unwrap().str(PUBLIC_KEY_TYPE).unwrap();
+        e.u8(7).unwrap().map(1).unwrap();
+        e.str("rk").unwrap().bool(true).unwrap();
+    })
+}
+
+/// FIDO Authr-Generic-1 P-5, as far as RS-Key meets it: §6.6 asks a reset for a fresh
+/// random store state, but `cred_store_state` reads the wiped tag as the fresh-device
+/// zero, so only a store that changed before the reset reads differently after it.
+#[test]
+fn a_store_changed_before_a_reset_reads_differently_after_it() {
+    let mut a = Authr::fresh();
+    assert_ok(&a.send(CTAP_MAKE_CREDENTIAL, &mc_rk()));
+    let before = pcmr_grant(&mut a);
+    let state = open_member(&before, &member(&mut a, 0x1E), b"encCredStoreState");
+    assert_eq!(
+        open_member(&before, &member(&mut a, 0x1E), b"encCredStoreState"),
+        state,
+        "the state holds from one getInfo to the next"
+    );
+    replug(&mut a);
+    assert_ok_empty(&a.send(CTAP_RESET, &[]));
+    let after = pcmr_grant(&mut a);
+    let new_state = open_member(&after, &member(&mut a, 0x1E), b"encCredStoreState");
+    assert_eq!(
+        open_member(&after, &member(&mut a, 0x1E), b"encCredStoreState"),
+        new_state,
+        "the grant taken after the reset opens 0x1E to one value"
+    );
+    assert_ne!(
+        new_state, state,
+        "a changed store must not read the same after a reset"
+    );
 }
