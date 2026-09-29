@@ -79,8 +79,9 @@ impl HmacDrbg {
     /// before handing control to the bootloader. Unusable until re-seeded.
     pub fn scrub(&mut self) {
         // Assigning drops the old state, which wipes it; the fresh one is zeros.
-        self.k = Secret::zeroed();
-        self.v = Secret::zeroed();
+        let Self { k, v } = self;
+        *k = Secret::zeroed();
+        *v = Secret::zeroed();
     }
 }
 

@@ -40,25 +40,25 @@ EXTENDS Naturals
 CONSTANTS
     Max,   \* the retry ceiling; models MAX_PIN_RETRIES / the per-reference default
     \* The `left == 0 => PIN_BLOCKED` floor, checked BEFORE the comparison at
-    \* crates/rsk-piv/src/lib.rs:1344-1346 (check_ref) and
-    \* crates/rsk-openpgp/src/pin.rs:257-259 (check_pin). One switch: the same
+    \* crates/rsk-piv/src/lib.rs:1355-1357 (check_ref) and
+    \* crates/rsk-openpgp/src/pin.rs:245-247 (check_pin). One switch: the same
     \* floor guards a direct verify AND a recovery reference (the PUK/RC that
     \* check_ref/check_pin is called on), so removing it opens both.
     BugUseWhenBlocked,
-    \* The decrement that IS the anti-bruteforce gate: crates/rsk-piv/src/lib.rs:1364
+    \* The decrement that IS the anti-bruteforce gate: crates/rsk-piv/src/lib.rs:1375
     \* (`set_retries_left(fs, retry, left - 1)`, spent BEFORE the compare) and
-    \* crates/rsk-openpgp/src/pin.rs:164 (`pw[idx] -= 1`). Removing it lets a wrong
+    \* crates/rsk-openpgp/src/pin.rs:152 (`pw[idx] -= 1`). Removing it lets a wrong
     \* attempt cost nothing -- unlimited guesses at full speed.
     BugWrongDoesNotSpend,
     \* The recovery reference verified BEFORE the target is refilled:
-    \* crates/rsk-piv/src/lib.rs:1501 (`check_ref(EF_PUK, ..)` opens
-    \* unblock_pin_with_puk) and crates/rsk-openpgp/src/pin.rs:961 (`check_pin(EF_RC,
+    \* crates/rsk-piv/src/lib.rs:1512 (`check_ref(EF_PUK, ..)` opens
+    \* unblock_pin_with_puk) and crates/rsk-openpgp/src/pin.rs:949 (`check_pin(EF_RC,
     \* ..)` opens reset_retry's P1=0 branch). Removing it refills the target on a
     \* WRONG recovery secret.
     BugRecoveryWithoutSecret
 
 \* Every reference that carries a retry counter. PW2 (PW1 mode 0x82) is NOT here:
-\* it shares PW1's verifier and counter (crates/rsk-openpgp/src/pin.rs:721), so it
+\* it shares PW1's verifier and counter (crates/rsk-openpgp/src/pin.rs:709), so it
 \* is PW1's counter under another name. The OATH access code and the OTP slot code
 \* are NOT here either: a MAC / equality challenge-response has NO retry counter
 \* (a wrong answer costs nothing), so they are the seam module's exempt-refusal
@@ -67,14 +67,14 @@ Refs == {"pivPin", "pivPuk", "pw1", "pw3", "rc"}
 
 \* The references a host VERIFY targets directly. `pivPuk` and `rc` are absent:
 \* neither is verified on its own, only PRESENTED as the recovery secret inside a
-\* RESET RETRY (crates/rsk-piv/src/lib.rs:585-592, crates/rsk-openpgp/src/pin.rs:938-989),
+\* RESET RETRY (crates/rsk-piv/src/lib.rs:596-603, crates/rsk-openpgp/src/pin.rs:926-977),
 \* where a wrong one still spends its counter.
 VerifyTargets == {"pivPin", "pw1", "pw3"}
 
 \* The recovery graph: which reference's correct presentation refills the target's
 \* counter. PIV's PUK unblocks the PIN (RESET RETRY COUNTER); OpenPGP's RC unblocks
 \* PW1 (RESET RETRY, P1=0). PW3's admin path to PW1 (P1=0x02) is DELIBERATELY out:
-\* it gates on a live PW3 SESSION (`sess.has_pw3`, crates/rsk-openpgp/src/pin.rs:994),
+\* it gates on a live PW3 SESSION (`sess.has_pw3`, crates/rsk-openpgp/src/pin.rs:982),
 \* which is the seam
 \* module's status, not a secret presented in the call. `pivPuk`, `pw3` and `rc`
 \* have no recovery -- blocked is terminal for them, TERMINATE DF / factory RESET
@@ -103,8 +103,8 @@ Init ==
     /\ viol = {}
 
 (***************************************************************************)
-(* VERIFY. crates/rsk-piv/src/lib.rs:1339-1406 (check_ref) and              *)
-(* crates/rsk-openpgp/src/pin.rs:234-329 (check_pin): refuse at zero, spend  *)
+(* VERIFY. crates/rsk-piv/src/lib.rs:1350-1417 (check_ref) and              *)
+(* crates/rsk-openpgp/src/pin.rs:222-317 (check_pin): refuse at zero, spend  *)
 (* on a wrong value, refill on a correct one.                              *)
 (***************************************************************************)
 \* Always enabled: a blocked card still ANSWERS every VERIFY -- it returns

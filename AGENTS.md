@@ -49,7 +49,10 @@ project — see [README.md](README.md) and
   exit, a `?` included. The root `clippy.toml` refuses a bare
   `Zeroize::zeroize` or a `Zeroizing` in every crate; a wipe no `Secret` can
   make (state that outlives a command, a key type's own `Drop`) stays bare
-  under an `#[expect]` that names its wipe point. Wipe early with `.wipe()`,
+  under an `#[expect]` that names its wipe point. A hand-written wipe of a whole
+  value (a type's `Drop`, a long-lived value's `scrub`, a session's reset) names
+  every field and every variant — no `_` arm — so a new one does not compile
+  until its wipe is decided. Wipe early with `.wipe()`,
   never `drop(secret)`: that moves the bytes and wipes the copy.
 - **A reset goes through `Worker::reboot`**, which scrubs the RAM secrets
   first. Clippy refuses a direct `SCB::sys_reset`,

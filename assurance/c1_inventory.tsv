@@ -142,13 +142,13 @@ open_channel_key	crates/rsk-fido/src/vendor.rs:556	30	decides	D2	checks the Poly
 serial_name	crates/rsk-oath/src/lib.rs:239	12	decides	D2	the 8-byte id goes out in the UNauthenticated SELECT (lib.rs:1260) and serves as ykman's PBKDF2 salt: a one-way sha256 of serial_hash, which, handed out directly, would reveal the root identifier	-
 otp_pin_record_v1	crates/rsk-oath/src/lib.rs:1098	9	decides	D4	builds the gate record itself — the PIN verifier and the full MAX_OTP_COUNTER budget; the three sites (set/change/unblock) raise the budget with exactly this record	SEC-LAT-003
 parse_exact	crates/rsk-oath/src/lib.rs:2070	18	decides	D5	strict positional grammar is the only thing that separates "73 00" = clear the access code (lib.rs:374) from a body with a key and no proof: an extra byte after the tag is 6A80 here, not a deletion of the code	SEC-SEAM-006,SEC-POL-004
-stage_dek	crates/rsk-openpgp/src/pin.rs:531	37	decides	D2	derives the session key from the new PIN and re-seals the DEK under it into the stage slot; the rescrub re-arm (pin.rs:551) is also here, on the FIRST append of the sequence, otherwise a reset has time to pass over unwiped copies	-
-reseed_pin	crates/rsk-openpgp/src/pin.rs:608	30	decides	D4	makes new the reference value of PW1/PW3 and gives back the attempt budget (pin_reset_retries) without comparing A SINGLE old value — the authority rests entirely with the caller	SEC-LAT-003
-rewrap_dek	crates/rsk-openpgp/src/pin.rs:838	23	decides	D2	derives the session key from the PIN and re-seals the DEK under it: after it, the DEK opens with the new PIN and stops opening with the old one	-
+stage_dek	crates/rsk-openpgp/src/pin.rs:519	37	decides	D2	derives the session key from the new PIN and re-seals the DEK under it into the stage slot; the rescrub re-arm (pin.rs:539) is also here, on the FIRST append of the sequence, otherwise a reset has time to pass over unwiped copies	-
+reseed_pin	crates/rsk-openpgp/src/pin.rs:596	30	decides	D4	makes new the reference value of PW1/PW3 and gives back the attempt budget (pin_reset_retries) without comparing A SINGLE old value — the authority rests entirely with the caller	SEC-LAT-003
+rewrap_dek	crates/rsk-openpgp/src/pin.rs:826	23	decides	D2	derives the session key from the PIN and re-seals the DEK under it: after it, the DEK opens with the new PIN and stops opening with the old one	-
 serial_str10	crates/rsk-otp/src/lib.rs:389	11	marshals	M	hex expansion of the public serial into the 10 bytes of the challenge block	-
 status_bytes	crates/rsk-otp/src/lib.rs:401	24	marshals	M	projection of the stored slot state into the report (valid/touch/seq); reads through the COLLAPSING read_slot_m, and that is correct — no gate hangs on this report, the touch itself is spent on the ticket path	-
 hid_status_frame	crates/rsk-otp/src/lib.rs:435	7	marshals	M	wraps status_bytes in the 8-byte frame of a keyboard GET_REPORT	-
-pad_pin	crates/rsk-piv/src/lib.rs:1414	12	decides	D1	canonicalizes a PIN entered on the panel into the very 8 bytes the verifier is computed over; a divergence from the host VERIFY means a PIN that never matches, and None cuts off empty and oversized input before an attempt is spent	SEC-LAT-002
+pad_pin	crates/rsk-piv/src/lib.rs:1425	12	decides	D1	canonicalizes a PIN entered on the panel into the very 8 bytes the verifier is computed over; a divergence from the host VERIFY means a PIN that never matches, and None cuts off empty and oversized input before an attempt is spent	SEC-LAT-002
 hex_u16	crates/rsk-ui/src/lib.rs:914	11	marshals	M	hex formatting of a u16 for the Info screen	-
 hex_u64	crates/rsk-ui/src/lib.rs:926	10	marshals	M	hex formatting of a u64 for the Info screen	-
 rsa_sw	crates/rsk-piv/src/lib.rs:65	13	marshals	M	RsaError -> Sw table, a pure mapping of the error to a status word	-
@@ -158,55 +158,55 @@ fill	crates/rsk-piv/src/lib.rs:107	3	marshals	M	byte pass-through from rsk-sdk::
 set_pin	crates/rsk-piv/src/lib.rs:188	7	decides	D1,D4	the only writer of has_pin, and it also sets/clears pin_fresh — the freshness for an ALWAYS slot	SEC-POL-002,SEC-SEAM-002
 clear_challenge	crates/rsk-piv/src/lib.rs:196	7	decides	D1,D4	resets an unfinished 9B handshake (has_challenge/chal_kind/chal_algo) — after it, step 2 of GENERAL AUTHENTICATE cannot grant has_mgm	SEC-SEAM-003
 reset	crates/rsk-piv/src/lib.rs:208	5	decides	D4	clears both of the applet's access statuses at once (PIN and mgm) and the challenge — the closed state of a selection	SEC-SEAM-001,SEC-SEAM-004
-new	crates/rsk-piv/src/lib.rs:231	19	decides	D4	sets the initial access status (Session::default — everything closed) and a cleared files_ensured, from which select decides provisioning	SEC-SEAM-001
-age_challenge	crates/rsk-piv/src/lib.rs:251	14	decides	D1,D5	the branch on INS/P2 decides whether an issued witness survives the next command; everything except 0x87 and GET METADATA 9B clears it	SEC-SEAM-003
-device_ids	crates/rsk-piv/src/lib.rs:266	10	marshals	M	assembles the tuple of identifiers and FusedRead for Device; no branch, nothing handed out to the host	-
-rsa_generate_params	crates/rsk-piv/src/lib.rs:277	30	decides	D1,D5	clears the challenge and refuses the fast path without has_mgm; resolved_policies determines the pin/touch policy of the future slot	SEC-SEAM-003,SEC-POL-001
-rsa_generate_finish	crates/rsk-piv/src/lib.rs:312	24	decides	D3	the effect is a write to flash of the generated RSA key and the EF_META head carrying the policy; the old head is deleted first	SEC-POL-001
-apt	crates/rsk-piv/src/lib.rs:332	20	marshals	M	lays out the constant template 61{...} into ResBuf, decides only whether it fits	-
-aid	crates/rsk-piv/src/lib.rs:351	3	marshals	M	returns the constant PIV_AID — the routing table carries an address, not a permission	-
-response_chaining	crates/rsk-piv/src/lib.rs:355	6	marshals	M	a constant transport attribute (GET RESPONSE), carries no policy	-
-select	crates/rsk-piv/src/lib.rs:362	33	decides	D3,D4	lib.rs:381 — !reselect resets the access status, otherwise keeps it; and provisioning of the default files + arming files_ensured	SEC-SEAM-004,SEC-SEAM-001
-deselect	crates/rsk-piv/src/lib.rs:394	3	decides	D4	clears all of the applet's access status when the selection leaves	SEC-SEAM-001
-process	crates/rsk-piv/src/lib.rs:398	84	decides	D1	mostly a dispatcher on INS, but lib.rs:411 clears an issued 9B-challenge, and lib.rs:419 refuses Lc=1 above any ACL	SEC-SEAM-003,SEC-SEAM-001
-verify	crates/rsk-piv/src/lib.rs:473	72	decides	D1,D4,D5	the PIN door: lib.rs:556 clears the status on a malformed length, lib.rs:569 sets it from check_ref's answer, and a zero counter yields 6983 before the comparison	SEC-LAT-001,SEC-LAT-002,SEC-SEAM-002
-change_pin	crates/rsk-piv/src/lib.rs:546	21	decides	D5	the P2 -> PinRef map decides whose verifier and whose attempt budget are spent and overwritten	SEC-LAT-002
-reset_retry	crates/rsk-piv/src/lib.rs:568	13	marshals	M	comparisons of P1/P2 against literals and delegation; all the policy is in wire_reference_pair and unblock_pin_with_puk	-
-set_retries	crates/rsk-piv/src/lib.rs:590	40	decides	D1,D3,D4	requires has_mgm AND has_pin, refuses zero totals, rewrites EF_RETRIES, re-arms EF_HARDENED and resets PIN/PUK to the defaults	SEC-LAT-003,SEC-SEAM-003,SEC-BOOT-001
-reset	crates/rsk-piv/src/lib.rs:631	28	decides	D3,D4	lets the applet's factory reset through only with both counters at zero; the effect is reset_files and a session reset	SEC-LAT-001,SEC-SEAM-001
-keygen	crates/rsk-piv/src/lib.rs:660	42	decides	D1,D2,D3	lib.rs:695 — has_mgm above the whole request frame; then generation and a write of the slot's private key with the resolved policy	SEC-SEAM-003,SEC-POL-001
-get_data	crates/rsk-piv/src/lib.rs:703	58	decides	D1,D2	lib.rs:747 — read_needs_pin && !has_pin refuses before the object lookup; lib.rs:756 sends PRINTED to the management-key synthesis	SEC-SEAM-003
-get_protected_mgm	crates/rsk-piv/src/lib.rs:765	36	decides	D1,D2	lib.rs:799 — refusal without has_pin, otherwise unseals the 9B management key to the host	SEC-SEAM-003
-put_data	crates/rsk-piv/src/lib.rs:816	72	decides	D1,D3	lib.rs:839 — has_mgm; lib.rs:857/847 decide whether the escrow record is stored, hidden or refused; lib.rs:882 forbids writing the attestation certificate; lib.rs:885 deletes the object	SEC-SEAM-003,SEC-STORE-006
-get_metadata	crates/rsk-piv/src/lib.rs:877	113	decides	D2,D5	an ungated command, and inside it lib.rs:930 and lib.rs:954 print out the predicate "key is still the factory one" over the PIN verifier and over the unsealed 9B key; lib.rs:972 — the touch-byte rule	SEC-LAT-002,SEC-SEAM-003
-slot_pubkey_tlv	crates/rsk-piv/src/lib.rs:998	56	marshals	M	encodes the slot's public part (81/82 or 86) from the cache or a derived point; only public material goes out to the host	-
-set_mgmkey	crates/rsk-piv/src/lib.rs:1049	61	decides	D1,D3,D4	lib.rs:1060 — has_mgm; P2 sets the touch policy, the FIPS branch refuses a new 3DES, and at the end the escrow flag is cleared	SEC-SEAM-003,SEC-POL-001
-move_key	crates/rsk-piv/src/lib.rs:1137	123	decides	D1,D2,D3	lib.rs:1169 — has_mgm; moves the sealed private key between slots, and lib.rs:1246 decides whether the deletion of the source counts as done	SEC-SEAM-003,SEC-STORE-001,SEC-STORE-006
-retries	crates/rsk-piv/src/lib.rs:1270	7	decides	D5	reads EF_RETRIES and returns the pair (total, left) — the value every door of the lattice branches on	SEC-LAT-001,SEC-LAT-002
-retries_left	crates/rsk-piv/src/lib.rs:1278	3	decides	D5	returns the remaining budget — the condition of the blocked floor in verify, reset and check_ref	SEC-LAT-001
-set_retries_left	crates/rsk-piv/src/lib.rs:1282	8	decides	D3,D4	the only write of the remaining attempts to EF_RETRIES — spending and restoring the budget	SEC-LAT-002,SEC-LAT-003
-reset_counter	crates/rsk-piv/src/lib.rs:1294	9	decides	D3,D4	raises the remainder to the total — a budget rise that SEC-LAT-003 allows only on the correct secret	SEC-LAT-003
-wire_reference_pair	crates/rsk-piv/src/lib.rs:1307	9	decides	D5	rule 2: the refusal on nc != 2*PIN_WIRE_LEN is the only ban on creating a reference that the wire form cannot present	SEC-LAT-002
-migrate_kbase	crates/rsk-piv/src/lib.rs:1317	6	decides	D3	in itself a forwarder, but its effect is re-sealing all PIV key slots and re-arming EF_HARDENED	SEC-BOOT-001
-check_ref	crates/rsk-piv/src/lib.rs:1324	72	decides	D1,D2,D3,D4,D5	the core of the lattice: the blocked floor, spending the attempt with read-back BEFORE the comparison, ct_eq over the verifier, kbase-fallback with a rewrite and restoring the total on a match	SEC-LAT-001,SEC-LAT-002,SEC-LAT-003,SEC-BOOT-001
-fid_retry	crates/rsk-piv/src/lib.rs:1406	6	decides	D5	binds a reference to its verifier file and counter index — the table carries whose budget is spent	SEC-LAT-002
-check_new_reference	crates/rsk-piv/src/lib.rs:1427	24	decides	D5	the length rule for a new PIN/PUK: the condition for writing the verifier, which is also the lower bound of the brute-force space against the attempt counter	-
-change_reference	crates/rsk-piv/src/lib.rs:1454	28	decides	D1,D3	the order "first the old secret (spends an attempt), then the format of the new one, then the write" is itself the reference-change door	SEC-LAT-002
-unblock_pin_with_puk	crates/rsk-piv/src/lib.rs:1483	30	decides	D1,D3,D4	checks the PUK, re-arms EF_HARDENED, writes the new PIN verifier and raises its counter — a budget rise on a secret not its own	SEC-LAT-003,SEC-LAT-001,SEC-BOOT-001
-reference_retries_left	crates/rsk-piv/src/lib.rs:1514	5	marshals	M	reads the remaining attempts for the caption on the panel; the calls in rsk-display/src/pin.rs:988,1019 are caption only	-
-verify_reference	crates/rsk-piv/src/lib.rs:1520	14	decides	D1	the panel door for the old secret: calls check_ref, i.e. spends an attempt and decides admission without touching the card status	SEC-LAT-001,SEC-LAT-002
-is_mgm_escrow	crates/rsk-piv/src/lib.rs:1535	12	decides	D5	exact match of 88{89 key}: whether the PRINTED record is stored in the clear or only confirmed depends on it	SEC-SEAM-003
-is_mgm_key_len	crates/rsk-piv/src/lib.rs:1548	6	decides	D5	a scan of the 9B algorithm table; the predicate that recognition of the escrow record rests on	SEC-SEAM-003
-mgm_is_protected	crates/rsk-piv/src/lib.rs:1555	12	decides	D5	collapses a failed probe into "no escrow"; the value decides whether GET DATA synthesizes the live management key	SEC-SEAM-003
-try_mgm_is_protected	crates/rsk-piv/src/lib.rs:1568	23	decides	D5	parses the 0x02 flag of PivmanData and separates a medium fault from absence — the PUT DATA refusal on 5FC109 stands on this distinction	SEC-SEAM-003
-escrow_revocation	crates/rsk-piv/src/lib.rs:1599	24	decides	D3,D4	builds the record that clears the escrow flag, read before SET MANAGEMENT KEY writes the key — once it lands, the PIN no longer opens management access; neither probe's error is swallowed	SEC-SEAM-003
-protect_mgm_key	crates/rsk-piv/src/lib.rs:1624	73	decides	D2,D3,D4	mints a random AES-256 mgm key, seals it and sets the flag: after that the PIN alone grants management access; the write order is fail-closed	SEC-SEAM-003
-pivman_set_protected	crates/rsk-piv/src/lib.rs:1711	5	decides	D5	pins the MGM_PROTECTED bit to one for the ADMIN DATA record — the permission itself, not its encoding	SEC-SEAM-003
-pivman_rebuild	crates/rsk-piv/src/lib.rs:1728	49	decides	D4,D5	mostly TLV re-encoding, but lib.rs:1734 computes the flags byte that try_mgm_is_protected later reads as a permission	SEC-SEAM-003
-ct_eq	crates/rsk-piv/src/lib.rs:1772	4	decides	D5	a forwarder to the canonical comparator, but its answer is precisely the condition of every PIN/PUK/mgm comparison; registered in assurance/ct_sites.toml	SEC-LAT-002
-push_tlv	crates/rsk-piv/src/lib.rs:1753	9	marshals	M	appends tag{len,payload} to ResBuf, decides only whether it fits	-
-dyn_auth_resp	crates/rsk-piv/src/lib.rs:1774	11	marshals	M	builds the 7C{tag payload} envelope of the GENERAL AUTHENTICATE response, does not judge the contents	-
-wrap_cert_object	crates/rsk-piv/src/lib.rs:1788	15	marshals	M	wraps the certificate in 70{}71{00}FE{} — pure encoding	-
+new	crates/rsk-piv/src/lib.rs:242	19	decides	D4	sets the initial access status (Session::default — everything closed) and a cleared files_ensured, from which select decides provisioning	SEC-SEAM-001
+age_challenge	crates/rsk-piv/src/lib.rs:262	14	decides	D1,D5	the branch on INS/P2 decides whether an issued witness survives the next command; everything except 0x87 and GET METADATA 9B clears it	SEC-SEAM-003
+device_ids	crates/rsk-piv/src/lib.rs:277	10	marshals	M	assembles the tuple of identifiers and FusedRead for Device; no branch, nothing handed out to the host	-
+rsa_generate_params	crates/rsk-piv/src/lib.rs:288	30	decides	D1,D5	clears the challenge and refuses the fast path without has_mgm; resolved_policies determines the pin/touch policy of the future slot	SEC-SEAM-003,SEC-POL-001
+rsa_generate_finish	crates/rsk-piv/src/lib.rs:323	24	decides	D3	the effect is a write to flash of the generated RSA key and the EF_META head carrying the policy; the old head is deleted first	SEC-POL-001
+apt	crates/rsk-piv/src/lib.rs:343	20	marshals	M	lays out the constant template 61{...} into ResBuf, decides only whether it fits	-
+aid	crates/rsk-piv/src/lib.rs:362	3	marshals	M	returns the constant PIV_AID — the routing table carries an address, not a permission	-
+response_chaining	crates/rsk-piv/src/lib.rs:366	6	marshals	M	a constant transport attribute (GET RESPONSE), carries no policy	-
+select	crates/rsk-piv/src/lib.rs:373	33	decides	D3,D4	lib.rs:392 — !reselect resets the access status, otherwise keeps it; and provisioning of the default files + arming files_ensured	SEC-SEAM-004,SEC-SEAM-001
+deselect	crates/rsk-piv/src/lib.rs:405	3	decides	D4	clears all of the applet's access status when the selection leaves	SEC-SEAM-001
+process	crates/rsk-piv/src/lib.rs:409	84	decides	D1	mostly a dispatcher on INS, but lib.rs:422 clears an issued 9B-challenge, and lib.rs:430 refuses Lc=1 above any ACL	SEC-SEAM-003,SEC-SEAM-001
+verify	crates/rsk-piv/src/lib.rs:484	72	decides	D1,D4,D5	the PIN door: lib.rs:567 clears the status on a malformed length, lib.rs:580 sets it from check_ref's answer, and a zero counter yields 6983 before the comparison	SEC-LAT-001,SEC-LAT-002,SEC-SEAM-002
+change_pin	crates/rsk-piv/src/lib.rs:557	21	decides	D5	the P2 -> PinRef map decides whose verifier and whose attempt budget are spent and overwritten	SEC-LAT-002
+reset_retry	crates/rsk-piv/src/lib.rs:579	13	marshals	M	comparisons of P1/P2 against literals and delegation; all the policy is in wire_reference_pair and unblock_pin_with_puk	-
+set_retries	crates/rsk-piv/src/lib.rs:601	40	decides	D1,D3,D4	requires has_mgm AND has_pin, refuses zero totals, rewrites EF_RETRIES, re-arms EF_HARDENED and resets PIN/PUK to the defaults	SEC-LAT-003,SEC-SEAM-003,SEC-BOOT-001
+reset	crates/rsk-piv/src/lib.rs:642	28	decides	D3,D4	lets the applet's factory reset through only with both counters at zero; the effect is reset_files and a session reset	SEC-LAT-001,SEC-SEAM-001
+keygen	crates/rsk-piv/src/lib.rs:671	42	decides	D1,D2,D3	lib.rs:706 — has_mgm above the whole request frame; then generation and a write of the slot's private key with the resolved policy	SEC-SEAM-003,SEC-POL-001
+get_data	crates/rsk-piv/src/lib.rs:714	58	decides	D1,D2	lib.rs:758 — read_needs_pin && !has_pin refuses before the object lookup; lib.rs:767 sends PRINTED to the management-key synthesis	SEC-SEAM-003
+get_protected_mgm	crates/rsk-piv/src/lib.rs:776	36	decides	D1,D2	lib.rs:810 — refusal without has_pin, otherwise unseals the 9B management key to the host	SEC-SEAM-003
+put_data	crates/rsk-piv/src/lib.rs:827	72	decides	D1,D3	lib.rs:850 — has_mgm; lib.rs:868/847 decide whether the escrow record is stored, hidden or refused; lib.rs:893 forbids writing the attestation certificate; lib.rs:896 deletes the object	SEC-SEAM-003,SEC-STORE-006
+get_metadata	crates/rsk-piv/src/lib.rs:888	113	decides	D2,D5	an ungated command, and inside it lib.rs:941 and lib.rs:965 print out the predicate "key is still the factory one" over the PIN verifier and over the unsealed 9B key; lib.rs:983 — the touch-byte rule	SEC-LAT-002,SEC-SEAM-003
+slot_pubkey_tlv	crates/rsk-piv/src/lib.rs:1009	56	marshals	M	encodes the slot's public part (81/82 or 86) from the cache or a derived point; only public material goes out to the host	-
+set_mgmkey	crates/rsk-piv/src/lib.rs:1060	61	decides	D1,D3,D4	lib.rs:1071 — has_mgm; P2 sets the touch policy, the FIPS branch refuses a new 3DES, and at the end the escrow flag is cleared	SEC-SEAM-003,SEC-POL-001
+move_key	crates/rsk-piv/src/lib.rs:1148	123	decides	D1,D2,D3	lib.rs:1180 — has_mgm; moves the sealed private key between slots, and lib.rs:1257 decides whether the deletion of the source counts as done	SEC-SEAM-003,SEC-STORE-001,SEC-STORE-006
+retries	crates/rsk-piv/src/lib.rs:1281	7	decides	D5	reads EF_RETRIES and returns the pair (total, left) — the value every door of the lattice branches on	SEC-LAT-001,SEC-LAT-002
+retries_left	crates/rsk-piv/src/lib.rs:1289	3	decides	D5	returns the remaining budget — the condition of the blocked floor in verify, reset and check_ref	SEC-LAT-001
+set_retries_left	crates/rsk-piv/src/lib.rs:1293	8	decides	D3,D4	the only write of the remaining attempts to EF_RETRIES — spending and restoring the budget	SEC-LAT-002,SEC-LAT-003
+reset_counter	crates/rsk-piv/src/lib.rs:1305	9	decides	D3,D4	raises the remainder to the total — a budget rise that SEC-LAT-003 allows only on the correct secret	SEC-LAT-003
+wire_reference_pair	crates/rsk-piv/src/lib.rs:1318	9	decides	D5	rule 2: the refusal on nc != 2*PIN_WIRE_LEN is the only ban on creating a reference that the wire form cannot present	SEC-LAT-002
+migrate_kbase	crates/rsk-piv/src/lib.rs:1328	6	decides	D3	in itself a forwarder, but its effect is re-sealing all PIV key slots and re-arming EF_HARDENED	SEC-BOOT-001
+check_ref	crates/rsk-piv/src/lib.rs:1335	72	decides	D1,D2,D3,D4,D5	the core of the lattice: the blocked floor, spending the attempt with read-back BEFORE the comparison, ct_eq over the verifier, kbase-fallback with a rewrite and restoring the total on a match	SEC-LAT-001,SEC-LAT-002,SEC-LAT-003,SEC-BOOT-001
+fid_retry	crates/rsk-piv/src/lib.rs:1417	6	decides	D5	binds a reference to its verifier file and counter index — the table carries whose budget is spent	SEC-LAT-002
+check_new_reference	crates/rsk-piv/src/lib.rs:1438	24	decides	D5	the length rule for a new PIN/PUK: the condition for writing the verifier, which is also the lower bound of the brute-force space against the attempt counter	-
+change_reference	crates/rsk-piv/src/lib.rs:1465	28	decides	D1,D3	the order "first the old secret (spends an attempt), then the format of the new one, then the write" is itself the reference-change door	SEC-LAT-002
+unblock_pin_with_puk	crates/rsk-piv/src/lib.rs:1494	30	decides	D1,D3,D4	checks the PUK, re-arms EF_HARDENED, writes the new PIN verifier and raises its counter — a budget rise on a secret not its own	SEC-LAT-003,SEC-LAT-001,SEC-BOOT-001
+reference_retries_left	crates/rsk-piv/src/lib.rs:1525	5	marshals	M	reads the remaining attempts for the caption on the panel; the calls in rsk-display/src/pin.rs:988,1019 are caption only	-
+verify_reference	crates/rsk-piv/src/lib.rs:1531	14	decides	D1	the panel door for the old secret: calls check_ref, i.e. spends an attempt and decides admission without touching the card status	SEC-LAT-001,SEC-LAT-002
+is_mgm_escrow	crates/rsk-piv/src/lib.rs:1546	12	decides	D5	exact match of 88{89 key}: whether the PRINTED record is stored in the clear or only confirmed depends on it	SEC-SEAM-003
+is_mgm_key_len	crates/rsk-piv/src/lib.rs:1559	6	decides	D5	a scan of the 9B algorithm table; the predicate that recognition of the escrow record rests on	SEC-SEAM-003
+mgm_is_protected	crates/rsk-piv/src/lib.rs:1566	12	decides	D5	collapses a failed probe into "no escrow"; the value decides whether GET DATA synthesizes the live management key	SEC-SEAM-003
+try_mgm_is_protected	crates/rsk-piv/src/lib.rs:1579	23	decides	D5	parses the 0x02 flag of PivmanData and separates a medium fault from absence — the PUT DATA refusal on 5FC109 stands on this distinction	SEC-SEAM-003
+escrow_revocation	crates/rsk-piv/src/lib.rs:1610	24	decides	D3,D4	builds the record that clears the escrow flag, read before SET MANAGEMENT KEY writes the key — once it lands, the PIN no longer opens management access; neither probe's error is swallowed	SEC-SEAM-003
+protect_mgm_key	crates/rsk-piv/src/lib.rs:1635	73	decides	D2,D3,D4	mints a random AES-256 mgm key, seals it and sets the flag: after that the PIN alone grants management access; the write order is fail-closed	SEC-SEAM-003
+pivman_set_protected	crates/rsk-piv/src/lib.rs:1722	5	decides	D5	pins the MGM_PROTECTED bit to one for the ADMIN DATA record — the permission itself, not its encoding	SEC-SEAM-003
+pivman_rebuild	crates/rsk-piv/src/lib.rs:1739	49	decides	D4,D5	mostly TLV re-encoding, but lib.rs:1745 computes the flags byte that try_mgm_is_protected later reads as a permission	SEC-SEAM-003
+ct_eq	crates/rsk-piv/src/lib.rs:1783	4	decides	D5	a forwarder to the canonical comparator, but its answer is precisely the condition of every PIN/PUK/mgm comparison; registered in assurance/ct_sites.toml	SEC-LAT-002
+push_tlv	crates/rsk-piv/src/lib.rs:1764	9	marshals	M	appends tag{len,payload} to ResBuf, decides only whether it fits	-
+dyn_auth_resp	crates/rsk-piv/src/lib.rs:1785	11	marshals	M	builds the 7C{tag payload} envelope of the GENERAL AUTHENTICATE response, does not judge the contents	-
+wrap_cert_object	crates/rsk-piv/src/lib.rs:1799	15	marshals	M	wraps the certificate in 70{}71{00}FE{} — pure encoding	-
 parse	crates/rsk-fido/src/clientpin.rs:66	42	decides	M	parses the request's CBOR map into Req; every gate refusal (PIN, permissions, forced-change) lies below, in separate functions	-
 checked_proto	crates/rsk-fido/src/clientpin.rs:117	9	decides	D5	the protocol gate of §6.1.2/§6.2.2 step 2 for six commands: an unsupported proto refuses before the selection gesture	SEC-FIDO-001
 client_pin	crates/rsk-fido/src/clientpin.rs:127	33	decides	D5	the routing table carries the permission (:155/:156 `if ctx.presence.uv_available()`), plus the proto gate :138 and ensure_initialized	SEC-FIDO-001
@@ -452,30 +452,30 @@ default	crates/rsk-openpgp/src/pin.rs:43	3	marshals	M	Self::new(), one expressio
 new	crates/rsk-openpgp/src/pin.rs:49	16	decides	D4	initial access: every has_pw* cleared, the MSE slots at DEC/AUT, the session keys zeroed	SEC-SEAM-002
 adopt_reseeded	crates/rsk-openpgp/src/pin.rs:66	13	decides	D2	replaces the session keys under the standing status — changes which DEK opens, without touching the gate	-
 reset	crates/rsk-openpgp/src/pin.rs:80	16	decides	D4	deselect clears all four access statuses and zeroes the session keys	SEC-SEAM-002
-drop	crates/rsk-openpgp/src/pin.rs:111	5	decides	D2	zeroes the three session keys — the only thing that removes the DEK opener from RAM	-
-ct_eq	crates/rsk-openpgp/src/pin.rs:130	4	decides	D5	constant-time comparison of the verifier is the very non-literal predicate the gate rests on	-
-spend_pin_retry	crates/rsk-openpgp/src/pin.rs:135	39	decides	D4	spends an attempt BEFORE the comparison and re-reads the counter: without the re-read, a write that did not land yielded guesses at one per power cycle	SEC-LAT-001,SEC-LAT-002
-pin_reset_retries	crates/rsk-openpgp/src/pin.rs:175	23	decides	D4	raises the budget to the maximum; force raises a blocked counter too	SEC-LAT-003,SEC-LAT-001
-set_pin_retry_counter	crates/rsk-openpgp/src/pin.rs:199	15	decides	D4	sets the counter to an explicit value, with zero deactivating the reset code	SEC-LAT-003
-clear_access_status	crates/rsk-openpgp/src/pin.rs:215	14	decides	D4	clears the status of the compared reference by fid, not by p2, otherwise a wrong RC would drop PW1.81	SEC-SEAM-002
-check_pin	crates/rsk-openpgp/src/pin.rs:230	98	decides	D1	the whole gate: the lockout floor, the spend, the comparison, the kbase fallback and the raising of exactly its own latch	SEC-LAT-001,SEC-LAT-002,SEC-SEAM-002
-migrate_pin_kbase	crates/rsk-openpgp/src/pin.rs:333	64	decides	D3	re-seals the DEK and the verifier under the OTP generation, gating both writes on Ok from the re-arm	SEC-BOOT-001
-load_dek	crates/rsk-openpgp/src/pin.rs:404	61	decides	D2	selects the DEK copy by the standing status and decrypts it into the caller's buffer	-
-stage_fid	crates/rsk-openpgp/src/pin.rs:466	9	marshals	M	the address table of the stage slot, carries no permission	-
-staged_is_for	crates/rsk-openpgp/src/pin.rs:476	7	decides	D5	one guard for the commit and for the recovery: its refusal is the only thing that keeps a short blob from being written over the live copy	-
-recover_staged_dek	crates/rsk-openpgp/src/pin.rs:484	47	decides	D3	completes a torn PIN update: decides whether to commit the stage, and zeroes the out buffer on refusal	SEC-STORE-006
-commit_staged_dek	crates/rsk-openpgp/src/pin.rs:576	21	decides	D3	moves the stage onto the target slot and clears the stage, having checked the record with the same guard	-
-pw_fid	crates/rsk-openpgp/src/pin.rs:602	5	marshals	M	0x1000|p2, pure address arithmetic; the mode enumeration sits in the callers	-
-clear_reset_code	crates/rsk-openpgp/src/pin.rs:639	37	decides	D3	tears down the four RC records (verifier, DEK, stage, counter) and answers Ok only if all four went through	SEC-LAT-003
-verify	crates/rsk-openpgp/src/pin.rs:677	66	decides	D1	P1=FF clears status only for a defined P2, the mode enumeration closes off cross-applet FIDs, the status query reads the latch before the counter	SEC-LAT-001,SEC-SEAM-002
-check_pin_len	crates/rsk-openpgp/src/pin.rs:751	19	decides	D5	length policy for the new value; its refusal is a refusal of the whole command before any write	-
-offered_len_impossible	crates/rsk-openpgp/src/pin.rs:771	21	decides	D5	decides whether to spend an attempt: an impossible length means 6A80, with no spend and before the lockout floor	SEC-LAT-002
-verifier_unusable	crates/rsk-openpgp/src/pin.rs:793	7	decides	D5	declares an unusable verifier blocked and thereby opens TERMINATE DF	SEC-LAT-001
-put_verifier	crates/rsk-openpgp/src/pin.rs:801	14	decides	D3	checks the length and only then writes the reference value	-
-store_verifier	crates/rsk-openpgp/src/pin.rs:817	17	decides	D3	stores the record [len,0x01,verifier] to flash — the reference value itself, with no length check	-
-change_pin	crates/rsk-openpgp/src/pin.rs:869	67	decides	D1	checks the old PIN, opens the DEK and writes stage/verifier/commit; an unsupported P2 is rejected before any write	SEC-LAT-002
-reset_retry	crates/rsk-openpgp/src/pin.rs:937	81	decides	D1	two doors to a new PW1 — reset code and PW3 — both raise the PW1 budget after their own secret is presented	SEC-LAT-003,SEC-LAT-001
-put_reset_code	crates/rsk-openpgp/src/pin.rs:1020	45	decides	D1	requires PW3, seals the DEK under the new RC and enables its counter; empty data goes to clear_reset_code	SEC-LAT-003
+drop	crates/rsk-openpgp/src/pin.rs:89	5	decides	D2	zeroes the three session keys — the only thing that removes the DEK opener from RAM	-
+ct_eq	crates/rsk-openpgp/src/pin.rs:118	4	decides	D5	constant-time comparison of the verifier is the very non-literal predicate the gate rests on	-
+spend_pin_retry	crates/rsk-openpgp/src/pin.rs:123	39	decides	D4	spends an attempt BEFORE the comparison and re-reads the counter: without the re-read, a write that did not land yielded guesses at one per power cycle	SEC-LAT-001,SEC-LAT-002
+pin_reset_retries	crates/rsk-openpgp/src/pin.rs:163	23	decides	D4	raises the budget to the maximum; force raises a blocked counter too	SEC-LAT-003,SEC-LAT-001
+set_pin_retry_counter	crates/rsk-openpgp/src/pin.rs:187	15	decides	D4	sets the counter to an explicit value, with zero deactivating the reset code	SEC-LAT-003
+clear_access_status	crates/rsk-openpgp/src/pin.rs:203	14	decides	D4	clears the status of the compared reference by fid, not by p2, otherwise a wrong RC would drop PW1.81	SEC-SEAM-002
+check_pin	crates/rsk-openpgp/src/pin.rs:218	98	decides	D1	the whole gate: the lockout floor, the spend, the comparison, the kbase fallback and the raising of exactly its own latch	SEC-LAT-001,SEC-LAT-002,SEC-SEAM-002
+migrate_pin_kbase	crates/rsk-openpgp/src/pin.rs:321	64	decides	D3	re-seals the DEK and the verifier under the OTP generation, gating both writes on Ok from the re-arm	SEC-BOOT-001
+load_dek	crates/rsk-openpgp/src/pin.rs:392	61	decides	D2	selects the DEK copy by the standing status and decrypts it into the caller's buffer	-
+stage_fid	crates/rsk-openpgp/src/pin.rs:454	9	marshals	M	the address table of the stage slot, carries no permission	-
+staged_is_for	crates/rsk-openpgp/src/pin.rs:464	7	decides	D5	one guard for the commit and for the recovery: its refusal is the only thing that keeps a short blob from being written over the live copy	-
+recover_staged_dek	crates/rsk-openpgp/src/pin.rs:472	47	decides	D3	completes a torn PIN update: decides whether to commit the stage, and zeroes the out buffer on refusal	SEC-STORE-006
+commit_staged_dek	crates/rsk-openpgp/src/pin.rs:564	21	decides	D3	moves the stage onto the target slot and clears the stage, having checked the record with the same guard	-
+pw_fid	crates/rsk-openpgp/src/pin.rs:590	5	marshals	M	0x1000|p2, pure address arithmetic; the mode enumeration sits in the callers	-
+clear_reset_code	crates/rsk-openpgp/src/pin.rs:627	37	decides	D3	tears down the four RC records (verifier, DEK, stage, counter) and answers Ok only if all four went through	SEC-LAT-003
+verify	crates/rsk-openpgp/src/pin.rs:665	66	decides	D1	P1=FF clears status only for a defined P2, the mode enumeration closes off cross-applet FIDs, the status query reads the latch before the counter	SEC-LAT-001,SEC-SEAM-002
+check_pin_len	crates/rsk-openpgp/src/pin.rs:739	19	decides	D5	length policy for the new value; its refusal is a refusal of the whole command before any write	-
+offered_len_impossible	crates/rsk-openpgp/src/pin.rs:759	21	decides	D5	decides whether to spend an attempt: an impossible length means 6A80, with no spend and before the lockout floor	SEC-LAT-002
+verifier_unusable	crates/rsk-openpgp/src/pin.rs:781	7	decides	D5	declares an unusable verifier blocked and thereby opens TERMINATE DF	SEC-LAT-001
+put_verifier	crates/rsk-openpgp/src/pin.rs:789	14	decides	D3	checks the length and only then writes the reference value	-
+store_verifier	crates/rsk-openpgp/src/pin.rs:805	17	decides	D3	stores the record [len,0x01,verifier] to flash — the reference value itself, with no length check	-
+change_pin	crates/rsk-openpgp/src/pin.rs:857	67	decides	D1	checks the old PIN, opens the DEK and writes stage/verifier/commit; an unsupported P2 is rejected before any write	SEC-LAT-002
+reset_retry	crates/rsk-openpgp/src/pin.rs:925	81	decides	D1	two doors to a new PW1 — reset code and PW3 — both raise the PW1 budget after their own secret is presented	SEC-LAT-003,SEC-LAT-001
+put_reset_code	crates/rsk-openpgp/src/pin.rs:1008	45	decides	D1	requires PW3, seals the DEK under the new RC and enables its counter; empty data goes to clear_reset_code	SEC-LAT-003
 truncate_utf8	crates/rsk-fido/src/credential.rs:117	11	marshals	M	cuts the string at a UTF-8 boundary — length arithmetic and nothing more	-
 cred_blob_ok	crates/rsk-fido/src/credential.rs:166	7	marshals	M	length comparison against MAX_CREDBLOB_LENGTH; the record is written in both cases, the blob simply does not get into the box	-
 box_entries	crates/rsk-fido/src/credential.rs:174	8	marshals	M	counts the entries of the 0x07 sub-map for the CBOR header	-
@@ -633,18 +633,18 @@ in_progress	crates/rsk-usb/src/ctaphid.rs:394	4	marshals	M	a read of the in_tx f
 current_cid	crates/rsk-usb/src/ctaphid.rs:399	4	marshals	M	a read of the transaction channel	-
 abort	crates/rsk-usb/src/ctaphid.rs:404	4	marshals	M	clearing in_tx; the abort decision is made by run on timeout	-
 scrub	crates/rsk-usb/src/ctaphid.rs:409	7	decides	D2	zeroes the message buffer, otherwise the PIN and key material stay in RAM until the next message	-
-feed	crates/rsk-usb/src/ctaphid.rs:428	73	decides	D5	all three transport refusals: a foreign channel, a seq gap and a length larger than the buffer	SEC-TRANS-001,SEC-TRANS-002,SEC-TRANS-003
-new	crates/rsk-usb/src/ctaphid.rs:524	10	marshals	M	frame iterator constructor	-
-next	crates/rsk-usb/src/ctaphid.rs:539	27	marshals	M	slicing the response into INIT and CONT frames	-
-new	crates/rsk-usb/src/ctaphid.rs:604	19	marshals	M	assembly of the transport from the reader, writer and hooks	-
-run	crates/rsk-usb/src/ctaphid.rs:624	34	decides	D5	drops short reads, otherwise feed would parse the buffer tail as payload, and breaks off the transaction on RX timeout	SEC-TRANS-003
-on_frame	crates/rsk-usb/src/ctaphid.rs:665	14	decides	D5	the only place in the image where Outcome turns into a response and where lock.refuses is applied	SEC-TRANS-001
-dispatch	crates/rsk-usb/src/ctaphid.rs:684	89	decides	D4	the table carries not only an address: INIT resets the selected applet, LOCK arms the lock, an empty CBOR is rejected	SEC-TRANS-001,SEC-TRANS-002
-run_with_keepalive	crates/rsk-usb/src/ctaphid.rs:776	84	decides	D1	opens the CANCEL watch window only while a touch is awaited, and zeroes the request together with the response	SEC-FIDO-002
-run_vendor	crates/rsk-usb/src/ctaphid.rs:852	28	decides	D2	zeroes scratch and the message buffer after a vendor command	-
-write_frame	crates/rsk-usb/src/ctaphid.rs:898	5	marshals	M	one write of a report to the endpoint	-
-write_frames	crates/rsk-usb/src/ctaphid.rs:905	25	marshals	M	slicing and writing, abandoning the response on a host timeout	-
-write_message	crates/rsk-usb/src/ctaphid.rs:931	13	marshals	M	write_frames with the production timeout	-
+feed	crates/rsk-usb/src/ctaphid.rs:439	73	decides	D5	all three transport refusals: a foreign channel, a seq gap and a length larger than the buffer	SEC-TRANS-001,SEC-TRANS-002,SEC-TRANS-003
+new	crates/rsk-usb/src/ctaphid.rs:535	10	marshals	M	frame iterator constructor	-
+next	crates/rsk-usb/src/ctaphid.rs:550	27	marshals	M	slicing the response into INIT and CONT frames	-
+new	crates/rsk-usb/src/ctaphid.rs:615	19	marshals	M	assembly of the transport from the reader, writer and hooks	-
+run	crates/rsk-usb/src/ctaphid.rs:635	34	decides	D5	drops short reads, otherwise feed would parse the buffer tail as payload, and breaks off the transaction on RX timeout	SEC-TRANS-003
+on_frame	crates/rsk-usb/src/ctaphid.rs:676	14	decides	D5	the only place in the image where Outcome turns into a response and where lock.refuses is applied	SEC-TRANS-001
+dispatch	crates/rsk-usb/src/ctaphid.rs:695	89	decides	D4	the table carries not only an address: INIT resets the selected applet, LOCK arms the lock, an empty CBOR is rejected	SEC-TRANS-001,SEC-TRANS-002
+run_with_keepalive	crates/rsk-usb/src/ctaphid.rs:787	84	decides	D1	opens the CANCEL watch window only while a touch is awaited, and zeroes the request together with the response	SEC-FIDO-002
+run_vendor	crates/rsk-usb/src/ctaphid.rs:863	28	decides	D2	zeroes scratch and the message buffer after a vendor command	-
+write_frame	crates/rsk-usb/src/ctaphid.rs:909	5	marshals	M	one write of a report to the endpoint	-
+write_frames	crates/rsk-usb/src/ctaphid.rs:916	25	marshals	M	slicing and writing, abandoning the response on a host timeout	-
+write_message	crates/rsk-usb/src/ctaphid.rs:942	13	marshals	M	write_frames with the production timeout	-
 set	firmware/src/pin_lock.rs:51	5	decides	D4	stores the soft lock in scratch2 so that it survives a warm reboot	SEC-BOOT-002
 was_warm_boot	firmware/src/pin_lock.rs:57	6	decides	D5	tells a warm reset from a cold one without consuming the tag — the §6.6 window rests on this	SEC-BOOT-002
 restore_and_arm	firmware/src/pin_lock.rs:57	8	decides	D4	brings the lock back into this power cycle and re-arms the tag exactly once	SEC-BOOT-002

@@ -39,7 +39,7 @@ impl Reassembler {
     }
 
     /// A reassembler mid-transaction, as a harness poses one — the pre-state
-    /// `crates/rsk-usb/src/ctaphid.rs:430-508` decides a frame against. The
+    /// `crates/rsk-usb/src/ctaphid.rs:441-519` decides a frame against. The
     /// buffer stays concrete: none of the three properties reads a payload byte,
     /// and a symbolic 7609-byte array gives CBMC unrelated state to unwind.
     pub fn mid_transaction(cid: u32, seq: u8, cur: usize, bcnt: usize) -> Self {
@@ -70,7 +70,7 @@ impl Reassembler {
 
     /// `NoBufferOverrun` as a state predicate over the real fields: the assembled
     /// length never passes the declared one, and neither passes the buffer. The
-    /// state the copy at `crates/rsk-usb/src/ctaphid.rs:491-497` indexes through.
+    /// state the copy at `crates/rsk-usb/src/ctaphid.rs:502-508` indexes through.
     pub fn within_the_buffer(&self) -> bool {
         self.cur <= self.bcnt && self.bcnt <= CTAP_MAX_MESSAGE && self.cur <= self.msg.len()
     }

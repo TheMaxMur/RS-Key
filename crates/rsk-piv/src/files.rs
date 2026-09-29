@@ -83,7 +83,13 @@ impl MgmKey {
     }
 
     pub(crate) fn wipe(&mut self) {
-        self.rec.wipe();
+        // Where the key sits in the record, and its policy, are not secret.
+        let Self {
+            rec,
+            key: _,
+            policy: _,
+        } = self;
+        rec.wipe();
     }
 }
 

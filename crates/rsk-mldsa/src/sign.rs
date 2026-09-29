@@ -52,15 +52,26 @@ pub struct ExpandedKey<const K: usize, const L: usize> {
 }
 
 impl<const K: usize, const L: usize> Drop for ExpandedKey<K, L> {
-    // The polynomial fields wipe themselves (see `Poly`'s drop); these are the rest.
+    // Every field is named, so a new one does not compile until its wipe is decided.
+    // The polynomial fields wipe themselves (see `Poly`'s drop); `expanded` is a flag.
     #[expect(
         clippy::disallowed_methods,
         reason = "an expanded key's drop is its wipe"
     )]
     fn drop(&mut self) {
-        self.rho.zeroize();
-        self.cap_k.zeroize();
-        self.tr.zeroize();
+        let Self {
+            rho,
+            cap_k,
+            tr,
+            t1: _,
+            s1_hat_mont: _,
+            s2_hat_mont: _,
+            t0_hat_mont: _,
+            expanded: _,
+        } = self;
+        rho.zeroize();
+        cap_k.zeroize();
+        tr.zeroize();
     }
 }
 

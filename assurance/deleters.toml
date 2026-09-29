@@ -393,7 +393,7 @@ why = "one instance of the cardholder certificate: a public data object the host
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 455
+line = 443
 call = "let _ = fs.delete_key_over(stage, Some(&rearmed));"
 verb = "delete_key_over"
 answer = "discarded"
@@ -404,7 +404,7 @@ why = "load_dek re-runs this retirement on every PIN use, so a failed one is ret
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 527
+line = 515
 call = "let _ = fs.delete_key_over(stage, rearmed.as_ref().ok());"
 verb = "delete_key_over"
 answer = "discarded"
@@ -415,7 +415,7 @@ why = "the same retirement after a recovered update commits; the same next-load_
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 598
+line = 586
 call = "let _ = fs.delete_key_over(stage, Some(rearmed));"
 verb = "delete_key_over"
 answer = "discarded"
@@ -426,7 +426,7 @@ why = "and after an ordinary staged commit. All three are the one record load_de
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 666
+line = 654
 call = "let verifier = fs.delete_over(EF_RC, Some(&rearmed)).is_ok();"
 verb = "delete_over"
 answer = "read"
@@ -437,7 +437,7 @@ why = "the RC verifier is what RESET RETRY P1=0 walks in through, and init's rep
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 667
+line = 655
 call = "let dek = fs.delete_key_over(EF_DEK_RC, Some(&rearmed)).is_ok();"
 verb = "delete_key_over"
 answer = "read"
@@ -448,7 +448,7 @@ why = "the DEK sealed under that reset code. A survivor of any of the three leav
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 668
+line = 656
 call = "let staged = fs.delete_key_over(EF_DEK_STAGE_RC, Some(&rearmed)).is_ok();"
 verb = "delete_key_over"
 answer = "read"
@@ -536,7 +536,7 @@ why = "and its second. Both slots' valid bits come off flash in the response tha
 
 [[site]]
 file = "crates/rsk-piv/src/files.rs"
-line = 645
+line = 651
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -558,7 +558,7 @@ why = "PUT DATA with an empty body deletes a pooled object, so the removal is th
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 866
+line = 877
 call = "return match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
@@ -569,7 +569,7 @@ why = "PUT DATA with an empty body IS the object delete, so the removal is the w
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1225
+line = 1236
 call = "let dropped = fs.delete_key(key_fid(from));"
 verb = "delete_key"
 answer = "read"
@@ -580,7 +580,7 @@ why = "MOVE with to = 0xFF, the slot delete. The head earns a retry because one 
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1226
+line = 1237
 call = "let _ = fs.delete(pubkey_fid(from));"
 verb = "delete"
 answer = "discarded"

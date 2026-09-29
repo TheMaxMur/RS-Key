@@ -87,7 +87,14 @@ impl FidoRng {
     /// Wipe the DRBG state for a secure reboot; it reseeds from the TRNG at the
     /// next boot, so this only destroys the current session's keystream.
     pub fn scrub(&mut self) {
-        self.drbg.scrub();
+        // The TRNG is a peripheral handle and the counter a byte count: only the DRBG
+        // holds key material.
+        let Self {
+            trng: _,
+            drbg,
+            since_reseed: _,
+        } = self;
+        drbg.scrub();
     }
 }
 

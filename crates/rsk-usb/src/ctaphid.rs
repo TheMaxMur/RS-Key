@@ -410,7 +410,18 @@ impl Reassembler {
     /// material, and the buffer otherwise holds them until the next message.
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
-        if let Some(held) = self.msg.get_mut(..self.bcnt) {
+        // Every field is named, so a new buffer cannot miss this wipe; the rest is the
+        // channel's framing.
+        let Self {
+            msg,
+            cid: _,
+            cmd: _,
+            bcnt,
+            cur: _,
+            seq: _,
+            in_tx: _,
+        } = self;
+        if let Some(held) = msg.get_mut(..*bcnt) {
             #[expect(
                 clippy::disallowed_methods,
                 reason = "the reassembly buffer lives as long as the transport: `scrub` \
@@ -418,7 +429,7 @@ impl Reassembler {
             )]
             held.zeroize();
         }
-        self.bcnt = 0;
+        *bcnt = 0;
     }
 
     // Refines `RSKeyTransport!NoCrossChannelSplice` — SEC-TRANS-001.

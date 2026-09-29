@@ -208,8 +208,19 @@ impl Session {
     }
 
     fn reset(&mut self) {
+        // Every field is named, so a new one does not compile until its reset is decided:
+        // `set_pin` clears the PIN pair, `clear_challenge` the witness it wipes.
+        let Self {
+            has_pin: _,
+            pin_fresh: _,
+            has_mgm,
+            has_challenge: _,
+            chal_kind: _,
+            challenge: _,
+            chal_algo: _,
+        } = self;
+        *has_mgm = false;
         self.set_pin(false);
-        self.has_mgm = false;
         self.clear_challenge();
     }
 }

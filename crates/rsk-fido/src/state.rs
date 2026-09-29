@@ -770,7 +770,19 @@ impl Drop for FidoState {
             ephemeral_set: _,
             // `d·G` — what getKeyAgreement hands to the host.
             ephemeral_pub: _,
-            paut,
+            // The token is the secret; the rest is its scope and its timers.
+            paut:
+                PinUvAuthToken {
+                    token,
+                    in_use: _,
+                    permissions: _,
+                    rp_id_hash: _,
+                    has_rp_id: _,
+                    user_present: _,
+                    user_verified: _,
+                    issued_at_ms: _,
+                    last_used_ms: _,
+                },
             needs_power_cycle: _,
             new_pin_mismatches: _,
             // Session carry-over, all of it the host's own bytes or a cursor into
@@ -800,7 +812,7 @@ impl Drop for FidoState {
         )]
         {
             ephemeral.zeroize();
-            paut.token.zeroize();
+            token.zeroize();
         }
     }
 }

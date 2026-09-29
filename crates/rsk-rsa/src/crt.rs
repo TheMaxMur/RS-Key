@@ -173,11 +173,19 @@ impl RsaCrt {
 impl Drop for RsaCrt {
     #[expect(clippy::disallowed_methods, reason = "a RsaCrt's drop is its wipe")]
     fn drop(&mut self) {
-        self.p.zeroize();
-        self.q.zeroize();
-        self.dp.zeroize();
-        self.dq.zeroize();
-        self.qinv.zeroize();
+        let Self {
+            half: _,
+            p,
+            q,
+            dp,
+            dq,
+            qinv,
+        } = self;
+        p.zeroize();
+        q.zeroize();
+        dp.zeroize();
+        dq.zeroize();
+        qinv.zeroize();
     }
 }
 

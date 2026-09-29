@@ -204,7 +204,7 @@ statement = "csrc/bignum_high_level.c:280. The private-exponent modexp, the one 
 [[boundary]]
 id = "import:crates/rsk-rsa/src/lib.rs:rsa_private_exp_crt"
 provider = "arm-none-eabi-gcc"
-statement = "csrc/bignum_high_level.c:296. CRT signing. Same header contract, and the one with the most operands: eleven, of which eight are pointers whose lengths Rust cannot check and three are the size_t lengths describing two of them. Counted off the signature itself, which crates/rsk-rsa/src/lib.rs:318-330 and the C definition spell operand for operand alike; it read `nine pointers` until 2026-09-02."
+statement = "csrc/bignum_high_level.c:296. CRT signing. Same header contract, and the one with the most operands: eleven, of which eight are pointers whose lengths Rust cannot check and three are the size_t lengths describing two of them. Counted off the signature itself, which crates/rsk-rsa/src/lib.rs:326-338 and the C definition spell operand for operand alike; it read `nine pointers` until 2026-09-02."
 
 [[boundary]]
 id = "import:crates/rsk-rsa/src/lib.rs:bignum_modexp_public_exponent"

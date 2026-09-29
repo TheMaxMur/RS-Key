@@ -109,6 +109,14 @@ remove. The rest follows from what the type can and cannot see:
   `#[expect(clippy::disallowed_methods, reason = "…")]` naming that point, and
   rustc holds the list both ways: a new bare wipe fails clippy, and so does an
   `#[expect]` whose wipe is gone.
+- A hand-written wipe of a whole value — a type's `Drop`, a long-lived value's
+  `scrub`, a session's reset — names every field and variant of it:
+  `let Self { … } = self;` lists each field (`_` for one that holds no secret,
+  wipes itself or is cleared by a helper the wipe calls), and a `match` over the
+  variants has no `_` arm. A field or variant added later then does not compile
+  until someone decides how it is wiped, and a deleted wipe of a bound field leaves
+  its binding unused, which clippy refuses. A wipe of named buffers (a response or
+  chaining buffer, a challenge) covers those, not the struct around them.
 
 Resets are held the same way: `clippy.toml` refuses `SCB::sys_reset`,
 `rom_data::reset_to_usb_boot`, `reboot`, `reboot_ns` and

@@ -149,16 +149,16 @@ pub fn spawn(core1: Peri<'static, CORE1>) {
 /// copies the payload to a local and writes back only the `None` discriminant, so
 /// wiping the local leaves a full RSA prime resident in this static — which
 /// `worker::reboot`'s BOOTSEL drop does not clear either (audit run-33).
-fn scrub_found(mb: &mut Mailbox) {
-    for slot in &mut mb.found {
+fn scrub_found(found: &mut [Option<Found>; 2]) {
+    for slot in found {
         *slot = None;
     }
 }
 
 /// Drop the job, DRBG seed and all, in its slot. Same hazard as
 /// [`scrub_found`]: the seed replays core1's entire candidate stream.
-fn scrub_job(mb: &mut Mailbox) {
-    mb.job = None;
+fn scrub_job(job: &mut Option<Job>) {
+    *job = None;
 }
 
 /// Copy the posted job into `into`, then drop the slot's job in place (a `take()`
@@ -207,9 +207,10 @@ fn take_found(slot: &mut Option<Found>, into: &mut Found) -> bool {
 /// cleared soundly from here.
 pub fn scrub() {
     MAILBOX.lock(|mb| {
-        let mb = &mut mb.borrow_mut();
-        scrub_found(mb);
-        scrub_job(mb);
+        // Both fields named: a new one does not compile until its scrub is decided.
+        let Mailbox { job, found } = &mut *mb.borrow_mut();
+        scrub_found(found);
+        scrub_job(job);
     });
     // Ask core1 to wind down, then wait for it to go idle. Bounded: the caller is
     // on the reboot path and must not hang if core1 is wedged.
@@ -253,7 +254,7 @@ fn core1_main(stack_floor: u32) -> ! {
             // STOP up means core0 has assembled and drained: anything still
             // in the found slots is OUR late post — scrub it (once per edge).
             if STOP.load(Ordering::Acquire) && !stop_scrubbed {
-                MAILBOX.lock(|mb| scrub_found(&mut mb.borrow_mut()));
+                MAILBOX.lock(|mb| scrub_found(&mut mb.borrow_mut().found));
                 // …and our own sieve: its last candidate IS the prime we just
                 // delivered, and it would otherwise sit here until the next
                 // search reseeds. SAFETY: unchanged ownership — CORE1_SIEVE is
@@ -463,9 +464,9 @@ pub fn run_rsa_search_progress(
     // next job's entry gate (the BUSY wait above) keeps the mailbox exclusive.
     MAILBOX.lock(|mb| {
         let mut mb = mb.borrow_mut();
-        scrub_job(&mut mb);
+        scrub_job(&mut mb.job);
         JOB_PENDING.store(false, Ordering::Relaxed);
-        scrub_found(&mut mb);
+        scrub_found(&mut mb.found);
     });
     // Our own sieve holds the last candidate — the prime this key was built
     // from. `sieve` is the same `&mut` the loop above used, so this stays inside
@@ -489,7 +490,7 @@ fn post_job(half_bytes: usize, rng: &mut dyn Rng) {
     STOP.store(false, Ordering::Release);
     MAILBOX.lock(|mb| {
         let mut mb = mb.borrow_mut();
-        scrub_found(&mut mb);
+        scrub_found(&mut mb.found);
         let job = mb.job.insert(Job {
             half_bytes,
             seed: Secret::zeroed(),

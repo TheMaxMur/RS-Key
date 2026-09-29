@@ -1160,8 +1160,9 @@ enum OrgAtt {
 
 impl OrgAtt {
     fn wipe(&mut self) {
-        if let OrgAtt::Chain { key, .. } = self {
-            key.wipe();
+        match self {
+            OrgAtt::Chain { key, len: _ } => key.wipe(),
+            OrgAtt::None | OrgAtt::Cut => {}
         }
     }
 }

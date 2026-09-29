@@ -292,9 +292,17 @@ impl IncrementalSieve {
     )]
     pub fn scrub(&mut self) {
         use zeroize::Zeroize;
-        self.cand.zeroize();
-        self.res.zeroize();
-        self.seeded = false;
+        let Self {
+            half: _,
+            cnt: _,
+            cand,
+            res,
+            steps: _,
+            seeded,
+        } = self;
+        cand.zeroize();
+        res.zeroize();
+        *seeded = false;
     }
 }
 

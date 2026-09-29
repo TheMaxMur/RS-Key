@@ -78,7 +78,8 @@ impl FusedRead {
 
     /// Wipe the key before the binding drops, as [`Secret::wipe`] does.
     pub fn wipe(&mut self) {
-        if let Some(key) = self.key.as_mut() {
+        let Self { key, latched: _ } = self;
+        if let Some(key) = key {
             key.wipe();
         }
     }

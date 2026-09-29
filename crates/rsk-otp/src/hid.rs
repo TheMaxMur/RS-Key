@@ -125,7 +125,8 @@ impl FrameRx {
     /// Wipe the reassembly buffer. Called after a frame is handed off, on an abort,
     /// and before the device drops to the bootloader.
     pub fn scrub(&mut self) {
-        self.buf.wipe();
+        let Self { buf } = self;
+        buf.wipe();
     }
 }
 
@@ -421,12 +422,23 @@ impl OtpHid {
     /// The TX buffer is the one that is easy to miss: for slots `0x30`/`0x38` it
     /// holds a 20-byte HMAC-SHA1 response, which with a fixed challenge
     /// (yubikey-luks) *is* the credential, and `FrameTx::next` streams without
-    /// clearing.
+    /// clearing. Every field is named, so a new buffer cannot miss this wipe.
     pub fn scrub(&mut self) {
-        self.rx.scrub();
-        self.tx = FrameTx::new();
-        self.req_payload.wipe();
-        self.req_slot = 0;
+        let Self {
+            rx,
+            tx,
+            // The state machine, and the status bytes a host may read at any time.
+            state: _,
+            processing: _,
+            status: _,
+            req_slot,
+            req_payload,
+            req_ready: _,
+        } = self;
+        rx.scrub();
+        *tx = FrameTx::new();
+        req_payload.wipe();
+        *req_slot = 0;
     }
 }
 

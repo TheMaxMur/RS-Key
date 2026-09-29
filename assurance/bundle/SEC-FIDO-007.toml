@@ -83,7 +83,7 @@ owners_writers = [
   "crates/rsk-fido/src/state.rs:437 — `keydev_dec: None` in `FidoState::new`",
   "crates/rsk-fido/src/state.rs:524 — `clear_keydev_dec`: the assignment drops the `Secret`, which wipes it, then None",
   "crates/rsk-fido/src/state.rs:539 — `*self = Self::new()` inside `FidoState::reset`, which drops the old value",
-  "crates/rsk-fido/src/state.rs:787 — `Drop for FidoState`, whose exhaustive destructuring names it; a `Secret`, it wipes itself as the state drops",
+  "crates/rsk-fido/src/state.rs:799 — `Drop for FidoState`, whose exhaustive destructuring names it; a `Secret`, it wipes itself as the state drops",
   "crates/rsk-fido/src/config.rs:430 — AUT_DISABLE's clear; the model omits this action outright",
   "crates/rsk-fido/src/reset.rs:107 — `ctx.state.reset()` AHEAD of every flash write, which is the ordering the invariant IS",
 ]

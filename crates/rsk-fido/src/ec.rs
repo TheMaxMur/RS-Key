@@ -142,8 +142,8 @@ pub enum CredKey {
     MlDsa87(Box<rsk_crypto::MlDsa87>),
 }
 
-// The bare Weierstrass scalars need explicit zeroize (`NonZeroScalar` has no `Drop`);
-// Ed25519's `SigningKey` and the boxed ML-DSA keys zeroize themselves.
+// The bare Weierstrass scalars need explicit zeroize (`NonZeroScalar` has no `Drop`).
+// Every variant is named: a new scheme does not compile until its wipe is decided.
 impl Drop for CredKey {
     #[expect(
         clippy::disallowed_methods,
@@ -155,7 +155,9 @@ impl Drop for CredKey {
             Self::P384(s) => s.zeroize(),
             Self::P521(s) => s.zeroize(),
             Self::K256(s) => s.zeroize(),
-            _ => {}
+            // Ed25519's `SigningKey` wipes itself (ed25519-dalek's `zeroize` feature),
+            // and so does rsk-mldsa's expanded key, which dropping its `Box` drops.
+            Self::Ed25519(_) | Self::MlDsa44(_) | Self::MlDsa65(_) | Self::MlDsa87(_) => {}
         }
     }
 }

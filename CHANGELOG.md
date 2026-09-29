@@ -1124,6 +1124,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **A hand-written wipe of a whole value names every field and variant** —
+  refactor; the same bytes are wiped at the same points. `CredKey`'s drop wiped
+  its four curve scalars and let every other scheme through a `_ => {}` arm, so a
+  scheme added later with a key that does not wipe itself would have compiled
+  unwiped. It now names each variant, and the whole-value wipes that picked fields
+  by name list them all, as `FidoState`'s drop and the secure reboot already did:
+  the drops of the pinUvAuthToken inside `FidoState`, `ExpandedKey`, `Poly`, the
+  OpenPGP `Session`, `RsaCrt`, `CrtParams`, `RsaKey` and `RsaKeygen`; the OpenPGP
+  and PIV sessions' resets; the scrubs of the prime sieve, the HMAC-DRBG, the OTP
+  HID frame buffers, the CTAPHID reassembler, the typing queue, core1's mailbox
+  and the RNG; and the early wipes of a fused-key read, the PIV management key
+  and an enterprise registration's org key. A field or variant added to any of
+  them does not compile until its wipe is decided. The OpenPGP session's reset
+  assigns a fresh session, so its drop is the one wipe. Wipes of named buffers
+  keep their shape, and so do the reboot's two handler wipes,
+  `AppletHandler::scrub_secrets` and `CcidApplets::scrub`, which wipe the buffers
+  they name. `bcdDevice` 0x0A6A → 0x0A6B.
+
 - **cargo-mutants in three places: the fix loop, every pull request, and a
   weekly sweep that gates against a baseline** — host only, no `bcdDevice`
   bump. `scripts/mutants-all.sh --in-diff [<base>]` mutates only the lines the

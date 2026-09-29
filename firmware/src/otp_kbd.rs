@@ -85,13 +85,19 @@ pub fn scrub() {
     OTP_HID.lock(|c| c.borrow_mut().scrub());
     TYPE_Q.lock(|c| {
         let mut q = c.borrow_mut();
+        let TypeQueue {
+            buf,
+            len,
+            pos,
+            encode: _,
+        } = &mut *q;
         #[expect(
             clippy::disallowed_methods,
             reason = "a static queue: its wipe point is the reboot, not a scope's end"
         )]
-        q.buf.zeroize();
-        q.len = 0;
-        q.pos = 0;
+        buf.zeroize();
+        *len = 0;
+        *pos = 0;
     });
 }
 

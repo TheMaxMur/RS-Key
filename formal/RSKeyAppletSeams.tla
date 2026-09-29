@@ -208,8 +208,8 @@ Init ==
     /\ viol  = {}
 
 \* Every status an applet owns, gone. This is `Session::reset`
-\* (crates/rsk-piv/src/lib.rs:213-217), `pin::Session::reset`
-\* (crates/rsk-openpgp/src/pin.rs:82-107) and OATH's `deselect`
+\* (crates/rsk-piv/src/lib.rs:224-228), `pin::Session::reset`
+\* (crates/rsk-openpgp/src/pin.rs:83-85) and OATH's `deselect`
 \* (crates/rsk-oath/src/lib.rs:1283-1287) -- three functions, one meaning.
 ClearedFor(h, a) ==
     [r \in Refs |-> IF RefOwner(r) = a
@@ -284,7 +284,7 @@ SelectOther(a) ==
 (* disagree about what a refusal costs -- see the invariant's comment.      *)
 (***************************************************************************)
 
-\* PIV VERIFY (crates/rsk-piv/src/lib.rs:521-535): success sets has_pin AND
+\* PIV VERIFY (crates/rsk-piv/src/lib.rs:532-546): success sets has_pin AND
 \* pin_fresh, refusal clears both, through `Session::set_pin`
 \* (crates/rsk-piv/src/lib.rs:193-196) which is the only writer of either.
 PivVerify(ok) ==
@@ -297,7 +297,7 @@ PivVerify(ok) ==
     /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, viol >>
 
 \* PIV CHANGE REFERENCE DATA / RESET RETRY COUNTER take no `&mut Session` at all
-\* (crates/rsk-piv/src/lib.rs:543-582), so a refused change costs the standing
+\* (crates/rsk-piv/src/lib.rs:554-593), so a refused change costs the standing
 \* status NOTHING. Deliberate, and settled by measurement rather than taste:
 \* SP 800-73-4 pt2 3.2.2/3.2.3 say the security status is unchanged and a real
 \* YubiKey keeps it.
@@ -318,7 +318,7 @@ PivChangeRefused ==
     /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, refused >>
 
 \* OpenPGP clears EXACTLY the addressed reference, and it keys the clear on the
-\* FID it compared rather than on P2 (crates/rsk-openpgp/src/pin.rs:215-227):
+\* FID it compared rather than on P2 (crates/rsk-openpgp/src/pin.rs:203-215):
 \* RESET RETRY COUNTER compares EF_RC while passing p2 = 0x81, so a wrong
 \* resetting code must leave PW1.81 standing.
 PgpVerify(r, ok) ==
@@ -330,7 +330,7 @@ PgpVerify(r, ok) ==
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
 \* A refused CHANGE clears the addressed reference too -- the same writer
-\* (crates/rsk-openpgp/src/pin.rs:292-294), which is where OpenPGP and PIV part
+\* (crates/rsk-openpgp/src/pin.rs:280-282), which is where OpenPGP and PIV part
 \* company.
 PgpChangeRefused(r) ==
     /\ sel = Pgp
@@ -669,7 +669,7 @@ NoKeyOpOnTheAdminStatus ==
 \* THE OTHER HALF OF THE REFUSAL RULE, and it points the opposite way: two
 \* refusals must cost NOTHING, and each is settled by its own authority rather
 \* than by a cross-applet principle. PIV's CHANGE REFERENCE DATA takes no
-\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:543-582) -- SP 800-73-4 pt2
+\* `&mut Session` at all (crates/rsk-piv/src/lib.rs:554-593) -- SP 800-73-4 pt2
 \* 3.2.2/3.2.3, plus a measured YubiKey 5.7.4. OATH's access-code VALIDATE keeps
 \* the standing unlock (crates/rsk-oath/src/lib.rs:596-598), because a MAC
 \* challenge-response has no retry counter for a refusal to protect.

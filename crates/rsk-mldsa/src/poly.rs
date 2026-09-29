@@ -24,7 +24,8 @@ impl Drop for Poly {
         reason = "a Poly's drop is its wipe, as a Secret's is"
     )]
     fn drop(&mut self) {
-        self.0.zeroize();
+        let Self(coeffs) = self;
+        coeffs.zeroize();
     }
 }
 

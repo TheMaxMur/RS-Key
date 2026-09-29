@@ -40,9 +40,10 @@ struct CrtParams {
 impl Drop for CrtParams {
     #[expect(clippy::disallowed_methods, reason = "a CrtParams's drop is its wipe")]
     fn drop(&mut self) {
-        self.dp.zeroize();
-        self.dq.zeroize();
-        self.qinv.zeroize();
+        let Self { dp, dq, qinv } = self;
+        dp.zeroize();
+        dq.zeroize();
+        qinv.zeroize();
     }
 }
 
@@ -62,9 +63,18 @@ pub struct RsaKey {
 impl Drop for RsaKey {
     #[expect(clippy::disallowed_methods, reason = "a RsaKey's drop is its wipe")]
     fn drop(&mut self) {
-        self.d.zeroize();
-        self.p.zeroize();
-        self.q.zeroize();
+        // `n` and `e` are public; the CRT parameters wipe themselves.
+        let Self {
+            n: _,
+            e: _,
+            d,
+            p,
+            q,
+            crt: _,
+        } = self;
+        d.zeroize();
+        p.zeroize();
+        q.zeroize();
     }
 }
 

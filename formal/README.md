@@ -300,8 +300,8 @@ split three ways, and the split is the point.
 
 | | |
 |---|---|
-| **Equivalent, not a defect** | `ctaphid.rs:460` `\|` → `^` on `(f[5] << 8) \| f[6]` — disjoint bits, the two operators agree |
-| **Fail-safe direction** | `ctaphid.rs:461` `>` → `>=` refuses an exactly-maximum message: stricter, so `NoBufferOverrun` still holds. `fs.rs:234` and `fs.rs:282` `\|=` → `&=` clear *decided* bits, which sends more reads to the reliable backend |
+| **Equivalent, not a defect** | `ctaphid.rs:471` `\|` → `^` on `(f[5] << 8) \| f[6]` — disjoint bits, the two operators agree |
+| **Fail-safe direction** | `ctaphid.rs:472` `>` → `>=` refuses an exactly-maximum message: stricter, so `NoBufferOverrun` still holds. `fs.rs:234` and `fs.rs:282` `\|=` → `&=` clear *decided* bits, which sends more reads to the reliable backend |
 | **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:287` and `fs.rs:290`, three mutants), `try_has_data`'s zero-length test (`fs.rs:378`), `factory_wipe`'s 64-key batch bound (`fs.rs:504`), the registry retain in `delete` (`fs.rs:604`), and **`meta_delete`'s fault guard (`fs.rs:867`)** |
 
 The last one was worth the exercise on its own. `Fs::meta_add_reserve` refuses a
@@ -352,7 +352,7 @@ back the same way:
 |---|---|---|
 | `crates/rsk-fs/src/lib.rs:64` | `request_rescrub` → `()`: the at-rest lap is never re-armed | `BugRekeyKeepsTheMarker`, RED on `MarkerNeverLies` |
 | `crates/rsk-oath/src/lib.rs:1285` | `deselect` → `()`: the VALIDATE unlock outlives its selection | `BugSelectKeepsOtherApplet`, RED on `NoStatusOutsideItsSelection` |
-| `crates/rsk-piv/src/lib.rs:397` | `deselect` → `()`: the verified PIN outlives its selection | the same |
+| `crates/rsk-piv/src/lib.rs:408` | `deselect` → `()`: the verified PIN outlives its selection | the same |
 
 That is **model-catches** three times: a defect the suite could not tell from
 correct code, on a line carrying the property's own tag, which the model reddens.
@@ -420,7 +420,7 @@ whole seam module is about was handed to nobody who looked.
 
 #### The ninth row, and the column number that decided it
 
-`crates/rsk-piv/src/lib.rs:1375` `&&` → `||` is the sharpest thing this pass has
+`crates/rsk-piv/src/lib.rs:1386` `&&` → `||` is the sharpest thing this pass has
 produced. The PIV PIN gate ends in
 
 ```rust
@@ -454,11 +454,11 @@ says which.
 | Mutation | Verdict | Owned by |
 |---|---|---|
 | `crates/rsk-fido/src/reset.rs:147` `<` → `<=` — `sweep`'s 64-key batch bound | test gap; the mutation indexes past `keys` | `a_reset_sweeps_more_secrets_than_one_batch_holds` |
-| `crates/rsk-openpgp/src/pin.rs:265` `&&` → `\|\|`, and the same guard → `true` | test gap; a record too short to be `[len, fmt, verifier]`, or with a zeroed length, read as a verifier | `a_malformed_pw_record_is_reference_not_found_not_a_verifier` |
-| `crates/rsk-openpgp/src/pin.rs:259` `<` → `<=` | fail-safe — a short `EF_PW_PRIV` makes a live reference answer `PIN_BLOCKED`; wrong, but in the refusing direction | recorded |
-| `crates/rsk-openpgp/src/pin.rs:958` guard → `true` | effectively equivalent — an empty `EF_RC` yields `rc_len = 0`, and the `check_pin` below re-reads `EF_RC` and refuses on its own guard | recorded |
+| `crates/rsk-openpgp/src/pin.rs:253` `&&` → `\|\|`, and the same guard → `true` | test gap; a record too short to be `[len, fmt, verifier]`, or with a zeroed length, read as a verifier | `a_malformed_pw_record_is_reference_not_found_not_a_verifier` |
+| `crates/rsk-openpgp/src/pin.rs:247` `<` → `<=` | fail-safe — a short `EF_PW_PRIV` makes a live reference answer `PIN_BLOCKED`; wrong, but in the refusing direction | recorded |
+| `crates/rsk-openpgp/src/pin.rs:946` guard → `true` | effectively equivalent — an empty `EF_RC` yields `rc_len = 0`, and the `check_pin` below re-reads `EF_RC` and refuses on its own guard | recorded |
 | `crates/rsk-fido/src/reset.rs:162` `>` → `>=` | conformance in three applets of four — the runaway valve trips one delete early, and `deleted` differs from `>` only where it lands EXACTLY on the budget. Unreachable where each `sweep` call counts its own phase over a fid space smaller than the budget: FIDO 1034 + 5 against 1039, OATH 255 + 2 against 257, PIV 764 + 4 against 768 (all measured). **OpenPGP is the exception** — one `deleted` is SHARED across both phases (`crates/rsk-openpgp/src/terminate.rs:184`, outside the `for gates` loop) over 1049 fids, and its 64-key batch DIVIDES the 512 budget, so `deleted == 512` is reachable and `>=` would fail a TERMINATE that `>` completes. Green in all four when driven, because no fixture holds 512 live OpenPGP records — a property of the FIXTURE, not of the behaviour | recorded |
-| `>` → `==` at all four valves — `crates/rsk-fido/src/reset.rs:162`, `crates/rsk-oath/src/lib.rs:1770`, `crates/rsk-piv/src/files.rs:638`, `crates/rsk-openpgp/src/terminate.rs:215` | **the valve stops guarding**: `deleted` rises a whole batch at a time and can step past the budget without ever equalling it. It was never the cardinality that made this undrivable — a medium that answers `Ok` and keeps the record runs 1039 out of FIVE files. It was the BATCH: both runaways the tree had re-yield ONE fid, and 1 divides every budget, so the mutant merely trips one delete early there and each test passes it by construction. OATH and OpenPGP reached the valve with nothing at all — their fault backends ERROR, which stops the sweep at a `?` above it | `a_sweep_that_never_converges_stops_inside_its_delete_budget` (FIDO, OATH, PIV) + `a_wipe_that_never_converges_stops_inside_its_delete_budget` (OpenPGP) |
+| `>` → `==` at all four valves — `crates/rsk-fido/src/reset.rs:162`, `crates/rsk-oath/src/lib.rs:1770`, `crates/rsk-piv/src/files.rs:644`, `crates/rsk-openpgp/src/terminate.rs:215` | **the valve stops guarding**: `deleted` rises a whole batch at a time and can step past the budget without ever equalling it. It was never the cardinality that made this undrivable — a medium that answers `Ok` and keeps the record runs 1039 out of FIVE files. It was the BATCH: both runaways the tree had re-yield ONE fid, and 1 divides every budget, so the mutant merely trips one delete early there and each test passes it by construction. OATH and OpenPGP reached the valve with nothing at all — their fault backends ERROR, which stops the sweep at a `?` above it | `a_sweep_that_never_converges_stops_inside_its_delete_budget` (FIDO, OATH, PIV) + `a_wipe_that_never_converges_stops_inside_its_delete_budget` (OpenPGP) |
 
 Both closures are the tree's own rule about sweeping by class rather than by
 site, and both were one applet away from being closed already. PIV has
@@ -1429,10 +1429,10 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 
 | Invariant | What it asserts | The Rust that owns it |
 |---|---|---|
-| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:444-464` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:213-217` · `crates/rsk-openpgp/src/pin.rs:82-107` · `crates/rsk-oath/src/lib.rs:1283-1287` · `crates/rsk-device/src/ccid.rs:354-369` (the ICC power transition) |
-| `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:193-196` · `crates/rsk-openpgp/src/pin.rs:215-227` · `crates/rsk-oath/src/lib.rs:1186-1187` |
+| `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:444-464` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:224-228` · `crates/rsk-openpgp/src/pin.rs:83-85` · `crates/rsk-oath/src/lib.rs:1283-1287` · `crates/rsk-device/src/ccid.rs:354-369` (the ICC power transition) |
+| `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:193-196` · `crates/rsk-openpgp/src/pin.rs:203-215` · `crates/rsk-oath/src/lib.rs:1186-1187` |
 | `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:86-98` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:57-65`, `:113-117` |
-| `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status but OATH's OTP PIN. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:373-376` · `crates/rsk-openpgp/src/lib.rs:349-352` · `crates/rsk-oath/src/lib.rs:1321` |
+| `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status but OATH's OTP PIN. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:384-387` · `crates/rsk-openpgp/src/lib.rs:349-352` · `crates/rsk-oath/src/lib.rs:1321` |
 | `AccessCodeRemovalNeedsTheCode` | Removing the OATH access code needs the validated status the code bought. **A step rule — its violation produces exactly the exempt code-less state, so no state predicate can see it** | `crates/rsk-oath/src/lib.rs:368-370` (the shared gate) · `:377-389` (the removal path) |
 
 The fourth one points the other way from the first three and that is why it is
@@ -1453,8 +1453,8 @@ direction it actually goes.
 | Command | What a refusal costs | The authority | The mutant |
 |---|---|---|---|
 | PIV `VERIFY` | `has_pin` **and** `pin_fresh` (`crates/rsk-piv/src/lib.rs:193-196` is the only writer of either) | the applet's own session discipline | `NoStatusAfterARefusedAuth` |
-| PIV `CHANGE REFERENCE DATA` / `RESET RETRY COUNTER` | **nothing** — it takes no `&mut Session` at all (`crates/rsk-piv/src/lib.rs:543-582`) | SP 800-73-4 pt 2 §3.2.2/§3.2.3, plus a measured YubiKey 5.7.4 | `BugPivChangeResetsStatus`, RED in 46 |
-| OpenPGP `VERIFY` / `CHANGE` | exactly the **addressed** reference, keyed on the FID compared rather than on P2 (`crates/rsk-openpgp/src/pin.rs:215-227`, `:292-294`) | OpenPGP 3.4.1, and the `RESET RETRY COUNTER` case that compares `EF_RC` while passing `p2 = 0x81` | `NoStatusAfterARefusedAuth` |
+| PIV `CHANGE REFERENCE DATA` / `RESET RETRY COUNTER` | **nothing** — it takes no `&mut Session` at all (`crates/rsk-piv/src/lib.rs:554-593`) | SP 800-73-4 pt 2 §3.2.2/§3.2.3, plus a measured YubiKey 5.7.4 | `BugPivChangeResetsStatus`, RED in 46 |
+| OpenPGP `VERIFY` / `CHANGE` | exactly the **addressed** reference, keyed on the FID compared rather than on P2 (`crates/rsk-openpgp/src/pin.rs:203-215`, `:280-282`) | OpenPGP 3.4.1, and the `RESET RETRY COUNTER` case that compares `EF_RC` while passing `p2 = 0x81` | `NoStatusAfterARefusedAuth` |
 | OATH OTP-PIN `CHANGE` | **both** flags (`crates/rsk-oath/src/lib.rs:1186-1187`) | `aa47867` — before it the whole retry budget could be burned through the door that did not close | `BugFailedChangeKeepsStatus` |
 | OATH access-code `VALIDATE` | **nothing** — the standing unlock survives (`crates/rsk-oath/src/lib.rs:596-598`) | a MAC challenge-response has no retry counter for a refusal to protect; a YubiKey 5.7.4 measured keeping it from a genuinely locked applet | `BugRefusedValidateDropsUnlock`, RED in 46 |
 
@@ -1688,9 +1688,9 @@ seam modules keep, so a switch is one real thing a reviewer could break:
 
 | Mutation switch | Removes | Target invariant | Caught in |
 |---|---|---|---|
-| `BugUseWhenBlocked` | the `left == 0 => PIN_BLOCKED` floor (`crates/rsk-piv/src/lib.rs:1344-1346` / `crates/rsk-openpgp/src/pin.rs:257-259`), which guards a direct verify AND a recovery reference | `NoAuthWhenBlocked` | 30 states |
-| `BugWrongDoesNotSpend` | the decrement that IS the gate (`crates/rsk-piv/src/lib.rs:1364` / `crates/rsk-openpgp/src/pin.rs:164`) | `WrongAttemptIsCharged` | 2 states |
-| `BugRecoveryWithoutSecret` | the recovery secret verified before the refill (`crates/rsk-piv/src/lib.rs:1501` / `crates/rsk-openpgp/src/pin.rs:961`) | `BudgetRisesOnlyWithItsSecret` | 9 states |
+| `BugUseWhenBlocked` | the `left == 0 => PIN_BLOCKED` floor (`crates/rsk-piv/src/lib.rs:1355-1357` / `crates/rsk-openpgp/src/pin.rs:245-247`), which guards a direct verify AND a recovery reference | `NoAuthWhenBlocked` | 30 states |
+| `BugWrongDoesNotSpend` | the decrement that IS the gate (`crates/rsk-piv/src/lib.rs:1375` / `crates/rsk-openpgp/src/pin.rs:152`) | `WrongAttemptIsCharged` | 2 states |
+| `BugRecoveryWithoutSecret` | the recovery secret verified before the refill (`crates/rsk-piv/src/lib.rs:1512` / `crates/rsk-openpgp/src/pin.rs:949`) | `BudgetRisesOnlyWithItsSecret` | 9 states |
 
 `Lattice.cfg` is **GREEN, exhaustive** over 243 distinct states at depth 11, with
 no dead action; every `LatSolo_*.cfg` is RED on its own target. The all-blocked
@@ -2105,7 +2105,7 @@ bring-up order are M8's transport territory.
 ## The ninth module — `RSKeyTransport.tla`
 
 `rsk-usb` was the last workspace member no module covered, and the CTAPHID
-frame reassembler (`crates/rsk-usb/src/ctaphid.rs:430-508`) is a genuine
+frame reassembler (`crates/rsk-usb/src/ctaphid.rs:441-519`) is a genuine
 sequence machine — `in_tx` carries across the frames of a multi-frame message.
 It is already unit-tested and fuzzed, and that is exactly the point of also
 modelling it: every one of those exercises a *single* `feed`, or a fuzzer's
@@ -2116,13 +2116,13 @@ assert and a sampling fuzzer does not prove.
 
 - `NoCrossChannelSplice` — a continuation on a channel other than the
   in-progress transaction's is `CHANNEL_BUSY`, the owner's transaction left
-  intact (`crates/rsk-usb/src/ctaphid.rs:480-482`); one host application's bytes
+  intact (`crates/rsk-usb/src/ctaphid.rs:491-493`); one host application's bytes
   must never assemble into another's message;
 - `NoSequenceGap` — an out-of-order continuation aborts rather than filling the
-  gap (`:484-487`); the reassembler never completes a message the host did not
+  gap (`:495-498`); the reassembler never completes a message the host did not
   send in that order;
 - `NoBufferOverrun` — an INIT declaring more than `CTAP_MAX_MESSAGE` is refused
-  (`:461-463`), and the chunk count never passes the ceiling; in a `no_std`
+  (`:472-474`), and the chunk count never passes the ceiling; in a `no_std`
   image passing it is an out-of-bounds write, so this one is **structural** (the
   other two are ghosts — a splice and a desync leave no trace in the completed
   message, they are steps).
@@ -2145,10 +2145,10 @@ mid-transaction is a legal resync (a takeover, not a splice: B's fresh buffer
 holds B's chunks). The bounded IN-endpoint write that fixed the runtime
 interface wedge (0x075D, `TX_TIMEOUT_MS`) is a liveness property, and **no
 liveness proof is claimed from CTAPHID evidence**. It lives on `write_frames`
-(`crates/rsk-usb/src/ctaphid.rs:917-929`), the response path, where two host
+(`crates/rsk-usb/src/ctaphid.rs:928-940`), the response path, where two host
 regressions pin the abandon and the drain
 (`crates/rsk-usb/src/ctaphid_tests.rs:449,471`) — not on the async `run` loop
-(`crates/rsk-usb/src/ctaphid.rs:628`), which neither of them enters. No mutation
+(`crates/rsk-usb/src/ctaphid.rs:639`), which neither of them enters. No mutation
 record stands behind either: `write_frames`, `FrameSink` and `TX_TIMEOUT` appear
 in none of `formal/comutants.toml`, `formal/floors.txt` or `formal/runs.toml`,
 and `scripts/comutate.py` excludes liveness switches from the roster by design.

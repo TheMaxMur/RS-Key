@@ -78,52 +78,40 @@ impl Session {
     }
 
     /// Clear all auth state (applet deselect) and restore the default MSE key
-    /// slots.
+    /// slots. The assignment drops the old session in place, so its `Drop` wipes
+    /// the keys, and a field added later is reset by the `new` it must join.
     pub fn reset(&mut self) {
-        self.has_pw1 = false;
-        self.has_pw2 = false;
-        self.has_pw3 = false;
-        self.has_rc = false;
-        self.algo_dec = EF_ALGO_PRIV2;
-        self.pk_dec = EF_PK_DEC;
-        self.algo_aut = EF_ALGO_PRIV3;
-        self.pk_aut = EF_PK_AUT;
-        self.cert_occ = 0;
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
-        )]
-        self.session_pw1.zeroize();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
-        )]
-        self.session_pw3.zeroize();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
-        )]
-        self.session_rc.zeroize();
+        *self = Self::new();
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
+        // Every field is named: a new one does not compile until someone decides
+        // whether it is a secret.
+        let Self {
+            has_pw1: _,
+            has_pw2: _,
+            has_pw3: _,
+            has_rc: _,
+            algo_dec: _,
+            pk_dec: _,
+            algo_aut: _,
+            pk_aut: _,
+            cert_occ: _,
+            session_pw1,
+            session_pw3,
+            session_rc,
+        } = self;
         #[expect(
             clippy::disallowed_methods,
-            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
+            reason = "the session keys live in the Session between commands; its drop is their wipe point, reset's included"
         )]
-        self.session_pw1.zeroize();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
-        )]
-        self.session_pw3.zeroize();
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "the session keys live in the Session between commands; reset and drop are their wipe points"
-        )]
-        self.session_rc.zeroize();
+        {
+            session_pw1.zeroize();
+            session_pw3.zeroize();
+            session_rc.zeroize();
+        }
     }
 }
 

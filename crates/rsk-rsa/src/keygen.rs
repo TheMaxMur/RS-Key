@@ -59,7 +59,13 @@ impl Drop for RsaKeygen {
         reason = "the held prime's drop is its wipe"
     )]
     fn drop(&mut self) {
-        if let Some(p) = &mut self.p {
+        let Self {
+            half_bytes: _,
+            e: _,
+            p,
+            asm_ok: _,
+        } = self;
+        if let Some(p) = p {
             p.zeroize();
         }
     }
