@@ -558,16 +558,20 @@ fn only_a_broadcast_init_survives_someone_elses_lock() {
 /// command itself as producing "some visual or audible identification". A build
 /// with nothing to flash must therefore leave the bit clear: the host offers wink
 /// to tell two identical-looking keys apart, so a silent success points the user
-/// at the wrong key. CBOR and LOCK are unconditional — both commands are
-/// implemented, and a host decides whether to *try* CTAPHID_LOCK from this byte,
-/// so an unset bit hides a working feature. NMSG stays clear (U2F is implemented).
+/// at the wrong key. CBOR is unconditional, and NMSG stays clear (U2F is
+/// implemented). LOCK is implemented but claims no bit: CTAP defines none, and has
+/// the pre-standard `0x02` a YubiKey 5.8.0 leaves clear set to zero like any other.
 #[test]
 fn wink_is_claimed_only_where_something_can_flash() {
-    assert_eq!(
-        init_capabilities(true),
-        CAPFLAG_WINK | CAPFLAG_LOCK | CAPFLAG_CBOR
-    );
-    assert_eq!(init_capabilities(false), CAPFLAG_LOCK | CAPFLAG_CBOR);
+    assert_eq!(init_capabilities(true), CAPFLAG_WINK | CAPFLAG_CBOR);
+    assert_eq!(init_capabilities(false), CAPFLAG_CBOR);
+    for can_wink in [true, false] {
+        assert_eq!(
+            init_capabilities(can_wink) & CAPFLAG_LOCK,
+            0,
+            "a reserved bit"
+        );
+    }
     assert_eq!(
         init_capabilities(false) & CAPFLAG_WINK,
         0,

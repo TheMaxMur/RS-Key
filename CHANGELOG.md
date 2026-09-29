@@ -162,6 +162,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The CTAPHID_INIT capability byte leaves bit `0x02` clear.** It carried the
+  pre-standard U2FHID `CAPFLAG_LOCK` to announce that `CTAPHID_LOCK` works, but no
+  FIDO specification ever defined that bit: CTAP 2.3 §11.2.9.1.3 defines `0x01`,
+  `0x04` and `0x08` and has every other bit set to zero. A YubiKey 5.8.0 answers
+  `0x05`. The byte is now `0x05` with an LED and `0x04` without one, and
+  `CTAPHID_LOCK` works as before. The FIDO conformance tool gates its two LOCK cases
+  on that bit, so it now skips them. `bcdDevice` 0x0A6F → 0x0A70.
+
 - **NFCCTAP_CONTROL END ends the FIDO session on the CCID interface, as CTAP 2.3
   §11.3.4 has it.** `80 12 01 00` answered `9000` and changed nothing, so the
   applet went on serving CTAP2 and U2F after a host had ended the session, where

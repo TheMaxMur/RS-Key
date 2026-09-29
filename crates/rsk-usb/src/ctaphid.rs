@@ -114,7 +114,7 @@ use crate::TX_TIMEOUT_MS;
 
 pub const CTAPHID_IF_VERSION: u8 = 2;
 pub const CAPFLAG_WINK: u8 = 0x01;
-pub const CAPFLAG_LOCK: u8 = 0x02;
+pub const CAPFLAG_LOCK: u8 = 0x02; // pre-standard U2FHID; CTAP reserves it, INIT leaves it clear
 pub const CAPFLAG_CBOR: u8 = 0x04;
 
 // Device version reported in CTAPHID_INIT / CTAPHID_VERSION — the shared firmware
@@ -318,12 +318,12 @@ pub trait MsgHandler {
 /// has an indicator to flash: an invisible wink is worse than an unset bit,
 /// because the host offers the command precisely to tell two identical-looking
 /// keys apart, and a silent success tells the user the wrong key is the right one.
-/// LOCK is unconditional — [`ChannelLock`] implements the command, and a host
-/// reads this bit to decide whether to attempt it at all, so leaving it clear
-/// does not make the device safer, it hides a working command.
+/// [`ChannelLock`] implements CTAPHID_LOCK, but no bit may say so: CTAP 2.3
+/// §11.2.9.1.3 defines none and has every unused one "set to zero", and 0x02 is a
+/// pre-standard U2FHID header's, which a YubiKey 5.8.0 leaves clear too.
 /// `NMSG` stays clear — CTAPHID_MSG (U2F) is implemented.
 pub fn init_capabilities(can_wink: bool) -> u8 {
-    CAPFLAG_CBOR | CAPFLAG_LOCK | if can_wink { CAPFLAG_WINK } else { 0 }
+    CAPFLAG_CBOR | if can_wink { CAPFLAG_WINK } else { 0 }
 }
 
 /// Run the identification burst where there is something to run it on, and report

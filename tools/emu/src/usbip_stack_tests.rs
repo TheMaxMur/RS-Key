@@ -559,9 +559,9 @@ fn a_stray_continuation_frame_gets_no_answer() {
     });
 }
 
-/// hid-1 P-3: an INIT on the broadcast channel, field by field (§11.2.9.1.3). The
-/// LOCK bit is U2FHID's CAPFLAG_LOCK, which CTAP 2.3's table omits; the conformance
-/// tool reads it to decide whether to test CTAPHID_LOCK at all.
+/// hid-1 P-3: an INIT on the broadcast channel, field by field (§11.2.9.1.3): the
+/// three bits the table defines, and every other one "set to zero" — `0x02`, the
+/// pre-standard U2FHID LOCK bit, included.
 #[test]
 fn an_init_on_the_broadcast_channel_allocates_a_channel() {
     on_the_wire(async |host: &mut Host| {
@@ -578,12 +578,13 @@ fn an_init_on_the_broadcast_channel_allocates_a_channel() {
         let caps = r.data[16];
         assert_ne!(caps & CAPFLAG_CBOR, 0, "CTAPHID_CBOR is implemented");
         assert_eq!(caps & CAPABILITY_NMSG, 0, "CTAPHID_MSG is implemented");
-        let known = CAPFLAG_WINK | CAPFLAG_LOCK | CAPFLAG_CBOR | CAPABILITY_NMSG;
+        let known = CAPFLAG_WINK | CAPFLAG_CBOR | CAPABILITY_NMSG;
         assert_eq!(
             caps & !known,
             0,
             "reserved capability bits set: {caps:#04x}"
         );
+        assert_eq!(caps & CAPFLAG_LOCK, 0, "the pre-standard LOCK bit");
     });
 }
 
@@ -699,17 +700,12 @@ fn a_cancel_ends_a_touch_wait_and_is_never_answered_itself() {
 }
 
 /// hid-1 P-13: LOCK(0) is acknowledged on its own channel with an empty body
-/// (§11.2.9.2.2), and only after INIT has advertised the command.
+/// (§11.2.9.2.2). No capability bit claims the command, so the conformance tool
+/// skips this case and P-14; the command answers all the same.
 #[test]
 fn a_lock_release_is_acknowledged_with_an_empty_body() {
     on_the_wire(async |host: &mut Host| {
-        let init = host.transact(CID_BROADCAST, CTAPHID_INIT, &NONCE).await;
-        assert_ne!(
-            init.data[16] & CAPFLAG_LOCK,
-            0,
-            "CTAPHID_LOCK is advertised"
-        );
-        let cid = u32::from_le_bytes(init.data[8..12].try_into().unwrap());
+        let cid = host.open_channel().await;
         let r = host.transact(cid, CTAPHID_LOCK, &[0]).await;
         assert_eq!(
             r,

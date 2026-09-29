@@ -228,8 +228,9 @@ continuation frames: `CID(4) | SEQ(1) | data[:59]`. `CTAPHID_INIT = 0x86`,
 
 Take the channel id from the `CTAPHID_INIT` response and use that one: every INIT on
 the broadcast CID allocates a fresh id, so an id hardcoded or cached across sessions
-will not be yours. `CTAPHID_LOCK` is honoured for the 1–10 seconds it asks for, and
-the INIT capability byte carries `CAPABILITY_LOCK` (`0x02`) to say so. Meanwhile
+will not be yours. `CTAPHID_LOCK` is honoured for the 1–10 seconds it asks for,
+though no INIT capability bit says so: CTAP defines none for it, and `0x02` — a
+pre-standard U2FHID header's LOCK bit — stays clear, as on a YubiKey 5.8.0. Meanwhile
 every other channel gets `ERR_CHANNEL_BUSY` — including one sending `CTAPHID_INIT`
 to resynchronise itself. The exception is an INIT on the **broadcast** CID, which
 still gets through: a client arriving mid-lock is given an id, then turned away on
