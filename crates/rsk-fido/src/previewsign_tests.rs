@@ -1480,14 +1480,10 @@ fn org_key(scalar: &[u8; 32]) -> VerifyingKey {
     VerifyingKey::from_sec1_point(&point).unwrap()
 }
 
-/// Under enterprise attestation the signing key is attested as the credential is:
-/// by the organisation's key, with its chain. `attestation_key` makes that choice a
-/// second time, apart from the credential's, so this holds the two together.
-#[test]
-fn an_enterprise_registration_attests_the_signing_key_with_the_org_key() {
-    let (mut board, org, chain) = enterprise_board();
-    let input = generate_key(&[ALG_ESP256_SPLIT_ARKG], Some(1));
-    let req = enc(|e| {
+/// A registration asking for previewSign with `input` and for enterprise
+/// attestation 2, the platform-managed kind.
+fn enterprise_mc_req(input: &[u8]) -> Vec<u8> {
+    enc(|e| {
         e.map(6).unwrap();
         e.u8(1).unwrap().bytes(&CDH).unwrap();
         e.u8(2)
@@ -1505,11 +1501,18 @@ fn an_enterprise_registration_attests_the_signing_key_with_the_org_key() {
         e.str("alg").unwrap().i64(ALG_ES256).unwrap();
         e.str("type").unwrap().str("public-key").unwrap();
         e.u8(6).unwrap().map(1).unwrap().str(NAME).unwrap();
-        e.writer_mut().write_all(&input).unwrap();
-        // enterpriseAttestation 2, the platform-managed kind.
+        e.writer_mut().write_all(input).unwrap();
         e.u8(0x0A).unwrap().u8(2).unwrap();
-    });
-    let reg = registered(&board.mc(&req).unwrap());
+    })
+}
+
+/// Under enterprise attestation the signing key is attested as the credential is:
+/// by the organisation's key, with its chain, both signed off the one choice.
+#[test]
+fn an_enterprise_registration_attests_the_signing_key_with_the_org_key() {
+    let (mut board, org, chain) = enterprise_board();
+    let input = generate_key(&[ALG_ESP256_SPLIT_ARKG], Some(1));
+    let reg = registered(&board.mc(&enterprise_mc_req(&input)).unwrap());
     assert!(reg.fields.contains(&4), "epAtt: {:?}", reg.fields);
     let key = attested_key(reg.att_obj.as_deref().unwrap());
     let (sig, x5c) = packed(&key.att_stmt);
@@ -1518,6 +1521,36 @@ fn an_enterprise_registration_attests_the_signing_key_with_the_org_key() {
     assert!(
         attests(&org_key(&org), &key.auth_data, &sig),
         "the org key attests the signing key"
+    );
+}
+
+/// Over an org chain that reads back cut, what a build before ab8bcfc3 could store,
+/// the credential takes the device's own attestation, and so does its signing key:
+/// both are signed off the one choice.
+#[test]
+fn an_enterprise_request_over_a_cut_chain_attests_the_signing_key_with_the_device_key() {
+    let (mut board, org, _) = enterprise_board();
+    let mut cut = std::vec![2u8];
+    for _ in 0..2 {
+        cut.extend_from_slice(&1500u16.to_le_bytes());
+        cut.extend_from_slice(&[0x30; 1500]);
+    }
+    assert!(cut.len() > crate::cert::ATT_CHAIN_REC_MAX);
+    board.fs.put(crate::consts::EF_ATT_CHAIN, &cut).unwrap();
+    let input = generate_key(&[ALG_ESP256_SPLIT_ARKG], Some(1));
+    let reg = registered(&board.mc(&enterprise_mc_req(&input)).unwrap());
+    assert!(!reg.fields.contains(&4), "epAtt: {:?}", reg.fields);
+    let key = attested_key(reg.att_obj.as_deref().unwrap());
+    let (sig, x5c) = packed(&key.att_stmt);
+    assert_eq!(x5c, packed(&reg.att_stmt).1, "the credential's chain");
+    let mut ee = [0u8; 1024];
+    let n = board.fs.read(crate::consts::EF_EE_DEV, &mut ee).unwrap();
+    assert_eq!(x5c, [ee[..n].to_vec()], "the device's own certificate");
+    assert!(!attests(&org_key(&org), &key.auth_data, &sig));
+    let device = board.attestation_key();
+    assert!(
+        attests(&device, &key.auth_data, &sig),
+        "the device key attests it"
     );
 }
 

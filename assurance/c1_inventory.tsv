@@ -221,7 +221,7 @@ needs_confirm	crates/rsk-fido/src/clientpin.rs:575	11	decides	D5	decides whether
 builtin_uv_step	crates/rsk-fido/src/clientpin.rs:588	24	decides	D1	returns UvOutcome::BUILTIN (uv=true, up_collected=true) — i.e. covers both uv and the second gesture; Deny stays final	SEC-FIDO-001,SEC-DISP-003
 builtin_uv_ready	crates/rsk-fido/src/clientpin.rs:613	13	decides	D1	the lockout floor before entry on the panel: no EF_PIN → NotAllowed, zero budget or soft-lock → UvBlocked	SEC-LAT-001
 consent_for_permissions	crates/rsk-fido/src/clientpin.rs:627	24	decides	D1	spends the confirmation gesture and (:641) names pcmr under its own heading, because it is not a session grant	SEC-DISP-001
-builtin_uv_enabled	crates/rsk-fido/src/clientpin.rs:652	6	decides	D5	the uv option predicate that makecredential.rs:464/:589 and getassertion.rs:348/:459 read as the condition to refuse/start the ceremony	SEC-FIDO-001
+builtin_uv_enabled	crates/rsk-fido/src/clientpin.rs:652	6	decides	D5	the uv option predicate that makecredential.rs:466/:613 and getassertion.rs:348/:477 read as the condition to refuse/start the ceremony	SEC-FIDO-001
 builtin_uv	crates/rsk-fido/src/clientpin.rs:659	15	decides	D1	starts the ceremony on the panel; the panel rejects a short entry without verify, so no attempt is spent	SEC-LAT-002
 perform_builtin_uv	crates/rsk-fido/src/clientpin.rs:675	26	decides	D1	a non-entry (Declined/Timeout/Cancelled) returns BEFORE verify and spends no attempt; a real mismatch spends one	SEC-LAT-002
 get_uv_retries	crates/rsk-fido/src/clientpin.rs:702	15	marshals	M	encodes the same counter as getPINRetries, under key 0x05	-
@@ -283,7 +283,7 @@ stop_using_token	crates/rsk-fido/src/state.rs:645	16	decides	D4	the registered R
 retire_sequences_except	crates/rsk-fido/src/state.rs:662	31	decides	D4	clears every multi-step sequence the command does not continue — §6 "exclusively preceded"	SEC-FIDO-003
 expire_stale_token	crates/rsk-fido/src/state.rs:694	14	decides	D1	token expiry on the inactivity window or the absolute ceiling — checked before every CBOR command	SEC-FIDO-003
 expire_stale_sequences	crates/rsk-fido/src/state.rs:709	17	decides	D4	the only bound on a walk opened by a pcmr token (it has no timer), and on largeBlob on a key without a PIN	SEC-FIDO-003
-user_verified	crates/rsk-fido/src/state.rs:727	4	decides	D5	the uv predicate on which makecredential.rs:595 and getassertion.rs:450 decide to refuse	SEC-FIDO-001
+user_verified	crates/rsk-fido/src/state.rs:727	4	decides	D5	the uv predicate on which makecredential.rs:597 and getassertion.rs:450 decide to refuse	SEC-FIDO-001
 user_present	crates/rsk-fido/src/state.rs:732	8	decides	D5	getUserPresentFlagValue §6.5.5.7; measured: there are no production callers — into the core by rule 1	SEC-FIDO-001
 verify_token	crates/rsk-fido/src/state.rs:741	4	decides	D1	the check of the pinUvAuthParam MAC under the current token is itself the §6.5.5.7 token door	SEC-FIDO-001,SEC-FIDO-003
 idle_past	crates/rsk-fido/src/state.rs:747	5	decides	D5	the §6 window between walk steps: the predicate on which expire_stale_sequences decides to clear the cursor	SEC-FIDO-003

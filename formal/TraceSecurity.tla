@@ -127,7 +127,7 @@ R4bEventConsensus ==
 (* BugTokenlessIgnoresAlwaysUv there.                                       *)
 (***************************************************************************)
 
-\* CTAP 2.1 6.1.2, crates/rsk-fido/src/makecredential.rs:607-625. Two arms, and
+\* CTAP 2.1 6.1.2, crates/rsk-fido/src/makecredential.rs:609-627. Two arms, and
 \* the recording now carries both:
 \*   step 6.2/6.4 -- alwaysUv with no way to verify refuses whatever `rk` says;
 \*   step 10      -- otherwise a DISCOVERABLE credential still needs a token

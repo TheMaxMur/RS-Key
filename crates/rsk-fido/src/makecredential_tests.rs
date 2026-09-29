@@ -1982,10 +1982,42 @@ fn build_request_ea(ea: u64) -> std::vec::Vec<u8> {
     buf[..n].to_vec()
 }
 
+/// [`build_request_ea`] with a `["none"]` attestationFormatsPreference (0x0B).
+fn build_request_ea_none(ea: u64) -> std::vec::Vec<u8> {
+    let mut buf = [0u8; 512];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(6).unwrap();
+        e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
+        e.u8(2).unwrap().map(1).unwrap();
+        e.str("id").unwrap().str("example.com").unwrap();
+        e.u8(3).unwrap().map(2).unwrap();
+        e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
+        e.str("name").unwrap().str("alice").unwrap();
+        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
+        e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(10).unwrap().u64(ea).unwrap();
+        e.u8(11).unwrap().array(1).unwrap().str("none").unwrap();
+        e.writer().position()
+    };
+    buf[..n].to_vec()
+}
+
 // Run makeCredential with enterprise attestation enabled/disabled (the
 // enable persists in flash — EF_EA_ENABLED — per CTAP 2.1).
 fn run_ea(req: &[u8], enable: bool) -> Result<(std::vec::Vec<u8>, Fs<RamStorage>), CtapError> {
-    let mut fs = Fs::new(RamStorage::new());
+    run_ea_with(RamStorage::new(), req, enable, |_| {})
+}
+
+/// [`run_ea`] on `backend`, over a store `setup` has written to first.
+fn run_ea_with<S: Storage>(
+    backend: S,
+    req: &[u8],
+    enable: bool,
+    setup: impl FnOnce(&mut Fs<S>),
+) -> Result<(std::vec::Vec<u8>, Fs<S>), CtapError> {
+    let mut fs = Fs::new(backend);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut out = [0u8; 1024];
@@ -1993,6 +2025,7 @@ fn run_ea(req: &[u8], enable: bool) -> Result<(std::vec::Vec<u8>, Fs<RamStorage>
     if enable {
         fs.put(EF_EA_ENABLED, &[1]).unwrap();
     }
+    setup(&mut fs);
     let len = {
         let mut presence = crate::AlwaysConfirm;
         let mut ctx = Ctx {
@@ -2047,6 +2080,153 @@ fn enterprise_attestation_level2_full_attestation() {
     let s = Signature::from_der(&sig).unwrap();
     vk.verify(&signed, &s)
         .expect("enterprise attestation verifies under the device key");
+}
+
+/// What a build before ab8bcfc3 could store over today's cap: the record reads back
+/// cut, its count intact and its second certificate running past the buffer.
+fn cut_chain() -> std::vec::Vec<u8> {
+    let cert = [0x30u8; 1500];
+    let mut rec = std::vec![2u8];
+    for _ in 0..2 {
+        rec.extend_from_slice(&(cert.len() as u16).to_le_bytes());
+        rec.extend_from_slice(&cert);
+    }
+    assert!(rec.len() > crate::cert::ATT_CHAIN_REC_MAX);
+    rec
+}
+
+/// The org key the enterprise tests install, with `chain` as its EF_ATT_CHAIN record.
+fn install_org<S: Storage>(fs: &mut Fs<S>, chain: Option<&[u8]>) {
+    crate::seed::store_att_key(&dev(), fs, &[0x21u8; 32]).unwrap();
+    if let Some(chain) = chain {
+        fs.put(EF_ATT_CHAIN, chain).unwrap();
+    }
+}
+
+/// The `x5c` of a `packed` makeCredential response's attStmt.
+fn x5c_of(resp: &[u8]) -> std::vec::Vec<std::vec::Vec<u8>> {
+    let mut d = Decoder::new(resp);
+    d.map().unwrap();
+    for _ in 0..4 {
+        d.skip().unwrap();
+    }
+    assert_eq!(d.u8().unwrap(), 3);
+    d.map().unwrap();
+    for _ in 0..4 {
+        d.skip().unwrap();
+    }
+    assert_eq!(d.str().unwrap(), "x5c");
+    let n = d.array().unwrap().unwrap();
+    (0..n).map(|_| d.bytes().unwrap().to_vec()).collect()
+}
+
+fn verifies_under(key: &P256Key, auth_data: &[u8], sig: &[u8]) -> bool {
+    let (x, y) = key.public_xy();
+    let pt = Sec1Point::from_bytes(&crate::ec::sec1_uncompressed(x, y)).unwrap();
+    let mut signed = auth_data.to_vec();
+    signed.extend_from_slice(&[0xCD; 32]);
+    VerifyingKey::from_sec1_point(&pt)
+        .unwrap()
+        .verify(&signed, &Signature::from_der(sig).unwrap())
+        .is_ok()
+}
+
+/// Over an org chain that is not whole (cut as ab8bcfc3 describes, misframed, or
+/// missing) an enterprise request registers on the device's own key and cert,
+/// without `ep`. ab8bcfc3 promised that; the registration failed CTAP1_ERR_OTHER.
+#[test]
+fn enterprise_attestation_over_a_cut_chain_is_the_device_attestation() {
+    let req = build_request_ea(2);
+    let cut = cut_chain();
+    let misframed = [2u8, 3, 0, 0x30, 1, 2]; // counts two certificates, holds one
+    for (what, chain) in [
+        ("cut", Some(&cut[..])),
+        ("misframed", Some(&misframed[..])),
+        ("missing", None),
+    ] {
+        let (resp, mut fs) =
+            run_ea_with(RamStorage::new(), &req, true, |fs| install_org(fs, chain))
+                .unwrap_or_else(|e| panic!("a {what} chain failed the registration: {e:?}"));
+        let mut d = Decoder::new(&resp);
+        assert_eq!(
+            d.map().unwrap().unwrap(),
+            3,
+            "{what}: no `ep` without the org attestation"
+        );
+        assert_eq!(d.u8().unwrap(), 1);
+        assert_eq!(d.str().unwrap(), "packed");
+        assert_eq!(d.u8().unwrap(), 2);
+        let ad = d.bytes().unwrap().to_vec();
+        assert_eq!(d.u8().unwrap(), 3);
+        assert_eq!(d.map().unwrap().unwrap(), 3);
+        assert_eq!(d.str().unwrap(), "alg");
+        assert_eq!(d.i64().unwrap(), ALG_ES256);
+        assert_eq!(d.str().unwrap(), "sig");
+        let sig = d.bytes().unwrap().to_vec();
+        assert_eq!(d.str().unwrap(), "x5c");
+        assert_eq!(d.array().unwrap().unwrap(), 1);
+        let cert = d.bytes().unwrap().to_vec();
+        let mut ee = [0u8; 1024];
+        let n = fs.read(EF_EE_DEV, &mut ee).unwrap();
+        assert_eq!(cert, ee[..n], "{what}: the device's own certificate");
+        let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
+        let device = P256Key::from_scalar(seed.expose()).unwrap();
+        assert!(
+            verifies_under(&device, &ad, &sig),
+            "{what}: the device key attests it"
+        );
+        let org = P256Key::from_scalar(&[0x21u8; 32]).unwrap();
+        assert!(!verifies_under(&org, &ad, &sig), "{what}");
+    }
+}
+
+/// With no enterprise attestation left to give, nothing outranks a `["none"]`
+/// preference over a cut chain: the device attests nothing, as without EA.
+#[test]
+fn a_none_preference_holds_over_an_enterprise_request_on_a_cut_chain() {
+    let req = build_request_ea_none(2);
+    let (resp, _) = run_ea_with(RamStorage::new(), &req, true, |fs| {
+        install_org(fs, Some(&cut_chain()))
+    })
+    .unwrap();
+    let mut d = Decoder::new(&resp);
+    assert_eq!(d.map().unwrap().unwrap(), 3, "no `ep`");
+    assert_eq!(d.u8().unwrap(), 1);
+    assert_eq!(d.str().unwrap(), "none");
+    assert_eq!(d.u8().unwrap(), 2);
+    d.bytes().unwrap();
+    assert_eq!(d.u8().unwrap(), 3);
+    assert_eq!(d.map().unwrap().unwrap(), 0, "the none statement is empty");
+}
+
+/// A chain read the flash failed is not a cut chain: the registration fails, and
+/// the host can retry it, rather than settle for the device's attestation. The
+/// same store with the read answering gives the org's, with `ep`.
+#[test]
+fn a_faulted_chain_read_fails_the_enterprise_registration() {
+    let req = build_request_ea(2);
+    let mut whole = [0u8; 64];
+    let n = crate::cert::att_chain_pack(&[0x30u8, 0x03, 1, 2, 3], &mut whole).unwrap();
+    let register = |fault: bool| {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        run_ea_with(backend, &req, true, |fs| {
+            install_org(fs, Some(&whole[..n]));
+            medium.stick(fault.then_some(EF_ATT_CHAIN));
+        })
+        .map(|(resp, _)| resp)
+    };
+    let resp = register(false).expect("control: a whole chain registers");
+    assert_eq!(
+        Decoder::new(&resp).map().unwrap().unwrap(),
+        4,
+        "control: `ep`"
+    );
+    assert_eq!(
+        x5c_of(&resp),
+        [whole[3..n].to_vec()],
+        "control: the org chain"
+    );
+    assert_eq!(register(true).unwrap_err(), CtapError::Other);
 }
 
 #[test]
@@ -2928,24 +3108,7 @@ fn attestation_formats_preference_omits_only_for_none_alone() {
 /// administrator turned on.
 #[test]
 fn enterprise_attestation_outranks_a_none_preference() {
-    let mut buf = [0u8; 512];
-    let n = {
-        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
-        e.map(6).unwrap();
-        e.u8(1).unwrap().bytes(&[0xCDu8; 32]).unwrap();
-        e.u8(2).unwrap().map(1).unwrap();
-        e.str("id").unwrap().str("example.com").unwrap();
-        e.u8(3).unwrap().map(2).unwrap();
-        e.str("id").unwrap().bytes(&[1, 2, 3, 4]).unwrap();
-        e.str("name").unwrap().str("alice").unwrap();
-        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
-        e.str("alg").unwrap().i64(ALG_ES256).unwrap();
-        e.str("type").unwrap().str("public-key").unwrap();
-        e.u8(10).unwrap().u64(2).unwrap();
-        e.u8(11).unwrap().array(1).unwrap().str("none").unwrap();
-        e.writer().position()
-    };
-    let (resp, _) = run_ea(&buf[..n], true).unwrap();
+    let (resp, _) = run_ea(&build_request_ea_none(2), true).unwrap();
     let mut d = Decoder::new(&resp);
     d.map().unwrap();
     assert_eq!(d.u8().unwrap(), 1);

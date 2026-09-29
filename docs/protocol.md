@@ -513,6 +513,9 @@ needs only the identifiers above. RS-Key implements:
   choosing by lowest supported index needs more than one supported format and
   `attestationFormats` (`0x16`) stays `["packed"]`. An enterprise attestation that
   was actually performed outranks the preference and is still returned in full.
+  None is performed over an org key whose stored chain is missing or does not read
+  back whole (RS-Key `0x0A6A`+): the device's own certificate attests, without
+  `ep`, and the preference holds.
   **Vendor-facilitated (type 1) enterprise attestation reads a stored RP list.**
   `enterpriseAttestation: 1` returns `ep` and the org certificate only for an RP on
   that list; any other RP gets the ordinary `packed` statement with the device's own

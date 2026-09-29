@@ -162,6 +162,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **An enterprise registration over a cut org chain registers on the device's
+  own attestation, as the 0.4.11 notes said it would.** A chain a build before
+  0.4.11 stored past the cap 0.4.11 set reads back cut; those notes promised the
+  registration falls back to device attestation, but it failed with
+  `CTAP1_ERR_OTHER`. It now registers under the device's own key and
+  certificate, with no `ep` flag: the enterprise attestation the org key was
+  installed for is the one the device could not give, so a `["none"]`
+  attestation preference is honoured over the request. previewSign's signing
+  key (preview-sign builds) follows the same choice. A chain the flash fails to
+  read still fails the registration, so the host can retry it. Re-import the
+  chain within the cap to restore org attestation. `bcdDevice` 0x0A69 → 0x0A6A.
+
 - **A Yubico-OTP use counter planted at `0xFFFF` no longer wraps to 0.** Only a
   flash writer can store a counter above the 15-bit ceiling, and the power-up
   advance took `0xFFFF` to `0`, a counter going backwards, which is the replay it

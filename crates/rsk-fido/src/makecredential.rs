@@ -12,9 +12,10 @@
 //! credential, which `makeCredUvNotRqd` lets through on presence alone. Request
 //! extensions are sealed into the box and echoed in the authData extension
 //! output (ED flag); excludeList is credProtect-aware. Enterprise attestation
-//! (request field 0x0A): level 2 emits a full attestation signed by the device
-//! key with its x5c cert and the `ep` response flag; level 1 is accepted but
-//! stays self-attestation.
+//! (request field 0x0A: level 2, or level 1 for an RP on the stored list) signs
+//! with the org key and its chain and returns the `ep` flag; with no org key the
+//! device key attests, still with `ep`, and over an org chain that is not whole
+//! the device key attests without it.
 
 // Host bytes: a panic here is a board that answers nothing until unplugged.
 #![deny(
@@ -33,6 +34,7 @@ use rsk_crypto::MLDSA87_PK_LEN;
 use rsk_crypto::pinproto::PinProto;
 use rsk_crypto::sha256;
 use rsk_fs::{Fs, Storage};
+use rsk_secret::Secret;
 
 use crate::cbordec::{cbor, def_arr, def_map, parse_credential_descriptors, skip_value};
 use crate::cert;
@@ -809,13 +811,20 @@ fn make_credential_inner<S: Storage, R: Rng>(
     ad.get_mut(ad_len..ad_len + 32)
         .ok_or(CtapError::Other)?
         .copy_from_slice(req.client_data_hash);
-    // `ea_performed` — platform-managed (type 2), or vendor-facilitated (type 1)
-    // for an RP on the stored enterprise list (`EF_EA_RPIDS`, empty until written) —
-    // presents the org/EP cert and sets the `ep` flag. A type-1 request for a
-    // non-listed RP is NOT enterprise: full attestation with the device's own
-    // cert and no `ep` (CTAP2.1 §6.1.3, conformance Enterprise-Attestation F-6).
-    let ea_performed = req.enterprise_attestation == Some(2)
+    // Platform-managed (type 2), or vendor-facilitated (type 1) for an RP on the
+    // stored list (`EF_EA_RPIDS`); type 1 for any other RP is not enterprise (CTAP2.1
+    // §6.1.3, conformance Enterprise-Attestation F-6).
+    let ea_requested = req.enterprise_attestation == Some(2)
         || (req.enterprise_attestation == Some(1) && rp_eligible_for_vendor_ea(ctx.fs, rp_id_hash));
+    let mut att = AttBufs::new();
+    let mut org = if ea_requested {
+        org_attestation(ctx, &mut att)?
+    } else {
+        OrgAtt::None
+    };
+    // An org key whose chain does not read back whole cannot give the enterprise
+    // attestation it was installed for: the device's own stands in, with no `ep`.
+    let ea_performed = ea_requested && !matches!(org, OrgAtt::Cut);
     // Every credential ships packed **basic** attestation: the device key signs and
     // the x5c leaf is its cert. Both alternatives break clients — an empty
     // `fmt:"none"` statement is rejected by OpenSSH < 10.0, which verifies any
@@ -828,12 +837,11 @@ fn make_credential_inner<S: Storage, R: Rng>(
     // wins when it was actually performed: it is explicitly configured and strictly
     // stronger, and answering it with an empty statement would discard it.
     let omit_att = req.att_fmt_pref == AttFmtPref::NoneOnly && !ea_performed;
-    let mut att = AttBufs::new();
     let (sig_len, chain_len, certs) = if omit_att {
         (0, 0, 0)
     } else {
         let signed = ad.get(..ad_len + 32).ok_or(CtapError::Other)?;
-        make_attestation(ctx, seed, signed, ea_performed, &mut att)?
+        make_attestation(ctx, seed, signed, &org, &mut att)?
     };
     // The signing key's attestation object takes the credential's format and signer
     // (v4 registration step 9) — and, when it is encoded, the credential's chain.
@@ -843,7 +851,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
             let signer = if omit_att {
                 None
             } else {
-                Some(attestation_key(ctx, seed, ea_performed)?)
+                Some(attestation_key(seed, &org)?)
             };
             Some(previewsign::attest(
                 key,
@@ -855,6 +863,7 @@ fn make_credential_inner<S: Storage, R: Rng>(
         }
         None => None,
     };
+    org.wipe();
 
     // largeBlobKey response field (0x05) — resident credentials only.
     let large_blob_key = if req.ext_large_blob_key == Some(true) && req.rk {
@@ -1080,26 +1089,13 @@ fn encode_preview_att_obj<W: Write>(
     Ok(())
 }
 
-/// The key [`make_attestation`] signs with, chosen the same way: the org key when
-/// enterprise attestation was performed and one is installed, else the device key.
+/// The key [`make_attestation`] signs with, off the same [`OrgAtt`]: the org key
+/// when its chain was read whole, else the device key.
 #[cfg(feature = "preview-sign")]
-fn attestation_key<S: Storage, R: Rng>(
-    ctx: &mut Ctx<S, R>,
-    seed: &[u8; 32],
-    ea_performed: bool,
-) -> Result<P256Key, CtapError> {
-    let org_key = if ea_performed {
-        load_att_key(&ctx.dev, ctx.fs)
-    } else {
-        None
-    };
-    let key = match org_key {
-        Some(mut scalar) => {
-            let k = P256Key::from_scalar(scalar.expose());
-            scalar.wipe();
-            k
-        }
-        None => P256Key::from_scalar(seed),
+fn attestation_key(seed: &[u8; 32], org: &OrgAtt) -> Result<P256Key, CtapError> {
+    let key = match org {
+        OrgAtt::Chain { key, .. } => P256Key::from_scalar(key.expose()),
+        OrgAtt::None | OrgAtt::Cut => P256Key::from_scalar(seed),
     };
     key.ok_or(CtapError::Other)
 }
@@ -1153,41 +1149,57 @@ impl AttBufs {
     }
 }
 
-/// Sign `signed` (authData ‖ clientDataHash) into `att` and shape the attestation
-/// statement — always basic or enterprise, so always ES256 with an x5c chain. When
-/// enterprise attestation was performed and an org key is installed it signs with
-/// that key + the EF_ATT_CHAIN chain; otherwise with the device key (the seed
-/// scalar) + its self-signed EF_EE_DEV cert (the pair U2F register uses). Returns
-/// `(sig_len, chain_len, cert_count)`.
+/// What an enterprise request is attested with: the installed org key, its chain
+/// already read into the [`AttBufs`]; no org key; or one whose chain is missing or
+/// not whole, which the device's own attestation stands in for.
+enum OrgAtt {
+    None,
+    Chain { key: Secret<[u8; 32]>, len: usize },
+    Cut,
+}
+
+impl OrgAtt {
+    fn wipe(&mut self) {
+        if let OrgAtt::Chain { key, .. } = self {
+            key.wipe();
+        }
+    }
+}
+
+/// Read the org key and its chain into `att` for an enterprise request. Whole, not
+/// merely present: a chain an older build stored over this build's cap does not fit
+/// the buffer. A chain read the flash failed stays an error the host can retry.
+fn org_attestation<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    att: &mut AttBufs,
+) -> Result<OrgAtt, CtapError> {
+    let Some(key) = load_att_key(&ctx.dev, ctx.fs) else {
+        return Ok(OrgAtt::None);
+    };
+    let read = ctx.fs.try_read(EF_ATT_CHAIN, &mut att.chain[..]);
+    Ok(match read.map_err(|_| CtapError::Other)? {
+        Some(len) if att.chain.get(..len).is_some_and(cert::att_chain_intact) => {
+            OrgAtt::Chain { key, len }
+        }
+        _ => OrgAtt::Cut,
+    })
+}
+
+/// Sign `signed` (authData ‖ clientDataHash) into `att`: the org key and its chain
+/// for [`OrgAtt::Chain`], else the device key and its self-signed EF_EE_DEV cert
+/// (the pair U2F register uses). Returns `(sig_len, chain_len, cert_count)`.
 fn make_attestation<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     seed: &[u8; 32],
     signed: &[u8],
-    ea_performed: bool,
+    org: &OrgAtt,
     att: &mut AttBufs,
 ) -> Result<(usize, usize, u8), CtapError> {
-    let org_key = if ea_performed {
-        load_att_key(&ctx.dev, ctx.fs)
-    } else {
-        None
-    };
-    if let Some(mut scalar) = org_key {
-        let k = P256Key::from_scalar(scalar.expose());
-        scalar.wipe();
-        let k = k.ok_or(CtapError::Other)?;
+    if let OrgAtt::Chain { key, len } = org {
+        let k = P256Key::from_scalar(key.expose()).ok_or(CtapError::Other)?;
         let sl = k.sign_der(signed, &mut att.sig);
-        let cl = ctx
-            .fs
-            .read(EF_ATT_CHAIN, &mut att.chain[..])
-            .map(|n| n.min(att.chain.len()))
-            // Intact, not merely non-empty: a chain stored under an older, larger
-            // cap reads back truncated with its count intact, and emitting it would
-            // fail the whole registration. Falling through here attests with the
-            // device key instead, so an upgraded device still registers.
-            .filter(|&n| att.chain.get(..n).is_some_and(cert::att_chain_intact))
-            .ok_or(CtapError::Other)?;
-        let count = cert::att_chain_count(att.chain.get(..cl).ok_or(CtapError::Other)?);
-        Ok((sl, cl, count))
+        let count = cert::att_chain_count(att.chain.get(..*len).ok_or(CtapError::Other)?);
+        Ok((sl, *len, count))
     } else {
         let device_key = P256Key::from_scalar(seed).ok_or(CtapError::Other)?;
         let sl = device_key.sign_der(signed, &mut att.sig);

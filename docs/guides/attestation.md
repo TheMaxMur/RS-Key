@@ -71,7 +71,7 @@ firmware:
 | Limit | Value |
 |---|---|
 | Curve | P-256 only |
-| Chain size | ≤ 2048 bytes total |
+| Chain size | ≤ 2132 bytes total |
 | Certs in chain | ≤ 4 |
 
 **Give each device its own key.** The key is sealed like the master seed, so an
@@ -111,6 +111,13 @@ rsk fido attestation clear [--pin …]
   device's own certificate, no org chain. EA fires only when the platform sets
   the `enterpriseAttestation` request field *and* `enableEnterpriseAttestation`
   is on (below).
+
+The chain has to read back whole to be used for enterprise attestation. A build
+before 0.4.11 could store one past the cap above, and it now reads back cut. An
+EA request over such a chain gets the per-device basic attestation and no `ep`
+flag, since the org attestation is the one the device cannot give. Re-import the
+chain within the cap to restore it. Up to bcdDevice `0x0A69` that registration
+failed with `CTAP1_ERR_OTHER`.
 
 ### Without an org chain (the default)
 
