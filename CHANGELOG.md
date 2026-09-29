@@ -162,6 +162,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The FIDO metadata statements no longer claim `upv` 1.2.** MDS 3.1.1 maps a
+  FIDO2 statement's `upv` onto the CTAP versions in `versions` and reserves 1.2,
+  because CTAP 2.2 was skipped. The statements listed it beside 1.0, 1.1 and 1.3
+  from when getInfo still advertised `FIDO_2_2`, and kept it when getInfo stopped.
+  The shipping statement and its conformance variant now carry 1.0, 1.1 and 1.3,
+  one per FIDO2 entry in `versions`; the U2F statement is unchanged. The docs link
+  the MDS 3.1.1 Proposed Standard in place of its review draft.
+
 - **`authenticatorReset` gives the credential store a new state, as CTAP 2.3 §6.6
   asks.** getInfo's `encCredStoreState` sealed a counter: each change added one,
   and a reset deleted it back to the zero every fresh device started from, so a

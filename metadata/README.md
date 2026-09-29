@@ -3,7 +3,7 @@
 
 # metadata — self-published FIDO Metadata Statement
 
-`rs-key.metadata.json` is a [FIDO Metadata Statement v3.1.1](https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1.1-rd-20251016.html)
+`rs-key.metadata.json` is a [FIDO Metadata Statement v3.1.1](https://fidoalliance.org/specs/mds/fido-metadata-statement-v3.1.1-ps-20260105.html)
 for the RS-Key FIDO2 authenticator, describing the **default build profile**.
 
 It is **self-published**, not a FIDO Alliance MDS listing — getting into the MDS
