@@ -2005,3 +2005,234 @@ fn a_vendor_write_segment_runs_no_side_effects() {
         "the side effects ran on a segment"
     );
 }
+
+// --- the NFC transport's framing (CTAP 2.3 §11.3) --------------------------
+
+/// An extended-length command APDU (ISO 7816-4 §5.1): `Lc` as `00 hi lo`, then an
+/// `Le` of `00 00`, the most a host can ask back.
+fn extended_apdu(cla: u8, ins: u8, p1: u8, p2: u8, data: &[u8]) -> Vec<u8> {
+    let lc = u16::try_from(data.len()).expect("an extended Lc counts to 65535");
+    let mut a = std::vec![cla, ins, p1, p2, 0x00];
+    a.extend_from_slice(&lc.to_be_bytes());
+    a.extend_from_slice(data);
+    a.extend_from_slice(&[0x00, 0x00]);
+    a
+}
+
+/// The device as its boot leaves it: `firmware/src/main.rs` runs
+/// `rsk_fido::seed::ensure_seed` before any transport attaches, and no credential is
+/// made without the seed and attestation certificate it lays down.
+fn booted() -> Env {
+    let env = Env::new();
+    rsk_fido::seed::ensure_seed(
+        &crate::tests::dev(),
+        &mut env.fs.borrow_mut(),
+        &mut *env.rng.borrow_mut(),
+    )
+    .expect("a blank store takes a seed");
+    env
+}
+
+/// `authenticatorMakeCredential` for an ES256 credential, too long for one short APDU:
+/// the platform passed `rp.name` and `user.displayName` on untruncated, which WebAuthn
+/// leaves to the authenticator. No PIN is set, so a touch is all it takes.
+fn long_make_credential() -> Vec<u8> {
+    use minicbor::Encoder;
+    use minicbor::encode::write::Cursor;
+    let name = "N".repeat(200);
+    let mut buf = std::vec![0u8; 1024];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(4).unwrap();
+        e.u8(1).unwrap().bytes(&[0xCD; 32]).unwrap();
+        e.u8(2).unwrap().map(2).unwrap();
+        e.str("id").unwrap().str("example.com").unwrap();
+        e.str("name").unwrap().str(&name).unwrap();
+        e.u8(3).unwrap().map(3).unwrap();
+        e.str("id").unwrap().bytes(&[0x75; 16]).unwrap();
+        e.str("name").unwrap().str("user@example.com").unwrap();
+        e.str("displayName").unwrap().str(&name).unwrap();
+        e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
+        e.str("alg")
+            .unwrap()
+            .i64(rsk_fido::consts::ALG_ES256)
+            .unwrap();
+        e.str("type")
+            .unwrap()
+            .str(rsk_fido::consts::PUBLIC_KEY_TYPE)
+            .unwrap();
+        e.writer().position()
+    };
+    let mut body = std::vec![rsk_fido::consts::CTAP_MAKE_CREDENTIAL];
+    body.extend_from_slice(&buf[..n]);
+    body
+}
+
+/// A makeCredential answer: `CTAP2_OK`, then one attestation object with nothing after
+/// it, a map carrying fmt (0x01), authData (0x02) and attStmt (0x03).
+fn assert_attestation_object(answer: &[u8]) {
+    let (&status, cbor) = answer.split_first().expect("a CTAP status byte");
+    assert_eq!(status, rsk_fido::CTAP2_OK, "the CTAP status");
+    let mut d = minicbor::Decoder::new(cbor);
+    let n = d.map().unwrap().expect("a definite-length map");
+    let keys: Vec<u8> = (0..n)
+        .map(|_| {
+            let key = d.u8().unwrap();
+            d.skip().unwrap();
+            key
+        })
+        .collect();
+    assert_eq!(
+        d.position(),
+        cbor.len(),
+        "bytes past the attestation object"
+    );
+    for (key, name) in [(0x01, "fmt"), (0x02, "authData"), (0x03, "attStmt")] {
+        assert!(keys.contains(&key), "no {name} among the keys {keys:?}");
+    }
+}
+
+/// One NFCCTAP_MSG in short APDUs: every segment but the last under the chaining
+/// class `90`, each acknowledged bare, the last as the `80` that closes the chain.
+/// Returns the answer joined through GET RESPONSE, checked chained as §11.3.6 owes a
+/// short request: `61xx` on every frame but the last, none past 256 bytes.
+fn ctap_msg_in_segments(ccid: &mut Ccid<'_>, segments: &[&[u8]]) -> Vec<u8> {
+    let (last, chained) = segments.split_last().expect("a chain closes on a segment");
+    for segment in chained {
+        let command = apdu(0x90, rsk_fido::consts::CTAP_CBOR, 0x00, 0x00, segment);
+        assert_eq!(
+            ccid.handle_apdu(&command, 0),
+            rsk_sdk::Sw::OK.to_bytes(),
+            "a {}-byte segment",
+            segment.len()
+        );
+    }
+    let mut close = ctap_msg(last);
+    close.push(0x00); // Le: all a short response carries
+    let (got, answer) = frames(ccid, &close);
+    let (end, pieces) = got.split_last().expect("an answer has a frame");
+    assert!(
+        pieces.iter().all(|&(status, _)| status.sw1() == 0x61)
+            && got.iter().all(|&(_, n)| n <= rsk_sdk::apdu::NE_SHORT_MAX)
+            && end.0 == rsk_sdk::Sw::OK,
+        "a short request's answer did not come back chained: {got:04X?}"
+    );
+    answer
+}
+
+#[test]
+fn a_make_credential_in_one_extended_apdu_is_answered_in_one() {
+    // nfc-1 P-2. CTAP 2.3 §11.3.5 obliges both length encodings, and §11.3.6 answers an
+    // extended request in one extended response: past 256 bytes, still no `61xx`.
+    use rsk_sdk::Sw;
+    let env = booted();
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        Sw::OK
+    );
+    let command = extended_apdu(
+        rsk_sdk::apdu::CLA_PROPRIETARY,
+        rsk_fido::consts::CTAP_CBOR,
+        0x00,
+        0x00,
+        &long_make_credential(),
+    );
+    let (got, answer) = frames(&mut ccid, &command);
+    assert_attestation_object(&answer);
+    assert!(
+        answer.len() > rsk_sdk::apdu::NE_SHORT_MAX,
+        "control: {} bytes fit a short response",
+        answer.len()
+    );
+    assert_eq!(got, [(Sw::OK, answer.len())], "the answer came in pieces");
+}
+
+#[test]
+fn a_make_credential_chained_in_short_apdus_is_answered_chained() {
+    // nfc-1 P-3: past 255 bytes a platform that sends short APDUs must chain them.
+    let env = booted();
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    let request = long_make_credential();
+    let segments: Vec<&[u8]> = request.chunks(usize::from(u8::MAX)).collect();
+    assert!(segments.len() > 2, "control: {} segments", segments.len());
+    assert_attestation_object(&ctap_msg_in_segments(&mut ccid, &segments));
+}
+
+#[test]
+fn a_chain_in_segments_of_uneven_size_joins_to_the_same_request() {
+    // nfc-1 P-4: ISO 7816-4 fixes no segment size. A lone command byte, then 200, 17
+    // and 255 bytes: an accumulator that assumed full segments would leave gaps.
+    let env = booted();
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    let request = long_make_credential();
+    let mut rest = &request[..];
+    let mut segments = Vec::new();
+    for n in [1, 200, 17, 255] {
+        let (segment, tail) = rest.split_at(n);
+        segments.push(segment);
+        rest = tail;
+    }
+    assert!(
+        (1..=usize::from(u8::MAX)).contains(&rest.len()),
+        "control: {} bytes close the chain",
+        rest.len()
+    );
+    segments.push(rest);
+    assert_attestation_object(&ctap_msg_in_segments(&mut ccid, &segments));
+}
+
+#[test]
+fn an_unknown_instruction_is_refused_in_an_extended_apdu_too() {
+    // nfc-1 F-2: the extended twin of the short `6D00` rows above. How a command's
+    // length is encoded must not decide whether its instruction exists.
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+        rsk_sdk::Sw::OK
+    );
+    let unknown = extended_apdu(rsk_sdk::apdu::CLA_PROPRIETARY, 0x75, 0x00, 0x00, GET_INFO);
+    assert_eq!(
+        ccid.handle_apdu(&unknown, 0),
+        rsk_sdk::Sw::INS_NOT_SUPPORTED.to_bytes()
+    );
+}
+
+#[test]
+fn a_ctap_msg_whose_lc_overstates_its_data_is_wrong_length() {
+    // nfc-1 F-3 and F-4: getInfo's one byte under a short Lc of FF, and under an extended
+    // Lc of FF01, whose low byte alone reads 1: a parser that kept it would run getInfo.
+    use rsk_sdk::Sw;
+    let mut short = ctap_msg(GET_INFO);
+    short[4] = 0xFF;
+    let mut extended = extended_apdu(
+        rsk_sdk::apdu::CLA_PROPRIETARY,
+        rsk_fido::consts::CTAP_CBOR,
+        0x00,
+        0x00,
+        GET_INFO,
+    );
+    extended[5] = 0xFF;
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    for (case, command) in [("F-3, short", short), ("F-4, extended", extended)] {
+        assert_eq!(
+            sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
+            Sw::OK
+        );
+        assert_eq!(
+            ccid.handle_apdu(&command, 0),
+            Sw::WRONG_LENGTH.to_bytes(),
+            "{case}: {command:02X?}"
+        );
+    }
+}
