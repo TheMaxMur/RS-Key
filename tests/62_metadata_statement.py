@@ -6,7 +6,7 @@
 
     nix develop -c python tests/62_metadata_statement.py
 
-This is a drift guard for `metadata/rs-key.metadata.json`. Part A and Part C are
+This is a drift guard for `metadata/rs-key.metadata.json`. Parts A, C and D are
 host-only, so `scripts/emu-suites.sh` sweeps them on every pull request; Part B
 needs a device and is the half you run by hand on a board.
 
@@ -29,6 +29,10 @@ Part B (runs only if a FIDO HID device is plugged in):
   * encIdentifier / encCredStoreState change on every call, so only presence is
     compared, one way: a member the device sends must be declared.
 
+Part D (host-only, always runs): every published statement against the rules the
+FIDO Metadata Statement spec (v3.1.1) and the FIDO Registry (v2.3) write down,
+case by case as the conformance tool's metadata-stmt-1 names them.
+
 The statement describes the DEFAULT (shipping) build profile, which advertises
 EdDSA (-8): the Windows WebAuthn API drops unadvertised algorithms, breaking
 `ssh-keygen -t ed25519-sk`. ES256K (-47) is never advertised (the FIDO
@@ -39,10 +43,13 @@ shipping statement minus EdDSA. `advertise-pqc` adds COSE -48 to algorithms and
 `fips-profile` raises minPINLength — if the live device is one of those, Part B
 says so instead of failing blindly.
 """
+import base64
+import hashlib
 import json
 import os
 import re
 import sys
+import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 META = os.path.join(ROOT, "metadata", "rs-key.metadata.json")
@@ -324,11 +331,442 @@ def part_c(stmt):
     print(f"Part C OK — {len(paths)} statement(s) parse under python-fido2's MDS3 model")
 
 
+# Part D reads FIDO Metadata Statement v3.1.1 PS 2026-01-05 ("MDS") and the FIDO Registry
+# of Predefined Values v2.3 PS it cites ("Registry"). The case ids are the conformance
+# tool's metadata-stmt-1; the rules are written from the spec text, not from the tool.
+STATEMENT_FAMILIES = {META: "fido2", CONF_META: "fido2", U2F_META: "u2f"}
+PROTOCOL_FAMILIES = ("uaf", "u2f", "fido2")
+MDS3_SCHEMA = 3
+MDS3_DESCRIPTION_MAX = 200
+# MDS §4: the members of the MetadataStatement dictionary.
+MDS3_MEMBERS = {
+    "legalHeader", "aaid", "aaguid", "attestationCertificateKeyIdentifiers", "friendlyNames",
+    "description", "alternativeDescriptions", "authenticatorVersion", "protocolFamily",
+    "schema", "upv", "authenticationAlgorithms", "publicKeyAlgAndEncodings",
+    "attestationTypes", "userVerificationDetails", "keyProtection", "isKeyRestricted",
+    "isFreshUserVerificationRequired", "matcherProtection", "cryptoStrength",
+    "attachmentHint", "tcDisplay", "tcDisplayContentType", "tcDisplayPNGCharacteristics",
+    "attestationRootCertificates", "ecdaaTrustAnchors", "icon", "iconDark",
+    "providerLogoLight", "providerLogoDark", "supportedExtensions",
+    "multiDeviceCredentialSupport", "authenticatorGetInfo", "cxConfigURL",
+}
+# MDS keeps no list of what it dropped, so this is the IDL diffed across editions:
+# 2.0 (RD 2018-07-02) -> 3.0, and 3.1 -> 3.1.1; 3.0 -> 3.1 dropped nothing.
+MDS3_DROPPED = {
+    "assertionScheme": "3.0", "authenticationAlgorithm": "3.0",
+    "publicKeyAlgAndEncoding": "3.0", "operatingEnv": "3.0", "isSecondFactorOnly": "3.0",
+    "keyScope": "3.1.1", "cxpConfigURL": "3.1.1",
+}
+# MDS §4 upv. FIDO2 maps each CTAP 2.3 §6.4 version string; 1.2 is reserved because
+# CTAP 2.2 was skipped, and defines no "FIDO_2_2". U2F is 1.0, 1.1 or 1.2 (CTAP1).
+FIDO2_UPV = {"FIDO_2_0": (1, 0), "FIDO_2_1": (1, 1), "FIDO_2_3": (1, 3)}
+FIDO2_UPV_RESERVED = {(1, 2)}
+U2F_UPV = {(1, 0), (1, 1), (1, 2)}
+# MDS §3.1 writes an AAGUID the RFC 4122 way, which outputs lower-case hex; §4 wants
+# each attestation key identifier as RFC 5280 method 1 (a SHA-1) in lower-case hex.
+AAGUID_RE = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+KEY_IDENTIFIER_RE = r"[0-9a-f]{40}"
+# Registry §3.1-§3.7: the strings a statement may carry, and the pairs the Registry
+# calls exclusive "in authenticator metadata".
+USER_VERIFY = {
+    "presence_internal", "fingerprint_internal", "passcode_internal", "voiceprint_internal",
+    "faceprint_internal", "location_internal", "eyeprint_internal", "pattern_internal",
+    "handprint_internal", "passcode_external", "pattern_external", "none", "all",
+}
+KEY_PROTECTION = {"software", "hardware", "tee", "secure_element", "remote_handle", "sync_fabric"}
+MATCHER_PROTECTION = {"software", "tee", "on_chip"}
+ATTACHMENT_HINTS = {
+    "internal", "external", "wired", "wireless", "nfc", "bluetooth", "network", "ready",
+    "wifi_direct", "smart-card",
+}
+TC_DISPLAY = {"any", "privileged_software", "tee", "hardware", "remote"}
+PUBLIC_KEY_ENCODINGS = {"ecc_x962_raw", "ecc_x962_der", "rsa_2048_raw", "rsa_2048_der", "cose"}
+ATTESTATION_TYPES = {"basic_full", "basic_surrogate", "ecdaa", "attca", "anonca", "none"}
+KEY_PROTECTION_EXCLUSIVE = (("software", "hardware"), ("software", "tee"),
+                            ("software", "secure_element"), ("tee", "secure_element"))
+MATCHER_PROTECTION_EXCLUSIVE = (("software", "tee"), ("software", "on_chip"), ("tee", "on_chip"))
+TC_DISPLAY_EXCLUSIVE = (("privileged_software", "tee"), ("privileged_software", "hardware"),
+                        ("tee", "hardware"))
+# MDS §3.2-§3.5: the methods each accuracy descriptor may describe, and its members as
+# (bits of the WebIDL unsigned type, or None for a double; required).
+ACCURACY_DESCRIPTORS = {
+    "caDesc": ({"passcode_internal", "passcode_external"},
+               {"base": (16, True), "minLength": (16, True),
+                "maxRetries": (16, False), "blockSlowdown": (16, False)}),
+    "baDesc": ({"fingerprint_internal", "voiceprint_internal", "faceprint_internal",
+                "eyeprint_internal", "handprint_internal"},
+               {"selfAttestedFRR": (None, False), "selfAttestedFAR": (None, False),
+                "iAPARThreshold": (None, False), "maxTemplates": (16, False),
+                "maxRetries": (16, False), "blockSlowdown": (16, False)}),
+    "paDesc": ({"pattern_internal", "pattern_external"},
+               {"minComplexity": (32, True), "maxRetries": (16, False),
+                "blockSlowdown": (16, False)}),
+}
+# FIDO's own sample statement (MDS §5, which the conformance tool ships as well); the
+# icon and the root certificate are matched by the SHA-256 of their decoded bytes.
+SAMPLE_AAGUID = "0132d110-bf4e-4208-a403-ab4f5f12efe5"
+SAMPLE_DESCRIPTIONS = ("FIDO Alliance Sample FIDO2 Authenticator",
+                       "FIDO Alliance Sample U2F Authenticator",
+                       "FIDO Alliance Sample UAF Authenticator")
+SAMPLE_KEY_IDENTIFIER = "7c0903708b87115b0b422def3138c3c864e44573"
+SAMPLE_ICON_SHA256 = "da81834275ebee7dd076f3be596a8ef3a2ba83ae88ee33a376ec280a4f9716e6"
+SAMPLE_ROOT_SHA256 = "7231962210d2933ec993a77b4a7203898ab74cdf974ff02d2de3f1ec7cb9de68"
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _uint(value, bits):
+    """A WebIDL unsigned integer as JSON carries it: an int in range, never a bool."""
+    return type(value) is int and 0 <= value < 1 << bits
+
+
+def _registered(stmt, member, allowed, case, out, empty_ok=False):
+    """The Registry strings a list member carries. A missing member, an empty list
+    where MDS §1 bars one, and every string the Registry lacks are findings."""
+    value = stmt.get(member)
+    if not isinstance(value, list) or not (value or empty_ok):
+        out.append((case, member, "must be a list of Registry strings"
+                    + ("" if empty_ok else ", and not empty (MDS §1)")))
+        return set()
+    unknown = [v for v in value if not (isinstance(v, str) and v in allowed)]
+    if unknown:
+        out.append((case, member, f"{unknown} not in the FIDO Registry"))
+    return {v for v in value if isinstance(v, str) and v in allowed}
+
+
+def _exclusive(names, pairs, member, case, out):
+    for a, b in pairs:
+        if a in names and b in names:
+            out.append((case, member, f'"{a}" and "{b}" are exclusive in metadata (Registry)'))
+
+
+def _versions(stmt):
+    """The version strings the embedded authenticatorGetInfo claims."""
+    gi = stmt.get("authenticatorGetInfo")
+    versions = gi.get("versions") if isinstance(gi, dict) else None
+    return [v for v in versions if isinstance(v, str)] if isinstance(versions, list) else []
+
+
+def _data_url_png(url):
+    """The bytes a base64 `data:image/png` URL (RFC 2397) carries, else None."""
+    if not isinstance(url, str) or not url.startswith("data:"):
+        return None
+    header, _, payload = url[len("data:"):].partition(",")
+    if header.lower() != "image/png;base64":
+        return None
+    try:
+        return base64.b64decode(payload, validate=True)
+    except ValueError:
+        return None
+
+
+def _check_members(stmt, family, out):
+    # metadata-stmt-1 P-33 / P-34: a reader keyed on MDS3 ignores a member a later
+    # edition dropped, or one outside the §4 dictionary, without a word.
+    for key in stmt:
+        if key in MDS3_DROPPED:
+            out.append(("P-33", key, f"was dropped from the statement in MDS {MDS3_DROPPED[key]}"))
+        elif key not in MDS3_MEMBERS:
+            out.append(("P-34", key, "is not a MetadataStatement member (MDS §4)"))
+
+
+def _check_scalars(stmt, family, out):
+    # metadata-stmt-1 P-1/P-36: §4 wants a legalHeader in each statement and §1 bars
+    # an empty DOMString; the text itself MDS gives only as an example.
+    header = stmt.get("legalHeader")
+    if not (isinstance(header, str) and header):
+        out.append(("P-1", "legalHeader", "must be present and not empty (MDS §4)"))
+    # metadata-stmt-1 P-4: "only ASCII characters" — any ASCII, since MDS §4 does not
+    # say printable — and at most 200 of them.
+    desc = stmt.get("description")
+    if not (isinstance(desc, str) and desc):
+        out.append(("P-4", "description", "must be present and not empty (MDS §4)"))
+    else:
+        if not desc.isascii():
+            out.append(("P-4", "description", "must contain only ASCII characters (MDS §4)"))
+        if len(desc) > MDS3_DESCRIPTION_MAX:
+            out.append(("P-4", "description",
+                        f"is {len(desc)} characters; MDS §4 allows {MDS3_DESCRIPTION_MAX}"))
+    # metadata-stmt-1 P-7: a family MDS §4 names, and the one this file publishes.
+    family_value = stmt.get("protocolFamily")
+    if family_value not in PROTOCOL_FAMILIES:
+        out.append(("P-7", "protocolFamily", f"{family_value!r} is none of {PROTOCOL_FAMILIES}"))
+    elif family_value != family:
+        out.append(("P-7", "protocolFamily",
+                    f"is {family_value!r}, but this file publishes the {family!r} statement"))
+    # metadata-stmt-1 P-20: bits of strength when claimed; absent means unknown.
+    strength = stmt.get("cryptoStrength")
+    if "cryptoStrength" in stmt and not (_uint(strength, 16) and strength > 0):
+        out.append(("P-20", "cryptoStrength", f"{strength!r} is not a positive unsigned short"))
+    # metadata-stmt-1 P-31: the schema version of this edition.
+    schema = stmt.get("schema")
+    if not (_uint(schema, 16) and schema == MDS3_SCHEMA):
+        out.append(("P-31", "schema", f"is {schema!r}; MDS §4 makes it {MDS3_SCHEMA}"))
+
+
+def _check_family(stmt, family, out):
+    # metadata-stmt-1 P-3, MDS §4: FIDO2 MUST set aaguid and supports no AAID; with
+    # neither aaid nor aaguid the attestation key identifiers MUST be set; and
+    # supportedExtensions applies to UAF only.
+    if family == "fido2":
+        aaguid = stmt.get("aaguid")
+        if not (isinstance(aaguid, str) and re.fullmatch(AAGUID_RE, aaguid)):
+            out.append(("P-3", "aaguid",
+                        f"MUST be an MDS §3.1 AAGUID on a fido2 statement; got {aaguid!r}"))
+        for member in ("aaid", "attestationCertificateKeyIdentifiers"):
+            if member in stmt:
+                out.append(("P-3", member, "does not belong on a fido2 statement"))
+    ids = stmt.get("attestationCertificateKeyIdentifiers")
+    if ids is None and "aaid" not in stmt and "aaguid" not in stmt:
+        out.append(("P-3", "attestationCertificateKeyIdentifiers",
+                    "MUST be set when neither aaid nor aaguid is (MDS §4)"))
+    elif ids is not None and not (isinstance(ids, list) and ids and all(
+            isinstance(i, str) and re.fullmatch(KEY_IDENTIFIER_RE, i) for i in ids)):
+        out.append(("P-3", "attestationCertificateKeyIdentifiers",
+                    "must be a non-empty list of lower-case hex SHA-1 key identifiers"))
+    if "supportedExtensions" in stmt and family != "uaf":
+        out.append(("P-3", "supportedExtensions", "applies to UAF authenticators only (MDS §4)"))
+    if family == "u2f":
+        if "authenticatorGetInfo" in stmt:
+            out.append(("P-3", "authenticatorGetInfo",
+                        "U2F authenticators do not support it (MDS §4)"))
+        if stmt.get("authenticationAlgorithms") != ["secp256r1_ecdsa_sha256_raw"]:
+            out.append(("P-3", "authenticationAlgorithms",
+                        'FIDO U2F has the one algorithm "secp256r1_ecdsa_sha256_raw" (MDS §4)'))
+
+
+def _check_upv(stmt, family, out):
+    # metadata-stmt-1 P-8: a non-empty list of UAF Protocol §3.1.1 Versions, each
+    # exactly {major, minor}, both unsigned short.
+    upv = stmt.get("upv")
+    if not (isinstance(upv, list) and upv):
+        out.append(("P-8", "upv", "must be a non-empty list of {major, minor} (MDS §4)"))
+        upv = []
+    have = set()
+    for i, version in enumerate(upv):
+        if (isinstance(version, dict) and version.keys() == {"major", "minor"}
+                and _uint(version["major"], 16) and _uint(version["minor"], 16)):
+            have.add((version["major"], version["minor"]))
+        else:
+            out.append(("P-8", f"upv[{i}]", "must be {major, minor}, both unsigned short"))
+    if family == "u2f":
+        for major, minor in sorted(have - U2F_UPV):
+            out.append(("P-8", "upv", f"{major}.{minor} is not a U2F version (MDS §4: 1.0-1.2)"))
+    elif family == "fido2":
+        # metadata-stmt-1 P-32: a fido2 statement carries getInfo, and its upv set is
+        # exactly what getInfo.versions maps to.
+        if not isinstance(stmt.get("authenticatorGetInfo"), dict):
+            out.append(("P-32", "authenticatorGetInfo",
+                        "MUST be present on a fido2 statement (MDS §4)"))
+            return
+        versions = _versions(stmt)
+        want = {FIDO2_UPV[v] for v in versions if v in FIDO2_UPV}
+        for major, minor in sorted(have - want):
+            why = ("is reserved: CTAP 2.2 was skipped" if (major, minor) in FIDO2_UPV_RESERVED
+                   else "is what no entry of authenticatorGetInfo.versions maps to")
+            out.append(("P-32", "upv", f"{major}.{minor} {why} (MDS §4 upv)"))
+        for v in versions:
+            if v in FIDO2_UPV and FIDO2_UPV[v] not in have:
+                major, minor = FIDO2_UPV[v]
+                out.append(("P-32", "upv", f"lacks {major}.{minor}, which getInfo's {v} maps to"))
+
+
+def _check_registered(stmt, family, out):
+    # metadata-stmt-1 P-13 / P-14: Registry §3.6.2 and §3.7 strings; FIDO U2F has the
+    # one key encoding (MDS §4 publicKeyAlgAndEncodings).
+    _registered(stmt, "publicKeyAlgAndEncodings", PUBLIC_KEY_ENCODINGS, "P-13", out)
+    if family == "u2f" and stmt.get("publicKeyAlgAndEncodings") != ["ecc_x962_raw"]:
+        out.append(("P-13", "publicKeyAlgAndEncodings",
+                    'FIDO U2F has the one encoding "ecc_x962_raw" (MDS §4)'))
+    _registered(stmt, "attestationTypes", ATTESTATION_TYPES, "P-14", out)
+    # metadata-stmt-1 P-16 / P-19: Registry §3.2 and §3.3 with their exclusive pairs;
+    # remote_handle MUST be set together with another key protection type.
+    keys = _registered(stmt, "keyProtection", KEY_PROTECTION, "P-16", out)
+    _exclusive(keys, KEY_PROTECTION_EXCLUSIVE, "keyProtection", "P-16", out)
+    if keys == {"remote_handle"}:
+        out.append(("P-16", "keyProtection", '"remote_handle" MUST be combined with another type'))
+    matcher = _registered(stmt, "matcherProtection", MATCHER_PROTECTION, "P-19", out)
+    _exclusive(matcher, MATCHER_PROTECTION_EXCLUSIVE, "matcherProtection", "P-19", out)
+    # metadata-stmt-1 P-22: Registry §3.4 — "internal" only ever stands alone and
+    # "external" never does; MDS §4 requires the member from CTAP 2.2 on, i.e. past upv 1.1.
+    if "attachmentHint" in stmt:
+        hints = _registered(stmt, "attachmentHint", ATTACHMENT_HINTS, "P-22", out)
+        if "internal" in hints and len(hints) > 1:
+            out.append(("P-22", "attachmentHint",
+                        '"internal" cannot be combined with another hint (Registry §3.4)'))
+        if hints == {"external"}:
+            out.append(("P-22", "attachmentHint",
+                        '"external" MUST be combined with another hint (Registry §3.4)'))
+    elif any(FIDO2_UPV.get(v, (1, 0)) > FIDO2_UPV["FIDO_2_1"] for v in _versions(stmt)):
+        out.append(("P-22", "attachmentHint", "MUST be present for CTAP 2.2 or newer (MDS §4)"))
+
+
+def _check_uv_details(stmt, family, out):
+    # metadata-stmt-1 P-15: alternatives, each a non-empty AND-list of
+    # VerificationMethodDescriptor (MDS §3.5, §3.6); the member itself is optional.
+    if "userVerificationDetails" not in stmt:
+        return
+    alternatives = stmt["userVerificationDetails"]
+    if not (isinstance(alternatives, list) and alternatives):
+        out.append(("P-15", "userVerificationDetails", "must be a non-empty list of combinations"))
+        return
+    for i, combination in enumerate(alternatives):
+        where = f"userVerificationDetails[{i}]"
+        if not (isinstance(combination, list) and combination):
+            out.append(("P-15", where, "must be a non-empty list of VerificationMethodDescriptor"))
+            continue
+        for j, descriptor in enumerate(combination):
+            _check_uv_method(descriptor, f"{where}[{j}]", out)
+
+
+def _check_uv_method(descriptor, where, out):
+    if not isinstance(descriptor, dict):
+        out.append(("P-15", where, "must be a VerificationMethodDescriptor"))
+        return
+    method = descriptor.get("userVerificationMethod")
+    uvm = f"{where}.userVerificationMethod"
+    if method == "all":
+        out.append(("P-15", uvm, '"all" MUST NOT be used here (MDS §3.5)'))
+    elif not (isinstance(method, str) and method in USER_VERIFY):
+        out.append(("P-15", uvm, f"{method!r} is not in Registry §3.1"))
+    for key in sorted(descriptor.keys() - {"userVerificationMethod"} - ACCURACY_DESCRIPTORS.keys()):
+        out.append(("P-15", f"{where}.{key}", "is not a VerificationMethodDescriptor member"))
+    # An accuracy descriptor rides only on the methods MDS §3.5 names for it, with its
+    # §3.2-§3.4 members; a baDesc MUST set at least one, the others have required ones.
+    for name, (methods, members) in ACCURACY_DESCRIPTORS.items():
+        if name not in descriptor:
+            continue
+        accuracy = descriptor[name]
+        if not (isinstance(method, str) and method in methods):
+            out.append(("P-15", f"{where}.{name}", f"describes only {sorted(methods)}"))
+        if not (isinstance(accuracy, dict) and accuracy):
+            out.append(("P-15", f"{where}.{name}", "must be a dictionary with at least one member"))
+            continue
+        for key in sorted(accuracy.keys() - members.keys()):
+            out.append(("P-15", f"{where}.{name}.{key}", f"is not a {name} member"))
+        for key, (bits, required) in members.items():
+            if key not in accuracy:
+                if required:
+                    out.append(("P-15", f"{where}.{name}.{key}", "is required"))
+            elif not (_uint(accuracy[key], bits) if bits else type(accuracy[key]) in (int, float)):
+                kind = f"a {bits}-bit unsigned integer" if bits else "a number"
+                out.append(("P-15", f"{where}.{name}.{key}", f"must be {kind}"))
+
+
+def _check_tc_display(stmt, family, out):
+    # metadata-stmt-1 P-24: Registry §3.5 strings in a valid combination: "any" MUST
+    # be set whenever a display exists, and its three implementations exclude one another.
+    shown = _registered(stmt, "tcDisplay", TC_DISPLAY, "P-24", out, empty_ok=True)
+    _exclusive(shown, TC_DISPLAY_EXCLUSIVE, "tcDisplay", "P-24", out)
+    display = stmt.get("tcDisplay")
+    if not (isinstance(display, list) and display):
+        return
+    if "any" not in shown:
+        out.append(("P-24", "tcDisplay", '"any" MUST be set when a display is available'))
+    # metadata-stmt-1 P-25 / P-26, MDS §4: a display needs its MIME type, and a PNG one
+    # its image characteristics.
+    content_type = stmt.get("tcDisplayContentType")
+    png_traits = stmt.get("tcDisplayPNGCharacteristics")
+    if not (isinstance(content_type, str) and content_type):
+        out.append(("P-25", "tcDisplayContentType", "MUST be present when tcDisplay is not empty"))
+    elif content_type.lower() == "image/png" and not (isinstance(png_traits, list) and png_traits):
+        out.append(("P-26", "tcDisplayPNGCharacteristics",
+                    "MUST be present for an image/png display"))
+
+
+def _check_icon(stmt, family, out):
+    # metadata-stmt-1 P-29: MDS §4 allows a PNG or an SVG data: URL; this holds the PNG
+    # form the statements use — the signature, then a whole IHDR chunk (length 13, type,
+    # data, CRC-32 over type and data). An SVG icon would need its own branch here.
+    if "icon" not in stmt:
+        return
+    png = _data_url_png(stmt["icon"])
+    if png is None:
+        out.append(("P-29", "icon", "must be a base64 data:image/png URL (RFC 2397)"))
+        return
+    ihdr = png[8:33]
+    if not (png.startswith(PNG_SIGNATURE) and ihdr[:8] == b"\x00\x00\x00\x0dIHDR"
+            and ihdr[21:] == zlib.crc32(ihdr[4:21]).to_bytes(4, "big")):
+        out.append(("P-29", "icon", "does not decode to a PNG (signature, then an IHDR chunk)"))
+
+
+def _check_samples(stmt, family, out):
+    # metadata-stmt-1 P-35: a value copied from FIDO's sample statement says the
+    # statement was never finished.
+    aaguid = stmt.get("aaguid")
+    if isinstance(aaguid, str) and aaguid.lower() == SAMPLE_AAGUID:
+        out.append(("P-35", "aaguid", "is the AAGUID of FIDO's sample statement (MDS §5.3)"))
+    if stmt.get("description") in SAMPLE_DESCRIPTIONS:
+        out.append(("P-35", "description", "is a FIDO sample statement's description (MDS §5)"))
+    ids = stmt.get("attestationCertificateKeyIdentifiers")
+    if isinstance(ids, list) and SAMPLE_KEY_IDENTIFIER in ids:
+        out.append(("P-35", "attestationCertificateKeyIdentifiers",
+                    "lists the key of FIDO's sample statement (MDS §5.2)"))
+    png = _data_url_png(stmt.get("icon"))
+    if png is not None and hashlib.sha256(png).hexdigest() == SAMPLE_ICON_SHA256:
+        out.append(("P-35", "icon", "is the icon of FIDO's sample statements (MDS §5)"))
+    roots = stmt.get("attestationRootCertificates")
+    for i, cert in enumerate(roots if isinstance(roots, list) else []):
+        try:
+            der = base64.b64decode(cert, validate=True)
+        except (TypeError, ValueError):
+            continue
+        if hashlib.sha256(der).hexdigest() == SAMPLE_ROOT_SHA256:
+            out.append(("P-35", f"attestationRootCertificates[{i}]",
+                        "is the root of FIDO's sample statements (MDS §5)"))
+
+
+def mds3_problems(stmt, family):
+    """Every MDS / Registry rule `stmt` breaks, as (case, member, detail) — typed, so
+    the self-test can ask which rule answered. `family` is the one its file publishes,
+    so a wrong protocolFamily is one finding rather than a different rulebook."""
+    out = []
+    for check in (_check_members, _check_scalars, _check_family, _check_upv,
+                  _check_registered, _check_uv_details, _check_tc_display,
+                  _check_icon, _check_samples):
+        check(stmt, family, out)
+    return out
+
+
+def part_d(stmt):
+    """Every published statement against the MDS3 statement rules: the FIDO Metadata
+    Statement spec's and the FIDO Registry's own text, one metadata-stmt-1 case each.
+    Part C asks whether a relying party's parser takes the file; this asks the spec."""
+    fails = []
+    paths = [p for p in STATEMENT_FAMILIES if os.path.exists(p)]
+    for path in paths:
+        name = os.path.basename(path)
+        family = STATEMENT_FAMILIES[path]
+        for case, member, detail in mds3_problems(json.load(open(path)), family):
+            fails.append(f"{name}: {member}: {detail} [metadata-stmt-1 {case}]")
+
+    # A checker that passes everything proves nothing: the shipping statement broken
+    # five ways at once must be reported five times, each by the rule it breaks.
+    broken = json.loads(json.dumps(stmt))  # deep copy
+    broken["description"] = "x" * (MDS3_DESCRIPTION_MAX + 1)
+    broken["protocolFamily"] = "uaf"
+    broken["notAnMds3Member"] = True
+    broken["icon"] = "data:image/png;base64," + base64.b64encode(b"GIF89a").decode()
+    broken["schema"] = MDS3_SCHEMA - 1
+    want = {("P-4", "description"), ("P-7", "protocolFamily"), ("P-34", "notAnMds3Member"),
+            ("P-29", "icon"), ("P-31", "schema")}
+    got = {(case, member) for case, member, _ in mds3_problems(broken, STATEMENT_FAMILIES[META])}
+    for case, member in sorted(want - got):
+        fails.append(f"self-test: {os.path.basename(META)} with {member} broken passed {case}"
+                     " — Part D proves nothing")
+
+    if fails:
+        for f in fails:
+            print(f"  FAIL: {f}")
+        sys.exit(f"Part D: {len(fails)} failure(s)")
+    print(f"Part D OK — {len(paths)} statement(s) hold the MDS 3.1.1 / Registry 2.3 rules")
+
+
 def main():
     stmt = json.load(open(META))
     part_a(stmt)
     check_conformance_variant(stmt)
     part_c(stmt)
+    part_d(stmt)
     part_b(stmt)
 
 
