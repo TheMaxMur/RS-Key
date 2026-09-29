@@ -260,9 +260,9 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   `0x1209:0x0001` identity most hosts never bind the CCID interface at all, so the
   surface is absent there for an unrelated reason, not by design.
 - **The residual gap is *intent*. The trusted-display flavor closes it.** Because
-  a standard key attests presence and possession, a malicious page can silently
-  drive an authorized key over WebUSB to phish a real sign-in ([demonstrated
-  against YubiKeys in Chrome](https://www.wired.com/story/chrome-yubikey-phishing-webusb/)).
+  a standard key attests presence and possession, malware on the host can have it
+  sign in to a site you never chose when you touch it for one you did: the button
+  cannot show which `rpId` a touch approves.
   The [trusted-display flavor](guides/display.md) paints the true `rpId` on the
   device's own screen and gates each signature on a tap there, so a compromised
   host cannot fake what you approve. [Qubes OS's CTAP proxy](https://doc.qubes-os.org/en/latest/user/security-in-qubes/ctap-proxy.html#the-qubes-approach-to-ctap)
