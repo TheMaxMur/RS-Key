@@ -689,6 +689,74 @@ fn an_unconfigured_device_reports_device_flags_00() {
     );
 }
 
+/// How many entries of `blob`'s TLV run carry `tag`.
+fn tlv_count(blob: &[u8], tag: u8) -> usize {
+    let mut i = 0;
+    let mut n = 0;
+    while i + 2 <= blob.len() {
+        n += usize::from(blob[i] == tag);
+        i += 2 + blob[i + 1] as usize;
+    }
+    n
+}
+
+/// A YubiKey reports `DEVICE_FLAGS` in every DeviceInfo, and `ykman config usb` stores
+/// a record without it, which READ CONFIG then echoed with no `08` at all. It reads as
+/// the factory `00` now, in the same bytes on every transport; the record is untouched.
+#[test]
+fn a_record_without_device_flags_reports_the_factory_flags() {
+    let mut fs = fs();
+    let record = [TAG_USB_ENABLED, 2, 0x02, 0x3B];
+    persist_touched(&SERIAL, &mut fs, &record).unwrap();
+    let mut small = [0u8; MIN_CONFIG_RES_CAP];
+    let mut res = ResBuf::new(&mut small);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    let otp = res.as_slice().to_vec();
+    assert_eq!(otp[0] as usize, otp.len() - 1);
+    assert!(tlv_whole(&otp[1..]));
+    assert_eq!(
+        tlv_get(&otp[1..], TAG_DEVICE_FLAGS),
+        Some(&[DEVICE_FLAGS_FACTORY][..]),
+        "a host-written record without 08 read back without DEVICE_FLAGS"
+    );
+    assert_eq!(tlv_get(&otp[1..], TAG_USB_ENABLED), Some(&record[2..]));
+    assert_eq!(tlv_get(&otp[1..], TAG_CONFIG_LOCK), Some(&[0x00][..]));
+    let mut stored = [0u8; EF_DEV_CONF_READ_MAX];
+    let n = fs.read(EF_DEV_CONF, &mut stored).unwrap();
+    assert_eq!(&stored[..n], &record, "the flags reached the stored record");
+    // A transport with more room answers the same bytes.
+    let mut big = [0u8; 256];
+    let mut res = ResBuf::new(&mut big);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    assert_eq!(res.as_slice(), &otp[..]);
+    // So does a buffer of exactly its size…
+    let mut exact = std::vec![0u8; otp.len()];
+    let mut res = ResBuf::new(&mut exact);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    assert_eq!(res.as_slice(), &otp[..]);
+    // …and one byte short, the flags are what gives way, not the lock state.
+    let mut short = std::vec![0u8; otp.len() - 1];
+    let mut res = ResBuf::new(&mut short);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    let body = res.as_slice();
+    assert_eq!(body[0] as usize, body.len() - 1);
+    assert!(tlv_whole(&body[1..]));
+    assert_eq!(tlv_count(&body[1..], TAG_DEVICE_FLAGS), 0);
+    assert_eq!(tlv_get(&body[1..], TAG_USB_ENABLED), Some(&record[2..]));
+    assert_eq!(tlv_get(&body[1..], TAG_CONFIG_LOCK), Some(&[0x00][..]));
+
+    // A record with flags of its own keeps them, once.
+    persist_touched(&SERIAL, &mut fs, &[TAG_DEVICE_FLAGS, 1, 0x80]).unwrap();
+    let mut body = [0u8; MIN_CONFIG_RES_CAP];
+    let mut res = ResBuf::new(&mut body);
+    assert_eq!(config_tlv(&[0; 4], &mut fs, &mut res), Sw::OK);
+    assert_eq!(tlv_count(&res.as_slice()[1..], TAG_DEVICE_FLAGS), 1);
+    assert_eq!(
+        tlv_get(&res.as_slice()[1..], TAG_DEVICE_FLAGS),
+        Some(&[0x80][..])
+    );
+}
+
 /// A lock code a build before 0.4.5 stored, as it stored it: `0A 10 <code>` beside
 /// the owner's other fields.
 fn legacy_locked_record() -> Vec<u8> {

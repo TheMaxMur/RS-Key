@@ -134,9 +134,9 @@ const CONFIG_TLV_FIXED: usize = 1 + (2 + 2) + (2 + 4) + (2 + 1) + (2 + 3) + CONF
 const CONFIG_LOCK_TLV_LEN: usize = 2 + 1;
 
 /// Build the READ CONFIG TLV: a leading overall-length byte, then
-/// USB_SUPPORTED / SERIAL / FORM_FACTOR / VERSION, then either the persisted
-/// `EF_DEV_CONF` blob or the default USB_ENABLED / DEVICE_FLAGS / CONFIG_LOCK
-/// tail. Public because the OTP applet serves the same TLV (P1=0x13).
+/// USB_SUPPORTED / SERIAL / FORM_FACTOR / VERSION, then the persisted `EF_DEV_CONF`
+/// blob (DEVICE_FLAGS added where it has none) or the default USB_ENABLED /
+/// DEVICE_FLAGS, then CONFIG_LOCK. Public: the OTP applet serves it too (P1=0x13).
 pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
     let mut buf = [0u8; 128];
     let mut n = 1; // byte 0 = overall length, filled at the end.
@@ -199,7 +199,7 @@ pub fn config_tlv<S: Storage>(serial: &[u8; 4], fs: &mut Fs<S>, res: &mut ResBuf
                 dst.copy_from_slice(src);
                 clamp_usb_enabled(dst);
             }
-            n += elen;
+            n = push_device_flags_if_absent(&mut buf, n, n + elen, taken);
             // Whether a code is set, never the code, as a YubiKey reports it.
             push_tlv(&mut buf, &mut n, TAG_CONFIG_LOCK, &[lock_reported(fs)]);
         }
@@ -750,6 +750,23 @@ fn clamp_usb_enabled(blob: &mut [u8]) {
         }
         i = end;
     }
+}
+
+/// The `DEVICE_FLAGS` entry [`push_device_flags_if_absent`] may add to an echo.
+const DEVICE_FLAGS_TLV_LEN: usize = 2 + 1;
+
+/// A YubiKey reports `DEVICE_FLAGS` in every DeviceInfo; an echo `buf[start..end]`
+/// without it gets the factory byte, where the body still fits `room` and the
+/// smallest transport's frame, so every transport answers alike. Returns the new end.
+fn push_device_flags_if_absent(buf: &mut [u8], start: usize, end: usize, room: usize) -> usize {
+    let mut n = end;
+    let echo = buf.get(start..end).unwrap_or_default();
+    if !has_tag(echo, TAG_DEVICE_FLAGS)
+        && end + DEVICE_FLAGS_TLV_LEN + CONFIG_LOCK_TLV_LEN <= room.min(MIN_CONFIG_RES_CAP)
+    {
+        push_tlv(buf, &mut n, TAG_DEVICE_FLAGS, &[DEVICE_FLAGS_FACTORY]);
+    }
+    n
 }
 
 /// Append a `tag, len, value` TLV; silently truncated by the fixed `read_config`

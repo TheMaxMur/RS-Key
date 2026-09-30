@@ -757,7 +757,9 @@ Response = one **leading overall-length byte**, then concatenated `TAG LEN VALUE
 When no host config has been written, the device returns the **defaults**:
 `USB_ENABLED` = all-supported, `DEVICE_FLAGS = 00`, `CONFIG_LOCK = 00`. Once
 WRITE CONFIG has stored a blob, READ CONFIG echoes that blob after the fixed
-`USB_SUPPORTED/SERIAL/FORM_FACTOR/VERSION` prefix, then always appends
+`USB_SUPPORTED/SERIAL/FORM_FACTOR/VERSION` prefix, adds `DEVICE_FLAGS = 00` after
+it when the blob carries none (a YubiKey 5.8.0 reports the tag in every
+DeviceInfo; the stored blob itself is not changed), then always appends
 `CONFIG_LOCK`.
 
 A stored blob is echoed **only if it still satisfies the WRITE CONFIG rules** —

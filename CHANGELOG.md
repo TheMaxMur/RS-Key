@@ -162,6 +162,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **DeviceInfo reports `DEVICE_FLAGS` after a host has written the configuration,
+  as a YubiKey 5.8.0 always does.** `ykman config usb` stores a record without tag
+  `08`, and READ CONFIG echoed that record with no `DEVICE_FLAGS` at all, on every
+  transport. It now adds `08 01 00`, the factory flags, after an echo that carries
+  none, where the whole response still fits the 64-byte OTP-HID frame. Every record
+  the writer accepts leaves room for it. The stored record is unchanged, and a
+  record with flags of its own keeps them. yubikit already read a missing tag as
+  `00`, so this changes no client's reading. `bcdDevice` 0x0A7A → 0x0A7B.
+
 - **A PIV ECDSA signature over a challenge wider than the key's field answers
   `6A80`, as on a YubiKey 5.8.0.** GENERAL AUTHENTICATE signed the leftmost 32 bytes
   of a longer challenge with a P-256 key, and the leftmost 48 with a P-384 one. The
