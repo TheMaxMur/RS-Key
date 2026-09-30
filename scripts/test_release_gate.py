@@ -887,12 +887,22 @@ REF_BLOCK = (
     REF_BLOCK.replace("            exit 1\n", ""),
     REF_BLOCK.replace("exit 1", "exit 0"),
     REF_BLOCK.replace("!=", "="),
-], ids=["gone", "only-prints", "exits-0", "inverted"])
+    REF_BLOCK.replace("            exit 1\n", "          else\n            exit 1\n"),
+    REF_BLOCK.replace("            exit 1\n", "").replace("          fi\n", "          fi;\n"),
+    REF_BLOCK.replace("            exit 1\n",
+                      "            if false; then\n              exit 1\n            fi\n"),
+    REF_BLOCK.replace("exit 1", "exit 256"),
+    REF_BLOCK.replace("            exit 1\n", "            {\n              exit 1\n            } | cat\n"),
+], ids=["gone", "only-prints", "exits-0", "inverted", "else", "fi-semicolon",
+        "nested-if", "exits-256", "pipe"])
 def test_a_builder_that_releases_from_another_ref_is_refused(tree, broken):
     """A run at a branch, or at tag A with `tag: B`, signs and attests as that ref,
-    and the published verify commands take the release's own tag. Four ways the
-    test stops stopping it: deleted, a message with no exit, an exit that
-    succeeds, and the comparison inverted so it refuses exactly the right runs."""
+    and the published verify commands take the release's own tag. Ways the test
+    stops stopping it: deleted, a message with no exit, an exit that succeeds, the
+    comparison inverted, and five a review ran past the first rule under `bash -e`:
+    the exit moved to an `else`, a `fi;` that let the bound slide to the next
+    block's `exit`, an inner `if false`, `exit 256` (which is 0), and the exit in a
+    piped group, which `bash -e` without pipefail runs past."""
     tree.edit(WORKFLOW, REF_BLOCK, broken)
     tree.regenerate()
     assert only(tree.problems(), "does not stop a run whose ref is not the tag it releases")

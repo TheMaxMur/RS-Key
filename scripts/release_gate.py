@@ -380,7 +380,11 @@ TRIGGER = '["v*"]'
 #: spells it, and the exit that makes it a test. Rule 6 holds WHICH workflow
 #: signs; this holds at WHICH ref, the other half of the identity a verifier checks.
 REF_TEST = 'if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then'
-EXIT = re.compile(r"exit [1-9]\d*")
+#: A status bash reads as a failure: 1-255, since `exit 256` is `exit 0`.
+EXIT = re.compile(r"exit (?:25[0-5]|2[0-4]\d|1\d\d|[1-9]\d?)")
+#: A line that ends the test's `then` branch, or opens a nested one the exit
+#: could hide in: its `fi` (`fi;` too), an `else`, an `elif`, an inner `if`.
+BRANCH_END = re.compile(r"(?:fi|else|elif|if)\b")
 
 #: `for pkg in a b c; do`, the shape both flavor loops use.
 LOOP = re.compile(r"for pkg in (?P<list>[\w\s-]+?);\s*do")
@@ -1315,22 +1319,31 @@ def check_ref_is_tag(paired: dict[str, dict], findings: list[str]) -> None:
     """Rule 6, the ref half: the admission step stops a run not AT its tag.
 
     Read off the commands of the step whose shape is `admission`, the way
-    [`SHAPE`] reads a subject: [`REF_TEST`], then an `exit` before its `fi`. A
-    test that only prints cannot fail, which is rule 1c's reason one step over.
+    [`SHAPE`] reads a subject: [`REF_TEST`], and its `then` branch read up to the
+    first line that could end or nest it ([`BRANCH_END`]) must END in an [`EXIT`].
+    Anywhere else an exit may sit in an `else`, an inner `if`, a pipe or a
+    heredoc, or past a `fi;`, and this refuses each rather than modelling it.
+
+    Out of reach for a text rule, like every rule here: a function holding the
+    test that nothing calls, a `GITHUB_REF` reassigned above it, a `trap` that
+    turns the exit into a success.
     """
     step = next((s for s in paired.values() if subject_of(s) == "admission"), None)
     if step is None:
         return
-    code = step["code"]
-    start = code.index(REF_TEST) + 1 if REF_TEST in code else len(code)
-    block = code[start : code.index("fi", start)] if "fi" in code[start:] else []
-    if not any(EXIT.fullmatch(line) for line in block):
+    code, held = step["code"], False
+    if REF_TEST in code:
+        start = code.index(REF_TEST) + 1
+        end = next((i for i in range(start, len(code)) if BRANCH_END.match(code[i])), len(code))
+        # An empty branch leaves `code[end - 1]` at the test itself, which is no exit.
+        held = EXIT.fullmatch(code[end - 1]) is not None
+    if not held:
         findings.append(
             f"{WORKFLOW}'s step {step['title']!r} does not stop a run whose ref is"
-            f" not the tag it releases (`{REF_TEST}` with an `exit` before its"
-            " `fi`) — the signature and the attestation carry the run's ref and the"
-            " published verify commands take the release's own tag, so a run at a"
-            " branch or at another tag publishes what they refuse"
+            f" not the tag it releases (`{REF_TEST}` with its `then` branch ending"
+            " in `exit 1`-`255`) — the signature and the attestation carry the"
+            " run's ref and the published verify commands take the release's own"
+            " tag, so a run at a branch or at another tag publishes what they refuse"
         )
 
 
