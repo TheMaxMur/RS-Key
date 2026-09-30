@@ -86,6 +86,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **A configuration lock now shuts the phy and LED records too.** A code set with
+  `ykman config set-lock-code` guarded only the DeviceInfo record, so a host could
+  still rewrite the USB identity and the LED wiring and colours of a locked key.
+  While a code is set, every host write of either record is refused, a replay
+  included, and nothing is stored or applied live: rescue `1C/01` and the vendor
+  SET LED answer `6986`, before any touch they would ask for; the FIDO
+  `CONFIG_WRITE` targets `1` and `2`, over CTAPHID and CCID, and the
+  `authenticatorConfig` phy ids answer `0x30`. No code opens these records: clear
+  the lock to change them. A lock set before this build shuts them from the
+  upgrade on. The trusted display's own settings, the touch timeout included, stay
+  open. `bcdDevice` 0x0A7B → 0x0A7C.
+
 - **Setting a configuration lock code where none is set takes a touch.** Any host
   could set one on a key that had none, as on a YubiKey, and a code its owner
   does not hold keeps every later config change behind a factory wipe. All four

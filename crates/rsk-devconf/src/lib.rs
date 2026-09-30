@@ -22,7 +22,7 @@ use rsk_fs::{Fs, Storage};
 use rsk_sdk::{Confirm, FIRMWARE_VERSION, ResBuf, Sw};
 
 mod lock;
-
+pub use lock::ensure_unlocked;
 use lock::{LOCK_CODE_LEN, LockChange, lock_change, lock_reported};
 
 // Capability bits (YubiKey `CAPABILITY.*`) — the USB_ENABLED bitmask vocabulary,

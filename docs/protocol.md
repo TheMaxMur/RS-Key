@@ -313,7 +313,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | `6982` | SECURITY_STATUS_NOT_SATISFIED | auth/precondition missing |
 | `6984` | DATA_INVALID | malformed payload (e.g. bad guard magic) |
 | `6985` | CONDITIONS_NOT_SATISFIED | state precondition unmet (e.g. RTC unset); a WRITE CONFIG setting a configuration lock where none is set without its touch (§6.2); OpenPGP PSO:CDS, the RSA and ECDH arms of PSO:DECIPHER and INTERNAL AUTHENTICATE with no key in the slot, and ATTEST of an empty slot or an imported key, as a YubiKey 5.8.0 answers them |
-| `6986` | COMMAND_NOT_ALLOWED | WRITE CONFIG (§6) with no lock code while a configuration lock is set, as a YubiKey 5.8.0 answers it |
+| `6986` | COMMAND_NOT_ALLOWED | WRITE CONFIG (§6) with no lock code while a configuration lock is set, as a YubiKey 5.8.0 answers it; a phy (§7) or LED (§8) write while one is set |
 | `6A80` | WRONG_DATA | bad data field; PIV `MOVE KEY` onto a slot that holds a key or takes none, or onto itself; PIV `PUT DATA` with a P1-P2 other than `3FFF`; OpenPGP GENERATE and IMPORT with a control-reference template they cannot read or whose key reference `84 01 xx` names another slot, and GENERATE `P1 = 80` and IMPORT under Yubico's attestation-key template `B6 { 84 01 81 }`; OpenPGP ATTEST with a P1-P2 or a body it does not take; OpenPGP SELECT DATA with any body but `60 04 5C 02 7F 21` |
 | `6A86` | INCORRECT_P1P2 | unsupported P1/P2 |
 | `6A88` | REFERENCE_NOT_FOUND | the object, key or PIN the request names is absent (PIV `GET METADATA`, `MOVE KEY`, the PIN commands' key reference) |
@@ -334,7 +334,7 @@ surface returns:
 | `0x12` | INVALID_CBOR | the body is not exactly one CBOR item (trailing bytes) |
 | `0x14` | MISSING_PARAMETER | required field absent (e.g. blob/`pinUvAuthParam`) |
 | `0x27` | OPERATION_DENIED | touch declined / timed out; a `CONFIG_WRITE` of `EF_DEV_CONF` whose lock code is wrong (§6.2) |
-| `0x30` | NOT_ALLOWED | precondition unmet (a `CONFIG_WRITE` of `EF_DEV_CONF` with no lock code while a lock is set (§6.2), no MSE channel, one already spent or owned by another CTAPHID channel, an `MSE` while one is live (§9.1), sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
+| `0x30` | NOT_ALLOWED | precondition unmet (a `CONFIG_WRITE` of `EF_DEV_CONF` with no lock code, or of the phy or LED record, while a lock is set (§6.2), no MSE channel, one already spent or owned by another CTAPHID channel, an `MSE` while one is live (§9.1), sealed, soft-locked, or an `authenticatorReset` outside the §5.1 power-up window) |
 | `0x33` | PIN_AUTH_INVALID | `pinUvAuthParam` MAC or `acfg` permission wrong |
 | `0x36` | PUAT_REQUIRED | a PIN is set but no `pinUvAuthToken` was supplied |
 | `0x39` | REQUEST_TOO_LARGE | `subCommandParams` over the limit |
@@ -800,8 +800,14 @@ none on a YubiKey.
   A record in any other form reads locked and opens for no code.
 - **Scope**: it survives `authenticatorReset`, like `EF_DEV_CONF`. The display
   build's factory reset or an `rsk-wipe` erase clears it, which is how a lost
-  code is recovered. It gates `EF_DEV_CONF` only: the RS-Key phy and LED records
-  (§7, §8) have no YubiKey counterpart and stay outside it.
+  code is recovered. It gates the RS-Key phy and LED records (§7, §8) as well,
+  which have no YubiKey counterpart, and no code opens them: while a code is set,
+  every host write of either (rescue `1C/01`, vendor SET LED `10`, `CONFIG_WRITE`
+  targets `1` and `2` over either transport, the `authenticatorConfig` phy ids) is
+  refused as a DeviceInfo write without its code is (`6986`; `0x30` over CTAP), a
+  replay included, and changes nothing. Clear the lock to change them. The trusted
+  display's own settings (the touch timeout, for one) are not a host write and stay
+  open.
 
 **Capability bits** (`USB_SUPPORTED` / `USB_ENABLED`):
 
@@ -879,7 +885,7 @@ firmware predates the rescue applet.
 | `10` | `01` | `00` | 32-byte SHA-256 digest | 64-byte secp256k1 signature | KEYDEV: sign a digest with the device attestation key |
 | `10` | `02` | `00` | — | 65-byte uncompressed pubkey (`04 ‖ X ‖ Y`) | KEYDEV: read the device attestation pubkey |
 | `10` | `03` | `00` | X.509 DER cert | — | KEYDEV: store the device end-entity cert |
-| `1C` | `01` | `00` | phy TLV blob (§7.1) | — | WRITE phy record |
+| `1C` | `01` | `00` | phy TLV blob (§7.1) | — | WRITE phy record; `6986`, before the touch, while a configuration lock is set (§6.2) |
 | `1C` | `02` | `01` | `YYYY(BE2) Mon Day Wday Hour Min Sec` (8 B) | — | SET RTC (civil; Wday ignored) |
 | `1C` | `02` | `02` | epoch seconds (BE4) | — | SET RTC (Unix) |
 | `1E` | `01` | `00` | — | phy TLV blob (§7.1) | READ phy record; `6581` if the record cannot be read (never the never-written default — the host RMWs on this answer) |
@@ -1018,7 +1024,7 @@ per device status), persisted in flash and applied immediately. Source:
 |---|---|---|---|---|---|
 | `01` | — | — | — | counter (BE4) | INCREMENT test counter, return new value. User-presence-gated (`6985` if declined) |
 | `02` | — | — | — | counter (BE4) | GET test counter |
-| `10` | brightness `0..255` | `color \| steady \| status<<4` | `[effect[, speed]]` opt. | — | SET LED for one status |
+| `10` | brightness `0..255` | `color \| steady \| status<<4` | `[effect[, speed]]` opt. | — | SET LED for one status; `6986`, before any touch, while a configuration lock is set (§6.2) |
 | `11` | `00` | `00` | — | 17-byte config block | GET LED config |
 | `1F` | `00`/`01` | `00` | — | — | REBOOT (warm / BOOTSEL). `01` is user-presence-gated (`6985` if declined; see §7) |
 
@@ -1164,7 +1170,7 @@ Keys 3/4 are present only when a PIN is set (see gating).
 | `09` | ATT_IMPORT | `{1: blob(60), 2: DER chain}` | — | MSE + touch + PIN-token. With **no PIN set** it additionally takes a distinct "Replace this identity?" confirmation — the PIN-token half is waived in that state, and an import replaces the identity every later U2F REGISTER signs with |
 | `0A` | ATT_CLEAR | — | — | MSE + touch + PIN-token |
 | `0B` | ATT_STATE | — | `{1: present, 2: sha256(chain)?}` | **ungated**; `2` is left out under `1: true` when the stored chain is missing, unreadable or longer than the device's buffer, so a host reads it as optional |
-| `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**, but for DEV_CONF's configuration lock (§6.2); touch + PIN-token under `strict-config`; no MSE. A write that changes nothing is a no-op: no flash write, no journal entry, and for PHY no reboot latch |
+| `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**, but for the configuration lock (§6.2), which covers all three targets; touch + PIN-token under `strict-config`; no MSE. A write that changes nothing is a no-op: no flash write, no journal entry, and for PHY no reboot latch |
 | `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | `{1: blob(bstr)[, 2: {phy_tag: uint}]}` | **ungated**; `CTAP2_ERR_OTHER` if the record cannot be read — an empty blob means *absent*, never *unreadable*, because the host read-modify-writes on this answer |
 | `0E` | AUDIT_CONFIG | `{1: op(uint)}` — `0`=disable, `1`=enable, `2`=status | `{1: enabled(bool)}` | set: PIN-token + touch; status (`2`): **ungated** |
 
@@ -1406,7 +1412,7 @@ SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x
    enable and disable the soft-lock, and `0x0e6841934e719be7` is the
    enterprise-attestation RP list (§5), which takes an rpId array at key 4 and
    writes no hardware. The phy IDs, the ones PicoForge writes, set the phy record
-   and take effect on the next boot: `PhysicalVidPid 0x6fcb19b0cbe3acfa` (value `(vid<<16)|pid`),
+   and take effect on the next boot (`0x30` while a configuration lock is set, §6.2): `PhysicalVidPid 0x6fcb19b0cbe3acfa` (value `(vid<<16)|pid`),
    `PhysicalLedGpio 0x7b392a394de9f948`, `PhysicalLedBrightness 0x76a85945985d02fd`,
    `PhysicalOptions 0x269f3b09eceb805f` (bitmask `0x2` dimmable / `0x4`
    disable-power-reset / `0x8` led-steady — all three are honoured: dimmable gates

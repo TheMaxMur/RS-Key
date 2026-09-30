@@ -326,19 +326,16 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
                 cfg!(feature = "strict-config")
                     || presence.request_ceremony(LOCK_SET_CONFIRM) == Presence::Confirmed
             };
-            persist_dev_conf(&serial, ctx.fs, req.blob, &mut confirm).map_err(|e| match e {
-                DevConfError::TooLong => CtapError::InvalidLength,
-                DevConfError::BadTlv => CtapError::InvalidParameter,
-                DevConfError::Store => CtapError::Other,
-                DevConfError::Locked => CtapError::NotAllowed,
-                DevConfError::WrongCode | DevConfError::NotConfirmed => CtapError::OperationDenied,
-            })?
+            persist_dev_conf(&serial, ctx.fs, req.blob, &mut confirm).map_err(dev_conf_error)?
         }
         // The phy record (VID/PID, USB interfaces, LED, presence-timeout) — a
         // read-modify-write merge (the same `merge_save` the CCID rescue WRITE 0x1C
         // uses), so a host that sends only the fields it changed cannot wipe the
         // rest. Takes effect on the next boot (main reads EF_PHY), like the CCID path.
         CONFIG_TARGET_PHY => {
+            // The configuration lock covers this record too (§6.2), a replay included:
+            // judged before the no-op check, as a locked DeviceInfo write is.
+            rsk_devconf::ensure_unlocked(ctx.fs).map_err(dev_conf_error)?;
             // The merge is what lands, so compare *that* against the stored record.
             // A no-op replay skips the reboot latch too: the re-enumeration exists to
             // apply a changed USB identity, and it is a free host-driven reboot.
@@ -358,6 +355,9 @@ fn config_write<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResul
             if req.blob.len() < LED_CONF_LEN {
                 return Err(CtapError::InvalidLength);
             }
+            // The configuration lock covers this record too (§6.2), and is judged
+            // before anything is marked for the transport to apply live.
+            rsk_devconf::ensure_unlocked(ctx.fs).map_err(dev_conf_error)?;
             let want = &req.blob[..LED_CONF_LEN];
             // Applied live even when flash already holds it, as the CCID SET_LED is.
             ctx.state.led_written = true;
@@ -1082,6 +1082,18 @@ pub fn try_backup_sealed<S: Storage>(
     fs: &mut rsk_fs::Fs<S>,
 ) -> Result<bool, rsk_sdk::error::Error> {
     fs.try_has_data(EF_BACKUP_SEALED)
+}
+
+/// A device-config record's refusal as a CTAP status: one table for the three
+/// CONFIG_WRITE targets and the authenticatorConfig phy ids (protocol.md §6.2).
+pub(crate) fn dev_conf_error(e: DevConfError) -> CtapError {
+    match e {
+        DevConfError::TooLong => CtapError::InvalidLength,
+        DevConfError::BadTlv => CtapError::InvalidParameter,
+        DevConfError::Store => CtapError::Other,
+        DevConfError::Locked => CtapError::NotAllowed,
+        DevConfError::WrongCode | DevConfError::NotConfirmed => CtapError::OperationDenied,
+    }
 }
 
 #[cfg(test)]

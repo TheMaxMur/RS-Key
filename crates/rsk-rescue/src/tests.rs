@@ -1249,3 +1249,64 @@ fn an_older_builds_lock_takes_the_latch_only_over_a_finished_migration() {
         (1, Some(otp_lock::PAGE58_LATCH_VALUE))
     );
 }
+
+/// The configuration lock covers the phy record, and no code opens it here: while
+/// one is set, WRITE `1C/01` answers `6986` before its touch is asked, and the record
+/// stays as it was. Cleared, the same write asks and lands.
+#[test]
+fn a_locked_configuration_refuses_the_phy_write_before_its_touch() {
+    struct Counting(u32);
+    impl UserPresence for Counting {
+        fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
+            self.0 += 1;
+            Presence::Confirmed
+        }
+    }
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform::default());
+    let presence = RefCell::new(Counting(0));
+    let mut app = RescueApplet::new(
+        SERIAL_ID,
+        SERIAL_HASH,
+        None,
+        None,
+        &rng,
+        &platform,
+        &presence,
+        KV_TOTAL,
+        FLASH_SIZE,
+    );
+    let mut fs = Fs::new(RamStorage::new());
+    let owner = rsk_phy::PhyData {
+        vid_pid: Some((0x1234, 0x5678)),
+        ..Default::default()
+    };
+    rsk_phy::save(&mut fs, &owner).unwrap();
+    let mut code = vec![0x0A, 16];
+    code.extend_from_slice(&[0xA5; 16]);
+    rsk_devconf::persist_touched(&[0; 4], &mut fs, &code).unwrap();
+
+    let mut blob = [0u8; rsk_phy::PHY_MAX_SIZE];
+    let new = rsk_phy::PhyData {
+        vid_pid: Some((0x1050, 0x0407)),
+        ..Default::default()
+    };
+    let n = new.serialize(&mut blob).unwrap();
+    let write = apdu(0x80, INS_WRITE, 0x01, 0, &blob[..n]);
+    assert_eq!(run(&mut app, &mut fs, &write).0, Sw::COMMAND_NOT_ALLOWED);
+    assert_eq!(
+        presence.borrow().0,
+        0,
+        "a touch was asked for a refused write"
+    );
+    assert_eq!(rsk_phy::load(&mut fs).unwrap().vid_pid, owner.vid_pid);
+
+    let mut clear = vec![0x0B, 16];
+    clear.extend_from_slice(&[0xA5; 16]);
+    clear.extend_from_slice(&[0x0A, 16]);
+    clear.extend_from_slice(&[0; 16]);
+    rsk_devconf::persist_touched(&[0; 4], &mut fs, &clear).unwrap();
+    assert_eq!(run(&mut app, &mut fs, &write).0, Sw::OK);
+    assert_eq!(presence.borrow().0, 1);
+    assert_eq!(rsk_phy::load(&mut fs).unwrap().vid_pid, new.vid_pid);
+}

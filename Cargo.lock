@@ -2316,6 +2316,7 @@ version = "0.1.0"
 dependencies = [
  "k256",
  "rsk-crypto",
+ "rsk-devconf",
  "rsk-fs",
  "rsk-phy",
  "rsk-sdk",
@@ -2401,6 +2402,7 @@ dependencies = [
 name = "rsk-vendor"
 version = "0.1.0"
 dependencies = [
+ "rsk-devconf",
  "rsk-fs",
  "rsk-led",
  "rsk-sdk",

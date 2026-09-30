@@ -96,7 +96,7 @@ head_minters = ["crates/rsk-piv"]
 
 [[site]]
 file = "crates/rsk-devconf/src/lock.rs"
-line = 122
+line = 132
 call = "Self::Clear => fs.delete(EF_DEV_LOCK),"
 verb = "delete"
 answer = "read"

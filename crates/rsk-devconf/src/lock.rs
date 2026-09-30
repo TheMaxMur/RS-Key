@@ -70,6 +70,16 @@ pub(crate) fn lock_reported<S: Storage>(fs: &mut Fs<S>) -> u8 {
     }
 }
 
+/// The lock covers the phy and LED records too, where no code opens it: a host write
+/// of either is refused while a code is set, as a DeviceInfo write without one is,
+/// and a record that cannot be read refuses as well.
+pub fn ensure_unlocked<S: Storage>(fs: &mut Fs<S>) -> Result<(), DevConfError> {
+    match read_lock(fs)? {
+        Lock::Unlocked => Ok(()),
+        Lock::Locked(_) => Err(DevConfError::Locked),
+    }
+}
+
 /// Whether `blob` may pass the lock, and what it does to it. Locked, a write needs the
 /// code in `UNLOCK` — `6986` without, `63C0` wrong, no retry counter, as on a YubiKey
 /// 5.8.0. A `CONFIG_LOCK` of sixteen zero bytes clears the lock; any other sets it.

@@ -292,13 +292,13 @@ pub fn authenticator_config<S: Storage, R: Rng>(
     }
 }
 
-/// Read-modify-write the phy record for a PicoForge physical-config command: apply
-/// `f`, persist to EF_PHY (effective on the next boot, like the CCID phy write),
-/// and journal it. The auth was already verified by the caller.
+/// Read-modify-write EF_PHY for a PicoForge physical-config command (effective on the
+/// next boot) and journal it; the caller verified the auth, the config lock is here.
 fn set_phy<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     f: impl FnOnce(&mut rsk_phy::PhyData),
 ) -> CtapResult {
+    rsk_devconf::ensure_unlocked(ctx.fs).map_err(crate::vendor::dev_conf_error)?;
     rsk_phy::update(ctx.fs, f).map_err(|_| CtapError::Other)?;
     journal::append_config_write(ctx, CONFIG_TARGET_PHY as u8);
     Ok(0)

@@ -165,6 +165,11 @@ impl<S: Storage, P: Platform> Applet<Fs<S>> for VendorApplet<'_, P> {
                 Sw::OK
             }
             INS_SET_LED => {
+                // The configuration lock covers the LED record, and no code opens it
+                // here: refused before any touch and before the live block moves.
+                if let Err(e) = rsk_devconf::ensure_unlocked(fs) {
+                    return e.sw();
+                }
                 // On a build without the trusted display the LED is the only signal
                 // that the key is waiting for a touch, so a host that can rewrite it
                 // can make "awaiting consent" look identical to idle. `strict-config`

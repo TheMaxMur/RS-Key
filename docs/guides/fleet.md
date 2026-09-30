@@ -340,9 +340,10 @@ key keeps only a salted hash of the code, and counts no wrong tries, as a
 YubiKey counts none: `--generate` gives a code nobody can guess, and a code a
 person made up can be. A factory reset from the [trusted display](display.md) or an
 [`rsk-wipe`](https://github.com/TheMaxMur/RS-Key/blob/main/rsk-wipe/README.md)
-erase clears a lost code; a YubiKey has no such way back. The lock covers the
-enabled-applications set only, not RS-Key's own USB identity and LED records
-([protocol.md §6.2](../protocol.md#62-configuration-lock)).
+erase clears a lost code; a YubiKey has no such way back. The lock also shuts
+RS-Key's own USB identity and LED records, which no code opens: `rsk hw` and
+`rsk led` are refused until it is cleared. The trusted display's own settings stay
+open ([protocol.md §6.2](../protocol.md#62-configuration-lock)).
 
 ## See also
 

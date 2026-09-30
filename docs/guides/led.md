@@ -229,6 +229,10 @@ rsk hw  --transport fido --touch-timeout 45   # wiring; approve with a touch
 rsk led --transport fido --status idle --color blue   # colours, applied live
 ```
 
+A [configuration lock](fleet.md#configuration-lock) shuts both commands, on either
+transport, and no code opens them: clear the lock first. The trusted display's own
+settings stay open.
+
 `--touch-timeout` has a floor of **10 seconds**. A shorter window can expire
 while your finger is still on the button, and the next queued request would then
 inherit that same press as its consent. `rsk hw` refuses anything below 10, and

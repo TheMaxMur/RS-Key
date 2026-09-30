@@ -15,6 +15,9 @@ rsk-crypto = { workspace = true }
 # WRITE 0x1C / READ 0x1E stay here and behave as they did; only the record's
 # codec left, because FIDO, rsk-device, rsk-display and the boot path read it too.
 rsk-phy = { workspace = true }
+# The configuration lock, which covers the phy record this applet writes, as it covers
+# every other host writer of that record.
+rsk-devconf = { workspace = true }
 k256 = { workspace = true }
 # The device key's scalar and its seal key held in a type that wipes itself.
 rsk-secret = { workspace = true }
@@ -22,3 +25,5 @@ rsk-secret = { workspace = true }
 [dev-dependencies]
 # RamStorage for the host tests (the same backend the other applet crates use).
 rsk-fs = { workspace = true, features = ["test-util"] }
+# `persist_touched`, to set a configuration lock as ykman does.
+rsk-devconf = { workspace = true, features = ["test-util"] }

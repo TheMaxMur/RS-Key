@@ -14,10 +14,15 @@ rsk-fs = { workspace = true }
 # The `EF_LED_CONF` block length, so SET/GET LED move the same bytes the codec
 # defines rather than a second opinion about its size.
 rsk-led = { workspace = true }
+# The configuration lock, which covers the LED record this applet writes, as it covers
+# every other host writer of that record.
+rsk-devconf = { workspace = true }
 
 [dev-dependencies]
 # RamStorage for the host tests (the same backend the sibling applets use).
 rsk-fs = { workspace = true, features = ["test-util"] }
+# `persist_touched`, to set a configuration lock as ykman does.
+rsk-devconf = { workspace = true, features = ["test-util"] }
 
 [features]
 # Gate the LED write behind user presence, matching the FIDO twin

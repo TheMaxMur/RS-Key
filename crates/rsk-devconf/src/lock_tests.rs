@@ -409,3 +409,31 @@ fn no_other_write_asks_for_a_touch() {
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "lock_reads_tests.rs"]
 mod reads;
+
+/// The lock covers the phy and LED records too, where no code opens it: their host
+/// writers ask here first. Every state a DeviceInfo write reads as locked shuts them,
+/// a probe the medium could not answer included; only no record at all opens them.
+#[test]
+fn the_phy_and_led_writers_are_shut_while_a_code_is_set() {
+    let mut open = fs();
+    assert_eq!(ensure_unlocked(&mut open), Ok(()));
+    let mut locked = locked_fs();
+    assert_eq!(ensure_unlocked(&mut locked), Err(DevConfError::Locked));
+    persist_touched(&SERIAL, &mut locked, &write(Some(&CODE), &[], Some(&CLEAR))).unwrap();
+    assert_eq!(ensure_unlocked(&mut locked), Ok(()), "a cleared lock");
+    for rec in [&[0x02; LOCK_RECORD_LEN][..], &[LOCK_FORMAT; 5][..], &[][..]] {
+        let mut damaged = fs();
+        damaged.put(EF_DEV_LOCK, rec).unwrap();
+        assert_eq!(
+            ensure_unlocked(&mut damaged),
+            Err(DevConfError::Locked),
+            "{rec:02x?} opened"
+        );
+    }
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut stuck = Fs::new(backend);
+    stuck.scan();
+    persist_touched(&SERIAL, &mut stuck, &write(None, &[], Some(&CODE))).unwrap();
+    medium.stick(Some(EF_DEV_LOCK));
+    assert_eq!(ensure_unlocked(&mut stuck), Err(DevConfError::Store));
+}

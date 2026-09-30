@@ -208,8 +208,8 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   half, as on a YubiKey: once one is set, all four writes need it
   ([protocol.md §6.2](protocol.md#62-configuration-lock)). It keeps no retry
   counter, a YubiKey keeping none either, so a code a person could remember can be
-  guessed online — use `--generate`. It does not reach the phy and LED records,
-  which are RS-Key's own and stay writable over `CONFIG_WRITE`. The
+  guessed online — use `--generate`. It shuts RS-Key's own phy and LED records
+  too, which no code opens: they change only once the lock is cleared. The
   USB *identity* (serial, strings) is cosmetic — never proof a device is genuine,
   attestation is (§3). The **enabled-applications mask is enforced**, though: a
   disabled application's applet stops answering (PIV/OpenPGP/OATH/OTP over CCID,

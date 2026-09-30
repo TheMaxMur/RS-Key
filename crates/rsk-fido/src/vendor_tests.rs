@@ -3523,3 +3523,8 @@ fn load_moves_the_credential_store_tag() {
         "a loaded seed left the store tag where the old store had it"
     );
 }
+
+/// CONFIG_WRITE's phy and LED targets under a configuration lock; its own file, it
+/// needs this module's fixtures.
+#[path = "vendor_lock_tests.rs"]
+mod config_lock;

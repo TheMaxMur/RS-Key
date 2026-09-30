@@ -1032,3 +1032,31 @@ fn read_record<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Option<std::vec::Vec<u8>
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "config_reads_tests.rs"]
 mod reads;
+
+/// The PicoForge phy ids write the record the configuration lock covers, and are
+/// refused under it as CONFIG_WRITE's phy target is: `NOT_ALLOWED`, nothing stored.
+#[test]
+fn picoforge_config_is_refused_while_a_configuration_lock_is_set() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut code = std::vec![0x0A, 16];
+    code.extend_from_slice(&[0xA5; 16]);
+    rsk_devconf::persist_touched(&[0; 4], &mut fs, &code).unwrap();
+    for (id, val) in [
+        (CONFIG_PHY_VIDPID, 0x1050_0407),
+        (CONFIG_PHY_LED_GPIO, 22),
+        (CONFIG_PHY_LED_BRIGHTNESS, 64),
+        (CONFIG_PHY_OPTIONS, 0x0A),
+    ] {
+        let mut st = armed(PERM_ACFG);
+        let sub = subpara_vendor_int(id, val);
+        assert_eq!(
+            run_fs(&mut fs, &mut st, &vendor_req(&sub, &TOKEN)),
+            Err(CtapError::NotAllowed),
+            "vendor id {id:#x}"
+        );
+    }
+    assert!(
+        !fs.has_data(rsk_phy::EF_PHY),
+        "a refused write stored the record"
+    );
+}

@@ -220,6 +220,11 @@ impl<'a> RescueApplet<'a> {
         }
         match apdu.p1 {
             0x01 => {
+                // The configuration lock covers this record, and no code opens it
+                // here: refused before the touch, which it would only waste.
+                if let Err(e) = rsk_devconf::ensure_unlocked(fs) {
+                    return e.sw();
+                }
                 // The phy record is device identity (VID/PID, USB interfaces,
                 // LED); a hostile host must not rewrite it silently.
                 if !self.require_presence(Confirm::titled("Write device config?")) {

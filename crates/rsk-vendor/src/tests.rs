@@ -436,3 +436,32 @@ fn a_faulted_led_probe_does_not_overwrite_the_owners_block() {
         "a boot that could not read the LED block must apply nothing, not the defaults"
     );
 }
+
+/// The configuration lock covers the LED record, and no code opens it here: while
+/// one is set, SET LED answers `6986` and neither the live block nor flash moves.
+/// Cleared, the same write lands.
+#[test]
+fn a_locked_configuration_refuses_set_led() {
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = VendorApplet::new(FullPlatform::default(), &pres);
+    let mut fs = Fs::new(RamStorage::default());
+    let mut code = vec![0x0A, 16];
+    code.extend_from_slice(&[0xA5; 16]);
+    rsk_devconf::persist_touched(&[0; 4], &mut fs, &code).unwrap();
+    let set = apdu(INS_SET_LED, 0x80, 0x03, &[]);
+    let live = app.platform.led;
+    assert_eq!(run(&mut app, &mut fs, &set).0, Sw::COMMAND_NOT_ALLOWED);
+    assert_eq!(
+        app.platform.led, live,
+        "the live LED moved for a refused write"
+    );
+    assert!(!fs.has_data(EF_LED_CONF), "a refused write reached flash");
+
+    let mut clear = vec![0x0B, 16];
+    clear.extend_from_slice(&[0xA5; 16]);
+    clear.extend_from_slice(&[0x0A, 16]);
+    clear.extend_from_slice(&[0; 16]);
+    rsk_devconf::persist_touched(&[0; 4], &mut fs, &clear).unwrap();
+    assert_eq!(run(&mut app, &mut fs, &set).0, Sw::OK);
+    assert!(fs.has_data(EF_LED_CONF));
+}

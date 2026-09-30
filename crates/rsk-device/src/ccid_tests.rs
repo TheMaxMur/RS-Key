@@ -2467,3 +2467,8 @@ fn with_always_uv_on_and_no_pad_u2f_is_off_on_both_transports() {
         );
     }
 }
+
+/// The phy and LED writers under a configuration lock, over both transports; its own
+/// file, it needs this module's fixtures.
+#[path = "config_lock_tests.rs"]
+mod config_lock;

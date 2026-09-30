@@ -258,7 +258,8 @@ Grouped into three domains, plus the journal / backup / reset actions:
   touch timeout, each adjusted live. All three **persist across reboots**:
   brightness and sleep in an `EF_DISPLAY` flash record; the touch timeout in
   `EF_PHY`'s `PresenceTimeout`, the same field `rsk hw --touch-timeout` writes,
-  so the panel and the host tool stay in sync.
+  so the panel and the host tool stay in sync. A configuration lock shuts the host
+  tool's write and not the panel's, which no host can reach.
 - **Security**: set / change the **device PIN** and the **FIDO clientPIN** (each
   chosen entirely on the panel). Changing the clientPIN asks for the current one
   first, and that prompt *is* the card's `changePIN` check: a **wrong** entry
