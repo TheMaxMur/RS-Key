@@ -441,7 +441,8 @@ tag comes from the SBOM's name in the signed `SHA256SUMS`,
 It stops, with nothing written, when a file is missing, when cosign is not
 installed, when `SHA256SUMS` names no single release tag, or when any check
 fails. When `gh` is not installed it skips step 3
-and says so. Step 1 is yours to run. `--dry-run` runs the checks and writes
+and says so; a `gh` too old for `--source-ref` stops it, with a message to
+upgrade. Step 1 is yours to run. `--dry-run` runs the checks and writes
 nothing, which is the route for a secure-boot board: the image it boots is one
 you seal with your own key first (`nix run .#flash`, [production.md](production.md)).
 An image you built yourself has no release signature, so it flashes only with

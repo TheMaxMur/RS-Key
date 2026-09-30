@@ -143,6 +143,9 @@ def verify(uf2):
     ref = SOURCE_REF.format(tag=release_tag(sums))
     r = _run([gh, "attestation", "verify", uf2, "--repo", REPO,
               "--signer-workflow", SIGNER_WORKFLOW, "--source-ref", ref])
+    if r.returncode != 0 and "unknown flag: --source-ref" in f"{r.stderr}{r.stdout}":
+        die(f"this gh predates `gh attestation verify --source-ref`, which pins the "
+            f"provenance to {sanitize(ref)}: upgrade the GitHub CLI; not flashing")
     if r.returncode != 0:
         die(f"{shown}: gh attestation verify failed; not flashing.\n{_said(r)}")
     print(f"{shown}: built by {SIGNER_WORKFLOW} at {sanitize(ref)} (attestation) ✓")

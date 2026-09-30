@@ -159,7 +159,9 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   more than one; [supply-chain.md](docs/supply-chain.md#verifying-a-download)'s
   step 3 prints the same flag. The identity regexp matched any character in
   place of the dot in `github.com`; it is `github\.com` in `rsk flash` and on both
-  pages. The issuer is pinned, so that dot let no real certificate through.
+  pages. The issuer is pinned, so that dot let no real certificate through. A
+  `gh` too old to know `--source-ref` stops it with a message to upgrade the
+  GitHub CLI, rather than as a failed check.
 
 - **OpenPGP TERMINATE DF leaves the applet terminated until ACTIVATE FILE, as on a
   YubiKey 5.8.0.** TERMINATE DF wiped the applet and put the factory state back at

@@ -45,12 +45,13 @@ class Tools:
     """cosign, gh and picotool as stand-ins; `ran` holds each call in order. Given a
     `signer`, cosign answers by matching the identity regexp it was passed against it;
     given the ref a run was `attested` at, gh answers by the `--source-ref` it was
-    passed, and with none it takes any ref, as gh does."""
+    passed, and with none it takes any ref, as gh does. `gh_says` is the error a gh
+    too old for a flag prints, and makes gh fail with it."""
 
     def __init__(self, monkeypatch, cosign=0, gh=0, have=("cosign", "gh", "picotool"),
-                 reboot=0, signer=None, attested=None):
+                 reboot=0, signer=None, attested=None, gh_says=None):
         self.ran, self.rc, self.signer = [], {"cosign": cosign, "gh": gh}, signer
-        self.attested = attested
+        self.attested, self.gh_says = attested, gh_says
         monkeypatch.setattr(flash.shutil, "which",
                             lambda tool: f"/bin/{tool}" if tool in have else None)
         monkeypatch.setattr(flash, "_run", self._run)
@@ -73,6 +74,8 @@ class Tools:
             rc = 0 if re.search(wanted, self.signer) else 1
         if tool == "gh" and self.attested is not None and "--source-ref" in argv:
             rc = 0 if argv[argv.index("--source-ref") + 1] == self.attested else 1
+        if tool == "gh" and self.gh_says is not None:
+            return types.SimpleNamespace(returncode=1, stdout="", stderr=self.gh_says)
         return types.SimpleNamespace(returncode=rc, stdout="",
                                      stderr=f"{tool} said no\x1b[31m")
 
@@ -223,6 +226,19 @@ def test_an_attestation_from_another_ref_writes_nothing(release, monkeypatch, ca
         flash_it(release / NAME)
     assert tools.names() == ["cosign", "gh"]
     assert "gh attestation verify failed" in capsys.readouterr().err
+
+
+def test_a_gh_too_old_for_the_pin_is_told_to_upgrade(release, monkeypatch, capsys):
+    """A gh from before `--source-ref` fails on the flag, and "gh attestation verify
+    failed" reads as a release that failed its check. It is told what is missing
+    instead, and nothing is written."""
+    tools = Tools(monkeypatch, gh_says="unknown flag: --source-ref\n\nUsage:  gh attestation verify\n")
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.names() == ["cosign", "gh"]
+    err = capsys.readouterr().err
+    assert "upgrade the GitHub CLI" in err and "refs/tags/v9.9.9" in err
+    assert "verify failed" not in err
 
 
 def test_an_attestation_from_the_release_tag_is_flashed(release, monkeypatch, capsys):
