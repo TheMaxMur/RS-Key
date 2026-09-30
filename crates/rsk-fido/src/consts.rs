@@ -33,10 +33,9 @@ pub const CTAP_LARGE_BLOBS: u8 = 0x0C;
 pub const CTAP_CONFIG: u8 = 0x0D;
 pub const CTAP_VENDOR: u8 = 0x41; // vendor range: seed backup + MSE channel
 
-// authenticatorVendor (0x41) subcommands — wallet-style seed backup. Export hands
-// the raw 32-byte seed *value* over the encrypted MSE channel so the host can
-// render it as a BIP-39 / SLIP-39 mnemonic; restore re-seals it under this
-// chip's kbase.
+// authenticatorVendor (0x41) subcommands. Backup export hands the raw 32-byte seed
+// *value* over the encrypted MSE channel, for a host to render as a BIP-39 / SLIP-39
+// mnemonic; restore re-seals it under this chip's kbase.
 pub const VENDOR_MSE: u64 = 0x01; // establish the ECDH key-agreement channel
 pub const VENDOR_BACKUP_EXPORT: u64 = 0x02; // hand the seed to the host (gated)
 pub const VENDOR_BACKUP_LOAD: u64 = 0x03; // install a seed from the host (gated)
@@ -51,6 +50,7 @@ pub const VENDOR_ATT_STATE: u64 = 0x0B; // {present, chain hash} — ungated
 pub const VENDOR_CONFIG_WRITE: u64 = 0x0C; // persist a device-config blob (PIN + touch)
 pub const VENDOR_CONFIG_READ: u64 = 0x0D; // read a device-config record (ungated, for host RMW)
 pub const VENDOR_AUDIT_CONFIG: u64 = 0x0E; // turn the audit journal on/off (PIN + touch), OFF by default
+pub const VENDOR_CONFIG_COMMANDS: u64 = 0x0F; // list the authenticatorConfig vendor ids (ungated)
 
 // Config-write targets — `subCommandParams` key 1 of `VENDOR_CONFIG_WRITE`. The
 // FIDO-transport twin of the CCID device-config writes, so a host without a
@@ -432,3 +432,16 @@ pub const ALG_ARKG_P256: i64 = -65700;
 /// The ARKG-pub key type: an ARKG public seed `{-1: pk_bl, -2: pk_kem, -3: dkalg}`.
 #[cfg(feature = "preview-sign")]
 pub const KTY_ARKG_PUB: i64 = -65537;
+
+/// Every authenticatorConfig vendorCommandId `config.rs` serves: what getInfo's `0x15`
+/// would list if a 64-bit id there did not fail Yubico's Android SDK (issue #111), so
+/// `VENDOR_CONFIG_COMMANDS` hands it to a host instead (issue #122).
+pub const VENDOR_PROTOTYPE_CONFIG_COMMANDS: [u64; 7] = [
+    CONFIG_AUT_ENABLE,
+    CONFIG_AUT_DISABLE,
+    CONFIG_PHY_VIDPID,
+    CONFIG_PHY_LED_GPIO,
+    CONFIG_PHY_LED_BRIGHTNESS,
+    CONFIG_PHY_OPTIONS,
+    CONFIG_EA_RPIDS,
+];

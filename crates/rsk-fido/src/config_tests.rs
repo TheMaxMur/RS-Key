@@ -1060,3 +1060,17 @@ fn picoforge_config_is_refused_while_a_configuration_lock_is_set() {
         "a refused write stored the record"
     );
 }
+
+/// `VENDOR_PROTOTYPE_CONFIG_COMMANDS` is what `0x41`/`0x0F` tells a host this build
+/// serves, so every id on it must reach a handler: none may answer the unknown-id
+/// INVALID_SUBCOMMAND.
+#[test]
+fn every_listed_vendor_config_id_is_served() {
+    for id in crate::consts::VENDOR_PROTOTYPE_CONFIG_COMMANDS {
+        let mut fs = Fs::new(RamStorage::new());
+        let mut st = armed(PERM_ACFG);
+        let sub = subpara_vendor_int(id, 1);
+        let r = run_fs(&mut fs, &mut st, &vendor_req(&sub, &TOKEN));
+        assert_ne!(r, Err(CtapError::InvalidSubcommand), "{id:#018x}");
+    }
+}

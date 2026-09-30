@@ -218,9 +218,9 @@ fn dispatch<S: Storage, R: Rng>(
         VENDOR_ATT_STATE => att_state(ctx, out),
         VENDOR_CONFIG_WRITE => config_write(ctx, req),
         VENDOR_CONFIG_READ => config_read(ctx, req, out),
-        // Mirrors credentialManagement's answer, which is the YubiKey's for its own
-        // `0x41`. The `CONFIG_VENDOR` id check one level down keeps its
-        // INVALID_SUBCOMMAND: that is the spec's own rule for a vendorCommandId.
+        crate::consts::VENDOR_CONFIG_COMMANDS => config_commands(out),
+        // credentialManagement's answer, the YubiKey's for its own `0x41`. The
+        // `CONFIG_VENDOR` id check one level down keeps the spec's INVALID_SUBCOMMAND.
         _ => Err(CtapError::InvalidParameter),
     }
 }
@@ -1082,6 +1082,20 @@ pub fn try_backup_sealed<S: Storage>(
     fs: &mut rsk_fs::Fs<S>,
 ) -> Result<bool, rsk_sdk::error::Error> {
     fs.try_has_data(EF_BACKUP_SEALED)
+}
+
+/// `CONFIG_COMMANDS`: `{1: [vendorCommandId, …]}`, every authenticatorConfig vendor
+/// id this build serves, where getInfo's `0x15` stays empty (issue #111). Ungated: the
+/// ids are public, and protocol.md lists them too.
+fn config_commands(out: &mut [u8]) -> CtapResult {
+    let ids = &crate::consts::VENDOR_PROTOTYPE_CONFIG_COMMANDS;
+    encode(out, |e| {
+        e.map(1)?.u8(1)?.array(ids.len() as u64)?;
+        for &id in ids {
+            e.u64(id)?;
+        }
+        Ok(())
+    })
 }
 
 /// A device-config record's refusal as a CTAP status: one table for the three

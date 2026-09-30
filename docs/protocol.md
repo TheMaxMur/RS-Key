@@ -1173,6 +1173,7 @@ Keys 3/4 are present only when a PIN is set (see gating).
 | `0C` | CONFIG_WRITE | `{1: target(uint), 2: blob(bstr)}` — target `0`=DEV_CONF, `1`=PHY, `2`=LED | — | **ungated by default**, but for the configuration lock (§6.2), which covers all three targets; touch + PIN-token under `strict-config`; no MSE. A write that changes nothing is a no-op: no flash write, no journal entry, and for PHY no reboot latch |
 | `0D` | CONFIG_READ | `{1: target(uint)}` — target `1`=PHY, `2`=LED | `{1: blob(bstr)[, 2: {phy_tag: uint}]}` | **ungated**; `CTAP2_ERR_OTHER` if the record cannot be read — an empty blob means *absent*, never *unreadable*, because the host read-modify-writes on this answer |
 | `0E` | AUDIT_CONFIG | `{1: op(uint)}` — `0`=disable, `1`=enable, `2`=status | `{1: enabled(bool)}` | set: PIN-token + touch; status (`2`): **ungated** |
+| `0F` | CONFIG_COMMANDS | — | `{1: [vendorCommandId(uint), …]}` | **ungated**; every `authenticatorConfig` `vendorPrototype` (`0xFF`) id this build serves (§11), the list getInfo's `0x15` leaves empty. RS-Key `0x0A80`+; an older build answers `0x02` |
 
 > ### `rescrub_refused` (`BACKUP_STATE` key 5, bcdDevice ≥ `0x09C5`)
 > **Flash health for this power cycle, and nothing more.** After the one-shot
@@ -1407,7 +1408,8 @@ SET     00 10 40 11        # P1=0x40 brightness, P2 = color 1 | status 1<<4 = 0x
    `vendorPrototypeConfigCommands` (`0x15`) is present, so the arm is detectable
    without probing — §6.11.3 ties the two, so a build that hides one hides both.
    From `0x09D5` that array is **empty**: the IDs are 64-bit, and Yubico's Android
-   SDK rejects a getInfo carrying one (issue #111), so they are listed here instead.
+   SDK rejects a getInfo carrying one (issue #111), so they are listed here instead,
+   and from `0x0A80` `authenticatorVendor` `0x0F` (§9) returns them to a host.
    The arm is more than its hardware half: `0x03e43f56b34285e2` / `0x1831a40f04a25ed9`
    enable and disable the soft-lock, and `0x0e6841934e719be7` is the
    enterprise-attestation RP list (§5), which takes an rpId array at key 4 and

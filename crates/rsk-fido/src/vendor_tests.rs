@@ -2213,7 +2213,8 @@ fn undefined_vendor_subcommand_is_invalid_parameter() {
     let (mut fs, mut rng, mut st) = setup();
     let mut req = [0u8; 32];
     let mut out = [0u8; 64];
-    for subcmd in [0x00u64, 0x0F, 0x7F] {
+    // 0x10 is the first id past the last one served (CONFIG_COMMANDS, 0x0F).
+    for subcmd in [0x00u64, 0x10, 0x7F] {
         let n = one_byte_req(&mut req, subcmd);
         let e = call(
             &mut fs,
@@ -3528,3 +3529,8 @@ fn load_moves_the_credential_store_tag() {
 /// needs this module's fixtures.
 #[path = "vendor_lock_tests.rs"]
 mod config_lock;
+
+/// The vendor config command list (`0x41`/`0x0F`); its own file, it needs this
+/// module's fixtures.
+#[path = "vendor_caps_tests.rs"]
+mod config_commands;

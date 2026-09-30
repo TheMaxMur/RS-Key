@@ -40,6 +40,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **A host can ask which `authenticatorConfig` vendor commands a build serves.**
+  getInfo's `vendorPrototypeConfigCommands` (`0x15`) stays empty, because Yubico's
+  Android SDK fails a getInfo carrying a 64-bit id (issue #111), so the list was in
+  `docs/protocol.md` alone and every host tool hardcoded it (issue #122). The new
+  `authenticatorVendor` subcommand `0x0F` (`CONFIG_COMMANDS`) answers
+  `{1: [vendorCommandId, …]}`: the soft-lock pair, the four PicoForge phy ids and
+  the enterprise-attestation RP list. It is ungated, like the `*_STATE`
+  subcommands; a build that predates it answers `0x02`.
+  `bcdDevice` 0x0A7F → 0x0A80.
+
 - OpenPGP key attestation, as a YubiKey 5.8.0 does it. `ATTEST`
   (`80 FB <key> 00`, what `ykman openpgp keys attest` sends) writes an X.509
   certificate for a key the card generated into that key's cardholder-certificate
