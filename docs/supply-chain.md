@@ -397,8 +397,11 @@ runs inside the reusable builder. Sigstore stamps the cert with the reusable
 workflow's identity (`job_workflow_ref`), which ends in the ref the run started
 from. The regexp accepts a `v*` tag only, because releases are cut from tags.
 The release job stops a run started at any ref but the tag it releases (its
-`resolve tag` step, in the table above). A run dispatched by hand therefore has
-to start at that tag, and every release it publishes names its own tag.
+`resolve tag` step, in the table above). A dispatched run uses the workflow file
+at the ref it starts from, though, and the tags published up to v0.4.11 carry
+one without that test: a dispatch at one of them can build another tag and sign
+it under the old tag's name, which this regexp accepts. Step 3's `--source-ref`
+refuses it.
 
 ### 3. Build provenance (GitHub attestation)
 
@@ -439,12 +442,13 @@ tag comes from the SBOM's name in the signed `SHA256SUMS`,
 `picotool reboot`.
 
 It stops, with nothing written, when a file is missing, when cosign is not
-installed, when `SHA256SUMS` names no single release tag, or when any check
-fails. When `gh` is not installed it skips step 3
-and says so; a `gh` too old for `--source-ref` stops it, with a message to
-upgrade. Step 1 is yours to run. `--dry-run` runs the checks and writes
-nothing, which is the route for a secure-boot board: the image it boots is one
-you seal with your own key first (`nix run .#flash`, [production.md](production.md)).
+installed, or when any check fails. When `gh` is not installed it skips step 3
+and says so, and the tag is not read. With `gh`, it also stops when
+`SHA256SUMS` names no single release tag, and when `gh` is too old for
+`--source-ref`, with a message to upgrade. Step 1 is yours to run. `--dry-run`
+runs the checks and writes nothing, which is the route for a secure-boot board:
+the image it boots is one you seal with your own key first (`nix run .#flash`,
+[production.md](production.md)).
 An image you built yourself has no release signature, so it flashes only with
 `--local-build`, which checks nothing and warns.
 

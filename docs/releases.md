@@ -5,7 +5,13 @@ page. Each is cut from a `v*` git tag by the
 [release workflow](https://github.com/TheMaxMur/RS-Key/blob/main/.github/workflows/release.yml).
 It builds every artifact reproducibly, hashes it, and signs the manifest. It
 runs only at the tag it releases: a run started by hand from a branch, or from
-another tag, stops before it builds anything.
+another tag, stops before it builds anything. A run started by hand uses the
+workflow file at the ref it starts from, though, and the tags published up to
+v0.4.11 carry one without that test. A run started at one of them can still
+build another tag, signed under the old tag's name; `gh attestation verify
+--source-ref` refuses it
+([supply-chain.md](supply-chain.md#3-build-provenance-github-attestation),
+step 3).
 
 ## What a release contains
 

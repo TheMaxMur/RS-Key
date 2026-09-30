@@ -148,15 +148,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   A's identity. The tag push runs as before, and so does a dispatch from the tag
   itself (`gh workflow run release.yml --ref vX.Y.Z -f tag=vX.Y.Z`).
   `scripts/release_gate.py` refuses a `resolve tag` step without that test, in
-  the `release manifest` row of `check-assurance.sh`.
+  the `release manifest` row of `check-assurance.sh`. A dispatch uses the
+  workflow file at the ref it starts from, and the tags published up to v0.4.11
+  carry one without the test: a dispatch at one of them can still build another
+  tag under the old tag's name, which the tag-only cosign identity accepts and
+  `gh attestation verify --source-ref` refuses.
 
 - **`rsk flash` checks the build provenance at the release's own tag, and its
   cosign identity escapes the host's dot** (`rsk` 0.3.48). `gh attestation
   verify --signer-workflow` takes the workflow at any ref, so provenance from a
   run at a branch passed. `rsk flash` adds `--source-ref refs/tags/<tag>`, the
   tag read from the SBOM's name in the signed `SHA256SUMS`
-  (`rs-key-<tag>-sbom.cdx.json`), and refuses a `SHA256SUMS` that names no tag or
-  more than one; [supply-chain.md](docs/supply-chain.md#verifying-a-download)'s
+  (`rs-key-<tag>-sbom.cdx.json`), and with `gh` installed refuses a `SHA256SUMS`
+  that names no tag or more than one; [supply-chain.md](docs/supply-chain.md#verifying-a-download)'s
   step 3 prints the same flag. The identity regexp matched any character in
   place of the dot in `github.com`; it is `github\.com` in `rsk flash` and on both
   pages. The issuer is pinned, so that dot let no real certificate through. A
