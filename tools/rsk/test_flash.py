@@ -43,11 +43,14 @@ def release(tmp_path):
 
 class Tools:
     """cosign, gh and picotool as stand-ins; `ran` holds each call in order. Given a
-    `signer`, cosign answers by matching the identity regexp it was passed against it."""
+    `signer`, cosign answers by matching the identity regexp it was passed against it;
+    given the ref a run was `attested` at, gh answers by the `--source-ref` it was
+    passed, and with none it takes any ref, as gh does."""
 
     def __init__(self, monkeypatch, cosign=0, gh=0, have=("cosign", "gh", "picotool"),
-                 reboot=0, signer=None):
+                 reboot=0, signer=None, attested=None):
         self.ran, self.rc, self.signer = [], {"cosign": cosign, "gh": gh}, signer
+        self.attested = attested
         monkeypatch.setattr(flash.shutil, "which",
                             lambda tool: f"/bin/{tool}" if tool in have else None)
         monkeypatch.setattr(flash, "_run", self._run)
@@ -68,6 +71,8 @@ class Tools:
             # cosign's check is Go's MatchString of the regexp against the SAN: a search.
             wanted = argv[argv.index("--certificate-identity-regexp") + 1]
             rc = 0 if re.search(wanted, self.signer) else 1
+        if tool == "gh" and self.attested is not None and "--source-ref" in argv:
+            rc = 0 if argv[argv.index("--source-ref") + 1] == self.attested else 1
         return types.SimpleNamespace(returncode=rc, stdout="",
                                      stderr=f"{tool} said no\x1b[31m")
 
@@ -92,7 +97,7 @@ def test_a_good_release_is_verified_then_loaded_and_rebooted(release, monkeypatc
          "--certificate-identity-regexp", flash.IDENTITY_REGEXP,
          "--certificate-oidc-issuer", flash.OIDC_ISSUER, sums),
         ("gh", "attestation", "verify", image, "--repo", flash.REPO,
-         "--signer-workflow", flash.SIGNER_WORKFLOW),
+         "--signer-workflow", flash.SIGNER_WORKFLOW, "--source-ref", "refs/tags/v9.9.9"),
         ("bootsel",),
         ("picotool", "load", "-v", image),
         ("picotool", "reboot"),
@@ -112,11 +117,16 @@ def test_a_signature_that_does_not_verify_writes_nothing(release, monkeypatch, c
     assert "\x1b" not in err  # the verifier's words are sanitized
 
 
-def test_a_signature_from_a_branch_run_writes_nothing(release, monkeypatch, capsys):
+@pytest.mark.parametrize("signer", [
+    f"{SIGNER}@refs/heads/main",
+    f"{SIGNER.replace('github.com', 'githubXcom')}@refs/tags/v9.9.9",
+], ids=["branch-ref", "host-dot"])
+def test_a_signature_from_elsewhere_writes_nothing(release, monkeypatch, capsys, signer):
     """Releases are cut from tags. SHA256SUMS signed by release-build.yml at a branch,
-    as a release run dispatched from `main` signs it, fails the identity rsk hands
-    cosign, and nothing is written."""
-    tools = Tools(monkeypatch, signer=f"{SIGNER}@refs/heads/main")
+    as a release run dispatched from `main` would sign it, fails the identity rsk
+    hands cosign, and so does a host one character off `github.com`, which a bare
+    `.` in the regexp let through. Nothing is written either way."""
+    tools = Tools(monkeypatch, signer=signer)
     with pytest.raises(SystemExit):
         flash_it(release / NAME)
     assert tools.names() == ["cosign"]
@@ -202,6 +212,48 @@ def test_a_failing_attestation_writes_nothing(release, monkeypatch, capsys):
     assert "gh attestation verify failed" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("attested", ["refs/heads/main", "refs/tags/v9.9.8"],
+                         ids=["branch-run", "another-tag"])
+def test_an_attestation_from_another_ref_writes_nothing(release, monkeypatch, capsys, attested):
+    """`--signer-workflow` names the workflow file and takes it at any ref, so the
+    run is pinned to the release's tag with `--source-ref`: provenance from a
+    branch run, or from another release's run, is refused."""
+    tools = Tools(monkeypatch, attested=attested)
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.names() == ["cosign", "gh"]
+    assert "gh attestation verify failed" in capsys.readouterr().err
+
+
+def test_an_attestation_from_the_release_tag_is_flashed(release, monkeypatch, capsys):
+    """The control: the same stand-in passes a run at the tag SHA256SUMS names."""
+    tools = Tools(monkeypatch, attested="refs/tags/v9.9.9")
+    flash_it(release / NAME)
+    assert [call[1] for call in tools.wrote()] == ["load", "reboot"]
+    assert "at refs/tags/v9.9.9 (attestation)" in capsys.readouterr().out
+
+
+def test_sums_that_name_no_tag_write_nothing(release, monkeypatch, capsys):
+    """The tag is the SBOM's, so SHA256SUMS without one names no ref to pin the
+    provenance to; gh is not run on a guess."""
+    (release / flash.SUMS).write_text(f"{hashlib.sha256(IMAGE).hexdigest()}  ./{NAME}\n")
+    tools = Tools(monkeypatch)
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.names() == ["cosign"]
+    assert "names no release tag" in capsys.readouterr().err
+
+
+def test_sums_that_name_two_tags_write_nothing(release, monkeypatch, capsys):
+    with open(release / flash.SUMS, "a") as f:
+        f.write(f"{'1' * 64}  ./rs-key-v9.9.8-sbom.cdx.json\n")
+    tools = Tools(monkeypatch)
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.names() == ["cosign"]
+    assert "more than one release tag (v9.9.8, v9.9.9)" in capsys.readouterr().err
+
+
 def test_a_local_build_needs_the_flag_and_gets_a_warning(tmp_path, monkeypatch, capsys):
     (tmp_path / "firmware.uf2").write_bytes(IMAGE)
     tools = Tools(monkeypatch)
@@ -243,14 +295,16 @@ def test_a_failed_reboot_is_not_reported_as_done(release, monkeypatch, capsys):
 
 
 def test_the_checks_are_the_ones_the_page_publishes():
-    """The identity, issuer, repo and signer workflow are docs/supply-chain.md's
-    verify commands, so the tool cannot check less than the page tells a reader to.
+    """The identity, issuer, repo, signer workflow and source ref are
+    docs/supply-chain.md's verify commands, so the tool cannot check less than the
+    page tells a reader to.
     releases.md says rsk runs its step 1, so that command carries the same identity."""
     page = (REPO_ROOT / "docs/supply-chain.md").read_text(encoding="utf-8")
     assert f"--certificate-identity-regexp '{flash.IDENTITY_REGEXP}'" in page
     assert f"--certificate-oidc-issuer {flash.OIDC_ISSUER}" in page
     assert re.search(rf"--repo {re.escape(flash.REPO)}\s", page)
     assert f"--signer-workflow {flash.SIGNER_WORKFLOW}" in page
+    assert f"--source-ref {flash.SOURCE_REF.format(tag='<tag>')}" in page
     assert f"--bundle {flash.BUNDLE}" in page
     releases = (REPO_ROOT / "docs/releases.md").read_text(encoding="utf-8")
     assert f"--certificate-identity-regexp '{flash.IDENTITY_REGEXP}'" in releases

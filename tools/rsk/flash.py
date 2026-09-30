@@ -7,9 +7,10 @@ The checks are the ones docs/supply-chain.md has a reader run by hand, in that
 order. `cosign verify-blob` proves SHA256SUMS was signed by this repo's release
 workflow: the Fulcio certificate's identity and issuer, and the Rekor entry the
 bundle carries. The image's sha256 must be the one SHA256SUMS lists under its
-name. `gh attestation verify` ties the image to the pinned build workflow; it is
-skipped, and says so, when `gh` is not installed. Only then `picotool load -v`
-and `picotool reboot`, as the flashing guides have it.
+name. `gh attestation verify` ties the image to the pinned build workflow at the
+release's own tag, read from the SBOM's name in SHA256SUMS; it is skipped, and
+says so, when `gh` is not installed. Only then `picotool load -v` and
+`picotool reboot`, as the flashing guides have it.
 
 cosign and gh are run, not imported, so nothing joins the Python dependencies. An
 image you built yourself carries no release signature: it flashes only with
@@ -32,13 +33,18 @@ REPO = "TheMaxMur/RS-Key"
 SIGNER_WORKFLOW = f"{REPO}/.github/workflows/release-build.yml"
 # The verify command docs/supply-chain.md and releases.md print, character for character
 # (test_flash holds both). Tag refs only: releases are cut from `v*` tags.
-IDENTITY_REGEXP = r"^https://github.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$"
+IDENTITY_REGEXP = r"^https://github\.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
+# `--signer-workflow` names the file at any ref; this pins the run to the release's tag.
+SOURCE_REF = "refs/tags/{tag}"
 COSIGN_HELP = "https://docs.sigstore.dev/"
 
 #: One `sha256sum` line: text mode (two spaces) or binary (` *`), and the `./`
 #: the release job's `sha256sum ./*.uf2` writes in front of each name.
 SUMS_LINE = re.compile(r"^([0-9a-fA-F]{64}) [ *](?:\./)?(.+)$")
+#: The SBOM's name, the one asset name with nothing after the tag but a fixed
+#: suffix: in `rs-key-<tag>-<flavor>.uf2` a tag like `v1.0.0-rc1` has no end.
+SBOM_NAME = re.compile(r"rs-key-(.+)-sbom\.cdx\.json")
 
 
 def register(sub):
@@ -86,6 +92,23 @@ def listed_digest(sums, name):
     return found.pop()
 
 
+def release_tag(sums):
+    """The tag SHA256SUMS names its release by; dies unless it names exactly one."""
+    tags = set()
+    with open(sums, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = SUMS_LINE.match(line.rstrip("\r\n"))
+            if m and (sbom := SBOM_NAME.fullmatch(m[2])):
+                tags.add(sbom[1])
+    if not tags:
+        die(f"{SUMS} lists no rs-key-<tag>-sbom.cdx.json, so it names no release tag "
+            "to check the provenance at; not flashing")
+    if len(tags) > 1:
+        die(f"{SUMS} names more than one release tag "
+            f"({', '.join(sanitize(t) for t in sorted(tags))}); not flashing")
+    return tags.pop()
+
+
 def verify(uf2):
     here, name = os.path.split(uf2)
     shown = sanitize(name)
@@ -117,11 +140,12 @@ def verify(uf2):
               "attestation verify). The signature and the checksum above passed; install "
               "the GitHub CLI to check the provenance too.", file=sys.stderr)
         return
+    ref = SOURCE_REF.format(tag=release_tag(sums))
     r = _run([gh, "attestation", "verify", uf2, "--repo", REPO,
-              "--signer-workflow", SIGNER_WORKFLOW])
+              "--signer-workflow", SIGNER_WORKFLOW, "--source-ref", ref])
     if r.returncode != 0:
         die(f"{shown}: gh attestation verify failed; not flashing.\n{_said(r)}")
-    print(f"{shown}: built by {SIGNER_WORKFLOW} (attestation) ✓")
+    print(f"{shown}: built by {SIGNER_WORKFLOW} at {sanitize(ref)} (attestation) ✓")
 
 
 def run(args):

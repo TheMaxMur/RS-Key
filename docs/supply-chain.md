@@ -386,7 +386,7 @@ CI already enforces this: the release job rebuilds all fourteen flavors with
 ```sh
 cosign verify-blob \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$' \
+  --certificate-identity-regexp '^https://github\.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   SHA256SUMS
 sha256sum -c SHA256SUMS          # then check the artifacts against it
@@ -405,7 +405,8 @@ to start at that tag, and every release it publishes names its own tag.
 ```sh
 gh attestation verify rs-key-<tag>-default.uf2 \
   --repo TheMaxMur/RS-Key \
-  --signer-workflow TheMaxMur/RS-Key/.github/workflows/release-build.yml
+  --signer-workflow TheMaxMur/RS-Key/.github/workflows/release-build.yml \
+  --source-ref refs/tags/<tag>
 ```
 
 This confirms the `.uf2` was built by the **`release-build.yml` reusable
@@ -414,7 +415,9 @@ runner, so a hand-built upload won't verify. Pinning `--signer-workflow` to the
 reusable builder is the **SLSA Build L3** check: it proves a *specific, trusted*
 workflow produced the artifact, not merely that something in the repo did.
 (Dropping `--signer-workflow` still verifies an attestation exists for this repo,
-a weaker Build-L2-style check.) The provenance is a GitHub attestation
+a weaker Build-L2-style check.) `--signer-workflow` takes that workflow at any
+ref, so `--source-ref` pins the run to the release's own tag, the one in the
+file names. The provenance is a GitHub attestation
 (Sigstore-signed, logged in Rekor) kept in the attestation API rather than as a
 release asset, so it stays available even though the published release is
 immutable.
@@ -430,11 +433,14 @@ rsk flash rs-key-<tag>-default.uf2    # the board in BOOTSEL
 the identity and issuer above, character for character, so the certificate and
 the bundle's Rekor entry are checked as they are there. It then matches the
 image's sha256 to the one `SHA256SUMS` lists under its name, and runs step 3's
-`gh attestation verify` with the same `--signer-workflow`. Only then does it run
-`picotool load -v` and `picotool reboot`.
+`gh attestation verify` with the same `--signer-workflow` and `--source-ref`. The
+tag comes from the SBOM's name in the signed `SHA256SUMS`,
+`rs-key-<tag>-sbom.cdx.json`. Only then does it run `picotool load -v` and
+`picotool reboot`.
 
 It stops, with nothing written, when a file is missing, when cosign is not
-installed, or when any check fails. When `gh` is not installed it skips step 3
+installed, when `SHA256SUMS` names no single release tag, or when any check
+fails. When `gh` is not installed it skips step 3
 and says so. Step 1 is yours to run. `--dry-run` runs the checks and writes
 nothing, which is the route for a secure-boot board: the image it boots is one
 you seal with your own key first (`nix run .#flash`, [production.md](production.md)).

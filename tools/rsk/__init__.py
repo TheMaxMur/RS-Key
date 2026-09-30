@@ -9,4 +9,4 @@ burn/lock, FIDO management, LED config, OpenPGP reset, and hands-free reboot. Ru
 from `nix develop` (the flake provides `rsk` on PATH and all Python deps) or as
 `python -m rsk`.
 """
-__version__ = "0.3.47"
+__version__ = "0.3.48"

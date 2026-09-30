@@ -66,7 +66,7 @@ v0.4.10. Same bytes either way; substitute the name you actually downloaded.
 #    job_workflow_ref, so that is what the Fulcio cert's SAN carries.
 cosign verify-blob \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$' \
+  --certificate-identity-regexp '^https://github\.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   SHA256SUMS
 
@@ -85,8 +85,9 @@ the board in BOOTSEL, and:
 rsk flash rs-key-<tag>-default.uf2    # --dry-run checks and writes nothing
 ```
 
-It also runs `gh attestation verify` when the GitHub CLI is installed, and says
-so when it is not.
+It also runs `gh attestation verify`, pinned to the release's own tag, when the
+GitHub CLI is installed, and says so when it is not
+([supply-chain.md](supply-chain.md#3-build-provenance-github-attestation), step 3).
 
 ## Verify the build is reproducible
 
