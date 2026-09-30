@@ -60,10 +60,10 @@ const _: () = assert!(rsk_piv::MAX_OBJECT + 9 == rsk_sdk::applet::CHAIN_BUF_SIZE
 // always fits the buffer GET DATA builds it in (E3's class).
 const _: () = assert!(rsk_openpgp::files::MAX_DO_BYTES <= RESP_CAP - 2);
 // Same cliff, same reason, for the other number DO C0 announces: GET CHALLENGE
-// serves `Le` bytes up to this maximum, and one byte over the body an applet is
-// handed would answer `9000` with nothing in it. Its sibling assertion in
-// `rsk-openpgp` bounds it by the scratch it is drawn into; that one cannot see
-// this ceiling.
+// serves `Le` bytes up to this maximum, straight into the body an applet is
+// handed, and one byte over that body would answer `9000` with nothing in it.
+// Its sibling assertion in `rsk-openpgp` ties it to `FRAME_BODY`, which is as
+// far as that crate can see; this one holds it to the CCID frame itself.
 const _: () = assert!(rsk_openpgp::files::MAX_CHALLENGE_BYTES <= RESP_CAP - 2);
 
 /// Registration-order indices of the applets whose RSA keygen is fast-pathed.

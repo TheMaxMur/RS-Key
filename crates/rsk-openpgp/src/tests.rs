@@ -217,15 +217,15 @@ fn get_challenge_serves_exactly_what_do_c0_announces() {
             ne as u8,
         ]
     };
-    // Everything up to the announcement is served in full…
+    // Everything up to the announcement is served in full, into a transport's buffer…
     for ne in [1, 8, 255, 256, 257, announced - 1, announced] {
-        let (body, sw) = run(&mut app, &mut fs, &ext(ne));
+        let (body, sw) = run_big(&mut app, &mut fs, &ext(ne));
         assert_eq!(sw, Sw::OK, "Le {ne}");
         assert_eq!(body.len(), ne, "Le {ne}");
     }
     // …and one byte past it is refused, not truncated under 9000.
-    for ne in [announced + 1, 2048, 4096] {
-        let (body, sw) = run(&mut app, &mut fs, &ext(ne));
+    for ne in [announced + 1, 4096, 65535] {
+        let (body, sw) = run_big(&mut app, &mut fs, &ext(ne));
         assert_eq!(sw, Sw::WRONG_LENGTH, "Le {ne}");
         assert!(body.is_empty(), "Le {ne}");
     }

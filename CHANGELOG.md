@@ -184,6 +184,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **OpenPGP GET CHALLENGE serves a whole frame.** It stopped at 1024 random bytes,
+  the size of the applet's scratch, which DO `C0` announced as its maximum. It now
+  serves up to 3060, one response APDU less its status word, the most one CCID
+  frame carries back, generated straight into the response; `C0` bytes 3–4
+  announce exactly that, and the rest of `C0` is unchanged. An `Le` past it is
+  still `6700`. `bcdDevice` 0x0A81 → 0x0A82.
+
 - **OpenPGP's historical bytes (DO `5F52`) are a YubiKey 5.8.0's.** GET DATA `5F52`,
   and the copy inside `6E`, answered `00 31 84 73 80 01 C0 05 90 00`, the bytes of
   pico-openpgp, which this applet came from. They answer the YubiKey's

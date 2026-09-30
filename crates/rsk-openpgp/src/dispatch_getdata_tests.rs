@@ -559,3 +559,43 @@ fn the_historical_bytes_are_a_yubikeys() {
         "6E carries another"
     );
 }
+
+/// GET CHALLENGE serves up to one response APDU less its status word, 3060 bytes,
+/// generated in place in the response; it stopped at its 1024-byte scratch. DO C0
+/// bytes 3-4 announce exactly that, and the rest of C0 is as it was, the AES bit and
+/// the MSE byte included.
+#[test]
+fn get_challenge_serves_a_whole_frame() {
+    let mut fs = setup();
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut disp = Dispatcher::default();
+    let mut applets: [&mut dyn rsk_sdk::Applet<Fs<RamStorage>>; 1] = [&mut app];
+    assert_eq!(
+        dispatch(&mut disp, &mut applets, &mut fs, SELECT_OPENPGP).1,
+        Sw::OK
+    );
+    let (tpl, sw) = dispatch(
+        &mut disp,
+        &mut applets,
+        &mut fs,
+        &[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    let related = children(&child(&children(&tpl), consts::EF_APP_DATA));
+    let c0 = child(
+        &children(&child(&related, consts::EF_DISCRETE_DO)),
+        consts::EF_EXT_CAP,
+    );
+    assert_eq!(
+        c0,
+        [0x7F, 0x00, 0x0B, 0xF4, 0x08, 0x00, 0x08, 0x00, 0x00, 0x01]
+    );
+
+    let challenge = |ne: u16| [0x00, 0x84, 0x00, 0x00, 0x00, (ne >> 8) as u8, ne as u8];
+    let (body, sw) = dispatch(&mut disp, &mut applets, &mut fs, &challenge(3060));
+    assert_eq!((body.len(), sw), (3060, Sw::OK));
+    let (body, sw) = dispatch(&mut disp, &mut applets, &mut fs, &challenge(3061));
+    assert_eq!((body.len(), sw), (0, Sw::WRONG_LENGTH));
+}

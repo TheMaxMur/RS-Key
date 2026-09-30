@@ -355,7 +355,7 @@ crypto-critical helpers, where a proof genuinely beats a sample:
 Some of that production source means something different under Kani than in the
 shipped build: an array cut to 16 so CBMC does not bit-blast 3 KiB, a file id
 aliased into a 24-bit map. Each such shrink narrows every proof over it, so each
-one says beside itself what it stops proving — and seven `cfg(not(kani))`
+one says beside itself what it stops proving — and eight `cfg(not(kani))`
 compile-time assertions carry the part of that shape a shrunk proof no longer
 can, about the width that ships.
 
@@ -369,6 +369,7 @@ can, about the width that ships.
 | `rsk-fs` | `fs.rs` | `FID_PRESENT_BYTES` |
 | `rsk-fs` | `fs.rs` | `const _` |
 | `rsk-fs` | `lib.rs` | `EF_META` |
+| `rsk-openpgp` | `lib.rs` | `const _` |
 | `rsk-sdk` | `applet.rs` | `CHAIN_BUF_SIZE` |
 | `rsk-sdk` | `applet.rs` | `FRAME_BODY` |
 | `rsk-sdk` | `applet.rs` | `RESP_BUILD` |

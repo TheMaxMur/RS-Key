@@ -80,16 +80,16 @@ pub(crate) fn check_uif<S: Storage>(
     Ok(())
 }
 
-/// Scratch buffer for the PSO results and GET CHALLENGE. **Not** for GET DATA,
+/// Scratch buffer for the PSO results. **Not** for GET DATA or GET CHALLENGE,
 /// which builds into the caller's response buffer: a stored DO can be as long as
 /// DO C0 announces, and giving the applet private RAM that size costs more than
 /// the stack floor has. The largest thing built here is the `0xFA` algorithm
 /// information at ~370 bytes.
 const SCRATCH: usize = 1024;
 
-/// GET CHALLENGE fills the scratch, so what DO C0 announces cannot exceed it —
-/// the two used to drift, C0 saying 128 while the command served up to 1024.
-const _: () = assert!(files::MAX_CHALLENGE_BYTES <= SCRATCH);
+/// GET CHALLENGE fills the response in place, one frame's body at most: DO C0 says so.
+#[cfg(not(kani))]
+const _: () = assert!(files::MAX_CHALLENGE_BYTES == rsk_sdk::applet::FRAME_BODY);
 
 /// The OpenPGP applet. Holds the per-power-cycle session state (`has_pw1/2/3`
 /// and the session keys via [`Session`], the currently selected DO); the
@@ -561,8 +561,12 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                     // its CCID interface four past that. ISO 7816-4 decides.
                     return Sw::WRONG_LENGTH;
                 }
-                self.rng.borrow_mut().fill(&mut self.scratch[..ne]);
-                res.extend(&self.scratch[..ne]);
+                // Straight into the response: no applet buffer holds a whole frame.
+                let Some(out) = res.spare_mut().get_mut(..ne) else {
+                    return Sw::WRONG_LENGTH;
+                };
+                self.rng.borrow_mut().fill(out);
+                res.commit(ne);
                 Sw::OK
             }
             consts::INS_ACTIVATE_FILE => Sw::OK,

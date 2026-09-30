@@ -29,12 +29,10 @@ pub const MAX_APDU_BYTES: usize = 3062;
 /// longer one modulo 256, which is data loss and not copied.
 pub const MAX_DO_BYTES: usize = 2048;
 
-/// The most random bytes GET CHALLENGE serves, and DO C0 bytes 3-4. One owner,
-/// for the same reason [`MAX_DO_BYTES`] is: C0 announced 128 while the command
-/// served anything up to the applet's 1024-byte scratch, so the number a host
-/// reads off the card said nothing about what the card would do. `rsk-openpgp`'s
-/// `SCRATCH` is the ceiling this may take, asserted at compile time there.
-pub const MAX_CHALLENGE_BYTES: usize = 1024;
+/// The most random bytes GET CHALLENGE serves, and DO C0 bytes 3-4: one response
+/// APDU less its status word, the most one frame carries back, generated in place in
+/// the response. One owner, so what C0 announces is what the card does.
+pub const MAX_CHALLENGE_BYTES: usize = MAX_APDU_BYTES - 2;
 
 /// Extended capabilities: no secure messaging, GET CHALLENGE, key import,
 /// PW-status puttable, private DO, changeable algo attrs, AES, KDF-DO.
