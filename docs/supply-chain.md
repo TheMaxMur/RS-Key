@@ -501,12 +501,23 @@ a GitHub issue listing any Rekor entry signed as an RS-Key GitHub-Actions
 identity (any `…/RS-Key/.github/workflows/*` subject under the GitHub OIDC
 issuer).
 
-This is the **detection** half that complements the **verification** above: the
-attestations prove a *legitimate* release is genuine, while the monitor surfaces
-an *illegitimate* signature, one made with our identity by something we didn't
-run (a compromised OIDC token, repo, or runner). Each real release adds a couple
-of expected entries from `release-build.yml`, so a known issue or two per release
-is normal. The alarm is an entry you don't recognise.
+This is the **detection** half that complements the **verification** above.
+Each real release adds a couple of expected entries from `release-build.yml`, so
+a known issue or two per release is normal.
+
+An entry you don't recognise is not by itself a compromise. The monitor matches
+the certificate's subject, the workflow that signed, and `release-build.yml` is
+a public reusable workflow: a run in any repository that calls it signs with the
+same subject. The certificate also records the repository and the ref of the run,
+the two values the verify commands above pin. `openssl x509 -noout -text` on the
+entry's certificate prints them: the repository under 1.3.6.1.4.1.57264.1.5 (and
+as a URL under .1.12), the ref under .1.6.
+
+- `TheMaxMur/RS-Key` at a release tag that was pushed: a release, expected.
+- `TheMaxMur/RS-Key` at any other ref: the alarm. A run of ours signed that
+  nobody meant to, or an OIDC token, repository access or runner leaked.
+- Any other repository: someone else called the builder. The pins keep it from
+  verifying as any of our releases, so there is nothing to rotate.
 
 ## What's deliberately *not* here
 
