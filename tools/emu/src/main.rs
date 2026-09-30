@@ -33,6 +33,7 @@ mod store;
 mod taps;
 mod usbip;
 mod usbip_driver;
+mod usbip_server;
 mod usbip_stack;
 
 use std::io::BufRead;

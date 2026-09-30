@@ -646,7 +646,7 @@ fn an_open_menu_does_not_hold_a_power_cycle() {
 }
 
 /// …and only an operator's. `PoweredPort::attach` queues a power cycle per USB/IP
-/// import and `usbip::listen` accepts them in an unbounded loop, so a peer that
+/// import and `usbip_server::listen` accepts them in an unbounded loop, so a peer that
 /// reconnects in a loop would otherwise close every on-panel screen on its first
 /// poll — the denial `UI_YIELD_FLOOR_MS` exists to stop (audit run-35), and worse
 /// than the one it stops, because no touch resets a floor that is not applied.
