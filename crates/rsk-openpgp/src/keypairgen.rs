@@ -275,6 +275,11 @@ pub fn rsa_generate_params<S: Storage>(
     p2: u8,
     data: &[u8],
 ) -> Result<Option<(KeyFid, usize)>, Sw> {
+    // The dual-core path runs ahead of `process`, so it asks what `process` does first:
+    // a terminated applet generates nothing, and `process` answers why.
+    if let Some(sw) = crate::terminate::lifecycle(fs).refusal() {
+        return Err(sw);
+    }
     if p1 != 0x80 {
         return Ok(None); // read-public (0x81) is fast
     }

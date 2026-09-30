@@ -411,6 +411,12 @@ It is destructive but idempotent, so it is the clean way to clear non-default
 PINs a prior gpg session left behind (which otherwise block the test suite at
 VERIFY).
 
+Between the two commands the applet is terminated, as a YubiKey's is: every
+command, SELECT included, answers `6285` until ACTIVATE FILE, across a replug
+too. An interrupted reset leaves it there rather than half-wiped; run
+`rsk openpgp reset` or `gpg-card factory-reset` again, or send ACTIVATE FILE
+(`00 44 00 00`) yourself.
+
 ## Troubleshooting
 
 - `gpg: selecting card failed: No such device` → scdaemon vs pcscd fight;

@@ -612,6 +612,10 @@ fn terminate_mints_a_new_attestation_identity() {
         let (fc, _) = get(app, fs, EF_ATT_CERT);
         verify(app, fs, PW3_MODE83);
         assert_eq!(run(app, fs, &cmd(0, INS_TERMINATE_DF, 0, 0, &[])).1, Sw::OK);
+        assert_eq!(
+            run(app, fs, &cmd(0, INS_ACTIVATE_FILE, 0, 0, &[])).1,
+            Sw::OK
+        );
         let (new_key, sw) = run(app, fs, &read);
         assert_eq!(sw, Sw::OK);
         assert_ne!(new_key, key);

@@ -61,8 +61,9 @@ pub fn is_openpgp_fid(fid: u16) -> bool {
         )
 }
 
-/// Factory-reset the OpenPGP applet. Permitted only when the admin PIN (PW3) is
-/// verified or already blocked (its retry counter has reached 0).
+/// Factory-reset the OpenPGP applet and leave it terminated, answering `6285` until
+/// ACTIVATE FILE. Permitted only when the admin PIN (PW3) is verified or already
+/// blocked (its retry counter has reached 0).
 pub fn terminate_df<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -87,18 +88,13 @@ pub fn terminate_df<S: Storage>(
     if apdu.nc != 0 {
         return Sw::WRONG_LENGTH;
     }
-    // A sweep that could not prove it cleared the range must not report success — the
-    // host would file the card as factory-reset over surviving private-key records.
-    let wiped = wipe_openpgp(fs);
-    // Re-seed even when the sweep failed, the rule `rsk_piv::files::reset_files`
-    // states: an applet with no EF_PW_PRIV answers 6A88 to every later TERMINATE,
-    // and only a reboot runs `scan_files` again. Safe because every record it
-    // re-seeds is swept LAST, so a sweep that failed never reached one.
-    let ensured = scan_files(dev, fs, rng).map_err(|_| Sw::MEMORY_FAILURE);
-    match wiped.and(ensured) {
-        Ok(()) => Sw::OK,
-        Err(sw) => sw,
+    // The marker lands first: from it on the applet is terminated whatever the wipe
+    // answers, and ACTIVATE FILE runs the wipe again before it removes the marker. A
+    // marker that did not land wipes nothing, and the card is as it was.
+    if fs.put(EF_TERMINATED, &[TERMINATED_MARK]).is_err() {
+        return Sw::MEMORY_FAILURE;
     }
+    wipe_and_reseed(dev, fs, rng)
 }
 
 /// The records every wipe removes LAST: the three PW verifiers, the retry/status
@@ -132,6 +128,10 @@ pub fn is_openpgp_gate_fid(fid: u16) -> bool {
             | EF_KDF
             | EF_SIG_COUNT
             | EF_SEX
+            // Not the applet's own sweep's (`is_openpgp_fid` leaves it out): it stands
+            // over that wipe. The device-wide wipe takes it last, so a cut there leaves
+            // OpenPGP terminated rather than half-wiped.
+            | EF_TERMINATED
     )
 }
 
@@ -228,6 +228,71 @@ fn sweep<S: Storage>(fs: &mut Fs<S>, _attempted: &RearmAttempted) -> Result<(), 
         return Err(Sw::MEMORY_FAILURE);
     }
     Ok(())
+}
+
+/// What `EF_TERMINATED` holds. Its presence is the state; the byte is room for a format.
+const TERMINATED_MARK: u8 = 0x01;
+
+/// The wipe and the factory state after it, for TERMINATE DF and ACTIVATE FILE alike.
+fn wipe_and_reseed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Sw {
+    // A sweep that could not prove it cleared the range must not report success — the
+    // host would file the card as factory-reset over surviving private-key records.
+    let wiped = wipe_openpgp(fs);
+    // Re-seed even when the sweep failed, the rule `rsk_piv::files::reset_files`
+    // states: without EF_PW_PRIV the applet answers 6A88 once active again, until a
+    // reboot runs `scan_files`. Safe because every record it re-seeds is swept LAST.
+    let ensured = scan_files(dev, fs, rng).map_err(|_| Sw::MEMORY_FAILURE);
+    match wiped.and(ensured) {
+        Ok(()) => Sw::OK,
+        Err(sw) => sw,
+    }
+}
+
+/// Where TERMINATE DF has left the applet, read off `EF_TERMINATED` for every command.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lifecycle {
+    /// No marker: every command is served.
+    Active,
+    /// The marker stands: every command but ACTIVATE FILE answers `6285`.
+    Terminated,
+    /// The marker would not read: every command answers `6581`, ACTIVATE FILE too.
+    Unread,
+}
+
+impl Lifecycle {
+    /// What a command other than ACTIVATE FILE answers here; `None` where it is served.
+    pub fn refusal(self) -> Option<Sw> {
+        match self {
+            Self::Active => None,
+            Self::Terminated => Some(Sw::TERMINATED),
+            Self::Unread => Some(Sw::MEMORY_FAILURE),
+        }
+    }
+}
+
+/// Read `EF_TERMINATED`. An unreadable marker is neither answer: taken for active the
+/// card would serve what TERMINATE was wiping, for terminated ACTIVATE would wipe it.
+pub fn lifecycle<S: Storage>(fs: &mut Fs<S>) -> Lifecycle {
+    match fs.try_has_data(EF_TERMINATED) {
+        Ok(false) => Lifecycle::Active,
+        Ok(true) => Lifecycle::Terminated,
+        Err(_) => Lifecycle::Unread,
+    }
+}
+
+/// ACTIVATE FILE over a terminated applet: the wipe and the factory state again, then
+/// the marker, last, so a cut anywhere leaves it terminated for the next ACTIVATE.
+pub fn activate<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Sw {
+    let sw = wipe_and_reseed(dev, fs, rng);
+    if !sw.is_ok() {
+        return sw;
+    }
+    // `force_delete`: a present-cache false absence must not leave the marker on flash
+    // to terminate the card again at the next boot, over what was set up since.
+    match fs.force_delete(EF_TERMINATED) {
+        Ok(()) => Sw::OK,
+        Err(_) => Sw::MEMORY_FAILURE,
+    }
 }
 
 #[cfg(test)]

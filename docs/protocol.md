@@ -307,6 +307,7 @@ Source: `crates/rsk-sdk/src/sw.rs`.
 | `9000` | OK | success |
 | `63C0` | — | WRITE CONFIG (§6) with a configuration lock code that is not the one set, as a YubiKey 5.8.0 answers it |
 | `6400` | EXEC_ERROR | execution error (internal) |
+| `6285` | TERMINATED | OpenPGP after TERMINATE DF: every command, SELECT included, until ACTIVATE FILE (§5.1) |
 | `6581` | MEMORY_FAILURE | flash access failed — a write, or a read whose answer the command must not guess (`1E/01` READ phy, `1C/01` WRITE phy, WRITE CONFIG's merge); and OpenPGP PSO:DECIPHER's answer to an ECDH peer point that decodes but is unusable (off the field or curve, X25519 small order), or to an RSA cryptogram it cannot decrypt (any width but the modulus's, bad padding, c = 0, n − 1 or n); RSA PSO:CDS and INTERNAL AUTHENTICATE over more than k − 11 bytes; GENERATE's `P1 = 81` read of a slot with no key; and an RSA IMPORT whose primes have the right widths and make no working key (`p = q`, composite primes, a short modulus) — as a YubiKey 5.8.0 answers each, though it also deletes the slot's key on that last one and RS-Key keeps it |
 | `6700` | WRONG_LENGTH | bad `Lc`/`Le` for this command |
 | `6883` | LAST_CHAIN_EXPECTED | an APDU arrived that neither continues nor closes the open command chain |
@@ -588,9 +589,9 @@ The only RS-Key-specific bytes a config tool needs are §6 (Management config),
 
 ### 5.1 Where a standard command answers differently
 
-Four places where a host that works against other authenticators sees a status
+Places where a host that works against other authenticators sees a status
 byte it may not expect. All are spec-permitted strictness, not extensions, and
-the second and the last match the reference this project is measured against.
+each says where it matches the YubiKey this project is measured against.
 
 **`authenticatorReset` has a power-up window.** CTAP 2.1 §6.6 lets an
 authenticator with no display refuse a reset that does not follow a fresh
@@ -654,6 +655,17 @@ those 21 answers `6B00` to a GET DATA of its own, and PUT DATA still takes the
 writable ones. A YubiKey 5.8.0 answers the same, with keys and a name set. The
 Gnuk-derived suite in `third_party/openpgp-card-tests` reads them one by one; a
 host written that way has to read the template instead.
+
+**OpenPGP TERMINATE DF leaves the applet terminated until ACTIVATE FILE.** As on a
+YubiKey 5.8.0, TERMINATE DF (`00 E6 00 00`, PW3 verified or blocked, `6982`
+otherwise) wipes the applet and then every command answers `6285`, SELECT
+included, until ACTIVATE FILE (`00 44 00 00`) answers `9000` and leaves the factory
+state: `C4` = `01 7F 7F 7F 03 00 03`, PW1 `123456`, PW3 `12345678`. The state
+survives a reset and a power cycle; a PW1 or PW3 verified before TERMINATE is still
+verified after ACTIVATE, now against the factory password. ACTIVATE FILE on an
+applet that is not terminated answers `9000` and changes nothing. RS-Key `0x0A83`+;
+an older build answered TERMINATE with the factory state at once, and a host that
+sends ACTIVATE right after it, as `ykman` and `gpg-card` do, works with both.
 
 ---
 

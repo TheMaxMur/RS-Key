@@ -51,6 +51,8 @@ impl Sw {
     pub const BYTES_REMAINING_00: Sw = Sw::new(0x61, 0x00);
     pub const WARNING_STATE_UNCHANGED: Sw = Sw::new(0x62, 0x00);
     pub const WARNING_EOF: Sw = Sw::new(0x62, 0x82);
+    /// ISO 7816-4 "selected file in termination state": OpenPGP after TERMINATE DF.
+    pub const TERMINATED: Sw = Sw::new(0x62, 0x85);
     pub const WARNING_NOINFO: Sw = Sw::new(0x63, 0x00);
     pub const EXEC_ERROR: Sw = Sw::new(0x64, 0x00);
     /// Past the fuse latch the fused key did not read: nothing opens or seals, so

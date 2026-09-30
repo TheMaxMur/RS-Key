@@ -2403,7 +2403,8 @@ fn key_info_reports_generated_and_imported_apart() {
     fs.delete(consts::EF_KEY_ORIGIN).unwrap();
     assert_eq!(key_info(&mut app, &mut fs), [1, 2, 2, 2, 3, 2]);
 
-    // TERMINATE DF takes the record with everything else.
+    // TERMINATE DF takes the record with everything else, and ACTIVATE FILE opens
+    // the applet again.
     assert_eq!(
         run(
             &mut app,
@@ -2414,6 +2415,8 @@ fn key_info_reports_generated_and_imported_apart() {
         Sw::OK
     );
     assert!(!fs.has_data(consts::EF_KEY_ORIGIN));
+    let activate = [0x00, consts::INS_ACTIVATE_FILE, 0x00, 0x00];
+    assert_eq!(run(&mut app, &mut fs, &activate).1, Sw::OK);
     assert_eq!(key_info(&mut app, &mut fs), [1, 0, 2, 0, 3, 0]);
 }
 

@@ -96,6 +96,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **OpenPGP TERMINATE DF leaves the applet terminated until ACTIVATE FILE, as on a
+  YubiKey 5.8.0.** TERMINATE DF wiped the applet and put the factory state back at
+  once, and ACTIVATE FILE did nothing. Now TERMINATE (PW3 verified or blocked,
+  `6982` otherwise, as before) records the terminated state before it wipes, and
+  every command, SELECT included, answers `6285` until ACTIVATE FILE; the state
+  survives a reset and a power cycle. ACTIVATE runs the wipe again, puts the
+  factory state back (`C4` = `01 7F 7F 7F 03 00 03`, PW1 `123456`, PW3
+  `12345678`) and clears the state last, so a reset cut short at any point is
+  either not done or still terminated, never half-wiped; running it again finishes
+  it. A PW1 or PW3 verified before TERMINATE is still verified after ACTIVATE, as
+  on the YubiKey, now against the factory password. ACTIVATE on an applet that is
+  not terminated still answers `9000` and changes nothing. `rsk openpgp reset`,
+  `ykman openpgp reset` and `gpg-card factory-reset` send ACTIVATE right after
+  TERMINATE and work as before. The state is a new record, `0x10A2`, which an
+  older build never reads: flashing one over a terminated applet leaves it usable,
+  and flashing this build back finds it terminated again.
+  `bcdDevice` 0x0A82 → 0x0A83.
+
 - **A configuration lock now shuts the phy and LED records too.** A code set with
   `ykman config set-lock-code` guarded only the DeviceInfo record, so a host could
   still rewrite the USB identity and the LED wiring and colours of a locked key.

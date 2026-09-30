@@ -347,14 +347,20 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
     /// occurrence. Measured on a YubiKey 5.7.4, 3/3: re-SELECT of the bare AID
     /// and of a 5-byte truncation both keep all three PWs, while a different
     /// valid AID and an ICC power cycle clear them (the dispatcher's `deselect`).
-    fn select(&mut self, reselect: bool, _fs: &mut Fs<S>, _res: &mut ResBuf) -> Sw {
+    fn select(&mut self, reselect: bool, fs: &mut Fs<S>, _res: &mut ResBuf) -> Sw {
         if !reselect {
             self.reset_session();
         }
-        Sw::OK
+        // TERMINATE DF's marker outlives every reset: a terminated applet answers its
+        // SELECT `6285`, as a YubiKey 5.8.0 does, and stays selected for ACTIVATE FILE.
+        terminate::lifecycle(fs).refusal().unwrap_or(Sw::OK)
     }
 
     fn process(&mut self, apdu: &Apdu, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+        // After TERMINATE DF only ACTIVATE FILE is served, until it has run.
+        if let Some(sw) = self.lifecycle_gate(apdu, fs) {
+            return sw;
+        }
         let fid = ((apdu.p1 as u16) << 8) | apdu.p2 as u16;
         match apdu.ins {
             consts::INS_GET_DATA => self.handle_get_data(fid, fs, res),
@@ -597,6 +603,32 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
     }
 }
 
+impl OpenpgpApplet<'_> {
+    /// TERMINATE DF's lifecycle, ahead of every command: `Some` answers for the applet
+    /// (ACTIVATE FILE run over a terminated one, `6285` or `6581` for the rest), `None`
+    /// lets the command through. Its own function so `process` stays one dispatch.
+    fn lifecycle_gate<S: Storage>(&mut self, apdu: &Apdu, fs: &mut Fs<S>) -> Option<Sw> {
+        let lifecycle = terminate::lifecycle(fs);
+        if lifecycle != terminate::Lifecycle::Terminated || apdu.ins != consts::INS_ACTIVATE_FILE {
+            return lifecycle.refusal();
+        }
+        let mkek = read_fused(self.mkek_source);
+        let Some(dev) = Device::fused(&self.serial_hash, &self.serial_id, &mkek) else {
+            return Some(Sw::FUSED_KEY_UNREAD);
+        };
+        let sw = terminate::activate(&dev, fs, &mut *self.rng.borrow_mut());
+        if sw.is_ok() {
+            // The statuses stand, as on a YubiKey 5.8.0, and the keys they carry are
+            // the factory passwords' now: nothing else opens the new DEK.
+            let pw1 = dev.pin_derive_session(consts::PW1_DEFAULT);
+            let pw3 = dev.pin_derive_session(consts::PW3_DEFAULT);
+            self.sess.adopt_reseeded(&pw1, &pw3);
+            self.sess.has_rc = false;
+        }
+        Some(sw)
+    }
+}
+
 #[cfg(test)]
 mod tests;
 
@@ -619,3 +651,7 @@ mod dispatch_getdata_tests;
 #[cfg(test)]
 #[path = "reselect_tests.rs"]
 mod reselect_tests;
+
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod lifecycle_tests;

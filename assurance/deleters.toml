@@ -501,6 +501,17 @@ metadata = "none"
 disposition = "must-read"
 why = "TERMINATE DF's sweep, secrets before every record scan_files re-seeds. OpenPGP fids carry no EF_META head, so the record half is only ever the shared blob being unreadable — deferred, because an early stop left the private-key records on the card, and the re-seed that now runs whatever the sweep answered cannot reach a deferred record. The phase above already refuses to call a truncated walk an empty range."
 
+
+[[site]]
+file = "crates/rsk-openpgp/src/terminate.rs"
+line = 292
+call = "match fs.force_delete(EF_TERMINATED) {"
+verb = "force_delete"
+answer = "read"
+class = "secret-or-gate"
+metadata = "none"
+disposition = "must-read"
+why = "ACTIVATE FILE's last step: the terminate marker gates every OpenPGP command. A marker that survived an ACTIVATE answered 9000 would terminate the card again at the next boot, and the next ACTIVATE would wipe whatever the owner had set up since, so the refusal is 6581 and the card stays terminated for a retry. force_delete, not delete: a present-cache false absence must still reach the medium."
 [[site]]
 file = "crates/rsk-otp/src/lib.rs"
 line = 515

@@ -114,6 +114,10 @@ pub const EF_DEK_PWPIV: u16 = 0x109d;
 pub const EF_DEK_STAGE_PW1: KeyFid = KeyFid::new(0x109e);
 pub const EF_DEK_STAGE_RC: KeyFid = KeyFid::new(0x109f);
 pub const EF_DEK_STAGE_PW3: KeyFid = KeyFid::new(0x10a1);
+/// TERMINATE DF's marker: present, the applet answers `6285` to all but ACTIVATE FILE.
+/// Written before the wipe and removed after the factory state: an older build never
+/// reads this fid and its TERMINATE never sweeps it.
+pub const EF_TERMINATED: u16 = 0x10a2;
 pub const EF_CH_1: u16 = 0x1f21;
 pub const EF_CH_2: u16 = 0x1f22;
 pub const EF_CH_3: u16 = 0x1f23;
