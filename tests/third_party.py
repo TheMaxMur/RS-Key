@@ -198,8 +198,12 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # Name; whether it must be absent is unstated.
         "::test_name_lang_sex": "§4.4.1 vs §7.2.6 wrapper, plus: unset cardholder children present vs absent",
         # The same wrapper question, reached through the new pcsc section: it reads
-        # DO 6E and asserts the response *starts* with the child tag `4F`.
-        "::test_openpgp_status_objects": "§4.4.1 vs §7.2.6: DO 6E arrives with its own tag, so it starts 6E, not 4F",
+        # DO 6E and asserts the response *starts* with the child tag `4F`. It fails a
+        # line earlier now, on 5F52: it pins pico-openpgp's historical bytes.
+        "::test_openpgp_status_objects": "5F52 is a YubiKey 5.8.0's historical bytes, not the pico-openpgp ones pinned here; past it, §4.4.1 vs §7.2.6: DO 6E starts 6E, not 4F",
+        # 5F52 carries a YubiKey 5.8.0's historical bytes. The suite accepts those only
+        # from a card it knows is a YubiKey, and `is_yubikey` is never set.
+        "test_000_initial_card.py::test_historical_bytes": "5F52 is a YubiKey 5.8.0's historical bytes, which the suite accepts only from a card it knows is a YubiKey",
         # Replacing or changing a password does not drop the security status the
         # OLD one earned. Gnuk clears it, so this suite verifies PW1 no. 82 early,
         # then resets PW1 through the admin, then expects the private DOs shut.

@@ -7,8 +7,8 @@
 
 use crate::consts::*;
 
-/// Historical bytes.
-pub const HISTORICAL_BYTES: &[u8] = &[0x00, 0x31, 0x84, 0x73, 0x80, 0x01, 0xC0, 0x05, 0x90, 0x00];
+/// Historical bytes (DO 5F52): a YubiKey 5.8.0's, byte for byte.
+pub const HISTORICAL_BYTES: &[u8] = &[0x00, 0x73, 0x00, 0x00, 0xE0, 0x05, 0x90, 0x00];
 
 /// One CCID frame's payload — `MAX_CCID_MSG - 10` bytes — which is both the
 /// largest command APDU the transport delivers and the largest response APDU it

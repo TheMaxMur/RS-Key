@@ -516,3 +516,46 @@ fn a_select_answers_as_a_yubikeys_openpgp_does() {
         assert_eq!(still, Sw::OK, "OpenPGP still selected after {form:02X?}");
     }
 }
+
+/// DO 5F52 carries a YubiKey 5.8.0's historical bytes, `00 73 00 00 E0 05 90 00`, on
+/// its own and inside 6E alike. Ours were pico-openpgp's ten, from the tree this
+/// applet came from.
+#[test]
+fn the_historical_bytes_are_a_yubikeys() {
+    let mut fs = setup();
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut disp = Dispatcher::default();
+    let mut applets: [&mut dyn rsk_sdk::Applet<Fs<RamStorage>>; 1] = [&mut app];
+    assert_eq!(
+        dispatch(&mut disp, &mut applets, &mut fs, SELECT_OPENPGP).1,
+        Sw::OK
+    );
+    let (hist, sw) = dispatch(
+        &mut disp,
+        &mut applets,
+        &mut fs,
+        &[0x00, 0xCA, 0x5F, 0x52, 0x00],
+    );
+    assert_eq!(
+        (hist.as_slice(), sw),
+        (
+            &[0x00, 0x73, 0x00, 0x00, 0xE0, 0x05, 0x90, 0x00][..],
+            Sw::OK
+        )
+    );
+    let (tpl, sw) = dispatch(
+        &mut disp,
+        &mut applets,
+        &mut fs,
+        &[0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    let related = children(&child(&children(&tpl), consts::EF_APP_DATA));
+    assert_eq!(
+        child(&related, consts::EF_HIST_BYTES),
+        hist,
+        "6E carries another"
+    );
+}

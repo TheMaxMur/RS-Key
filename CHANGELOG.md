@@ -184,6 +184,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **OpenPGP's historical bytes (DO `5F52`) are a YubiKey 5.8.0's.** GET DATA `5F52`,
+  and the copy inside `6E`, answered `00 31 84 73 80 01 C0 05 90 00`, the bytes of
+  pico-openpgp, which this applet came from. They answer the YubiKey's
+  `00 73 00 00 E0 05 90 00` now. The vendored openpgp-card suite accepts those only
+  from a card it knows is a YubiKey, so its `test_historical_bytes` is listed as a
+  divergence. `bcdDevice` 0x0A80 → 0x0A81.
+
 - **The TenStar RP2350-USB preset takes user presence from its BOOT button.**
   `BOARD=tenstar-usb` read presence from a GPIO button on pin 15, and pressing the
   board's BOOT button did nothing, so a registration waited for a touch it could
