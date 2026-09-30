@@ -174,6 +174,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The TenStar RP2350-USB preset takes user presence from its BOOT button.**
+  `BOARD=tenstar-usb` read presence from a GPIO button on pin 15, and pressing the
+  board's BOOT button did nothing, so a registration waited for a touch it could
+  never get (issue #125). The preset now uses BOOTSEL, as the default image does;
+  the reporter's build with `PRESENCE_PIN=bootsel` completed a passkey
+  registration on Windows 11. Not verified on a board here. A build that sets
+  `PRESENCE_PIN` explicitly is unchanged. `bcdDevice` 0x0A7E → 0x0A7F.
+
 - **The DRBG is never seeded from an all-zero TRNG block.** The RP2350's TRNG
   presents no result when a health check fails and its result registers then read
   zero; the firmware took the 48-byte boot seed, and each 32-byte reseed, as they

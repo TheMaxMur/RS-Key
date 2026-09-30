@@ -510,8 +510,8 @@ columns = ["tenstar-usb"]
 same_as = "firmware"
 knob_delta = [
   "flash.kvmain_kb=1408", "flash.size_mb=16", "led.kind=ws2812",
-  "led.order=grb", "led.pin=22", "presence.active_high=False",
-  "presence.pin=15", "presence.source=gpio", "usb.vidpid=RSKey",
+  "led.order=grb", "led.pin=22", "presence.source=bootsel",
+  "usb.vidpid=RSKey",
 ]
 disposition = "equivalent"
 basis = "same-cargo-features"
@@ -968,7 +968,7 @@ text = "2 MB with `KVMAIN` at 896 K — the `firmware-2mb` question on a board t
 column = "tenstar-usb"
 owner = "contributor"
 settled_by = "evidence"
-text = "The 16 MB geometry question, plus a GPIO presence source on 15."
+text = "The 16 MB geometry question of `firmware-16mb`; presence is BOOTSEL, as on the default image (issue #125)."
 
 [[question]]
 column = "waveshare-touch-lcd"
