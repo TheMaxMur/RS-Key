@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "tag to (re)build a release for, e.g. v0.1.0"
+        description: "tag to (re)build a release for, e.g. v0.1.0; run the workflow from that same tag, any other ref is refused"
         required: true
 
 # Deny by default at the workflow level; the release job below grants exactly the

@@ -86,7 +86,10 @@ asserts rather than assumes.
    must be exactly `release-build.yml`, because that identity is what the
    published `cosign verify-blob --certificate-identity-regexp` checks and what
    makes the provenance SLSA Build L3 rather than L2 — and because a second
-   called workflow is a release step this manifest never opens.
+   called workflow is a release step this manifest never opens. And the builder
+   runs only AT the tag it releases ([`REF_TEST`]): the signature and the
+   attestation carry the run's ref, and the verify commands take the release's
+   own tag, so a run at a branch or at another tag publishes what they refuse.
 7. **[`stable`]** — see above.
 8. **The published set, both ways and on both pages.** Every asset a page names
    is one this workflow writes AND one `gh release create` uploads; nothing is
@@ -255,7 +258,7 @@ ENTRIES = (
     {
         "step": "resolve tag",
         "subject": "admission",
-        "statement": "Shape, charset, and an ancestor-of-`main` test. Defence in depth only: an actor who can push a tag also controls this file at that ref, so the primary control is a repository tag ruleset.",
+        "statement": "Shape, charset, the run's own ref, and an ancestor-of-`main` test. The ref test makes the published identity the release's: a run anywhere but at the tag it releases stops here. The rest is defence in depth: an actor who can push a tag also controls this file at that ref, so the primary control is a repository tag ruleset.",
     },
     {
         "step": "build the",
@@ -372,6 +375,12 @@ CALLED = re.compile(r"^\s+uses:\s*(?P<path>\S+?\.ya?ml)(?P<ref>@\S+)?\s*(?:#.*)?
 #: every tag-shaped ref to a job holding `contents: write`, and the tag gate is
 #: defence in depth by its own entry's statement.
 TRIGGER = '["v*"]'
+
+#: The admission step's test that a run is AT the tag it releases, as the step
+#: spells it, and the exit that makes it a test. Rule 6 holds WHICH workflow
+#: signs; this holds at WHICH ref, the other half of the identity a verifier checks.
+REF_TEST = 'if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then'
+EXIT = re.compile(r"exit [1-9]\d*")
 
 #: `for pkg in a b c; do`, the shape both flavor loops use.
 LOOP = re.compile(r"for pkg in (?P<list>[\w\s-]+?);\s*do")
@@ -1302,6 +1311,29 @@ def check_caller(root: pathlib.Path, findings: list[str]) -> None:
         )
 
 
+def check_ref_is_tag(paired: dict[str, dict], findings: list[str]) -> None:
+    """Rule 6, the ref half: the admission step stops a run not AT its tag.
+
+    Read off the commands of the step whose shape is `admission`, the way
+    [`SHAPE`] reads a subject: [`REF_TEST`], then an `exit` before its `fi`. A
+    test that only prints cannot fail, which is rule 1c's reason one step over.
+    """
+    step = next((s for s in paired.values() if subject_of(s) == "admission"), None)
+    if step is None:
+        return
+    code = step["code"]
+    start = code.index(REF_TEST) + 1 if REF_TEST in code else len(code)
+    block = code[start : code.index("fi", start)] if "fi" in code[start:] else []
+    if not any(EXIT.fullmatch(line) for line in block):
+        findings.append(
+            f"{WORKFLOW}'s step {step['title']!r} does not stop a run whose ref is"
+            f" not the tag it releases (`{REF_TEST}` with an `exit` before its"
+            " `fi`) — the signature and the attestation carry the run's ref and the"
+            " published verify commands take the release's own tag, so a run at a"
+            " branch or at another tag publishes what they refuse"
+        )
+
+
 #: What `gh release create` uploads. Captured as the trailing operands so the
 #: published set can be held against it: `dist/*` uploads everything the job
 #: wrote, and `dist/*.uf2` — measured by review at exit 0 — uploads none of the
@@ -1525,6 +1557,7 @@ def audit(
     check_counts(job, loops, findings)
     check_page_count(root, flavors, findings)
     check_caller(root, findings)
+    check_ref_is_tag(paired, findings)
     published = assets(job, [label_of(name) for name in flavors])
     check_uploaded(job, published, findings)
     check_named_writes(job, findings)

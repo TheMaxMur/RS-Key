@@ -153,7 +153,7 @@ The closed vocabulary the `Subject` column below is drawn from. Printed here bec
 | 3 | nix-community/cache-nix-action | `none` | A cache keyed on `flake.lock`. A cache hit and a cache miss must produce the same bytes; the rebuild step is what says they do. |
 | 4 | actions/cache | `none` | The cargo registry cache. Outside the Nix sandbox, so it feeds no shipped byte — `nix build` vendors from `Cargo.lock`. |
 | 5 | sigstore/cosign-installer | `none` | Installs the signer. Its pin is part of the trust base: this is the code that holds the OIDC token. |
-| 6 | resolve tag | `admission` | Shape, charset, and an ancestor-of-`main` test. Defence in depth only: an actor who can push a tag also controls this file at that ref, so the primary control is a repository tag ruleset. |
+| 6 | resolve tag | `admission` | Shape, charset, the run's own ref, and an ancestor-of-`main` test. The ref test makes the published identity the release's: a run anywhere but at the tag it releases stops here. The rest is defence in depth: an actor who can push a tag also controls this file at that ref, so the primary control is a repository tag ruleset. |
 | 7 | build the 14 reproducible firmware flavors | `none` | Produces the images. A build alone establishes nothing — it is the rebuild below that turns it into evidence. |
 | 8 | reproducibility gate — rebuild all 14, require bit-identical | `bit-for-bit` | Recompiles every flavor already in the store and fails on a hash mismatch, so a non-reproducible image is never published. Says the BUILD is a function of its inputs; says nothing about what the machine code means. |
 | 9 | generate the CycloneDX SBOM | `inventory` | The firmware crate's dependency tree, scoped to the shipped target. |
@@ -182,6 +182,10 @@ case "$TAG" in
 echo "refusing: tag has characters not allowed in a release tag" >&2
 exit 1 ;;
 esac
+if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+echo "refusing: this run is at $GITHUB_REF, not refs/tags/$TAG; start it at the tag" >&2
+exit 1
+fi
 git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
 if ! git merge-base --is-ancestor "$TAG^{commit}" origin/main; then
 echo "refusing: $TAG does not point at a commit on main" >&2
@@ -327,8 +331,8 @@ The files that decide what a release is. A digest here covers the parts the tabl
 
 | File | sha256 |
 |---|---|
-| `.github/workflows/release.yml` | `943eae75595831de403c51f1468be0d255b182a20fb155ab9a9eca956c54270f` |
-| `.github/workflows/release-build.yml` | `1ddbf12b1acfd1e09793a9b574128e2e692cf76351b5e5614545086894655584` |
+| `.github/workflows/release.yml` | `9f4218cfb9869bc458be8076f2185af6bdb734598db9b49167557dca30324a05` |
+| `.github/workflows/release-build.yml` | `54923e1ab4639d62d8a23220abd0c064e462d3806e45f812b8e62f61570a449a` |
 | `nix/firmware.nix` | `93468064b0328a06e8059b418e3e220df3ee4f273b4445052494f832eb5e26d8` |
 | `scripts/pt.sh` | `c55ba6255421a664c13ba8b1e3b05b01af842d3ba8e95cd986a7a46005c877ed` |
 
@@ -391,9 +395,10 @@ sha256sum -c SHA256SUMS          # then check the artifacts against it
 The certificate identity is **`release-build.yml`**, not `release.yml`: cosign
 runs inside the reusable builder. Sigstore stamps the cert with the reusable
 workflow's identity (`job_workflow_ref`), which ends in the ref the run started
-from. The regexp accepts a `v*` tag only, because releases are cut from tags. A
-release run dispatched from a branch carries that branch's ref, so its
-`SHA256SUMS` does not verify.
+from. The regexp accepts a `v*` tag only, because releases are cut from tags.
+The release job stops a run started at any ref but the tag it releases (its
+`resolve tag` step, in the table above). A run dispatched by hand therefore has
+to start at that tag, and every release it publishes names its own tag.
 
 ### 3. Build provenance (GitHub attestation)
 

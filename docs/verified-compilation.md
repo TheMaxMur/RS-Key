@@ -147,7 +147,7 @@ fifteen are touched, and the third is the one that fails quietly.
 |---|---|---|
 | build the firmware | `none` | the derivation must carry a second toolchain |
 | reproducibility gate | `bit-for-bit` | the second compiler must be deterministic, and reproducible by whoever holds its licence |
-| CycloneDX SBOM | `inventory` | `cargo cyclonedx` (`.github/workflows/release-build.yml:164`) enumerates cargo packages; a non-Rust kernel is simply absent from the published inventory, with no error |
+| CycloneDX SBOM | `inventory` | `cargo cyclonedx` (`.github/workflows/release-build.yml:171`) enumerates cargo packages; a non-Rust kernel is simply absent from the published inventory, with no error |
 
 The remaining twelve — checkout, the installers, the caches, tag admission,
 checksums, provenance, signing, notes, publication — are language-agnostic.

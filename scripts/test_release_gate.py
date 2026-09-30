@@ -91,6 +91,10 @@ jobs:
       - name: resolve tag
         id: tag
         run: |
+          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then
+            echo "refusing: this run is not at its tag" >&2
+            exit 1
+          fi
           git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
           if ! git merge-base --is-ancestor "$TAG^{commit}" origin/main; then
             exit 1
@@ -869,6 +873,39 @@ def test_without_rule_6_the_swapped_builder_is_not_found(tree, monkeypatch):
     assert tree.problems() == []
 
 
+#: The fixture's ref test, whole, so each case below breaks one part of it.
+REF_BLOCK = (
+    '          if [ "$GITHUB_REF" != "refs/tags/$TAG" ]; then\n'
+    '            echo "refusing: this run is not at its tag" >&2\n'
+    "            exit 1\n"
+    "          fi\n"
+)
+
+
+@pytest.mark.parametrize("broken", [
+    "",
+    REF_BLOCK.replace("            exit 1\n", ""),
+    REF_BLOCK.replace("exit 1", "exit 0"),
+    REF_BLOCK.replace("!=", "="),
+], ids=["gone", "only-prints", "exits-0", "inverted"])
+def test_a_builder_that_releases_from_another_ref_is_refused(tree, broken):
+    """A run at a branch, or at tag A with `tag: B`, signs and attests as that ref,
+    and the published verify commands take the release's own tag. Four ways the
+    test stops stopping it: deleted, a message with no exit, an exit that
+    succeeds, and the comparison inverted so it refuses exactly the right runs."""
+    tree.edit(WORKFLOW, REF_BLOCK, broken)
+    tree.regenerate()
+    assert only(tree.problems(), "does not stop a run whose ref is not the tag it releases")
+
+
+def test_without_rule_6_the_builder_at_any_ref_is_not_found(tree, monkeypatch):
+    """The arm, regenerated for the swapped builder's reason above."""
+    gone(monkeypatch, "check_ref_is_tag")
+    tree.edit(WORKFLOW, REF_BLOCK, "")
+    tree.regenerate()
+    assert tree.problems() == []
+
+
 # --- rule 8: the page's asset names --------------------------------------------
 
 
@@ -1053,12 +1090,14 @@ def test_regenerating_launders_no_clause(tree):
     tree.edit(WORKFLOW, "      - name: checksums",
               "      - run: scp dist/* mirror:/pub\n      - name: checksums")
     tree.edit(WORKFLOW, "dist/SHA256SUMS.sigstore.json", "dist/SHA256SUMS.sigstore.v2.json")
+    tree.edit(WORKFLOW, REF_BLOCK, "")
     tree.regenerate()
     problems = tree.problems()
     assert only(problems, "is not what the generator writes") == []
     assert only(problems, "iterates 3 flavor(s)")
     assert only(problems, "this parser does not see")
     assert only(problems, "docs/supply-chain.md names the release asset `SHA256SUMS.sigstore.json`")
+    assert only(problems, "does not stop a run whose ref is not the tag it releases")
 
 
 def test_a_page_with_no_marker_pair_is_a_finding_not_a_crash(tree):

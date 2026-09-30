@@ -3,7 +3,9 @@
 Releases live on the [GitHub Releases](https://github.com/TheMaxMur/RS-Key/releases)
 page. Each is cut from a `v*` git tag by the
 [release workflow](https://github.com/TheMaxMur/RS-Key/blob/main/.github/workflows/release.yml).
-It builds every artifact reproducibly, hashes it, and signs the manifest.
+It builds every artifact reproducibly, hashes it, and signs the manifest. It
+runs only at the tag it releases: a run started by hand from a branch, or from
+another tag, stops before it builds anything.
 
 ## What a release contains
 
