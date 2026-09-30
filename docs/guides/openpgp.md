@@ -412,9 +412,9 @@ one that works there.
 rsk openpgp reset      # or: gpg --card-edit → admin → factory-reset
 ```
 
-`rsk openpgp reset` blocks both PINs, then drives the spec-compliant
-`TERMINATE` (0xE6) + `ACTIVATE` (0x44) and reseeds factory defaults
-(PW1 `123456`, PW3 `12345678`). It wipes the OpenPGP applet (keys, PINs, DOs,
+`rsk openpgp reset` blocks both PINs, however many tries they have, then
+drives the spec-compliant `TERMINATE` (0xE6) + `ACTIVATE` (0x44) and reseeds
+factory defaults (PW1 `123456`, PW3 `12345678`). It wipes the OpenPGP applet (keys, PINs, DOs,
 reset code) and **nothing else**. FIDO / PIV / OATH / OTP survive (the
 TERMINATE is scoped to the OpenPGP FIDs). This is also the only way out of a
 PW3 that you have blocked: a blocked admin PIN cannot be unblocked, only reset

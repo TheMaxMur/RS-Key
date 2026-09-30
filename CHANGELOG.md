@@ -257,6 +257,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **`rsk openpgp reset` blocks a PIN however many tries it has** (`rsk` 0.3.47).
+  It sent five wrong VERIFYs per PIN, enough for the factory three but not for a
+  PIN that SET PIN RETRIES gave more, and TERMINATE DF then refused the reset, as
+  it refused `rsk offboard`'s OpenPGP wipe. It now sends wrong VERIFYs until the
+  card answers `6983`, up to 255, a byte's worth, and stops at the first.
+
 - **A U2F registration over an org attestation key the flash could not read is
   retried, not attested by the device key.** U2F REGISTER read the org key as
   absent whether it was absent, unreadable or would not open on this device, so
