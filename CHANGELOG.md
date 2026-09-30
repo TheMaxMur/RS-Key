@@ -162,6 +162,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A makeCredential whose `pubKeyCredParams` is absent or empty is
+  `UNSUPPORTED_ALGORITHM` (`0x26`), as on a YubiKey 5.8.0.** CTAP §6.1.2 step 3
+  walks the list for an algorithm the authenticator supports, and with no list, or an
+  empty one, it chooses nothing, exactly as with a list of only unsupported ones. The
+  YubiKey answers all three `0x26` (measured); RS-Key answered the first two
+  `MISSING_PARAMETER` (`0x14`). A request without its clientDataHash, rp or user is
+  still `0x14`, ahead of the algorithm, on both keys. `bcdDevice` 0x0A77 → 0x0A78.
+
 - **While alwaysUv has U2F switched off, VERSION says so too, and a SELECT over CCID
   answers `FIDO_2_0`, as on a YubiKey 5.8.0.** CTAP 2.1 §7.2.4 disables CTAP1/U2F
   under alwaysUv, and REGISTER and AUTHENTICATE already answered `6986` while getInfo

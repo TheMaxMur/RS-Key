@@ -142,8 +142,8 @@ pub(crate) struct Request<'a> {
     user_id_present: bool,
     user_name: &'a str,
     user_display_name: &'a str,
-    has_pubkey_param: bool,
-    /// First supported algorithm + its curve (`0` / unset = none supported).
+    /// First supported algorithm + its curve (`0` / unset = none supported, which is
+    /// also what an absent or empty `pubKeyCredParams` leaves).
     sel_alg: i64,
     sel_curve: i64,
     exclude: [&'a [u8]; MAX_EXCLUDE],
@@ -199,7 +199,6 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         user_id_present: false,
         user_name: "",
         user_display_name: "",
-        has_pubkey_param: false,
         sel_alg: 0,
         sel_curve: 0,
         exclude: [&[]; MAX_EXCLUDE],
@@ -227,8 +226,10 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
     let mut expected = 1u64;
     for _ in 0..n {
         let key = cbor(d.u32())? as u64;
-        // Keys 1..=4 are mandatory and must appear first, in order.
-        if expected <= 4 && key != expected {
+        // Keys 1..=3 are mandatory and must appear first, in order. So is key 4, but a
+        // YubiKey 5.8.0 answers its absence as it answers an empty or unusable list, so
+        // `make_credential` does: UNSUPPORTED_ALGORITHM, after its rp and user checks.
+        if expected <= 3 && key != expected {
             return Err(CtapError::MissingParameter);
         }
         if key < expected {
@@ -251,11 +252,11 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         }
     }
     // The twin of `get_assertion`'s: the ordered check needs a LATER key to compare
-    // against, so `{}`, `{1}`, `{1,2}` and `{1,2,3}` all walked out unjudged and were
-    // answered downstream by the empty values they left. Those answers happened to
-    // read `MissingParameter` too, which is why nothing showed — until the guard
-    // below stopped saying it for every shape at once.
-    if expected <= 4 {
+    // against, so `{}`, `{1}` and `{1,2}` walked out unjudged and were answered
+    // downstream by the empty values they left. Those answers happened to read
+    // `MissingParameter` too, which is why nothing showed — until the guard below
+    // stopped saying it for every shape at once. `{1,2,3}` is key 4's absence (above).
+    if expected <= 3 {
         return Err(CtapError::MissingParameter);
     }
     Ok(req)
@@ -324,7 +325,6 @@ fn parse_user_entity<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(
 fn parse_pubkey_params(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(), CtapError> {
     let a = def_arr(d)?;
     for _ in 0..a {
-        req.has_pubkey_param = true;
         let m = def_map(d)?;
         let (mut ty, mut alg, mut ty_present, mut alg_present) = ("", 0i64, false, false);
         for _ in 0..m {
@@ -471,9 +471,9 @@ pub fn make_credential<S: Storage, R: Rng>(
     // `pubKeyCredParams`, the remaining options and the selection gesture. An
     // absent one is `enforce_pin`'s business.
     let proto = crate::clientpin::checked_proto(req.pin_uv_auth_protocol)?;
-    if !req.has_pubkey_param {
-        return Err(CtapError::MissingParameter);
-    }
+    // §6.1.2 step 3 chose nothing: no algorithm this build supports was offered, or
+    // `pubKeyCredParams` is absent or empty. A YubiKey 5.8.0 (measured 2026-09-30)
+    // answers all three UNSUPPORTED_ALGORITHM, after the rp and user checks above.
     if req.sel_alg == 0 {
         return Err(CtapError::UnsupportedAlgorithm);
     }

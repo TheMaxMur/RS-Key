@@ -2878,7 +2878,7 @@ fn mc_user(e: &mut Encoder<Cursor<&mut [u8]>>) {
 /// as `a4cbf54`.
 ///
 /// Bounded at both ends, each end measured rather than assumed. Above: a request
-/// missing one of the mandatory keys 1..=4 is refused by `parse` before key 9 is
+/// missing one of the mandatory keys 1..=3 is refused by `parse` before key 9 is
 /// ever read, so it keeps answering MISSING_PARAMETER where that card answers
 /// INVALID_PARAMETER (`missing_mandatory_param_rejected` pins it), and a
 /// malformed `pubKeyCredParams` entry outranks the protocol on that card too.
@@ -2887,7 +2887,7 @@ fn mc_user(e: &mut Encoder<Cursor<&mut [u8]>>) {
 /// rule and the reason `up:false` is not a row here.
 #[test]
 fn unsupported_protocol_outranks_every_later_check() {
-    let rows: [OrderRow; 2] = [
+    let rows: [OrderRow; 3] = [
         (
             "unsupported alg",
             &|e| {
@@ -2903,10 +2903,9 @@ fn unsupported_protocol_outranks_every_later_check() {
             CtapError::UnsupportedAlgorithm,
         ),
         (
-            // The control code here is OURS, and it is a measured divergence in
-            // its own right: that card answers UNSUPPORTED_ALGORITHM to an empty
-            // list (and to an absent key 4), three readings, since §6.1.2 step 3's
-            // loop simply chooses nothing. Recorded, not silently blessed.
+            // That card answers UNSUPPORTED_ALGORITHM to an empty list and to an
+            // absent key 4, since §6.1.2 step 3's loop simply chooses nothing, and
+            // a YubiKey 5.8.0 does too; so do we.
             "empty pubKeyCredParams",
             &|e| {
                 mc_cdh(e);
@@ -2915,7 +2914,17 @@ fn unsupported_protocol_outranks_every_later_check() {
                 e.u8(4).unwrap().array(0).unwrap();
             },
             4,
-            CtapError::MissingParameter,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            "absent pubKeyCredParams",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+            },
+            3,
+            CtapError::UnsupportedAlgorithm,
         ),
     ];
     for (label, head, nkeys, alone) in rows {
@@ -3252,4 +3261,97 @@ fn without_always_uv_a_configured_pad_is_not_asked() {
         Err(CtapError::PuatRequired),
         "a discoverable credential was verified on the pad instead of refused"
     );
+}
+
+/// `pubKeyCredParams` absent, empty, or offering nothing this build supports: §6.1.2
+/// step 3 chooses nothing, and a YubiKey 5.8.0 answers all three UNSUPPORTED_ALGORITHM
+/// (measured 2026-09-30). An absent clientDataHash, rp or user stays MISSING_PARAMETER.
+#[test]
+fn a_pub_key_cred_params_that_offers_nothing_is_an_unsupported_algorithm() {
+    let options = |e: &mut Encoder<Cursor<&mut [u8]>>| {
+        e.u8(7).unwrap().map(1).unwrap();
+        e.str("rk").unwrap().bool(false).unwrap();
+    };
+    let rows: [OrderRow; 7] = [
+        (
+            "absent",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+            },
+            3,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            "absent, a later key present",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+                options(e);
+            },
+            4,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            "empty",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+                e.u8(4).unwrap().array(0).unwrap();
+            },
+            4,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            "offering only an unsupported algorithm",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+                mc_user(e);
+                only_alg(e, -1000);
+            },
+            4,
+            CtapError::UnsupportedAlgorithm,
+        ),
+        (
+            "absent, and no user",
+            &|e| {
+                mc_cdh(e);
+                mc_rp(e);
+            },
+            2,
+            CtapError::MissingParameter,
+        ),
+        (
+            "absent, and no rp",
+            &|e| {
+                mc_cdh(e);
+                mc_user(e);
+            },
+            2,
+            CtapError::MissingParameter,
+        ),
+        (
+            "absent, and no clientDataHash",
+            &|e| {
+                mc_rp(e);
+                mc_user(e);
+            },
+            2,
+            CtapError::MissingParameter,
+        ),
+    ];
+    for (label, head, nkeys, want) in rows {
+        let mut buf = [0u8; 256];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(nkeys).unwrap();
+            head(&mut e);
+            e.writer().position()
+        };
+        assert_eq!(run_err(&buf[..n]), want, "pubKeyCredParams {label}");
+    }
 }
