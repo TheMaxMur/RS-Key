@@ -184,6 +184,50 @@ fn set_pin_retries_answers_as_a_yubikey_does() {
     );
 }
 
+/// The admin reference's command: PW1 verified in both modes does not stand in for
+/// PW3. Not measured on the YubiKey, which was probed with nothing verified.
+#[test]
+fn set_pin_retries_takes_no_user_status_for_the_admins() {
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut fs = boot(RamStorage::new());
+    let mut card = Card::new(&rng, &presence);
+    assert_eq!(card.sw(&mut fs, SELECT), Sw::OK);
+    card.sw(&mut fs, &verify(0x83, WRONG_PW));
+    assert_eq!(card.counters(&mut fs), [3, 0, 2]);
+    assert_eq!(card.sw(&mut fs, &verify(0x81, consts::PW1_DEFAULT)), Sw::OK);
+    assert_eq!(card.sw(&mut fs, &verify(0x82, consts::PW1_DEFAULT)), Sw::OK);
+    let sw = card.sw(&mut fs, &set_retries(0, 0, &[5, 6, 7]));
+    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED, "PW1 alone");
+    assert_eq!(
+        card.counters(&mut fs),
+        [3, 0, 2],
+        "PW3's spent try stays spent"
+    );
+}
+
+/// Each byte sets the count to the maximum it sets, whatever count stood before: a
+/// lowered maximum over a spent count takes the count to it, not to the maximum it
+/// replaces (the measured `F2 01 01 01` gives `C4 01 00 01`).
+#[test]
+fn a_lowered_maximum_takes_a_spent_count_to_itself() {
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let mut fs = boot(RamStorage::new());
+    let mut card = Card::new(&rng, &presence);
+    assert_eq!(card.sw(&mut fs, SELECT), Sw::OK);
+    card.sw(&mut fs, &verify(0x81, WRONG_PW));
+    assert_eq!(card.counters(&mut fs), [2, 0, 3]);
+    assert_eq!(card.sw(&mut fs, &verify(0x83, consts::PW3_DEFAULT)), Sw::OK);
+    assert_eq!(card.sw(&mut fs, &set_retries(0, 0, &[1, 0, 0])), Sw::OK);
+    assert_eq!(
+        card.counters(&mut fs),
+        [1, 0, 3],
+        "PW1's count is its new maximum"
+    );
+    assert_eq!(maxima(&mut fs), [1, 3, 3]);
+}
+
 /// A PIN spent to zero is given its tries back, and the value it had still verifies.
 #[test]
 fn set_pin_retries_unblocks_a_blocked_pin() {
