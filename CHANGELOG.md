@@ -53,6 +53,22 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   every card so far), so no new record, and a build before this one counts from
   the maxima set here too. The ykman suite's `test_change_pin_retries` is no longer
   a divergence. `bcdDevice` 0x0A88 → 0x0A89.
+
+- **`tools/emu --image` serves the firmware image itself** — host only, no
+  `bcdDevice` bump. The emulator ran the applet crates, so what a board runs
+  around them — `main.rs`, the worker, the USB stack, the flash driver, the
+  bootrom — was exercised only on a board. `rsk-emu --image <elf>` cold-boots the
+  ELF through the real bootrom on picoem's RP2350 (a fork, pinned by rev in
+  `tools/emu/Cargo.toml`), over models of the USB controller, OTP, the QMI and its
+  NOR flash, the SHA-256 block, the TRNG, BOOTRAM and the PSM; an emulated host
+  controller enumerates the image and carries the same two ports over its own
+  endpoints, so `tests/emu.py` and the suites run unchanged. Over the sweep of
+  `scripts/emu-suites.sh`'s sessions it passes the same 54 suites and refuses the
+  same 11 as the applet backend. `--store` is the whole flash with the OTP beside
+  it, `--usbip` offers the image's own descriptors, `--touch` presses BOOTSEL, and
+  the flags that drive the applet backend's own state are refused by name. See
+  `tools/emu/README.md`.
+
 - **A host can ask which `authenticatorConfig` vendor commands a build serves.**
   getInfo's `vendorPrototypeConfigCommands` (`0x15`) stays empty, because Yubico's
   Android SDK fails a getInfo carrying a 64-bit id (issue #111), so the list was in

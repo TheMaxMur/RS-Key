@@ -18,6 +18,7 @@ mod ccid;
 mod device;
 mod display;
 mod hid;
+mod image;
 mod otp_kbd;
 mod park;
 #[cfg(test)]
@@ -38,6 +39,7 @@ mod usbip_stack;
 
 use std::io::BufRead;
 use std::net::TcpListener;
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -92,6 +94,12 @@ usage: rsk-emu [options]
   --seed <hex>        seed the DRBG deterministically — every key becomes
                       predictable; for reproducible tests only
   --serial <16 hex>   device serial (default RSKEMU\\x00\\x01)
+  --image <elf>       serve that firmware ELF on an emulated RP2350 instead of
+                      the applet stack, booted through the real bootrom, on the
+                      same ports. --store is then the whole 4 MB flash, its OTP
+                      beside it in <store>.otp; --seed feeds the TRNG, --serial
+                      is the chip id, and --touch presses BOOTSEL
+  --rom <file>        the bootrom --image boots (default: picoem's pinned A4)
   -h, --help          this
 ";
 
@@ -117,6 +125,8 @@ fn main() {
     let mut auto_touch = None;
     let mut tap_script = None;
     let mut tap_port = None;
+    let mut image: Option<PathBuf> = None;
+    let mut rom: Option<PathBuf> = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -155,6 +165,8 @@ fn main() {
                 let raw = parse_hex(&value("--serial"), Some(8));
                 cfg.serial.copy_from_slice(&raw);
             }
+            "--image" => image = Some(value("--image").into()),
+            "--rom" => rom = Some(value("--rom").into()),
             other => die(&format!("unknown argument {other:?}\n\n{USAGE}")),
         }
     }
@@ -185,6 +197,33 @@ fn main() {
     };
     if cfg.seed.is_some() {
         eprintln!("emu: DETERMINISTIC SEED — every key this run mints is predictable");
+    }
+    if let Some(image) = image {
+        refuse_for_image(
+            &cfg,
+            auto_touch.is_some(),
+            tap_script.is_some() || tap_port.is_some(),
+        );
+        let opts = image::Options {
+            image,
+            rom,
+            store: cfg.store,
+            host,
+            fido_port,
+            ccid_port,
+            usbip: cfg.usbip,
+            touch,
+            seed: cfg.seed,
+            serial: cfg.serial,
+            trace: cfg.trace,
+        };
+        if let Err(e) = image::run(opts) {
+            die(&e);
+        }
+        return;
+    }
+    if rom.is_some() {
+        die("--rom is the bootrom --image boots — add --image");
     }
 
     let (jobs_tx, jobs_rx) = device::job_queue();
@@ -281,6 +320,38 @@ fn main() {
     });
 
     device::run(cfg, jobs_rx, signals, lines, taps.or(socket_taps));
+}
+
+/// What `--image` has no use for, refused by name: the image carries its own
+/// presence, identity and panel, and the snapshots are the applet backend's.
+fn refuse_for_image(cfg: &Config, auto_touch: bool, taps: bool) {
+    let refused = [
+        (
+            cfg.display || taps,
+            "--display and the pad drive the applet backend's window; the image's panel is not emulated",
+        ),
+        (
+            auto_touch,
+            "--auto-touch-ms: presence is the image's — a `--features no-touch` build confirms it, --touch presses BOOTSEL",
+        ),
+        (
+            cfg.security_trace.is_some(),
+            "--security-trace snapshots the applet backend's state, which an image keeps to itself",
+        ),
+        (
+            cfg.yubico,
+            "--yubico: the identity is built into the image (VIDPID=Yubikey5)",
+        ),
+        (
+            cfg.power_cut.is_some(),
+            "--power-cut is not modelled on the image's flash",
+        ),
+    ];
+    for (given, why) in refused {
+        if given {
+            die(why);
+        }
+    }
 }
 
 /// Read and parse a `--taps` script, refusing a malformed or empty one up front

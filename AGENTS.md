@@ -218,7 +218,7 @@ CONTRIBUTING.md → "Code".
 | `crates/rsk-*` | The libraries, and the one thing that separates them from `firmware/`: they are **host-tested**, so host-testable logic belongs here. Which crates exist is [`docs/architecture.md`](docs/architecture.md#crates) — `scripts/crate_graph.py` holds that table to the workspace members, so it is the list that cannot go stale. Naming them here instead is what drifted across four refactors. |
 | `tools/rsk/` | The Python host CLI (`rsk …`). Match the neighbouring modules: `register(sub)`, `die()`, flake-provided deps (no pip). |
 | `tools/tui/` | The Rust TUI cockpit — **its own workspace** (build/clippy/test via its own manifest). |
-| `tools/emu/` | The software emulator — **its own workspace**. Runs the applet crates on the host over TCP, so `tests/*.py` need no board. |
+| `tools/emu/` | The software emulator — **its own workspace**. Runs the applet crates on the host over TCP, so `tests/*.py` need no board; `--image` serves the firmware ELF itself on an emulated RP2350 (picoem) behind the same ports. |
 | `docs/` | mdBook (`SUMMARY.md` = nav). [`docs/protocol.md`](docs/protocol.md) is the **third-party / PicoForge wire spec** — keep it in sync when a wire format changes. |
 | `fuzz/` | Fuzz targets (nightly, own workspace): `nix develop .#fuzz -c cargo fuzz run <target>`. |
 | `tests/*.py` | On-device tests, run by hand against a no-touch board — or against `tools/emu` with no board (`python tests/emu.py tests/NN_*.py`). |

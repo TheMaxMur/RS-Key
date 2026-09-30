@@ -226,6 +226,18 @@ alone can be cancelled mid-wait (`CTAPHID_CANCEL`) and so alone can answer
 `Presence::Cancelled`. The no-touch build (`--features no-touch`)
 auto-confirms. For test rigs, not for daily use.
 
+## Without a board
+
+`tools/emu`, a workspace of its own, serves what a host sees of the device —
+CTAPHID reports and CCID messages over TCP, or the whole USB device over USB/IP —
+from one of two backends. The default runs the applet crates on the host through
+`rsk-device`, the wiring the firmware runs, with the worker's sequencing written a
+second time. `--image` runs the firmware ELF itself: cold-booted through the real
+bootrom on picoem's RP2350 cores, over the chip models in `tools/emu/src/image/`
+(USB controller, OTP, QMI and NOR flash, SHA-256, TRNG), with an emulated host
+controller on the far side of the bus. [testing.md](testing.md) says what each
+proves.
+
 ## Provenance
 
 RS-Key reimplements the applet behaviour, file layouts and protocol surface

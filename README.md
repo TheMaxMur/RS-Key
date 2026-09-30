@@ -213,7 +213,8 @@ attaches it to the kernel as a *real* USB device, which is how a browser, `ykman
 or `gpg` reach it.
 
 It is **not** a security key: no secure boot, no OTP root, no fuses, and the seed
-sits in a file. It emulates behaviour, not the device. See
+sits in a file. It emulates behaviour, not the device. `--image` runs the firmware
+image itself instead, booted through the real bootrom on an emulated RP2350. See
 [`tools/emu/README.md`](tools/emu/README.md).
 
 ## Production / secure boot (irreversible — read first)

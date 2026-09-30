@@ -32,6 +32,9 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
                       strings, the ATR, the OpenPGP AID vendor — as the
                       VIDPID=Yubikey5 build does. `ykman` needs it.
   --power-cut <n>     cut the flash's power after n bytes of writes
+  --image <elf>       serve that firmware ELF on an emulated RP2350 instead of
+                      the applet stack (below)
+  --rom <file>        the bootrom --image boots (default: picoem's pinned A4)
 ```
 
 `--auto-touch-ms` is mutually exclusive with `--touch` and `--display`. During
@@ -170,6 +173,54 @@ writes to. On EOF the emulator correctly stops pretending anyone could answer an
 times the touch out at once, which makes a `--touch` device behave like a
 no-touch one and leaves the suite nothing to watch; a fifo gives it the real
 thing, a wait nobody ever ends.
+
+## The firmware image itself (`--image`)
+
+`--image <elf>` serves the firmware's own ELF on the same two ports, in place of
+the applet crates. It cold-boots through the real bootrom on
+[picoem](https://github.com/TheMaxMur/picoem)'s RP2350 — two Cortex-M33 cores with
+TrustZone, and the bus — and `src/image/` models what the bootrom and the image
+lean on past it: the USB controller, OTP, the QMI with its SPI NOR flash, the
+SHA-256 block, the TRNG, BOOTRAM, the PSM and the BOOTSEL pad. A host controller
+on the emulated clock enumerates the image as Linux does and carries each
+socket's reports and CCID messages over its endpoints, so `tests/emu.py` and the
+suites run unchanged.
+
+```bash
+nix develop -c cargo build --release -p firmware --features no-touch
+nix develop -c cargo run --release --manifest-path tools/emu/Cargo.toml --target "$HOST" -- \
+  --image target/thumbv8m.main-none-eabihf/release/firmware --store ./image.store
+python tests/emu.py tests/10_fido_getinfo.py
+```
+
+- **Time** is held to the wall clock and never runs ahead of it, so the image's
+  own timeouts — the §6.6 reset window, keepalives, CCID time extensions — mean
+  what they mean on a desk. One busy core runs at about the board's speed; two run
+  slower (an on-card RSA-2048 keygen took 13.6 s, the board ~4.3 s). An idle key
+  still costs most of a host core, most of it stepping the LED's PIO block.
+- **The store** is the whole 4 MB flash, image and KV store together, with the OTP
+  rows beside it in `<store>.otp`. A new one starts blank but for the chip id,
+  which is `--serial`. Placing the image rewrites only the sectors it covers, so
+  the KV store stays when a rebuilt image goes in, as a reflashed board's does.
+- **Power**: a replug (`03`) is a power-on reset through the bootrom; a reboot the
+  image asks for keeps the watchdog scratch, as a warm reset does — so the soft
+  PIN lock and the reset window behave as on the board.
+- **Presence and identity are the image's.** A `--features no-touch` build
+  confirms presence; a touch build waits for BOOTSEL, which each line on the
+  terminal holds down for half a second under `--touch`, and a keepalive asking
+  for the touch says so there. The Yubico identity is a `VIDPID=Yubikey5` build. `--display`, the pad, `--auto-touch-ms`, `--security-trace`, `--yubico`
+  and `--power-cut` are refused by name.
+- **`--usbip`** offers the image's own descriptors. An attach power-cycles the
+  chip and hands the bus to the USB/IP host until it detaches.
+- `--trace` prints what the chip models log and, every five seconds, where each
+  core is. `--rom` boots another bootrom (the A2's, say); the default is the A4
+  one picoem pins, read from its checkout.
+
+Against the tests/emu.py sweep of `scripts/emu-suites.sh` — the default,
+reset-window, PIN and Yubico-identity sessions — the image passes the same 54
+suites the applet backend passes and refuses the same 11. It is still not
+silicon: each model goes as deep as the bootrom and the image reach, and the
+panel, the LED's light and a power cut are not modelled.
 
 ## The wire
 

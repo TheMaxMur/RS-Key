@@ -424,6 +424,9 @@ pub const EPIPE: i32 = -32;
 /// `-ECONNRESET`, how it reports a URB cancelled while still in flight.
 pub const ECONNRESET: i32 = -104;
 
+/// `-ESHUTDOWN`, a URB the device went away under.
+pub const ESHUTDOWN: i32 = -108;
+
 #[cfg(test)]
 #[path = "usbip_tests.rs"]
 pub(crate) mod tests;

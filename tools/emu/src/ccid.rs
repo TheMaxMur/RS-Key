@@ -38,11 +38,11 @@ use rsk_usb::ccid::{
 use crate::device::{Job, Jobs, Unplug};
 
 /// A CCID message.
-const OP_CCID: u8 = 0x00;
+pub(crate) const OP_CCID: u8 = 0x00;
 /// Unplug and plug back in — what a test harness sends where an operator would
 /// pull the key out. Answers empty. CCID has no message for it: a power cycle is
 /// not a card reset, and only one of the two reopens the CTAP 2.1 §6.6 window.
-const OP_REPLUG: u8 = 0x03;
+pub(crate) const OP_REPLUG: u8 = 0x03;
 
 /// Refuse an absurd length before allocating for it: a real message can never
 /// exceed the class descriptor's `dwMaxCCIDMessageLength`.
@@ -194,7 +194,7 @@ fn run(jobs: &Jobs, job: Job) -> io::Result<Vec<u8>> {
     }
 }
 
-fn send(stream: &mut TcpStream, payload: &[u8]) -> io::Result<()> {
+pub(crate) fn send(stream: &mut TcpStream, payload: &[u8]) -> io::Result<()> {
     stream.write_all(&(payload.len() as u32).to_be_bytes())?;
     stream.write_all(payload)?;
     stream.flush()

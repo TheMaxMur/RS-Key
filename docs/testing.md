@@ -990,6 +990,32 @@ what is still written twice is the worker's sequencing and the board's own
 ([tools/emu/README.md](https://github.com/TheMaxMur/RS-Key/tree/main/tools/emu)
 lists the gaps). A green emulator run is a protocol result, not a device result.
 
+### The image itself — `--image`
+
+`--image <elf>` closes most of that gap: the same ports serve the firmware ELF,
+cold-booted through the real bootrom on an emulated RP2350
+([picoem](https://github.com/TheMaxMur/picoem), pinned in `tools/emu/Cargo.toml`),
+with the USB controller, OTP, the QMI and its NOR flash, the SHA-256 block and the
+TRNG modelled in `tools/emu/src/image/`. A host controller inside the emulator
+enumerates the image and carries the sockets over its endpoints, so what answers
+is the board's `main.rs`, worker, USB stack and flash driver, not a second copy:
+
+```sh
+nix develop -c cargo build --release -p firmware --features no-touch
+nix develop -c cargo run --release --manifest-path tools/emu/Cargo.toml \
+  --target "$HOST" -- --image target/thumbv8m.main-none-eabihf/release/firmware \
+  --store ./image.store
+```
+
+Over the `tests/emu.py` sessions of `scripts/emu-suites.sh` it passes the same 54
+suites the applet backend passes and refuses the same 11 (bcdDevice 0x0A88), in
+about three times its wall time. Time is held to the wall clock, so the §6.6
+window and the keepalives keep their meaning; one busy core runs at about the
+board's speed, two slower (an RSA-2048 keygen: 13.6 s, the board's ~4.3 s). Presence and identity are the image's own: a no-touch build, and a
+`VIDPID=Yubikey5` build for the Yubico session. `--store` is the whole flash, with
+the OTP beside it. What it still is not is silicon: every model goes as deep as
+the bootrom and the image reach, no deeper. `tools/emu/README.md` has the rest.
+
 ## Latency harness
 
 Timing a crypto primitive from the host is noisy. On the RP2350 the hot working

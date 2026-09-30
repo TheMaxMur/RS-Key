@@ -72,6 +72,13 @@ embassy-futures = { git = "https://github.com/embassy-rs/embassy", branch = "mai
 # rather than a second description of them. Already in the graph through
 # `rsk-usb`; naming it here is what lets `usbip_driver` implement its `Driver`.
 embassy-usb = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
+# `--image`: the firmware's own ELF on an emulated RP2350. picoem (MIT OR Apache-2.0)
+# runs the two Cortex-M33 cores and the bus; the fork adds the MMIO mount seam the
+# chip models plug into and the core fixes the bootrom needs. Pinned to one commit.
+rp2350-emu = { git = "https://github.com/TheMaxMur/picoem", rev = "d83e668d37a6330ee2a0d450e15185e54d7e57f0" }
+# The chip's SHA-256 block runs the bootrom's signature check through the bare
+# compression function; the crate is already in the graph, with this feature.
+sha2 = { version = "0.10", features = ["compress"] }
 
 [dev-dependencies]
 # device_tests.rs reads a slot back through rsk-otp's seal, which unseals only
