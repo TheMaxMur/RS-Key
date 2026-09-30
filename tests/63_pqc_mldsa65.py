@@ -116,7 +116,7 @@ def main():
             print("getInfo: classic algorithms only (default build); -49 still negotiable")
         assert gi[5] == 7609, f"maxMsgSize {gi[5]}, want 7609"
 
-        # 3. ML-DSA-65 registration. CTAP 2.1 §6.1.2 step 4 picks the FIRST
+        # 3. ML-DSA-65 registration. CTAP 2.1 §6.1.2 step 3 picks the FIRST
         # supported entry, so -49 must lead the list to be selected.
         (cred_id, alg, pk, auth_data, att), dt_mc = make_credential(dev, cid, [-49, -7])
         assert alg == -49, f"selected alg {alg}, want -49 (first supported)"

@@ -17,7 +17,7 @@ parameter validation, `setMinPINLength` overflow, the rpId-scoped
    3. makeCredential options   -> uv:true alongside a pinUvAuthParam is accepted,
                                   not CTAP2_ERR_INVALID_OPTION (§6.1.2 step 5)
    4. pubKeyCredParams         -> the platform's FIRST supported algorithm wins,
-                                  even with ML-DSA listed after it (§6.1.2 step 4)
+                                  even with ML-DSA listed after it (§6.1.2 step 3)
    5. credBlob                 -> a blob of exactly maxCredBlobLength is accepted
    6. makeCredUvNotRqd         -> a NON-discoverable credential is created on
                                   presence alone with a PIN set, uv clear, and it

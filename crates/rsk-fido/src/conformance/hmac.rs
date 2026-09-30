@@ -305,7 +305,7 @@ fn a_degenerate_hmac_secret_is_not_a_present_extension() {
 }
 
 /// A UV makeCredential evaluating hmac-secret at registration time
-/// (`hmac-secret-mc`, CTAP 2.2 §12.5), the way a platform asking for PRF at
+/// (`hmac-secret-mc`, CTAP 2.2 §12.8), the way a platform asking for PRF at
 /// creation does.
 fn mc_hmac_mc(ecdh: &Ecdh, token: &[u8; 32], salt: &[u8]) -> Vec<u8> {
     let salt_enc = ecdh.enc(salt);

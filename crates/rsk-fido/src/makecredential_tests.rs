@@ -1935,7 +1935,7 @@ fn selected_alg(algs: &[i64]) -> Result<i64, CtapError> {
 #[test]
 fn first_supported_alg_wins() {
     use crate::consts::{ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87};
-    // §6.1.2 step 4: the chosen algorithm is the FIRST supported element of
+    // §6.1.2 step 3: the chosen algorithm is the FIRST supported element of
     // pubKeyCredParams — the platform's order is its preference order, so an
     // ML-DSA entry listed after a classic one does NOT override it.
     assert_eq!(selected_alg(&[ALG_ES256, ALG_MLDSA44]), Ok(ALG_ES256));

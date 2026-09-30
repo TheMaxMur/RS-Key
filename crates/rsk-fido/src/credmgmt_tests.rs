@@ -145,7 +145,7 @@ fn grant_pcmr(fs: &mut Fs<RamStorage>, rng: &mut SeqRng) -> [u8; 32] {
     // would get that instead of a PIN check.
     let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
     pin_file[0] = 8; // retries
-    pin_file[1] = 4; // min length
+    pin_file[1] = 4; // the PIN's own length, in code points
     pin_file[2] = 1;
     fs.put(EF_PIN, &pin_file).unwrap();
     *ensure_ppuat(&dev(), fs, rng).unwrap().expose()

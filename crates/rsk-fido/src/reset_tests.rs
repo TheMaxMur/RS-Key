@@ -1077,7 +1077,7 @@ fn provisioned_with_a_grant() -> TearAfter {
     provision_passkey(&mut fs, seed.expose());
     let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
     pin_file[0] = 8; // retries
-    pin_file[1] = 4; // min length
+    pin_file[1] = 4; // the PIN's own length, in code points
     pin_file[2] = 1;
     fs.put(EF_PIN, &pin_file).unwrap();
     crate::seed::ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();

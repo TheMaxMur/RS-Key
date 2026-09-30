@@ -50,7 +50,7 @@ fn roundtrip(proto: PinProto, two_salts: bool) {
     let (ax, ay) = public_xy(&auth_scalar).unwrap();
     let (px, py) = public_xy(&plat_scalar).unwrap();
 
-    let salt64 = [0xA1u8; 64];
+    let salt64: [u8; 64] = core::array::from_fn(|i| if i < 32 { 0xA1 } else { 0xB2 });
     let salt: &[u8] = if two_salts { &salt64 } else { &salt64[..32] };
     let (salt_enc, salt_auth, shared) = platform(proto, &plat_scalar, &ax, &ay, salt);
 

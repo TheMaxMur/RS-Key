@@ -149,7 +149,7 @@ impl Authr {
     fn set_pin_file(&mut self) {
         let mut pin_file = [0u8; crate::clientpin::PIN_FILE_LEN];
         pin_file[0] = 8; // retries
-        pin_file[1] = 4; // min length
+        pin_file[1] = 4; // the PIN's own length, in code points
         pin_file[2] = 1;
         self.fs.put(consts::EF_PIN, &pin_file).unwrap();
     }

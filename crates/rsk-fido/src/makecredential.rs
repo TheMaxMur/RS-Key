@@ -319,7 +319,7 @@ fn parse_user_entity<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<(
 }
 
 /// Parse `pubKeyCredParams` (request key 4), selecting the first supported
-/// algorithm — §6.1.2 step 4: the platform's list order IS its preference order,
+/// algorithm — §6.1.2 step 3: the platform's list order IS its preference order,
 /// and every element is still validated after one is chosen.
 fn parse_pubkey_params(d: &mut Decoder<'_>, req: &mut Request<'_>) -> Result<(), CtapError> {
     let a = def_arr(d)?;
