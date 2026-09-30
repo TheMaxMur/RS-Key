@@ -1029,3 +1029,68 @@ fn a_version_with_data_is_a_wrong_length() {
         "a P1 is not judged"
     );
 }
+
+/// getInfo's `versions` (0x01), read over the real dispatch.
+fn get_info_versions(ctx: &mut Ctx<RamStorage, SeqRng>) -> std::vec::Vec<std::string::String> {
+    let mut out = [0u8; 1024];
+    let n = crate::process_cbor(ctx, &[crate::consts::CTAP_GET_INFO], &mut out);
+    assert_eq!(out[0], 0, "getInfo refused");
+    let mut d = minicbor::Decoder::new(&out[1..n]);
+    d.map().unwrap();
+    assert_eq!(d.u8().unwrap(), 0x01, "versions leads the map");
+    let count = d.array().unwrap().unwrap();
+    (0..count).map(|_| d.str().unwrap().into()).collect()
+}
+
+/// Every door that says whether U2F is served — VERSION, the SELECT body, getInfo's
+/// `U2F_V2` — in §7.2.4's states: off under alwaysUv, `6986` and `FIDO_2_0` as on a YubiKey
+/// 5.8.0 (measured 2026-09-30), unless a pad with a PIN keeps it on; all three agree.
+#[test]
+fn every_u2f_door_answers_from_one_gate() {
+    let version = Apdu::parse(&[0x00, CTAP_VERSION, 0x00, 0x00]).unwrap();
+    for (what, always_uv, pad, pin, served) in [
+        ("alwaysUv off", false, false, false, true),
+        ("alwaysUv on, no pad", true, false, false, false),
+        ("alwaysUv on, a pad with no PIN", true, true, false, false),
+        ("alwaysUv on, a pad with a PIN", true, true, true, true),
+        ("alwaysUv off, a pad with a PIN", false, true, true, true),
+    ] {
+        let mut fs = Fs::new(RamStorage::new());
+        let mut rng = SeqRng(1);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        if pin {
+            crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
+        }
+        fs.put(EF_ALWAYS_UV, &[u8::from(always_uv)]).unwrap();
+        let mut plain = crate::AlwaysConfirm;
+        let mut uv_pad = UvPad {
+            digits: PIN,
+            touches: 0,
+        };
+        let presence: &mut dyn crate::UserPresence = if pad { &mut uv_pad } else { &mut plain };
+        let selected = select_version(&mut fs, presence);
+        let mut state = crate::FidoState::new();
+        let mut ctx = Ctx {
+            presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        let mut out = [0u8; 16];
+        let (sw, n) = process_u2f(&mut ctx, &version, &mut out);
+        let listed = get_info_versions(&mut ctx).iter().any(|v| v == "U2F_V2");
+        let text = |b: &[u8]| std::string::String::from_utf8_lossy(b).into_owned();
+        let want = if served {
+            (Sw::OK, "U2F_V2".into(), "U2F_V2".into(), true)
+        } else {
+            (Sw::COMMAND_NOT_ALLOWED, "".into(), "FIDO_2_0".into(), false)
+        };
+        assert_eq!(
+            (sw, text(&out[..n]), text(selected), listed),
+            want,
+            "{what}: (VERSION, its body, the SELECT body, U2F_V2 in getInfo)"
+        );
+    }
+}

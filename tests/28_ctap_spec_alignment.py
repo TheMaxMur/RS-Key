@@ -35,7 +35,8 @@ parameter validation, `setMinPINLength` overflow, the rpId-scoped
   11. alwaysUv                -> it overrides makeCredUvNotRqd in BOTH the
                                   advertisement and the enforcement (§6.1.2 step 6,
                                   §6.4), and U2F drops U2F_V2 and answers
-                                  SW_COMMAND_NOT_ALLOWED 6986 (§7.2.4)
+                                  SW_COMMAND_NOT_ALLOWED 6986 (§7.2.4), VERSION
+                                  included, as a YubiKey 5.8.0 does
 
 Non-destructive: no reset and no replug. `alwaysUv` is toggled on for step 11 and
 restored in a `finally`; the one resident credential step 10 creates is removed by
@@ -340,6 +341,9 @@ def under_always_uv(dev, cid, pin, base):
         apdu = bytes([0, 1, 0, 0, 0, 0, 0x40]) + os.urandom(64) + b"\x00\x00"
         _, p = raw(dev, cid, CTAPHID_MSG, apdu)
         check("REGISTER answers SW_COMMAND_NOT_ALLOWED 6986 (was 6985)",
+              p[-2:] == b"\x69\x86", f"sw {p[-2:].hex()}")
+        _, p = raw(dev, cid, CTAPHID_MSG, bytes([0, 3, 0, 0]))
+        check("…and VERSION 6986 too, as on a YubiKey 5.8.0 (was U2F_V2)",
               p[-2:] == b"\x69\x86", f"sw {p[-2:].hex()}")
     finally:
         _, token = token_for(dev, cid, pin, PERM_ACFG)

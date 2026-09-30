@@ -3222,3 +3222,34 @@ fn an_ea_list_wider_than_this_build_matches_what_it_holds_and_declines_the_rest(
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "makecredential_reads_tests.rs"]
 mod reads;
+
+/// With alwaysUv off a configured pad is not asked: §6.1.2 step 6.3's upgrade of a
+/// token-less request is alwaysUv's alone. Without `uv`, a non-discoverable credential is
+/// made on presence with `uv` clear (makeCredUvNotRqd) and a discoverable one is refused.
+#[test]
+fn without_always_uv_a_configured_pad_is_not_asked() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
+    let cdh = [0xCDu8; 32];
+    let mut out = [0u8; 1024];
+    let mut pad = UvPad::typing();
+    let mut state = crate::FidoState::new();
+    let mut ctx = Ctx {
+        presence: &mut pad,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+    };
+    let len = make_credential(&mut ctx, &build_request(false), &mut out).unwrap();
+    let auth_data = verify_response(&out[..len], &cdh);
+    assert_eq!(auth_data[32] & FLAG_UV, 0, "the pad was run: UV is set");
+    assert_eq!(
+        make_credential(&mut ctx, &build_request(true), &mut out),
+        Err(CtapError::PuatRequired),
+        "a discoverable credential was verified on the pad instead of refused"
+    );
+}

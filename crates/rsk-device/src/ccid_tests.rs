@@ -2381,3 +2381,89 @@ fn a_u2f_version_with_data_is_a_wrong_length_on_both_transports() {
         "control: bare over CTAPHID"
     );
 }
+
+/// alwaysUv with no built-in UV switches U2F off on both transports, as on a YubiKey 5.8.0
+/// (measured 2026-09-30): SELECT is `FIDO_2_0`, VERSION, check-only and REGISTER `6986`. A
+/// pad with a PIN keeps it on, as alwaysUv off does: `U2F_V2`, served, `6A80`, `6985`.
+#[test]
+fn with_always_uv_on_and_no_pad_u2f_is_off_on_both_transports() {
+    use rsk_fido::consts::{
+        CTAP_AUTHENTICATE, CTAP_REGISTER, CTAP_VERSION, EF_ALWAYS_UV, FIDO_2_0_VERSION,
+        U2F_AUTH_CHECK_ONLY, U2F_VERSION,
+    };
+    use rsk_sdk::Sw;
+    let env = booted();
+    env.finger.borrow_mut().answer = false;
+    let mut auth = [0u8; 32 + 32 + 1 + 64];
+    auth[64] = 64;
+    let check_only = extended_apdu(0x00, CTAP_AUTHENTICATE, U2F_AUTH_CHECK_ONLY, 0x00, &auth);
+    let register = extended_apdu(0x00, CTAP_REGISTER, 0x00, 0x00, &[0u8; 64]);
+    let bare_version = [0x00, CTAP_VERSION, 0x00, 0x00];
+    let off: (&[u8], Sw, Sw, Sw) = (
+        FIDO_2_0_VERSION,
+        Sw::COMMAND_NOT_ALLOWED,
+        Sw::COMMAND_NOT_ALLOWED,
+        Sw::COMMAND_NOT_ALLOWED,
+    );
+    let on: (&[u8], Sw, Sw, Sw) = (
+        U2F_VERSION,
+        Sw::OK,
+        Sw::WRONG_DATA,
+        Sw::CONDITIONS_NOT_SATISFIED,
+    );
+    for (what, always_uv, pad, want) in [
+        ("alwaysUv on, no pad", true, false, off),
+        ("alwaysUv on, a pad with a PIN", true, true, on),
+        ("alwaysUv off", false, true, on),
+    ] {
+        env.fs
+            .borrow_mut()
+            .put(EF_ALWAYS_UV, &[u8::from(always_uv)])
+            .unwrap();
+        if pad {
+            env.finger.borrow_mut().pad = true;
+            rsk_fido::clientpin::store_local_pin(
+                &crate::tests::dev(),
+                &mut env.fs.borrow_mut(),
+                b"481629",
+            )
+            .unwrap();
+        }
+        let (body, version, check, reg) = want;
+        let mut ccid = env.ccid();
+        let res = ccid
+            .handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)
+            .to_vec();
+        assert_eq!(
+            (sw(&res), String::from_utf8_lossy(&res[..res.len() - 2])),
+            (Sw::OK, String::from_utf8_lossy(body)),
+            "{what}: SELECT"
+        );
+        let res = ccid
+            .handle_apdu(&apdu(0x00, CTAP_VERSION, 0x00, 0x00, &[]), 0)
+            .to_vec();
+        assert_eq!(sw(&res), version, "{what}: VERSION over CCID");
+        assert_eq!(
+            sw(ccid.handle_apdu(&check_only, 0)),
+            check,
+            "{what}: check-only over CCID"
+        );
+
+        let mut ctap = env.ctap();
+        let res = ctap.handle_msg(&bare_version, 0).to_vec();
+        assert_eq!(sw(&res), version, "{what}: VERSION over CTAPHID");
+        if version == Sw::OK {
+            assert_eq!(&res[..res.len() - 2], U2F_VERSION, "{what}: its body");
+        }
+        assert_eq!(
+            sw(ctap.handle_msg(&check_only, 0)),
+            check,
+            "{what}: check-only over CTAPHID"
+        );
+        assert_eq!(
+            sw(ctap.handle_msg(&register, 0)),
+            reg,
+            "{what}: REGISTER over CTAPHID"
+        );
+    }
+}

@@ -27,6 +27,7 @@ use crate::consts::{
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
+use crate::u2f::U2fGate;
 
 /// How many extensions getInfo names (0x02).
 const EXTENSIONS: u64 = 7 + if cfg!(feature = "preview-sign") { 1 } else { 0 };
@@ -115,15 +116,10 @@ fn write_info<W: Write>(
     // CTAP 2.3 §6.4 spells it out — "MUST not be present in versions member". The
     // 2.2 surface is advertised through its option IDs and getInfo members instead.
     //
-    // U2F_V2 (CTAP1) drops off while alwaysUv is on: §7.2.4 disables the CTAP1/U2F
-    // interface (`process_u2f` refuses REGISTER/AUTHENTICATE), so getInfo must stop
-    // claiming it. The conformance run is alwaysUv-off, so the list stays all five.
-    // The same clause carves out the one case where it survives — "unless the
-    // CTAP1/U2F authenticator is protected by a built-in user verification method",
-    // i.e. a configured PIN pad, which `process_u2f` then runs on every REGISTER /
-    // AUTHENTICATE. Capability alone is not enough: with no PIN set there is nothing
-    // to verify against, so U2F goes away as on any screenless build.
-    let u2f = !always_uv || (builtin_uv && pin_set);
+    // U2F_V2 goes while alwaysUv has CTAP1/U2F off (§7.2.4), unless a pad with a PIN set
+    // protects it; `U2fGate::of` decides that for every U2F answer. The conformance run is
+    // alwaysUv-off, so there the list stays all five.
+    let u2f = U2fGate::of(always_uv, builtin_uv && pin_set) != U2fGate::Disabled;
     enc.u8(0x01)?.array(3 + u64::from(u2f))?;
     if u2f {
         enc.str("U2F_V2")?;

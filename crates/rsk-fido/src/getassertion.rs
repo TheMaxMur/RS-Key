@@ -345,7 +345,7 @@ pub fn get_assertion<S: Storage, R: Rng>(
     if req.pin_uv_auth_param.is_some() {
         req.uv = false;
     }
-    if req.uv && !builtin_uv_enabled(ctx) {
+    if req.uv && !builtin_uv_enabled(ctx.fs, ctx.presence) {
         return Err(CtapError::InvalidOption);
     }
     // …and moot on an `up:false` probe: built-in UV is a modal PIN entry, so one
@@ -474,7 +474,7 @@ fn enforce_pin<S: Storage, R: Rng>(
             let always_uv = req.up && crate::config::always_uv_enabled(ctx.fs);
             // §6.2.2 steps 5.4 / 6.2: an explicit uv:true, or alwaysUv with a
             // configured pad, runs built-in UV instead of refusing the request.
-            if req.uv || (always_uv && builtin_uv_enabled(ctx)) {
+            if req.uv || (always_uv && builtin_uv_enabled(ctx.fs, ctx.presence)) {
                 return builtin_uv_step(ctx);
             }
             // §6.2.2 steps 5.1/5.5: clientPin is always an advertised option ID

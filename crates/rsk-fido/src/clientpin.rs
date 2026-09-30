@@ -39,7 +39,7 @@ use crate::error::{CtapError, CtapResult};
 use crate::journal;
 use crate::seed::{clear_ppuat, ensure_ppuat, migrate_keydev_pin};
 use crate::state::{PERM_ACFG, PERM_BE, PERM_GA, PERM_MC, PERM_PCMR};
-use crate::{Ctx, PinEntry, Rng};
+use crate::{Ctx, PinEntry, Rng, UserPresence};
 
 pub(crate) const PIN_FILE_LEN: usize = 35; // retries(1) + len(1) + format(1) + verifier(32)
 pub(crate) const PADDED_PIN_LEN: usize = 64;
@@ -652,8 +652,8 @@ fn consent_for_permissions<S: Storage, R: Rng>(
 /// The `uv` option ID (CTAP 2.1 §6.4): the backend has a PIN pad of its own AND a
 /// PIN is configured, i.e. built-in user verification is both capable and
 /// "presently configured". `false` on every screenless build.
-pub(crate) fn builtin_uv_enabled<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> bool {
-    ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
+pub(crate) fn builtin_uv_enabled<S: Storage>(fs: &mut Fs<S>, presence: &dyn UserPresence) -> bool {
+    presence.uv_available() && fs.has_data(EF_PIN)
 }
 
 /// `performBuiltInUv(internalRetry = true)` — the spec's built-in user

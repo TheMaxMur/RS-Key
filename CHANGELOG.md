@@ -162,6 +162,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **While alwaysUv has U2F switched off, VERSION says so too, and a SELECT over CCID
+  answers `FIDO_2_0`, as on a YubiKey 5.8.0.** CTAP 2.1 §7.2.4 disables CTAP1/U2F
+  under alwaysUv, and REGISTER and AUTHENTICATE already answered `6986` while getInfo
+  dropped `U2F_V2`; but VERSION still answered `U2F_V2` over CCID and CTAPHID, and a
+  SELECT of the FIDO applet answered `U2F_V2`, which is how a host decides CTAP1 is
+  served. The YubiKey answers VERSION `6986` over both transports and SELECTs as
+  `FIDO_2_0`, the version string CTAP 2.3 §11.3.3 gives an authenticator that
+  implements CTAP2 alone; RS-Key now does both. The display build with a PIN set keeps
+  U2F on, as before, and SELECT, VERSION, REGISTER, AUTHENTICATE and getInfo now read
+  one predicate for it. `bcdDevice` 0x0A76 → 0x0A77.
+
 - **setPIN over a PIN already set answers `NOT_ALLOWED` (`0x30`), as a YubiKey 5.8.0
   does.** CTAP §6.5.5.5 names `PIN_AUTH_INVALID` (`0x33`) there, and RS-Key answered
   it. The YubiKey answers `0x30` whether or not the request carries a newPinEnc, and

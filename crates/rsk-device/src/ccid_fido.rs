@@ -132,14 +132,13 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static> Applet<Fs<S>> for FidoCcidApplet<'_,
         true
     }
 
-    /// SELECT answers `U2F_V2`, which is how a host learns CTAP1 is served here, and
-    /// lifts an END. A re-SELECT clears nothing else: the session state is the
-    /// device's, shared with the CTAPHID transport, and dropping a PIN token because a
-    /// reader re-selected the applet would let either transport revoke the other's
-    /// authorization.
-    fn select(&mut self, _reselect: bool, _fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
+    /// SELECT answers `U2F_V2` while CTAP1 is served here, `FIDO_2_0` once alwaysUv has
+    /// switched it off (`select_version`), and lifts an END. Nothing else: the session is
+    /// the device's, and a re-SELECT on this transport must not revoke CTAPHID's token.
+    fn select(&mut self, _reselect: bool, fs: &mut Fs<S>, res: &mut ResBuf) -> Sw {
         self.ended = false;
-        if res.extend(rsk_fido::consts::U2F_VERSION) {
+        let version = rsk_fido::u2f::select_version(fs, &*self.presence.borrow());
+        if res.extend(version) {
             Sw::OK
         } else {
             Sw::WRONG_LENGTH

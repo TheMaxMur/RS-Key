@@ -17,7 +17,7 @@
 
 use rsk_secret::Secret;
 
-use rsk_fs::Storage;
+use rsk_fs::{Fs, Storage};
 use rsk_sdk::apdu::Apdu;
 use rsk_sdk::sw::Sw;
 
@@ -30,7 +30,7 @@ use crate::ec::{MAX_DER_SIG, P256Key};
 use crate::journal;
 use crate::keyderiv::{KEY_HANDLE_LEN, derive_new, fido_load_key, verify_key};
 use crate::seed::{bump_sign_counter, load_att_key};
-use crate::{Ctx, Rng};
+use crate::{Ctx, Rng, UserPresence};
 
 /// Dispatch a U2F APDU; writes the response body into `out`, returns `(SW, len)`.
 pub fn process_u2f<S: Storage, R: Rng>(
@@ -43,12 +43,12 @@ pub fn process_u2f<S: Storage, R: Rng>(
         return (Sw::CLA_NOT_SUPPORTED, 0);
     }
     match apdu.ins {
-        // §7.2.4: alwaysUv disables the CTAP1/U2F interface, so register and
-        // authenticate fail immediately with the status word that clause names —
-        // SW_COMMAND_NOT_ALLOWED, not the "test-of-user-presence required" code,
-        // which would have the client retry a switched-off interface forever.
-        // VERSION, a capability query that touches no credential, stays live.
-        CTAP_REGISTER | CTAP_AUTHENTICATE if u2f_gate(ctx) == U2fGate::Disabled => {
+        // §7.2.4: alwaysUv disables CTAP1/U2F, and a command fails at once with the
+        // SW_COMMAND_NOT_ALLOWED it names (not "touch me", which a client retries for
+        // ever) — VERSION too, as on a YubiKey 5.8.0 (measured 2026-09-30).
+        CTAP_REGISTER | CTAP_AUTHENTICATE | CTAP_VERSION
+            if u2f_gate(ctx.fs, ctx.presence) == U2fGate::Disabled =>
+        {
             (Sw::COMMAND_NOT_ALLOWED, 0)
         }
         CTAP_REGISTER => cmd_register(ctx, apdu, out),
@@ -67,7 +67,7 @@ pub fn process_u2f<S: Storage, R: Rng>(
 
 /// What a U2F operation owes the user before it may run — CTAP 2.1 §7.2.4.
 #[derive(PartialEq, Eq, Clone, Copy)]
-enum U2fGate {
+pub(crate) enum U2fGate {
     /// alwaysUv is off: plain user presence, the classic U2F contract.
     Presence,
     /// alwaysUv is on and a built-in user verification method is configured. §7.2.4
@@ -76,18 +76,18 @@ enum U2fGate {
     /// operation runs that method instead of a bare touch, and U2F stops being a
     /// presence-only way around the always-require-UV guarantee.
     BuiltinUv,
-    /// alwaysUv is on with nothing to verify against: the interface is disabled, and
-    /// getInfo drops `U2F_V2` to match.
+    /// alwaysUv is on with nothing to verify against: every U2F answer says it is off.
     Disabled,
 }
 
-fn u2f_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> U2fGate {
-    if !crate::config::always_uv_enabled(ctx.fs) {
-        U2fGate::Presence
-    } else if crate::clientpin::builtin_uv_enabled(ctx) {
-        U2fGate::BuiltinUv
-    } else {
-        U2fGate::Disabled
+impl U2fGate {
+    /// §7.2.4, read once for every U2F answer; `builtin_uv` is a method configured.
+    pub(crate) fn of(always_uv: bool, builtin_uv: bool) -> Self {
+        match (always_uv, builtin_uv) {
+            (false, _) => U2fGate::Presence,
+            (true, true) => U2fGate::BuiltinUv,
+            (true, false) => U2fGate::Disabled,
+        }
     }
 }
 
@@ -100,7 +100,7 @@ fn u2f_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> U2fGate {
 /// user instead of collapsing into one unlabelled PIN prompt (audit run-28). The card
 /// comes first, so the operation is named before the PIN is typed.
 fn u2f_interaction<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, confirm: crate::Confirm<'_>) -> bool {
-    match u2f_gate(ctx) {
+    match u2f_gate(ctx.fs, ctx.presence) {
         U2fGate::BuiltinUv => {
             let owes_card =
                 crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
@@ -109,6 +109,14 @@ fn u2f_interaction<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, confirm: crate::Conf
         }
         _ => ctx.check_user_presence(confirm),
     }
+}
+
+/// The store's and the backend's reading of [`U2fGate`]. getInfo, which is handed the
+/// same facts rather than the store, reads [`U2fGate::of`] too.
+fn u2f_gate<S: Storage>(fs: &mut Fs<S>, presence: &dyn UserPresence) -> U2fGate {
+    let always_uv = crate::config::always_uv_enabled(fs);
+    let builtin_uv = crate::clientpin::builtin_uv_enabled(fs, presence);
+    U2fGate::of(always_uv, builtin_uv)
 }
 
 fn cmd_register<S: Storage, R: Rng>(
@@ -314,7 +322,7 @@ fn cmd_authenticate<S: Storage, R: Rng>(
     // interface is still reachable under alwaysUv, so skipping it would hand back
     // exactly the presence-free signature the clause exists to prevent. The emitted
     // TUP flag still follows the raw `tup`, so the wire meaning is unchanged.
-    let owes = tup || u2f_gate(ctx) == U2fGate::BuiltinUv;
+    let owes = tup || u2f_gate(ctx.fs, ctx.presence) == U2fGate::BuiltinUv;
     if owes && !u2f_interaction(ctx, crate::Confirm::titled("Sign in?")) {
         scalar.wipe();
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
@@ -392,6 +400,16 @@ pub fn hid_apdu(raw: &[u8]) -> Result<Apdu<'_>, Sw> {
         data,
         extended: true,
     })
+}
+
+/// The body a SELECT of [`FIDO_AID`](crate::consts::FIDO_AID) answers: `U2F_V2` while
+/// U2F is served, and once alwaysUv has switched it off the version CTAP 2.3 §11.3.3
+/// gives an authenticator with CTAP2 alone, as a YubiKey 5.8.0 answers (2026-09-30).
+pub fn select_version<S: Storage>(fs: &mut Fs<S>, presence: &dyn UserPresence) -> &'static [u8] {
+    match u2f_gate(fs, presence) {
+        U2fGate::Disabled => crate::consts::FIDO_2_0_VERSION,
+        U2fGate::Presence | U2fGate::BuiltinUv => crate::consts::U2F_VERSION,
+    }
 }
 
 #[cfg(test)]

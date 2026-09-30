@@ -413,6 +413,10 @@ pub const U2F_AUTH_NO_ENFORCE: u8 = 0x08; // don't enforce user presence and sig
 pub const U2F_AUTH_FLAG_TUP: u8 = 0x01; // test-of-user-presence bit
 pub const U2F_REGISTER_ID: u8 = 0x05; // registration response leading byte
 
+/// What a SELECT of [`FIDO_AID`] answers in place of [`U2F_VERSION`] once alwaysUv has
+/// switched U2F off: CTAP 2.3 §11.3.3's version string for CTAP2 alone.
+pub const FIDO_2_0_VERSION: &[u8] = b"FIDO_2_0";
+
 /// How much of an rpIdHash `credmgmt::settle_rp_records` matches a credential to
 /// its RP record on: a collision can only count a record high, never delete it.
 pub const SETTLE_KEY_LEN: usize = 8;

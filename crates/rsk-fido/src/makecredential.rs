@@ -463,7 +463,7 @@ pub fn make_credential<S: Storage, R: Rng>(
     if req.up == Some(false) {
         return Err(CtapError::InvalidOption);
     }
-    if req.uv && !builtin_uv_enabled(ctx) {
+    if req.uv && !builtin_uv_enabled(ctx.fs, ctx.presence) {
         return Err(CtapError::InvalidOption);
     }
     // §6.1.2 step 2 ahead of every check below — where the oracle puts it: a
@@ -610,7 +610,7 @@ fn enforce_pin<S: Storage, R: Rng>(
             // §6.1.2 step 6.3: with alwaysUv on and a configured pad, a token-less
             // request is UPGRADED to built-in UV rather than refused. Step 11.2 then
             // runs the ceremony for either route.
-            if req.uv || (always_uv && builtin_uv_enabled(ctx)) {
+            if req.uv || (always_uv && builtin_uv_enabled(ctx.fs, ctx.presence)) {
                 return builtin_uv_step(ctx);
             }
             // alwaysUv without a way to verify (§6.1.2 steps 6.2/6.4): clientPin is

@@ -112,7 +112,10 @@ on the same seed reproduces the same keys.
 
 Legacy **U2F** (CTAP1, `U2F_V2`) works the same way for older 2FA setups: the
 register/authenticate pair is non-resident, with a monotonic signature counter,
-attested by the device's end-entity certificate.
+attested by the device's end-entity certificate. With `alwaysUv` on, U2F is
+switched off, since a touch verifies nobody: the device stops announcing it, as a
+YubiKey does, and refuses its commands. The display build with a PIN set is the
+exception, where each U2F operation asks for the PIN on the panel.
 
 ## Signature counters
 
