@@ -456,3 +456,17 @@ fn u2f_over_ctaphid_takes_the_extended_encoding_alone() {
     let res = ctap.handle_msg(&u2f_version(), 0).to_vec();
     assert_eq!(&res[..res.len() - 2], rsk_fido::consts::U2F_VERSION);
 }
+
+#[test]
+fn a_select_with_a_byte_past_its_le_is_wrong_length_here_too() {
+    // The dispatcher's parser is the CCID one, so its length rule holds on this
+    // transport as well, and the refused SELECT selects nothing.
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    let past = [&select(rsk_vendor::VENDOR_AID)[..], &[0x00, 0xAA]].concat();
+    assert_eq!(
+        ctap.handle_msg(&past, 0),
+        rsk_sdk::Sw::WRONG_LENGTH.to_bytes()
+    );
+    assert!(ctap.disp.current().is_none());
+}

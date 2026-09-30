@@ -2335,6 +2335,98 @@ fn with_no_applet_selected_a_command_is_an_unknown_instruction() {
     assert_eq!(ccid.handle_apdu(&sm, 0), Sw::CLA_NOT_SUPPORTED.to_bytes());
 }
 
+/// YubiKey 5.8.0, measured 2026-09-30 over raw USB CCID: a command whose body fits no
+/// length case is `6700` alone, bytes past `Le` included, and the applet serves on.
+/// Not measured: whether a refused SELECT moves the selection; here it does not.
+#[test]
+fn a_command_whose_body_fits_no_length_case_is_wrong_length() {
+    use rsk_sdk::Sw;
+    let hex = |s: &str| -> Vec<u8> {
+        let digits: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+        digits
+            .chunks(2)
+            .map(|p| u8::from_str_radix(core::str::from_utf8(p).unwrap(), 16).unwrap())
+            .collect()
+    };
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let oath = "00A40400 07 A0000005272101";
+    let selected = ccid.handle_apdu(&hex(&format!("{oath} 00")), 0).to_vec();
+    assert_eq!(sw(&selected), Sw::OK);
+    assert_eq!(ccid.handle_apdu(&hex(oath), 0), &selected[..], "case 3");
+
+    let openpgp = select(rsk_openpgp::consts::OPENPGP_AID);
+    assert_eq!(sw(ccid.handle_apdu(&openpgp, 0)), Sw::OK);
+    let whole = ccid.handle_apdu(&hex("00CA006E 000000"), 0).to_vec();
+    assert_eq!(sw(&whole), Sw::OK);
+    let n = whole.len() - 2;
+    assert!(n > 256, "DO 6E is {n} bytes, too few to show a cut");
+    // The bytes of DO 6E served, or `None` for the bare `6700`.
+    let rows: [(String, Option<usize>); 9] = [
+        (format!("{oath} 00 AA"), None),
+        (format!("{oath} 00 AABB"), None),
+        ("00A40400 000007 A0000005272101 0000 AA".into(), None),
+        ("00CA006E 00".into(), Some(256)),
+        ("00CA006E 00AA".into(), Some(0xAA)),
+        ("00CA006E 10AA".into(), None),
+        ("00CA006E 000000 AA".into(), None),
+        ("00CA006E 000000 AABB".into(), Some(n)),
+        ("00A40400 05 A0".into(), None),
+    ];
+    for (raw, served) in rows {
+        let res = ccid.handle_apdu(&hex(&raw), 0).to_vec();
+        let Some(cut) = served else {
+            assert_eq!(res, Sw::WRONG_LENGTH.to_bytes(), "{raw}");
+            continue;
+        };
+        assert_eq!(res[..res.len() - 2], whole[..cut], "{raw}: the body");
+        let owed = if cut < n { 0x61 } else { 0x90 };
+        assert_eq!(sw(&res).sw1(), owed, "{raw}");
+    }
+    assert_eq!(
+        ccid.handle_apdu(&hex("00CA006E 000000"), 0),
+        &whole[..],
+        "OpenPGP is still the one selected"
+    );
+}
+
+/// RS-Key's own, as for a class it does not answer: a command refused for its lengths
+/// leaves a held tail and an open chain as they were.
+#[test]
+fn a_command_refused_for_its_lengths_leaves_a_tail_and_a_chain_as_they_were() {
+    use rsk_sdk::Sw;
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let refused = [0x00, 0xCA, 0x00, 0x6E, 0x00, 0x00, 0x00, 0xAA];
+    let short_read = [0x00, 0xCA, 0x00, 0x6E, 0x00];
+    ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0);
+    let (whole, _) = exchange_chained(&mut ccid, &short_read);
+    let first = ccid.handle_apdu(&short_read, 0).to_vec();
+    assert_eq!(sw(&first).sw1(), 0x61, "a short read owes a tail");
+    assert_eq!(ccid.handle_apdu(&refused, 0), Sw::WRONG_LENGTH.to_bytes());
+    let (rest, status) = exchange_chained(&mut ccid, &[0x00, 0xC0, 0x00, 0x00, 0x00]);
+    assert_eq!(status, Sw::OK);
+    assert_eq!(
+        [&first[..first.len() - 2], &rest[..]].concat(),
+        whole,
+        "the tail"
+    );
+
+    let write = crate::tests::vendor_config_write(rsk_fido::consts::CONFIG_TARGET_LED, &LED_BLOCK);
+    let (head, tail) = write.split_at(write.len() / 2);
+    ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0);
+    let segment = apdu(0x90, 0x10, 0x00, 0x00, head);
+    assert_eq!(sw(ccid.handle_apdu(&segment, 0)), Sw::OK);
+    assert_eq!(ccid.handle_apdu(&refused, 0), Sw::WRONG_LENGTH.to_bytes());
+    let last = exchange_chained(&mut ccid, &apdu(0x80, 0x10, 0x00, 0x00, tail));
+    assert_eq!(
+        last,
+        (vec![0x00], Sw::OK),
+        "the chain took its final segment"
+    );
+    assert_eq!(env.board.borrow().config_written, 1);
+}
+
 /// U2F VERSION takes no data (U2F Raw Message Formats §6.1), whichever transport
 /// carries it: a YubiKey 5.8.0 refuses one with a data field `6700` over both.
 #[test]

@@ -125,6 +125,15 @@ YubiKey 5.8.0; a segment that would reach or pass that is `6700`, and the partia
 is dropped rather than dispatched — so a host that retries the segment is
 starting a **new** chain, not continuing the old one.
 
+The lengths have to describe the command exactly, short or extended (`00`, then
+a two-byte `Lc` or `Le`): a byte past the `Le`, or an `Lc` its data does not
+fill, is `6700` before any applet sees the command, as a YubiKey 5.8.0 answers it
+over raw USB. Two shapes outside ISO 7816-4 are read as that YubiKey reads them:
+a two-byte body `00 xx` is the extended `Le` `00xx`, and an extended `Le`
+followed by two more bytes is a case 4 with `Lc` `0000`, those two bytes its
+`Le`. RS-Key's own: the selection, an open chain and a held tail stay as they
+were.
+
 ![ISO-7816 short-APDU cases. Every command opens with the four-byte header CLA INS P1 P2. Case 1 is header only; Case 2 appends a one-byte Le (expected response length, 00 meaning up to 256); Case 3 appends Lc then Lc bytes of command data; Case 4 appends Lc, data, and Le. SELECT is a Case 4 command, VERIFY a Case 3 command](images/apdu-cases.svg)
 
 PIV, OpenPGP and CTAP over CCID answer a success body longer than the request's

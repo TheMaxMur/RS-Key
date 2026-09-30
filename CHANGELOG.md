@@ -236,6 +236,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A command whose lengths fit no ISO 7816-4 case is `6700`, as on a YubiKey
+  5.8.0.** RS-Key ignored bytes past the `Le`: `00 A4 04 00 07 <OATH AID> 00 AA`
+  selected OATH, and an extended `Le` followed by one more byte read the whole DO.
+  The YubiKey answers both `6700` before any application sees the command
+  (measured over raw USB). A byte past the `Le`, short or extended, is now `6700`
+  over CCID and to the vendor applet over CTAPHID alike, and the selection, an open
+  chain and a held tail stay as they were. Two shapes outside the standard are
+  read as the YubiKey reads them: `00 xx` is the extended `Le` `00xx` (so `00 00`
+  is 65536 now, not 256; that one is unmeasured), and an extended `Le` followed by
+  two more bytes is a case 4 with `Lc` 0. U2F over CTAPHID keeps its own framing.
+  `bcdDevice` 0x0A83 → 0x0A84.
+
 - **OpenPGP GET CHALLENGE serves a whole frame.** It stopped at 1024 random bytes,
   the size of the applet's scratch, which DO `C0` announced as its maximum. It now
   serves up to 3060, one response APDU less its status word, the most one CCID

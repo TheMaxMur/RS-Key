@@ -48,7 +48,8 @@ pub struct Apdu<'a> {
 
 impl<'a> Apdu<'a> {
     /// Parse a raw command buffer. Handles ISO-7816 cases 1–4, short and
-    /// extended length.
+    /// extended length, and refuses a body that fits none of them — a byte past
+    /// `Le` included — with [`Error::WrongLength`], as a YubiKey 5.8.0 does.
     pub fn parse(buf: &'a [u8]) -> Result<Self> {
         // No slice patterns: Kani's codegen refuses them behind a reference, and the
         // harnesses in `apdu_kani.rs` drive this parser.
@@ -88,6 +89,8 @@ impl<'a> Apdu<'a> {
                     return Err(Error::WrongLength);
                 };
                 data = body;
+                // An Lc of 0 is taken too: a YubiKey 5.8.0 reads `00 0000 xxyy` as a
+                // case 4 with the Le `xxyy`.
                 if after.len() == 2
                     && let Some(&le) = after.first_chunk::<2>()
                 {
@@ -95,8 +98,17 @@ impl<'a> Apdu<'a> {
                         0 => NE_EXT_MAX,
                         n => n as usize,
                     };
+                } else if !after.is_empty() {
+                    return Err(Error::WrongLength);
                 }
             }
+        } else if let (Some(&[0, lo]), 2) = (rest.first_chunk::<2>(), rest.len()) {
+            // `00 xx` fits no case: a YubiKey 5.8.0 reads it as the 16-bit Le `00xx`.
+            extended = true;
+            ne = match lo {
+                0 => NE_EXT_MAX,
+                n => n as usize,
+            };
         } else if let Some((&lc, tail)) = rest.split_first() {
             // Short Lc (cases 3 and 4).
             nc = lc as usize;
@@ -111,6 +123,8 @@ impl<'a> Apdu<'a> {
                     0 => NE_SHORT_MAX,
                     n => n as usize,
                 };
+            } else if !after.is_empty() {
+                return Err(Error::WrongLength);
             }
         }
 
