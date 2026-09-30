@@ -778,9 +778,9 @@ pub fn global_sign_counter<S: Storage>(fs: &mut Fs<S>) -> Result<u32> {
     })
 }
 
-/// Persist `counter+1`; returns the value *before* the bump — the value to
-/// report in the current operation. Now used only by U2F authenticate (CTAP2
-/// signature counters are per-credential, see [`cred_sign_counter`]).
+/// Persist `counter+1`; returns the value *before* the bump — the value to report
+/// in the current operation. U2F's counter, for AUTHENTICATE and for a CTAP2
+/// assertion of a U2F registration; other CTAP2 counters are [`cred_sign_counter`]'s.
 pub fn bump_sign_counter<S: Storage>(fs: &mut Fs<S>) -> Result<u32> {
     let ctr = global_sign_counter(fs)?;
     fs.put_counter(EF_COUNTER, &ctr.wrapping_add(1).to_le_bytes())?;

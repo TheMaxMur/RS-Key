@@ -45,7 +45,7 @@ use crate::keyderiv::{KEY_HANDLE_LEN, fido_load_key, verify_key};
 use crate::largeblobext::{self, GaInput};
 #[cfg(feature = "preview-sign")]
 use crate::previewsign;
-use crate::seed::{report_sign_counter, set_cred_sign_counter};
+use crate::seed::{bump_sign_counter, report_sign_counter, set_cred_sign_counter};
 use crate::state::{AssertionState, MAX_ASSERTION_CREDS, PERM_GA};
 use crate::{Ctx, Rng};
 
@@ -827,6 +827,11 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     // A non-resident credential keeps no on-device state and reports 0.
     let ctr = match best.slot {
         Some(slot) => report_sign_counter(ctx.fs, slot).map_err(|_| CtapError::Other)?,
+        // A U2F registration counts on the counter U2F AUTHENTICATE advances, read and
+        // advanced here before anything is signed, as there: one sequence on both paths.
+        None if sel.as_ref().is_some_and(|c| c.u2f) => {
+            bump_sign_counter(ctx.fs).map_err(|_| CtapError::Other)?
+        }
         None => 0,
     };
     let mut ad = [0u8; 37 + GA_EXT_MAX + 32];

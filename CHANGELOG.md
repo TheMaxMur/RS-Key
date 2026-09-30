@@ -244,6 +244,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A U2F registration asserted over CTAP2 counts on the U2F counter, as on a
+  YubiKey 5.8.0.** A site that moved from U2F to WebAuthn logs its old
+  registrations in with the `appid` extension, a CTAP2 getAssertion whose rpId is
+  the AppID. RS-Key reported signCount 0 there while U2F AUTHENTICATE went on
+  advancing its own counter, so the site saw the counter fall back to 0, the sign
+  of a cloned key. The YubiKey reports one rising counter for the credential on
+  both paths (measured: 1, 4, 7, 11 across AUTHENTICATE, CTAP2 with `up: false`,
+  CTAP2 with `up: true`, AUTHENTICATE). RS-Key now reports and advances U2F's
+  counter on the CTAP2 path too, `up: false` included, in steps of one, and stores
+  it before anything is signed; a counter the flash will not serve fails the
+  assertion (`CTAP1_ERR_OTHER`), as it fails U2F AUTHENTICATE. Other non-resident
+  credentials still report 0. `bcdDevice` 0x0A86 → 0x0A87.
+
 - **A command whose lengths fit no ISO 7816-4 case is `6700`, as on a YubiKey
   5.8.0.** RS-Key ignored bytes past the `Le`: `00 A4 04 00 07 <OATH AID> 00 AA`
   selected OATH, and an extended `Le` followed by one more byte read the whole DO.

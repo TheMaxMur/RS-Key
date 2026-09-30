@@ -5154,6 +5154,87 @@ fn hmac_secret_length_and_mac_codes() {
     }
 }
 
+/// An extended-length U2F command, as U2F HID frames one.
+fn u2f_apdu(ins: u8, p1: u8, data: &[u8]) -> std::vec::Vec<u8> {
+    let lc = u16::try_from(data.len()).unwrap().to_be_bytes();
+    [&[0x00, ins, p1, 0x00, 0x00, lc[0], lc[1]][..], data].concat()
+}
+
+/// YubiKey 5.8.0, measured 2026-09-30: one U2F registration asserted by U2F
+/// AUTHENTICATE, by CTAP2 with the AppID as its rpId (`up: false`, then `up: true`)
+/// and by AUTHENTICATE again reports one rising counter there: 1, 4, 7, 11. RS-Key's
+/// steps are +1; a signCount 0 on the CTAP2 path reads to a relying party as a clone.
+#[test]
+fn a_u2f_credential_counts_on_one_counter_over_both_protocols() {
+    use crate::consts::{CTAP_AUTHENTICATE, CTAP_REGISTER, U2F_AUTH_ENFORCE};
+    use crate::u2f::process_u2f;
+    use rsk_sdk::{Apdu, Sw};
+    let (mut fs, mut rng) = setup();
+    let app = sha256(b"example.com");
+    let chal = [0xC4u8; 32];
+    let mut out = [0u8; 1024];
+    let mut state = crate::FidoState::new();
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 20,
+    };
+    let register = u2f_apdu(CTAP_REGISTER, 0, &[chal, app].concat());
+    let (sw, _) = process_u2f(&mut ctx, &Apdu::parse(&register).unwrap(), &mut out);
+    assert_eq!(sw, Sw::OK);
+    let kh = out[67..67 + KEY_HANDLE_LEN].to_vec();
+    let body = [&chal[..], &app, &[KEY_HANDLE_LEN as u8], &kh].concat();
+    let authenticate = u2f_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &body);
+    let authenticate = Apdu::parse(&authenticate).unwrap();
+
+    let mut counts = std::vec::Vec::new();
+    assert_eq!(process_u2f(&mut ctx, &authenticate, &mut out).0, Sw::OK);
+    counts.push(u32::from_be_bytes(out[1..5].try_into().unwrap()));
+    for up in [false, true] {
+        let n = get_assertion(&mut ctx, &ga_request_up(&kh, up), &mut out).unwrap();
+        counts.push(assertion_sign_count(&out[..n]));
+    }
+    assert_eq!(process_u2f(&mut ctx, &authenticate, &mut out).0, Sw::OK);
+    counts.push(u32::from_be_bytes(out[1..5].try_into().unwrap()));
+    let first = counts[0];
+    assert_eq!(counts, [first, first + 1, first + 2, first + 3]);
+}
+
+/// Read and advanced before anything is signed, as U2F AUTHENTICATE reads it: a
+/// U2F credential whose counter the flash will not serve is not asserted over CTAP2
+/// at all, rather than asserted with a signCount 0.
+#[test]
+fn a_u2f_credential_whose_counter_will_not_read_is_not_asserted() {
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
+    let (kh, _) = crate::keyderiv::derive_new(seed.expose(), &sha256(b"example.com"), &mut rng);
+    medium.stick(Some(crate::consts::EF_COUNTER.get()));
+    let mut out = [0u8; 1024];
+    let mut state = crate::FidoState::new();
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        presence: &mut presence,
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 20,
+    };
+    assert_eq!(
+        get_assertion(&mut ctx, &ga_request_up(&kh, false), &mut out),
+        Err(CtapError::Other)
+    );
+}
+
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "getassertion_reads_tests.rs"]
 mod reads;

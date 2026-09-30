@@ -124,7 +124,9 @@ for a cloned key. RS-Key keeps one **per resident credential**: a passkey starts
 0 and only its own logins advance it, so colluding sites can't read a shared global
 counter to gauge how much you use the key elsewhere (WebAuthn §6.1.1). A non-resident
 second-factor credential stores nothing on the device, so it reports 0. Legacy U2F
-keeps the single monotonic counter that protocol expects.
+keeps the single monotonic counter that protocol expects, and a U2F registration
+asserted over CTAP2 (a site's `appid` login) reports and advances that same counter,
+as a YubiKey 5.8.0 does, so the site sees one rising sequence on both paths.
 
 A counter the flash cannot serve is refused rather than reported as 0: an assertion
 the device could not count is not one it signs, so a read fault costs you the login
