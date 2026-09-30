@@ -125,6 +125,13 @@ flag, since the org attestation is the one the device cannot give. Re-import the
 chain within the cap to restore it. Up to bcdDevice `0x0A69` that registration
 failed with `CTAP1_ERR_OTHER`.
 
+The org key itself is held to the same rule. One that is stored but will not open
+on this device (sealed on another) gives the same per-device attestation and no
+`ep`. A key the flash could not read fails the registration with
+`CTAP1_ERR_OTHER` for the host to retry, as an unreadable chain does. Up to
+bcdDevice `0x0A78` both got the per-device attestation *with* `ep`, as if no org
+key were installed.
+
 ### Without an org chain (the default)
 
 If no org key is provisioned, the request field still has an effect, per the

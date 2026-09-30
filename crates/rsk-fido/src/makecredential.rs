@@ -62,7 +62,7 @@ use crate::keyderiv::fido_load_key;
 use crate::largeblobext::{self, McInput};
 #[cfg(feature = "preview-sign")]
 use crate::previewsign;
-use crate::seed::load_att_key;
+use crate::seed::{AttKey, read_att_key};
 use crate::state::PERM_MC;
 use crate::{Ctx, Rng};
 
@@ -1151,8 +1151,8 @@ impl AttBufs {
 }
 
 /// What an enterprise request is attested with: the installed org key, its chain
-/// already read into the [`AttBufs`]; no org key; or one whose chain is missing or
-/// not whole, which the device's own attestation stands in for.
+/// already read into the [`AttBufs`]; no org key; or one that will not open or whose
+/// chain is missing or not whole, which the device's own attestation stands in for.
 enum OrgAtt {
     None,
     Chain { key: Secret<[u8; 32]>, len: usize },
@@ -1170,13 +1170,16 @@ impl OrgAtt {
 
 /// Read the org key and its chain into `att` for an enterprise request. Whole, not
 /// merely present: a chain an older build stored over this build's cap does not fit
-/// the buffer. A chain read the flash failed stays an error the host can retry.
+/// the buffer. A key or chain read the flash failed stays an error the host can retry.
 fn org_attestation<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     att: &mut AttBufs,
 ) -> Result<OrgAtt, CtapError> {
-    let Some(key) = load_att_key(&ctx.dev, ctx.fs) else {
-        return Ok(OrgAtt::None);
+    let key = match read_att_key(&ctx.dev, ctx.fs).map_err(|_| CtapError::Other)? {
+        AttKey::Loaded(key) => key,
+        AttKey::Absent => return Ok(OrgAtt::None),
+        // Installed and not openable here: nothing to attest with, so no `ep` either.
+        AttKey::Unopenable => return Ok(OrgAtt::Cut),
     };
     let read = ctx.fs.try_read(EF_ATT_CHAIN, &mut att.chain[..]);
     Ok(match read.map_err(|_| CtapError::Other)? {

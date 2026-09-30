@@ -898,6 +898,29 @@ pub(crate) fn wrap_keydev_legacy<S: Storage>(
     fs.put(EF_KEY_DEV.get(), &out).unwrap();
 }
 
+/// `EF_ATT_KEY` as an enterprise attestation has to tell it apart: no org key, one
+/// that will not open under this device, or the key itself.
+pub(crate) enum AttKey {
+    Absent,
+    Unopenable,
+    Loaded(Secret<[u8; 32]>),
+}
+
+/// [`load_att_key`] with its outcomes kept apart, and `Err` for a read the flash
+/// failed: a retry may serve that one, and never a record that will not open.
+pub(crate) fn read_att_key<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Result<AttKey> {
+    let mut buf = Secret::<[u8; 64]>::zeroed();
+    let out = fs
+        .try_read_key(EF_ATT_KEY, buf.expose_mut())
+        .map(|read| match read {
+            None => AttKey::Absent,
+            Some(n) => open_any(dev, &buf.expose()[..n.min(buf.expose().len())])
+                .map_or(AttKey::Unopenable, AttKey::Loaded),
+        });
+    buf.wipe();
+    out
+}
+
 #[cfg(test)]
 #[path = "seed_tests.rs"]
 mod tests;

@@ -162,6 +162,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **An enterprise attestation over an org key that cannot be loaded no longer
+  claims `ep`.** The org attestation key was read as absent whether it was absent,
+  unreadable or would not open, so an enterprise request got the per-device
+  attestation with `ep: true` in all three cases, as if no org key were installed.
+  An absent key still gives that. A key stored but not openable on this device is
+  treated as a cut chain is: the per-device attestation and no `ep`. A key the
+  flash could not read fails the registration with `CTAP1_ERR_OTHER`, which the host
+  can retry, as an unreadable chain already did. U2F's batch attestation reads the
+  key as before. `bcdDevice` 0x0A78 → 0x0A79.
+
 - **A makeCredential whose `pubKeyCredParams` is absent or empty is
   `UNSUPPORTED_ALGORITHM` (`0x26`), as on a YubiKey 5.8.0.** CTAP §6.1.2 step 3
   walks the list for an algorithm the authenticator supports, and with no list, or an

@@ -3355,3 +3355,66 @@ fn a_pub_key_cred_params_that_offers_nothing_is_an_unsupported_algorithm() {
         assert_eq!(run_err(&buf[..n]), want, "pubKeyCredParams {label}");
     }
 }
+
+/// An org key whose record the flash could not read is not an absent one: the
+/// enterprise registration fails `CTAP1_ERR_OTHER` for the host to retry, as a faulted
+/// chain read already does. The same store with the read answering gives the org's.
+#[test]
+fn a_faulted_org_key_read_fails_the_enterprise_registration() {
+    let req = build_request_ea(2);
+    let mut whole = [0u8; 64];
+    let n = crate::cert::att_chain_pack(&[0x30u8, 0x03, 1, 2, 3], &mut whole).unwrap();
+    let register = |fault: bool| {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        run_ea_with(backend, &req, true, |fs| {
+            install_org(fs, Some(&whole[..n]));
+            medium.stick(fault.then_some(crate::consts::EF_ATT_KEY.get()));
+        })
+        .map(|(resp, _)| resp)
+    };
+    let resp = register(false).expect("control: a readable org key registers");
+    assert_eq!(
+        x5c_of(&resp),
+        [whole[3..n].to_vec()],
+        "control: the org chain"
+    );
+    assert_eq!(register(true).unwrap_err(), CtapError::Other);
+}
+
+/// An org key that is there but will not open under this device (sealed by another
+/// one here) can attest nothing: the device's own attestation, with no `ep`, as over a
+/// cut chain. No org key at all is the device's attestation WITH `ep`, as before.
+#[test]
+fn an_org_key_that_will_not_open_is_the_device_attestation_without_ep() {
+    let req = build_request_ea(2);
+    let mut whole = [0u8; 64];
+    let n = crate::cert::att_chain_pack(&[0x30u8, 0x03, 1, 2, 3], &mut whole).unwrap();
+    let elsewhere = Device {
+        serial_hash: &[0xBA; 32],
+        ..dev()
+    };
+    for (what, sealed_by, members) in [
+        ("an org key sealed elsewhere", Some(&elsewhere), 3),
+        ("no org key", None, 4),
+    ] {
+        let (resp, mut fs) = run_ea_with(RamStorage::new(), &req, true, |fs| {
+            if let Some(other) = sealed_by {
+                crate::seed::store_att_key(other, fs, &[0x21u8; 32]).unwrap();
+                fs.put(EF_ATT_CHAIN, &whole[..n]).unwrap();
+            }
+        })
+        .unwrap_or_else(|e| panic!("{what}: the registration failed: {e:?}"));
+        assert_eq!(
+            Decoder::new(&resp).map().unwrap().unwrap(),
+            members,
+            "{what}: `ep` is there only with an org attestation to stand behind it, or none"
+        );
+        let mut ee = [0u8; 1024];
+        let len = fs.read(EF_EE_DEV, &mut ee).unwrap();
+        assert_eq!(
+            x5c_of(&resp),
+            [ee[..len].to_vec()],
+            "{what}: the device's own cert"
+        );
+    }
+}
