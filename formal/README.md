@@ -1825,7 +1825,7 @@ so the kill measured a defence in depth rather than the modelled defect. It now
 widens both layers, and `put_data_c4_refuses_a_user_status` drives the command
 so the outer gate is asserted too.
 
-The live roster is **92 entries: all 86 executable patches killed, six
+The live roster is **93 entries: all 87 executable patches killed, six
 unreachable with recorded evidence.**
 
 ## The sixth module — `RSKeyAdminSurface.tla`
@@ -2675,7 +2675,7 @@ describes. Falsified through the row itself, exit codes taken with no pipe:
 
 | Mutation | What the row said | Exit |
 |---|---|---|
-| the tree as it stands | `245 generated configuration(s) reproduce byte-for-byte, 1 hand-written` | 0 |
+| the tree as it stands | `247 generated configuration(s) reproduce byte-for-byte, 1 hand-written` | 0 |
 | one `BootCarryMut_*.cfg` deleted | `… writes it and formal/ does not have it` | **1** |
 | `MaxWeak = 2` → `1` inside one generated file | `differs … line 5: generator writes '    MaxWeak = 2', the tree has '    MaxWeak = 1'` | **1** |
 | the same edit made in the *generator* instead | 13 rows `differs …` — every `Boot*` configuration | **1** |
@@ -2787,7 +2787,7 @@ to itself.
 
 | Mutation | What the row said | Exit |
 |---|---|---|
-| the tree as it stands | `245 configuration(s) held to 68 entries (26 wildcard families covering 203), 6 ratchets, 1 exempt, 1 counterfactual repair(s)` | 0 |
+| the tree as it stands | `247 configuration(s) held to 68 entries (26 wildcard families covering 205), 6 ratchets, 1 exempt, 1 counterfactual repair(s)` | 0 |
 | `SeamMut_*.cfg` `RED` → `GREEN` | `… requires GREEN, but the configuration switches BugAdminOpensKeyOps on and so owes RED` | **1** |
 | the `SeamSolo_*.cfg` row deleted | `no verdict entry in formal/floors.txt and no registered exemption` | **1** |
 | a broader `SeamMut*` laid above it | `` `SeamMut_*.cfg` never decides anything: … `SeamMut*` matches 19 configuration(s) first `` | **1** |
@@ -2881,8 +2881,9 @@ run-tlc: DEAD ACTION in Seams.cfg -- never fired: NeverEnabled
 ```
 
 Mutation-tested both ways on the seam module: an action written to be
-unreachable is named and the run exits 1; the module as it stands fires **21 of
-21** and exits 0 (re-measured 2026-08-26; it was 20 before `0f71fdb`). It is opt-in because coverage costs wall clock — and that is
+unreachable is named and the run exits 1; the module as it stands fires **22 of
+22** and exits 0 (re-measured 2026-09-30, `PgpKeyOpRefused` the 22nd; it was 20
+before `0f71fdb`). It is opt-in because coverage costs wall clock — and that is
 now a measured price rather than a reason not to pay it. `COVERAGE=1
 ./run-tlc.sh Shipped.cfg` swept the FIDO module's 77.6 M states on 2026-08-26 in
 **2804 s against the plain run's 2034 s**, GREEN over the same 986 836 197
@@ -2953,7 +2954,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-TRACE-004` | `R4cGateAnswers` | MODELLED-ONLY | `TraceSecurity` | — | 0 | 0 | 0 | 0 | 0 | 0 |
 | `SEC-SEAM-001` | `NoStatusOutsideItsSelection` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 7 | 6 | 0 | 0 | 0 |
 | `SEC-SEAM-002` | `NoStatusAfterARefusedAuth` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
-| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 11 | 9 | 0 | 0 | 0 |
+| `SEC-SEAM-003` | `NoKeyOpOnTheAdminStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 12 | 10 | 0 | 0 | 0 |
 | `SEC-SEAM-004` | `ReselectPreservesAccessStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-005` | `ExemptRefusalPreservesStatus` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-SEAM-006` | `AccessCodeRemovalNeedsTheCode` | MODELLED-ONLY | `RSKeyAppletSeams` | — | 1 | 1 | 1 | 0 | 0 | 0 |

@@ -1863,3 +1863,39 @@ replace = """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
 note = "The model switch widens the REQUIREMENT: `PivAlwaysSpendsFreshness` recorded at every PIN policy, so a NEVER slot owes a spend. Its code image is the implementation obeying it, which is MX-POL-001's `BugNeverSlotSpendsFreshness` -- the implementation mutant the model sees nothing of (a bit-identical state space) and the requirement mutant it refuses at depth 3. The two levels therefore read the one fact from opposite sides, and both were read: TLC's PivKeyOp at a NEVER slot leaves pivFresh TRUE after a VERIFY and the widened recorder fires; the code's two failures, `a_key_operation_at_a_once_slot_spends_the_always_freshness` and `the_card_authentication_slot_needs_no_pin_by_default` in crates/rsk-piv/src/tests.rs, are an ALWAYS-slot signature answered 6982 where 9000 was owed after a NEVER-slot operation -- a freshness spent where `spend_pin` spends at PIN-gated slots only."
+
+# ---- batch 11: the refused key operation (batch3 item 1) --------------------
+
+[comutant.BugRefusedSigPinNotSpent]
+status = "patch"
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "A one-shot PW1 no. 81 spent only when the operation was SERVED, at both callers the model's `PgpKeyOpRefused` folds into one action: PSO:CDS past its PIN check and ATTEST past its touch. Two sites because the switch covers both, and each was measured ALONE and killed on its own, 1 failure apiece: the pso.rs site by `a_refused_pso_cds_spends_a_one_shot_pw1_like_a_yubikey` (crates/rsk-openpgp/src/tests.rs), whose status VERIFY answers 9000 after a CDS refused for having no key -- `no key: PW1 spent` asserted the other way; the attest.rs site by `attest_spends_a_one_shot_pw1_where_a_yubikey_does` (crates/rsk-openpgp/src/attest_tests.rs), `ATTEST after P1 04` answering 9000 where 6982 was owed. Both are the SERVED direction, as is TLC's: `PgpKeyOpRefused` at PW1.81 under the one-shot status leaves held.pw1 TRUE over psig FALSE, `viol` empty -- a PIN the requirement spent, still standing for the next signature."
+
+[[comutant.BugRefusedSigPinNotSpent.site]]
+file = "crates/rsk-openpgp/src/pso.rs"
+find = """
+    let res = try_pso(dev, fs, sess, rng, presence, apdu, out);
+    if spends {
+        spend_one_shot_pw1(fs, sess);
+    }
+"""
+replace = """
+    let res = try_pso(dev, fs, sess, rng, presence, apdu, out);
+    if spends && res.is_ok() {
+        spend_one_shot_pw1(fs, sess);
+    }
+"""
+
+[[comutant.BugRefusedSigPinNotSpent.site]]
+file = "crates/rsk-openpgp/src/attest.rs"
+find = """
+    let r = write_statement(dev, fs, sess, rng, apdu.p1, serial);
+    spend_one_shot_pw1(fs, sess);
+"""
+replace = """
+    let r = write_statement(dev, fs, sess, rng, apdu.p1, serial);
+    if r.is_ok() {
+        spend_one_shot_pw1(fs, sess);
+    }
+"""

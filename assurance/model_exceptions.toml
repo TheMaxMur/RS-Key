@@ -96,7 +96,7 @@
 [[exception]]
 id = "MX-SEAM-001"
 module = "RSKeyAppletSeams.tla"
-line = 144
+line = 147
 shape = "set"
 site = "Refs"
 clause = "Refs"
@@ -125,7 +125,7 @@ owed = "SeamSolo_BugRecoveryRefHoldsStatus.cfg"
 [[exception]]
 id = "MX-SEAM-002"
 module = "RSKeyAppletSeams.tla"
-line = 225
+line = 228
 shape = "clause"
 site = "ClearedFor"
 clause = 'r = "oathCode"'
@@ -147,7 +147,7 @@ carried_by = "NAR-OATH-REMOVAL"
 [[exception]]
 id = "MX-SEAM-003"
 module = "RSKeyAppletSeams.tla"
-line = 230
+line = 233
 shape = "clause"
 site = "AllCleared"
 clause = 'r = "oathCode"'
@@ -170,7 +170,7 @@ carried_by = "NAR-OATH-REMOVAL"
 [[exception]]
 id = "MX-SEAM-005"
 module = "RSKeyAppletSeams.tla"
-line = 260
+line = 263
 shape = "clause"
 site = "Reselect"
 clause = "a = Oath"
@@ -198,21 +198,21 @@ mutant = "SeamSolo_BugOathReselectUnrecorded.cfg"
 [[exception]]
 id = "MX-SEAM-006"
 module = "RSKeyAppletSeams.tla"
-line = 473
+line = 471
 shape = "clause"
-site = "PgpKeyOp"
+site = "PgpOneShotSpend"
 clause = 'r = "pw1"'
 kind = "narrowing"
-production = "EF_PW_PRIV[0] = 0 makes PW1 no. 81 valid for exactly one use: crates/rsk-openpgp/src/keys.rs spends it, and its two callers decide when — pso.rs after every PSO:CDS past its PIN check, attest.rs after every ATTEST past its touch. PW1 no. 82 — PSO:DECIPHER and INTERNAL AUTHENTICATE — carries no such rule and is not spent."
+production = "EF_PW_PRIV[0] = 0 makes PW1 no. 81 valid for exactly one use: crates/rsk-openpgp/src/keys.rs spends it, and its two callers decide when — pso.rs after every PSO:CDS past its PIN check, attest.rs after every ATTEST past its touch, served or refused alike. `PgpKeyOp` and `PgpKeyOpRefused` both reach this one clause. PW1 no. 82 — PSO:DECIPHER and INTERNAL AUTHENTICATE — carries no such rule and is not spent."
 why = '''
 The one-shot spend is narrowed to the signature reference. `BugSigPinNotSpent`
 mutates whether the spend HAPPENS; `BugDecipherPinSpentLikeSig` mutates which
 reference it happens AT, widening this clause to the decipher reference, and is
 required RED. It falls at `NoKeyOpOnTheAdminStatus` with `viol` EMPTY, so on the
-structural clause `held["pw1"] = psig`: a PgpKeyOp at PW1.82 under the one-shot
-status takes held.pw1 FALSE while psig stays TRUE. That is the REFUSED direction
--- a signature status dropped that the requirement keeps -- which is all this
-widening can do, and the code twin fails the same way round.
+structural clause `held["pw1"] = psig`: a key operation at PW1.82 under the
+one-shot status takes held.pw1 FALSE while psig stays TRUE. That is the REFUSED
+direction -- a signature status dropped that the requirement keeps -- which is
+all this widening can do, and the code twin fails the same way round.
 
 What no switch here reaches is a spend whose TARGET moved rather than its
 reference: a PW1.82 status taken down falls on no clause, since nothing requires
@@ -224,12 +224,12 @@ carried_by = "NAR-ASSIGNMENT-HOLES"
 [[exception]]
 id = "MX-SEAM-007"
 module = "RSKeyAppletSeams.tla"
-line = 476
+line = 479
 shape = "clause"
-site = "PgpKeyOp"
+site = "PgpSigFreshness"
 clause = 'r = "pw1"'
 kind = "narrowing"
-production = "The requirement-side twin of the line above: `psig` is the freshness the specification leaves behind, and it is spent by a signature under the one-shot status. The implementation also spends it on a PSO:CDS it refuses past the PIN check (5352d50) and on every ATTEST past its touch, served or refused, which the model has no action for; that can only take a status away."
+production = "The requirement-side twin of the line above: `psig` is the freshness the requirement leaves behind, spent under the one-shot status by a PSO:CDS or an ATTEST, served or refused past its PIN check or its touch — a YubiKey 5.8.0's rule, held in the code by `a_refused_pso_cds_spends_a_one_shot_pw1_like_a_yubikey` and `attest_spends_a_one_shot_pw1_where_a_yubikey_does`. `PgpKeyOpRefused` carries the refused half, which until it existed the model had no action for."
 why = '''
 Kept apart from MX-SEAM-006 for the reason the ghost exists at all. The two
 clauses are the implementation half and the requirement half of one fact, and
@@ -255,7 +255,7 @@ carried_by = "NAR-ASSIGNMENT-HOLES"
 [[exception]]
 id = "MX-SEAM-008"
 module = "RSKeyAppletSeams.tla"
-line = 645
+line = 672
 shape = "clause"
 site = "NoStatusOutsideItsSelection"
 clause = 'r = "oathCode"'
@@ -278,7 +278,7 @@ carried_by = "NAR-OATH-REMOVAL"
 [[exception]]
 id = "MX-SEAM-009"
 module = "RSKeyAppletSeams.tla"
-line = 209
+line = 212
 shape = "clause"
 site = "Init"
 clause = 'r = "oathCode"'
@@ -300,7 +300,7 @@ carried_by = "NAR-OATH-REMOVAL"
 [[exception]]
 id = "MX-SEAM-010"
 module = "RSKeyAppletSeams.tla"
-line = 604
+line = 630
 shape = "clause"
 site = "FactoryWipe"
 clause = 'r = "oathCode"'
@@ -323,7 +323,7 @@ carried_by = "NAR-OATH-REMOVAL"
 [[exception]]
 id = "MX-SEAM-011"
 module = "RSKeyAppletSeams.tla"
-line = 247
+line = 250
 shape = "clause"
 site = "Reselect"
 clause = "a = Oath"
@@ -337,7 +337,7 @@ same 410 distinct states (measured 2026-09-23). The recorder accepts
 `held' = held`, and the seam invariant sees only a status held outside the
 selection that bought it, which a re-SELECT never leaves. So the debt is a
 requirement before it is a mutant. Re-measured 2026-09-30: still GREEN, at the
-same 6 189 generated and 422 distinct states as Seams.cfg. What pays for the clause today is
+same 6 349 generated and 422 distinct states as Seams.cfg. What pays for the clause today is
 crates/rsk-oath/src/reselect_tests.rs `a_reselect_of_the_oath_aid_drops_the_otp_pin`.
 '''
 mutant = "owes"
@@ -346,7 +346,7 @@ owed = "SeamSolo_BugReselectKeepsOathOtpPin.cfg"
 [[exception]]
 id = "MX-SEAM-012"
 module = "RSKeyAppletSeams.tla"
-line = 337
+line = 340
 shape = "clause"
 site = "PgpVerify"
 clause = 'r = "pw1"'
@@ -366,7 +366,7 @@ mutant = "SeamSolo_BugAnyPgpVerifyArmsSig.cfg"
 [[exception]]
 id = "MX-SEAM-013"
 module = "RSKeyAppletSeams.tla"
-line = 348
+line = 351
 shape = "clause"
 site = "PgpChangeRefused"
 clause = 'r = "pw1"'
@@ -386,7 +386,7 @@ mutant = "SeamSolo_BugRefusedPw1ChangeKeepsSig.cfg"
 [[exception]]
 id = "MX-SEAM-014"
 module = "RSKeyAppletSeams.tla"
-line = 515
+line = 541
 shape = "clause"
 site = "AdminOpGuard"
 clause = "a = Piv"
@@ -401,7 +401,7 @@ mutant = "SeamSolo_BugUserStatusOpensAdmin.cfg"
 [[exception]]
 id = "MX-SEAM-015"
 module = "RSKeyAppletSeams.tla"
-line = 517
+line = 543
 shape = "clause"
 site = "AdminOpGuard"
 clause = "a = Piv"
@@ -419,7 +419,7 @@ mutant = "SeamSolo_BugUserStatusOpensAdmin.cfg"
 [[exception]]
 id = "MX-SEAM-016"
 module = "RSKeyAppletSeams.tla"
-line = 520
+line = 546
 shape = "clause"
 site = "AdminOpPolicy"
 clause = "a = Piv"
@@ -431,7 +431,7 @@ The recorder's copy of the same dispatch, which the guard is held against.
 is required RED at `NoKeyOpOnTheAdminStatus`: the first PIV admin operation,
 served on the 9B status, is recorded in `viol`. So the guard and the requirement
 agree per applet, not by coincidence. One direction only: a requirement naming
-BOTH admin statuses is GREEN over Seams.cfg's own 6 189 generated and 422
+BOTH admin statuses is GREEN over Seams.cfg's own 6 349 generated and 422
 distinct states (measured 2026-09-30), since the seam invariant already keeps the
 other applet's status down. The code twin is unreachable by construction.
 '''

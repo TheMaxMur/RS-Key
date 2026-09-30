@@ -894,12 +894,15 @@ formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1227-1258	// Any attempt 
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1283-1302	/// `select` recomputes `validated` from whether a code is set.	*chain = Chain::None;
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1333-1337	// A code-less applet is open on every SELECT. With a code, a re-SELECT keeps a	self.otp_pin_verified = false;
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1336-1336	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
+formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/attest.rs	113-115	if !sess.has_pw1 {	}
+formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/attest.rs	127-128	let r = write_statement(dev, fs, sess, rng, apdu.p1, serial);	spend_one_shot_pw1(fs, sess);
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/keys.rs	443-458	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/lib.rs	257-259	// moved the tag below the ACL and left this one above it.	return Sw::SECURITY_STATUS_NOT_SATISFIED;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	20-39	pub struct Session {	session_rc: [u8; 32],
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	83-85	pub fn reset(&mut self) {	}
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	203-215	/// Refines `RSKeyAppletSeams!NoStatusAfterARefusedAuth` — SEC-SEAM-002.	}
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	280-282	// comparison, but a YubiKey 5.7.4 clears exactly the addressed	// stops PSO:CDS and the admin surface instead of leaving them open.
+formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pso.rs	44-48	let spends = (apdu.p1, apdu.p2) == (0x9E, 0x9A) && sess.has_pw1;	}
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/putdata.rs	60-66	pub fn write_authorized(sess: &Session, fid: u16) -> bool {	}
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/auth.rs	57-65	/// skips the PIN; listing known gated values made unknown bytes ungated.	}
 formal/RSKeyAppletSeams.tla	crates/rsk-piv/src/auth.rs	113-117	/// nothing clears the PIN's own status — 9B included, hence `is_key`.	self.sess.pin_fresh = false;

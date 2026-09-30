@@ -448,6 +448,7 @@ SEAM_BUGS=(BugSelectKeepsOtherApplet BugReselectResetsStatus
            BugDecipherPinSpentLikeSig BugAnyPgpVerifyArmsSig
            BugRefusedPw1ChangeKeepsSig
            BugUserStatusOpensAdmin BugAdminPolicyIgnoresApplet
+           BugRefusedSigPinNotSpent
            BugRefusedValidateGrants
            BugPwStatusIgnoresAdmin BugPivChangeResetsStatus
            BugRefusedValidateDropsUnlock BugRemoveCodeUnvalidated
@@ -479,6 +480,8 @@ seam_target() {
     BugUserStatusOpensAdmin)    echo NoKeyOpOnTheAdminStatus ;;
     # The requirement's per-applet dispatch collapsed: the admin recorder fires.
     BugAdminPolicyIgnoresApplet) echo NoKeyOpOnTheAdminStatus ;;
+    # A refused PSO:CDS or ATTEST that keeps PW1.81 the requirement spent.
+    BugRefusedSigPinNotSpent)   echo NoKeyOpOnTheAdminStatus ;;
     BugRefusedValidateGrants)   echo NoStatusAfterARefusedAuth ;;
     BugPwStatusIgnoresAdmin)    echo NoKeyOpOnTheAdminStatus ;;
     BugPivChangeResetsStatus)   echo ExemptRefusalPreservesStatus ;;

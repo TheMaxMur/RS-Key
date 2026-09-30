@@ -80,6 +80,9 @@ CONSTANTS
     BugUserStatusOpensAdmin,
     \* The admin REQUIREMENT naming one status, PW3, for both applets' surfaces.
     BugAdminPolicyIgnoresApplet,
+    \* A key operation refused past its gate leaves a one-shot PW1.81 standing,
+    \* where PSO:CDS and ATTEST spend it served or refused, as a YubiKey 5.8.0 does.
+    BugRefusedSigPinNotSpent,
     \* A refused OATH access-code VALIDATE that GRANTS the unlock. The refusal
     \* rule exempts that action entirely, so nothing could tell the two apart.
     BugRefusedValidateGrants,
@@ -169,9 +172,9 @@ VARIABLES
     \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:443-458), which is
     \* `pin_fresh` on the other applet. Host-writable through PUT DATA C4.
     oneShotSig,
-    \* Ghost: the PW1.81 freshness the requirement leaves behind, spent by every
-    \* signature while the one-shot status is set. Its `held` twin may be left
-    \* standing by a Bug* switch; this may not.
+    \* Ghost: the PW1.81 freshness the requirement leaves behind, spent under the
+    \* one-shot status by every signature or ATTEST past its gate, served or
+    \* refused. Its `held` twin may be left standing by a Bug* switch; this may not.
     psig,
     \* Ghost: the freshness the REQUIREMENT leaves behind, always spent by a key
     \* operation. `fresh` is what the Rust holds and a Bug* switch may stop
@@ -461,21 +464,44 @@ PgpKeyOpGuard(r) ==
     IF BugAdminOpensKeyOps THEN held[r] \/ held["pw3"] ELSE held[r]
 PgpKeyOpPolicy(r) == held[r]
 
+\* `spend_one_shot_pw1` and its callers' one decision, served or refused alike:
+\* after a PSO:CDS past its PIN check (crates/rsk-openpgp/src/pso.rs:44-48) and
+\* an ATTEST past its touch (crates/rsk-openpgp/src/attest.rs:127-128).
+PgpOneShotSpend(r) ==
+    IF (r = "pw1" \/ BugDecipherPinSpentLikeSig) /\ oneShotSig
+         /\ ~BugSigPinNotSpent
+      THEN [held EXCEPT !["pw1"] = FALSE] ELSE held
+
+\* The two decipher switches widen one half each, so `held["pw1"] = psig`
+\* falls either way: a PW1.81 status dropped that the requirement keeps, or
+\* kept after the requirement retired it.
+PgpSigFreshness(r) ==
+    IF (r = "pw1" \/ BugDecipherGhostSpentLikeSig) /\ oneShotSig
+      THEN FALSE ELSE psig
+
+\* A served key operation. ATTEST is PW1 no. 81's as well
+\* (crates/rsk-openpgp/src/attest.rs:113-115), so `PgpKeyOp("pw1")` is a
+\* signature or an attestation.
 PgpKeyOp(r) ==
     /\ sel = Pgp
     /\ r \in {"pw1", "pw2"}
     /\ PgpKeyOpGuard(r)
     /\ viol' = IF PgpKeyOpPolicy(r) THEN viol
                                     ELSE viol \cup {"NoKeyOpOnTheAdminStatus"}
-    \* The two decipher switches widen one half each, so `held["pw1"] = psig`
-    \* falls either way: a PW1.81 status dropped that the requirement keeps, or
-    \* kept after the requirement retired it.
-    /\ held' = IF (r = "pw1" \/ BugDecipherPinSpentLikeSig) /\ oneShotSig
-                    /\ ~BugSigPinNotSpent
-                 THEN [held EXCEPT !["pw1"] = FALSE] ELSE held
-    /\ psig'  = IF (r = "pw1" \/ BugDecipherGhostSpentLikeSig) /\ oneShotSig
-                  THEN FALSE ELSE psig
+    /\ held' = PgpOneShotSpend(r)
+    /\ psig' = PgpSigFreshness(r)
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, refused >>
+
+\* One refused past its gate -- a missed key or touch, bad input: no key
+\* operation runs, so nothing is authorised and `viol` is untouched, and the
+\* spend lands all the same. Its successors are PgpKeyOp's until the switch.
+PgpKeyOpRefused(r) ==
+    /\ sel = Pgp
+    /\ r \in {"pw1", "pw2"}
+    /\ PgpKeyOpGuard(r)
+    /\ held' = IF BugRefusedSigPinNotSpent THEN held ELSE PgpOneShotSpend(r)
+    /\ psig' = PgpSigFreshness(r)
+    /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, refused, viol >>
 
 \* PUT DATA C4 -- the PW status byte that makes PW1.81 one-shot -- is an
 \* ADMINISTRATIVE write, gated on PW3 by `write_authorized`
@@ -619,6 +645,7 @@ Next ==
     \/ \E r \in {"pw1", "pw2", "pw3"}, ok \in BOOLEAN : PgpVerify(r, ok)
     \/ \E r \in {"pw1", "pw2", "pw3"} : PgpChangeRefused(r)
     \/ \E r \in {"pw1", "pw2"} : PgpKeyOp(r)
+    \/ \E r \in {"pw1", "pw2"} : PgpKeyOpRefused(r)
     \/ \E ok \in BOOLEAN : OathVerifyOtpPin(ok)
     \/ OathChangeRefused \/ OathValidateRefused \/ OathValidateOk \/ OathSetCode
     \/ OathRemoveCode
