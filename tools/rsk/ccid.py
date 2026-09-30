@@ -14,6 +14,8 @@ VENDOR_AID = [0xF0, 0x00, 0x00, 0x00, 0x01]
 # ISO 7816-4 status words, as the (sw1, sw2) tuple transmit() returns.
 SW_OK = (0x90, 0x00)
 SW_COND_NOT_SATISFIED = (0x69, 0x85)
+# A write the configuration lock refuses without its code (a YubiKey's answer too).
+SW_COMMAND_NOT_ALLOWED = (0x69, 0x86)
 
 
 def _require():

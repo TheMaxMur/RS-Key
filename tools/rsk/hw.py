@@ -28,12 +28,21 @@ from .backup import (
     CONFIG_READ,
     CONFIG_TARGET_PHY,
     CONFIG_WRITE,
+    ERR_NOT_ALLOWED,
     _die_pin_required,
     _die_touch_denied,
     _gated,
     _vendor,
 )
-from .common import add_pin_arg, connect_fido, device_has_pin, die, resolve_pin, sanitize
+from .common import (
+    add_pin_arg,
+    connect_fido,
+    device_has_pin,
+    die,
+    die_config_locked,
+    resolve_pin,
+    sanitize,
+)
 from .status import RESCUE_AID, rescue_read
 
 # phy TLV tags — must match crates/rsk-phy/src/lib.rs.
@@ -299,6 +308,8 @@ def _run_ccid(args):
             "phy write declined on the device (no confirmation). Approve on the "
             "device when prompted, then retry."
         )
+    if (s1, s2) == ccid.SW_COMMAND_NOT_ALLOWED:
+        die_config_locked("phy", f"{s1:02X}{s2:02X}")
     if (s1, s2) != ccid.SW_OK:
         raise SystemExit(f"WRITE phy failed: {s1:02X}{s2:02X}")
     print("phy LED config written ✓")
@@ -348,6 +359,8 @@ def _run_fido(args):
     st, _ = _vendor(dev, cid, fields)
     _die_pin_required(st)
     _die_touch_denied(st)
+    if st == ERR_NOT_ALLOWED:
+        die_config_locked("phy", f"{st:#04x}")
     if st != 0:
         die(f"CONFIG_WRITE failed: {st:#x}")
     print("phy config written over FIDO ✓")

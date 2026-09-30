@@ -139,6 +139,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   upgrade on. The trusted display's own settings, the touch timeout included, stay
   open. `bcdDevice` 0x0A7B → 0x0A7C.
 
+- **`rsk hw` and `rsk led` say when the configuration lock refused their write**
+  (`rsk` 0.3.45). A device refuses a phy or LED write for its configuration lock
+  with `6986` over CCID and `0x30` over the FIDO `CONFIG_WRITE`, the answers a
+  locked device-config write gets, and both commands printed only that bare code.
+  On either transport they now say that the lock is set, keep the device's
+  answer, and name what clears it (`ykman config set-lock-code -l <code>
+  --clear`). Every other answer keeps its own message.
+
 - **Setting a configuration lock code where none is set takes a touch.** Any host
   could set one on a key that had none, as on a YubiKey, and a code its owner
   does not hold keeps every later config change behind a factory wipe. All four

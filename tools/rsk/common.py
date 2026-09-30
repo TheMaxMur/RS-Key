@@ -13,6 +13,17 @@ def die(msg):
     sys.exit(1)
 
 
+#: What clears the configuration lock; rsk has no command of its own for it.
+CLEAR_CONFIG_LOCK = "ykman config set-lock-code -l <code> --clear"
+
+
+def die_config_locked(record, answer):
+    """A phy or LED write the configuration lock refused. `answer` is the device's
+    own code as its transport spells it: `6986`, or `0x30` over CONFIG_WRITE."""
+    die(f"{record} write refused ({answer}): the configuration lock is set. Clear it "
+        f"with its code (`{CLEAR_CONFIG_LOCK}`) and retry.")
+
+
 def sanitize(text):
     """Map C0/C1 controls (incl. ESC) and Cf bidi/format chars in device-controlled
     text to U+FFFD, so a counterfeit device can't inject ANSI/OSC escapes or a
