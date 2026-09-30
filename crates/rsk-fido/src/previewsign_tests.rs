@@ -729,7 +729,7 @@ fn every_flags_value_but_the_drafts_three_is_refused() {
     }
 }
 
-/// Deviation (b): an ML-DSA credential refuses the extension as the draft refuses
+/// The one deviation: an ML-DSA credential refuses the extension as the draft refuses
 /// an algorithm it cannot serve, before the touch — and only the combination.
 #[test]
 fn an_ml_dsa_credential_refuses_the_extension() {
@@ -759,23 +759,26 @@ fn an_ml_dsa_credential_refuses_the_extension() {
     }
 }
 
-/// Deviation (a): a key asked for `unattended` is made — and attested — as
-/// `require-up`, so a signature without a touch is refused and one with it asked for.
+/// YubiKey 5.8.0, measured 2026-09-30: a key asked for `unattended` is made and
+/// attested so, and signs with no touch — UP clear, authData flags `0x80` — or with
+/// one (`0x81`); a `require-up` key answers `up:false` with UP_REQUIRED (`0x3B`).
 #[test]
-fn an_unattended_key_still_asks_for_presence() {
+fn an_unattended_key_signs_without_a_touch() {
     let mut board = Board::new();
     let (cred, key) = register(&mut board, Some(0b000), false);
-    assert_eq!(key.flags, 0b001, "attested as require-up");
+    assert_eq!(key.flags, 0b000, "attested as unattended");
+    assert_eq!(key.auth_data[32], FLAG_UP | FLAG_AT | FLAG_ED, "0xC1");
+    assert_eq!(key.auth_data[33..37], [0; 4], "signCount 0");
     let (pk, args) = relying_party(&key, b"unattended");
 
-    // `up:false`, the draft's unattended signature: refused, and nobody asked.
+    // `up:false`, the draft's unattended signature: served, and nobody asked.
     let mut button = Button::touching();
     let req = signing_request(&cred, &key, &args, Some(false));
-    assert_eq!(
-        board.run(false, &req, &mut button),
-        Err(CtapError::UpRequired)
-    );
+    let resp = board.run(false, &req, &mut button);
     assert_eq!(button.asked, 0);
+    let (ad, sig, _) = asserted(&resp.unwrap());
+    assert_eq!(ad[32], FLAG_ED, "UP clear");
+    verify_signature(&pk, &sig.unwrap());
     // With `up`, the touch is asked for: withheld, nothing is signed…
     let mut button = Button::untouched();
     let req = signing_request(&cred, &key, &args, Some(true));
@@ -789,7 +792,22 @@ fn an_unattended_key_still_asks_for_presence() {
     let resp = board.run(false, &req, &mut button).unwrap();
     assert_eq!(button.asked, 1);
     let (ad, sig, _) = asserted(&resp);
-    assert_eq!(ad[32] & FLAG_UP, FLAG_UP);
+    assert_eq!(ad[32], FLAG_ED | FLAG_UP);
+    verify_signature(&pk, &sig.unwrap());
+
+    // A `require-up` key: no signature without the touch, one with it.
+    let (cred, key) = register(&mut board, Some(0b001), false);
+    let (pk, args) = relying_party(&key, b"require-up");
+    let mut button = Button::touching();
+    let req = signing_request(&cred, &key, &args, Some(false));
+    assert_eq!(
+        board.run(false, &req, &mut button),
+        Err(CtapError::UpRequired)
+    );
+    assert_eq!(button.asked, 0);
+    let req = signing_request(&cred, &key, &args, Some(true));
+    let (ad, sig, _) = asserted(&board.run(false, &req, &mut button).unwrap());
+    assert_eq!(ad[32], FLAG_ED | FLAG_UP);
     verify_signature(&pk, &sig.unwrap());
 }
 

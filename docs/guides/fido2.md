@@ -226,12 +226,14 @@ On a build with the trusted display, the touch that releases a signature asks
 *Sign data?*, not *Sign in?*: the digest the site asked for is what gets signed,
 and a compromised host could have put its own there.
 
-Deliberate deviations from the draft:
+The site fixes each key's presence rule at registration (`flags`). A
+`require-up` key, the default, answers a signature request with `up: false`
+with `CTAP2_ERR_UP_REQUIRED` (`0x3B`), and a `require-uv` key wants a verified
+user as well. An `unattended` key (`0b000`) needs no touch: a request with
+`up: false` is signed with UP clear and nothing asked, as on a YubiKey 5.8.0.
 
-- **An `unattended` key still needs a touch.** The draft lets a site ask for
-  signatures without user presence (`flags` `0b000`). Here that key is created as
-  `require-up` and its attestation says so. A signature request with `up: false`
-  answers `CTAP2_ERR_UP_REQUIRED` (`0x3B`).
+One deliberate deviation from the draft:
+
 - **Not with an ML-DSA credential.** Asking for previewSign on a credential whose
   algorithm is ML-DSA is refused with `CTAP2_ERR_UNSUPPORTED_ALGORITHM` (`0x26`).
   That response would carry two attestation objects beside a multi-kilobyte key,

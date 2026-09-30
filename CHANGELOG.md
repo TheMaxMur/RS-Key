@@ -95,17 +95,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   handle is the draft's example MAC encoding, so no flash record changes shape.
   Refusals come in a YubiKey 5.8.0's order, all before the touch: `flags` outside
   the draft's three (`0x2C`), then an `alg` that is not a negative integer
-  (`0x11`), then no supported algorithm (`0x26`). Two deliberate deviations: a key
-  asked for `unattended` is made and attested `require-up`, so every signature
-  takes a touch; and an ML-DSA credential refuses the extension (`0x26`), its
-  response having no room for a second attestation object. The default image
+  (`0x11`), then no supported algorithm (`0x26`). One deliberate deviation: an
+  ML-DSA credential refuses the extension (`0x26`), its response having no room
+  for a second attestation object. The default image
   compiles none of it and getInfo does not advertise it
   ([the FIDO guide](docs/guides/fido2.md#previewsign-experimental-off-by-default)).
   `bcdDevice` 0x0A65 → 0x0A66. On a display build the touch that releases a
   signature asks "Sign data?" where it asked "Sign in?", since the host chose what
   it signs. `bcdDevice` 0x0A67 → 0x0A68. The two titles are literals again, where
   the display's title census reads them: refactor, no behaviour change.
-  `bcdDevice` 0x0A68 → 0x0A69.
+  `bcdDevice` 0x0A68 → 0x0A69. A key asked for `unattended` (`flags` `0b000`) is
+  made and attested so, and signs without a touch: an assertion with `up: false`
+  is served with UP clear (authData flags `0x80`), as on a YubiKey 5.8.0. It was
+  made `require-up`, a deviation, and answered `up: false` with `0x3B`, as a
+  `require-up` key still does. `bcdDevice` 0x0A84 → 0x0A85.
 
 ### Changed
 

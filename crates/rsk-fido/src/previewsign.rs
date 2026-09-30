@@ -17,10 +17,10 @@
 //! seed is re-derived from the same secret and `params`. Nothing is stored, so no
 //! record changes shape and an older build's records load as they always did.
 //!
-//! Two deliberate deviations. A key asked for `unattended` (flags `0b000`) is made
-//! `require-up` and attested so: every signature here takes a touch. And an ML-DSA
-//! credential refuses the extension with `CTAP2_ERR_UNSUPPORTED_ALGORITHM`, since
-//! its registration response leaves no room for a second attestation object.
+//! A key asked for `unattended` (flags `0b000`) signs without a touch, as a YubiKey
+//! 5.8.0's does. One deliberate deviation: an ML-DSA credential refuses the
+//! extension with `CTAP2_ERR_UNSUPPORTED_ALGORITHM`, since its registration
+//! response leaves no room for a second attestation object.
 
 // Host bytes: a panic here is a board that answers nothing until unplugged.
 #![deny(
@@ -236,8 +236,8 @@ pub(crate) fn negotiate(
         return Ok(None);
     }
     let flags = match input.flags.map(u8::try_from) {
-        // Deviation: an `unattended` key is made `require-up` — see the module.
-        None | Some(Ok(FLAGS_UNATTENDED | FLAGS_REQUIRE_UP)) => FLAGS_REQUIRE_UP,
+        None | Some(Ok(FLAGS_REQUIRE_UP)) => FLAGS_REQUIRE_UP,
+        Some(Ok(FLAGS_UNATTENDED)) => FLAGS_UNATTENDED,
         Some(Ok(FLAGS_REQUIRE_UV)) => FLAGS_REQUIRE_UV,
         Some(_) => return Err(CtapError::InvalidOption),
     };
