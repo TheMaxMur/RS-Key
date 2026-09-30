@@ -76,6 +76,7 @@ impl crate::UserPresence for CountingPresence {
 #[test]
 fn register_without_touch_is_refused() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut data = std::vec::Vec::new();
@@ -306,6 +307,7 @@ fn u2f_disabled_under_always_uv_when_the_pad_has_no_pin() {
 #[test]
 fn u2f_dont_enforce_still_runs_builtin_uv() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
@@ -374,6 +376,7 @@ fn u2f_dont_enforce_still_runs_builtin_uv() {
 #[test]
 fn register_then_authenticate() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
 
@@ -469,6 +472,7 @@ fn register_then_authenticate() {
 #[test]
 fn check_only_and_bad_handle() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(2);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
 
@@ -536,6 +540,7 @@ fn enforce_auth_rejects_unknown_handle_without_touch() {
     // keepalives that desynced the host. The handle check must win, and the
     // touch must not even be requested.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(7);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
 
@@ -576,6 +581,7 @@ fn authenticate_p1_matrix() {
     // reserved control byte used to skip the touch, clear the TUP flag and sign
     // anyway — a silent signing oracle; it must be INCORRECT_P1P2 instead.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(11);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
 
@@ -667,6 +673,7 @@ fn authenticate_p1_matrix() {
 #[test]
 fn version() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(3);
     let ver = Apdu::parse(&[0x00, CTAP_VERSION, 0x00, 0x00]).unwrap();
     let mut o = [0u8; 16];
@@ -688,6 +695,7 @@ fn version() {
 #[test]
 fn bad_cla_and_ins() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(9);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -723,6 +731,7 @@ fn bad_cla_and_ins() {
 #[test]
 fn no_enforce_authenticate_cannot_flush_the_audit_journal() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut out = [0u8; 1024];
@@ -780,6 +789,7 @@ fn a_faulted_counter_probe_does_not_sign_a_fabricated_u2f_counter() {
     use crate::consts::EF_COUNTER;
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     fs.scan();
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
@@ -854,6 +864,7 @@ fn a_refused_counter_advance_signs_nothing() {
     use crate::consts::EF_COUNTER;
     let (backend, medium) = rsk_fs::storage::faults::Cut::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     fs.scan();
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
@@ -925,6 +936,7 @@ fn a_refused_counter_advance_signs_nothing() {
 #[test]
 fn a_u2f_register_touch_leaves_a_live_token_unspent() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut data = std::vec::Vec::new();
@@ -998,6 +1010,7 @@ fn a_hid_request_takes_the_extended_encoding_alone() {
 #[test]
 fn a_version_with_data_is_a_wrong_length() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(3);
     let mut state = crate::FidoState::new();
     let mut presence = crate::AlwaysConfirm;
@@ -1056,6 +1069,7 @@ fn every_u2f_door_answers_from_one_gate() {
         ("alwaysUv off, a pad with a PIN", false, true, true, true),
     ] {
         let mut fs = Fs::new(RamStorage::new());
+        crate::tests::uv_optional(&mut fs);
         let mut rng = SeqRng(1);
         ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
         if pin {

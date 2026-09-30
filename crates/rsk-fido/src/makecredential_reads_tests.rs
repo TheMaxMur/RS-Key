@@ -14,6 +14,7 @@ struct Session {
 fn seeded(fs: &mut Fs<Traced>) -> Session {
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), fs, &mut rng).unwrap();
+    crate::tests::uv_optional(fs);
     Session {
         rng,
         state: crate::FidoState::new(),

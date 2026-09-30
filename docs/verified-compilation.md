@@ -154,7 +154,7 @@ checksums, provenance, signing, notes, publication — are language-agnostic.
 
 ## What it costs the gate
 
-`scripts/check.sh` runs 97 rows: 59 invoke `cargo`, 18 are Python, 20 are
+`scripts/check.sh` runs 98 rows: 60 invoke `cargo`, 18 are Python, 20 are
 neither. A kernel outside Rust is invisible to a measured nine of them, and
 would need a twin for many more.
 
@@ -165,7 +165,7 @@ would need a twin for many more.
 workspace manifests, `scripts/kani_gate.py` from files with an `.rs` suffix —
 so a C or extracted-C kernel is not a thing they can fail about.
 
-**Would need a twin:** 21 clippy rows, 8 rustdoc rows, 4 fmt rows and 16
+**Would need a twin:** 21 clippy rows, 8 rustdoc rows, 4 fmt rows and 17
 `cargo test` rows. A second language does not inherit `-D warnings`, a
 formatter the gate can run, a doc build, or a test harness whose empty
 selection is already caught.

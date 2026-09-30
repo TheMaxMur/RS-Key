@@ -66,7 +66,7 @@ fn config_enable_enterprise_attestation_round_trips() {
 
 #[test]
 fn config_toggle_always_uv_round_trips() {
-    let mut a = Authr::fresh();
+    let mut a = Authr::at_build_default();
     // alwaysUv starts at the compiled default — disabled on the shipped and
     // conformance images, enabled only under `--features always-uv` — and
     // toggleAlwaysUv must flip whatever that default is. A real conformance run is a

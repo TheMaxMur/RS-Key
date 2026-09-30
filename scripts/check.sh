@@ -507,6 +507,10 @@ run "clippy (fips firmware)"   cargo clippy -p firmware --features fips-profile 
 # same reasoning as fips above, and its own filter hid 61 failing cases.
 run_tests "test (strong-pin)"        cargo test -p rsk-fido --features strong-pin --target "$HOST"
 run "clippy (strong-pin fw)"   cargo clippy -p firmware --features strong-pin -- -D warnings
+# `always-uv` makes alwaysUv the compiled default: U2F off, UV on every registration
+# and assertion. The WHOLE suite: a test of the default build states the alwaysUv it
+# assumes (`tests::uv_optional`), and the flavour's own default is asserted apart.
+run_tests "test (always-uv)"         cargo test -p rsk-fido --features always-uv --target "$HOST"
 # `strict-config` restores today's strict admin-write authorization (the DEFAULT
 # build is the permissive full-YubiKey-compat surface). The default path is what
 # every run above lints/tests; gate the strict path explicitly or it rots.

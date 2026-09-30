@@ -120,6 +120,7 @@ struct Board {
 impl Board {
     fn new() -> Self {
         let mut fs = Fs::new(RamStorage::new());
+        crate::tests::uv_optional(&mut fs);
         let mut rng = SeqRng(1);
         ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
         Self {

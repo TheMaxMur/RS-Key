@@ -90,8 +90,16 @@ struct Authr {
 }
 
 impl Authr {
-    /// A freshly-provisioned authenticator: seed ensured, no PIN, no credentials.
+    /// A freshly-provisioned authenticator: seed ensured, no PIN, no credentials, and
+    /// alwaysUv off whatever the build's default (`tests::uv_optional`).
     fn fresh() -> Self {
+        let mut a = Self::at_build_default();
+        crate::tests::uv_optional(&mut a.fs);
+        a
+    }
+
+    /// [`fresh`](Self::fresh) with alwaysUv left at the build's compiled default.
+    fn at_build_default() -> Self {
         let mut fs = Fs::new(RamStorage::new());
         let mut rng = SeqRng(1);
         crate::seed::ensure_seed(&dev(), &mut fs, &mut rng).unwrap();

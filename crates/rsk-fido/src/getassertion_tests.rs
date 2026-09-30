@@ -580,6 +580,7 @@ fn ga_request(allow: Option<&[u8]>) -> std::vec::Vec<u8> {
 
 fn setup() -> (Fs<RamStorage>, SeqRng) {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     (fs, rng)
@@ -622,6 +623,7 @@ fn register_non_resident<S: rsk_fs::Storage>(
     fs: &mut Fs<S>,
     rng: &mut SeqRng,
 ) -> std::vec::Vec<u8> {
+    crate::tests::uv_optional(fs);
     let mut out = [0u8; 1024];
     let mut state = crate::FidoState::new();
     let mut presence = crate::AlwaysConfirm;
@@ -1467,6 +1469,7 @@ fn probe_setup() -> (
 ) {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     fs.scan();
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();

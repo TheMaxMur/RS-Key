@@ -84,6 +84,7 @@ fn register<S: rsk_fs::Storage>(
     uid: &[u8],
     name: &str,
 ) -> (std::vec::Vec<u8>, [u8; 32], [u8; 32]) {
+    crate::tests::uv_optional(fs);
     let mut out = [0u8; 1024];
     let mut state = FidoState::new();
     let n = {
@@ -130,6 +131,7 @@ fn parse_mc(resp: &[u8]) -> (std::vec::Vec<u8>, [u8; 32], [u8; 32]) {
 
 fn setup() -> (Fs<RamStorage>, SeqRng) {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     (fs, rng)
@@ -863,6 +865,7 @@ fn the_store_tag_survives_a_remount() {
     assert_ne!(live, [0u8; 16]);
 
     let mut fs = Fs::new(fs.into_storage());
+    crate::tests::uv_optional(&mut fs);
     assert_eq!(
         cred_store_state(&mut fs).unwrap(),
         live,
@@ -1093,6 +1096,7 @@ fn rp_present(fs: &mut Fs<RamStorage>, state: &mut FidoState, rp_hash: &[u8; 32]
 #[test]
 fn missing_param_is_puat_required() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut state = armed(PERM_CM);
     let mut out = [0u8; 64];
     // {1: 1} — getCredsMetadata with no pinUvAuthParam.
@@ -1276,6 +1280,7 @@ fn legacy_plaintext_rp_migrates_and_stays_usable() {
 fn a_faulted_migration_probe_costs_one_boot_not_the_seal() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     // Two pre-migration records: count(1) ‖ rpIdHash(32) ‖ cleartext domain.
@@ -1759,6 +1764,7 @@ impl Storage for CountingStorage {
 }
 
 fn register_into<S: Storage>(fs: &mut Fs<S>, rng: &mut SeqRng, rp: &str, uid: &[u8], name: &str) {
+    crate::tests::uv_optional(fs);
     let mut out = [0u8; 1024];
     let mut state = FidoState::new();
     let mut presence = crate::AlwaysConfirm;
@@ -2085,6 +2091,7 @@ fn the_protocol_is_judged_before_the_token_and_absent_is_not_zero() {
         let mut req = std::vec![0xA2, 0x01, 0x01, 0x03];
         req.extend_from_slice(&proto);
         let mut fs = Fs::new(RamStorage::new());
+        crate::tests::uv_optional(&mut fs);
         let mut state = armed(PERM_CM);
         assert_eq!(
             run(&mut fs, &mut state, &req, &mut out),
@@ -2097,6 +2104,7 @@ fn the_protocol_is_judged_before_the_token_and_absent_is_not_zero() {
     let mut req = std::vec![0xA2, 0x01, 0x01, 0x04, 0x50];
     req.extend_from_slice(&[0xAA; 16]);
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut state = armed(PERM_CM);
     assert_eq!(
         run(&mut fs, &mut state, &req, &mut out),
@@ -2104,6 +2112,7 @@ fn the_protocol_is_judged_before_the_token_and_absent_is_not_zero() {
     );
     // Control: neither present is still the token's own code.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut state = armed(PERM_CM);
     assert_eq!(
         run(&mut fs, &mut state, &[0xA1, 0x01, 0x01], &mut out),
@@ -2293,6 +2302,7 @@ fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
         let mut medium = fs.into_storage();
         medium.budget = usize::MAX;
         let mut fs = Fs::new(medium);
+        crate::tests::uv_optional(&mut fs);
         fs.scan();
         if fs.has_data(EF_CRED) {
             assert!(
@@ -2318,6 +2328,7 @@ fn a_torn_update_user_never_changes_a_credential_behind_the_store_state() {
         || {
             let (cut, medium) = rsk_fs::storage::faults::Cut::new();
             let mut fs = Fs::new(cut);
+            crate::tests::uv_optional(&mut fs);
             let mut rng = SeqRng(1);
             ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
             let (id, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
@@ -2460,6 +2471,7 @@ fn settling_a_consistent_store_writes_nothing() {
 fn a_credential_that_cannot_be_read_settles_nothing() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     fs.scan();
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
@@ -2491,6 +2503,7 @@ mod recovery;
 fn a_lookup_over_an_unread_record_fails_rather_than_deny_the_passkey() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let (alice, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
@@ -2547,6 +2560,7 @@ fn a_lookup_over_an_unread_record_fails_rather_than_deny_the_passkey() {
 fn an_unread_passkey_fails_only_the_lists_it_could_be_in() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
@@ -2577,6 +2591,7 @@ fn an_unread_passkey_fails_only_the_lists_it_could_be_in() {
 fn a_get_next_over_a_counted_passkey_it_could_not_read_fails_the_leg() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
@@ -2616,6 +2631,7 @@ fn a_get_next_over_a_counted_passkey_it_could_not_read_fails_the_leg() {
 fn an_unread_record_in_a_rebuild_under_the_walk_ends_it() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
@@ -2654,6 +2670,7 @@ fn an_unread_record_in_a_rebuild_under_the_walk_ends_it() {
 fn a_scoped_token_learns_nothing_from_a_lookup_the_flash_failed() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let (carol, ..) = register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");
@@ -2784,6 +2801,7 @@ fn a_rebuild_that_missed_a_counted_passkey_ends_the_walk_before_it_reads() {
 fn a_delete_settles_its_rp_past_another_rps_unread_record() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     register(&mut fs, &mut rng, "other.com", &[3, 3], "carol");

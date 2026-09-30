@@ -63,6 +63,7 @@ fn build_request(rk: bool) -> std::vec::Vec<u8> {
 
 fn run(req: &[u8]) -> (std::vec::Vec<u8>, Fs<RamStorage>) {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
@@ -90,6 +91,7 @@ fn run(req: &[u8]) -> (std::vec::Vec<u8>, Fs<RamStorage>) {
 
 fn run_err(req: &[u8]) -> CtapError {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
@@ -123,6 +125,7 @@ impl crate::UserPresence for Decline {
 // `run_err` with a declining button, to prove an operation is touch-gated.
 fn run_err_no_touch(req: &[u8]) -> CtapError {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
@@ -282,6 +285,7 @@ fn makecred_cancel_maps_keepalive_cancel() {
     }
     let req = mc_build(4, good_params);
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
@@ -431,6 +435,7 @@ fn unsupported_alg_rejected() {
         e.writer().position()
     };
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
@@ -525,6 +530,7 @@ fn enterprise_attestation_uses_org_chain_when_provisioned() {
     use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
@@ -641,6 +647,7 @@ fn missing_mandatory_param_rejected() {
         e.writer().position()
     };
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
@@ -1033,6 +1040,7 @@ fn hmac_secret_mc_with_no_subfields_is_absent_a_partial_one_is_not() {
 #[test]
 fn min_pin_length_extension_for_listed_rp() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     // EF_MINPINLEN = [minLen=6, force=0, sha256("example.com")].
@@ -1171,6 +1179,7 @@ fn large_blob_key_in_make_credential() {
 #[test]
 fn make_credential_with_pin_sets_uv_flag() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1224,6 +1233,7 @@ fn config_toggle_always_uv_req(token: &[u8; 32]) -> std::vec::Vec<u8> {
 #[test]
 fn make_credential_spends_token_permissions_except_lbw() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1284,6 +1294,7 @@ fn register_and_get_cred_id(
     rng: &mut SeqRng,
     state: &mut crate::FidoState,
 ) -> std::vec::Vec<u8> {
+    crate::tests::uv_optional(fs);
     let mut out = [0u8; 1024];
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
@@ -1307,6 +1318,7 @@ fn register_and_get_cred_id(
 #[test]
 fn excluded_makecredential_requires_touch_before_disclosing() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1339,6 +1351,7 @@ fn excluded_makecredential_requires_touch_before_disclosing() {
 #[test]
 fn excluded_makecredential_confirms_then_spends_token() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1400,6 +1413,7 @@ fn a_refused_touch_leaves_the_token_unspent() {
     for (answer, status) in REFUSALS {
         for excluded in [false, true] {
             let mut fs = Fs::new(RamStorage::new());
+            crate::tests::uv_optional(&mut fs);
             let mut rng = SeqRng(1);
             ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
             let mut state = crate::FidoState::new();
@@ -1449,6 +1463,7 @@ fn a_refused_touch_leaves_the_token_unspent() {
 #[test]
 fn the_selection_probe_touch_leaves_the_token_unspent() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1477,6 +1492,7 @@ fn the_selection_probe_touch_leaves_the_token_unspent() {
 #[test]
 fn make_credential_requires_pin_for_a_discoverable_credential() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1506,6 +1522,7 @@ fn make_credential_requires_pin_for_a_discoverable_credential() {
 #[test]
 fn make_cred_uv_not_rqd_creates_non_discoverable_on_presence_alone() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1632,6 +1649,7 @@ fn build_request_uv(rk: bool, param: Option<(&[u8], u64)>) -> std::vec::Vec<u8> 
 #[test]
 fn uv_option_with_pin_uv_auth_param_is_not_an_error() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1662,6 +1680,7 @@ fn uv_option_with_pin_uv_auth_param_is_not_an_error() {
 #[test]
 fn uv_option_without_builtin_uv_is_invalid_option() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1687,6 +1706,7 @@ fn uv_option_without_builtin_uv_is_invalid_option() {
 #[test]
 fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
@@ -1722,6 +1742,7 @@ fn uv_option_runs_builtin_uv_and_supplies_user_presence() {
 #[test]
 fn a_builtin_uv_presence_test_spends_a_live_token_without_polling() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1758,6 +1779,7 @@ fn a_builtin_uv_presence_test_spends_a_live_token_without_polling() {
 #[test]
 fn builtin_uv_decline_is_operation_denied() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
@@ -1840,6 +1862,7 @@ fn always_uv_requires_user_verification_without_pin() {
 #[test]
 fn make_credential_bad_pin_auth_rejected() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -1887,6 +1910,7 @@ fn selected_alg(algs: &[i64]) -> Result<i64, CtapError> {
     };
 
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let dev = Device {
         serial_hash: &[0xAB; 32],
         serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
@@ -2018,6 +2042,7 @@ fn run_ea_with<S: Storage>(
     setup: impl FnOnce(&mut Fs<S>),
 ) -> Result<(std::vec::Vec<u8>, Fs<S>), CtapError> {
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut out = [0u8; 1024];
@@ -2291,6 +2316,7 @@ fn enterprise_type1_non_eligible_ignores_org_key() {
     // It returns a normal basic_full attestation with the DEVICE's own cert and
     // no `ep` — never the enterprise batch cert.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::seed::store_att_key(&dev(), &mut fs, &[0x21u8; 32]).unwrap();
@@ -2354,6 +2380,7 @@ fn vendor_ea_eligibility() {
     // device upgraded to this firmware reads. The FIDO conformance test RPID
     // qualifies only under the `ea-conformance-rpid` feature.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     assert!(!rp_eligible_for_vendor_ea(&mut fs, &sha256(b"example.com")));
     assert_eq!(
         rp_eligible_for_vendor_ea(
@@ -2386,6 +2413,7 @@ fn enterprise_type1_listed_rp_uses_org_key() {
     // It must now come back with `ep` and the org/EP cert — otherwise the storage
     // is wired to nothing and the negative test above passes for the wrong reason.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::seed::store_att_key(&dev(), &mut fs, &[0x21u8; 32]).unwrap();
@@ -2485,6 +2513,7 @@ fn builtin_uv_still_names_the_registration_on_a_display() {
     // cannot (`collect_pin` takes no `Confirm`). Without it a host could trade one
     // context-free PIN entry for a credential at an rp of its choosing.
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
@@ -2560,6 +2589,7 @@ fn an_rp_id_carrying_whitespace_is_refused() {
 fn an_exclude_check_fails_only_over_an_unread_record_of_its_own_rp() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut register = |fs: &mut Fs<_>, rp: &str| {
@@ -2626,6 +2656,7 @@ impl crate::UserPresence for Unanswered {
 fn an_exclude_check_the_flash_failed_asks_for_the_touch_first() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     {
@@ -2697,6 +2728,7 @@ fn mc_build_exclude(entries: &[(&str, &[u8])]) -> std::vec::Vec<u8> {
 #[test]
 fn exclude_list_over_max_is_limit_exceeded() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -2729,6 +2761,7 @@ fn exclude_list_over_max_is_limit_exceeded() {
 #[test]
 fn exclude_list_at_max_excludes_and_foreign_types_do_not() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     let mut state = crate::FidoState::new();
@@ -3164,6 +3197,7 @@ fn the_trace_reader_reports_the_two_fields_the_gate_is_a_function_of() {
 fn a_faulted_pin_probe_does_not_drop_the_makecredential_uv_gate() {
     let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
     let mut fs = Fs::new(backend);
+    crate::tests::uv_optional(&mut fs);
     fs.scan();
     let dev = Device {
         serial_hash: &[0xAB; 32],
@@ -3214,6 +3248,7 @@ fn a_faulted_pin_probe_does_not_drop_the_makecredential_uv_gate() {
 #[test]
 fn an_ea_list_wider_than_this_build_matches_what_it_holds_and_declines_the_rest() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let held = sha256(b"held.example");
     let past = sha256(b"past-the-buffer.example");
     let mut list = [0u8; 32 * (MAX_EA_RPIDS + 1)];
@@ -3238,6 +3273,7 @@ mod reads;
 #[test]
 fn without_always_uv_a_configured_pad_is_not_asked() {
     let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
     crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();

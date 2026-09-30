@@ -201,6 +201,15 @@ pub(crate) fn bare<T: Bare>(x: T) -> T::Out {
     x.bare()
 }
 
+/// What a test of the default build takes a fresh store to be, stated so the same test
+/// runs on the `always-uv` flavour: alwaysUv off, as `toggleAlwaysUv` would leave it,
+/// unless the test set it first. A test of that flavour's own default leaves this out.
+pub(crate) fn uv_optional<S: Storage>(fs: &mut Fs<S>) {
+    if cfg!(feature = "always-uv") && !fs.has_data(crate::consts::EF_ALWAYS_UV) {
+        fs.put(crate::consts::EF_ALWAYS_UV, &[0]).unwrap();
+    }
+}
+
 /// Bytes from a hex vector — how the ARKG and previewSign references are written.
 #[cfg(feature = "preview-sign")]
 pub(crate) fn unhex(s: &str) -> std::vec::Vec<u8> {

@@ -41,8 +41,10 @@ struct Harness {
 
 impl Harness {
     fn new() -> Self {
+        let mut fs = Fs::new(RamStorage::new());
+        crate::tests::uv_optional(&mut fs);
         Harness {
-            fs: Fs::new(RamStorage::new()),
+            fs,
             state: FidoState::new(),
             rng: SeqRng(1),
         }

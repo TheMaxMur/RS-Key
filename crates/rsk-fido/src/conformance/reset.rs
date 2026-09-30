@@ -67,6 +67,9 @@ fn reset_wipes_credentials() {
     assert_ok(&a.send(CTAP_MAKE_CREDENTIAL, &mc_rk()));
     // authenticatorReset erases all FIDO state on user presence.
     assert_ok_empty(&a.send(CTAP_RESET, &[]));
+    // The reset took alwaysUv back to the build's default; this test is about the
+    // credential, so it restates the fixture's "off" before it asks.
+    crate::tests::uv_optional(&mut a.fs);
     // The discoverable credential is gone.
     let r = a.send(CTAP_GET_ASSERTION, &ga());
     assert_eq!(r.status, CtapError::NoCredentials.as_u8());

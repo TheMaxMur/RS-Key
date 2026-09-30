@@ -1367,6 +1367,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **`check.sh` runs the rsk-fido tests on the `always-uv` build** — host only, no
+  `bcdDevice` bump. No row did, and 251 of the 882 cases failed there: every one
+  on a fixture that took alwaysUv to be off (a registration with no PIN, U2F
+  enabled), none on a defect. The fixtures now say so through
+  `tests::uv_optional`, which on that build writes the explicit alwaysUv-off a
+  `toggleAlwaysUv` would leave, unless the test set it first; the tests of the
+  flavour's own default leave it out. All 881 pass on both builds.
+
 - **`check.sh` runs the rsk-fido tests with `preview-sign` and `largeblob-ext`
   together** — host only, no `bcdDevice` bump. The previewSign test of how the two
   extensions share makeCredential's unsigned outputs compiles only with both on,
