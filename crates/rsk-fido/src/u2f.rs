@@ -29,7 +29,7 @@ use crate::credential::{CRED_REC_MAX, credential_load};
 use crate::ec::{MAX_DER_SIG, P256Key};
 use crate::journal;
 use crate::keyderiv::{KEY_HANDLE_LEN, derive_new, fido_load_key, verify_key};
-use crate::seed::{bump_sign_counter, load_att_key};
+use crate::seed::{AttKey, bump_sign_counter, read_att_key};
 use crate::{Ctx, Rng, UserPresence};
 
 /// Dispatch a U2F APDU; writes the response body into `out`, returns `(SW, len)`.
@@ -150,9 +150,13 @@ fn cmd_register<S: Storage, R: Rng>(
     let cred_key = P256Key::from_scalar(scalar.expose());
     scalar.wipe();
     // Org-provisioned attestation (vendor ATT_IMPORT) wins — classic U2F batch
-    // attestation; otherwise the per-device key (the seed scalar) with its
-    // self-signed EF_EE_DEV cert.
-    let mut att_scalar = load_att_key(&ctx.dev, ctx.fs);
+    // attestation; otherwise the per-device key with its EF_EE_DEV cert. An org key the
+    // flash would not read is retried, as a counter fault is, not swapped for the device's.
+    let mut att_scalar = match read_att_key(&ctx.dev, ctx.fs) {
+        Ok(AttKey::Loaded(key)) => Some(key),
+        Ok(AttKey::Absent | AttKey::Unopenable) => None,
+        Err(_) => return (Sw::MEMORY_FAILURE, 0),
+    };
     let org = att_scalar.is_some();
     let device_key = match att_scalar.as_mut() {
         Some(s) => {

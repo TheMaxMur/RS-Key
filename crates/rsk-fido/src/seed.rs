@@ -898,7 +898,7 @@ pub(crate) fn wrap_keydev_legacy<S: Storage>(
     fs.put(EF_KEY_DEV.get(), &out).unwrap();
 }
 
-/// `EF_ATT_KEY` as an enterprise attestation has to tell it apart: no org key, one
+/// `EF_ATT_KEY` as an org attestation has to tell it apart: no org key, one
 /// that will not open under this device, or the key itself.
 pub(crate) enum AttKey {
     Absent,

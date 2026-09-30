@@ -1108,3 +1108,76 @@ fn every_u2f_door_answers_from_one_gate() {
         );
     }
 }
+
+/// The certificate a REGISTER response carries after the key handle: one DER
+/// SEQUENCE, however long its length field.
+fn registered_cert(resp: &[u8]) -> std::vec::Vec<u8> {
+    let cert = &resp[1 + 65 + 1 + KEY_HANDLE_LEN..];
+    let (head, body) = match cert[1] {
+        0x81 => (3, usize::from(cert[2])),
+        0x82 => (4, usize::from(u16::from_be_bytes([cert[2], cert[3]]))),
+        n => (2, usize::from(n)),
+    };
+    cert[..head + body].to_vec()
+}
+
+/// An org attestation key the flash could not read is not an absent one: REGISTER
+/// answers the `MEMORY_FAILURE` a counter fault answers, which the host retries,
+/// rather than swap the org batch attestation for the device's own for good. One
+/// stored but not openable here, and none at all, still take the device's.
+#[test]
+fn an_org_key_the_flash_would_not_read_fails_the_registration() {
+    use crate::consts::EF_ATT_KEY;
+    let mut leaf = [0u8; 64];
+    let n = crate::cert::att_chain_pack(&[0x30u8, 0x03, 1, 2, 3], &mut leaf).unwrap();
+    let elsewhere = Device {
+        serial_hash: &[0xBA; 32],
+        ..dev()
+    };
+    let register = |sealed_by: Option<&Device>, fault: bool| {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        crate::tests::uv_optional(&mut fs);
+        fs.scan();
+        let mut rng = SeqRng(1);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        if let Some(by) = sealed_by {
+            crate::seed::store_att_key(by, &mut fs, &[0x21u8; 32]).unwrap();
+            fs.put(EF_ATT_CHAIN, &leaf[..n]).unwrap();
+        }
+        let mut ee = [0u8; 1024];
+        let ee_len = fs.read(EF_EE_DEV, &mut ee).unwrap();
+        medium.stick(fault.then_some(EF_ATT_KEY.get()));
+        let reg_bytes = ext_apdu(CTAP_REGISTER, 0, &[CHAL, APP].concat());
+        let mut out = [0u8; 1024];
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        let (sw, len) = process_u2f(&mut ctx, &Apdu::parse(&reg_bytes).unwrap(), &mut out);
+        let cert = (sw == Sw::OK).then(|| registered_cert(&out[..len]));
+        (sw, len, cert, ee[..ee_len].to_vec())
+    };
+    let (sw, _, cert, _) = register(Some(&dev()), false);
+    assert_eq!(
+        (sw, cert),
+        (Sw::OK, Some(leaf[3..n].to_vec())),
+        "control: the org chain's leaf"
+    );
+    let (sw, len, _, _) = register(Some(&dev()), true);
+    assert_eq!((sw, len), (Sw::MEMORY_FAILURE, 0), "a faulted org key read");
+    for (what, sealed_by) in [("sealed elsewhere", Some(&elsewhere)), ("absent", None)] {
+        let (sw, _, cert, device) = register(sealed_by, false);
+        assert_eq!(
+            (sw, cert),
+            (Sw::OK, Some(device)),
+            "{what}: the device's cert"
+        );
+    }
+}

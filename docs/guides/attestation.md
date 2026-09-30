@@ -130,7 +130,11 @@ on this device (sealed on another) gives the same per-device attestation and no
 `ep`. A key the flash could not read fails the registration with
 `CTAP1_ERR_OTHER` for the host to retry, as an unreadable chain does. Up to
 bcdDevice `0x0A78` both got the per-device attestation *with* `ep`, as if no org
-key were installed.
+key were installed. U2F registration holds its batch attestation to the same
+rule: an unreadable org key answers `6581` (`MEMORY_FAILURE`, what an unreadable
+signature counter answers there) for the host to retry, and one that will not
+open gives the device certificate. Up to bcdDevice `0x0A87` an unreadable key
+gave the device certificate too, a registration attested by the wrong key for good.
 
 ### Without an org chain (the default)
 

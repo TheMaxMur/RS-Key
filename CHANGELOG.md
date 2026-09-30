@@ -244,6 +244,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A U2F registration over an org attestation key the flash could not read is
+  retried, not attested by the device key.** U2F REGISTER read the org key as
+  absent whether it was absent, unreadable or would not open on this device, so
+  one faulted read on an org-provisioned key gave the registration the device's
+  own certificate in place of the organisation's batch attestation, for the life
+  of that registration. A read the flash failed now answers `6581`
+  (`MEMORY_FAILURE`), what U2F answers for an unreadable signature counter, and
+  the host retries it. A key that will not open here, and no key at all, still
+  give the device certificate. makeCredential's enterprise attestation has held
+  this rule since 0x0A79. `bcdDevice` 0x0A87 → 0x0A88.
+
 - **A U2F registration asserted over CTAP2 counts on the U2F counter, as on a
   YubiKey 5.8.0.** A site that moved from U2F to WebAuthn logs its old
   registrations in with the `appid` extension, a CTAP2 getAssertion whose rpId is
@@ -342,8 +353,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   An absent key still gives that. A key stored but not openable on this device is
   treated as a cut chain is: the per-device attestation and no `ep`. A key the
   flash could not read fails the registration with `CTAP1_ERR_OTHER`, which the host
-  can retry, as an unreadable chain already did. U2F's batch attestation reads the
-  key as before. `bcdDevice` 0x0A78 → 0x0A79.
+  can retry, as an unreadable chain already did. U2F registration takes the same
+  rule at 0x0A88. `bcdDevice` 0x0A78 → 0x0A79.
 
 - **A makeCredential whose `pubKeyCredParams` is absent or empty is
   `UNSUPPORTED_ALGORITHM` (`0x26`), as on a YubiKey 5.8.0.** CTAP §6.1.2 step 3
