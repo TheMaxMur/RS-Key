@@ -575,6 +575,7 @@ impl<S: Storage> Applet<Fs<S>> for OpenpgpApplet<'_> {
                 res.commit(ne);
                 Sw::OK
             }
+            consts::INS_SET_RETRIES => retries::set_pin_retries(fs, &self.sess, apdu.data),
             consts::INS_ACTIVATE_FILE => Sw::OK,
             consts::INS_TERMINATE_DF => {
                 let mkek = read_fused(self.mkek_source);
@@ -629,6 +630,9 @@ impl OpenpgpApplet<'_> {
     }
 }
 
+// Declared below the dispatch, whose lines formal/ and assurance/ cite by number.
+pub mod retries;
+
 #[cfg(test)]
 mod tests;
 
@@ -655,3 +659,7 @@ mod reselect_tests;
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
 mod lifecycle_tests;
+
+#[cfg(test)]
+#[path = "retries_tests.rs"]
+mod retries_tests;

@@ -591,7 +591,15 @@ needs only the identifiers above. RS-Key implements:
   attestation key (reference `81`) whose self-signed certificate is DO `FC`. The
   key reads through GENERATE `P1 = 81` under `B6 { 84 01 81 }` and is listed in
   `DE`, `DA` (inside `73` and in `FA`), `C5`/`C6`/`CD` and `D9`, where a YubiKey
-  lists its own; no host can import it, generate it or write `FC`.
+  lists its own; no host can import it, generate it or write `FC`. So is Yubico's
+  SET PIN RETRIES (`00 F2 00 00 03 <PW1> <RC> <PW3>`, what `ykman openpgp access
+  set-retries` sends), as a YubiKey 5.8.0 answers it: `6982` without PW3, then
+  `6A80` for a body that is not three bytes, P1 and P2 not judged. A byte from 1 to
+  255 becomes that PIN's maximum and its tries left, unblocking it with its value
+  kept; 0 leaves the PIN as it is. The resetting code's maximum is kept while none
+  is set (`C4` shows `00` for it), and PUT DATA `D3` starts a new one there. The
+  PINs and PW3's status stay, the maxima survive a power cycle, and TERMINATE DF +
+  ACTIVATE FILE put back 3, 3, 3.
 
 The only RS-Key-specific bytes a config tool needs are §6 (Management config),
 §7 (Rescue), §8 (Vendor/LED) and §9 (CTAPHID `0x41`).

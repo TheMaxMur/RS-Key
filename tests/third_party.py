@@ -281,9 +281,6 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         "test_091_reset_attr.py::Test_Reset_ATTRS::test_keyattr_reset_": "the PUT restores the attribute; C1-C3 read alone after it are 6B00, as on a YubiKey 5.8.0, where the suite skips the read; past it the card stores 0011 for the 0020 it was sent",
     },
     "ykman": {
-        # Yubico extensions RS-Key does not implement, xfailed rather than removed so
-        # an implementation shows up as a strict XPASS.
-        "test_openpgp.py::test_change_pin_retries": "Yubico's SET PIN RETRIES (INS F2) is not implemented (6D00)",
         # A capacity RS-Key keeps on purpose: more accounts than a YubiKey holds.
         "cli/test_oath.py::TestOATH::test_add_max_creds": "RS-Key holds 255 OATH accounts; the suite wants a YubiKey 5.7's 64, the 65th refused",
         # brainpoolP512r1 (OID tail 01 01 0D): no no_std arithmetic for it yet.

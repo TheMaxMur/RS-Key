@@ -67,6 +67,8 @@ pub const INS_PUT_DATA: u8 = 0xDA;
 pub const INS_PUT_DATA_ODD: u8 = 0xDB; // IMPORT (extended header list)
 pub const INS_MSE: u8 = 0x22;
 pub const INS_VERSION: u8 = 0xF1;
+/// Yubico's SET PIN RETRIES, what `ykman openpgp access set-retries` sends.
+pub const INS_SET_RETRIES: u8 = 0xF2;
 /// Yubico's ATTEST, class `80` only.
 pub const INS_ATTEST: u8 = 0xFB;
 

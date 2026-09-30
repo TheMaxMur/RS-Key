@@ -60,6 +60,20 @@ direction — charging afterwards would mean an interrupted write leaves a wrong
 guess free, and this counter is the only limit the card has. `gpg --card-status` prints them
 as `PIN retry counter : 3 3 3` (PW1, RC, PW3: all three default to 3).
 
+The admin PIN can set how many tries each one gets, with the command a YubiKey
+takes for it:
+
+```sh
+ykman openpgp access set-retries 5 3 10   # PW1, Reset Code, PW3; asks for the admin PIN
+```
+
+Each number becomes that PIN's limit and gives it that many tries at once, a
+blocked PIN included, which keeps its value. ykman takes 1 to 99; the card takes
+up to 255, and a 0 in the raw command leaves that PIN as it is. The Reset Code's number waits
+until a Reset Code is set, which then starts with it. The limits survive a replug,
+and a factory reset (below) puts back 3, 3, 3. More tries is more guesses for
+whoever holds the key: the admin PIN can hand PW1 fresh tries without knowing it.
+
 Change them first:
 
 ```sh
@@ -74,11 +88,13 @@ admin PIN lives somewhere offline.
 
 **Two ways admin operations lock:**
 
-- **Three wrong PW3** blocks the admin PIN. Unlike PW1, the admin PIN has no
-  higher authority to unblock it. Recovery is a **factory reset** of the
-  applet (below). Plan to keep PW3 written down somewhere offline.
-- **Three wrong PW1** blocks the user PIN. This one *is* recoverable: unblock it
-  with the admin PIN or the Reset Code (see [Unblocking PW1](#unblocking-pw1)).
+- **Three wrong PW3** (or as many as `set-retries` gave it) blocks the admin PIN.
+  Unlike PW1, the admin PIN has no higher authority to unblock it. Recovery is a
+  **factory reset** of the applet (below). Plan to keep PW3 written down
+  somewhere offline.
+- **Three wrong PW1** (likewise) blocks the user PIN. This one *is* recoverable:
+  unblock it with the admin PIN or the Reset Code (see
+  [Unblocking PW1](#unblocking-pw1)).
 
 ### KDF (`kdf-setup`) — hashing the PIN before it leaves the host
 

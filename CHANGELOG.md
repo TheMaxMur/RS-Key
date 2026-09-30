@@ -40,6 +40,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **OpenPGP takes Yubico's SET PIN RETRIES (INS `F2`), as a YubiKey 5.8.0 does.**
+  `ykman openpgp access set-retries` sets how many tries PW1, the resetting code and
+  PW3 each get; RS-Key answered it `6D00`. Under PW3 (`6982` otherwise) a body of
+  exactly three bytes (`6A80` otherwise, P1 and P2 not judged) sets each PIN's
+  maximum from 1 to 255 and gives it that many tries at once, unblocking a blocked
+  PIN with its value kept, while a 0 leaves a PIN as it is. The resetting code's
+  maximum is kept while none is set, and PUT DATA `D3` starts a new one there. The
+  PINs and PW3's status are left alone, the maxima survive a power cycle, and
+  TERMINATE DF + ACTIVATE FILE put back 3, 3, 3. The maxima are the record every
+  path that gives a PIN its tries back already read (`EF_PW_RETRIES`, 3/3/3 on
+  every card so far), so no new record, and a build before this one counts from
+  the maxima set here too. The ykman suite's `test_change_pin_retries` is no longer
+  a divergence. `bcdDevice` 0x0A88 → 0x0A89.
 - **A host can ask which `authenticatorConfig` vendor commands a build serves.**
   getInfo's `vendorPrototypeConfigCommands` (`0x15`) stays empty, because Yubico's
   Android SDK fails a getInfo carrying a 64-bit id (issue #111), so the list was in
