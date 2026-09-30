@@ -487,13 +487,14 @@ SCOPED = {
     # boot family took the roster to 79, the OATH seam batch takes it to 85, and it
     # stays gone.
     # `` `BugPanelCancelable` | … | 230 states `` collided the day the safety tier
-    # reached 230 configurations. The same coincidence retired
-    # `NoStatusAfterARefusedAuth | 73 states` when the roster left 73, and this one
-    # will retire the same way: it is a co-mutant's state count, in a column of
-    # state counts, and it moves when that mutant's model does.
+    # reached 230 configurations, and retired as predicted when the tier reached
+    # 242 -- where `` `BugCmWalkIgnoresChannel` | … | 1 242 states `` collided in
+    # turn, read as 242 through its thousands space. Same class, same retirement:
+    # a co-mutant's state count, in a column of state counts, that moves when that
+    # mutant's model does.
     (
         "formal/README.md",
-        "— E45's ruling | `NoCrossTransportTouchConsumption` | 230 states",
+        "channel equality | `NoAuthorizationBypass` | 1 242 states",
     ): "a co-mutant's own state count in the co-refutation table, which the tier's "
     "configuration count reached by coincidence — the column beside it is all state "
     "counts and none of them is a roster",
