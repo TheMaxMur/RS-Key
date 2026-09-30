@@ -442,7 +442,7 @@ mutant = "SeamSolo_BugAdminPolicyIgnoresApplet.cfg"
 [[exception]]
 id = "MX-LAT-001"
 module = "RSKeyRetryLattice.tla"
-line = 66
+line = 79
 shape = "set"
 site = "Refs"
 clause = "Refs"
@@ -464,7 +464,7 @@ owed = "LatSolo_BugPw2HasItsOwnCounter.cfg"
 [[exception]]
 id = "MX-LAT-002"
 module = "RSKeyRetryLattice.tla"
-line = 72
+line = 85
 shape = "set"
 site = "VerifyTargets"
 clause = "VerifyTargets"
@@ -485,22 +485,27 @@ owed = "LatSolo_BugRecoveryRefIsVerifiable.cfg"
 [[exception]]
 id = "MX-LAT-003"
 module = "RSKeyRetryLattice.tla"
-line = 82
+line = 98
 shape = "case"
 site = "RecoveryOf"
 clause = "RecoveryOf"
 against = "Refs"
 omits = ["pivPuk", "pw3", "rc"]
 kind = "narrowing"
-production = "Blocked is terminal for the PUK, PW3 and the resetting code: TERMINATE DF and a factory RESET are the only ways back, and both belong to the reset models rather than to this ladder."
+production = "No presented secret refills the PUK, PW3 or the resetting code. PW3's status refills without one: OpenPGP's SET PIN RETRIES (crates/rsk-openpgp/src/retries.rs) gives PW1, the resetting code and PW3 new tries while PW3 is held, so a blocked resetting code comes back that way, and the model carries it as its own SetRetries action rather than in this presented-secret graph. A blocked PW3 cannot be held and the PUK has no such door: for those two, TERMINATE DF and a factory RESET are the only ways back, and both belong to the reset models rather than to this ladder."
 why = '''
 The `OTHER -> {}` arm answers for three of the five references, so `Recover` is
 never enabled at any of them and no interleaving in this module can reach a
-terminal reference's recovery. A mutant that gave one of them a recovery path
-would not be caught here; it would simply be a bigger model. Measured on a
-scratch copy (2026-09-30): PW3 given the RC as its recovery, the switch in the
-`OTHER` arm, is GREEN at Lattice.cfg's 243 distinct states with 2 917 generated
-against 2 431 -- steps taken that nothing records.
+terminal reference's PRESENTED-secret recovery. A mutant that gave one of them a
+recovery path would not be caught here; it would simply be a bigger model.
+Measured on a scratch copy (2026-09-30): PW3 given the RC as its recovery, an arm
+ahead of `OTHER`, was GREEN at the 243 distinct states Lattice.cfg then had, with
+2 917 generated against 2 431 -- steps taken that nothing records. Re-measured
+the same day over the model with SetRetries, it is still GREEN, and now over
+2 940 distinct states against 2 244: a PW3 the RC refills reaches counts and
+statuses no correct VERIFY leaves, and no requirement refuses any of them. The
+resetting code's own way back, SET PIN RETRIES, is no presented secret and so no
+arm of this `CASE`.
 '''
 mutant = "owes"
 owed = "LatSolo_BugTerminalRefRecovers.cfg"
@@ -509,14 +514,14 @@ carried_by = "NAR-RETRY-LATTICE"
 [[exception]]
 id = "MX-LAT-004"
 module = "RSKeyRetryLattice.tla"
-line = 82
+line = 98
 shape = "case"
 site = "RecoveryOf"
 clause = "RecoveryOf"
 against = "VerifyTargets"
 omits = ["pw3"]
 kind = "narrowing"
-production = "OpenPGP's admin path from PW3 to PW1 (RESET RETRY, P1 = 0x02) gates on a live PW3 SESSION (crates/rsk-openpgp/src/pin.rs), not on a secret presented in the call — which is the seam module's status and not this module's counter."
+production = "OpenPGP has two admin paths that gate on a live PW3 SESSION rather than a secret presented in the call: RESET RETRY P1 = 0x02 (crates/rsk-openpgp/src/pin.rs), which replaces PW1's value and refills it, and SET PIN RETRIES (crates/rsk-openpgp/src/retries.rs), which keeps every value and refills PW1, the resetting code and PW3. Neither is a recovery by a presented secret, so neither is an arm here: the second is the SetRetries action, guarded by the PW3 status this module now tracks, and the first stays out, a value this module does not model."
 why = '''
 The same `CASE` measured against the references a host verifies directly, and it
 is a different statement: PW3 is a VERIFY target with no recovery, while the
@@ -524,13 +529,42 @@ other two omissions are references a host never verifies at all. Two rows for on
 clause, because the derivation measures against every containing set rather than
 guessing which one the author meant — and the two answers are what a reader needs
 to see the admin path is out for a reason the ladder cannot express. Measured
-the same day: PW1 given PW3 as a presented recovery is GREEN at the same counts.
-And the owed name is the wrong switch: the admin path is legitimate, so it would
-model the product rather than a defect. The defect this row stands against is
-PW3 given a recovery, which is MX-LAT-003's, and no requirement here refuses it.
+the same day: PW1 given PW3 as a presented recovery was GREEN at the same counts,
+and over the model with SetRetries it is GREEN at 3 504 distinct states. And the
+owed name is the wrong switch: the admin path is legitimate, so it would model the
+product rather than a defect. The defect this row stands against is PW3 given a
+recovery, which is MX-LAT-003's, and no requirement here refuses it. SET PIN
+RETRIES is the admin path that IS modelled, and its three switches are the
+requirement's: PW3 held, not PW1, and the count set to the maximum set.
 '''
 mutant = "owes"
 owed = "LatSolo_BugAdminPathRefills.cfg"
+carried_by = "NAR-RETRY-LATTICE"
+
+[[exception]]
+id = "MX-LAT-005"
+module = "RSKeyRetryLattice.tla"
+line = 107
+shape = "set"
+site = "PgpRefs"
+clause = "PgpRefs"
+against = "Refs"
+omits = ["pivPin", "pivPuk"]
+kind = "narrowing"
+production = "SET PIN RETRIES is OpenPGP's command (INS F2, crates/rsk-openpgp/src/retries.rs) and names PW1, the resetting code and PW3, one byte each. PIV's PIN and PUK have the applet's own SET RETRIES (INS FA, crates/rsk-piv/src/lib.rs), under the management key and the PIN, which resets both references to their default values under new totals; the module does not carry it."
+why = '''
+The references the SetRetries action may touch. For OpenPGP's command it is the
+product, not a hole: F2 has no byte for a PIV reference. The hole is the PIV
+door it stands beside, which raises the PIN's and the PUK's counters under a
+status as F2 does and is not an action here. SEC-LAT-003's statement names the
+OpenPGP door alone, and FA is outside it by replacing both values: what it raises
+is the budget of a new reference, not of the secret a host was guessing. That
+reading is the one a switch would test, and none exists: a PIV SET RETRIES that
+kept the PUK while giving it new tries would be a budget raised out of nothing,
+and nothing here could see it.
+'''
+mutant = "owes"
+owed = "LatSolo_BugPivSetRetriesKeepsThePuk.cfg"
 carried_by = "NAR-RETRY-LATTICE"
 
 [[exception]]

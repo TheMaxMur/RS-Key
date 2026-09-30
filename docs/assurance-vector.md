@@ -92,9 +92,9 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-STORE-004` | `NoFalseMetaAbsent` | 2 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (3 input(s) newer) | MODELLED-ONLY |
 | `SEC-STORE-005` | `CacheHonest` | 2 of 4 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (3 input(s) newer) | MODELLED-ONLY |
 | `SEC-STORE-006` | `NoSilentOrphan` | 2 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (3 input(s) newer) | MODELLED-ONLY |
-| `SEC-LAT-001` | `NoAuthWhenBlocked` | 2 of 6 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-LAT-002` | `WrongAttemptIsCharged` | 2 of 7 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | 2 of 6 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-LAT-001` | `NoAuthWhenBlocked` | 2 of 9 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-LAT-002` | `WrongAttemptIsCharged` | 2 of 10 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | 2 of 12 | 4 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-POL-001` | `PivOperationNeedsSlotPolicy` | 1 of 13 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-POL-002` | `PivAlwaysSpendsFreshness` | 1 of 14 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-POL-003` | `AttributeChangeInvalidatesTheKey` | 1 of 13 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |

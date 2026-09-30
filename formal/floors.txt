@@ -72,9 +72,10 @@ Seams.cfg                            GREEN   200
 \* The flash layer (RSKeyStore): a small exhaustive space -- 364 distinct at
 \* depth 6 -- so its floor is set near a third, the same rule as its siblings.
 Store.cfg                            GREEN   121
-\* The retry/recovery lattice (RSKeyRetryLattice): 243 distinct at depth 11, five
-\* budgeted references over a ceiling of two -- a third is the floor here too.
-Lattice.cfg                          GREEN   80
+\* The retry/recovery lattice (RSKeyRetryLattice): five budgeted references,
+\* each with a stored maximum under a ceiling of two, and the statuses SET PIN
+\* RETRIES reads -- a third of the distinct count is the floor here too.
+Lattice.cfg                          GREEN   748
 \* Four-app operation policies (RSKeyAppletPolicies), separate from the real
 \* PIV/OpenPGP retry counters. A third of the measured distinct count is the
 \* floor, the same rule as its siblings; the measurement itself is the results
@@ -334,9 +335,10 @@ LatSolo_*.cfg                        RED     -
 \* invariants are step recorders, so a state satisfying them carries `viol = {}`
 \* and no other conjunct is needed -- `IndInv` is `TypeOK /\ viol = {}` and one
 \* step of `Next` never leaves it. The floor is the count of type-correct states
-\* the predicate admits at `Max = 2` (3^5 counter assignments over the five
-\* references), because below it the predicate stopped admitting what it admits.
-LatInduction.cfg                     GREEN   243
+\* the predicate admits at `Max = 2` -- 3^5 counts times 2^5 maxima over the five
+\* references, times the 2^3 status sets -- because below it the predicate
+\* stopped admitting what it admits.
+LatInduction.cfg                     GREEN   62208
 \* One mutant, for the reason the store family's row gives.
 LatInductionMut_*.cfg                RED     -
 PolicyMut_*.cfg                      RED     -

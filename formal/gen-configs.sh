@@ -612,13 +612,20 @@ echo "wrote Store.cfg, StoreInduction.cfg and ${#STORE_BUGS[@]} x 2 store config
 # module for the same measured reason: it shares no variable with the others (it
 # has counters, the seam has statuses), and it is the one part of the applet
 # surface with no safe oracle -- exhausting a real PUK ladder blocks the card.
-LATTICE_BUGS=(BugUseWhenBlocked BugWrongDoesNotSpend BugRecoveryWithoutSecret)
+LATTICE_BUGS=(BugUseWhenBlocked BugWrongDoesNotSpend BugRecoveryWithoutSecret
+              BugSetRetriesWithoutAdmin BugSetRetriesOnUserStatus
+              BugSetRetriesRefillsOldMaximum)
 
 lattice_target() {
   case "$1" in
     BugUseWhenBlocked)        echo NoAuthWhenBlocked ;;
     BugWrongDoesNotSpend)     echo WrongAttemptIsCharged ;;
     BugRecoveryWithoutSecret) echo BudgetRisesOnlyWithItsSecret ;;
+    # SET PIN RETRIES raising a budget with no status, under the user's, or to a
+    # count other than the maximum it sets.
+    BugSetRetriesWithoutAdmin)      echo BudgetRisesOnlyWithItsSecret ;;
+    BugSetRetriesOnUserStatus)      echo BudgetRisesOnlyWithItsSecret ;;
+    BugSetRetriesRefillsOldMaximum) echo BudgetRisesOnlyWithItsSecret ;;
   esac
 }
 LATTICE_INV=(NoAuthWhenBlocked WrongAttemptIsCharged BudgetRisesOnlyWithItsSecret)

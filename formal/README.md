@@ -1658,9 +1658,10 @@ this module is it.
 The seam module has the applets' status *lifetime* — who holds which access
 status, what a SELECT or a refusal does to it. It does not have the arithmetic
 *behind* establishing that status: the finite retry counter on each reference,
-the recovery reference that can refill it, and the rule that a wrong attempt
-costs exactly one try from a budget that refuses at zero. That is this module —
-PIV's PIN and PUK, OpenPGP's PW1, PW3 and RC — one layer beneath the seam.
+the maximum it is refilled to, the recovery reference that can refill it, and the
+rule that a wrong attempt costs exactly one try from a budget that refuses at
+zero. That is this module — PIV's PIN and PUK, OpenPGP's PW1, PW3 and RC — one
+layer beneath the seam.
 
 **It is the applet surface with no safe oracle, which is the whole reason to
 model it.** The wire behaviour of these applets was attacked with a real YubiKey
@@ -1672,8 +1673,21 @@ for the measured reason the seam gave for being a second: the two share no
 variable — the seam has statuses and selections, this has counters — so a
 product multiplies state and buys no new interleaving.
 
+**One door raises a budget with no secret presented: OpenPGP's SET PIN RETRIES**
+(INS `F2`, `crates/rsk-openpgp/src/retries.rs:32-80`). Under PW3 it sets how many
+tries PW1, the RC and PW3 each get, and gives each that many, a blocked one
+included, while every value stays as it was. So each reference carries its own
+stored maximum (`maxima`, the `EF_PW_RETRIES` record, under the ceiling `Max`),
+a correct VERIFY or RESET RETRY refills to it, and `SetRetries` is an action of
+its own, guarded by the PW3 status (`crates/rsk-openpgp/src/retries.rs:33-35`)
+that the module now keeps beside the counters (`held`). It keeps it coarsely: a
+wrong attempt drops a status, and a card reset, a SELECT elsewhere and the RESET
+RETRY that ends all three do not, which only keeps one up longer. The RC is
+always set here, as it always was; over an unset one `F2` stores the maximum and
+gives no tries, a step that raises nothing.
+
 **Three invariants, all honestly ghosts.** The counter arithmetic erases its own
-history — a success refills to `Max`, so no reachable *state* shows the
+history — a success refills to the maximum, so no reachable *state* shows the
 exhaustion a bad grant rode past — which makes each of these a fact about a
 *step*, not a state, exactly as the seam module's mostly are:
 
@@ -1684,36 +1698,56 @@ exhaustion a bad grant rode past — which makes each of these a fact about a
   *exactly one*, the anti-bruteforce gate (a wrong VERIFY charges the target, a
   wrong RESET RETRY charges the recovery reference);
 - `BudgetRisesOnlyWithItsSecret` — a counter rises only on a correct secret, its
-  own or its recovery reference's, never out of nothing.
+  own or its recovery reference's, or when SET PIN RETRIES, with PW3 held, sets a
+  new maximum for it, and then to that maximum; never out of nothing — not on a
+  wrong secret, not under the user's status, not with no status at all.
 
-**Three mutants, one per defended code site** — the discipline the store and
-seam modules keep, so a switch is one real thing a reviewer could break:
+**Six mutants, each a defended code site broken** — the discipline the store
+and seam modules keep, so a switch is one real thing a reviewer could break; the
+two guard switches break one site two ways:
 
-| Mutation switch | Removes | Target invariant | Caught in |
-|---|---|---|---|
-| `BugUseWhenBlocked` | the `left == 0 => PIN_BLOCKED` floor (`crates/rsk-piv/src/lib.rs:1355-1357` / `crates/rsk-openpgp/src/pin.rs:245-247`), which guards a direct verify AND a recovery reference | `NoAuthWhenBlocked` | 30 states |
-| `BugWrongDoesNotSpend` | the decrement that IS the gate (`crates/rsk-piv/src/lib.rs:1375` / `crates/rsk-openpgp/src/pin.rs:152`) | `WrongAttemptIsCharged` | 2 states |
-| `BugRecoveryWithoutSecret` | the recovery secret verified before the refill (`crates/rsk-piv/src/lib.rs:1512` / `crates/rsk-openpgp/src/pin.rs:949`) | `BudgetRisesOnlyWithItsSecret` | 9 states |
+| Mutation switch | Removes | Target invariant |
+|---|---|---|
+| `BugUseWhenBlocked` | the `left == 0 => PIN_BLOCKED` floor (`crates/rsk-piv/src/lib.rs:1355-1357` / `crates/rsk-openpgp/src/pin.rs:245-247`), which guards a direct verify AND a recovery reference | `NoAuthWhenBlocked` |
+| `BugWrongDoesNotSpend` | the decrement that IS the gate (`crates/rsk-piv/src/lib.rs:1375` / `crates/rsk-openpgp/src/pin.rs:152`) | `WrongAttemptIsCharged` |
+| `BugRecoveryWithoutSecret` | the recovery secret verified before the refill (`crates/rsk-piv/src/lib.rs:1512` / `crates/rsk-openpgp/src/pin.rs:949`) | `BudgetRisesOnlyWithItsSecret` |
+| `BugSetRetriesWithoutAdmin` | SET PIN RETRIES's PW3 guard (`crates/rsk-openpgp/src/retries.rs:33-35`) | `BudgetRisesOnlyWithItsSecret` |
+| `BugSetRetriesOnUserStatus` | the same guard's admin half: PW1's status taken for PW3's | `BudgetRisesOnlyWithItsSecret` |
+| `BugSetRetriesRefillsOldMaximum` | the count set to the maximum set (`crates/rsk-openpgp/src/retries.rs:65-69`): it takes the one replaced | `BudgetRisesOnlyWithItsSecret` |
 
-`Lattice.cfg` is **GREEN, exhaustive** over 243 distinct states at depth 11, with
-no dead action; every `LatSolo_*.cfg` is RED on its own target. The all-blocked
-state — a locked-out card — is not a deadlock: a blocked card still *answers*
-every VERIFY (it returns `PIN_BLOCKED` and changes nothing), so a blocked
-reference's verify is a no-op refusal here, an enabled step rather than a dead
-end. That was a real bug in the first draft, caught by TLC's deadlock check.
+Each of the three new counterexamples was read for the clause it fell on. With
+the guard gone, a wrong PW1 and then `SetRetries` with no status held refills
+it: `"pw3" \in held` is false. With PW1 taken for PW3, PW1 verified, one PW3 try
+spent and `SetRetries` refills PW3 under PW1 alone. Refilling to the replaced
+maximum, a wrong PW1, PW3 verified and `SetRetries` lowering PW1's maximum to one
+raises its count to two: a rise to a count the step did not set, the direction a
+lowered limit makes a fault of. That one needs two maxima to tell apart, which is
+why `formal/scopes.txt` holds `Max` at two.
+
+`Lattice.cfg` is **GREEN, exhaustive**, with no dead action (`SetRetries` fires
+under `COVERAGE=1`); every `LatSolo_*.cfg` is RED on its own target. The
+all-blocked state — a locked-out card — is not a deadlock: a blocked card still
+*answers* every VERIFY (it returns `PIN_BLOCKED` and changes nothing), so a
+blocked reference's verify is a no-op refusal here, an enabled step rather than
+a dead end. That was a real bug in the first draft, caught by TLC's deadlock
+check.
 
 **What it does NOT cover, stated.** The OATH access code and the OTP slot code
 are absent: a MAC / equality challenge-response has *no retry counter*, so a
 wrong answer costs nothing — the seam module's exempt-refusal territory, and
-their acceptance is the group-E oracle's. OpenPGP's admin path to PW1 (RESET
-RETRY `P1 = 0x02`) is out too: it gates on a live PW3 *session*, which is the
-seam module's status, not a secret presented in the call. `LatMut_*` is
-co-refuted since the applet batch below, and the exclusion it carried until then
-had a real reason: a naive injection measures a `u8` underflow rather than a
-blocked reference authenticating, because the floor and the counter's type are
-two layers. The patch that resolves it is one substitution — rebinding `left` to
-`left.max(1)` removes the floor AND keeps the arithmetic under it in range, so
-what the slice fails on is the property rather than a panic.
+their acceptance is the group-E oracle's. OpenPGP's other admin path to PW1
+(RESET RETRY `P1 = 0x02`) is out: it gates on a live PW3 *session* and replaces
+PW1's value, which this module does not model. So is PIV's own SET RETRIES (INS
+`FA`), which resets the PIN and the PUK to their defaults under new totals
+(`MX-LAT-005`). And a SET PIN RETRIES that set a maximum and left the count as it
+stood is GREEN here, measured on a scratch copy: it raises nothing, and a count
+over its maximum is no invariant of this module. `LatMut_*` is co-refuted since the applet batch below,
+and the exclusion it carried until then had a real reason: a naive injection
+measures a `u8` underflow rather than a blocked reference authenticating, because
+the floor and the counter's type are two layers. The patch that resolves it is
+one substitution — rebinding `left` to `left.max(1)` removes the floor AND keeps
+the arithmetic under it in range, so what the slice fails on is the property
+rather than a panic.
 
 ## The fifth module — `RSKeyAppletPolicies.tla`
 
@@ -1825,7 +1859,7 @@ so the kill measured a defence in depth rather than the modelled defect. It now
 widens both layers, and `put_data_c4_refuses_a_user_status` drives the command
 so the outer gate is asserted too.
 
-The live roster is **93 entries: all 87 executable patches killed, six
+The live roster is **96 entries: all 90 executable patches killed, six
 unreachable with recorded evidence.**
 
 ## The sixth module — `RSKeyAdminSurface.tla`
@@ -2675,7 +2709,7 @@ describes. Falsified through the row itself, exit codes taken with no pipe:
 
 | Mutation | What the row said | Exit |
 |---|---|---|
-| the tree as it stands | `247 generated configuration(s) reproduce byte-for-byte, 1 hand-written` | 0 |
+| the tree as it stands | `253 generated configuration(s) reproduce byte-for-byte, 1 hand-written` | 0 |
 | one `BootCarryMut_*.cfg` deleted | `… writes it and formal/ does not have it` | **1** |
 | `MaxWeak = 2` → `1` inside one generated file | `differs … line 5: generator writes '    MaxWeak = 2', the tree has '    MaxWeak = 1'` | **1** |
 | the same edit made in the *generator* instead | 13 rows `differs …` — every `Boot*` configuration | **1** |
@@ -2787,7 +2821,7 @@ to itself.
 
 | Mutation | What the row said | Exit |
 |---|---|---|
-| the tree as it stands | `247 configuration(s) held to 68 entries (26 wildcard families covering 205), 6 ratchets, 1 exempt, 1 counterfactual repair(s)` | 0 |
+| the tree as it stands | `253 configuration(s) held to 68 entries (26 wildcard families covering 211), 6 ratchets, 1 exempt, 1 counterfactual repair(s)` | 0 |
 | `SeamMut_*.cfg` `RED` → `GREEN` | `… requires GREEN, but the configuration switches BugAdminOpensKeyOps on and so owes RED` | **1** |
 | the `SeamSolo_*.cfg` row deleted | `no verdict entry in formal/floors.txt and no registered exemption` | **1** |
 | a broader `SeamMut*` laid above it | `` `SeamMut_*.cfg` never decides anything: … `SeamMut*` matches 19 configuration(s) first `` | **1** |
@@ -2966,7 +3000,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-STORE-006` | `NoSilentOrphan` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-001` | `NoAuthWhenBlocked` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-002` | `WrongAttemptIsCharged` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
-| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
+| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 4 | 4 | 0 | 0 | 0 |
 | `SEC-POL-001` | `PivOperationNeedsSlotPolicy` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-POL-002` | `PivAlwaysSpendsFreshness` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-POL-003` | `AttributeChangeInvalidatesTheKey` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 1 | 0 | 0 | 0 |
@@ -3296,16 +3330,21 @@ than a settled abstraction.
   boot's first press steps it through one of those two rules, and a press
   through the other, after promoting an unused counter to 1. A raw write to a
   slot FID is below the type, and outside this bound.
-- **The PIN comparison is a nondeterministic boolean** (`correct`), the
-  counters run to a single step (`Max`), and OpenPGP's admin path from PW3 to
-  PW1 is deliberately outside the recovery graph because it gates on a live
-  PW3 session. The cryptography, the PIN bytes and the wire framing are
-  elsewhere; a defect in the comparison itself cannot be seen from here.
+- **The PIN comparison is a nondeterministic boolean** (`correct`), and the
+  counters and their stored maxima run to two (`Max`) where the card's are a
+  byte. OpenPGP's SET PIN RETRIES is modelled, under a PW3 status the module
+  keeps coarsely (a wrong attempt drops it; a card reset, a SELECT elsewhere and
+  the RESET RETRY that ends every status do not, which only keeps it up longer),
+  and with the resetting code always set. RESET RETRY P1 = 0x02, the admin path
+  that replaces PW1, and PIV's own SET RETRIES are outside the model. The
+  cryptography, the PIN bytes and the wire framing are elsewhere; a defect in
+  the comparison itself cannot be seen from here.
   **Disposition: bounded-elsewhere** — `formal/scopes.txt`
-  `RSKeyRetryLattice/Max` (minimum 1, measured on `NoAuthWhenBlocked`).
-  RSKeyRetryLattice/Max is the counter ceiling every mutant of that module fires
-  at, and the secret is abstracted to matched or not-matched, so the model is
-  the arithmetic around a comparison's answer.
+  `RSKeyRetryLattice/Max` (minimum 2, measured on
+  `BudgetRisesOnlyWithItsSecret`). RSKeyRetryLattice/Max is the ceiling every
+  counter and every stored maximum of that module runs under, and the one every
+  mutant of it fires at; the secret is abstracted to matched or not-matched, so
+  the model is the arithmetic around a comparison's answer.
 - **The capability mask is a set of opaque capabilities**, not the 16-bit
   `USB_ENABLED` bitmask, and the clamp to the supported set is enforced by
   construction rather than checked. The config-lock TLV is present only as the

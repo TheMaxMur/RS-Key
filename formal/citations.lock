@@ -811,6 +811,9 @@ formal/README.md	crates/rsk-openpgp/src/pin.rs	949-949	if data.len() <= rc_len {
 formal/README.md	crates/rsk-openpgp/src/pso.rs	86-98	(0x9E, 0x9A) => {	if !sess.has_pw2 {
 formal/README.md	crates/rsk-openpgp/src/putdata.rs	60-66	pub fn write_authorized(sess: &Session, fid: u16) -> bool {	}
 formal/README.md	crates/rsk-openpgp/src/putdata.rs	260-263	pub fn put_pw_status<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {	}
+formal/README.md	crates/rsk-openpgp/src/retries.rs	32-80	pub fn set_pin_retries<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {	}
+formal/README.md	crates/rsk-openpgp/src/retries.rs	33-35	if !sess.has_pw3 {	}
+formal/README.md	crates/rsk-openpgp/src/retries.rs	65-69	*m = want;	}
 formal/README.md	crates/rsk-openpgp/src/terminate.rs	184-184	let mut deleted = 0u32;	let mut deleted = 0u32;
 formal/README.md	crates/rsk-openpgp/src/terminate.rs	215-215	if deleted > WIPE_MAX_DELETES {	if deleted > WIPE_MAX_DELETES {
 formal/README.md	crates/rsk-piv/src/auth.rs	57-65	/// skips the PIN; listing known gated values made unknown bytes ungated.	}
@@ -930,13 +933,22 @@ formal/RSKeyBootHardening.tla	firmware/src/pin_lock.rs	18-21	//! a real power cy
 formal/RSKeyBootHardening.tla	firmware/src/pin_lock.rs	36-37	const TAG: u32 = 0x5253_4B00;	const TAG_MASK: u32 = 0xFFFF_FF00;
 formal/RSKeyBootHardening.tla	firmware/src/pin_lock.rs	52-54	/// Refines `RSKeyBootHardening!TheWholeLockRides` — SEC-BOOT-002.	rp_pac::WATCHDOG.scratch2().write_value(encode(lock));
 formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	152-152	pw[idx] -= 1;	pw[idx] -= 1;
+formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	183-183	pw[idx] = retr[slot];	pw[idx] = retr[slot];
+formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	206-216	fn clear_access_status(sess: &mut Session, fid: u16, p2: u8) {	}
 formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	222-317	/// Refines `RSKeyRetryLattice!NoAuthWhenBlocked` — SEC-LAT-001.	}
 formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	245-247	let n = n.min(pw.len());	if idx < n && pw[idx] == 0 {
+formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	314-314	sess.has_pw3 = true;	sess.has_pw3 = true;
 formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	709-709	let mut fid = pw_fid(p2);	let mut fid = pw_fid(p2);
 formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	926-977	/// resetting code (P1=0x00) or via a verified admin PIN (P1=0x02). Both re-seal	return match result {
 formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	949-949	if data.len() <= rc_len {	if data.len() <= rc_len {
+formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	957-959	sess.has_pw1 = false;	sess.has_pw3 = false;
 formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/pin.rs	982-982	if p1 != 0x02 {	if p1 != 0x02 {
+formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/retries.rs	32-80	pub fn set_pin_retries<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {	}
+formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/retries.rs	33-35	if !sess.has_pw3 {	}
+formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/retries.rs	65-69	*m = want;	}
+formal/RSKeyRetryLattice.tla	crates/rsk-openpgp/src/retries.rs	66-67	// A resetting code nobody set has no tries to give until PUT DATA D3 sets one.	if fid != EF_RC || rc_set {
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	596-603	fn reset_retry<S: Storage>(&mut self, dev: &Device, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {	unblock_pin_with_puk(dev, fs, puk, new)
+formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	609-609	fn set_retries<S: Storage>(&mut self, dev: &Device, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {	fn set_retries<S: Storage>(&mut self, dev: &Device, fs: &mut Fs<S>, apdu: &Apdu) -> Sw {
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1350-1417	/// Refines `RSKeyRetryLattice!NoAuthWhenBlocked` — SEC-LAT-001.	Sw::retries(left)
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1355-1357	Err(sw) => return sw,	if left == 0 {
 formal/RSKeyRetryLattice.tla	crates/rsk-piv/src/lib.rs	1375-1375	if set_retries_left(fs, retry, left - 1).is_err() {	if set_retries_left(fs, retry, left - 1).is_err() {

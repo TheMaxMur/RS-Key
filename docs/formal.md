@@ -35,8 +35,10 @@ refinement pilot inducts its persistent-state invariant over.
 
 `RSKeyRetryLattice.tla` models the retry & recovery budget lattice of the two
 applets that have one — PIV (PIN, PUK) and OpenPGP (PW1, PW3, RC): the finite
-counter behind each reference, the recovery reference that refills it, and the
-anti-bruteforce arithmetic that is identical at every one. It is the part of the
+counter behind each reference, the maximum it is refilled to, the recovery
+reference that refills it, OpenPGP's SET PIN RETRIES (which refills PW1, the RC
+and PW3 under PW3's status, a new maximum each), and the anti-bruteforce
+arithmetic that is identical at every one. It is the part of the
 applet surface with no safe oracle — exhausting a real PUK ladder blocks the
 card and the only way back takes the keys — so an exhaustive check of every
 verify/block/recover interleaving can run only in a model.
@@ -179,7 +181,7 @@ generated table in `formal/README.md` records every one, its target invariant,
 its model verdict and its code-level verdict: **30 of 31 are co-refuted, one is
 unreachable, and none is a gap**. Deriving that roster found six real coverage
 gaps; each now has a regression harness. Later modules extend the live roster to
-93 entries: all 87 executable patches are killed, and six are unreachable.
+96 entries: all 90 executable patches are killed, and six are unreachable.
 
 The applet batch — the 24 seam, retry-lattice and policy mutants — was added
 because the roster had a measurable skew: 31 of its first 43 patches sat in

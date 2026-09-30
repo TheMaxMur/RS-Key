@@ -103,11 +103,17 @@ RSKeyAppletPolicies    SessionMax             1   OtpCounterNeverRepeats
 \* whole space with no counterexample there and falls at two.
 RSKeyAppletPolicies    Slots                  2   OtpCounterNeverRepeats
 
+\* --- RSKeyRetryLattice ----------------------------------------------------
+\* SET PIN RETRIES resetting a count to the maximum it replaces is only a defect
+\* where there are two maxima to tell apart. The witness,
+\* BugSetRetriesRefillsOldMaximum, explores its whole space at `Max = 1` with no
+\* counterexample and falls at two; every other lattice mutant fires at one.
+RSKeyRetryLattice      Max                    2   BudgetRisesOnlyWithItsSecret
+
 \* --- where a single element is enough ---------------------------------------
-\* Every mutant of these three fires over one element; the shipped values are the
+\* Every mutant of these two fires over one element; the shipped values are the
 \* domain's real vocabulary, not a measurement.
 RSKeyAdminSurface      Caps                   1   DisabledAppletNeverDispatches
-RSKeyRetryLattice      Max                    1   NoAuthWhenBlocked
 RSKeyBootHardening     MaxWeak                1   MarkerNeverLies
 \* Not a size. The open RP2350 question (M7-Q1) is a standing assumption now,
 \* two-armed and registered: `assurance/assumptions.toml` carries it and

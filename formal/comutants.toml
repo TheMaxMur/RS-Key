@@ -1020,6 +1020,60 @@ slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
 note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:952."
 
+# SET PIN RETRIES (OpenPGP INS F2): the one door that raises a budget under a
+# status rather than on a presented secret. Its three switches each take one
+# half of the rule SEC-LAT-003 allows it: PW3 held, and the count set to the
+# maximum the command sets.
+
+[comutant.BugSetRetriesWithoutAdmin]
+status = "patch"
+file = "crates/rsk-openpgp/src/retries.rs"
+find = """
+    if !sess.has_pw3 {
+        return Sw::SECURITY_STATUS_NOT_SATISFIED;
+    }
+"""
+replace = """
+    let _ = sess;
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "SET PIN RETRIES with its `has_pw3` guard dropped: any host sets every PIN's tries. Killed by 2 tests, both the served direction TLC's counterexample takes (a wrong PW1, then F2 with no status held refills it): `set_pin_retries_answers_as_a_yubikey_does` reads 9000 where the F2 sent with nothing verified owed 6982 (`no PW3`), and `set_pin_retries_takes_no_user_status_for_the_admins` 9000 where F2 under PW1 alone owed 6982 (`PW1 alone`), both in crates/rsk-openpgp/src/retries_tests.rs."
+
+[comutant.BugSetRetriesOnUserStatus]
+status = "patch"
+file = "crates/rsk-openpgp/src/retries.rs"
+find = """
+    if !sess.has_pw3 {
+"""
+replace = """
+    if !sess.has_pw3 && !sess.has_pw1 && !sess.has_pw2 {
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "The same guard taking PW1's status (81 or 82) for PW3's: the non-admin refill. Killed by 1 test, `set_pin_retries_takes_no_user_status_for_the_admins` (crates/rsk-openpgp/src/retries_tests.rs), 9000 where 6982 was owed under PW1 alone (`PW1 alone`), the served direction; TLC's counterexample is the same shape, PW1 verified, one PW3 try spent, F2 refilling PW3 with only PW1 held."
+
+[comutant.BugSetRetriesRefillsOldMaximum]
+status = "patch"
+file = "crates/rsk-openpgp/src/retries.rs"
+find = """
+        *m = want;
+        // A resetting code nobody set has no tries to give until PUT DATA D3 sets one.
+        if fid != EF_RC || rc_set {
+            *l = want;
+        }
+"""
+replace = """
+        // A resetting code nobody set has no tries to give until PUT DATA D3 sets one.
+        if fid != EF_RC || rc_set {
+            *l = *m;
+        }
+        *m = want;
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "SET PIN RETRIES resetting each named count to the maximum it REPLACES, the maximum written after. Killed by 5 tests in crates/rsk-openpgp/src/retries_tests.rs. Four read the fail-safe face first -- C4 03 00 03 where F2 05 06 07 owed 05 00 07, fewer tries than set. The one that reads TLC's direction is `a_lowered_maximum_takes_a_spent_count_to_itself`: one wrong PW1, PW3 verified, F2 01 00 00 leaves C4 03 00 03 where 01 00 03 was owed (`PW1's count is its new maximum`), three tries over a limit of one -- the counterexample's wrong PW1 then F2 lowering its maximum to 1 with the count raised to the old 2."
+
 # ---- RSKeyAppletPolicies: slot policy, attributes, gates, counter ----------
 
 [comutant.BugPivPolicyIgnored]

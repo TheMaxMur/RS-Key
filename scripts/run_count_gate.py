@@ -477,7 +477,7 @@ SCOPED = {
     "claim, and the generated roster line carries the same 30",
     (
         "docs/formal.md",
-        "93 entries: all 87 executable patches are killed",
+        "96 entries: all 90 executable patches are killed",
     ): "the whole-tree roster restated in the page that introduces the phase-2 "
     "table, whose generated region beside it gives the phase-2 line and not this "
     "total",
@@ -500,7 +500,7 @@ SCOPED = {
     "counts and none of them is a roster",
     (
         "formal/README.md",
-        "**93 entries: all 87 executable patches killed",
+        "**96 entries: all 90 executable patches killed",
     ): "the co-mutant roster restated where its composition is broken down, which the "
     "generated line beside it does not give — the copy that read 69, then 71, 72 and "
     "73, re-measured by hand in four commits of this series. Its own claim that a "
