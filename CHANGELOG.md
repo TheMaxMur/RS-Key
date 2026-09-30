@@ -95,7 +95,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   handle is the draft's example MAC encoding, so no flash record changes shape.
   Refusals come in a YubiKey 5.8.0's order, all before the touch: `flags` outside
   the draft's three (`0x2C`), then an `alg` that is not a negative integer
-  (`0x11`), then no supported algorithm (`0x26`). One deliberate deviation: an
+  (`0x11`), then no supported algorithm (`0x26`). Two deliberate deviations: the
+  seed's attestation object is `none` outside enterprise attestation (below), and an
   ML-DSA credential refuses the extension (`0x26`), its response having no room
   for a second attestation object. The default image
   compiles none of it and getInfo does not advertise it
@@ -108,7 +109,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   made and attested so, and signs without a touch: an assertion with `up: false`
   is served with UP clear (authData flags `0x80`), as on a YubiKey 5.8.0. It was
   made `require-up`, a deviation, and answered `up: false` with `0x3B`, as a
-  `require-up` key still does. `bcdDevice` 0x0A84 → 0x0A85.
+  `require-up` key still does. `bcdDevice` 0x0A84 → 0x0A85. The seed's attestation
+  object is `fmt: "none"` with an empty statement beside a packed credential, as a
+  YubiKey 5.8.0 answers it; it took the credential's format, signer and chain, as
+  the draft asks. Under enterprise attestation, not measured on the YubiKey, it
+  still does. `bcdDevice` 0x0A85 → 0x0A86.
 
 ### Changed
 

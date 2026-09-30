@@ -18,9 +18,11 @@
 //! record changes shape and an older build's records load as they always did.
 //!
 //! A key asked for `unattended` (flags `0b000`) signs without a touch, as a YubiKey
-//! 5.8.0's does. One deliberate deviation: an ML-DSA credential refuses the
-//! extension with `CTAP2_ERR_UNSUPPORTED_ALGORITHM`, since its registration
-//! response leaves no room for a second attestation object.
+//! 5.8.0's does. Two deliberate deviations from the draft. The signing key's
+//! attestation object is `none`, as that YubiKey answers it, where the draft gives it
+//! the credential's format: only an enterprise attestation signs it. And an ML-DSA
+//! credential refuses the extension with `CTAP2_ERR_UNSUPPORTED_ALGORITHM`, since
+//! its registration response leaves no room for a second attestation object.
 
 // Host bytes: a panic here is a board that answers nothing until unplugged.
 #![deny(

@@ -1410,8 +1410,10 @@ fn large_blob_and_preview_sign_share_the_unsigned_outputs() {
     assert!(reg.att_obj.is_some());
 }
 
+/// YubiKey 5.8.0, measured 2026-09-30: beside a credential attested as ever, the
+/// signing key's attestation object is `fmt: "none"` with an empty statement.
 #[test]
-fn registration_attests_an_arkg_seed_beside_the_credential() {
+fn registration_returns_an_arkg_seed_beside_the_credential() {
     let mut board = Board::new();
     let input = generate_key(&[ALG_ESP256_SPLIT_ARKG], Some(1));
     let resp = board
@@ -1444,23 +1446,16 @@ fn registration_attests_an_arkg_seed_beside_the_credential() {
     assert_eq!(ad.len(), 316, "fits AUTH_DATA_MAX with room");
     assert!(ad.len() <= AUTH_DATA_MAX);
 
-    // The same format, signer and chain as the credential's own attestation.
-    assert_eq!(key.fmt, "packed");
-    assert_eq!(reg.fmt, "packed");
-    let (sig, x5c) = packed(&key.att_stmt);
-    let (outer_sig, outer_x5c) = packed(&reg.att_stmt);
-    assert_eq!(x5c, outer_x5c);
-    let signer = board.attestation_key();
-    let mut signed = ad.clone();
-    signed.extend_from_slice(&CDH);
-    signer
-        .verify(&signed, &Signature::from_der(&sig).unwrap())
-        .expect("the signing key is attested by the device key");
+    // The credential is attested by the device key; its signing key by nothing.
+    assert_eq!((reg.fmt.as_str(), key.fmt.as_str()), ("packed", "none"));
+    assert_eq!(key.att_stmt, [0xA0], "an empty map");
+    let (outer_sig, _) = packed(&reg.att_stmt);
     let mut outer = reg.auth_data.clone();
     outer.extend_from_slice(&CDH);
-    signer
+    board
+        .attestation_key()
         .verify(&outer, &Signature::from_der(&outer_sig).unwrap())
-        .expect("…which attests the credential too");
+        .expect("the device key attests the credential");
 
     // Pins the seed this fixed device mints; the reference vectors are for it.
     assert_eq!(
@@ -1544,11 +1539,11 @@ fn an_enterprise_registration_attests_the_signing_key_with_the_org_key() {
 }
 
 /// Over an org chain that reads back cut, what a build before ab8bcfc3 could store,
-/// the credential takes the device's own attestation, and so does its signing key:
-/// both are signed off the one choice.
+/// no enterprise attestation is performed: the credential takes the device's own,
+/// and its signing key the `none` object a registration without EA gets.
 #[test]
-fn an_enterprise_request_over_a_cut_chain_attests_the_signing_key_with_the_device_key() {
-    let (mut board, org, _) = enterprise_board();
+fn an_enterprise_request_over_a_cut_chain_attests_no_signing_key() {
+    let (mut board, _, _) = enterprise_board();
     let mut cut = std::vec![2u8];
     for _ in 0..2 {
         cut.extend_from_slice(&1500u16.to_le_bytes());
@@ -1559,23 +1554,18 @@ fn an_enterprise_request_over_a_cut_chain_attests_the_signing_key_with_the_devic
     let input = generate_key(&[ALG_ESP256_SPLIT_ARKG], Some(1));
     let reg = registered(&board.mc(&enterprise_mc_req(&input)).unwrap());
     assert!(!reg.fields.contains(&4), "epAtt: {:?}", reg.fields);
-    let key = attested_key(reg.att_obj.as_deref().unwrap());
-    let (sig, x5c) = packed(&key.att_stmt);
-    assert_eq!(x5c, packed(&reg.att_stmt).1, "the credential's chain");
     let mut ee = [0u8; 1024];
     let n = board.fs.read(crate::consts::EF_EE_DEV, &mut ee).unwrap();
+    let (_, x5c) = packed(&reg.att_stmt);
     assert_eq!(x5c, [ee[..n].to_vec()], "the device's own certificate");
-    assert!(!attests(&org_key(&org), &key.auth_data, &sig));
-    let device = board.attestation_key();
-    assert!(
-        attests(&device, &key.auth_data, &sig),
-        "the device key attests it"
-    );
+    let key = attested_key(reg.att_obj.as_deref().unwrap());
+    assert_eq!(key.fmt, "none");
+    assert_eq!(key.att_stmt, [0xA0], "an empty map");
 }
 
 /// The other half: with the org key installed but enterprise attestation not asked
-/// for, the device's own key attests the signing key and the org key vouches for
-/// nothing, since a signature under it names the organisation to the site.
+/// for, the org key vouches for nothing, since a signature under it names the
+/// organisation to the site: the device's key attests the credential, none its key.
 #[test]
 fn a_registration_without_enterprise_attestation_keeps_the_org_key_out() {
     let (mut board, org, chain) = enterprise_board();
@@ -1586,14 +1576,31 @@ fn a_registration_without_enterprise_attestation_keeps_the_org_key_out() {
             .unwrap(),
     );
     assert!(!reg.fields.contains(&4), "epAtt: {:?}", reg.fields);
-    let key = attested_key(reg.att_obj.as_deref().unwrap());
-    let (sig, x5c) = packed(&key.att_stmt);
+    let (sig, x5c) = packed(&reg.att_stmt);
     assert_ne!(x5c, chain, "the org chain rode a registration without EA");
-    assert!(!attests(&org_key(&org), &key.auth_data, &sig));
-    let device = board.attestation_key();
+    assert!(!attests(&org_key(&org), &reg.auth_data, &sig));
+    assert!(attests(&board.attestation_key(), &reg.auth_data, &sig));
+    let key = attested_key(reg.att_obj.as_deref().unwrap());
+    assert_eq!(key.fmt, "none");
+    assert_eq!(key.att_stmt, [0xA0], "an empty map");
+}
+
+/// Enterprise attestation performed with no org key installed is the device's own,
+/// with `ep`; the signing key is attested as the credential is, by the device key.
+#[test]
+fn an_enterprise_registration_without_an_org_key_attests_the_signing_key_with_the_device_key() {
+    let mut board = Board::new();
+    board.fs.put(crate::consts::EF_EA_ENABLED, &[1]).unwrap();
+    let input = generate_key(&[ALG_ESP256_SPLIT_ARKG], Some(1));
+    let reg = registered(&board.mc(&enterprise_mc_req(&input)).unwrap());
+    assert!(reg.fields.contains(&4), "epAtt: {:?}", reg.fields);
+    let key = attested_key(reg.att_obj.as_deref().unwrap());
+    assert_eq!(key.fmt, "packed");
+    let (sig, x5c) = packed(&key.att_stmt);
+    assert_eq!(x5c, packed(&reg.att_stmt).1, "the credential's chain");
     assert!(
-        attests(&device, &key.auth_data, &sig),
-        "the device key attests it"
+        attests(&board.attestation_key(), &key.auth_data, &sig),
+        "the device key attests the signing key"
     );
 }
 

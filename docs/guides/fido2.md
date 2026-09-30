@@ -232,8 +232,13 @@ with `CTAP2_ERR_UP_REQUIRED` (`0x3B`), and a `require-uv` key wants a verified
 user as well. An `unattended` key (`0b000`) needs no touch: a request with
 `up: false` is signed with UP clear and nothing asked, as on a YubiKey 5.8.0.
 
-One deliberate deviation from the draft:
+Deliberate deviations from the draft:
 
+- **The seed's attestation object is `none`.** The draft attests the signing
+  key in the credential's own format. A YubiKey 5.8.0 answers `fmt: "none"` with
+  an empty statement beside a packed credential, and so does this build. Only
+  under enterprise attestation, which that YubiKey was not measured with, is the
+  seed attested, by the credential's key and chain.
 - **Not with an ML-DSA credential.** Asking for previewSign on a credential whose
   algorithm is ML-DSA is refused with `CTAP2_ERR_UNSUPPORTED_ALGORITHM` (`0x26`).
   That response would carry two attestation objects beside a multi-kilobyte key,

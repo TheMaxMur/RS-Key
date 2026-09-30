@@ -843,15 +843,15 @@ fn make_credential_inner<S: Storage, R: Rng>(
         let signed = ad.get(..ad_len + 32).ok_or(CtapError::Other)?;
         make_attestation(ctx, seed, signed, &org, &mut att)?
     };
-    // The signing key's attestation object takes the credential's format and signer
-    // (v4 registration step 9) — and, when it is encoded, the credential's chain.
+    // The signing key's attestation object is `none`, as a YubiKey 5.8.0 answers it,
+    // unless enterprise attestation was performed: then the credential's signer and chain.
     #[cfg(feature = "preview-sign")]
     let preview_att = match &preview_key {
         Some(key) => {
-            let signer = if omit_att {
-                None
-            } else {
+            let signer = if ea_performed {
                 Some(attestation_key(seed, &org)?)
+            } else {
+                None
             };
             Some(previewsign::attest(
                 key,
