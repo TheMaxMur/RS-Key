@@ -10,8 +10,8 @@
 //!   for user presence, naming the operation and the *real* relying party, and
 //!   block-waits an on-screen tap. A tap on **Allow** confirms; a tap on **Deny**
 //!   is a genuine `Declined` (→ `OPERATION_DENIED`) — the BOOTSEL button has no
-//!   such gesture. This is the anti-WebUSB-phishing guarantee: a signature can't
-//!   be obtained without a physical tap on a screen showing the true rp.
+//!   such gesture. This is what closes the intent gap: malware on the host cannot
+//!   get a signature without a physical tap on a screen showing the true rp.
 //!
 //! The *what to draw*, the untrusted-string sanitizing, the Allow/Deny button
 //! geometry and the touch-report parse live in `rsk-ui` (host-tested + Kani). What
