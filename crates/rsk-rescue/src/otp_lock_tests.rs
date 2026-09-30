@@ -62,13 +62,47 @@ fn the_arms_close_on_the_latch_alone_by_majority() {
     }
 }
 
+/// Every row the patterns below can make, judged copy by copy: all blank writes, all
+/// latch is the latch, a bit outside the latch in any copy is foreign, and the rest is
+/// a subset (an older build's lock, a burn a power cut tore), which a burn completes.
 #[test]
-fn foreign_or_partial_value_refused() {
-    // A page-63-style factory lock, a single-copy partial, secure-locked —
-    // anything that is neither blank nor exactly ours must be refused.
-    assert_eq!(lock_decision(0x14_14_14), LockDecision::Unexpected);
-    assert_eq!(lock_decision(0x00_00_3C), LockDecision::Unexpected);
-    assert_eq!(lock_decision(0x3F_3F_3F), LockDecision::Unexpected);
+fn the_lock_decision_over_every_byte_pattern() {
+    let latch = PAGE58_LATCH_VALUE & 0xFF;
+    // The latch's own bits, subsets of it, the latch, and each bit outside it.
+    let bytes: [u32; 16] = [
+        0x00, 0x01, 0x04, 0x08, 0x10, 0x20, 0x14, 0x39, 0x3C, 0x3D, 0x02, 0x40, 0x80, 0x3F, 0x7D,
+        0xFF,
+    ];
+    for a in bytes {
+        for b in bytes {
+            for c in bytes {
+                let raw = a | (b << 8) | (c << 16);
+                let copies = [a, b, c];
+                let want = if copies.iter().any(|&x| x & !latch != 0) {
+                    LockDecision::Unexpected
+                } else if copies == [latch; 3] {
+                    LockDecision::AlreadyLocked
+                } else if copies == [0; 3] {
+                    LockDecision::Write
+                } else {
+                    LockDecision::Latch
+                };
+                let got = lock_decision(raw);
+                assert_eq!(got, want, "{raw:#08x}");
+                if got == LockDecision::Latch {
+                    assert_eq!(raw | PAGE58_LATCH_VALUE, PAGE58_LATCH_VALUE, "{raw:#08x}");
+                }
+            }
+        }
+    }
+    // Bits above the row's 24 belong to no copy, and no burn of ours explains them.
+    for raw in [
+        1 << 24,
+        PAGE58_LATCH_VALUE | 1 << 31,
+        PAGE58_LOCK_VALUE | 1 << 24,
+    ] {
+        assert_eq!(lock_decision(raw), LockDecision::Unexpected, "{raw:#010x}");
+    }
 }
 
 #[test]

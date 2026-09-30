@@ -174,6 +174,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A page-58 latch a power cut tore can be completed.** `rsk otp lock-page58`
+  burns `3D3D3D` into the lock row, and a burn cut short leaves some of those bits
+  and not others. The firmware took any row but blank, `3C3C3C` or `3D3D3D` as
+  foreign and refused it for good, so the latch could never close. A row whose
+  every set bit is the latch's now takes the burn, under a first lock's guards,
+  and lands on exactly the latch: provisioned keys, the magic, a boot that left
+  nothing under the pre-burn key (`6985` before the touch otherwise, and nothing
+  burnt), then the touch. A row with a bit outside the latch is still refused
+  (`6985`), and one holding the latch still answers `9000` with nothing burnt.
+  `bcdDevice` 0x0A7C → 0x0A7D.
+
 - **DeviceInfo reports `DEVICE_FLAGS` after a host has written the configuration,
   as a YubiKey 5.8.0 always does.** `ykman config usb` stores a record without tag
   `08`, and READ CONFIG echoed that record with no `DEVICE_FLAGS` at all, on every

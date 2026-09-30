@@ -93,7 +93,8 @@ A few notes that matter:
   record under the pre-burn key or in the clear, so a record planted there over
   BOOTSEL stays shut ([threat model](threat-model.md)). A lock burnt by a build
   before 0x0A67, or by the host ritual, is `0x3C3C3C` (S *read-write*) and
-  carries no latch: run `rsk otp lock-page58` again to add it.
+  carries no latch: run `rsk otp lock-page58` again to add it. The same run
+  completes a latch a power cut tore, whose row holds only some of its bits.
 - **The MKEK/DEVK are generated randomly and forgotten.** `rsk otp burn` does not
   keep a copy. The fuses *are* the key. There is nothing to back up and nothing
   to lose.

@@ -273,9 +273,9 @@ fn otp_lock_rejects_bad_guards() {
 #[test]
 fn otp_lock_refuses_foreign_lock_value() {
     let rng = RefCell::new(LcgRng(7));
-    // a different, pre-existing lock config
+    // a different, pre-existing lock config: LOCK_S 2, a bit outside the latch
     let platform = RefCell::new(FakePlatform {
-        lock_raw: Some(0x14_14_14),
+        lock_raw: Some(0x3E_3E_3E),
         ..Default::default()
     });
     let presence = RefCell::new(AlwaysConfirm);
@@ -1309,4 +1309,62 @@ fn a_locked_configuration_refuses_the_phy_write_before_its_touch() {
     assert_eq!(run(&mut app, &mut fs, &write).0, Sw::OK);
     assert_eq!(presence.borrow().0, 1);
     assert_eq!(rsk_phy::load(&mut fs).unwrap().vid_pid, new.vid_pid);
+}
+
+/// A burn a power cut tore leaves a subset of the latch, and a second LOCK58 completes
+/// it under a first lock's guards: over records left behind it is refused before the
+/// touch and nothing burns (the host probes on that); over none it burns the latch.
+#[test]
+fn a_torn_latch_is_completed_only_over_a_finished_migration() {
+    struct Counting(u32);
+    impl UserPresence for Counting {
+        fn request(&mut self, _confirm: Confirm<'_>) -> Presence {
+            self.0 += 1;
+            Presence::Confirmed
+        }
+    }
+    for torn in [0x00_00_3D, 0x3D_00_00, 0x01_04_20, 0x3D_3D_3C, 0x3C_3C_00] {
+        let rng = RefCell::new(LcgRng(7));
+        let platform = RefCell::new(FakePlatform {
+            lock_raw: Some(torn),
+            pre_otp_left: Some(otp_lock::PRE_OTP_PIV),
+            ..Default::default()
+        });
+        let presence = RefCell::new(Counting(0));
+        let mut app = RescueApplet::new(
+            SERIAL_ID,
+            SERIAL_HASH,
+            Some(FusedKey::open(test_mkek)),
+            None,
+            &rng,
+            &platform,
+            &presence,
+            KV_TOTAL,
+            FLASH_SIZE,
+        );
+        let mut fs = Fs::new(RamStorage::new());
+        assert_eq!(
+            run(&mut app, &mut fs, &lock_apdu()).0,
+            Sw::CONDITIONS_NOT_SATISFIED,
+            "{torn:#08x}"
+        );
+        assert_eq!(
+            (platform.borrow().lock_writes, presence.borrow().0),
+            (0, 0),
+            "{torn:#08x}: burnt or asked over a record left behind"
+        );
+
+        platform.borrow_mut().pre_otp_left = Some(0);
+        assert_eq!(
+            run(&mut app, &mut fs, &lock_apdu()).0,
+            Sw::OK,
+            "{torn:#08x}"
+        );
+        let p = platform.borrow();
+        assert_eq!(
+            (p.lock_writes, presence.borrow().0, p.lock_raw),
+            (1, 1, Some(otp_lock::PAGE58_LATCH_VALUE)),
+            "{torn:#08x}"
+        );
+    }
 }

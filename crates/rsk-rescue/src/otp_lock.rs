@@ -24,14 +24,14 @@ pub const PAGE58_LATCH_VALUE: u32 = 0x3D_3D_3D;
 pub enum LockDecision {
     /// Row is blank — write the latch.
     Write,
-    /// Row holds an older build's lock — burn the latch over it, under the same
-    /// guards as a first lock.
+    /// Row holds a subset of the latch — an older build's lock, or a burn a power
+    /// cut tore — and a burn completes it, under the same guards as a first lock.
     Latch,
     /// Row already holds the latch — idempotent no-op.
     AlreadyLocked,
-    /// Row holds some other (partial / foreign) value — refuse. OTP bits only
-    /// ever go 0→1, so ORing our value into a non-zero row could land a
-    /// different, unintended access config; never clobber.
+    /// Row holds a bit outside the latch — a foreign value — refuse. OTP bits only
+    /// ever go 0→1, so ORing our value into it could land a different,
+    /// unintended access config; never clobber.
     Unexpected,
 }
 
@@ -81,8 +81,9 @@ pub fn key_rows(raw: impl IntoIterator<Item = Option<u32>>) -> KeyRows {
 pub fn lock_decision(current_raw: u32) -> LockDecision {
     match current_raw {
         0 => LockDecision::Write,
-        PAGE58_LOCK_VALUE => LockDecision::Latch,
         PAGE58_LATCH_VALUE => LockDecision::AlreadyLocked,
+        // A burn only sets bits, so over a subset it lands exactly on the latch.
+        raw if raw & !PAGE58_LATCH_VALUE == 0 => LockDecision::Latch,
         _ => LockDecision::Unexpected,
     }
 }

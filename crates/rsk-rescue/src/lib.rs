@@ -394,9 +394,9 @@ impl<'a> RescueApplet<'a> {
     /// [`OTP_LOCK_MAGIC`] payload, and a provisioned MKEK (locking a blank
     /// page would only hide nothing while blinding BOOTSEL); and it waits for a
     /// boot that left nothing under the pre-burn key ([`Platform::pre_otp_left`]).
-    /// Idempotent: a row
-    /// already holding our value returns OK; any other non-blank value is
-    /// refused rather than clobbered. See [`otp_lock`].
+    /// Idempotent: a row already holding the latch returns OK; a subset of it (an
+    /// older build's lock, a torn burn) is completed under the same guards; a bit
+    /// outside it is refused rather than clobbered. See [`otp_lock`].
     fn lock_page58(&mut self, apdu: &Apdu) -> Sw {
         if apdu.data != OTP_LOCK_MAGIC {
             return Sw::DATA_INVALID;
@@ -414,8 +414,8 @@ impl<'a> RescueApplet<'a> {
         match otp_lock::lock_decision(cur) {
             otp_lock::LockDecision::AlreadyLocked => Sw::OK,
             otp_lock::LockDecision::Unexpected => Sw::CONDITIONS_NOT_SATISFIED,
-            // An older build's lock takes the latch under the same guards as a blank
-            // row: the latch closes the arms below the fused root for good.
+            // A subset of the latch, an older build's lock or a torn burn, takes it under
+            // a blank row's guards: the latch closes the arms below the fused root.
             otp_lock::LockDecision::Write | otp_lock::LockDecision::Latch => {
                 // Only over a device whose boot moved every device-sealed record to the
                 // fused root, and before the touch: the latch is what every later boot
