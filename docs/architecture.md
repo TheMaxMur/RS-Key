@@ -79,6 +79,15 @@ the host enumerates a mute device and times out. That is the "blink red / not
 recognised until several replugs" report that motivated attaching to the bus
 only after everything else is ready.
 
+The TRNG seed is drawn so that it can fail only closed: a draw holding an all-zero
+192-bit block, the part's answer to a failed health check, is drawn again, and
+after three such draws the board halts there, before the pull-up, rather than seed
+the DRBG from a constant; it wipes the seed and the dead stack first, and nothing
+else holds a secret yet. The 64 KiB reseed draws the same way; failing, it leaves
+the operation in flight to the DRBG as its checked seeds left it and queues a warm
+reboot, which the worker runs through its RAM scrub, and the boot after it draws
+the seed afresh.
+
 ![Boot sequence — bootrom secure-boot verify, then a provision-and-recover phase (OTP keys, KV mount, phy record, TRNG seed, seal migrations, at-rest scrub) that completes before the USB pull-up, then attach-and-serve (build, spawn usb_task, transports live, worker dispatches applets)](images/boot-flow.svg)
 
 ## Crates

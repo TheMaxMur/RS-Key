@@ -100,3 +100,68 @@ fn scrub_wipes_both_halves_of_the_state() {
     assert!(d.k.expose().iter().all(|&x| x == 0), "K survived the scrub");
     assert!(d.v.expose().iter().all(|&x| x == 0), "V survived the scrub");
 }
+
+/// The RP2350 TRNG's block: its 192-bit EHR, which `blocking_fill_bytes` copies
+/// into a buffer in order from its start.
+const BLOCK: usize = 24;
+
+/// A draw with an all-zero block is a stuck or unfinished source, and a DRBG seeded
+/// from it is seeded from a constant. Each such draw is drawn again, and the first
+/// clean one is what the caller gets.
+#[test]
+fn a_draw_with_an_all_zero_block_is_drawn_again() {
+    let good = [0x5Au8; 48];
+    for (name, bad) in [
+        ("the first block zero", 0..BLOCK),
+        ("the second block zero", BLOCK..2 * BLOCK),
+        ("all of it zero", 0..2 * BLOCK),
+    ] {
+        let mut calls = 0;
+        let mut buf = [0u8; 48];
+        let r = draw_entropy(&mut buf, BLOCK, |b| {
+            calls += 1;
+            b.copy_from_slice(&good);
+            if calls == 1 {
+                b[bad.clone()].fill(0);
+            }
+        });
+        assert_eq!((r, calls, buf), (Ok(()), 2, good), "{name}");
+    }
+}
+
+/// A source that never answers a clean draw is given [`ENTROPY_TRIES`] draws and no
+/// more, and the caller is told: it fails closed rather than seed from what it got.
+/// The reseed's 32 bytes end in an 8-byte block, which counts as one.
+#[test]
+fn a_source_that_answers_only_zero_blocks_fails_closed() {
+    for (len, zero) in [(48usize, 24..48), (32, 24..32), (32, 0..24)] {
+        let mut calls = 0;
+        let mut buf = std::vec![0u8; len];
+        let r = draw_entropy(&mut buf, BLOCK, |b| {
+            calls += 1;
+            b.fill(0xA5);
+            b[zero.clone()].fill(0);
+        });
+        assert_eq!(
+            (r, calls),
+            (Err(EntropyFault), ENTROPY_TRIES),
+            "{len}/{zero:?}"
+        );
+    }
+}
+
+/// The check finds a stuck block and nothing more: one set bit per block passes, and
+/// a clean draw is taken the first time.
+#[test]
+fn a_block_with_one_set_bit_is_not_a_stuck_one() {
+    let mut sparse = [0u8; 48];
+    sparse[0] = 0x01;
+    sparse[47] = 0x80;
+    let mut calls = 0;
+    let mut buf = [0u8; 48];
+    let r = draw_entropy(&mut buf, BLOCK, |b| {
+        calls += 1;
+        b.copy_from_slice(&sparse);
+    });
+    assert_eq!((r, calls, buf), (Ok(()), 1, sparse));
+}

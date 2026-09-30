@@ -23,6 +23,37 @@ fn a_taken_request_stays_pending_until_the_reset() {
     );
 }
 
+/// The TRNG fault's request: a warm reboot on an idle slot, and nothing over a queued BOOTSEL
+/// drop (the panel's firmware install) or a reset under way, both of which scrub and reset.
+#[test]
+fn a_warm_request_unless_pending_keeps_what_is_queued() {
+    let idle = RebootSlot::new();
+    idle.queue_warm_unless_pending();
+    assert_eq!(
+        idle.take(),
+        Some(1),
+        "an idle slot must queue the warm reboot"
+    );
+
+    let bootsel = RebootSlot::new();
+    bootsel.queue(true);
+    bootsel.queue_warm_unless_pending();
+    assert_eq!(
+        bootsel.take(),
+        Some(2),
+        "a queued BOOTSEL drop must keep its mode"
+    );
+
+    let resetting = RebootSlot::new();
+    resetting.begin_reset();
+    resetting.queue_warm_unless_pending();
+    assert_eq!(
+        (resetting.pending(), resetting.take()),
+        (true, None),
+        "a reset under way must not be queued again"
+    );
+}
+
 /// A reset the worker begins with no request queued still reads pending: the panel parks on
 /// the reset under way, not on the request.
 #[test]

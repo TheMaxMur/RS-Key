@@ -5,8 +5,8 @@
 //! leaves below the stack pointer — a RustCrypto `Copy` temporary, the `hmac`
 //! crate's padded key block, a SHAKE reader's state — no `Drop` or `Secret` can
 //! reach, and it stays until a later frame overwrites it. Core0 is swept after
-//! every request, keyboard OTP frame, typed ticket and panel flow, core1 after
-//! every prime search.
+//! every request, keyboard OTP frame, typed ticket and panel flow, and before a
+//! boot halts on a failed TRNG seed; core1 after every prime search.
 
 #[cfg(feature = "bench")]
 use core::sync::atomic::{AtomicBool, Ordering};

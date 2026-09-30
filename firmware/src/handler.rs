@@ -62,7 +62,7 @@ impl FidoRng {
     /// configured — `sample_count` only; the ROSC settings are the driver's.
     pub fn new(mut trng: Trng<'static, TRNG>) -> Self {
         let mut seed = Secret::<[u8; 48]>::zeroed();
-        trng.blocking_fill_bytes(seed.expose_mut());
+        draw_trng(&mut trng, &mut seed).unwrap_or_else(|_| halt_at_boot());
         let drbg = HmacDrbg::new(seed.expose());
         seed.wipe();
         Self {
@@ -75,9 +75,15 @@ impl FidoRng {
     fn draw(&mut self, buf: &mut [u8]) {
         if self.since_reseed >= RESEED_INTERVAL {
             let mut e = Secret::<[u8; 32]>::zeroed();
-            self.trng.blocking_fill_bytes(e.expose_mut());
-            self.drbg.reseed(e.expose());
+            if draw_trng(&mut self.trng, &mut e).is_ok() {
+                self.drbg.reseed(e.expose());
+            } else {
+                // Fail closed through the worker's reboot, which scrubs RAM first; its boot
+                // draws the seed afresh. Till then the DRBG serves from checked seeds alone.
+                crate::vendor::request_reboot_unless_pending();
+            }
             e.wipe();
+            // After a failed draw too: a dead TRNG is not polled again before the reboot.
             self.since_reseed = 0;
         }
         self.drbg.fill(buf);
@@ -96,6 +102,34 @@ impl FidoRng {
         } = self;
         drbg.scrub();
     }
+}
+
+/// The RP2350 TRNG's block, its 192-bit EHR: `blocking_fill_bytes` fills a buffer
+/// with whole ones from its start.
+const TRNG_BLOCK: usize = 24;
+
+/// Fill `out` from the TRNG, never with a draw holding an all-zero block (the part's
+/// failed-check answer, if one ever reached us). A TRNG that answers only those for
+/// [`rsk_crypto::drbg::ENTROPY_TRIES`] draws is a fault, and `out` is wiped.
+fn draw_trng<const N: usize>(
+    trng: &mut Trng<'static, TRNG>,
+    out: &mut Secret<[u8; N]>,
+) -> Result<(), rsk_crypto::drbg::EntropyFault> {
+    let drawn = rsk_crypto::drbg::draw_entropy(out.expose_mut(), TRNG_BLOCK, |b| {
+        trng.blocking_fill_bytes(b)
+    });
+    if drawn.is_err() {
+        out.wipe();
+    }
+    drawn
+}
+
+/// The boot seed's fail-closed stop, before the USB pull-up: no key is minted off a
+/// constant. Nothing `Worker::reboot` scrubs exists yet; the dead stack below is what
+/// holds anything, the failed draws' temporaries and the store scan's, so it is swept.
+fn halt_at_boot() -> ! {
+    crate::sweep::dead_stack();
+    panic!("the TRNG answered only draws with an all-zero block at boot");
 }
 
 // One impl for every applet: the randomness seam is `rsk-sdk`'s, not one

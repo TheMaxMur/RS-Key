@@ -33,6 +33,14 @@ impl RebootSlot {
         self.state.store(mode, Ordering::Relaxed);
     }
 
+    /// Queue a warm reboot unless a reboot is queued or under way already, whose mode then
+    /// stands: for a fault that needs the scrub and a reset, not a particular one.
+    pub fn queue_warm_unless_pending(&self) {
+        let _ = self
+            .state
+            .compare_exchange(NONE, WARM, Ordering::Relaxed, Ordering::Relaxed);
+    }
+
     /// The queued reboot, for the worker to carry out: `Some(1)` warm, `Some(2)` BOOTSEL.
     /// Taking it begins the reset, so the slot stays pending.
     pub fn take(&self) -> Option<u8> {

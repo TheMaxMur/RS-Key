@@ -383,8 +383,8 @@ impl<'a> Worker<'a> {
                 Either3::First(_) => {
                     self.handle_transport().await;
                     crate::sweep::dead_stack();
-                    // A vendor reboot command takes effect only after its SW_OK has
-                    // been sent (the reset can't run mid-dispatch).
+                    // A reboot the dispatch queued (a vendor REBOOT, a TRNG fault) runs only
+                    // after its response is sent: the reset can't run mid-dispatch.
                     if let Some(mode) = crate::vendor::take_reboot() {
                         self.reboot(mode).await;
                     }
@@ -392,14 +392,14 @@ impl<'a> Worker<'a> {
                 Either3::Second(_) => {
                     self.handle_otp_hid();
                     crate::sweep::dead_stack();
+                    if let Some(mode) = crate::vendor::take_reboot() {
+                        self.reboot(mode).await;
+                    }
                 }
                 Either3::Third(_) => {
                     self.button_tick();
-                    // A reboot queued off-transport — the display's Settings → Firmware
-                    // "Verify & install" — is serviced on this idle tick so it lands within a
-                    // button-poll period instead of waiting on the next host APDU. The
-                    // worker owns the live RAM secrets, so the scrub-then-reset in `reboot`
-                    // runs here, not from the display task.
+                    // One queued off-transport (the panel's firmware install, a TRNG fault in its
+                    // draws) lands within a poll period, and the worker owns what `reboot` wipes.
                     if let Some(mode) = crate::vendor::take_reboot() {
                         self.reboot(mode).await;
                     }

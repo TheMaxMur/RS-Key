@@ -85,6 +85,36 @@ impl HmacDrbg {
     }
 }
 
+/// How many draws [`draw_entropy`] takes before it gives up. A working source answers
+/// an all-zero block with probability 2^-(8·len), so each one is a fault, and a fault
+/// that outlasts three draws is not a passing one.
+pub const ENTROPY_TRIES: usize = 3;
+
+/// An entropy source that answered only draws with an all-zero block.
+#[derive(Debug, PartialEq, Eq)]
+pub struct EntropyFault;
+
+/// Fill `buf` from `source`, refusing a draw with an all-zero `block`-byte block (the
+/// last may be shorter): a DRBG seeded from one is seeded from a constant. At most
+/// [`ENTROPY_TRIES`] draws; then [`EntropyFault`], `buf` holding the last, to wipe.
+pub fn draw_entropy(
+    buf: &mut [u8],
+    block: usize,
+    mut source: impl FnMut(&mut [u8]),
+) -> Result<(), EntropyFault> {
+    for _ in 0..ENTROPY_TRIES {
+        source(buf);
+        // Folded, not searched: these bytes are the seed.
+        if buf
+            .chunks(block.max(1))
+            .all(|c| c.iter().fold(0, |acc, &b| acc | b) != 0)
+        {
+            return Ok(());
+        }
+    }
+    Err(EntropyFault)
+}
+
 #[cfg(test)]
 #[path = "drbg_tests.rs"]
 mod tests;

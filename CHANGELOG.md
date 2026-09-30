@@ -174,6 +174,21 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **The DRBG is never seeded from an all-zero TRNG block.** The RP2350's TRNG
+  presents no result when a health check fails and its result registers then read
+  zero; the firmware took the 48-byte boot seed, and each 32-byte reseed, as they
+  came, so a part that ever flagged zeroed registers valid would have seeded the
+  DRBG from a constant and every key after it with it. Each draw is now checked
+  block by block (the TRNG's 24-byte block): one holding an all-zero block is drawn
+  again, three draws in all. At boot the board then halts before USB attach, the
+  seed and the dead stack wiped (nothing else holds a secret yet), so the key never
+  enumerates and a replug retries. At a reseed (every 64 KiB of DRBG output) the
+  operation in flight is served by the DRBG as its checked seeds left it, and the
+  key then reboots through the RAM scrub every requested reboot runs; the boot after
+  it draws its seed afresh and halts there if the TRNG is still dead. Nothing
+  changes on a working TRNG, which answers an all-zero block with probability
+  2^-192. `bcdDevice` 0x0A7D → 0x0A7E.
+
 - **A page-58 latch a power cut tore can be completed.** `rsk otp lock-page58`
   burns `3D3D3D` into the lock row, and a burn cut short leaves some of those bits
   and not others. The firmware took any row but blank, `3C3C3C` or `3D3D3D` as

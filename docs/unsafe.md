@@ -266,22 +266,23 @@ What a request's crypto leaves below the stack pointer — a RustCrypto `Copy`
 temporary, the `hmac` crate's padded key block, a SHAKE reader's state — no
 `Drop` or `Secret` can reach, because the frame that held it has returned. So
 core0's dead stack is zeroed after every request, keyboard OTP frame and typed
-ticket (by the worker) and every flow the panel runs (through the display's
-hooks), and core1 zeroes its own after every prime search: every word from the
-floor that core's `MSPLIM` holds (sections 21–22) up to its stack pointer, both
-read by the code on that core, eight stores a pass. Nothing under the live
-pointer is a value: the stack grows down, and what is below belongs to frames
-that have returned. An interrupt taken mid-sweep pushes its frame below the
-pointer and returns before the loop runs again, so no store lands under a live
-frame; what a handler leaves in the part already swept waits for the next sweep.
-A measurement build (`--features bench`) adds vendor `INS 0x15`, which reads the
-same region to count a pattern in it and can stop the sweep for a positive
-control; `check.sh` holds it out of the default image with the other debug
-commands.
+ticket (by the worker), every flow the panel runs (through the display's hooks)
+and before a boot whose TRNG seed failed halts, and core1 zeroes its own after
+every prime search: every word from the floor that core's `MSPLIM` holds
+(sections 21–22) up to its stack pointer, both read by the code on that core,
+eight stores a pass. Nothing under the live pointer is a value: the stack grows
+down, and what is below belongs to frames that have returned. An interrupt taken
+mid-sweep pushes its frame below the pointer and returns before the loop runs
+again, so no store lands under a live frame; what a handler leaves in the part
+already swept waits for the next sweep. A measurement build (`--features bench`)
+adds vendor `INS 0x15`, which reads the same region to count a pattern in it and
+can stop the sweep for a positive control; `check.sh` holds it out of the
+default image with the other debug commands.
 *Safe alternative:* none; memory no Rust value owns has no safe handle.
 *Containment:* one function, bounded by two registers of the core it runs on,
-called at three points in the worker, from the display's hooks and in core1's job
-loop, each after the work's frames have returned; the probe only reads.
+called at three points in the worker, from the display's hooks, in core1's job
+loop and before a failed boot's halt, each after the work's frames have returned;
+the probe only reads.
 
 ## RSA assembly FFI (`crates/rsk-rsa/src/lib.rs`)
 

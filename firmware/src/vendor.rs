@@ -60,6 +60,12 @@ pub fn request_reboot(bootsel: bool) {
     REBOOT.queue(bootsel);
 }
 
+/// Queue a warm reboot unless one is queued or under way already (the TRNG's reseed fault:
+/// it needs `Worker::reboot`'s scrub and a reset, and a queued BOOTSEL drop gives both).
+pub fn request_reboot_unless_pending() {
+    REBOOT.queue_warm_unless_pending();
+}
+
 /// The worker has begun a reset, whether or not a request queued it.
 pub fn begin_reset() {
     REBOOT.begin_reset();
@@ -68,8 +74,8 @@ pub fn begin_reset() {
 /// Whether a reboot is queued or under way, from the request until the reset. The display's
 /// ambient loop reads this to park itself once a Settings → Firmware update is requested —
 /// it must stop busy-waiting and yield so the worker (same thread-mode executor) gets
-/// scheduled to scrub the live secrets and reset. Display-only: the standard key never
-/// queues a reboot off-transport (the worker services those inline after the SW_OK).
+/// scheduled to scrub the live secrets and reset. Display-only: on the standard key every
+/// request comes from the worker's own dispatches, and the worker services it after them.
 #[cfg(feature = "display")]
 pub fn reboot_pending() -> bool {
     REBOOT.pending()
