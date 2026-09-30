@@ -50,7 +50,7 @@ if [ "${1:-}" != "--tiers" ]; then
   [ -n "$metaroot" ] || { echo "run-tlc: no metadir under $STATES" >&2; exit 2; }
   # SANY writes each standard module into java.io.tmpdir under its bare name and deletes
   # it at exit: TLCs sharing that directory parse a half-written Naturals.tla, exit 150.
-  mkdir -p "$metaroot/java-tmp"
+  mkdir -p "$metaroot/java-tmp" || { echo "run-tlc: no java.io.tmpdir under $metaroot" >&2; exit 2; }
 fi
 
 # Which module a configuration belongs to: the seam configs are the second

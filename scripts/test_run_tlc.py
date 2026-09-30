@@ -23,6 +23,7 @@ Name the denominator before quoting either number.
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import tomllib
 
@@ -145,6 +146,7 @@ def run(
     stamp: str = "",
     leaves: bool = False,
     shard: str = "",
+    shims: pathlib.Path | None = None,
 ):
     real_jar, java, out, states = fake_tlc
     env = {
@@ -166,6 +168,8 @@ def run(
         "TLC_OUT": str(out),
         # And for the same reason TLC's scratch: the runner makes a directory there.
         "TLC_STATES": str(states),
+        # Commands the runner calls, shadowed ahead of the real ones for one case.
+        **({"PATH": f"{shims}{os.pathsep}{os.environ['PATH']}"} if shims else {}),
     }
     script = runner or RUNNER
     return subprocess.run(
@@ -1025,6 +1029,32 @@ def test_a_metadir_that_cannot_be_made_stops_the_runner_before_tlc(fake_tlc, are
     assert not (fake_tlc[2] / VICTIM.replace(".cfg", ".log")).exists()
 
 
+def refusing_mkdir(tmp_path: pathlib.Path) -> pathlib.Path:
+    """A PATH entry whose `mkdir` fails the run's java.io.tmpdir and makes the rest:
+    the one way to fail that directory while `mktemp -d` made the root it sits in."""
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    real = shutil.which("mkdir")
+    shim = shims / "mkdir"
+    shim.write_text(
+        "#!/bin/sh\n"
+        'for a in "$@"; do case "$a" in */java-tmp) echo "mkdir: $a: refused" >&2; exit 1 ;; esac; done\n'
+        f'exec {real} "$@"\n'
+    )
+    shim.chmod(0o755)
+    return shims
+
+
+def test_a_java_tmpdir_that_cannot_be_made_stops_the_runner_before_tlc(fake_tlc, arena, tmp_path):
+    """Its `mkdir` went unchecked, and a TLC handed a java.io.tmpdir that is not there
+    cannot write `Naturals.tla` into it: exit 150 on every row, measured on the pinned
+    jar, which reads as a tier of reds rather than a machine that cannot run one."""
+    result = run(fake_tlc, VICTIM, RED_SEAM, runner=arena(), stamp=STAMP, shims=refusing_mkdir(tmp_path))
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "no java.io.tmpdir" in result.stderr
+    assert not (fake_tlc[2] / VICTIM.replace(".cfg", ".log")).exists()
+
+
 def _victim_refused(fake_tlc, runner):
     victim = _same_second(fake_tlc, runner)
     return victim.returncode == 1 and "!! expected RED: NoStatusOutsideItsSelection" in victim.stdout
@@ -1035,9 +1065,24 @@ def _metadir_left(fake_tlc, runner):
     return any(fake_tlc[3].iterdir())
 
 
+def _stopped_for(result, reason):
+    """Exit 2 and this check's own words: the tmpdir check stands behind the metadir
+    one, so with the first cut the second stops the run and the code alone is no
+    evidence the first ran."""
+    return result.returncode == 2 and reason in result.stderr
+
+
 def _ran_with_no_metadir(fake_tlc, runner):
     fake_tlc[3].write_text("not a directory\n")
-    return run(fake_tlc, VICTIM, RED_SEAM, runner=runner, stamp=STAMP).returncode != 2
+    return not _stopped_for(run(fake_tlc, VICTIM, RED_SEAM, runner=runner, stamp=STAMP), "no metadir")
+
+
+def _ran_with_no_java_tmpdir(fake_tlc, runner):
+    shims = runner.parent / "shims"
+    if not shims.exists():
+        refusing_mkdir(runner.parent)
+    result = run(fake_tlc, VICTIM, RED_SEAM, runner=runner, stamp=STAMP, shims=shims)
+    return not _stopped_for(result, "no java.io.tmpdir")
 
 
 #: THE METADIR ARMS: each part of the fix cut out of the runner, and the case that
@@ -1052,6 +1097,12 @@ METADIR_ARMS = [
         '  [ -n "$metaroot" ] || { echo "run-tlc: no metadir under $STATES" >&2; exit 2; }\n',
         "",
         _ran_with_no_metadir,
+    ),
+    (
+        "stopping when its java.io.tmpdir cannot be made",
+        '  mkdir -p "$metaroot/java-tmp" || { echo "run-tlc: no java.io.tmpdir under $metaroot" >&2; exit 2; }\n',
+        '  mkdir -p "$metaroot/java-tmp"\n',
+        _ran_with_no_java_tmpdir,
     ),
 ]
 
