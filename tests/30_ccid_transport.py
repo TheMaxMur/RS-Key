@@ -10,8 +10,8 @@
 
 Exercises the CCID slice end to end, HID-free: PC/SC -> OS CCID driver -> USB
 bulk -> rsk_usb::ccid -> APDU dispatch -> vendor applet. Powers the card on
-(FIDO ATR), SELECTs the vendor applet by AID, and increments/reads the
-persisted counter — the same applet tests/01 drives over CTAPHID_MSG.
+(the ATR its USB identity calls for), SELECTs the vendor applet by AID, and
+increments/reads the persisted counter — the same applet tests/01 drives over CTAPHID_MSG.
 
 INCREMENT is user-presence-gated, so on a board with a button this waits for a
 touch; the no-touch test image and `tools/emu` confirm on their own.
@@ -30,11 +30,21 @@ except ImportError:
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _device import find_reader  # noqa: E402
 
-# The FIDO ATR the firmware answers with (without its leading length byte).
-ATR_FIDO = [
+# The two ATRs the firmware answers with (without the leading length byte): a
+# YubiKey's under the Yubico USB identity, RS-Key's own label under any other VID
+# (`firmware/src/main.rs`, `rsk_usb::ccid::ATR_YUBIKEY` / `ATR_RSKEY`).
+ATR_YUBIKEY = [
     0x3B, 0xFD, 0x13, 0x00, 0x00, 0x81, 0x31, 0xFE, 0x15, 0x80, 0x73, 0xC0,
     0x21, 0xC0, 0x57, 0x59, 0x75, 0x62, 0x69, 0x4B, 0x65, 0x79, 0x40,
 ]
+ATR_RSKEY = [
+    0x3B, 0xFC, 0x13, 0x00, 0x00, 0x81, 0x31, 0xFE, 0x15, 0x80, 0x73, 0xC0,
+    0x21, 0xC0, 0x56, 0x52, 0x53, 0x2D, 0x4B, 0x65, 0x79, 0x4B,
+]
+# The OpenPGP AID's manufacturer bytes follow the same VID gate as the ATR, so they
+# name the ATR to expect without trusting the one under test.
+OPENPGP_AID = [0xD2, 0x76, 0x00, 0x01, 0x24, 0x01]
+YUBICO_MANUFACTURER = [0x00, 0x06]
 
 VENDOR_AID = [0xF0, 0x00, 0x00, 0x00, 0x01]
 SELECT = [0x00, 0xA4, 0x04, 0x00, len(VENDOR_AID)] + VENDOR_AID
@@ -52,6 +62,15 @@ def fail(msg):
     sys.exit(1)
 
 
+def expected_atr(conn):
+    """The ATR this card's USB identity calls for, read off its OpenPGP AID."""
+    _, sw1, sw2 = conn.transmit([0x00, 0xA4, 0x04, 0x00, len(OPENPGP_AID)] + OPENPGP_AID)
+    aid, s1, s2 = conn.transmit([0x00, 0xCA, 0x00, 0x4F, 0x00])
+    if (sw1, sw2, s1, s2) != (0x90, 0x00, 0x90, 0x00) or len(aid) < 10:
+        fail("cannot read the OpenPGP AID that names the card's identity")
+    return ATR_YUBIKEY if aid[8:10] == YUBICO_MANUFACTURER else ATR_RSKEY
+
+
 def main():
     target = find_reader()
     if not target:
@@ -62,8 +81,9 @@ def main():
 
     atr = list(conn.getATR())
     print("ATR:", toHexString(atr))
-    if atr != ATR_FIDO:
-        fail(f"ATR mismatch\n  got      {toHexString(atr)}\n  expected {toHexString(ATR_FIDO)}")
+    want = expected_atr(conn)
+    if atr != want:
+        fail(f"ATR mismatch\n  got      {toHexString(atr)}\n  expected {toHexString(want)}")
 
     data, sw1, sw2 = conn.transmit(SELECT)
     print("SELECT vendor AID -> %02X%02X" % (sw1, sw2))

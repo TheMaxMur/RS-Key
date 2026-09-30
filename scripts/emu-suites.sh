@@ -75,12 +75,12 @@ echo "== on-device suites (socket transports)"
 start_emu default
 for t in tests/[0-9]*.py; do
   case "$(basename "$t")" in
-    # Their own sessions below: `30` wants the Yubico card identity, and `28`/`76`
-    # want a PIN already set. `16` wants one too and has no session of its own —
+    # Their own sessions below: `28`/`76` want a PIN already set (`30` runs here
+    # and again under the Yubico identity). `16` wants one too and has no session —
     # it exists for the recording, which runs it where `21` has just set it. `09`
     # is the mirror: it wants NO PIN, and in this sweep it would meet whichever
     # one an earlier suite left behind.
-    30_* | 28_* | 76_* | 16_* | 09_*) continue ;;
+    28_* | 76_* | 16_* | 09_*) continue ;;
     *) run_suite "$t" ;;
   esac
 done
