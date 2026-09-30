@@ -162,6 +162,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **changePIN and the PIN token subcommands judge pinHashEnc's length as a YubiKey
+  5.8.0 does.** A pinHashEnc that is neither 16 bytes nor 32, one block bare or
+  behind protocol two's IV, is `INVALID_PARAMETER` (`0x02`) before the PIN is tried,
+  under either protocol, and spends no retry even behind a wrong PIN; on the display
+  build it comes before the consent screen too. getPinToken
+  and getPinUvAuthTokenUsingPinWithPermissions took any length their decrypt did: 48
+  and 64 bytes were verified on their first block, an empty one under protocol one
+  was a wrong PIN and spent a retry, and the rest were `PIN_AUTH_INVALID`. On
+  changePIN the other protocol's length now passes that gate and is refused after
+  the MAC, `PIN_AUTH_INVALID` (`0x33`) with no retry spent, where it was `0x02`
+  before it. The token subcommands read the two lengths as the YubiKey does:
+  protocol two's 16 bytes are an IV with no hash, a wrong PIN, and protocol one's 32
+  bytes are compared on their first block. `bcdDevice` 0x0A74 → 0x0A75.
+
 - **setPIN and changePIN judge newPinEnc's length as a YubiKey 5.8.0 does.** A
   newPinEnc that is empty, not a whole number of 16-byte blocks, or longer than 80
   bytes is `PIN_POLICY_VIOLATION` (`0x37`) before the MAC is checked, under protocol

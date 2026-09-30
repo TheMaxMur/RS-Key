@@ -251,9 +251,9 @@ fn change_pin<S: Storage, R: Rng>(
     // every refusal below, a pinHashEnc of the wrong length included; the padded PIN's
     // own length is judged after the current PIN, by the new PIN's decrypt.
     new_pin_enc_gate(new_pin_enc)?;
-    // Before the MAC, so a pinHashEnc of the wrong length never reaches the decrypt:
-    // a short one would spend a retry on a hash that was never sent.
-    if pin_hash_enc.len() != 16 + proto.iv_overhead() {
+    // pinHashEnc's own gate, before the MAC and so before any retry: one block, bare or
+    // behind protocol two's IV, whichever protocol this is (the decrypt below judges it).
+    if !PIN_HASH_ENC_LENGTHS.contains(&pin_hash_enc.len()) {
         return Err(CtapError::InvalidParameter);
     }
     if ctx.state.needs_power_cycle {
@@ -280,10 +280,10 @@ fn change_pin<S: Storage, R: Rng>(
         shared.wipe();
         return Err(CtapError::PinAuthInvalid);
     }
-
-    // Verify the old PIN (decrements the counter; mismatch path regenerates).
+    // Verify the old PIN (decrements the counter; mismatch path regenerates). Past the
+    // gate, a hash of the other protocol's length is PIN_AUTH_INVALID, with no retry.
     let mut old_hash = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();
-    if pinproto::decrypt(proto, secret, pin_hash_enc, old_hash.expose_mut()).is_err() {
+    if pinproto::decrypt(proto, secret, pin_hash_enc, old_hash.expose_mut()) != Ok(PIN_HASH_LEN) {
         shared.wipe();
         return Err(CtapError::PinAuthInvalid);
     }
@@ -372,6 +372,13 @@ fn get_pin_token<S: Storage, R: Rng>(
     }
     let mut shared = Secret::<[u8; 64]>::zeroed();
     let slen = derive_shared(ctx, req, proto, shared.expose_mut())?;
+    // A YubiKey 5.8.0 (measured 2026-09-30) refuses a pinHashEnc of neither protocol's
+    // length before the PIN is tried; here before the consent too, so it paints nothing.
+    let pin_hash_enc = req.pin_hash_enc.ok_or(CtapError::MissingParameter)?;
+    if !PIN_HASH_ENC_LENGTHS.contains(&pin_hash_enc.len()) {
+        shared.wipe();
+        return Err(CtapError::InvalidParameter);
+    }
     // §6.5.5.7.1/.2 place the display's consent between the key agreement and the
     // PIN check, so a decline costs no retry.
     if let Err(e) = consent_for_permissions(ctx, permissions) {
@@ -381,14 +388,7 @@ fn get_pin_token<S: Storage, R: Rng>(
     let secret = shared_secret(shared.expose(), slen)?;
 
     let mut pin_hash = Secret::<[u8; PADDED_PIN_LEN]>::zeroed();
-    if pinproto::decrypt(
-        proto,
-        secret,
-        req.pin_hash_enc.ok_or(CtapError::MissingParameter)?,
-        pin_hash.expose_mut(),
-    )
-    .is_err()
-    {
+    if pinproto::decrypt(proto, secret, pin_hash_enc, pin_hash.expose_mut()).is_err() {
         shared.wipe();
         return Err(CtapError::PinAuthInvalid);
     }
@@ -1393,6 +1393,12 @@ fn new_pin_enc_gate(new_pin_enc: &[u8]) -> Result<(), CtapError> {
     }
     Ok(())
 }
+
+/// LEFT(SHA-256(PIN), 16), which pinHashEnc carries.
+const PIN_HASH_LEN: usize = 16;
+/// pinHashEnc's lengths past its gate, whatever the protocol: the hash bare, or behind
+/// protocol two's IV. A YubiKey 5.8.0 refuses every other before the PIN is tried.
+const PIN_HASH_ENC_LENGTHS: [usize; 2] = [PIN_HASH_LEN, pinproto::IV_SIZE + PIN_HASH_LEN];
 
 /// The phase-4 trace reader (`formal/TraceSecurity.tla`).
 #[cfg(any(test, kani, feature = "assurance-trace"))]

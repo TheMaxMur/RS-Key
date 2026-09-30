@@ -589,7 +589,7 @@ assurance/toolchain.toml	scripts/pt.sh	107-107	if ! log=$(picotool partition cre
 crates/rsk-device/src/ctap.rs	crates/rsk-fido/src/clientpin.rs	656-656	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
 crates/rsk-device/src/ctap.rs	crates/rsk-usb/src/ctaphid.rs	228-228	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 2 * CONT_DATA;	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 2 * CONT_DATA;
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	100-100	6 => req.pin_hash_enc = Some(cbor(d.bytes())?),	6 => req.pin_hash_enc = Some(cbor(d.bytes())?),
-crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	256-258	if pin_hash_enc.len() != 16 + proto.iv_overhead() {	}
+crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	256-258	if !PIN_HASH_ENC_LENGTHS.contains(&pin_hash_enc.len()) {	}
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	426-426	let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);	let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/clientpin.rs	451-457	ctx.state.reset_pin_uv_auth_token(ctx.rng);	ctx.state.paut.permissions = permissions;
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/clientpin.rs	451-465	ctx.state.reset_pin_uv_auth_token(ctx.rng);	Secret::new(ctx.state.paut.token)
@@ -687,7 +687,7 @@ formal/README.md	crates/rsk-display/src/presence.rs	192-192	// a release wait a 
 formal/README.md	crates/rsk-fido/src/clientpin.rs	145-145	match req.subcommand {	match req.subcommand {
 formal/README.md	crates/rsk-fido/src/clientpin.rs	197-199	if ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)? {	}
 formal/README.md	crates/rsk-fido/src/clientpin.rs	227-231	// No PIN was set, so no `pcmr` grant can be outstanding — except one a build	let res = store_new_pin(ctx, padded.expose());
-formal/README.md	crates/rsk-fido/src/clientpin.rs	256-258	if pin_hash_enc.len() != 16 + proto.iv_overhead() {	}
+formal/README.md	crates/rsk-fido/src/clientpin.rs	256-258	if !PIN_HASH_ENC_LENGTHS.contains(&pin_hash_enc.len()) {	}
 formal/README.md	crates/rsk-fido/src/clientpin.rs	259-259	if ctx.state.needs_power_cycle {	if ctx.state.needs_power_cycle {
 formal/README.md	crates/rsk-fido/src/clientpin.rs	268-273	let macd = macd	}
 formal/README.md	crates/rsk-fido/src/clientpin.rs	324-328	// verifier lands: a power cut the other way round would leave the old holder's	let res = store_new_pin(ctx, padded.expose());

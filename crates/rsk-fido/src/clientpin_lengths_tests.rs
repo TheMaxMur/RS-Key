@@ -223,3 +223,181 @@ fn change_pin_judges_the_new_pin_length_before_and_after_the_pin_as_a_yubikey_do
         }
     }
 }
+
+/// The lengths `yk/changepin_sweep.py` sent for pinHashEnc.
+const CHANGE_HASH_LENS: [usize; 13] = [0, 1, 15, 16, 17, 31, 32, 33, 47, 48, 64, 80, 96];
+/// Both protocols, a bad MAC: one block, bare or behind protocol two's IV, reaches it.
+const CHANGE_HASH_BAD_MAC: [u8; 13] = [
+    0x02, 0x02, 0x02, 0x33, 0x02, 0x02, 0x33, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,
+];
+/// Protocol two, a good MAC.
+const CHANGE_HASH_TWO_GOOD_MAC: [u8; 13] = [
+    0x02, 0x02, 0x02, 0x33, 0x02, 0x02, 0x00, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,
+];
+/// Protocol one, a good MAC.
+const CHANGE_HASH_ONE_GOOD_MAC: [u8; 13] = [
+    0x02, 0x02, 0x02, 0x00, 0x02, 0x02, 0x33, 0x02, 0x02, 0x02, 0x02, 0x02, 0x02,
+];
+
+/// changePIN's pinHashEnc, the padded new PIN [`PIN`] again: neither protocol's length is
+/// `02` before the MAC, the other protocol's is `33` after it, and no cell spends a retry.
+#[test]
+fn change_pin_judges_the_pin_hash_length_as_a_yubikey_does() {
+    let mut wrong = std::vec::Vec::new();
+    for (proto, wire) in PROTOCOLS {
+        let new = PADDED_PIN_LEN + proto.iv_overhead();
+        for good in [false, true] {
+            let row = match (proto, good) {
+                (_, false) => &CHANGE_HASH_BAD_MAC,
+                (PinProto::Two, true) => &CHANGE_HASH_TWO_GOOD_MAC,
+                (PinProto::One, true) => &CHANGE_HASH_ONE_GOOD_MAC,
+            };
+            for (&len, &want) in CHANGE_HASH_LENS.iter().zip(row) {
+                let (got, retries) = change_pin_cell(proto, wire, new, len, PIN, good);
+                if got != want || retries != MAX_PIN_RETRIES {
+                    wrong.push(format!(
+                        "p{wire} {good} {len}: {got:#04x} {want:#04x} {retries}"
+                    ));
+                }
+            }
+        }
+        // Ahead of the PIN check: a wrong PIN behind a pinHashEnc of 48 bytes costs nothing.
+        let (got, retries) = change_pin_cell(proto, wire, new, 48, WRONG_PIN, true);
+        if (got, retries) != (0x02, MAX_PIN_RETRIES) {
+            wrong.push(format!("p{wire} wrong PIN 48: {got:#04x} {retries}"));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "protocol, good MAC, pinHashEnc bytes: answered, a YubiKey 5.8.0's, retries: {wrong:#?}"
+    );
+}
+
+/// `rpId` example.com, CBOR-encoded, for 0x09's `ga`.
+const EXAMPLE_COM: &[u8] = b"\x6bexample.com";
+
+/// getPinToken (0x05), or getPinUvAuthTokenUsingPinWithPermissions (0x09) for `ga` at
+/// example.com, over [`PIN`] with a pinHashEnc of `len` bytes over `current`. Answers
+/// the status and the retries left after it.
+fn get_token_cell(proto: PinProto, wire: u64, sub: u64, len: usize, current: &[u8]) -> (u8, u8) {
+    let (mut fs, mut rng, mut state, _) = setup_with_pin(PIN);
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, proto, wire);
+    let phe = blob(&plat, len, &sha256(current)[..16]);
+    let mut fields = std::vec![
+        (1, V::U(wire)),
+        (2, V::U(sub)),
+        (3, V::Cose(&plat.x, &plat.y)),
+        (6, V::B(&phe)),
+    ];
+    if sub == CP_GET_PIN_UV_TOKEN_USING_PIN {
+        fields.push((9, V::U(u64::from(PERM_GA))));
+        fields.push((10, V::Raw(EXAMPLE_COM)));
+    }
+    let mut out = [0u8; 128];
+    let answer = status(run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &build(&fields),
+        &mut out,
+    ));
+    (answer, ef_pin_retries(&mut fs))
+}
+
+/// The lengths `yk/order_probe.py` sent.
+const TOKEN_HASH_LENS: [usize; 9] = [0, 15, 16, 17, 31, 32, 33, 48, 64];
+/// Protocol two. At 16 bytes, an IV and no ciphertext, the hash compared is empty: a
+/// wrong PIN, and a retry spent.
+const TOKEN_TWO: [(u8, u8); 9] = [
+    (0x02, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+    (0x31, MAX_PIN_RETRIES - 1),
+    (0x02, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+    (0x00, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+];
+/// Protocol one. At 32 bytes two blocks decrypt, and the first is the hash compared.
+const TOKEN_ONE: [(u8, u8); 9] = [
+    (0x02, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+    (0x00, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+    (0x00, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+    (0x02, MAX_PIN_RETRIES),
+];
+
+/// On a display the gate comes before the consent screen: a display whose user refuses
+/// every consent answers `02` to a 48-byte pinHashEnc, and its refusal (`27`) to 32 bytes.
+#[test]
+fn a_malformed_pin_hash_asks_the_display_nothing() {
+    for sub in [CP_GET_PIN_TOKEN, CP_GET_PIN_UV_TOKEN_USING_PIN] {
+        for (len, want) in [
+            (48, CtapError::InvalidParameter),
+            (32, CtapError::OperationDenied),
+        ] {
+            let (mut fs, mut rng, mut state, _) = setup_with_pin(PIN);
+            let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+            let phe = blob(&plat, len, &sha256(PIN)[..16]);
+            let mut fields = std::vec![
+                (1, V::U(2)),
+                (2, V::U(sub)),
+                (3, V::Cose(&plat.x, &plat.y)),
+                (6, V::B(&phe)),
+            ];
+            if sub == CP_GET_PIN_UV_TOKEN_USING_PIN {
+                fields.push((9, V::U(u64::from(PERM_GA))));
+            }
+            let mut out = [0u8; 128];
+            let req = build(&fields);
+            let answer = run_with(
+                &mut DenyConsent,
+                &mut fs,
+                &mut rng,
+                &mut state,
+                &req,
+                &mut out,
+            );
+            assert_eq!(
+                answer,
+                Err(want),
+                "subcommand {sub:#04x}, pinHashEnc {len} bytes"
+            );
+            assert_eq!(ef_pin_retries(&mut fs), MAX_PIN_RETRIES);
+        }
+    }
+}
+
+/// getPinToken and 0x09 alike: a pinHashEnc of neither protocol's length is `02` before
+/// the PIN is tried, so it costs no retry even behind a wrong PIN.
+#[test]
+fn get_pin_token_judges_the_pin_hash_length_as_a_yubikey_does() {
+    let mut wrong = std::vec::Vec::new();
+    for sub in [CP_GET_PIN_TOKEN, CP_GET_PIN_UV_TOKEN_USING_PIN] {
+        for (proto, wire) in PROTOCOLS {
+            let row = match proto {
+                PinProto::Two => &TOKEN_TWO,
+                PinProto::One => &TOKEN_ONE,
+            };
+            for (&len, &want) in TOKEN_HASH_LENS.iter().zip(row) {
+                let got = get_token_cell(proto, wire, sub, len, PIN);
+                if got != want {
+                    wrong.push(format!("{sub:#04x} p{wire} {len}: {got:x?} {want:x?}"));
+                }
+            }
+            let got = get_token_cell(proto, wire, sub, 48, WRONG_PIN);
+            if got != (0x02, MAX_PIN_RETRIES) {
+                wrong.push(format!("{sub:#04x} p{wire} wrong PIN 48: {got:x?}"));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "subcommand, protocol, pinHashEnc bytes: (answered, retries), a YubiKey 5.8.0's: {wrong:#?}"
+    );
+}

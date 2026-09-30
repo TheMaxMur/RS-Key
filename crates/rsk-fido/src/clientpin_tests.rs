@@ -2502,9 +2502,9 @@ fn cose_with_alg(x: &[u8; 32], y: &[u8; 32], alg: Option<i64>) -> std::vec::Vec<
     buf[..n].to_vec()
 }
 
-/// `pinHashEnc` arrives unbounded (`clientpin.rs:100`). Without its length guard
-/// (`clientpin.rs:256-258`) a short one reaches the decrypt and spends a PIN retry;
-/// an over-long one meets the checked `macd` copy and the same refusal.
+/// `pinHashEnc` arrives unbounded (`clientpin.rs:100`); its gate (`clientpin.rs:256-258`)
+/// refuses what neither protocol sends before the MAC. Protocol two's empty hash is its
+/// IV alone, protocol one's length, so it passes and is refused after the MAC, unspent.
 #[test]
 fn change_pin_refuses_a_pin_hash_of_the_wrong_length() {
     let mut answers = std::vec::Vec::new();
@@ -2543,10 +2543,15 @@ fn change_pin_refuses_a_pin_hash_of_the_wrong_length() {
             answers.push((wire, hash.len(), answer, ef_pin_retries(&mut fs)));
         }
     }
-    // One verdict over all four, so a widened guard shows what each protocol does.
+    // One verdict over all four, so a moved gate shows what each protocol does. The
+    // YubiKey 5.8.0 cells, measured 2026-09-30.
+    let want = |wire, len| match (wire, len) {
+        (2, 0) => Err(CtapError::PinAuthInvalid),
+        _ => Err(CtapError::InvalidParameter),
+    };
     assert!(
-        answers.iter().all(|(_, _, answer, retries)| {
-            *answer == Err(CtapError::InvalidParameter) && *retries == MAX_PIN_RETRIES
+        answers.iter().all(|&(wire, len, answer, retries)| {
+            answer == want(wire, len) && retries == MAX_PIN_RETRIES
         }),
         "(protocol, hash bytes, answer, retries left): {answers:?}"
     );

@@ -381,7 +381,7 @@ those are where a hole costs the most:
 | `clientpin.rs:422` `\|` → `^` on `PERM_MC \| PERM_GA` | equivalent — `0x01` and `0x02` are disjoint | — |
 | `clientpin.rs:814` `&&` → `\|\|` — the kbase-migration fallback | equivalent by construction: the inner `ct_eq` cannot match in either case the widened guard admits | — |
 | `clientpin.rs:1391` `>` → `<` — the same ceiling, compared | **model-blind, real** since bcd `0x0A74`: every protocol-one setPIN and changePIN is refused, where the `!=` below the old bound still refused and only the status word moved | `change_pin_over_protocol_one` |
-| `clientpin.rs:256-258` deleted — the pinHashEnc length guard, the `\|\|` half of one guard until bcd `0x0A74` | **the guard is load-bearing**: without it a short `pinHashEnc` reaches the decrypt and spends a PIN retry, and an over-long one met a slice-index panic until that copy was checked — see below | closed by `change_pin_refuses_a_pin_hash_of_the_wrong_length` |
+| `clientpin.rs:256-258` deleted — pinHashEnc's length gate, the `\|\|` half of one guard until bcd `0x0A74` | **the guard was load-bearing**: without it a short `pinHashEnc` reached the decrypt and spent a PIN retry, and an over-long one met a slice-index panic until that copy was checked — see below. Since bcd `0x0A75` the decrypt after the MAC refuses anything but one block, so without the gate every wrong length answers `0x33` there instead of `0x02` here, and none spends a retry | `change_pin_refuses_a_pin_hash_of_the_wrong_length`, `change_pin_judges_the_pin_hash_length_as_a_yubikey_does` |
 
 The row that stood open longest is closed by reading where its widened guard
 leads. `pinHashEnc` comes straight from the CBOR decoder and nothing else bounds it;
