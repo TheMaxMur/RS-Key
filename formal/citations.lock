@@ -195,8 +195,8 @@ assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	816-816	fs.pu
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	836-836	pub fn settle_rp_records<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<()> {	pub fn settle_rp_records<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<()> {
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	871-871	fs.delete(EF_RP + j)?;	fs.delete(EF_RP + j)?;
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	879-879	fs.put(EF_RP + j, record)?;	fs.put(EF_RP + j, record)?;
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt_tests.rs	2170-2170	fn deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot() {	fn deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot() {
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt_tests.rs	2269-2269	fn a_torn_delete_never_leaves_a_credential_without_its_rp() {	fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt_tests.rs	2179-2179	fn deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot() {	fn deleting_one_of_two_credentials_writes_back_to_its_own_rp_slot() {
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt_tests.rs	2278-2278	fn a_torn_delete_never_leaves_a_credential_without_its_rp() {	fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/passkeys.rs	89-89	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/passkeys.rs	113-113	let Some(n) = fs.read(EF_RP + i, &mut buf) else {	let Some(n) = fs.read(EF_RP + i, &mut buf) else {
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/passkeys.rs	117-117	if n < RP_PREFIX || buf[0] == 0 {	if n < RP_PREFIX || buf[0] == 0 {
@@ -244,7 +244,7 @@ assurance/bundle/SEC-FIDO-006.toml	formal/gen-configs.sh	171-176	if [ "$b" = "$o
 assurance/bundle/SEC-FIDO-006.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-006.toml	fuzz/fuzz_targets/power_cut.rs	228-230	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	}
 assurance/bundle/SEC-FIDO-006.toml	scripts/assurance_gate.py	122-142	def cfg_checked(path: pathlib.Path) -> list[str]:	return out
-assurance/bundle/SEC-FIDO-006.toml	scripts/check.sh	557-557	run "assurance-trace image identity" assurance_trace_is_image_neutral	run "assurance-trace image identity" assurance_trace_is_image_neutral
+assurance/bundle/SEC-FIDO-006.toml	scripts/check.sh	561-561	run "assurance-trace image identity" assurance_trace_is_image_neutral	run "assurance-trace image identity" assurance_trace_is_image_neutral
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/consts.rs	361-361	pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]	pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset.rs	6-6	//! physical touch gates the wipe, inside the CTAP 2.1 §6.6 power-up window	//! physical touch gates the wipe, inside the CTAP 2.1 §6.6 power-up window
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset.rs	37-51	if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {	}
@@ -402,7 +402,7 @@ assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/clientpin.rs	618-618	if !
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/clientpin.rs	729-737	fn pin_set_and_unblocked<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {	}
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/clientpin.rs	893-894	if fid == EF_PIN {	clear_ppuat(fs).map_err(|_| CtapError::Other)?;
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/config.rs	242-244	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/conformance/mod.rs	166-166	self.state.begin_using_token(false, self.clock);	self.state.begin_using_token(false, self.clock);
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/conformance/mod.rs	174-174	self.state.begin_using_token(false, self.clock);	self.state.begin_using_token(false, self.clock);
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/credmgmt_kani.rs	77-77	st.begin_using_token(false, 1_000);	st.begin_using_token(false, 1_000);
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/credmgmt_kani.rs	158-158	st.begin_using_token(false, NOW);	st.begin_using_token(false, NOW);
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/credmgmt_kani.rs	389-389	st.begin_using_token(false, NOW);	st.begin_using_token(false, NOW);
@@ -490,7 +490,7 @@ assurance/platform.toml	crates/rsk-fido/src/config.rs	348-356	fn toggle_always_u
 assurance/platform.toml	crates/rsk-fido/src/config.rs	485-485	if force_change && !pin_set {	if force_change && !pin_set {
 assurance/platform.toml	crates/rsk-fido/src/config.rs	502-505	if force {	}
 assurance/platform.toml	crates/rsk-fido/src/conformance/config.rs	77-77	cfg!(feature = "always-uv"),	cfg!(feature = "always-uv"),
-assurance/platform.toml	crates/rsk-fido/src/conformance/mod.rs	166-166	self.state.begin_using_token(false, self.clock);	self.state.begin_using_token(false, self.clock);
+assurance/platform.toml	crates/rsk-fido/src/conformance/mod.rs	174-174	self.state.begin_using_token(false, self.clock);	self.state.begin_using_token(false, self.clock);
 assurance/platform.toml	crates/rsk-fido/src/consts.rs	395-395	pub const PUAT_MAX_USAGE_PERIOD_MS: u64 = 600_000;	pub const PUAT_MAX_USAGE_PERIOD_MS: u64 = 600_000;
 assurance/platform.toml	crates/rsk-fido/src/credmgmt.rs	285-287	if !ctx.fs.has_data(EF_PIN) {	}
 assurance/platform.toml	crates/rsk-fido/src/credmgmt.rs	399-399	};	};
@@ -538,8 +538,8 @@ assurance/platform.toml	firmware/src/handler.rs	57-57	const RESEED_INTERVAL: usi
 assurance/platform.toml	firmware/src/handler.rs	61-61	/// 16 B nonce, SP 800-90A 10.1.2.3), drawn through the `Trng` the caller	/// 16 B nonce, SP 800-90A 10.1.2.3), drawn through the `Trng` the caller
 assurance/platform.toml	firmware/src/handler.rs	63-63	pub fn new(mut trng: Trng<'static, TRNG>) -> Self {	pub fn new(mut trng: Trng<'static, TRNG>) -> Self {
 assurance/platform.toml	firmware/src/handler.rs	64-64	let mut seed = Secret::<[u8; 48]>::zeroed();	let mut seed = Secret::<[u8; 48]>::zeroed();
-assurance/platform.toml	firmware/src/handler.rs	65-65	trng.blocking_fill_bytes(seed.expose_mut());	trng.blocking_fill_bytes(seed.expose_mut());
-assurance/platform.toml	firmware/src/handler.rs	78-78	self.trng.blocking_fill_bytes(e.expose_mut());	self.trng.blocking_fill_bytes(e.expose_mut());
+assurance/platform.toml	firmware/src/handler.rs	65-65	draw_trng(&mut trng, &mut seed).unwrap_or_else(|_| halt_at_boot());	draw_trng(&mut trng, &mut seed).unwrap_or_else(|_| halt_at_boot());
+assurance/platform.toml	firmware/src/handler.rs	78-78	if draw_trng(&mut self.trng, &mut e).is_ok() {	if draw_trng(&mut self.trng, &mut e).is_ok() {
 assurance/platform.toml	firmware/src/led.rs	353-353	fn tick(&mut self) -> RGB8 {	fn tick(&mut self) -> RGB8 {
 assurance/platform.toml	firmware/src/led.rs	361-361	let now = Instant::now();	let now = Instant::now();
 assurance/platform.toml	firmware/src/led.rs	536-536	fn effect_sparkle(status: usize, tick: u32) -> [RGB8; MAX_LEDS] {	fn effect_sparkle(status: usize, tick: u32) -> [RGB8; MAX_LEDS] {
@@ -586,7 +586,7 @@ assurance/toolchain.toml	scripts/check.sh	275-275	want="$(arm-none-eabi-nm "$elf
 assurance/toolchain.toml	scripts/pt.sh	27-31	nm_bin=	[ -n "$nm_bin" ] || { echo "pt.sh: no nm on PATH (need arm-none-eabi-nm, llvm-nm or nm)" >&2; exit 1; }
 assurance/toolchain.toml	scripts/pt.sh	43-43	start=$(sym __kvmain_start)	start=$(sym __kvmain_start)
 assurance/toolchain.toml	scripts/pt.sh	107-107	if ! log=$(picotool partition create "$tmp/pt.json" "$out" "$in" -t elf 2>&1); then	if ! log=$(picotool partition create "$tmp/pt.json" "$out" "$in" -t elf 2>&1); then
-crates/rsk-device/src/ctap.rs	crates/rsk-fido/src/clientpin.rs	656-656	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
+crates/rsk-device/src/ctap.rs	crates/rsk-fido/src/clientpin.rs	656-656	presence.uv_available() && fs.has_data(EF_PIN)	presence.uv_available() && fs.has_data(EF_PIN)
 crates/rsk-device/src/ctap.rs	crates/rsk-usb/src/ctaphid.rs	228-228	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 2 * CONT_DATA;	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 2 * CONT_DATA;
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	100-100	6 => req.pin_hash_enc = Some(cbor(d.bytes())?),	6 => req.pin_hash_enc = Some(cbor(d.bytes())?),
 crates/rsk-fido/src/clientpin_tests.rs	crates/rsk-fido/src/clientpin.rs	256-258	if !PIN_HASH_ENC_LENGTHS.contains(&pin_hash_enc.len()) {	}
@@ -1128,7 +1128,7 @@ formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/getassertion.rs	685-686	// be
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/makecredential.rs	770-771	let ask = verified	.needs_confirm(ctx.presence.shows_confirm())
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/u2f.rs	106-106	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
 formal/RSKeyTrustedDisplay.tla	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}
-formal/TraceSecurity.tla	crates/rsk-fido/src/clientpin.rs	656-656	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)	ctx.presence.uv_available() && ctx.fs.has_data(EF_PIN)
+formal/TraceSecurity.tla	crates/rsk-fido/src/clientpin.rs	656-656	presence.uv_available() && fs.has_data(EF_PIN)	presence.uv_available() && fs.has_data(EF_PIN)
 formal/TraceSecurity.tla	crates/rsk-fido/src/config.rs	312-312	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");
 formal/TraceSecurity.tla	crates/rsk-fido/src/makecredential.rs	609-627	let always_uv = crate::config::always_uv_enabled(ctx.fs);	Ok(UvOutcome::NONE)
 formal/TraceSecurity.tla	crates/rsk-fido/src/reset.rs	267-267	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS
@@ -1164,7 +1164,7 @@ formal/comutants.toml	crates/rsk-oath/src/set_code_tests.rs	323-323	assert_eq!(	
 formal/comutants.toml	crates/rsk-oath/src/tests.rs	1452-1452	assert_eq!(run(app, fs, &apdu(INS_SET_CODE, 0, 0, &d)).0, Sw::OK);	assert_eq!(run(app, fs, &apdu(INS_SET_CODE, 0, 0, &d)).0, Sw::OK);
 formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	258-260	if !putdata::write_authorized(&self.sess, fid) {	}
 formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	329-331	fn deselect(&mut self, _fs: &mut Fs<S>) {	}
-formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	350-353	fn select(&mut self, reselect: bool, _fs: &mut Fs<S>, _res: &mut ResBuf) -> Sw {	}
+formal/comutants.toml	crates/rsk-openpgp/src/lib.rs	350-353	fn select(&mut self, reselect: bool, fs: &mut Fs<S>, _res: &mut ResBuf) -> Sw {	}
 formal/comutants.toml	crates/rsk-openpgp/src/pin.rs	247-251	if idx < n && pw[idx] == 0 {	let mut rec = [0u8; 64];
 formal/comutants.toml	crates/rsk-openpgp/src/pin.rs	952-952	let sw = check_pin(dev, fs, sess, rng, EF_RC, p2, &data[..rc_len]);	let sw = check_pin(dev, fs, sess, rng, EF_RC, p2, &data[..rc_len]);
 formal/comutants.toml	crates/rsk-otp/src/counter_tests.rs	9-9	assert_eq!(next_use_counter(5, 0), (5, 1, false));	assert_eq!(next_use_counter(5, 0), (5, 1, false));
