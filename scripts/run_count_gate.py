@@ -376,6 +376,12 @@ SCOPED = {
     ): "the configuration's size today, in the sentence that re-derives the floor as a "
     "third of it — a floor stated as a ratio is nothing without the count",
     (
+        "formal/floors.txt",
+        "LatInduction.cfg                     GREEN   62208",
+    ): "the lattice induction probe's floor, which is by construction the count of "
+    "type-correct states `IndInv` admits and so the distinct count the probe prints — "
+    "the store probe's floor is its count too, under the value floor",
+    (
         "formal/README.md",
         "GREEN over 14 514 424 distinct\nstates at the liveness constants",
     ): "`Fairness.cfg`'s distinct count, the space the invariant is checked over, beside "
@@ -489,15 +495,10 @@ SCOPED = {
     # `` `BugPanelCancelable` | … | 230 states `` collided the day the safety tier
     # reached 230 configurations, and retired as predicted when the tier reached
     # 242 -- where `` `BugCmWalkIgnoresChannel` | … | 1 242 states `` collided in
-    # turn, read as 242 through its thousands space. Same class, same retirement:
+    # turn, read as 242 through its thousands space, and retired the same way when
+    # the SET PIN RETRIES mutants took the tier to 248. Same class, same retirement:
     # a co-mutant's state count, in a column of state counts, that moves when that
     # mutant's model does.
-    (
-        "formal/README.md",
-        "channel equality | `NoAuthorizationBypass` | 1 242 states",
-    ): "a co-mutant's own state count in the co-refutation table, which the tier's "
-    "configuration count reached by coincidence — the column beside it is all state "
-    "counts and none of them is a roster",
     (
         "formal/README.md",
         "**96 entries: all 90 executable patches killed",
