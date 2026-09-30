@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! The encrypted PIN inputs' lengths, cell by cell as a YubiKey 5.8.0 answered them
-//! (measured 2026-09-30 with python-fido2 2.2.1). A row is a status byte per length,
-//! `0x00` for success, in the order of the length list above it.
+//! The encrypted PIN inputs' lengths, and what is judged before them, cell by cell as a
+//! YubiKey 5.8.0 answered them (measured 2026-09-30 with python-fido2 2.2.1). A row is a
+//! status byte per length, `0x00` for success, in the order of the length list above it.
 
 use super::*;
 
@@ -399,5 +399,84 @@ fn get_pin_token_judges_the_pin_hash_length_as_a_yubikey_does() {
     assert!(
         wrong.is_empty(),
         "subcommand, protocol, pinHashEnc bytes: (answered, retries), a YubiKey 5.8.0's: {wrong:#?}"
+    );
+}
+
+/// EF_PIN as it stands, `None` when there is none.
+fn pin_record(fs: &mut Fs<RamStorage>) -> Option<std::vec::Vec<u8>> {
+    let mut buf = [0u8; PIN_FILE_LEN];
+    fs.read(EF_PIN, &mut buf).map(|n| buf[..n].to_vec())
+}
+
+/// setPIN, over [`PIN`] or over no PIN, carrying keyAgreement when `ka`, a newPinEnc of
+/// `len` bytes over [`NEW_PIN`] when there is one, and a pinUvAuthParam, good or
+/// broken, when `good_mac` is `Some`. Answers the status and whether EF_PIN is as it was.
+fn set_pin_request_cell(
+    proto: PinProto,
+    wire: u64,
+    pin_set: bool,
+    ka: bool,
+    len: Option<usize>,
+    good_mac: Option<bool>,
+) -> (u8, bool) {
+    let (mut fs, mut rng, mut state) = if pin_set {
+        let (fs, rng, state, _) = setup_with_pin(PIN);
+        (fs, rng, state)
+    } else {
+        let (fs, rng) = setup();
+        (fs, rng, FidoState::new())
+    };
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, proto, wire);
+    let before = pin_record(&mut fs);
+    let npe = len.map(|len| blob(&plat, len, NEW_PIN));
+    let puap = good_mac.map(|good| mac(&plat, npe.as_deref().unwrap_or_default(), good));
+    let mut fields = std::vec![(1, V::U(wire)), (2, V::U(3))];
+    if ka {
+        fields.push((3, V::Cose(&plat.x, &plat.y)));
+    }
+    if let Some(p) = &puap {
+        fields.push((4, V::B(p)));
+    }
+    if let Some(n) = &npe {
+        fields.push((5, V::B(n)));
+    }
+    let mut out = [0u8; 64];
+    let answer = status(run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &build(&fields),
+        &mut out,
+    ));
+    (answer, pin_record(&mut fs) == before)
+}
+
+/// setPIN over a PIN already set: what it needs present first (`14`), the newPinEnc gate
+/// (`37`), then `30` with a newPinEnc or without, not §6.5.5.5's `33`; the PIN stands. With
+/// no PIN a missing newPinEnc stays `14`, which the YubiKey was not measured on.
+#[test]
+fn set_pin_over_a_set_pin_answers_as_a_yubikey_does() {
+    let mut wrong = std::vec::Vec::new();
+    for (proto, wire) in PROTOCOLS {
+        let exact = Some(PADDED_PIN_LEN + proto.iv_overhead());
+        for (what, pin_set, ka, len, good_mac, want) in [
+            ("no keyAgreement", true, false, exact, Some(true), 0x14),
+            ("no pinUvAuthParam", true, true, exact, None, 0x14),
+            ("no newPinEnc", true, true, None, Some(true), 0x30),
+            ("newPinEnc 96", true, true, Some(96), Some(true), 0x37),
+            ("newPinEnc 48", true, true, Some(48), Some(true), 0x30),
+            ("newPinEnc padded", true, true, exact, Some(true), 0x30),
+            ("a bad MAC", true, true, exact, Some(false), 0x30),
+            ("no PIN, no newPinEnc", false, true, None, Some(true), 0x14),
+        ] {
+            let (got, kept) = set_pin_request_cell(proto, wire, pin_set, ka, len, good_mac);
+            if got != want || !kept {
+                wrong.push(format!("p{wire} {what}: {got:#04x} {want:#04x} {kept}"));
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "protocol, request: answered, a YubiKey 5.8.0's, EF_PIN kept: {wrong:#?}"
     );
 }

@@ -99,10 +99,6 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # The FIDO conformance tool checks both (MakeCredential Req-6, P-3/F-1)
         # and RS-Key passes it; the suite asserts the opposite for `up: true`.
         "test_000_getinfo.py::test_Check_up_option": "CTAP 2.1 accepts an explicit up:true; only up:false is INVALID_OPTION",
-        # CTAP 2.1 §6.5.5.5, verbatim: "If a PIN has already been set,
-        # authenticator returns CTAP2_ERR_PIN_AUTH_INVALID error". The suite wants
-        # NOT_ALLOWED, which is the CTAP 2.0 answer.
-        "test_010_pin.py::test_set_pin_twice": "§6.5.5.5 makes a second setPIN PIN_AUTH_INVALID, not NOT_ALLOWED",
         # CTAP 2.1 zero-length-pinUvAuthParam probe: PIN_INVALID when a PIN is set,
         # PIN_NOT_SET when it is not. The suite wants PIN_AUTH_INVALID — again the
         # 2.0 answer. Both halves are pinned by `conformance::pin`.

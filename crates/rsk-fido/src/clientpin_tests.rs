@@ -1580,8 +1580,8 @@ fn set_pin_rejects_short_pin_and_double_set() {
         ),
         Err(CtapError::PinPolicyViolation)
     );
-    // A valid set, then a second set — §6.5.5.5: "If a PIN has already been set,
-    // authenticator returns CTAP2_ERR_PIN_AUTH_INVALID error."
+    // A valid set, then a second set: NOT_ALLOWED, as a YubiKey 5.8.0 answers it,
+    // where §6.5.5.5 names PIN_AUTH_INVALID.
     run(
         &mut fs,
         &mut rng,
@@ -1598,7 +1598,7 @@ fn set_pin_rejects_short_pin_and_double_set() {
             &plat.set_pin_req(NEW_PIN),
             &mut out
         ),
-        Err(CtapError::PinAuthInvalid)
+        Err(CtapError::NotAllowed)
     );
 }
 
@@ -4198,4 +4198,57 @@ fn a_builtin_uv_persistent_grant_reads_credential_metadata() {
     assert_eq!(d.u8().unwrap(), 1);
     assert_eq!(d.u32().unwrap(), 0, "no discoverable credential was made");
     assert_eq!(d.u8().unwrap(), 2);
+}
+
+/// A keyAgreement without its x or without its y is MISSING_PARAMETER before any ECDH is
+/// tried, one coordinate gone as much as both, and an empty one counts as gone. No retry
+/// is spent.
+#[test]
+fn a_key_agreement_without_a_coordinate_is_a_missing_parameter() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(PIN);
+    let h = sha256(PIN);
+    let phe = plat.enc(&h[..16]);
+    // `{1: 2, 3: -25, -1: 1}` and whichever coordinates are given.
+    let cose = |x: Option<&[u8]>, y: Option<&[u8]>| {
+        let mut buf = [0u8; 128];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(3 + u64::from(x.is_some()) + u64::from(y.is_some()))
+                .unwrap();
+            e.u8(1).unwrap().u8(2).unwrap();
+            e.u8(3)
+                .unwrap()
+                .i64(crate::consts::ALG_ECDH_ES_HKDF_256)
+                .unwrap();
+            e.i8(-1).unwrap().u8(crate::consts::CURVE_P256).unwrap();
+            if let Some(x) = x {
+                e.i8(-2).unwrap().bytes(x).unwrap();
+            }
+            if let Some(y) = y {
+                e.i8(-3).unwrap().bytes(y).unwrap();
+            }
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    };
+    let mut out = [0u8; 128];
+    for (what, key) in [
+        ("no y", cose(Some(&plat.x), None)),
+        ("no x", cose(None, Some(&plat.y))),
+        ("an empty y", cose(Some(&plat.x), Some(&[]))),
+        ("neither", cose(None, None)),
+    ] {
+        let req = build(&[
+            (1, V::U(plat.wire)),
+            (2, V::U(5)),
+            (3, V::Raw(&key)),
+            (6, V::B(&phe)),
+        ]);
+        assert_eq!(
+            run(&mut fs, &mut rng, &mut state, &req, &mut out),
+            Err(CtapError::MissingParameter),
+            "a keyAgreement with {what}"
+        );
+    }
+    assert_eq!(ef_pin_retries(&mut fs), MAX_PIN_RETRIES);
 }

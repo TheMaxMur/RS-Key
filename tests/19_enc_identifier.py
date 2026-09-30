@@ -79,7 +79,7 @@ def main():
         sp = client_pin(
             dev, cid, {1: 2, 2: 3, 3: proto.cose(), 4: proto.authenticate(npe), 5: npe}
         )
-        assert sp[0] in (0x00, 0x33), f"setPIN status {sp[0]:#x}"
+        assert sp[0] in (0x00, 0x30), f"setPIN status {sp[0]:#x}"
         ph = hashlib.sha256(PIN).digest()[:16]
         tk = client_pin(
             dev, cid, {1: 2, 2: 9, 3: proto.cose(), 6: proto.encrypt(ph), 9: PERM_PCMR}

@@ -162,6 +162,16 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **setPIN over a PIN already set answers `NOT_ALLOWED` (`0x30`), as a YubiKey 5.8.0
+  does.** CTAP §6.5.5.5 names `PIN_AUTH_INVALID` (`0x33`) there, and RS-Key answered
+  it. The YubiKey answers `0x30` whether or not the request carries a newPinEnc, and
+  in this order: a missing keyAgreement or pinUvAuthParam is `MISSING_PARAMETER`
+  (`0x14`), then a newPinEnc that fails the length gate is `PIN_POLICY_VIOLATION`
+  (`0x37`), then the PIN already set. RS-Key answered a missing newPinEnc `0x14` and
+  a gated one `0x33`. With no PIN set a missing newPinEnc stays `0x14`, and the PIN
+  already set is never touched. pico-fido's `test_set_pin_twice` asserts `0x30`, so its
+  divergence entry goes. `bcdDevice` 0x0A75 → 0x0A76.
+
 - **changePIN and the PIN token subcommands judge pinHashEnc's length as a YubiKey
   5.8.0 does.** A pinHashEnc that is neither 16 bytes nor 32, one block bare or
   behind protocol two's IV, is `INVALID_PARAMETER` (`0x02`) before the PIN is tried,

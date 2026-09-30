@@ -23,7 +23,8 @@ parameter validation, `setMinPINLength` overflow, the rpId-scoped
                                   presence alone with a PIN set, uv clear, and it
                                   asserts and excludes like any other; rk:true still
                                   needs a token (§6.1.2 steps 7/10, issue #51)
-   7. setPIN (already set)     -> CTAP2_ERR_PIN_AUTH_INVALID (§6.5.5.5)
+   7. setPIN (already set)     -> CTAP2_ERR_NOT_ALLOWED, as a YubiKey 5.8.0
+                                  answers it (§6.5.5.5 names PIN_AUTH_INVALID)
    8. largeBlobs get           -> `length` / pinUvAuthParam / over-long reads are
                                   refused; the 17-byte array is hash-checked (§6.10.2)
    9. setMinPINLength          -> more RP ids than fit is CTAP2_ERR_KEY_STORE_FULL,
@@ -259,7 +260,7 @@ def set_pin_already_set(dev, cid):
     npe = proto.encrypt(b"87654321" + b"\x00" * 56)
     sp = client_pin(dev, cid, ordered(
         {1: 2, 2: 3, 3: proto.cose(), 4: proto.authenticate(npe), 5: npe}))
-    check("setPIN answers PIN_AUTH_INVALID (was NOT_ALLOWED)", sp[0] == 0x33,
+    check("setPIN answers NOT_ALLOWED, as a YubiKey 5.8.0 does", sp[0] == 0x30,
           f"status {sp[0]:#04x}")
 
 

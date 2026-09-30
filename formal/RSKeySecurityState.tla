@@ -82,7 +82,7 @@ CONSTANTS
     BugPanelCancelable,           \* the panel's half of request_cancel's scope test
     BugUnscopedOtpCancel,         \* crates/rsk-device/src/presence.rs:127
     BugLocalPinKeepsToken,        \* crates/rsk-display/src/gates.rs:149
-    BugSetPinOverExisting,        \* clientpin.rs:197-199 setPIN over a live PIN
+    BugSetPinOverExisting,        \* clientpin.rs:201-203 setPIN over a live PIN
     BugHostPreemptsLocalWait,     \* the button's owner, taken by a host command
     BugLocalPinIgnoresBudget,     \* crates/rsk-display/src/gates.rs:129-131
     BugPpuatIsAGate,              \* eab4b5c: EF_PAUTHTOKEN in the deferred phase
@@ -806,7 +806,7 @@ LocalPinOk ==
 (* setPIN / changePIN -- multi-write, so a power cut has a position.        *)
 (***************************************************************************)
 
-\* clientpin.rs:197-199: a PIN already set may only be replaced by changePIN,
+\* clientpin.rs:201-203: a PIN already set may only be replaced by changePIN,
 \* which spends a retry and verifies the old one. setPIN carries no such check,
 \* so this test IS the authorization -- and it needs a Policy like every other
 \* gate here, not just an enabling conjunct. A step that is merely never ENABLED

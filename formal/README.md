@@ -223,7 +223,7 @@ says how deep TLC had to go to find it, roughly.
 | `BugPinWriteBeforeRevoke` | `clientpin.rs:227-231` / `:324-328` — the new verifier landing before the persistent grant is revoked, at both PIN flows | `NoTokenAfterInvalidation` | 5 296 states |
 | `BugUnscopedOtpCancel` | `cancel_otp_wait`'s own scope test (`crates/rsk-device/src/presence.rs:126-137`) — the second writer of the same cancel flag | `NoCrossTransportTouchConsumption` | 237 states |
 | `BugLocalPinKeepsToken` | `ends_host_token` (`crates/rsk-display/src/gates.rs:142-149`) — E66, the panel's PIN pad as a fourth door | `NoTokenAfterInvalidation` | 1 662 states |
-| `BugSetPinOverExisting` | `clientpin.rs:197-199` — setPIN refusing to overwrite a live PIN | `NoAuthorizationBypass` | 741 states |
+| `BugSetPinOverExisting` | `clientpin.rs:201-203` — setPIN refusing to overwrite a live PIN | `NoAuthorizationBypass` | 741 states |
 
 And the three that break a **liveness** property rather than an invariant. They
 are a separate `LIVE_BUGS` list in `gen-configs.sh` on purpose: a wedge is a
@@ -843,7 +843,7 @@ generalise by itself.
   with makeCredential and getAssertion lifted out of `Next` so they cannot mask
   it, `BugNoTouchRequired` is **RED through the reset alone in 254 states**, on a
   trace whose middle step is `TouchTimeout`.
-- **setPIN over an existing PIN.** `clientpin.rs:197-199` is the only thing
+- **setPIN over an existing PIN.** `clientpin.rs:201-203` is the only thing
   standing between a stranger with physical access and their own clientPIN —
   changePIN spends a retry and verifies the old one, setPIN does not. It was
   `~pin.set`, an enabling conjunct, and removing it left everything **GREEN over

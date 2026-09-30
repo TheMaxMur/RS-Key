@@ -189,19 +189,19 @@ fn set_pin<S: Storage, R: Rng>(
 ) -> CtapResult {
     let _ = out;
     require_pin_inputs(req, true, false)?;
-    // §6.5.5.5: "If a PIN has already been set, authenticator returns
-    // CTAP2_ERR_PIN_AUTH_INVALID error" — changePIN is the only way to replace one.
-    // Not `has_data`: it answers the same `false` for "no PIN" and for a probe the
-    // flash could not serve, and this is the whole guard — so a faulted read let an
-    // unauthenticated host install its own PIN over the owner's.
+    // The newPinEnc gate comes before a PIN already set, both protocols alike, as on a
+    // YubiKey 5.8.0 (measured 2026-09-30): an over-long PIN is a policy violation there
+    // (FIDO ClientPin*-Policy F-2). The padded PIN's own length waits for the MAC.
+    if let Some(new_pin_enc) = req.new_pin_enc {
+        new_pin_enc_gate(new_pin_enc)?;
+    }
+    // Only changePIN replaces a PIN. The YubiKey answers NOT_ALLOWED, newPinEnc or none,
+    // where §6.5.5.5 names PIN_AUTH_INVALID. Not `has_data`: a faulted probe read as "no
+    // PIN" let an unauthenticated host install its own PIN over the owner's.
     if ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)? {
-        return Err(CtapError::PinAuthInvalid);
+        return Err(CtapError::NotAllowed);
     }
     let new_pin_enc = req.new_pin_enc.ok_or(CtapError::MissingParameter)?;
-    // A YubiKey 5.8.0 (measured 2026-09-30) judges the length twice, both protocols
-    // alike: the gate before the MAC, where an over-long PIN is a policy violation
-    // (ClientPin*-Policy F-2), and the padded PIN's own length after the MAC.
-    new_pin_enc_gate(new_pin_enc)?;
     let mut shared = Secret::<[u8; 64]>::zeroed();
     let slen = derive_shared(ctx, req, proto, shared.expose_mut())?;
     let secret = shared_secret(shared.expose(), slen)?;
@@ -736,14 +736,14 @@ fn pin_set_and_unblocked<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), 
     Ok(())
 }
 
-/// Common presence checks for set/change/getToken; returns the protocol.
-/// `need_new_pin` (set/change) also requires `pinUvAuthParam`; getPinToken carries
-/// neither.
-fn require_pin_inputs(req: &Req, need_new_pin: bool, need_pin_hash: bool) -> Result<(), CtapError> {
+/// Common presence checks for set/change/getToken. `need_auth` (set/change) requires
+/// `pinUvAuthParam`; their newPinEnc is theirs to require, because setPIN answers a PIN
+/// already set ahead of a newPinEnc that is missing.
+fn require_pin_inputs(req: &Req, need_auth: bool, need_pin_hash: bool) -> Result<(), CtapError> {
     let missing = !req.key_agreement
         || req.kax.is_empty()
         || req.kay.is_empty()
-        || (need_new_pin && (req.new_pin_enc.is_none() || req.pin_uv_auth_param.is_none()))
+        || (need_auth && req.pin_uv_auth_param.is_none())
         || (need_pin_hash && req.pin_hash_enc.is_none());
     if missing {
         return Err(CtapError::MissingParameter);

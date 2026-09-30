@@ -85,7 +85,7 @@ status = "patch"
 file = "crates/rsk-fido/src/clientpin.rs"
 find = """
     if ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)? {
-        return Err(CtapError::PinAuthInvalid);
+        return Err(CtapError::NotAllowed);
     }
 """
 replace = ""
