@@ -162,6 +162,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **A PIV ECDSA signature over a challenge wider than the key's field answers
+  `6A80`, as on a YubiKey 5.8.0.** GENERAL AUTHENTICATE signed the leftmost 32 bytes
+  of a longer challenge with a P-256 key, and the leftmost 48 with a P-384 one. The
+  YubiKey answers `6A80` to a 33-, 48- or 64-byte challenge on P-256 (measured);
+  RS-Key now refuses any challenge longer than the field, on P-384 from 49 bytes by
+  the same rule (not yet measured on a YubiKey). RS-Key refuses it before the touch
+  and before a PIN-ALWAYS slot's VERIFY is spent. A shorter challenge is still
+  left-padded to the field, as on the YubiKey. `bcdDevice` 0x0A79 → 0x0A7A.
+
 - **An enterprise attestation over an org key that cannot be loaded no longer
   claims `ep`.** The org attestation key was read as absent whether it was absent,
   unreadable or would not open, so an enterprise request got the per-device

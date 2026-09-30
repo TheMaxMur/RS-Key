@@ -286,6 +286,11 @@ impl<S: Storage> GenAuth<'_, S> {
                 out.wipe();
             }
             ALGO_ECCP256 | ALGO_ECCP384 => {
+                // A YubiKey 5.8.0 refuses a challenge wider than the field instead of
+                // signing its leftmost bytes; judged before the touch and the PIN spend.
+                if c.len() > keygen::nist_field_len(self.algo) {
+                    return Err(Sw::WRONG_DATA);
+                }
                 check_touch(self.touch_policy, self.presence)?;
                 let key = self.load_ec()?;
                 let mut raw = [0u8; 96];

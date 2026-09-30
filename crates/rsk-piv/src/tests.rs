@@ -11041,3 +11041,8 @@ mod reads;
 /// module's fixtures.
 #[path = "mgmkey_tests.rs"]
 mod mgmkey;
+
+/// ECDSA challenge lengths at GENERAL AUTHENTICATE; its own file, it needs this
+/// module's fixtures.
+#[path = "ecdsa_tests.rs"]
+mod ecdsa;

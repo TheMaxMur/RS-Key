@@ -515,7 +515,7 @@ fn import_ec<S: Storage>(
     // from the one the host meant, and `06 01 01` was stored and signed with as
     // d = 1. Left-padding is the host's job — a YubiKey refuses every other
     // length too, including 32 bytes offered as P-384 (measured, 3 runs).
-    let field = if algo == ALGO_ECCP256 { 32 } else { 48 };
+    let field = nist_field_len(algo);
     if scalar.len() != field {
         return Err(Sw::WRONG_DATA);
     }
@@ -792,4 +792,10 @@ pub(crate) fn attest<S: Storage>(
         return Sw::WRONG_LENGTH;
     }
     Sw::OK
+}
+
+/// A P-256 / P-384 key's field length: its imported scalar's exact length, and the
+/// longest ECDSA challenge GENERAL AUTHENTICATE signs with it.
+pub(crate) fn nist_field_len(algo: u8) -> usize {
+    if algo == ALGO_ECCP256 { 32 } else { 48 }
 }
