@@ -167,6 +167,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   `gh` too old to know `--source-ref` stops it with a message to upgrade the
   GitHub CLI, rather than as a failed check.
 
+- **`rsk flash` checks which repository's run signed `SHA256SUMS`** (`rsk`
+  0.3.48). The cosign identity names `release-build.yml`, a reusable workflow
+  any repository can call from its own, and a run elsewhere that called it
+  signed as that same identity. Without `gh`, which pins the repository, `rsk
+  flash` accepted such a signature. It now passes
+  `--certificate-github-workflow-repository TheMaxMur/RS-Key`, and so do the
+  verify commands on [supply-chain.md](docs/supply-chain.md#verifying-a-download)
+  and [releases.md](docs/releases.md#verify-a-download). Checked with cosign
+  3.1.3 on v0.4.11's own `SHA256SUMS`: it verifies, and pinned to
+  `someone/RS-Key` cosign refuses it on the certificate's repository.
+
 - **OpenPGP TERMINATE DF leaves the applet terminated until ACTIVATE FILE, as on a
   YubiKey 5.8.0.** TERMINATE DF wiped the applet and put the factory state back at
   once, and ACTIVATE FILE did nothing. Now TERMINATE (PW3 verified or blocked,

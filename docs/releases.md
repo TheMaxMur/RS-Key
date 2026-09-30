@@ -69,11 +69,13 @@ v0.4.10. Same bytes either way; substitute the name you actually downloaded.
 # 1. the checksums file is authentic (keyless cosign — needs cosign >= 2.0)
 #    The signer is the *reusable* build workflow (release-build.yml), not the
 #    thin release.yml caller: a workflow_call job's OIDC identity is its own
-#    job_workflow_ref, so that is what the Fulcio cert's SAN carries.
+#    job_workflow_ref, so that is what the Fulcio cert's SAN carries. Any
+#    repository can call it, so the last flag pins the repository of the run.
 cosign verify-blob \
   --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github\.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  --certificate-github-workflow-repository TheMaxMur/RS-Key \
   SHA256SUMS
 
 # 2. the images match the (now-trusted) checksums

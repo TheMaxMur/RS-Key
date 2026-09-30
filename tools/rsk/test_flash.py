@@ -43,15 +43,16 @@ def release(tmp_path):
 
 class Tools:
     """cosign, gh and picotool as stand-ins; `ran` holds each call in order. Given a
-    `signer`, cosign answers by matching the identity regexp it was passed against it;
+    `signer`, cosign answers by matching the identity regexp it was passed against it,
+    and the repository it was pinned to against the certificate's `repository`;
     given the ref a run was `attested` at, gh answers by the `--source-ref` it was
     passed, and with none it takes any ref, as gh does. `gh_says` is the error a gh
     too old for a flag prints, and makes gh fail with it."""
 
     def __init__(self, monkeypatch, cosign=0, gh=0, have=("cosign", "gh", "picotool"),
-                 reboot=0, signer=None, attested=None, gh_says=None):
+                 reboot=0, signer=None, attested=None, gh_says=None, repository=flash.REPO):
         self.ran, self.rc, self.signer = [], {"cosign": cosign, "gh": gh}, signer
-        self.attested, self.gh_says = attested, gh_says
+        self.attested, self.gh_says, self.repository = attested, gh_says, repository
         monkeypatch.setattr(flash.shutil, "which",
                             lambda tool: f"/bin/{tool}" if tool in have else None)
         monkeypatch.setattr(flash, "_run", self._run)
@@ -72,6 +73,10 @@ class Tools:
             # cosign's check is Go's MatchString of the regexp against the SAN: a search.
             wanted = argv[argv.index("--certificate-identity-regexp") + 1]
             rc = 0 if re.search(wanted, self.signer) else 1
+            # And an exact comparison with GithubWorkflowRepository, when it is given one.
+            if "--certificate-github-workflow-repository" in argv:
+                pinned = argv[argv.index("--certificate-github-workflow-repository") + 1]
+                rc = rc or (0 if pinned == self.repository else 1)
         if tool == "gh" and self.attested is not None and "--source-ref" in argv:
             rc = 0 if argv[argv.index("--source-ref") + 1] == self.attested else 1
         if tool == "gh" and self.gh_says is not None:
@@ -98,7 +103,8 @@ def test_a_good_release_is_verified_then_loaded_and_rebooted(release, monkeypatc
     assert tools.ran == [
         ("cosign", "verify-blob", "--bundle", bundle,
          "--certificate-identity-regexp", flash.IDENTITY_REGEXP,
-         "--certificate-oidc-issuer", flash.OIDC_ISSUER, sums),
+         "--certificate-oidc-issuer", flash.OIDC_ISSUER,
+         flash.REPOSITORY_PIN, flash.REPO, sums),
         ("gh", "attestation", "verify", image, "--repo", flash.REPO,
          "--signer-workflow", flash.SIGNER_WORKFLOW, "--source-ref", "refs/tags/v9.9.9"),
         ("bootsel",),
@@ -142,6 +148,17 @@ def test_a_signature_from_a_tag_run_is_flashed(release, monkeypatch):
     tools = Tools(monkeypatch, signer=f"{SIGNER}@refs/tags/v9.9.9")
     flash_it(release / NAME)
     assert [call[1] for call in tools.wrote()] == ["load", "reboot"]
+
+
+def test_a_signature_from_another_repository_writes_nothing(release, monkeypatch, capsys):
+    """The identity names `release-build.yml`, a reusable workflow any repository can
+    call: a run in `someone/RS-Key` that calls it signs as exactly that identity. The
+    certificate still records the repository that ran it, and rsk pins that."""
+    tools = Tools(monkeypatch, signer=f"{SIGNER}@refs/tags/v9.9.9", repository="someone/RS-Key")
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.names() == ["cosign"]
+    assert "does not verify" in capsys.readouterr().err
 
 
 def test_an_image_whose_sha_differs_writes_nothing(release, monkeypatch, capsys):
@@ -338,16 +355,19 @@ def test_a_failed_reboot_is_not_reported_as_done(release, monkeypatch, capsys):
 
 
 def test_the_checks_are_the_ones_the_page_publishes():
-    """The identity, issuer, repo, signer workflow and source ref are
-    docs/supply-chain.md's verify commands, so the tool cannot check less than the
-    page tells a reader to.
-    releases.md says rsk runs its step 1, so that command carries the same identity."""
+    """The identity, issuer, signing repository, repo, signer workflow and source ref
+    are docs/supply-chain.md's verify commands, so the tool cannot check less than
+    the page tells a reader to. releases.md says rsk runs its step 1, so that
+    command carries the same identity and the same repository pin."""
+    pin = f"{flash.REPOSITORY_PIN} {flash.REPO}"
     page = (REPO_ROOT / "docs/supply-chain.md").read_text(encoding="utf-8")
     assert f"--certificate-identity-regexp '{flash.IDENTITY_REGEXP}'" in page
     assert f"--certificate-oidc-issuer {flash.OIDC_ISSUER}" in page
+    assert pin in page
     assert re.search(rf"--repo {re.escape(flash.REPO)}\s", page)
     assert f"--signer-workflow {flash.SIGNER_WORKFLOW}" in page
     assert f"--source-ref {flash.SOURCE_REF.format(tag='<tag>')}" in page
     assert f"--bundle {flash.BUNDLE}" in page
     releases = (REPO_ROOT / "docs/releases.md").read_text(encoding="utf-8")
     assert f"--certificate-identity-regexp '{flash.IDENTITY_REGEXP}'" in releases
+    assert pin in releases

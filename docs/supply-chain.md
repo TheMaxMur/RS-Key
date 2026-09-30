@@ -388,6 +388,7 @@ cosign verify-blob \
   --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github\.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-github-workflow-repository TheMaxMur/RS-Key \
   SHA256SUMS
 sha256sum -c SHA256SUMS          # then check the artifacts against it
 ```
@@ -396,6 +397,10 @@ The certificate identity is **`release-build.yml`**, not `release.yml`: cosign
 runs inside the reusable builder. Sigstore stamps the cert with the reusable
 workflow's identity (`job_workflow_ref`), which ends in the ref the run started
 from. The regexp accepts a `v*` tag only, because releases are cut from tags.
+A reusable workflow can be called from any repository, and a run elsewhere that
+calls this one signs with the same identity, so
+`--certificate-github-workflow-repository` pins the repository the run belonged
+to, which the certificate records beside it.
 The release job stops a run started at any ref but the tag it releases (its
 `resolve tag` step, in the table above). A dispatched run uses the workflow file
 at the ref it starts from, though, and the tags published up to v0.4.11 carry
