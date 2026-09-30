@@ -104,6 +104,7 @@ UNSUPPORTED = {
     # Hardware by definition.
     "29_reset_power_cut": "cuts physical USB power during a flash write",
     "54_sram_residue": "measures SRAM residue on a real chip",
+    "55_stack_residue": "probes the dead stack of a `--features bench` board image",
     "90_otp_mkek_migration": "migrates the OTP MKEK; the emulator has no fuses",
 }
 

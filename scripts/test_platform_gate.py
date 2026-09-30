@@ -660,6 +660,7 @@ def test_the_checkout_derives_what_it_is_measured_at():
         "board-only:51_secure_reboot",
         "board-only:53_ccid_pinpad",
         "board-only:54_sram_residue",
+        "board-only:55_stack_residue",
         "board-only:90_otp_mkek_migration",
     }, kinds["board-only"]
     assert set(kinds["model"]) == {

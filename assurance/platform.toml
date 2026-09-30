@@ -552,6 +552,7 @@ refines = ["PLAT-TOOLCHAIN-002"]
 covers = [
   "unsafe:firmware/src/sweep.rs#block:core-ptr-with_exposed_provenance_mut-u32-word-write_volatile",
   "unsafe:firmware/src/sweep.rs#block:core-ptr-with_exposed_provenance-u8-addr-read_volatile",
+  "board-only:55_stack_residue",
 ]
 
 [[assumption]]
