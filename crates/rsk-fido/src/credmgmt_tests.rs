@@ -236,7 +236,7 @@ fn run<S: rsk_fs::Storage>(
     req: &[u8],
     out: &mut [u8],
 ) -> CtapResult {
-    let mut rng = SeqRng(7);
+    let mut rng = command_rng(fs);
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
         presence: &mut presence,
@@ -1779,7 +1779,7 @@ fn run_into<S: Storage>(
     req: &[u8],
     out: &mut [u8],
 ) -> CtapResult {
-    let mut rng = SeqRng(7);
+    let mut rng = command_rng(fs);
     let mut presence = crate::AlwaysConfirm;
     let mut ctx = Ctx {
         presence: &mut presence,
@@ -2810,4 +2810,35 @@ fn a_delete_settles_its_rp_past_another_rps_unread_record() {
         [1, 1],
         "and example.com's count went down"
     );
+}
+
+/// Two credMgmt changes in a row each give the store tag (encCredStoreState) a value of
+/// its own: a second tag equal to the first would tell a platform that cached after the
+/// first change that nothing changed since.
+#[test]
+fn two_changes_in_a_row_leave_two_different_store_tags() {
+    use crate::credential::cred_store_state;
+
+    let (mut fs, mut rng) = setup();
+    let (alice, ..) = register(&mut fs, &mut rng, "example.com", &[1, 1], "alice");
+    let (bob, ..) = register(&mut fs, &mut rng, "example.com", &[2, 2], "bob");
+    let mut state = armed(PERM_CM);
+    let mut out = [0u8; 256];
+    let mut tags = std::vec![cred_store_state(&mut fs).unwrap()];
+    for id in [&alice, &bob] {
+        let req = cm_request(0x06, Some(&subpara_cred(id)), &TOKEN);
+        run(&mut fs, &mut state, &req, &mut out).unwrap();
+        tags.push(cred_store_state(&mut fs).unwrap());
+    }
+    assert!(
+        tags[1] != tags[0] && tags[2] != tags[1] && tags[2] != tags[0],
+        "the tag before, after one delete, after two: {tags:02x?}"
+    );
+}
+
+/// The RNG a credMgmt command runs with here, seeded by the store's write generation. A
+/// replay from the same start state draws what it drew, which `probe::sweep` holds a
+/// faulted run to, and a command after a change to the store draws afresh.
+fn command_rng<S: Storage>(fs: &Fs<S>) -> SeqRng {
+    SeqRng(7 + u64::from(fs.write_gen()))
 }

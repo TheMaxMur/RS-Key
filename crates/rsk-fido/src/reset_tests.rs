@@ -1489,7 +1489,9 @@ fn cut_fs_with_a_pin() -> (Fs<Cut>, CutMedium) {
 fn run_reset<S: rsk_fs::Storage>(fs: &mut Fs<S>) -> CtapResult {
     let mut state = FidoState::new();
     let mut presence = crate::AlwaysConfirm;
-    let mut rng = SeqRng(3);
+    // Seeded by the store's write generation, as `credmgmt_tests`' `command_rng` is: a
+    // second reset of one store draws a seed and a store tag of its own.
+    let mut rng = SeqRng(3 + u64::from(fs.write_gen()));
     let mut ctx = Ctx {
         presence: &mut presence,
         dev: dev(),
@@ -1730,5 +1732,23 @@ fn a_wipe_stopped_part_way_does_not_keep_the_old_store_tag() {
         store_tag(&mut fs),
         before,
         "the stopped wipe kept the old store's tag"
+    );
+}
+
+/// Two resets of one store each leave it a store tag of its own, as two credMgmt changes
+/// do: a platform that cached after the first reset must see the second as a change too.
+#[test]
+fn two_resets_in_a_row_leave_two_different_store_tags() {
+    let mut fs = Fs::new(RamStorage::new());
+    ensure_seed(&dev(), &mut fs, &mut SeqRng(1)).unwrap();
+    let before = store_tag(&mut fs);
+    assert_eq!(run_reset(&mut fs), Ok(0));
+    let once = store_tag(&mut fs);
+    assert_eq!(run_reset(&mut fs), Ok(0));
+    let twice = store_tag(&mut fs);
+    assert!(
+        once != before && twice != once && twice != before,
+        "the tag before, after one reset, after two: {:02x?}",
+        [before, once, twice]
     );
 }
