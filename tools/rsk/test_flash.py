@@ -44,7 +44,9 @@ def release(tmp_path):
 class Tools:
     """cosign, gh and picotool as stand-ins; `ran` holds each call in order. Given a
     `signer`, cosign answers by matching the identity regexp it was passed against it,
-    and the repository it was pinned to against the certificate's `repository`;
+    the repository it was pinned to against the certificate's `repository`, and the
+    workflow ref it was pinned to against the signer's own ref, which is the run's
+    for a reusable workflow called by local path (so v0.4.11's certificate reads);
     given the ref a run was `attested` at, gh answers by the `--source-ref` it was
     passed, and with none it takes any ref, as gh does. `gh_says` is the error a gh
     too old for a flag prints, and makes gh fail with it."""
@@ -73,10 +75,11 @@ class Tools:
             # cosign's check is Go's MatchString of the regexp against the SAN: a search.
             wanted = argv[argv.index("--certificate-identity-regexp") + 1]
             rc = 0 if re.search(wanted, self.signer) else 1
-            # And an exact comparison with GithubWorkflowRepository, when it is given one.
-            if "--certificate-github-workflow-repository" in argv:
-                pinned = argv[argv.index("--certificate-github-workflow-repository") + 1]
-                rc = rc or (0 if pinned == self.repository else 1)
+            # And exact comparisons with GithubWorkflowRepository and GithubWorkflowRef.
+            for flag, recorded in (("--certificate-github-workflow-repository", self.repository),
+                                   ("--certificate-github-workflow-ref", self.signer.rpartition("@")[2])):
+                if flag in argv:
+                    rc = rc or (0 if argv[argv.index(flag) + 1] == recorded else 1)
         if tool == "gh" and self.attested is not None and "--source-ref" in argv:
             rc = 0 if argv[argv.index("--source-ref") + 1] == self.attested else 1
         if tool == "gh" and self.gh_says is not None:
@@ -103,6 +106,7 @@ def test_a_good_release_is_verified_then_loaded_and_rebooted(release, monkeypatc
     assert tools.ran == [
         ("cosign", "verify-blob", "--bundle", bundle,
          "--certificate-identity-regexp", flash.IDENTITY_REGEXP,
+         flash.TAG_PIN, "refs/tags/v9.9.9",
          "--certificate-oidc-issuer", flash.OIDC_ISSUER,
          flash.REPOSITORY_PIN, flash.REPO, sums),
         ("gh", "attestation", "verify", image, "--repo", flash.REPO,
@@ -155,6 +159,17 @@ def test_a_signature_from_another_repository_writes_nothing(release, monkeypatch
     call: a run in `someone/RS-Key` that calls it signs as exactly that identity. The
     certificate still records the repository that ran it, and rsk pins that."""
     tools = Tools(monkeypatch, signer=f"{SIGNER}@refs/tags/v9.9.9", repository="someone/RS-Key")
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.names() == ["cosign"]
+    assert "does not verify" in capsys.readouterr().err
+
+
+def test_a_signature_from_another_tag_writes_nothing(release, monkeypatch, capsys):
+    """The identity regexp takes any `v*` tag, and a release run dispatched from an
+    older tag signs as that tag. SHA256SUMS names v9.9.9, so a signature made at
+    v9.9.8 is refused on the ref the certificate records, before anything is written."""
+    tools = Tools(monkeypatch, signer=f"{SIGNER}@refs/tags/v9.9.8")
     with pytest.raises(SystemExit):
         flash_it(release / NAME)
     assert tools.names() == ["cosign"]
@@ -266,14 +281,17 @@ def test_an_attestation_from_the_release_tag_is_flashed(release, monkeypatch, ca
     assert "at refs/tags/v9.9.9 (attestation)" in capsys.readouterr().out
 
 
-def test_sums_that_name_no_tag_write_nothing(release, monkeypatch, capsys):
+@pytest.mark.parametrize("have", [("cosign", "gh", "picotool"), ("cosign", "picotool")],
+                         ids=["with-gh", "without-gh"])
+def test_sums_that_name_no_tag_write_nothing(release, monkeypatch, capsys, have):
     """The tag is the SBOM's, so SHA256SUMS without one names no ref to pin the
-    provenance to; gh is not run on a guess."""
+    signature and the provenance to. Neither verifier is run on a guess, with gh or
+    without it: then cosign's pin is the only tag pin there is."""
     (release / flash.SUMS).write_text(f"{hashlib.sha256(IMAGE).hexdigest()}  ./{NAME}\n")
-    tools = Tools(monkeypatch)
+    tools = Tools(monkeypatch, have=have)
     with pytest.raises(SystemExit):
         flash_it(release / NAME)
-    assert tools.names() == ["cosign"]
+    assert tools.names() == []
     assert "names no release tag" in capsys.readouterr().err
 
 
@@ -283,7 +301,7 @@ def test_sums_that_name_two_tags_write_nothing(release, monkeypatch, capsys):
     tools = Tools(monkeypatch)
     with pytest.raises(SystemExit):
         flash_it(release / NAME)
-    assert tools.names() == ["cosign"]
+    assert tools.names() == []
     assert "more than one release tag (v9.9.8, v9.9.9)" in capsys.readouterr().err
 
 
@@ -297,21 +315,12 @@ def test_the_run_is_pinned_to_the_whole_tag(tmp_path, monkeypatch, tag):
     (tmp_path / flash.SUMS).write_text(f"{'0' * 64}  ./rs-key-{tag}-sbom.cdx.json\n"
                                        f"{hashlib.sha256(IMAGE).hexdigest()}  ./{name}\n")
     (tmp_path / flash.BUNDLE).write_text("{}")
-    tools = Tools(monkeypatch, attested=f"refs/tags/{tag}")
+    tools = Tools(monkeypatch, signer=f"{SIGNER}@refs/tags/{tag}", attested=f"refs/tags/{tag}")
     flash_it(tmp_path / name)
+    cosign = tools.ran[0]
+    assert cosign[cosign.index(flash.TAG_PIN) + 1] == f"refs/tags/{tag}"
     assert tools.ran[1][-2:] == ("--source-ref", f"refs/tags/{tag}")
     assert [call[1] for call in tools.wrote()] == ["load", "reboot"]
-
-
-def test_without_gh_the_tag_is_not_read(release, monkeypatch, capsys):
-    """The tag pins gh's check and nothing else, so with no gh a SHA256SUMS naming
-    none is not refused for it: the image flashes with the warning any image gets
-    when the provenance is not checked."""
-    (release / flash.SUMS).write_text(f"{hashlib.sha256(IMAGE).hexdigest()}  ./{NAME}\n")
-    tools = Tools(monkeypatch, have=("cosign", "picotool"))
-    flash_it(release / NAME)
-    assert tools.names() == ["cosign", "bootsel", "picotool", "picotool"]
-    assert "provenance was NOT checked" in capsys.readouterr().err
 
 
 def test_a_local_build_needs_the_flag_and_gets_a_warning(tmp_path, monkeypatch, capsys):
@@ -354,20 +363,32 @@ def test_a_failed_reboot_is_not_reported_as_done(release, monkeypatch, capsys):
     assert "rebooted" not in captured.out
 
 
+def command(page, head):
+    """The `head …` command a page prints, `\\` continuations and all: what a reader
+    copies. Read off the command and not the page, whose prose names the same flags."""
+    found = re.search(rf"^{re.escape(head)}\b.*\\\n(?:  .*\\\n)*  .*$", page, re.M)
+    assert found, head
+    return found.group(0)
+
+
 def test_the_checks_are_the_ones_the_page_publishes():
-    """The identity, issuer, signing repository, repo, signer workflow and source ref
-    are docs/supply-chain.md's verify commands, so the tool cannot check less than
-    the page tells a reader to. releases.md says rsk runs its step 1, so that
-    command carries the same identity and the same repository pin."""
-    pin = f"{flash.REPOSITORY_PIN} {flash.REPO}"
+    """The identity, signing tag, issuer, signing repository, repo, signer workflow
+    and source ref are docs/supply-chain.md's verify commands, so the tool cannot
+    check less than the page tells a reader to. releases.md says rsk runs its step 1,
+    so that command carries the same identity and the same two pins."""
+    pins = (f"{flash.REPOSITORY_PIN} {flash.REPO}",
+            f"{flash.TAG_PIN} {flash.SOURCE_REF.format(tag='<tag>')}")
     page = (REPO_ROOT / "docs/supply-chain.md").read_text(encoding="utf-8")
-    assert f"--certificate-identity-regexp '{flash.IDENTITY_REGEXP}'" in page
-    assert f"--certificate-oidc-issuer {flash.OIDC_ISSUER}" in page
-    assert pin in page
-    assert re.search(rf"--repo {re.escape(flash.REPO)}\s", page)
-    assert f"--signer-workflow {flash.SIGNER_WORKFLOW}" in page
-    assert f"--source-ref {flash.SOURCE_REF.format(tag='<tag>')}" in page
-    assert f"--bundle {flash.BUNDLE}" in page
-    releases = (REPO_ROOT / "docs/releases.md").read_text(encoding="utf-8")
+    cosign = command(page, "cosign verify-blob")
+    assert f"--certificate-identity-regexp '{flash.IDENTITY_REGEXP}'" in cosign
+    assert f"--certificate-oidc-issuer {flash.OIDC_ISSUER}" in cosign
+    assert f"--bundle {flash.BUNDLE}" in cosign
+    assert all(pin in cosign for pin in pins)
+    gh = command(page, "gh attestation verify")
+    assert re.search(rf"--repo {re.escape(flash.REPO)}\s", gh)
+    assert f"--signer-workflow {flash.SIGNER_WORKFLOW}" in gh
+    assert f"--source-ref {flash.SOURCE_REF.format(tag='<tag>')}" in gh
+    releases = command((REPO_ROOT / "docs/releases.md").read_text(encoding="utf-8"),
+                       "cosign verify-blob")
     assert f"--certificate-identity-regexp '{flash.IDENTITY_REGEXP}'" in releases
-    assert pin in releases
+    assert all(pin in releases for pin in pins)

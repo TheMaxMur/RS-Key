@@ -4,13 +4,15 @@
 """rsk flash — verify a release image, then write it to a board in BOOTSEL.
 
 The checks are the ones docs/supply-chain.md has a reader run by hand, in that
-order. `cosign verify-blob` proves SHA256SUMS was signed by this repo's release
-workflow in a run of this repo: the Fulcio certificate's identity, issuer and
+order. The release's tag is read first, from the SBOM's name in SHA256SUMS: the
+signature covers that file, so a changed name fails the next check. `cosign
+verify-blob` proves SHA256SUMS was signed by this repo's release workflow in a
+run of this repo at that tag: the Fulcio certificate's identity, ref, issuer and
 repository, and the Rekor entry the bundle carries. The image's sha256 must be
 the one SHA256SUMS lists under its name. `gh attestation verify` ties the image
-to the pinned build workflow at the release's own tag, read from the SBOM's name
-in SHA256SUMS; it is skipped, and says so, when `gh` is not installed. Only then
-`picotool load -v` and `picotool reboot`, as the flashing guides have it.
+to the pinned build workflow at the same tag; it is skipped, and says so, when
+`gh` is not installed. Only then `picotool load -v` and `picotool reboot`, as
+the flashing guides have it.
 
 cosign and gh are run, not imported, so nothing joins the Python dependencies. An
 image you built yourself carries no release signature: it flashes only with
@@ -38,6 +40,9 @@ OIDC_ISSUER = "https://token.actions.githubusercontent.com"
 # The identity names a reusable workflow any repository may call; this pins the run
 # to REPO. cosign reads it from GithubWorkflowRepository, Fulcio's 1.3.6.1.4.1.57264.1.5.
 REPOSITORY_PIN = "--certificate-github-workflow-repository"
+# The identity regexp takes any `v*` tag; this pins the run to SOURCE_REF, the release's
+# own. cosign reads it from GithubWorkflowRef, 1.3.6.1.4.1.57264.1.6.
+TAG_PIN = "--certificate-github-workflow-ref"
 # `--signer-workflow` names the file at any ref; this pins the run to the release's tag.
 SOURCE_REF = "refs/tags/{tag}"
 COSIGN_HELP = "https://docs.sigstore.dev/"
@@ -105,7 +110,7 @@ def release_tag(sums):
                 tags.add(sbom[1])
     if not tags:
         die(f"{SUMS} lists no rs-key-<tag>-sbom.cdx.json, so it names no release tag "
-            "to check the provenance at; not flashing")
+            "to check the signature and the provenance at; not flashing")
     if len(tags) > 1:
         die(f"{SUMS} names more than one release tag "
             f"({', '.join(sanitize(t) for t in sorted(tags))}); not flashing")
@@ -126,14 +131,17 @@ def verify(uf2):
         die(f"cosign not found. It checks the release signature, and nothing is flashed "
             f"unchecked. Install it ({COSIGN_HELP}; `brew install cosign` or "
             "`nix shell nixpkgs#cosign`) and run this again")
+    # Read before the signature is checked, which is sound: the check covers this file.
+    ref = SOURCE_REF.format(tag=release_tag(sums))
     r = _run([cosign, "verify-blob", "--bundle", bundle,
-              "--certificate-identity-regexp", IDENTITY_REGEXP,
+              "--certificate-identity-regexp", IDENTITY_REGEXP, TAG_PIN, ref,
               "--certificate-oidc-issuer", OIDC_ISSUER,
               REPOSITORY_PIN, REPO, sums])
     if r.returncode != 0:
         die(f"the signature on {SUMS} does not verify, so neither does anything it "
             f"lists; not flashing.\n{_said(r)}")
-    print(f"{SUMS}: signed by {SIGNER_WORKFLOW} in a run of {REPO}, Rekor entry checked ✓")
+    print(f"{SUMS}: signed by {SIGNER_WORKFLOW} at {sanitize(ref)} in a run of {REPO}, "
+          "Rekor entry checked ✓")
     want, got = listed_digest(sums, name), sha256_of(uf2)
     if got != want:
         die(f"{shown}: sha256 {got} is not the {want} that {SUMS} lists; not flashing")
@@ -144,7 +152,6 @@ def verify(uf2):
               "attestation verify). The signature and the checksum above passed; install "
               "the GitHub CLI to check the provenance too.", file=sys.stderr)
         return
-    ref = SOURCE_REF.format(tag=release_tag(sums))
     r = _run([gh, "attestation", "verify", uf2, "--repo", REPO,
               "--signer-workflow", SIGNER_WORKFLOW, "--source-ref", ref])
     if r.returncode != 0 and "unknown flag: --source-ref" in f"{r.stderr}{r.stdout}":

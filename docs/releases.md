@@ -8,8 +8,8 @@ runs only at the tag it releases: a run started by hand from a branch, or from
 another tag, stops before it builds anything. A run started by hand uses the
 workflow file at the ref it starts from, though, and the tags published up to
 v0.4.11 carry one without that test. A run started at one of them can still
-build another tag, signed under the old tag's name; `gh attestation verify
---source-ref` refuses it
+build another tag, signed under the old tag's name; the tag pin in step 1 below
+refuses it, and so does `gh attestation verify --source-ref`
 ([supply-chain.md](supply-chain.md#3-build-provenance-github-attestation),
 step 3).
 
@@ -63,17 +63,20 @@ step 3).
 
 Grab the images you want plus `SHA256SUMS` and the signature —
 `SHA256SUMS.sigstore.json`, or `SHA256SUMS.cosign.bundle` on releases up to
-v0.4.10. Same bytes either way; substitute the name you actually downloaded.
+v0.4.10. Same bytes either way; substitute the name you actually downloaded, and
+the release's tag for `<tag>`.
 
 ```sh
 # 1. the checksums file is authentic (keyless cosign — needs cosign >= 2.0)
 #    The signer is the *reusable* build workflow (release-build.yml), not the
 #    thin release.yml caller: a workflow_call job's OIDC identity is its own
-#    job_workflow_ref, so that is what the Fulcio cert's SAN carries. Any
-#    repository can call it, so the last flag pins the repository of the run.
+#    job_workflow_ref, so that is what the Fulcio cert's SAN carries. The ref
+#    flag pins the release's own tag; any repository can call the workflow, so
+#    the last flag pins the repository of the run.
 cosign verify-blob \
   --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github\.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$' \
+  --certificate-github-workflow-ref refs/tags/<tag> \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   --certificate-github-workflow-repository TheMaxMur/RS-Key \
   SHA256SUMS

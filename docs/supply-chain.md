@@ -387,6 +387,7 @@ CI already enforces this: the release job rebuilds all fourteen flavors with
 cosign verify-blob \
   --bundle SHA256SUMS.sigstore.json \
   --certificate-identity-regexp '^https://github\.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$' \
+  --certificate-github-workflow-ref refs/tags/<tag> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-github-workflow-repository TheMaxMur/RS-Key \
   SHA256SUMS
@@ -405,8 +406,9 @@ The release job stops a run started at any ref but the tag it releases (its
 `resolve tag` step, in the table above). A dispatched run uses the workflow file
 at the ref it starts from, though, and the tags published up to v0.4.11 carry
 one without that test: a dispatch at one of them can build another tag and sign
-it under the old tag's name, which this regexp accepts. Step 3's `--source-ref`
-refuses it.
+it under the old tag's name, which the regexp alone accepts.
+`--certificate-github-workflow-ref refs/tags/<tag>`, with `<tag>` the one in the
+file names, refuses it, and so does step 3's `--source-ref`.
 
 ### 3. Build provenance (GitHub attestation)
 
@@ -437,20 +439,20 @@ rsk flash rs-key-<tag>-default.uf2    # the board in BOOTSEL
 ```
 
 `rsk flash` takes a release image with `SHA256SUMS` and
-`SHA256SUMS.sigstore.json` beside it. It runs step 2's `cosign verify-blob` with
-the identity and issuer above, character for character, so the certificate and
-the bundle's Rekor entry are checked as they are there. It then matches the
-image's sha256 to the one `SHA256SUMS` lists under its name, and runs step 3's
-`gh attestation verify` with the same `--signer-workflow` and `--source-ref`. The
-tag comes from the SBOM's name in the signed `SHA256SUMS`,
-`rs-key-<tag>-sbom.cdx.json`. Only then does it run `picotool load -v` and
-`picotool reboot`.
+`SHA256SUMS.sigstore.json` beside it. It reads the release's tag from the SBOM's
+name in `SHA256SUMS`, `rs-key-<tag>-sbom.cdx.json`: the signature covers that
+file, so a changed name fails step 2. It runs step 2's `cosign verify-blob` with
+the identity, tag, issuer and repository above, character for character, so the
+certificate and the bundle's Rekor entry are checked as they are there. It then
+matches the image's sha256 to the one `SHA256SUMS` lists under its name, and runs
+step 3's `gh attestation verify` with the same `--signer-workflow` and
+`--source-ref`. Only then does it run `picotool load -v` and `picotool reboot`.
 
 It stops, with nothing written, when a file is missing, when cosign is not
-installed, or when any check fails. When `gh` is not installed it skips step 3
-and says so, and the tag is not read. With `gh`, it also stops when
-`SHA256SUMS` names no single release tag, and when `gh` is too old for
-`--source-ref`, with a message to upgrade. Step 1 is yours to run. `--dry-run`
+installed, when `SHA256SUMS` names no single release tag, or when any check
+fails. When `gh` is not installed it skips step 3 and says so; the tag pin in
+step 2 still holds. A `gh` too old for `--source-ref` stops it, with a message
+to upgrade. Step 1 is yours to run. `--dry-run`
 runs the checks and writes nothing, which is the route for a secure-boot board:
 the image it boots is one you seal with your own key first (`nix run .#flash`,
 [production.md](production.md)).
