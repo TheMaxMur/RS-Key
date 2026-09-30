@@ -109,6 +109,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **`rsk flash` accepts only a signature from a release built at a tag**
+  (`rsk` 0.3.46). The cosign identity it checks, copied from the verify command
+  in [supply-chain.md](docs/supply-chain.md#verifying-a-download), took
+  `release-build.yml` at any ref of this repo (`@.*$`). Both now take a `v*` tag
+  only (`@refs/tags/v.*$`), the form [releases.md](docs/releases.md#verify-a-download)
+  already printed, and the two pages print the same regexp. `release.yml`'s
+  `workflow_dispatch` path can still publish a release this refuses: dispatched
+  from a branch (`main` by default), it builds and publishes the tag it is given,
+  but the signature carries the branch's ref. Dispatched from the tag itself
+  (`gh workflow run release.yml --ref vX.Y.Z -f tag=vX.Y.Z`), it verifies. Every
+  release published so far was built by a tag push, so none that verified before
+  is refused now.
+
 - **OpenPGP TERMINATE DF leaves the applet terminated until ACTIVATE FILE, as on a
   YubiKey 5.8.0.** TERMINATE DF wiped the applet and put the factory state back at
   once, and ACTIVATE FILE did nothing. Now TERMINATE (PW3 verified or blocked,

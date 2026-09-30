@@ -382,7 +382,7 @@ CI already enforces this: the release job rebuilds all fourteen flavors with
 ```sh
 cosign verify-blob \
   --bundle SHA256SUMS.sigstore.json \
-  --certificate-identity-regexp '^https://github.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@.*$' \
+  --certificate-identity-regexp '^https://github.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   SHA256SUMS
 sha256sum -c SHA256SUMS          # then check the artifacts against it
@@ -390,7 +390,10 @@ sha256sum -c SHA256SUMS          # then check the artifacts against it
 
 The certificate identity is **`release-build.yml`**, not `release.yml`: cosign
 runs inside the reusable builder. Sigstore stamps the cert with the reusable
-workflow's identity (`job_workflow_ref`).
+workflow's identity (`job_workflow_ref`), which ends in the ref the run started
+from. The regexp accepts a `v*` tag only, because releases are cut from tags. A
+release run dispatched from a branch carries that branch's ref, so its
+`SHA256SUMS` does not verify.
 
 ### 3. Build provenance (GitHub attestation)
 

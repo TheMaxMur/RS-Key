@@ -25,6 +25,8 @@ from rsk import flash  # noqa: E402
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 NAME = "rs-key-v9.9.9-default.uf2"
 IMAGE = b"UF2\nnot really an image\n"
+#: The Fulcio certificate's identity, less the ref the signing run was started from.
+SIGNER = "https://github.com/TheMaxMur/RS-Key/.github/workflows/release-build.yml"
 
 
 @pytest.fixture
@@ -40,11 +42,12 @@ def release(tmp_path):
 
 
 class Tools:
-    """cosign, gh and picotool as stand-ins; `ran` holds each call in order."""
+    """cosign, gh and picotool as stand-ins; `ran` holds each call in order. Given a
+    `signer`, cosign answers by matching the identity regexp it was passed against it."""
 
     def __init__(self, monkeypatch, cosign=0, gh=0, have=("cosign", "gh", "picotool"),
-                 reboot=0):
-        self.ran, self.rc = [], {"cosign": cosign, "gh": gh}
+                 reboot=0, signer=None):
+        self.ran, self.rc, self.signer = [], {"cosign": cosign, "gh": gh}, signer
         monkeypatch.setattr(flash.shutil, "which",
                             lambda tool: f"/bin/{tool}" if tool in have else None)
         monkeypatch.setattr(flash, "_run", self._run)
@@ -60,7 +63,12 @@ class Tools:
     def _run(self, argv):
         tool = pathlib.PurePath(argv[0]).name
         self.ran.append((tool, *argv[1:]))
-        return types.SimpleNamespace(returncode=self.rc[tool], stdout="",
+        rc = self.rc[tool]
+        if tool == "cosign" and self.signer is not None:
+            # cosign's check is Go's MatchString of the regexp against the SAN: a search.
+            wanted = argv[argv.index("--certificate-identity-regexp") + 1]
+            rc = 0 if re.search(wanted, self.signer) else 1
+        return types.SimpleNamespace(returncode=rc, stdout="",
                                      stderr=f"{tool} said no\x1b[31m")
 
     def names(self):
@@ -102,6 +110,25 @@ def test_a_signature_that_does_not_verify_writes_nothing(release, monkeypatch, c
     err = capsys.readouterr().err
     assert "does not verify" in err and "cosign said no" in err
     assert "\x1b" not in err  # the verifier's words are sanitized
+
+
+def test_a_signature_from_a_branch_run_writes_nothing(release, monkeypatch, capsys):
+    """Releases are cut from tags. SHA256SUMS signed by release-build.yml at a branch,
+    as a release run dispatched from `main` signs it, fails the identity rsk hands
+    cosign, and nothing is written."""
+    tools = Tools(monkeypatch, signer=f"{SIGNER}@refs/heads/main")
+    with pytest.raises(SystemExit):
+        flash_it(release / NAME)
+    assert tools.names() == ["cosign"]
+    assert "does not verify" in capsys.readouterr().err
+
+
+def test_a_signature_from_a_tag_run_is_flashed(release, monkeypatch):
+    """The control: the same stand-in passes the identity a tag-built release
+    carries, so the case above is refused for its ref, not for the match."""
+    tools = Tools(monkeypatch, signer=f"{SIGNER}@refs/tags/v9.9.9")
+    flash_it(release / NAME)
+    assert [call[1] for call in tools.wrote()] == ["load", "reboot"]
 
 
 def test_an_image_whose_sha_differs_writes_nothing(release, monkeypatch, capsys):
@@ -217,10 +244,13 @@ def test_a_failed_reboot_is_not_reported_as_done(release, monkeypatch, capsys):
 
 def test_the_checks_are_the_ones_the_page_publishes():
     """The identity, issuer, repo and signer workflow are docs/supply-chain.md's
-    verify commands, so the tool cannot check less than the page tells a reader to."""
+    verify commands, so the tool cannot check less than the page tells a reader to.
+    releases.md says rsk runs its step 1, so that command carries the same identity."""
     page = (REPO_ROOT / "docs/supply-chain.md").read_text(encoding="utf-8")
     assert f"--certificate-identity-regexp '{flash.IDENTITY_REGEXP}'" in page
     assert f"--certificate-oidc-issuer {flash.OIDC_ISSUER}" in page
     assert re.search(rf"--repo {re.escape(flash.REPO)}\s", page)
     assert f"--signer-workflow {flash.SIGNER_WORKFLOW}" in page
     assert f"--bundle {flash.BUNDLE}" in page
+    releases = (REPO_ROOT / "docs/releases.md").read_text(encoding="utf-8")
+    assert f"--certificate-identity-regexp '{flash.IDENTITY_REGEXP}'" in releases

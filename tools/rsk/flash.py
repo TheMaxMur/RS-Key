@@ -30,8 +30,9 @@ BUNDLE = "SHA256SUMS.sigstore.json"
 REPO = "TheMaxMur/RS-Key"
 # The reusable builder signs and attests, not the release.yml that calls it.
 SIGNER_WORKFLOW = f"{REPO}/.github/workflows/release-build.yml"
-# docs/supply-chain.md's verify command, character for character (test_flash holds it).
-IDENTITY_REGEXP = r"^https://github.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@.*$"
+# The verify command docs/supply-chain.md and releases.md print, character for character
+# (test_flash holds both). Tag refs only: releases are cut from `v*` tags.
+IDENTITY_REGEXP = r"^https://github.com/TheMaxMur/RS-Key/\.github/workflows/release-build\.yml@refs/tags/v.*$"
 OIDC_ISSUER = "https://token.actions.githubusercontent.com"
 COSIGN_HELP = "https://docs.sigstore.dev/"
 
