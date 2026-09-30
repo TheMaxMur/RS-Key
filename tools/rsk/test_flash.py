@@ -254,6 +254,33 @@ def test_sums_that_name_two_tags_write_nothing(release, monkeypatch, capsys):
     assert "more than one release tag (v9.9.8, v9.9.9)" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("tag", ["v1.0.0-rc1", "v1.2.3-sbom"])
+def test_the_run_is_pinned_to_the_whole_tag(tmp_path, monkeypatch, tag):
+    """Why the tag is read off the SBOM's name: a pre-release tag carries a `-`, so
+    `rs-key-<tag>-<flavor>.uf2` cannot say where it ends, and a tag may even carry
+    `-sbom`. Every other case here runs at `v9.9.9`, which neither exercises."""
+    name = f"rs-key-{tag}-default.uf2"
+    (tmp_path / name).write_bytes(IMAGE)
+    (tmp_path / flash.SUMS).write_text(f"{'0' * 64}  ./rs-key-{tag}-sbom.cdx.json\n"
+                                       f"{hashlib.sha256(IMAGE).hexdigest()}  ./{name}\n")
+    (tmp_path / flash.BUNDLE).write_text("{}")
+    tools = Tools(monkeypatch, attested=f"refs/tags/{tag}")
+    flash_it(tmp_path / name)
+    assert tools.ran[1][-2:] == ("--source-ref", f"refs/tags/{tag}")
+    assert [call[1] for call in tools.wrote()] == ["load", "reboot"]
+
+
+def test_without_gh_the_tag_is_not_read(release, monkeypatch, capsys):
+    """The tag pins gh's check and nothing else, so with no gh a SHA256SUMS naming
+    none is not refused for it: the image flashes with the warning any image gets
+    when the provenance is not checked."""
+    (release / flash.SUMS).write_text(f"{hashlib.sha256(IMAGE).hexdigest()}  ./{NAME}\n")
+    tools = Tools(monkeypatch, have=("cosign", "picotool"))
+    flash_it(release / NAME)
+    assert tools.names() == ["cosign", "bootsel", "picotool", "picotool"]
+    assert "provenance was NOT checked" in capsys.readouterr().err
+
+
 def test_a_local_build_needs_the_flag_and_gets_a_warning(tmp_path, monkeypatch, capsys):
     (tmp_path / "firmware.uf2").write_bytes(IMAGE)
     tools = Tools(monkeypatch)
