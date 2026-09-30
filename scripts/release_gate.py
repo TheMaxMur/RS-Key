@@ -1320,9 +1320,10 @@ def check_ref_is_tag(paired: dict[str, dict], findings: list[str]) -> None:
 
     Read off the commands of the step whose shape is `admission`, the way
     [`SHAPE`] reads a subject: [`REF_TEST`], and its `then` branch read up to the
-    first line that could end or nest it ([`BRANCH_END`]) must END in an [`EXIT`].
-    Anywhere else an exit may sit in an `else`, an inner `if`, a pipe or a
-    heredoc, or past a `fi;`, and this refuses each rather than modelling it.
+    first line that could end or nest it ([`BRANCH_END`]) must END in an [`EXIT`]
+    and hold no other exit. Anywhere else an exit may sit in an `else`, an inner
+    `if`, a pipe or a heredoc, past a `fi;`, or behind an `exit 0`, and this
+    refuses each rather than modelling it.
 
     Out of reach for a text rule, like every rule here: a function holding the
     test that nothing calls, a `GITHUB_REF` reassigned above it, a `trap` that
@@ -1335,8 +1336,11 @@ def check_ref_is_tag(paired: dict[str, dict], findings: list[str]) -> None:
     if REF_TEST in code:
         start = code.index(REF_TEST) + 1
         end = next((i for i in range(start, len(code)) if BRANCH_END.match(code[i])), len(code))
-        # An empty branch leaves `code[end - 1]` at the test itself, which is no exit.
-        held = EXIT.fullmatch(code[end - 1]) is not None
+        branch = code[start:end]
+        # One exit, the last line: an `exit 0` above it ends the step as a success.
+        held = bool(branch) and EXIT.fullmatch(branch[-1]) is not None and not any(
+            re.match(r"exit\b", line) for line in branch[:-1]
+        )
     if not held:
         findings.append(
             f"{WORKFLOW}'s step {step['title']!r} does not stop a run whose ref is"

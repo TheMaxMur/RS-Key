@@ -893,8 +893,11 @@ REF_BLOCK = (
                       "            if false; then\n              exit 1\n            fi\n"),
     REF_BLOCK.replace("exit 1", "exit 256"),
     REF_BLOCK.replace("            exit 1\n", "            {\n              exit 1\n            } | cat\n"),
+    REF_BLOCK.replace("            exit 1\n", "            exit 0\n            exit 1\n"),
+    REF_BLOCK.replace('            echo "refusing: this run is not at its tag" >&2\n'
+                      "            exit 1\n", ""),
 ], ids=["gone", "only-prints", "exits-0", "inverted", "else", "fi-semicolon",
-        "nested-if", "exits-256", "pipe"])
+        "nested-if", "exits-256", "pipe", "exits-0-first", "empty"])
 def test_a_builder_that_releases_from_another_ref_is_refused(tree, broken):
     """A run at a branch, or at tag A with `tag: B`, signs and attests as that ref,
     and the published verify commands take the release's own tag. Ways the test
