@@ -62,6 +62,14 @@ What is checked, and the direction of each:
 * or it says `owes`, and then `owed` names the configuration that would refute it
   and that configuration must NOT exist. That is the ledger held in the second
   direction: pay the debt and the row goes red until it claims what it paid;
+* a `set` or `case` row claims no mutant at all. Its derived half is `omits`,
+  read off the model's text, which no configuration changes, so the derivation
+  cannot see what a switch does. The `mutant` rule above reads the whole
+  definition: a switch on a continuation line past a set literal, or in a CASE
+  arm the scan does not parse, passed it, and the row counted as carried by a
+  switch that changed nothing it records. Such a row owes until the derivation
+  can read a switched arm, and writing its owed configuration reddens it until
+  then;
 * `carried_by`, where a row has one, resolves to an id in
   `assurance/abstractions.toml`. Two registries disposing of the same narrowing
   without knowing about each other is how the second one starts being wrong;
@@ -154,6 +162,9 @@ IDENTIFIER = re.compile(r"[a-z][A-Za-z0-9_]*")
 FUNCTION = re.compile(r"\|->")
 
 SHAPES = ("clause", "set", "case")
+#: The shapes whose derived half is `omits`. It is read off the model's text, which
+#: no configuration changes, so no switch can move it and these rows claim none.
+OMITTING = ("set", "case")
 #: The judgement the derivation cannot make. `narrowing` is a hole in the model
 #: standing for a fact about the product; `dispatch` is a per-case answer the
 #: guard test read as a hole; `mutant-arm` is a defect the module carries on
@@ -702,9 +713,15 @@ def mutant_problems(root, entry, where):
                 " creditor is a note, and nothing can notice it being paid"
             )
         elif switched_on(root, owed) is not None:
+            claim = (
+                f"a `{entry['shape']}` row cannot claim it until the derivation reads"
+                " the switch it turns on, so teach it that first"
+                if entry.get("shape") in OMITTING
+                else "claim it as the mutant"
+            )
             problems.append(
                 f"{where}: owes {owed}, and {MODELS}/{owed} exists — the debt is paid"
-                " and the row still says it is owed; claim it as the mutant"
+                f" and the row still says it is owed; {claim}"
             )
         return problems
     if owed is not None:
@@ -715,6 +732,14 @@ def mutant_problems(root, entry, where):
     on = switched_on(root, claimed)
     if on is None:
         problems.append(f"{where}: claims {claimed}, which is not a file in {MODELS}")
+        return problems
+    if entry.get("shape") in OMITTING:
+        problems.append(
+            f"{where}: claims {claimed}, and a `{entry['shape']}` row is carried by no"
+            " switch — its omits is derived from the model's text, which no"
+            " configuration changes, so the derivation cannot see what the switch"
+            " does; it owes until the derivation can read a switched arm"
+        )
         return problems
     reads = switches(root, entry["module"], entry["line"])
     if not on & reads:

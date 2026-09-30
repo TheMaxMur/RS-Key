@@ -1410,6 +1410,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Internal
 
+- **The model-exception gate no longer counts a `set` or `case` row as carried
+  by a switch** — host only, no `bcdDevice` bump. A row's claimed mutant was held
+  to the `Bug…` switches its model definition reads, while the `omits` of a `set`
+  or `case` row is derived from the literal or the CASE arms alone. A switch on a
+  continuation line past a set literal, or in a CASE arm the scan does not parse,
+  was read, so a configuration turning it on passed as the row's mutant and the
+  row counted as carried, while the switch changed nothing the row records. Such
+  a row now claims no mutant: the `model exceptions` row in `check-assurance.sh`
+  fails on the claim, and the row owes until the derivation can read a switched
+  arm. One whose owed configuration exists is told that, not to claim it. None
+  claimed one; the three `set` rows and the two `case` rows owe.
+
 - **`check.sh` runs the rsk-fido tests on the `always-uv` build** — host only, no
   `bcdDevice` bump. No row did, and 251 of the 882 cases failed there: every one
   on a fixture that took alwaysUv to be off (a registration with no PIN, U2F

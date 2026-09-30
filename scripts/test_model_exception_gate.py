@@ -12,7 +12,10 @@ deletes the recorder's `\\/ (a = Oath …)` from a COPY of this checkout's own
 `RSKeyAppletSeams.tla` — the one of stage 6's two clauses the model still has,
 whose deletion changed the input of no gate before this row existed — and drives
 the gate as a PROCESS, because `check.sh` reads an exit code and not a list of
-findings. `test_a_narrowing_over_a_state_variable_reddens_the_row` is the hole
+findings. `test_a_switch_past_a_set_literal_reddens_the_row` drives its own copy
+the same way, over a hole found after the guard shipped: `Refs`'s debt, paid with
+a switch on a continuation line past the literal, exited 0 and counted the row as
+carried. `test_a_narrowing_over_a_state_variable_reddens_the_row` is the hole
 this table found in the guard while it was being written: with the subject rule
 scoped to bound names, a constructed `(sel = Piv \\/ sel = Pgp)` passed at rc 0.
 Closing it turned up two real narrowings in `RSKeyAppletPolicies` that nothing
@@ -187,6 +190,18 @@ def says(found, needle):
     return [p for p in found if needle in p]
 
 
+def scratch_tree(tmp_path):
+    """A copy of THIS checkout's models, registries and guard; returns (root, guard)."""
+    scratch = tmp_path / "tree"
+    (scratch / "scripts").mkdir(parents=True)
+    shutil.copytree(ROOT / "formal", scratch / "formal", ignore=shutil.ignore_patterns("out", "states"))
+    (scratch / "assurance").mkdir()
+    for name in ("model_exceptions.toml", "abstractions.toml"):
+        shutil.copy(ROOT / "assurance" / name, scratch / "assurance" / name)
+    shutil.copy(ROOT / "scripts" / "model_exception_gate.py", scratch / "scripts")
+    return scratch, scratch / "scripts" / "model_exception_gate.py"
+
+
 # ---- the clean arm, both ways ------------------------------------------------
 
 
@@ -224,15 +239,7 @@ def test_the_criterion_defect_reddens_the_row(tmp_path):
     thirty guards here could not go red because their tables drove `audit()` and
     nothing joined that to what the row reads.
     """
-    scratch = tmp_path / "tree"
-    (scratch / "scripts").mkdir(parents=True)
-    shutil.copytree(ROOT / "formal", scratch / "formal", ignore=shutil.ignore_patterns("out", "states"))
-    (scratch / "assurance").mkdir()
-    for name in ("model_exceptions.toml", "abstractions.toml"):
-        shutil.copy(ROOT / "assurance" / name, scratch / "assurance" / name)
-    shutil.copy(ROOT / "scripts" / "model_exception_gate.py", scratch / "scripts")
-
-    guard = scratch / "scripts" / "model_exception_gate.py"
+    scratch, guard = scratch_tree(tmp_path)
     clean = subprocess.run([sys.executable, str(guard)], capture_output=True, text=True)
     assert clean.returncode == 0, clean.stderr
 
@@ -386,22 +393,108 @@ def test_a_mutant_from_another_clause_cannot_be_claimed(tmp_path):
     assert says(found, "is not this row's"), found
 
 
-def test_a_paid_debt_still_recorded_as_owed_reddens_the_row(tmp_path):
+def test_a_switch_past_a_set_literal_does_not_carry_its_row(tmp_path):
+    """A hole found after the guard shipped. A claim was held to the switches the
+    row's DEFINITION reads, and a `set` row's `omits` is read off the literal alone:
+    a switch on a continuation line past `Small`'s literal passed the claim and the
+    row read as carried, while the switch moved nothing the row records. An empty
+    finding list before the rule. Planted over the blank line, so no row moves."""
+    model = MODEL.replace("CONSTANTS BugFixtureSwitch\n", "CONSTANTS BugFixtureSwitch, BugThirdRefCounts\n")
+    model = model.replace('Small == {"a", "b"}\n\n',
+                          'Small == {"a", "b"}\n         \\cup (IF BugThirdRefCounts THEN {} ELSE {})\n')
+    ledger = LEDGER.replace('mutant = "owes"\nowed = "FixSolo_BugThirdRefCounts.cfg"',
+                            'mutant = "FixSolo_BugThirdRefCounts.cfg"')
+    assert "IF BugThirdRefCounts" in model and ledger != LEDGER
+    build(tmp_path, model=model, ledger=ledger)
+    (tmp_path / "formal" / "FixSolo_BugThirdRefCounts.cfg").write_text(
+        "CONSTANTS\n    BugThirdRefCounts = TRUE\n"
+    )
+    # The premise, both halves: the definition reads the switch, the derivation does not.
+    assert "BugThirdRefCounts" in gate.switches(tmp_path, "RSKeyFixture.tla", 9)
+    assert [s["omits"] for s in gate.exceptions(tmp_path) if s["site"] == "Small"] == [["c"]]
+    found = problems(tmp_path, model=model, ledger=ledger)
+    assert says(found, "RSKeyFixture.tla:9: claims FixSolo_BugThirdRefCounts.cfg, and a `set` row"), found
+    assert len(found) == 1, found
+
+
+def test_a_switch_in_a_case_arm_does_not_carry_its_row(tmp_path):
+    """The same hole one shape over, found in review. A `case` row's `omits` is read
+    off the arms the scan parses, and a switch in `Recover`'s `OTHER` arm is in
+    none of them: MX-FIX-003's claim passed on a switch that changes nothing. An
+    empty finding list before the rule. Planted in place, so no row moves."""
+    model = MODEL.replace("CONSTANTS BugFixtureSwitch\n", "CONSTANTS BugFixtureSwitch, BugTerminalRefRecovers\n")
+    model = model.replace("[] OTHER   -> {}", "[] OTHER   -> IF BugTerminalRefRecovers THEN {} ELSE {}")
+    ledger = LEDGER.replace('mutant = "owes"\nowed = "FixSolo_BugTerminalRefRecovers.cfg"',
+                            'mutant = "FixSolo_BugTerminalRefRecovers.cfg"')
+    assert "IF BugTerminalRefRecovers" in model and ledger != LEDGER
+    build(tmp_path, model=model, ledger=ledger)
+    (tmp_path / "formal" / "FixSolo_BugTerminalRefRecovers.cfg").write_text(
+        "CONSTANTS\n    BugTerminalRefRecovers = TRUE\n"
+    )
+    # The premise, both halves: the definition reads the switch, the derivation does not.
+    assert "BugTerminalRefRecovers" in gate.switches(tmp_path, "RSKeyFixture.tla", 15)
+    assert sorted((s["against"], s["omits"]) for s in gate.exceptions(tmp_path)
+                  if s["site"] == "Recover") == [("Refs", ["b", "c"]), ("Small", ["b"])]
+    found = problems(tmp_path, model=model, ledger=ledger)
+    assert says(found, "RSKeyFixture.tla:15: claims FixSolo_BugTerminalRefRecovers.cfg, and a `case` row"), found
+    assert len(found) == 1, found
+
+
+def test_a_switch_past_a_set_literal_reddens_the_row(tmp_path):
+    """The same plant on THIS tree's `Refs` (MX-SEAM-001), paid with the very switch
+    its row owes, and driven as the row drives it: a process and its exit code.
+    Before the rule it exited 0 and counted the row as carried."""
+    scratch, guard = scratch_tree(tmp_path)
+    clean = subprocess.run([sys.executable, str(guard)], capture_output=True, text=True)
+    assert clean.returncode == 0, clean.stderr
+
+    seams = scratch / "formal" / "RSKeyAppletSeams.tla"
+    text = seams.read_text()
+    literal = next(line for line in text.splitlines() if line.startswith("Refs =="))
+    at = text.splitlines().index(literal) + 1
+    assert f"\n{literal}\n\n" in text
+    seams.write_text(text.replace(
+        f"\n{literal}\n\n",
+        f"\n{literal}\n        \\cup (IF BugRecoveryRefHoldsStatus THEN {{}} ELSE {{}})\n",
+    ))
+    (scratch / "formal" / "SeamSolo_BugRecoveryRefHoldsStatus.cfg").write_text(
+        "CONSTANTS\n    BugRecoveryRefHoldsStatus = TRUE\n"
+    )
+    ledger = scratch / "assurance" / "model_exceptions.toml"
+    debt = 'mutant = "owes"\nowed = "SeamSolo_BugRecoveryRefHoldsStatus.cfg"'
+    assert debt in ledger.read_text()
+    ledger.write_text(ledger.read_text().replace(
+        debt, 'mutant = "SeamSolo_BugRecoveryRefHoldsStatus.cfg"'))
+
+    red = subprocess.run([sys.executable, str(guard)], capture_output=True, text=True)
+    assert red.returncode == 1, red.stdout
+    claim = f"RSKeyAppletSeams.tla:{at}: claims SeamSolo_BugRecoveryRefHoldsStatus.cfg, and a `set` row"
+    assert claim in red.stderr, red.stderr
+    assert len([line for line in red.stderr.splitlines() if line.startswith("  ")]) == 1, red.stderr
+
+
+@pytest.mark.parametrize("owed, advice", [
+    ("FixSolo_BugThirdRefCounts.cfg", "a `set` row cannot claim it"),
+    ("FixSolo_BugDispatchSwapsArms.cfg", "claim it as the mutant"),
+])
+def test_a_paid_debt_still_recorded_as_owed_reddens_the_row(tmp_path, owed, advice):
     """The second direction of the ledger, and the one a debt column never has.
 
     `owed` names a configuration that must NOT exist. Someone writes it, the
     narrowing gains the mutant it was owed — and the row still says it is owed,
-    which is a ledger describing a tree it has stopped being about.
+    which is a ledger describing a tree it has stopped being about. The advice
+    follows the shape: a `set` row cannot claim it, so it is told what must change.
     """
     build(tmp_path)
-    (tmp_path / "formal" / "FixSolo_BugThirdRefCounts.cfg").write_text(CFG)
+    (tmp_path / "formal" / owed).write_text(CFG)
     was = gate.FLOOR_SITES
     gate.FLOOR_SITES = 4
     try:
         found = gate.audit(tmp_path)
     finally:
         gate.FLOOR_SITES = was
-    assert says(found, "the debt is paid"), found
+    paid = says(found, f"owes {owed}, and formal/{owed} exists — the debt is paid")
+    assert len(paid) == 1 and advice in paid[0], found
 
 
 def test_a_debt_with_no_creditor_reddens_the_row(tmp_path):

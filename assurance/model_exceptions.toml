@@ -44,7 +44,8 @@
 #   <name>.cfg  the configuration that drives this clause. Held BOTH ways: the
 #               file must be in formal/, and it must switch a `Bug…` constant the
 #               row's own definition reads, so a row cannot claim a mutant that
-#               belongs to a different clause
+#               belongs to a different clause. A `set` or `case` row claims none:
+#               its `omits` is derived from text no configuration changes
 #   owes        no configuration refutes this narrowing yet. Then `owed` names the
 #               one that would, and THAT file must not exist — pay the debt and
 #               the row goes red until it claims what it paid
@@ -75,13 +76,14 @@
 # assurance/properties.toml, which is the registry the matrix, the evidence
 # bundles and the generated pages all read.
 #
-# The three `set` rows (MX-SEAM-001, MX-LAT-001, MX-LAT-002) are out twice over.
-# The claim rule wants the switch read inside the literal's own definition, and
-# `set_literals` parses only its balanced first line: a switch parked on a
-# continuation line passes the rule while `omits` goes on describing the shipped
-# literal, which the configuration it names makes false. And none of the three
-# has a requirement to fall on (MX-SEAM-001's row carries the measurement). The
-# two `case` rows (MX-LAT-003/004) owe a requirement-side recovery graph for
+# The three `set` rows (MX-SEAM-001, MX-LAT-001, MX-LAT-002) and the two `case`
+# rows (MX-LAT-003/004) are out twice over. The gate refuses a mutant for either
+# shape: `omits` is derived from the model's text, and a switch parked on a
+# continuation line past a literal, or in a CASE arm, passed the definition rule
+# while `omits` went on describing the shipped text. Paying one starts with
+# teaching the derivation to read a switched arm. And none of the three `set`
+# rows has a requirement to fall on (MX-SEAM-001's row carries the measurement);
+# the two `case` rows owe a requirement-side recovery graph for
 # `BudgetRisesOnlyWithItsSecret`'s recorder to read; without one, a terminal
 # reference given a recovery is GREEN and only the generated count moves.
 #
