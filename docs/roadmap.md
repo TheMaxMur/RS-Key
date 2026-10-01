@@ -49,6 +49,14 @@ the accepted per-device attestation design visible in the results: its empty
 root list and the statement's custom legal header affect official metadata
 tests. A published result must list those outcomes alongside its pass count.
 
+The seven failures in the private Go replay are accounted for: three runner
+defects are fixed, two enterprise cases pass with the official test fixture,
+and two are the accepted empty-root differences. The complete emulator replay
+is **223 passed / 2 failed / 70 skipped**, with no exclusions. The official
+hardware run has reached its cold-power-cycle prompt; it has no final result
+yet. A software reboot does not satisfy the board's CTAP Reset window. The
+255-pass target remains open.
+
 **The trusted display.** The variant with a screen is where the anti-phishing
 promise lives: what you are approving, shown by something the host cannot
 repaint ([guides/display.md](guides/display.md)). The direction is to make that

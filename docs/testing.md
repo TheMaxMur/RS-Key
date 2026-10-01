@@ -1086,6 +1086,29 @@ Additional cases check signed extension bytes, internal and external PIN
 methods, getNextAssertion, wrong input types and preservation of RP hashes.
 The tests exercise the public protocol; the private Go runner is not vendored.
 
+The private Go runner was replayed over TCP on 2026-10-02 with all 295 cases
+selected, the featureful enterprise profile and no exclusions. Its catalog
+identifies the official source as v1.9.1; this is a separate execution from
+the installed official v1.8.5.1 application:
+
+| Emulator setup | Passed | Failed | Skipped |
+|---|---:|---:|---:|
+| Original runner, no enterprise test certificate | 218 | 7 | 70 |
+| Fixed runner, no enterprise test certificate | 221 | 4 | 70 |
+| Fixed runner, official enterprise test certificate and test RP ID | 223 | 2 | 70 |
+
+Three failures came from the runner: Generic P-1 compared randomized encrypted
+GetInfo fields with metadata placeholders, and Resident Key P-2/P-3 reused an
+RP across cases whose credentials accumulate. The fixes retain the encrypted
+fields' length and presence checks and give each resident-key case a fresh RP
+without resetting the group between cases. Enterprise Attestation P-2/P-3
+pass with the official suite's test key and certificate provisioned on the
+emulator. The two remaining failures are MakeCred-Resp P-04 and Metadata P-27,
+the accepted empty-root differences described below. Unit tests, `go vet`
+and race tests passed for the runner changes; its dependency now matches the
+TCP transport API. The private suite and its assertions remain outside this
+repository.
+
 Current metadata declares `basic_full` with a per-device self-signed `x5c`
 leaf and an empty `attestationRootCertificates` list. The official tool's
 MakeCred-Resp P-04 and Metadata P-27 require an anchor; Metadata P-36 also
@@ -1112,7 +1135,17 @@ Two honest caveats:
 - **The full enterprise-attestation suite needs a conformance-only build.** It
   asserts against the suite's own test RP ID, which a build flag
   (`ea-conformance-rpid`) whitelists; the shipping build does **not** bake it in
-  ([build options](build.md)). Everything else runs on the normal firmware.
+  ([build options](build.md)). Its certificate-comparison cases also need the
+  official suite's enterprise test key and certificate installed on the test
+  device. Everything else runs on the normal firmware.
+
+On a headless hardware build, `no-touch` confirms presence but keeps the
+10-second cold-power-up window for CTAP Reset. A software reboot preserves
+the PIN soft lock and cannot reopen that window. The official v1.8.5.1 run
+started against `bcdDevice 0x0A8B` on 2026-10-02 and reached its power-cycle
+prompt; the board returned `NOT_ALLOWED` outside the reset window. That
+incomplete run supplies no updated pass count. An operator or a rig that
+actually switches USB power must supply each requested cold power cycle.
 
 As with any corpus, this shows conformance on the cases the tools cover. It is
 not a security audit.
@@ -1132,11 +1165,10 @@ the full matrix (including the GUI/ceremony cells) lives in
 wrapper bug was caught: every protocol test passed, only the real ykman
 parser rejected the reply.
 
-For the same reason, the matrix carries an untested row for
-[Telesma](https://github.com/go-ctap/app) and its `go-ctap/ctap` client stack:
-every FIDO cell above reads the device through libfido2 or python-fido2, so a
-divergence both of them tolerate is invisible here. It is the cheapest available
-third reader of our CTAP replies, and the only one that claims 2.3.
+The private Go runner above also exercises the `go-ctap/ctap` client stack
+over TCP. The matrix still carries an untested row for the actual
+[Telesma](https://github.com/go-ctap/app) application: a protocol run does not
+exercise its user flows.
 
 ## CI parity
 
