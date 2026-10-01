@@ -14,6 +14,7 @@ use super::Log;
 use super::bootram::{self, BootRam};
 use super::elf::Elf;
 use super::flash::Flash;
+use super::inspect::Stack;
 use super::ioqspi::{IO_QSPI_BASE, IoQspi};
 use super::otp::{self, OtpCore, OtpCtrl, OtpData, SharedOtp};
 use super::psm::{PSM_BASE, Psm};
@@ -69,6 +70,7 @@ pub struct Chip {
     qmi_ops_seen: u64,
     otp_burns_seen: usize,
     emu_ns: f64,
+    stacks: Option<[Stack; 2]>,
 }
 
 impl Chip {
@@ -155,6 +157,7 @@ impl Chip {
             qmi_ops_seen: 0,
             otp_burns_seen: 0,
             emu_ns: 0.0,
+            stacks: None,
         })
     }
 
@@ -204,6 +207,11 @@ impl Chip {
         let cycles = cycles.max(1);
         self.emu.step_quantum = cycles;
         self.emu.step().map_err(|e| e.to_string())?;
+        if let Some(stacks) = &mut self.stacks {
+            for (c, stack) in stacks.iter_mut().enumerate() {
+                stack.sample(self.emu.core(c).regs.sp());
+            }
+        }
         self.emu_ns += f64::from(cycles) * 1e9 / f64::from(self.emu.bus.sys_clk_hz());
         if self.core1_hold {
             self.core1_hold = false;
@@ -351,3 +359,6 @@ fn reset_core1(emu: &mut Emulator) {
     emu.bus.atomics.clear_wfe_waiting(1);
     emu.bus.atomics.set_irq_pending(1, 0);
 }
+
+#[path = "probe.rs"]
+mod probe;

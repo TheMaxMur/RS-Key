@@ -100,6 +100,8 @@ usage: rsk-emu [options]
                       beside it in <store>.otp; --seed feeds the TRNG, --serial
                       is the chip id, and --touch presses BOOTSEL
   --rom <file>        the bootrom --image boots (default: picoem's pinned A4)
+  --inspect-port <n>  image laboratory socket on loopback: stack, SRAM and
+                      power-cut probes (disabled by default)
   -h, --help          this
 ";
 
@@ -127,6 +129,7 @@ fn main() {
     let mut tap_port = None;
     let mut image: Option<PathBuf> = None;
     let mut rom: Option<PathBuf> = None;
+    let mut inspect_port = None;
 
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -167,6 +170,7 @@ fn main() {
             }
             "--image" => image = Some(value("--image").into()),
             "--rom" => rom = Some(value("--rom").into()),
+            "--inspect-port" => inspect_port = Some(parse_port(&value("--inspect-port"))),
             other => die(&format!("unknown argument {other:?}\n\n{USAGE}")),
         }
     }
@@ -216,6 +220,7 @@ fn main() {
             seed: cfg.seed,
             serial: cfg.serial,
             trace: cfg.trace,
+            inspect_port,
         };
         if let Err(e) = image::run(opts) {
             die(&e);
@@ -224,6 +229,9 @@ fn main() {
     }
     if rom.is_some() {
         die("--rom is the bootrom --image boots — add --image");
+    }
+    if inspect_port.is_some() {
+        die("--inspect-port inspects a firmware image — add --image");
     }
 
     let (jobs_tx, jobs_rx) = device::job_queue();

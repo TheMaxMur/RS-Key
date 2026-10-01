@@ -1016,6 +1016,18 @@ board's speed, two slower (an RSA-2048 keygen: 13.6 s, the board's ~4.3 s). Pres
 the OTP beside it. What it still is not is silicon: every model goes as deep as
 the bootrom and the image reach, no deeper. `tools/emu/README.md` has the rest.
 
+`tools/emu/image_assurance.py` drives image-only checks through an opt-in
+`--inspect-port` on loopback: per-command SP high-water, whole-SRAM searches for
+known OATH key material, release-to-current persistent-flash upgrades and cuts
+at selected cycles or program bytes. Each cut leaves a snapshot before recovery;
+the runner opens it in a new process and checks the credential again. Native and
+image backends also run the same deterministic OATH/OpenPGP transcript. Planted
+SRAM leaks and incompatible-image fixtures falsify the actual assertions.
+The [image laboratory instructions](../tools/emu/README.md#image-laboratory)
+describe the commands and limits, including why stack paint alone lies when
+the firmware sweeps its dead stack. These are development experiments, not an
+additional CI gate or evidence about analog flash cells.
+
 ## Latency harness
 
 Timing a crypto primitive from the host is noisy. On the RP2350 the hot working

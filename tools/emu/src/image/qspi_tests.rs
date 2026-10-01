@@ -7,6 +7,83 @@ use std::sync::{Arc, Mutex};
 
 const XOR: u32 = 0x1000;
 
+#[test]
+fn erase_outside_the_part_is_refused_without_panicking() {
+    let mut r = Rig::new();
+    r.cmd(0x06);
+    r.cmd_addr(0x20, 0x80_0000);
+    r.put_get(&[], 0);
+    assert_eq!(r.q().flash.stats.erased_bytes, 0);
+    assert_eq!(r.q().flash.stats.protocol_events, 1);
+    assert!(r.emu.bus.memory.xip_bytes().iter().all(|&b| b == 0xFF));
+}
+
+#[test]
+fn delayed_program_cut_counts_from_the_array_operation() {
+    let mut r = Rig::new();
+    r.q().flash.arm_program_cycles(1000);
+    r.cmd(0x06);
+    assert_eq!(r.q().flash.cut_at, None);
+    r.cmd_addr(0x02, 0x1000);
+    r.put_get(&[0; 256], 256);
+    let flash = &r.q().flash;
+    assert_eq!(
+        flash.cut_at,
+        Some(flash.pending.as_ref().unwrap().started + 1000)
+    );
+    assert!(flash.cut_armed());
+}
+
+#[test]
+fn byte_cut_keeps_only_the_programmed_prefix() {
+    for count in [0, 1, 7, 8] {
+        let mut r = Rig::new();
+        r.q().flash.arm_cut(count);
+        r.cmd(0x06);
+        r.cmd_addr(0x02, 0x10FE);
+        r.put_get(&[0x12; 8], 8);
+        for i in 0..8 {
+            let address = 0x1000 + ((0xFE + i) & 0xFF);
+            assert_eq!(
+                r.flash(address, 1)[0],
+                if i < count as usize { 0x12 } else { 0xFF }
+            );
+        }
+        assert!(r.q().flash.cut_cycle.is_some());
+        let (offset, bytes, _) = r.q().flash.tear(0).unwrap();
+        assert_eq!(r.flash(offset as usize, bytes.len()), bytes);
+    }
+}
+
+#[test]
+fn cycle_cut_tears_an_in_flight_program_and_erase() {
+    let mut r = Rig::new();
+    r.q().flash.arm_cycles();
+    r.cmd(0x06);
+    r.cmd_addr(0x02, 0x1000);
+    r.put_get(&[0x12; 8], 8);
+    let pending = r.q().flash.pending.as_ref().unwrap();
+    let middle = (pending.started + pending.ends) / 2;
+    let (off, bytes, reason) = r.q().flash.tear(middle).unwrap();
+    assert_eq!(off, 0x1000);
+    assert_eq!(
+        &bytes[..8],
+        &[0x12, 0x12, 0x12, 0x12, 0xFF, 0xFF, 0xFF, 0xFF]
+    );
+    assert!(reason.starts_with("program "));
+    r.q().flash.busy_until = 0;
+    r.emu.bus.memory.xip_write(0x1000, &[0; 4096]);
+    r.cmd(0x06);
+    r.cmd_addr(0x20, 0x1000);
+    r.put_get(&[], 0);
+    let pending = r.q().flash.pending.as_ref().unwrap();
+    let middle = (pending.started + pending.ends) / 2;
+    let (_, bytes, reason) = r.q().flash.tear(middle).unwrap();
+    assert!(bytes[..2048].iter().all(|&b| b == 0xFF));
+    assert!(bytes[2048..].iter().all(|&b| b == 0));
+    assert!(reason.starts_with("erase "));
+}
+
 /// An emulator with 4 MB of erased flash and the QMI mounted, driven
 /// through the bus like the ROM drives it.
 struct Rig {

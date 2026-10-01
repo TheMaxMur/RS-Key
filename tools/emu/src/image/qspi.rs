@@ -95,6 +95,26 @@ enum ArrayOp {
     Program { page: u32, first: u8 },
 }
 
+struct PendingArray {
+    offset: u32,
+    before: Vec<u8>,
+    after: Vec<u8>,
+    order: Vec<usize>,
+    started: u64,
+    ends: u64,
+    what: &'static str,
+}
+
+impl PendingArray {
+    fn prefix(&self, count: usize) -> Vec<u8> {
+        let mut bytes = self.before.clone();
+        for &at in self.order.iter().take(count) {
+            bytes[at] = self.after[at];
+        }
+        bytes
+    }
+}
+
 pub struct NorFlash {
     selected: bool,
     phase: Phase,
@@ -121,6 +141,13 @@ pub struct NorFlash {
     /// CS rise does nothing.
     refused: bool,
     pub stats: FlashStats,
+    pending: Option<PendingArray>,
+    capture_faults: bool,
+    cut_after: Option<u64>,
+    pub cut_cycle: Option<u64>,
+    cut_prefix: usize,
+    cut_delay: Option<u64>,
+    pub cut_at: Option<u64>,
     log: Log,
 }
 
@@ -131,6 +158,7 @@ pub struct FlashStats {
     pub array_ops: u64,
     pub commands: u64,
     pub programmed_pages: u64,
+    pub programmed_bytes: u64,
     pub erased_bytes: u64,
     pub status_polls: u64,
     pub protocol_events: u64,
@@ -157,6 +185,13 @@ impl NorFlash {
             reset_enabled: false,
             refused: false,
             stats: FlashStats::default(),
+            pending: None,
+            capture_faults: false,
+            cut_after: None,
+            cut_cycle: None,
+            cut_prefix: 0,
+            cut_delay: None,
+            cut_at: None,
             log,
         }
     }
@@ -312,14 +347,35 @@ impl NorFlash {
     }
 
     fn apply(&mut self, op: ArrayOp, ctx: &mut MmioCtx) {
+        if self.cut_cycle.is_some() {
+            return;
+        }
         self.sr[0] &= !SR1_WEL;
         self.stats.array_ops += 1;
         match op {
             ArrayOp::Erase { addr, len, ns } => {
                 let ff = vec![0xFFu8; len as usize];
+                let Some(before) = ctx.flash().get(addr as usize..addr as usize + len as usize)
+                else {
+                    self.event(
+                        ctx.cycle,
+                        format!("erase outside flash at {addr:#x}, length {len}"),
+                    );
+                    return;
+                };
+                let before = self.capture_faults.then(|| before.to_vec());
                 ctx.write_flash(addr, &ff);
                 self.stats.erased_bytes += len as u64;
                 self.start_busy(ctx, ns, "erase");
+                self.pending = before.map(|before| PendingArray {
+                    offset: addr,
+                    before,
+                    after: ff,
+                    order: (0..len as usize).collect(),
+                    started: ctx.cycle,
+                    ends: self.busy_until,
+                    what: "erase",
+                });
             }
             ArrayOp::Program { page, first } => {
                 // More than 256 bytes: the last 256 win (W25Q).
@@ -330,15 +386,108 @@ impl NorFlash {
                     .get(page as usize..page as usize + 256)
                     .map(<[u8]>::to_vec)
                     .unwrap_or_else(|| vec![0xFF; 256]);
+                let before = self.capture_faults.then(|| buf.clone());
+                let mut order = Vec::new();
                 for (i, &b) in self.data_in[skip..].iter().enumerate() {
                     let at = (first as usize + skip + i) & 0xFF;
                     buf[at] &= b; // NOR: bits only go 1 -> 0
+                    if self.capture_faults {
+                        order.push(at);
+                    }
                 }
-                ctx.write_flash(page, &buf);
                 self.stats.programmed_pages += 1;
+                self.stats.programmed_bytes += (n - skip) as u64;
                 self.start_busy(ctx, T_PAGE_PROGRAM_NS, "program");
+                if let Some(after) = self.cut_delay.take() {
+                    self.cut_at = Some(ctx.cycle.saturating_add(after));
+                }
+                let Some(before) = before else {
+                    ctx.write_flash(page, &buf);
+                    return;
+                };
+                let pending = PendingArray {
+                    offset: page,
+                    before,
+                    after: buf,
+                    order,
+                    started: ctx.cycle,
+                    ends: self.busy_until,
+                    what: "program",
+                };
+                let cut = self.cut_after.filter(|&n| n <= pending.order.len() as u64);
+                let bytes = match cut {
+                    Some(n) => {
+                        self.cut_cycle = Some(ctx.cycle);
+                        self.cut_prefix = n as usize;
+                        pending.prefix(n as usize)
+                    }
+                    None => pending.after.clone(),
+                };
+                self.cut_after = self
+                    .cut_after
+                    .map(|n| n.saturating_sub(pending.order.len() as u64));
+                ctx.write_flash(page, &bytes);
+                self.pending = Some(pending);
             }
         }
+    }
+
+    pub fn arm_cut(&mut self, bytes: u64) {
+        self.capture_faults = true;
+        self.cut_after = Some(bytes);
+        self.cut_cycle = None;
+        self.cut_delay = None;
+        self.cut_at = None;
+    }
+
+    pub fn cut_armed(&self) -> bool {
+        self.cut_after.is_some() || self.cut_delay.is_some() || self.cut_at.is_some()
+    }
+
+    pub fn arm_program_cycles(&mut self, cycles: u64) {
+        self.capture_faults = true;
+        self.cut_after = None;
+        self.cut_cycle = None;
+        self.cut_delay = Some(cycles);
+        self.cut_at = None;
+    }
+
+    pub fn arm_cycles(&mut self) {
+        self.capture_faults = true;
+        self.cut_after = None;
+        self.cut_cycle = None;
+        self.cut_delay = None;
+        self.cut_at = None;
+    }
+
+    /// A deterministic prefix fault model, not an analog model of NOR cells.
+    pub fn tear(&mut self, cycle: u64) -> Option<(u32, Vec<u8>, String)> {
+        let pending = self.pending.take()?;
+        if self.cut_cycle.is_some() {
+            return Some((
+                pending.offset,
+                pending.prefix(self.cut_prefix),
+                format!(
+                    "program-byte address={:#x} bytes={}/{}",
+                    pending.offset,
+                    self.cut_prefix,
+                    pending.order.len()
+                ),
+            ));
+        }
+        if cycle >= pending.ends {
+            return None;
+        }
+        let elapsed = cycle.saturating_sub(pending.started);
+        let count = (elapsed * pending.order.len() as u64 / (pending.ends - pending.started).max(1))
+            as usize;
+        let description = format!(
+            "{} address={:#x} bytes={count}/{}",
+            pending.what,
+            pending.offset,
+            pending.order.len()
+        );
+        Some((pending.offset, pending.prefix(count), description))
     }
 
     /// Byte the flash drives for the current read command at `self.addr`.

@@ -21,6 +21,7 @@ use super::desc::{self, Device};
 use super::elf::Elf;
 use super::flash::Flash;
 use super::hc::{Completion, Hc, Outcome, Transfer};
+use super::inspect::{self, Command};
 use super::otp;
 use super::sockets::{self, CcidReply, Report, Request, UsbipPort};
 use crate::usbip::{BUSID, ESHUTDOWN, Ret, Urb, UsbDeviceInfo};
@@ -70,6 +71,7 @@ pub struct Options {
     pub seed: Option<Vec<u8>>,
     pub serial: [u8; 8],
     pub trace: bool,
+    pub inspect_port: Option<u16>,
 }
 
 /// Why a power-up ended, and so what the next one keeps.
@@ -236,6 +238,10 @@ struct Board {
     last_whereabouts: Instant,
     /// A keepalive has already said the key wants a touch.
     touch_asked: bool,
+    cut_cycles: Option<u64>,
+    cut_at: Option<u64>,
+    last_cut: String,
+    power_ups: u64,
 }
 
 /// Serve the image until the process is killed.
@@ -328,6 +334,16 @@ impl Board {
             eprintln!("emu: each line on the terminal holds BOOTSEL down for {ms} ms");
             sockets::read_touches(tx.clone());
         }
+        if let Some(port) = opts.inspect_port {
+            let listener = TcpListener::bind(("127.0.0.1", port))
+                .map_err(|e| format!("cannot bind inspection port: {e}"))?;
+            eprintln!(
+                "emu: image inspection on {}",
+                listener.local_addr().map_err(|e| e.to_string())?
+            );
+            let chip = tx.clone();
+            std::thread::spawn(move || inspect::listen(listener, chip));
+        }
 
         let chip = Chip::power_up(&rom, elf.clone(), &seed, &flash, rows, None)?;
         let hc = Hc::new(chip.usb.clone());
@@ -358,6 +374,10 @@ impl Board {
             announced: false,
             last_whereabouts: Instant::now(),
             touch_asked: false,
+            cut_cycles: None,
+            cut_at: None,
+            last_cut: "none".into(),
+            power_ups: 1,
         })
     }
 
@@ -392,6 +412,9 @@ impl Board {
             scratch,
         )?;
         self.chip = chip;
+        self.power_ups += 1;
+        self.cut_at = None;
+        self.cut_cycles = None;
         self.hc = Hc::new(self.chip.usb.clone());
         if let (Owner::Usbip { .. }, Some(dev)) = (&self.owner, &self.device) {
             self.hc.set_endpoints(dev.endpoints());
@@ -460,7 +483,27 @@ impl Board {
             if asked {
                 next = self.next_event();
             }
-            let cycles = if parked {
+            if self.cut_at.is_some_and(|at| self.chip.cycles() >= at)
+                || self.chip.program_cut().is_some()
+            {
+                let cycle = self.chip.cycles();
+                let flash = self.chip.cut_flash();
+                self.last_cut = format!("cycle={cycle} flash={flash}");
+                self.chip.sync_flash(&mut self.flash)?;
+                if let Some(store) = &self.opts.store {
+                    let mut path = store.clone().into_os_string();
+                    path.push(".cut");
+                    self.flash.snapshot(&PathBuf::from(path))?;
+                }
+                eprintln!("emu: power cut {}", self.last_cut);
+                return Ok(End::PowerCycle);
+            }
+            let cycles = if self.chip.measuring()
+                || self.cut_at.is_some()
+                || self.chip.program_cut_armed()
+            {
+                1
+            } else if parked {
                 let ns = next.saturating_sub(now).clamp(1, PARKED_STEP_NS);
                 u32::try_from(self.chip.cycles_in(ns)).unwrap_or(u32::MAX)
             } else {
@@ -468,6 +511,11 @@ impl Board {
             };
             self.chip.step(cycles)?;
             steps += 1;
+            if self.cut_at.is_some_and(|at| self.chip.cycles() >= at)
+                || self.chip.program_cut().is_some()
+            {
+                continue;
+            }
             if parked || steps.is_multiple_of(CHECK_EVERY) {
                 if let Some(stop) = self.chip.check() {
                     match self.stopped(stop) {
@@ -548,7 +596,16 @@ impl Board {
 
     fn request(&mut self, r: Request, dead: bool) -> Option<End> {
         let bridged = !dead && matches!(self.owner, Owner::Sockets);
+        if matches!(r, Request::HidReport { .. } | Request::Ccid { .. })
+            && let Some(after) = self.cut_cycles.take()
+        {
+            self.cut_at = Some(self.chip.cycles().saturating_add(after));
+        }
         match r {
+            Request::Inspect { command, reply } => {
+                let result = self.inspect(command, dead);
+                let _ = reply.send(result);
+            }
             Request::HidOpen { conn, reports } => {
                 self.hid.conns.insert(conn, reports);
             }
@@ -605,6 +662,48 @@ impl Board {
             }
         }
         None
+    }
+
+    fn inspect(&mut self, command: Command, dead: bool) -> Result<String, String> {
+        match command {
+            Command::Status => Ok(format!(
+                "cycle={} ready={} dead={} power_ups={} programmed_bytes={} last_cut={}",
+                self.chip.cycles(),
+                matches!(self.configure, Configure::Done),
+                dead,
+                self.power_ups,
+                self.chip.programmed_bytes(),
+                self.last_cut
+            )),
+            Command::Begin if !matches!(self.configure, Configure::Done) || dead => {
+                Err("device is not ready".into())
+            }
+            Command::Begin => self.chip.begin_measurement(),
+            Command::End => self.chip.end_measurement(),
+            Command::Scan(pattern) => Ok(self.chip.scan_sram(&pattern)),
+            Command::Plant { address, bytes } => {
+                self.chip.plant_sram(address, &bytes);
+                Ok(format!("planted={} address={address:#x}", bytes.len()))
+            }
+            Command::CutCycles(after) => {
+                self.chip.arm_cycles();
+                self.cut_at = None;
+                self.cut_cycles = Some(after);
+                Ok(format!("armed=cycles after={after} starts=next-transfer"))
+            }
+            Command::CutProgram(bytes) => {
+                self.cut_cycles = None;
+                self.cut_at = None;
+                self.chip.arm_program_cut(bytes);
+                Ok(format!("armed=program bytes={bytes}"))
+            }
+            Command::CutProgramCycles(cycles) => {
+                self.cut_cycles = None;
+                self.cut_at = None;
+                self.chip.arm_program_cycles(cycles);
+                Ok(format!("armed=program-cycles after={cycles}"))
+            }
+        }
     }
 
     fn submit_urb(&mut self, urb: Urb, dead: bool) {

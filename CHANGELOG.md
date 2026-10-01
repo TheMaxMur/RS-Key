@@ -40,6 +40,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- **Firmware-image emulator inspection and fault injection.** An opt-in loopback
+  port measures command stacks, scans emulated SRAM and cuts power at selected
+  cycles or program bytes, retaining a torn-flash snapshot before reboot. A
+  standalone runner compares native/image responses, checks release upgrades,
+  and falsifies residue and compatibility assertions with explicit controls.
+
 - **OpenPGP takes Yubico's SET PIN RETRIES (INS `F2`), as a YubiKey 5.8.0 does.**
   `ykman openpgp access set-retries` sets how many tries PW1, the resetting code and
   PW3 each get; RS-Key answered it `6D00`. Under PW3 (`6982` otherwise) a body of

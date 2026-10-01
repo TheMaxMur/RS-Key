@@ -84,6 +84,10 @@ impl Flash {
         &self.bytes
     }
 
+    pub fn snapshot(&self, path: &Path) -> Result<(), String> {
+        std::fs::write(path, &self.bytes).map_err(|e| format!("{}: {e}", path.display()))
+    }
+
     /// Bring this copy (and the file) in line with the chip's flash after the
     /// QMI model erased or programmed it: every sector that differs.
     pub fn sync_from(&mut self, backing: &[u8]) -> Result<usize, String> {

@@ -12,6 +12,7 @@ mod desc;
 mod elf;
 mod flash;
 mod hc;
+mod inspect;
 mod ioqspi;
 mod otp;
 mod psm;

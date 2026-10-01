@@ -35,6 +35,7 @@ cargo run --manifest-path tools/emu/Cargo.toml --target "$HOST" -- --store ./my.
   --image <elf>       serve that firmware ELF on an emulated RP2350 instead of
                       the applet stack (below)
   --rom <file>        the bootrom --image boots (default: picoem's pinned A4)
+  --inspect-port <n>  image laboratory socket on loopback (disabled by default)
 ```
 
 `--auto-touch-ms` is mutually exclusive with `--touch` and `--display`. During
@@ -220,7 +221,79 @@ Against the tests/emu.py sweep of `scripts/emu-suites.sh` — the default,
 reset-window, PIN and Yubico-identity sessions — the image passes the same 54
 suites the applet backend passes and refuses the same 11. It is still not
 silicon: each model goes as deep as the bootrom and the image reach, and the
-panel, the LED's light and a power cut are not modelled.
+panel and the LED's light are not modelled. Power cuts use the explicit fault
+model below; they do not model analog NOR-cell failure.
+
+### Image laboratory
+
+`--inspect-port <n>` opens a separate TCP listener on `127.0.0.1`. One line per
+connection receives `ok ...` or `error ...`; this is emulator control, outside
+the device's USB interface. It can inspect and modify emulated SRAM. Leave it
+disabled for an ordinary protocol run.
+
+| Request | Result |
+|---|---|
+| `status` | Current cycle, readiness, fault state, power-up count and last injected cut |
+| `begin`, then `end` | Paint unused stacks, step by one cycle and record each core's lowest SP until `end` |
+| `scan HEX` | Count and SRAM addresses of an exact 1–256-byte pattern; no secret bytes printed |
+| `plant ADDRESS HEX` | Write a synthetic positive-control pattern at a hexadecimal SRAM address |
+| `cut-cycles N` | Cut N cycles after the next socket HID report or CCID request is accepted |
+| `cut-program N` | Cut after N accepted page-program bytes, counted across programs |
+| `cut-program-cycles N` | Cut N cycles after the next page program starts |
+
+Fault arms replace one another and clear on reboot. An injected cut immediately
+disconnects in-flight transfers, saves flash and cold-boots. With `--store`, a
+`<store>.cut` snapshot keeps the torn array *before* recovery can repair it.
+During a busy program or erase, a cycle cut retains a prefix proportional to
+elapsed operation time; a byte cut retains exactly that many program bytes.
+Program order wraps within a 256-byte page. This deterministic fault model
+exercises recovery from incomplete writes, not every physically possible cell
+pattern. It changes no flash timing when unarmed.
+
+Stack bounds come from the ELF, checked against the core's live `MSPLIM`.
+`coreN_used` is the ELF stack symbol's top minus the lowest sampled SP; core1's
+symbol includes `StaticCell` padding, so its value is a conservative bound.
+`coreN_painted` means bytes covered by writes. It is **not stack usage**: the
+firmware clears the entire dead stack after a command, which consumes all the
+paint. Sampling SP also catches a reserved frame that never writes its bottom.
+Single-cycle sampling slows the emulator and is enabled only between `begin`
+and `end`, or while a fault is armed.
+
+The standalone runner owns fresh processes, socket ports and flash files:
+
+```sh
+nix develop -c python tools/emu/image_assurance.py \
+  --emulator tools/emu/target/"$HOST"/release/rsk-emu \
+  --image current-notouch-pt.elf --release-image v0.4.11-notouch-pt.elf \
+  --work /tmp/rsk-image-assurance
+```
+
+Build both ELF fixtures with `--features no-touch`, and run `scripts/pt.sh` on
+each. The runner compares native/image OATH and OpenPGP responses, measures
+ML-DSA-87 command stacks, checks known OATH key/HMAC-pad residues with a planted
+leak through the same assertion, upgrades a release's OATH, FIDO signing key
+and OpenPGP PIN on the same flash, and reboots from cycle/byte-cut snapshots in
+new processes. `--only` selects a scenario. Logs, image hashes and measured
+results stay in the new `--work` directory; no board is enumerated.
+
+For falsification, `--incompatible-image` takes a scratch current ELF with
+`EF_OATH_CRED` moved from `0xBA00` to `0xB900`: upgrade must lose the credential
+with `6984`, while boot and SELECT succeed. `--stack-regression` takes a distinct
+scratch ELF with larger ML-DSA stack frames and must exceed the baseline by
+more than 1 KiB of interrupt variation. Removing the `#[inline(never)]` attributes
+from the six ML-DSA helpers in `rsk-fido/src/ec.rs` is the historical regression
+probe; its result must be measured on the current compiler. These are separate
+fixtures, never changes to the tested production checkout.
+
+The historical probe was run on 2026-10-01 against `d7e19ad0`, Rust 1.96.0,
+`no-touch`, using independently built ELF files. ML-DSA-87's maximum sampled
+core0 use was 94,396 bytes with the helpers and 94,400 without their six
+`#[inline(never)]` attributes: the old failure no longer reproduced. A separate
+positive control kept a 65,536-byte local array live across `mldsa87_sign`, with
+`core::hint::black_box(&mut stack_probe)` before the operation and after
+`rnd.wipe()`. It raised the measured maximum to 159,640 bytes and exceeded the
+same baseline envelope. This calibrates frame-growth detection; it does not
+claim the historical wedge still exists.
 
 ## The wire
 

@@ -20,6 +20,10 @@ pub type Report = [u8; HID_RPT_SIZE];
 
 /// What the transports ask of the chip thread.
 pub enum Request {
+    Inspect {
+        command: super::inspect::Command,
+        reply: Sender<Result<String, String>>,
+    },
     HidOpen {
         conn: u64,
         reports: Sender<Report>,
