@@ -377,7 +377,7 @@ SCOPED = {
     "third of it — a floor stated as a ratio is nothing without the count",
     (
         "formal/floors.txt",
-        "LatInduction.cfg                     GREEN   62208",
+        "LatInduction.cfg                     GREEN   70000",
     ): "the lattice induction probe's floor, which is by construction the count of "
     "type-correct states `IndInv` admits and so the distinct count the probe prints — "
     "the store probe's floor is its count too, under the value floor",
@@ -483,7 +483,7 @@ SCOPED = {
     "claim, and the generated roster line carries the same 30",
     (
         "docs/formal.md",
-        "96 entries: all 90 executable patches are killed",
+        "103 entries: all 97 executable patches are killed",
     ): "the whole-tree roster restated in the page that introduces the phase-2 "
     "table, whose generated region beside it gives the phase-2 line and not this "
     "total",
@@ -501,7 +501,7 @@ SCOPED = {
     # mutant's model does.
     (
         "formal/README.md",
-        "**96 entries: all 90 executable patches killed",
+        "**103 entries: all 97 executable patches killed",
     ): "the co-mutant roster restated where its composition is broken down, which the "
     "generated line beside it does not give — the copy that read 69, then 71, 72 and "
     "73, re-measured by hand in four commits of this series. Its own claim that a "

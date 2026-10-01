@@ -6,6 +6,10 @@
 # because the roadmap that drove it is deliberately untracked, and a measurement
 # whose only record is a hand-written page is the thing this tree distrusts most.
 #
+# Retry-door followup, 2026-10-01 on d7e19ad0: set_pin_retries and put_kdf added;
+# reset_retry and reset_counter wording corrected after rereading their callers.
+# Other rows remain the dated inventory below.
+#
 # THE SUBJECT: every production `fn` in the 27 files that carry a P0-family
 # `SEC-*` tag, after three whole files were dropped because their `mod` is
 # cfg-gated in the parent (crates/rsk-fs/src/powercut.rs,
@@ -185,7 +189,7 @@ move_key	crates/rsk-piv/src/lib.rs:1148	123	decides	D1,D2,D3	lib.rs:1169 — has
 retries	crates/rsk-piv/src/lib.rs:1281	7	decides	D5	reads EF_RETRIES and returns the pair (total, left) — the value every door of the lattice branches on	SEC-LAT-001,SEC-LAT-002
 retries_left	crates/rsk-piv/src/lib.rs:1289	3	decides	D5	returns the remaining budget — the condition of the blocked floor in verify, reset and check_ref	SEC-LAT-001
 set_retries_left	crates/rsk-piv/src/lib.rs:1293	8	decides	D3,D4	the only write of the remaining attempts to EF_RETRIES — spending and restoring the budget	SEC-LAT-002,SEC-LAT-003
-reset_counter	crates/rsk-piv/src/lib.rs:1305	9	decides	D3,D4	raises the remainder to the total — a budget rise that SEC-LAT-003 allows only on the correct secret	SEC-LAT-003
+reset_counter	crates/rsk-piv/src/lib.rs:1305	9	decides	D3,D4	raises the remainder to the total — the caller must supply either the presented-secret or administrative authority	SEC-LAT-003
 wire_reference_pair	crates/rsk-piv/src/lib.rs:1318	9	decides	D5	rule 2: the refusal on nc != 2*PIN_WIRE_LEN is the only ban on creating a reference that the wire form cannot present	SEC-LAT-002
 migrate_kbase	crates/rsk-piv/src/lib.rs:1328	6	decides	D3	in itself a forwarder, but its effect is re-sealing all PIV key slots and re-arming EF_HARDENED	SEC-BOOT-001
 check_ref	crates/rsk-piv/src/lib.rs:1335	72	decides	D1,D2,D3,D4,D5	the core of the lattice: the blocked floor, spending the attempt with read-back BEFORE the comparison, ct_eq over the verifier, kbase-fallback with a rewrite and restoring the total on a match	SEC-LAT-001,SEC-LAT-002,SEC-LAT-003,SEC-BOOT-001
@@ -474,7 +478,7 @@ verifier_unusable	crates/rsk-openpgp/src/pin.rs:781	7	decides	D5	declares an unu
 put_verifier	crates/rsk-openpgp/src/pin.rs:789	14	decides	D3	checks the length and only then writes the reference value	-
 store_verifier	crates/rsk-openpgp/src/pin.rs:805	17	decides	D3	stores the record [len,0x01,verifier] to flash — the reference value itself, with no length check	-
 change_pin	crates/rsk-openpgp/src/pin.rs:857	67	decides	D1	checks the old PIN, opens the DEK and writes stage/verifier/commit; an unsupported P2 is rejected before any write	SEC-LAT-002
-reset_retry	crates/rsk-openpgp/src/pin.rs:925	81	decides	D1	two doors to a new PW1 — reset code and PW3 — both raise the PW1 budget after their own secret is presented	SEC-LAT-003,SEC-LAT-001
+reset_retry	crates/rsk-openpgp/src/pin.rs:925	81	decides	D1	two doors to a new PW1 — presented resetting code or standing PW3 status — both restore the PW1 budget	SEC-LAT-003,SEC-LAT-001
 put_reset_code	crates/rsk-openpgp/src/pin.rs:1008	45	decides	D1	requires PW3, seals the DEK under the new RC and enables its counter; empty data goes to clear_reset_code	SEC-LAT-003
 truncate_utf8	crates/rsk-fido/src/credential.rs:117	11	marshals	M	cuts the string at a UTF-8 boundary — length arithmetic and nothing more	-
 cred_blob_ok	crates/rsk-fido/src/credential.rs:166	7	marshals	M	length comparison against MAX_CREDBLOB_LENGTH; the record is written in both cases, the blob simply does not get into the box	-
@@ -731,3 +735,5 @@ clear_pending	crates/rsk-sdk/src/applet.rs:494	11	decides	D2	zeroes the held res
 clear_chaining	crates/rsk-sdk/src/applet.rs:494	12	decides	D2	zeroes the accumulated chain holding private-key IMPORT data and clears the latch the next command could stick to	SEC-SEAM-001
 serve_pending	crates/rsk-sdk/src/applet.rs:511	17	decides	D2	hands out the held tail on 0xC0 ahead of any applet and without consulting the selection (a short-circuit in process before the SELECT parse)	SEC-SEAM-001
 maybe_chain	crates/rsk-sdk/src/applet.rs:539	27	decides	D2	copies the response tail into pending, which outlives the command — it is exactly this that creates the state clear_pending exists for	SEC-SEAM-001
+set_pin_retries	crates/rsk-openpgp/src/retries.rs:32	49	decides	D1,D3,D4	requires PW3; nonzero inputs replace stored maxima and counts, an unset RC remains at zero; count write leads maximum write, so interrupted increases can exceed the old maximum	SEC-LAT-003,SEC-LAT-004
+put_kdf	crates/rsk-openpgp/src/kdf.rs:136	69	decides	D1,D3,D4	requires PW3 and empty private-key slots before reseeding PW1/PW3 and restoring their budgets; clears RC and drops access statuses on a partial failure	SEC-LAT-003

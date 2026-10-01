@@ -442,71 +442,45 @@ mutant = "SeamSolo_BugAdminPolicyIgnoresApplet.cfg"
 [[exception]]
 id = "MX-LAT-001"
 module = "RSKeyRetryLattice.tla"
-line = 79
+line = 90
 shape = "set"
 site = "Refs"
 clause = "Refs"
 against = "RSKeyAppletSeams.tla:Refs"
 omits = ["oathCode", "oathOtpPin", "pivMgm", "pw2"]
 kind = "narrowing"
-production = "PW2 is PW1 mode 0x82 and shares PW1's verifier and counter (crates/rsk-openpgp/src/pin.rs), so it is PW1's counter under another name. The OATH access code and the OTP slot code are a MAC / equality challenge-response with no retry counter at all, and PIV's 9B management key has none either."
-why = '''
-Four references left out of a lattice about counters, for two different reasons,
-and only one of them is stated in the module: the comment names PW2 and the two
-OATH codes and is silent about `pivMgm`. That silence is the finding this row
-carries — a reader checking the model against the product would find three
-justifications for four omissions, and the fourth is the one a 9B mutual
-authenticate would need if it ever gained a budget.
-'''
+production = "PW2 shares PW1's verifier and counter. OATH's MAC code, the OTP slot code and PIV's management key have no retry counter. The management status is modelled separately because PIV FA needs it."
+why = "The model carries counters rather than one entry per status. Giving PW2 its own counter would need a separate shared-counter property before a mutant could refute it."
 mutant = "owes"
 owed = "LatSolo_BugPw2HasItsOwnCounter.cfg"
 
 [[exception]]
 id = "MX-LAT-002"
 module = "RSKeyRetryLattice.tla"
-line = 85
+line = 96
 shape = "set"
 site = "VerifyTargets"
 clause = "VerifyTargets"
 against = "Refs"
 omits = ["pivPuk", "rc"]
 kind = "narrowing"
-production = "Neither the PUK nor the resetting code is verified on its own: each is presented as the recovery secret inside a RESET RETRY (crates/rsk-piv/src/lib.rs, crates/rsk-openpgp/src/pin.rs), where a wrong one still spends its counter."
-why = '''
-The narrowing decides which references `Next` offers a direct VERIFY at, so a
-firmware that started answering VERIFY on the PUK — the shape a spec-completeness
-change reaches for — is outside the model rather than caught by it. `Recover`
-does exercise both references' floors, which is why this is a narrowing of the
-reachable space and not of the property.
-'''
+production = "Neither PUK nor RC is verified on its own; each is presented inside RESET RETRY, which spends or restores the recovery reference's counter."
+why = "Recover exercises both floors, but a firmware that started answering direct VERIFY for these references is outside the model."
 mutant = "owes"
 owed = "LatSolo_BugRecoveryRefIsVerifiable.cfg"
 
 [[exception]]
 id = "MX-LAT-003"
 module = "RSKeyRetryLattice.tla"
-line = 98
+line = 101
 shape = "case"
 site = "RecoveryOf"
 clause = "RecoveryOf"
 against = "Refs"
 omits = ["pivPuk", "pw3", "rc"]
 kind = "narrowing"
-production = "No presented secret refills the PUK, PW3 or the resetting code. PW3's status refills without one: OpenPGP's SET PIN RETRIES (crates/rsk-openpgp/src/retries.rs) gives PW1, the resetting code and PW3 new tries while PW3 is held, so a blocked resetting code comes back that way, and the model carries it as its own SetRetries action rather than in this presented-secret graph. A blocked PW3 cannot be held and the PUK has no such door: for those two, TERMINATE DF and a factory RESET are the only ways back, and both belong to the reset models rather than to this ladder."
-why = '''
-The `OTHER -> {}` arm answers for three of the five references, so `Recover` is
-never enabled at any of them and no interleaving in this module can reach a
-terminal reference's PRESENTED-secret recovery. A mutant that gave one of them a
-recovery path would not be caught here; it would simply be a bigger model.
-Measured on a scratch copy (2026-09-30): PW3 given the RC as its recovery, an arm
-ahead of `OTHER`, was GREEN at the 243 distinct states Lattice.cfg then had, with
-2 917 generated against 2 431 -- steps taken that nothing records. Re-measured
-the same day over the model with SetRetries, it is still GREEN, and now over
-2 940 distinct states against 2 244: a PW3 the RC refills reaches counts and
-statuses no correct VERIFY leaves, and no requirement refuses any of them. The
-resetting code's own way back, SET PIN RETRIES, is no presented secret and so no
-arm of this `CASE`.
-'''
+production = "No other presented recovery secret restores PUK, PW3 or RC. PIV FA restores PUK under PIN and management statuses; OpenPGP F2 restores RC under PW3, and D3 installs an RC. These are separate administrative actions."
+why = "The presented-secret graph is still a model-side definition rather than an independent policy. Adding a recovery edge changes the admitted model and is not refuted by BudgetRisesOnlyWithItsSecret. Administrative doors are now modelled, but that graph-completeness obligation remains."
 mutant = "owes"
 owed = "LatSolo_BugTerminalRefRecovers.cfg"
 carried_by = "NAR-RETRY-LATTICE"
@@ -514,29 +488,15 @@ carried_by = "NAR-RETRY-LATTICE"
 [[exception]]
 id = "MX-LAT-004"
 module = "RSKeyRetryLattice.tla"
-line = 98
+line = 101
 shape = "case"
 site = "RecoveryOf"
 clause = "RecoveryOf"
 against = "VerifyTargets"
 omits = ["pw3"]
 kind = "narrowing"
-production = "OpenPGP has two admin paths that gate on a live PW3 SESSION rather than a secret presented in the call: RESET RETRY P1 = 0x02 (crates/rsk-openpgp/src/pin.rs), which replaces PW1's value and refills it, and SET PIN RETRIES (crates/rsk-openpgp/src/retries.rs), which keeps every value and refills PW1, the resetting code and PW3. Neither is a recovery by a presented secret, so neither is an arm here: the second is the SetRetries action, guarded by the PW3 status this module now tracks, and the first stays out, a value this module does not model."
-why = '''
-The same `CASE` measured against the references a host verifies directly, and it
-is a different statement: PW3 is a VERIFY target with no recovery, while the
-other two omissions are references a host never verifies at all. Two rows for one
-clause, because the derivation measures against every containing set rather than
-guessing which one the author meant — and the two answers are what a reader needs
-to see the admin path is out for a reason the ladder cannot express. Measured
-the same day: PW1 given PW3 as a presented recovery was GREEN at the same counts,
-and over the model with SetRetries it is GREEN at 3 504 distinct states. And the
-owed name is the wrong switch: the admin path is legitimate, so it would model the
-product rather than a defect. The defect this row stands against is PW3 given a
-recovery, which is MX-LAT-003's, and no requirement here refuses it. SET PIN
-RETRIES is the admin path that IS modelled, and its three switches are the
-requirement's: PW3 held, not PW1, and the count set to the maximum set.
-'''
+production = "PW3 is a direct VERIFY target without a presented recovery secret. RESET RETRY P1=02 uses a standing PW3 status to replace PW1 and is modelled separately by ResetRetryAdmin."
+why = "The admin-status door is covered, but the presented-secret graph still cannot refute an invented PW3 recovery edge. Its authority is distinct from presenting PW3 as a recovery secret."
 mutant = "owes"
 owed = "LatSolo_BugAdminPathRefills.cfg"
 carried_by = "NAR-RETRY-LATTICE"
@@ -551,20 +511,66 @@ clause = "PgpRefs"
 against = "Refs"
 omits = ["pivPin", "pivPuk"]
 kind = "narrowing"
-production = "SET PIN RETRIES is OpenPGP's command (INS F2, crates/rsk-openpgp/src/retries.rs) and names PW1, the resetting code and PW3, one byte each. PIV's PIN and PUK have the applet's own SET RETRIES (INS FA, crates/rsk-piv/src/lib.rs), under the management key and the PIN, which resets both references to their default values under new totals; the module does not carry it."
-why = '''
-The references the SetRetries action may touch. For OpenPGP's command it is the
-product, not a hole: F2 has no byte for a PIV reference. The hole is the PIV
-door it stands beside, which raises the PIN's and the PUK's counters under a
-status as F2 does and is not an action here. SEC-LAT-003's statement names the
-OpenPGP door alone, and FA is outside it by replacing both values: what it raises
-is the budget of a new reference, not of the secret a host was guessing. That
-reading is the one a switch would test, and none exists: a PIV SET RETRIES that
-kept the PUK while giving it new tries would be a budget raised out of nothing,
-and nothing here could see it.
-'''
+production = "F2 names only PW1, RC and PW3. PIV FA has its own action, gated by both management and PIN statuses; it writes totals and counts before replacing the PIN/PUK verifiers."
+why = "The command's applet boundary remains a narrowing. The earlier claimed defect, retaining a PUK while refilling its count, is also a legitimate partial-write outcome of FA, already authorised by both statuses; it is not an unauthorised rise. An F2 byte changing a PIV budget is the unmodelled cross-applet defect. CountWithinMaximum applies only to fault-free histories from Init: a torn F2 increase can leave a count above the old maximum."
 mutant = "owes"
-owed = "LatSolo_BugPivSetRetriesKeepsThePuk.cfg"
+owed = "LatSolo_BugPgpSetRetriesTouchesPiv.cfg"
+carried_by = "NAR-RETRY-LATTICE"
+
+[[exception]]
+id = "MX-LAT-006"
+module = "RSKeyRetryLattice.tla"
+line = 134
+shape = "clause"
+site = "Init"
+clause = 'r = "rc"'
+kind = "dispatch"
+production = "A factory card has no resetting-code verifier and zero RC tries; all other references start at their maxima."
+why = "The absent-verifier branch is now explicit so F2 cannot reactivate an unset RC. The initial-state rule has no independent property forbidding a seeded resetting code."
+mutant = "owes"
+owed = "LatSolo_BugInitialRcEnabled.cfg"
+carried_by = "NAR-RETRY-LATTICE"
+
+[[exception]]
+id = "MX-LAT-007"
+module = "RSKeyRetryLattice.tla"
+line = 171
+shape = "clause"
+site = "Verify"
+clause = 'r = "pw1"'
+kind = "narrowing"
+production = "PW1 modes 81 and 82 share a counter but have separate statuses. A wrong attempt clears the offered mode only; the other may still open load_dek."
+why = "A nondeterministic retained status overapproximates both modes instead of multiplying them. Exact status lifetime is a seam property; this branch makes a reduced counter beside a standing user session reachable for the admin-door mutant."
+mutant = "owes"
+owed = "LatSolo_BugPw1WrongClearsBothModes.cfg"
+carried_by = "NAR-RETRY-LATTICE"
+
+[[exception]]
+id = "MX-LAT-008"
+module = "RSKeyRetryLattice.tla"
+line = 194
+shape = "clause"
+site = "Recover"
+clause = 'via # "rc"'
+kind = "narrowing"
+production = "A PUK always has a verifier. RC cannot be presented before D3 installs it, even if the blocked-counter guard is removed."
+why = "The verifier-existence check survives the floor mutant. An absent verifier returning success needs its own model and Rust defect, not a counter-floor patch."
+mutant = "owes"
+owed = "LatSolo_BugMissingRcAuthenticates.cfg"
+carried_by = "NAR-RETRY-LATTICE"
+
+[[exception]]
+id = "MX-LAT-009"
+module = "RSKeyRetryLattice.tla"
+line = 239
+shape = "clause"
+site = "SetRetries"
+clause = 'r = "rc"'
+kind = "narrowing"
+production = "F2 updates an unset RC's maximum while leaving its count zero; a blocked but installed RC receives the requested count."
+why = "The existence branch separates a blocked reference from an absent one. CountWithinMaximum alone would permit tries for an absent verifier, so this is not closed by the new state bound."
+mutant = "owes"
+owed = "LatSolo_BugUnsetRcGetsTries.cfg"
 carried_by = "NAR-RETRY-LATTICE"
 
 [[exception]]

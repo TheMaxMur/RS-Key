@@ -182,7 +182,7 @@ ROW_TRANCHES = ("p0-launch", "p0b")
 #: then a deliberate edit here, in the same diff as the shrink.
 FLOOR_PACKAGES = 19
 FLOOR_BOARDS = 6
-FLOOR_ROWS = 40
+FLOOR_ROWS = 41
 #: A `why` or a settling question shorter than this is a placeholder rather than
 #: prose: `.strip()` alone let `"?"` and `"TODO"` stand as the question that would
 #: settle a whole column. Six, because the ledger's shortest real question is

@@ -355,3 +355,92 @@ fn an_unreadable_maxima_record_changes_nothing() {
     assert_eq!(card.counters(&mut fs), [3, 0, 3]);
     assert_eq!(maxima(&mut fs), [3, 3, 3]);
 }
+
+/// A torn increase can persist its authorised count under the old maximum.
+/// The lattice's count bound therefore covers only completed commands.
+#[test]
+fn a_cut_during_an_increase_can_leave_the_count_above_its_maximum() {
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    let setup = || {
+        let (cut, medium) = Cut::new();
+        let mut fs = boot(cut);
+        let mut card = Card::new(&rng, &presence);
+        assert_eq!(card.sw(&mut fs, SELECT), Sw::OK);
+        assert_eq!(card.sw(&mut fs, &verify(0x83, consts::PW3_DEFAULT)), Sw::OK);
+        medium.clear_ops();
+        (card, fs, medium)
+    };
+    let increase = set_retries(0, 0, &[10, 0, 10]);
+    let total = {
+        let (mut card, mut fs, medium) = setup();
+        assert_eq!(card.sw(&mut fs, &increase), Sw::OK);
+        medium.ops().len() as u32
+    };
+    let mut saw_split_records = false;
+    for budget in 0..=total {
+        let (mut card, mut fs, medium) = setup();
+        medium.arm(budget);
+        card.sw(&mut fs, &increase);
+        medium.arm(u32::MAX);
+        drop(card);
+        let mut fs = boot(fs.into_storage());
+        let mut card = Card::new(&rng, &presence);
+        assert_eq!(card.sw(&mut fs, SELECT), Sw::OK);
+        let (left, max) = (card.counters(&mut fs), maxima(&mut fs));
+        assert!(left == [3, 0, 3] || left == [10, 0, 10]);
+        assert!(max == [3, 3, 3] || max == [10, 3, 10]);
+        if left[0] > max[0] {
+            saw_split_records = true;
+            assert_eq!(
+                card.sw(&mut fs, &verify(0x81, WRONG_PW)),
+                Sw::SECURITY_STATUS_NOT_SATISFIED
+            );
+            assert_eq!(card.counters(&mut fs)[0], 9, "a wrong guess spends one");
+            assert_eq!(card.sw(&mut fs, &verify(0x81, consts::PW1_DEFAULT)), Sw::OK);
+            assert_eq!(
+                card.counters(&mut fs)[0],
+                3,
+                "a match restores the stored maximum"
+            );
+        }
+    }
+    assert!(
+        saw_split_records,
+        "the cut sweep must witness the abstraction gap"
+    );
+}
+
+#[test]
+fn user_status_does_not_authorise_admin_recovery_doors() {
+    let rng = RefCell::new(CountRng(0));
+    let presence = RefCell::new(crate::AlwaysConfirm);
+    for mode in [0x81, 0x82] {
+        let mut fs = boot(RamStorage::new());
+        let mut card = Card::new(&rng, &presence);
+        assert_eq!(card.sw(&mut fs, SELECT), Sw::OK);
+        assert_eq!(card.sw(&mut fs, &verify(mode, consts::PW1_DEFAULT)), Sw::OK);
+        let other_mode = if mode == 0x81 { 0x82 } else { 0x81 };
+        assert_eq!(
+            card.sw(&mut fs, &verify(other_mode, WRONG_PW)),
+            Sw::SECURITY_STATUS_NOT_SATISFIED
+        );
+        assert_eq!(card.counters(&mut fs), [2, 0, 3]);
+        assert_eq!(
+            card.sw(
+                &mut fs,
+                &command(consts::INS_RESET_RETRY, 0x02, 0x81, b"111111")
+            ),
+            Sw::CONDITIONS_NOT_SATISFIED,
+            "PW1 cannot replace PW1 through the admin door"
+        );
+        assert_eq!(
+            card.sw(
+                &mut fs,
+                &command(consts::INS_PUT_DATA, 0x00, 0xD3, RESET_CODE)
+            ),
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "PW1 cannot activate a resetting code"
+        );
+    }
+}

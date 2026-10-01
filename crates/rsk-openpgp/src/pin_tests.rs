@@ -2470,3 +2470,29 @@ fn every_session_key_handed_back_wipes_itself() {
 // needs this module's fixtures.
 #[path = "pin_recovery_tests.rs"]
 mod recovery;
+
+#[test]
+fn a_user_session_cannot_install_a_reset_code() {
+    for mode in [PW1_MODE81, PW1_MODE82] {
+        let mut fs = setup();
+        let mut sess = Session::new();
+        let mut rng = CountRng(7);
+        assert_eq!(
+            verify(
+                &dev(),
+                &mut fs,
+                &mut sess,
+                &mut rng,
+                0x00,
+                mode,
+                PW1_DEFAULT
+            ),
+            Sw::OK
+        );
+        assert_eq!(
+            put_reset_code(&dev(), &mut fs, &mut sess, &mut rng, b"resetme0"),
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "a user session can open the DEK but cannot activate RC"
+        );
+    }
+}

@@ -251,7 +251,28 @@ fn a_card_holding_a_key_refuses_the_do() {
         admin(&mut fs, &mut sess);
         fs.put(slot.get(), &[0xAB; 40]).unwrap();
         assert_eq!(
-            write(&mut fs, &mut sess, &three_salts()),
+            verify(
+                &dev(),
+                &mut fs,
+                &mut sess,
+                &mut CountRng(0),
+                0x00,
+                PW1_MODE81,
+                b"999999"
+            ),
+            Sw::SECURITY_STATUS_NOT_SATISFIED
+        );
+        let sw = write(&mut fs, &mut sess, &three_salts());
+        let mut pw = [0u8; 7];
+        let n = fs.read(EF_PW_PRIV, &mut pw).unwrap();
+        assert!(n > pw_retry_idx(EF_PW1));
+        assert_eq!(
+            pw[pw_retry_idx(EF_PW1)],
+            PW_RETRIES_DEFAULT - 1,
+            "KDF beside a private key must not refill PW1"
+        );
+        assert_eq!(
+            sw,
             Sw::CONDITIONS_NOT_SATISFIED,
             "a key in {:#06x} must block the KDF DO",
             slot.get()
@@ -665,4 +686,41 @@ fn a_torn_kdf_setup_always_leaves_the_admin_a_way_back() {
             );
         },
     );
+}
+
+#[test]
+fn a_user_session_cannot_reseed_kdf() {
+    for mode in [PW1_MODE81, PW1_MODE82] {
+        let (mut fs, mut sess) = setup();
+        let mut rng = CountRng(7);
+        assert_eq!(
+            verify(
+                &dev(),
+                &mut fs,
+                &mut sess,
+                &mut rng,
+                0x00,
+                mode,
+                PW1_DEFAULT
+            ),
+            Sw::OK
+        );
+        assert_eq!(
+            verify(
+                &dev(),
+                &mut fs,
+                &mut sess,
+                &mut rng,
+                0x00,
+                PW3_MODE83,
+                b"99999999"
+            ),
+            Sw::SECURITY_STATUS_NOT_SATISFIED
+        );
+        assert_eq!(
+            write(&mut fs, &mut sess, &three_salts()),
+            Sw::SECURITY_STATUS_NOT_SATISFIED,
+            "a user session cannot reseed PW3 and restore its spent budget"
+        );
+    }
 }

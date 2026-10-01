@@ -24,7 +24,7 @@ So the axes are printed apart. Every one is derived from the tree on every gate 
 
 Three readings the axes are built to stop. A `kani` count does not fill in for `hardware`: a bounded proof is about execution paths and a board result is about a platform, and neither substitutes for the other. A `trace` count is DIRECT — a recorded session reaches a property only if a configuration checking that property replays it, so the refinement properties carry the session and the invariants they refine do not inherit it. And a configuration NAMING an invariant is not one ASSERTING it: most of them are mutants that exist for it to fall in, which is why `model` and `trace` are printed as two numbers each.
 
-`hardware` reads two sources, and together they give **2 of 59**. One is a bundle's DECLARATION, and the gate's job there is that a declaration cannot arrive without the board revision it was taken on. The other is `docs/platform-assumptions.md`'s registry, which is where a board result actually lands — an obligation moving to `discharged` with a real stepping recorded is what moves this column, whatever class it is filed under.
+`hardware` reads two sources, and together they give **2 of 60**. One is a bundle's DECLARATION, and the gate's job there is that a declaration cannot arrive without the board revision it was taken on. The other is `docs/platform-assumptions.md`'s registry, which is where a board result actually lands — an obligation moving to `discharged` with a real stepping recorded is what moves this column, whatever class it is filed under.
 
 Neither direction of that number says more than it is. A `0` is "nothing here was measured on hardware" and never a measurement: the axis prints the same 0 over a question nobody asked and over one a board refused to answer. A non-zero is not the property holding on hardware either — it is THESE rows and no others, on the stepping and the boot configuration they name, and it lapses when either moves.
 
@@ -32,14 +32,14 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 
 ## What a release may say
 
-- **56 of 59** security properties are ASSERTED by at least one finite TLA+ configuration whose recorded verdict is GREEN, and hold exhaustively over that configuration's constants.
-- **44 of 59** carry a model mutant whose code twin `formal/comutants.toml` records as patched into the real tree and killed. That verdict is re-driven by the weekly `comutate run`, not by the gate that writes this page.
-- **33 of the 46** rows the v1 word calls `MODELLED-ONLY` carry such a twin: the word means *no Kani harness*, and never *untested*.
-- **10 of 59** are checked by a configuration that ACCEPTS a recorded session, and **10** by one that must REFUSE a negative one.
-- **11 of 59** carry at least one Kani harness named after them. That is all `BOUNDED` keys on — a harness NAME, not the `#[kani::proof]` attribute, not a bound, not a `cfg` — so it points at the bundle's method table and is never the proof itself.
-- Rows carrying a dated raw evidence bundle: **17 of 59**; of those, still ahead of every input they are about: **0**.
+- **57 of 60** security properties are ASSERTED by at least one finite TLA+ configuration whose recorded verdict is GREEN, and hold exhaustively over that configuration's constants.
+- **45 of 60** carry a model mutant whose code twin `formal/comutants.toml` records as patched into the real tree and killed. That verdict is re-driven by the weekly `comutate run`, not by the gate that writes this page.
+- **34 of the 47** rows the v1 word calls `MODELLED-ONLY` carry such a twin: the word means *no Kani harness*, and never *untested*.
+- **10 of 60** are checked by a configuration that ACCEPTS a recorded session, and **10** by one that must REFUSE a negative one.
+- **11 of 60** carry at least one Kani harness named after them. That is all `BOUNDED` keys on — a harness NAME, not the `#[kani::proof]` attribute, not a bound, not a `cfg` — so it points at the bundle's method table and is never the proof itself.
+- Rows carrying a dated raw evidence bundle: **17 of 60**; of those, still ahead of every input they are about: **0**.
 - No property is claimed on more than **10** built image(s) of the configuration ledger; every other column is a gap or out of scope.
-- **2 of 59** carry a result measured on a board, each naming the revision it was taken on.
+- **2 of 60** carry a result measured on a board, each naming the revision it was taken on.
 
 ## What a release may not say
 
@@ -48,7 +48,7 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 - that a `model` count is the strength of the evidence — its denominator counts every configuration NAMING the invariant, and most of those are mutants that exist for it to fall in. `asserted` is the half a claim may rest on, and for a `clause_of` row it can be 0 while the parent invariant carrying that clause is asserted.
 - that the model-checked properties hold on *the firmware* — they hold on the images the scope axis names, and `docs/assurance-matrix.md` carries the rest of that row.
 - that the reconstructed `v1` column is an independent check on the registry's word. It reads the two derivations `assurance_gate.py` already forces that word from, so its disagreement set is empty on every input that gate accepts: it records that the scalar is a projection, and cannot discover that it is not.
-- that 42 of the rows are current — they carry no evidence date at all, so nothing here says when they were last true.
+- that 43 of the rows are current — they carry no evidence date at all, so nothing here says when they were last true.
 
 ## The vector
 
@@ -92,9 +92,10 @@ The `freshness` axis reads committed history only, so an uncommitted edit to an 
 | `SEC-STORE-004` | `NoFalseMetaAbsent` | 2 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (3 input(s) newer) | MODELLED-ONLY |
 | `SEC-STORE-005` | `CacheHonest` | 2 of 4 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (3 input(s) newer) | MODELLED-ONLY |
 | `SEC-STORE-006` | `NoSilentOrphan` | 2 of 12 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | `982fb2f` stale (3 input(s) newer) | MODELLED-ONLY |
-| `SEC-LAT-001` | `NoAuthWhenBlocked` | 2 of 9 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-LAT-002` | `WrongAttemptIsCharged` | 2 of 10 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
-| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | 2 of 12 | 4 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-LAT-001` | `NoAuthWhenBlocked` | 2 of 16 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-LAT-002` | `WrongAttemptIsCharged` | 2 of 17 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | 2 of 24 | 9 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
+| `SEC-LAT-004` | `CountWithinMaximum` | 2 of 17 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-POL-001` | `PivOperationNeedsSlotPolicy` | 1 of 13 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-POL-002` | `PivAlwaysSpendsFreshness` | 1 of 14 | 2 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
 | `SEC-POL-003` | `AttributeChangeInvalidatesTheKey` | 1 of 13 | 1 | 0 of 0 | 0 | 0 | 4 | 0 | — | MODELLED-ONLY |
@@ -126,38 +127,38 @@ The same 40 P0-family rows, counted the other way round: per column rather than 
 
 | Column | Kind | Published | Placed | Unplaced |
 |---|---|---|---:|---:|
-| `firmware` | package | yes | 40 | 0 |
-| `firmware-no-touch` | package | no | 7 | 33 |
-| `firmware-fips` | package | yes | 3 | 37 |
-| `firmware-pqc` | package | yes | 3 | 37 |
-| `firmware-fips-pqc` | package | yes | 3 | 37 |
-| `firmware-no-touch-pqc` | package | no | 7 | 33 |
-| `firmware-no-touch-fips` | package | no | 7 | 33 |
-| `firmware-no-touch-fips-pqc` | package | no | 7 | 33 |
-| `firmware-strong-pin` | package | yes | 3 | 37 |
-| `firmware-strong-pin-pqc` | package | yes | 3 | 37 |
-| `firmware-always-uv` | package | yes | 3 | 37 |
-| `firmware-always-uv-pqc` | package | yes | 3 | 37 |
-| `firmware-strict-up` | package | yes | 3 | 37 |
-| `firmware-strict-up-pqc` | package | yes | 3 | 37 |
-| `firmware-pico` | package | no | 40 | 0 |
-| `firmware-display` | package | yes | 0 | 40 |
-| `firmware-2mb` | package | yes | 9 | 31 |
-| `firmware-16mb` | package | yes | 9 | 31 |
-| `firmware-strict-config` | package | yes | 3 | 37 |
-| `keygen-bench` | feature | no | 3 | 37 |
-| `core1-stats` | feature | no | 3 | 37 |
-| `bench` | feature | no | 3 | 37 |
-| `fido-conformance` | feature | no | 3 | 37 |
-| `ea-conformance-rpid` | feature | no | 3 | 37 |
-| `largeblob-ext` | feature | no | 3 | 37 |
-| `preview-sign` | feature | no | 3 | 37 |
-| `abrobot-16m` | board | no | 9 | 31 |
-| `abrobot-4m` | board | no | 36 | 4 |
-| `seeed-xiao` | board | no | 9 | 31 |
-| `tenstar-usb` | board | no | 9 | 31 |
-| `waveshare-one` | board | no | 40 | 0 |
-| `waveshare-touch-lcd` | board | no | 9 | 31 |
+| `firmware` | package | yes | 41 | 0 |
+| `firmware-no-touch` | package | no | 7 | 34 |
+| `firmware-fips` | package | yes | 3 | 38 |
+| `firmware-pqc` | package | yes | 3 | 38 |
+| `firmware-fips-pqc` | package | yes | 3 | 38 |
+| `firmware-no-touch-pqc` | package | no | 7 | 34 |
+| `firmware-no-touch-fips` | package | no | 7 | 34 |
+| `firmware-no-touch-fips-pqc` | package | no | 7 | 34 |
+| `firmware-strong-pin` | package | yes | 3 | 38 |
+| `firmware-strong-pin-pqc` | package | yes | 3 | 38 |
+| `firmware-always-uv` | package | yes | 3 | 38 |
+| `firmware-always-uv-pqc` | package | yes | 3 | 38 |
+| `firmware-strict-up` | package | yes | 3 | 38 |
+| `firmware-strict-up-pqc` | package | yes | 3 | 38 |
+| `firmware-pico` | package | no | 41 | 0 |
+| `firmware-display` | package | yes | 0 | 41 |
+| `firmware-2mb` | package | yes | 9 | 32 |
+| `firmware-16mb` | package | yes | 9 | 32 |
+| `firmware-strict-config` | package | yes | 3 | 38 |
+| `keygen-bench` | feature | no | 3 | 38 |
+| `core1-stats` | feature | no | 3 | 38 |
+| `bench` | feature | no | 3 | 38 |
+| `fido-conformance` | feature | no | 3 | 38 |
+| `ea-conformance-rpid` | feature | no | 3 | 38 |
+| `largeblob-ext` | feature | no | 3 | 38 |
+| `preview-sign` | feature | no | 3 | 38 |
+| `abrobot-16m` | board | no | 9 | 32 |
+| `abrobot-4m` | board | no | 37 | 4 |
+| `seeed-xiao` | board | no | 9 | 32 |
+| `tenstar-usb` | board | no | 9 | 32 |
+| `waveshare-one` | board | no | 41 | 0 |
+| `waveshare-touch-lcd` | board | no | 9 | 32 |
 
 Read the feature rows first: every one of them carries the same handful of placed cells and the rest unplaced, which is the shape roadmap §12 calls feature blindness. A default-build proof is not a proof about the image a feature builds, and the column is where that stops being invisible.
 
@@ -194,6 +195,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | bundle | `SEC-LAT-001` | no raw evidence bundle |
 | bundle | `SEC-LAT-002` | no raw evidence bundle |
 | bundle | `SEC-LAT-003` | no raw evidence bundle |
+| bundle | `SEC-LAT-004` | no raw evidence bundle |
 | bundle | `SEC-POL-001` | no raw evidence bundle |
 | bundle | `SEC-POL-002` | no raw evidence bundle |
 | bundle | `SEC-POL-003` | no raw evidence bundle |
@@ -307,4 +309,4 @@ For the commit that carries this page — which is why no commit is named here: 
 | `liveness` | `./formal/run-tlc.sh liveness` | 2026-09-30 | `62f9f2a` | Apple M5 Pro (18 cores) |
 | `safety` | `./formal/run-tlc.sh safety` | 2026-09-30 | `62f9f2a` | Apple M5 Pro (18 cores) |
 
-**Raw evidence bundles:** `SEC-FIDO-001`, `SEC-FIDO-002`, `SEC-FIDO-003`, `SEC-FIDO-004`, `SEC-FIDO-005`, `SEC-FIDO-006`, `SEC-FIDO-006A`, `SEC-FIDO-006B`, `SEC-FIDO-006C`, `SEC-FIDO-007`, `SEC-FIDO-008`, `SEC-STORE-001`, `SEC-STORE-002`, `SEC-STORE-003`, `SEC-STORE-004`, `SEC-STORE-005`, `SEC-STORE-006` — of 59 registered properties. Stale against this commit: `SEC-FIDO-001`, `SEC-FIDO-002`, `SEC-FIDO-003`, `SEC-FIDO-004`, `SEC-FIDO-005`, `SEC-FIDO-006`, `SEC-FIDO-006A`, `SEC-FIDO-006B`, `SEC-FIDO-006C`, `SEC-FIDO-007`, `SEC-FIDO-008`, `SEC-STORE-001`, `SEC-STORE-002`, `SEC-STORE-003`, `SEC-STORE-004`, `SEC-STORE-005`, `SEC-STORE-006`.
+**Raw evidence bundles:** `SEC-FIDO-001`, `SEC-FIDO-002`, `SEC-FIDO-003`, `SEC-FIDO-004`, `SEC-FIDO-005`, `SEC-FIDO-006`, `SEC-FIDO-006A`, `SEC-FIDO-006B`, `SEC-FIDO-006C`, `SEC-FIDO-007`, `SEC-FIDO-008`, `SEC-STORE-001`, `SEC-STORE-002`, `SEC-STORE-003`, `SEC-STORE-004`, `SEC-STORE-005`, `SEC-STORE-006` — of 60 registered properties. Stale against this commit: `SEC-FIDO-001`, `SEC-FIDO-002`, `SEC-FIDO-003`, `SEC-FIDO-004`, `SEC-FIDO-005`, `SEC-FIDO-006`, `SEC-FIDO-006A`, `SEC-FIDO-006B`, `SEC-FIDO-006C`, `SEC-FIDO-007`, `SEC-FIDO-008`, `SEC-STORE-001`, `SEC-STORE-002`, `SEC-STORE-003`, `SEC-STORE-004`, `SEC-STORE-005`, `SEC-STORE-006`.

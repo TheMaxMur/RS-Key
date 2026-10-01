@@ -124,11 +124,11 @@ needed a trick one:
   reddens the shipped tree twice, on `CHANGELOG.md`'s `SEC-DISP` and
   `SEC-FIDO-NNN` — a family named as a family, and a placeholder;
 * **the REVERSE direction is open, and the number is why.** "A registry row no
-  hand-written page names" is not held, because it would report 34 of the 59 on
+  hand-written page names" is not held, because it would report 34 of the 60 on
   a clean tree — measured, and they are not rot: every occurrence of all 34 is
   generator-written, on `docs/assurance-vector.md`, `docs/assurance-matrix.md`
   and `docs/platform-assumptions.md`, or inside one of the six generated REGIONS
-  of `formal/README.md`, which drops that page from 59 registered ids to 7 once
+  of `formal/README.md`, which drops that page from 60 registered ids to 8 once
   [`mask_regions`] has run. The weaker form — a row no page names AT ALL — is 0
   today and would be decorative: `evidence_gate` refuses a stale
   `docs/assurance-vector.md` and `assurance_gate` refuses a stale

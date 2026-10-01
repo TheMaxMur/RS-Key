@@ -985,7 +985,7 @@ def test_a_disposed_inverse_kill_is_admitted_and_counted_apart(tmp_path, disposi
      ("gate_ledger", "walk=4", "walk=5"),
      ("gate_assumption", "FALSE=91", "FALSE=90"),
      ("gate_ghost", "24 route(s)", "25 route(s)"),
-     ("gate_matrix", "1280 cells", "1281 cells")],
+     ("gate_matrix", "1312 cells", "1313 cells")],
 )
 def test_a_transcribed_gate_line_that_the_gate_does_not_derive(tmp_path, key, old, new):
     """The second half of the hole `35afe59` named and did not close: editing
@@ -1093,12 +1093,12 @@ def test_the_assumption_total_read_is_the_line_s_first():
 
 @pytest.mark.parametrize(
     "key,old,new,says",
-    [("gate_matrix", "(37 covered", "(109 covered", "109 covered"),
+    [("gate_matrix", "(38 covered", "(109 covered", "109 covered"),
      ("gate_ghost", "21 action(s)", "24 action(s)", "24 action(s) record"),
-     ("gate_matrix", "991 gap", "109 gap", "109 gap"),
+     ("gate_matrix", "1019 gap", "109 gap", "109 gap"),
      ("gate_ghost", "11 guard(s)", "21 guard(s)", "21 guard(s)"),
-     ("gate_matrix", "0 conditional", "37 conditional", "37 conditional"),
-     ("gate_matrix", "40 P0-family", "32 P0-family", "32 P0-family properties")],
+     ("gate_matrix", "0 conditional", "38 conditional", "38 conditional"),
+     ("gate_matrix", "41 P0-family", "32 P0-family", "32 P0-family properties")],
 )
 def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
     tmp_path, key, old, new, says
@@ -1109,7 +1109,7 @@ def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
 
     Every swap here takes its digits off a SIBLING count of the very line it
     falsifies (`109` off `109 out-of-scope`, `24` off `24 route(s)`, `21` off `21
-    action(s)`, `37` off `37 covered`, `32` off `32 build`), so the old rules are
+    action(s)`, `38` off `38 covered`, `32` off `32 build`), so the old rules are
     all satisfied and only [`bundle_gate.CLAIMED_UNIT`] can speak: measured, every
     one was exit 0 before it. A swap onto a number the line NO LONGER carries is
     a case the bare-integer rule answers as well, which is how `(139 covered`
@@ -1122,7 +1122,7 @@ def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
 
     The READING is asserted too, and two of them are two words long. Each claim
     position is reported once, on the LONGEST spelling the gate wrote a count
-    for, so `40 P0-family properties → 32` is one finding about `P0-family
+    for, so `41 P0-family properties → 32` is one finding about `P0-family
     properties` rather than two about the same drift. Typed out rather than
     derived for the reason every count here is: it is the third copy that fails
     loudly instead of the one that agrees with itself.
@@ -1188,10 +1188,10 @@ def test_a_unit_count_the_gate_line_restates_unquoted_is_a_transcription(tmp_pat
 
 @pytest.mark.parametrize(
     "key,old,new,says",
-    [("gate_matrix", "32 build configurations", "37 build-configurations",
-      "37 build-configurations"),
-     ("gate_matrix", "991 gap)", "109 gaps)", "109 gaps"),
-     ("gate_matrix", "1280 cells", "109 cell", "109 cell"),
+    [("gate_matrix", "32 build configurations", "38 build-configurations",
+      "38 build-configurations"),
+     ("gate_matrix", "1019 gap)", "109 gaps)", "109 gaps"),
+     ("gate_matrix", "1312 cells", "109 cell", "109 cell"),
      ("gate_ghost", "11 guard(s)", "24 guards", "24 guards"),
      ("gate_ghost", "21 action(s) record", "24 actions record", "24 actions")],
 )
@@ -1262,7 +1262,7 @@ def test_a_count_whose_noun_the_gate_never_wrote_is_the_row_s_own(tmp_path):
     root = tree(tmp_path)
 
     def add(doc):
-        doc["result"]["gate_matrix"] += " The slice adds 40 reviews of its own."
+        doc["result"]["gate_matrix"] += " The slice adds 41 reviews of its own."
 
     rewrite(root, add)
     assert findings(root) == [], findings(root)
@@ -1341,7 +1341,7 @@ def test_the_owner_of_a_pair_is_the_last_word_that_is_not_one():
 
 @pytest.mark.parametrize(
     "key,old,new,says",
-    [("gate_matrix", "40 P0-family", "40 P37-family", "`P0-family`"),
+    [("gate_matrix", "41 P0-family", "41 P38-family", "`P0-family`"),
      ("gate_ghost", "record NoAuthorizationBypass over", "record NoAuthorizationBypasx over",
       "`NoAuthorizationBypass`"),
      ("gate_ledger", "token-refinement-gate: GREEN", "token-refinement-gate: RED",
@@ -1354,13 +1354,13 @@ def test_a_transcription_copies_the_gate_s_words_and_not_only_its_digits(
     freely and the digits inside a NAME were never numbers to begin with.
 
     `GREEN → RED` is the shape at its plainest: a green ledger transcribed as a
-    red one, with every count still correct, was exit 0. `P0-family → P37-family`
+    red one, with every count still correct, was exit 0. `P0-family → P38-family`
     and a misspelt invariant are the same edit on a name, and they are also where
     38 of the numbers no rule holds in position live — `P0-family`'s `0`,
     `PowerOnClearsScratch2`'s `2`, `SEC-FIDO-001`'s `001` — because a digit
     inside a name is not a count of anything and no count rule can reach it.
 
-    `37` is a number the matrix line carries, off `37 covered`, so the
+    `38` is a number the matrix line carries, off `38 covered`, so the
     bare-integer rule stays quiet and only [`bundle_gate.gate_words`] speaks."""
     root = tree(tmp_path)
 
@@ -1386,7 +1386,7 @@ def test_a_lowercase_word_of_a_derived_line_is_the_gate_s_prose(tmp_path):
     transcribing them, and a check resting on prose is the thing this file is
     about."""
     root = tree(tmp_path)
-    edit(root, "matrix-gate: ok — 40 P0-family", "matrix-gate: 40 P0-family")
+    edit(root, "matrix-gate: ok — 41 P0-family", "matrix-gate: 41 P0-family")
     assert findings(root) == [], findings(root)
 
 

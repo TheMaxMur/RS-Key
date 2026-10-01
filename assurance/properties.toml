@@ -338,8 +338,15 @@ source = ["PIV SP 800-73-4", "OpenPGP card 3.4", "docs/threat-model.md#TM-HOST-G
 id = "SEC-LAT-003"
 name = "BudgetRisesOnlyWithItsSecret"
 status = "MODELLED-ONLY"
-statement = "A reference's retry counter rises only on a correct presentation of a secret — its own (a correct VERIFY) or its designated recovery reference's (a correct RESET RETRY) — or when the admin reference PW3 is held and OpenPGP's SET PIN RETRIES sets a new maximum for it, and then to that maximum; never out of nothing."
+statement = "A reference's retry counter rises only on its own or its designated recovery secret, or an authorised administrative door: PIV SET RETRIES requires both PIN and management-key statuses; OpenPGP SET PIN RETRIES, RESET RETRY P1=02 and PUT DATA D3 require PW3; KDF reseeding also requires empty private-key slots. A refill uses the stored maximum, or the new maximum set by SET RETRIES; never out of nothing. The model abstracts completed, fault-free commands; interrupted record writes are outside it."
 source = ["PIV SP 800-73-4", "OpenPGP card 3.4", "Yubico SET PIN RETRIES (OpenPGP INS F2)", "docs/threat-model.md#TM-HOST-GATES"]
+
+[[property]]
+id = "SEC-LAT-004"
+name = "CountWithinMaximum"
+status = "MODELLED-ONLY"
+statement = "In fault-free command histories starting from the model's initial state, each PIV/OpenPGP retry count is at most its stored maximum. This is not a crash invariant: a torn OpenPGP SET PIN RETRIES increase can persist a new count before its new maximum."
+source = ["Yubico SET PIN RETRIES (OpenPGP INS F2)", "formal/README.md — the fourth module", "docs/threat-model.md#TM-HOST-GATES"]
 
 # ---- RSKeyAppletPolicies — four applets' stateful operation doors -----------
 

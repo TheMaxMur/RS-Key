@@ -614,7 +614,10 @@ echo "wrote Store.cfg, StoreInduction.cfg and ${#STORE_BUGS[@]} x 2 store config
 # surface with no safe oracle -- exhausting a real PUK ladder blocks the card.
 LATTICE_BUGS=(BugUseWhenBlocked BugWrongDoesNotSpend BugRecoveryWithoutSecret
               BugSetRetriesWithoutAdmin BugSetRetriesOnUserStatus
-              BugSetRetriesRefillsOldMaximum)
+              BugSetRetriesRefillsOldMaximum BugSetRetriesKeepsCount
+              BugPivSetRetriesWithoutMgm BugPivSetRetriesWithoutPin
+              BugResetRetryWithoutAdmin BugResetCodeWithoutAdmin
+              BugKdfWithoutAdmin BugKdfWithKeys)
 
 lattice_target() {
   case "$1" in
@@ -625,10 +628,14 @@ lattice_target() {
     # count other than the maximum it sets.
     BugSetRetriesWithoutAdmin)      echo BudgetRisesOnlyWithItsSecret ;;
     BugSetRetriesOnUserStatus)      echo BudgetRisesOnlyWithItsSecret ;;
-    BugSetRetriesRefillsOldMaximum) echo BudgetRisesOnlyWithItsSecret ;;
+    BugSetRetriesRefillsOldMaximum) echo CountWithinMaximum ;;
+    BugSetRetriesKeepsCount) echo CountWithinMaximum ;;
+    BugPivSetRetriesWithoutMgm|BugPivSetRetriesWithoutPin|BugResetRetryWithoutAdmin|\
+    BugResetCodeWithoutAdmin|BugKdfWithoutAdmin|BugKdfWithKeys)
+        echo BudgetRisesOnlyWithItsSecret ;;
   esac
 }
-LATTICE_INV=(NoAuthWhenBlocked WrongAttemptIsCharged BudgetRisesOnlyWithItsSecret)
+LATTICE_INV=(NoAuthWhenBlocked WrongAttemptIsCharged BudgetRisesOnlyWithItsSecret CountWithinMaximum)
 
 emit_lattice() { # $1 = cfg, $2 = switch (""), $3 = 1 for solo, $4 = 1 for induction
   local out=$1 on=${2:-} solo=${3:-0} induct=${4:-0}

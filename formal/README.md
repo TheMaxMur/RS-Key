@@ -1492,7 +1492,7 @@ it.
 | `BugRemoveCodeUnvalidated` | the access-code removal (`73 00`) reached without the validated status (`crates/rsk-oath/src/lib.rs:368-370`) — the hole the abstractions list carried for two revisions as definitionally invisible to any state predicate | `AccessCodeRemovalNeedsTheCode` | 71 states |
 
 `Seams.cfg` is **GREEN, exhaustive, 6 045 states generated / 410 distinct at
-depth 11**, and 14 of 14 mutants are caught by the invariant that names them.
+depth 11**, and every mutant listed above is caught by the invariant that names it.
 The final reduction comes from keeping `psig`, the requirement-side one-shot
 status, scoped to the OpenPGP selection just like the status it shadows.
 
@@ -1673,81 +1673,91 @@ for the measured reason the seam gave for being a second: the two share no
 variable — the seam has statuses and selections, this has counters — so a
 product multiplies state and buys no new interleaving.
 
-**One door raises a budget with no secret presented: OpenPGP's SET PIN RETRIES**
-(INS `F2`, `crates/rsk-openpgp/src/retries.rs:32-80`). Under PW3 it sets how many
-tries PW1, the RC and PW3 each get, and gives each that many, a blocked one
-included, while every value stays as it was. So each reference carries its own
-stored maximum (`maxima`, the `EF_PW_RETRIES` record, under the ceiling `Max`),
-a correct VERIFY or RESET RETRY refills to it, and `SetRetries` is an action of
-its own, guarded by the PW3 status (`crates/rsk-openpgp/src/retries.rs:33-35`)
-that the module now keeps beside the counters (`held`). It keeps it coarsely: a
-wrong attempt drops a status, and a card reset, a SELECT elsewhere and the RESET
-RETRY that ends all three do not, which only keeps one up longer. The RC is
-always set here, as it always was; over an unset one `F2` stores the maximum and
-gives no tries, a step that raises nothing.
+**Administrative recovery is part of the lattice.** Each reference has a stored
+maximum (`maxima`), and a successful comparison restores that reference's count.
+A presented PUK also restores the PIN; a presented resetting code restores PW1.
+The remaining doors use standing statuses:
 
-**Three invariants, all honestly ghosts.** The counter arithmetic erases its own
-history — a success refills to the maximum, so no reachable *state* shows the
-exhaustion a bad grant rode past — which makes each of these a fact about a
-*step*, not a state, exactly as the seam module's mostly are:
-
-- `NoAuthWhenBlocked` — no reference authenticates on an exhausted budget,
-  neither a direct VERIFY at zero nor a RESET RETRY leaning on a recovery
-  reference already at zero;
-- `WrongAttemptIsCharged` — a wrong attempt against an unblocked reference spends
-  *exactly one*, the anti-bruteforce gate (a wrong VERIFY charges the target, a
-  wrong RESET RETRY charges the recovery reference);
-- `BudgetRisesOnlyWithItsSecret` — a counter rises only on a correct secret, its
-  own or its recovery reference's, or when SET PIN RETRIES, with PW3 held, sets a
-  new maximum for it, and then to that maximum; never out of nothing — not on a
-  wrong secret, not under the user's status, not with no status at all.
-
-**Six mutants, each a defended code site broken** — the discipline the store
-and seam modules keep, so a switch is one real thing a reviewer could break; the
-two guard switches break one site two ways:
-
-| Mutation switch | Removes | Target invariant |
+| Door | Authority | Counter effect |
 |---|---|---|
-| `BugUseWhenBlocked` | the `left == 0 => PIN_BLOCKED` floor (`crates/rsk-piv/src/lib.rs:1355-1357` / `crates/rsk-openpgp/src/pin.rs:245-247`), which guards a direct verify AND a recovery reference | `NoAuthWhenBlocked` |
-| `BugWrongDoesNotSpend` | the decrement that IS the gate (`crates/rsk-piv/src/lib.rs:1375` / `crates/rsk-openpgp/src/pin.rs:152`) | `WrongAttemptIsCharged` |
-| `BugRecoveryWithoutSecret` | the recovery secret verified before the refill (`crates/rsk-piv/src/lib.rs:1512` / `crates/rsk-openpgp/src/pin.rs:949`) | `BudgetRisesOnlyWithItsSecret` |
-| `BugSetRetriesWithoutAdmin` | SET PIN RETRIES's PW3 guard (`crates/rsk-openpgp/src/retries.rs:33-35`) | `BudgetRisesOnlyWithItsSecret` |
-| `BugSetRetriesOnUserStatus` | the same guard's admin half: PW1's status taken for PW3's | `BudgetRisesOnlyWithItsSecret` |
-| `BugSetRetriesRefillsOldMaximum` | the count set to the maximum set (`crates/rsk-openpgp/src/retries.rs:65-69`): it takes the one replaced | `BudgetRisesOnlyWithItsSecret` |
+| OpenPGP SET PIN RETRIES (`F2`) | PW3 | Each nonzero byte sets that reference's maximum and count; an unset RC keeps zero tries |
+| PIV SET RETRIES (`FA`) | PIN **and** management key | New PIN/PUK maxima and counts, then default verifiers; PIN status cleared on success |
+| OpenPGP RESET RETRY (`P1=02`) | PW3 | Replace PW1 and restore its stored maximum |
+| OpenPGP PUT DATA `D3` | PW3 | Set RC and restore its maximum, or clear RC and set its count to zero |
+| OpenPGP PUT DATA `F9` (KDF) | PW3 **and** no private keys | Reseed PW1/PW3, restore their maxima and deactivate RC |
 
-Each of the three new counterexamples was read for the clause it fell on. With
-the guard gone, a wrong PW1 and then `SetRetries` with no status held refills
-it: `"pw3" \in held` is false. With PW1 taken for PW3, PW1 verified, one PW3 try
-spent and `SetRetries` refills PW3 under PW1 alone. Refilling to the replaced
-maximum, a wrong PW1, PW3 verified and `SetRetries` lowering PW1's maximum to one
-raises its count to two: a rise to a count the step did not set, the direction a
-lowered limit makes a fault of. That one needs two maxima to tell apart, which is
-why `formal/scopes.txt` holds `Max` at two.
+`held` represents statuses coarsely. PW1's modes share a counter but a wrong
+attempt clears only the status for its own P2; the other mode may stay held.
+The model therefore permits a wrong PW1 attempt to preserve `held`. Ignoring
+that behaviour made the RESET RETRY guard mutant survive: the model could not
+reach a reduced PW1 budget beside the other mode's standing session. Management
+authentication has no counter. Key presence is a nondeterministic input to KDF,
+as the comparison result is to VERIFY; key lifetime is outside this module.
+An RC verifier's presence is separate from its count, so a blocked code can be
+refilled by F2, while an unset one cannot.
 
-`Lattice.cfg` is **GREEN, exhaustive**, with no dead action (`SetRetries` fires
-under `COVERAGE=1`); every `LatSolo_*.cfg` is RED on its own target. The
-all-blocked state — a locked-out card — is not a deadlock: a blocked card still
-*answers* every VERIFY (it returns `PIN_BLOCKED` and changes nothing), so a
-blocked reference's verify is a no-op refusal here, an enabled step rather than
-a dead end. That was a real bug in the first draft, caught by TLC's deadlock
-check.
+**Three step invariants and one state invariant:**
 
-**What it does NOT cover, stated.** The OATH access code and the OTP slot code
-are absent: a MAC / equality challenge-response has *no retry counter*, so a
-wrong answer costs nothing — the seam module's exempt-refusal territory, and
-their acceptance is the group-E oracle's. OpenPGP's other admin path to PW1
-(RESET RETRY `P1 = 0x02`) is out: it gates on a live PW3 *session* and replaces
-PW1's value, which this module does not model. So is PIV's own SET RETRIES (INS
-`FA`), which resets the PIN and the PUK to their defaults under new totals
-(`MX-LAT-005`). And a SET PIN RETRIES that set a maximum and left the count as it
-stood is GREEN here, measured on a scratch copy: it raises nothing, and a count
-over its maximum is no invariant of this module. `LatMut_*` is co-refuted since the applet batch below,
-and the exclusion it carried until then had a real reason: a naive injection
-measures a `u8` underflow rather than a blocked reference authenticating, because
-the floor and the counter's type are two layers. The patch that resolves it is
-one substitution — rebinding `left` to `left.max(1)` removes the floor AND keeps
-the arithmetic under it in range, so what the slice fails on is the property
-rather than a panic.
+- `NoAuthWhenBlocked`: no authentication on an exhausted direct or recovery
+  reference.
+- `WrongAttemptIsCharged`: a wrong attempt against an unblocked reference
+  spends exactly one; recovery spends the recovery reference's budget.
+- `BudgetRisesOnlyWithItsSecret`: a rise requires the presented secret or the
+  administrative authority in the table, and uses the existing or newly set
+  maximum.
+- `CountWithinMaximum`: each count is at most its stored maximum in histories from
+  `Init` with only completed, fault-free commands.
+
+**The last property is not a crash invariant of the firmware.** F2 persists
+`EF_PW_PRIV` before `EF_PW_RETRIES`. A cut during an increase can leave count 10
+under maximum 3; the host test
+`a_cut_during_an_increase_can_leave_the_count_above_its_maximum` witnesses this
+across every storage-operation cut. Wrong guesses then consume the persisted
+count one at a time; a correct VERIFY restores the still-stored maximum. The
+new count was authorised by PW3, so this is not an unauthorised refill, but the
+persisted records disagree. The opposite ordering protects a *lowered* maximum
+from retaining its old, larger count. A later completed wrong VERIFY
+does not repair that mismatch; the fault-free history assumption excludes it.
+Atomicity across both records, older records, arbitrary read/write failures and
+interrupted commands are outside
+this model; `SEC-LAT-004` must not be read as a production all-path proof.
+PIV FA likewise writes the counters before replacing the verifiers: its two
+statuses authorise a rise even if a later replacement fails.
+
+Each mutation has a full-invariant and a solo configuration, and a Rust twin
+in `formal/comutants.toml`:
+
+| Mutation switch | Defect | Target invariant |
+|---|---|---|
+| `BugUseWhenBlocked` | Authenticate with an exhausted direct or recovery reference | `NoAuthWhenBlocked` |
+| `BugWrongDoesNotSpend` | A wrong guess costs nothing | `WrongAttemptIsCharged` |
+| `BugRecoveryWithoutSecret` | Recover with a wrong PUK or resetting code | `BudgetRisesOnlyWithItsSecret` |
+| `BugSetRetriesWithoutAdmin` | F2 accepts no PW3 | `BudgetRisesOnlyWithItsSecret` |
+| `BugSetRetriesOnUserStatus` | F2 accepts PW1 as PW3 | `BudgetRisesOnlyWithItsSecret` |
+| `BugSetRetriesRefillsOldMaximum` | F2 refills to the replaced maximum | `CountWithinMaximum` |
+| `BugSetRetriesKeepsCount` | F2 lowers a maximum and leaves the count above it | `CountWithinMaximum` |
+| `BugPivSetRetriesWithoutMgm` | FA accepts PIN alone | `BudgetRisesOnlyWithItsSecret` |
+| `BugPivSetRetriesWithoutPin` | FA accepts management authentication alone | `BudgetRisesOnlyWithItsSecret` |
+| `BugResetRetryWithoutAdmin` | RESET RETRY P1=02 uses PW1's session as authority | `BudgetRisesOnlyWithItsSecret` |
+| `BugResetCodeWithoutAdmin` | D3 uses PW1's session as authority | `BudgetRisesOnlyWithItsSecret` |
+| `BugKdfWithoutAdmin` | F9 uses PW1's session as authority | `BudgetRisesOnlyWithItsSecret` |
+| `BugKdfWithKeys` | F9 reseeds beside an existing private key | `BudgetRisesOnlyWithItsSecret` |
+
+The three OpenPGP replacement mutants still need a PW1 session to open the
+DEK after removing the PW3 guard. A model that let them refill with no session
+would miss that second gate. D3 and F9 also have a PW3 check in the APDU
+dispatch; their Rust twins remove the helper check only. Direct helper tests
+prove its own contract, while the dispatch continues to refuse the wire call.
+The KDF key-presence mutant uses a spent PW1 count,
+so its counterexample is a forbidden rise beside a key, not merely an unchanged
+budget on a command the policy refuses.
+
+The induction probe admits arbitrary counts **within** their maxima, arbitrary
+statuses, and an inactive RC only with zero tries; every successor must preserve
+those facts. This is stronger than checking reachability from `Init`, but still
+bounded by `Max`. The all-blocked state answers VERIFY with a refusal and is not
+a deadlock. OATH's MAC code and the OTP slot code have no retry counters and
+stay outside this lattice, as do verifier cryptography and wire framing.
 
 ## The fifth module — `RSKeyAppletPolicies.tla`
 
@@ -1859,7 +1869,7 @@ so the kill measured a defence in depth rather than the modelled defect. It now
 widens both layers, and `put_data_c4_refuses_a_user_status` drives the command
 so the outer gate is asserted too.
 
-The live roster is **96 entries: all 90 executable patches killed, six
+The live roster is **103 entries: all 97 executable patches killed, six
 unreachable with recorded evidence.**
 
 ## The sixth module — `RSKeyAdminSurface.tla`
@@ -2709,7 +2719,7 @@ describes. Falsified through the row itself, exit codes taken with no pipe:
 
 | Mutation | What the row said | Exit |
 |---|---|---|
-| the tree as it stands | `253 generated configuration(s) reproduce byte-for-byte, 1 hand-written` | 0 |
+| the tree as it stands | `267 generated configuration(s) reproduce byte-for-byte, 1 hand-written` | 0 |
 | one `BootCarryMut_*.cfg` deleted | `… writes it and formal/ does not have it` | **1** |
 | `MaxWeak = 2` → `1` inside one generated file | `differs … line 5: generator writes '    MaxWeak = 2', the tree has '    MaxWeak = 1'` | **1** |
 | the same edit made in the *generator* instead | 13 rows `differs …` — every `Boot*` configuration | **1** |
@@ -2821,7 +2831,7 @@ to itself.
 
 | Mutation | What the row said | Exit |
 |---|---|---|
-| the tree as it stands | `253 configuration(s) held to 68 entries (26 wildcard families covering 211), 6 ratchets, 1 exempt, 1 counterfactual repair(s)` | 0 |
+| the tree as it stands | `267 configuration(s) held to 68 entries (26 wildcard families covering 225), 6 ratchets, 1 exempt, 1 counterfactual repair(s)` | 0 |
 | `SeamMut_*.cfg` `RED` → `GREEN` | `… requires GREEN, but the configuration switches BugAdminOpensKeyOps on and so owes RED` | **1** |
 | the `SeamSolo_*.cfg` row deleted | `no verdict entry in formal/floors.txt and no registered exemption` | **1** |
 | a broader `SeamMut*` laid above it | `` `SeamMut_*.cfg` never decides anything: … `SeamMut*` matches 19 configuration(s) first `` | **1** |
@@ -3000,7 +3010,8 @@ evidence columns and validated cross-model support edges below on every gate run
 | `SEC-STORE-006` | `NoSilentOrphan` | MODELLED-ONLY | `RSKeyStore` | — | 1 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-001` | `NoAuthWhenBlocked` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-LAT-002` | `WrongAttemptIsCharged` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 1 | 1 | 0 | 0 | 0 |
-| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 4 | 4 | 0 | 0 | 0 |
+| `SEC-LAT-003` | `BudgetRisesOnlyWithItsSecret` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 2 | 9 | 9 | 0 | 0 | 0 |
+| `SEC-LAT-004` | `CountWithinMaximum` | MODELLED-ONLY | `RSKeyRetryLattice` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-POL-001` | `PivOperationNeedsSlotPolicy` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 1 | 0 | 0 | 0 |
 | `SEC-POL-002` | `PivAlwaysSpendsFreshness` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 2 | 2 | 0 | 0 | 0 |
 | `SEC-POL-003` | `AttributeChangeInvalidatesTheKey` | MODELLED-ONLY | `RSKeyAppletPolicies` | — | 1 | 1 | 1 | 0 | 0 | 0 |
@@ -3332,19 +3343,20 @@ than a settled abstraction.
   slot FID is below the type, and outside this bound.
 - **The PIN comparison is a nondeterministic boolean** (`correct`), and the
   counters and their stored maxima run to two (`Max`) where the card's are a
-  byte. OpenPGP's SET PIN RETRIES is modelled, under a PW3 status the module
-  keeps coarsely (a wrong attempt drops it; a card reset, a SELECT elsewhere and
-  the RESET RETRY that ends every status do not, which only keeps it up longer),
-  and with the resetting code always set. RESET RETRY P1 = 0x02, the admin path
-  that replaces PW1, and PIV's own SET RETRIES are outside the model. The
-  cryptography, the PIN bytes and the wire framing are elsewhere; a defect in
-  the comparison itself cannot be seen from here.
+  byte. Administrative doors include OpenPGP F2, RESET RETRY P1=02, D3, KDF
+  reseeding and PIV FA. Status lifetime is coarse; PW1's other mode may stay
+  held after a wrong attempt, and resetting-code presence is tracked separately.
+  KDF key presence is an input rather than a model of key lifetime. Commands are
+  completed and fault-free: a torn F2 increase can leave its new count above the
+  old stored maximum, so CountWithinMaximum is not an all-path firmware claim.
+  Cryptography, PIN bytes, wire framing and interrupted record writes remain
+  outside the abstraction.
   **Disposition: bounded-elsewhere** — `formal/scopes.txt`
-  `RSKeyRetryLattice/Max` (minimum 2, measured on
-  `BudgetRisesOnlyWithItsSecret`). RSKeyRetryLattice/Max is the ceiling every
-  counter and every stored maximum of that module runs under, and the one every
-  mutant of it fires at; the secret is abstracted to matched or not-matched, so
-  the model is the arithmetic around a comparison's answer.
+  `RSKeyRetryLattice/Max` (minimum 2, measured on `CountWithinMaximum`).
+  RSKeyRetryLattice/Max is the ceiling every counter and every stored maximum of
+  that module runs under, and the one every mutant of it fires at; the secret is
+  abstracted to matched or not-matched, so the model is the arithmetic around a
+  comparison's answer.
 - **The capability mask is a set of opaque capabilities**, not the 16-bit
   `USB_ENABLED` bitmask, and the clamp to the supported set is enforced by
   construction rather than checked. The config-lock TLV is present only as the

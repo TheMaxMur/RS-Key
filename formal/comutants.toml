@@ -1020,10 +1020,7 @@ slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
 note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:952."
 
-# SET PIN RETRIES (OpenPGP INS F2): the one door that raises a budget under a
-# status rather than on a presented secret. Its three switches each take one
-# half of the rule SEC-LAT-003 allows it: PW3 held, and the count set to the
-# maximum the command sets.
+# Administrative retry doors: the status guard and the arithmetic it admits.
 
 [comutant.BugSetRetriesWithoutAdmin]
 status = "patch"
@@ -1073,6 +1070,102 @@ replace = """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
 note = "SET PIN RETRIES resetting each named count to the maximum it REPLACES, the maximum written after. Killed by 5 tests in crates/rsk-openpgp/src/retries_tests.rs. Four read the fail-safe face first -- C4 03 00 03 where F2 05 06 07 owed 05 00 07, fewer tries than set. The one that reads TLC's direction is `a_lowered_maximum_takes_a_spent_count_to_itself`: one wrong PW1, PW3 verified, F2 01 00 00 leaves C4 03 00 03 where 01 00 03 was owed (`PW1's count is its new maximum`), three tries over a limit of one -- the counterexample's wrong PW1 then F2 lowering its maximum to 1 with the count raised to the old 2."
+
+[comutant.BugSetRetriesKeepsCount]
+status = "patch"
+file = "crates/rsk-openpgp/src/retries.rs"
+find = """
+            *l = want;
+"""
+replace = """
+            let _ = l;
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "F2 lowers a maximum without lowering its count. Co-refuted: a_lowered_maximum_takes_a_spent_count_to_itself reads [2,0,3] where [1,0,3] was required, the excess-count direction TLC finds. Other failures include fewer tries than requested; they are not the evidence for this property."
+
+[comutant.BugPivSetRetriesWithoutMgm]
+status = "patch"
+file = "crates/rsk-piv/src/lib.rs"
+find = """
+        if !self.sess.has_mgm || !self.sess.has_pin {
+"""
+replace = """
+        if !self.sess.has_pin {
+"""
+slice = ["cargo", "test", "-p", "rsk-piv"]
+expect = "killed"
+note = "PIV FA omits one of its two required statuses. Co-refuted by the corresponding set_retries_requires_* test: 9000 where the request with only the other status required 6982."
+
+[comutant.BugPivSetRetriesWithoutPin]
+status = "patch"
+file = "crates/rsk-piv/src/lib.rs"
+find = """
+        if !self.sess.has_mgm || !self.sess.has_pin {
+"""
+replace = """
+        if !self.sess.has_mgm {
+"""
+slice = ["cargo", "test", "-p", "rsk-piv"]
+expect = "killed"
+note = "PIV FA omits one of its two required statuses. Co-refuted by the corresponding set_retries_requires_* test: 9000 where the request with only the other status required 6982."
+
+[comutant.BugResetRetryWithoutAdmin]
+status = "patch"
+file = "crates/rsk-openpgp/src/pin.rs"
+find = """
+    if !sess.has_pw3 {
+        return Sw::CONDITIONS_NOT_SATISFIED;
+    }
+"""
+replace = """
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "RESET RETRY P1=02 without its PW3 guard. Co-refuted by user_status_does_not_authorise_admin_recovery_doors: the other PW1 mode remains held after a wrong attempt; the command returns 9000 where 6985 was required, refilling that spent shared budget."
+
+[comutant.BugResetCodeWithoutAdmin]
+status = "patch"
+file = "crates/rsk-openpgp/src/pin.rs"
+find = """
+    if !sess.has_pw3 {
+        return Sw::SECURITY_STATUS_NOT_SATISFIED;
+    }
+    if data.is_empty() {
+"""
+replace = """
+    if data.is_empty() {
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "PUT DATA D3 helper without its PW3 guard. Co-refuted by a_user_session_cannot_install_a_reset_code: 9000 where 6982 was required, activating RC under PW1. The dispatch still checks PW3; this direct helper test measures its own guard. The older no-status case only changes 6982 to 6985 and is not the semantic kill."
+
+[comutant.BugKdfWithoutAdmin]
+status = "patch"
+file = "crates/rsk-openpgp/src/kdf.rs"
+find = """
+    if !sess.has_pw3 {
+        return Sw::SECURITY_STATUS_NOT_SATISFIED;
+    }
+"""
+replace = """
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "KDF helper without its PW3 guard. Co-refuted by a_user_session_cannot_reseed_kdf: after PW1 verification and a wrong PW3, it returns 9000 where 6982 was required and refills PW3. The dispatch still guards the wire path; the older no-status test only changes the refusal code."
+
+[comutant.BugKdfWithKeys]
+status = "patch"
+file = "crates/rsk-openpgp/src/kdf.rs"
+find = """
+        Ok(true) => return Sw::CONDITIONS_NOT_SATISFIED,
+"""
+replace = """
+        Ok(true) => {}
+"""
+slice = ["cargo", "test", "-p", "rsk-openpgp"]
+expect = "killed"
+note = "KDF reseeding beside a private key returns the PINs to factory-derived values. Co-refuted by a_card_holding_a_key_refuses_the_do: after a wrong PW1, KDF beside an existing private key restores its count from 2 to 3 where it must remain 2; the refusal guard prevents that budget rise."
 
 # ---- RSKeyAppletPolicies: slot policy, attributes, gates, counter ----------
 

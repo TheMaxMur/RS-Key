@@ -11,21 +11,21 @@
 (* retry counter behind each reference, the maximum it is refilled to, the   *)
 (* recovery reference that can refill it, and the anti-bruteforce arithmetic *)
 (* that is the same at every one -- spend on a wrong attempt, refuse at      *)
-(* zero, refill only on a correct secret, or through OpenPGP's SET PIN       *)
-(* RETRIES while the admin reference PW3 is held.                            *)
+(* zero, refill only on a correct secret or an authorised administrative     *)
+(* command. CountWithinMaximum assumes a history without storage faults.   *)
 (*                                                                           *)
 (* WHY MODEL THIS, and why here rather than by measurement. The applets have *)
 (* a YubiKey oracle and their WIRE surface was attacked with it (~47 group-E *)
 (* findings). The retry ladder has NO safe oracle: measuring a real PUK      *)
-(* ladder to exhaustion BLOCKS the card, and once blocked the only way back  *)
-(* takes the keys. So the one place an exhaustive check of every             *)
-(* verify/block/recover interleaving can run at all is a model. A fourth     *)
+(* ladder to exhaustion blocks that reference, and recovery depends on      *)
+(* other secrets or administrative statuses. The model explores every       *)
+(* verify/block/recover interleaving without risking a real card. A fourth  *)
 (* module and not more of the seam one because the two share no variable --  *)
 (* the seam has statuses and selections, this has counters -- so a product   *)
 (* multiplies state and buys no interleaving, the measured reason the seam   *)
-(* module gave for being a second. SET PIN RETRIES is the one door here that *)
-(* reads a status, so the statuses a VERIFY raises are tracked beside the    *)
-(* counters (`held`), more coarsely than the seam module keeps them.         *)
+(* module gave for being a second. Administrative doors read statuses, so   *)
+(* the statuses a VERIFY raises are tracked beside the counters (`held`),   *)
+(* more coarsely than the seam module keeps them.                           *)
 (*                                                                           *)
 (* THE METHOD is the three siblings': a Guard the Rust tests (mutable by a   *)
 (* Bug* switch) against a Policy the requirement fixes; a step the Policy     *)
@@ -68,7 +68,18 @@ CONSTANTS
     \* SET PIN RETRIES resetting a count to the maximum it REPLACES rather than to
     \* the one it sets (crates/rsk-openpgp/src/retries.rs:65-69): a lowered maximum
     \* over a spent count hands the old maximum's tries back.
-    BugSetRetriesRefillsOldMaximum
+    BugSetRetriesRefillsOldMaximum,
+    \* F2 changes a maximum but leaves its count above the lowered limit.
+    BugSetRetriesKeepsCount,
+    \* PIV FA needs both statuses (crates/rsk-piv/src/lib.rs:609-612).
+    BugPivSetRetriesWithoutMgm,
+    BugPivSetRetriesWithoutPin,
+    \* Each OpenPGP replacement door checks PW3 before load_dek can use PW1.
+    BugResetRetryWithoutAdmin,
+    BugResetCodeWithoutAdmin,
+    BugKdfWithoutAdmin,
+    \* PUT DATA F9 refuses to reseed beside any existing private key.
+    BugKdfWithKeys
 
 \* Every reference that carries a retry counter. PW2 (PW1 mode 0x82) is NOT here:
 \* it shares PW1's verifier and counter (crates/rsk-openpgp/src/pin.rs:709), so it
@@ -84,26 +95,15 @@ Refs == {"pivPin", "pivPuk", "pw1", "pw3", "rc"}
 \* where a wrong one still spends its counter.
 VerifyTargets == {"pivPin", "pw1", "pw3"}
 
-\* The recovery graph a PRESENTED secret draws: which reference's correct
-\* presentation refills the target's counter. PIV's PUK unblocks the PIN (RESET
-\* RETRY COUNTER); OpenPGP's RC unblocks PW1 (RESET RETRY, P1=0). No presented
-\* secret refills `pivPuk`, `pw3` or `rc`. PW3's STATUS refills without one:
-\* SET PIN RETRIES (SetRetries below) gives PW1, the RC and PW3 new tries while
-\* PW3 is held, so a blocked RC comes back that way. A blocked PW3 cannot be held
-\* -- every wrong attempt drops its status -- so it stays terminal with the PUK,
-\* TERMINATE DF / factory RESET the only way back, which the reset models cover.
-\* RESET RETRY P1=0x02, which REPLACES PW1 under PW3's session
-\* (`sess.has_pw3`, crates/rsk-openpgp/src/pin.rs:982), is out: it presents no
-\* secret either, and it is not SET PIN RETRIES.
+\* Presented-secret recovery is distinct from the administrative doors below.
+\* Neither a blocked PW3 nor a PUK has another presented recovery reference;
+\* PIV FA may restore a blocked PUK while the PIN and management key are held.
 RecoveryOf(r) ==
     CASE r = "pivPin" -> {"pivPuk"}
       [] r = "pw1"    -> {"rc"}
       [] OTHER        -> {}
 
-\* The references SET PIN RETRIES (OpenPGP INS F2) names, one byte each: OpenPGP's
-\* three. PIV's PIN and PUK take the applet's own SET RETRIES (INS FA,
-\* crates/rsk-piv/src/lib.rs:609), which resets both references to their defaults
-\* and is not modelled here (MX-LAT-005).
+\* F2 names only OpenPGP's three references. FA has its own action and guard.
 PgpRefs == {"pw1", "rc", "pw3"}
 
 InvNames == { "NoAuthWhenBlocked", "WrongAttemptIsCharged",
@@ -113,22 +113,28 @@ VARIABLES
     retries,  \* [Refs -> 0..Max]: the remaining attempts at each reference
     maxima,   \* [Refs -> 1..Max]: each reference's stored maximum (EF_PW_RETRIES)
     held,     \* the VerifyTargets whose status a correct VERIFY raised and holds
+    mgm,      \* PIV's management-key status, which has no retry counter
+    rcSet,    \* whether a resetting-code verifier exists (not whether blocked)
     viol      \* ghost: the set of invariant names some step has violated
 
-vars == << retries, maxima, held, viol >>
+vars == << retries, maxima, held, mgm, rcSet, viol >>
 
 TypeOK ==
     /\ retries \in [Refs -> 0..Max]
     /\ maxima \in [Refs -> 1..Max]
     /\ held \in SUBSET VerifyTargets
+    /\ mgm \in BOOLEAN
+    /\ rcSet \in BOOLEAN
     /\ viol \in SUBSET InvNames
 
 \* A fresh card: every maximum at the ceiling, every counter at its maximum, no
 \* status held.
 Init ==
     /\ maxima = [r \in Refs |-> Max]
-    /\ retries = [r \in Refs |-> Max]
+    /\ retries = [r \in Refs |-> IF r = "rc" THEN 0 ELSE Max]
     /\ held = {}
+    /\ mgm = FALSE
+    /\ rcSet = FALSE
     /\ viol = {}
 
 (***************************************************************************)
@@ -158,9 +164,13 @@ Verify(r) ==
             spent    == IF doCharge /\ (~BugWrongDoesNotSpend)
                           THEN retries[r] - 1 ELSE retries[r]
         IN /\ retries' = [retries EXCEPT ![r] = IF grants THEN maxima[r] ELSE spent]
-           /\ held' = IF grants THEN held \cup {r}
-                      ELSE IF correct THEN held ELSE held \ {r}
-           /\ UNCHANGED maxima
+           \* PW1 has two modes sharing one counter: a wrong mode may leave the
+           \* other mode's status up (clear_access_status clears only its P2).
+           /\ held' \in IF grants THEN {held \cup {r}}
+                        ELSE IF correct THEN {held}
+                        ELSE IF r = "pw1" THEN {held, held \ {r}}
+                        ELSE {held \ {r}}
+           /\ UNCHANGED << maxima, mgm, rcSet >>
            \* A grant on a reference that was at zero is the whole point of the
            \* blocked floor. It is a step, not a state: the success path refills
            \* the counter to its maximum, so no reachable state shows the exhaustion.
@@ -181,7 +191,7 @@ Verify(r) ==
 Recover(r) ==
     \E via \in RecoveryOf(r), correct \in BOOLEAN :
         LET viaBlocked == retries[via] = 0
-            proceeds   == (~viaBlocked) \/ BugUseWhenBlocked
+            proceeds   == (via # "rc" \/ rcSet) /\ ((~viaBlocked) \/ BugUseWhenBlocked)
             \* the target is refilled iff a usable secret was presented -- a
             \* correct one that got past the floor, or the switch that skips it
             refills    == proceeds /\ (correct \/ BugRecoveryWithoutSecret)
@@ -190,9 +200,9 @@ Recover(r) ==
             spentVia   == IF doCharge /\ (~BugWrongDoesNotSpend)
                             THEN retries[via] - 1 ELSE retries[via]
         IN /\ retries' =
-                IF refills THEN [retries EXCEPT ![r] = maxima[r]]
+                IF refills THEN [retries EXCEPT ![r] = maxima[r], ![via] = maxima[via]]
                            ELSE [retries EXCEPT ![via] = spentVia]
-           /\ UNCHANGED << maxima, held >>
+           /\ UNCHANGED << maxima, held, mgm, rcSet >>
            \* refilling through a blocked recovery reference is the recovery-side
            \* face of the blocked floor; refilling on a WRONG secret is a budget
            \* raised out of nothing.
@@ -210,11 +220,9 @@ Recover(r) ==
 (* (crates/rsk-openpgp/src/retries.rs:33-35), one byte per reference in     *)
 (* PgpRefs -- 0 leaves it as it is, any other value sets its maximum AND its *)
 (* count to that value (crates/rsk-openpgp/src/retries.rs:65-69), a blocked *)
-(* one included. No secret is presented and no status changes. The RC is    *)
-(* always set in this module, its activation abstracted as it always was;   *)
-(* over an unset one F2 stores the maximum and gives no tries                *)
-(* (crates/rsk-openpgp/src/retries.rs:66-67), a step that raises nothing, so *)
-(* leaving it out drops no rise.                                             *)
+(* one included. No secret is presented and no status changes. An unset RC *)
+(* keeps its zero count (crates/rsk-openpgp/src/retries.rs:66-67); D3 sets   *)
+(* its verifier and activates its counter, and KDF reseeding clears it.                                             *)
 (***************************************************************************)
 \* The guard: PW3's status, and the two ways a mutant lets F2 through without it.
 SetRetriesGuard ==
@@ -228,7 +236,8 @@ SetRetries ==
     /\ SetRetriesGuard
     /\ \E b \in [PgpRefs -> 0..Max] :
         LET named(r)   == r \in PgpRefs /\ b[r] # 0
-            newLeft(r) == IF ~named(r) THEN retries[r]
+            newLeft(r) == IF ~named(r) \/ (r = "rc" /\ ~rcSet)
+                             \/ BugSetRetriesKeepsCount THEN retries[r]
                           ELSE IF BugSetRetriesRefillsOldMaximum THEN maxima[r]
                           ELSE b[r]
             \* the requirement: a count this step raises is raised with PW3 held,
@@ -236,71 +245,95 @@ SetRetries ==
             earned(r)  == "pw3" \in held /\ named(r) /\ newLeft(r) = b[r]
         IN /\ maxima' = [r \in Refs |-> IF named(r) THEN b[r] ELSE maxima[r]]
            /\ retries' = [r \in Refs |-> newLeft(r)]
-           /\ UNCHANGED held
+           /\ UNCHANGED << held, mgm, rcSet >>
            /\ viol' = viol
                 \cup (IF \E r \in Refs : newLeft(r) > retries[r] /\ ~earned(r)
                         THEN {"BudgetRisesOnlyWithItsSecret"} ELSE {})
+
+\* Management authentication has no retry budget; its comparison is abstracted.
+ManagementAuth ==
+    /\ mgm' \in BOOLEAN
+    /\ UNCHANGED << retries, maxima, held, rcSet, viol >>
+
+\* FA writes both totals/counts before replacing the PIN and PUK verifiers.
+\* A refused replacement can leave the new counts; the two statuses authorise
+\* that rise already (crates/rsk-piv/src/lib.rs:609-649).
+PivSetRetries ==
+    /\ (mgm \/ BugPivSetRetriesWithoutMgm)
+    /\ ("pivPin" \in held \/ BugPivSetRetriesWithoutPin)
+    /\ \E pinMax \in 1..Max, pukMax \in 1..Max :
+        /\ maxima' = [maxima EXCEPT !["pivPin"] = pinMax, !["pivPuk"] = pukMax]
+        /\ retries' = [retries EXCEPT !["pivPin"] = pinMax, !["pivPuk"] = pukMax]
+        /\ held' = held \ {"pivPin"}
+        /\ UNCHANGED << mgm, rcSet >>
+        /\ viol' = viol \cup
+            (IF (pinMax > retries["pivPin"] \/ pukMax > retries["pivPuk"])
+                    /\ ~(mgm /\ "pivPin" \in held)
+             THEN {"BudgetRisesOnlyWithItsSecret"} ELSE {})
+
+\* RESET RETRY P1=02 replaces PW1 under PW3; no old PW1 is presented.
+\* With the guard removed, PW1 still supplies the session needed by load_dek.
+\* The refilled maximum is unchanged (crates/rsk-openpgp/src/pin.rs:982-999).
+ResetRetryAdmin ==
+    /\ "pw3" \in held \/ (BugResetRetryWithoutAdmin /\ "pw1" \in held)
+    /\ retries' = [retries EXCEPT !["pw1"] = maxima["pw1"]]
+    /\ UNCHANGED << maxima, held, mgm, rcSet >>
+    /\ viol' = viol \cup
+        (IF maxima["pw1"] > retries["pw1"] /\ "pw3" \notin held
+         THEN {"BudgetRisesOnlyWithItsSecret"} ELSE {})
+
+\* PUT DATA D3 activates or clears RC under PW3. Clearing never raises a count.
+\* crates/rsk-openpgp/src/pin.rs:1018-1044.
+PutResetCode ==
+    /\ "pw3" \in held \/ (BugResetCodeWithoutAdmin /\ "pw1" \in held)
+    /\ rcSet' \in BOOLEAN
+    /\ retries' = [retries EXCEPT !["rc"] = IF rcSet' THEN maxima["rc"] ELSE 0]
+    /\ UNCHANGED << maxima, held, mgm >>
+    /\ viol' = viol \cup
+        (IF retries'["rc"] > retries["rc"] /\ "pw3" \notin held
+         THEN {"BudgetRisesOnlyWithItsSecret"} ELSE {})
+
+\* F9 reseeds PW1/PW3 and clears RC only under PW3 and with every key slot empty.
+\* Key presence is an input here, like `correct`; key lifetimes are elsewhere.
+\* crates/rsk-openpgp/src/kdf.rs:142-158, crates/rsk-openpgp/src/kdf.rs:177-184.
+KdfReseed ==
+    /\ "pw3" \in held \/ (BugKdfWithoutAdmin /\ "pw1" \in held)
+    /\ \E keysPresent \in BOOLEAN :
+        /\ ~keysPresent \/ BugKdfWithKeys
+        /\ retries' = [retries EXCEPT !["pw1"] = maxima["pw1"],
+                                       !["pw3"] = maxima["pw3"], !["rc"] = 0]
+        /\ rcSet' = FALSE
+        /\ UNCHANGED << maxima, held, mgm >>
+        /\ viol' = viol \cup
+            (IF (maxima["pw1"] > retries["pw1"] \/ maxima["pw3"] > retries["pw3"])
+                    /\ ("pw3" \notin held \/ keysPresent)
+             THEN {"BudgetRisesOnlyWithItsSecret"} ELSE {})
 
 Next ==
     \/ \E r \in VerifyTargets : Verify(r)
     \/ \E r \in Refs : Recover(r)
     \/ SetRetries
+    \/ ManagementAuth
+    \/ PivSetRetries
+    \/ ResetRetryAdmin
+    \/ PutResetCode
+    \/ KdfReseed
 
 Spec == Init /\ [][Next]_vars
 
-(***************************************************************************)
-(* THE INVARIANTS. All three are ghosts, and honestly so: each is a fact     *)
-(* about a STEP -- "this attempt was granted / charged / refilled" -- not    *)
-(* about a state, because the counter arithmetic erases its own history      *)
-(* (a success refills to the maximum, so the exhaustion a bad grant rode is  *)
-(* gone from every reachable state). The seam module carries the same shape *)
-(* for the same reason; the writers are enumerated so the ghost is only as   *)
-(* strong as a closed list, and the list is checked by the mutants.         *)
-(***************************************************************************)
-
-\* No reference authenticates on an exhausted budget: neither a direct VERIFY at
-\* zero, nor a RESET RETRY that leans on a recovery reference already at zero.
-\* Writers: Verify, Recover.
+\* These three record a step, because a refill erases its preceding exhaustion.
 NoAuthWhenBlocked == "NoAuthWhenBlocked" \notin viol
-
-\* Every wrong attempt against an UNBLOCKED reference spends exactly one from its
-\* counter -- the anti-bruteforce gate. Not "at least one" and not "sometimes":
-\* a wrong VERIFY spends the target's, a wrong RESET RETRY spends the recovery
-\* reference's. Writers: Verify, Recover.
 WrongAttemptIsCharged == "WrongAttemptIsCharged" \notin viol
-
-\* A reference's counter rises only on a correct presentation of a secret -- its
-\* own (a correct VERIFY refills it to its maximum) or its recovery reference's (a
-\* correct RESET RETRY does) -- or when OpenPGP's SET PIN RETRIES, with the admin
-\* reference PW3 held, sets a new maximum for it, and then to that maximum. Never
-\* out of nothing: not on a wrong recovery secret, not under the user's status
-\* alone, not with no status at all, not to a count the step did not set.
-\* Writers: Recover, SetRetries. VERIFY raises a counter only through `correct`,
-\* so it is not one.
 BudgetRisesOnlyWithItsSecret == "BudgetRisesOnlyWithItsSecret" \notin viol
 
-(***************************************************************************)
-(* THE INDUCTION PROBE. Everything above is checked over what `Init` can     *)
-(* REACH. `LatInduction.cfg` asks the stronger question with the same        *)
-(* checker: does one step from ANY type-correct state the three invariants   *)
-(* admit land in one that still does?                                        *)
-(*                                                                           *)
-(* Here the answer is cheap to predict and was still worth measuring, because *)
-(* the three are STEP recorders: a state satisfying them carries `viol = {}`  *)
-(* and nothing else, so the probe's initial states are every counter,        *)
-(* maximum and status assignment rather than the ones a ladder can reach --  *)
-(* counts above their maximum among them. That is the whole difference        *)
-(* between this row and `Lattice.cfg`, and it is the one that matters for     *)
-(* the source obligation: an inductive invariant needs no reachability        *)
-(* argument, which is what a deductive prover would be bought for.            *)
-(*                                                                           *)
-(* What it still does NOT give is the maximum. `Max` is a TLC CONSTANT, so a  *)
-(* GREEN row here is GREEN at that one value; the production ceiling is the   *)
-(* `u8` stored beside each counter, and it is                                 *)
-(* `crates/rsk-piv/src/retry_lattice_kani.rs` that ranges over all 256 of     *)
-(* them, against the functions VERIFY and RESET RETRY COUNTER call.           *)
-(***************************************************************************)
+\* In fault-free histories from Init or an in-bound state. A torn F2 increase
+\* can leave its new count under the old maximum: its count write leads.
+CountWithinMaximum == \A r \in Refs : retries[r] <= maxima[r]
+
+\* One step from any admitted counter/maximum/status assignment. The bound is
+\* a state invariant, so this probe excludes counts already above their maxima.
 IndInv == TypeOK /\ NoAuthWhenBlocked /\ WrongAttemptIsCharged
-            /\ BudgetRisesOnlyWithItsSecret
+            /\ BudgetRisesOnlyWithItsSecret /\ CountWithinMaximum
+            /\ (~rcSet => retries["rc"] = 0)
 
 =============================================================================

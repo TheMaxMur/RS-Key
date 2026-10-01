@@ -27,8 +27,8 @@ const REFS: [u16; 3] = [EF_PW1, EF_RC, EF_PW3];
 /// SET PIN RETRIES. Each byte of `data` is one reference's: 1..=255 makes it that
 /// reference's maximum and its tries left, a blocked PIN unblocked with its value
 /// kept; 0 leaves both. With no resetting code set, the code's maximum is kept and
-/// its counter stays 0 until PUT DATA D3 starts it there. P1 and P2 are not judged,
-/// and neither a PIN nor PW3's status changes.
+/// its counter stays 0 until PUT DATA D3 starts it there. P1 and P2 are not judged.
+/// Refines `RSKeyRetryLattice!CountWithinMaximum` — SEC-LAT-004 (fault-free histories).
 pub fn set_pin_retries<S: Storage>(fs: &mut Fs<S>, sess: &Session, data: &[u8]) -> Sw {
     if !sess.has_pw3 {
         return Sw::SECURITY_STATUS_NOT_SATISFIED;

@@ -11046,3 +11046,15 @@ mod mgmkey;
 /// module's fixtures.
 #[path = "ecdsa_tests.rs"]
 mod ecdsa;
+
+#[test]
+fn set_retries_requires_mgmt_not_just_pin() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    let (sw, _) = run(&mut app, &mut fs, INS_SET_RETRIES, 5, 4, &[]);
+    assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
+}

@@ -107,8 +107,9 @@ RSKeyAppletPolicies    Slots                  2   OtpCounterNeverRepeats
 \* SET PIN RETRIES resetting a count to the maximum it replaces is only a defect
 \* where there are two maxima to tell apart. The witness,
 \* BugSetRetriesRefillsOldMaximum, explores its whole space at `Max = 1` with no
-\* counterexample and falls at two; every other lattice mutant fires at one.
-RSKeyRetryLattice      Max                    2   BudgetRisesOnlyWithItsSecret
+\* counterexample and falls at two. BugSetRetriesKeepsCount likewise needs two
+\* maxima to lower a bound below the count it leaves unchanged.
+RSKeyRetryLattice      Max                    2   CountWithinMaximum
 
 \* --- where a single element is enough ---------------------------------------
 \* Every mutant of these two fires over one element; the shipped values are the

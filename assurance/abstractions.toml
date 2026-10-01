@@ -348,13 +348,14 @@ comparison's answer.
 body = '''
 - **The PIN comparison is a nondeterministic boolean** (`correct`), and the
   counters and their stored maxima run to two (`Max`) where the card's are a
-  byte. OpenPGP's SET PIN RETRIES is modelled, under a PW3 status the module
-  keeps coarsely (a wrong attempt drops it; a card reset, a SELECT elsewhere and
-  the RESET RETRY that ends every status do not, which only keeps it up longer),
-  and with the resetting code always set. RESET RETRY P1 = 0x02, the admin path
-  that replaces PW1, and PIV's own SET RETRIES are outside the model. The
-  cryptography, the PIN bytes and the wire framing are elsewhere; a defect in
-  the comparison itself cannot be seen from here.
+  byte. Administrative doors include OpenPGP F2, RESET RETRY P1=02, D3, KDF
+  reseeding and PIV FA. Status lifetime is coarse; PW1's other mode may stay
+  held after a wrong attempt, and resetting-code presence is tracked separately.
+  KDF key presence is an input rather than a model of key lifetime. Commands are
+  completed and fault-free: a torn F2 increase can leave its new count above the
+  old stored maximum, so CountWithinMaximum is not an all-path firmware claim.
+  Cryptography, PIN bytes, wire framing and interrupted record writes remain
+  outside the abstraction.
 '''
 
 [[abstraction]]

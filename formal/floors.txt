@@ -75,7 +75,7 @@ Store.cfg                            GREEN   121
 \* The retry/recovery lattice (RSKeyRetryLattice): five budgeted references,
 \* each with a stored maximum under a ceiling of two, and the statuses SET PIN
 \* RETRIES reads -- a third of the distinct count is the floor here too.
-Lattice.cfg                          GREEN   748
+Lattice.cfg                          GREEN   8306
 \* Four-app operation policies (RSKeyAppletPolicies), separate from the real
 \* PIV/OpenPGP retry counters. A third of the measured distinct count is the
 \* floor, the same rule as its siblings; the measurement itself is the results
@@ -331,14 +331,11 @@ StoreInduction.cfg                   GREEN   1000
 StoreInductionMut_*.cfg              RED     -
 LatMut_*.cfg                         RED     -
 LatSolo_*.cfg                        RED     -
-\* The lattice's induction probe. Unlike the store's it FOUND nothing: the three
-\* invariants are step recorders, so a state satisfying them carries `viol = {}`
-\* and no other conjunct is needed -- `IndInv` is `TypeOK /\ viol = {}` and one
-\* step of `Next` never leaves it. The floor is the count of type-correct states
-\* the predicate admits at `Max = 2` -- 3^5 counts times 2^5 maxima over the five
-\* references, times the 2^3 status sets -- because below it the predicate
-\* stopped admitting what it admits.
-LatInduction.cfg                     GREEN   62208
+\* The lattice's induction probe ranges over in-bound counts, both management
+\* statuses and both RC-presence states; an absent RC must have zero tries.
+\* Four ordinary references each admit five (maximum, count) pairs at Max=2;
+\* RC admits five installed pairs plus two absent pairs. Status sets add 2^4.
+LatInduction.cfg                     GREEN   70000
 \* One mutant, for the reason the store family's row gives.
 LatInductionMut_*.cfg                RED     -
 PolicyMut_*.cfg                      RED     -
