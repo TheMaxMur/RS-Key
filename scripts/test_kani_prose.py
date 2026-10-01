@@ -108,35 +108,35 @@ def test_the_shipped_page_matches_the_shipped_runner():
 
 def test_a_floor_the_runner_raised_leaves_the_page_behind():
     """The rot itself: a harness lands, `kani.sh` moves, the prose does not."""
-    moved = runner().replace("FLOOR_all=94", "FLOOR_all=95")
-    assert "FLOOR_all=95" in moved, "fixture no longer matches the runner"
+    moved = runner().replace("FLOOR_all=96", "FLOOR_all=97")
+    assert "FLOOR_all=97" in moved, "fixture no longer matches the runner"
     found = problems(page(), moved)
-    assert any("`FLOOR_all` of 94" in p and "95" in p for p in found), found
+    assert any("`FLOOR_all` of 96" in p and "97" in p for p in found), found
 
 
 def test_a_number_the_page_mistypes_is_caught():
-    stale = page().replace("`FLOOR_all` of 94", "`FLOOR_all` of 89")
+    stale = page().replace("`FLOOR_all` of 96", "`FLOOR_all` of 89")
     assert "of 89" in stale, "fixture no longer matches the page"
     found = problems(stale, runner())
-    assert any("`FLOOR_all` of 89" in p and "94" in p for p in found), found
+    assert any("`FLOOR_all` of 89" in p and "96" in p for p in found), found
 
 
 def test_deleting_the_clause_does_not_leave_it_green():
     """The deletion arm: the sentence removed, not re-typed."""
-    gone = flat(page()).replace("today's `FLOOR_all` of 94", "today's roster")
+    gone = flat(page()).replace("today's `FLOOR_all` of 96", "today's roster")
     found = problems(gone, runner())
     assert any("no longer states" in p and "FLOOR_all" in p for p in found), found
 
 
 def test_the_shape_that_rotted_is_refused_outright():
-    loose = page().replace("today's `FLOOR_light1` of 32", "today's 32")
+    loose = page().replace("today's `FLOOR_light1` of 34", "today's 34")
     found = problems(loose, runner())
     assert any("bare count" in p for p in found), found
 
 
 def test_a_ratchet_the_runner_does_not_define_is_a_finding_not_a_skip():
     """A mistyped tier would otherwise match no floor and be checked against none."""
-    typo = page().replace("`FLOOR_light1` of 32", "`FLOOR_lite1` of 32")
+    typo = page().replace("`FLOOR_light1` of 34", "`FLOOR_lite1` of 34")
     found = problems(typo, runner())
     assert any("does not define" in p and "FLOOR_lite1" in p for p in found), found
 
@@ -153,6 +153,6 @@ def test_a_rewrap_does_not_take_the_guard_off_the_sentence():
 
     the two places — both were live holes before `flat` existed.
     """
-    wrapped = page().replace("today's `FLOOR_light1` of 32", "today's\n**`FLOOR_light1`**\nof 32")
+    wrapped = page().replace("today's `FLOOR_light1` of 34", "today's\n**`FLOOR_light1`**\nof 34")
     assert problems(wrapped, runner()) == []
-    assert problems(wrapped.replace("of 32", "of 27"), runner())
+    assert problems(wrapped.replace("of 34", "of 27"), runner())

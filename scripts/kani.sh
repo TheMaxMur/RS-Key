@@ -132,13 +132,13 @@ STATEFUL="rsk-fido rsk-fs"
 # deleting a harness and pasting the new number is self-consistent, and only
 # the diff shows it.
 FLOOR_pr=65
-FLOOR_state=29
-FLOOR_all=94
+FLOOR_state=31
+FLOOR_all=96
 # The four weekly rows partition `all`, so these sum to FLOOR_all and the guard
 # checks each against the tree the same way. A harness that moves between shards
 # has to move a number with it.
 FLOOR_heavy=5
-FLOOR_light1=32
+FLOOR_light1=34
 FLOOR_light2=29
 FLOOR_light3=28
 

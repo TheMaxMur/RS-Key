@@ -47,3 +47,7 @@ impl Policy {
         Ok(Self::decode(head.get(..n).unwrap_or(&[])))
     }
 }
+
+#[cfg(kani)]
+#[path = "pinpolicy_kani.rs"]
+mod proofs;
