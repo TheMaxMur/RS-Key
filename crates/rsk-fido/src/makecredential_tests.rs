@@ -26,6 +26,70 @@ impl Rng for SeqRng {
 // Every makeCredential ships packed basic attestation with the device x5c.
 const ATT_FMT: &str = "packed";
 
+#[test]
+fn all_extension_outputs_fit_the_makecredential_buffer() {
+    let bytes = build_request(false);
+    let mut req = parse(&bytes).unwrap();
+    req.ext_uvm = true;
+    req.ext_cred_blob = &[0xaa];
+    req.ext_cred_protect = Some(3);
+    req.ext_hmac_secret = true;
+    req.ext_min_pin_length = true;
+    req.ext_pin_complexity = true;
+    let rp_hash = sha256(req.rp_id.as_bytes());
+    let mut fs = Fs::new(RamStorage::new());
+    let mut policy = vec![crate::consts::MIN_PIN_LENGTH, crate::pinpolicy::COMPLEXITY];
+    policy.extend_from_slice(&rp_hash);
+    fs.put(EF_MINPINLEN, &policy).unwrap();
+    #[cfg(feature = "preview-sign")]
+    let preview = {
+        let mut enc = Encoder::new(Cursor::new([0u8; 32]));
+        enc.map(1)
+            .unwrap()
+            .u8(3)
+            .unwrap()
+            .array(1)
+            .unwrap()
+            .i64(crate::consts::ALG_ESP256_SPLIT_ARKG)
+            .unwrap();
+        let n = enc.writer().position();
+        let bytes = enc.into_writer().into_inner();
+        let input = &bytes[..n];
+        let input = previewsign::parse_mc(&mut Decoder::new(input)).unwrap();
+        let key = previewsign::negotiate(&input, i64::from(crate::consts::CURVE_P256))
+            .unwrap()
+            .unwrap();
+        previewsign::generate(&[0x42; 32], b"credential", &rp_hash, key, &mut SeqRng(1)).unwrap()
+    };
+    #[cfg(feature = "preview-sign")]
+    previewsign::write_mc_ext(
+        &mut Encoder::new(Cursor::new([0u8; previewsign::MC_EXT_MAX])),
+        &preview,
+    )
+    .unwrap();
+    let mut out = [0u8; MC_EXT_MAX];
+    let n = encode_mc_extensions(
+        &mut fs,
+        &req,
+        &rp_hash,
+        &[0xaa; SALT_ENC_MAX],
+        crate::uvm::Method::PasscodeExternal,
+        true,
+        #[cfg(feature = "preview-sign")]
+        Some(&preview),
+        &mut out,
+    )
+    .unwrap();
+    let mut d = Decoder::new(&out[..n]);
+    let entries = d.map().unwrap().unwrap();
+    assert_eq!(entries, 7 + u64::from(cfg!(feature = "preview-sign")));
+    for _ in 0..entries {
+        d.str().unwrap();
+        d.skip().unwrap();
+    }
+    assert_eq!(d.position(), n);
+}
+
 fn build_request(rk: bool) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 512];
     let n = {

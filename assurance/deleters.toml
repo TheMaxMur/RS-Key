@@ -107,7 +107,7 @@ why = "the record IS the configuration lock; a verifier that survives a clear ke
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
-line = 351
+line = 355
 call = "ctx.fs.delete(EF_ALWAYS_UV).map_err(|_| CtapError::Other)?;"
 verb = "delete"
 answer = "read"
@@ -118,7 +118,7 @@ why = "the record IS the alwaysUv policy, and toggleAlwaysUv's whole effect is m
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
-line = 388
+line = 392
 call = ".and_then(|()| ctx.fs.delete_key(EF_KEY_DEV))"
 verb = "delete_key"
 answer = "read"
@@ -129,7 +129,7 @@ why = "AUT_ENABLE wraps the seed and then drops the plain copy: a survivor means
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
-line = 428
+line = 432
 call = ".delete_key(EF_KEY_DEV_ENC)"
 verb = "delete_key"
 answer = "read"
@@ -140,7 +140,7 @@ why = "AUT_DISABLE's mirror — a surviving wrapped copy keeps lock_engaged true
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
-line = 441
+line = 445
 call = "ctx.fs.delete(EF_EA_RPIDS).map_err(|_| CtapError::Other)?;"
 verb = "delete"
 answer = "read"
@@ -239,7 +239,7 @@ why = "the blob is AAD-bound to its credential slot, so the slot's next owner ca
 
 [[site]]
 file = "crates/rsk-fido/src/passkeys.rs"
-line = 194
+line = 193
 call = "let _ = fs.delete(EF_RPNICK + slot); // absent is fine — the RP ends up unnamed"
 verb = "delete"
 answer = "discarded"
@@ -250,7 +250,7 @@ why = "clearing a display-only label: a survivor keeps the old nickname on the p
 
 [[site]]
 file = "crates/rsk-fido/src/passkeys.rs"
-line = 289
+line = 288
 call = "if fs.delete(ef_cred_fid).is_err() {"
 verb = "delete"
 answer = "read"

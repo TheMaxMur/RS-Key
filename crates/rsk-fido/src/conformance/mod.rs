@@ -37,6 +37,7 @@ mod largeblobs;
 mod makecredential;
 mod multialg;
 mod pin;
+mod policy;
 mod reset;
 mod selection;
 mod stateful;

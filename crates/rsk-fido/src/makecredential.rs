@@ -72,7 +72,10 @@ const MAX_EXCLUDE: usize = MAX_CREDENTIAL_LIST_LEN;
 /// credIdLen(2).
 const AUTH_DATA_HEADER: usize = 32 + 1 + 4 + 16 + 2;
 /// Ceiling of `encode_mc_extensions`' output (its scratch buffer, below).
+#[cfg(not(feature = "preview-sign"))]
 const MC_EXT_MAX: usize = 192;
+#[cfg(feature = "preview-sign")]
+const MC_EXT_MAX: usize = 192 + previewsign::MC_EXT_MAX;
 /// Largest AKP COSE public key `cose_public` emits — the ML-DSA-87 case: a
 /// 3-entry map (1) with kty (1+1), alg −50 (1+2) and the 2592-byte pk wrapped as
 /// key −1 (1) + a >255-byte CBOR byte-string header (3) → 10 + pk = 2602.
@@ -161,6 +164,8 @@ pub(crate) struct Request<'a> {
     ext_cred_protect: Option<u64>,
     ext_cred_blob: &'a [u8],
     ext_min_pin_length: bool,
+    ext_pin_complexity: bool,
+    ext_uvm: bool,
     ext_third_party_payment: bool,
     ext_hmac_secret: bool,
     ext_large_blob_key: Option<bool>,
@@ -211,6 +216,8 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         ext_cred_protect: None,
         ext_cred_blob: &[],
         ext_min_pin_length: false,
+        ext_pin_complexity: false,
+        ext_uvm: false,
         ext_third_party_payment: false,
         ext_hmac_secret: false,
         ext_large_blob_key: None,
@@ -364,6 +371,8 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
             "credProtect" => req.ext_cred_protect = Some(cbor(d.u32())? as u64),
             "credBlob" => req.ext_cred_blob = cbor(d.bytes())?,
             "minPinLength" => req.ext_min_pin_length = cbor(d.bool())?,
+            "pinComplexityPolicy" => req.ext_pin_complexity = cbor(d.bool())?,
+            "uvm" => req.ext_uvm = cbor(d.bool())?,
             "thirdPartyPayment" => req.ext_third_party_payment = cbor(d.bool())?,
             "hmac-secret" => req.ext_hmac_secret = cbor(d.bool())?,
             "hmac-secret-mc" => req.hmac_secret_mc = hmacsecret::parse(d)?,
@@ -603,7 +612,7 @@ fn enforce_pin<S: Storage, R: Rng>(
                 ctx.state.paut.rp_id_hash = *rp_id_hash;
                 ctx.state.paut.has_rp_id = true;
             }
-            Ok(UvOutcome::TOKEN)
+            Ok(UvOutcome::token(ctx.state.paut.uv_method))
         }
         None => {
             let always_uv = crate::config::always_uv_enabled(ctx.fs);
@@ -740,20 +749,6 @@ fn make_credential_inner<S: Storage, R: Rng>(
         0
     };
 
-    // authData extension output (credBlob / credProtect / hmac-secret / minPinLength / hmac-secret-mc).
-    let mut ext = [0u8; MC_EXT_MAX];
-    let hmac_mc = hs.get(..hs_len).ok_or(CtapError::Other)?;
-    let ext_len = encode_mc_extensions(
-        ctx.fs,
-        req,
-        rp_id_hash,
-        hmac_mc,
-        #[cfg(feature = "preview-sign")]
-        preview_key.as_ref(),
-        &mut ext,
-    )?;
-    let ed = if ext_len > 0 { FLAG_ED } else { 0 };
-
     // §6.1.2 user presence: makeCredential's `up` is implicitly true and cannot
     // be disabled, so a configured button is ALWAYS polled before creating the
     // credential — matching getAssertion — even on the no-PIN path (e.g. an SSH
@@ -771,6 +766,22 @@ fn make_credential_inner<S: Storage, R: Rng>(
         .needs_confirm(ctx.presence.shows_confirm())
         .then(|| crate::Confirm::register(req.rp_id.as_bytes(), req.user_name.as_bytes()));
     let up = ctx.user_presence_test(req, ask)?;
+
+    // authData extension output (credBlob / credProtect / hmac-secret / minPinLength / hmac-secret-mc).
+    let mut ext = [0u8; MC_EXT_MAX];
+    let hmac_mc = hs.get(..hs_len).ok_or(CtapError::Other)?;
+    let ext_len = encode_mc_extensions(
+        ctx.fs,
+        req,
+        rp_id_hash,
+        hmac_mc,
+        verified.method,
+        up.bits() != 0,
+        #[cfg(feature = "preview-sign")]
+        preview_key.as_ref(),
+        &mut ext,
+    )?;
+    let ed = if ext_len > 0 { FLAG_ED } else { 0 };
 
     // authData = rpIdHash | flags | counter | aaguid | credIdLen | credId | COSEpubkey | ext.
     // Worst case (ML-DSA-65): AUTH_DATA_HEADER(55) + CRED_BOX_MAX(748) +
@@ -1294,24 +1305,41 @@ fn exclude_hit<S: Storage>(
 /// Build the makeCredential authData extension map (credBlob bool / credProtect /
 /// hmac-secret / minPinLength / hmac-secret-mc) into `out`; returns its length
 /// (0 if none apply). `hmac_mc` is the already-evaluated hmac-secret-mc output.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "extension output binds the requested inputs to the actual ceremony factors"
+)]
 fn encode_mc_extensions<S: Storage>(
     fs: &mut Fs<S>,
     req: &Request,
     rp_id_hash: &[u8; 32],
     hmac_mc: &[u8],
+    method: crate::uvm::Method,
+    up: bool,
     #[cfg(feature = "preview-sign")] preview: Option<&previewsign::GeneratedKey>,
     out: &mut [u8],
 ) -> Result<usize, CtapError> {
     let blob_present = !req.ext_cred_blob.is_empty();
-    let min_pin = if req.ext_min_pin_length {
+    let min_pin = if req.ext_min_pin_length || req.ext_pin_complexity {
         rp_min_pin_len(fs, rp_id_hash)
     } else {
         0
     };
-    let l = u64::from(blob_present)
+    let complexity = if req.ext_pin_complexity && min_pin > 0 {
+        Some(
+            crate::pinpolicy::Policy::read(fs)
+                .map_err(|_| CtapError::Other)?
+                .complexity,
+        )
+    } else {
+        None
+    };
+    let l = u64::from(req.ext_uvm)
+        + u64::from(complexity.is_some())
+        + u64::from(blob_present)
         + u64::from(req.ext_cred_protect.is_some())
         + u64::from(req.ext_hmac_secret)
-        + u64::from(min_pin > 0)
+        + u64::from(req.ext_min_pin_length && min_pin > 0)
         + u64::from(!hmac_mc.is_empty());
     #[cfg(feature = "preview-sign")]
     let l = l + u64::from(preview.is_some());
@@ -1320,6 +1348,9 @@ fn encode_mc_extensions<S: Storage>(
     }
     let mut enc = Encoder::new(Cursor::new(out));
     enc.map(l).map_err(|_| CtapError::Other)?;
+    if req.ext_uvm {
+        crate::uvm::write(&mut enc, method, up).map_err(|_| CtapError::Other)?;
+    }
     if blob_present {
         // The flag reports whether the blob was short enough to seal — inclusive of
         // the advertised maxCredBlobLength, matching `CredExt::cred_blob_ok`.
@@ -1342,7 +1373,7 @@ fn encode_mc_extensions<S: Storage>(
     if let Some(key) = preview {
         previewsign::write_mc_ext(&mut enc, key).map_err(|_| CtapError::Other)?;
     }
-    if min_pin > 0 {
+    if req.ext_min_pin_length && min_pin > 0 {
         enc.str("minPinLength")
             .and_then(|e| e.u8(min_pin))
             .map_err(|_| CtapError::Other)?;
@@ -1352,10 +1383,15 @@ fn encode_mc_extensions<S: Storage>(
             .and_then(|e| e.bytes(hmac_mc))
             .map_err(|_| CtapError::Other)?;
     }
+    if let Some(enabled) = complexity {
+        enc.str("pinComplexityPolicy")
+            .and_then(|e| e.bool(enabled))
+            .map_err(|_| CtapError::Other)?;
+    }
     Ok(enc.writer().position())
 }
 
-/// The per-RP minimum PIN length from EF_MINPINLEN (`[len, force, rpIdHash…]`), or
+/// The per-RP minimum PIN length from EF_MINPINLEN (`[len, flags, rpIdHash…]`), or
 /// 0 if this rp is not in the authorised list (set via authenticatorConfig).
 fn rp_min_pin_len<S: Storage>(fs: &mut Fs<S>, rp_id_hash: &[u8; 32]) -> u8 {
     let mut buf = [0u8; 2 + 32 * MAX_MIN_PIN_RPIDS];

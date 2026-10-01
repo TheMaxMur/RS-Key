@@ -23,10 +23,6 @@ use crate::credential::{
     credential_load, seal_nick, slot_map, unseal_nick, unseal_rp_id,
 };
 
-/// The trivial-PIN predicate the `strong-pin` / `fips-profile` builds enforce, re-exported
-/// so the display PIN pad rejects a guessable PIN at entry (the host path already does).
-#[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
-pub use crate::clientpin::pin_is_trivial;
 /// The device-local PIN seam for a display-initiated action, re-exported here so the
 /// trusted display reaches the whole on-device Passkeys/PIN seam — read walks,
 /// [`delete_cred`], the PIN check ([`spend_and_verify_local_pin`]) and the on-device set/change
@@ -38,6 +34,9 @@ pub use crate::clientpin::{
     min_pin_length, pin_is_set, pin_retries_left, spend_and_verify_device_pin,
     spend_and_verify_local_pin, store_device_pin, store_local_pin,
 };
+/// The trivial-PIN predicate the `strong-pin` / `fips-profile` builds enforce, re-exported
+/// so the display PIN pad rejects a guessable PIN at entry (the host path already does).
+pub use crate::clientpin::{pin_complexity_enabled, pin_is_trivial};
 /// The compile-time PIN-length floor (CTAP default 4, or the `fips-profile` minimum) that
 /// [`store_device_pin`] enforces — the trusted-display device-PIN pad must use it as its
 /// floor so a set the user types can actually be stored.

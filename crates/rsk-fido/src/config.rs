@@ -19,7 +19,7 @@ use crate::consts::{
     CONFIG_PHY_LED_BRIGHTNESS, CONFIG_PHY_LED_GPIO, CONFIG_PHY_OPTIONS, CONFIG_PHY_VIDPID,
     CONFIG_SET_MIN_PIN, CONFIG_TARGET_PHY, CONFIG_TOGGLE_ALWAYS_UV, CONFIG_VENDOR, CTAP_CONFIG,
     EF_ALWAYS_UV, EF_EA_ENABLED, EF_EA_RPIDS, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_MINPINLEN, EF_PIN,
-    MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS, MAX_RAW_SUBPARA, MIN_PIN_LENGTH,
+    MAX_EA_RPIDS, MAX_MIN_PIN_RPIDS, MAX_RAW_SUBPARA,
 };
 use crate::error::{CtapError, CtapResult};
 use crate::journal;
@@ -64,6 +64,7 @@ struct Req<'a> {
     pin_uv_auth_param: Option<&'a [u8]>,
     new_min_pin: u64,
     force_change: bool,
+    pin_complexity: bool,
     rp_ids: [&'a str; MAX_MIN_PIN_RPIDS],
     rp_ids_len: usize,
     /// The list did not fit `MAX_MIN_PIN_RPIDS`. Reported as `KEY_STORE_FULL` by
@@ -94,6 +95,7 @@ fn parse(data: &[u8]) -> Result<Req<'_>, CtapError> {
         pin_uv_auth_param: None,
         new_min_pin: 0,
         force_change: false,
+        pin_complexity: false,
         rp_ids: [""; MAX_MIN_PIN_RPIDS],
         rp_ids_len: 0,
         rp_ids_overflow: false,
@@ -172,6 +174,7 @@ fn parse_min_pin_sub<'a>(d: &mut Decoder<'a>, req: &mut Req<'a>, sk: u64) -> Res
             }
         }
         3 => req.force_change = cbor(d.bool())?,
+        4 => req.pin_complexity = cbor(d.bool())?,
         _ => skip_value(d)?,
     }
     Ok(())
@@ -261,6 +264,7 @@ pub fn authenticator_config<S: Storage, R: Rng>(
             ctx,
             req.new_min_pin,
             req.force_change,
+            req.pin_complexity,
             &req.rp_ids[..req.rp_ids_len],
         ),
         CONFIG_VENDOR => match req.vendor_id {
@@ -457,9 +461,11 @@ fn set_min_pin_length<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     new_min_pin: u64,
     force_change: bool,
+    pin_complexity: bool,
     rp_ids: &[&str],
 ) -> CtapResult {
-    let current = current_min_pin(ctx).map_err(|_| CtapError::Other)? as u64;
+    let policy = crate::pinpolicy::Policy::read(ctx.fs).map_err(|_| CtapError::Other)?;
+    let current = policy.min as u64;
     let new_min = if new_min_pin == 0 {
         current
     } else {
@@ -486,7 +492,7 @@ fn set_min_pin_length<S: Storage, R: Rng>(
         return Err(CtapError::PinNotSet);
     }
     // A PIN shorter than the new minimum must be changed before next use.
-    let mut force = force_change;
+    let mut force = policy.force || force_change;
     if pin_set {
         let mut pf = [0u8; crate::clientpin::PIN_FILE_LEN];
         if let Some(n) = ctx
@@ -503,13 +509,36 @@ fn set_min_pin_length<S: Storage, R: Rng>(
         ctx.state.reset_pin_uv_auth_token(ctx.rng);
         crate::seed::clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
     }
-    // EF_MINPINLEN = [minPINLength, forceChangePin, sha256(rpId)…]; the rp hash
+    // EF_MINPINLEN = [minPINLength, flags, sha256(rpId)…]; the rp hash
     // list authorises those RPs to read minPINLength via the makeCredential
     // extension.
     let mut data = [0u8; 2 + 32 * MAX_MIN_PIN_RPIDS];
     data[0] = new_min as u8;
-    data[1] = u8::from(force);
+    data[1] = crate::pinpolicy::Policy {
+        min: new_min as u8,
+        force,
+        complexity: policy.complexity || pin_complexity,
+    }
+    .flags();
     let mut len = 2;
+    if rp_ids.is_empty() {
+        let mut old = [0u8; 2 + 32 * MAX_MIN_PIN_RPIDS];
+        if let Some(n) = ctx
+            .fs
+            .try_read(EF_MINPINLEN, &mut old)
+            .map_err(|_| CtapError::Other)?
+        {
+            if n > old.len() {
+                return Err(CtapError::KeyStoreFull);
+            }
+            if let Some(hashes) = old.get(2..n) {
+                data.get_mut(2..n)
+                    .ok_or(CtapError::Other)?
+                    .copy_from_slice(hashes);
+                len = n;
+            }
+        }
+    }
     for id in rp_ids {
         data[len..len + 32].copy_from_slice(&sha256(id.as_bytes()));
         len += 32;
@@ -524,18 +553,6 @@ fn set_min_pin_length<S: Storage, R: Rng>(
         &[u8::from(force)],
     );
     Ok(0)
-}
-
-/// The standing floor the monotonic guard compares against. Fallible on purpose: the
-/// collapsed answer is the build's [`MIN_PIN_LENGTH`], which sits below any floor an
-/// owner configured, so a faulted probe let the guard pass and stored the LOWER value
-/// — and nothing short of a reset raises minPINLength back.
-fn current_min_pin<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> rsk_sdk::error::Result<u8> {
-    let mut buf = [0u8; 2];
-    Ok(match ctx.fs.try_read(EF_MINPINLEN, &mut buf)? {
-        Some(n) if n >= 1 => buf[0],
-        _ => MIN_PIN_LENGTH,
-    })
 }
 
 #[cfg(test)]

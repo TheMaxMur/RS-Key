@@ -285,6 +285,26 @@ fn the_pad_never_yields_mid_entry() {
 // --- set / change PIN ------------------------------------------------------
 
 #[test]
+fn a_nontrivial_fido_pin_is_still_accepted_with_complexity_enabled() {
+    let env = Env::new();
+    env.fs
+        .borrow_mut()
+        .put(
+            rsk_fido::consts::EF_MINPINLEN,
+            &[rsk_fido::consts::MIN_PIN_LENGTH, 2],
+        )
+        .unwrap();
+    let mut taps = pin_entry(PIN);
+    taps.extend(pin_entry(PIN));
+    let mut ui = env.ui(Pad::taps(&taps));
+    env.local(&mut ui).run_set_pin(PinScope::Fido);
+    assert!(matches!(
+        rsk_fido::passkeys::spend_and_verify_local_pin(&dev(), &mut env.fs.borrow_mut(), PIN),
+        rsk_fido::passkeys::LocalPin::Ok
+    ));
+}
+
+#[test]
 fn a_mismatched_confirmation_stores_nothing() {
     let env = Env::new();
     let mut taps = pin_entry(PIN);

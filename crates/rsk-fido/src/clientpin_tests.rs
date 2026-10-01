@@ -13,6 +13,121 @@ use rsk_fs::Fs;
 use rsk_fs::storage::faults::{Cut, CutMedium, ProbeStuck};
 use rsk_fs::storage::ram::RamStorage;
 
+#[test]
+fn an_already_cleared_force_change_does_not_require_a_flash_write() {
+    let (storage, medium) = Cut::new();
+    let mut fs = Fs::new(storage);
+    fs.put(
+        EF_MINPINLEN,
+        &[MIN_PIN_LENGTH, crate::pinpolicy::COMPLEXITY],
+    )
+    .unwrap();
+    medium.arm(0);
+    assert_eq!(clear_force_change(&mut fs), Ok(()));
+    assert_eq!(
+        medium.value(EF_MINPINLEN),
+        Some(vec![MIN_PIN_LENGTH, crate::pinpolicy::COMPLEXITY])
+    );
+}
+
+#[test]
+fn configured_complexity_refuses_host_and_local_trivial_pins() {
+    let (mut fs, mut rng) = setup();
+    fs.put(
+        EF_MINPINLEN,
+        &[MIN_PIN_LENGTH, crate::pinpolicy::COMPLEXITY],
+    )
+    .unwrap();
+    let mut state = FidoState::new();
+    let plat = key_agreement(&mut fs, &mut rng, &mut state, PinProto::Two, 2);
+    let mut out = [0u8; 256];
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.set_pin_req(b"123456"),
+            &mut out
+        ),
+        Err(CtapError::PinPolicyViolation)
+    );
+    assert!(!fs.has_data(EF_PIN));
+    assert_eq!(
+        store_local_pin(&dev(), &mut fs, b"123456"),
+        Err(SetPinError::TooWeak)
+    );
+    assert!(!fs.has_data(EF_PIN));
+    store_local_pin(&dev(), &mut fs, PIN).unwrap();
+}
+
+#[test]
+fn changing_pin_keeps_complexity_and_rp_hashes() {
+    let (mut fs, mut rng, mut state, plat) = setup_with_pin(PIN);
+    let mut policy = vec![
+        MIN_PIN_LENGTH,
+        crate::pinpolicy::FORCE_CHANGE | crate::pinpolicy::COMPLEXITY,
+    ];
+    policy.extend_from_slice(&sha256(b"policy.example"));
+    fs.put(EF_MINPINLEN, &policy).unwrap();
+    let mut out = [0u8; 256];
+    assert_eq!(
+        run(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &plat.change_pin_req(PIN, b"123456"),
+            &mut out
+        ),
+        Err(CtapError::PinPolicyViolation)
+    );
+    run(
+        &mut fs,
+        &mut rng,
+        &mut state,
+        &plat.change_pin_req(PIN, NEW_PIN),
+        &mut out,
+    )
+    .unwrap();
+    let mut after = [0u8; 34];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut after), Some(34));
+    assert_eq!(after[0], MIN_PIN_LENGTH);
+    assert_eq!(after[1], crate::pinpolicy::COMPLEXITY);
+    assert_eq!(&after[2..], &policy[2..]);
+}
+
+#[test]
+fn unread_complexity_cannot_install_a_weak_local_pin() {
+    let (storage, medium) = ProbeStuck::new();
+    let mut fs = Fs::new(storage);
+    fs.put(
+        EF_MINPINLEN,
+        &[MIN_PIN_LENGTH, crate::pinpolicy::COMPLEXITY],
+    )
+    .unwrap();
+    medium.stick_once(EF_MINPINLEN);
+    assert_eq!(
+        store_local_pin(&dev(), &mut fs, b"123456"),
+        Err(SetPinError::Storage)
+    );
+    assert!(!fs.has_data(EF_PIN));
+}
+
+#[test]
+fn the_pin_pad_reads_the_effective_floor_and_complexity_fail_closed() {
+    let (storage, medium) = ProbeStuck::new();
+    let mut fs = Fs::new(storage);
+    assert_eq!(
+        pin_complexity_enabled(&mut fs),
+        crate::consts::PIN_COMPLEXITY_POLICY
+    );
+    fs.put(EF_MINPINLEN, &[16, crate::pinpolicy::COMPLEXITY])
+        .unwrap();
+    assert_eq!(min_pin_length(&mut fs), 16);
+    assert!(pin_complexity_enabled(&mut fs));
+    medium.stick_once(EF_MINPINLEN);
+    assert!(pin_complexity_enabled(&mut fs));
+}
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {
@@ -699,10 +814,10 @@ fn store_local_pin_enforces_min_length() {
     }
     assert!(!pin_is_set(&mut fs));
     // …but accepts one that meets it.
-    store_local_pin(&dev(), &mut fs, b"123456").unwrap();
+    store_local_pin(&dev(), &mut fs, b"739164").unwrap();
     assert!(pin_is_set(&mut fs));
     assert!(matches!(
-        spend_and_verify_local_pin(&dev(), &mut fs, b"123456"),
+        spend_and_verify_local_pin(&dev(), &mut fs, b"739164"),
         LocalPin::Ok
     ));
 }
@@ -713,7 +828,8 @@ fn store_local_pin_enforces_min_length() {
 fn store_local_pin_enforces_max_length() {
     // The 63-byte ceiling is accepted and verifies…
     let (mut fs, _rng) = setup();
-    let at_max = [b'1'; MAX_PIN_LENGTH];
+    let mut at_max = [b'1'; MAX_PIN_LENGTH];
+    at_max[..6].copy_from_slice(b"739164");
     store_local_pin(&dev(), &mut fs, &at_max).unwrap();
     assert!(matches!(
         spend_and_verify_local_pin(&dev(), &mut fs, &at_max),
@@ -1202,7 +1318,17 @@ fn pin_complexity_policy_tracks_the_strong_pin_rule() {
 
     let mut info = [0u8; 1024];
     let n = crate::getinfo::get_info(
-        false, 4, false, false, false, false, 256, None, None, &mut info,
+        false,
+        4,
+        false,
+        crate::consts::PIN_COMPLEXITY_POLICY,
+        false,
+        false,
+        false,
+        256,
+        None,
+        None,
+        &mut info,
     )
     .unwrap();
     let mut d = minicbor::Decoder::new(&info[..n]);
@@ -4065,7 +4191,7 @@ fn mc_req_authorized(cdh: &[u8; 32], puap: &[u8]) -> std::vec::Vec<u8> {
     let mut buf = [0u8; 256];
     let n = {
         let mut e = Encoder::new(Cursor::new(&mut buf[..]));
-        e.map(6).unwrap();
+        e.map(7).unwrap();
         e.u8(1).unwrap().bytes(cdh).unwrap();
         e.u8(2)
             .unwrap()
@@ -4081,6 +4207,14 @@ fn mc_req_authorized(cdh: &[u8; 32], puap: &[u8]) -> std::vec::Vec<u8> {
         e.u8(4).unwrap().array(1).unwrap().map(2).unwrap();
         e.str("alg").unwrap().i64(crate::consts::ALG_ES256).unwrap();
         e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(6)
+            .unwrap()
+            .map(1)
+            .unwrap()
+            .str("uvm")
+            .unwrap()
+            .bool(true)
+            .unwrap();
         e.u8(8).unwrap().bytes(puap).unwrap();
         e.u8(9).unwrap().u64(2).unwrap();
         e.writer().position()
@@ -4093,12 +4227,20 @@ fn ga_req_authorized(cdh: &[u8; 32], cred_id: &[u8], puap: &[u8]) -> std::vec::V
     let mut buf = [0u8; 512];
     let n = {
         let mut e = Encoder::new(Cursor::new(&mut buf[..]));
-        e.map(5).unwrap();
+        e.map(6).unwrap();
         e.u8(1).unwrap().str("example.com").unwrap();
         e.u8(2).unwrap().bytes(cdh).unwrap();
         e.u8(3).unwrap().array(1).unwrap().map(2).unwrap();
         e.str("id").unwrap().bytes(cred_id).unwrap();
         e.str("type").unwrap().str("public-key").unwrap();
+        e.u8(4)
+            .unwrap()
+            .map(1)
+            .unwrap()
+            .str("uvm")
+            .unwrap()
+            .bool(true)
+            .unwrap();
         e.u8(6).unwrap().bytes(puap).unwrap();
         e.u8(7).unwrap().u64(2).unwrap();
         e.writer().position()
@@ -4140,10 +4282,23 @@ fn builtin_uv_tokens_make_and_assert_a_user_verified_credential() {
 
     let n = client_pin(&mut ctx, &plat.get_uv_token_req(PERM_MC as u64), &mut out).unwrap();
     let token = plat.decrypt_token(&out[..n]);
+    assert_eq!(
+        ctx.state.paut.uv_method,
+        crate::uvm::Method::PasscodeInternal
+    );
     let req = mc_req_authorized(&cdh, &token_param(&token, &cdh));
     let n = crate::makecredential::make_credential(&mut ctx, &req, &mut out)
         .unwrap_or_else(|e| panic!("makeCredential refused the 0x06 mc token: {e:?}"));
     let ad = response_auth_data(&out[..n]);
+    let id_len = usize::from(u16::from_be_bytes([ad[53], ad[54]]));
+    let mut extensions = Decoder::new(&ad[55 + id_len..]);
+    extensions.skip().unwrap();
+    assert_eq!(
+        &extensions.input()[extensions.position()..],
+        &[
+            0xa1, 0x63, b'u', b'v', b'm', 0x82, 0x83, 1, 2, 4, 0x83, 4, 2, 4
+        ]
+    );
     assert_eq!(
         ad[32] & FLAG_UV,
         FLAG_UV,
@@ -4157,8 +4312,15 @@ fn builtin_uv_tokens_make_and_assert_a_user_verified_credential() {
     let req = ga_req_authorized(&cdh, &cred_id, &token_param(&token, &cdh));
     let n = crate::getassertion::get_assertion(&mut ctx, &req, &mut out)
         .unwrap_or_else(|e| panic!("getAssertion refused the 0x06 ga token: {e:?}"));
+    let ad = response_auth_data(&out[..n]);
     assert_eq!(
-        response_auth_data(&out[..n])[32] & FLAG_UV,
+        &ad[37..],
+        &[
+            0xa1, 0x63, b'u', b'v', b'm', 0x82, 0x83, 1, 2, 4, 0x83, 4, 2, 4
+        ]
+    );
+    assert_eq!(
+        ad[32] & FLAG_UV,
         FLAG_UV,
         "the 0x06 token's assertion lacks UV"
     );

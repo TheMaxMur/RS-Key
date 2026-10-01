@@ -103,6 +103,8 @@ const SEED_LABEL_MAX: usize = SEED_KEM_LABEL.len();
 
 /// Ceiling of the attested key's authData — 316 bytes for ESP256-split-ARKG.
 const AUTH_DATA_MAX: usize = 384;
+/// The registration's authData entry: `"previewSign": {alg: -65539}`.
+pub(crate) const MC_EXT_MAX: usize = 1 + NAME.len() + 1 + 1 + 5;
 /// The assertion's authData entry at its largest: `"previewSign": {sig: DER}`.
 pub(crate) const GA_EXT_MAX: usize = 1 + NAME.len() + 1 + 1 + 2 + MAX_DER_SIG;
 /// The largest classic credential key in COSE, a P-521 EC2 key: the makeCredential

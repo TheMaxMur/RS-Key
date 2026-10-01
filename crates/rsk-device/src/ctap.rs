@@ -266,7 +266,7 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
     }
 
     /// Whether §6.1.2 step 6.3's built-in-UV upgrade is available on this build —
-    /// the first conjunct of `crates/rsk-fido/src/clientpin.rs:656`. An INPUT to
+    /// the first conjunct of `crates/rsk-fido/src/clientpin.rs:677`. An INPUT to
     /// the token-less makeCredential gate the phase-4 replay states, not state:
     /// with a pad, `alwaysUv` upgrades a token-less request instead of refusing
     /// it, so a recording that did not carry this could not tell the two apart.

@@ -400,7 +400,7 @@ fn get_pin_token<S: Storage, R: Rng>(
 
     pin_hash.wipe();
 
-    // CTAP 2.1 forced PIN change: while EF_MINPINLEN[1] is set, a successful PIN
+    // CTAP 2.1 forced PIN change: while EF_MINPINLEN's force bit is set, a successful PIN
     // check still refuses the token until changePIN lifts the flag. The FIDO
     // conformance ClientPin forcePINChange tests assert a DIFFERENT code per
     // subcommand: legacy getPinToken (0x05) → CTAP2_ERR_PIN_INVALID (0x31)
@@ -423,7 +423,15 @@ fn get_pin_token<S: Storage, R: Rng>(
     } else {
         permissions
     };
-    let res = issue_token(ctx, proto, secret, permissions, req.rp_id, out);
+    let res = issue_token(
+        ctx,
+        proto,
+        secret,
+        permissions,
+        req.rp_id,
+        crate::uvm::Method::PasscodeExternal,
+        out,
+    );
     shared.wipe();
     res
 }
@@ -433,12 +441,17 @@ fn get_pin_token<S: Storage, R: Rng>(
 /// (0x06) token paths once verification has already succeeded — the token itself
 /// is identical; only *how* the user verified differs.
 /// Refines `RSKeySecurityState!NoLiveTokenWithoutPinRecord` — SEC-FIDO-008.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the token carries its verifier provenance alongside permissions and RP binding"
+)]
 fn issue_token<S: Storage, R: Rng>(
     ctx: &mut Ctx<S, R>,
     proto: PinProto,
     secret: &[u8],
     permissions: u8,
     rp_id: Option<&str>,
+    method: crate::uvm::Method,
     out: &mut [u8],
 ) -> CtapResult {
     // §6.5.5.7.2 step 12 / .3 step 11: a `pcmr` request is answered with the
@@ -454,6 +467,7 @@ fn issue_token<S: Storage, R: Rng>(
         // `true` would make §6.1.2 step 14 skip the presence request — which on a
         // display build is the screen that names the rp. Step 14's Note allows it.
         ctx.state.begin_using_token(false, ctx.now_ms);
+        ctx.state.paut.uv_method = method;
         ctx.state.paut.permissions = permissions;
         match rp_id {
             Some(rp) => {
@@ -539,6 +553,7 @@ fn get_uv_token<S: Storage, R: Rng>(
         shared_secret(shared.expose(), slen)?,
         permissions,
         req.rp_id,
+        crate::uvm::Method::PasscodeInternal,
         out,
     );
     shared.wipe();
@@ -553,6 +568,7 @@ fn get_uv_token<S: Storage, R: Rng>(
 pub(crate) struct UvOutcome {
     pub uv: bool,
     pub up_collected: bool,
+    pub method: crate::uvm::Method,
 }
 
 impl UvOutcome {
@@ -560,16 +576,21 @@ impl UvOutcome {
     pub const NONE: Self = Self {
         uv: false,
         up_collected: false,
+        method: crate::uvm::Method::None,
     };
     /// A `pinUvAuthParam` verified against the pinUvAuthToken.
-    pub const TOKEN: Self = Self {
-        uv: true,
-        up_collected: false,
-    };
+    pub fn token(method: crate::uvm::Method) -> Self {
+        Self {
+            uv: true,
+            up_collected: false,
+            method,
+        }
+    }
     /// Built-in UV ran on the device's own pad.
     pub const BUILTIN: Self = Self {
         uv: true,
         up_collected: true,
+        method: crate::uvm::Method::PasscodeInternal,
     };
 
     /// Whether the ceremony still owes its `Confirm` screen. Built-in UV supplies the
@@ -933,14 +954,13 @@ fn pin_code_points(pin: &[u8]) -> Option<usize> {
 /// (`159753`, `147258`, `258369`, `789456`, `147852`, `123654`), where the smudge
 /// pattern IS the PIN, and the mirror/stutter/Fibonacci runs people reach for when
 /// told "not 123456" (`123321`, `112233`, `112358`, `102030`). Six code points each:
-/// the floor is six here, so a four-digit entry could never be reached to be refused.
-#[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
+/// matched exactly; shorter PINs are judged by the structural rules.
 const PIN_DENYLIST: [&str; 10] = [
     "159753", "147258", "258369", "789456", "147852", "123654", "123321", "112233", "112358",
     "102030",
 ];
 
-/// A trivially guessable PIN, refused by the `strong-pin` / `fips-profile` builds atop
+/// A trivially guessable PIN, refused when the complexity policy is enabled atop
 /// the length floor. `pub` so the trusted-display PIN pad rejects them at entry too.
 ///
 /// Four rules, every one over **code points** rather than bytes. The floor next door
@@ -960,21 +980,20 @@ const PIN_DENYLIST: [&str; 10] = [
 /// Not UTF-8 is refused rather than measured, the same call the host path makes one
 /// step earlier: a byte count over-measures every non-ASCII PIN, and guessing is the
 /// wrong direction to fail in.
-#[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
 pub fn pin_is_trivial(pin: &[u8]) -> bool {
     let Ok(text) = core::str::from_utf8(pin) else {
         return true;
     };
-    let mut cp = ['\0'; PADDED_PIN_LEN];
+    let mut code_points = Secret::new(['\0'; PADDED_PIN_LEN]);
     let mut n = 0;
     for c in text.chars() {
-        let Some(slot) = cp.get_mut(n) else {
+        let Some(slot) = code_points.expose_mut().get_mut(n) else {
             return true; // longer than a PIN can be; refuse rather than measure a prefix
         };
         *slot = c;
         n += 1;
     }
-    let Some(cp) = cp.get(..n) else {
+    let Some(cp) = code_points.expose().get(..n) else {
         return true;
     };
     if n < 2 {
@@ -1016,11 +1035,11 @@ fn store_new_pin<S: Storage, R: Rng>(
     // UTF-8 cannot be counted at all — refused under §6.5.5.5's "arbitrary, additional
     // constraints" allowance.
     let cps = pin_code_points(pin).ok_or(CtapError::PinPolicyViolation)?;
-    if cps < try_min_pin_length(ctx.fs).map_err(|_| CtapError::Other)? as usize {
+    let policy = crate::pinpolicy::Policy::read(ctx.fs).map_err(|_| CtapError::Other)?;
+    if cps < policy.min as usize {
         return Err(CtapError::PinPolicyViolation);
     }
-    #[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
-    if pin_is_trivial(pin) {
+    if policy.complexity && pin_is_trivial(pin) {
         return Err(CtapError::PinPolicyViolation);
     }
     write_pin_verifier(EF_PIN, &ctx.dev, ctx.fs, pin, cps)?;
@@ -1043,14 +1062,15 @@ pub fn min_pin_length<S: Storage>(fs: &mut Fs<S>) -> u8 {
 /// configured, so a faulted probe stored a PIN the policy forbids — and the stored
 /// verifier is what every later authentication uses.
 fn try_min_pin_length<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<u8> {
-    let mut buf = [0u8; 2];
-    Ok(match fs.try_read(EF_MINPINLEN, &mut buf)? {
-        Some(n) if n >= 1 => buf[0],
-        _ => MIN_PIN_LENGTH,
-    })
+    Ok(crate::pinpolicy::Policy::read(fs)?.min)
 }
 
-/// The pending forced-PIN-change flag (`EF_MINPINLEN[1]`).
+/// Whether the FIDO PIN pad must reject trivial PINs; unread policy stays restrictive.
+pub fn pin_complexity_enabled<S: Storage>(fs: &mut Fs<S>) -> bool {
+    crate::pinpolicy::Policy::read(fs).map_or(true, |policy| policy.complexity)
+}
+
+/// The pending forced-PIN-change flag (`EF_MINPINLEN[1]` bit 0).
 ///
 /// A probe the medium could not answer reads as PENDING, for the same reason as
 /// [`pin_is_set`]: every caller spends `false` to let something through — a token
@@ -1059,13 +1079,13 @@ fn try_min_pin_length<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<u8> 
 fn force_change_pending<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> bool {
     let mut buf = [0u8; 2];
     match ctx.fs.try_read(EF_MINPINLEN, &mut buf) {
-        Ok(v) => matches!(v, Some(n) if n >= 2 && buf[1] != 0),
+        Ok(v) => matches!(v, Some(n) if n >= 2 && buf[1] & crate::pinpolicy::FORCE_CHANGE != 0),
         Err(_) => true,
     }
 }
 
 /// A successful changePIN satisfies the policy: drop the flag, keep the
-/// minimum and the RP-id hash list (EF_MINPINLEN = [min, force, hashes…]).
+/// minimum and the RP-id hash list (EF_MINPINLEN = [min, flags, hashes…]).
 fn clear_force_change<S: Storage>(fs: &mut Fs<S>) -> Result<(), CtapError> {
     let mut buf = [0u8; 2 + 32 * MAX_MIN_PIN_RPIDS];
     // The collapsing probe stands: a faulted read leaves the flag SET — the
@@ -1079,9 +1099,9 @@ fn clear_force_change<S: Storage>(fs: &mut Fs<S>) -> Result<(), CtapError> {
     // PIN change, which is the restrictive side this site already chose.
     if let Some(n) = fs.read(EF_MINPINLEN, &mut buf)
         && (2..=buf.len()).contains(&n)
-        && buf[1] != 0
+        && buf[1] & crate::pinpolicy::FORCE_CHANGE != 0
     {
-        buf[1] = 0;
+        buf[1] &= !crate::pinpolicy::FORCE_CHANGE;
         if let Some(rec) = buf.get(..n) {
             fs.put(EF_MINPINLEN, rec).map_err(|_| CtapError::Other)?;
         }
@@ -1112,6 +1132,8 @@ pub enum SetPinError {
     /// The new PIN is longer than [`MAX_PIN_LENGTH`] — the host clientPIN path could not
     /// represent it, so it is refused here too; `max` is that ceiling.
     TooLong { max: u8 },
+    /// The enabled FIDO PIN complexity policy refuses this PIN.
+    TooWeak,
     /// A flash error — the `EF_PIN` write, or the `minPINLength` read the floor check
     /// needs. No PIN was stored either way.
     Storage,
@@ -1306,7 +1328,8 @@ pub fn store_local_pin<S: Storage>(
     fs: &mut Fs<S>,
     pin: &[u8],
 ) -> Result<(), SetPinError> {
-    let min = try_min_pin_length(fs).map_err(|_| SetPinError::Storage)?;
+    let policy = crate::pinpolicy::Policy::read(fs).map_err(|_| SetPinError::Storage)?;
+    let min = policy.min;
     // Counted in code points, like the host path — the pad types ASCII digits today,
     // but the floor is defined that way and the two must not drift apart.
     let cps = pin_code_points(pin).ok_or(SetPinError::TooShort { min })?;
@@ -1323,6 +1346,9 @@ pub fn store_local_pin<S: Storage>(
         return Err(SetPinError::TooLong {
             max: u8::try_from(MAX_PIN_LENGTH).unwrap_or(u8::MAX),
         });
+    }
+    if policy.complexity && pin_is_trivial(pin) {
+        return Err(SetPinError::TooWeak);
     }
     write_pin_verifier(EF_PIN, dev, fs, pin, cps).map_err(|_| SetPinError::Storage)?;
     // The new PIN meets the policy, so drop any pending forced-change marker. The PIN is

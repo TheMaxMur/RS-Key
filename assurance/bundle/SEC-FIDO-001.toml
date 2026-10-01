@@ -44,9 +44,9 @@ clause_reset_window = "assurance/token_refinement.toml reset_window_owner — 2 
 clause_ghost = "assurance/ghost_actions.toml — 21 model actions over 24 routes"
 # The files carrying the `Refines … — SEC-FIDO-001` tag the registry greps for.
 owners_tagged = [
-  "crates/rsk-fido/src/state.rs:172 CredMgmtState::may_walk_rps",
-  "crates/rsk-fido/src/state.rs:286 PinLock",
-  "crates/rsk-fido/src/clientpin.rs:774 spend_and_verify_pin_hash",
+  "crates/rsk-fido/src/state.rs:181 CredMgmtState::may_walk_rps",
+  "crates/rsk-fido/src/state.rs:297 PinLock",
+  "crates/rsk-fido/src/clientpin.rs:795 spend_and_verify_pin_hash",
 ]
 # And the files co-refutation patches, which the derived column cannot see.
 owners_co_refuted = [

@@ -77,7 +77,8 @@ REQUIRED = [
     "attestationRootCertificates", "authenticatorGetInfo",
 ]
 # Fields whose value tracks device state, not model identity.
-STATEFUL = {"forcePINChange", "minPINLength", "remainingDiscoverableCredentials"}
+STATEFUL = {"forcePINChange", "minPINLength", "remainingDiscoverableCredentials",
+            "pinComplexityPolicy"}
 # Re-encrypted under a fresh IV per call, so a statement carries each as the
 # empty placeholder MDS3 takes, and only presence can be compared.
 ENCRYPTED_MEMBERS = ((0x19, "encIdentifier"), (0x1E, "encCredStoreState"))

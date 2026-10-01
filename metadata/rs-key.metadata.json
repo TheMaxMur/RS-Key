@@ -24,7 +24,8 @@
   ],
   "userVerificationDetails": [
     [ { "userVerificationMethod": "presence_internal" } ],
-    [ { "userVerificationMethod": "passcode_external" } ]
+    [ { "userVerificationMethod": "passcode_external" } ],
+    [ { "userVerificationMethod": "none" } ]
   ],
   "keyProtection": [
     "hardware"
@@ -54,7 +55,9 @@
       "largeBlobKey",
       "minPinLength",
       "hmac-secret-mc",
-      "thirdPartyPayment"
+      "thirdPartyPayment",
+      "uvm",
+      "pinComplexityPolicy"
     ],
     "aaguid": "2479c7bf6b3056839ec80e8171a918b7",
     "options": {

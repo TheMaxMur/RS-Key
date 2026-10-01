@@ -488,10 +488,14 @@ needs only the identifiers above. RS-Key implements:
   `transportsForReset` (`0x1A`) is `["usb", "smart-card"]` — identical to
   `transports` (`0x09`), because a reset is reachable exactly where the applet is,
   and §5.2 routes the FIDO AID onto CCID as well as CTAPHID. It is an array of
-  `AuthenticatorTransport` strings, not a bit field. There is no `nfc`: no radio. `pinComplexityPolicy` (`0x1B`) is `true` only on a
-  build that refuses a PIN beyond the length floor — the `strong-pin` and
-  `fips-profile` images block a repeated code point and a ±1 run; the default
-  build answers `false`, and the optional `pinComplexityPolicyURL` (`0x1C`) is
+  `AuthenticatorTransport` strings, not a bit field. There is no `nfc`: no radio. `pinComplexityPolicy` (`0x1B`) reports the effective PIN complexity policy.
+  `strong-pin` and `fips-profile` enable it by default; other builds start with
+  `false`. An authenticated `setMinPINLength` request can enable it with
+  subCommandParams key `4: true`. A false or absent key leaves it unchanged;
+  only `authenticatorReset` restores the build default. The policy rejects
+  periodic PINs, ascending/descending runs, at most two distinct code points,
+  and the keypad-pattern denylist, on both host and trusted-display PIN changes.
+  The optional `pinComplexityPolicyURL` (`0x1C`) is
   never emitted. `longTouchForReset` (`0x18`) is `false`: a reset takes the same
   touch as any other presence check — CTAP 2.3 cut the long-touch hold from 2.2's
   10 s to 5 s, and RS-Key implements neither gesture. `encIdentifier` (`0x19`) is
@@ -686,7 +690,30 @@ sends ACTIVATE right after it, as `ykman` and `gpg-card` do, works with both.
 
 ---
 
-### 5.2 CTAP over CCID
+### 5.2 FIDO extension outputs and PIN policy
+
+The `uvm` extension accepts a boolean on makeCredential and getAssertion.
+When requested with `true`, signed authData reports the ceremony factors as
+`[method, keyProtection, matcherProtection]` entries: presence (`0x0001`),
+external PIN (`0x0800`), device-local PIN (`0x0004`), or no interaction (`0x0200`).
+Key and matcher protection are `0x0002` (hardware) and `0x0004` (on-chip).
+getNextAssertion carries the originating ceremony's methods. A false input
+produces no output.
+
+The `pinComplexityPolicy` extension takes a boolean on makeCredential and returns
+the effective policy only to an RP on the `minPinLengthRPIDs` list; unlisted RPs
+receive no output. It has no getAssertion output. Both extensions reject an
+input of the wrong type. An omitted or empty `minPinLengthRPIDs` config parameter
+preserves the existing list; a non-empty list replaces it.
+
+The persisted `EF_MINPINLEN` layout remains `[minimum: u8, flags: u8, rpIdHash…]`.
+Flag bit 0 means `forceChangePin`; bit 1 enables complexity. Older records with
+flags 0 or 1 load unchanged, and clearing forceChangePin preserves bit 1 and
+all RP hashes. Older firmware interprets any nonzero flags byte as a pending
+PIN change, so downgrading a key with complexity enabled keeps authentication
+blocked until reset. The upgrade itself requires no migration or reset.
+
+### 5.3 CTAP over CCID
 
 The FIDO applet answers on the CCID interface as well as on CTAPHID, as ISO 7816
 APDUs — the encoding CTAP 2.1 §11.2.1 defines for ISO7816 readers, which
@@ -751,6 +778,7 @@ enabled the AID is gone (`6A82`).
 interface at all** — the `ccid` driver whitelists USB ids and that one is not
 listed — so none of this is reachable there. A `VIDPID=Yubikey5` build, or a host
 carrying the `ccid-rs-key` overlay, is what makes the interface appear.
+
 
 ## 6. Management applet (Yubico-compatible) — applet enable/disable
 

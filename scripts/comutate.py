@@ -24,7 +24,7 @@ and how it fell is the point of writing exclusions down. The stated ground was
 that two of its three defended sites live in `firmware/`, which has no host
 tests by construction. Only one did: the scratch-word carry's model conjunct is
 `lock' = recorded`, and that assignment is `restore_pin_lock` at
-crates/rsk-fido/src/state.rs:557-560 — `firmware/src/pin_lock.rs` holds the
+crates/rsk-fido/src/state.rs:568-571 — `firmware/src/pin_lock.rs` holds the
 register encode, not the restore. The marker-after-lap order really was in
 `firmware/`, where a patch could not have scored a kill in any case since a
 build failure is classified `build-broke` below, so it was lifted into

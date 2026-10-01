@@ -89,7 +89,7 @@ owners_tagged = [
   "crates/rsk-fido/src/credential.rs:811 credential_store — the producer of the ANTECEDENT (`store.cred`) and the site that writes the consequent first",
   "crates/rsk-fido/src/credmgmt.rs:781 decrement_rp — a destroyer of the CONSEQUENT (`store.rpent`), at the delete",
   "crates/rsk-fido/src/credmgmt.rs:836 settle_rp_records — the consequent's other destroyer, the boot pass, which removes only a record no readable credential names",
-  "crates/rsk-fido/src/passkeys.rs:89 for_each_rp — the management surface, which is what `unmanageable` MEANS",
+  "crates/rsk-fido/src/passkeys.rs:88 for_each_rp — the management surface, which is what `unmanageable` MEANS",
 ]
 # BOTH HALVES OF THE IMPLICATION ARE COVERED, and the grep that shows it is
 # `grep -rn NoUnmanageableCredential crates/ firmware/`: five hits, three of them
@@ -106,14 +106,14 @@ owners_writers = [
   "crates/rsk-fido/src/credmgmt.rs:766 — `delete_credential`'s `fs.delete(EF_CRED + slot)`, the antecedent's destroyer, ahead of the RP work",
   "crates/rsk-fido/src/credmgmt.rs:808 — `let _ = fs.delete(EF_RP + j)` at count zero, the consequent's destroyer",
   "crates/rsk-fido/src/credmgmt.rs:816 — `fs.put(EF_RP + j, ...)` on the write-back path, the count decrement that does NOT delete",
-  "crates/rsk-fido/src/passkeys.rs:295 — the trusted-display delete's `let _ = decrement_rp(...)`, the same effect keyed by slot",
+  "crates/rsk-fido/src/passkeys.rs:294 — the trusted-display delete's `let _ = decrement_rp(...)`, the same effect keyed by slot",
   "crates/rsk-fido/src/credmgmt.rs:871 — the boot pass's `fs.delete(EF_RP + j)`, for a record no readable credential names; a credential the medium cannot read refuses the whole pass before it",
   "crates/rsk-fido/src/credmgmt.rs:879 — the boot pass's `fs.put(EF_RP + j, record)`, a count brought back to the credentials that remain",
   "crates/rsk-fido/src/reset.rs — the wipe, which deletes the seed first and then sweeps EF_RP and EF_CRED in flash-ring order (the clause's stated carve-out)",
 ]
 owners_readers = [
   "crates/rsk-fido/src/credmgmt.rs:359 enumerate_rps — CTAP 0x02/0x03, the host's browse surface; it walks EF_RP and never EF_CRED",
-  "crates/rsk-fido/src/passkeys.rs:89 for_each_rp — the trusted-display Passkeys view, the second EF_RP walk",
+  "crates/rsk-fido/src/passkeys.rs:88 for_each_rp — the trusted-display Passkeys view, the second EF_RP walk",
   "crates/rsk-fido/src/credmgmt.rs:723 find_resident — deleteCredential's own EF_CRED scan, which is why a strand costs discovery and not revocation outright",
 ]
 # The three files `formal/comutants.toml` patches for this property, which the
@@ -238,7 +238,7 @@ bound_files_in_argument = 4
 stops_files_in_argument = "anything in a fifth file"
 bound_crates = 1
 stops_crates = "a site outside rsk-fido. The whole argument is in one crate, so a management surface in another would be outside it"
-shipped_relation = "eight writer entries over four files in ONE crate — ten sites, since one entry holds the three best-effort rollbacks — against the three functions the tag set names; the count is a count of sites and not a shrink of a shipped constant, because a review has no other unit. The three skip conditions are the finding: an EF_RP read the flash refuses now fails the host walk (credmgmt.rs:393) and still drops the slot from the display's (passkeys.rs:113), and both surfaces drop one when `n < RP_PREFIX || buf[0] == 0` (credmgmt.rs:401, passkeys.rs:117) and when `unseal_rp_id` fails (credmgmt.rs:436, passkeys.rs:122) — and `store.rpent` is plain set membership, so a record that exists and is skipped satisfies the invariant while being exactly what the clause forbids. The two surfaces do not even agree with each other on the third: `enumerate_rps` answers `CtapError::Other` for the WHOLE walk, so one unsealable record hides every other relying party from the host, while `for_each_rp` skips that one and lists the rest"
+shipped_relation = "eight writer entries over four files in ONE crate — ten sites, since one entry holds the three best-effort rollbacks — against the three functions the tag set names; the count is a count of sites and not a shrink of a shipped constant, because a review has no other unit. The three skip conditions are the finding: an EF_RP read the flash refuses now fails the host walk (credmgmt.rs:393) and still drops the slot from the display's (passkeys.rs:112), and both surfaces drop one when `n < RP_PREFIX || buf[0] == 0` (credmgmt.rs:401, passkeys.rs:116) and when `unseal_rp_id` fails (credmgmt.rs:436, passkeys.rs:121) — and `store.rpent` is plain set membership, so a record that exists and is skipped satisfies the invariant while being exactly what the clause forbids. The two surfaces do not even agree with each other on the third: `enumerate_rps` answers `CtapError::Other` for the WHOLE walk, so one unsealable record hides every other relying party from the host, while `for_each_rp` skips that one and lists the rest"
 cfg = "none — every site above is unconditional production code; the invariant's name appears in no cfg-gated mirror"
 features = "none"
 
@@ -452,7 +452,7 @@ registered = "yes — assurance/platform.toml PLAT-MODEL-002, pending, whose sta
 id = "AS-CRED-2"
 statement = "`r \\in store.rpent` means the EF_RP record for r is REACHABLE by the management surface, and in the shipped tree it means only that the record exists: both surfaces additionally require the read to succeed, the count byte to be positive and the rpId to unseal."
 kind = "model fidelity"
-discharger = "reading the two surfaces apart, and there is no run behind it. crates/rsk-fido/src/credmgmt.rs:399, :391 and :426 and crates/rsk-fido/src/passkeys.rs:113, :117 and :122 are the six `continue`/error arms, the first of which now fails the host walk on a refused read instead of skipping (the credMgmt read sweep drives it); the third pair does not even agree — enumerate_rps answers CtapError::Other for the whole walk while for_each_rp skips one record. Of the three the read-failure arm is the one a live medium reaches, and docs/threat-model.md:60-93 states it as a threat of its own. What would discharge this is either a second model variable for `listable` or a test at each surface driving a refused EF_RP read and asserting what the owner is shown"
+discharger = "reading the two surfaces apart, and there is no run behind it. crates/rsk-fido/src/credmgmt.rs:399, :391 and :426 and crates/rsk-fido/src/passkeys.rs:112, :117 and :122 are the six `continue`/error arms, the first of which now fails the host walk on a refused read instead of skipping (the credMgmt read sweep drives it); the third pair does not even agree — enumerate_rps answers CtapError::Other for the whole walk while for_each_rp skips one record. Of the three the read-failure arm is the one a live medium reaches, and docs/threat-model.md:60-93 states it as a threat of its own. What would discharge this is either a second model variable for `listable` or a test at each surface driving a refused EF_RP read and asserting what the owner is shown"
 expressible = "no — the alternative needs a second VARIABLE, and a boolean constant cannot carry a per-record predicate"
 registered = "yes — assurance/platform.toml PLAT-CRED-001, pending. The nearest existing row is PLAT-MODEL-002, which is about cardinality and not about what membership MEANS, and folding this into it would be two answers under one premise"
 

@@ -380,7 +380,7 @@ pub const MIN_PIN_LENGTH: u8 = 4;
 #[cfg(any(feature = "fips-profile", feature = "strong-pin"))]
 pub const MIN_PIN_LENGTH: u8 = 6;
 
-/// Whether this build enforces a PIN rule BEYOND the length floor — getInfo's
+/// Whether this build enables the PIN complexity rule by default — getInfo's
 /// `pinComplexityPolicy` (0x1B). True where `clientpin::pin_is_trivial` refuses a
 /// repeated code point or a ±1 run; a raised `MIN_PIN_LENGTH` alone is not one.
 pub const PIN_COMPLEXITY_POLICY: bool = cfg!(any(feature = "fips-profile", feature = "strong-pin"));

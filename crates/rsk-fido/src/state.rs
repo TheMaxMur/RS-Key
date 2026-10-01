@@ -44,6 +44,9 @@ pub struct AssertionState {
     pub rp_id_hash: [u8; 32],
     pub client_data_hash: [u8; 32],
     pub uv: bool,
+    pub(crate) uv_method: crate::uvm::Method,
+    pub ext_uvm: bool,
+    pub(crate) uvm_up: bool,
     /// The originating request's user-presence decision (honoring `up:false`
     /// unless the `strict-up` build forces it true) — getNextAssertion reuses it
     /// so a silent discovery stays silent across the whole walk.
@@ -75,6 +78,9 @@ impl AssertionState {
             rp_id_hash: [0; 32],
             client_data_hash: [0; 32],
             uv: false,
+            uv_method: crate::uvm::Method::None,
+            ext_uvm: false,
+            uvm_up: false,
             up: true,
             slots: [0; MAX_ASSERTION_CREDS],
             total: 0,
@@ -98,6 +104,9 @@ impl AssertionState {
         self.total = 0;
         self.counter = 0;
         self.hmac_present = false;
+        self.ext_uvm = false;
+        self.uvm_up = false;
+        self.uv_method = crate::uvm::Method::None;
         self.ext_cred_blob = false;
         self.ext_third_party_payment = false;
     }
@@ -253,6 +262,7 @@ pub struct PinUvAuthToken {
     pub has_rp_id: bool,
     pub user_present: bool,
     pub user_verified: bool,
+    pub(crate) uv_method: crate::uvm::Method,
     /// `now_ms` when the token was issued; the absolute-lifetime cap measures
     /// from here and never moves.
     pub issued_at_ms: u64,
@@ -271,6 +281,7 @@ impl PinUvAuthToken {
             has_rp_id: false,
             user_present: false,
             user_verified: false,
+            uv_method: crate::uvm::Method::None,
             issued_at_ms: 0,
             last_used_ms: 0,
         }
@@ -605,6 +616,7 @@ impl FidoState {
         self.paut.rp_id_hash = [0; 32];
         self.paut.user_present = false;
         self.paut.user_verified = false;
+        self.paut.uv_method = crate::uvm::Method::None;
         self.paut.issued_at_ms = 0;
         self.paut.last_used_ms = 0;
     }
@@ -614,6 +626,7 @@ impl FidoState {
     pub fn begin_using_token(&mut self, user_is_present: bool, now_ms: u64) {
         self.paut.user_present = user_is_present;
         self.paut.user_verified = true;
+        self.paut.uv_method = crate::uvm::Method::PasscodeExternal;
         self.paut.in_use = true;
         self.paut.issued_at_ms = now_ms;
         self.paut.last_used_ms = now_ms;
@@ -639,6 +652,7 @@ impl FidoState {
             self.paut.permissions &= PERM_LBW;
             self.paut.user_present = false;
             self.paut.user_verified = false;
+            self.paut.uv_method = crate::uvm::Method::None;
         }
     }
 
@@ -653,6 +667,7 @@ impl FidoState {
         self.paut.rp_id_hash = [0; 32];
         self.paut.user_present = false;
         self.paut.user_verified = false;
+        self.paut.uv_method = crate::uvm::Method::None;
         // The credMgmt *Next* walkers carry no pinUvAuthParam of their own (CTAP 2.1
         // §6.8 exempts them) — they inherit the *Begin* call's authorization, so the
         // cursor must die with the token that granted it.
@@ -780,6 +795,7 @@ impl Drop for FidoState {
                     has_rp_id: _,
                     user_present: _,
                     user_verified: _,
+                    uv_method: _,
                     issued_at_ms: _,
                     last_used_ms: _,
                 },

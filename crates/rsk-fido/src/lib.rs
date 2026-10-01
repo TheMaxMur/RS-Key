@@ -32,12 +32,14 @@ pub mod largeblobext;
 pub mod largeblobs;
 pub mod makecredential;
 pub mod passkeys;
+mod pinpolicy;
 pub mod reset;
 pub mod seed;
 pub mod selection;
 pub mod state;
 pub mod u2f;
 mod up;
+mod uvm;
 pub mod vendor;
 
 #[cfg(any(test, kani, feature = "assurance-trace"))]
@@ -166,13 +168,8 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
     }
 
     let result = match cmd {
-        consts::CTAP_GET_INFO => {
-            // minPINLength / forceChangePin come from EF_MINPINLEN ([len, force]).
-            let mut mp = [0u8; 2];
-            let (min_pin, force) = match ctx.fs.read(consts::EF_MINPINLEN, &mut mp) {
-                Some(n) if n >= 1 => (mp[0], n >= 2 && mp[1] == 1),
-                _ => (consts::MIN_PIN_LENGTH, false),
-            };
+        consts::CTAP_GET_INFO => (|| {
+            let policy = pinpolicy::Policy::read(ctx.fs).map_err(|_| CtapError::Other)?;
             let remaining_rk = credential::remaining_discoverable(ctx.fs);
             // Re-encrypted under a fresh IV on every getInfo, so the member cannot
             // become a stable fingerprint (`seed::enc_identifier`).
@@ -180,8 +177,9 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
             let enc_css = seed::enc_cred_store_state(&ctx.dev, ctx.fs, ctx.rng);
             getinfo::get_info(
                 ctx.fs.has_data(consts::EF_PIN),
-                min_pin,
-                force,
+                policy.min,
+                policy.force,
+                policy.complexity,
                 ctx.fs.has_data(consts::EF_EA_ENABLED),
                 config::always_uv_enabled(ctx.fs),
                 ctx.presence.uv_available(),
@@ -190,7 +188,7 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
                 enc_css.as_ref(),
                 &mut out[1..],
             )
-        }
+        })(),
         consts::CTAP_MAKE_CREDENTIAL => makecredential::make_credential(ctx, params, &mut out[1..]),
         consts::CTAP_GET_ASSERTION => getassertion::get_assertion(ctx, params, &mut out[1..]),
         consts::CTAP_GET_NEXT_ASSERTION => getassertion::get_next_assertion(ctx, &mut out[1..]),

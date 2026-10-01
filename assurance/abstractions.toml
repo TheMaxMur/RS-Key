@@ -122,12 +122,12 @@ body = '''
 - **A registration with a PIN set and no token — CLOSED, and what is left of it
   is one conjunct.** CTAP 2.1 §6.1.2 steps 7/10 serve a NON-discoverable
   credential on presence alone even where a PIN is set
-  (`makecredential.rs:624-626`), and `Next` carries it now:
+  (`makecredential.rs:633-635`), and `Next` carries it now:
   `RegisterNdStart` / `RegisterNdTouched` / `RegisterNdRefused`, guarded by
   `McTokenlessGuard(FALSE)`. It writes nothing, because
-  `makecredential.rs:905-906` stores only under `req.rk`, so it carries no `rp`
+  `makecredential.rs:916-917` stores only under `req.rk`, so it carries no `rp`
   either. What stays narrow is the `~tok.live` conjunct in that guard: above
-  `state.rs:638` the same touch SPENDS a live token without binding it, and tier
+  `state.rs:651` the same touch SPENDS a live token without binding it, and tier
   A has no word for that edge — its `UseMc` admits an authorized event only
   under `~pinSet \/ (live /\ permissionMc)` and its `Consumed` requires the rpId
   binding this path never makes. So the model takes the states where B and the
@@ -155,7 +155,7 @@ row says which of the two kinds of not-closed each one is.
 body = '''
 - **`largeBlobs`, `getNextAssertion`, the MSE seed-backup channel and built-in
   UV are absent.** They carry their own channel-ownership rules
-  (`state.rs:33-51`, `:376-385`) that this model does not check — the most
+  (`state.rs:33-54`, `:387-396`) that this model does not check — the most
   obvious place to extend it. The trusted-display ceremony is NOT on that list
   and used to be: `RSKeyTrustedDisplay` models the panel's Approve/Deny with
   its own configurations in the safety tier. What stays absent is its meeting

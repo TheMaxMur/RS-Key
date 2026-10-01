@@ -40,6 +40,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- FIDO `uvm` reports the presence and PIN factors used in signed registration
+  and assertion data, preserving device-local PIN provenance across tokens and
+  getNextAssertion. `pinComplexityPolicy` returns the effective policy to
+  authorized registration RPs; authenticatorConfig can enable it until reset.
+  Legacy PIN-policy records remain readable, and PIN changes preserve the
+  policy and RP allowlist. `bcdDevice` → `0x0A8B`.
+
 - **Firmware-image emulator inspection and fault injection.** An opt-in loopback
   port measures command stacks, scans emulated SRAM and cuts power at selected
   cycles or program bytes, retaining a torn-flash snapshot before reboot. A

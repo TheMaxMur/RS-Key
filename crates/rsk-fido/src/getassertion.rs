@@ -84,6 +84,7 @@ pub(crate) struct Request<'a> {
     /// `None` = the platform sent no pinUvAuthProtocol. A numeric `0` is a value
     /// it did send, and an unsupported one (§6.2.2 step 2).
     pin_uv_auth_protocol: Option<u64>,
+    ext_uvm: bool,
     ext_cred_blob: bool,
     ext_third_party_payment: bool,
     ext_large_blob_key: Option<bool>,
@@ -108,6 +109,7 @@ fn parse(data: &[u8]) -> Result<Request<'_>, CtapError> {
         up: true,
         pin_uv_auth_param: None,
         pin_uv_auth_protocol: None,
+        ext_uvm: false,
         ext_cred_blob: false,
         ext_third_party_payment: false,
         ext_large_blob_key: None,
@@ -159,6 +161,7 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
     let m = def_map(d)?;
     for _ in 0..m {
         match cbor(d.str())? {
+            "uvm" => req.ext_uvm = cbor(d.bool())?,
             "credBlob" => req.ext_cred_blob = cbor(d.bool())?,
             "thirdPartyPayment" => req.ext_third_party_payment = cbor(d.bool())?,
             // Only one of the two large-blob designs is a recognized extension in
@@ -180,7 +183,7 @@ fn parse_extensions<'a>(d: &mut Decoder<'a>, req: &mut Request<'a>) -> Result<()
             "credProtect" => {
                 let _: u32 = cbor(d.u32())?;
             }
-            "minPinLength" => {
+            "minPinLength" | "pinComplexityPolicy" => {
                 let _: bool = cbor(d.bool())?;
             }
             "hmac-secret-mc" => {
@@ -460,7 +463,7 @@ fn enforce_pin<S: Storage, R: Rng>(
                 ctx.state.paut.rp_id_hash = *rp_id_hash;
                 ctx.state.paut.has_rp_id = true;
             }
-            Ok(UvOutcome::TOKEN)
+            Ok(UvOutcome::token(ctx.state.paut.uv_method))
         }
         // alwaysUv forces UV only for an assertion that asserts presence; the
         // platform's silent up:false pre-flight (credential discovery, e.g.
@@ -741,19 +744,6 @@ fn get_assertion_inner<S: Storage, R: Rng>(
         uv,
     )?;
 
-    // authData extension output (credBlob / hmac-secret / thirdPartyPayment).
-    let mut ext = [0u8; GA_EXT_MAX];
-    let ext_len = encode_ga_extensions(
-        req.ext_cred_blob,
-        req.ext_third_party_payment,
-        sel.as_ref(),
-        hs.get(..hs_len).ok_or(CtapError::Other)?,
-        #[cfg(feature = "preview-sign")]
-        preview.as_ref(),
-        &mut ext,
-    )?;
-    let ed = if ext_len > 0 { FLAG_ED } else { 0 };
-
     // largeBlobKey response field (0x07) — only when the request and the stored
     // credential both opted in.
     let large_blob_key = if req.ext_large_blob_key == Some(true) && sel_large_blob {
@@ -804,7 +794,27 @@ fn get_assertion_inner<S: Storage, R: Rng>(
     });
     #[cfg(not(feature = "preview-sign"))]
     let ask = want_up.then(|| crate::Confirm::new("Sign in?", req.rp_id.as_bytes(), account));
+    let interaction = ask.is_some() || verified.up_collected;
     let up = ctx.user_presence_test(req, ask)?;
+    if ctx.state.gna.active {
+        ctx.state.gna.ext_uvm = req.ext_uvm;
+        ctx.state.gna.uv_method = verified.method;
+        ctx.state.gna.uvm_up = interaction;
+    }
+
+    // authData extension output (credBlob / hmac-secret / thirdPartyPayment).
+    let mut ext = [0u8; GA_EXT_MAX];
+    let ext_len = encode_ga_extensions(
+        req.ext_uvm.then_some((verified.method, interaction)),
+        req.ext_cred_blob,
+        req.ext_third_party_payment,
+        sel.as_ref(),
+        hs.get(..hs_len).ok_or(CtapError::Other)?,
+        #[cfg(feature = "preview-sign")]
+        preview.as_ref(),
+        &mut ext,
+    )?;
+    let ed = if ext_len > 0 { FLAG_ED } else { 0 };
 
     // CTAP 2.3 §12.4 largeBlob, run here so the gesture the assertion asked for is
     // already spent before any flash is touched. The rules themselves live with the
@@ -949,6 +959,7 @@ fn get_assertion_inner<S: Storage, R: Rng>(
 /// the already-evaluated hmac-secret output (empty when not requested). Echoes the
 /// selected credential's stored extension data.
 fn encode_ga_extensions(
+    uvm: Option<(crate::uvm::Method, bool)>,
     get_cred_blob: bool,
     third_party_payment: bool,
     sel: Option<&Credential>,
@@ -956,7 +967,10 @@ fn encode_ga_extensions(
     #[cfg(feature = "preview-sign")] preview: Option<&previewsign::DerSig>,
     out: &mut [u8],
 ) -> Result<usize, CtapError> {
-    let l = u64::from(get_cred_blob) + u64::from(!hmac.is_empty()) + u64::from(third_party_payment);
+    let l = u64::from(uvm.is_some())
+        + u64::from(get_cred_blob)
+        + u64::from(!hmac.is_empty())
+        + u64::from(third_party_payment);
     #[cfg(feature = "preview-sign")]
     let l = l + u64::from(preview.is_some());
     if l == 0 {
@@ -964,6 +978,9 @@ fn encode_ga_extensions(
     }
     let mut enc = Encoder::new(Cursor::new(out));
     enc.map(l).map_err(|_| CtapError::Other)?;
+    if let Some((method, up)) = uvm {
+        crate::uvm::write(&mut enc, method, up).map_err(|_| CtapError::Other)?;
+    }
     if get_cred_blob {
         // Echo the stored credBlob (empty byte string if the credential has none).
         let blob = sel.map(|c| c.ext.cred_blob).unwrap_or(&[]);
@@ -1129,6 +1146,10 @@ fn next_assertion_response<S: Storage, R: Rng>(
     let mut ext = [0u8; 320];
     // previewSign never reaches here: it needs an allowList, and this walk has none.
     let ext_len = encode_ga_extensions(
+        ctx.state
+            .gna
+            .ext_uvm
+            .then_some((ctx.state.gna.uv_method, ctx.state.gna.uvm_up)),
         ctx.state.gna.ext_cred_blob,
         ctx.state.gna.ext_third_party_payment,
         Some(&cred),

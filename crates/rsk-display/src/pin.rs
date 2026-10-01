@@ -849,8 +849,13 @@ where
                     _ => break, // declined / timeout / host yield — nothing set
                 };
             // Refuse a guessable PIN before the confirm step, matching the host set path.
-            #[cfg(any(feature = "strong-pin", feature = "fips-profile"))]
-            if rsk_fido::passkeys::pin_is_trivial(&new.expose()[..n1]) {
+            let complexity = match target {
+                PinScope::Device => cfg!(any(feature = "strong-pin", feature = "fips-profile")),
+                PinScope::Fido => {
+                    rsk_fido::passkeys::pin_complexity_enabled(&mut self.cells.fs.borrow_mut())
+                }
+            };
+            if complexity && rsk_fido::passkeys::pin_is_trivial(&new.expose()[..n1]) {
                 new_caption = Some(PinCaption::TooWeak);
                 continue;
             }

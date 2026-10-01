@@ -240,7 +240,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-THREAT-001` | A CTAPHID channel id is a routing label the sender writes, so channel  |
 | platform | `PLAT-THREAT-002` | A PIN-derived record stays rooted in the public chip serial until its  |
 | platform | `PLAT-MODEL-001` | `PermSets`'s five subsets are a SCOPE and not a description: a host ca |
-| platform | `PLAT-MODEL-009` | `EF_MINPINLEN`'s FLOOR (byte 0) and its RP-id disclosure list (bytes 2 |
+| platform | `PLAT-MODEL-009` | `EF_MINPINLEN`'s FLOOR (byte 0), complexity policy (flag bit 1) and RP |
 | platform | `PLAT-MODEL-011` | `EF_DEVICE_PIN` is outside `RSKeySecurityState` because the SURFACE it |
 | platform | `PLAT-MODEL-003` | The model's `ram` is `FidoState::keydev_dec.is_some()` and nothing els |
 | platform | `PLAT-MODEL-004` | One `store.seed` boolean stands for two flash records, so the soft-loc |

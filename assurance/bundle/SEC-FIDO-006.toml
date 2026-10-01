@@ -69,8 +69,8 @@ owners_tagged = [
   "crates/rsk-fido/src/reset.rs:35 reset — the command itself",
   "crates/rsk-fido/src/reset.rs:140 sweep — one phase of it",
   "crates/rsk-fido/src/reset.rs:321 survives_factory_reset — the OTHER wipe, the trusted-display one, which the model does not have at all",
-  "crates/rsk-fido/src/state.rs:533 FidoState::reset — the volatile half, and the first thing the command does",
-  "crates/rsk-fido/src/lib.rs:104 Ctx::load_keydev — RAM first then flash, which is what makes the RAM copy count as surviving",
+  "crates/rsk-fido/src/state.rs:544 FidoState::reset — the volatile half, and the first thing the command does",
+  "crates/rsk-fido/src/lib.rs:106 Ctx::load_keydev — RAM first then flash, which is what makes the RAM copy count as surviving",
 ]
 # And the three CLAUSE tags, which are all on one function and are the reason
 # each clause row derives `rust = 1`.
@@ -499,7 +499,7 @@ registered = "yes — assurance/platform.toml PLAT-MODEL-007, pending, whose `di
 
 [[assumption]]
 id = "AS-RESET-9"
-statement = "The volatile half of the reset happens by Rust drop-and-replace rather than by an explicit clear: `ctx.state.reset()` at crates/rsk-fido/src/reset.rs:107 is `*self = Self::new()` at crates/rsk-fido/src/state.rs:539, and the `Drop` impl zeroizes what it displaces."
+statement = "The volatile half of the reset happens by Rust drop-and-replace rather than by an explicit clear: `ctx.state.reset()` at crates/rsk-fido/src/reset.rs:107 is `*self = Self::new()` at crates/rsk-fido/src/state.rs:550, and the `Drop` impl zeroizes what it displaces."
 kind = "compiler"
 discharger = "stage 11's source-to-binary work, and nothing here. The model writes `ram' = FALSE` outright at RSKeySecurityState.tla:1310 and the α calls `volatile.retire()`; what no proof in this tree covers is that the emitted image does what the `Drop` says"
 expressible = "no — a fact about a compiler, not about the model"

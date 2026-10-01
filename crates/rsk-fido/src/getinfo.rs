@@ -23,14 +23,14 @@ use crate::consts::{
     AAGUID, ALG_EDDSA, ALG_ES256, ALG_ES384, ALG_ES512, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87,
     ATT_FMT_PACKED, ENC_GETINFO_MEMBER_LEN, FIRMWARE_VERSION, LARGE_BLOB_EXT, MAX_CRED_ID_LENGTH,
     MAX_CREDBLOB_LENGTH, MAX_CREDENTIAL_COUNT_IN_LIST, MAX_LARGE_BLOB_SIZE, MAX_MIN_PIN_RPIDS,
-    MAX_MSG_SIZE, PIN_COMPLEXITY_POLICY, TRANSPORTS,
+    MAX_MSG_SIZE, TRANSPORTS,
 };
 use crate::cose::cose_public_key;
 use crate::error::{CtapError, CtapResult};
 use crate::u2f::U2fGate;
 
 /// How many extensions getInfo names (0x02).
-const EXTENSIONS: u64 = 7 + if cfg!(feature = "preview-sign") { 1 } else { 0 };
+const EXTENSIONS: u64 = 9 + if cfg!(feature = "preview-sign") { 1 } else { 0 };
 
 /// Encode the getInfo response map into `out`; returns the byte length.
 /// `pin_set` reflects whether a PIN is configured (`options.clientPin`);
@@ -54,6 +54,7 @@ pub fn get_info(
     pin_set: bool,
     min_pin_len: u8,
     force_change: bool,
+    pin_complexity: bool,
     ea_enabled: bool,
     always_uv: bool,
     builtin_uv: bool,
@@ -68,6 +69,7 @@ pub fn get_info(
         pin_set,
         min_pin_len,
         force_change,
+        pin_complexity,
         ea_enabled,
         always_uv,
         builtin_uv,
@@ -85,6 +87,7 @@ fn write_info<W: Write>(
     pin_set: bool,
     min_pin_len: u8,
     force_change: bool,
+    pin_complexity: bool,
     ea_enabled: bool,
     always_uv: bool,
     builtin_uv: bool,
@@ -141,7 +144,9 @@ fn write_info<W: Write>(
         })?
         .str("minPinLength")?
         .str("hmac-secret-mc")?
-        .str("thirdPartyPayment")?;
+        .str("thirdPartyPayment")?
+        .str("uvm")?
+        .str("pinComplexityPolicy")?;
     #[cfg(feature = "preview-sign")]
     enc.str(crate::previewsign::NAME)?;
 
@@ -261,7 +266,7 @@ fn write_info<W: Write>(
         enc.u8(0x0B)?.u64(MAX_LARGE_BLOB_SIZE as u64)?;
     }
 
-    // 0x0C forceChangePin (EF_MINPINLEN[1]); enforced at token issuance (clientpin).
+    // 0x0C forceChangePin (EF_MINPINLEN[1] bit 0); enforced at token issuance (clientpin).
     enc.u8(0x0C)?.bool(force_change)?;
 
     // 0x0D minPINLength (EF_MINPINLEN[0], default MIN_PIN_LENGTH)
@@ -319,7 +324,7 @@ fn write_info<W: Write>(
     // 0x1B pinComplexityPolicy — a PIN rule BEYOND minPINLength, which 0x0D already
     // reports; a raised floor alone is length, not complexity. Its optional URL
     // companion (0x1C) stays absent — a docs link that rots is worse than none.
-    enc.u8(0x1B)?.bool(PIN_COMPLEXITY_POLICY)?;
+    enc.u8(0x1B)?.bool(pin_complexity)?;
 
     // 0x1D maxPINLength — max PIN length in Unicode code points. The PIN is padded
     // to 64 bytes on the wire, so the content is at most 63. A 2-byte CBOR key

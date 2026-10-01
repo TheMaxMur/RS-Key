@@ -182,7 +182,7 @@ ML-DSA-44 (`-48`).
 
 ## Extensions supported
 
-getInfo advertises seven extensions:
+getInfo advertises nine extensions:
 
 | Extension | What it does | Limit |
 |---|---|---|
@@ -192,7 +192,9 @@ getInfo advertises seven extensions:
 | `credBlob` | small opaque blob stored with the credential | 128 bytes |
 | `largeBlobKey` + large blobs | per-credential key into a device blob store | 4 KB store |
 | `largeBlob` (CTAP 2.3) | the blob itself, per credential, inside the assertion | 4046 B/credential; **replaces** the row above, `largeblob-ext` build only |
-| `minPinLength` | the device hands its PIN-length policy to the RP | |
+| `minPinLength` | the device hands its PIN-length policy to an authorized RP | |
+| `pinComplexityPolicy` | tells an authorized RP whether trivial PINs are refused | registration only |
+| `uvm` | signed record of the presence and PIN methods used | registration and authentication |
 | `thirdPartyPayment` | the secure-payment-confirmation marker | |
 
 `hmac-secret` has a use outside the browser: it is what lets `age` encrypt to
