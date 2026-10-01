@@ -10,7 +10,7 @@ Clients are the stock Yubico tooling: `ykman oath` on the command line and the
 subcommand; OATH is driven entirely through those. Both `ykman oath` and the
 Yubico Authenticator gate on a `Yubico YubiKey` reader name, so they only see
 the device on the opt-in `VIDPID=Yubikey5` build; the default RS-Key build
-enumerates as `RS-Key Security Key` (VID:PID `0x1209:0x0001`) and stays invisible
+enumerates as `RS-Key Security Key` (VID:PID `0x1209:0xF1D2`) and stays invisible
 to them. Build that flavor when you want to drive OATH from the Yubico tools
 ([build.md](../build.md)).
 

@@ -903,7 +903,7 @@ fn resolve_xosc_delay_mult() -> u32 {
 /// Resolve the full USB identity `(VID, PID, manufacturer, product)`.
 ///
 /// `VIDPID=<preset>` picks a named VID/PID pair; the default `RSKey` is this
-/// project's own pid.codes identity (`0x1209:0x0001`). `USB_VID` / `USB_PID`
+/// project's own pid.codes identity (`0x1209:0xF1D2`). `USB_VID` / `USB_PID`
 /// (`0xHHHH` or decimal) override either half, and `USB_MANUFACTURER` /
 /// `USB_PRODUCT` override the descriptor strings.
 ///
@@ -923,7 +923,7 @@ fn resolve_identity() -> (u16, u16, String, String) {
     let preset = env::var("VIDPID").unwrap_or_else(|_| "RSKey".into());
     let (mut vid, mut pid) = match preset.as_str() {
         // This project's own pid.codes identity — the default.
-        "RSKey" => (0x1209, 0x0001),
+        "RSKey" => (0x1209, 0xF1D2),
         // Vendor-mimicking interop presets (opt-in; local interop only, never
         // distributed). Only the Yubico VID also swaps the descriptor strings.
         "NitroHSM" => (0x20A0, 0x4230),

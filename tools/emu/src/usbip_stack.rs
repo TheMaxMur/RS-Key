@@ -45,7 +45,7 @@ use crate::usbip_server::{Backend, UrbSink};
 /// product string says which it is, and the serial (`RSKEMU\0\1`) already makes
 /// every value derived from it recognisably the emulator's.
 const VID: u16 = 0x1209;
-const PID: u16 = 0x0001;
+const PID: u16 = 0xF1D2;
 const MANUFACTURER: &str = "RS-Key";
 /// Deliberately not a board serial: everything derived from it is the
 /// emulator's, and the Yubico identity keeps it so a masquerade still says which

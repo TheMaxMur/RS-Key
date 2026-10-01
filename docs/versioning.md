@@ -41,7 +41,7 @@ the **`bcdDevice`** counter:
 
 ```sh
 rsk-tui --once          # prints "bcdDevice 0x…" alongside the applet state
-lsusb -v -d 1209:0001 | grep bcdDevice          # Linux
+lsusb -v -d 1209:F1D2 | grep bcdDevice          # Linux
 ioreg -p IOUSB -l | grep -i bcdDevice           # macOS
 ```
 

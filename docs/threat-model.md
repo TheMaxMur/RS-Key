@@ -257,7 +257,7 @@ bulk stream, ISO-7816 APDUs, CTAP2 CBOR. Defenses:
   card. Treat FIDO as available to anything with card access, and use
   `ykman config usb --disable fido2` (or `--disable u2f`) if that is not wanted —
   the mask gates the two applications apart, over both transports. On the default
-  `0x1209:0x0001` identity most hosts never bind the CCID interface at all, so the
+  `0x1209:0xF1D2` identity most hosts never bind the CCID interface at all, so the
   surface is absent there for an unrelated reason, not by design.
 - **The residual gap is *intent*. The trusted-display flavor closes it.** Because
   a standard key attests presence and possession, malware on the host can have it

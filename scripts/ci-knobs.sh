@@ -45,12 +45,16 @@ identity() {
   # shellcheck disable=SC2086 # the glob is the point: one build dir, unknown hash
   grep -qx "cargo:rustc-env=PK_USB_VID=4617" $o
   # shellcheck disable=SC2086
+  grep -qx "cargo:rustc-env=PK_USB_PID=61906" $o
+  # shellcheck disable=SC2086
   grep -qx "cargo:rustc-env=PK_USB_MANUFACTURER=RS-Key" $o
   # shellcheck disable=SC2086
   grep -qx "cargo:rustc-env=PK_USB_PRODUCT=RS-Key Security Key" $o
   env VIDPID=Yubikey5 cargo build --release -p firmware >/dev/null
   # shellcheck disable=SC2086
   grep -qx "cargo:rustc-env=PK_USB_VID=4176" $o
+  # shellcheck disable=SC2086
+  grep -qx "cargo:rustc-env=PK_USB_PID=1031" $o
   # shellcheck disable=SC2086
   grep -qx "cargo:rustc-env=PK_USB_MANUFACTURER=Yubico" $o
   echo "default = RS-Key identity, Yubikey5 = Yubico identity: OK"

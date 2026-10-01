@@ -6,7 +6,7 @@ button press or read over USB. Program slots 1–2 with stock `ykman otp`. Slots
 
 > **`ykman otp` needs the opt-in Yubico flavor.** `ykman` gates on the "Yubico
 > YubiKey" reader name. Only the opt-in `VIDPID=Yubikey5` build presents it. The
-> default `RSKey` build (VID:PID `0x1209:0x0001`, reader "RS-Key") is invisible
+> default `RSKey` build (VID:PID `0x1209:0xF1D2`, reader "RS-Key") is invisible
 > to it. The HID-keyboard *typing* of a slot's output is identity-independent and
 > works on either build. Only programming and reading slots over `ykman` needs
 > the Yubico flavor.

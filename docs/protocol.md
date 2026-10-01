@@ -361,7 +361,7 @@ The build picks a VID/PID preset (`firmware/build.rs`):
 
 | Preset | VID:PID | Manufacturer / Product strings | Notes |
 |---|---|---|---|
-| `RSKey` (**default**) | `1209:0001` | `RS-Key` / `RS-Key Security Key` | pid.codes identity; not a masquerade |
+| `RSKey` (**default**) | `1209:F1D2` | `RS-Key` / `RS-Key Security Key` | [pid.codes allocation](https://pid.codes/1209/F1D2/) |
 | `Yubikey5` (opt-in interop) | `1050:0407` | `Yubico` / `YubiKey RSK OTP+FIDO+CCID` | so `ykman`/Yubico Authenticator derive PID from the PC/SC reader name |
 | others | NitroHSM, NitroFIDO2, GnuPG, Pico, Dev | — | local interop only |
 
@@ -747,7 +747,7 @@ selectable for the other and answers the disabled half `6986` — for CTAP2 its 
 since a poll or a control carries nothing to gate. With neither
 enabled the AID is gone (`6A82`).
 
-**⚠️ On the default `0x1209:0x0001` identity most hosts never bind the CCID
+**⚠️ On the default `0x1209:0xF1D2` identity most hosts never bind the CCID
 interface at all** — the `ccid` driver whitelists USB ids and that one is not
 listed — so none of this is reachable there. A `VIDPID=Yubikey5` build, or a host
 carrying the `ccid-rs-key` overlay, is what makes the interface appear.
@@ -996,7 +996,7 @@ untouched tag keeps its stored value. So a host may send just the fields it
 changed without wiping the rest, and a tag is cleared only by an explicit
 zero/empty TLV. (A host may still do a full read-modify-write for clarity.)
 
-![EF_PHY record: a TAG(1) LEN(1) VALUE(LEN) triple, then a worked three-record blob concatenating VIDPID (1209:0001), LED_DRIVER (ws2812) and OPTS (LED_STEADY)](images/phy-record.svg)
+![EF_PHY record: a TAG(1) LEN(1) VALUE(LEN) triple, then a worked three-record blob concatenating VIDPID (1209:F1D2), LED_DRIVER (ws2812) and OPTS (LED_STEADY)](images/phy-record.svg)
 
 | Tag | Name | Len | Value |
 |---|---|---|---|
@@ -1400,10 +1400,10 @@ READ    80 1E 01 00 00
 →  <phy TLV blob>                          # e.g. 06 02 00 00 on a virgin device
 ```
 
-**Switch USB identity to `1209:0001` (phy RMW):** read the blob, upsert tag `00`
-with `12 09 00 01`, write back:
+**Switch USB identity to `1209:F1D2` (phy RMW):** read the blob, upsert tag `00`
+with `12 09 F1 D2`, write back:
 ```
-WRITE   80 1C 01 00 <Lc> <…00 04 12 09 00 01…> 00
+WRITE   80 1C 01 00 <Lc> <…00 04 12 09 F1 D2…> 00
 REBOOT  80 1F 00 00 00
 ```
 

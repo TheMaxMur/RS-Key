@@ -1090,7 +1090,7 @@ drives the *real* consumer software (`gpg`, `ssh`, libfido2, `ykman`,
 OpenSC, browsers) and records whether the device works end to end. The
 `ykman` and Yubico Authenticator cells gate on the "Yubico YubiKey" reader
 name, so they run against the opt-in `VIDPID=Yubikey5` interop flavor (never
-distributed); the default RS-Key build (0x1209:0x0001) does not expose itself
+distributed); the default RS-Key build (0x1209:0xF1D2) does not expose itself
 to them. The sweep `tests/interop/run.py` automates the read-only CLI cells;
 the full matrix (including the GUI/ceremony cells) lives in
 [interop.md](interop.md). It is how the `ykman openpgp info` GET DATA `6E`

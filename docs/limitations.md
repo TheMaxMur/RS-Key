@@ -275,7 +275,7 @@ covers the security boundary. This page covers feature and hardware gaps.
 
 ## Protocol / compatibility
 
-- **The default USB identity is RS-Key's own** (`0x1209:0x0001` on the
+- **The default USB identity is RS-Key's own** (`0x1209:0xF1D2` on the
   pid.codes FOSS VID, manufacturer `RS-Key`, product `RS-Key Security Key`,
   reported firmware 5.8.0), *not* a YubiKey masquerade. We no longer ship
   Yubico's identifiers by default. A YubiKey identity (`0x1050:0x0407`,

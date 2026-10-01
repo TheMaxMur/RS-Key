@@ -1,7 +1,7 @@
 # Windows host setup
 
 The board enumerates as a composite **FIDO HID + CCID** device. By default it
-uses the project's own RS-Key USB identity `0x1209:0x0001` (pid.codes), with the
+uses the project's own RS-Key USB identity `0x1209:0xF1D2` (pid.codes), with the
 PC/SC reader name containing `RS-Key`. The opt-in `VIDPID=Yubikey5` interop build
 instead presents the YubiKey identity `0x1050:0x0407` (other presets:
 [build.md](build.md)). The two transports have different host requirements on

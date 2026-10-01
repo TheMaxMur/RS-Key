@@ -8,7 +8,7 @@
 
 [usb]
 vidpid = "RSKey"
-# 0x1209:0x0001 — this project's own pid.codes identity
+# 0x1209:0xF1D2 — this project's own pid.codes identity
 
 [led]
 kind = "ws2812"

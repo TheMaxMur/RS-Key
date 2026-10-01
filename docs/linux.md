@@ -1,7 +1,7 @@
 # Linux host setup
 
 The board enumerates as a composite **FIDO HID + CCID** device. By default it
-uses the project's own RS-Key USB identity `0x1209:0x0001` (pid.codes), with the
+uses the project's own RS-Key USB identity `0x1209:0xF1D2` (pid.codes), with the
 PC/SC reader name containing `RS-Key`. The opt-in `VIDPID=Yubikey5` interop build
 instead presents the YubiKey identity `0x1050:0x0407` (other presets:
 [build.md](build.md)). The two transports have different host requirements on
@@ -40,15 +40,16 @@ Replace `youruser` with your login name throughout.
 itself — the **ccid** driver does, and it binds only USB ids that appear in its
 own reader list (`supported_readers.txt`, compiled into
 `ifd-ccid.bundle/Contents/Info.plist`). The default RS-Key identity
-`0x1209:0x0001` is **not** in that list, so the CCID interface is skipped
+`0x1209:0xF1D2` is **not** in that list, so the CCID interface is skipped
 **silently**: FIDO keeps working, `pcsc_scan` shows nothing, and OpenPGP, PIV,
 OATH and Yubico-OTP all look absent rather than broken. No polkit or udev change
 fixes this — those govern access to a reader the driver never claimed.
 
-Why it is not simply fixed upstream: `0x1209:0x0001` is pid.codes' **shared
-prototype id**, not an allocation to this project. Listing it in the ccid driver
-would bind every unrelated prototype using the same id. A dedicated VID/PID is
-pending, and the upstream submission waits on it.
+[pid.codes allocated `1209:F1D2` to RS-Key](https://pid.codes/1209/F1D2/).
+The upstream ccid submission is still pending; allocation alone does not add a
+reader to an installed driver. Older firmware uses `1209:0001`, the shared test
+PID. The opt-in overlay below keeps that id for existing keys as well; it must
+not be submitted upstream because it also matches unrelated prototypes.
 
 Until then, pick one:
 
@@ -57,8 +58,8 @@ Until then, pick one:
   yubico udev rules cover it too. Nothing to patch; this is why the applets work
   out of the box on that build.
 - **Apply this flake's ccid overlay** ([NixOS](#nixos-declarative)) — the same
-  driver with that one line already in its reader list, and nothing else changed;
-  the build refuses to produce a bundle the id did not reach.
+  driver with the allocated id and the legacy test id in its reader list;
+  the build checks both entries in the generated bundle.
 - **Add the id to your local ccid driver.** Building from source, a one-line
   addition to `supported_readers.txt` before the build; on an FHS distro,
   edit `/usr/lib/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist`, which holds
@@ -89,7 +90,10 @@ Add to your `configuration.nix`:
     pkgs.libfido2
   ];
   services.udev.extraRules = ''
-    # RS-Key own identity (pid.codes 0x1209:0x0001) — FIDO HID + CCID access.
+    # RS-Key allocated identity (pid.codes 0x1209:0xF1D2).
+    SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="f1d2", TAG+="uaccess"
+    SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="f1d2", TAG+="uaccess"
+    # Compatibility with older RS-Key firmware using the shared test PID.
     SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", TAG+="uaccess"
     SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", TAG+="uaccess"
   '';
@@ -156,7 +160,10 @@ services.pcscd.plugins = lib.mkForce [
    Create `/etc/udev/rules.d/70-rsk.rules`:
 
    ```udev
-   # RS-Key own identity (pid.codes 0x1209:0x0001) — FIDO HID + CCID access.
+   # RS-Key allocated identity (pid.codes 0x1209:0xF1D2).
+   SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="f1d2", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+   SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="f1d2", TAG+="uaccess", GROUP="plugdev", MODE="0660"
+   # Compatibility with older RS-Key firmware using the shared test PID.
    SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", TAG+="uaccess", GROUP="plugdev", MODE="0660"
    SUBSYSTEM=="usb", ATTRS{idVendor}=="1209", ATTRS{idProduct}=="0001", TAG+="uaccess", GROUP="plugdev", MODE="0660"
    ```

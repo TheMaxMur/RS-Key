@@ -132,14 +132,41 @@ fn the_device_info_counts_the_interfaces_it_has() {
         d.num_interfaces as usize,
         interfaces_in(&config_descriptor()).len()
     );
-    assert_eq!(d.id_vendor, VID);
-    assert_eq!(d.id_product, PID);
+    assert_eq!((d.id_vendor, d.id_product), (0x1209, 0xF1D2));
     // …and `--yubico` is one identity or none: the tools that look for it match
     // the VID, and read the PID out of the PC/SC reader name.
     let yk = device_info(true);
     assert_eq!(yk.id_vendor, YUBICO_VID);
     assert_eq!(yk.id_product, YUBICO_PID);
     assert_eq!(d.bcd_device, crate::bcd::BCD_DEVICE);
+}
+
+#[test]
+fn the_device_descriptor_matches_the_devlist_identity() {
+    on_the_wire(async |host: &mut Host| {
+        let seqnum = host.submit(0, true, [0x80, 6, 0, 1, 0, 0, 18, 0], vec![], 18);
+        let deadline = Instant::now() + Duration::from_millis(REPLY_MS);
+        let descriptor = loop {
+            if let Ok(Ret::Submit {
+                seqnum: reply,
+                status,
+                data,
+                ..
+            }) = host.rets.try_recv()
+            {
+                assert_eq!(reply, seqnum);
+                assert_eq!(status, 0);
+                break data;
+            }
+            assert!(Instant::now() < deadline, "GET_DESCRIPTOR never answered");
+            Timer::after_millis(1).await;
+        };
+        let d = device_info(false);
+        assert_eq!(descriptor.len(), 18);
+        assert_eq!(&descriptor[8..10], &d.id_vendor.to_le_bytes());
+        assert_eq!(&descriptor[10..12], &d.id_product.to_le_bytes());
+        assert_eq!(&descriptor[12..14], &d.bcd_device.to_le_bytes());
+    });
 }
 
 /// The keyboard is interface 0 and FIDO is interface 1. Stated separately from

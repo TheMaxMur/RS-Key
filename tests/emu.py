@@ -211,11 +211,8 @@ def _enumerate(vid=0, pid=0):
         {
             "path": EMU_PATH,
             "vendor_id": 0x1209,
-            # The default build's identity (`VIDPID=RSKey`), which is also what
-            # `--usbip` presents. It was 0x000D here and in the USB/IP device
-            # info — a number neither the firmware nor its build script has ever
-            # produced, written twice from the same guess.
-            "product_id": 0x0001,
+            # Match the firmware's RSKey preset and the native USB/IP backend.
+            "product_id": 0xF1D2,
             "serial_number": EMU_SERIAL,
             "product_string": EMU_PRODUCT,
             "manufacturer_string": "RS-Key",

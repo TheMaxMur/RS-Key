@@ -92,7 +92,7 @@ ykman piv certificates generate --subject "CN=me" 9a pub.pem  # the new key its
 ```
 
 > **`ykman` needs the opt-in `VIDPID=Yubikey5` build.** It gates on the "Yubico
-> YubiKey" reader name, which the default RS-Key build (`0x1209:0x0001`) does not
+> YubiKey" reader name, which the default RS-Key build (`0x1209:0xF1D2`) does not
 > present. Build that flavor for the `ykman` commands here and under *Verifying*
 > below, or drive the device with `rsk` / `rsk-tui` on the default build.
 

@@ -9,7 +9,7 @@ software. It passes the FIDO Alliance Conformance Tools clean (CTAP2.3
 real client software is in the [interop matrix](../interop.md).
 
 The default build enumerates as "RS-Key", its own USB identity
-(`0x1209:0x0001`, the pid.codes FOSS VID), not a YubiKey one
+(`0x1209:0xF1D2`, the pid.codes FOSS VID), not a YubiKey one
 ([build.md](../build.md)). FIDO clients don't care: browsers, `python-fido2`,
 and libfido2 bind the FIDO HID usage page, not the VID/PID, so everything on this
 page works regardless of USB identity. The one exception is `ykman`, which gates

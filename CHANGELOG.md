@@ -146,6 +146,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **The default USB identity is the allocated `1209:F1D2`** (pid.codes), replacing
+  the shared test PID `1209:0001`. Firmware (`bcdDevice 0x0A8A`), the native
+  emulator and its test shim agree. The opt-in ccid overlay and Linux udev rules
+  recognize both IDs for existing devices. Explicit `EF_PHY` VID/PID overrides
+  survive upgrades, and stored keys and credentials are unchanged. Upstream
+  libccid support is still pending; use the local overlay in the meantime.
+
 - **`rsk flash` accepts only a signature from a release built at a tag**
   (`rsk` 0.3.46). The cosign identity it checks, copied from the verify command
   in [supply-chain.md](docs/supply-chain.md#verifying-a-download), took

@@ -104,7 +104,7 @@ To flash the firmware manually:
    it whenever the drive never appears or the copy fails.
 3. The board reboots itself and enumerates as `RS-Key Security Key`. (The
    default build uses the project's own USB identity, VID:PID
-   `0x1209:0x0001` from pid.codes; the PC/SC reader name contains "RS-Key".
+   `0x1209:0xF1D2` from pid.codes; the PC/SC reader name contains "RS-Key".
    For a build that presents the YubiKey USB identity so `ykman`/Yubico
    Authenticator auto-recognize it, build the opt-in `VIDPID=Yubikey5`
    flavor; see [build.md](build.md).)
@@ -132,8 +132,8 @@ of this repo and ships on its own schedule.
 
 ![PicoForge on its Device Overview page, reading a freshly flashed RS-Key: a sidebar of sections (Home, Passkeys, Accounts, Slots, PIV, OpenPGP, Audit, Backup, Lock, Attestation, Configuration, Security, Offboard) and four cards — Device Information (serial number, firmware "RS-Key build 0x0872", VID:PID 1209:0001, manufacturer and product name "RS-Key Security Key", storage 2 of 1536 KB, 4 MB flash chip), FIDO2 Information (AAGUID, U2F_V2 and FIDO 2.0 / 2.1 / 2.3, PIN "Not Set", resident keys supported, minimum PIN length 4, 256 remaining credentials), LED Configuration (GPIO 16, 30 s presence touch timeout) and Security Status (boot mode Development, debug enabled, secure lock pending)](images/picoforge-overview.png)
 
-That is a board straight out of step 2, so the screen reads the way yours will:
-the identity is the default `1209:0001`, no PIN is set yet (that is step 3), and
+This screenshot predates the allocated `1209:F1D2` identity and shows the former
+`1209:0001` test PID. No PIN is set yet (that is step 3), and
 the boot mode is still `Development`. [production.md](production.md) is what turns
 the last one into a locked-down key — irreversibly, so read it first.
 

@@ -57,8 +57,8 @@ host-side tooling to drive and provision all of it.
   on hardware is recorded in the [interop matrix](interop.md), with dates.
 - It is **not** a certified hardware security key, and not a drop-in replacement
   for an audited commercial key in production. There is no secure element.
-- The default USB identity is RS-Key's own (VID `0x1209` / PID `0x0001`, from
-  [pid.codes](https://pid.codes), the open-source USB VID), presenting as
+- The default USB identity is RS-Key's own (VID `0x1209` / PID `0xF1D2`, from
+  [pid.codes](https://pid.codes/1209/F1D2/)), presenting as
   "RS-Key Security Key". An opt-in `VIDPID=Yubikey5` build instead borrows a
   YubiKey's identity (VID `0x1050` / PID `0x0407`) so that `ykman` and Yubico
   Authenticator (which key off the "Yubico YubiKey" reader name) work without

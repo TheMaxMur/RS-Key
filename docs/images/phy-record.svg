@@ -2,7 +2,7 @@
 <!-- Copyright (C) 2026 RS-Key contributors -->
 <svg viewBox="0 0 780 420" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="ttl dsc" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
   <title id="ttl">EF_PHY device-config record</title>
-  <desc id="dsc">The phy record is a flat sequence of TAG(1) LEN(1) VALUE(LEN) records in any order. A worked example concatenates three records: VIDPID 00 04 12 09 00 01, LED_DRIVER 0C 01 03, and OPTS 06 02 00 08. TAG bytes are rust, LEN pale, VALUE teal.</desc>
+  <desc id="dsc">The phy record is a flat sequence of TAG(1) LEN(1) VALUE(LEN) records in any order. A worked example concatenates three records: VIDPID 00 04 12 09 F1 D2, LED_DRIVER 0C 01 03, and OPTS 06 02 00 08. TAG bytes are rust, LEN pale, VALUE teal.</desc>
   <defs>
     <style>
       .h1{font-size:23px;font-weight:700;fill:#2B2723}
@@ -59,7 +59,7 @@
 
   <!-- byte cells: stride 42, width 40, y 240 h 36 -->
   <g>
-    <!-- rec1 VIDPID: 00 04 | 12 09 00 01 -->
+    <!-- rec1 VIDPID: 00 04 | 12 09 F1 D2 -->
     <rect x="40"  y="240" width="40" height="36" fill="#C0562B"/>
     <rect x="82"  y="240" width="40" height="36" fill="#EFE0D6"/>
     <rect x="124" y="240" width="40" height="36" fill="#2F7E75"/>
@@ -81,8 +81,8 @@
     <text x="102" y="264" fill="#A9764F">04</text>
     <text x="144" y="264" fill="#fff">12</text>
     <text x="186" y="264" fill="#fff">09</text>
-    <text x="228" y="264" fill="#fff">00</text>
-    <text x="270" y="264" fill="#fff">01</text>
+    <text x="228" y="264" fill="#fff">F1</text>
+    <text x="270" y="264" fill="#fff">D2</text>
     <text x="312" y="264" fill="#fff">0C</text>
     <text x="354" y="264" fill="#A9764F">01</text>
     <text x="396" y="264" fill="#fff">03</text>
@@ -94,7 +94,7 @@
 
   <!-- decoded -->
   <g text-anchor="middle" class="dec">
-    <text x="166" y="296">→ VID:PID 1209:0001</text>
+    <text x="166" y="296">→ VID:PID 1209:F1D2</text>
     <text x="355" y="296">→ ws2812 (3)</text>
     <text x="502" y="296">→ LED_STEADY</text>
   </g>

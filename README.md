@@ -71,7 +71,7 @@ librekeys project) reads the device's state and writes the same config surface t
 
 <p align="center">
   <img src="docs/images/picoforge-overview.png" width="720" alt="PicoForge on its Device Overview page, reading a freshly flashed RS-Key: a sidebar of sections (Home, Passkeys, Accounts, Slots, PIV, OpenPGP, Audit, Backup, Lock, Attestation, Configuration, Security, Offboard) and four cards — Device Information (serial number, firmware RS-Key build 0x0872, VID:PID 1209:0001, product name RS-Key Security Key, storage 2 of 1536 KB, 4 MB flash chip), FIDO2 Information (AAGUID, U2F_V2 and FIDO 2.0 / 2.1 / 2.3, PIN Not Set, resident keys supported, 256 remaining credentials), LED Configuration (GPIO 16, 30 s presence touch timeout) and Security Status (boot mode Development, debug enabled, secure lock pending)"><br>
-  <sub>A board straight out of step 3, in PicoForge: the default <code>1209:0001</code> identity, no PIN yet, boot mode still <code>Development</code></sub>
+  <sub>A board straight out of step 3, in PicoForge: the former test identity <code>1209:0001</code> (current builds use <code>1209:F1D2</code>), no PIN yet, boot mode still <code>Development</code></sub>
 </p>
 
 The demo below runs on a board with a screen. A plain RP2350 board behaves the
@@ -279,7 +279,7 @@ not been run against RS-Key yet; it is `⏳` in the
   OpenPGP and PIV keys do not survive a board swap.
 - **No brainpoolP512r1 / X448 / Ed448** OpenPGP curves (no mature `no_std` Rust
   arithmetic yet); brainpoolP256r1 and P384r1 are supported.
-- The default USB identity is **RS-Key's own** pid.codes id `0x1209:0x0001`;
+- The default USB identity is **RS-Key's own** [pid.codes allocation](https://pid.codes/1209/F1D2/) `0x1209:0xF1D2`;
   the YubiKey USB identity that `ykman` / Yubico Authenticator auto-recognize is
   the opt-in `VIDPID=Yubikey5` build, not for distribution.
 

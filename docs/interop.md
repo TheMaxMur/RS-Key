@@ -23,7 +23,7 @@ yet still trip a strict third-party parser. (The canonical example is the
 rejected by ykman's stricter `Tlv.unpack(0x6E, …)`.)
 
 > This is experimental firmware with no security audit. Most cells below run on
-> the **default RS-Key build** (USB VID:PID `0x1209:0x0001`, reader name
+> the **default RS-Key build** (USB VID:PID `0x1209:0xF1D2`, reader name
 > "RS-Key"). `gpg`, `ssh`, browsers, OpenSC, and libfido2 bind the ATR / FIDO
 > HID usage page, not the VID/PID, so they don't care about branding. The
 > `ykman` and Yubico Authenticator cells are the exception: they derive the

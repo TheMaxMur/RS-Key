@@ -125,7 +125,7 @@ What attaches is the device's own USB stack, not a description of it: the same
 reads, and `fido2-token`, a browser, `ykman` and `gpg` all work.
 
 ```bash
-fido2-token -L                 # /dev/hidraw1: vendor=0x1209, product=0x0001
+fido2-token -L                 # /dev/hidraw1: vendor=0x1209, product=0xf1d2
 fido2-token -I /dev/hidraw1    # CTAP2.3 getInfo
 opensc-tool -a                 # 3b:fc:…:52:53:2d:4b:65:79  — the RS-Key ATR
 ```

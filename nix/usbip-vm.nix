@@ -47,7 +47,7 @@
         # The whole reason this guest exists.
         boot.kernelModules = [ "vhci-hcd" ];
 
-        # pcscd binds by USB id, and the default RS-Key identity (0x1209:0x0001)
+        # pcscd binds by USB id, and the default RS-Key identity (0x1209:0xF1D2)
         # is not in the stock driver's list — the CCID interface would be skipped
         # silently and every card suite would read as "applet missing". Same
         # overlay `docs/linux.md` tells a user to add.

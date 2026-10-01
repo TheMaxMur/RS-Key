@@ -5,7 +5,7 @@ S/MIME, PIV-aware OS login, SSH and `age` through PKCS#11. Driven with
 `ykman piv` or `yubico-piv-tool`; the applet also speaks the Yubico extensions
 (metadata, serial, attestation, move/delete, set-retries) those tools use.
 `ykman piv` and `yubico-piv-tool` gate on the "Yubico YubiKey" reader name,
-which the default RS-Key build (VID:PID `0x1209:0x0001`) does not present. They
+which the default RS-Key build (VID:PID `0x1209:0xF1D2`) does not present. They
 need the opt-in `VIDPID=Yubikey5` interop build ([build.md](../build.md)). The
 PKCS#11 / OpenSC and OS-native (macOS CryptoTokenKit, Windows) routes below
 identify the card by its applet, not the reader name, so they work on the default

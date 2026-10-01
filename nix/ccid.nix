@@ -1,37 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 #
-# The ccid driver carrying the default RS-Key identity in its reader list. libccid
-# binds only the USB ids in readers/supported_readers.txt (generated into the
-# bundle's Info.plist at build time), so on the default identity the CCID
-# interface is skipped *silently*: FIDO keeps working while OpenPGP, PIV, OATH and
-# Yubico-OTP look absent rather than broken
-# (docs/linux.md → "The CCID driver's reader list").
-#
-# This is a local overlay rather than an upstream submission because
-# 0x1209:0x0001 is pid.codes' shared *prototype* id, not an allocation to this
-# project: listing it in the ccid driver itself would bind every unrelated
-# prototype that uses the same id.
+# libccid binds only listed USB ids. Keep the allocated identity and the former
+# shared test PID in this opt-in overlay until upstream covers the allocation;
+# the test PID stays local because it also matches unrelated prototypes.
 { pkgs }:
 let
-  # The identity the default build presents (`config.device_release`'s neighbours
-  # in firmware/src/main.rs), and the one the udev rules in docs/linux.md match.
-  # The Yubico interop build (VIDPID=Yubikey5) needs none of this — 0x1050:0x0407
-  # is in the list already.
   vendorId = "0x1209";
-  productId = "0x0001";
+  productId = "0xF1D2";
+  legacyProductId = "0x0001";
 
-  # pcsc-lite names a reader from the USB product string, falling back to the
-  # driver's friendly name; both spellings have to keep matching the host tools'
-  # reader test (`RSK_READER_TOKENS` in tools/rsk/ccid.py).
+  # PC/SC may fall back to this name; keep the host tools' RS-Key reader token.
   friendlyName = "RS-Key";
+  legacyFriendlyName = "RS-Key (legacy test PID)";
 
-  # Anchor on pid.codes 0x1209's other tenant so the entry lands with the ids it
-  # shares a vendor with, inside the section the generator reads. --replace-fail
-  # then turns an upstream restructure into a build failure instead of a driver
-  # that silently drops the id again.
+  # Keep both rows in the section create_Info_plist.pl reads; fail on upstream drift.
   anchor = "# F-Secure Foundry";
-  entry = "# ${friendlyName}\n${vendorId}:${productId}:${friendlyName}\n\n${anchor}";
+  entry = "# ${friendlyName}\n${vendorId}:${productId}:${friendlyName}\n${vendorId}:${legacyProductId}:${legacyFriendlyName}\n\n${anchor}";
 in
 pkgs.ccid.overrideAttrs (old: {
   pname = "ccid-rs-key";
@@ -40,11 +25,20 @@ pkgs.ccid.overrideAttrs (old: {
     substituteInPlace readers/supported_readers.txt --replace-fail '${anchor}' '${entry}'
   '';
 
-  # --replace-fail proves the line reached the source; this proves create_Info_plist.pl
-  # picked it up. It reads the whole file and skips comments, so an entry parked in
-  # a commented-out section would edit cleanly and still never bind.
-  postInstallCheck = ''
-    grep -q '<string>${friendlyName}</string>' \
-      "$out/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist"
+  # Check the generated parallel arrays, not just whether the source patch landed.
+  postInstallCheck = (old.postInstallCheck or "") + ''
+    ${pkgs.python3}/bin/python3 - "$out/pcsc/drivers/ifd-ccid.bundle/Contents/Info.plist" <<'PY'
+    import plistlib
+    import sys
+
+    with open(sys.argv[1], "rb") as source:
+        info = plistlib.load(source)
+    arrays = [info[key] for key in ("ifdVendorID", "ifdProductID", "ifdFriendlyName")]
+    assert len({len(a) for a in arrays}) == 1, "ccid reader arrays differ in length"
+    readers = set(zip(*arrays))
+    for product, name in (("${productId}", "${friendlyName}"),
+                          ("${legacyProductId}", "${legacyFriendlyName}")):
+        assert ("${vendorId}", product, name) in readers, f"ccid omits {product}: {name}"
+    PY
   '';
 })

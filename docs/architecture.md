@@ -204,14 +204,17 @@ capacity no one reaches. Empty flash here is headroom, not waste.
 
 USB VID/PID, product strings and the reported firmware version are
 compile-time knobs ([build.md](build.md)). The default is RS-Key's own
-identity: VID:PID `0x1209:0x0001` (pid.codes), manufacturer "RS-Key",
+identity: VID:PID `0x1209:0xF1D2` (pid.codes), manufacturer "RS-Key",
 product "RS-Key Security Key" (the `RSKey` preset). An opt-in `VIDPID=Yubikey5`
 preset builds the Yubico interop flavor (`0x1050:0x0407`, reader name "Yubico
 YubiKey") for the tools that auto-recognize the device purely by that reader
 name. A flash-resident *phy* record can override VID/PID and the product
 string at boot (the store mounts before the USB builder runs for exactly this
 reason). FIDO tools find the device by HID usage page, CCID tools by the
-reader name.
+reader name. From build `0x0A8A`, the default PID is the allocated `F1D2`
+instead of the former test PID `0001`. An existing explicit VID/PID override in
+`EF_PHY` remains effective after an upgrade, including `1209:0001`; firmware
+does not rewrite that record. Keys and credentials are unaffected.
 
 ## User presence
 

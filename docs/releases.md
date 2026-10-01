@@ -36,7 +36,8 @@ step 3).
   | `16mb` | `FLASH_SIZE=16M` | 16 MB boards (e.g. TenStar RP2350-USB) |
   | `strict-config` | + strict-config | the historical strict admin-write posture: config writes stay presence/PIN-gated and the ungated transport writes are refused ([build.md](build.md), [threat-model.md](threat-model.md)). The `default` build is now the permissive full-ykman admin surface |
 
-  All fourteen present the default **RS-Key** USB identity (`0x1209:0x0001`). For the
+  All fourteen present the default **RS-Key** USB identity: `0x1209:0xF1D2`
+  from build `0x0A8A`; older images use the test PID `0x1209:0x0001`. For the
   YubiKey-interop identity, build `VIDPID=Yubikey5` yourself ([build.md](build.md)).
 - **`SHA256SUMS`**: a checksum for every image and the SBOM.
 - **`SHA256SUMS.sigstore.json`**: a keyless [cosign](https://docs.sigstore.dev/)
