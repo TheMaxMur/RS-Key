@@ -197,6 +197,22 @@ getInfo advertises nine extensions:
 | `uvm` | signed record of the presence and PIN methods used | registration and authentication |
 | `thirdPartyPayment` | the secure-payment-confirmation marker | |
 
+Read or strengthen the PIN policy with `rsk fido pin-policy`. For example:
+
+```sh
+rsk fido pin-policy
+rsk fido pin-policy --complexity --min-length 6 --rp-id login.example --force-change
+```
+
+The second command authenticates with the current FIDO PIN. It enables the
+complexity rule, raises the minimum length, authorizes that RP to read both
+policy extensions, and requires a new PIN before another token can be issued.
+Complexity and minimum length cannot be lowered without a factory reset, which
+also removes credentials. Without `--force-change`, enabling complexity applies
+to future PIN changes; it does not evaluate the existing PIN. Repeating
+`--rp-id` supplies a replacement list; omitting it preserves the current list.
+The same complexity rule applies when choosing a FIDO PIN on the key's display.
+
 `hmac-secret` has a use outside the browser: it is what lets `age` encrypt to
 this device with no smart card involved. See [age.md](age.md).
 

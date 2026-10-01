@@ -60,6 +60,7 @@ SITES = {
         ("measure", "ccid.connect", None),
     ],
     "fido": [
+        ("pin_policy", "_ctap", "True"),
         ("set_pin", "_ctap", "True"),
         ("list_passkeys", "_ctap", None),
         ("att_import", "connect_fido", "True"),

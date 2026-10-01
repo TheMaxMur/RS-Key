@@ -46,6 +46,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   authorized registration RPs; authenticatorConfig can enable it until reset.
   Legacy PIN-policy records remain readable, and PIN changes preserve the
   policy and RP allowlist. `bcdDevice` → `0x0A8B`.
+- `rsk fido pin-policy` shows or strengthens PIN length, complexity, RP access
+  and the forced-change requirement (CLI 0.3.49).
 
 - **Firmware-image emulator inspection and fault injection.** An opt-in loopback
   port measures command stacks, scans emulated SRAM and cuts power at selected

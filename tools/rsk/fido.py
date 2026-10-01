@@ -34,6 +34,7 @@ try:
     from fido2.ctap2 import Ctap2
     from fido2.ctap2.pin import ClientPin
     from fido2.ctap2.credman import CredentialManagement as CM
+    from fido2.ctap2.config import Config
 except ImportError:
     CtapHidDevice = None
 
@@ -48,6 +49,13 @@ def register(sub):
     lp = g.add_parser("list-passkeys", help="list discoverable credentials")
     add_pin_arg(lp)
     lp.set_defaults(func=list_passkeys)
+    pp = g.add_parser("pin-policy", help="show or strengthen the FIDO2 PIN policy")
+    add_pin_arg(pp)
+    pp.add_argument("--min-length", type=int, choices=range(4, 64), metavar="4-63")
+    pp.add_argument("--rp-id", action="append", help="RP allowed to read the PIN policy (repeatable)")
+    pp.add_argument("--force-change", action="store_true", help="require changing the current PIN")
+    pp.add_argument("--complexity", action="store_true", help="reject trivial PINs until factory reset")
+    pp.set_defaults(func=pin_policy)
 
     a = g.add_parser("attestation", help="org attestation key/chain (enterprise)")
     ga = a.add_subparsers(dest="acmd", required=True)
@@ -91,6 +99,30 @@ def _ctap(exclusive=False):
     if "FIDO_2_0" not in ctap.info.versions:
         die("device does not advertise FIDO2")
     return ctap
+
+
+def pin_policy(args):
+    ctap = _ctap(exclusive=True)
+    changing = (args.min_length is not None or args.rp_id is not None
+                or args.force_change or args.complexity)
+    if changing:
+        if not ctap.info.options.get("clientPin"):
+            die("set a FIDO2 PIN before configuring its policy")
+        cp = ClientPin(ctap)
+        pin = resolve_pin(args, has_pin=True, required=True)
+        try:
+            token = cp.get_pin_token(pin, ClientPin.PERMISSION.AUTHENTICATOR_CFG)
+            Config(ctap, cp.protocol, token).set_min_pin_length(
+                min_pin_length=args.min_length, rp_ids=args.rp_id,
+                force_change_pin=args.force_change, pin_complexity_policy=args.complexity)
+        except CtapError as e:
+            die_ctap_pin_error(e, cp)
+        except ValueError as e:
+            die(str(e))
+    info = ctap.get_info()
+    print(f"Minimum PIN length: {int(info.min_pin_length)} code points")
+    print(f"PIN complexity policy: {'enabled' if info.pin_complexity_policy else 'disabled'}")
+    print(f"PIN change required: {'yes' if info.force_pin_change else 'no'}")
 
 
 def set_pin(args):
