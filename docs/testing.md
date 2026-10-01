@@ -1062,14 +1062,37 @@ as a real change.
 
 ## FIDO conformance
 
-RS-Key is run against the **FIDO Alliance Conformance Tools** (v1.8.5.1), the
-same protocol test suites the FIDO certification programs are built on, and
-passes them clean:
+The last recorded run against the **FIDO Alliance Conformance Tools**
+(v1.8.5.1) was on **2026-06-20**, with firmware `bcdDevice 0x0776`. These are
+historical results; the current firmware needs a new official-tool run:
 
 | Suite | Result |
 |---|---|
 | CTAP2.3 (`profile_featureful` — the strictest profile) | **235 / 0** |
 | U2F 1.1 / 1.2 | **55 / 0** |
+
+The CTAP2.3 tool has 324 cases, with 89 pending in that run. Optional
+capabilities, transport and profile settings decide which cases execute, so
+compare the case IDs, failures and pending reasons as well as the pass count.
+The native Rust conformance tests, the pico-fido pytest corpus and the Go
+CTAP2.3 runner are separate suites; their totals cannot update this table.
+
+The Go catalog's `uvm P-1`, `pin-complexity-policy P-1/P-2` and
+`authenticator-config P-6` were marked not applicable in the 2026-09-29
+coverage map. They now have independent dispatcher tests in
+`crates/rsk-fido/src/conformance/policy.rs`: no makeCredential options,
+RP-scoped true and false policy outputs, enabling complexity and reset.
+Additional cases check signed extension bytes, internal and external PIN
+methods, getNextAssertion, wrong input types and preservation of RP hashes.
+The tests exercise the public protocol; the private Go runner is not vendored.
+
+Current metadata declares `basic_full` with a per-device self-signed `x5c`
+leaf and an empty `attestationRootCertificates` list. The official tool's
+MakeCred-Resp P-04 and Metadata P-27 require an anchor; Metadata P-36 also
+requires the MDS legal boilerplate when `legalHeader` is present, whereas
+RS-Key publishes its own declaration. These known differences must be
+reported in the next run. See [AAGUID & metadata](guides/aaguid-metadata.md)
+for the attestation design and [the roadmap](roadmap.md) for the parity target.
 
 A green run exercises the full CTAP2/U2F wire surface: makeCredential /
 getAssertion validation and `up`/`uv` privacy, clientPIN protocols 1 and 2

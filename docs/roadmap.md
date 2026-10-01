@@ -36,6 +36,19 @@ when it is not — matching a behaviour real hosts depend on beats being right
 alone ([interop.md](interop.md)). The direction is closing divergences one at a
 time, each with the measurement that found it.
 
+The next target is at least **255 passing CTAP2.3 cases in the FIDO Alliance
+Conformance Tool**, with the tool version, build and profile recorded. Compare
+case IDs and reasons for pending cases: host-test counts and a different
+runner's totals do not establish that result. The last recorded official run
+predates the current firmware ([testing.md](testing.md#fido-conformance)).
+
+The `uvm` and `pinComplexityPolicy` extension paths now have dispatcher tests,
+including authenticated policy configuration, RP privacy, PIN changes and
+reset. The next step is a fresh official-tool run of the current build. Keep
+the accepted per-device attestation design visible in the results: its empty
+root list and the statement's custom legal header affect official metadata
+tests. A published result must list those outcomes alongside its pass count.
+
 **The trusted display.** The variant with a screen is where the anti-phishing
 promise lives: what you are approving, shown by something the host cannot
 repaint ([guides/display.md](guides/display.md)). The direction is to make that
