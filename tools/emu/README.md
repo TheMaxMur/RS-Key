@@ -277,11 +277,31 @@ nix develop -c python tools/emu/image_assurance.py \
 
 Build both ELF fixtures with `--features no-touch`, and run `scripts/pt.sh` on
 each. The runner compares native/image OATH and OpenPGP responses, measures
-ML-DSA-87 command stacks, checks known OATH key/HMAC-pad residues with a planted
+ML-DSA-87 command stacks and verifies its signatures with dilithium-py,
+checks known OATH key/HMAC-pad residues with a planted
 leak through the same assertion, upgrades a release's OATH, FIDO signing key
 and OpenPGP PIN on the same flash, and reboots from cycle/byte-cut snapshots in
 new processes. `--only` selects a scenario. Logs, image hashes and measured
 results stay in the new `--work` directory; no board is enumerated.
+
+`--only operations` runs a second matrix against both backends. Every image
+command records both cores' minimum SP and checks their ELF/MSPLIM bounds:
+
+| Applet | Operations and independent oracle | SRAM patterns after the response |
+|---|---|---|
+| FIDO | Protocol-2 key agreement, set/get/change PIN, registration and assertion for ES256/384/512, ES256K, Ed25519 and ML-DSA-44/65/87; attestation and assertion signature verification; old-token refusal, reset and deleted-credential refusal | ECDH-derived HMAC/AES keys; old PIN token after changePIN |
+| PIV | AES-192 management mutual authentication, EC/RSA-2048 import and signing, P-256 ECDH, PIN verification/deauthentication and refused signing | Imported scalar and RSA factors |
+| OpenPGP | EC/Ed25519/RSA-2048 import, signing, internal authentication, ECDH/RSA decipher and refused authentication after deselection | Imported scalar, Ed25519 seed and RSA factors |
+| OTP | Slot programming, HMAC-SHA1 and AES challenge-response, deletion and empty-slot response | HMAC key/pads and AES key |
+
+The live FIDO token must first be found in SRAM; changePIN must remove its
+known bytes. A spent token retains its bytes by design, so a signature does
+not require their absence. Every applet also plants a leak in SRAM9, runs
+the same residue assertion, requires that exact address to fail and clears it.
+Scalar/factor probes search 16-byte prefixes and suffixes in both byte orders.
+These check selected known secrets and command paths, not arbitrary encodings
+of every secret; cached device/session keys have their own lifetimes. Logs and
+reports contain counts and addresses, not secret patterns.
 
 For falsification, `--incompatible-image` takes a scratch current ELF with
 `EF_OATH_CRED` moved from `0xBA00` to `0xB900`: upgrade must lose the credential

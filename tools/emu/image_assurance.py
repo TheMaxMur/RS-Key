@@ -27,8 +27,7 @@ import emu  # noqa: E402
 
 emu.install()
 from ctaphid import ctaphid_init, decode, enc, send_cbor  # noqa: E402
-from cryptography.hazmat.primitives import hashes  # noqa: E402
-from cryptography.hazmat.primitives.asymmetric import ec  # noqa: E402
+import image_operations  # noqa: E402
 
 OATH = bytes.fromhex("a0000005272101")
 OPENPGP = bytes.fromhex("d27600012401")
@@ -117,17 +116,33 @@ class Device:
 
     def apdu(self, command, expected=0x9000):
         body, hi, lo = self.card.transmit(command)
+        body = bytes(body)
+        while hi == 0x61:
+            more, hi, lo = self.card.transmit([0, 0xC0, 0, 0, lo])
+            body += bytes(more)
         sw = (hi << 8) | lo
         assert sw == expected, f"APDU {bytes(command[:4]).hex()}: {sw:04x}, expected {expected:04x}"
-        return bytes(body)
+        return body
 
     def select(self, aid):
         return self.apdu(bytes([0, 0xA4, 4, 0, len(aid)]) + aid)
 
-    def ctap(self, command, body):
-        answer = send_cbor(self.hid, self.cid, bytes([command]) + enc(body))
-        assert answer[0] == 0, f"CTAP {command}: status {answer[0]:02x}"
-        return decode(answer[1:])
+    def power_cycle(self):
+        with socket.create_connection(("127.0.0.1", self.ccid_port), timeout=180) as sock:
+            sock.sendall(bytes([emu.OP_REPLUG]) + bytes(4))
+            emu._recv_frame(sock)
+        self.hid.close()
+        self.hid = emu.EmuHid()
+        self.hid.open_path()
+        self.cid = ctaphid_init(self.hid)
+        self.card.sock.close()
+        self.card = emu.EmuCard()
+        self.card.connect()
+
+    def ctap(self, command, body=None, expected=0):
+        answer = send_cbor(self.hid, self.cid, bytes([command]) + (enc(body) if body is not None else b""))
+        assert answer[0] == expected, f"CTAP {command}: status {answer[0]:02x}, expected {expected:02x}"
+        return decode(answer[1:]) if len(answer) > 1 else None
 
     def measured(self, label, operation, report):
         self.inspect("begin")
@@ -185,10 +200,7 @@ def create_credential(dev, alg=-7):
 
 def assertion(dev, cred, public):
     response = dev.ctap(2, {1: RP, 2: CDH, 3: [{"id": cred, "type": "public-key"}]})
-    if public[3] == -7:
-        key = ec.EllipticCurvePublicNumbers(int.from_bytes(public[-2], "big"),
-                                          int.from_bytes(public[-3], "big"), ec.SECP256R1()).public_key()
-        key.verify(response[3], response[2] + CDH, ec.ECDSA(hashes.SHA256()))
+    image_operations.verify_fido(public, response[2] + CDH, response[3])
     return response
 
 
@@ -368,19 +380,25 @@ def main():
     parser.add_argument("--incompatible-image", type=Path, help="scratch ELF with OATH FID base changed")
     parser.add_argument("--stack-regression", type=Path, help="scratch ELF with increased ML-DSA stack use")
     parser.add_argument("--work", type=Path, required=True, help="new directory for logs and emulated flash")
-    parser.add_argument("--only", choices=["basic", "stack", "upgrade", "cuts", "all"], default="all")
+    parser.add_argument("--only", choices=["basic", "stack", "operations", "upgrade", "cuts", "all"], default="all")
     args = parser.parse_args()
     args.work.mkdir(parents=True, exist_ok=False)
     for name in ("emulator", "image", "release_image", "incompatible_image", "stack_regression"):
         value = getattr(args, name)
         if value:
             setattr(args, name, value.resolve(strict=True))
-    report = {"images": {name: hashlib.sha256(getattr(args, name).read_bytes()).hexdigest()
+    report = {"emulator": hashlib.sha256(args.emulator.read_bytes()).hexdigest(),
+              "images": {name: hashlib.sha256(getattr(args, name).read_bytes()).hexdigest()
                          for name in ("image", "release_image", "incompatible_image", "stack_regression")
                          if getattr(args, name)}}
     if args.stack_regression:
         assert report["images"]["image"] != report["images"]["stack_regression"], "stack mutant ELF is identical to baseline"
     try:
+        if args.only in ("all", "operations"):
+            for label, elf in (("native_operations", None), ("image_operations", args.image)):
+                report[label] = {}
+                with device(args.emulator, elf, args.work / f"{label}.store", args.work, label) as dev:
+                    image_operations.run(dev, report[label])
         if args.only in ("all", "basic"):
             with device(args.emulator, None, args.work / "native.store", args.work, "native") as native:
                 expected = transcript(native)

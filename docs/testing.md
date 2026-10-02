@@ -1028,11 +1028,16 @@ counter wrapping and the fallback for other stalls and active machines.
 
 `tools/emu/image_assurance.py` drives image-only checks through an opt-in
 `--inspect-port` on loopback: per-command SP high-water, whole-SRAM searches for
-known OATH key material, release-to-current persistent-flash upgrades and cuts
+known OATH, FIDO, PIV, OpenPGP and OTP secret material,
+release-to-current persistent-flash upgrades and cuts
 at selected cycles or program bytes. Each cut leaves a snapshot before recovery;
 the runner opens it in a new process and checks the credential again. Native and
 image backends also run the same deterministic OATH/OpenPGP transcript. Planted
 SRAM leaks and incompatible-image fixtures falsify the actual assertions.
+The operations matrix checks PIN-token lifetime, imported EC/Ed25519/RSA keys,
+HMAC pads and AES keys. It verifies signatures and decipher/ECDH results with
+host implementations; ML-DSA uses dilithium-py. Live session secrets are checked
+at their revocation point, rather than required to disappear after every reply.
 The [image laboratory instructions](../tools/emu/README.md#image-laboratory)
 describe the commands and limits, including why stack paint alone lies when
 the firmware sweeps its dead stack. These are development experiments, not an
