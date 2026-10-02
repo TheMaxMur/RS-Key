@@ -11,6 +11,7 @@
   3. config setMinPINLength(8)         -> OK; lowering to 4 -> PIN_POLICY_VIOLATION;
                                           no pinUvAuthParam -> PUAT_REQUIRED
   4. reset                             -> wipes the PIN (getInfo clientPin -> false)
+  5. another PIN, non-resident key      -> works before reset, NO_CREDENTIALS after
 
 Self-contained: sets a PIN, then resets it, so it leaves the device clean and is
 idempotent. Needs `cryptography` (in the devshell). Asks for a replug before each
@@ -39,6 +40,12 @@ from cryptography.hazmat.primitives import hashes, hmac as chmac  # noqa: E402
 # token), so the same token can drive the follow-up config calls.
 PIN = b"12345678"
 PERM_ACFG = 0x20
+PERM_MC = 0x01
+PERM_GA = 0x02
+RP_ID = "reset.example"
+CREDENTIAL_ID_LENGTH_OFFSET = 53
+CREDENTIAL_ID_OFFSET = 55
+CTAP2_ERR_NO_CREDENTIALS = 0x2E
 
 
 def token_mac(token, data):
@@ -60,6 +67,25 @@ def config_request(subcmd, subpara, token):
     return bytes(req)
 
 
+def set_pin(dev, cid):
+    ka = client_pin(dev, cid, {1: 2, 2: 2})
+    cose = decode(ka[1:])[1]
+    proto = Protocol2(cose[-2], cose[-3])
+    padded = PIN + b"\x00" * (64 - len(PIN))
+    npe = proto.encrypt(padded)
+    sp = client_pin(dev, cid, {1: 2, 2: 3, 3: proto.cose(), 4: proto.authenticate(npe), 5: npe})
+    assert sp[0] in (0x00, 0x30), f"setPIN status {sp[0]:#x}"
+    return proto
+
+
+def rp_token(dev, cid, proto, permission):
+    ph = hashlib.sha256(PIN).digest()[:16]
+    tk = client_pin(dev, cid, {1: 2, 2: 9, 3: proto.cose(), 6: proto.encrypt(ph),
+                               9: permission, 10: RP_ID})
+    assert tk[0] == 0x00, f"getPinUvAuthToken status {tk[0]:#x}"
+    return proto.decrypt(decode(tk[1:])[2])
+
+
 def main():
     info = find()
     if not info:
@@ -79,13 +105,7 @@ def main():
         dev, cid = replug.reset(dev, "the clean-slate reset")
 
         # 2. clientPIN: key agreement, setPIN, getPinUvAuthToken with acfg permission.
-        ka = client_pin(dev, cid, {1: 2, 2: 2})
-        cose = decode(ka[1:])[1]
-        proto = Protocol2(cose[-2], cose[-3])
-        padded = PIN + b"\x00" * (64 - len(PIN))
-        npe = proto.encrypt(padded)
-        sp = client_pin(dev, cid, {1: 2, 2: 3, 3: proto.cose(), 4: proto.authenticate(npe), 5: npe})
-        assert sp[0] in (0x00, 0x30), f"setPIN status {sp[0]:#x}"
+        proto = set_pin(dev, cid)
         ph = hashlib.sha256(PIN).digest()[:16]
         tk = client_pin(dev, cid, {1: 2, 2: 9, 3: proto.cose(), 6: proto.encrypt(ph), 9: PERM_ACFG})
         assert tk[0] == 0x00, f"getPinUvAuthToken status {tk[0]:#x}"
@@ -107,6 +127,35 @@ def main():
         assert gi[0] == 0x00
         assert decode(gi[1:])[4]["clientPin"] is False, "PIN survived reset"
         print("reset: OK, clientPin -> False")
+
+        # Both resets cold-boot a PIN-wrapped seed: repeated entropy can mint it again.
+        proto = set_pin(dev, cid)
+        cdh = hashlib.sha256(b"rs-key reset credential invalidation").digest()
+        token = rp_token(dev, cid, proto, PERM_MC)
+        mc = send_cbor(dev, cid, b"\x01" + enc({
+            1: cdh, 2: {"id": RP_ID}, 3: {"id": b"reset", "name": "reset"},
+            4: [{"alg": -7, "type": "public-key"}], 7: {"rk": False},
+            8: token_mac(token, cdh), 9: 2,
+        }))
+        assert mc[0] == 0x00, f"makeCredential status {mc[0]:#x}"
+        auth = decode(mc[1:])[2]
+        size = int.from_bytes(auth[CREDENTIAL_ID_LENGTH_OFFSET:CREDENTIAL_ID_OFFSET], "big")
+        cred_id = auth[CREDENTIAL_ID_OFFSET:CREDENTIAL_ID_OFFSET + size]
+        assert len(cred_id) == size and size > 0, "makeCredential returned a truncated credential ID"
+        descriptor = {"id": cred_id, "type": "public-key"}
+        token = rp_token(dev, cid, proto, PERM_GA)
+        ga = send_cbor(dev, cid, b"\x02" + enc({
+            1: RP_ID, 2: cdh, 3: [descriptor], 6: token_mac(token, cdh), 7: 2,
+        }))
+        assert ga[0] == 0x00, f"credential did not work before reset: {ga[0]:#x}"
+        dev, cid = replug.reset(dev, "the credential invalidation reset")
+        ga = send_cbor(dev, cid, b"\x02" + enc({
+            1: RP_ID, 2: cdh, 3: [descriptor], 5: {"up": False},
+        }))
+        assert ga[0] == CTAP2_ERR_NO_CREDENTIALS, (
+            f"credential survived reset: {ga[0]:#x}, want NO_CREDENTIALS"
+        )
+        print("reset: non-resident credential works before, unavailable after")
 
         print("\nPASS")
     finally:

@@ -1106,9 +1106,22 @@ the installed official v1.8.5.1 application:
 
 | Emulator setup | Passed | Failed | Skipped |
 |---|---:|---:|---:|
-| Original runner, no enterprise test certificate | 218 | 7 | 70 |
-| Fixed runner, no enterprise test certificate | 221 | 4 | 70 |
-| Fixed runner, official enterprise test certificate and test RP ID | 223 | 2 | 70 |
+| Native, original runner, no enterprise test certificate | 218 | 7 | 70 |
+| Native, fixed runner, no enterprise test certificate | 221 | 4 | 70 |
+| Native, fixed runner, official enterprise test certificate and test RP ID | 223 | 2 | 70 |
+| Firmware image, fixed runner, official enterprise test certificate and test RP ID | 223 | 2 | 70 |
+
+The firmware-image replay used the partitioned `bcdDevice 0x0A8B` touch ELF
+and picoem `4b1953f9`, with virtual BOOTSEL presses over loopback. All 295
+case verdicts match the native replay. Before the emulator entropy fix,
+Reset P-1 failed because each boot replayed the same TRNG stream: two resets
+from a PIN-wrapped store could recreate the deleted credential seed. Each
+cold or warm boot now advances that stream, while `--seed` reproduces the
+whole boot sequence. `tests/22_config_reset.py` checks that a non-resident
+credential works before reset and returns `NO_CREDENTIALS` afterward; the
+old image emulator fails that assertion and the fixed image and native
+backends pass. These runs use local emulated flash and do not update the
+official hardware result above.
 
 Three failures came from the runner: Generic P-1 compared randomized encrypted
 GetInfo fields with metadata placeholders, and Resident Key P-2/P-3 reused an

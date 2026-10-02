@@ -24,6 +24,7 @@ use super::hc::{Completion, Hc, Outcome, Transfer};
 use super::inspect::{self, Command};
 use super::otp;
 use super::sockets::{self, CcidReply, Report, Request, UsbipPort};
+use super::trng::next_boot_seed;
 use crate::usbip::{BUSID, ESHUTDOWN, Ret, Urb, UsbDeviceInfo};
 
 /// The longest step a parked chip takes: an interrupt raised inside one is taken
@@ -403,15 +404,18 @@ impl Board {
 
     fn power_up(&mut self, scratch: Option<[u32; SCRATCH_REGS]>) -> Result<(), String> {
         let rows = self.chip.otp_rows();
+        // Replaying one entropy stream can regenerate the key a reset just deleted.
+        let seed = next_boot_seed(&self.seed);
         let chip = Chip::power_up(
             &self.rom,
             self.elf.clone(),
-            &self.seed,
+            &seed,
             &self.flash,
             rows,
             scratch,
         )?;
         self.chip = chip;
+        self.seed = seed.to_vec();
         self.power_ups += 1;
         self.cut_at = None;
         self.cut_cycles = None;

@@ -52,6 +52,17 @@ fn the_bits_follow_the_seed() {
 }
 
 #[test]
+fn successive_boots_use_distinct_reproducible_entropy_streams() {
+    let second = next_boot_seed(b"seed");
+    let third = next_boot_seed(&second);
+    assert_eq!(second, next_boot_seed(b"seed"));
+    assert_eq!(third, next_boot_seed(&next_boot_seed(b"seed")));
+    assert_ne!(first_block(b"seed"), first_block(&second));
+    assert_ne!(first_block(&second), first_block(&third));
+    assert_ne!(first_block(&next_boot_seed(b"other")), first_block(&second));
+}
+
+#[test]
 fn a_disabled_source_samples_nothing() {
     let mut t = Trng::new(b"s");
     assert_eq!(t.read(TRNG_VALID, 4, &mut at(1_000_000)), 0);

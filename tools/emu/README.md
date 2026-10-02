@@ -210,6 +210,9 @@ python tests/emu.py tests/10_fido_getinfo.py
 - **Power**: a replug (`03`) is a power-on reset through the bootrom; a reboot the
   image asks for keeps the watchdog scratch, as a warm reset does — so the soft
   PIN lock and the reset window behave as on the board.
+  Every cold or warm boot advances the model's entropy stream, so repeated
+  resets cannot regenerate the deleted credential seed. `--seed` reproduces
+  the whole boot sequence rather than repeating one stream at every reboot.
 - **Presence and identity are the image's.** A `--features no-touch` build
   confirms presence; a touch build waits for BOOTSEL, which each line on the
   terminal holds down for half a second under `--touch`, and a keepalive asking

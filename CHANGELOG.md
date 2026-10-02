@@ -348,6 +348,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- **Firmware-image reboots advance the emulated entropy stream.** Reusing the
+  same TRNG seed and counter could recreate a deleted FIDO seed when two resets
+  booted a PIN-wrapped store, leaving a non-resident credential usable. Cold and
+  warm reboots now derive a new stream while seeded runs remain reproducible.
+  The reset wire test checks that a working credential becomes unavailable.
+  Host only; no firmware change or `bcdDevice` bump.
+
 - **`rsk openpgp reset` blocks a PIN however many tries it has** (`rsk` 0.3.47).
   It sent five wrong VERIFYs per PIN, enough for the factory three but not for a
   PIN that SET PIN RETRIES gave more, and TERMINATE DF then refused the reset, as

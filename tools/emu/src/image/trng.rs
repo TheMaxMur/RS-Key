@@ -27,6 +27,13 @@ const TRNG_BUSY: u32 = 0x1B8;
 const ISR_EHR_VALID: u32 = 1 << 0;
 const DEBUG_VNC_BYPASS: u32 = 1 << 1;
 
+pub(super) fn next_boot_seed(seed: &[u8]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"rsk-emu --image TRNG next boot");
+    h.update(seed);
+    h.finalize().into()
+}
+
 pub struct Trng {
     seed: [u8; 32],
     counter: u64,
