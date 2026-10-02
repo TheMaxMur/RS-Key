@@ -28,6 +28,7 @@ pub enum Command {
     Begin,
     End,
     Scan(Vec<u8>),
+    Read { address: u32, length: u32 },
     Plant { address: u32, bytes: Vec<u8> },
     CutCycles(u64),
     CutProgram(u64),
@@ -42,6 +43,18 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["begin"] => Ok(Command::Begin),
         ["end"] => Ok(Command::End),
         ["scan", hex] => Ok(Command::Scan(pattern(hex)?)),
+        ["read", addr, n] => {
+            let address = u32::from_str_radix(addr.trim_start_matches("0x"), 16)
+                .map_err(|_| "invalid SRAM address")?;
+            let length = u32::try_from(number(n)?).map_err(|_| "read leaves SRAM")?;
+            if length == 0
+                || address < SRAM_BASE
+                || u64::from(address) + u64::from(length) > u64::from(SRAM_BASE + SRAM_LEN)
+            {
+                return Err("read leaves SRAM".into());
+            }
+            Ok(Command::Read { address, length })
+        }
         ["plant", addr, hex] => {
             let address = u32::from_str_radix(addr.trim_start_matches("0x"), 16)
                 .map_err(|_| "invalid SRAM address")?;
@@ -56,7 +69,7 @@ pub fn parse(line: &str) -> Result<Command, String> {
         ["cut-cycles", n] => Ok(Command::CutCycles(number(n)?)),
         ["cut-program", n] => Ok(Command::CutProgram(number(n)?)),
         ["cut-program-cycles", n] => Ok(Command::CutProgramCycles(number(n)?)),
-        _ => Err("expected status, begin, end, scan HEX, plant ADDRESS HEX, cut-cycles N, cut-program N or cut-program-cycles N".into()),
+        _ => Err("expected status, begin, end, scan HEX, read ADDRESS N, plant ADDRESS HEX, cut-cycles N, cut-program N or cut-program-cycles N".into()),
     }
 }
 

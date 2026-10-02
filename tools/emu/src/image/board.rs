@@ -685,6 +685,7 @@ impl Board {
             Command::Begin => self.chip.begin_measurement(),
             Command::End => self.chip.end_measurement(),
             Command::Scan(pattern) => Ok(self.chip.scan_sram(&pattern)),
+            Command::Read { address, length } => Ok(self.chip.read_sram(address, length)),
             Command::Plant { address, bytes } => {
                 self.chip.plant_sram(address, &bytes);
                 Ok(format!("planted={} address={address:#x}", bytes.len()))

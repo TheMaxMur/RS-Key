@@ -22,6 +22,35 @@ fn inspection_refuses_empty_patterns_and_non_sram_writes() {
 }
 
 #[test]
+fn sram_reads_include_both_edges_and_refuse_overflow_or_other_memory() {
+    assert_eq!(
+        parse("read 20000000 532480"),
+        Ok(Command::Read {
+            address: SRAM_BASE,
+            length: SRAM_LEN,
+        })
+    );
+    assert_eq!(
+        parse("read 20081fff 1"),
+        Ok(Command::Read {
+            address: SRAM_BASE + SRAM_LEN - 1,
+            length: 1,
+        })
+    );
+    for bad in [
+        "read 1fffffff 1",
+        "read 20082000 1",
+        "read 20081fff 2",
+        "read 20000000 0",
+        "read 20000000 -1",
+        "read ffffffff 4294967295",
+        "read 20000000 18446744073709551615",
+    ] {
+        assert!(parse(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
 fn stack_sample_remembers_a_reserved_frame_after_return() {
     let mut stack = Stack {
         low: SRAM_BASE,

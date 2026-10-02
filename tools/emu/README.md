@@ -290,8 +290,8 @@ command records both cores' minimum SP and checks their ELF/MSPLIM bounds:
 | Applet | Operations and independent oracle | SRAM patterns after the response |
 |---|---|---|
 | FIDO | Protocol-2 key agreement, set/get/change PIN, registration and assertion for ES256/384/512, ES256K, Ed25519 and ML-DSA-44/65/87; attestation and assertion signature verification; old-token refusal, reset and deleted-credential refusal | ECDH-derived HMAC/AES keys; old PIN token after changePIN |
-| PIV | AES-192 management mutual authentication, EC/RSA-2048 import and signing, P-256 ECDH, PIN verification/deauthentication and refused signing | Imported scalar and RSA factors |
-| OpenPGP | EC/Ed25519/RSA-2048 import, signing, internal authentication, ECDH/RSA decipher and refused authentication after deselection | Imported scalar, Ed25519 seed and RSA factors |
+| PIV | AES-192 management mutual authentication, EC/RSA-2048 import and signing, RSA-2048 generation and signing, P-256 ECDH, PIN verification/deauthentication and refused signing | Imported scalar and RSA factors; factors of the generated public modulus |
+| OpenPGP | EC/Ed25519/RSA-2048 import, signing, internal authentication, ECDH/RSA decipher, RSA-2048 generation and signing, and refused authentication after deselection | Imported scalar, Ed25519 seed and RSA factors; factors of the generated public modulus |
 | OTP | Slot programming, HMAC-SHA1 and AES challenge-response, deletion and empty-slot response | HMAC key/pads and AES key |
 
 The live FIDO token must first be found in SRAM; changePIN must remove its
@@ -302,6 +302,15 @@ Scalar/factor probes search 16-byte prefixes and suffixes in both byte orders.
 These check selected known secrets and command paths, not arbitrary encodings
 of every secret; cached device/session keys have their own lifetimes. Logs and
 reports contain counts and addresses, not secret patterns.
+
+RSA generation also requires core1's ELF counters to show a taken job and
+candidate searches. Stack sampling continues through its background wind-down.
+After it goes idle, the runner reads all 520 KiB of SRAM over the opt-in inspection
+socket (`read ADDRESS LENGTH`) and checks every 128-byte window, in both byte
+orders, for a nontrivial divisor of the returned modulus. A planted RSA factor
+must fail that same assertion. SRAM dumps and private factors are not saved.
+The generation rows currently cover RSA-2048; larger key sizes remain outside
+this command matrix.
 
 `nix develop -c ./scripts/image-suites.sh <new-output-directory>` builds the
 current no-touch firmware and its partition table, builds the emulator with

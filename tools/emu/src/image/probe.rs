@@ -103,6 +103,16 @@ impl Chip {
         format!("count={} addresses={}", hits.len(), hits.join(","))
     }
 
+    pub fn read_sram(&self, address: u32, length: u32) -> String {
+        use std::fmt::Write;
+
+        let mut hex = String::with_capacity(length as usize * 2);
+        for offset in address - SRAM_BASE..address - SRAM_BASE + length {
+            write!(hex, "{:02x}", self.emu.bus.memory.sram_read8(offset)).unwrap();
+        }
+        hex
+    }
+
     pub fn plant_sram(&mut self, address: u32, bytes: &[u8]) {
         for (i, &b) in bytes.iter().enumerate() {
             self.emu

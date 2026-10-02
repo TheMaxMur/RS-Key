@@ -381,9 +381,13 @@ def otp(ops):
 
 
 def run(dev, report):
+    import image_rsa
+
     ops = Operations(dev, report)
     rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     fido(ops)
     piv(ops, rsa_key)
+    image_rsa.piv(ops)
     openpgp(ops, rsa_key)
+    image_rsa.openpgp(ops, rsa_key)
     otp(ops)
