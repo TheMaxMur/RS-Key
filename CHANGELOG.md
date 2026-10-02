@@ -44,6 +44,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   checks known-secret lifetimes across signing, decipher, PIN change and slot
   deletion. Host cryptographic oracles verify the results, including all eight
   FIDO signing algorithms; planted SRAM leaks exercise the residue assertions.
+- The emulator workflow runs firmware-image stack, residue and power-cut
+  scenarios on pull requests and nightly, retaining reports and logs.
 
 - FIDO `uvm` reports the presence and PIN factors used in signed registration
   and assertion data, preserving device-local PIN provenance across tokens and

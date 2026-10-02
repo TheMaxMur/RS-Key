@@ -1040,8 +1040,11 @@ host implementations; ML-DSA uses dilithium-py. Live session secrets are checked
 at their revocation point, rather than required to disappear after every reply.
 The [image laboratory instructions](../tools/emu/README.md#image-laboratory)
 describe the commands and limits, including why stack paint alone lies when
-the firmware sweeps its dead stack. These are development experiments, not an
-additional CI gate or evidence about analog flash cells.
+the firmware sweeps its dead stack. `scripts/image-suites.sh` builds a partitioned
+no-touch image and runs the basic, stack, operations and power-cut scenarios;
+the emulator workflow's `image` job runs it on pull requests and nightly.
+Release upgrades still need an explicit old-image fixture. These checks are
+evidence about the emulator's fault model, not analog flash cells.
 
 ## Latency harness
 

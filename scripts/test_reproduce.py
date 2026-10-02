@@ -188,8 +188,8 @@ def test_jobs_defect_a_claim_over_a_renamed_job_is_a_finding(tree):
 
 
 def test_phases_removal_a_phase_in_no_tier_is_a_finding(tree):
-    edit(tree, '"deep|comutants emu proofs-all coverage repro miri fuzz mutants"',
-         '"deep|comutants emu proofs-all coverage repro miri fuzz"')
+    edit(tree, '"deep|comutants emu image proofs-all coverage repro miri fuzz mutants"',
+         '"deep|comutants emu image proofs-all coverage repro miri fuzz"')
     edit(tree, "mutants\"\n)", "\"\n)")
     rc, out = self_test(tree)
     assert rc == 1

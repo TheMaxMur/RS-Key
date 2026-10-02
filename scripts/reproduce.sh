@@ -60,6 +60,7 @@ PHASES=(
   "model-liveness|model|~35 min|TLC over the liveness tier: the temporal properties and one mutant per property|./formal/run-tlc.sh liveness"
   "comutants|deep|~60 min|co-refutation: every model defect injected into production Rust, each patch expected to redden a named test|python scripts/comutate.py run"
   "emu|deep|~15 min|the on-device suites, the vendored OpenPGP and ykman suites and the diff against a frozen YubiKey 5.8.0, against tools/emu instead of a board|./scripts/emu-suites.sh"
+  "image|deep|~5 min|command stacks, known-secret lifetimes and interrupted writes in the partitioned firmware ELF on the emulated RP2350|./scripts/image-suites.sh"
   "proofs-all|deep|~8 h|the weekly Kani roster: every harness in every proven crate, in the four tiers CI shards it into|./scripts/kani.sh light1 && ./scripts/kani.sh light2 && ./scripts/kani.sh light3 && ./scripts/kani.sh heavy"
   "coverage|deep|~20 min|host-crate line coverage against the floor the weekly job holds|cargo llvm-cov --summary-only --fail-under-lines 80 --target \$HOST_TRIPLE --workspace --exclude firmware --exclude rsk-wipe"
   "repro|deep|~30 min|the hermetic firmware build is bit-identical on a rebuild|nix build .#firmware -o result-repro && nix build .#firmware --rebuild"
@@ -75,8 +76,8 @@ TIERS=(
   "quick|pages docs"
   "merge|gate assurance proofs"
   "model|model-safety model-liveness"
-  "deep|comutants emu proofs-all coverage repro miri fuzz mutants"
-  "all|pages docs gate assurance proofs model-safety model-liveness comutants emu proofs-all coverage repro miri fuzz mutants"
+  "deep|comutants emu image proofs-all coverage repro miri fuzz mutants"
+  "all|pages docs gate assurance proofs model-safety model-liveness comutants emu image proofs-all coverage repro miri fuzz mutants"
 )
 
 # --- what this checkout cannot produce ----------------------------------------
@@ -117,6 +118,7 @@ CLAIM_RUNNERS=(
   "scripts/kani.sh|proofs|"
   "formal/run-tlc.sh|model-safety|"
   "scripts/emu-suites.sh|emu|"
+  "scripts/image-suites.sh|image|"
   "scripts/miri-all.sh|miri|"
   "scripts/fuzz-all.sh|fuzz|"
   "scripts/mutants-all.sh|mutants|"
@@ -160,6 +162,7 @@ CLAIM_JOBS=(
   "deep-checks:assurance|assurance|"
   "emulator:changes|-|path classification, as above"
   "emulator:sockets|emu|"
+  "emulator:image|image|"
   "emulator:usb|-|the USB-stack half, in a QEMU guest; see REFUSED"
 )
 

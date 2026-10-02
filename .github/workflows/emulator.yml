@@ -12,8 +12,9 @@
 # in the change that staled it. Gated on `scripts/ci-scope.sh` so an edit that
 # cannot reach the emulator does not boot one.
 #
-# Two halves, because the transport splits them:
+# Three jobs, because the backend and transport split them:
 #   sockets — everything the emulator can serve over TCP, on the runner directly.
+#   image   — command stacks, known-secret lifetimes and power cuts on the ELF.
 #   usb     — `02`, `61`, `65`, `73`, `77`, the pico-fido conformance suite and
 #             OpenSC's p11test, which read USB descriptors or go through
 #             python-fido2's, pyscard's and pcsc-lite's own transports. Those need
@@ -107,6 +108,47 @@ jobs:
           # is usually the device saying why, not the suite.
           find /tmp -name '*.log' -newermt '-45 minutes' -path '*/tmp.*' \
             -exec sh -c 'echo "--- $1"; tail -40 "$1"' _ {} \; 2>/dev/null || true
+
+  image:
+    needs: changes
+    if: needs.changes.outputs.emulator == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: DeterminateSystems/nix-installer-action@3138316df39ed29be04236d7ffc686fa525866aa # v23
+
+      - uses: nix-community/cache-nix-action@7df957e333c1e5da7721f60227dbba6d06080569 # v7.0.2
+        with:
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('flake.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/thumbv8m.main-none-eabihf
+            tools/emu/target
+          key: image-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/emu/Cargo.lock', 'flake.lock') }}
+          restore-keys: image-${{ runner.os }}-
+
+      - name: command stacks, secret lifetimes and interrupted writes in the firmware image
+        run: nix develop -c ./scripts/image-suites.sh target/image-assurance
+        env:
+          HOST_TARGET: x86_64-unknown-linux-gnu
+
+      - name: image reports and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-assurance
+          path: |
+            target/image-assurance/**/*.log
+            target/image-assurance/**/report.json
+          if-no-files-found: warn
+          retention-days: 14
 
   usb:
     needs: changes

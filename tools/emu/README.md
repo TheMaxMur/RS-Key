@@ -303,6 +303,15 @@ These check selected known secrets and command paths, not arbitrary encodings
 of every secret; cached device/session keys have their own lifetimes. Logs and
 reports contain counts and addresses, not secret patterns.
 
+`nix develop -c ./scripts/image-suites.sh <new-output-directory>` builds the
+current no-touch firmware and its partition table, builds the emulator with
+assertions enabled, then runs `basic`, `stack`, `operations` and `cuts`.
+Omitting the directory retains a fresh report directory under `target/`.
+The `image` job in `.github/workflows/emulator.yml` runs this command on pull
+requests and nightly. It retains reports and logs; emulated flash and OTP files
+are not uploaded. Historical-release upgrade and scratch-ELF regression probes
+remain explicit local runs with the fixtures above.
+
 For falsification, `--incompatible-image` takes a scratch current ELF with
 `EF_OATH_CRED` moved from `0xBA00` to `0xB900`: upgrade must lose the credential
 with `6984`, while boot and SELECT succeed. `--stack-regression` takes a distinct
