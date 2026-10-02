@@ -39,23 +39,31 @@ time, each with the measurement that found it.
 The next target is at least **255 passing CTAP2.3 cases in the FIDO Alliance
 Conformance Tool**, with the tool version, build and profile recorded. Compare
 case IDs and reasons for pending cases: host-test counts and a different
-runner's totals do not establish that result. The last recorded official run
-predates the current firmware ([testing.md](testing.md#fido-conformance)).
+runner's totals do not establish that result. The complete official run on
+2026-10-02 reached **245 passed / 9 failed / 70 pending** in 736.90 seconds
+([testing.md](testing.md#fido-conformance)).
 
 The `uvm` and `pinComplexityPolicy` extension paths now have dispatcher tests,
 including authenticated policy configuration, RP privacy, PIN changes and
-reset. The next step is a fresh official-tool run of the current build. Keep
-the accepted per-device attestation design visible in the results: its empty
-root list and the statement's custom legal header affect official metadata
-tests. A published result must list those outcomes alongside its pass count.
+reset. Keep the accepted per-device attestation design visible in the results:
+its empty root list and the statement's custom legal header affect official
+metadata tests. A published result must list those outcomes alongside its pass
+count.
 
 The seven failures in the private Go replay are accounted for: three runner
 defects are fixed, two enterprise cases pass with the official test fixture,
 and two are the accepted empty-root differences. The complete emulator replay
 is **223 passed / 2 failed / 70 skipped**, with no exclusions. The official
-hardware run has reached its cold-power-cycle prompt; it has no final result
-yet. A software reboot does not satisfy the board's CTAP Reset window. The
-255-pass target remains open.
+hardware run also exposed three no-touch HID failures and the old tool's
+strictly increasing non-resident counter assertion. The subsequent official
+HID-group run on the touch image reached **16 passed / 0 failed**, including
+the three previously failing cases. Hardware enterprise-fixture setup and a
+complete touch-image rerun remain open. Recovering those five cases in one
+complete run would reach 250 passes; the 255-pass target still needs additional
+applicable cases. A separate `largeblob-ext` emulator replay exercised eleven
+additional cases but made eleven others inapplicable, retaining **223 passed /
+2 failed / 70 skipped**. That alternative build is not a pass-count increase.
+A software reboot does not satisfy the board's CTAP Reset window.
 
 **The trusted display.** The variant with a screen is where the anti-phishing
 promise lives: what you are approving, shown by something the host cannot

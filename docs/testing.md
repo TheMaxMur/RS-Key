@@ -1062,16 +1062,19 @@ as a real change.
 
 ## FIDO conformance
 
-The last recorded run against the **FIDO Alliance Conformance Tools**
-(v1.8.5.1) was on **2026-06-20**, with firmware `bcdDevice 0x0776`. These are
-historical results; the current firmware needs a new official-tool run:
+The latest complete run against the **FIDO Alliance Conformance Tools**
+(v1.8.5.1) was on **2026-10-02**, with firmware `bcdDevice 0x0A8B`,
+`no-touch,ea-conformance-rpid`, the featureful enterprise profile and all cases
+selected: **245 passed / 9 failed / 70 pending**, in **736.90 seconds**.
+The installed tool and its assertions were unchanged. The earlier run on
+2026-06-20, with `bcdDevice 0x0776`, reported:
 
 | Suite | Result |
 |---|---|
 | CTAP2.3 (`profile_featureful` — the strictest profile) | **235 / 0** |
 | U2F 1.1 / 1.2 | **55 / 0** |
 
-The CTAP2.3 tool has 324 cases, with 89 pending in that run. Optional
+The CTAP2.3 tool has 324 cases, with 89 pending in the June run. Optional
 capabilities, transport and profile settings decide which cases execute, so
 compare the case IDs, failures and pending reasons as well as the pass count.
 The native Rust conformance tests, the pico-fido pytest corpus and the Go
@@ -1109,12 +1112,22 @@ and race tests passed for the runner changes; its dependency now matches the
 TCP transport API. The private suite and its assertions remain outside this
 repository.
 
+A separate `largeblob-ext` emulator replay on the same date also reached
+**223 passed / 2 failed / 70 skipped**, with all 295 cases selected. Its
+metadata declares `largeBlob` instead of `largeBlobKey` and omits the classic
+large-blob array API. The matching profile has `featureful = false` and
+`largeBlobEnabledByDefault = true`, with delayed presence enabled. Eleven
+`largeBlob` cases pass, while six `largeBlobKey` cases, four classic array
+cases and ClientPIN2 F-3 become inapplicable. This extends the cases exercised
+across builds; it does not increase a single run's pass count or establish
+featureful-profile parity.
+
 Current metadata declares `basic_full` with a per-device self-signed `x5c`
 leaf and an empty `attestationRootCertificates` list. The official tool's
 MakeCred-Resp P-04 and Metadata P-27 require an anchor; Metadata P-36 also
 requires the MDS legal boilerplate when `legalHeader` is present, whereas
-RS-Key publishes its own declaration. These known differences must be
-reported in the next run. See [AAGUID & metadata](guides/aaguid-metadata.md)
+RS-Key publishes its own declaration. These differences appeared in the
+October run. See [AAGUID & metadata](guides/aaguid-metadata.md)
 for the attestation design and [the roadmap](roadmap.md) for the parity target.
 
 A green run exercises the full CTAP2/U2F wire surface: makeCredential /
@@ -1139,13 +1152,43 @@ Two honest caveats:
   official suite's enterprise test key and certificate installed on the test
   device. Everything else runs on the normal firmware.
 
+The nine failures in the October hardware run were:
+
+| Cases | Observed failure | Cause / next verification |
+|---|---|---|
+| HID-1 P-9/P-10 | `Sequence out of order` | Passed in the subsequent official HID-group run with touch enabled. |
+| HID-1 P-15 | Expected KEEPALIVE; got `undefined (0x00)` | Passed with touch enabled; the no-touch image completes Selection immediately. |
+| Enterprise Attestation P-2/P-3 | `x5c` does not contain `EPBatchCertificate` | The official test certificate was not installed on the board. |
+| MakeCred-Resp P-04; Metadata P-27 | Empty `attestationRootCertificates` | Accepted per-device attestation difference. |
+| Metadata P-36 | Custom `legalHeader` | Self-published metadata declaration. |
+| GetAssertion-Resp P-3 | Expected `0 < 0` | Non-resident credentials intentionally report `signCount = 0`. |
+
+The old tool requires a rising counter in GetAssertion-Resp P-3. RS-Key's
+non-resident credentials keep no counter state; a constant zero is allowed by
+[WebAuthn §6.1.1](https://www.w3.org/TR/webauthn-3/#sctn-sign-counter).
+Resident credentials and legacy U2F counters retain their separate contracts
+([signature counters](guides/fido2.md#signature-counters)). The Go runner
+accepts either three zeroes or a strictly increasing sequence, so its green
+P-3 does not predict this official-tool result.
+
+The same board was subsequently flashed with `ea-conformance-rpid` and touch
+enabled, with no firmware source changes. Two Selection probes on the no-touch
+image had completed successfully in 2 ms without keepalive. On the touch image,
+two Selection and two MakeCredential probes each returned
+`KEEPALIVE(UPNEEDED)` followed by `KEEPALIVE_CANCEL` when cancelled. These are
+independent hardware probes; they do not replace an official HID-group rerun
+or establish an increased official pass count. The subsequent official
+transport-group run completed in 309.62 seconds with **16 passed / 0 failed**:
+HID-1 P-9, P-10 and P-15 all passed, and P-11, P-13 and P-14 were pending.
+The NFC and BLE cases were also pending. This separate run closes the three
+HID failures; a complete run on the touch image is still required to report
+its total.
+
 On a headless hardware build, `no-touch` confirms presence but keeps the
 10-second cold-power-up window for CTAP Reset. A software reboot preserves
-the PIN soft lock and cannot reopen that window. The official v1.8.5.1 run
-started against `bcdDevice 0x0A8B` on 2026-10-02 and reached its power-cycle
-prompt; the board returned `NOT_ALLOWED` outside the reset window. That
-incomplete run supplies no updated pass count. An operator or a rig that
+the PIN soft lock and cannot reopen that window. An operator or a rig that
 actually switches USB power must supply each requested cold power cycle.
+Keep touch enabled for the official HID keepalive/cancel tests.
 
 As with any corpus, this shows conformance on the cases the tools cover. It is
 not a security audit.
