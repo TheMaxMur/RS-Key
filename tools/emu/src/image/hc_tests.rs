@@ -241,6 +241,62 @@ fn ready(hc: &mut Hc, fw: &mut Fw, now: &mut u64) {
     assert!(hc.ready());
 }
 
+#[test]
+fn control_completion_and_next_setup_wait_for_the_status_packet() {
+    for setup in [
+        [0x80, 0x06, 0, 0x01, 0, 0, 18, 0],
+        [0, 0x09, 1, 0, 0, 0, 0, 0],
+    ] {
+        let (mut hc, mut fw, _) = bench();
+        let mut now = 0;
+        ready(&mut hc, &mut fw, &mut now);
+        let first = hc.submit(control(setup));
+        loop {
+            now = hc.next_event().max(now + 1);
+            let done = hc.poll(now, now);
+            fw.service();
+            assert!(done.is_empty());
+            if hc
+                .active
+                .get(&CONTROL)
+                .is_some_and(|a| matches!(a.stage, Stage::StatusIn | Stage::StatusOut))
+            {
+                break;
+            }
+        }
+        let next = hc.submit(control([0x80, 0x06, 0, 0x01, 0, 0, 18, 0]));
+        let status = hc.next_event().max(now + 1);
+        let setups = fw.setups.len();
+        assert!(
+            hc.poll(status, status).is_empty(),
+            "completed at the start of the status packet"
+        );
+        fw.service();
+        let finish = status + pkt_ns(3) + GAP_NS + pkt_ns(3) + GAP_NS + pkt_ns(1);
+        for t in [status + 1, finish - 1] {
+            assert!(hc.poll(t, t).is_empty());
+            fw.service();
+            assert_eq!(
+                fw.setups.len(),
+                setups,
+                "next SETUP preceded the status ACK"
+            );
+        }
+        let done = hc.poll(finish, finish);
+        assert_eq!(done.len(), 1);
+        assert_eq!(done[0].id, first);
+        assert!(matches!(done[0].outcome, Outcome::Done(_)));
+        fw.service();
+        assert_eq!(fw.setups.len(), setups);
+        now = finish;
+        assert!(
+            run_for(&mut hc, &mut fw, &mut now, MS)
+                .iter()
+                .any(|c| c.id == next)
+        );
+    }
+}
+
 fn get(ep: u8, want: usize) -> Transfer {
     Transfer {
         ep,
@@ -523,4 +579,52 @@ fn set_configuration_and_clear_halt_reset_the_toggle() {
         None,
         "with neither, the host is on DATA1"
     );
+}
+
+#[test]
+fn data_completion_waits_for_the_last_packet_and_ack() {
+    for (ep, dir_in, length) in [
+        (3, true, 5),
+        (3, true, 64),
+        (2, false, 0),
+        (2, false, 64),
+        (1, true, 5),
+    ] {
+        let (mut hc, mut fw, _) = bench();
+        let mut now = 0;
+        ready(&mut hc, &mut fw, &mut now);
+        bulk_pair(&mut hc, &mut fw);
+        let data = vec![0x5A; length];
+        let start = if ep == 1 {
+            hc.next_interval(now, 1)
+        } else {
+            now
+        };
+        let id = if dir_in {
+            fw.arm_in(ep, 0, if ep == 1 { 0x200 } else { 0x1C0 }, &data);
+            hc.submit(get(ep, 64))
+        } else {
+            fw.arm_out(ep, 0);
+            hc.submit(put(ep, &data))
+        };
+        assert!(hc.poll(now, now).is_empty(), "completed at packet start");
+        if start != now {
+            assert!(
+                hc.poll(start, start).is_empty(),
+                "completed at interrupt packet start"
+            );
+        }
+        let finish = start + pkt_ns(3) + GAP_NS + pkt_ns(length + 3) + GAP_NS + pkt_ns(1);
+        assert!(
+            hc.poll(finish - 1, finish - 1).is_empty(),
+            "completed before ACK"
+        );
+        assert_eq!(
+            hc.poll(finish, finish),
+            [Completion {
+                id,
+                outcome: Outcome::Done(if dir_in { data } else { Vec::new() }),
+            }]
+        );
+    }
 }

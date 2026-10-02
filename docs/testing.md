@@ -1047,6 +1047,18 @@ the emulator workflow's `image` job runs it on pull requests and nightly.
 Release upgrades still need an explicit old-image fixture. These checks are
 evidence about the emulator's fault model, not analog flash cells.
 
+`tools/emu/image_picoboot.py` adds a privileged, isolated Linux run with real
+`picotool` over USB/IP into the A4 ROM loader. It verifies SRAM/flash transfers,
+full firmware reload and reboot, preserved OATH state, refreshed USB/IP
+descriptors, the KV partition's write refusal, and raw/ECC OTP persistence and
+refused bit clearing. It selects only its owned `vhci_hcd` device and unbinds
+that device's mass-storage driver during the session. Host regressions hold
+control and data completions until the final ACK, preserve BOOTSEL during
+transport handover, and exercise metadata refresh after each boot mode.
+See [the PICOBOOT runner](../tools/emu/README.md#picoboot-through-usbip) for
+setup and retained evidence. This run is separate from the default image CI
+job and does not validate mass storage or physical OTP fuses.
+
 ## Latency harness
 
 Timing a crypto primitive from the host is noisy. On the RP2350 the hot working

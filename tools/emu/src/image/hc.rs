@@ -108,6 +108,8 @@ enum Stage {
     DataOut,
     StatusIn,
     StatusOut,
+    /// The last transaction is on the wire; its buffer IRQ can still run.
+    Complete,
     /// A bulk or interrupt transfer's packets.
     Data,
 }
@@ -385,7 +387,9 @@ impl Hc {
             self.active.insert(key, a);
             return;
         }
-        let step = if key == CONTROL {
+        let step = if matches!(a.stage, Stage::Complete) {
+            Step::Finish(Outcome::Done(std::mem::take(&mut a.data)))
+        } else if key == CONTROL {
             self.control_token(&mut a, now, cycle)
         } else {
             self.data_token(key, &mut a, now, cycle)
@@ -460,20 +464,30 @@ impl Hc {
                         self.notes
                             .push(format!("status stage DATA{pid} with {} bytes", d.len()));
                     }
-                    Step::Finish(Outcome::Done(Vec::new()))
+                    a.data.clear();
+                    Self::packet_complete(a, now, 0)
                 }
                 Err(hs) => self.refused(hs, now + NAK_RETRY_NS),
             },
             Stage::StatusOut => match u.host_out(addr, 0, 1, &[], cycle) {
                 Handshake::Ack => {
-                    let mut data = std::mem::take(&mut a.data);
-                    data.truncate(a.t.want.min(a.w_length()));
-                    Step::Finish(Outcome::Done(data))
+                    a.data.truncate(a.t.want.min(a.w_length()));
+                    Self::packet_complete(a, now, 0)
                 }
                 hs => self.refused(hs, now + NAK_RETRY_NS),
             },
-            Stage::Data => Step::Finish(Outcome::Gone),
+            Stage::Data | Stage::Complete => Step::Finish(Outcome::Gone),
         }
+    }
+
+    fn packet_complete(a: &mut Active, now: u64, length: usize) -> Step {
+        // A follow-up command before the ACK races nsboot's pending buffer IRQ.
+        a.stage = Stage::Complete;
+        Step::Next(Self::packet_end(now, length))
+    }
+
+    fn packet_end(now: u64, length: usize) -> u64 {
+        now + pkt_ns(3) + GAP_NS + pkt_ns(length + 3) + GAP_NS + pkt_ns(1)
     }
 
     fn data_token(&mut self, key: (u8, bool), a: &mut Active, now: u64, cycle: u64) -> Step {
@@ -488,7 +502,7 @@ impl Hc {
         if key.1 {
             match u.host_in(self.addr, key.0, cycle) {
                 Ok((pid, d)) => {
-                    let spent = now + pkt_ns(3) + GAP_NS + pkt_ns(d.len() + 3) + GAP_NS;
+                    let spent = Self::packet_end(now, d.len());
                     let next = match ep.kind {
                         Kind::Bulk => spent,
                         Kind::Interrupt => retry,
@@ -506,7 +520,7 @@ impl Hc {
                     let short = d.len() < ep.mps;
                     a.data.extend_from_slice(&d);
                     if short || a.data.len() >= a.t.want {
-                        return Step::Finish(Outcome::Done(std::mem::take(&mut a.data)));
+                        return Self::packet_complete(a, now, d.len());
                     }
                     Step::Next(next)
                 }
@@ -517,10 +531,11 @@ impl Hc {
             match u.host_out(self.addr, key.0, toggle, &a.t.out[a.sent..end], cycle) {
                 Handshake::Ack => {
                     self.toggles.insert(key, toggle ^ 1);
-                    let spent = now + pkt_ns(3) + GAP_NS + pkt_ns(end - a.sent + 3) + GAP_NS;
+                    let length = end - a.sent;
+                    let spent = Self::packet_end(now, length);
                     a.sent = end;
                     if a.sent == a.t.out.len() {
-                        return Step::Finish(Outcome::Done(Vec::new()));
+                        return Self::packet_complete(a, now, length);
                     }
                     Step::Next(match ep.kind {
                         Kind::Bulk => spent,

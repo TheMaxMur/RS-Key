@@ -213,13 +213,18 @@ python tests/emu.py tests/10_fido_getinfo.py
   Every cold or warm boot advances the model's entropy stream, so repeated
   resets cannot regenerate the deleted credential seed. `--seed` reproduces
   the whole boot sequence rather than repeating one stream at every reboot.
+  Delayed ROM reboots count the normal 1 MHz watchdog ticks independently of
+  the CPU step quantum. Custom TICKS divisors and active debugger pauses are
+  outside this model.
 - **Presence and identity are the image's.** A `--features no-touch` build
   confirms presence; a touch build waits for BOOTSEL, which each line on the
   terminal holds down for half a second under `--touch`, and a keepalive asking
   for the touch says so there. The Yubico identity is a `VIDPID=Yubikey5` build. `--display`, the pad, `--auto-touch-ms`, `--security-trace`, `--yubico`
   and `--power-cut` are refused by name.
-- **`--usbip`** offers the image's own descriptors. An attach power-cycles the
-  chip and hands the bus to the USB/IP host until it detaches.
+- **`--usbip`** offers the image's current descriptors. Attach and detach
+  power-cycle a running image; in BOOTSEL they warm-boot back into the ROM
+  loader. A socket replug always cold-boots. Successful control and data
+  transfers complete after their final packet and ACK have crossed the bus.
 - `--trace` prints what the chip models log and, every five seconds, where each
   core is. `--rom` boots another bootrom (the A2's, say); the default is the A4
   one picoem pins, read from its checkout.
@@ -320,6 +325,42 @@ The `image` job in `.github/workflows/emulator.yml` runs this command on pull
 requests and nightly. It retains reports and logs; emulated flash and OTP files
 are not uploaded. Historical-release upgrade and scratch-ELF regression probes
 remain explicit local runs with the fixtures above.
+
+### PICOBOOT through USB/IP
+
+`image_picoboot.py` runs real `picotool` against the image's A4 ROM loader.
+Run it in an isolated x86_64 Linux VM as root, with `vhci_hcd` and a matching
+`usbip` utility installed. The dev shell supplies `picotool` and Python; it
+does not install the kernel utilities. Build a no-touch, partitioned fixture:
+
+```sh
+nix develop -c ./scripts/image-suites.sh target/picoboot-fixture
+nix develop
+sudo modprobe vhci-hcd
+sudo env PATH="$PATH" LD_LIBRARY_PATH="$LD_LIBRARY_PATH" \
+  python tools/emu/image_picoboot.py \
+    --emulator tools/emu/target/x86_64-unknown-linux-gnu/release/rsk-emu \
+    --image target/picoboot-fixture/firmware-pt.elf \
+    --work target/picoboot-run
+```
+
+Both output directories must be new. `--usbip` and `--picotool` accept explicit
+utility paths. The runner owns a loopback emulator, a fresh flash/OTP pair and
+one virtual USB/IP port. It checks the sysfs `vhci_hcd` parent before choosing
+the bus/address for every `picotool` command. It requires all virtual ports to
+be unused and unbinds `usb-storage` only from its own ROM interface, keeping
+kernel SCSI probes out of the PICOBOOT session.
+
+The run covers info, SRAM and spare-flash load/save/verify, a full ELF reload,
+an unchanged-image update, reboot into the firmware and another cold boot.
+An OATH credential must survive, and USB/IP must advertise the original
+firmware descriptors again. A write into KV must fail with the ROM permission
+error and leave its bytes unchanged. Raw and ECC OTP writes, refused bit
+clearing and persistence across reboot are checked through `picotool` too.
+Logs, image/emulator hashes and `report.json` remain in `--work`; the owned
+virtual port is detached on exit. These are virtual OTP writes, not fuse writes
+on a connected key. This privileged scenario is separate from the default CI
+image job; it does not test the mass-storage interface.
 
 For falsification, `--incompatible-image` takes a scratch current ELF with
 `EF_OATH_CRED` moved from `0xBA00` to `0xB900`: upgrade must lose the credential

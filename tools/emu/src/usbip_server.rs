@@ -44,6 +44,11 @@ pub trait Backend: UrbSink {
 
     /// Each interface's class, subclass and protocol, in descriptor order.
     fn interfaces(&self) -> Vec<[u8; 3]>;
+
+    /// One enumeration's device and interface descriptors.
+    fn description(&self) -> (UsbDeviceInfo, Vec<[u8; 3]>) {
+        (self.device(), self.interfaces())
+    }
 }
 
 /// Take URBs off an imported connection until the peer goes away.
@@ -175,7 +180,8 @@ pub fn listen(addr: &str, backend: &mut dyn Backend) -> std::io::Result<()> {
     for stream in l.incoming() {
         let Ok(mut s) = stream else { continue };
         let _ = s.set_nodelay(true);
-        match serve_op(&mut s, &backend.device(), &backend.interfaces()) {
+        let (device, interfaces) = backend.description();
+        match serve_op(&mut s, &device, &interfaces) {
             Ok(true) => {}
             Ok(false) => continue,
             Err(e) => {

@@ -8,6 +8,7 @@
 use std::io::{self, BufRead, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 
 use rsk_usb::ccid::MAX_CCID_MSG;
 use rsk_usb::ctaphid::HID_RPT_SIZE;
@@ -181,19 +182,29 @@ pub fn read_touches(chip: Sender<Request>) {
 }
 
 /// The USB/IP side: URBs to the chip thread, which answers them off the bus.
-pub struct UsbipPort {
-    pub chip: Sender<Request>,
+#[derive(Clone)]
+pub struct UsbipInfo {
     pub device: UsbDeviceInfo,
     pub interfaces: Vec<[u8; 3]>,
 }
 
+pub struct UsbipPort {
+    pub chip: Sender<Request>,
+    pub info: Arc<Mutex<UsbipInfo>>,
+}
+
 impl Backend for UsbipPort {
     fn device(&self) -> UsbDeviceInfo {
-        self.device.clone()
+        self.info.lock().unwrap().device.clone()
     }
 
     fn interfaces(&self) -> Vec<[u8; 3]> {
-        self.interfaces.clone()
+        self.info.lock().unwrap().interfaces.clone()
+    }
+
+    fn description(&self) -> (UsbDeviceInfo, Vec<[u8; 3]>) {
+        let info = self.info.lock().unwrap();
+        (info.device.clone(), info.interfaces.clone())
     }
 }
 
@@ -216,3 +227,7 @@ impl UrbSink for UsbipPort {
         let _ = self.chip.send(Request::UsbipDetach);
     }
 }
+
+#[cfg(test)]
+#[path = "sockets_tests.rs"]
+mod tests;

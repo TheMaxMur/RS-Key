@@ -9,8 +9,8 @@ use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use rsk_usb::ccid::{CCID_DATA_BLOCK_RET, HEADER, MAX_CCID_MSG, STATUS_TIMEEXT, WTX_INTERVAL_MS};
@@ -23,7 +23,7 @@ use super::flash::Flash;
 use super::hc::{Completion, Hc, Outcome, Transfer};
 use super::inspect::{self, Command};
 use super::otp;
-use super::sockets::{self, CcidReply, Report, Request, UsbipPort};
+use super::sockets::{self, CcidReply, Report, Request, UsbipInfo, UsbipPort};
 use super::trng::next_boot_seed;
 use crate::usbip::{BUSID, ESHUTDOWN, Ret, Urb, UsbDeviceInfo};
 
@@ -76,12 +76,29 @@ pub struct Options {
 }
 
 /// Why a power-up ended, and so what the next one keeps.
+#[derive(Debug, PartialEq, Eq)]
 enum End {
     /// A reset the image asked for: the watchdog scratch survives it.
     Warm {
         bootsel: bool,
     },
     PowerCycle,
+}
+
+#[derive(Default)]
+enum BootMode {
+    #[default]
+    Image,
+    UsbBootloader,
+}
+
+impl BootMode {
+    fn handover(&self) -> End {
+        match self {
+            Self::Image => End::PowerCycle,
+            Self::UsbBootloader => End::Warm { bootsel: true },
+        }
+    }
 }
 
 enum Flow {
@@ -234,7 +251,8 @@ struct Board {
     ccid: Option<CcidFlight>,
     replugs: Vec<Sender<()>>,
     press_until: Option<u64>,
-    usbip_offered: bool,
+    usbip_info: Option<Arc<Mutex<UsbipInfo>>>,
+    boot_mode: BootMode,
     announced: bool,
     last_whereabouts: Instant,
     /// A keepalive has already said the key wants a touch.
@@ -371,7 +389,8 @@ impl Board {
             ccid: None,
             replugs: Vec::new(),
             press_until: None,
-            usbip_offered: false,
+            usbip_info: None,
+            boot_mode: BootMode::Image,
             announced: false,
             last_whereabouts: Instant::now(),
             touch_asked: false,
@@ -415,6 +434,8 @@ impl Board {
             scratch,
         )?;
         self.chip = chip;
+        self.boot_mode = BootMode::Image;
+        self.announced = false;
         self.seed = seed.to_vec();
         self.power_ups += 1;
         self.cut_at = None;
@@ -580,10 +601,12 @@ impl Board {
             Stop::Nsboot(_) if self.bootsel => {
                 self.chip.press_bootsel(false);
                 self.bootsel = false;
+                self.boot_mode = BootMode::UsbBootloader;
                 eprintln!("emu: in the USB bootloader until a power cycle");
                 Flow::Run
             }
             Stop::Nsboot(why) => {
+                self.boot_mode = BootMode::UsbBootloader;
                 eprintln!("emu: the bootrom launched no image and entered BOOTSEL: {why}");
                 Flow::Run
             }
@@ -646,7 +669,7 @@ impl Board {
             Request::UsbipAttach { rets } => {
                 let urbs = HashMap::new();
                 self.owner = Owner::Usbip { rets, urbs };
-                return Some(End::PowerCycle);
+                return Some(self.boot_mode.handover());
             }
             Request::Urb(urb) => self.submit_urb(urb, dead),
             Request::Unlink { seqnum, pending } => {
@@ -662,7 +685,7 @@ impl Board {
             }
             Request::UsbipDetach => {
                 self.owner = Owner::Sockets;
-                return Some(End::PowerCycle);
+                return Some(self.boot_mode.handover());
             }
         }
         None
@@ -671,10 +694,11 @@ impl Board {
     fn inspect(&mut self, command: Command, dead: bool) -> Result<String, String> {
         match command {
             Command::Status => Ok(format!(
-                "cycle={} ready={} dead={} power_ups={} programmed_bytes={} last_cut={}",
+                "cycle={} ready={} dead={} bootloader={} power_ups={} programmed_bytes={} last_cut={}",
                 self.chip.cycles(),
                 matches!(self.configure, Configure::Done),
                 dead,
+                matches!(self.boot_mode, BootMode::UsbBootloader),
                 self.power_ups,
                 self.chip.programmed_bytes(),
                 self.last_cut
@@ -1008,14 +1032,18 @@ impl Board {
                 eprintln!("emu: device ready — {what}");
             }
         }
-        if let Some(addr) = self.opts.usbip.clone()
-            && !self.usbip_offered
-        {
-            self.usbip_offered = true;
+        let info = UsbipInfo {
+            device: usbip_device(&dev),
+            interfaces: dev.interfaces.iter().map(|i| i.class).collect(),
+        };
+        if let Some(shared) = &self.usbip_info {
+            *shared.lock().unwrap() = info;
+        } else if let Some(addr) = self.opts.usbip.clone() {
+            let shared = Arc::new(Mutex::new(info));
+            self.usbip_info = Some(shared.clone());
             let mut port = UsbipPort {
                 chip: self.tx.clone(),
-                device: usbip_device(&dev),
-                interfaces: dev.interfaces.iter().map(|i| i.class).collect(),
+                info: shared,
             };
             std::thread::spawn(move || {
                 if let Err(e) = crate::usbip_server::listen(&addr, &mut port) {
@@ -1097,3 +1125,7 @@ fn usbip_device(dev: &Device) -> UsbDeviceInfo {
         num_interfaces: u8::try_from(dev.interfaces.len()).unwrap_or(u8::MAX),
     }
 }
+
+#[cfg(test)]
+#[path = "board_tests.rs"]
+mod tests;

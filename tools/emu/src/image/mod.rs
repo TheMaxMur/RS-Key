@@ -21,6 +21,7 @@ mod sha256;
 mod sockets;
 mod trng;
 mod usb;
+mod watchdog;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

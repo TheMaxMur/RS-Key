@@ -40,6 +40,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- A Linux PICOBOOT image runner exercises real `picotool` over an owned USB/IP
+  device: SRAM/flash transfers, full reload/reboot, KV write refusal and
+  raw/ECC OTP persistence. Transport regressions cover final-packet completion,
+  BOOTSEL handover and refreshed descriptors.
 - The image laboratory measures FIDO, PIV, OpenPGP and OTP command stacks and
   checks known-secret lifetimes across signing, decipher, PIN change and slot
   deletion. Host cryptographic oracles verify the results, including all eight
@@ -358,6 +362,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- The image backend advances the ROM's watchdog countdown at its normal
+  1 MHz tick rate, so a delayed `picotool reboot` can reset the virtual chip.
 - **Firmware-image reboots advance the emulated entropy stream.** Reusing the
   same TRNG seed and counter could recreate a deleted FIDO seed when two resets
   booted a PIN-wrapped store, leaving a non-resident credential usable. Cold and

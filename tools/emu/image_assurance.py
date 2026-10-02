@@ -53,7 +53,7 @@ def fields(reply):
 
 
 class Device:
-    def __init__(self, binary, image, store, directory, label):
+    def __init__(self, binary, image, store, directory, label, usbip=None):
         self.fido_port, self.ccid_port, self.inspect_port = port(), port(), port()
         self.log_path = directory / f"{label}.log"
         self.log = self.log_path.open("w")
@@ -61,6 +61,8 @@ class Device:
                 "--fido-port", str(self.fido_port), "--ccid-port", str(self.ccid_port)]
         if image:
             args += ["--image", str(image), "--inspect-port", str(self.inspect_port)]
+        if usbip:
+            args += ["--usbip", f"127.0.0.1:{usbip}"]
         self.process = subprocess.Popen(args, stdout=self.log, stderr=self.log)
         self.image = image
         self.card = None
@@ -131,6 +133,9 @@ class Device:
         with socket.create_connection(("127.0.0.1", self.ccid_port), timeout=180) as sock:
             sock.sendall(bytes([emu.OP_REPLUG]) + bytes(4))
             emu._recv_frame(sock)
+        self.reconnect()
+
+    def reconnect(self):
         self.hid.close()
         self.hid = emu.EmuHid()
         self.hid.open_path()
@@ -157,8 +162,8 @@ class Device:
 
 
 @contextlib.contextmanager
-def device(*args):
-    item = Device(*args)
+def device(*args, **kwargs):
+    item = Device(*args, **kwargs)
     try:
         yield item
     finally:

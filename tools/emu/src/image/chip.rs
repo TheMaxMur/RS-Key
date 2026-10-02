@@ -22,10 +22,11 @@ use super::qspi::{self, Qmi};
 use super::sha256::{SHA256_BASE, Sha256};
 use super::trng::{TRNG_BASE, Trng};
 use super::usb::{self, SharedUsb, UsbCore, UsbDpram, UsbRegs};
+use super::watchdog::{WATCHDOG_BASE, Watchdog};
 
 /// The quantum while a core runs; a parked chip is stepped in larger ones.
 pub const RUN_QUANTUM: u32 = 64;
-const WATCHDOG_SCRATCH0: u32 = 0x400D_800C;
+const WATCHDOG_SCRATCH0: u32 = WATCHDOG_BASE + 0x0C;
 pub const SCRATCH_REGS: usize = 8;
 /// AIRCR.SYSRESETREQ, which `SCB::sys_reset` writes (with VECTKEY).
 const AIRCR_SYSRESETREQ: u32 = 1 << 2;
@@ -62,6 +63,7 @@ pub struct Chip {
     h_psm: MmioHandle,
     h_qmi: MmioHandle,
     h_bootram: MmioHandle,
+    h_watchdog: MmioHandle,
     hardfault: Option<u32>,
     panic_fn: Option<u32>,
     core1_released_seen: u32,
@@ -120,6 +122,9 @@ impl Chip {
         let h_bootram = emu
             .mount_mmio(bootram::BOOTRAM_BASE, 0x1000, atomic, BootRam::new())
             .map_err(m)?;
+        let h_watchdog = emu
+            .mount_mmio(WATCHDOG_BASE, 0x1000, atomic, Watchdog::new())
+            .map_err(m)?;
         let psm = Psm::new(Arc::clone(&emu.bus.atomics));
         let h_psm = emu.mount_mmio(PSM_BASE, 0x10, atomic, psm).map_err(m)?;
         let bootsel = Arc::new(AtomicBool::new(false));
@@ -151,6 +156,7 @@ impl Chip {
             h_psm,
             h_qmi,
             h_bootram,
+            h_watchdog,
             core1_released_seen: 0,
             core1_hold: false,
             nsboot_seen: false,
@@ -241,7 +247,13 @@ impl Chip {
             });
             return Some(Stop::Reboot { bootsel });
         }
-        if self.emu.bus.watchdog_reset_requested() {
+        if self.emu.bus.watchdog_reset_requested()
+            || self
+                .emu
+                .bus
+                .mmio_device::<Watchdog>(self.h_watchdog)?
+                .reset_requested
+        {
             return Some(Stop::Reboot { bootsel: false });
         }
         for c in 0..2 {
