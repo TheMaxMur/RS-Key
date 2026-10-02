@@ -1016,6 +1016,16 @@ board's speed, two slower (an RSA-2048 keygen: 13.6 s, the board's ~4.3 s). Pres
 the OTP beside it. What it still is not is silicon: every model goes as deep as
 the bootrom and the image reach, no deeper. `tools/emu/README.md` has the rest.
 
+The picoem pin's empty-`PULL` batching was compared on 2026-10-02 using two
+independent release builds, `d83e668` and `4b1953f`, and the same partitioned
+`bcdDevice 0x0A8B` no-touch ELF. Three 10-second idle samples per build reduced
+median CPU use from 68.7% to 22.4% of one macOS arm64 host core. Every sample
+ended with a successful GetInfo, with unchanged capabilities; the updated
+build answered in 15–17 ms. This is an idle-cost measurement, not a speedup of
+the firmware's commands. PIO differential tests compare the bulk advance with
+individual system clocks, including divider rewrites, FIFO wake-up, side-set,
+counter wrapping and the fallback for other stalls and active machines.
+
 `tools/emu/image_assurance.py` drives image-only checks through an opt-in
 `--inspect-port` on loopback: per-command SP high-water, whole-SRAM searches for
 known OATH key material, release-to-current persistent-flash upgrades and cuts

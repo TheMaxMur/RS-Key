@@ -161,6 +161,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- **Firmware-image emulation spends less CPU while idle.** The picoem pin
+  batches empty PIO `PULL` stalls without changing clock-divider phase,
+  side-set or diagnostic counters. Three idle samples per build reduced median
+  host CPU use from 68.7% to 22.4% of one core on macOS arm64, with the same
+  firmware ELF and GetInfo wake-up preserved. Host only; no `bcdDevice` bump.
+
 - **The default USB identity is the allocated `1209:F1D2`** (pid.codes), replacing
   the shared test PID `1209:0001`. Firmware (`bcdDevice 0x0A8A`), the native
   emulator and its test shim agree. The opt-in ccid overlay and Linux udev rules

@@ -197,8 +197,12 @@ python tests/emu.py tests/10_fido_getinfo.py
 - **Time** is held to the wall clock and never runs ahead of it, so the image's
   own timeouts — the §6.6 reset window, keepalives, CCID time extensions — mean
   what they mean on a desk. One busy core runs at about the board's speed; two run
-  slower (an on-card RSA-2048 keygen took 13.6 s, the board ~4.3 s). An idle key
-  still costs most of a host core, most of it stepping the LED's PIO block.
+  slower (an on-card RSA-2048 keygen took 13.6 s, the board ~4.3 s). Empty PIO
+  `PULL` stalls advance in batches while preserving divider phase and counters;
+  active machines and other stalls keep the per-cycle path. On macOS arm64,
+  three 10-second idle samples on the same no-touch ELF reduced median host
+  CPU use from 68.7% to 22.4% of one core (2026-10-02). GetInfo after idle
+  still completed in 15–17 ms. This measures idle CPU cost, not command speed.
 - **The store** is the whole 4 MB flash, image and KV store together, with the OTP
   rows beside it in `<store>.otp`. A new one starts blank but for the chip id,
   which is `--serial`. Placing the image rewrites only the sectors it covers, so
