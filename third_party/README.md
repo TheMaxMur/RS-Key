@@ -3,8 +3,8 @@
 Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Four
 unrelated kinds live here:
 
-- **Three external conformance suites** — `pico-fido-tests/`,
-  `openpgp-card-tests/`, `ykman-tests/` — vendored so the firmware can be
+- **Four external conformance suites** — `pico-fido-tests/`,
+  `openpgp-card-tests/`, `ykman-tests/`, `python-fido2-tests/` — vendored so the firmware can be
   validated without checking out the upstream repos. They are **not** part of RS-Key's own test
   suite (`tests/`, `cargo test`) — they are the upstream ecosystems' own tests,
   kept runnable against this implementation. Everything below is about them.
@@ -42,6 +42,7 @@ repo's top-level license file):
 | `pico-fido-tests/` | [polhenarejos/pico-fido](https://github.com/polhenarejos/pico-fido) `tests/` | **GPL-3.0-only** (headers read "GNU General Public License … version 3") | AGPL-3.0 (pico-fido's repo LICENSE) |
 | `openpgp-card-tests/` | [polhenarejos/pico-openpgp](https://github.com/polhenarejos/pico-openpgp) `tests/`, derived from [Gnuk](https://www.fsij.org/gnuk/) (NIIBE Yutaka / g10 Code GmbH) | **GPL-3.0-or-later** (Gnuk headers: "either version 3 … or any later version") | AGPL-3.0 |
 | `ykman-tests/` | [Yubico/yubikey-manager](https://github.com/Yubico/yubikey-manager) `tests/device/` with the `tests/` conftest, `util.py` and `files/` it imports | none, but `device/cli/test_otp.py` carries Yubico's BSD-2-Clause header | **BSD-2-Clause**, upstream's `COPYING` (Yubico AB) |
+| `python-fido2-tests/` | [Yubico/python-fido2](https://github.com/Yubico/python-fido2) selected `tests/device/` with its parent fixtures | none | **BSD-2-Clause**, upstream's `COPYING` |
 
 Vendored from upstream at:
 
@@ -50,6 +51,7 @@ Vendored from upstream at:
 | `pico-fido-tests/` | `b1bacec29db76f6944f9db9ffb595934a89c5a41` | 2026-08-02 |
 | `openpgp-card-tests/` | `1472b26574b2e74d371fe052c7e5f5e30cd2a997` | 2026-07-27 |
 | `ykman-tests/` | `bc866e83129193f0c57f4fd2e14da8fbf05f3916` (tag `5.9.1`) | 2026-04-15 |
+| `python-fido2-tests/` | `d1fd71182a7b677a34e15b8b221f272c9e72d77f` | 2026-10-03 |
 | `acvp/` | `975de31eb83d87039ec88934fdc47d8c312b892d` (ACVP-Server `v1.1.0.43`) | 2026-08-12 |
 | `wycheproof/` | `3fa63dd0344abb611f1fb1d77e119938603ea230` | 2026-09-02 |
 
@@ -59,6 +61,11 @@ refresh, or the next refresh has nothing to diff against. `ykman-tests/` must
 match the devshell's `yubikey-manager` release: its tests reach into ykman's
 private internals, so a newer ykman under an older copy breaks them. Its PEM
 fixtures are re-included past the tree-wide `*.pem` ignore in `.gitignore`.
+
+`python-fido2-tests/` contains the device modules `client`, `credentials`,
+`credman`, `credblob`, `info`, `largeblobs` and `prf`, with unmodified assertions
+and fixtures. Its USB/IP guest run uses the flake's python-fido2; selection and
+reconnect are supplied by `tests/third_party.py`, outside the vendored files.
 
 These suites are **run-only** (pytest/pyscard) — they are never compiled or
 linked into the firmware, and every upstream header is preserved verbatim, so
@@ -86,6 +93,7 @@ rather than against the device they were written for:
 ```sh
 python tests/third_party.py fido       # the pico-fido suite
 python tests/third_party.py openpgp    # the OpenPGP card suite
+python tests/third_party.py python-fido2 # Yubico's FIDO device tests, USB/IP guest
 ```
 
 It touches nothing in these directories at run time — the run is steered from

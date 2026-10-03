@@ -25,6 +25,7 @@ by one that did (`tests/interop`).
     python tests/third_party.py fido            # the pico-fido suite
     python tests/third_party.py openpgp         # the OpenPGP card suite
     python tests/third_party.py ykman           # ykman's device tests
+    python tests/third_party.py python-fido2    # Yubico's FIDO device tests
     python tests/third_party.py all -- -x       # everything; extra pytest args
 
 The suites want a device that answers like a flashed no-touch build. Against
@@ -57,6 +58,7 @@ SUITES = {
     # Yubico's own: ykman's `tests/device`, CCID half, against the Yubico identity. The
     # root is `tests/` because its conftest declares `--device`; nothing else there runs.
     "ykman": ("third_party/ykman-tests/tests", True),
+    "python-fido2": ("third_party/python-fido2-tests/tests/device", False),
 }
 
 # What RS-Key deliberately does not do the way these suites expect. The key is a
@@ -66,6 +68,7 @@ SUITES = {
 # Only *deliberate* divergences belong here. A test failing because RS-Key is
 # wrong is a bug, and putting it here hides it.
 DIVERGENCES: dict[str, dict[str, str]] = {
+    "python-fido2": {},
     "fido": {
         # An empty `saltEnc` is a parameter that is present and the wrong length,
         # not a missing one: §12.5 says to answer CTAP1_ERR_INVALID_LENGTH unless
@@ -299,6 +302,7 @@ DIVERGENCES: dict[str, dict[str, str]] = {
 # after upstream deleted it. Removing an entry is a claim that RS-Key grew the
 # feature, and the tests are here to check that claim.
 INAPPLICABLE: dict[str, dict[str, str]] = {
+    "python-fido2": {},
     "fido": {},
     "openpgp": {
         # Gnuk's admin-less mode: setting PW1 equal to PW3 makes PW1 authorize
@@ -349,6 +353,7 @@ INAPPLICABLE: dict[str, dict[str, str]] = {
 # because nothing comes after it, and keeps a listed divergence from failing seven
 # tests in `090_finalize` that have nothing to do with it.
 LAST: dict[str, tuple[str, ...]] = {
+    "python-fido2": (),
     "fido": (),
     "openpgp": ("040_pcsc_extra/",),
     "ykman": (),
@@ -376,6 +381,11 @@ class Plugin:
         _install_power_cycle()
         _install_reboot()
         config.addinivalue_line("markers", "rsk_divergence: expected, and why")
+
+    def pytest_fixture_setup(self, fixturedef, request):
+        if self.suite == "python-fido2" and fixturedef.argname == "dev_manager":
+            if not request.config.getoption("no_device"):
+                _install_fido2(fixturedef.func.__globals__["DeviceManager"])
 
     def pytest_collection_modifyitems(self, config, items):
         import pytest
@@ -411,6 +421,31 @@ class Plugin:
         terminalreporter.write_sep("=", "RS-Key divergences (expected, xfail)")
         for nodeid, reason in self.marked:
             terminalreporter.write_line(f"  {nodeid}\n      {reason}")
+
+
+def _install_fido2(manager):
+    """Supply the operator's selection and replug in the isolated USB/IP guest."""
+    from dataclasses import replace
+    from fido2.ctap2 import Ctap2
+    from _device import find_fido2
+
+    def select(self):
+        device = find_fido2()
+        if device is None:
+            raise RuntimeError("python-fido2: no RS-Key USB/IP device")
+        Ctap2(device).reset()
+        return device
+
+    def reconnect(self):
+        before = self.info
+        emu.power_cycle()
+        after = self.info
+        assert replace(before, enc_identifier=None, enc_cred_store_state=None) == replace(
+            after, enc_identifier=None, enc_cred_store_state=None)
+        return self.device
+
+    manager._select = select
+    manager._reconnect_usb = reconnect
 
 
 def _install_power_cycle():

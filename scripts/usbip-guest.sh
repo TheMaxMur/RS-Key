@@ -114,6 +114,7 @@ echo
 echo "== third_party: the pico-fido conformance suite"
 tp=0
 python tests/third_party.py fido -q || tp=$?
+run tests/third_party.py python-fido2 -q
 detach "RS-Key Security Key" || exit 1
 
 echo

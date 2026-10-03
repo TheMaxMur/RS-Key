@@ -863,13 +863,14 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
 
 Three other ecosystems' own conformance suites live in
 [third_party/](https://github.com/TheMaxMur/RS-Key/tree/main/third_party) —
-pico-fido's, pico-openpgp/Gnuk's and Yubico's own `ykman` device tests — and
+pico-fido's, pico-openpgp/Gnuk's and Yubico's `ykman` and `python-fido2` device tests — and
 `tests/third_party.py` runs them against RS-Key:
 
 ```sh
 nix develop -c python tests/third_party.py openpgp   # over the emulator's card socket
 nix develop -c python tests/third_party.py ykman     # the same, emulator started --yubico
 nix develop -c python tests/third_party.py fido      # needs a board, or --usbip
+nix develop -c python tests/third_party.py python-fido2 # isolated USB/IP guest
 ```
 
 ykman's suite covers PIV, OATH, OpenPGP, OTP and the management applet over CCID,
@@ -877,6 +878,13 @@ through ykman's own library and CLI. Over the socket it sees no HID, so its OTP-
 and interface tests are deselected, as are the applications RS-Key has none of
 (YubiHSM Auth, SCP03/SCP11). Its first run found the defects fixed in 0x09EA
 (OpenPGP RSA attributes) and 0x09EB (OTP INS 03).
+
+The selected python-fido2 modules exercise PRF (including `evalByCredential`
+and registration-time evaluation), largeBlob checksums and capacity, credBlob,
+credential management, algorithm negotiation, allow/exclude lists and getInfo.
+The upstream fixtures run both PIN protocols. `scripts/usbip-guest.sh` runs
+this suite with the real HID backend; the external plugin supplies selection,
+an initial reset and the emulator's power-cycle stand-in.
 
 No assertion in those directories is edited. The run is steered from outside by a
 pytest plugin that supplies the power cycle the CTAP 2.1 §6.6 reset window needs,
