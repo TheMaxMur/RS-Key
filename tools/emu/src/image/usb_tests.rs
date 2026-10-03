@@ -131,10 +131,64 @@ fn double_buffered_endpoint_alternates_and_reports_the_buffer() {
     assert_eq!(c.host_in(0, 3, 0), Ok((1, vec![0xB1])));
     assert_eq!(
         c.reg_read(BUFF_CPU_SHOULD_HANDLE, 0),
+        0,
+        "buffer 0 is still pending"
+    );
+    c.reg_write(BUFF_STATUS, 1 << 6, 0x3000, 0);
+    assert_eq!(
+        c.reg_read(BUFF_STATUS, 0),
+        1 << 6,
+        "buffer 1 reasserts status"
+    );
+    assert_eq!(
+        c.reg_read(BUFF_CPU_SHOULD_HANDLE, 0),
         1 << 6,
         "buffer 1 completed"
     );
     assert_eq!(c.host_in(0, 3, 0), Err(Handshake::Nak), "both handed back");
+    c.reg_write(BUFF_STATUS, 1 << 6, 0, 0);
+    assert_eq!(
+        c.reg_read(BUFF_STATUS, 0),
+        0,
+        "both completions acknowledged"
+    );
+}
+
+#[test]
+fn double_buffer_completions_keep_their_order_in_both_directions() {
+    for dir_in in [false, true] {
+        for first in [0, 1] {
+            let mut u = attached();
+            let ep = 3;
+            let bit = 1 << (ep * 2 + if dir_in { 0 } else { 1 });
+            u.wr32(
+                UsbCore::ep_ctrl_off(ep, dir_in),
+                EC_ENABLE | EC_DOUBLE_BUFFERED | EC_INTERRUPT_PER_BUFF | (2 << 26) | 0x200,
+            );
+            u.selector[ep as usize][dir_in as usize] = first;
+            let half = BC_AVAILABLE | if dir_in { BC_FULL | 1 } else { 64 };
+            u.wr32(
+                UsbCore::buf_ctrl_off(ep, dir_in),
+                half | (half | BC_PID) << 16,
+            );
+            for which in [first, first ^ 1] {
+                if dir_in {
+                    assert!(u.host_in(0, ep, 0).is_ok());
+                } else {
+                    assert_eq!(u.host_out(0, ep, which, &[0x5A], 0), Handshake::Ack);
+                }
+            }
+            for which in [first, first ^ 1] {
+                assert_eq!(u.reg_read(BUFF_STATUS, 0), bit);
+                assert_eq!(
+                    u.reg_read(BUFF_CPU_SHOULD_HANDLE, 0) & bit,
+                    if which == 1 { bit } else { 0 }
+                );
+                u.reg_write(BUFF_STATUS, bit, 0, 0);
+            }
+            assert_eq!(u.reg_read(BUFF_STATUS, 0), 0);
+        }
+    }
 }
 
 #[test]

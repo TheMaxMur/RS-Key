@@ -147,6 +147,9 @@ pub struct Hc {
     frame: u32,
     /// The next SOF, once the port is enabled.
     next_sof: Option<u64>,
+    /// A transaction occupies the shared bus even when another pipe is ready.
+    bus_free_ns: u64,
+    last_pipe: Option<(u8, bool)>,
     toggles: HashMap<(u8, bool), u8>,
     endpoints: HashMap<(u8, bool), Endpoint>,
     queues: HashMap<(u8, bool), VecDeque<(u64, Transfer)>>,
@@ -165,6 +168,8 @@ impl Hc {
             addr: 0,
             frame: 0,
             next_sof: None,
+            bus_free_ns: 0,
+            last_pipe: None,
             toggles: HashMap::new(),
             endpoints: HashMap::new(),
             queues: HashMap::new(),
@@ -241,12 +246,26 @@ impl Hc {
             | Port::AddressRecovery { until } => until,
             Port::Addressing | Port::Ready => u64::MAX,
         };
-        let active = self.active.values().map(|a| a.next_ns).min();
+        let active = self
+            .active
+            .values()
+            .map(|a| {
+                if a.stage == Stage::Complete {
+                    a.next_ns
+                } else {
+                    a.next_ns.max(self.bus_free_ns)
+                }
+            })
+            .min();
         let startable = self
             .queues
             .iter()
             .any(|(k, q)| !q.is_empty() && !self.active.contains_key(k) && self.may_start(*k));
-        let now = if startable { Some(0) } else { None };
+        let now = if startable {
+            Some(self.bus_free_ns)
+        } else {
+            None
+        };
         [Some(port), self.next_sof, active, now]
             .into_iter()
             .flatten()
@@ -267,7 +286,7 @@ impl Hc {
             self.usb.lock().unwrap().host_sof(self.frame);
         }
         let mut keys: Vec<(u8, bool)> = self.queues.keys().copied().collect();
-        keys.sort_unstable();
+        keys.sort_unstable_by_key(|key| (self.last_pipe.is_some_and(|last| *key <= last), *key));
         for key in keys {
             self.service(key, now, cycle);
         }
@@ -326,6 +345,8 @@ impl Hc {
         self.addr = 0;
         self.next_sof = None;
         self.toggles.clear();
+        self.bus_free_ns = 0;
+        self.last_pipe = None;
     }
 
     fn detach(&mut self, now: u64) {
@@ -334,6 +355,8 @@ impl Hc {
         self.addr = 0;
         self.next_sof = None;
         self.toggles.clear();
+        self.bus_free_ns = 0;
+        self.last_pipe = None;
         self.port = Port::Detached {
             poll_at: now + ATTACH_POLL_NS,
         };
@@ -383,15 +406,17 @@ impl Hc {
         let Some(mut a) = self.active.remove(&key) else {
             return;
         };
-        if a.next_ns > now {
+        if a.next_ns > now || (a.stage != Stage::Complete && self.bus_free_ns > now) {
             self.active.insert(key, a);
             return;
         }
         let step = if matches!(a.stage, Stage::Complete) {
             Step::Finish(Outcome::Done(std::mem::take(&mut a.data)))
         } else if key == CONTROL {
+            self.last_pipe = Some(key);
             self.control_token(&mut a, now, cycle)
         } else {
+            self.last_pipe = Some(key);
             self.data_token(key, &mut a, now, cycle)
         };
         match step {
@@ -407,9 +432,11 @@ impl Hc {
         let addr = self.addr;
         let usb = self.usb.clone();
         let mut u = usb.lock().unwrap();
+        self.bus_free_ns = now + pkt_ns(3) + GAP_NS + pkt_ns(1);
         match a.stage {
             Stage::Setup { tries } => match u.host_setup(addr, a.t.setup, cycle) {
                 Handshake::Ack => {
+                    self.bus_free_ns = Self::packet_end(now, 8);
                     a.pid = 1;
                     a.stage = if a.control_in() && a.w_length() > 0 {
                         Stage::DataIn
@@ -428,6 +455,7 @@ impl Hc {
             },
             Stage::DataIn => match u.host_in(addr, 0, cycle) {
                 Ok((pid, d)) => {
+                    self.bus_free_ns = Self::packet_end(now, d.len());
                     if pid == a.pid {
                         a.pid ^= 1;
                         let short = d.len() < EP0_MPS;
@@ -439,12 +467,13 @@ impl Hc {
                         self.notes
                             .push(format!("EP0 IN DATA{pid} where DATA{} was due", a.pid));
                     }
-                    Step::Next(now + pkt_ns(3) + GAP_NS + pkt_ns(d.len() + 3) + GAP_NS)
+                    Step::Next(self.bus_free_ns)
                 }
                 Err(hs) => self.refused(hs, now + NAK_RETRY_NS),
             },
             Stage::DataOut => {
                 let end = (a.sent + EP0_MPS).min(a.t.out.len());
+                self.bus_free_ns = Self::packet_end(now, end - a.sent);
                 match u.host_out(addr, 0, a.pid, &a.t.out[a.sent..end], cycle) {
                     Handshake::Ack => {
                         let n = end - a.sent;
@@ -453,13 +482,14 @@ impl Hc {
                         if a.sent == a.t.out.len() {
                             a.stage = Stage::StatusIn;
                         }
-                        Step::Next(now + pkt_ns(3) + GAP_NS + pkt_ns(n + 3) + GAP_NS)
+                        Step::Next(Self::packet_end(now, n))
                     }
                     hs => self.refused(hs, now + NAK_RETRY_NS),
                 }
             }
             Stage::StatusIn => match u.host_in(addr, 0, cycle) {
                 Ok((pid, d)) => {
+                    self.bus_free_ns = Self::packet_end(now, d.len());
                     if pid != 1 || !d.is_empty() {
                         self.notes
                             .push(format!("status stage DATA{pid} with {} bytes", d.len()));
@@ -469,13 +499,16 @@ impl Hc {
                 }
                 Err(hs) => self.refused(hs, now + NAK_RETRY_NS),
             },
-            Stage::StatusOut => match u.host_out(addr, 0, 1, &[], cycle) {
-                Handshake::Ack => {
-                    a.data.truncate(a.t.want.min(a.w_length()));
-                    Self::packet_complete(a, now, 0)
+            Stage::StatusOut => {
+                self.bus_free_ns = Self::packet_end(now, 0);
+                match u.host_out(addr, 0, 1, &[], cycle) {
+                    Handshake::Ack => {
+                        a.data.truncate(a.t.want.min(a.w_length()));
+                        Self::packet_complete(a, now, 0)
+                    }
+                    hs => self.refused(hs, now + NAK_RETRY_NS),
                 }
-                hs => self.refused(hs, now + NAK_RETRY_NS),
-            },
+            }
             Stage::Data | Stage::Complete => Step::Finish(Outcome::Gone),
         }
     }
@@ -499,10 +532,12 @@ impl Hc {
         let toggle = *self.toggles.get(&key).unwrap_or(&0);
         let usb = self.usb.clone();
         let mut u = usb.lock().unwrap();
+        self.bus_free_ns = now + pkt_ns(3) + GAP_NS + pkt_ns(1);
         if key.1 {
             match u.host_in(self.addr, key.0, cycle) {
                 Ok((pid, d)) => {
                     let spent = Self::packet_end(now, d.len());
+                    self.bus_free_ns = spent;
                     let next = match ep.kind {
                         Kind::Bulk => spent,
                         Kind::Interrupt => retry,
@@ -528,6 +563,7 @@ impl Hc {
             }
         } else {
             let end = (a.sent + ep.mps).min(a.t.out.len());
+            self.bus_free_ns = Self::packet_end(now, end - a.sent);
             match u.host_out(self.addr, key.0, toggle, &a.t.out[a.sent..end], cycle) {
                 Handshake::Ack => {
                     self.toggles.insert(key, toggle ^ 1);

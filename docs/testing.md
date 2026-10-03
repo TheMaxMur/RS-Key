@@ -1057,7 +1057,19 @@ control and data completions until the final ACK, preserve BOOTSEL during
 transport handover, and exercise metadata refresh after each boot mode.
 See [the PICOBOOT runner](../tools/emu/README.md#picoboot-through-usbip) for
 setup and retained evidence. This run is separate from the default image CI
-job and does not validate mass storage or physical OTP fuses.
+job and does not validate physical OTP fuses.
+`tools/emu/image_msc.py` leaves the owned kernel mass-storage driver active,
+reads the ROM's FAT16 directory and files, checks coexistence with `picotool`,
+refuses a damaged UF2 sector and reloads the complete UF2 through the virtual
+block device. Every payload and unchanged bytes outside the image are checked;
+OATH must survive reboot and a cold boot. This covers SCSI block I/O without
+mounting FAT. Shared-bus timing and fairness regressions prevent concurrent
+endpoint pipes from sending overlapping packets or starving each other;
+double-buffer status keeps both completions until the CPU acknowledges them.
+Twenty alternating `picotool info` and MSC reads invalidate the owned block
+device's cache each time. The picoem pin isolates Non-secure RCP accesses from
+Secure state, preventing interrupted BootROM memory routines from corrupting
+Secure buffer-validation counters.
 
 ## Latency harness
 

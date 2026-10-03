@@ -628,3 +628,55 @@ fn data_completion_waits_for_the_last_packet_and_ack() {
         );
     }
 }
+
+#[test]
+fn different_pipes_wait_for_the_bus_and_a_nak_does_not_starve_them() {
+    let (mut hc, mut fw, _) = bench();
+    let mut now = 0;
+    ready(&mut hc, &mut fw, &mut now);
+    bulk_pair(&mut hc, &mut fw);
+    fw.arm_out(2, 0);
+    fw.arm_in(3, 0, 0x1C0, &[0x5A; 64]);
+    let out = hc.submit(put(2, &[0xA5; 64]));
+    let input = hc.submit(get(3, 64));
+    assert!(hc.poll(now, now).is_empty());
+    assert_eq!(fw.take_out(2, 0x180), Some(vec![0xA5; 64]));
+    assert_ne!(
+        fw.dr(buf_ctrl(3, true)) & BC_AVAILABLE,
+        0,
+        "second pipe sent a packet while the first was on the wire"
+    );
+    let end = Hc::packet_end(now, 64);
+    assert!(hc.poll(end - 1, end - 1).is_empty());
+    assert_ne!(fw.dr(buf_ctrl(3, true)) & BC_AVAILABLE, 0);
+    assert_eq!(
+        hc.poll(end, end),
+        [Completion {
+            id: out,
+            outcome: Outcome::Done(Vec::new())
+        }]
+    );
+    assert_eq!(fw.dr(buf_ctrl(3, true)) & BC_AVAILABLE, 0);
+    let end = Hc::packet_end(end, 64);
+    assert_eq!(
+        hc.poll(end, end),
+        [Completion {
+            id: input,
+            outcome: Outcome::Done(vec![0x5A; 64])
+        }]
+    );
+
+    now = end;
+
+    hc.submit(put(2, &[0xA5])); // Unarmed OUT answers NAK.
+    fw.arm_in(3, 1, 0x1C0, &[0x5A]);
+    let input = hc.submit(get(3, 64));
+    let done = run_for(&mut hc, &mut fw, &mut now, MS);
+    assert!(
+        done.contains(&Completion {
+            id: input,
+            outcome: Outcome::Done(vec![0x5A])
+        }),
+        "NAKing pipe starved the other interface"
+    );
+}

@@ -360,7 +360,28 @@ clearing and persistence across reboot are checked through `picotool` too.
 Logs, image/emulator hashes and `report.json` remain in `--work`; the owned
 virtual port is detached on exit. These are virtual OTP writes, not fuse writes
 on a connected key. This privileged scenario is separate from the default CI
-image job; it does not test the mass-storage interface.
+image job.
+
+`image_msc.py` uses the same Linux setup and arguments with a new `--work`
+directory. It leaves the owned ROM's `usb-storage` driver active, checks the
+FAT16 MBR, directory, `INDEX.HTM` and `INFO_UF2.TXT`, and repeats `picotool info` 20 times
+while MSC remains usable. A bad-magic UF2 sector must leave flash untouched.
+The runner then writes the complete UF2 through the owned kernel block device,
+checks every payload and unchanged bytes outside the image, and verifies reboot,
+refreshed descriptors and OATH persistence through a cold boot. Block I/O is
+guarded by the virtual sysfs parent and the block device's major/minor identity.
+This exercises kernel SCSI reads/writes without mounting the FAT filesystem.
+It uses fresh emulated flash/OTP and detaches its virtual port on exit.
+
+The image host controller serializes transactions across all endpoint pipes,
+including their packet/ACK time. A NAKing pipe yields to other ready pipes;
+the transport regression covers concurrent MSC/PICOBOOT-style bulk endpoints.
+Double-buffer completion status preserves both events and exposes the next
+buffer after the CPU clears the first, as RP2350 datasheet §12.7.3.8 specifies.
+The MSC runner invalidates its owned disk's cache before repeated file reads.
+The picoem pin also makes Non-secure RCP reads return zero and ignores writes
+to Secure RCP state (RP2350 datasheet §3.6.3.2), allowing BootROM's interrupted
+Non-secure memory routines to coexist with Secure buffer validation.
 
 For falsification, `--incompatible-image` takes a scratch current ELF with
 `EF_OATH_CRED` moved from `0xBA00` to `0xB900`: upgrade must lose the credential

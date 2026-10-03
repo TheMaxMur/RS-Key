@@ -83,7 +83,7 @@ class Client:
             assert result.returncode == 0, f"{label}: {result.stdout}"
         return result.stdout
 
-    def attach(self):
+    def attach(self, unbind_storage=True):
         assert not active_ports(), "this runner requires an isolated, unused vhci_hcd"
         assert advertised(self.tcp_port) == {"vid": BOOTLOADER_VID, "pid": BOOTLOADER_PID,
                                               "interfaces": 2, "classes": [[8, 6, 80], [255, 0, 0]]}
@@ -110,21 +110,25 @@ class Client:
                         time.sleep(0.05)
                     assert (interface / "bInterfaceClass").read_text().strip() == "08"
                     driver = interface / "driver"
-                    if driver.exists():
+                    if unbind_storage and driver.exists():
                         assert driver.resolve().name == "usb-storage"
                         (driver / "unbind").write_text(interface.name)
                     self.report.setdefault("virtual_devices", []).append({"busid": busid, "port": self.kernel_port})
-                    return
+                    return node
             time.sleep(0.05)
         raise TimeoutError("owned virtual BOOTSEL device never enumerated")
 
     def detach(self):
         if self.kernel_port is not None:
+            result = None
             if self.kernel_port in active_ports():
-                subprocess.run([self.args.usbip, "detach", "-p", str(self.kernel_port)], check=True, timeout=30)
+                result = subprocess.run([self.args.usbip, "detach", "-p", str(self.kernel_port)], timeout=30)
             deadline = time.monotonic() + ENUMERATION_TIMEOUT
             while self.kernel_port in active_ports():
-                assert time.monotonic() < deadline, "owned USB/IP port did not detach"
+                if time.monotonic() >= deadline:
+                    if result is not None:
+                        result.check_returncode()
+                    raise TimeoutError("owned USB/IP port did not detach")
                 time.sleep(0.05)
             self.kernel_port = None
             self.selection = []

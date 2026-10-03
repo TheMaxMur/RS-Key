@@ -120,6 +120,8 @@ pub struct UsbCore {
     ep_stall_arm: u32,
     ep_status_stall_nak: u32,
     buff_cpu_should_handle: u32,
+    /// Completed buffer 0/1 bits per endpoint direction, until CPU W1C.
+    pending_buffers: [u8; 32],
     /// Next buffer (0/1) of each double-buffered endpoint, by `[ep][dir_in]`.
     selector: [[u8; 2]; 16],
     usb_muxing: u32,
@@ -159,6 +161,7 @@ impl UsbCore {
             ep_stall_arm: 0,
             ep_status_stall_nak: 0,
             buff_cpu_should_handle: 0,
+            pending_buffers: [0; 32],
             selector: [[0; 2]; 16],
             usb_muxing: 0,
             usb_pwr: 0,
@@ -360,7 +363,7 @@ impl UsbCore {
                     self.lat_trans_complete = false;
                 }
             }
-            BUFF_STATUS => self.buff_status &= !w1c,
+            BUFF_STATUS => self.ack_buffers(w1c),
             EP_ABORT => {
                 self.ep_abort = rmw(self.ep_abort);
                 // Nothing is ever in flight between host slots: done at once.
@@ -387,6 +390,23 @@ impl UsbCore {
     }
 
     // --- host side -------------------------------------------------------
+
+    fn ack_buffers(&mut self, mask: u32) {
+        for (index, pending) in self.pending_buffers.iter_mut().enumerate() {
+            let bit = 1 << index;
+            if mask & self.buff_status & bit == 0 {
+                continue;
+            }
+            let which = u8::from(self.buff_cpu_should_handle & bit != 0);
+            *pending &= !(1 << which);
+            self.buff_status &= !bit;
+            if *pending != 0 {
+                self.buff_status |= bit;
+                self.buff_cpu_should_handle =
+                    (self.buff_cpu_should_handle & !bit) | if *pending & 1 == 0 { bit } else { 0 };
+            }
+        }
+    }
 
     fn addressed(&mut self, addr: u8) -> bool {
         if !self.attached() {
@@ -497,9 +517,14 @@ impl UsbCore {
         };
         let bit = 1 << (ep as u32 * 2 + if dir_in { 0 } else { 1 });
         if irq {
+            // RP2350 §12.7.3.8: a second completion reasserts status after W1C,
+            // preserving the first buffer's identity until the CPU takes it.
+            if self.buff_status & bit == 0 {
+                self.buff_cpu_should_handle =
+                    (self.buff_cpu_should_handle & !bit) | if which == 1 { bit } else { 0 };
+            }
+            self.pending_buffers[bit.trailing_zeros() as usize] |= 1 << which;
             self.buff_status |= bit;
-            self.buff_cpu_should_handle =
-                (self.buff_cpu_should_handle & !bit) | if which == 1 { bit } else { 0 };
         }
         if ep != 0 && ec & EC_DOUBLE_BUFFERED != 0 {
             self.selector[ep as usize][dir_in as usize] ^= 1;

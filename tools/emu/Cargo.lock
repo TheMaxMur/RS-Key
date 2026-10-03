@@ -1286,7 +1286,7 @@ dependencies = [
 [[package]]
 name = "picoem-common"
 version = "0.2.2"
-source = "git+https://github.com/TheMaxMur/picoem?rev=4b1953f988262c5a5f557d711f68edb80dd6edf8#4b1953f988262c5a5f557d711f68edb80dd6edf8"
+source = "git+https://github.com/TheMaxMur/picoem?rev=ba0cad83bdfea9a13121f5c1a2cf632531a9f174#ba0cad83bdfea9a13121f5c1a2cf632531a9f174"
 dependencies = [
  "libc",
  "tracing",
@@ -1457,7 +1457,7 @@ dependencies = [
 [[package]]
 name = "rp2350-emu"
 version = "0.2.6"
-source = "git+https://github.com/TheMaxMur/picoem?rev=4b1953f988262c5a5f557d711f68edb80dd6edf8#4b1953f988262c5a5f557d711f68edb80dd6edf8"
+source = "git+https://github.com/TheMaxMur/picoem?rev=ba0cad83bdfea9a13121f5c1a2cf632531a9f174#ba0cad83bdfea9a13121f5c1a2cf632531a9f174"
 dependencies = [
  "picoem-common",
  "sha2 0.10.9",

@@ -40,6 +40,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Added
 
+- A Linux MSC image runner reads BOOTSEL's FAT16 files with `usb-storage`
+  active, checks coexistence with PICOBOOT and reloads a complete UF2 through
+  the owned virtual block device. It verifies every payload, untouched bytes
+  outside the image and OATH persistence across reboot and cold boot. The image
+  USB host now serializes packets across endpoints and gives NAKing pipes a
+  bounded turn, avoiding simultaneous MSC/PICOBOOT transactions. Double-buffer
+  status retains both completions until the CPU acknowledges each. The picoem
+  pin isolates Non-secure RCP accesses from Secure counters and salts, fixing
+  intermittent BootROM faults during concurrent MSC/PICOBOOT use.
 - A Linux PICOBOOT image runner exercises real `picotool` over an owned USB/IP
   device: SRAM/flash transfers, full reload/reboot, KV write refusal and
   raw/ECC OTP persistence. Transport regressions cover final-packet completion,
