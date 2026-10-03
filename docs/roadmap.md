@@ -36,10 +36,10 @@ when it is not — matching a behaviour real hosts depend on beats being right
 alone ([interop.md](interop.md)). The direction is closing divergences one at a
 time, each with the measurement that found it.
 
-The next target is at least **255 passing CTAP2.3 cases in the FIDO Alliance
-Conformance Tool**, with the tool version, build and profile recorded. Compare
-case IDs and reasons for pending cases: host-test counts and a different
-runner's totals do not establish that result. The complete official run on
+The next target is conformance parity with pico-fido, compared by applicable
+case IDs under the same tool version and profile. Record each build and the
+reasons for pending cases: host-test counts and a different runner's totals do
+not establish parity. The complete official run on
 2026-10-02 reached **245 passed / 9 failed / 70 pending** in 736.90 seconds
 ([testing.md](testing.md#fido-conformance)).
 
@@ -58,9 +58,9 @@ hardware run also exposed three no-touch HID failures and the old tool's
 strictly increasing non-resident counter assertion. The subsequent official
 HID-group run on the touch image reached **16 passed / 0 failed**, including
 the three previously failing cases. Hardware enterprise-fixture setup and a
-complete touch-image rerun remain open. Recovering those five cases in one
-complete run would reach 250 passes; the 255-pass target still needs additional
-applicable cases. A separate `largeblob-ext` emulator replay exercised eleven
+complete touch-image rerun remain open. Compare that run's remaining failures
+and pending cases against pico-fido; there is no fixed pass-count target.
+A separate `largeblob-ext` emulator replay exercised eleven
 additional cases but made eleven others inapplicable, retaining **223 passed /
 2 failed / 70 skipped**. That alternative build is not a pass-count increase.
 A software reboot does not satisfy the board's CTAP Reset window.
