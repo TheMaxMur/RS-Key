@@ -60,8 +60,8 @@ SUITES = {
 }
 
 # What RS-Key deliberately does not do the way these suites expect. The key is a
-# substring of the pytest node id; the value is why, in one line, aimed at
-# whoever finds the entry in three years.
+# substring of the pytest node id (`$` anchors its end); the value is why, in
+# one line, aimed at whoever finds the entry in three years.
 #
 # Only *deliberate* divergences belong here. A test failing because RS-Key is
 # wrong is a bug, and putting it here hides it.
@@ -108,6 +108,10 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # PUAT_REQUIRED unconditionally, without reading the option.
         "test_010_pin.py::test_get_no_pin_auth": "makeCredUvNotRqd: a non-discoverable credential needs no token",
         "test_010_pin.py::test_make_credential_no_pin": "makeCredUvNotRqd: a non-discoverable credential needs no token",
+        # Absent and empty algorithm lists use the same selection path. A
+        # YubiKey 5.8.0 answers UNSUPPORTED_ALGORITHM for both (2026-09-30),
+        # which `makecredential_tests` pins through the dispatcher.
+        "test_020_register.py::test_missing_pubKeyCredParams$": "an absent pubKeyCredParams answers UNSUPPORTED_ALGORITHM, as on a YubiKey 5.8.0",
         # The test calls `device.reboot()` when it sees PIN_AUTH_BLOCKED and then
         # asserts PIN_AUTH_BLOCKED again — a ladder that only holds while that
         # reboot does nothing. Given a real power cycle (which the runner supplies,
@@ -146,10 +150,6 @@ DIVERGENCES: dict[str, dict[str, str]] = {
         # listed for the challenge TLV and now fail one step earlier.
         "test_070_oath.py::test_rename_prefix_extension": "enrolls a 7-byte OATH secret; a YubiKey refuses a KEY TLV under 16 bytes",
         "test_070_oath.py::test_delete": "enrolls a 9-byte OATH secret; a YubiKey refuses a KEY TLV under 16 bytes",
-        # pinComplexityPolicy (0x1B) IS advertised. What this case asks for is
-        # SETTING it through setMinPINLength, which is a different surface: RS-Key's
-        # policy is the build's, not a host-writable flag.
-        "test_037_minpinlength.py::test_pin_complexity_policy_extension": "pinComplexityPolicy (0x1B) is advertised but not settable through setMinPINLength",
         # The suite hardcodes its own device's limit (120) instead of reading
         # `maxRPIDsForSetMinPINLength`, which §6.11.4 tells platforms to read:
         # "Platform can track how many RP IDs it can set, by checking value of the
@@ -356,9 +356,9 @@ LAST: dict[str, tuple[str, ...]] = {
 
 
 def _match(patterns, nodeid):
-    """The longest pattern that is a substring of `nodeid`, with its reason: the most
-    specific wins, so one that is a prefix of another test's name cannot take it."""
-    hits = [(pattern, reason) for pattern, reason in patterns.items() if pattern in nodeid]
+    """Longest substring pattern and reason; `$` anchors the end of the node id."""
+    hits = [(pattern, reason) for pattern, reason in patterns.items()
+            if (nodeid.endswith(pattern[:-1]) if pattern.endswith("$") else pattern in nodeid)]
     return max(hits, key=lambda hit: len(hit[0]), default=(None, None))
 
 
