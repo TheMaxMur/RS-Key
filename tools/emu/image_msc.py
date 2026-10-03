@@ -107,7 +107,7 @@ def exercise(args, report):
     tcp_port = port()
     client = Client(args, tcp_port, report)
     store = args.work / "device.flash"
-    with device(args.emulator, args.image, store, args.work, "msc", usbip=tcp_port) as dev:
+    with device(args.emulator, args.image, store, args.work, "msc", usbip=tcp_port, rom=args.rom) as dev:
         try:
             identity = advertised(tcp_port)
             put_oath(dev)
@@ -179,6 +179,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emulator", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
+    parser.add_argument("--rom", type=Path, help="explicit bootrom fixture (CI stages picoem's pinned A4)")
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--picotool", default="picotool")
     parser.add_argument("--usbip", default="usbip")
@@ -190,6 +191,9 @@ def main():
     args.image, args.emulator = args.image.resolve(strict=True), args.emulator.resolve(strict=True)
     report = {"passed": False, "emulator": hashlib.sha256(args.emulator.read_bytes()).hexdigest(),
               "image": hashlib.sha256(args.image.read_bytes()).hexdigest()}
+    if args.rom:
+        args.rom = args.rom.resolve(strict=True)
+        report["rom"] = hashlib.sha256(args.rom.read_bytes()).hexdigest()
     try:
         exercise(args, report)
         report["passed"] = True

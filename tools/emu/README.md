@@ -361,8 +361,16 @@ error and leave its bytes unchanged. Raw and ECC OTP writes, refused bit
 clearing and persistence across reboot are checked through `picotool` too.
 Logs, image/emulator hashes and `report.json` remain in `--work`; the owned
 virtual port is detached on exit. These are virtual OTP writes, not fuse writes
-on a connected key. This privileged scenario is separate from the default CI
-image job.
+on a connected key. The emulator workflow's `usb` job runs this scenario and
+MSC inside its throwaway NixOS guest, after detaching the native test devices.
+The host builds the emulator and a partitioned no-touch ELF; the guest owns
+the image processes, loopback USB/IP endpoints and virtual block devices.
+The host stages picoem's pinned A4 ROM after checking its SHA256; both reports
+record that ROM hash.
+`nix develop -c ./scripts/usbip-suites.sh <new-output-directory>` runs the
+same job locally on Linux. Omitting the directory retains evidence under
+`target/`. CI uploads reports and logs, including failures, without flash,
+OTP or executable fixtures. This remains separate from the default `image` job.
 
 `image_msc.py` uses the same Linux setup and arguments with a new `--work`
 directory. It leaves the owned ROM's `usb-storage` driver active, checks the

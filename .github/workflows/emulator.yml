@@ -22,7 +22,8 @@
 #             GitHub-hosted runner has no way to
 #             provide (no module loading, and no reliable /dev/kvm either). So
 #             they run inside a QEMU guest under software emulation; see
-#             `scripts/usbip-suites.sh`.
+#             `scripts/usbip-suites.sh`. The guest also runs image PICOBOOT and
+#             MSC with its own emulator and fresh virtual flash/OTP.
 
 name: emulator
 
@@ -176,10 +177,22 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             tools/emu/target
-          key: emu-${{ runner.os }}-${{ hashFiles('tools/emu/Cargo.lock', 'flake.lock') }}
-          restore-keys: emu-${{ runner.os }}-
+            target/thumbv8m.main-none-eabihf
+          key: usb-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'tools/emu/Cargo.lock', 'flake.lock') }}
+          restore-keys: usb-${{ runner.os }}-
 
       - name: the suites that need a real USB stack, in a QEMU guest
-        run: nix develop -c ./scripts/usbip-suites.sh
+        run: nix develop -c ./scripts/usbip-suites.sh target/usbip-assurance
         env:
           HOST_TARGET: x86_64-unknown-linux-gnu
+
+      - name: USB stack, PICOBOOT and MSC reports and logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: usbip-assurance
+          path: |
+            target/usbip-assurance/**/*.log
+            target/usbip-assurance/**/report.json
+          if-no-files-found: warn
+          retention-days: 14

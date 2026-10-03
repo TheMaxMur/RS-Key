@@ -161,7 +161,7 @@ def exercise(args, report):
     symbols = {v[0]: int(v[2], 16) for line in output.splitlines() if len(v := line.split()) >= 3}
     kv_start = XIP_BASE + symbols["__kvmain_start"]
     spare = kv_start - SECTOR_SIZE
-    with device(args.emulator, args.image, store, args.work, "picoboot", usbip=tcp_port) as dev:
+    with device(args.emulator, args.image, store, args.work, "picoboot", usbip=tcp_port, rom=args.rom) as dev:
         try:
             original_device = advertised(tcp_port)
             report["firmware_device"] = original_device
@@ -236,6 +236,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--emulator", type=Path, required=True)
     parser.add_argument("--image", type=Path, required=True)
+    parser.add_argument("--rom", type=Path, help="explicit bootrom fixture (CI stages picoem's pinned A4)")
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--picotool", default="picotool")
     parser.add_argument("--usbip", default="usbip")
@@ -247,6 +248,9 @@ def main():
     args.image, args.emulator = args.image.resolve(strict=True), args.emulator.resolve(strict=True)
     report = {"passed": False, "emulator": hashlib.sha256(args.emulator.read_bytes()).hexdigest(),
               "image": hashlib.sha256(args.image.read_bytes()).hexdigest()}
+    if args.rom:
+        args.rom = args.rom.resolve(strict=True)
+        report["rom"] = hashlib.sha256(args.rom.read_bytes()).hexdigest()
     try:
         exercise(args, report)
         report["passed"] = True

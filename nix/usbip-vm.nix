@@ -24,6 +24,7 @@
   system,
   rskPython,
   ccidOverlay,
+  sdl2,
 }:
 (nixpkgs.lib.nixosSystem {
   inherit system;
@@ -61,6 +62,8 @@
           pkgs.gnupg # the OpenPGP suites shell out to gpg-connect-agent
           pkgs.yubikey-manager # `ykman otp chalresp --touch` arms the slot 77 needs
           opensc-p11test # `tests/p11test/run.sh`
+          pkgs.picotool # image PICOBOOT and UF2 clients
+          pkgs.gcc-arm-embedded # `arm-none-eabi-nm` locates the image's KV fence
         ];
 
         # Boot time is the budget here: this runs under TCG on every PR, so the
@@ -98,6 +101,12 @@
         # console is the log.
         systemd.services.rsk-usbip-suites = {
           description = "RS-Key: the suites that need a real USB stack";
+          # Cargo builds have no Nix RPATH. SDL2 is linked even without --display.
+          environment.LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+            sdl2
+            pkgs.systemd
+            pkgs.pcsclite
+          ];
           wantedBy = [ "multi-user.target" ];
           after = [
             "network-online.target"
@@ -109,6 +118,8 @@
             config.boot.kernelPackages.usbip
             pkgs.yubikey-manager
             opensc-p11test
+            pkgs.picotool
+            pkgs.gcc-arm-embedded
             pkgs.diffutils # p11test's result against its reference
             pkgs.kmod
             pkgs.coreutils

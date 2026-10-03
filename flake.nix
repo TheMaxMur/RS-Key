@@ -71,7 +71,7 @@
           # `vhci_hcd`, and there is no such thing to own elsewhere.
           // nixpkgs.lib.optionalAttrs (nixpkgs.lib.hasSuffix "-linux" system) {
             usbip-vm = import ./nix/usbip-vm.nix {
-              inherit nixpkgs system;
+              inherit nixpkgs system sdl2;
               inherit (hostTools) rskPython;
               ccidOverlay = self.overlays.ccid-rs-key;
             };

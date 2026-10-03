@@ -53,7 +53,7 @@ def fields(reply):
 
 
 class Device:
-    def __init__(self, binary, image, store, directory, label, usbip=None):
+    def __init__(self, binary, image, store, directory, label, usbip=None, rom=None):
         self.fido_port, self.ccid_port, self.inspect_port = port(), port(), port()
         self.log_path = directory / f"{label}.log"
         self.log = self.log_path.open("w")
@@ -61,6 +61,8 @@ class Device:
                 "--fido-port", str(self.fido_port), "--ccid-port", str(self.ccid_port)]
         if image:
             args += ["--image", str(image), "--inspect-port", str(self.inspect_port)]
+            if rom:
+                args += ["--rom", str(rom)]
         if usbip:
             args += ["--usbip", f"127.0.0.1:{usbip}"]
         self.process = subprocess.Popen(args, stdout=self.log, stderr=self.log)

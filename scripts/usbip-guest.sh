@@ -145,6 +145,13 @@ fi
 detach "YubiKey" || exit 1
 
 echo
+echo "== phase 3: the firmware ROM loader and mass storage"
+for scenario in picoboot msc; do
+  run "tools/emu/image_$scenario.py" --emulator /out/rsk-emu \
+    --image /out/firmware-pt.elf --rom /out/bootrom.bin --work "/out/image/$scenario"
+done
+
+echo
 echo "usb suites: $pass passed, $fail failed"
 if [ ${#failed[@]} -gt 0 ]; then
   printf 'failed: %s\n' "${failed[*]}"

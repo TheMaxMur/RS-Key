@@ -1060,8 +1060,13 @@ that device's mass-storage driver during the session. Host regressions hold
 control and data completions until the final ACK, preserve BOOTSEL during
 transport handover, and exercise metadata refresh after each boot mode.
 See [the PICOBOOT runner](../tools/emu/README.md#picoboot-through-usbip) for
-setup and retained evidence. This run is separate from the default image CI
-job and does not validate physical OTP fuses.
+setup and retained evidence. The emulator workflow's `usb` job runs PICOBOOT
+and MSC in its isolated NixOS guest, with a host-built partitioned no-touch
+image and picoem's hash-checked A4 ROM. `scripts/usbip-suites.sh` runs the same
+path locally on Linux and keeps
+reports and logs on success or failure; CI uploads that evidence without
+virtual flash or OTP contents. These runs are separate from the `image` job
+and do not validate physical OTP fuses.
 `tools/emu/image_msc.py` leaves the owned kernel mass-storage driver active,
 reads the ROM's FAT16 directory and files, checks coexistence with `picotool`,
 refuses a damaged UF2 sector and reloads the complete UF2 through the virtual

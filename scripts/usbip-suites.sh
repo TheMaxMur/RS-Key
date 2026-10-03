@@ -3,6 +3,7 @@
 # Copyright (C) 2026 RS-Key contributors
 
 # The other half of `emu-suites.sh`: the suites that need a real USB stack.
+# PICOBOOT and MSC also run the firmware image inside the isolated guest.
 #
 # `emu-suites.sh` runs everything the emulator can serve over a socket. These
 # five (`02`, `61`, `65`, `73`, `77`), the pico-fido conformance suite and OpenSC's
@@ -33,10 +34,19 @@ if [ "$(uname)" != "Linux" ]; then
   exit 77
 fi
 
+OUT="${1:-target/usbip-assurance-$(date +%Y%m%d-%H%M%S)-$$}"
+mkdir -p "$(dirname "$OUT")"
+mkdir "$OUT"
+OUT="$(cd "$OUT" && pwd)"
+
 echo "== building the emulator"
 # Assertions and overflow checks on, as `emu-suites.sh` builds it: the suites are the oracle.
 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
-  cargo build --release --manifest-path tools/emu/Cargo.toml --target "$HOST_TARGET"
+  cargo build --locked --release --manifest-path tools/emu/Cargo.toml --target "$HOST_TARGET"
+
+echo "== building the partitioned no-touch image"
+cargo build --locked --release -p firmware --features no-touch
+./scripts/pt.sh target/thumbv8m.main-none-eabihf/release/firmware "$WORK/firmware-pt.elf"
 
 echo "== building the guest"
 nix build .#usbip-vm --no-link --print-out-paths >"$WORK/vm-path"
@@ -74,10 +84,30 @@ start_emu yubico 7801 7802 3241 --yubico --touch
 
 echo "== booting the guest (no KVM: this is software emulation, give it a minute)"
 mkdir -p "$WORK/out"
+cp "$EMU" "$WORK/out/rsk-emu"
+cp "$WORK/firmware-pt.elf" "$WORK/out/firmware-pt.elf"
+# The default ROM path is compiled from Cargo's checkout, absent in the guest.
+cargo metadata --locked --manifest-path tools/emu/Cargo.toml --filter-platform "$HOST_TARGET" --format-version 1 | python -c '
+import hashlib, json, shutil, sys
+from pathlib import Path
+package = next(p for p in json.load(sys.stdin)["packages"] if p["name"] == "rp2350-emu")
+rom = Path(package["manifest_path"]).parents[2] / "roms/rp2350/bootrom-combined.bin"
+expected = Path(str(rom) + ".sha256").read_text().strip()
+assert hashlib.sha256(rom.read_bytes()).hexdigest() == expected, "picoem bootrom pin differs"
+shutil.copyfile(rom, sys.argv[1])
+' "$WORK/out/bootrom.bin"
 # `$RSK_REPO` / `$RSK_OUT` are read by the VM's own run script when it expands the
 # 9p shares — that indirection is what lets one built guest serve any checkout.
 RSK_REPO="$PWD" RSK_OUT="$WORK/out" \
-  "$VM"/bin/run-*-vm </dev/null 2>&1 | tee "$WORK/vm.log" || true
+  "$VM"/bin/run-*-vm </dev/null 2>&1 | tee "$OUT/guest.log" || true
+
+cp "$WORK/default.log" "$WORK/yubico.log" "$OUT/"
+if [ -d "$WORK/out/image" ]; then
+  mkdir "$OUT/image"
+  # Retain evidence, never the emulated flash, OTP or executable fixtures.
+  (cd "$WORK/out/image" && find . -type f \( -name '*.log' -o -name report.json \) \
+    -exec cp --parents '{}' "$OUT/image/" \;)
+fi
 
 status="$(cat "$WORK/out/status" 2>/dev/null || echo "")"
 # p11test's JSONs outlive `$WORK`: they are what a reference update copies in.
