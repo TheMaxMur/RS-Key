@@ -58,3 +58,7 @@ pub enum Error {
 }
 
 pub type Result<T> = core::result::Result<T, Error>;
+
+#[cfg(test)]
+#[path = "wycheproof_tests.rs"]
+mod wycheproof_tests;

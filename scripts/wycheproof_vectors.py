@@ -123,6 +123,19 @@ def x25519(group, case):
             field(",".join(case["flags"]))]
 
 
+def aead(group, case):
+    return [field(case[key]) for key in ("key", "iv", "aad", "msg", "ct", "tag")]
+
+
+def mac(group, case):
+    return [field(case[key]) for key in ("key", "msg", "tag")]
+
+
+def hkdf(group, case):
+    return [field(case[key]) for key in ("ikm", "salt", "info")] + [
+        str(case["size"]), field(case["okm"])]
+
+
 def sign(group, case):
     numbers = load_der_private_key(bytes.fromhex(group["privateKeyPkcs8"]), None).private_numbers()
     fields = crt(group["keySize"], f"{numbers.p:x}", f"{numbers.q:x}",
@@ -133,6 +146,32 @@ def sign(group, case):
 
 
 FILES = (
+    (
+        "aes256-gcm.txt", ["aes_gcm_test"], aead,
+        lambda group: (group["keySize"], group["ivSize"], group["tagSize"]) == (256, 96, 128),
+        "AES-256, 96-bit nonces and 128-bit tags, the widths the card accepts",
+        ("algorithm", lambda group: "AES256-GCM"),
+        "key nonce aad message ciphertext tag",
+    ),
+    *(
+        (
+            f"hmac-{hash_name}.txt", [f"hmac_{hash_name}_test"], mac,
+            lambda group, bits=bits: group["tagSize"] == bits,
+            "full-width tags; truncated MAC verification is not the HMAC API",
+            ("algorithm", lambda group, name=hash_name: name),
+            "key message tag",
+        )
+        for hash_name, bits in (("sha1", 160), ("sha256", 256), ("sha512", 512))
+    ),
+    *(
+        (
+            f"hkdf-{hash_name}.txt", [f"hkdf_{hash_name}_test"], hkdf,
+            lambda group: True, "every case, including output-length overflow",
+            ("algorithm", lambda group, name=hash_name: name),
+            "ikm salt info size okm",
+        )
+        for hash_name in ("sha256", "sha512")
+    ),
     (
         "rsa-pkcs1-decrypt.txt",
         [f"rsa_pkcs1_{bits}_test" for bits in (2048, 3072, 4096)],

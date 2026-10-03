@@ -125,6 +125,12 @@ run through both private operations, byte for byte: the asm CRT signer OpenPGP
 signs with, fed the DigestInfo a host sends, and the software one a legacy key's
 PSO:DECIPHER takes, fed the same PKCS#1 v1.5 block.
 
+The `rsk-crypto` tests also replay 496 Wycheproof cases: AES-256-GCM at the
+card's fixed key/nonce/tag widths, full-width HMAC-SHA1/SHA256/SHA512 tags and
+HKDF-SHA256/SHA512. Valid vectors must match the output bytes; forged GCM and
+HMAC tags must fail authentication, and HKDF lengths above 255 hash blocks
+must return `BadLength`. The generator records every excluded group.
+
 Key agreement gets the same treatment. Wycheproof's ECDH cases for P-256, P-384,
 P-521, secp256k1 and brainpoolP256r1/P384r1 (points off the curve, compressed,
 empty and of the wrong width, shared secrets that start with zero bytes) and its
