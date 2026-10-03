@@ -75,7 +75,7 @@ embassy-usb = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 # `--image`: the firmware's own ELF on an emulated RP2350. picoem (MIT OR Apache-2.0)
 # runs the two Cortex-M33 cores and the bus; the fork adds the MMIO mount seam the
 # chip models plug into and the core fixes the bootrom needs. Pinned to one commit.
-rp2350-emu = { git = "https://github.com/TheMaxMur/picoem", rev = "ba0cad83bdfea9a13121f5c1a2cf632531a9f174" }
+rp2350-emu = { git = "https://github.com/TheMaxMur/picoem", rev = "1ab1ea47b5cb6e6a1b07a8d6baa4ea43640e480c" }
 # The chip's SHA-256 block runs the bootrom's signature check through the bare
 # compression function; the crate is already in the graph, with this feature.
 sha2 = { version = "0.10", features = ["compress"] }
