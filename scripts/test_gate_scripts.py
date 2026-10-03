@@ -82,6 +82,7 @@ NAMED = {
     # The font generator, the second of that shape: `check.sh` runs its `--check`
     # as a row, the name does not end in `_gate.py`, and it landed with no table.
     "generate_ui_fonts.py": ("test_generate_ui_fonts.py", "check.sh"),
+    "external_corpus.py": ("test_external_corpus.py", "check.sh"),
     # The two `formal/` mappers: both are `check-assurance.sh` rows, neither ends
     # in `_gate.py`, so their tables could have been deleted with this file green.
     "security_trace.py": ("test_security_trace.py", "check-assurance.sh"),

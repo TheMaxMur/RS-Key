@@ -244,7 +244,7 @@ assurance/bundle/SEC-FIDO-006.toml	formal/gen-configs.sh	171-176	if [ "$b" = "$o
 assurance/bundle/SEC-FIDO-006.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-006.toml	fuzz/fuzz_targets/power_cut.rs	228-230	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	}
 assurance/bundle/SEC-FIDO-006.toml	scripts/assurance_gate.py	122-142	def cfg_checked(path: pathlib.Path) -> list[str]:	return out
-assurance/bundle/SEC-FIDO-006.toml	scripts/check.sh	561-561	run "assurance-trace image identity" assurance_trace_is_image_neutral	run "assurance-trace image identity" assurance_trace_is_image_neutral
+assurance/bundle/SEC-FIDO-006.toml	scripts/check.sh	562-562	run "assurance-trace image identity" assurance_trace_is_image_neutral	run "assurance-trace image identity" assurance_trace_is_image_neutral
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/consts.rs	361-361	pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]	pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset.rs	6-6	//! physical touch gates the wipe, inside the CTAP 2.1 §6.6 power-up window	//! physical touch gates the wipe, inside the CTAP 2.1 §6.6 power-up window
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset.rs	37-51	if !ctx.presence.shows_confirm() && !in_reset_window(ctx) {	}
@@ -573,9 +573,9 @@ assurance/platform.toml	formal/gen-configs.sh	322-322	emit Historical_E76.cfg Bu
 assurance/platform.toml	fuzz/fuzz_targets/fido_session.rs	1440-1440	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"
 assurance/platform.toml	fuzz/fuzz_targets/power_cut.rs	228-228	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
 assurance/platform.toml	scripts/check.sh	172-221	assurance_trace_is_image_neutral() {	}
-assurance/platform.toml	scripts/check.sh	487-487	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"
+assurance/platform.toml	scripts/check.sh	488-488	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"
 assurance/platform.toml	scripts/citation_gate.py	556-556	EXTS = "rs|sh|txt|py"	EXTS = "rs|sh|txt|py"
-assurance/platform.toml	scripts/fuzz-all.sh	54-54	mapfile -t targets < <(cargo fuzz list)	mapfile -t targets < <(cargo fuzz list)
+assurance/platform.toml	scripts/fuzz-all.sh	55-55	mapfile -t targets < <(cargo fuzz list)	mapfile -t targets < <(cargo fuzz list)
 assurance/platform.toml	scripts/kani_gate.py	389-409	def workflow_pins(root):	}
 assurance/platform.toml	scripts/kani_gate.py	697-708	elif len(said) > 1:	)
 assurance/platform.toml	tests/29_reset_power_cut.py	527-530	assert assertion_status != 0, (	)
@@ -1207,7 +1207,7 @@ formal/comutants.toml	firmware/src/pin_lock.rs	18-21	//! a real power cycle clea
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	371-371	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	375-375	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;
 fuzz/fuzz_targets/fido_session.rs	crates/rsk-fido/src/state.rs	607-622	/// `resetPinUvAuthToken`: new random token, cleared permissions / flags. The	}
-scripts/bcd_gate.py	scripts/fuzz-coverage.sh	39-41	# A literal, not `${FUZZ_TARGET_FLOOR:-52}`: a floor the environment can lower is	FUZZ_TARGET_FLOOR=52
+scripts/bcd_gate.py	scripts/fuzz-coverage.sh	40-42	# A literal, not `${FUZZ_TARGET_FLOOR:-52}`: a floor the environment can lower is	FUZZ_TARGET_FLOOR=52
 scripts/comutate.py	crates/rsk-fido/src/state.rs	568-571	pub fn restore_pin_lock(&mut self, lock: PinLock) {	}
 scripts/ct_gate.py	crates/rsk-bench/src/lib.rs	12-12	//! bigger than the 16 KB XIP cache, so which lines collide and evict depends on	//! bigger than the 16 KB XIP cache, so which lines collide and evict depends on
 scripts/ct_gate.py	crates/rsk-crypto/src/mac.rs	55-55	if a.len() != b.len() {	if a.len() != b.len() {

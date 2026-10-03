@@ -358,6 +358,7 @@ fuzz_targets_are_alive() {
   for b in "${bins[@]}"; do
     "$b" "$empty" >"$log" 2>&1 || { dead="$dead ${b##*/}"; cat "$log" >&2; }
   done
+  python scripts/external_corpus.py --replay "$manifest"
   rm -f "$manifest" "$log" "$empty"
   if [ -n "$dead" ]; then
     echo "FAIL: these fuzz targets die before they read a fuzzer byte:$dead" >&2

@@ -13,6 +13,7 @@
 # in fuzz/coverage/<target>/{coverage.profdata,html/} (all git-ignored).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+python scripts/external_corpus.py
 
 # llvm-cov MUST be the one from the same nightly toolchain as the instrumented
 # build (rust's own llvm-tools): a version-mismatched nixpkgs llvm-cov cannot

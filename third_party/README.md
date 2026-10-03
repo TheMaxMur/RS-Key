@@ -1,6 +1,6 @@
 # third_party — code from elsewhere
 
-Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Four
+Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Five
 unrelated kinds live here:
 
 - **Four external conformance suites** — `pico-fido-tests/`,
@@ -32,6 +32,10 @@ unrelated kinds live here:
   README notice rather than a licence file, so `acvp/LICENSE` carries that
   notice intact, with the origin and what was changed; `wycheproof/LICENSE` is
   upstream's Apache-2.0, and each file's header says what was changed.
+- **Parser seeds** — `corpus/`, the Google CTAP2, OpenSK and CanoKey inputs
+  replayed by the existing fuzz targets. Its README records the revisions,
+  byte-preserving archive changes and harness adapters; Apache-2.0 licenses
+  are retained beside the JSON and inside the archives.
 
 The suite directories carry their own licenses, distinct from the repository's own
 AGPL-3.0-only. Note the split between each file's **per-file header** (the

@@ -17,6 +17,7 @@
 # Linux VM, which is why the shape is the fix and the check below is the proof.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+python scripts/external_corpus.py
 
 # The row's own toolchain, asserted before anything depends on it. Without this a
 # `cargo` that is not the dev shell's reads as "the roster shrank" — the failure

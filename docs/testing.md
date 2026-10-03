@@ -867,6 +867,12 @@ nix develop -c python tests/75_seed_backup.py --pin <your PIN>
 
 ## The vendored upstream suites
 
+The parser robustness corpus in `third_party/corpus/` adds Google CTAP2,
+OpenSK and CanoKey inputs to the existing fuzz targets. The `fuzz targets alive`
+row replays it without mutations; the fuzz and coverage runners also seed their
+corpus directories from it. Each adaptation and source revision is recorded in
+`third_party/corpus/README.md`. These inputs carry no expected response codes.
+
 Three other ecosystems' own conformance suites live in
 [third_party/](https://github.com/TheMaxMur/RS-Key/tree/main/third_party) —
 pico-fido's, pico-openpgp/Gnuk's and Yubico's `ykman` and `python-fido2` device tests — and
