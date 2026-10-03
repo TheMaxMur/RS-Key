@@ -694,8 +694,9 @@ impl Board {
     fn inspect(&mut self, command: Command, dead: bool) -> Result<String, String> {
         match command {
             Command::Status => Ok(format!(
-                "cycle={} ready={} dead={} bootloader={} power_ups={} programmed_bytes={} last_cut={}",
+                "cycle={} emulated_ns={} ready={} dead={} bootloader={} power_ups={} programmed_bytes={} last_cut={}",
                 self.chip.cycles(),
+                self.chip.now_ns(),
                 matches!(self.configure, Configure::Done),
                 dead,
                 matches!(self.boot_mode, BootMode::UsbBootloader),

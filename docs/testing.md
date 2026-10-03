@@ -1035,10 +1035,14 @@ the runner opens it in a new process and checks the credential again. Native and
 image backends also run the same deterministic OATH/OpenPGP transcript. Planted
 SRAM leaks and incompatible-image fixtures falsify the actual assertions.
 The operations matrix checks PIN-token lifetime, imported EC/Ed25519/RSA keys,
-RSA-2048 generation with a participating core1 and factor scans after wind-down,
+RSA-2048/3072/4096 generation in PIV and OpenPGP with a participating core1 and
+128/192/256-byte factor scans after wind-down,
 HMAC pads and AES keys. It verifies signatures and decipher/ECDH results with
 host implementations; ML-DSA uses dilithium-py. Live session secrets are checked
 at their revocation point, rather than required to disappear after every reply.
+Core1's tail remains inside the stack measurement; its timeout follows emulated
+time, with a separate host progress bound. Every RSA size has a planted-factor
+control and independent verification of a signature from the generated key.
 The [image laboratory instructions](../tools/emu/README.md#image-laboratory)
 describe the commands and limits, including why stack paint alone lies when
 the firmware sweeps its dead stack. `scripts/image-suites.sh` builds a partitioned

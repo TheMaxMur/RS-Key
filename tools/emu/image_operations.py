@@ -389,5 +389,5 @@ def run(dev, report):
     piv(ops, rsa_key)
     image_rsa.piv(ops)
     openpgp(ops, rsa_key)
-    image_rsa.openpgp(ops, rsa_key)
+    image_rsa.openpgp(ops)
     otp(ops)

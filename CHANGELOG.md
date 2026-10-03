@@ -59,9 +59,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   FIDO signing algorithms; planted SRAM leaks exercise the residue assertions.
 - The emulator workflow runs firmware-image stack, residue and power-cut
   scenarios on pull requests and nightly, retaining reports and logs.
-- The image laboratory checks PIV and OpenPGP RSA-2048 generation on both cores,
+- The image laboratory checks PIV and OpenPGP RSA-2048/3072/4096 generation on both cores,
   samples core1 through its background wind-down and scans all SRAM for factors
-  of the returned public modulus, with a planted-factor control.
+  of the returned public modulus, with a planted-factor control at every size.
+  The tail timeout follows emulated time, with a separate host progress bound;
+  inspection reports that time alongside cycle counts.
 
 - FIDO `uvm` reports the presence and PIN factors used in signed registration
   and assertion data, preserving device-local PIN provenance across tokens and

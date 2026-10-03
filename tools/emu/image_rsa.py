@@ -16,7 +16,9 @@ SRAM_LEN = 520 * 1024
 CONTROL_ADDRESS = 0x20081000
 COUNTERS = {"JOBS": 4, "C1_TRIES": 4, "C0_TRIES": 4, "BUSY": 1, "JOB_PENDING": 1}
 WIND_DOWN_TIMEOUT = 30
+WIND_DOWN_HOST_TIMEOUT = 1800
 CORE1_IDLE_ENVELOPE = 1024
+RSA_ALGORITHMS = {2048: 0x07, 3072: 0x05, 4096: 0x16}
 
 
 def read(dev, address, length):
@@ -81,11 +83,11 @@ def public_key(answer):
     length = int.from_bytes(inner[2:4], "big")
     modulus = int.from_bytes(inner[4:4 + length], "big")
     exponent = int.from_bytes(value(inner[4 + length:], 0x82), "big")
-    assert modulus.bit_length() == 2048 and exponent == 65537
+    assert modulus.bit_length() in RSA_ALGORITHMS and exponent == 65537
     return rsa.RSAPublicNumbers(exponent, modulus).public_key()
 
 
-def generate(ops, label, command):
+def generate(ops, label, command, bits):
     dev = ops.dev
     before = counters(dev) if dev.image else None
     after = None
@@ -93,17 +95,23 @@ def generate(ops, label, command):
     def operation():
         nonlocal after
         key = public_key(dev.apdu(command))
+        assert key.key_size == bits, "generation returned a different RSA size"
         if dev.image:
             after = counters(dev)
             row = ops.report[label]
             row["core1_busy_at_reply"] = bool(after["BUSY"])
             assert after["JOB_PENDING"] == 0, "RSA reply left a posted job"
             # The last candidate finishes in the background; measure its tail too.
-            deadline = time.monotonic() + WIND_DOWN_TIMEOUT
+            from image_assurance import fields
+            start = int(fields(dev.inspect("status"))["emulated_ns"])
+            deadline = time.monotonic() + WIND_DOWN_HOST_TIMEOUT
             while after["BUSY"]:
-                assert time.monotonic() < deadline, "core1 did not wind down"
+                now = int(fields(dev.inspect("status"))["emulated_ns"])
+                assert now - start < WIND_DOWN_TIMEOUT * 1_000_000_000, "core1 did not wind down"
+                assert time.monotonic() < deadline, "emulator did not progress through core1 wind-down"
                 time.sleep(0.05)
                 after = counters(dev)
+            row["core1_wind_down_ns"] = int(fields(dev.inspect("status"))["emulated_ns"]) - start
         return key
 
     key = ops.run(label, operation)
@@ -119,33 +127,39 @@ def generate(ops, label, command):
 
 def piv(ops):
     dev = ops.dev
-    dev.apdu(apdu(0x20, 0, 0x80, b"123456\xff\xff"))
-    key = generate(ops, "piv_generate_rsa", apdu(0x47, 0, 0x9C, tlv(0xAC, tlv(0x80, b"\x07"))))
+    for bits, algorithm in RSA_ALGORITHMS.items():
+        dev.apdu(apdu(0x20, 0, 0x80, b"123456\xff\xff"))
+        command = apdu(0x47, 0, 0x9C, tlv(0xAC, tlv(0x80, bytes([algorithm]))))
+        key = generate(ops, f"piv_generate_rsa_{bits}", command, bits)
 
-    def sign():
-        digest = DI_SHA256 + CDH
-        block = b"\x00\x01" + b"\xff" * (256 - 3 - len(digest)) + b"\x00" + digest
-        answer = dev.apdu(apdu(0x87, 7, 0x9C, tlv(0x7C, tlv(0x82, b"") + tlv(0x81, block))))
-        key.verify(value(value(answer, 0x7C), 0x82), MESSAGE, padding.PKCS1v15(), hashes.SHA256())
+        def sign():
+            digest = DI_SHA256 + CDH
+            block = b"\x00\x01" + b"\xff" * (bits // 8 - 3 - len(digest)) + b"\x00" + digest
+            answer = dev.apdu(apdu(0x87, algorithm, 0x9C, tlv(0x7C, tlv(0x82, b"") + tlv(0x81, block))))
+            key.verify(value(value(answer, 0x7C), 0x82), MESSAGE, padding.PKCS1v15(), hashes.SHA256())
 
-    ops.run("piv_generated_rsa_sign", sign)
-    if dev.image:
-        ops.report["piv_generated_rsa_sign"]["residue"] = clean(dev, key.public_numbers().n)
+        label = f"piv_generated_rsa_sign_{bits}"
+        ops.run(label, sign)
+        if dev.image:
+            ops.report[label]["residue"] = clean(dev, key.public_numbers().n)
 
 
-
-def openpgp(ops, control_key):
+def openpgp(ops):
     dev = ops.dev
     dev.apdu(apdu(0x20, 0, 0x83, b"12345678"))
-    key = generate(ops, "openpgp_generate_rsa", bytes.fromhex("00478000000002b6000000"))
-    dev.apdu(apdu(0x20, 0, 0x81, b"123456"))
+    for bits in RSA_ALGORITHMS:
+        dev.apdu(apdu(0xDA, 0, 0xC1, b"\x01" + bits.to_bytes(2, "big") + b"\x00\x20\x00"))
+        command = bytes.fromhex("00478000000002b6000000")
+        key = generate(ops, f"openpgp_generate_rsa_{bits}", command, bits)
+        dev.apdu(apdu(0x20, 0, 0x81, b"123456"))
 
-    def sign_openpgp():
-        signature = dev.apdu(apdu(0x2A, 0x9E, 0x9A, DI_SHA256 + CDH))
-        key.verify(signature, MESSAGE, padding.PKCS1v15(), hashes.SHA256())
+        def sign_openpgp():
+            signature = dev.apdu(apdu(0x2A, 0x9E, 0x9A, DI_SHA256 + CDH))
+            key.verify(signature, MESSAGE, padding.PKCS1v15(), hashes.SHA256())
 
-    ops.run("openpgp_generated_rsa_sign", sign_openpgp)
-    if dev.image:
-        ops.report["openpgp_generated_rsa_sign"]["residue"] = clean(dev, key.public_numbers().n)
-        control(dev, control_key)
-        ops.report["rsa_factor_control"] = "planted factor refused and cleared"
+        label = f"openpgp_generated_rsa_sign_{bits}"
+        ops.run(label, sign_openpgp)
+        if dev.image:
+            ops.report[label]["residue"] = clean(dev, key.public_numbers().n)
+            control(dev, rsa.generate_private_key(public_exponent=65537, key_size=bits))
+            ops.report[f"rsa_factor_control_{bits}"] = "planted factor refused and cleared"
