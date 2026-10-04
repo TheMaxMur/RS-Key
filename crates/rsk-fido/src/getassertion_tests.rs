@@ -14,6 +14,9 @@ use rsk_crypto::pinproto::PinProto;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "getassertion_walk_tests.rs"]
+mod walk;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {
