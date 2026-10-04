@@ -3,6 +3,44 @@
 
 use super::*;
 
+#[test]
+fn a_handler_without_a_pinpad_rejects_secure_without_writing_a_reply() {
+    struct NoPinpad;
+    impl ApduHandler for NoPinpad {
+        async fn handle_apdu(&mut self, _: &[u8], _: &mut [u8]) -> usize {
+            0
+        }
+    }
+    let mut handler = NoPinpad;
+    let mut out = [0xA5; 16];
+    let result = embassy_futures::block_on(handler.handle_secure(&[], &mut out));
+    assert_eq!(
+        (result.len, result.status, result.error),
+        (0, SECURE_STATUS_FAILED, 0)
+    );
+    assert_eq!(out, [0xA5; 16]);
+    embassy_futures::block_on(handler.reset_card());
+}
+
+#[test]
+fn a_reply_buffer_shorter_than_the_header_changes_neither_bytes_nor_slot_status() {
+    for len in 0..HEADER {
+        let mut out = [0xA5; HEADER];
+        let mut status = STATUS_INACTIVE;
+        assert_eq!(
+            process_message(
+                &msg(CCID_POWER_ON, 1, &[]),
+                ATR_RSKEY,
+                &mut status,
+                &mut out[..len]
+            ),
+            0
+        );
+        assert_eq!(status, STATUS_INACTIVE);
+        assert_eq!(out, [0xA5; HEADER]);
+    }
+}
+
 fn msg(msg_type: u8, seq: u8, payload: &[u8]) -> Vec<u8> {
     let mut v = Vec::new();
     v.push(msg_type);

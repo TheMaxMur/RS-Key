@@ -22,6 +22,15 @@ const OTHER: u32 = 0x5566_7788;
 
 thread_local! {
     static CANCELS: Cell<usize> = const { Cell::new(0) };
+    static PENDING_POLLS: Cell<usize> = const { Cell::new(0) };
+}
+
+fn release_presence() -> bool {
+    PENDING_POLLS.with(|polls| {
+        let n = polls.get();
+        polls.set(n + 1);
+        n == 0
+    })
 }
 
 fn cancel() {
@@ -37,10 +46,14 @@ struct Handler {
     vendor_supported: bool,
     wait_for_keepalive: Option<Trace>,
     wait_for_cancel: bool,
+    reply_delay_ms: Option<u64>,
 }
 
 impl Handler {
     async fn reply(&self, out: &mut [u8]) -> usize {
+        if let Some(ms) = self.reply_delay_ms {
+            Timer::after_millis(ms).await;
+        }
         if self.wait_for_cancel {
             core::future::poll_fn(|cx| {
                 if CANCELS.with(|count| count.get() > 0) {
@@ -497,6 +510,51 @@ fn bad_sequences_and_short_reports_never_reach_the_applet() {
         );
         assert!(hid.handler.requests.is_empty());
     });
+}
+
+#[test]
+fn short_reads_and_endpoint_errors_do_not_finish_an_incomplete_request() {
+    let body = [0xA5; INIT_DATA + 1];
+    let mut request = frames(OWNER, CTAPHID_CBOR, &body).into_iter();
+    let reads = [
+        request.next().unwrap(),
+        Read::Packet(vec![0; 3]),
+        Read::Error(embassy_usb::driver::EndpointError::Disabled),
+        request.next().unwrap(),
+    ];
+    with_hid(reads, |hid, trace| {
+        drain_ready(hid.run());
+        assert_eq!(hid.handler.requests, [(OWNER, CTAPHID_CBOR, body.to_vec())]);
+        assert_eq!(responses(trace), [(OWNER, CTAPHID_CBOR, vec![0x90, 0])]);
+    });
+}
+
+#[test]
+fn a_slow_msg_or_vendor_call_has_no_processing_keepalive_after_presence_ends() {
+    for vendor in [false, true] {
+        for pending in [false, true] {
+            with_hid([], |hid, trace| {
+                PENDING_POLLS.with(|polls| polls.set(0));
+                hid.up_pending = if pending { release_presence } else { || false };
+                hid.handler.reply_delay_ms = Some(2 * KEEPALIVE_MS);
+                hid.handler.vendor_supported = true;
+                let cmd = if vendor {
+                    TYPE_INIT | 0x40
+                } else {
+                    CTAPHID_MSG
+                };
+                hid.asm
+                    .feed(&TxFrames::new(OWNER, cmd, &[1]).next().unwrap());
+                complete(
+                    hid.run_with_keepalive(
+                        OWNER,
+                        if vendor { Call::Vendor(cmd) } else { Call::Msg },
+                    ),
+                );
+                assert_eq!(responses(trace), [(OWNER, cmd, vec![0x90, 0])]);
+            });
+        }
+    }
 }
 
 #[test]

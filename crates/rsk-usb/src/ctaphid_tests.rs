@@ -794,3 +794,80 @@ fn a_partial_last_frame_advances_by_its_remainder_and_no_further() {
         "the assembled message is not what was sent"
     );
 }
+
+#[test]
+fn default_transport_state_matches_a_fresh_session() {
+    let mut cids = CidAllocator::default();
+    assert_eq!(cids.allocate(), FIRST_CID);
+    let asm = Reassembler::default();
+    assert!(!asm.in_progress());
+    assert!(asm.message().is_empty());
+}
+
+#[test]
+fn an_overlarge_outgoing_message_emits_no_frame() {
+    let data = vec![0xA5; usize::from(u16::MAX) + 1];
+    assert!(TxFrames::new(1, CTAPHID_CBOR, &data).next().is_none());
+}
+
+#[test]
+fn default_handler_hooks_offer_no_vendor_command_or_indicator() {
+    struct Basic;
+    impl MsgHandler for Basic {
+        async fn handle_msg(&mut self, _: u32, _: &[u8], _: &mut [u8]) -> usize {
+            0
+        }
+        async fn handle_cbor(&mut self, _: u32, _: &[u8], _: &mut [u8]) -> usize {
+            0
+        }
+    }
+    let mut handler = Basic;
+    let mut out = [0xA5; 16];
+    assert_eq!(
+        embassy_futures::block_on(handler.handle_vendor(1, 0x40, &[], &mut out)),
+        None
+    );
+    assert_eq!(out, [0xA5; 16]);
+    assert!(!handler.can_wink());
+    handler.wink();
+    handler.reset_app_selection();
+}
+
+#[test]
+fn the_transport_projection_preserves_the_owners_concrete_state() {
+    use super::transport_assurance as probe;
+    let cid = 0x1122_3344;
+    let need = u16::try_from(INIT_DATA + CONT_DATA).unwrap();
+    let mut live = Reassembler::new();
+    assert_eq!(
+        live.feed(&probe::init_frame(cid, CTAPHID_PING, need)),
+        Outcome::None
+    );
+    let mut posed = Reassembler::mid_transaction(cid, 0, INIT_DATA, usize::from(need));
+    posed.cmd = CTAPHID_PING;
+    assert_eq!(live.tx_view(), posed.tx_view());
+    assert!(posed.within_the_buffer());
+    let mut fork = posed.clone_for_probe();
+    assert_eq!(
+        fork.feed(&probe::cont_frame(cid, 0)),
+        Outcome::Message(cid, CTAPHID_PING)
+    );
+    assert_eq!(fork.message().len(), usize::from(need));
+    assert!(fork.within_the_buffer());
+    assert_eq!(posed.tx_view().owner, Some(cid));
+    assert_eq!(posed.tx_view().got, INIT_DATA);
+    assert!(!Reassembler::mid_transaction(cid, 0, 2, 1).within_the_buffer());
+    assert!(!Reassembler::mid_transaction(cid, 0, 0, CTAP_MAX_MESSAGE + 1).within_the_buffer());
+}
+
+#[test]
+fn a_corrupt_probe_cursor_is_refused_before_copying_a_continuation() {
+    let cid = 0x1122_3344;
+    let mut posed =
+        Reassembler::mid_transaction(cid, 0, CTAP_MAX_MESSAGE + 1, CTAP_MAX_MESSAGE + 2);
+    assert_eq!(
+        posed.feed(&super::transport_assurance::cont_frame(cid, 0)),
+        Outcome::Error(cid, ERR_INVALID_LEN)
+    );
+    assert_eq!(posed.tx_view().owner, None);
+}
