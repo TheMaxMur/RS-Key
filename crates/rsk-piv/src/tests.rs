@@ -11067,3 +11067,6 @@ mod command_bounds_tests;
 
 #[path = "mgm_fault_bounds_tests.rs"]
 mod mgm_fault_bounds_tests;
+
+#[path = "pin_decisions_tests.rs"]
+mod pin_decisions;
