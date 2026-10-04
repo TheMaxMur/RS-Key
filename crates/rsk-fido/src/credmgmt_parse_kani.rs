@@ -30,6 +30,13 @@ fn two_field_maps_require_the_subcommand_before_a_protocol_or_duplicate() {
     kani::assume(first < 24 && subcommand < 24);
     let second = if duplicate { 1 } else { 3 };
     let data = [0xA2, first, subcommand, second, 0];
+    // Pure operands avoid short-circuit MIR copies of the same source cover.
+    kani::cover!(
+        (first == 1) & (second == 3),
+        "ordered protocol field accepted"
+    );
+    kani::cover!((first == 1) & (second == 1), "duplicate subcommand refused");
+    kani::cover!(first != 1, "missing first subcommand refused");
     let result = parse(&data);
     if first != 1 {
         assert!(matches!(result, Err(CtapError::MissingParameter)));
@@ -42,7 +49,4 @@ fn two_field_maps_require_the_subcommand_before_a_protocol_or_duplicate() {
             )
         );
     }
-    kani::cover!(first == 1 && second == 3, "ordered protocol field accepted");
-    kani::cover!(first == 1 && second == 1, "duplicate subcommand refused");
-    kani::cover!(first != 1, "missing first subcommand refused");
 }
