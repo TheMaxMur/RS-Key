@@ -4414,3 +4414,6 @@ fn a_key_agreement_without_a_coordinate_is_a_missing_parameter() {
     }
     assert_eq!(ef_pin_retries(&mut fs), MAX_PIN_RETRIES);
 }
+
+#[path = "clientpin_uv_outcomes_tests.rs"]
+mod uv_outcomes;
