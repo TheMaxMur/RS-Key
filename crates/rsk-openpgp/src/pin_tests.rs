@@ -2499,3 +2499,6 @@ fn a_user_session_cannot_install_a_reset_code() {
         );
     }
 }
+
+#[path = "pin_decisions_tests.rs"]
+mod decisions;
