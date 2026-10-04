@@ -3534,3 +3534,6 @@ mod config_lock;
 /// module's fixtures.
 #[path = "vendor_caps_tests.rs"]
 mod config_commands;
+
+#[path = "vendor_pad_tests.rs"]
+mod vendor_pad_tests;
