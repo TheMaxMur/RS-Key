@@ -438,3 +438,12 @@ fn a_never_written_record_opens_every_interface() {
     assert_eq!(boot.usb_itf(), USB_ITF_ALL);
     assert!(boot.record().is_none());
 }
+
+#[test]
+fn product_text_is_utf8_checked_without_altering_the_stored_bytes() {
+    for bytes in [b"RS-Key".as_slice(), "Key 🔑".as_bytes(), &[0xff, 0xfe]] {
+        let product = Product::new(bytes).unwrap();
+        assert_eq!(product.as_bytes(), bytes);
+        assert_eq!(product.as_str(), core::str::from_utf8(bytes).ok());
+    }
+}
