@@ -76,8 +76,8 @@ lower capacities or weaken assertions to meet a number.
 ## Implementation order
 
 The default host lane in phase 1 has measured branch counters and calibrated
-condition instrumentation. Phase 2 has started with LargeBlobs and CTAPHID
-regressions. Other configurations, whole-core decision coverage and phases
+condition instrumentation. Phase 2 has started with LargeBlobs, ClientPIN,
+storage and USB regressions. Other configurations, whole-core decision coverage and phases
 3 through 8 remain open. The criteria below still govern completion; one
 default host report does not complete every scope. Phase 1 also retains an
 SDK coverage-mapping warning described in [Testing](testing.md#branch-and-condition-measurements);
@@ -426,3 +426,38 @@ passed 3076 unique tests plus one child-process repeat, with five ignored cases:
 the SDK mapping warning remain unresolved. The TLA+ models were not extended to
 prove this storage-read failure; their code references were updated, while the
 new command-level regression supplies the evidence for this fix.
+
+## Further ClientPIN and recovery decisions
+
+Eight more tests cover an omitted `pinHashEnc` without spending retries or
+replacing a token, each runtime-enabled complexity family over both PIN
+protocols and the local pad, missing/short/oversized verifiers, the legacy
+one-byte minimum-PIN record and failed local migration of a legacy seed. The
+seed test separates a refused append from corrupted authentication data: a
+latched write fault alone would hide a missing migration-error guard behind
+the later retry-reset failure. Restoring the medium and remounting permits
+the correct PIN and recovers the original seed.
+
+Metadata reservation failures preserve all existing records without a backend
+write. A failed scrub followed by two marker-write failures retries across
+fresh mounts, preserves live data and stops retrying only after the marker
+lands. This is a command-level fault double, not a NOR power-cut proof. CCID's
+header encoder leaves short buffers untouched and preserves the body. A new
+Kani harness checks arbitrary fields and bytes in a twelve-byte buffer, all
+slice lengths through that bound, with three reached cover scenarios.
+
+Two compiled semantic controls survived the previous default FIDO suite and
+failed the new assertions: skipping the denylist accepted `159753`, and
+ignoring a seed-migration error authorized local verification over corrupted
+seed authentication data. Production sources were restored byte for byte.
+These controls do not claim that every existing build profile missed them.
+
+The unchanged default-host condition scope passed 3084 unique tests plus one
+child-process repeat, with five ignored cases. It recorded 38399/39598 lines
+(96.97%) and 6805/7975 outcomes (85.33%). ClientPIN increased from 215/234 to
+222/234 outcomes (94.87%), and CCID from 31/34 to 32/34 (94.12%). Fs remains
+82/88 in the raw summary, although every merged branch coordinate has both
+outcomes; that diagnostic does not replace the raw counter. MC/DC remains
+unsupported and the 27 SDK mapping warnings persist. Raw reports, controls
+and proof logs are in `target/coverage-decisions-next-20261004/`. No firmware
+behavior, coverage exclusions or coverage floors changed; fuzz coverage is unchanged.
