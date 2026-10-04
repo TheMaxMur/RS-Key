@@ -353,6 +353,60 @@ fn reboot_rejects_a_bad_p1_and_a_body() {
 }
 
 #[test]
+fn core1_statistics_and_confirmed_bootsel_reach_the_platform_hooks() {
+    let pres = RefCell::new(AlwaysConfirm);
+    let mut app = VendorApplet::new(FullPlatform::default(), &pres);
+    let mut fs = Fs::new(RamStorage::default());
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_CORE1_STATS, 0, 0, &[])),
+        (Sw::OK, vec![7; 32])
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_REBOOT, 1, 0, &[])),
+        (Sw::OK, vec![])
+    );
+    assert_eq!(app.platform.reboots, vec![(true,)]);
+}
+
+#[test]
+fn refused_counter_and_led_writes_report_the_storage_failure() {
+    for raw in [
+        apdu(INS_INCREMENT, 0, 0, &[]),
+        apdu(INS_SET_LED, 200, 0, &[1, 2]),
+    ] {
+        let (storage, medium) = rsk_fs::storage::faults::Cut::new();
+        let mut fs = Fs::new(storage);
+        fs.scan();
+        let pres = RefCell::new(AlwaysConfirm);
+        let mut app = VendorApplet::new(FullPlatform::default(), &pres);
+        medium.arm(0);
+        let parsed = Apdu::parse(&raw).unwrap();
+        let mut bytes = [0; 64];
+        let mut response = ResBuf::new(&mut bytes);
+        assert_eq!(
+            Applet::process(&mut app, &parsed, &mut fs, &mut response),
+            Sw::MEMORY_FAILURE
+        );
+        assert!(response.is_empty());
+        assert!(!fs.has_data(COUNTER_FID.get()));
+        assert!(!fs.has_data(EF_LED_CONF));
+    }
+}
+
+#[test]
+fn a_later_led_record_is_clamped_to_the_current_format() {
+    let mut fs = Fs::new(RamStorage::default());
+    let record: Vec<_> = (0..u8::try_from(CONF_LEN + 5).unwrap()).collect();
+    fs.put(EF_LED_CONF, &record).unwrap();
+    let mut conf = [0; CONF_LEN];
+    assert_eq!(
+        load_or_seed_led_config(&mut fs, &[0; CONF_LEN], &mut conf),
+        Ok(CONF_LEN)
+    );
+    assert_eq!(&conf, &record[..CONF_LEN]);
+}
+
+#[test]
 fn an_unknown_instruction_is_refused() {
     let pres = RefCell::new(AlwaysConfirm);
     let mut app = VendorApplet::new(FullPlatform::default(), &pres);
