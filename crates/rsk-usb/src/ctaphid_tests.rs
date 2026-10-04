@@ -145,6 +145,35 @@ fn broadcast_non_init_rejected() {
 }
 
 #[test]
+fn a_broadcast_continuation_never_changes_the_owners_transaction() {
+    let mut asm = Reassembler::new();
+    let bad = cont_frame(CID_BROADCAST, 0, &[0xEE]);
+    assert_eq!(
+        asm.feed(&bad),
+        Outcome::Error(CID_BROADCAST, ERR_INVALID_CHANNEL)
+    );
+    assert!(!asm.in_progress());
+
+    let cid = 0x1122_3344;
+    let data = [0x5A; INIT_DATA + 1];
+    assert_eq!(
+        asm.feed(&init_frame(cid, CTAPHID_CBOR, data.len() as u16, &data)),
+        Outcome::None
+    );
+    assert_eq!(
+        asm.feed(&bad),
+        Outcome::Error(CID_BROADCAST, ERR_INVALID_CHANNEL)
+    );
+    assert!(asm.in_progress());
+    assert_eq!(asm.current_cid(), cid);
+    assert_eq!(
+        asm.feed(&cont_frame(cid, 0, &data[INIT_DATA..])),
+        Outcome::Message(cid, CTAPHID_CBOR)
+    );
+    assert_eq!(asm.message(), &data);
+}
+
+#[test]
 fn bcnt_too_large() {
     let mut asm = Reassembler::new();
     // Header claims more than CTAP_MAX_MESSAGE (7609 < 0xFFFF).

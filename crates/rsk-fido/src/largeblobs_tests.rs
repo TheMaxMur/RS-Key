@@ -218,6 +218,43 @@ fn set_multi_fragment_assembles() {
 }
 
 #[test]
+fn refused_continuations_preserve_the_authenticated_transfer() {
+    let mut fs = seeded_fs_with_pin();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0u8; 64];
+    let blob = valid_blob(&[0xCD; 60]);
+    let split = 50;
+    let first = set_request(0, Some(blob.len() as u64), &blob[..split], &TOKEN);
+    assert_eq!(run(&mut fs, &mut state, &first, &mut out), Ok(0));
+
+    let repeated_length = set_request(
+        split as u64,
+        Some(blob.len() as u64),
+        &blob[split..],
+        &TOKEN,
+    );
+    assert_eq!(
+        run(&mut fs, &mut state, &repeated_length, &mut out),
+        Err(CtapError::InvalidParameter)
+    );
+    let mut overrun = blob[split..].to_vec();
+    overrun.push(0xEE);
+    let too_long = set_request(split as u64, None, &overrun, &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut state, &too_long, &mut out),
+        Err(CtapError::InvalidParameter)
+    );
+    let mut stored = [0u8; 128];
+    let n = fs.read(EF_LARGEBLOB, &mut stored).unwrap();
+    assert_eq!(&stored[..n], &LARGEBLOB_INITIAL);
+
+    let final_fragment = set_request(split as u64, None, &blob[split..], &TOKEN);
+    assert_eq!(run(&mut fs, &mut state, &final_fragment, &mut out), Ok(0));
+    let n = fs.read(EF_LARGEBLOB, &mut stored).unwrap();
+    assert_eq!(&stored[..n], &blob);
+}
+
+#[test]
 fn set_wrong_sequence_rejected() {
     let mut fs = seeded_fs();
     let mut state = armed(PERM_LBW);
@@ -361,6 +398,71 @@ fn get_rejects_write_only_parameters() {
         run(&mut fs, &mut state, &with_param, &mut out),
         Err(CtapError::InvalidParameter)
     );
+    let with_proto = {
+        let mut buf = [0u8; 32];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(3).unwrap();
+            e.u8(0x01).unwrap().u64(10).unwrap();
+            e.u8(0x03).unwrap().u64(0).unwrap();
+            e.u8(0x06).unwrap().u8(2).unwrap();
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    };
+    assert_eq!(
+        run(&mut fs, &mut state, &with_proto, &mut out),
+        Err(CtapError::InvalidParameter)
+    );
+}
+
+#[test]
+fn a_duplicate_offset_is_refused_without_changing_the_array() {
+    let mut fs = seeded_fs();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0u8; 64];
+    let req = {
+        let mut buf = [0u8; 32];
+        let n = {
+            let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+            e.map(3).unwrap();
+            e.u8(0x01).unwrap().u64(1).unwrap();
+            e.u8(0x03).unwrap().u64(0).unwrap();
+            e.u8(0x03).unwrap().u64(0).unwrap();
+            e.writer().position()
+        };
+        buf[..n].to_vec()
+    };
+    assert_eq!(
+        run(&mut fs, &mut state, &req, &mut out),
+        Err(CtapError::InvalidCbor)
+    );
+    let n = fs.read(EF_LARGEBLOB, &mut out).unwrap();
+    assert_eq!(&out[..n], &LARGEBLOB_INITIAL);
+}
+
+#[test]
+fn an_oversized_set_fragment_is_refused_before_replacing_the_array() {
+    let mut fs = seeded_fs();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0u8; 64];
+    let blob = valid_blob(&std::vec![0x42; MAX_FRAGMENT_LENGTH]);
+    let mut buf = std::vec![0u8; blob.len() + 32];
+    let n = {
+        let mut e = Encoder::new(Cursor::new(&mut buf[..]));
+        e.map(3).unwrap();
+        e.u8(0x02).unwrap().bytes(&blob).unwrap();
+        e.u8(0x03).unwrap().u64(0).unwrap();
+        e.u8(0x04).unwrap().u64(blob.len() as u64).unwrap();
+        e.writer().position()
+    };
+    assert!(n <= crate::consts::MAX_MSG_SIZE as usize);
+    assert_eq!(
+        run(&mut fs, &mut state, &buf[..n], &mut out),
+        Err(CtapError::InvalidLength)
+    );
+    let n = fs.read(EF_LARGEBLOB, &mut out).unwrap();
+    assert_eq!(&out[..n], &LARGEBLOB_INITIAL);
 }
 
 #[test]
@@ -403,6 +505,11 @@ fn set_length_bounds_enforced() {
     let mut fs = seeded_fs();
     let mut state = armed(PERM_LBW);
     let mut out = [0u8; 64];
+    let req = set_request(0, Some(0), &[], &TOKEN);
+    assert_eq!(
+        run(&mut fs, &mut state, &req, &mut out),
+        Err(CtapError::InvalidParameter)
+    );
     // length < 17 → INVALID_PARAMETER.
     let req = set_request(0, Some(10), &[0u8; 10], &TOKEN);
     assert_eq!(
