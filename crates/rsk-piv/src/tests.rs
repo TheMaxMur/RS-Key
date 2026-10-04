@@ -11064,3 +11064,6 @@ mod keygen_bounds_tests;
 
 #[path = "command_bounds_tests.rs"]
 mod command_bounds_tests;
+
+#[path = "mgm_fault_bounds_tests.rs"]
+mod mgm_fault_bounds_tests;
