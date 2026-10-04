@@ -215,6 +215,7 @@ fn rounded_rect_spans_match_the_original_pixels_exactly() {
 
 #[test]
 fn status_ring_mask_matches_all_distance_samples() {
+    let generated = std::hint::black_box(ring_sample_mask::<50, 3, 2500>());
     let diameter = 50;
     let width = 3;
     let center = diameter as i32 * SAMPLE_SCALE / 2;
@@ -233,12 +234,14 @@ fn status_ring_mask_matches_all_distance_samples() {
                 }
             }
             assert_eq!(fixed_ring_samples(diameter, width, x, y), Some(expected));
+            assert_eq!(generated[y * diameter as usize + x], expected);
         }
     }
 }
 
 #[test]
 fn status_arc_phase_table_matches_every_sample() {
+    let generated = std::hint::black_box(status_arc_coverages());
     let center = 50 * SAMPLE_SCALE / 2;
     for phase in 0..STATUS_ARC_PHASES {
         let start = STATUS_ARC_BASE_DEG + phase as i32 * STATUS_ARC_STEP_DEG;
@@ -262,10 +265,99 @@ fn status_arc_phase_table_matches_every_sample() {
                     fixed_ring_arc_coverage(50, 3, start, 270, x, y),
                     Some((min_coverage(arc), min_coverage(ring)))
                 );
+                assert_eq!(
+                    generated[phase * STATUS_ARC_PIXELS + y * 50 + x],
+                    (min_coverage(ring) << 4) | min_coverage(arc)
+                );
             }
         }
     }
     assert_eq!(fixed_ring_arc_coverage(50, 3, -89, 270, 0, 0), None);
+}
+
+#[test]
+fn generated_round_masks_and_spans_match_the_geometry_oracle() {
+    let masks = std::hint::black_box(rounded_masks());
+    let spans = std::hint::black_box(rounded_spans());
+    for diameter in 1..=ROUND_MASK_SIDE {
+        let rect = Rect::new(0, 0, diameter as u16, diameter as u16);
+        for y in 0..diameter {
+            for x in 0..diameter {
+                let expected = circle_coverage(
+                    x as i32,
+                    y as i32,
+                    diameter as i32 * SAMPLE_SCALE / 2,
+                    diameter as i32 * SAMPLE_SCALE / 2,
+                    diameter as i32 * SAMPLE_SCALE / 2,
+                );
+                assert_eq!(
+                    masks[diameter * ROUND_MASK_SIDE * ROUND_MASK_SIDE + y * ROUND_MASK_SIDE + x],
+                    expected
+                );
+            }
+            if y < diameter.div_ceil(2) {
+                let expected = (0..diameter.div_ceil(2))
+                    .find(|&x| {
+                        rounded_coverage_slow(rect, diameter as u32, x as i32, y as i32) == 16
+                    })
+                    .unwrap_or(diameter.div_ceil(2));
+                assert_eq!(usize::from(spans[diameter * ROUND_MASK_SIDE + y]), expected);
+            }
+        }
+    }
+}
+
+#[test]
+fn generated_circle_masks_match_supersampled_geometry() {
+    let mask = std::hint::black_box(circle_mask::<12, 144>());
+    for y in 0..12 {
+        for x in 0..12 {
+            assert_eq!(
+                mask[y * 12 + x],
+                circle_coverage(x as i32, y as i32, 48, 48, 48)
+            );
+        }
+    }
+}
+
+#[test]
+fn zero_sized_shapes_write_nothing_and_zero_radius_rectangles_are_solid() {
+    let mut target = Rec::new(24, Rgb565::BLACK);
+    rounded_rect(
+        &mut target,
+        Rect::new(0, 0, 0, 10),
+        0,
+        Some(Rgb565::WHITE),
+        None,
+        Rgb565::BLACK,
+    )
+    .unwrap();
+    fill_rect(&mut target, Rect::new(0, 0, 10, 0), Rgb565::WHITE).unwrap();
+    filled_circle(
+        &mut target,
+        EgPoint::new(0, 0),
+        0,
+        Rgb565::WHITE,
+        Rgb565::BLACK,
+    )
+    .unwrap();
+    assert!(target.pixels.iter().all(|&pixel| pixel == Rgb565::BLACK));
+    rounded_rect(
+        &mut target,
+        Rect::new(2, 2, 10, 10),
+        0,
+        Some(Rgb565::WHITE),
+        None,
+        Rgb565::BLACK,
+    )
+    .unwrap();
+    assert_eq!(target.at(2, 2), Rgb565::WHITE);
+    assert_eq!(target.at(11, 11), Rgb565::WHITE);
+    assert_eq!(target.at(12, 12), Rgb565::BLACK);
+    assert!(!rounded_sample(Rect::new(0, 0, 0, 0), 0, 0, 0));
+    assert!(rounded_sample(Rect::new(0, 0, 1, 1), 0, 1, 1));
+    assert_eq!(rounded_coverage(Rect::new(0, 0, 0, 0), 0, 0, 0), 0);
+    assert_eq!(fixed_rounded_coverage(Rect::new(0, 0, 1, 1), 0, 0, 0), 16);
 }
 
 #[test]

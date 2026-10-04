@@ -99,6 +99,7 @@ const ALL: [Glyph; 24] = [
 
 #[test]
 fn fixed_masks_match_the_original_sampler_exactly() {
+    let generated = std::hint::black_box(fixed_masks());
     for glyph in ALL {
         for size in FIXED_SIZES {
             let bitmap = pick(table(glyph), size);
@@ -106,6 +107,14 @@ fn fixed_masks_match_the_original_sampler_exactly() {
                 continue;
             };
             let actual: std::vec::Vec<u8> = coverage.collect();
+            let index = glyph_index(glyph) * FIXED_SIZES.len() + fixed_size_index(size).unwrap();
+            let tokens = &generated.bytes
+                [generated.offsets[index] as usize..generated.offsets[index + 1] as usize];
+            let replay: std::vec::Vec<u8> = tokens
+                .iter()
+                .flat_map(|token| std::iter::repeat_n(token >> 4, usize::from(token & 15) + 1))
+                .collect();
+            assert_eq!(replay, actual);
             assert_eq!(actual.len(), usize::from(size) * usize::from(size));
             for y in 0..i32::from(size) {
                 for x in 0..i32::from(size) {
@@ -113,6 +122,26 @@ fn fixed_masks_match_the_original_sampler_exactly() {
                         actual[y as usize * usize::from(size) + x as usize],
                         scaled_coverage(bitmap, x, y, i32::from(size)),
                         "{glyph:?}@{size} differs at ({x},{y})"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn generated_source_nibbles_preserve_all_authored_bitmap_coverage() {
+    let masks = std::hint::black_box(source_masks());
+    for (glyph, table) in GLYPH_TABLES.iter().enumerate() {
+        for (bitmap, source) in table.iter().enumerate() {
+            for y in 0..source.size {
+                for x in 0..source.size {
+                    let pixel = usize::from(y) * usize::from(source.size) + usize::from(x);
+                    let byte = masks
+                        [glyph * SOURCE_BYTES_PER_GLYPH + SOURCE_SIZE_OFFSETS[bitmap] + pixel / 2];
+                    assert_eq!(
+                        u16::from((byte >> ((pixel & 1) * 4)) & 15),
+                        source_coverage(source, i32::from(x), i32::from(y))
                     );
                 }
             }

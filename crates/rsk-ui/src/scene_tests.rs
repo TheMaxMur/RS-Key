@@ -1251,3 +1251,177 @@ fn transport_failure_panics_before_a_frame_drop_returns() {
     assert!(damage_result.is_err());
     assert_eq!(damage.presentations, 1);
 }
+
+#[test]
+fn resetting_a_finalized_scene_removes_its_commands_and_background() {
+    let mut scene = Scene::default();
+    scene.clear(Rgb565::BLUE).unwrap();
+    scene
+        .fill_solid(
+            &Rectangle::new(Point::new(8, 8), Size::new(6, 6)),
+            Rgb565::RED,
+        )
+        .unwrap();
+    scene.finalize(DAMAGE_KEY).unwrap();
+    assert!(scene.command_count() > 0);
+    scene.reset();
+    assert_eq!(scene.command_count(), 0);
+    assert_eq!(scene.error(), None);
+    scene.finalize(DAMAGE_KEY).unwrap();
+    let mut canvas = Canvas::filled(Rgb565::GREEN);
+    scene.replay(&mut canvas).unwrap();
+    assert!(canvas.pixels.iter().all(|color| *color == Rgb565::BLACK));
+}
+
+struct DefaultDamageSink {
+    canvas: Canvas,
+    refuse: bool,
+    draws: usize,
+}
+
+impl OriginDimensions for DefaultDamageSink {
+    fn size(&self) -> Size {
+        self.canvas.size()
+    }
+}
+
+impl DrawTarget for DefaultDamageSink {
+    type Color = Rgb565;
+    type Error = ();
+    fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(&mut self, pixels: I) -> Result<(), ()> {
+        self.draws += 1;
+        if self.refuse {
+            return Err(());
+        }
+        self.canvas.draw_iter(pixels).unwrap();
+        Ok(())
+    }
+}
+
+impl FrameTarget for DefaultDamageSink {
+    fn damage_key(&self) -> DamageKey {
+        DAMAGE_KEY
+    }
+    fn present_scene(&mut self, scene: &Scene) -> bool {
+        scene.replay(self).is_ok()
+    }
+}
+
+#[test]
+fn default_damage_presentation_clips_each_rectangle_and_stops_on_failure() {
+    let mut scene = Scene::default();
+    scene.clear(Rgb565::BLUE).unwrap();
+    scene
+        .fill_solid(
+            &Rectangle::new(Point::new(8, 8), Size::new(6, 6)),
+            Rgb565::RED,
+        )
+        .unwrap();
+    scene.finalize(DAMAGE_KEY).unwrap();
+    let rects = [Rect::new(8, 8, 3, 3), Rect::new(30, 30, 4, 4)];
+    let mut sink = DefaultDamageSink {
+        canvas: Canvas::filled(Rgb565::GREEN),
+        refuse: false,
+        draws: 0,
+    };
+    assert!(sink.present_damage(&scene, &rects));
+    for y in 0..PANEL_H {
+        for x in 0..PANEL_W {
+            let expected = if rects[0].contains(crate::Point::new(x, y)) {
+                Rgb565::RED
+            } else if rects[1].contains(crate::Point::new(x, y)) {
+                Rgb565::BLUE
+            } else {
+                Rgb565::GREEN
+            };
+            assert_eq!(sink.canvas.pixel(x, y), expected);
+        }
+    }
+    sink.refuse = true;
+    let before = sink.draws;
+    assert!(!sink.present_damage(&scene, &rects));
+    assert_eq!(sink.draws, before + 1);
+}
+
+#[test]
+fn a_clipped_raster_consumes_offscreen_colors_without_moving_visible_pixels() {
+    let area = Rectangle::new(Point::new(-1, -1), Size::new(3, 3));
+    let colors: Vec<_> = (0..9).map(|n| Rgb565::new(n, n, n)).collect();
+    for supplied in [0, 4, 5, 9] {
+        let mut scene = Scene::default();
+        scene
+            .fill_contiguous(&area, colors[..supplied].iter().copied())
+            .unwrap();
+        scene.finalize(DAMAGE_KEY).unwrap();
+        let tag = scene.tile_tag(0, 0);
+        scene.finalize(DAMAGE_KEY).unwrap();
+        assert_eq!(scene.tile_tag(0, 0), tag);
+        let mut canvas = Canvas::new();
+        scene.replay(&mut canvas).unwrap();
+        for y in 0..usize::from(PANEL_H) {
+            for x in 0..usize::from(PANEL_W) {
+                let ordinal = (y + 1) * 3 + x + 1;
+                let expected = if x < 2 && y < 2 && ordinal < supplied {
+                    colors[ordinal]
+                } else {
+                    Rgb565::BLACK
+                };
+                assert_eq!(
+                    canvas.pixels[y * usize::from(PANEL_W) + x],
+                    expected,
+                    "supplied={supplied}, x={x}, y={y}"
+                );
+            }
+        }
+        assert_eq!(scene.command_count() == 0, supplied <= 4);
+    }
+}
+
+#[test]
+fn empty_and_offscreen_replays_do_not_touch_the_target_or_dma_buffer() {
+    let mut scene = Scene::default();
+    scene.clear(Rgb565::RED).unwrap();
+    scene.finalize(DAMAGE_KEY).unwrap();
+    let mut sink = DefaultDamageSink {
+        canvas: Canvas::new(),
+        draws: 0,
+        refuse: true,
+    };
+    for rect in [
+        Rect::new(PANEL_W, 0, 1, 1),
+        Rect::new(0, PANEL_H, 1, 1),
+        Rect::new(0, 0, 0, 1),
+    ] {
+        assert_eq!(scene.replay_rect(&mut sink, rect), Ok(()));
+    }
+    assert_eq!(sink.draws, 0);
+    let mut bytes = [0x55; BAND_BYTES];
+    scene.raster_band(Rect::new(0, 0, 0, 1), 0, 1, &mut bytes);
+    scene.raster_band(Rect::new(0, 0, 1, 0), 0, 0, &mut bytes);
+    assert_eq!(bytes, [0x55; BAND_BYTES]);
+}
+
+#[test]
+fn static_and_dynamic_fill_colors_write_the_same_big_endian_pixel_pattern() {
+    for color in [crate::theme::BG, crate::theme::SURFACE, Rgb565::RED] {
+        let mut out = [0x55; BAND_BYTES + 6];
+        fill_color(&mut out, color);
+        let expected = color.into_storage().to_be_bytes();
+        for bytes in out.chunks_exact(2) {
+            assert_eq!(bytes, expected);
+        }
+    }
+}
+
+#[test]
+fn damage_rectangle_overflow_reports_capacity_without_overwriting_the_list() {
+    let sentinel = Rect::new(1, 2, 3, 4);
+    let mut out = [sentinel; DAMAGE_RECT_CAPACITY];
+    let mut len = DAMAGE_RECT_CAPACITY;
+    assert_eq!(
+        add_damage_rect(&mut out, &mut len, Rect::new(10, 10, 1, 1)),
+        Err(SceneError::Capacity)
+    );
+    assert_eq!(out, [sentinel; DAMAGE_RECT_CAPACITY]);
+    assert_eq!(len, DAMAGE_RECT_CAPACITY);
+}

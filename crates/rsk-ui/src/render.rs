@@ -1080,3 +1080,7 @@ fn fmt_ago(secs: u32, buf: &mut [u8; 8]) -> &str {
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "render_error_tests.rs"]
+mod error_tests;

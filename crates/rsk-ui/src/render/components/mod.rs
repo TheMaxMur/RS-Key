@@ -237,3 +237,7 @@ pub fn empty_state<D: DrawTarget<Color = Rgb565>>(
         theme::MUTED,
     )
 }
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;
