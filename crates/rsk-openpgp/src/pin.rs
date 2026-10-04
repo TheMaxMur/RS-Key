@@ -1054,3 +1054,7 @@ pub fn put_reset_code<S: Storage>(
 #[cfg(test)]
 #[path = "pin_tests.rs"]
 mod tests;
+
+#[cfg(kani)]
+#[path = "pin_kani.rs"]
+mod proofs;
