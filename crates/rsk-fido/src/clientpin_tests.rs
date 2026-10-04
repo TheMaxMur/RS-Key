@@ -4417,3 +4417,6 @@ fn a_key_agreement_without_a_coordinate_is_a_missing_parameter() {
 
 #[path = "clientpin_uv_outcomes_tests.rs"]
 mod uv_outcomes;
+
+#[path = "clientpin_decisions_tests.rs"]
+mod decisions;

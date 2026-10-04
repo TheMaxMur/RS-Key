@@ -69,6 +69,8 @@ struct SharedMock {
     /// walk died on — the page's own state probe, or an item inside the page.
     refused_at: Rc<Cell<Option<u32>>>,
     written: Rc<Cell<u64>>,
+    // A single program fails before changing bits; later programs can clean up.
+    fail_write_after: Rc<Cell<Option<usize>>>,
 }
 
 impl SharedMock {
@@ -79,6 +81,7 @@ impl SharedMock {
             fail_reads_in: Rc::new(RefCell::new(None)),
             refused_at: Rc::new(Cell::new(None)),
             written: Rc::new(Cell::new(0)),
+            fail_write_after: Rc::new(Cell::new(None)),
         }
     }
 
@@ -166,6 +169,13 @@ impl NorFlash for SharedMock {
     }
 
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result2<()> {
+        if let Some(left) = self.fail_write_after.get() {
+            if left == 0 {
+                self.fail_write_after.set(None);
+                return Err(FlashFault);
+            }
+            self.fail_write_after.set(Some(left - 1));
+        }
         if !(offset as usize).is_multiple_of(WORD) || !data.len().is_multiple_of(WORD) {
             return Err(FlashFault);
         }
@@ -667,5 +677,101 @@ fn remove_clears_a_fid_the_routing_no_longer_points_at() {
         keys(&mut store).0,
         Vec::<u16>::new(),
         "a record the walk keeps yielding after a delete is one no sweep can finish"
+    );
+}
+
+#[test]
+fn a_fault_in_one_partition_does_not_skip_the_other_walk() {
+    for (main_fault, counter_fault) in [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let flash = SharedMock::new();
+        let mut store = mount(&flash);
+        store.write(CRED, b"credential").unwrap();
+        store.write(CTR, b"counter").unwrap();
+        drop(store);
+        *flash.fail_reads_in.borrow_mut() = match (main_fault, counter_fault) {
+            (true, false) => Some(MAIN),
+            (false, true) => Some(COUNTER),
+            _ => None,
+        };
+        flash.fail_reads.set(main_fault && counter_fault);
+        let mut store = mount(&flash);
+        let (found, complete) = keys(&mut store);
+        let mut want = Vec::new();
+        if !main_fault {
+            want.push(CRED);
+        }
+        if !counter_fault {
+            want.push(CTR);
+        }
+        want.sort_unstable();
+        assert_eq!(
+            found, want,
+            "main fault {main_fault}, counter fault {counter_fault}"
+        );
+        assert_eq!(complete, !main_fault && !counter_fault);
+        flash.fail_reads.set(false);
+        *flash.fail_reads_in.borrow_mut() = None;
+        let mut recovered = mount(&flash);
+        assert_eq!(
+            read_vec(&mut recovered, CRED).as_deref(),
+            Some(&b"credential"[..])
+        );
+        assert_eq!(
+            read_vec(&mut recovered, CTR).as_deref(),
+            Some(&b"counter"[..])
+        );
+    }
+}
+
+#[test]
+fn a_failed_scrub_removes_its_filler_and_keeps_live_records() {
+    let mut failed_after_programming = false;
+    for budget in 0..32 {
+        let flash = SharedMock::new();
+        let mut store = mount(&flash);
+        store.write(CRED, b"credential").unwrap();
+        store.write(CTR, b"counter").unwrap();
+        let counter_before = flash.snapshot(COUNTER);
+        let written_before = flash.bytes_written();
+        flash.fail_write_after.set(Some(budget));
+        assert_eq!(
+            store.compact(),
+            Err(Error::MemoryFatal),
+            "write budget {budget}"
+        );
+        assert_eq!(
+            flash.fail_write_after.get(),
+            None,
+            "the program fault did not fire"
+        );
+        failed_after_programming |= flash.bytes_written() > written_before;
+        assert_eq!(flash.snapshot(COUNTER), counter_before);
+        let mut rebooted = mount(&flash);
+        assert_eq!(
+            read_vec(&mut rebooted, CRED).as_deref(),
+            Some(&b"credential"[..])
+        );
+        assert_eq!(
+            read_vec(&mut rebooted, CTR).as_deref(),
+            Some(&b"counter"[..])
+        );
+        assert_eq!(
+            read_vec(&mut rebooted, SCRUB_FILLER_FID),
+            None,
+            "write budget {budget}: the failed lap left a live filler"
+        );
+        let (found, complete) = keys(&mut rebooted);
+        assert!(complete);
+        assert!(!found.contains(&SCRUB_FILLER_FID));
+        rebooted.compact().unwrap();
+        assert_eq!(
+            read_vec(&mut rebooted, CRED).as_deref(),
+            Some(&b"credential"[..])
+        );
+    }
+    assert!(
+        failed_after_programming,
+        "no fault interrupted an already programming lap"
     );
 }
