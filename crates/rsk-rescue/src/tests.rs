@@ -4,6 +4,9 @@
 use super::*;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "command_bounds_tests.rs"]
+mod command_bounds;
+
 /// A provisioned MKEK for the tests. The applet holds a way to READ the fuses, not
 /// the key, so a test source has to be a plain `fn`.
 fn test_mkek(out: &mut [u8; 32]) -> bool {
