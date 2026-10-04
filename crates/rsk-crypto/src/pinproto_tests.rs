@@ -122,3 +122,18 @@ fn ecdh_rejects_off_curve_point() {
     let mut out = [0u8; 64];
     assert_eq!(ecdh(PinProto::Two, &a, &x, &y, &mut out), Err(Error::Ecdh));
 }
+
+#[test]
+fn only_the_two_defined_wire_protocol_versions_are_supported() {
+    for wire in 0..=u64::from(u8::MAX) {
+        assert_eq!(
+            PinProto::from_u64(wire),
+            match wire {
+                1 => Some(PinProto::One),
+                2 => Some(PinProto::Two),
+                _ => None,
+            }
+        );
+    }
+    assert_eq!(PinProto::from_u64(u64::MAX), None);
+}

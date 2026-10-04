@@ -240,3 +240,25 @@ fn hash_funcs_deterministic_and_empty_safe() {
     let _ = d.hash_multi(b"");
     let _ = d.double_hash_pin(b"");
 }
+
+#[test]
+fn wiping_a_fused_read_clears_its_key_without_changing_its_latch() {
+    fn read(out: &mut [u8; 32]) -> bool {
+        *out = OTP;
+        true
+    }
+    for source in [FusedKey::open(read), FusedKey::latched(read)] {
+        let mut fused = read_fused(Some(source));
+        assert_eq!(fused.key(), Some(&OTP));
+        let latched = fused.latched;
+        fused.wipe();
+        assert_eq!(fused.key(), Some(&[0; 32]));
+        assert_eq!(fused.latched, latched);
+        fused.wipe();
+        assert_eq!(fused.key(), Some(&[0; 32]));
+    }
+    let mut absent = read_fused(None);
+    absent.wipe();
+    assert_eq!(absent.key(), None);
+    assert!(!absent.latched);
+}
