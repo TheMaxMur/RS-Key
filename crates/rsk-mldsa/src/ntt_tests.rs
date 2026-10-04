@@ -35,11 +35,29 @@ fn ntt_roundtrip_identity() {
 
 #[test]
 fn ntt_zero_stays_zero() {
-    let mut w = Poly::zero();
+    let mut w = Poly::default();
     ntt_inplace(&mut w);
     assert_eq!(w.0, [0i32; 256]);
     inv_ntt_inplace(&mut w);
     assert_eq!(w.0, [0i32; 256]);
+}
+
+#[test]
+fn runtime_twiddles_match_independent_modular_exponentiation() {
+    let table = core::hint::black_box(gen_zeta_table_mont());
+    for (index, actual) in table.iter().enumerate() {
+        let mut exponent = (index as u8).reverse_bits();
+        let mut base = i64::from(ZETA);
+        let mut power = 1_i64;
+        while exponent != 0 {
+            if exponent & 1 != 0 {
+                power = power * base % i64::from(Q);
+            }
+            base = base * base % i64::from(Q);
+            exponent >>= 1;
+        }
+        assert_eq!(i64::from(*actual), power * (1_i64 << 32) % i64::from(Q));
+    }
 }
 
 #[test]
