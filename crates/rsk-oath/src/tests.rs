@@ -2835,3 +2835,6 @@ mod bounds_tests;
 
 #[path = "stored_bounds_tests.rs"]
 mod stored_bounds_tests;
+
+#[path = "retry_decisions_tests.rs"]
+mod retry_decisions;
