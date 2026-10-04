@@ -319,3 +319,18 @@ fn declining_delete_keeps_the_account_on_the_service_page() {
         1
     );
 }
+
+#[test]
+fn home_refresh_counts_credentials_across_rps_and_forgets_a_cleared_store() {
+    let env = Env::new();
+    seed_accounts(&env, 3, 2);
+    env.set_device_pin(PIN);
+    let mut ui = env.ui(Pad::idle());
+    env.local(&mut ui).refresh_home_stats();
+    assert!(ui.home_pin_set);
+    assert_eq!(ui.home_passkeys, 6);
+    *env.fs.borrow_mut() = Fs::new(rsk_fs::storage::ram::RamStorage::new());
+    env.local(&mut ui).refresh_home_stats();
+    assert!(!ui.home_pin_set);
+    assert_eq!(ui.home_passkeys, 0);
+}
