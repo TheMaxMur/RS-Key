@@ -259,3 +259,20 @@ fn one_of_one_round_trips() {
         secret
     );
 }
+
+#[test]
+fn runtime_shamir_tables_form_the_complete_nonzero_field() {
+    let generate = std::hint::black_box(gf_tables as fn() -> ([u8; 255], [u8; 256]));
+    let (exp, log) = generate();
+    let mut seen = [false; 256];
+    assert_eq!(&exp[..5], &[1, 3, 5, 15, 17]);
+    for (power, &value) in exp.iter().enumerate() {
+        assert!(!seen[usize::from(value)]);
+        seen[usize::from(value)] = true;
+        assert_eq!(usize::from(log[usize::from(value)]), power);
+    }
+    assert!(!seen[0]);
+    assert!(seen[1..].iter().all(|value| *value));
+    assert_eq!(exp, EXP);
+    assert_eq!(log, LOG);
+}
