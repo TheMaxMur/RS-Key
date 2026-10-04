@@ -1,5 +1,5 @@
 {
-  "legalHeader": "RS-Key is AGPL-3.0-only firmware; this Metadata Statement is self-published by the RS-Key project and is NOT a FIDO Alliance MDS listing. See metadata/README.md and docs/guides/aaguid-metadata.md.",
+  "legalHeader": "Submission of this statement and retrieval and use of this statement indicates acceptance of the appropriate agreement located at https://fidoalliance.org/metadata/metadata-legal-terms/.",
   "description": "RS-Key U2F Authenticator",
   "protocolFamily": "u2f",
   "schema": 3,

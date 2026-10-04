@@ -1135,9 +1135,12 @@ as a real change.
 ## FIDO conformance
 
 The latest complete run against the **FIDO Alliance Conformance Tools**
-(v1.8.5.1) was on **2026-10-02**, with firmware `bcdDevice 0x0A8B`,
-`no-touch,ea-conformance-rpid`, the featureful enterprise profile and all cases
-selected: **245 passed / 9 failed / 70 pending**, in **736.90 seconds**.
+(v1.8.5.1) was on **2026-10-04**, with firmware `bcdDevice 0x0A8B`,
+`ea-conformance-rpid` and physical presence enabled, the full feature enterprise
+profile and all categories selected: **250 passed / 4 failed / 70 pending**,
+in **685.92 seconds**. The official enterprise test certificate was installed.
+The earlier no-touch run on 2026-10-02 reached **245 passed / 9 failed /
+70 pending**, in **736.90 seconds**.
 The installed tool and its assertions were unchanged. The earlier run on
 2026-06-20, with `bcdDevice 0x0776`, reported:
 
@@ -1210,9 +1213,13 @@ featureful-profile parity.
 Current metadata declares `basic_full` with a per-device self-signed `x5c`
 leaf and an empty `attestationRootCertificates` list. The official tool's
 MakeCred-Resp P-04 and Metadata P-27 require an anchor; Metadata P-36 also
-requires the MDS legal boilerplate when `legalHeader` is present, whereas
-RS-Key publishes its own declaration. These differences appeared in the
-October run. See [AAGUID & metadata](guides/aaguid-metadata.md)
+requires the exact MDS legal boilerplate when `legalHeader` is present. The
+October 4 run still used RS-Key's custom header; all three metadata files now
+use the expected standard text. The metadata suite checks it as P-36, including
+a changed-header control. A subsequent official Metadata-group rerun reached
+**25 passed / 1 failed / 11 pending** in **0.07 seconds**: P-36 passed, and P-27
+remained the only failure. This separate run does not change the recorded 250/4
+complete result. See [AAGUID & metadata](guides/aaguid-metadata.md)
 for the attestation design and [the roadmap](roadmap.md) for the parity target.
 
 A green run exercises the full CTAP2/U2F wire surface: makeCredential /
@@ -1243,9 +1250,9 @@ The nine failures in the October hardware run were:
 |---|---|---|
 | HID-1 P-9/P-10 | `Sequence out of order` | Passed in the subsequent official HID-group run with touch enabled. |
 | HID-1 P-15 | Expected KEEPALIVE; got `undefined (0x00)` | Passed with touch enabled; the no-touch image completes Selection immediately. |
-| Enterprise Attestation P-2/P-3 | `x5c` does not contain `EPBatchCertificate` | The official test certificate was not installed on the board. |
+| Enterprise Attestation P-2/P-3 | `x5c` does not contain `EPBatchCertificate` | Passed in the complete October 4 touch run after importing the official test certificate. |
 | MakeCred-Resp P-04; Metadata P-27 | Empty `attestationRootCertificates` | Accepted per-device attestation difference. |
-| Metadata P-36 | Custom `legalHeader` | Self-published metadata declaration. |
+| Metadata P-36 | Custom `legalHeader` | Passed in the subsequent official Metadata-group run with the standard text restored. |
 | GetAssertion-Resp P-3 | Expected `0 < 0` | Non-resident credentials intentionally report `signCount = 0`. |
 
 The old tool requires a rising counter in GetAssertion-Resp P-3. RS-Key's
@@ -1266,8 +1273,9 @@ or establish an increased official pass count. The subsequent official
 transport-group run completed in 309.62 seconds with **16 passed / 0 failed**:
 HID-1 P-9, P-10 and P-15 all passed, and P-11, P-13 and P-14 were pending.
 The NFC and BLE cases were also pending. This separate run closes the three
-HID failures; a complete run on the touch image is still required to report
-its total.
+HID failures. The subsequent complete October 4 touch run also passed those
+cases and both enterprise certificate comparisons; its four remaining failures
+were MakeCred-Resp P-04, GetAssertion-Resp P-3, Metadata P-27 and P-36.
 
 On a headless hardware build, `no-touch` confirms presence but keeps the
 10-second cold-power-up window for CTAP Reset. A software reboot preserves

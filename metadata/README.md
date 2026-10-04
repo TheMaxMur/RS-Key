@@ -12,6 +12,11 @@ relying party or library that can import a local metadata file can consume this
 directly; see [docs/guides/aaguid-metadata.md](../docs/guides/aaguid-metadata.md)
 for the full rationale and the certification boundary.
 
+All three statements use the standard MDS3 `legalHeader` expected by the
+official conformance tool's Metadata P-36. That text does not make this a
+certified authenticator or an MDS listing; the publication and attestation
+limits below still apply.
+
 - **AAGUID:** `2479c7bf-6b30-5683-9ec8-0e8171a918b7`
   (`uuid5(NAMESPACE_URL, "https://github.com/TheMaxMur/RS-Key")`).
 - **Attestation:** `basic_full` — packed with an `x5c` leaf, signed by the

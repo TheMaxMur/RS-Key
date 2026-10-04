@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- The FIDO2, conformance and U2F metadata statements use the exact standard
+  MDS3 legal header expected by the official tool's Metadata P-36. The metadata
+  drift suite rejects a different header; the self-published and rootless
+  attestation limits remain documented.
+
 ### Added
 
 - A Linux MSC image runner reads BOOTSEL's FAT16 files with `usb-storage`

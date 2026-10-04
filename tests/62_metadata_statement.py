@@ -34,7 +34,7 @@ Part B (runs only if a FIDO HID device is plugged in):
 
 Part D (host-only, always runs): every published statement against the rules the
 FIDO Metadata Statement spec (v3.1.1) and the FIDO Registry (v2.3) write down,
-case by case as the conformance tool's metadata-stmt-1 names them.
+plus the official tool's exact MDS3 legal header, using metadata-stmt-1 case IDs.
 
 The statement describes the DEFAULT (shipping) build profile, which advertises
 EdDSA (-8): the Windows WebAuthn API drops unadvertised algorithms, breaking
@@ -358,11 +358,16 @@ def part_c(stmt):
 
 
 # Part D reads FIDO Metadata Statement v3.1.1 PS 2026-01-05 ("MDS") and the FIDO Registry
-# of Predefined Values v2.3 PS it cites ("Registry"). The case ids are the conformance
-# tool's metadata-stmt-1; the rules are written from the spec text, not from the tool.
+# of Predefined Values v2.3 PS it cites ("Registry"). The case ids are metadata-stmt-1;
+# P-36 additionally fixes the example legal header to match the official tool.
 STATEMENT_FAMILIES = {META: "fido2", CONF_META: "fido2", U2F_META: "u2f"}
 PROTOCOL_FAMILIES = ("uaf", "u2f", "fido2")
 MDS3_SCHEMA = 3
+MDS3_LEGAL_HEADER = (
+    "Submission of this statement and retrieval and use of this statement indicates "
+    "acceptance of the appropriate agreement located at "
+    "https://fidoalliance.org/metadata/metadata-legal-terms/."
+)
 MDS3_DESCRIPTION_MAX = 200
 # MDS §4: the members of the MetadataStatement dictionary.
 MDS3_MEMBERS = {
@@ -496,11 +501,13 @@ def _check_members(stmt, family, out):
 
 
 def _check_scalars(stmt, family, out):
-    # metadata-stmt-1 P-1/P-36: §4 wants a legalHeader in each statement and §1 bars
-    # an empty DOMString; the text itself MDS gives only as an example.
+    # MDS §4 requires a nonempty header; the official tool's P-36 requires this
+    # exact example. Keep RS-Key's self-publication caveat in the documentation.
     header = stmt.get("legalHeader")
     if not (isinstance(header, str) and header):
         out.append(("P-1", "legalHeader", "must be present and not empty (MDS §4)"))
+    elif header != MDS3_LEGAL_HEADER:
+        out.append(("P-36", "legalHeader", "must match the official tool's MDS3 legal header"))
     # metadata-stmt-1 P-4: "only ASCII characters" — any ASCII, since MDS §4 does not
     # say printable — and at most 200 of them.
     desc = stmt.get("description")
@@ -742,7 +749,7 @@ def _check_samples(stmt, family, out):
 
 
 def mds3_problems(stmt, family):
-    """Every MDS / Registry rule `stmt` breaks, as (case, member, detail) — typed, so
+    """Every MDS / Registry or P-36 rule `stmt` breaks, as (case, member, detail) — typed, so
     the self-test can ask which rule answered. `family` is the one its file publishes,
     so a wrong protocolFamily is one finding rather than a different rulebook."""
     out = []
@@ -754,9 +761,9 @@ def mds3_problems(stmt, family):
 
 
 def part_d(stmt):
-    """Every published statement against the MDS3 statement rules: the FIDO Metadata
-    Statement spec's and the FIDO Registry's own text, one metadata-stmt-1 case each.
-    Part C asks whether a relying party's parser takes the file; this asks the spec."""
+    """Every published statement against MDS3 / Registry rules and the official
+    tool's exact legal header, one metadata-stmt-1 case each.
+    Part C checks the relying party's parser; this checks the spec and tool policy."""
     fails = []
     paths = [p for p in STATEMENT_FAMILIES if os.path.exists(p)]
     for path in paths:
@@ -766,15 +773,16 @@ def part_d(stmt):
             fails.append(f"{name}: {member}: {detail} [metadata-stmt-1 {case}]")
 
     # A checker that passes everything proves nothing: the shipping statement broken
-    # five ways at once must be reported five times, each by the rule it breaks.
+    # six ways at once must be reported six times, each by the rule it breaks.
     broken = json.loads(json.dumps(stmt))  # deep copy
     broken["description"] = "x" * (MDS3_DESCRIPTION_MAX + 1)
     broken["protocolFamily"] = "uaf"
     broken["notAnMds3Member"] = True
     broken["icon"] = "data:image/png;base64," + base64.b64encode(b"GIF89a").decode()
     broken["schema"] = MDS3_SCHEMA - 1
+    broken["legalHeader"] = "RS-Key self-published metadata"
     want = {("P-4", "description"), ("P-7", "protocolFamily"), ("P-34", "notAnMds3Member"),
-            ("P-29", "icon"), ("P-31", "schema")}
+            ("P-29", "icon"), ("P-31", "schema"), ("P-36", "legalHeader")}
     got = {(case, member) for case, member, _ in mds3_problems(broken, STATEMENT_FAMILIES[META])}
     for case, member in sorted(want - got):
         fails.append(f"self-test: {os.path.basename(META)} with {member} broken passed {case}"
@@ -784,7 +792,7 @@ def part_d(stmt):
         for f in fails:
             print(f"  FAIL: {f}")
         sys.exit(f"Part D: {len(fails)} failure(s)")
-    print(f"Part D OK — {len(paths)} statement(s) hold the MDS 3.1.1 / Registry 2.3 rules")
+    print(f"Part D OK — {len(paths)} statement(s) hold MDS 3.1.1 / Registry 2.3 and P-36")
 
 
 def main():
