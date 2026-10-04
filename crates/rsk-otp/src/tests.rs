@@ -2755,3 +2755,6 @@ fn a_faulted_read_of_a_pre_otp_slot_is_never_reported_clear() {
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "reads_tests.rs"]
 mod reads;
+
+#[path = "command_bounds_tests.rs"]
+mod command_bounds_tests;
