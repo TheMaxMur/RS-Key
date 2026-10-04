@@ -95,12 +95,11 @@ its line-coverage floor remains 80%. Test helpers and the verification-only
 `transport_assurance.rs` are absent from the USB subtotal. These are line
 measurements, not branch coverage.
 
-A later default-profile run on the same date reached 38363/39591 lines
-(96.90%) and 3241/3272 functions (99.05%), with the same workspace selection
-and exclusions: 3052 unique tests passed, plus one isolated-process repeat,
-with five existing ignored cases. The added
-cases exercise backup and recovery exits, local PIN/PUK flows, passkey
-pagination and deletion, applet browsing and keygen, rendering errors, corrupt
+A later default-profile run on the same date reached 38379/39591 lines
+(96.94%) and 3244/3272 functions (99.14%), with the same workspace selection
+and exclusions: 3064 unique tests passed, plus one isolated-process repeat,
+with five existing ignored cases. The added cases exercise backup and recovery
+exits, local PIN/PUK flows, passkey pagination and deletion, applet browsing and keygen, rendering errors, corrupt
 records, storage failures and protocol output limits. AES, the SHA-512 core,
 RSA sieve module, PIV public-info and X.509 modules, FIDO largeBlob-extension
 module and SDK TLV module each reached 100% lines in that report.
@@ -114,21 +113,26 @@ instances of some generic code whose merged source-line counters are positive.
 No exclusions or floors were changed to remove these rows.
 
 The separate nightly corpus replay completed all 52 fuzz targets. Unioning
-their LCOV line records for repository sources reached 20345/32545 lines
-(62.51%), up from 16828/32545 (51.71%). This scope includes vendored sources
+their LCOV line records for repository sources reached 20568/32545 lines
+(63.20%), up from 16828/32545 (51.71%). This scope includes vendored sources
 and omits fuzz harnesses, external dependencies and standard-library sources;
 it is neither the host-unit scope nor an average of per-target percentages.
-The timed campaigns executed 98773335 inputs without a crash. The expanded
+The timed campaigns executed 99077751 inputs without a crash. The expanded
 display-label target renders 32 view variants, checks pixel bounds and panel
 error propagation, and compares retained replay and DMA bytes with direct
 rendering. The rescue target also replays fused and faulted boots, including
-failed fuse read-back and denied presence. Five compiled mutations were caught:
+failed fuse read-back and denied presence. OATH compares full and truncated
+HMAC responses for SHA-1/256/512, advances HOTP, round-trips password-safe
+fields through RENAME, and checks both wrong and correct access-code proofs.
+Six compiled mutations were caught:
 removing RSA sieve cleanup left candidate bytes, and either weakening of the
 largeBlob write preconditions admitted an unauthorised overwrite. Dropping
 Scene replay failed the pixel comparison, and the real `fuzz-all.sh` CI runner
 exited 1 on its display shard; the restored baseline passed. Omitting the
 rescue LOCK58 read-back check reported success over an unchanged fake fuse
-row: the rescue CI shard exited 1, and the restored baseline exited 0.
+row: the rescue CI shard exited 1, and the restored baseline exited 0. Allowing
+a wrong OATH access-code proof failed the new VALIDATE oracle through its CI
+shard; the original source was restored byte-for-byte and the baseline passed.
 
 | Mutation | Observed failure |
 |---|---|
@@ -136,6 +140,7 @@ row: the rescue CI shard exited 1, and the restored baseline exited 0.
 | Weaken either largeBlob write conjunction | A write without every required permission overwrites the buffer |
 | Omit retained Scene replay | Direct and retained pixels differ; the CI fuzz row reports `display_label` as crashing |
 | Omit rescue fuse read-back | LOCK58 reports success without the complete latch; the CI fuzz row reports `rescue_apdu` as crashing |
+| Permit a wrong access-code proof | VALIDATE accepts an invalid proof; the CI fuzz row reports `oath_apdu` as crashing |
 
 Each mutation below compiled and failed its transport test on 2026-10-04.
 The unmodified USB suite passed all 88 tests.
