@@ -210,6 +210,16 @@ records authenticated malformed bodies, unchanged records across interrupted
 recovery, two semantic controls and a bounded request-ordering proof. Its raw
 reports are in `target/coverage-credentials-20261004/`; fuzz coverage is unchanged.
 
+Eleven OATH and OpenPGP PIN cases passed 3106 unique tests plus the child repeat,
+with five ignored cases. A fresh condition directory recorded 38419/39598 lines
+(97.02%) and 6830/7975 outcomes (85.64%). OATH reached 436/488 outcomes and
+OpenPGP PIN 173/202. The [PIN persistence slice](testing-roadmap.md#oath-and-openpgp-pin-persistence-decisions)
+records retry write/read-back faults, malformed stored records, preserved DEK
+copies and two compiled controls that fail on unintended authorization. Its
+bounded Kani header proof reached all four cover scenarios and failed the owner
+assertion when that guard was removed. Raw reports are in
+`target/coverage-pins-20261004/`; fuzz coverage is unchanged.
+
 JSON/LCOV export succeeded. Both HTML exports warned about 27 mismatched
 records, including the fresh condition directory. Reusing the previous build
 directory for the credential slice reported 113 mismatches; rebuilding in an

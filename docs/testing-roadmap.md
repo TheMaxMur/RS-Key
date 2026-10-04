@@ -508,3 +508,51 @@ limitation and unsupported MC/DC remain open. Raw reports, controls and proof lo
 are in `target/coverage-credentials-20261004/`. Firmware behavior, exclusions and
 coverage floors are unchanged; existing Kani roster floors now include the new
 harness and its covers. Fuzz coverage is unchanged.
+
+## OATH and OpenPGP PIN persistence decisions
+
+Eleven cases extend the command paths around stored PINs and retry counters.
+OATH VERIFY and CHANGE refuse a rejected or silently dropped retry write, a
+short read-back and a read-back with the wrong counter. Each refusal closes
+standing authentication, retains the verifier and keeps the password safe
+closed; a healthy retry still opens the unchanged credential. Invalid stored
+PIN lengths are not comparisons. If a correct VERIFY cannot re-arm the scrub,
+it retains the old verifier and the charged attempt rather than superseding
+that verifier under the latched marker; a later healthy attempt migrates it.
+
+OpenPGP refuses missing retry slots, short or absent retry maxima, empty
+read-back at the last retry and malformed verifier records. The tests distinguish an
+uncharged record fault from a correct comparison whose retry reset failed.
+RESET RETRY without a new PIN preserves the standing admin session and records.
+An RC or admin DEK copy that does not open cannot replace PW1 or RC. A healthy
+DEK load can defer stale-stage retirement when the scrub re-arm is refused,
+then retire the stage on a later healthy load without changing the active DEK.
+
+Two compiled controls survived the previous default applet suites. Removing
+OATH's read-back length equality or OpenPGP's addressed-counter length guard
+made a correct PIN authorize after a short read-back. Each new test failed
+on that unintended success, not on setup or a compiler error. Both isolated
+sources were restored byte for byte.
+
+A Kani harness checks arbitrary bytes at lengths zero through four for the
+three DEK targets. At unwind bound 5 it proves that a staged header reaches
+the authenticated reader only with its target's owner byte, the supported
+format and a body byte. All 205 checks passed, with eight unreachable checks;
+all four generated cover properties were satisfied. The cover expressions
+evaluate their Boolean operands without short-circuiting, avoiding duplicated
+unreachable copies. Removing the owner check failed exactly the owner
+assertion. This proves the header gate, not AEAD authentication or recovery.
+The standard Kani PR runner also proved all 67 selected harnesses and reached
+all 49 source covers through its existing floor and vacuity checks.
+The roster now counts 99 harnesses and 78 source covers; the full roster was
+not solved in this slice, and its previously measured timings are unchanged.
+
+The same raw default-host condition scope passed 3106 unique tests plus the
+child-process repeat, with five ignored cases. A new empty build directory
+recorded 38419/39598 lines (97.02%) and 6830/7975 outcomes (85.64%): eight more
+lines and eleven more outcomes. OATH increased from 433/488 to 436/488 outcomes
+(89.34%), and OpenPGP PIN from 165/202 to 173/202 (85.64%). The 27 SDK mapping
+warnings and unsupported MC/DC remain unresolved. Reports, source identity,
+controls and proof logs are in `target/coverage-pins-20261004/`. This slice
+changes no firmware behavior, exclusions, coverage floors or dependencies.
+Fuzz coverage is unchanged.
