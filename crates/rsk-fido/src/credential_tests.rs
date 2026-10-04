@@ -1289,3 +1289,6 @@ fn provisioning_otp_changes_only_the_write_only_silent_tag() {
         assert_eq!(loaded.alg, input().alg);
     }
 }
+
+#[path = "credential_decisions_tests.rs"]
+mod decisions;
