@@ -980,3 +980,7 @@ mod transport_refinement_proofs;
 )]
 #[path = "ctaphid_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ctaphid_transport_tests.rs"]
+mod transport_tests;

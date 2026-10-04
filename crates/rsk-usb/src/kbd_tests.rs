@@ -62,3 +62,41 @@ fn an_unmapped_byte_types_nothing() {
     assert_eq!(keystroke(0x01, true), None);
     assert_eq!(keystroke(0x00, false), None);
 }
+
+#[test]
+fn printable_symbols_and_editing_keys_use_the_us_keyboard_usages() {
+    // Paired symbols share a physical key; only the shift modifier differs.
+    let pairs = [
+        (b'1', b'!', 0x1E),
+        (b'2', b'@', 0x1F),
+        (b'3', b'#', 0x20),
+        (b'4', b'$', 0x21),
+        (b'5', b'%', 0x22),
+        (b'6', b'^', 0x23),
+        (b'7', b'&', 0x24),
+        (b'8', b'*', 0x25),
+        (b'9', b'(', 0x26),
+        (b'0', b')', 0x27),
+        (b'-', b'_', 0x2D),
+        (b'=', b'+', 0x2E),
+        (b'[', b'{', 0x2F),
+        (b']', b'}', 0x30),
+        (b'\\', b'|', 0x31),
+        (b';', b':', 0x33),
+        (b'\'', b'"', 0x34),
+        (b'`', b'~', 0x35),
+        (b',', b'<', 0x36),
+        (b'.', b'>', 0x37),
+        (b'/', b'?', 0x38),
+    ];
+    for (plain, shifted, usage) in pairs {
+        assert_eq!(keystroke(plain, true), Some([0, 0, usage, 0, 0, 0, 0, 0]));
+        assert_eq!(
+            keystroke(shifted, true),
+            Some([KEYBOARD_MODIFIER_LEFTSHIFT, 0, usage, 0, 0, 0, 0, 0])
+        );
+    }
+    for (byte, usage) in [(0x1B, 0x29), (0x08, 0x2A), (b'\t', 0x2B), (b' ', 0x2C)] {
+        assert_eq!(keystroke(byte, true), Some([0, 0, usage, 0, 0, 0, 0, 0]));
+    }
+}

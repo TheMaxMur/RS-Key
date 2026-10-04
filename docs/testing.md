@@ -7,7 +7,7 @@ for end-to-end integration.
 
 | Layer | What it checks | Where |
 |---|---|---|
-| Host unit tests | parsers, state machines, applets, crypto, the display flow (~1500 tests) | `#[cfg(test)]` in each crate |
+| Host unit tests | parsers, state machines, applets, crypto, USB transports, the display flow | `#[cfg(test)]` in each crate |
 | Fuzzing | the same logic under adversarial bytes | `fuzz/` |
 | Miri | the fuzz targets' logic under the UB checker | `fuzz/tests/miri.rs` |
 | Kani proofs | bounded model checking — every input, not a sample | `#[cfg(kani)]` in the crates |
@@ -79,6 +79,35 @@ selection to that pair, and finds the copies rather than being told where they
 are.) Crypto tests pin NIST/RFC vectors; applet tests drive full protocol flows
 (register → assert, PIN lockout ladders, OpenPGP import → sign → verify, PIV
 generate → attest → parse with `x509-parser`).
+
+The USB tests also execute `Ccid::run` and `CtapHid::run` over scripted
+endpoints, with the real host time driver. They check fragmented requests,
+power-transition resets, receive and transmit timeouts, CCID time extensions,
+CTAPHID keepalives and CANCEL ownership, pipelined requests, and buffer wiping.
+The fixtures live in `crates/rsk-usb/src/ccid_transport_tests.rs` and
+`crates/rsk-usb/src/ctaphid_transport_tests.rs`; they do not test a physical USB
+controller or host enumeration.
+
+A default-profile measurement on 2026-10-04 raised line coverage over the four
+production USB modules from 311/740 (42.03%) to 698/740 (94.32%). The standard
+CI workspace selection rose from 35237/39585 (89.02%) to 35627/39591 (89.99%);
+its line-coverage floor remains 80%. Test helpers and the verification-only
+`transport_assurance.rs` are absent from the USB subtotal. These are line
+measurements, not branch coverage.
+
+Each mutation below compiled and failed its transport test on 2026-10-04.
+The unmodified USB suite passed all 88 tests.
+
+| Mutation | Observed failure |
+|---|---|
+| Remove CCID `reset_card` | Power transitions call no reset; two are expected |
+| Remove the CCID request wipe | APDU bytes remain in `rx` after the reply |
+| Remove the CCID response wipe | Response bytes remain in `tx` after sending |
+| Remove CTAPHID `reset_app_selection` | Three INIT requests call no reset |
+| Bypass the channel lock | A stranger receives PING instead of CHANNEL_BUSY |
+| Ignore the CANCEL channel | A stranger aborts the active touch wait |
+| Read during a processing wait | The pipelined second CBOR request disappears |
+| Preserve TYPE_INIT in the vendor callback | The handler receives `0xC0` instead of `0x40` |
 
 A command that writes can be put through a **cut sweep**: run it once per cut point
 — the flash refuses everything past the k-th mutation — reboot on the same medium,

@@ -31,3 +31,7 @@ rsk-secret = { workspace = true }
 # Shared firmware-version const for the CTAPHID INIT device-version bytes, which
 # ykman/yubikit read to gate the Management-over-FIDO DeviceInfo read.
 rsk-sdk = { workspace = true }
+
+[dev-dependencies]
+# Exercise the real transport deadlines on the host without an embassy executor.
+embassy-time = { workspace = true, features = ["std", "generic-queue-8"] }

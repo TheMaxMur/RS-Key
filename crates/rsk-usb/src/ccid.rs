@@ -642,3 +642,7 @@ mod proofs;
 )]
 #[path = "ccid_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ccid_transport_tests.rs"]
+mod transport_tests;

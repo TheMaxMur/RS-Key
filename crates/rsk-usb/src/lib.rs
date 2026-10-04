@@ -14,3 +14,7 @@ pub mod secure_pin;
 /// long — an unbounded write blocks the transport task and wedges the whole
 /// interface; a live host drains within milliseconds.
 pub(crate) const TX_TIMEOUT_MS: u64 = 500;
+
+#[cfg(test)]
+#[path = "driver_tests.rs"]
+mod test_driver;
