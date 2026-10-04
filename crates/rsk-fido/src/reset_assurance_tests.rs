@@ -147,3 +147,34 @@ fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {
          still reachable (swept={swept})"
     );
 }
+
+#[test]
+fn a_storage_abort_ends_each_reset_phase_without_changing_persistent_state() {
+    for phase in 0..4 {
+        let mut reset = ResetRefinement::new(protected());
+        let mut volatile = ResetVolatileView::default();
+        assert!(!reset.abort());
+        assert!(reset.begin(&mut volatile));
+        if phase >= 1 {
+            assert!(reset.delete(EF_KEY_DEV.get()));
+            assert!(reset.advance());
+        }
+        if phase >= 2 {
+            assert!(reset.delete(EF_CRED));
+            assert!(reset.advance());
+        }
+        if phase >= 3 {
+            assert!(reset.delete(EF_PIN));
+            assert!(reset.delete(EF_ALWAYS_UV));
+            assert!(reset.delete(EF_BACKUP_SEALED));
+            assert!(reset.advance());
+        }
+        let persistent = reset.persistent;
+        assert!(reset.abort());
+        assert_eq!(reset.progress, ResetProgress::Idle);
+        assert_eq!(reset.persistent, persistent);
+        assert!(!reset.abort());
+        assert!(reset.well_formed(&volatile));
+        assert!(reset.reset_never_weakens_surviving_state(&volatile));
+    }
+}

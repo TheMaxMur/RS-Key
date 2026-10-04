@@ -445,3 +445,7 @@ pub const VENDOR_PROTOTYPE_CONFIG_COMMANDS: [u64; 7] = [
     CONFIG_PHY_OPTIONS,
     CONFIG_EA_RPIDS,
 ];
+
+#[cfg(test)]
+#[path = "consts_tests.rs"]
+mod tests;

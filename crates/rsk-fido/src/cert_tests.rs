@@ -161,3 +161,18 @@ fn a_truncated_chain_is_not_intact_though_its_count_survives() {
         "but the certificates no longer resolve"
     );
 }
+
+#[test]
+fn chain_length_framing_accepts_a_two_octet_length_and_refuses_its_truncations() {
+    assert_eq!(der_seq_len(&[0x30, 0x82, 1, 0]), Some(260));
+    for body in [
+        &[0x30, 0x82][..],
+        &[0x30, 0x82, 1][..],
+        &[0x30, 0x83, 0, 0, 0][..],
+    ] {
+        assert_eq!(der_seq_len(body), None);
+    }
+    for (a, b, c) in [(1, 2, 3), (3, 1, 2), (3, 2, 1), (1, 1, 1)] {
+        assert_eq!(min3(std::hint::black_box(a), b, c), 1);
+    }
+}

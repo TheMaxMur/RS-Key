@@ -268,6 +268,143 @@ fn discard_removes_the_record() {
     assert!(h.read_blob(&CRED_A, 7).is_none());
 }
 
+#[test]
+fn assertion_writes_require_presence_a_named_credential_and_a_resident_slot() {
+    let mut h = Harness::new();
+    for up in [false, true] {
+        for named in [false, true] {
+            for slot in [None, Some(0)] {
+                assert!(h.write_blob(&CRED_A, 0, b"previous"));
+                let out = h.with(|ctx| {
+                    process_ga(
+                        ctx,
+                        &SEED,
+                        GaInput::Write {
+                            blob: b"replacement",
+                            original_size: 17,
+                        },
+                        &CRED_A,
+                        slot,
+                        named,
+                        up,
+                    )
+                });
+                let permitted = up && named && slot.is_some();
+                assert!(matches!(out, GaOutput::Written(written) if written == permitted));
+                assert!(out.emits());
+                let (blob, size) = h.read_blob(&CRED_A, 0).unwrap();
+                if permitted {
+                    assert_eq!(blob, b"replacement");
+                    assert_eq!(size, 17);
+                } else {
+                    assert_eq!(blob, b"previous");
+                    assert_eq!(size, 16);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn assertion_reads_emit_the_exact_unsigned_extension_map_or_nothing() {
+    let mut h = Harness::new();
+    assert!(h.write_blob(&CRED_A, 0, b"compressed"));
+    for (input, slot) in [
+        (GaInput::Absent, Some(0)),
+        (GaInput::Read, None),
+        (GaInput::Read, Some(1)),
+    ] {
+        let out = h.with(|ctx| process_ga(ctx, &SEED, input, &CRED_A, slot, false, false));
+        assert!(!out.emits());
+        assert!(ga_encoded(&out, &h.state.lba.temp).is_empty());
+    }
+    let out = h.with(|ctx| process_ga(ctx, &SEED, GaInput::Read, &CRED_A, Some(0), false, false));
+    assert!(out.emits());
+    let encoded = ga_encoded(&out, &h.state.lba.temp);
+    let mut d = Decoder::new(&encoded);
+    assert_eq!(d.u8().unwrap(), 8);
+    assert_eq!(d.map().unwrap(), Some(1));
+    assert_eq!(d.str().unwrap(), "largeBlob");
+    assert_eq!(d.map().unwrap(), Some(2));
+    assert_eq!(d.str().unwrap(), "blob");
+    assert_eq!(d.bytes().unwrap(), b"compressed");
+    assert_eq!(d.str().unwrap(), "originalSize");
+    assert_eq!(d.u32().unwrap(), 20);
+    assert_eq!(d.position(), encoded.len());
+}
+
+fn ga_encoded(out: &GaOutput, scratch: &[u8; MAX_LARGE_BLOB_SIZE]) -> Vec<u8> {
+    let mut bytes = vec![0; MAX_LARGE_BLOB_SIZE + 128];
+    let mut enc = Encoder::new(Cursor::new(&mut bytes[..]));
+    write_ga_output(&mut enc, out, scratch).unwrap();
+    let n = enc.writer().position();
+    bytes.truncate(n);
+    bytes
+}
+
+#[test]
+fn unsigned_extension_encoders_propagate_every_short_writer_failure() {
+    let scratch = [0xA5; MAX_LARGE_BLOB_SIZE];
+    for out in [
+        GaOutput::Written(false),
+        GaOutput::Written(true),
+        GaOutput::Blob {
+            at: 0..5,
+            original_size: u32::MAX,
+        },
+    ] {
+        let encoded = ga_encoded(&out, &scratch);
+        for size in 0..encoded.len() {
+            let mut short = vec![0; size];
+            assert!(
+                write_ga_output(
+                    &mut Encoder::new(Cursor::new(&mut short[..])),
+                    &out,
+                    &scratch
+                )
+                .is_err()
+            );
+        }
+    }
+    let mut bytes = [0; 128];
+    let mut encoded = Encoder::new(Cursor::new(&mut bytes[..]));
+    write_mc_output(&mut encoded).unwrap();
+    let n = encoded.writer().position();
+    let mut d = Decoder::new(&bytes[..n]);
+    assert_eq!(d.map().unwrap(), Some(1));
+    assert_eq!(d.str().unwrap(), "largeBlob");
+    assert_eq!(d.map().unwrap(), Some(1));
+    assert_eq!(d.str().unwrap(), "supported");
+    assert!(d.bool().unwrap());
+    assert_eq!(d.position(), n);
+    for size in 0..n {
+        let mut short = vec![0; size];
+        assert!(write_mc_output(&mut Encoder::new(Cursor::new(&mut short[..]))).is_err());
+    }
+}
+
+#[test]
+fn unknown_assertion_members_and_unrepresentable_original_sizes_are_refused() {
+    let unknown = ext_map(&[("other", V::Bool(true))]);
+    assert!(matches!(
+        parse_ga_bytes(&unknown),
+        Err(CtapError::InvalidCbor)
+    ));
+    let mut h = Harness::new();
+    assert!(h.with(|ctx| write(ctx, &SEED, &CRED_A, 0, b"", u64::from(u32::MAX))));
+    let rng_before = h.rng.0;
+    assert!(!h.with(|ctx| write(
+        ctx,
+        &SEED,
+        &CRED_A,
+        0,
+        b"replacement",
+        u64::from(u32::MAX) + 1
+    )));
+    assert_eq!(h.rng.0, rng_before);
+    assert_eq!(h.read_blob(&CRED_A, 0), Some((Vec::new(), u32::MAX)));
+}
+
 /// The stored bytes never contain the plaintext: a flash dump of a `largeblob-ext`
 /// device must not hand over what the platform wrote (the 2.1 array arrives
 /// already encrypted; a 2.3 blob does not).
