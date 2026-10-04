@@ -30,6 +30,13 @@ cross-reset state, the store — tying a model to the code it claims to abstract
 under models that actually run, and keeping the checks-of-the-checks honest:
 a proof nobody executes is documentation with a false badge on it.
 
+**Testing with measured decisions and failures.** The
+[testing roadmap](testing-roadmap.md) adapts SQLite's methods to the
+authenticator: branch and MC/DC measurements, independent result checks,
+compound storage failures, stateful fuzzing and tests of the delivered image.
+Its eight phases have explicit completion criteria and remain open. High host
+line coverage alone does not complete this direction.
+
 **Conformance parity.** The bar is a real YubiKey and the specification, in
 that order when they disagree and the spec is on our side, and the other order
 when it is not — matching a behaviour real hosts depend on beats being right

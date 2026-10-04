@@ -5,6 +5,10 @@ hardware-agnostic on purpose (only `firmware` touches the HAL), so everything
 except board bring-up is tested and fuzzed on the host. The device is reserved
 for end-to-end integration.
 
+The [testing roadmap](testing-roadmap.md) describes the planned expansion of
+these checks using SQLite's methods, with separate completion criteria for
+coverage, failures, semantic oracles, configurations and the delivered image.
+
 | Layer | What it checks | Where |
 |---|---|---|
 | Host unit tests | parsers, state machines, applets, crypto, USB transports, the display flow | `#[cfg(test)]` in each crate |
@@ -111,6 +115,93 @@ remainder, and Scene's encoder never writes the unknown opcodes its decoder
 rejects with `unreachable!()`. LLVM's standard summaries also retain uncovered
 instances of some generic code whose merged source-line counters are positive.
 No exclusions or floors were changed to remove these rows.
+
+### Branch and condition measurements
+
+The pinned nightly can also measure branches. A default host baseline on
+2026-10-04 recorded 6509/7646 outcomes (85.13%) before the new LargeBlobs and
+broadcast-continuation cases. It retained the same 38379/39591 source lines
+and 3244/3272 functions as the earlier line report. These raw workspace totals
+include verification helpers; they are not a production-only core subtotal.
+
+Rustc `1.98.0-nightly` (`61d7280f3`, LLVM 22.1.6) rejects native MC/DC
+instrumentation. `cargo-llvm-cov` 0.8.5 still lists `--mcdc`, but its presence
+does not make the compiler accept it. The compiler's `condition` option
+records additional Boolean operands that `--branch` misses outside branch
+conditions. It does not establish an MC/DC percentage. The calibration and
+remaining scope are recorded in the [testing roadmap](testing-roadmap.md#phase-1-establish-trustworthy-coverage-measurements).
+
+A second probe executed all arms of a three-way `match`, both exits of `?`,
+and empty/nonempty `for` loops. It reached 16/16 lines and 20/20 regions, but
+recorded zero branch outcomes, even in condition mode. Thus the branch totals
+describe instrumented outcomes, not every control-flow edge. A 0/0 subtotal
+does not prove that a module contains no decisions, and 100% instrumented
+branches does not establish exhaustive coverage of its propagated errors.
+
+Use the existing nightly shell and an isolated build directory for each mode:
+
+```sh
+nix develop .#fuzz
+HOST_TARGET=$(rustc -vV | sed -n 's/^host: //p')
+OUT=target/coverage-decisions
+mkdir -p "$OUT"
+
+CARGO_TARGET_DIR="$OUT/branch-build" cargo llvm-cov --branch \
+    --target "$HOST_TARGET" --workspace --exclude firmware --exclude rsk-wipe \
+    --json --output-path "$OUT/branch.json" -- --test-threads=1
+
+export CARGO_TARGET_DIR="$OUT/condition-build"
+export RUSTFLAGS='-Z coverage-options=condition'
+cargo llvm-cov --target "$HOST_TARGET" \
+    --workspace --exclude firmware --exclude rsk-wipe \
+    --json --output-path "$OUT/condition.json" -- --test-threads=1
+cargo llvm-cov report --branch --target "$HOST_TARGET" \
+    --html --output-dir "$OUT/condition-html"
+cargo llvm-cov report --target "$HOST_TARGET" \
+    --lcov --output-path "$OUT/condition.lcov"
+```
+
+The condition run intentionally omits `--branch`, which would select the
+weaker compiler mode. On `report`, `--branch` displays the already recorded
+outcomes without rebuilding. Retain rustc/LLVM versions, source revision and
+working diff, feature closure, raw counters and warnings alongside the reports.
+Compare configurations separately; generic instances and merged source
+locations answer different questions. Neither this report nor the stable
+CI line floor measures the embedded binary or native MC/DC.
+
+The reports and calibration controls for the first slice are local ignored
+artifacts in `target/coverage-decisions-20261004/`. The condition run passed
+3068 unique tests plus the isolated-process repeat, with five ignored cases:
+38384/39591 lines (96.95%) and 6790/7975 condition outcomes (85.14%). LargeBlobs
+reached 48/48 instrumented outcomes (100%), and CTAPHID reached 89/94 (94.68%). The remaining
+five CTAPHID outcomes are failures of checked copies bounded by the report,
+message or nonce length; they remain in the raw denominator.
+
+The ClientPIN/store slice in `target/coverage-clientpin-store-20261004/`
+initially passed 3075 unique tests plus the isolated-process repeat. An eighth
+regression reproduced a forced-PIN-change bypass on a verifier read fault and
+passed after the fix (`bcdDevice` `0x0A8C`). Its final report is retained in
+`target/coverage-clientpin-store-fix-20261004/`: 3076 unique tests plus the
+repeat, five ignored cases, 38398/39598 lines (96.97%) and 6797/7975 outcomes
+(85.23%). The condition-outcome denominator remains comparable to the first
+condition run; the fix adds seven executable lines. ClientPIN reached 215/234 outcomes (91.88%),
+and `rsk-store/src/lib.rs` reached 14/14 outcomes and 88/88 lines. These are
+instrumented file subtotals; they do not establish exhaustive control-flow
+coverage or coverage of the vendored storage backend. Three semantic controls
+survived the old package suites and failed the new refusal/state assertions.
+The [testing roadmap](testing-roadmap.md#clientpin-and-store-slice) records the
+fault scope and limitations. Fuzz coverage is unchanged by this host-test slice.
+
+JSON/LCOV export succeeded. Both HTML exports warned about 27 mismatched
+records, including the fresh condition directory. LLVM's `-dump` diagnostic
+identified four SDK functions at hash zero: `Sw::sw1`, `Sw::to_bytes`,
+`Apdu::is_basic_class` and `Apdu::is_served_over_ccid`. Their matching named
+records also have positive execution counts in JSON. This identifies the
+affected owners; it does not resolve why the additional mappings lack a
+matching profile. Keep the warning and the SDK attribution limitation open,
+and do not describe either aggregate as a fully validated core metric or
+published release evidence. The affected mappings are outside the modules
+whose tests changed in these slices.
 
 The separate nightly corpus replay completed all 52 fuzz targets. Unioning
 their LCOV line records for repository sources reached 20568/32545 lines

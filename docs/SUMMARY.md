@@ -68,6 +68,7 @@
 - [Architecture](architecture.md)
 - [Host protocol](protocol.md)
 - [Testing](testing.md)
+  - [Testing roadmap](testing-roadmap.md)
 - [Reproducing the evidence](reproducing.md)
 - [Interop matrix](interop.md)
 - [Versions](versioning.md)
