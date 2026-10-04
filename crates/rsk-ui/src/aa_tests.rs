@@ -517,3 +517,72 @@ fn shapes_use_contiguous_masks_and_solid_spans() {
     assert_eq!(target.contiguous, 5);
     assert_eq!(target.solid, 1);
 }
+
+#[test]
+fn circular_strokes_remain_symmetric_for_uncached_inner_diameters() {
+    for diameter in [12u32, 17, 39, 58] {
+        for width in [1, 3, 7] {
+            let side = diameter as usize + 4;
+            let mut target = Rec::new(side, Rgb565::BLACK);
+            circle(
+                &mut target,
+                EgPoint::new(2, 2),
+                diameter,
+                width,
+                Rgb565::WHITE,
+                Rgb565::BLACK,
+            )
+            .unwrap();
+            assert!(!target.oob);
+            assert_eq!(target.at(0, 0), Rgb565::BLACK);
+            let d = diameter as usize;
+            for y in 0..d {
+                for x in 0..d {
+                    let pixel = target.at(x + 2, y + 2);
+                    assert_eq!(pixel, target.at(d - 1 - x + 2, y + 2));
+                    assert_eq!(pixel, target.at(x + 2, d - 1 - y + 2));
+                    assert_eq!(pixel, target.at(y + 2, x + 2));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn a_complete_arc_matches_its_circle_at_every_rotation() {
+    for diameter in [24u32, 50] {
+        let side = diameter as usize + 4;
+        let top_left = EgPoint::new(2, 2);
+        let center = EgPoint::new(2 + diameter as i32 / 2, 2 + diameter as i32 / 2);
+        let mut expected = Rec::new(side, Rgb565::BLACK);
+        circle(
+            &mut expected,
+            top_left,
+            diameter,
+            3,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        for start in [-90, -89, 0, 13, 360] {
+            let mut target = Rec::new(side, Rgb565::BLACK);
+            ring_arc(
+                &mut target,
+                center,
+                diameter,
+                3,
+                start,
+                360,
+                Rgb565::RED,
+                Rgb565::WHITE,
+                Rgb565::BLACK,
+            )
+            .unwrap();
+            assert!(!target.oob);
+            assert_eq!(
+                target.pixels, expected.pixels,
+                "diameter={diameter}, start={start}"
+            );
+        }
+    }
+}
