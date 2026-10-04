@@ -724,3 +724,19 @@ fn a_user_session_cannot_reseed_kdf() {
         );
     }
 }
+
+#[test]
+fn the_kdf_layouts_end_at_the_documented_record_widths() {
+    let length: fn(&[Field]) -> usize = core::hint::black_box(layout_len);
+    assert_eq!(length(&SINGLE_SALT), 90);
+    assert_eq!(length(&THREE_SALTS), 110);
+    for (layout, width) in [(&SINGLE_SALT[..], 90), (&THREE_SALTS[..], 110)] {
+        assert_eq!(
+            layout.last().map(|&(offset, _, count)| offset + 2 + count),
+            Some(width)
+        );
+        for pair in layout.windows(2) {
+            assert_eq!(pair[0].0 + 2 + pair[0].2, pair[1].0);
+        }
+    }
+}

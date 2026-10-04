@@ -949,3 +949,46 @@ fn a_kdf_change_keeps_the_attestation_key() {
         signed_by(&parse(&der), &root(app, fs));
     });
 }
+
+#[test]
+fn certificate_errors_keep_the_signers_status_word() {
+    use rsk_ec::EcError;
+    for (error, expected) in [
+        (rsk_x509::Error::Encoding, Sw::EXEC_ERROR),
+        (rsk_x509::Error::Ec(EcError::Failed), Sw::EXEC_ERROR),
+        (rsk_x509::Error::Ec(EcError::BadPoint), Sw::WRONG_DATA),
+        (
+            rsk_x509::Error::Ec(EcError::RejectedPoint),
+            Sw::MEMORY_FAILURE,
+        ),
+        (
+            rsk_x509::Error::Ec(EcError::Unsupported),
+            Sw::FUNC_NOT_SUPPORTED,
+        ),
+    ] {
+        assert_eq!(x509_sw(error), expected);
+    }
+}
+
+#[test]
+fn yubico_attestation_extensions_share_the_registered_oid_prefix() {
+    let oid: fn(u8) -> [u8; 10] = core::hint::black_box(yubico_oid);
+    for (suffix, expected) in [
+        (1, OID_CARDHOLDER),
+        (2, OID_SOURCE),
+        (3, OID_VERSION),
+        (4, OID_FINGERPRINT),
+        (5, OID_GENERATED),
+        (6, OID_SIG_COUNTER),
+        (7, OID_SERIAL),
+        (8, OID_UIF),
+        (9, OID_FORM_FACTOR),
+    ] {
+        assert_eq!(oid(suffix), expected);
+        assert_eq!(
+            &expected[..9],
+            &[0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0xc4, 0x0a, 0x05]
+        );
+        assert_eq!(expected[9], suffix);
+    }
+}

@@ -46,3 +46,20 @@ fn ec_sw_reproduces_every_status_word() {
         "an operation the curve does not offer must stay 6A81"
     );
 }
+
+#[test]
+fn legacy_record_widths_accept_only_the_layouts_older_builds_wrote() {
+    for len in 0..=1400 {
+        assert_eq!(legacy_ec_len(len), [33, 49, 67].contains(&len));
+        assert_eq!(legacy_aes_len(len), [16, 24, 32].contains(&len));
+        let rsa_lengths = (32..=256).step_by(32).flat_map(|half| [half * 2, half * 5]);
+        assert_eq!(
+            legacy_rsa_len(len),
+            rsa_lengths.into_iter().any(|allowed| len == allowed)
+        );
+        assert_eq!(
+            crate::consts::pin_kdf_size(std::hint::black_box(len)),
+            len + 28
+        );
+    }
+}

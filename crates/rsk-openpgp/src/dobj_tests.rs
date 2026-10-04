@@ -283,3 +283,29 @@ fn short_fingerprint_slot_does_not_leak_scratch_tail() {
         "short/absent slots must be zero-padded — no sentinel/scratch leak"
     );
 }
+
+#[test]
+fn a_writer_is_empty_until_it_has_emitted_a_byte() {
+    let mut fs = fs();
+    let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+    let mut out = [0; 8];
+    let mut writer = DoWriter::new(&mut out, &mut fs, &aid);
+    assert!(writer.is_empty());
+    writer.push(0x55);
+    assert!(!writer.is_empty());
+    assert_eq!(writer.bytes(), &[0x55]);
+    let mut empty = [];
+    let mut writer = DoWriter::new(&mut empty, &mut fs, &aid);
+    writer.push(0x55);
+    assert!(writer.is_empty());
+    assert!(writer.bytes().is_empty());
+}
+
+#[test]
+fn fixed_short_lengths_refuse_a_long_form_body() {
+    let length: fn(usize) -> u8 = core::hint::black_box(short_len);
+    for n in 0..0x80 {
+        assert_eq!(usize::from(length(n)), n);
+    }
+    assert!(std::panic::catch_unwind(|| length(0x80)).is_err());
+}
