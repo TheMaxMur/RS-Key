@@ -1021,25 +1021,20 @@ def test_a_transcribed_gate_line_that_the_gate_does_not_derive(tmp_path, key, ol
 
 
 @pytest.mark.parametrize(
-    "old,new",
-    [("volatile=11/10", "volatile=11/12"),
-     ("persistent=14/5", "persistent=14/11"),
-     ("outcomes=7/6", "outcomes=7/12")],
+    "axis,donor",
+    [("volatile", "softlock"), ("persistent", "volatile"), ("outcomes", "softlock")],
 )
-def test_a_transcribed_fraction_denominator_is_that_gate_s(tmp_path, old, new):
-    """The pair rule reads `persistent=14/5` as `persistent=14` and stops at the
-    slash, so the denominator was left to the bare-integer rule — which asks only
-    whether the number stands SOMEWHERE in the derived line. Every denominator
-    here is replaced by one the SAME line carries (`11` off `api=11`, `12` off
-    `softlock=12`), so the old two rules are both satisfied and only
-    [`bundle_gate.CLAIMED_FRACTION`] can speak: measured, all three were exit 0
-    before it. 33 denominators over the 11 bundles of that day were held that way;
-    the rule reads 51 over 17 now.
-
-    The count is asserted because it is the whole point — one finding, quoting
-    the WHOLE token. A message naming `persistent=14` would be the pair rule
-    firing on something else, and this case passing over it."""
+def test_a_transcribed_fraction_denominator_is_that_gate_s(tmp_path, axis, donor):
+    """Borrow another axis's value so only the fraction rule can reject it.
+    The bare-number rule accepts the donor; exactly one finding pins the cause.
+    """
     root = tree(tmp_path)
+    derived = bundle_gate.gate_corpus()["gate_ledger"]
+    values = dict(word.split("=", 1) for word in derived.split() if "=" in word)
+    old = f"{axis}={values[axis]}"
+    borrowed = values[donor].split("/", 1)[0]
+    assert borrowed != old.rsplit("/", 1)[1]
+    new = f"{old.rsplit('/', 1)[0]}/{borrowed}"
 
     def retype(doc):
         assert old in doc["result"]["gate_ledger"], doc["result"]["gate_ledger"]

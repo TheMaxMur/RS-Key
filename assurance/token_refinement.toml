@@ -355,3 +355,10 @@ file = "crates/rsk-fido/src/reset.rs"
 function = "reset"
 disposition = "out-of-scope"
 why = "the window's only production caller, and it consults it only where the presence backend shows no prompt"
+
+[[softlock_owner]]
+file = "crates/rsk-device/src/tests.rs"
+function = "absent_board_capabilities_preserve_a_cold_unlocked_boot"
+disposition = "out-of-scope"
+test_only = true
+why = "checks the default Hooks implementation's cold boot after a lock write; compiled only under cfg(test), with no production token event"
