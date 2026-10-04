@@ -214,6 +214,17 @@ trusted-display `Label` sanitizer (attacker rpId / account text must stay
 printable ASCII, no bidi / homoglyph escape, and the confirm screen must
 render without panic), and the seed-blob format/migration state machine.
 
+The CCID target varies response capacity, including buffers shorter than the
+header, and exercises XfrBlock refusals and both APDU range parsers. Its
+framing oracle checks response length, slot status, sequence echo and untouched
+buffer tails. `fuzz/fuzz_targets/ccid_frame.rs` is shared by libFuzzer and Miri;
+the three sibling tests raise the Miri roster floor from 48 to 51.
+
+| Mutation, checked on 2026-10-04 | Shared-oracle failure |
+|---|---|
+| Remove the short-output guard | The reported response length exceeds capacity |
+| Replace the echoed sequence with zero | The response loses the request's `bSeq` |
+
 Most targets drive one applet from a fresh state. Four are **stateful**. They
 replay an attacker-chosen *sequence* against persistent state, hunting the
 multi-step seams a fresh-state target can't reach (both real bugs of this
@@ -310,8 +321,8 @@ a corpus with `RSK_POWER_CUT_STATS=1` and prints one log-bucket row per axis.
 nix develop .#fuzz -c ./scripts/fuzz-dimensions.py fuzz/corpus/power_cut
 ```
 
-It gates nothing and is not in CI — there is no coverage floor anywhere in this
-tree, and a reporter that looks like a gate is worse than none.
+It gates nothing and is not in CI — there is no fuzz-coverage floor, and a
+reporter that looks like a gate is worse than none.
 
 ## Kani proofs
 

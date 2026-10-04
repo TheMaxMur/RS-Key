@@ -37,10 +37,12 @@ use rsk_sdk::applet::RESP_BUILD;
 use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{Applet, ResBuf, Sw};
 use rsk_secret::Secret;
-use rsk_usb::ccid::process_message;
 use rsk_usb::ctaphid::{CTAP_MAX_MESSAGE, HID_RPT_SIZE, Outcome, Reassembler, TxFrames};
 
 use core::cell::RefCell;
+
+#[path = "../fuzz_targets/ccid_frame.rs"]
+mod ccid_frame;
 
 // -------------------------------------------------------------------------
 // Shared RNG and helpers
@@ -816,7 +818,6 @@ fn miri_openpgp_ec_key() {
 
 #[test]
 fn miri_ccid() {
-    const ATR: &[u8] = &[0x3b, 0xda, 0x18, 0xff, 0x81, 0xb1, 0xfe, 0x75, 0x1f, 0x03];
     for data in [
         &b""[..],
         b"\x62\x00\x00\x00\x00\x00\x00\x00\x00\x00",
@@ -827,9 +828,9 @@ fn miri_ccid() {
             0x00,
         ],
     ] {
-        let mut status = 0u8;
-        let mut out = [0u8; 2048];
-        let _ = process_message(data, ATR, &mut status, &mut out);
+        let mut record = vec![u8::try_from(data.len()).unwrap()];
+        record.extend_from_slice(data);
+        ccid_frame::replay(&record);
     }
 }
 

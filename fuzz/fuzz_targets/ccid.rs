@@ -18,27 +18,8 @@
 //! slot is no longer in — is a card that has gone missing while still answering.
 
 use libfuzzer_sys::fuzz_target;
-use rsk_usb::ccid::{HEADER, process_message};
-
-/// `bStatus` lives in response byte 7 (`put_header`).
-const B_STATUS: usize = 7;
+mod ccid_frame;
 
 fuzz_target!(|data: &[u8]| {
-    const ATR: &[u8] = &[0x3b, 0xda, 0x18, 0xff, 0x81, 0xb1, 0xfe, 0x75, 0x1f, 0x03];
-    let mut status = 0u8;
-    let mut out = [0u8; 2048];
-
-    let mut rest = data;
-    while let Some((&n, tail)) = rest.split_first() {
-        let end = (n as usize).min(tail.len());
-        let w = process_message(&tail[..end], ATR, &mut status, &mut out);
-        rest = &tail[end..];
-        if w > 0 {
-            assert!(w >= HEADER, "a {w}-byte response is not a CCID message");
-            assert_eq!(
-                out[B_STATUS], status,
-                "the reply reports a slot status the slot is not in"
-            );
-        }
-    }
+    ccid_frame::replay(data);
 });
