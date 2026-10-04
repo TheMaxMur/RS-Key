@@ -23,3 +23,12 @@ fn serial4_masks_the_chip_id_to_eight_digits() {
     );
     assert!(u32::from_be_bytes(serial4([0xFF; 8])) <= 0x03FF_FFFF);
 }
+
+#[test]
+fn the_build_version_decimal_parser_handles_every_supported_component() {
+    for value in 0..=u8::MAX {
+        let text = value.to_string();
+        assert_eq!(env_u8(std::hint::black_box(&text)), value);
+    }
+    assert_eq!(env_u8(std::hint::black_box("")), 0);
+}

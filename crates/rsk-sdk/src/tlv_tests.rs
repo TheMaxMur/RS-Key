@@ -42,3 +42,26 @@ fn format_len_roundtrip() {
     assert_eq!(format_len(0x1234, &mut buf), 3);
     assert_eq!(&buf[..3], &[0x82, 0x12, 0x34]);
 }
+
+#[test]
+fn encoded_size_matches_the_wire_on_every_length_boundary() {
+    for len in [0, 1, 127, 128, 255, 256, u16::MAX] {
+        for tag in [0x5a_u16, 0x9f1f] {
+            let mut wire = if tag > 255 {
+                tag.to_be_bytes().to_vec()
+            } else {
+                vec![tag as u8]
+            };
+            let mut header = [0; 3];
+            let size = format_len(len, &mut header);
+            assert_eq!(format_len_size(std::hint::black_box(len)), size);
+            wire.extend(&header[..size]);
+            wire.extend(vec![0x55; usize::from(len)]);
+            assert_eq!(len_tag(std::hint::black_box(tag), len), wire.len());
+            assert_eq!(
+                Tlv::new(&wire).collect::<Vec<_>>(),
+                [(tag, &wire[wire.len() - usize::from(len)..])]
+            );
+        }
+    }
+}
