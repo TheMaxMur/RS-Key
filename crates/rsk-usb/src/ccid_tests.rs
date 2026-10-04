@@ -41,6 +41,40 @@ fn a_reply_buffer_shorter_than_the_header_changes_neither_bytes_nor_slot_status(
     }
 }
 
+#[test]
+fn header_encoding_is_atomic_for_short_buffers_and_preserves_the_body() {
+    for len in 0..=HEADER + 4 {
+        let mut out = [0xA5; HEADER + 4];
+        put_header(
+            &mut out[..len],
+            CCID_DATA_BLOCK_RET,
+            0x0123_4567,
+            0x9B,
+            STATUS_FAILED,
+        );
+        if len < HEADER {
+            assert_eq!(out, [0xA5; HEADER + 4]);
+        } else {
+            assert_eq!(
+                &out[..HEADER],
+                &[
+                    CCID_DATA_BLOCK_RET,
+                    0x67,
+                    0x45,
+                    0x23,
+                    1,
+                    0,
+                    0x9B,
+                    STATUS_FAILED,
+                    0,
+                    0
+                ]
+            );
+            assert_eq!(&out[HEADER..], &[0xA5; 4]);
+        }
+    }
+}
+
 fn msg(msg_type: u8, seq: u8, payload: &[u8]) -> Vec<u8> {
     let mut v = Vec::new();
     v.push(msg_type);

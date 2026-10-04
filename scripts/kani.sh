@@ -131,16 +131,16 @@ STATEFUL="rsk-fido rsk-fs"
 # they are a consistency check against the tree, not a ratchet against history:
 # deleting a harness and pasting the new number is self-consistent, and only
 # the diff shows it.
-FLOOR_pr=65
+FLOOR_pr=66
 FLOOR_state=31
-FLOOR_all=96
+FLOOR_all=97
 # The four weekly rows partition `all`, so these sum to FLOOR_all and the guard
 # checks each against the tree the same way. A harness that moves between shards
 # has to move a number with it.
 FLOOR_heavy=5
 FLOOR_light1=34
 FLOOR_light2=29
-FLOOR_light3=28
+FLOOR_light3=29
 
 # Source-level `kani::cover!`s each tier must report on. Kani 0.67.0 has no
 # `--fail-uncoverable`, so an unsatisfiable cover prints "N of M cover properties
@@ -149,13 +149,13 @@ FLOOR_light3=28
 # is caught on its own (the row fails when the per-check listing is absent); the
 # floor is for the partial case, a cover that stopped being reported while the
 # rest still are. Counted from source by the same guard as the floors above.
-COVERS_pr=42
+COVERS_pr=45
 COVERS_state=36
-COVERS_all=68
+COVERS_all=71
 COVERS_heavy=1
 COVERS_light1=35
 COVERS_light2=12
-COVERS_light3=20
+COVERS_light3=23
 
 # `kani::cover!` properties CBMC may report unsatisfied while their source-level
 # cover is still reached. One `cover!` becomes several properties wherever the

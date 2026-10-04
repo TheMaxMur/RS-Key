@@ -108,22 +108,26 @@ def test_the_shipped_page_matches_the_shipped_runner():
 
 def test_a_floor_the_runner_raised_leaves_the_page_behind():
     """The rot itself: a harness lands, `kani.sh` moves, the prose does not."""
-    moved = runner().replace("FLOOR_all=96", "FLOOR_all=97")
-    assert "FLOOR_all=97" in moved, "fixture no longer matches the runner"
+    floor = ratchets(runner())[ANCHOR]
+    moved = runner().replace(f"{ANCHOR}={floor}", f"{ANCHOR}={floor + 1}")
+    assert moved != runner(), "fixture no longer matches the runner"
     found = problems(page(), moved)
-    assert any("`FLOOR_all` of 96" in p and "97" in p for p in found), found
+    assert any(f"`{ANCHOR}` of {floor}" in p and f"at {floor + 1}" in p for p in found), found
 
 
 def test_a_number_the_page_mistypes_is_caught():
-    stale = page().replace("`FLOOR_all` of 96", "`FLOOR_all` of 89")
-    assert "of 89" in stale, "fixture no longer matches the page"
+    floor = ratchets(runner())[ANCHOR]
+    stale = flat(page()).replace(f"`{ANCHOR}` of {floor}", f"`{ANCHOR}` of {floor - 1}")
+    assert stale != flat(page()), "fixture no longer matches the page"
     found = problems(stale, runner())
-    assert any("`FLOOR_all` of 89" in p and "96" in p for p in found), found
+    assert any(f"`{ANCHOR}` of {floor - 1}" in p and f"at {floor}" in p for p in found), found
 
 
 def test_deleting_the_clause_does_not_leave_it_green():
     """The deletion arm: the sentence removed, not re-typed."""
-    gone = flat(page()).replace("today's `FLOOR_all` of 96", "today's roster")
+    floor = ratchets(runner())[ANCHOR]
+    gone = flat(page()).replace(f"today's `{ANCHOR}` of {floor}", "today's roster")
+    assert gone != flat(page()), "fixture no longer matches the page"
     found = problems(gone, runner())
     assert any("no longer states" in p and "FLOOR_all" in p for p in found), found
 
