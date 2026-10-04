@@ -83,3 +83,21 @@ fn an_output_buffer_under_the_plaintext_reads_as_unprogrammed() {
     );
     assert_eq!(*exact.expose(), plain);
 }
+
+#[test]
+fn the_optional_slot_reader_authenticates_and_checks_the_callers_capacity() {
+    let (dev, mut fs) = fixture();
+    let mut output = Secret::<[u8; CONFIG_SIZE]>::zeroed();
+    assert_eq!(seal_read(&dev, &mut fs, FID, &mut output), None);
+    let plain = [0x55; CONFIG_SIZE];
+    let rec = SlotRecord::from_bytes(&plain).unwrap();
+    assert!(seal_put(&dev, &mut fs, &mut TestRng(7), FID, &rec));
+    assert_eq!(
+        seal_read(&dev, &mut fs, FID, &mut output),
+        Some(CONFIG_SIZE)
+    );
+    assert_eq!(output.expose(), &plain);
+    let mut too_short = Secret::<[u8; 1]>::zeroed();
+    assert_eq!(seal_read(&dev, &mut fs, FID, &mut too_short), None);
+    assert_eq!(too_short.expose(), &[0]);
+}

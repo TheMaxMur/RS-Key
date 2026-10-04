@@ -359,3 +359,24 @@ fn a_poll_before_the_first_seed_reports_the_firmware_version() {
     let expected = status_frame([major, minor, patch, 0, 0, 0, 0]);
     assert_eq!(get(&mut hid, false), expected);
 }
+
+#[test]
+fn default_hid_components_start_empty_and_announce_no_pending_touch() {
+    let mut rx = FrameRx::default();
+    let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
+    assert_eq!(rx.feed(&[0; REPORT_SIZE], &mut out), RxOutcome::None);
+    let mut tx = FrameTx::default();
+    let mut report = [0x55; REPORT_SIZE];
+    assert!(!tx.active());
+    assert!(!tx.next(&mut report));
+    assert_eq!(report, [0x55; REPORT_SIZE]);
+    let mut processing = ProcessingStatus::default();
+    assert_eq!(processing.poll(false), STATUS_PROCESSING);
+    let mut hid = OtpHid::default();
+    assert!(hid.take_request().is_none());
+    let (major, minor, patch) = VERSION;
+    assert_eq!(
+        get(&mut hid, false),
+        status_frame([major, minor, patch, 0, 0, 0, 0])
+    );
+}
