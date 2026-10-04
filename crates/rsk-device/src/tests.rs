@@ -436,3 +436,30 @@ pub fn vendor_config_write(target: u64, blob: &[u8]) -> Vec<u8> {
     body.extend_from_slice(&buf[..n]);
     body
 }
+
+#[test]
+fn absent_board_capabilities_preserve_a_cold_unlocked_boot() {
+    struct Bare;
+    impl Hooks<RamStorage> for Bare {}
+
+    let mut hooks = Bare;
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    fs.put(0x1234, b"owner").unwrap();
+    hooks.config_written(&mut fs);
+    hooks.request_reboot();
+    hooks.store_pin_lock(PinLock {
+        engaged: true,
+        mismatches: 3,
+    });
+    let boot = hooks.boot_state();
+    assert!(!boot.warm);
+    assert!(!boot.lock.engaged);
+    assert_eq!(boot.lock.mismatches, 0);
+    assert!(!hooks.local_pin_changed());
+    let mut rng = TestRng(7);
+    assert!(hooks.rsa_search(2048, &mut rng).is_none());
+    let mut out = [0; 8];
+    assert_eq!(fs.read(0x1234, &mut out), Some(5));
+    assert_eq!(&out[..5], b"owner");
+}

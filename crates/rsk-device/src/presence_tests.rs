@@ -477,3 +477,13 @@ fn a_scope_change_mid_wait_moves_the_advertisement_and_the_cancel_right() {
     assert!(board.saw_pending[SCOPE_FIDO as usize]);
     assert!(board.saw_pending[SCOPE_CCID as usize]);
 }
+
+#[test]
+fn a_default_arbiter_has_no_pending_ceremony_or_cancel() {
+    let arb = Arbiter::default();
+    for scope in [SCOPE_NONE, SCOPE_FIDO, SCOPE_CCID, SCOPE_OTP] {
+        assert!(!arb.pending_for(scope));
+    }
+    assert!(!arb.cancel_requested());
+    assert_eq!(arb.timeout_ms(), 30_000);
+}

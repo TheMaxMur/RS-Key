@@ -2564,3 +2564,12 @@ fn with_always_uv_on_and_no_pad_u2f_is_off_on_both_transports() {
 /// file, it needs this module's fixtures.
 #[path = "config_lock_tests.rs"]
 mod config_lock;
+
+#[test]
+fn the_boot_keyboard_status_record_starts_unprogrammed() {
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let (major, minor, patch) = rsk_sdk::FIRMWARE_VERSION;
+    assert_eq!(ccid.otp_status_record(), [major, minor, patch, 1, 0, 0, 0]);
+    assert_eq!(ccid.otp_status_record(), [major, minor, patch, 1, 0, 0, 0]);
+}
