@@ -19,6 +19,9 @@ secure_boot_*.pem
 *.pem
 /tools/tui/target/
 /tools/emu/target/
+# The asm differential oracle builds beside its manifest (tools/emu pattern:
+# detached workspace, own target dir).
+/asm/oracle/target/
 # `rsk-emu --store <path>` writes a flash image, and that image holds the device
 # seed in the clear — there is no OTP root under an emulator to seal it to. The
 # default path is the working directory, so this is the difference between a

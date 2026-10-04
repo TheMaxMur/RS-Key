@@ -903,6 +903,9 @@ cargo build --release -p firmware --features bench,no-touch
 rsk bench ecdh                 # variable-base P-256 ECDH (the layout-sensitive one)
 rsk bench sign                 # P-256 comb sign (the getAssertion hot path)
 rsk bench ratchet              # the HKDF-SHA512 key-derivation ratchet
+rsk bench mldsa65_keygen       # ML-DSA-65 keygen from seed
+rsk bench mldsa65_sign         # ML-DSA-65 sign (key expansion included)
+rsk bench mldsa65_verify       # ML-DSA-65 sign+verify (verify ≈ this − sign)
 ```
 
 To A/B two builds without the cross-session trap that faked a "-33%" during the

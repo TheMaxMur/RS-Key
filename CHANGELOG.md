@@ -38,6 +38,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- **`rsk bench` can time ML-DSA-65 now.** `mldsa65_keygen`, `mldsa65_sign` and
+  `mldsa65_verify` join the never-shipped `bench` selectors, driving the real
+  `rsk-mldsa` keygen, signing and verification paths with fixed public inputs —
+  the first on-device ML-DSA timing numbers this tree has had, and the baseline
+  any future lattice-kernel work gets measured against. The default image is
+  unchanged (the selectors live behind the `bench` feature); the counter moves
+  because the row counts lines a build can reach. `rsk` 0.3.38.
+  **bcdDevice → 0x09DB.**
+
 ## [0.4.11] - 2026-09-08
 
 The catch-up release, and the one where the instruments were audited harder than

@@ -31,14 +31,17 @@ from . import ccid
 INS_BENCH = 0x14
 SUMMARY_LEN = 20
 
-# Selector name -> (P1, human label). 0-2 mirror rsk_fido::bench::run; 3 is served
-# in firmware/src/vendor.rs, since OTP is board hardware that host-testable crate
-# cannot reach.
+# Selector name -> (P1, human label). 0-2 and 4-6 mirror rsk_fido::bench::run; 3
+# is served in firmware/src/vendor.rs, since OTP is board hardware that
+# host-testable crate cannot reach.
 PRIMITIVES = {
     "ecdh": (0, "variable-base P-256 ECDH (clientPIN key agreement)"),
     "sign": (1, "P-256 comb sign (getAssertion hot path)"),
     "ratchet": (2, "HKDF-SHA512 key-derivation ratchet"),
     "otp": (3, "OTP key-page read — 16 raw + 16 ECC rows"),
+    "mldsa65_keygen": (4, "ML-DSA-65 keygen from seed (makeCredential path)"),
+    "mldsa65_sign": (5, "ML-DSA-65 sign incl. key expansion (getAssertion path)"),
+    "mldsa65_verify": (6, "ML-DSA-65 sign+verify round trip (verify ≈ this − sign)"),
 }
 
 

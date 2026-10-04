@@ -41,7 +41,36 @@ fn ratchet_selector_matches_the_kdf() {
 }
 
 #[test]
+fn mldsa65_keygen_selector_expands_the_real_key() {
+    let pk = rsk_crypto::MlDsa65::from_seed(&FIXED_SEED).public_key();
+    assert_eq!(pk.len(), rsk_crypto::MLDSA65_PK_LEN);
+    assert_eq!(run(4), checksum(&pk));
+}
+
+#[test]
+fn mldsa65_sign_selector_produces_a_signature() {
+    let kp = rsk_crypto::MlDsa65::from_seed(&FIXED_SEED);
+    let mut out = [0u8; rsk_crypto::MLDSA65_SIG_LEN];
+    let n = kp.sign(&FIXED_MSG, &FIXED_RND, &mut out).unwrap();
+    assert_eq!(n, out.len());
+    assert_eq!(run(5), checksum(&out[..n]));
+}
+
+#[test]
+fn mldsa65_verify_selector_round_trips() {
+    let kp = rsk_crypto::MlDsa65::from_seed(&FIXED_SEED);
+    let pk = kp.public_key();
+    let mut sig = [0u8; rsk_crypto::MLDSA65_SIG_LEN];
+    let n = kp.sign(&FIXED_MSG, &FIXED_RND, &mut sig).unwrap();
+    assert!(rsk_crypto::mldsa65_verify(&pk, &FIXED_MSG, &sig));
+    // run(6) folds the verify verdict in: a refusal flips the checksum.
+    assert_eq!(run(6), checksum(&sig[..n]) ^ 1);
+}
+
+#[test]
 fn unknown_selectors_are_zero() {
+    // 3 is the firmware-served OTP selector; `run` itself leaves it at 0.
     assert_eq!(run(3), 0);
+    assert_eq!(run(SEL_LAST + 1), 0);
     assert_eq!(run(255), 0);
 }
