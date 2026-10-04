@@ -4,6 +4,149 @@
 use super::*;
 
 #[test]
+fn public_enumeration_and_bulk_codes_skip_malformed_stored_credentials() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let dev = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    assert_eq!(
+        put(
+            &mut app,
+            &mut fs,
+            &put_data(b"good", 0x21, 6, SECRET_SHA1, false, None)
+        ),
+        Sw::OK
+    );
+    for (offset, body) in [
+        tlv(TAG_NAME, b"no-key"),
+        tlv(TAG_KEY, &[0x21, 6]),
+        [tlv(TAG_NAME, b"empty-key"), tlv(TAG_KEY, &[])].concat(),
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert!(seal::seal_put(
+            &dev,
+            &mut fs,
+            &mut CountRng(3),
+            KeyFid::new(EF_OATH_CRED + 1 + offset as u16),
+            body
+        ));
+    }
+    fs.put_key(
+        KeyFid::new(EF_OATH_CRED + 4),
+        rsk_fs::Sealed::wrap(b"broken seal"),
+    )
+    .unwrap();
+    let mut names = Vec::new();
+    assert_eq!(
+        for_each_cred(&dev, &mut fs, |cred| names.push(cred.name.to_vec())),
+        1
+    );
+    assert_eq!(names, [b"good".to_vec()]);
+    let mut listed = vec![TAG_NAME_LIST, 5, 0x21];
+    listed.extend(b"good");
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[])),
+        (Sw::OK, listed)
+    );
+    let mut expected = tlv(TAG_NAME, b"good");
+    expected.extend([TAG_RESPONSE + 1, 5, 6]);
+    expected.extend(287082u32.to_be_bytes());
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_CALC_ALL, 0, 1, &tlv(TAG_CHALLENGE, &1u64.to_be_bytes()))
+        ),
+        (Sw::OK, expected)
+    );
+    let mut calculate = tlv(TAG_NAME, b"no-key");
+    calculate.extend(tlv(TAG_CHALLENGE, &[0; 8]));
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &calculate)),
+        (Sw::WRONG_DATA, vec![])
+    );
+    let mut calculate = tlv(TAG_NAME, b"empty-key");
+    calculate.extend(tlv(TAG_CHALLENGE, &[0; 8]));
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 1, &calculate)),
+        (Sw::WRONG_DATA, vec![])
+    );
+}
+
+#[test]
+fn a_page_whose_current_credential_no_longer_opens_refuses_its_tail() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    assert_eq!(
+        put(
+            &mut app,
+            &mut fs,
+            &put_data(b"credential", 0x21, 6, SECRET_SHA1, false, None)
+        ),
+        Sw::OK
+    );
+    let raw = [0, INS_LIST, 0, 0, 4];
+    let request = Apdu::parse(&raw).unwrap();
+    let mut bytes = [0; 4];
+    let mut response = ResBuf::new(&mut bytes);
+    let sw = Applet::process(&mut app, &request, &mut fs, &mut response);
+    assert_eq!(sw.sw1(), 0x61);
+    assert_eq!(response.len(), 4);
+    fs.put_key(
+        KeyFid::new(EF_OATH_CRED),
+        rsk_fs::Sealed::wrap(b"broken seal"),
+    )
+    .unwrap();
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_SEND_REMAINING, 0, 0, &[])),
+        (Sw::MEMORY_FAILURE, vec![])
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_SEND_REMAINING, 0, 0, &[])),
+        (Sw::INS_NOT_SUPPORTED, vec![])
+    );
+}
+
+#[test]
+fn bulk_calculate_cannot_emit_a_code_when_its_high_water_mark_write_is_refused() {
+    let (mut fs, medium) = new_cut_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let mut credential = put_data(b"monotonic", 0x21, 6, SECRET_SHA1, false, None);
+    credential.extend([TAG_PROPERTY, PROP_INCREASING]);
+    assert_eq!(put(&mut app, &mut fs, &credential), Sw::OK);
+    let before = medium.value(EF_OATH_CRED);
+    medium.arm(0);
+    let body = tlv(TAG_CHALLENGE, &1u64.to_be_bytes());
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 1, &body)),
+        (Sw::MEMORY_FAILURE, vec![])
+    );
+    assert_eq!(medium.value(EF_OATH_CRED), before);
+    medium.arm(u32::MAX);
+    let (sw, response) = run(&mut app, &mut fs, &apdu(INS_CALC_ALL, 0, 1, &body));
+    assert_eq!(sw, Sw::OK);
+    let mut expected = vec![6];
+    expected.extend(287082u32.to_be_bytes());
+    assert_eq!(
+        find_tag(&response, (TAG_RESPONSE + 1).into()),
+        Some(expected.as_slice())
+    );
+    assert_ne!(medium.value(EF_OATH_CRED), before);
+}
+
+#[test]
 fn both_tlv_walkers_decode_two_octet_lengths_and_refuse_truncation() {
     let mut bytes = vec![TAG_PWS_METADATA, 0x82, 1, 0];
     bytes.extend(0..=u8::MAX);
