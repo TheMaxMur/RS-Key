@@ -95,9 +95,10 @@ its line-coverage floor remains 80%. Test helpers and the verification-only
 `transport_assurance.rs` are absent from the USB subtotal. These are line
 measurements, not branch coverage.
 
-A later default-profile run on the same date reached 38238/39591 lines
-(96.58%) and 3239/3272 functions (98.99%), with the same workspace selection
-and exclusions: 3006 tests passed, with five existing ignored cases. The added
+A later default-profile run on the same date reached 38363/39591 lines
+(96.90%) and 3241/3272 functions (99.05%), with the same workspace selection
+and exclusions: 3052 unique tests passed, plus one isolated-process repeat,
+with five existing ignored cases. The added
 cases exercise backup and recovery exits, local PIN/PUK flows, passkey
 pagination and deletion, applet browsing and keygen, rendering errors, corrupt
 records, storage failures and protocol output limits. AES, the SHA-512 core,
@@ -113,24 +114,28 @@ instances of some generic code whose merged source-line counters are positive.
 No exclusions or floors were changed to remove these rows.
 
 The separate nightly corpus replay completed all 52 fuzz targets. Unioning
-their LCOV line records for repository sources reached 20283/32545 lines
-(62.32%), up from 16828/32545 (51.71%). This scope includes vendored sources
+their LCOV line records for repository sources reached 20345/32545 lines
+(62.51%), up from 16828/32545 (51.71%). This scope includes vendored sources
 and omits fuzz harnesses, external dependencies and standard-library sources;
 it is neither the host-unit scope nor an average of per-target percentages.
-The timed campaigns executed 98253004 inputs without a crash. The expanded
+The timed campaigns executed 98773335 inputs without a crash. The expanded
 display-label target renders 32 view variants, checks pixel bounds and panel
 error propagation, and compares retained replay and DMA bytes with direct
-rendering. Four compiled mutations were caught:
+rendering. The rescue target also replays fused and faulted boots, including
+failed fuse read-back and denied presence. Five compiled mutations were caught:
 removing RSA sieve cleanup left candidate bytes, and either weakening of the
 largeBlob write preconditions admitted an unauthorised overwrite. Dropping
 Scene replay failed the pixel comparison, and the real `fuzz-all.sh` CI runner
-exited 1 on its display shard; the restored baseline passed.
+exited 1 on its display shard; the restored baseline passed. Omitting the
+rescue LOCK58 read-back check reported success over an unchanged fake fuse
+row: the rescue CI shard exited 1, and the restored baseline exited 0.
 
 | Mutation | Observed failure |
 |---|---|
 | Remove RSA sieve scrubbing | Candidate bytes remain after cleanup |
 | Weaken either largeBlob write conjunction | A write without every required permission overwrites the buffer |
 | Omit retained Scene replay | Direct and retained pixels differ; the CI fuzz row reports `display_label` as crashing |
+| Omit rescue fuse read-back | LOCK58 reports success without the complete latch; the CI fuzz row reports `rescue_apdu` as crashing |
 
 Each mutation below compiled and failed its transport test on 2026-10-04.
 The unmodified USB suite passed all 88 tests.
