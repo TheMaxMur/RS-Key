@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+use crate::tests::pin_entry;
 use crate::tests::{
     Env, PIN, Pad, WORKER_RESET_WAIT_MS, WORKER_TICK_MS, backdate, backdate_local, center, nowhere,
     settings_row,
@@ -442,4 +443,55 @@ fn a_contact_resting_on_the_panel_cannot_hold_the_lock_off() {
         (true, false, true),
         "a resting contact must not count as a tap again, or the auto-lock never arms"
     );
+}
+
+#[test]
+fn an_unlock_tap_repaints_home_but_power_cancellation_keeps_the_panel_dark() {
+    let env = Env::new();
+    env.set_device_pin(PIN);
+    let mut ui = env.ui(Pad::taps(&pin_entry(PIN)));
+    ui.hooks.presence_ms = 3000;
+    env.local(&mut ui).tap_locked();
+    assert!(!ui.locked && !ui.asleep);
+    assert_eq!(ui.shown, Some(home(StatusKind::Idle, true, 0)));
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.press_wake(1);
+    env.local(&mut ui).tap_locked();
+    assert!(ui.locked && ui.asleep);
+    assert_ne!(ui.shown, Some(home(StatusKind::Idle, true, 0)));
+}
+
+#[test]
+fn onboarding_taps_repaint_only_after_a_resolved_choice() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::taps(&[center(rsk_ui::PIN_CANCEL_RECT)]));
+    env.local(&mut ui).tap_onboarding(nowhere());
+    assert_eq!(ui.shown, Some(Screen::Onboard));
+    env.local(&mut ui)
+        .tap_onboarding(center(rsk_ui::ONBOARD_SET_RECT));
+    assert!(ui.onboarding);
+    assert_eq!(ui.shown, Some(Screen::Onboard));
+    env.local(&mut ui)
+        .tap_onboarding(center(rsk_ui::ONBOARD_SKIP_RECT));
+    assert!(!ui.onboarding);
+    assert_eq!(ui.shown, Some(home(StatusKind::Idle, false, 0)));
+    assert!(!ui.panel.oob);
+}
+
+#[test]
+fn direct_tab_switches_return_to_a_refreshed_home() {
+    let env = Env::new();
+    let mut samples = vec![None, None];
+    for tab in [NavTab::Passkeys, NavTab::Settings, NavTab::Home] {
+        samples.extend([Some(nav_tab(tab)), None, None, None, None]);
+    }
+    let mut ui = env.ui(Pad::script(&samples));
+    ui.onboarding = false;
+    let before = ui.panel.writes;
+    let started = Instant::now();
+    env.local(&mut ui).tap_nav(nav_tab(NavTab::Apps));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(ui.shown, Some(home(StatusKind::Idle, false, 0)));
+    assert!(ui.panel.writes > before);
+    assert!(!ui.panel.oob);
 }

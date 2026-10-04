@@ -397,3 +397,7 @@ where
         self.end_modal();
     }
 }
+
+#[cfg(test)]
+#[path = "backup_tests.rs"]
+mod tests;

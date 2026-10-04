@@ -1231,3 +1231,11 @@ where
 #[cfg(test)]
 #[path = "pin_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pin_piv_tests.rs"]
+mod piv_tests;
+
+#[cfg(test)]
+#[path = "pin_flow_tests.rs"]
+mod flow_tests;

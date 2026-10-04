@@ -16,6 +16,7 @@
 //! reading that source, the way `rsk_ui`'s ceremony-title census reads the tree.
 
 use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::{Mutex, MutexGuard};
 use std::vec;
 use std::vec::Vec;
@@ -65,6 +66,16 @@ impl Panel {
             damage_presentations: 0,
             damage_rects: Vec::new(),
         }
+    }
+
+    pub fn area_pixels(&self, rect: rsk_ui::Rect) -> Vec<Rgb565> {
+        (rect.y..rect.y + rect.h)
+            .flat_map(|y| {
+                (rect.x..rect.x + rect.w).map(move |x| {
+                    self.px[usize::from(y) * usize::from(rsk_ui::PANEL_W) + usize::from(x)]
+                })
+            })
+            .collect()
     }
 
     /// FNV-1a per key rect, over that rect's pixels alone. Every key is the same size
@@ -283,6 +294,13 @@ impl TouchPad for DeadlinePad {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PanelSignal {
+    None,
+    Wake,
+    HostRequest,
+}
+
 /// The board verbs and firmware globals, as recorded state a test can set before a
 /// flow and read after it.
 pub struct Board {
@@ -314,6 +332,9 @@ pub struct Board {
     pub pin_failed: usize,
     /// How many times a returned panel flow asked for the dead stack to be swept.
     pub sweeps: usize,
+    pub rsa_key: Option<Box<rsk_openpgp::keys::RsaKey>>,
+    pub rsa_requests: Vec<usize>,
+    pub signal: Rc<core::cell::Cell<PanelSignal>>,
 }
 
 impl Board {
@@ -336,6 +357,9 @@ impl Board {
             pin_changed: 0,
             pin_failed: 0,
             sweeps: 0,
+            rsa_key: None,
+            rsa_requests: Vec::new(),
+            signal: Rc::new(core::cell::Cell::new(PanelSignal::None)),
         }
     }
 
@@ -350,6 +374,10 @@ impl Hooks for Board {
         self.backlight = duty;
     }
     fn wake_pressed(&self) -> bool {
+        if self.signal.get() == PanelSignal::Wake {
+            self.signal.set(PanelSignal::None);
+            return true;
+        }
         let left = self.wake_polls.get();
         self.wake_polls.set(left.saturating_sub(1));
         left > 0
@@ -364,10 +392,10 @@ impl Hooks for Board {
         self.attach_ms
     }
     fn host_request_pending_after(&self, _since: Instant) -> bool {
-        self.host_pending
+        self.host_request_pending()
     }
     fn host_request_pending(&self) -> bool {
-        self.host_pending
+        self.host_pending || self.signal.get() == PanelSignal::HostRequest
     }
     fn request_reboot(&mut self, bootsel: bool) {
         self.reboot = Some(bootsel);
@@ -409,6 +437,20 @@ impl Hooks for Board {
     }
     fn set_presence_timeout_ms(&mut self, ms: u32) {
         self.presence_ms = ms;
+    }
+    fn rsa_search_progress(
+        &mut self,
+        nbits: usize,
+        _rng: &mut dyn rsk_sdk::Rng,
+        on_tick: &mut dyn FnMut(),
+    ) -> Option<Box<rsk_openpgp::keys::RsaKey>> {
+        self.rsa_requests.push(nbits);
+        on_tick();
+        if self.rsa_key.is_some() {
+            block_for(Duration::from_millis(status::KEYGEN_SPIN_MS + 1));
+            on_tick();
+        }
+        self.rsa_key.take()
     }
 }
 
@@ -800,6 +842,39 @@ fn an_off_ramp_colour_lands_as_ink_rather_than_refusing_the_frame() {
 fn the_band_target_has_no_way_to_fail() {
     fn infallible<D: DrawTarget<Error = core::convert::Infallible>>() {}
     infallible::<BandCoverage<'static>>();
+}
+
+#[test]
+fn a_board_without_optional_hooks_reports_no_hardware_or_side_effects() {
+    struct NoBoard;
+    impl Hooks for NoBoard {}
+    let env = Env::new();
+    let mut board = NoBoard;
+    board.set_backlight(100);
+    board.set_led_status(rsk_led::STATUS_TOUCH);
+    board.request_reboot(true);
+    board.note_local_pin_changed();
+    board.note_local_pin_failed();
+    board.set_up_pending(true);
+    board.set_cancel_requested(true);
+    board.set_presence_timeout_ms(100);
+    board.sweep_dead_stack();
+    assert!(!board.wake_pressed());
+    assert_eq!(board.led_status(), rsk_led::STATUS_IDLE);
+    assert_eq!(board.attach_elapsed_ms(), 0);
+    assert!(!board.host_request_pending_after(Instant::now()));
+    assert!(!board.host_request_pending());
+    assert!(!board.reboot_pending());
+    assert!(!board.secure_boot_enabled());
+    assert!(!board.cancel_requested());
+    assert_eq!(board.presence_timeout_ms(), 30000);
+    let mut ticks = 0;
+    assert!(
+        board
+            .rsa_search_progress(2048, &mut *env.rng.borrow_mut(), &mut || ticks += 1)
+            .is_none()
+    );
+    assert_eq!(ticks, 0);
 }
 
 #[test]

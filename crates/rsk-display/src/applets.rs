@@ -1273,3 +1273,19 @@ where
 #[cfg(test)]
 #[path = "applets_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "applets_browse_tests.rs"]
+mod browse_tests;
+
+#[cfg(test)]
+#[path = "applets_keygen_tests.rs"]
+mod keygen_tests;
+
+#[cfg(test)]
+#[path = "applets_passkeys_tests.rs"]
+mod passkeys_tests;
+
+#[cfg(test)]
+#[path = "applets_audit_tests.rs"]
+mod audit_tests;
