@@ -1830,6 +1830,9 @@ fn a_meta_record_longer_than_the_blob_stops_both_walks() {
     );
 }
 
+#[path = "fs_decisions_tests.rs"]
+mod decisions;
+
 /// A backend whose enumeration yields every key TWICE — what a ring holding two
 /// live copies of one fid looks like from `for_each_key`.
 struct DoubleWalk(RamStorage);
