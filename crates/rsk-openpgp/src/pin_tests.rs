@@ -6,6 +6,9 @@ use crate::init::scan_files;
 use rsk_fs::storage::faults::{Cut, CutMedium, RemoveStuck};
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "pin_recovery_bounds_tests.rs"]
+mod pin_recovery_bounds_tests;
+
 struct CountRng(u8);
 impl Rng for CountRng {
     fn fill(&mut self, buf: &mut [u8]) {
