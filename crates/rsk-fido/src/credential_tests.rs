@@ -1257,3 +1257,35 @@ fn a_store_change_draws_a_random_tag_not_the_next_number() {
         "the tag must not count the changes"
     );
 }
+
+#[test]
+fn provisioning_otp_changes_only_the_write_only_silent_tag() {
+    let otp = [0x77; 32];
+    let fused = Device {
+        otp_key: Some(&otp),
+        ..dev()
+    };
+    let rp_hash = sha256(b"example.com");
+    let mut before = [0; 512];
+    let mut after = [0; 512];
+    let before_len =
+        credential_create(&SEED, &dev(), &input(), &rp_hash, &IV, &mut before).unwrap();
+    let after_len = credential_create(&SEED, &fused, &input(), &rp_hash, &IV, &mut after).unwrap();
+    assert_eq!(before_len, after_len);
+    let prefix_len = after_len - SILENT_TAG_LEN;
+    assert_eq!(&before[..prefix_len], &after[..prefix_len]);
+    assert_ne!(
+        &before[prefix_len..before_len],
+        &after[prefix_len..after_len]
+    );
+    let key = sha256(&[otp.as_slice(), &rp_hash].concat());
+    let expected = hmac_sha256(&key, &after[..prefix_len]);
+    assert_eq!(&after[prefix_len..after_len], &expected[..SILENT_TAG_LEN]);
+    for boxed in [&before[..before_len], &after[..after_len]] {
+        let mut scratch = [0; 512];
+        let loaded = credential_load(&SEED, boxed, &rp_hash, &mut scratch).unwrap();
+        assert_eq!(loaded.rp_id, input().rp_id);
+        assert_eq!(loaded.user_id, input().user_id);
+        assert_eq!(loaded.alg, input().alg);
+    }
+}
