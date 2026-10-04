@@ -155,8 +155,8 @@ capacity boundaries, short outputs and each error-return path. Add tests to
 the existing sibling test files; do not refactor production code just to make
 its private guard easier to call.
 
-Review the current 1207 uncovered lines and 28 functions individually. Classify
-real missing cases, invariant-unreachable exits, compile-time code and test
+Review uncovered lines and unexecuted functions individually in each declared
+profile. Classify real missing cases, invariant-unreachable exits, compile-time code and test
 helpers. Use existing tests or bounded proofs to support an unreachable claim.
 Do not turn every residual into an exclusion.
 
@@ -461,3 +461,50 @@ outcomes; that diagnostic does not replace the raw counter. MC/DC remains
 unsupported and the 27 SDK mapping warnings persist. Raw reports, controls
 and proof logs are in `target/coverage-decisions-next-20261004/`. No firmware
 behavior, coverage exclusions or coverage floors changed; fuzz coverage is unchanged.
+
+## Credential codec and combined recovery slice
+
+Eleven more tests cover every short record/output/scratch length at the selected
+credential boundaries, invalid resident IDs and oversized cached points, serial
+source bounds, truncated trailers and authenticated malformed CBOR or UTF-8.
+Credential-management refusals preserve the authorized enumeration, token and
+store; oversized authenticated subparameters cannot update or delete credentials,
+and short or zero-count records do not enter the returned lists. Positive controls
+still decode, enumerate and authenticate valid records.
+
+Two cases sweep command-level mutation faults in both an operation and its first
+recovery attempt, then remount and recover on a healthy medium. Deleting either
+one of two credentials for an RP or the last credential for another RP preserves
+every unrelated raw credential byte and reconciles RP counts. Legacy RP sealing
+preserves both domains and hashes, re-arms the scrub and becomes idempotent. The
+latched `Snap` faults are not byte-level NOR power cuts or proof that obsolete
+cleartext has already been erased.
+
+Two compiled semantic controls survived the previous default FIDO suite. Removing
+the mandatory first-map-key guard failed the new exact error assertion; removing
+the cached-point bound accepted a point one byte too long. Production sources
+were restored byte for byte. These controls do not establish that other build
+profiles missed the defects.
+
+A Kani harness checks five-byte, definite two-field maps with symbolic first key
+and subcommand in `0..24`, followed by either a duplicate subcommand key or a
+protocol key. It proves the corresponding refusal or parsed subcommand, with
+unwinding assertions enabled at bound 3. Two helpers assert their unreachability
+for this alphabet rather than replacing reachable parser behavior. The harness
+passed with zero of 337 failed checks and all three source cover scenarios
+reached (three of four generated properties satisfied). Removing the first-key
+guard failed the error assertion and both unreachability assertions. Earlier
+attempts timed out and are retained as diagnostics. This proves the declared map
+shapes, not arbitrary CBOR, authorization or independent-condition coverage.
+
+The same default-host condition scope passed 3095 unique tests plus one child
+repeat, with five ignored cases. A fresh build recorded 38411/39598 lines
+(97.00%) and 6819/7975 outcomes (85.50%): twelve more lines and fourteen more
+outcomes. Credential codecs increased from 141/180 to 150/180 outcomes (83.33%),
+and credential management from 121/147 to 126/147 (85.71%). Reusing the previous
+build directory produced 113 mapping warnings; an empty build directory restored
+the known 27 SDK warnings and reproduced the totals. The underlying SDK mapping
+limitation and unsupported MC/DC remain open. Raw reports, controls and proof logs
+are in `target/coverage-credentials-20261004/`. Firmware behavior, exclusions and
+coverage floors are unchanged; existing Kani roster floors now include the new
+harness and its covers. Fuzz coverage is unchanged.
