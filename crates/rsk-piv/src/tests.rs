@@ -11061,3 +11061,6 @@ fn set_retries_requires_mgmt_not_just_pin() {
 
 #[path = "keygen_bounds_tests.rs"]
 mod keygen_bounds_tests;
+
+#[path = "command_bounds_tests.rs"]
+mod command_bounds_tests;

@@ -192,3 +192,71 @@ fn a_short_der_signature_buffer_maps_the_builder_error() {
         Err(Sw::EXEC_ERROR)
     );
 }
+
+#[test]
+fn rsa_finish_reports_each_refused_write_and_response_limit() {
+    let key = rsk_rsa::generate_rsa(&mut RsaRng(&mut TestRng(99)), RSA_FIXTURE_BYTES * 8).unwrap();
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut completed = 0;
+    let mut refused = 0;
+    for budget in 0..=4 {
+        let (mut fs, medium) = new_cut_fs();
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+        medium.arm(budget);
+        let mut out = [0; MAX_RSA_PUBDO];
+        let (n, sw) = app.rsa_generate_finish(
+            &mut fs,
+            &mut TestRng(7),
+            SLOT_AUTHENTICATION,
+            [PINPOLICY_ONCE, TOUCHPOLICY_NEVER],
+            &key,
+            &mut out,
+        );
+        match sw {
+            Sw::MEMORY_FAILURE => {
+                refused += 1;
+                assert_eq!(n, 0);
+            }
+            Sw::OK => {
+                completed += 1;
+                assert_eq!(&out[..2], &[0x7f, 0x49]);
+                let mut modulus = [0; MAX_RSA_BYTES];
+                assert_eq!(
+                    seal::load_rsa_modulus(
+                        &device(),
+                        &mut fs,
+                        key_fid(SLOT_AUTHENTICATION),
+                        &mut modulus
+                    ),
+                    Ok(RSA_FIXTURE_BYTES)
+                );
+                assert_eq!(&modulus[..RSA_FIXTURE_BYTES], key.n_be());
+            }
+            other => panic!("budget {budget}: {other:?}"),
+        }
+    }
+    assert!(completed > 0 && refused > 0);
+    let mut fs = new_fs();
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    assert_eq!(
+        app.rsa_generate_finish(
+            &mut fs,
+            &mut TestRng(7),
+            SLOT_AUTHENTICATION,
+            [PINPOLICY_ONCE, TOUCHPOLICY_NEVER],
+            &key,
+            &mut []
+        ),
+        (0, Sw::WRONG_LENGTH)
+    );
+    assert!(
+        seal::load_rsa_modulus(
+            &device(),
+            &mut fs,
+            key_fid(SLOT_AUTHENTICATION),
+            &mut [0; MAX_RSA_BYTES]
+        )
+        .is_ok()
+    );
+}
