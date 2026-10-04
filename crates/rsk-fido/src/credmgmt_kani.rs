@@ -491,3 +491,6 @@ fn no_authorization_bypass_creds_begin_at_call_site() {
     kani::cover!(begin.owner == Some(W_C2));
     kani::cover!(begin.authorized && scoped); // a scoped token serving its own rp
 }
+
+#[path = "credmgmt_parse_kani.rs"]
+mod parse_proofs;

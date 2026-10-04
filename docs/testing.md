@@ -201,8 +201,19 @@ controls and the bounded CCID header proof. Fs retains its raw 82/88 outcomes;
 merging generic branch coordinates does not replace that summary. The local
 reports are in `target/coverage-decisions-next-20261004/`.
 
+Eleven credential-codec and management cases passed 3095 unique tests plus the
+child-process repeat, with five ignored cases. A fresh condition build recorded
+38411/39598 lines (97.00%) and 6819/7975 outcomes (85.50%). Credential codecs
+reached 150/180 outcomes and credential management 126/147. The
+[credential slice](testing-roadmap.md#credential-codec-and-combined-recovery-slice)
+records authenticated malformed bodies, unchanged records across interrupted
+recovery, two semantic controls and a bounded request-ordering proof. Its raw
+reports are in `target/coverage-credentials-20261004/`; fuzz coverage is unchanged.
+
 JSON/LCOV export succeeded. Both HTML exports warned about 27 mismatched
-records, including the fresh condition directory. LLVM's `-dump` diagnostic
+records, including the fresh condition directory. Reusing the previous build
+directory for the credential slice reported 113 mismatches; rebuilding in an
+empty directory restored 27 and reproduced the same coverage totals. LLVM's `-dump` diagnostic
 identified four SDK functions at hash zero: `Sw::sw1`, `Sw::to_bytes`,
 `Apdu::is_basic_class` and `Apdu::is_served_over_ccid`. Their matching named
 records also have positive execution counts in JSON. This identifies the
@@ -645,9 +656,9 @@ command with it. "Peak" is the tier's `maximum resident set size` under
 | Tier | Crates | Harnesses | Covers | Solve | Wall | Peak | Slowest harness |
 |---|---|---|---|---|---|---|---|
 | `pr` | 13 | 66 | 45 | 229 s | 251 s | 2.8 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 39 s |
-| `state` | 2 | 31 | 36 | 1341 s | 1365 s | 15.3 GiB | `rsk-fido::…_at_call_site`, 6 m 06 s |
-| `all` | 17 | 97 | 71 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
-| `light1` | 4 | 34 | 35 | 528 s | 538 s | 9.3 GiB | `rsk-fido::…_at_call_site`, 5 m 35 s |
+| `state` | 2 | 32 | 39 | 1341 s | 1365 s | 15.3 GiB | `rsk-fido::…_at_call_site`, 6 m 06 s |
+| `all` | 17 | 98 | 74 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
+| `light1` | 4 | 35 | 38 | 528 s | 538 s | 9.3 GiB | `rsk-fido::…_at_call_site`, 5 m 35 s |
 | `light2` | 5 | 29 | 12 | 1289 s | 1300 s | 8.9 GiB | `rsk-rsa::sieve_step_keeps_residues`, 17 m 38 s |
 | `light3` | 7 | 29 | 23 | 162 s | 176 s | 2.4 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 36 s |
 | `heavy` | 1 | 5 | 1 | 1785 s | 1788 s | 19.9 GiB | `rsk-phy::serialize_parse_roundtrip`, 18 m 35 s |
@@ -679,12 +690,12 @@ shards ran separately in the same session and checked the same harness names as
 `all` did, compared name by name out of the four logs against `all`'s own
 listing, for 3763 s of solving against `all`'s 3735 s. That count was the `all`
 roster **of the 2026-08-26 tree: 89 names**. The same tier is **today's
-`FLOOR_all` of 97** — the `all` row above, eight harnesses later — and the four
+`FLOOR_all` of 98** — the `all` row above, nine harnesses later — and the four
 weekly floors still sum to it, because the shards partition the crates and
 `kani.sh` refuses to run when they stop. The count adds up; the *solving* does
 not, which is what 3763 s against 3735 s says. So `FLOOR_all` and `COVERS_all`
 are numbers a run has reached, and the reading they have reached is the 89 —
-moving it onto the 97 takes a fresh run of the four shards.
+moving it onto the 98 takes a fresh run of the four shards.
 
 Two figures this page carried are refuted by that run rather than confirmed.
 `rsk-phy`'s tier peaks at **19.9 GiB** against the 11.1 GB recorded for the
@@ -703,14 +714,14 @@ and not as a side effect of measuring.
 20 m 33 s, `light2` 54 m 52 s, `light3` 4 m 59 s and `heavy` 1 h 33 m 41 s on
 hosted `ubuntu-latest` runners, all four inside the 6 h job cap — and only one of
 the four is a reading of the roster above. That run was `main` at `06813cc1`,
-where `FLOOR_all` was 66 against today's `FLOOR_all` of 97, `light1` carried 17
-harnesses against today's `FLOOR_light1` of 34 and `light2` 21 against today's
+where `FLOOR_all` was 66 against today's `FLOOR_all` of 98, `light1` carried 17
+harnesses against today's `FLOOR_light1` of 35 and `light2` 21 against today's
 `FLOOR_light2` of 29. A run that proved 17 of `light1` is not evidence for a
-`light1` floor of 34.
+`light1` floor of 35.
 
 By *cost* it reads better than by count, and the two answers should not be
 conflated. Every harness the three shards have gained since is in one crate each
-— `rsk-fido` 3 → 13 in `light1`, `rsk-fs` 5 → 13 in `light2`, `rsk-usb` 3 → 9 in
+— `rsk-fido` 3 → 14 in `light1`, `rsk-fs` 5 → 13 in `light2`, `rsk-usb` 3 → 9 in
 `light3` — and the single harness that dominates any of them,
 `rsk-rsa::sieve_step_keeps_residues` at 82% of `light2`, was in that run already.
 So the times are better evidence than the floors are. `heavy` needs no such

@@ -2860,3 +2860,6 @@ fn two_changes_in_a_row_leave_two_different_store_tags() {
 fn command_rng<S: Storage>(fs: &Fs<S>) -> SeqRng {
     SeqRng(7 + u64::from(fs.write_gen()))
 }
+
+#[path = "credmgmt_decisions_tests.rs"]
+mod decisions;

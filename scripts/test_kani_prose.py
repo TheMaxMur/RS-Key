@@ -133,14 +133,18 @@ def test_deleting_the_clause_does_not_leave_it_green():
 
 
 def test_the_shape_that_rotted_is_refused_outright():
-    loose = page().replace("today's `FLOOR_light1` of 34", "today's 34")
+    floor = ratchets(runner())["FLOOR_light1"]
+    loose = flat(page()).replace(f"today's `FLOOR_light1` of {floor}", f"today's {floor}")
+    assert loose != flat(page()), "fixture no longer matches the page"
     found = problems(loose, runner())
     assert any("bare count" in p for p in found), found
 
 
 def test_a_ratchet_the_runner_does_not_define_is_a_finding_not_a_skip():
     """A mistyped tier would otherwise match no floor and be checked against none."""
-    typo = page().replace("`FLOOR_light1` of 34", "`FLOOR_lite1` of 34")
+    floor = ratchets(runner())["FLOOR_light1"]
+    typo = flat(page()).replace(f"`FLOOR_light1` of {floor}", f"`FLOOR_lite1` of {floor}")
+    assert typo != flat(page()), "fixture no longer matches the page"
     found = problems(typo, runner())
     assert any("does not define" in p and "FLOOR_lite1" in p for p in found), found
 
@@ -157,6 +161,8 @@ def test_a_rewrap_does_not_take_the_guard_off_the_sentence():
 
     the two places — both were live holes before `flat` existed.
     """
-    wrapped = page().replace("today's `FLOOR_light1` of 34", "today's\n**`FLOOR_light1`**\nof 34")
+    floor = ratchets(runner())["FLOOR_light1"]
+    wrapped = flat(page()).replace(f"today's `FLOOR_light1` of {floor}", f"today's\n**`FLOOR_light1`**\nof {floor}")
+    assert wrapped != flat(page()), "fixture no longer matches the page"
     assert problems(wrapped, runner()) == []
-    assert problems(wrapped.replace("of 34", "of 27"), runner())
+    assert problems(wrapped.replace(f"of {floor}", f"of {floor - 1}"), runner())
