@@ -556,3 +556,48 @@ warnings and unsupported MC/DC remain unresolved. Reports, source identity,
 controls and proof logs are in `target/coverage-pins-20261004/`. This slice
 changes no firmware behavior, exclusions, coverage floors or dependencies.
 Fuzz coverage is unchanged.
+
+## PIV reference persistence and state proof covers
+
+Four cases cover VERIFY, CHANGE PIN, CHANGE PUK and PUK-based RESET RETRY.
+A read-back of zero through three bytes cannot confirm the last charged
+attempt, even when the unread buffer byte would equal the expected zero.
+Refusals preserve both verifiers and keep that attempt spent; the next attempt
+is blocked. Restoring a healthy fixture's budget allows the same command to
+complete. A refused reset after a correct comparison also reports a memory
+failure, retains the charged attempt and cannot change either verifier.
+
+Refused verifier writes preserve the old references and their usability.
+Malformed stored lengths cause no write or retry charge. An empty PIN record
+at VERIFY is an absent reference and preserves standing status; other record
+faults at VERIFY drop PIN status and freshness. CHANGE and RESET RETRY retain
+standing PIN status on these failures, while management authentication remains
+in force on all four paths.
+
+One compiled control accepts a zero-byte retry read-back as complete. It passed
+the previous default PIV suite's 245 tests, with one ignored, and the new
+last-attempt test failed on the unintended `9000` response. Ignoring a refused
+retry reset failed both the new test and four existing migration/read-fault
+tests; it is additional path coverage, not a newly discovered oracle gap.
+Both production sources in the isolated clone were restored byte for byte.
+
+The bounded FIDO two-field-map proof previously generated four properties
+for three source covers, with one redundant unreachable copy. Moving the
+covers ahead of the assertion branches and evaluating pure Boolean operands
+without short-circuiting reached all three generated properties. Its input
+alphabet, unwind bound and refusal assertions are unchanged. Removing the
+mandatory first-key guard still fails its exact missing-parameter assertion
+with all three covers reached. The standard Kani state runner proved all
+32 selected harnesses and reached 39 source covers. Its existing allowance
+of one dead generated copy remains unchanged; this is not a run of all
+99 harnesses or the weekly shards.
+
+The same raw default-host condition scope passed 3110 unique tests plus one
+child-process repeat, with five ignored cases. A fresh build recorded
+38420/39598 lines (97.03%) and 6831/7975 outcomes (85.66%): one additional
+line and condition outcome. PIV's applet root increased from 297/347 to
+298/347 outcomes (85.88%). Function coverage remains 3244/3272 (99.14%).
+The 27 SDK mapping warnings, unsupported MC/DC and uncounted `match`/`?`
+outcomes remain open. Reports, source identity, controls and proof logs are in
+`target/coverage-piv-state-20261005/`. Firmware behavior, exclusions, coverage
+floors and dependencies are unchanged. Fuzz coverage is unchanged.

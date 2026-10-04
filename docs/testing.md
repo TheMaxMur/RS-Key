@@ -220,6 +220,17 @@ bounded Kani header proof reached all four cover scenarios and failed the owner
 assertion when that guard was removed. Raw reports are in
 `target/coverage-pins-20261004/`; fuzz coverage is unchanged.
 
+Four PIV reference cases passed 3110 unique tests plus the child repeat, with
+five ignored cases. The fresh condition report recorded 38420/39598 lines
+(97.03%), 6831/7975 outcomes (85.66%) and unchanged function coverage. The
+[PIV slice](testing-roadmap.md#piv-reference-persistence-and-state-proof-covers)
+checks short retry read-back, refused retry restoration and verifier writes,
+and malformed verifier lengths through all four reference APDU paths. A
+compiled control that treats an empty read-back as complete survived the prior
+default suite and failed the new refusal assertion. The Kani state runner proved
+32 harnesses and reached 39 source covers with its existing ceilings. Reports
+are in `target/coverage-piv-state-20261005/`; fuzz coverage is unchanged.
+
 JSON/LCOV export succeeded. Both HTML exports warned about 27 mismatched
 records, including the fresh condition directory. Reusing the previous build
 directory for the credential slice reported 113 mismatches; rebuilding in an
