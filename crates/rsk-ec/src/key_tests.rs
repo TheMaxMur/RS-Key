@@ -3,6 +3,60 @@
 
 use super::*;
 
+#[test]
+fn imported_scalars_cannot_exceed_any_curves_field_width() {
+    for (curve, width) in [
+        (Curve::P256, 32),
+        (Curve::P384, 48),
+        (Curve::P521, 66),
+        (Curve::K256, 32),
+        (Curve::Bp256, 32),
+        (Curve::Bp384, 48),
+        (Curve::Ed25519, 32),
+        (Curve::X25519, 32),
+    ] {
+        assert!(PrivKey::from_scalar(curve, &vec![1; width + 1]).is_none());
+        let key = PrivKey::from_scalar(curve, &[1]).unwrap();
+        assert_eq!(key.scalar().len(), width);
+        assert!(key.scalar()[..width - 1].iter().all(|&byte| byte == 0));
+        assert_eq!(key.scalar()[width - 1], 1);
+    }
+}
+
+#[test]
+fn weierstrass_generation_retries_a_zero_sample_before_accepting_one() {
+    struct Samples(usize);
+    impl Rng for Samples {
+        fn fill(&mut self, out: &mut [u8]) {
+            out.fill(0);
+            if self.0 != 0 {
+                *out.last_mut().unwrap() = 1;
+            }
+            self.0 += 1;
+        }
+    }
+    for curve in [Curve::P256, Curve::P384, Curve::P521, Curve::K256] {
+        let mut rng = Samples(0);
+        let key = PrivKey::generate(curve, &mut rng).unwrap();
+        assert_eq!(rng.0, 2, "{curve:?}");
+        assert_eq!(key.curve(), curve);
+        let mut expected = vec![0; key.scalar().len()];
+        *expected.last_mut().unwrap() = 1;
+        assert_eq!(key.scalar(), expected);
+    }
+}
+
+#[test]
+fn edwards_and_montgomery_keys_refuse_the_other_private_operation() {
+    let mut out = [0x55; MAX_EC_SIG];
+    let x25519 = PrivKey::from_scalar(Curve::X25519, &[1; 32]).unwrap();
+    assert_eq!(x25519.sign(&[0; 32], &mut out), Err(EcError::Unsupported));
+    assert_eq!(out, [0x55; MAX_EC_SIG]);
+    let ed25519 = PrivKey::from_scalar(Curve::Ed25519, &[1; 32]).unwrap();
+    assert_eq!(ed25519.ecdh(&[1; 32], &mut out), Err(EcError::Unsupported));
+    assert_eq!(out, [0x55; MAX_EC_SIG]);
+}
+
 // These check the raw `r ‖ s` output and the public-point round-trip for the
 // heavier Weierstrass curves; P-256 and Ed25519 are covered end-to-end by the
 // two applets' own suites.
