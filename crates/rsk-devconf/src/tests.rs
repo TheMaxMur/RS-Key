@@ -5,6 +5,9 @@ use super::*;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "bounds_tests.rs"]
+mod bounds;
+
 fn fs() -> Fs<RamStorage> {
     Fs::new(RamStorage::new())
 }
