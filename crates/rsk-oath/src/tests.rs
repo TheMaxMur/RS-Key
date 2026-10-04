@@ -2832,3 +2832,6 @@ mod reads;
 
 #[path = "bounds_tests.rs"]
 mod bounds_tests;
+
+#[path = "stored_bounds_tests.rs"]
+mod stored_bounds_tests;
