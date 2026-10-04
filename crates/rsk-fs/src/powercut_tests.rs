@@ -352,3 +352,37 @@ fn a_delete_that_loses_the_value_but_keeps_the_metadata_is_caught() {
     dev.arm(0);
     model.step(&mut dev, &mut fs, Op::Delete(A));
 }
+
+#[test]
+fn adopting_an_existing_device_tracks_data_and_metadata_only_files() {
+    let mut dev = RamDevice::new(Tear::Before);
+    let mut fs = dev.mount();
+    fs.put(A, b"old").unwrap();
+    fs.meta_add(A, b"policy").unwrap();
+    fs.meta_add(B, b"metadata only").unwrap();
+    let mut model = PowerCutModel::new(&FIDS, META_MAX);
+    model.adopt(&mut dev, &mut fs);
+    assert_eq!(model.live(), 1);
+    model.reboot(&mut dev, &mut fs);
+    model.step(&mut dev, &mut fs, Op::Delete(B));
+    assert_eq!(model.live(), 1);
+    model.step(&mut dev, &mut fs, Op::Put(C, b"new".to_vec()));
+    assert_eq!(model.live(), 2);
+    model.step(&mut dev, &mut fs, Op::Delete(A));
+    assert_eq!(model.live(), 1);
+    model.reboot(&mut dev, &mut fs);
+}
+
+#[test]
+fn adopting_after_a_power_cut_recovers_before_driving_the_model() {
+    let mut dev = RamDevice::new(Tear::Before);
+    let mut fs = dev.mount();
+    fs.put(A, b"old").unwrap();
+    dev.medium.dead.set(true);
+    let mut model = PowerCutModel::new(&FIDS, META_MAX);
+    model.adopt(&mut dev, &mut fs);
+    assert!(!dev.dead());
+    assert_eq!(model.live(), 1);
+    model.step(&mut dev, &mut fs, Op::Read(A, 3));
+    model.reboot(&mut dev, &mut fs);
+}
