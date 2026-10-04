@@ -11058,3 +11058,6 @@ fn set_retries_requires_mgmt_not_just_pin() {
     let (sw, _) = run(&mut app, &mut fs, INS_SET_RETRIES, 5, 4, &[]);
     assert_eq!(sw, Sw::SECURITY_STATUS_NOT_SATISFIED);
 }
+
+#[path = "keygen_bounds_tests.rs"]
+mod keygen_bounds_tests;

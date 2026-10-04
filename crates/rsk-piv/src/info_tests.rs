@@ -66,6 +66,109 @@ fn retries_come_from_ef_retries() {
 }
 
 #[test]
+fn legacy_and_incomplete_metadata_never_invent_an_origin_or_policy() {
+    let mut fs = fs();
+    let fid = key_fid(SLOT_SIGNATURE).get();
+    fs.put(fid, &[0xAB; 64]).unwrap();
+    for meta in [
+        &[ALGO_ECCP384, PINPOLICY_ONCE, TOUCHPOLICY_ALWAYS][..],
+        &[ALGO_ECCP384, PINPOLICY_ONCE][..],
+    ] {
+        fs.meta_add(fid, meta).unwrap();
+        let slot = read_slot(&mut fs, SLOT_SIGNATURE);
+        assert!(slot.present);
+        assert_eq!(slot.origin, 0);
+        if meta.len() == 3 {
+            assert_eq!(
+                (slot.algo, slot.pin_policy, slot.touch_policy),
+                (ALGO_ECCP384, PINPOLICY_ONCE, TOUCHPOLICY_ALWAYS)
+            );
+        } else {
+            assert_eq!((slot.algo, slot.pin_policy, slot.touch_policy), (0, 0, 0));
+        }
+    }
+    fs.put(EF_RETRIES, &[3, 0, 3]).unwrap();
+    let info = read_info(&mut fs);
+    assert_eq!(
+        (info.pin_retries, info.puk_retries),
+        (DEFAULT_RETRIES, DEFAULT_RETRIES)
+    );
+}
+
+#[test]
+fn extra_slot_enumeration_respects_every_output_capacity() {
+    let mut fs = fs();
+    for slot in [SLOT_ATTESTATION, SLOT_RETIRED_FIRST, SLOT_RETIRED_LAST] {
+        fs.put(key_fid(slot).get(), &[0xAA; 64]).unwrap();
+    }
+    for size in 0..=MAX_EXTRA_SLOTS {
+        let mut out = vec![PivSlot::default(); size];
+        let n = read_extra(&mut fs, &mut out);
+        assert_eq!(n, size.min(3));
+        assert_eq!(
+            out[..n].iter().map(|s| s.slot).collect::<Vec<_>>(),
+            [SLOT_ATTESTATION, SLOT_RETIRED_FIRST, SLOT_RETIRED_LAST][..n]
+        );
+        assert!(out[n..].iter().all(|s| *s == PivSlot::default()));
+    }
+}
+
+#[test]
+fn display_labels_distinguish_supported_keys_and_public_policies() {
+    for (slot, label) in [
+        (SLOT_AUTHENTICATION, "Authentication"),
+        (SLOT_SIGNATURE, "Signature"),
+        (SLOT_KEYMGM, "Key Management"),
+        (SLOT_CARDAUTH, "Card Auth"),
+        (SLOT_CARDMGM, "Management"),
+        (SLOT_ATTESTATION, "Attestation"),
+        (SLOT_RETIRED_FIRST, "Retired"),
+    ] {
+        assert_eq!(slot_name(slot), label);
+    }
+    for (algo, label) in [
+        (ALGO_RSA1024, "RSA 1024"),
+        (ALGO_RSA2048, "RSA 2048"),
+        (ALGO_RSA3072, "RSA 3072"),
+        (ALGO_RSA4096, "RSA 4096"),
+        (ALGO_ECCP256, "NIST P-256"),
+        (ALGO_ECCP384, "NIST P-384"),
+        (ALGO_ED25519, "Ed25519"),
+        (ALGO_X25519, "X25519"),
+        (ALGO_3DES, "3DES"),
+        (ALGO_AES128, "AES-128"),
+        (ALGO_AES192, "AES-192"),
+        (ALGO_AES256, "AES-256"),
+        (0xFF, "—"),
+    ] {
+        assert_eq!(algo_name(algo), label);
+    }
+    for (value, label) in [
+        (PINPOLICY_NEVER, "Never"),
+        (PINPOLICY_ONCE, "Once"),
+        (PINPOLICY_ALWAYS, "Always"),
+        (0xFF, "Default"),
+    ] {
+        assert_eq!(pin_policy_name(value), label);
+    }
+    for (value, label) in [
+        (TOUCHPOLICY_NEVER, "Never"),
+        (TOUCHPOLICY_ALWAYS, "Always"),
+        (TOUCHPOLICY_CACHED, "Cached"),
+        (0xFF, "Default"),
+    ] {
+        assert_eq!(touch_policy_name(value), label);
+    }
+    for (value, label) in [
+        (ORIGIN_GENERATED, "Generated"),
+        (ORIGIN_IMPORTED, "Imported"),
+        (0xFF, "—"),
+    ] {
+        assert_eq!(origin_name(value), label);
+    }
+}
+
+#[test]
 fn extra_lists_populated_retired_and_f9_only() {
     let mut fs = fs();
     // F9 present, retired 0x82 has a key, 0x84 has only a cert, the rest are empty.
