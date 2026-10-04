@@ -495,6 +495,8 @@ needs only the identifiers above. RS-Key implements:
   only `authenticatorReset` restores the build default. The policy rejects
   periodic PINs, ascending/descending runs, at most two distinct code points,
   and the keypad-pattern denylist, on both host and trusted-display PIN changes.
+  Under `forcePINChange`, an unread current verifier returns `CTAP2_ERR_OTHER`
+  (`0x7F`) and leaves the change pending; it cannot establish a different PIN.
   The optional `pinComplexityPolicyURL` (`0x1C`) is
   never emitted. `longTouchForReset` (`0x18`) is `false`: a reset takes the same
   touch as any other presence check — CTAP 2.3 cut the long-touch hold from 2.2's

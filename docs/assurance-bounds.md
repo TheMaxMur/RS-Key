@@ -319,7 +319,7 @@ Every one of the 17 is a `p0-launch` row of `assurance/configurations.toml`, all
 | `bound_max_retries` | `2` | the six rungs between two and the shipped eight; a retry-shaped defect is not what this arm is for |
 | `bound_mismatch_limit` | `1` | the two mismatches between one and the shipped three, on the forced-change arm |
 
-> **Row note (`shipped_relation`).** ForceChangeModelled = TRUE turns on `gate.forceChange`, EF_MINPINLEN byte 1, which `clientpin.rs` reads at the two get_pin_token doors and `change_pin` clears. It belongs to this property because it is a refusal AFTER the PIN has verified — a grant that must not be minted rather than one that must be retired — and `assurance/platform.toml` PLAT-MODEL-010 is `discharged` on it. What the arm does NOT reach is the built-in-UV door (clientpin.rs:544-546), which has no action in this module at all, and the panel's own clear at clientpin.rs:1357
+> **Row note (`shipped_relation`).** ForceChangeModelled = TRUE turns on `gate.forceChange`, EF_MINPINLEN byte 1, which `clientpin.rs` reads at the two get_pin_token doors and `change_pin` clears. It belongs to this property because it is a refusal AFTER the PIN has verified — a grant that must not be minted rather than one that must be retired — and `assurance/platform.toml` PLAT-MODEL-010 is `discharged` on it. What the arm does NOT reach is the built-in-UV door (clientpin.rs:544-546), which has no action in this module at all, and the panel's own clear at clientpin.rs:1366
 
 #### Method 5 — non-degeneracy: the invariant can go red, seven different ways, and each red names it rather than a sibling
 

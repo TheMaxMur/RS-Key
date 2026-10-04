@@ -20,7 +20,7 @@
 (*    -- or the superseded copy stays readable forever: run-35 found FOUR OF *)
 (*    FIVE lazy re-keys skipping that, and its sweep landed the CALL at      *)
 (*    crates/rsk-fido/src/clientpin.rs:882,                                  *)
-(*    crates/rsk-fido/src/clientpin.rs:1288-1291,                            *)
+(*    crates/rsk-fido/src/clientpin.rs:1297-1300,                            *)
 (*    crates/rsk-piv/src/lib.rs:1399, crates/rsk-oath/src/lib.rs:1246,       *)
 (*    crates/rsk-openpgp/src/pin.rs:347 -- three of those five used to name  *)
 (*    the comment or the write ABOVE the call, which is what a mechanical    *)

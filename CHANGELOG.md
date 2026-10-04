@@ -40,6 +40,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- A failed read of the current PIN verifier during a forced PIN change returns
+  `CTAP2_ERR_OTHER` and leaves the change pending. It can no longer accept the
+  unchanged PIN and clear the policy flag. A read-fault sweep covers the command
+  before and after the fix. `bcdDevice` → `0x0A8C`.
 - The FIDO2, conformance and U2F metadata statements use the exact standard
   MDS3 legal header expected by the official tool's Metadata P-36. The metadata
   drift suite rejects a different header; the self-published and rootless

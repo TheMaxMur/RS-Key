@@ -47,7 +47,7 @@
 (* from this module or from any other CTAPHID evidence. It lives on           *)
 (* `write_frames` (crates/rsk-usb/src/ctaphid.rs:928-940), where two host     *)
 (* regressions pin the abandon and the drain                                  *)
-(* (crates/rsk-usb/src/ctaphid_tests.rs:449,471) -- over `write_frames`, not  *)
+(* (crates/rsk-usb/src/ctaphid_tests.rs:478,500) -- over `write_frames`, not  *)
 (* over the async `run` loop (crates/rsk-usb/src/ctaphid.rs:639), which       *)
 (* neither of them enters. No mutation record stands behind either: the       *)
 (* co-refutation roster excludes liveness switches by design                  *)

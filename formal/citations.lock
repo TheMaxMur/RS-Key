@@ -100,7 +100,7 @@ assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	324-328	// v
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	544-546	if force_change_pending(ctx) {	}
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	822-822	// the retry budget. If the stored value doesn't match, fail closed (treat as	// the retry budget. If the stored value doesn't match, fail closed (treat as
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	905-905	fn write_pin_verifier<S: Storage>(	fn write_pin_verifier<S: Storage>(
-assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	1357-1357	let _ = clear_force_change(fs);	let _ = clear_force_change(fs);
+assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	1366-1366	let _ = clear_force_change(fs);	let _ = clear_force_change(fs);
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin_tests.rs	2458-2458	/// The revocation sits in `write_pin_verifier`, the one function every `EF_PIN`	/// The revocation sits in `write_pin_verifier`, the one function every `EF_PIN`
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/config.rs	245-247	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/consts.rs	371-371	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
@@ -480,9 +480,9 @@ assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	544-546	if force_change
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	639-639	if !ctx.fs.has_data(EF_PIN) {	if !ctx.fs.has_data(EF_PIN) {
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	811-885	// sibling spend_and_verify_pin_at has the same in-function guard.	migrate_keydev_pin(&ctx.dev, ctx.fs, pin_hash).map_err(|_| CtapError::Other)?;
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	900-900	/// Establishing a clientPIN also runs §6.5.5.6 step 15's `resetPersistentPinUvAuthToken`,	/// Establishing a clientPIN also runs §6.5.5.6 step 15's `resetPersistentPinUvAuthToken`,
-assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	1021-1048	fn store_new_pin<S: Storage, R: Rng>(	}
-assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	1335-1335	let cps = pin_code_points(pin).ok_or(SetPinError::TooShort { min })?;	let cps = pin_code_points(pin).ok_or(SetPinError::TooShort { min })?;
-assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	1345-1345	if pin.len() > MAX_PIN_LENGTH {	if pin.len() > MAX_PIN_LENGTH {
+assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	1030-1057	fn store_new_pin<S: Storage, R: Rng>(	}
+assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	1344-1344	let cps = pin_code_points(pin).ok_or(SetPinError::TooShort { min })?;	let cps = pin_code_points(pin).ok_or(SetPinError::TooShort { min })?;
+assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	1354-1354	if pin.len() > MAX_PIN_LENGTH {	if pin.len() > MAX_PIN_LENGTH {
 assurance/platform.toml	crates/rsk-fido/src/clientpin_tests.rs	1376-1378	// `forced_pin_change_0x09_is_policy_violation`). The verify already	assert_eq!(
 assurance/platform.toml	crates/rsk-fido/src/clientpin_tests.rs	2194-2194	state.begin_using_token(false, 1_000);	state.begin_using_token(false, 1_000);
 assurance/platform.toml	crates/rsk-fido/src/config.rs	316-316	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");
@@ -529,7 +529,7 @@ assurance/platform.toml	crates/rsk-piv/src/lib.rs	1391-1391	// kbase-migration f
 assurance/platform.toml	crates/rsk-store/src/lib.rs	143-150	/// Removes from BOTH partitions, not just the one [`is_counter_fid`] routes to.	/// the second call finds nothing and costs one ring walk.
 assurance/platform.toml	crates/rsk-store/src/lib.rs	177-179	let main_done = for_each_in(&mut self.main, &mut self.buf, f);	main_done && counter_done
 assurance/platform.toml	crates/rsk-store/src/tests.rs	59-62	/// Every read from here on fails, unconditionally and for every address —	/// memoise as absence.
-assurance/platform.toml	crates/rsk-store/src/tests.rs	395-404	#[test]	assert!(!complete);
+assurance/platform.toml	crates/rsk-store/src/tests.rs	405-414	#[test]	assert!(!complete);
 assurance/platform.toml	crates/rsk-usb/src/ccid.rs	479-479	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
 assurance/platform.toml	crates/rsk-usb/src/ctaphid.rs	838-838	Timer::after_millis(KEEPALIVE_MS),	Timer::after_millis(KEEPALIVE_MS),
 assurance/platform.toml	firmware/src/display.rs	203-203	crate::presence::set_cancel_requested(requested);	crate::presence::set_cancel_requested(requested);
@@ -700,10 +700,10 @@ formal/README.md	crates/rsk-fido/src/clientpin.rs	797-890	ctx: &mut Ctx<S, R>,	.
 formal/README.md	crates/rsk-fido/src/clientpin.rs	835-835	if !matched && ctx.dev.otp_key.is_some() {	if !matched && ctx.dev.otp_key.is_some() {
 formal/README.md	crates/rsk-fido/src/clientpin.rs	857-857	if retries == 0 {	if retries == 0 {
 formal/README.md	crates/rsk-fido/src/clientpin.rs	901-905	/// here rather than in each caller: the `pcmr` grant is a flash record that no PIN	fn write_pin_verifier<S: Storage>(
-formal/README.md	crates/rsk-fido/src/clientpin.rs	1199-1203	/// at zero is a hard block — but deliberately omits the CTAP-session side effects	/// opens no faster path to grind the PIN than USB already does. The caller
-formal/README.md	crates/rsk-fido/src/clientpin.rs	1205-1211	pub fn spend_and_verify_local_pin<S: Storage>(	}
-formal/README.md	crates/rsk-fido/src/clientpin.rs	1410-1410	const NEW_PIN_ENC_MAX: usize = pinproto::IV_SIZE + PADDED_PIN_LEN;	const NEW_PIN_ENC_MAX: usize = pinproto::IV_SIZE + PADDED_PIN_LEN;
-formal/README.md	crates/rsk-fido/src/clientpin.rs	1417-1417	if len == 0 || !len.is_multiple_of(AES_BLOCK) || len > NEW_PIN_ENC_MAX {	if len == 0 || !len.is_multiple_of(AES_BLOCK) || len > NEW_PIN_ENC_MAX {
+formal/README.md	crates/rsk-fido/src/clientpin.rs	1208-1212	/// at zero is a hard block — but deliberately omits the CTAP-session side effects	/// opens no faster path to grind the PIN than USB already does. The caller
+formal/README.md	crates/rsk-fido/src/clientpin.rs	1214-1220	pub fn spend_and_verify_local_pin<S: Storage>(	}
+formal/README.md	crates/rsk-fido/src/clientpin.rs	1419-1419	const NEW_PIN_ENC_MAX: usize = pinproto::IV_SIZE + PADDED_PIN_LEN;	const NEW_PIN_ENC_MAX: usize = pinproto::IV_SIZE + PADDED_PIN_LEN;
+formal/README.md	crates/rsk-fido/src/clientpin.rs	1426-1426	if len == 0 || !len.is_multiple_of(AES_BLOCK) || len > NEW_PIN_ENC_MAX {	if len == 0 || !len.is_multiple_of(AES_BLOCK) || len > NEW_PIN_ENC_MAX {
 formal/README.md	crates/rsk-fido/src/config.rs	245-247	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
 formal/README.md	crates/rsk-fido/src/config.rs	433-434	.map_err(|_| CtapError::Other)?;	ctx.state.clear_keydev_dec();
 formal/README.md	crates/rsk-fido/src/consts.rs	371-371	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
@@ -834,8 +834,8 @@ formal/README.md	crates/rsk-usb/src/ctaphid.rs	491-493	if cid != self.cid {	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	495-498	if seq != self.seq {	}
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	639-639	pub async fn run(&mut self) -> ! {	pub async fn run(&mut self) -> ! {
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	928-940	async fn write_frames<S, T, F>(sink: &mut S, cid: u32, cmd: u8, data: &[u8], mut timeout: F)	}
-formal/README.md	crates/rsk-usb/src/ctaphid_tests.rs	449-449	fn write_frames_abandons_when_host_stalls() {	fn write_frames_abandons_when_host_stalls() {
-formal/README.md	crates/rsk-usb/src/ctaphid_tests.rs	471-471	fn write_frames_writes_every_frame_when_host_drains() {	fn write_frames_writes_every_frame_when_host_drains() {
+formal/README.md	crates/rsk-usb/src/ctaphid_tests.rs	478-478	fn write_frames_abandons_when_host_stalls() {	fn write_frames_abandons_when_host_stalls() {
+formal/README.md	crates/rsk-usb/src/ctaphid_tests.rs	500-500	fn write_frames_writes_every_frame_when_host_drains() {	fn write_frames_writes_every_frame_when_host_drains() {
 formal/README.md	firmware/src/main.rs	689-737	use rsk_rescue::otp_lock::{	let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
 formal/README.md	firmware/src/main.rs	736-736	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
 formal/README.md	firmware/src/main.rs	741-757	// One-shot at-rest hardening: the seal migrations above leave the superseded	}
@@ -912,7 +912,7 @@ formal/RSKeyAppletSeams.tla	crates/rsk-sdk/src/applet.rs	450-454	if let Some(c) 
 formal/RSKeyAppletSeams.tla	firmware/src/pin_lock.rs	12-21	//! [`rsk_fido::state::PinLock`] lives in RAM and is rebuilt clear on every boot,	//!
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	882-882	let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;	let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	882-890	let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;	.map_err(|_| CtapError::Other)?;
-formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	1288-1291	let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, migrated) else {	};
+formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	1297-1300	let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, migrated) else {	};
 formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	29-124	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	}
 formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	64-64	let _ = fs.delete(EF_HARDENED);	let _ = fs.delete(EF_HARDENED);
 formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	126-144	/// Run the one-shot at-rest scrub lap: iff [`EF_HARDENED`] is absent, drive a full	}
@@ -997,11 +997,11 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	849-849	// A Yubi
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	857-857	if retries == 0 {	if retries == 0 {
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	858-863	// The transition into the hard lockout (later attempts are turned	ctx.state.new_pin_mismatches += 1;
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	886-888	pin_data[0] = MAX_PIN_RETRIES;	ctx.fs
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1021-1046	fn store_new_pin<S: Storage, R: Rng>(	ctx.state.needs_power_cycle = false;
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1199-1203	/// at zero is a hard block — but deliberately omits the CTAP-session side effects	/// opens no faster path to grind the PIN than USB already does. The caller
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1205-1211	pub fn spend_and_verify_local_pin<S: Storage>(	}
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1239-1241	return LocalPin::Blocked;	if n != PIN_FILE_LEN || pin_data[0] == 0 {
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1357-1357	let _ = clear_force_change(fs);	let _ = clear_force_change(fs);
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1030-1055	fn store_new_pin<S: Storage, R: Rng>(	ctx.state.needs_power_cycle = false;
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1208-1212	/// at zero is a hard block — but deliberately omits the CTAP-session side effects	/// opens no faster path to grind the PIN than USB already does. The caller
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1214-1220	pub fn spend_and_verify_local_pin<S: Storage>(	}
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1248-1250	return LocalPin::Blocked;	if n != PIN_FILE_LEN || pin_data[0] == 0 {
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	1366-1366	let _ = clear_force_change(fs);	let _ = clear_force_change(fs);
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/config.rs	245-247	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/config.rs	246-246	|| ctx.state.paut.permissions & PERM_ACFG == 0	|| ctx.state.paut.permissions & PERM_ACFG == 0
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/config.rs	433-434	.map_err(|_| CtapError::Other)?;	ctx.state.clear_keydev_dec();
@@ -1126,8 +1126,8 @@ formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	491-493	if cid != self.c
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	495-498	if seq != self.seq {	}
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	639-639	pub async fn run(&mut self) -> ! {	pub async fn run(&mut self) -> ! {
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	928-940	async fn write_frames<S, T, F>(sink: &mut S, cid: u32, cmd: u8, data: &[u8], mut timeout: F)	}
-formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid_tests.rs	449-449	fn write_frames_abandons_when_host_stalls() {	fn write_frames_abandons_when_host_stalls() {
-formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid_tests.rs	471-471	fn write_frames_writes_every_frame_when_host_drains() {	fn write_frames_writes_every_frame_when_host_drains() {
+formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid_tests.rs	478-478	fn write_frames_abandons_when_host_stalls() {	fn write_frames_abandons_when_host_stalls() {
+formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid_tests.rs	500-500	fn write_frames_writes_every_frame_when_host_drains() {	fn write_frames_writes_every_frame_when_host_drains() {
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/power.rs	53-63	pub(super) fn armed_touch(&mut self) -> Option<rsk_ui::Point> {	}
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/power.rs	54-57	match self.touch.read() {	None
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	85-85	/// Refines `RSKeyTrustedDisplay!ConfirmNamesTheOperation` — SEC-DISP-001.	/// Refines `RSKeyTrustedDisplay!ConfirmNamesTheOperation` — SEC-DISP-001.

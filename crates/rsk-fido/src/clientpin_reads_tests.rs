@@ -110,6 +110,28 @@ fn no_faulted_read_takes_a_change_pin_the_wrong_pin_refuses() {
 }
 
 #[test]
+fn no_faulted_read_satisfies_a_forced_change_with_the_current_pin() {
+    assert_eq!(
+        sweep(
+            |fs| {
+                let mut s = pinned(fs);
+                fs.put(
+                    EF_MINPINLEN,
+                    &[MIN_PIN_LENGTH, crate::pinpolicy::FORCE_CHANGE],
+                )
+                .unwrap();
+                s.req = s.plat.change_pin_req(PIN, PIN);
+                s
+            },
+            send,
+            &[],
+        ),
+        None,
+        "the current PIN cannot satisfy a forced change even without a read fault"
+    );
+}
+
+#[test]
 fn a_faulted_read_fails_a_get_pin_token_or_answers_it_as_clean() {
     sweep(
         |fs| {

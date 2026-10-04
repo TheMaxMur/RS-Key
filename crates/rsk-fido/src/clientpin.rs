@@ -315,7 +315,7 @@ fn change_pin<S: Storage, R: Rng>(
             .expose()
             .get(..pin_len)
             .ok_or(CtapError::PinPolicyViolation)?;
-        if pin_verifier_matches(ctx, pin) {
+        if pin_verifier_matches(ctx, pin)? {
             padded.wipe();
             return Err(CtapError::PinPolicyViolation);
         }
@@ -930,15 +930,24 @@ fn write_pin_verifier<S: Storage>(
 /// [`spend_and_verify_pin_hash`] this costs no retry and has no session side effects —
 /// it exists only for §6.5.5.6's "the new PIN must differ" check, where a match is a
 /// policy violation rather than an authentication attempt.
-fn pin_verifier_matches<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, pin: &[u8]) -> bool {
+fn pin_verifier_matches<S: Storage, R: Rng>(
+    ctx: &mut Ctx<S, R>,
+    pin: &[u8],
+) -> Result<bool, CtapError> {
     let mut pin_data = [0u8; PIN_FILE_LEN];
-    if ctx.fs.read(EF_PIN, &mut pin_data) != Some(PIN_FILE_LEN) {
-        return false;
+    // An unread verifier cannot establish that a forced replacement differs.
+    if ctx
+        .fs
+        .try_read(EF_PIN, &mut pin_data)
+        .map_err(|_| CtapError::Other)?
+        != Some(PIN_FILE_LEN)
+    {
+        return Err(CtapError::Other);
     }
     let mut dhash = Secret::new(sha256(pin));
     let cand = ctx.dev.pin_derive_verifier(&dhash.expose()[..16]);
     dhash.wipe();
-    pinproto_ct_eq(cand.expose(), &pin_data[3..PIN_FILE_LEN])
+    Ok(pinproto_ct_eq(cand.expose(), &pin_data[3..PIN_FILE_LEN]))
 }
 
 /// The PIN's length in Unicode code points — the unit `minPINLength` (getInfo 0x0D)

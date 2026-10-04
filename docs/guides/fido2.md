@@ -63,6 +63,11 @@ and has to run within ten seconds of a replug (see [Factory
 reset](#factory-reset)). `rsk fido set-pin` asks for the current PIN when changing,
 the new one twice, and prints the resulting `clientPin` state.
 
+When the policy requires a PIN change, the replacement must differ from the
+current PIN. If its verifier cannot be read, the change returns
+`CTAP2_ERR_OTHER` (`0x7F`) and remains pending; retry with a different PIN once
+storage is readable.
+
 Once a PIN is set, registering a **passkey** refuses to run without it (CTAP
 `PUAT_REQUIRED`, `0x36`). The browser collects the PIN and retries. That is
 expected, not a fault.

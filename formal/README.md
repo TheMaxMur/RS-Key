@@ -376,11 +376,11 @@ those are where a hole costs the most:
 | Mutation | Verdict | Owned by |
 |---|---|---|
 | `crates/rsk-sdk/src/applet.rs:449` `==` → `!=` — the dispatcher's reselect decision | **model-catches**: `BugReselectResetsStatus` / `ReselectPreservesAccessStatus` | `reselect_is_true_only_for_the_applet_already_current` |
-| `clientpin.rs:1410` `+` → `*` — the padded-length bound, since bcd `0x0A74` the ceiling of the newPinEnc gate `set_pin` and `change_pin` share | **model-blind, real** | `set_pin_judges_the_new_pin_length_as_a_yubikey_does`, `change_pin_judges_the_new_pin_length_as_a_yubikey_does` |
+| `clientpin.rs:1419` `+` → `*` — the padded-length bound, since bcd `0x0A74` the ceiling of the newPinEnc gate `set_pin` and `change_pin` share | **model-blind, real** | `set_pin_judges_the_new_pin_length_as_a_yubikey_does`, `change_pin_judges_the_new_pin_length_as_a_yubikey_does` |
 | `clientpin.rs:354` `\|\|` → `&&` — the legacy token's argument check | **model-blind, real** | `the_legacy_get_pin_token_refuses_an_rp_id` |
 | `clientpin.rs:422` `\|` → `^` on `PERM_MC \| PERM_GA` | equivalent — `0x01` and `0x02` are disjoint | — |
 | `clientpin.rs:835` `&&` → `\|\|` — the kbase-migration fallback | equivalent by construction: the inner `ct_eq` cannot match in either case the widened guard admits | — |
-| `clientpin.rs:1417` `>` → `<` — the same ceiling, compared | **model-blind, real** since bcd `0x0A74`: every protocol-one setPIN and changePIN is refused, where the `!=` below the old bound still refused and only the status word moved | `change_pin_over_protocol_one` |
+| `clientpin.rs:1426` `>` → `<` — the same ceiling, compared | **model-blind, real** since bcd `0x0A74`: every protocol-one setPIN and changePIN is refused, where the `!=` below the old bound still refused and only the status word moved | `change_pin_over_protocol_one` |
 | `clientpin.rs:256-258` deleted — pinHashEnc's length gate, the `\|\|` half of one guard until bcd `0x0A74` | **the guard was load-bearing**: without it a short `pinHashEnc` reached the decrypt and spent a PIN retry, and an over-long one met a slice-index panic until that copy was checked — see below. Since bcd `0x0A75` the decrypt after the MAC refuses anything but one block, so without the gate every wrong length answers `0x33` there instead of `0x02` here, and none spends a retry | `change_pin_refuses_a_pin_hash_of_the_wrong_length`, `change_pin_judges_the_pin_hash_length_as_a_yubikey_does` |
 
 The row that stood open longest is closed by reading where its widened guard
@@ -1367,7 +1367,7 @@ falls in 238 states.
 (`crates/rsk-display/src/gates.rs:117-206`) spends the **same** persistent
 `EF_PIN` retry counter the wire path spends, because
 `spend_and_verify_local_pin` is `spend_and_verify_pin_at(EF_PIN, ..)`
-(`crates/rsk-fido/src/clientpin.rs:1205-1211`). A clientPIN refused there is
+(`crates/rsk-fido/src/clientpin.rs:1214-1220`). A clientPIN refused there is
 changePIN's failed old-PIN check performed locally, so it must end the host's
 outstanding grant exactly as `clientpin.rs:857` does. `ends_host_token`
 (`crates/rsk-display/src/gates.rs:142-149`) is the Rust's own test and it is
@@ -1377,7 +1377,7 @@ because a `Blocked` verdict at zero was turned away before any compare.
 
 What the pad does **not** do is go through the CTAP session at all — no ECDH
 regeneration, no RAM 3-strikes lock, no journal
-(`crates/rsk-fido/src/clientpin.rs:1199-1203`) — so `LocalPinWrong` is not a
+(`crates/rsk-fido/src/clientpin.rs:1208-1212`) — so `LocalPinWrong` is not a
 `PinAttempt` here either. The persistent 8-try counter is the whole gate, and a
 host-soft-locked device still takes PIN entry at the pad, which is the
 documented recovery.
@@ -2194,7 +2194,7 @@ interface wedge (0x075D, `TX_TIMEOUT_MS`) is a liveness property, and **no
 liveness proof is claimed from CTAPHID evidence**. It lives on `write_frames`
 (`crates/rsk-usb/src/ctaphid.rs:928-940`), the response path, where two host
 regressions pin the abandon and the drain
-(`crates/rsk-usb/src/ctaphid_tests.rs:449,471`) — not on the async `run` loop
+(`crates/rsk-usb/src/ctaphid_tests.rs:478,500`) — not on the async `run` loop
 (`crates/rsk-usb/src/ctaphid.rs:639`), which neither of them enters. No mutation
 record stands behind either: `write_frames`, `FrameSink` and `TX_TIMEOUT` appear
 in none of `formal/comutants.toml`, `formal/floors.txt` or `formal/runs.toml`,
