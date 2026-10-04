@@ -124,6 +124,72 @@ fn sieve_depth_scales_with_length() {
 }
 
 #[test]
+fn runtime_prime_table_matches_an_independent_sieve() {
+    let actual = core::hint::black_box(build_small_primes());
+    let limit = actual[N_SMALL - 1] as usize;
+    let mut prime = vec![true; limit + 1];
+    for p in 2..=limit {
+        if prime[p] {
+            for multiple in (p * 2..=limit).step_by(p) {
+                prime[multiple] = false;
+            }
+        }
+    }
+    let expected: Vec<_> = (3..=limit)
+        .filter(|&p| prime[p])
+        .map(|p| p as u32)
+        .collect();
+    assert_eq!(actual.as_slice(), expected);
+}
+
+#[test]
+fn scrubbing_a_sieve_erases_candidates_and_residues_and_allows_reuse() {
+    let mut sieve = IncrementalSieve::default();
+    assert!(sieve.needs_seed());
+    assert_eq!(sieve.step(), None);
+    sieve.reseed(128, &[0xA5; 128]);
+    assert!(sieve.cand.iter().any(|&b| b != 0));
+    assert!(sieve.res.iter().any(|&r| r != 0));
+    sieve.scrub();
+    assert!(sieve.cand.iter().all(|&b| b == 0));
+    assert!(sieve.res.iter().all(|&r| r == 0));
+    assert!(sieve.needs_seed());
+    assert_eq!(sieve.step(), None);
+    sieve.reseed(192, &[0x33; 192]);
+    let verdict = sieve.step().unwrap();
+    assert_eq!(verdict, !has_small_factor(sieve.candidate()));
+}
+
+#[test]
+fn overflow_and_the_window_limit_require_a_new_seed() {
+    let mut sieve = IncrementalSieve::new();
+    sieve.reseed(128, &[0xFF; 128]);
+    assert_eq!(sieve.step(), None);
+    assert!(sieve.needs_seed());
+    sieve.reseed(128, &[0x11; 128]);
+    for _ in 1..SIEVE_WINDOW {
+        assert!(sieve.step().is_some());
+    }
+    assert_eq!(sieve.step(), None);
+    assert!(sieve.needs_seed());
+    assert_eq!(sieve.step(), None);
+}
+
+#[test]
+fn trailing_zero_counts_cover_zero_and_byte_boundaries() {
+    for (bytes, bits) in [
+        (&[][..], 0),
+        (&[0][..], 8),
+        (&[0, 0][..], 16),
+        (&[2][..], 1),
+        (&[0, 0x10][..], 12),
+        (&[0, 0, 0x80][..], 23),
+    ] {
+        assert_eq!(trailing_zeros_le(bytes), bits);
+    }
+}
+
+#[test]
 fn modexp_matches_biguint() {
     let modulus = le32("e3a1b5c70000000000000000000000000000000000000000000000000000be25");
     let base = [7u8]; // little-endian 7
