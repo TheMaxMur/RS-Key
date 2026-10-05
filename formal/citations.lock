@@ -402,7 +402,7 @@ assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/clientpin.rs	639-639	if !
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/clientpin.rs	750-758	fn pin_set_and_unblocked<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {	}
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/clientpin.rs	914-915	if fid == EF_PIN {	clear_ppuat(fs).map_err(|_| CtapError::Other)?;
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/config.rs	245-247	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/conformance/mod.rs	175-175	self.state.begin_using_token(false, self.clock);	self.state.begin_using_token(false, self.clock);
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/conformance/mod.rs	177-177	self.state.begin_using_token(false, self.clock);	self.state.begin_using_token(false, self.clock);
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/credmgmt_kani.rs	77-77	st.begin_using_token(false, 1_000);	st.begin_using_token(false, 1_000);
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/credmgmt_kani.rs	158-158	st.begin_using_token(false, NOW);	st.begin_using_token(false, NOW);
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/credmgmt_kani.rs	389-389	st.begin_using_token(false, NOW);	st.begin_using_token(false, NOW);
@@ -490,7 +490,7 @@ assurance/platform.toml	crates/rsk-fido/src/config.rs	352-360	fn toggle_always_u
 assurance/platform.toml	crates/rsk-fido/src/config.rs	491-491	if force_change && !pin_set {	if force_change && !pin_set {
 assurance/platform.toml	crates/rsk-fido/src/config.rs	508-511	if force {	}
 assurance/platform.toml	crates/rsk-fido/src/conformance/config.rs	77-77	cfg!(feature = "always-uv"),	cfg!(feature = "always-uv"),
-assurance/platform.toml	crates/rsk-fido/src/conformance/mod.rs	175-175	self.state.begin_using_token(false, self.clock);	self.state.begin_using_token(false, self.clock);
+assurance/platform.toml	crates/rsk-fido/src/conformance/mod.rs	177-177	self.state.begin_using_token(false, self.clock);	self.state.begin_using_token(false, self.clock);
 assurance/platform.toml	crates/rsk-fido/src/consts.rs	395-395	pub const PUAT_MAX_USAGE_PERIOD_MS: u64 = 600_000;	pub const PUAT_MAX_USAGE_PERIOD_MS: u64 = 600_000;
 assurance/platform.toml	crates/rsk-fido/src/credmgmt.rs	285-287	if !ctx.fs.has_data(EF_PIN) {	}
 assurance/platform.toml	crates/rsk-fido/src/credmgmt.rs	399-399	};	};

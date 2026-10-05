@@ -1166,7 +1166,7 @@ Every one of the 17 is a `p0-launch` row of `assurance/configurations.toml`, all
 
 #### Method 6 — the production side: which sites own each half of the implication, and whether the one tag is on a half that can falsify it
 
-`review` over crates/rsk-fido/src/clientpin.rs::issue_token + crates/rsk-fido/src/state.rs::begin_using_token + crates/rsk-fido/src/reset.rs::reset. cfg: none — every site above is unconditional production code except crates/rsk-fido/src/conformance/mod.rs:175, which is cfg(test) and is counted apart in `owners_antecedent` rather than in these bounds. features: none.
+`review` over crates/rsk-fido/src/clientpin.rs::issue_token + crates/rsk-fido/src/state.rs::begin_using_token + crates/rsk-fido/src/reset.rs::reset. cfg: none — every site above is unconditional production code except crates/rsk-fido/src/conformance/mod.rs:177, which is cfg(test) and is counted apart in `owners_antecedent` rather than in these bounds. features: none.
 
 | Bound | Value | What stops being proved |
 |---|---|---|

@@ -41,6 +41,8 @@ mod policy;
 mod reset;
 mod selection;
 mod stateful;
+#[path = "token_tests.rs"]
+mod token;
 mod u2f;
 
 /// Deterministic RNG (copied per test file, matching the repo convention).
