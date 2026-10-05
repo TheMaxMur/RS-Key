@@ -1471,6 +1471,17 @@ impl Sess {
 
     /// Drive one CTAPHID_CBOR message; returns the reply length in `self.out`.
     fn step(&mut self, msg: &[u8]) -> usize {
+        self.step_bounded(msg, OUT_MAX)
+    }
+
+    fn step_bounded(&mut self, msg: &[u8], capacity: usize) -> usize {
+        let assertion = matches!(
+            msg.first(),
+            Some(&consts::CTAP_GET_ASSERTION | &consts::CTAP_GET_NEXT_ASSERTION)
+        );
+        let before = assertion.then(|| self.counter_bytes());
+        let leg = (self.state.gna.counter, self.state.gna.started_ms);
+        self.out.fill(0xA5);
         let mut ctx = Ctx {
             presence: &mut self.presence,
             dev: self.dev,
@@ -1479,8 +1490,25 @@ impl Sess {
             state: &mut self.state,
             now_ms: self.now_ms,
         };
-        let w = process_cbor(&mut ctx, msg, &mut self.out);
-        check_reply(&self.out, w);
+        let w = process_cbor(&mut ctx, msg, &mut self.out[..capacity]);
+        check_reply(&self.out[..capacity], w);
+        assert!(self.out[capacity..].iter().all(|&byte| byte == 0xA5));
+        if assertion && self.out[0] != rsk_fido::CTAP2_OK {
+            assert_eq!(
+                Some(self.counter_bytes()),
+                before,
+                "a refused assertion changed resident signCount"
+            );
+            if msg.first() == Some(&consts::CTAP_GET_NEXT_ASSERTION)
+                && self.out[0] == rsk_fido::CtapError::Other.as_u8()
+            {
+                assert_eq!(
+                    (self.state.gna.counter, self.state.gna.started_ms),
+                    leg,
+                    "a failed next response advanced its leg or timer"
+                );
+            }
+        }
         match msg.first().copied() {
             // getInfo is stateless by spec: it must succeed whatever the
             // sequence did before it.
@@ -1521,6 +1549,28 @@ impl Sess {
             );
         }
     }
+
+    fn counter_bytes(&mut self) -> Option<Vec<u8>> {
+        let mut bytes = [0; rsk_fs::MAX_VALUE_BYTES];
+        let n = self.fs.read(consts::EF_CRED_CTR.get(), &mut bytes)?;
+        Some(bytes[..n.min(bytes.len())].to_vec())
+    }
+}
+
+fn assertion_capacity(msg: &[u8], selector: u8) -> usize {
+    if selector & 4 != 0
+        && matches!(
+            msg.first(),
+            Some(&consts::CTAP_GET_ASSERTION | &consts::CTAP_GET_NEXT_ASSERTION)
+        )
+    {
+        // Extra arm bits preserve the corpus's existing command generation.
+        let choices = [1, 2, 32, 64, 128, 256, OUT_MAX];
+        let index = usize::from(selector >> 3) + usize::from(msg.last().copied().unwrap_or(0));
+        choices[index % choices.len()]
+    } else {
+        OUT_MAX
+    }
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -1551,7 +1601,8 @@ fuzz_target!(|data: &[u8]| {
             let n = u16::from_be_bytes([rest[i], rest[i + 1]]) as usize;
             i += 2;
             let end = (i + n).min(rest.len());
-            s.step(&rest[i..end]);
+            let msg = &rest[i..end];
+            s.step_bounded(msg, assertion_capacity(msg, q));
             i = end;
         }
     } else {
@@ -1564,7 +1615,8 @@ fuzz_target!(|data: &[u8]| {
             } else {
                 let n = build(kind, &mut u, &s.pool, &s.state.lba, &s.token, &mut msg);
                 if n > 0 {
-                    s.step(&msg[..n]);
+                    let msg = &msg[..n];
+                    s.step_bounded(msg, assertion_capacity(msg, q));
                 }
             }
             if u.is_empty() {
