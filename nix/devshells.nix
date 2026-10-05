@@ -191,6 +191,7 @@
       fuzzToolchain
       pkgs.cargo-fuzz
       pkgs.cargo-llvm-cov # branch and condition instrumentation require nightly
+      rskPython # corpus preparation uses the same pinned stack as the host tests
     ];
     # `-Zmiri-many-seeds` (bare) re-runs the whole suite once per seed over a
     # large default range; under the interpreter, with ML-KEM/ML-DSA/EC/RSA in
