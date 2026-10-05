@@ -157,9 +157,13 @@ clear, then an AES-128-ECB block over the private id, a 16-bit usage counter, a
 session counter, an uptime stamp, two random bytes and a CRC). A validation
 server decrypts and replay-checks them.
 
-- The usage counter advances at the first press after every power-up and at
-  every session wrap, as on a YubiKey, so a token never repeats across reboots:
-  the standard replay defence. A host cannot advance it without a press.
+- The 15-bit usage counter advances at the first press after every power-up and
+  at every session wrap, until it stops at `0x7FFF`. Before that limit, the
+  persisted advance keeps the `(use, session)` position moving across reboots.
+  At the ceiling, rebooting or wrapping the session can repeat that position;
+  reprogram the slot with new secrets shared with the verifier before reaching
+  it. This follows [Yubico's counter limit](https://docs.yubico.com/yesdk/users-manual/application-otp/yubico-otp.html).
+  A host cannot advance the counter without a press.
 - **Public validation (YubiCloud)** requires uploading the slot's AES key to
   Yubico. `--generate-key` prints the key, public id and private id at
   programming time. Capture them then, because they cannot be read back later.

@@ -702,3 +702,56 @@ The 27 SDK mapping warnings, unsupported MC/DC and uncounted `match`/`?`
 outcomes remain open. No production source, dependency, exclusion, coverage floor
 or proof roster changed. Fuzz coverage is unchanged; no new Kani solve is
 claimed for this slice.
+
+## OTP recovery and counter boundaries
+
+Ten cases extend OTP through actual button presses, APDUs and fresh `Fs`
+instances over the same medium. A record at `0x7FFE` advances once to `0x7FFF`.
+Both a session wrap and a fresh boot leave the saturated counter unchanged
+without a write. Older above-ceiling records also stay unchanged. Two refused final
+advances across separate boots preserve the stored record and leave the RAM
+advance owed; a healthy retry persists it before releasing a ticket.
+
+These tests pin the existing saturation contract. They do not establish ticket
+uniqueness past the ceiling: the `(use, session)` position can repeat there.
+The [OTP guide](guides/otp.md#yubico-otp-validation) now states that limit and
+the need to reprogram with new verifier secrets before reaching it.
+
+CONFIGURE, UPDATE and a first press refuse a fused key lost between the slot
+probe and the write; the stored bytes, sequence and counters stay unchanged.
+The reader deliberately supplies plausible key bytes even when it returns
+failure. Restoring it makes the command work. SWAP refuses an unread latched
+key before moving either occupied record, and both writes share one successful
+read even if the later status probes fail. Challenge responses verify the
+keys after the move; the existing non-atomic SWAP contract remains.
+
+Two refused migration writes preserve plaintext or pre-OTP records through
+fresh boots, with and without a fused key. Recovery preserves the full counter
+tail, opens the current seal, stays idempotent and produces the next position.
+Repeated read faults at each migration probe preserve the old medium and the
+scrub marker until a healthy pass. Six inconsistent lengths are refused when
+calling the public `Apdu` API directly; that scope is distinct from parsed wire
+inputs, whose parser already enforces the advertised length.
+
+Three compiled controls passed all 123 prior default OTP tests and failed the
+expanded suite. Acknowledging a failed fused-key write returned an unintended
+`9000` and released a ticket; acknowledging truncated CONFIGURE data returned
+`9000` instead of `6700`. Re-reading the fused key inside SWAP's writes wrongly
+refused a move that had already obtained its device context. Its failing
+assertion expects success and measures that coherence contract, not an
+authorization refusal. Production source in the isolated clone was restored.
+
+A fresh raw default-host build passed 3142 unique tests plus one child-process
+repeat, with five ignored cases: 38444/39598 lines (97.09%), 6870/7975 condition
+outcomes (86.14%) and unchanged 3244/3272 functions (99.14%). OTP's root reached
+246/270 outcomes (91.11%) and 603/616 lines. Its 24 raw missing outcomes remain
+visible; coordinate diagnostics do not replace them. The two existing counter
+Kani harnesses verified and reached all four source covers. They assume a
+stored counter within the ceiling and prove arithmetic, not whole faulted
+histories or uniqueness at saturation.
+
+Reports, source hashes and controls are in `target/coverage-otp-recovery-20261005/`.
+The 27 SDK mapping warnings, unsupported MC/DC and uncounted `match`/`?`
+outcomes remain open. No production source, dependency, exclusion, coverage
+floor or proof roster changed. All ten cases run in both default and
+strict-config. Fuzz coverage is unchanged.

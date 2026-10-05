@@ -252,6 +252,17 @@ ordering. Four compiled controls survived the previous default OTP suite and
 failed the new cases. Reports are in `target/coverage-otp-decisions-20261005/`;
 fuzz coverage and the proof roster are unchanged.
 
+Ten OTP recovery cases passed 3142 unique tests plus the child repeat, with
+five ignored cases. A fresh condition build recorded 38444/39598 lines (97.09%),
+6870/7975 outcomes (86.14%) and unchanged function coverage. OTP's root reached
+246/270 outcomes (91.11%) and 603/616 lines; its record codec gained one outcome
+and one line. The [recovery slice](testing-roadmap.md#otp-recovery-and-counter-boundaries)
+checks repeated boot faults, fused-key loss between operations, the counter
+ceiling and defensive public-APDU lengths. Three compiled controls survived
+the prior OTP suite and failed the new assertions. Both existing counter Kani
+harnesses verified, reaching four source covers. Reports are in
+`target/coverage-otp-recovery-20261005/`; fuzz coverage is unchanged.
+
 JSON/LCOV export succeeded. Both HTML exports warned about 27 mismatched
 records, including the fresh condition directory. Reusing the previous build
 directory for the credential slice reported 113 mismatches; rebuilding in an

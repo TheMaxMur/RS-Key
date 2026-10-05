@@ -432,7 +432,7 @@ registered = "yes — assurance/platform.toml PLAT-TOOL-004, pending, whose cove
 id = "AS-RESET-7"
 statement = "Kani/CBMC is sound for the arithmetic this clause's harness bounds, and the solver that ran is the pinned one — which for cargo-kani means a version number in a workflow file and not a hash in flake.lock."
 kind = "tool TCB"
-discharger = "a pinned toolchain and a recorded tool hash, and the second does not exist: no hash of cargo-kani or of the CBMC/SAT bundle it fetches is written down anywhere. The version was measured in the devshell and is 0.67.0 — and it IS bound, by three KANI_VERSION literals scripts/kani_gate.py holds against docs/testing.md:640. `nothing in the tree binds it`, which this field said before, was the retired half of PLAT-TOOL-003 and was false"
+discharger = "a pinned toolchain and a recorded tool hash, and the second does not exist: no hash of cargo-kani or of the CBMC/SAT bundle it fetches is written down anywhere. The version was measured in the devshell and is 0.67.0 — and it IS bound, by three KANI_VERSION literals scripts/kani_gate.py holds against docs/testing.md:651. `nothing in the tree binds it`, which this field said before, was the retired half of PLAT-TOOL-003 and was false"
 expressible = "no — a fact about a tool, not about the model"
 registered = "yes — assurance/platform.toml PLAT-TOOL-003, pending, whose covers carries slice:AS-RESET-7; its supports names SEC-FIDO-006B now, since this row's BOUNDED status rests on that solver"
 
