@@ -15,6 +15,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 python scripts/external_corpus.py
 
+FUZZ_CONFIG="${FUZZ_CONFIG:-default}"
+case "$FUZZ_CONFIG" in
+  default) config_args=() ;;
+  flavours) config_args=(--features flavours) ;;
+  *) echo "::error::FUZZ_CONFIG=$FUZZ_CONFIG is not default or flavours"; exit 1 ;;
+esac
+
 # llvm-cov MUST be the one from the same nightly toolchain as the instrumented
 # build (rust's own llvm-tools): a version-mismatched nixpkgs llvm-cov cannot
 # parse the embedded coverage map. Pin it to the active sysroot.
@@ -59,10 +66,18 @@ inputs=0
 if [ -d fuzz/corpus ]; then
   inputs=$(find fuzz/corpus -type f | wc -l | tr -d ' ')
 fi
-echo "${#targets[@]} target(s), corpus: ${inputs} inputs"
+echo "${#targets[@]} target(s), config: $FUZZ_CONFIG, corpus: ${inputs} inputs"
+
+mkdir -p fuzz/coverage
+rustc -vV > fuzz/coverage/toolchain.txt
+git rev-parse HEAD > fuzz/coverage/source-commit.txt
+git diff --binary > fuzz/coverage/source.patch
+printf '%s\n' "$FUZZ_CONFIG" > fuzz/coverage/config.txt
+cargo metadata --locked --manifest-path fuzz/Cargo.toml --format-version 1 --filter-platform "$host" \
+  ${config_args[@]+"${config_args[@]}"} > fuzz/coverage/metadata.json
 
 summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
-printf '### libFuzzer per-target coverage\n\n' >> "$summary"
+printf '### libFuzzer per-target coverage (%s)\n\n' "$FUZZ_CONFIG" >> "$summary"
 
 # Said once, up front, instead of 53 identical `(coverage failed)` rows: with no
 # corpus `cargo fuzz coverage` refuses per target — "The corpus does not contain
@@ -89,7 +104,7 @@ for t in "${targets[@]}"; do
   rm -rf "fuzz/coverage/$t/raw"
   # Replay the accumulated corpus under instrumentation → merged profdata. A
   # target with an empty/absent corpus or a build hiccup must not abort the rest.
-  if ! cargo fuzz coverage "$t" --target-dir "$covbuild"; then
+  if ! cargo fuzz coverage ${config_args[@]+"${config_args[@]}"} "$t" --target-dir "$covbuild"; then
     printf '| %s | (coverage failed) | |\n' "$t" >> "$summary"
     continue
   fi
@@ -101,6 +116,10 @@ for t in "${targets[@]}"; do
   fi
   "$llvm_cov" show "$bin" -instr-profile="$prof" -ignore-filename-regex="$ign" \
     -format=html -output-dir="fuzz/coverage/$t/html" >/dev/null
+  "$llvm_cov" export "$bin" -instr-profile="$prof" -ignore-filename-regex="$ign" \
+    -format=lcov > "fuzz/coverage/$t/coverage.lcov"
+  "$llvm_cov" export "$bin" -instr-profile="$prof" -ignore-filename-regex="$ign" \
+    > "fuzz/coverage/$t/coverage.json"
   # `llvm-cov report`'s TOTAL row: field 4 = region cover %, field 10 = line cover %.
   row="$("$llvm_cov" report "$bin" -instr-profile="$prof" -ignore-filename-regex="$ign" \
     | awk '/^TOTAL/ { print $4 " | " $10 }')"

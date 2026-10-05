@@ -245,6 +245,10 @@ jobs:
     if: github.event.schedule != '41 5 * * 0'
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [default, flavours]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -265,50 +269,60 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             fuzz/coverage/.build
-          key: fuzz-cov-${{ runner.os }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
-          restore-keys: fuzz-cov-${{ runner.os }}-
+          key: fuzz-cov-${{ runner.os }}-${{ matrix.config }}-${{ hashFiles('fuzz/Cargo.lock', 'flake.lock') }}
+          restore-keys: fuzz-cov-${{ runner.os }}-${{ matrix.config }}-
 
       # Read (never write) the corpora the `fuzz` shards accumulated on the
       # previous run: coverage measures those saved inputs, not a fresh fuzzing
       # pass. One restore per shard, because that is how they are stored; they
       # extract into the same tree and the per-target directories are disjoint.
       # Restoring only one would measure a quarter of the roster against a floor
-      # written for all of it. The `default` half of each shard's pair: this row
-      # builds no flavour, so the table it prints is that build's.
+      # written for all of it. Each configuration replays its own saved corpus.
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-s1-default-${{ github.run_id }}
+          key: fuzz-corpus-s1-${{ matrix.config }}-${{ github.run_id }}
           restore-keys: |
-            fuzz-corpus-s1-default-
+            fuzz-corpus-s1-${{ matrix.config }}-
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-s2-default-${{ github.run_id }}
+          key: fuzz-corpus-s2-${{ matrix.config }}-${{ github.run_id }}
           restore-keys: |
-            fuzz-corpus-s2-default-
+            fuzz-corpus-s2-${{ matrix.config }}-
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-s3-default-${{ github.run_id }}
+          key: fuzz-corpus-s3-${{ matrix.config }}-${{ github.run_id }}
           restore-keys: |
-            fuzz-corpus-s3-default-
+            fuzz-corpus-s3-${{ matrix.config }}-
       - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: fuzz/corpus
-          key: fuzz-corpus-s4-default-${{ github.run_id }}
+          key: fuzz-corpus-s4-${{ matrix.config }}-${{ github.run_id }}
           restore-keys: |
-            fuzz-corpus-s4-default-
+            fuzz-corpus-s4-${{ matrix.config }}-
 
       - name: per-target libFuzzer coverage over the accumulated corpus
         run: nix develop .#fuzz -c ./scripts/fuzz-coverage.sh
+        env:
+          FUZZ_CONFIG: ${{ matrix.config }}
 
-      - name: upload the per-target HTML reports
+      - name: upload the raw coverage and per-target HTML reports
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: fuzz-coverage-${{ github.run_id }}
-          path: fuzz/coverage/*/html
+          name: fuzz-coverage-${{ github.run_id }}-${{ matrix.config }}
+          path: |
+            fuzz/coverage/*/html
+            fuzz/coverage/*/coverage.json
+            fuzz/coverage/*/coverage.lcov
+            fuzz/coverage/*/coverage.profdata
+            fuzz/coverage/toolchain.txt
+            fuzz/coverage/source-commit.txt
+            fuzz/coverage/source.patch
+            fuzz/coverage/config.txt
+            fuzz/coverage/metadata.json
           if-no-files-found: ignore
 
   repro:
@@ -341,9 +355,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   coverage:
-    if: github.event.schedule != '41 5 * * 0'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        # Daily keeps the default lane; Sunday and manual runs measure each build.
+        profile: ${{ fromJSON(github.event.schedule == '17 5 * * *' && '["default"]' || '["default", "advertise-pqc", "fips-profile", "fips-profile,advertise-pqc", "strong-pin", "strong-pin,advertise-pqc", "always-uv", "always-uv,advertise-pqc", "strict-up", "strict-up,advertise-pqc", "display", "strict-config", "largeblob-ext", "preview-sign", "preview-sign,largeblob-ext", "display,strong-pin", "display,fips-profile", "fido-conformance"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -360,8 +378,8 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: coverage-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: coverage-${{ runner.os }}-
+          key: coverage-${{ runner.os }}-${{ matrix.profile }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: coverage-${{ runner.os }}-${{ matrix.profile }}-
 
       # Host crates only — the embedded firmware image is not host-measurable, so
       # its coverage is 0 by construction. firmware and rsk-wipe are the two
@@ -371,10 +389,25 @@ jobs:
       # a regression alarm, not a target: 85.0% line over the host crates
       # (aarch64-apple-darwin), so a real drop fails and noise does not.
       - name: llvm-cov — host-crate line coverage, floored at 80%
+        if: matrix.profile == 'default'
         run: |
           nix develop -c cargo llvm-cov --summary-only --fail-under-lines 80 \
             --target x86_64-unknown-linux-gnu \
             --workspace --exclude firmware --exclude rsk-wipe
+
+      - name: condition coverage and raw evidence for the shipping profile
+        run: nix develop .#fuzz -c ./scripts/metrics.sh --coverage
+        env:
+          COVERAGE_PROFILE: ${{ matrix.profile }}
+          COVERAGE_OUT: target/coverage-profiles/${{ github.run_id }}-${{ matrix.profile }}
+
+      - name: retain profile logs, feature closure and raw coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unit-coverage-${{ github.run_id }}-${{ matrix.profile }}
+          path: target/coverage-profiles/${{ github.run_id }}-${{ matrix.profile }}
+          if-no-files-found: error
 
   kani:
     if: github.event.schedule != '17 5 * * *'

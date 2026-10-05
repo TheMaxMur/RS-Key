@@ -1207,7 +1207,7 @@ formal/comutants.toml	firmware/src/pin_lock.rs	18-21	//! a real power cycle clea
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	371-371	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
 formal/gen-configs.sh	crates/rsk-fido/src/consts.rs	375-375	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;
 fuzz/fuzz_targets/fido_session.rs	crates/rsk-fido/src/state.rs	607-622	/// `resetPinUvAuthToken`: new random token, cleared permissions / flags. The	}
-scripts/bcd_gate.py	scripts/fuzz-coverage.sh	40-42	# A literal, not `${FUZZ_TARGET_FLOOR:-52}`: a floor the environment can lower is	FUZZ_TARGET_FLOOR=52
+scripts/bcd_gate.py	scripts/fuzz-coverage.sh	47-49	# A literal, not `${FUZZ_TARGET_FLOOR:-52}`: a floor the environment can lower is	FUZZ_TARGET_FLOOR=52
 scripts/comutate.py	crates/rsk-fido/src/state.rs	568-571	pub fn restore_pin_lock(&mut self, lock: PinLock) {	}
 scripts/ct_gate.py	crates/rsk-bench/src/lib.rs	12-12	//! bigger than the 16 KB XIP cache, so which lines collide and evict depends on	//! bigger than the 16 KB XIP cache, so which lines collide and evict depends on
 scripts/ct_gate.py	crates/rsk-crypto/src/mac.rs	55-55	if a.len() != b.len() {	if a.len() != b.len() {

@@ -105,7 +105,7 @@ A surviving line is one that can change the emitted image, and `bcdDevice` is a
 *build* counter — CHANGELOG.md's own words. Bumping for a behaviour-neutral
 refactor that still moves the binary is correct, not noise, and costs one hex
 digit. So there is no env var and no skip list: a floor the environment can lower
-is not a ratchet (`scripts/fuzz-coverage.sh:40-42`). If this guard is ever *wrong*
+is not a ratchet (`scripts/fuzz-coverage.sh:47-49`). If this guard is ever *wrong*
 about reachability, fix the reachability rule here where the fix is reviewable.
 
 ## The counter only goes up
