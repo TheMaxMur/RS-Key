@@ -8,7 +8,7 @@
 # harness in `rsk-phy` costs half an hour or more and nothing that expensive
 # belongs on a pull request. But that put every proof a day away from the change that broke
 # it, and the split is cheap once the cost is measured rather than assumed: the
-# whole fast tier discharges in 229 s of solving (docs/testing.md carries the
+# fast tier discharged in 229 s of solving on 2026-08-26 (docs/testing.md carries the
 # table), while four crates hold everything slow.
 #
 # So: `pr` on every pull request that touches the crates, `state` additionally
@@ -31,8 +31,8 @@ cd "$(dirname "$0")/.."
 
 # --- the tiers ---------------------------------------------------------------
 #
-# FAST: every crate whose whole harness set discharges in under a minute a
-# harness. Measured 2026-08-26 on kani 0.67.0, idle 18-core Apple M5 Pro — 63
+# FAST: the crates whose harnesses fit the PR tier's five-minute cap.
+# Measured 2026-08-26 on kani 0.67.0, idle 18-core Apple M5 Pro — 63
 # harnesses, 229 s of solving all told, the slowest three being
 # `rsk-usb::no_buffer_overrun_after_any_single_frame` at 39 s,
 # `rsk-piv::set_protected…` at 37 s and `rsk-led::every_block_length…` at 34 s.
@@ -131,16 +131,16 @@ STATEFUL="rsk-fido rsk-fs"
 # they are a consistency check against the tree, not a ratchet against history:
 # deleting a harness and pasting the new number is self-consistent, and only
 # the diff shows it.
-FLOOR_pr=67
+FLOOR_pr=70
 FLOOR_state=32
-FLOOR_all=99
+FLOOR_all=102
 # The four weekly rows partition `all`, so these sum to FLOOR_all and the guard
 # checks each against the tree the same way. A harness that moves between shards
 # has to move a number with it.
 FLOOR_heavy=5
 FLOOR_light1=35
 FLOOR_light2=29
-FLOOR_light3=30
+FLOOR_light3=33
 
 # Source-level `kani::cover!`s each tier must report on. Kani 0.67.0 has no
 # `--fail-uncoverable`, so an unsatisfiable cover prints "N of M cover properties
@@ -149,13 +149,13 @@ FLOOR_light3=30
 # is caught on its own (the row fails when the per-check listing is absent); the
 # floor is for the partial case, a cover that stopped being reported while the
 # rest still are. Counted from source by the same guard as the floors above.
-COVERS_pr=49
+COVERS_pr=58
 COVERS_state=39
-COVERS_all=78
+COVERS_all=87
 COVERS_heavy=1
 COVERS_light1=38
 COVERS_light2=12
-COVERS_light3=27
+COVERS_light3=36
 
 # `kani::cover!` properties CBMC may report unsatisfied while their source-level
 # cover is still reached. One `cover!` becomes several properties wherever the

@@ -471,3 +471,7 @@ pub fn split_frame(payload: &[u8; PAYLOAD_SIZE], slot: u8) -> [[u8; REPORT_SIZE]
 )]
 #[path = "hid_tests.rs"]
 mod tests;
+
+#[cfg(kani)]
+#[path = "hid_kani.rs"]
+mod proofs;

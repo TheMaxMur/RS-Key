@@ -442,6 +442,11 @@ framing oracle checks response length, slot status, sequence echo and untouched
 buffer tails. `fuzz/fuzz_targets/ccid_frame.rs` is shared by libFuzzer and Miri;
 the three sibling tests raise the Miri roster floor from 48 to 51.
 
+OTP HID also shares its RX/TX oracle with Miri. Independent response histories
+exercise load, poll and replacement without needing a valid RX CRC first.
+Assertions check CRC bytes, sequence, padding, the pending end marker and
+unchanged output after exhaustion. Four sibling tests raise the roster to 55.
+
 | Mutation, checked on 2026-10-04 | Shared-oracle failure |
 |---|---|
 | Remove the short-output guard | The reported response length exceeds capacity |
@@ -719,13 +724,19 @@ command with it. "Peak" is the tier's `maximum resident set size` under
 
 | Tier | Crates | Harnesses | Covers | Solve | Wall | Peak | Slowest harness |
 |---|---|---|---|---|---|---|---|
-| `pr` | 13 | 67 | 49 | 229 s | 251 s | 2.8 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 39 s |
+| `pr` | 13 | 70 | 58 | 229 s | 251 s | 2.8 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 39 s |
 | `state` | 2 | 32 | 39 | 1341 s | 1365 s | 15.3 GiB | `rsk-fido::…_at_call_site`, 6 m 06 s |
-| `all` | 17 | 99 | 78 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
+| `all` | 17 | 102 | 87 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
 | `light1` | 4 | 35 | 38 | 528 s | 538 s | 9.3 GiB | `rsk-fido::…_at_call_site`, 5 m 35 s |
 | `light2` | 5 | 29 | 12 | 1289 s | 1300 s | 8.9 GiB | `rsk-rsa::sieve_step_keeps_residues`, 17 m 38 s |
-| `light3` | 7 | 30 | 27 | 162 s | 176 s | 2.4 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 36 s |
+| `light3` | 7 | 33 | 36 | 162 s | 176 s | 2.4 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 36 s |
 | `heavy` | 1 | 5 | 1 | 1785 s | 1788 s | 19.9 GiB | `rsk-phy::serialize_parse_roundtrip`, 18 m 35 s |
+
+On 2026-10-05 the `pr` runner verified its current 70 harnesses and reached all
+58 source covers, with 418 seconds of solving. Three OTP additions cover TX
+load/replacement bounds, one RX report and plaintext record reads. Their CRC
+and slot-domain abstractions are stated in the [testing roadmap](testing-roadmap.md#otp-hid-fuzz-oracle-and-copy-proofs).
+The table's wall, peak and weekly timings remain the older readings below.
 
 > **`state` is the one row re-measured after the authorization slice, and it
 > more than doubled.** Three new `credmgmt_kani.rs` harnesses drive a real
@@ -754,12 +765,12 @@ shards ran separately in the same session and checked the same harness names as
 `all` did, compared name by name out of the four logs against `all`'s own
 listing, for 3763 s of solving against `all`'s 3735 s. That count was the `all`
 roster **of the 2026-08-26 tree: 89 names**. The same tier is **today's
-`FLOOR_all` of 99** — the `all` row above, ten harnesses later — and the four
+`FLOOR_all` of 102** — the `all` row above, thirteen harnesses later — and the four
 weekly floors still sum to it, because the shards partition the crates and
 `kani.sh` refuses to run when they stop. The count adds up; the *solving* does
 not, which is what 3763 s against 3735 s says. So `FLOOR_all` and `COVERS_all`
 are numbers a run has reached, and the reading they have reached is the 89 —
-moving it onto the 99 takes a fresh run of the four shards.
+moving it onto the 102 takes a fresh run of the four shards.
 
 Two figures this page carried are refuted by that run rather than confirmed.
 `rsk-phy`'s tier peaks at **19.9 GiB** against the 11.1 GB recorded for the
@@ -778,7 +789,7 @@ and not as a side effect of measuring.
 20 m 33 s, `light2` 54 m 52 s, `light3` 4 m 59 s and `heavy` 1 h 33 m 41 s on
 hosted `ubuntu-latest` runners, all four inside the 6 h job cap — and only one of
 the four is a reading of the roster above. That run was `main` at `06813cc1`,
-where `FLOOR_all` was 66 against today's `FLOOR_all` of 99, `light1` carried 17
+where `FLOOR_all` was 66 against today's `FLOOR_all` of 102, `light1` carried 17
 harnesses against today's `FLOOR_light1` of 35 and `light2` 21 against today's
 `FLOOR_light2` of 29. A run that proved 17 of `light1` is not evidence for a
 `light1` floor of 35.
@@ -808,7 +819,7 @@ by the instruction "raise it in the commit that adds one", and `FLOOR_all` drift
 to 64 against a tree of 65: one harness could have gone missing under a floor that
 still passed.
 
-`pr` passes `--harness-timeout 5m`, seven times its slowest harness. That cap is
+`pr` passes `--harness-timeout 5m`. That cap is
 the tripwire on the tier assignment: a fast-tier harness that grows past it
 fails the pull request instead of quietly making every one of them wait, and the
 answer is to move its crate to the slow list, never to raise the cap.

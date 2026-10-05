@@ -797,3 +797,60 @@ All five cases run in default and strict-config. The 27 SDK mapping warnings,
 unsupported MC/DC and uncounted `match`/`?` outcomes remain open. No production
 source, dependency, exclusion, coverage floor or proof roster changed. Fuzz
 coverage is unchanged.
+
+## OTP HID fuzz oracle and copy proofs
+
+`otp_hid` and its Miri mirror now call one shared oracle. RX still consumes
+eight-byte reports and refuses to release payload bytes on reset, bad CRC or
+an incomplete frame. A second interpretation reads independent response
+histories: body length, poll count and body bytes. TX therefore runs without
+waiting for a valid RX CRC. Loading another body replaces any pending stream.
+
+Assertions check the capped body, CRC suffix against a separate bitwise
+reference, sequence flags, zero padding, one end marker and unchanged output
+after exhaustion. Empty input also runs TX, so the existing empty-input gate
+row checks these assertions. Four sibling tests exercise every body length
+through 73 and every poll boundary, truncated histories, a valid RX frame and
+its corrupt counterpart. The Miri roster now contains 55 unique tests in both
+default and flavours; listing a roster alone is not execution evidence.
+
+All five OTP oracle tests, including the existing seed replay, passed on the
+host in both configurations. The same five passed under Miri's strict
+provenance policy with seeds 0 through 7 on the final source. The exhaustive
+replacement test runs inside that interpreter, not only as a native fixture.
+
+Three new Kani harnesses run in the existing `pr` and `light3` tiers. The full
+`pr` runner verified 70 harnesses and reached 58 source covers. The new nine
+covers are reachable without raising the dead-cover allowance. TX uses real
+load/next calls and symbolic bodies through 72 bytes; replacing at each data
+or marker boundary preserves copy bounds, sequence and exhaustion. RX proves
+one arbitrary report from a fresh receiver, including its checked chunk index
+and release/reset behavior. Both stub CRC arithmetic; they prove transport
+behavior under that abstraction, rather than the CRC function or RX histories.
+
+The plaintext proof uses the real reader and `Fs`, a modeled successful
+backend and arbitrary bytes and stored lengths through `MAX_VALUE_BYTES`.
+Accepted lengths preserve exactly the returned bytes, rejected lengths clear
+the old record, and no read writes the medium. Its valid-slot predicate maps
+one slot to FID 7 inside `Fs`'s 24-FID Kani cache. This proof excludes slot
+authorization, backend faults and other FIDs; host tests retain those cases.
+
+Three compiled fuzz controls passed the old target and failed the shared
+oracle. Losing the pending marker also failed the actual `check.sh` fuzz row,
+with its full 52-target build and external replay; other gate rows were skipped
+in that isolated experiment. Retaining the old sequence emitted `0x41` instead
+of `0x40`, and returning zero from CRC emitted `FF FF` instead of `00 00` for
+an empty response. The latter two controls replay fixed inputs through the
+compiled libFuzzer target. Two Kani controls failed through `kani.sh` on the
+pending-marker assertion and the required refusal of a short record. Failure
+locations were inspected; neither was a timeout or a compilation failure.
+
+Fresh default `otp_hid` coverage replayed the same 460 frozen inputs before
+and after, including four declared fixtures, with raw profiles cleared for
+each stage. HID moved from 89/224 to 92/224 lines and 131/296 to 135/296
+regions. This is one target's footprint, not aggregate fuzz coverage. Reports,
+source snapshots, binary hashes and controls are in
+`target/coverage-otp-hid-assurance-20261005/`. No firmware behavior, dependency
+or coverage exclusion changed. The previous default unit result remains the
+last measurement: 97.09% lines and 86.18% condition outcomes. It was not
+re-measured here; the last aggregate fuzz result remains 63.20%.

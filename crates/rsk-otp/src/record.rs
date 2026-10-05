@@ -214,3 +214,7 @@ impl SlotRecord {
 )]
 #[path = "record_tests.rs"]
 mod tests;
+
+#[cfg(kani)]
+#[path = "record_kani.rs"]
+mod proofs;
