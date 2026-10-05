@@ -914,3 +914,53 @@ Both new tests also passed under strict-config. Raw exports, source snapshots,
 reproduction commands and controls are in
 `target/coverage-fido-token-20261005/`. Firmware behavior, dependencies,
 coverage exclusions and floors are unchanged. Fuzz coverage was not re-measured.
+
+## 2026-10-05 Assertion failure and retry boundaries
+
+Eleven wire-level tests now exercise every truncated prefix of a resident
+record, an inconsistent RP-hash prefix, all insufficient output capacities
+for getAssertion and getNextAssertion with and without UV, repair of a corrupt
+next box, channel refusal near expiry, transient/persistent seed and counter
+read failures, and a cut before the next counter write. They check returned
+status, published reply length, untouched buffer canaries, persistent records,
+counter position and the idle timer. Successful retries verify the signature
+against the public key registered earlier and check the expected user and
+per-credential signCount. A failed Begin must disarm its walk; a retriable
+failed Next must preserve its leg and timer.
+They also cover oversized allowList IDs, all UV/allowList combinations for
+credProtect=2, and silent discovery through every Next leg without UP or UV.
+
+Seven compiled controls survived the previous default FIDO suite and fail
+these tests: persisting either command's counter before encoding its reply,
+refreshing the Next timer before refusal, keeping a walk after a failed Begin,
+ignoring the stored RP prefix during discovery or allowList lookup, and
+ignoring a refused Next counter write. The assertions show the protected
+effect or wrong status, rather than counting a compile failure as a kill.
+The premature Next counter control also fails the actual `check.sh` host-test
+row in the isolated clone; other rows are skipped only for that control.
+
+The existing `fido_session` target also varies assertion output capacities and
+checks counter/Next-position preservation on refusal. Seven locally encoded
+seeds register another resident credential with a valid token, discover both
+accounts, and mix short and complete Next replies with retries. They pass under
+default and `flavours`. Two compiled controls pass with the corresponding new oracle
+removed and fail through `cargo fuzz run` with it present: a premature counter
+write changes stored bytes, and premature timer refresh changes the leg's
+timestamp. Restoring the source reproduces the passing binary hash.
+
+| Fuzz control | Oracle removed | Oracle present | Observed defect |
+|---|---|---|---|
+| Counter persisted before Next output | Exit 0 | Exit 1 | Stored count changes from 1 to 2 on a refused reply |
+| Timer refreshed before Next error | Exit 0 | Exit 1 | Timestamp changes from 999 to 1996 on a refused reply |
+
+The fresh raw default-host run passes 3160 unique unit tests plus one
+child-process repeat, with five ignored cases. It covers 38446/39598 lines
+(97.09%), 6879/7975 condition outcomes (86.26%) and 3244/3272 functions
+(99.14%). This adds one line, six condition outcomes and fifteen regions.
+The production getAssertion file's standard summary moves from 209/238 to
+215/238 condition outcomes. Function totals remain unchanged.
+MC/DC, the 27 SDK HTML mapping warnings and the
+uncounted language constructs remain open. The full 52-target fuzz union
+was not re-measured. Reproduction commands, raw exports, control logs and
+seed provenance are in `target/coverage-assertion-failures-20261005/`.
+Firmware behavior, dependencies, coverage selection and floors are unchanged.
