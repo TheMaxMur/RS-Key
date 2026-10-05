@@ -654,3 +654,51 @@ The 27 SDK mapping warnings, unsupported MC/DC and uncounted `match`/`?`
 outcomes remain open. No production source, dependency, exclusion, coverage floor
 or proof roster changed. Fuzz coverage is unchanged; no new Kani solve is
 claimed for this slice.
+
+## OTP command decisions
+
+Ten cases exercise OTP through the applet's APDU path. Each reserved config
+byte is independently refused with a valid CRC at all four slots; refusal
+preserves the records, write generation and program sequence. Extended status
+checks complete TLV bodies for plain Yubico OTP, HMAC/Yubico challenge-response,
+six/eight-digit HOTP and short/static tickets. Only plain Yubico OTP carries
+the fixed public-id field.
+
+Both challenge modes cover all four presence answers with and without touch.
+Non-confirmation returns no response, writes nothing and advances neither
+counter; subsequent confirmation works. HMAC is checked against its digest,
+and Yubico responses are independently decrypted to the host challenge and
+serial. Short Yubico challenges and both slot-two command offsets are refused.
+SELECT checks a lone second classic slot and the extended pair's deliberate
+absence from the classic status sequence.
+
+SWAP tests both offset bounds, all valid pairs including self-swaps, and the
+first refused write with both source records occupied. A healthy retry moves
+both records. Either delete arm accepts an erase that completed despite an
+unrelated metadata-read failure, checking the resulting slot contents. These
+tests preserve the existing non-atomic SWAP contract. DEFAULT-only cases cover
+an omitted scan-map code at each protected slot and an empty legacy device
+configuration over an existing record; strict-config compiles those writes out.
+
+Four compiled controls passed all 113 prior default OTP tests and failed the
+expanded suite. Ignoring the second CONFIGURE RFU byte returned an unintended
+`9000`; removing the HOTP status filter disclosed an extra public-id TLV;
+ignoring slot two at SELECT reset the sequence to zero. Removing SWAP's first
+offset bound reached an out-of-bounds session-counter swap. All controls ran in
+an isolated clone, and its production source was restored byte for byte.
+
+A fresh raw default-host condition build passed 3132 unique tests plus one
+child-process repeat, with five ignored cases. It recorded 38430/39598 lines
+(97.05%), 6856/7975 outcomes (85.97%) and unchanged 3244/3272 function coverage
+(99.14%). OTP's root increased from 219/270 to 233/270 outcomes (86.30%),
+and from 589/616 to 590/616 lines. Its 37 raw missing outcomes remain visible.
+Coordinate diagnostics include checked APDU-length/slot-array bounds and mode
+implications, but also the use-counter ceiling, fused-key read failure between
+operations and boot-migration refusals. They are not all unreachable, and
+coordinate aggregation does not replace LLVM's raw totals or a bounded proof.
+
+Reports, source hashes and controls are in `target/coverage-otp-decisions-20261005/`.
+The 27 SDK mapping warnings, unsupported MC/DC and uncounted `match`/`?`
+outcomes remain open. No production source, dependency, exclusion, coverage floor
+or proof roster changed. Fuzz coverage is unchanged; no new Kani solve is
+claimed for this slice.

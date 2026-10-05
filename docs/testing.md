@@ -242,6 +242,16 @@ survived the prior default PIV suite and failed the new assertions. Reports are
 in `target/coverage-piv-auth-20261005/`; fuzz coverage and the proof roster are
 unchanged.
 
+Ten OTP command-decision cases passed 3132 unique tests plus the child repeat,
+with five ignored cases. The fresh default-host build recorded 38430/39598
+lines (97.05%), 6856/7975 condition outcomes (85.97%) and unchanged 3244/3272
+function coverage (99.14%). OTP's root reached 233/270 outcomes (86.30%),
+up from 219/270. The [OTP slice](testing-roadmap.md#otp-command-decisions)
+checks mode/status bodies, touch results, both SWAP bounds and storage refusal
+ordering. Four compiled controls survived the previous default OTP suite and
+failed the new cases. Reports are in `target/coverage-otp-decisions-20261005/`;
+fuzz coverage and the proof roster are unchanged.
+
 JSON/LCOV export succeeded. Both HTML exports warned about 27 mismatched
 records, including the fresh condition directory. Reusing the previous build
 directory for the credential slice reported 113 mismatches; rebuilding in an
