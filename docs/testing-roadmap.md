@@ -601,3 +601,56 @@ The 27 SDK mapping warnings, unsupported MC/DC and uncounted `match`/`?`
 outcomes remain open. Reports, source identity, controls and proof logs are in
 `target/coverage-piv-state-20261005/`. Firmware behavior, exclusions, coverage
 floors and dependencies are unchanged. Fuzz coverage is unchanged.
+
+## PIV private operations and handshake decisions
+
+Twelve cases exercise GENERAL AUTHENTICATE through the applet's APDU path.
+Signing and agreement cover NEVER, ONCE, ALWAYS, a legacy DEFAULT and an
+undefined stored PIN policy, before VERIFY, after VERIFY and after a key
+operation. Authorization is checked before touch; denied operations return no
+private output, preserve the standing management status and cannot acquire PIN
+freshness. All four presence results are checked under NEVER, ALWAYS, CACHED,
+legacy DEFAULT and undefined touch policies. Only NEVER bypasses the prompt;
+every non-confirmation at another policy preserves freshness for a later touch.
+
+A sealed curve inconsistent with the metadata head is refused after touch but
+before the PIN spend. Restoring the head makes the same key usable without
+another VERIFY. An Ed25519 agreement request is refused before touch; the next
+signature verifies independently. Short response buffers at P-256, P-384,
+Ed25519 and X25519 operations return a length error after consuming freshness,
+and an immediate retry is PIN-gated. Malformed dynamic templates consume neither
+touch nor freshness.
+
+Handshake cases reject management answers at private slots, a single-auth
+answer to a mutual witness and non-block-sized answers. A mutual witness cannot
+be replayed as a single-auth answer using only the encrypted bytes supplied by
+the card. Incorrect-length answers consume their challenge without authenticating;
+a missing or empty host challenge leaves the mutual witness usable. A correct
+witness with a nonempty, incorrect-length host challenge authenticates the host
+but refuses its requested cryptogram: the existing command ordering, checked by
+the following protected write and read-back. No firmware behavior changed.
+
+Three compiled controls survived all 249 prior default PIV tests, with one
+ignored, and failed the expanded suite. Removing the sealed-curve binding and
+allowing mutual witnesses at the single-auth verifier both failed on an
+unintended `9000`; refunding freshness after a short response failed its spent-PIN
+assertion. All three controls were compiled in an isolated clone and the
+production source was restored byte for byte.
+
+A fresh raw default-host condition build passed 3122 unique tests plus one
+child-process repeat, with five ignored cases. It recorded 38429/39598 lines
+(97.05%), 6842/7975 outcomes (85.79%) and unchanged 3244/3272 function coverage
+(99.14%). GENERAL AUTHENTICATE reached 299/304 lines and 86/90 outcomes (95.56%),
+up from 290/304 and 75/90. Its remaining coordinate diagnostics concern the
+key-reference guard at PIN spend and the two challenge-algorithm bindings.
+Coordinate aggregation does not replace the four raw missing outcomes. The
+normal session writers preserve `pin_fresh` implying `has_pin`; independently
+toggling `has_pin` while freshness stays true would require a fabricated state,
+not a public command history. These constraints are not exclusions or a new
+bounded proof of all histories, including faulted storage.
+
+Reports, source hashes and controls are in `target/coverage-piv-auth-20261005/`.
+The 27 SDK mapping warnings, unsupported MC/DC and uncounted `match`/`?`
+outcomes remain open. No production source, dependency, exclusion, coverage floor
+or proof roster changed. Fuzz coverage is unchanged; no new Kani solve is
+claimed for this slice.

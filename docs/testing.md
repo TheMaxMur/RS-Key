@@ -231,6 +231,17 @@ default suite and failed the new refusal assertion. The Kani state runner proved
 32 harnesses and reached 39 source covers with its existing ceilings. Reports
 are in `target/coverage-piv-state-20261005/`; fuzz coverage is unchanged.
 
+Twelve PIV private-operation and handshake cases passed 3122 unique tests plus
+the child repeat, with five ignored cases. A fresh condition build recorded
+38429/39598 lines (97.05%), 6842/7975 outcomes (85.79%) and unchanged function
+coverage. GENERAL AUTHENTICATE reached 86/90 outcomes (95.56%). The
+[authentication slice](testing-roadmap.md#piv-private-operations-and-handshake-decisions)
+checks PIN and touch policies, sealed-curve binding, short responses and
+single/mutual challenge separation through APDUs. Three compiled controls
+survived the prior default PIV suite and failed the new assertions. Reports are
+in `target/coverage-piv-auth-20261005/`; fuzz coverage and the proof roster are
+unchanged.
+
 JSON/LCOV export succeeded. Both HTML exports warned about 27 mismatched
 records, including the fresh condition directory. Reusing the previous build
 directory for the credential slice reported 113 mismatches; rebuilding in an
