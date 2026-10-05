@@ -17,7 +17,7 @@ impl Sw {
     pub const fn new(sw1: u8, sw2: u8) -> Self {
         Sw(((sw1 as u16) << 8) | sw2 as u16)
     }
-    #[inline]
+    #[cfg_attr(not(coverage), inline)]
     pub const fn sw1(self) -> u8 {
         (self.0 >> 8) as u8
     }
@@ -30,7 +30,7 @@ impl Sw {
         self.0 == Self::OK.0
     }
     /// Big-endian bytes, as appended to a response APDU.
-    #[inline]
+    #[cfg_attr(not(coverage), inline)]
     pub const fn to_bytes(self) -> [u8; 2] {
         [self.sw1(), self.sw2()]
     }

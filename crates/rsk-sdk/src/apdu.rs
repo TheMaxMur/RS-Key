@@ -157,14 +157,14 @@ impl<'a> Apdu<'a> {
     /// Whether a YubiKey 5.8.0's CCID layer hands this class on at all: `00`, `04`,
     /// `80`, `84`, or any class with the chaining bit, taken as a segment first.
     /// It answers every other class with an empty data block.
-    #[inline]
+    #[cfg_attr(not(coverage), inline)]
     pub fn is_served_over_ccid(&self) -> bool {
         self.is_chaining() || self.cla & !(CLA_PROPRIETARY | CLA_SM_PROPRIETARY) == 0
     }
 
     /// Class `00` or `80`: the basic channel with no other bit set, interindustry
     /// or proprietary. A YubiKey 5.8.0 serves OATH, management and OTP under both.
-    #[inline]
+    #[cfg_attr(not(coverage), inline)]
     pub fn is_basic_class(&self) -> bool {
         self.cla & !CLA_PROPRIETARY == 0
     }

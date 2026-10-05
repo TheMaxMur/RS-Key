@@ -129,11 +129,14 @@ least six were prose-only (diagrams, naming, tightening), which is exactly the
 class no mechanical rule can tell from a wire change.
 """
 
+import difflib
 import pathlib
 import re
 import subprocess
 import sys
 import tomllib
+
+import gate_lines
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MAIN = pathlib.Path("firmware/src/main.rs")
@@ -201,6 +204,9 @@ NO_STD = re.compile(r"^#!\[\s*no_std\s*\]$")
 #: line itself emits nothing either way, and the code it gates is judged on its
 #: own lines.
 CFG_TEST = re.compile(r"#!?\[\s*cfg(?:_attr)?\s*\([^)]*\b(?:test|kani)\b")
+# Ordinary builds expand this exact coverage-only spelling to #[inline].
+# Comparing that expansion keeps the attribute and any accompanying code edits.
+COVERAGE_INLINE = re.compile(r"(?m)^([ \t]*)#\[cfg_attr\(not\(coverage\), inline\)\](?=[ \t]*$)")
 PATH_ATTR = re.compile(r'#\s*!?\[\s*path\s*=\s*"([^"]+)"\s*\]')
 #: `const _: () = …` — an anonymous const item, evaluated at compile time and
 #: emitting no code. Anchored at both ends (rustfmt keeps one item per line), so
@@ -437,6 +443,14 @@ def manifest(text, rel):
     return {name: value for name, value in parsed.items() if name in MANIFEST_TABLES}
 
 
+def ordinary_inline(text):
+    """Expand the known coverage-only attribute outside comments and literals."""
+    matches = list(COVERAGE_INLINE.finditer(gate_lines.rust_code(text)))
+    for found in reversed(matches):
+        text = text[:found.start()] + found.group(1) + "#[inline]" + text[found.end():]
+    return text
+
+
 def changed_lines(root, base, rel, untracked):
     """Added and removed lines for one file, blank-line changes dropped.
 
@@ -448,9 +462,17 @@ def changed_lines(root, base, rel, untracked):
     if rel in untracked:
         yield from read(root, None, rel).splitlines()
         return
-    diff = git(
-        root, "diff", "--ignore-blank-lines", "-U0", base, "--", rel, missing_ok=True
-    )
+    before, after = read(root, base, rel), read(root, None, rel)
+    ordinary_before = ordinary_inline(before)
+    ordinary_after = ordinary_inline(after)
+    if before != ordinary_before or after != ordinary_after:
+        diff = "\n".join(difflib.unified_diff(
+            ordinary_before.splitlines(), ordinary_after.splitlines(), n=0,
+        ))
+    else:
+        diff = git(
+            root, "diff", "--ignore-blank-lines", "-U0", base, "--", rel, missing_ok=True
+        )
     for line in diff.splitlines():
         if line[:1] in "+-" and not line.startswith(("+++", "---")):
             yield line[1:]

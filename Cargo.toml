@@ -3,9 +3,9 @@ resolver = "2"
 members = ["firmware", "rsk-wipe", "crates/rsk-sdk", "crates/rsk-fs", "crates/rsk-usb", "crates/rsk-crypto", "crates/rsk-fido", "crates/rsk-openpgp", "crates/rsk-rsa", "crates/rsk-ec", "crates/rsk-sha512", "crates/rsk-devconf", "crates/rsk-mgmt", "crates/rsk-oath", "crates/rsk-otp", "crates/rsk-piv", "crates/rsk-x509", "crates/rsk-rescue", "crates/rsk-vendor", "crates/rsk-device", "crates/rsk-display", "crates/rsk-store", "crates/rsk-led", "crates/rsk-phy", "crates/rsk-ui", "crates/rsk-bip39", "crates/rsk-slip39", "crates/rsk-mldsa", "crates/rsk-bench", "crates/rsk-secret"]
 
 # One lint policy for every member, each opting in with `[lints] workspace = true`.
-# `cfg(kani)` guards the proof harnesses (set by `cargo kani`, unknown to rustc).
+# Kani proofs and cargo-llvm-cov instrumentation use explicit cfg names.
 [workspace.lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)", "cfg(coverage)"] }
 # Lifted only at the roots of `firmware`, `rsk-wipe` and `rsk-rsa` (docs/unsafe.md).
 unsafe_code = "deny"
 

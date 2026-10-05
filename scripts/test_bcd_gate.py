@@ -267,6 +267,50 @@ def test_a_cfg_attribute_sharing_a_line_with_code(tree):
     assert only(tree.problems(), "TIMEOUT_MS")
 
 
+@pytest.fixture
+def inline_tree(tree):
+    tree.edit("crates/rsk-a/src/lib.rs", "pub fn judge", "#[inline]\npub fn judge")
+    tree.bump()
+    tree.note()
+    tree.commit("inline the method and bump its build")
+    return tree
+
+
+def test_coverage_only_inline_rewrite_keeps_the_ordinary_attribute(inline_tree):
+    inline_tree.edit("crates/rsk-a/src/lib.rs", "#[inline]",
+                     "#[cfg_attr(not(coverage), inline)]")
+    inline_tree.append("crates/rsk-a/src/lib.rs", "\n// coverage workaround\n")
+    assert inline_tree.problems() == []
+
+
+@pytest.mark.parametrize("replacement", [
+    "#[cfg_attr(not(coverage), inline(always))]",
+    "#[cfg_attr(coverage, inline)]",
+    "#[cfg_attr(not(coverage), inline)] pub const EXTRA: u8 = 1;",
+])
+def test_other_inline_or_coverage_attributes_still_count(inline_tree, replacement):
+    inline_tree.edit("crates/rsk-a/src/lib.rs", "#[inline]", replacement)
+    assert only(inline_tree.problems(), "crates/rsk-a/src/lib.rs")
+
+
+def test_coverage_inline_rewrite_does_not_hide_accompanying_code(inline_tree):
+    inline_tree.edit("crates/rsk-a/src/lib.rs", "#[inline]",
+                     "#[cfg_attr(not(coverage), inline)]")
+    inline_tree.edit("crates/rsk-a/src/lib.rs", "byte < 0x80", "byte < 0x81")
+    assert only(inline_tree.problems(), "byte < 0x80")
+
+
+def test_inline_text_inside_a_raw_string_is_still_a_changed_value(tree):
+    value = 'pub const TEXT: &str = r#"\n#[inline]\n"#;'
+    tree.append("crates/rsk-a/src/lib.rs", "\n" + value + "\n")
+    tree.bump()
+    tree.note()
+    tree.commit("add the text value and bump its build")
+    tree.edit("crates/rsk-a/src/lib.rs", value,
+              value.replace("#[inline]", "#[cfg_attr(not(coverage), inline)]"))
+    assert only(tree.problems(), "#[inline]")
+
+
 def test_un_gating_a_test_module_puts_it_in_the_image(tree):
     tree.edit("crates/rsk-a/src/lib.rs", "#[cfg(test)]\nmod tests;", "pub mod tests;")
     tree.append("crates/rsk-a/src/tests.rs", "\npub const NOW_SHIPPED: u8 = 1;\n")
