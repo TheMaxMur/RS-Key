@@ -854,3 +854,63 @@ source snapshots, binary hashes and controls are in
 or coverage exclusion changed. The previous default unit result remains the
 last measurement: 97.09% lines and 86.18% condition outcomes. It was not
 re-measured here; the last aggregate fuzz result remains 63.20%.
+
+## Independent FIDO token authorization conditions
+
+Two wire-level tests exercise makeCredential and getAssertion through
+`process_cbor` under PIN protocols 1 and 2. Each ceremony has eleven cases:
+valid bound and unbound tokens; bad MAC, missing command permission, missing
+UV and inactive tokens in both binding states; and a token bound to another RP.
+An unbound token's stale RP hash does not authorize or refuse the request;
+successful use binds it to the requested RP. The other conditions remain
+permissive while the condition under test changes.
+
+Every refusal must return PIN_AUTH_INVALID with only the status byte, leave
+the output tail untouched, request no presence, preserve all stored records
+and the store's mutation generation, and leave the token's bytes, flags,
+binding and timers unchanged. Repairing only the rejected condition allows
+the same token to retry. Successful use asserts UP and UV, refreshes only the
+usage timer, binds the RP and consumes permissions down to largeBlobWrite.
+
+Eight compiled controls passed the previous 947 unique default FIDO unit
+tests and failed the expanded suite. Removing the permission or RP check in
+either command, or UV enforcement in makeCredential, incorrectly returned
+success instead of PIN_AUTH_INVALID. Refreshing either command's token before
+a refusal changed its usage timer. Binding getAssertion's unbound token before
+a refusal changed its RP state. The failing assertions were inspected in
+each case; compilation failures and timeouts are not counted as kills.
+An isolated clone and separate build directory retain binary hashes before
+and after adding the tests. Production source was restored in that clone.
+On the final `*_tests.rs` source, removing getAssertion's permission check
+also failed the actual `check.sh` host-test row in that clone: success was
+returned instead of PIN_AUTH_INVALID. Other rows were skipped for this
+isolated control; the normal full gate runs separately.
+
+The five Boolean conditions in each authorization guard now have both
+outcomes in the raw per-instantiation counters: the coordinate subtotal moved
+from 15/20 to 20/20 across the two guards. This selected subtotal is distinct
+from LLVM's file summaries, which remain 178/212 outcomes for makeCredential
+and 209/238 for getAssertion. It does not replace those summaries or establish
+whole-core MC/DC. The test cases pair the authorization inputs independently;
+native MC/DC instrumentation remains unsupported.
+
+A small generic probe reproduces the distinction. Splitting the three
+`a && b` input pairs between two instantiations reaches all four coordinate
+outcomes, while LLVM's file summary reports 3/4. Running all three pairs in
+one instantiation makes that summary 4/4. Both stages use the same compiler,
+condition instrumentation and source function, with profiles cleared between
+runs. A merged coordinate subtotal therefore cannot silently replace the
+standard denominator.
+
+A full default-host condition run passed 3149 unique unit tests plus one
+child-process repeat, with five ignored cases. The raw workspace result is
+38445/39598 lines (97.09%), 6873/7975 condition outcomes (86.18%) and
+3244/3272 functions (99.14%), unchanged from the previous measurement.
+The existing report selection omits the new `*_tests.rs` file and retains
+verification helpers. The new guard observations do not increase those
+aggregate source summaries.
+The 27 SDK HTML mapping warnings and uncounted language constructs remain.
+Both new tests also passed under strict-config. Raw exports, source snapshots,
+reproduction commands and controls are in
+`target/coverage-fido-token-20261005/`. Firmware behavior, dependencies,
+coverage exclusions and floors are unchanged. Fuzz coverage was not re-measured.
