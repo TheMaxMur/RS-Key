@@ -5,6 +5,9 @@ use super::*;
 use crate::Rng;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "record_plaintext_tests.rs"]
+mod plaintext;
+
 struct CountRng(u8);
 impl Rng for CountRng {
     fn fill(&mut self, b: &mut [u8]) {

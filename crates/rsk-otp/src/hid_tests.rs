@@ -3,6 +3,9 @@
 
 use super::*;
 
+#[path = "hid_tx_tests.rs"]
+mod tx;
+
 #[test]
 fn reassembles_a_full_frame() {
     let mut payload = [0u8; PAYLOAD_SIZE];
