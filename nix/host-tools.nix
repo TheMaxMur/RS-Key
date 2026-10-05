@@ -47,6 +47,7 @@ let
     ps.shamir-mnemonic # SLIP-39 Shamir shares
     ps.fido2 # `rsk fido` set-pin / list-passkeys
     ps.pytest # third_party/ conformance suites
+    ps.coverage # separate CLI and test-runner branch measurements; no firmware input
     ps.makefun # ykman's tests/device (condition.py)
     ps.pillow # deterministic IBM Plex rasterisation for the trusted-display assets
     inputimeoutPy # prompt helper used by the vendored FIDO suite

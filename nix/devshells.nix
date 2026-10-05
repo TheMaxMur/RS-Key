@@ -30,6 +30,7 @@
 
       # Security tooling (see scripts/check.sh).
       pkgs.gitleaks # secret detection (pre-commit hook over staged diff)
+      pkgs.git # provenance and history checks also run on minimal NixOS hosts
       pkgs.cargo-audit # SCA: RustSec advisory scan of Cargo.lock
       pkgs.cargo-deny # SCA: advisories + licenses + source/ban policy
       pkgs.cargo-cyclonedx # CycloneDX SBOM generation (release provenance)
@@ -191,6 +192,7 @@
       fuzzToolchain
       pkgs.cargo-fuzz
       pkgs.cargo-llvm-cov # branch and condition instrumentation require nightly
+      pkgs.git # coverage provenance must not depend on the host's Git installation
       rskPython # corpus preparation uses the same pinned stack as the host tests
     ];
     # `-Zmiri-many-seeds` (bare) re-runs the whole suite once per seed over a
@@ -201,6 +203,8 @@
     # (~4 h) began timing out as the crypto suite grew; 8 (~2 h) samples that
     # nondeterminism just as well and leaves headroom under the job budget.
     MIRIFLAGS = "-Zmiri-many-seeds=0..8 -Zdeduplicate-diagnostics -Zmiri-strict-provenance";
+    # cargo-miri may invoke rustup on hosts that also have a stable installation.
+    RUSTUP_TOOLCHAIN = "${fuzzToolchain}";
     # libFuzzer's runtime is C++: on Linux the fuzz binaries need
     # libstdc++.so.6 at run time, and a nix-linked binary's loader does not
     # search the host's /usr/lib (broke the deep-checks CI job, every target
