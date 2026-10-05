@@ -30,19 +30,20 @@ use rsk_openpgp::consts::{PW1_DEFAULT, PW1_MODE81, PW1_MODE82, PW3_DEFAULT, PW3_
 use rsk_openpgp::keys::curve_from_attr;
 use rsk_openpgp::pso::parse_ecdh_point;
 use rsk_openpgp::{OpenpgpApplet, scan_files};
-use rsk_otp::hid::{FrameRx, FrameTx, PAYLOAD_SIZE, REPORT_SIZE, RxOutcome};
 use rsk_phy::{PHY_MAX_SIZE, PhyData};
 use rsk_sdk::apdu::Apdu;
 use rsk_sdk::applet::RESP_BUILD;
 use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{Applet, ResBuf, Sw};
-use rsk_secret::Secret;
 use rsk_usb::ctaphid::{CTAP_MAX_MESSAGE, HID_RPT_SIZE, Outcome, Reassembler, TxFrames};
 
 use core::cell::RefCell;
 
 #[path = "../fuzz_targets/ccid_frame.rs"]
 mod ccid_frame;
+
+#[path = "../fuzz_targets/otp_hid_oracle.rs"]
+mod otp_hid_oracle;
 
 // -------------------------------------------------------------------------
 // Shared RNG and helpers
@@ -1140,25 +1141,7 @@ fn miri_otp_hid() {
         &[0x12; 64],
         &[0xFF; 16],
     ] {
-        let mut rx = FrameRx::new();
-        let mut payload = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
-        let mut tx = FrameTx::new();
-        for chunk in data.chunks(REPORT_SIZE) {
-            let mut report = [0u8; REPORT_SIZE];
-            report[..chunk.len()].copy_from_slice(chunk);
-            match rx.feed(&report, &mut payload) {
-                RxOutcome::Frame { slot: _ } => {
-                    tx.load(payload.expose());
-                    let mut out = [0u8; REPORT_SIZE];
-                    let mut guard = 0;
-                    while tx.next(&mut out) {
-                        guard += 1;
-                        assert!(guard < 64, "FrameTx must terminate");
-                    }
-                }
-                RxOutcome::None | RxOutcome::Reset | RxOutcome::BadCrc => {}
-            }
-        }
+        otp_hid_oracle::replay(data);
     }
 }
 
