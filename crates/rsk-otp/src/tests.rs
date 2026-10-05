@@ -2761,3 +2761,6 @@ mod command_bounds_tests;
 
 #[path = "decisions_tests.rs"]
 mod decisions;
+
+#[path = "recovery_tests.rs"]
+mod recovery;
