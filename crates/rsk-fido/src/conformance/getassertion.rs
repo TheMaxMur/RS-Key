@@ -657,3 +657,6 @@ fn a_wrong_typed_request_member_is_cbor_unexpected_type() {
         );
     }
 }
+
+#[path = "assertion_failure_tests.rs"]
+mod failures;
