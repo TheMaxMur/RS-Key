@@ -11070,3 +11070,9 @@ mod mgm_fault_bounds_tests;
 
 #[path = "pin_decisions_tests.rs"]
 mod pin_decisions;
+
+#[path = "auth_decisions_tests.rs"]
+mod auth_decisions;
+
+#[path = "handshake_decisions_tests.rs"]
+mod handshake_decisions;
