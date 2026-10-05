@@ -40,6 +40,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- The image emulator builds on ARM Linux: picoem's x86_64 affinity helpers
+  now use the same architecture guard as its threaded runtime.
+- Image PICOBOOT/MSC tests retry a refused USB/IP detach request after a
+  virtual-device reboot, within the existing deadline; a live failed port
+  still fails the run.
+
 - A failed read of the current PIN verifier during a forced PIN change returns
   `CTAP2_ERR_OTHER` and leaves the change pending. It can no longer accept the
   unchanged PIN and clear the policy flag. A read-fault sweep covers the command

@@ -130,6 +130,10 @@ class Client:
                         result.check_returncode()
                     raise TimeoutError("owned USB/IP port did not detach")
                 time.sleep(0.05)
+                # Self-reboot can race usbip's imported-device lookup. A refused
+                # request needs another attempt, within the same detach deadline.
+                if result is not None and result.returncode:
+                    result = subprocess.run([self.args.usbip, "detach", "-p", str(self.kernel_port)], timeout=30)
             self.kernel_port = None
             self.selection = []
 

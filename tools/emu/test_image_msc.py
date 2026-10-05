@@ -65,6 +65,23 @@ class MscTests(unittest.TestCase):
                         client.detach()
                         self.assertIsNone(client.kernel_port)
 
+    def test_detach_retries_a_refused_request_until_the_owned_port_disappears(self):
+        client = Client(SimpleNamespace(usbip="usbip"), 3240, {})
+        client.kernel_port = 0
+        client.selection = ["--bus", "3", "--address", "1"]
+        with patch("image_picoboot.active_ports", side_effect=[{0: "3-1"}, {0: "3-1"}, {}]), \
+             patch("image_picoboot.time.sleep"), \
+             patch("image_picoboot.time.monotonic", side_effect=[0, 1]), \
+             patch("image_picoboot.subprocess.run", side_effect=[
+                 subprocess.CompletedProcess(["usbip", "detach"], 1),
+                 subprocess.CompletedProcess(["usbip", "detach"], 0),
+             ]) as run:
+            client.detach()
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+        self.assertIsNone(client.kernel_port)
+        self.assertEqual(client.selection, [])
+
 
 if __name__ == "__main__":
     unittest.main()
