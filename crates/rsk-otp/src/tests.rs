@@ -2758,3 +2758,6 @@ mod reads;
 
 #[path = "command_bounds_tests.rs"]
 mod command_bounds_tests;
+
+#[path = "decisions_tests.rs"]
+mod decisions;
