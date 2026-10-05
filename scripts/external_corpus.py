@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
-"""Adapt the pinned upstream seeds to the existing fuzz targets, or replay them.
+"""Adapt pinned upstream seeds and local regressions to the fuzz targets.
 
 The source archives and selection rules are recorded in third_party/corpus/README.md.
 No upstream response is treated as a conformance oracle.
 """
 import argparse
 import hashlib
+import hmac
 import json
 from pathlib import Path
 import subprocess
@@ -27,6 +28,25 @@ CTAP = {
     "Cbor_ClientPinParameters": 0x06,
 }
 APPLETS = {"applet0": "piv_apdu", "applet2": "oath_apdu", "applet4": "openpgp_apdu"}
+
+
+def assertion_sequences():
+    from fido2 import cbor
+
+    cdh = bytes([0xCD]) * 32
+    register = bytes([1]) + cbor.encode({
+        1: cdh, 2: {"id": "a.co"}, 3: {"id": bytes([9]), "name": "next"},
+        4: [{"alg": -7, "type": "public-key"}], 7: {"rk": True},
+        8: hmac.digest(bytes([0x99]) * 32, cdh, "sha256"), 9: 2,
+    })
+    discover = bytes([2]) + cbor.encode({1: "a.co", 2: cdh, 5: {"up": False}, 8: 6})
+    for index, capacity in enumerate((1, 2, 32, 64, 128, 256, 2048)):
+        short = bytes([2]) + cbor.encode({1: "a.co", 2: cdh, 5: {"up": False}, 8: index})
+        commands = (register, discover, bytes([8, index]), bytes([8, 6]),
+                    bytes([8, 6]), short, discover)
+        # Raw arm with bounded replies; Next ignores the capacity selector byte.
+        data = bytes([20]) + b"".join(len(c).to_bytes(2, "big") + c for c in commands)
+        yield "fido_session", f"rs-key-assertion-capacity-{capacity}", data
 
 
 def records():
@@ -70,6 +90,7 @@ def records():
                 yield "fido_u2f", label, data
             elif group in APPLETS and 0 < len(data) < 255:
                 yield APPLETS[group], label, bytes([len(data)]) + data
+    yield from assertion_sequences()
 
 
 def prepare(destination):

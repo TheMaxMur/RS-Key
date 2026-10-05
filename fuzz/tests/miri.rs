@@ -45,6 +45,12 @@ mod ccid_frame;
 #[path = "../fuzz_targets/otp_hid_oracle.rs"]
 mod otp_hid_oracle;
 
+#[path = "../fuzz_targets/fido_session.rs"]
+mod fido_session;
+
+#[path = "fixtures/fido_session.rs"]
+mod fido_session_seeds;
+
 // -------------------------------------------------------------------------
 // Shared RNG and helpers
 // -------------------------------------------------------------------------
@@ -1405,99 +1411,14 @@ fn miri_seed_blob() {
 
 #[test]
 fn miri_fido_session() {
-    use rsk_fido::consts::{
-        CTAP_CLIENT_PIN, CTAP_CREDENTIAL_MGMT, CTAP_GET_INFO, CTAP_LARGE_BLOBS, CTAP_RESET,
-        CTAP_SELECTION,
-    };
-    use rsk_fido::credential::credential_store;
-    use rsk_fido::state::{PERM_ACFG, PERM_CM, PERM_GA, PERM_LBW, PERM_MC, PERM_PCMR};
-
-    let d = Device {
-        serial_hash: &[0xAB; 32],
-        serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
-        otp_key: None,
-        latched: false,
-    };
-    let mut fs = Fs::new(RamStorage::new());
-    let mut rng = SeqRng(1);
-    let _ = ensure_seed(&d, &mut fs, &mut rng);
-    let rp_hash = sha256(b"a.co");
-    if let Some(seed) = load_keydev(&d, &mut fs) {
-        let input = CredInput {
-            rp_id: "a.co",
-            user_id: &[1, 2],
-            user_name: "u",
-            user_display_name: "",
-            use_sign_count: true,
-            rk: true,
-            created_ms: 1,
-            alg: -7,
-            curve: 1,
-            ext: CredExt {
-                cred_protect: 0,
-                cred_blob: &[],
-                hmac_secret: false,
-                large_blob_key: false,
-                third_party_payment: false,
-            },
-        };
-        let mut cred_box = [0u8; 512];
-        if let Ok(len) = credential_create(
-            seed.expose(),
-            &d,
-            &input,
-            &rp_hash,
-            &[0x11; 12],
-            &mut cred_box,
-        ) {
-            let _ = credential_store(
-                seed.expose(),
-                &d,
-                &mut fs,
-                &mut SeqRng(3),
-                &cred_box[..len],
-                &rp_hash,
-                "a.co",
-                &[1, 2],
-                &[],
-            );
-        }
-    }
-
-    let mut state = FidoState::new();
-    state.paut.token = [0x99; 32];
-    state.paut.permissions = PERM_MC | PERM_GA | PERM_CM | PERM_LBW | PERM_ACFG | PERM_PCMR;
-    state.begin_using_token(false, 0);
-
-    // One session: token-armed queries, a reset mid-way, then getInfo must
-    // still succeed against the wiped store.
-    let msgs: [&[u8]; 7] = [
-        &[CTAP_GET_INFO],
-        &[CTAP_SELECTION],
-        &[CTAP_CLIENT_PIN, 0xa1, 0x02, 0x01],
-        &[CTAP_CREDENTIAL_MGMT, 0xa1, 0x01, 0x01],
-        &[CTAP_LARGE_BLOBS, 0xa1, 0x01, 0x00],
-        &[CTAP_RESET],
-        &[CTAP_GET_INFO],
+    // Retain reset/query coverage, then run the fuzz target's actual state oracles.
+    let queries: &[u8] = &[
+        0, 0, 1, 4, 0, 1, 11, 0, 4, 6, 0xA1, 2, 1, 0, 4, 10, 0xA1, 1, 1, 0, 4, 12, 0xA1, 1, 0, 0,
+        1, 7, 0, 1, 4,
     ];
-    let mut presence = rsk_fido::AlwaysConfirm;
-    let mut out = [0u8; 2048];
-    let mut now_ms: u64 = 2;
-    for msg in msgs {
-        let mut ctx = Ctx {
-            presence: &mut presence,
-            dev: d,
-            fs: &mut fs,
-            rng: &mut rng,
-            state: &mut state,
-            now_ms,
-        };
-        let w = rsk_fido::process_cbor(&mut ctx, msg, &mut out);
-        assert!(w >= 1 && w <= out.len());
-        if msg.first() == Some(&CTAP_GET_INFO) {
-            assert_eq!(out[0], rsk_fido::CTAP2_OK);
-        }
-        now_ms += 997;
+    fido_session::exercise(queries);
+    for index in 0..7 {
+        fido_session::exercise(&fido_session_seeds::assertion_capacity(index));
     }
 }
 

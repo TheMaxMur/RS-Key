@@ -39,6 +39,14 @@ invocation: a temporary assertion in `fido_cbor` rejected OpenSK's
 assertion with libFuzzer exit 77 and propagated failure. The assertion was
 removed before the green run.
 
+The same adapter retains seven local `fido_session` sequences for assertion
+output capacities 1, 2, 32, 64, 128, 256 and 2048. Python-fido2 independently
+encodes an authenticated resident registration, silent discovery, short Next
+replies and retries. They use public fixture values, not device secrets.
+`fuzz/tests/fixtures/fido_session.rs` retains the matching wire commands for
+the ordinary test and Miri, both calling the actual session harness. These
+local inputs are AGPL-3.0-only and are not upstream conformance vectors.
+
 ```sh
 nix develop -c python scripts/external_corpus.py
 ```

@@ -3,6 +3,7 @@
 
 """Upstream wire bytes must reach their intended command and applet harness."""
 import json
+import hashlib
 import subprocess
 import tarfile
 
@@ -10,6 +11,17 @@ import pytest
 
 import external_corpus as corpus
 import gate_lines
+
+
+def test_assertion_sequences_retain_independently_encoded_wire_bytes():
+    seeds = {(target, name): data for target, name, data in corpus.records()
+             if name.startswith("rs-key-assertion-capacity-")}
+    assert len(seeds) == 7
+    witness = seeds["fido_session", "rs-key-assertion-capacity-1"]
+    assert hashlib.sha256(witness).hexdigest() == (
+        "1034d8225314a0a6b4c5e8ee45c9c78e1288b932751b5e7bf0f9f1c65b57527b")
+    assert witness[:3] == bytes.fromhex("140083")
+    assert len({data for data in seeds.values()}) == 7
 
 
 def test_opensk_generic_value_reaches_each_command():

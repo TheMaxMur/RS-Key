@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
 //! Stateful CTAP2 session fuzzing, structure-aware. The single-command FIDO
 //! targets (fido_cbor, fido_largeblobs, fido_credmgmt, …) each drive ONE command
@@ -59,8 +59,8 @@
 
 use std::sync::OnceLock;
 
-use libfuzzer_sys::arbitrary::Unstructured;
-use libfuzzer_sys::fuzz_target;
+use fuzzing::arbitrary::Unstructured;
+use libfuzzer_sys as fuzzing;
 use minicbor::encode::write::{Cursor, EndOfSlice};
 use minicbor::encode::{Error as EncError, Write};
 use minicbor::{Decoder, Encoder};
@@ -1573,7 +1573,7 @@ fn assertion_capacity(msg: &[u8], selector: u8) -> usize {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+pub(crate) fn exercise(data: &[u8]) {
     let Some((&arm, rest)) = data.split_first() else {
         return;
     };
@@ -1627,4 +1627,7 @@ fuzz_target!(|data: &[u8]| {
     }
 
     s.display_walk();
-});
+}
+
+#[cfg(not(test))]
+fuzzing::fuzz_target!(|data: &[u8]| exercise(data));
