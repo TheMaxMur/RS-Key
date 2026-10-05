@@ -974,3 +974,17 @@ in `check.sh` builds `firmware` on it at all. The board loop builds `rsk-wipe`, 
 and both `BOARD=` firmware rows pin `waveshare-one`. So the column is real and \
 WHOLLY UNEXERCISED, and what is left to decide is whether the tree should build \
 it, or whether it should be a knob of `firmware-display` instead."""
+
+[[question]]
+column = "panel"
+owner = "contributor"
+settled_by = "absence"
+text = """
+The status-only screen: `rsk-ui` for its fonts and `firmware/src/panel.rs` over \
+SPI1. It wraps the BOOTSEL button in a `UserPresence` impl that paints a banner \
+for the length of the wait and forwards the decision unchanged — no `Confirm` \
+reaches the panel, `shows_confirm` keeps its false default, and there is no PIN \
+surface at all. Is the delta for every P0-family row genuinely out-of-scope, or \
+does a wrapper on the presence path — beside a screen that reads the build \
+counter, the chip serial, the attach flag and uptime — put a new path under an \
+authorisation row?"""

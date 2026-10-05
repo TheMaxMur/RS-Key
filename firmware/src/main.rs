@@ -52,6 +52,8 @@ mod handler;
 mod led;
 mod otp_kbd;
 mod otp_keys;
+#[cfg(feature = "panel")]
+mod panel;
 mod pin_lock;
 mod presence;
 mod rescue_platform;
@@ -68,6 +70,16 @@ compile_error!(
     "the `display` build requires LED_KIND=none (the ST7789 panel replaces the LED \
      and its backlight uses GPIO16); build with `LED_KIND=none ... --features \
      display` — the `firmware-display` nix flavor sets this for you"
+);
+
+// `display` is the 240x320 touchscreen trusted UI (presence on the panel); `panel`
+// is the 240x135 status-only screen (presence on BOOTSEL). Two different panels with
+// two different geometries and presence sources — a build that asked for both is a
+// mistake, so refuse it rather than let one silently win.
+#[cfg(all(feature = "display", feature = "panel"))]
+compile_error!(
+    "the `display` and `panel` features are mutually exclusive: `display` is the \
+     240x320 touchscreen trusted UI, `panel` the 240x135 status-only screen"
 );
 
 use flash_storage::FLASH_SIZE;
@@ -382,6 +394,39 @@ const _: () = assert!(
     "USR_LED_PIN is not supported on a display build (the panel replaces the onboard LED)"
 );
 
+// Status-only panel (`panel` feature). SCK/MOSI are hard-wired to SPI1's GPIO10/11
+// in `panel.rs`, matching the board's LCD wiring, so only the control pins and the
+// SPI clock come from the board config — carried by the `[display]` section, which
+// is the same panel-wiring vocabulary the trusted display uses.
+#[cfg(feature = "panel")]
+const BUILD_PANEL_SPI_FREQ_HZ: u32 = env_u32(env!("PK_PANEL_SPI_FREQ_HZ"));
+#[cfg(feature = "panel")]
+const BUILD_PANEL_CS: u8 = env_u16(env!("PK_PANEL_CS")) as u8;
+#[cfg(feature = "panel")]
+const BUILD_PANEL_DC: u8 = env_u16(env!("PK_PANEL_DC")) as u8;
+#[cfg(feature = "panel")]
+const BUILD_PANEL_BL_PIN: u8 = env_u16(env!("PK_PANEL_BL_PIN")) as u8;
+
+// The panel's control pins are claimed via `AnyPin::steal`, so reject a pad owned
+// by two drivers — including SPI1's hard-wired SCK/MOSI (10/11) — at compile time.
+#[cfg(feature = "panel")]
+const _: () = {
+    const CTLS: &[u8] = &[BUILD_PANEL_CS, BUILD_PANEL_DC, BUILD_PANEL_BL_PIN];
+    let mut i = 0;
+    while i < CTLS.len() {
+        assert!(
+            CTLS[i] != 10 && CTLS[i] != 11,
+            "panel control GPIO overlaps SPI1 SCK/MOSI (10/11)"
+        );
+        let mut j = i + 1;
+        while j < CTLS.len() {
+            assert!(CTLS[i] != CTLS[j], "duplicate panel GPIO");
+            j += 1;
+        }
+        i += 1;
+    }
+};
+
 #[cfg(led_kind = "ws2812")]
 const BUILD_DRIVER: u8 = 3;
 #[cfg(led_kind = "gpio")]
@@ -450,6 +495,10 @@ static PHY_MANUFACTURER: StaticCell<[u8; 64]> = StaticCell::new();
 /// invariant as FS/RNG above — borrows never span `.await`.
 #[cfg(feature = "display")]
 static UI: StaticCell<RefCell<display::Ui>> = StaticCell::new();
+/// The status-only panel, shared with the task that repaints it. Same `RefCell`
+/// invariant as `UI` — borrows never span `.await`.
+#[cfg(feature = "panel")]
+static PANEL: StaticCell<RefCell<panel::Panel>> = StaticCell::new();
 
 struct SendUsb(UsbDevice<'static, Drv>);
 unsafe impl Send for SendUsb {}
@@ -714,7 +763,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x09DA;
+    let device_release: u16 = 0x09DB;
     config.device_release = device_release;
 
     let mut builder = Builder::new(
@@ -1144,6 +1193,46 @@ async fn main(spawner: Spawner) {
         spawner.spawn(display::status_task(ui).unwrap());
         ui
     };
+
+    // Status-only panel (the `panel` feature). Built after the USB task is spawned,
+    // like the display block above, so the panel's blocking init runs on the thread
+    // executor while the interrupt executor enumerates. It adds no presence source of
+    // its own — `presence_ref` below stays on the BOOTSEL button and merely gets
+    // wrapped so the screen can show a wait.
+    #[cfg(feature = "panel")]
+    let panel_ui: &'static RefCell<panel::Panel> = {
+        use embassy_rp::gpio::{Level, Output};
+        use embassy_rp::spi::{Config as SpiConfig, Phase, Polarity, Spi};
+
+        let mut spi_cfg = SpiConfig::default();
+        spi_cfg.frequency = BUILD_PANEL_SPI_FREQ_HZ;
+        spi_cfg.polarity = Polarity::IdleLow;
+        spi_cfg.phase = Phase::CaptureOnFirstTransition;
+        let spi = Spi::new_blocking_txonly(p.SPI1, p.PIN_10, p.PIN_11, spi_cfg);
+
+        let cs = Output::new(
+            unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_PANEL_CS) },
+            Level::High,
+        );
+        let dc = Output::new(
+            unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_PANEL_DC) },
+            Level::Low,
+        );
+        // The backlight is an active-low PNP high-side switch on the reference board,
+        // so `Level::High` holds it dark through init; `Panel::new` pulls it low once
+        // the first frame is painted.
+        let bl = Output::new(
+            unsafe { embassy_rp::gpio::AnyPin::steal(BUILD_PANEL_BL_PIN) },
+            Level::High,
+        );
+        let info = panel::Info {
+            version: device_release,
+            chipid: u64::from_le_bytes(serial_id),
+        };
+        let ui = PANEL.init(RefCell::new(panel::Panel::new(spi, cs, dc, bl, info)));
+        spawner.spawn(panel::status_task(ui, info).unwrap());
+        ui
+    };
     core1::spawn(p.CORE1);
 
     // Standard key: BOOTSEL by default, or a dedicated `PRESENCE_PIN` GPIO button.
@@ -1151,11 +1240,17 @@ async fn main(spawner: Spawner) {
     // rejected at compile time — see the `BUILD_PRESENCE_IS_GPIO` assert above).
     #[cfg(not(feature = "display"))]
     let presence_ref = {
-        let presence = if BUILD_PRESENCE_IS_GPIO {
+        let button = if BUILD_PRESENCE_IS_GPIO {
             ButtonPresence::new_gpio(BUILD_PRESENCE_PIN, BUILD_PRESENCE_ACTIVE_HIGH)
         } else {
             ButtonPresence::new_bootsel(p.BOOTSEL)
         };
+        // The `panel` build wraps that same button so the screen can show the press
+        // it is waiting for; the plain key installs the button as-is.
+        #[cfg(feature = "panel")]
+        let presence = panel::PanelPresence::new(panel_ui, button);
+        #[cfg(not(feature = "panel"))]
+        let presence = button;
         PRESENCE.init(RefCell::new(presence))
     };
     #[cfg(feature = "display")]
