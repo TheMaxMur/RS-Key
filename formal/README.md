@@ -2076,7 +2076,7 @@ removing its own site's re-arm in a worktree — the first probe removed the
 as the asserts' specificity check. The panel path's own twin
 (`spend_and_verify_pin_at`, the fourth PIN door) and the OATH/OpenPGP site
 asserts remain open, recorded here rather than implied. The boot-wiring gap that
-stood here is CLOSED. `crates/rsk-device/src/ctap_tests.rs:101-123` drives only
+stood here is CLOSED. `crates/rsk-device/src/ctap_tests.rs:105-127` drives only
 `engaged: true, mismatches: 3`, so `a_warm_boot_carries_a_sub_limit_batch_in`
 was added beside it for the other arm — and what that case alone catches is not
 `BugPartialLockCarry`, which the ordinary rsk-device host row catches too, but a

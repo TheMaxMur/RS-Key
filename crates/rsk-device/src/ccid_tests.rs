@@ -4,7 +4,9 @@
 use super::*;
 #[cfg(not(feature = "strict-config"))]
 use crate::tests::WriteStuck;
-use crate::tests::{Env, TestRng, VendorBoard, apdu, dev_conf, get_creds_metadata, select, sw};
+use crate::tests::{
+    Env, FIDO_PIN, TestRng, VendorBoard, apdu, dev_conf, get_creds_metadata, select, sw,
+};
 
 /// The DeviceInfo serial the management applet reports for [`crate::tests::SERIAL_ID`].
 fn serial() -> [u8; 4] {
@@ -1142,6 +1144,7 @@ fn selecting_fido_over_ccid_answers_the_u2f_version_string() {
     // `CtapPcscDevice._select` raises unless SELECT returns 9000, and sets its
     // NMSG (CTAP1) capability on exactly this body.
     let env = Env::new();
+    env.uv_optional();
     let mut ccid = env.ccid();
     let res = ccid
         .handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)
@@ -1262,8 +1265,8 @@ fn a_panel_pin_change_ends_the_token_over_ccid_too() {
 fn a_soft_lock_engaged_over_ccid_is_handed_over_for_persisting() {
     let env = Env::new();
     let _power_up = env.ctap();
-    rsk_fido::passkeys::store_local_pin(&crate::tests::dev(), &mut env.fs.borrow_mut(), b"123456")
-        .expect("the test PIN meets the default policy");
+    rsk_fido::passkeys::store_local_pin(&crate::tests::dev(), &mut env.fs.borrow_mut(), FIDO_PIN)
+        .expect("the test PIN meets each shipping policy");
     let mut ccid = env.ccid();
     assert_eq!(
         sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
@@ -1438,6 +1441,7 @@ fn a_phy_write_over_ccid_reboots_on_the_write_not_a_later_command() {
 #[test]
 fn u2f_over_ccid_answers_its_version_command() {
     let env = Env::new();
+    env.uv_optional();
     let mut ccid = env.ccid();
     assert_eq!(
         sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
@@ -1750,6 +1754,7 @@ fn fido_over_ccid_answers_each_instruction_as_a_yubikey_does() {
     // `80`, U2F's only under `00` (`6E00` under `80`), and any other is `6D00`.
     use rsk_sdk::Sw;
     let env = Env::new();
+    env.uv_optional();
     let mut ccid = env.ccid();
     let timeout = [rsk_fido::error::CtapError::UserActionTimeout as u8];
     let rows: [(&str, [u8; 4], Sw, &[u8]); 22] = [
@@ -2126,6 +2131,7 @@ fn a_make_credential_in_one_extended_apdu_is_answered_in_one() {
     // extended request in one extended response: past 256 bytes, still no `61xx`.
     use rsk_sdk::Sw;
     let env = booted();
+    env.uv_optional();
     let mut ccid = env.ccid();
     assert_eq!(
         sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
@@ -2152,6 +2158,7 @@ fn a_make_credential_in_one_extended_apdu_is_answered_in_one() {
 fn a_make_credential_chained_in_short_apdus_is_answered_chained() {
     // nfc-1 P-3: past 255 bytes a platform that sends short APDUs must chain them.
     let env = booted();
+    env.uv_optional();
     let mut ccid = env.ccid();
     assert_eq!(
         sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
@@ -2168,6 +2175,7 @@ fn a_chain_in_segments_of_uneven_size_joins_to_the_same_request() {
     // nfc-1 P-4: ISO 7816-4 fixes no segment size. A lone command byte, then 200, 17
     // and 255 bytes: an accumulator that assumed full segments would leave gaps.
     let env = booted();
+    env.uv_optional();
     let mut ccid = env.ccid();
     assert_eq!(
         sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),
@@ -2244,6 +2252,7 @@ fn a_ctap_msg_whose_lc_overstates_its_data_is_wrong_length() {
 fn nfcctap_control_end_refuses_fido_until_the_applet_is_selected_again() {
     use rsk_sdk::Sw;
     let env = Env::new();
+    env.uv_optional();
     let mut ccid = env.ccid();
     let fido = rsk_fido::consts::FIDO_AID;
     let end = apdu(rsk_sdk::apdu::CLA_PROPRIETARY, 0x12, 0x01, 0x00, &[]);
@@ -2433,6 +2442,7 @@ fn a_command_refused_for_its_lengths_leaves_a_tail_and_a_chain_as_they_were() {
 fn a_u2f_version_with_data_is_a_wrong_length_on_both_transports() {
     use rsk_sdk::Sw;
     let env = Env::new();
+    env.uv_optional();
     let mut ccid = env.ccid();
     assert_eq!(
         sw(ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0)),

@@ -2,7 +2,9 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{Env, apdu, dev, get_creds_metadata, select, sw, wrong_pin_token_request};
+use crate::tests::{
+    Env, FIDO_PIN, apdu, dev, get_creds_metadata, select, sw, wrong_pin_token_request,
+};
 
 /// U2F VERSION — the one U2F command that touches no credential and needs no
 /// touch, so it can stand for "did this reach the FIDO applet?".
@@ -18,6 +20,7 @@ fn a_u2f_command_reaches_fido_when_nothing_is_selected() {
     // U2F has no SELECT over CTAPHID, so its INS is routed straight to the FIDO
     // applet — but only while the dispatcher holds no selection.
     let env = Env::new();
+    env.uv_optional();
     let mut ctap = env.ctap();
     let res = ctap.handle_msg(&u2f_version(), 0).to_vec();
     assert_eq!(sw(&res), rsk_sdk::Sw::OK);
@@ -47,6 +50,7 @@ fn a_ctaphid_init_drops_a_stale_selection() {
     // A fresh session must start with nothing selected, or U2F — which never
     // selects anything — inherits whatever the previous one left behind.
     let env = Env::new();
+    env.uv_optional();
     let mut ctap = env.ctap();
     ctap.handle_msg(&select(rsk_vendor::VENDOR_AID), 0);
     ctap.deselect_msg();
@@ -157,8 +161,8 @@ fn the_soft_lock_handed_over_is_the_one_the_command_left() {
     // a reboot right after the third wrong PIN would find the second one's batch.
     let env = Env::new();
     let mut ctap = env.ctap();
-    rsk_fido::passkeys::store_local_pin(&dev(), &mut env.fs.borrow_mut(), b"123456")
-        .expect("the test PIN meets the default policy");
+    rsk_fido::passkeys::store_local_pin(&dev(), &mut env.fs.borrow_mut(), FIDO_PIN)
+        .expect("the test PIN meets each shipping policy");
     let wrong = wrong_pin_token_request();
     for _ in 0..rsk_fido::consts::PIN_MISMATCH_LIMIT {
         ctap.handle_cbor(1, &wrong, 0);
@@ -391,6 +395,7 @@ fn the_security_trace_reports_the_pad_and_not_a_constant() {
 fn u2f_over_ctaphid_takes_the_extended_encoding_alone() {
     use rsk_sdk::Sw;
     let env = Env::new();
+    env.uv_optional();
     // The seed the boot lays down, which an AUTHENTICATE's key-handle check reads.
     let seeded =
         rsk_fido::seed::ensure_seed(&dev(), &mut env.fs.borrow_mut(), &mut *env.rng.borrow_mut());

@@ -25,6 +25,7 @@ pub const SERIAL_HASH: [u8; 32] = [0x5A; 32];
 const KV_TOTAL: u32 = 64 * 1024;
 const FLASH_SIZE: u32 = 4 * 1024 * 1024;
 const OPENPGP_MFR: u16 = 0x1234;
+pub const FIDO_PIN: &[u8] = b"9f4a27c3";
 
 /// The board verbs, as a record of what a dispatch asked for.
 #[derive(Default)]
@@ -256,6 +257,14 @@ impl Env<RamStorage> {
 }
 
 impl<S: Storage> Env<S> {
+    /// Default-policy transport tests use the explicit toggle-off state.
+    pub fn uv_optional(&self) {
+        self.fs
+            .borrow_mut()
+            .put(rsk_fido::consts::EF_ALWAYS_UV, &[0])
+            .unwrap();
+    }
+
     /// The same wiring over a chosen backend.
     pub fn with_storage(storage: S) -> Self {
         Self {

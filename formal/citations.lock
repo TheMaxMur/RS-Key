@@ -52,7 +52,7 @@ assurance/board/PLAT-TRNG-002.toml	scripts/platform_gate.py	1337-1337	OUTCOME_ST
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/clientpin.rs	795-795	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/state.rs	181-181	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/state.rs	297-297	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
-assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/ccid_tests.rs	1204-1204	fn both_transports_answer_from_one_session_state() {	fn both_transports_answer_from_one_session_state() {
+assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/ccid_tests.rs	1207-1207	fn both_transports_answer_from_one_session_state() {	fn both_transports_answer_from_one_session_state() {
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	4-21	//! Presence-scope arbitration: one physical button, four transports, and the	//! `NoCrossTransportTouchConsumption` (`formal/RSKeySecurityState.tla`).
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	13-14	//! touch the key for somebody else's operation. CTAP 2.1 §11.2.9.1.4 scopes a	//! cancel to its own channel.
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	26-32	pub const SCOPE_NONE: u8 = 0;	pub const SCOPE_OTP: u8 = 3;
@@ -668,7 +668,7 @@ formal/README.md	crates/rsk-device/src/ctap.rs	82-93	fido_state: &'a RefCell<rsk
 formal/README.md	crates/rsk-device/src/ctap.rs	128-128	st.restore_pin_lock(boot.lock);	st.restore_pin_lock(boot.lock);
 formal/README.md	crates/rsk-device/src/ctap.rs	205-209	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
 formal/README.md	crates/rsk-device/src/ctap.rs	262-269	.abstract_token(rsk_fido::TokenPersistentView {	/// the first conjunct of `crates/rsk-fido/src/clientpin.rs:677`. An INPUT to
-formal/README.md	crates/rsk-device/src/ctap_tests.rs	101-123	#[test]	}
+formal/README.md	crates/rsk-device/src/ctap_tests.rs	105-127	#[test]	}
 formal/README.md	crates/rsk-device/src/presence.rs	25-26	/// No host request in flight: an on-panel (local) flow owns the button.	pub const SCOPE_NONE: u8 = 0;
 formal/README.md	crates/rsk-device/src/presence.rs	118-122	pub fn request_cancel(&self) {	}
 formal/README.md	crates/rsk-device/src/presence.rs	126-137	/// the wait, and without that every later command reads "would block" until	}
@@ -1143,8 +1143,8 @@ formal/TraceSecurity.tla	crates/rsk-fido/src/config.rs	316-316	const DEFAULT_ALW
 formal/TraceSecurity.tla	crates/rsk-fido/src/makecredential.rs	618-636	let always_uv = crate::config::always_uv_enabled(ctx.fs);	Ok(UvOutcome::NONE)
 formal/TraceSecurity.tla	crates/rsk-fido/src/reset.rs	267-267	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS
 formal/comutants.toml	crates/rsk-device/src/ctap.rs	127-128	let boot = hooks.borrow_mut().boot_state();	st.restore_pin_lock(boot.lock);
-formal/comutants.toml	crates/rsk-device/src/ctap_tests.rs	101-123	#[test]	}
-formal/comutants.toml	crates/rsk-device/src/ctap_tests.rs	122-122	assert_eq!(carried.mismatches, 3, "the mismatch count was dropped");	assert_eq!(carried.mismatches, 3, "the mismatch count was dropped");
+formal/comutants.toml	crates/rsk-device/src/ctap_tests.rs	105-127	#[test]	}
+formal/comutants.toml	crates/rsk-device/src/ctap_tests.rs	126-126	assert_eq!(carried.mismatches, 3, "the mismatch count was dropped");	assert_eq!(carried.mismatches, 3, "the mismatch count was dropped");
 formal/comutants.toml	crates/rsk-display/src/settings_tests.rs	270-270	env.local(&mut ui).save_display_config();	env.local(&mut ui).save_display_config();
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	230-230	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	544-546	if force_change_pending(ctx) {	}
