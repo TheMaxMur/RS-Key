@@ -755,3 +755,45 @@ The 27 SDK mapping warnings, unsupported MC/DC and uncounted `match`/`?`
 outcomes remain open. No production source, dependency, exclusion, coverage
 floor or proof roster changed. All ten cases run in both default and
 strict-config. Fuzz coverage is unchanged.
+
+## OTP HID transmission and plaintext record bounds
+
+Five cases extend the transport and record tests. `FrameTx` responses of every
+length from zero through 72 bytes check the capped payload, CRC residual,
+sequence tags, zero padding and exactly one end marker. `active()` stays true
+after the last data report until that marker is emitted. Replacing a response
+at every report boundary, including before its marker and after draining it,
+starts the replacement at sequence zero without carrying old bytes forward.
+
+Plaintext reads preserve every accepted length from 52 through 60 bytes and
+clear the previous record's unused tail. Each other length through 88 bytes,
+plus 89 and 176, is refused without writing or truncating the medium. A healthy
+read then succeeds on the same scratch. Two persistent read faults preserve
+the error, clear the old secret and leave the medium unchanged; restoring the
+reader allows recovery.
+
+Four compiled controls passed all 133 prior default OTP tests and failed the
+expanded suite. Dropping the pending-marker state made `active()` false too
+early. Retaining the old sequence started a replacement at `0x41` instead of
+`0x40`. Accepting a short plaintext record returned `Some(0)` instead of
+absence, and removing the scratch wipe left the previous `0xD3` bytes behind.
+These are assertion failures in compiled tests; production source in the
+isolated clone was restored.
+
+The remaining checked-copy guards need reachability evidence. A capped TX body
+has at most 66 bytes including CRC in its 72-byte buffer; while sending data,
+`offset + copied` cannot exceed that total. An accepted plaintext length is at
+most 60 in buffers of 60 and 88 bytes. RX accepts only sequence 0 through 9 in
+ten complete seven-byte chunks. These arithmetic observations do not constitute
+a new Kani solve or erase the raw uncovered outcomes.
+
+A fresh raw default-host build passed 3147 unique tests plus one child-process
+repeat, with five ignored cases: 38445/39598 lines (97.09%), 6873/7975 condition
+outcomes (86.18%) and unchanged 3244/3272 functions (99.14%). HID reached 34/38
+outcomes and the record codec 19/20, gaining three outcomes and one line.
+Four raw missing HID outcomes and one record outcome remain visible. Reports,
+source hashes and controls are in `target/coverage-otp-hid-record-20261005/`.
+All five cases run in default and strict-config. The 27 SDK mapping warnings,
+unsupported MC/DC and uncounted `match`/`?` outcomes remain open. No production
+source, dependency, exclusion, coverage floor or proof roster changed. Fuzz
+coverage is unchanged.

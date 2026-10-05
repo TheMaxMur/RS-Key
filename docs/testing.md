@@ -263,6 +263,17 @@ the prior OTP suite and failed the new assertions. Both existing counter Kani
 harnesses verified, reaching four source covers. Reports are in
 `target/coverage-otp-recovery-20261005/`; fuzz coverage is unchanged.
 
+Five OTP transport and plaintext-record cases passed 3147 unique tests plus
+the child repeat, with five ignored cases. A fresh condition build recorded
+38445/39598 lines (97.09%), 6873/7975 outcomes (86.18%) and unchanged function
+coverage. HID reached 34/38 outcomes and the record codec 19/20. The
+[HID and record slice](testing-roadmap.md#otp-hid-transmission-and-plaintext-record-bounds)
+checks every response length, replacement boundaries, malformed records,
+scratch wiping and recovery. Four compiled controls survived the prior OTP
+suite and failed the new tests. Reports are in
+`target/coverage-otp-hid-record-20261005/`; fuzz coverage is unchanged and no new
+Kani solve is claimed.
+
 JSON/LCOV export succeeded. Both HTML exports warned about 27 mismatched
 records, including the fresh condition directory. Reusing the previous build
 directory for the credential slice reported 113 mismatches; rebuilding in an
