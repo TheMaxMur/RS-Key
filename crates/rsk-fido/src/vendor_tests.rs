@@ -3537,3 +3537,6 @@ mod config_commands;
 
 #[path = "vendor_pad_tests.rs"]
 mod vendor_pad_tests;
+
+#[path = "vendor_recovery_tests.rs"]
+mod recovery;
