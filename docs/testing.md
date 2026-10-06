@@ -281,11 +281,46 @@ empty directory restored 27 and reproduced the same coverage totals. LLVM's `-du
 identified four SDK functions at hash zero: `Sw::sw1`, `Sw::to_bytes`,
 `Apdu::is_basic_class` and `Apdu::is_served_over_ccid`. Their matching named
 records also have positive execution counts in JSON. This identifies the
-affected owners; it does not resolve why the additional mappings lack a
-matching profile. Keep the warning and the SDK attribution limitation open,
-and do not describe either aggregate as a fully validated core metric or
-published release evidence. The affected mappings are outside the modules
-whose tests changed in these slices.
+affected owners. On 2026-10-05 an isolated full-workspace comparison reproduced
+all 27 warnings and removed them by withholding `inline` on those four methods
+only under `cfg(coverage)`. Every raw total and SDK file summary stayed identical;
+the ordinary partitioned firmware's loadable bytes also stayed identical.
+The original reports retain their warnings. New coverage builds use the
+workaround, without excluding any source or changing the compiler pin.
+Reports and the byte comparison are in `target/testing-completion-20261005/`.
+This resolves the observed macOS warning, not the unsupported MC/DC or
+unmeasured-profile limitations. Seventeen ARM Linux profile exports retain six
+additional hash-zero mappings for `Apdu::is_secure_messaging`. A separate ARM
+Linux full-workspace `fido-conformance` comparison removed all six by applying
+the same attribute to that method, with identical raw totals and SDK summaries.
+New coverage builds include the fifth method; the older reports remain intact.
+None of these local reports is release evidence.
+
+The existing metrics runner now reproduces these measurements by firmware
+feature closure. Run it in the pinned nightly shell; the output directory must
+be new so that a failed run cannot inherit an older report:
+
+```sh
+COVERAGE_PROFILE=display,strong-pin COVERAGE_OUT=target/coverage-display-strong \
+  nix develop .#fuzz -c ./scripts/metrics.sh --coverage
+```
+
+With no profile it measures the default workspace. It retains the diff from
+`HEAD` including staged changes, hashes the declared build inputs and saves
+new untracked inputs under `untracked/`. The report stays incomplete if its
+input hashes differ at the end.
+Its manifest also records the applied Rust flags. Older measurements retain
+their original provenance limits.
+
+It derives the host feature arguments from `firmware/Cargo.toml`, records the
+compiler, target, revision, source diff, metadata and command exits, and retains
+raw JSON, LCOV and HTML.
+Condition counters remain distinct from MC/DC. Zero executed tests, an empty
+report or a failed command cannot produce a completed manifest. Tests of the
+actual shell entry exercise those exits and metadata diagnostics on stderr.
+The scheduled coverage job retains its existing default 80% line floor and
+adds these reports: default daily, individual profiles on Sunday or manual runs.
+The workflow changes are local and have not been executed on GitHub.
 
 The separate nightly corpus replay completed all 52 fuzz targets. Unioning
 their LCOV line records for repository sources reached 20568/32545 lines
@@ -1285,6 +1320,12 @@ lists the gaps). A green emulator run is a protocol result, not a device result.
 
 ### The image itself — `--image`
 
+The picoem pin includes an ARM Linux build fix: affinity helpers are compiled
+only on the x86_64 hosts supported by its threaded runtime. ARM hosts use the
+serial emulator. The local `9513634a` commit has passed picoem-common and
+rp2350-emu tests and Clippy on macOS arm64 and ARM Linux. It is not yet published;
+local consumers need that commit in their Cargo Git cache.
+
 `--image <elf>` closes most of that gap: the same ports serve the firmware ELF,
 cold-booted through the real bootrom on an emulated RP2350
 ([picoem](https://github.com/TheMaxMur/picoem), pinned in `tools/emu/Cargo.toml`),
@@ -1333,6 +1374,11 @@ RSA-2048/3072/4096 generation in PIV and OpenPGP with a participating core1 and
 HMAC pads and AES keys. It verifies signatures and decipher/ECDH results with
 host implementations; ML-DSA uses dilithium-py. Live session secrets are checked
 at their revocation point, rather than required to disappear after every reply.
+Seed-backup commands additionally check encrypted export, replacement and
+restore, certificate binding and signatures after reboot, rejection of the old
+resident credential and a damaged load tag, and persistent sealing of export.
+Known seed and MSE-key patterns must be absent after completed and refused
+commands; a planted seed residue falsifies the same scan.
 Core1's tail remains inside the stack measurement; its timeout follows emulated
 time, with a separate host progress bound. Every RSA size has a planted-factor
 control and independent verification of a signature from the generated key.
@@ -1592,8 +1638,9 @@ attached, the `tests/` scripts. The scheduled
 from this page, both sharded across runners, a `repro` job that builds the
 hermetic firmware twice and requires bit-identical outputs
 ([build.md](build.md#nix-build-hermetic-no-dev-shell)), and an `llvm-cov` job
-that floors host-crate line coverage. Weekly, on Sunday: the full Kani roster,
-one runner per tier, the `cargo-mutants` sweep held against the accepted
+that floors host-crate line coverage. Weekly, on Sunday: individual firmware
+feature-closure coverage reports, the full Kani roster with one runner per tier,
+the `cargo-mutants` sweep held against the accepted
 survivors in `scripts/mutants-accepted.txt`, the semantic
 co-refutation roster, TLC's formal safety tier and `check-assurance.sh` again
 over `main`. No hidden state.

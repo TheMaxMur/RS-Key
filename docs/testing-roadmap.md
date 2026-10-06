@@ -75,13 +75,13 @@ lower capacities or weaken assertions to meet a number.
 
 ## Implementation order
 
-The default host lane in phase 1 has measured branch counters and calibrated
-condition instrumentation. Phase 2 has started with LargeBlobs, ClientPIN,
-storage and USB regressions. Other configurations, whole-core decision coverage and phases
-3 through 8 remain open. The criteria below still govern completion; one
-default host report does not complete every scope. Phase 1 also retains an
-SDK coverage-mapping warning described in [Testing](testing.md#branch-and-condition-measurements);
-it is not marked complete while that limitation remains.
+Phase 1 has calibrated condition instrumentation and separate raw reports for
+the default workspace and seventeen feature profiles. Phases 2 through 7 have
+additional authorization, recovery, fuzzing and delivered-image evidence;
+their whole-scope criteria remain open. Phase 8 retains profile evidence in the
+existing CI jobs, whose changes have only been exercised locally. The dated
+results below identify their compiler, host and source selection. Mapping
+warnings, unsupported MC/DC and device-only gaps remain visible limitations.
 
 | Phase | Work | Depends on |
 |---|---|---|
@@ -964,3 +964,183 @@ uncounted language constructs remain open. The full 52-target fuzz union
 was not re-measured. Reproduction commands, raw exports, control logs and
 seed provenance are in `target/coverage-assertion-failures-20261005/`.
 Firmware behavior, dependencies, coverage selection and floors are unchanged.
+
+## 2026-10-06 Profiles, shared fuzz replay and delivered images
+
+The fresh default macOS arm64 condition run passed 3163 unique unit tests,
+one child-process repeat and five ignored cases. Its raw result is
+38449/39598 lines (97.10%), 6879/7975 condition outcomes (86.26%) and
+3245/3272 functions (99.17%). The added display case exercises shared
+borrows and PIN state through a cloned `Parked` value. Two retired-slot PIV
+cut sweeps cover EC generation and RSA persistence: another slot stays byte
+identical, a committed key receives its generated policy, and a key left
+without a metadata head cannot authenticate. Ignoring a failed head write
+compiles and fails the success oracle in both sweeps; restoring it passes.
+These are command-level record cuts, not a replacement for byte-level NOR
+cuts or interrupted recovery. PIV keygen's raw line and condition summaries
+did not increase. `metrics-after-retired-cuts/` and `retired-cut-controls/`
+under `target/testing-completion-20261005/` retain the reports and controls.
+
+The same host-testable workspace also passed with both dev and test
+`opt-level=0` under pinned stable Rust: 3163 unique unit tests, one child-process
+repeat, five ignored cases and nineteen passing doctests. It took 380 seconds;
+`host-unoptimized/` retains the command, compiler, source hashes and output.
+This is separate from the failed unoptimized device image described below.
+
+Seventeen separate profiles passed on ARM Linux with the pinned nightly
+compiler. They retain JSON, HTML, feature closure, source hashes, exits and
+elapsed costs in `linux-profiles/`. These measurements precede the three tests
+above; their source snapshots identify that boundary. Their maps are kept
+separate, including profiles that change the denominator:
+
+| Firmware features | Raw lines | Condition outcomes |
+|---|---|---|
+| advertise-pqc | 38448/39598 | 6878/7975 |
+| fips-profile | 38383/39598 | 6858/7975 |
+| fips-profile,advertise-pqc | 38385/39598 | 6858/7975 |
+| strong-pin | 38443/39598 | 6871/7973 |
+| strong-pin,advertise-pqc | 38445/39598 | 6871/7973 |
+| always-uv | 38446/39598 | 6879/7975 |
+| always-uv,advertise-pqc | 38448/39598 | 6879/7975 |
+| strict-up | 38440/39598 | 6865/7968 |
+| strict-up,advertise-pqc | 38442/39598 | 6865/7968 |
+| display | 38453/39609 | 6883/7979 |
+| strict-config | 38321/39475 | 6833/7929 |
+| largeblob-ext | 38476/39641 | 6867/7976 |
+| preview-sign | 39001/40185 | 6948/8055 |
+| preview-sign,largeblob-ext | 39035/40228 | 6938/8056 |
+| display,strong-pin | 38450/39609 | 6875/7977 |
+| display,fips-profile | 38390/39609 | 6862/7979 |
+| fido-conformance | 38440/39598 | 6865/7968 |
+
+All seventeen original HTML exports retain six SDK mapping warnings. LLVM's
+dump names `Apdu::is_secure_messaging` at hash zero. A separate isolated ARM
+Linux full-workspace `fido-conformance` pair removes all six by withholding
+`inline` on that fifth SDK method under `cfg(coverage)`. Every raw total and SDK
+file summary stays identical. The pair includes the three new PIV/display cases
+and records 38443/39598 lines and 6865/7968 outcomes in both builds. Its JSON,
+HTML, compiler, commands and source hashes remain in `linux-sdk-mapping-pair/`.
+The older seventeen reports are retained with their warnings.
+These ARM results also do not establish the x86_64 GitHub lane or whole-core
+MC/DC, which the pinned rustc still cannot instrument.
+
+Fresh 52-target corpus replays cover 20569/32552 repository lines (63.19%) in
+default and 20216/32806 (61.62%) in `flavours`; vendored sources remain in
+both denominators. The maps are incompatible and are not combined. Seven
+encoded assertion/retry histories are retained in the existing corpus path.
+Miri now imports the actual `fido_session` target body; both configurations
+passed its eight declared seeds. The ordinary native replay passed all 52
+targets. `fuzz-default/`, `fuzz-flavours/` and `shared-session-miri*.log`
+retain these independent results.
+
+Separate host-tool measurements precede the later image fixes. TUI has
+1637/3424 lines and 192/302 condition outcomes. The emulator report has
+3882/6878 lines and 690/1216 outcomes, including five covered lines of eight
+from a standard-library TLS helper. The Python CLI has 3640/4618 statements
+and 560/1012 branch outcomes. The ordinary runner tests have 13007/28171
+statements and 2001/6988 outcomes with `scripts` as their source scope;
+the 2700 assurance cases were not part of that coverage run. None of these
+denominators belongs in the firmware-core percentage. Raw reports and source
+hashes are bound by `host-tools-manifest.json`.
+
+The ordinary optimized, partitioned 4 MiB image passed the complete laboratory:
+native comparison, ML-DSA-87, 81 native/89 image operation entries, RSA-2048,
+3072 and 4096 generation with core1, stack/residue controls and nineteen power
+cuts. A separately built local v0.4.11 tag upgraded with its OATH key, resident
+FIDO signing key and changed OpenPGP PIN intact. PICOBOOT and MSC passed the
+full ARM Linux USB/IP runner after a bounded detach retry fixed a reboot race.
+These runs are retained in `image-release/`, `release-upgrade/` and
+`usbip-linux-arm-retry/`; their manifests identify the tested binaries.
+The full USB/IP runner passed again with the capacity and panic fixes in
+`usbip-linux-panic-final/`: nine suites, PICOBOOT reload/reboot and OTP checks,
+and MSC UF2 reload with OATH persistence. The physical key was not involved.
+
+Larger images exposed a fixed 4 MiB assumption in the flash model. Capacity now
+follows the ELF through identity, upper-address reads, erase and persistence;
+ordinary 4 and 8 MiB images pass the native comparison and residue controls.
+The unoptimized 4 MiB build exceeds the code partition. An 8 MiB build links,
+but its storage constructor drives SP below SRAM and then panics before USB.
+It remains a failed image scenario. The diagnostic instruction trace is in
+`unoptimized-instruction-trace.txt`; it does not prove silicon stack-fault
+behavior. The laboratory now detects a sampled PC anywhere inside either
+core's panic handler and resolves the caller before the return address enters
+the next symbol. Removing either fix fails the actual `check.sh` emulator
+test row; restoration passes all 206 tests. macOS and ARM Linux tests and
+Clippy pass. Hardware state, official FIDO results and firmware behavior were
+not changed by these emulator and test-only commits.
+
+## 2026-10-06 Seed replacement and interrupted certificate recovery
+
+Two vendor-command tests sweep every record mutation during seed import and
+then every mutation during the next boot's certificate repair. After remount,
+the seed is exactly old or new. A new seed has a new credential-store state;
+any surviving certificate has the matching public key and verifies under an
+independent RustCrypto signing key. Healthy recovery preserves the chosen seed,
+restores a missing certificate and becomes write-free on its next invocation.
+The sealed export window, global sign counter, largeBlob and LED record survive.
+These are record-level cuts; byte-level NOR cuts remain a separate scope.
+
+Removing the old-certificate deletion fails the new pre-recovery cut oracle,
+while all pre-existing default FIDO cases pass. Removing the credential-store
+state renewal fails both new tests and existing cases. Both controls compile
+and fail the actual `check.sh` host-test row in an isolated copy; restoration
+passes. The default FIDO suite and selected FIPS, always-UV, conformance,
+strong-PIN and strict-config recovery cases pass. Raw command and control logs
+are retained under `target/testing-completion-20261005/`.
+
+A fresh default-host condition run passes 3165 unique unit tests plus the
+child-process repeat, with five ignored cases. Its line, function and condition
+totals are unchanged: 38449/39598, 3245/3272 and 6879/7975. Both the semantic
+improvement and the unchanged raw percentage matter. `metrics-after-backup-recovery/`
+retains source selection, commands, JSON, LCOV and HTML. Its export has no SDK
+mapping warnings; unsupported MC/DC and uncounted language constructs remain.
+The new test file was still untracked during this measurement and was absent
+from its saved diff; its later local commit `461de8dd` retains the source.
+
+The metrics runner now saves staged changes in the diff from `HEAD`, hashes
+the declared build inputs, saves untracked inputs, and records its Rust flags.
+Different input hashes at the end leave the report incomplete. Eight runner
+cases pass. Removing staged-diff capture, untracked-file retention or the final
+hash comparison fails the corresponding case through `check.sh`'s existing
+pytest row selected with `-k metrics`; restoring the source passes. These
+controls remain in `metrics-provenance-row-controls.json`. Older reports are
+kept with their original provenance limitations.
+
+## 2026-10-06 Registry reset and source snapshots
+
+Two SDK command-path cases cover an enabled applet above mask bit 31 and a
+selected applet removed before card reset. Reset clears selection, command
+chaining and the entire held response even when the old slot no longer exists.
+The next GET RESPONSE cannot replay its tail. Disabling the higher slot or
+returning before reset cleanup fails the corresponding case through the existing
+host-test row selected to these cases; restoration passes all 76 SDK tests.
+
+The latest default-host report passes 3167 unique unit tests plus the child
+repeat, with five ignored cases. It records 38449/39598 lines (97.10%),
+6880/7975 condition outcomes (86.27%) and 3245/3272 functions (99.17%).
+`metrics-after-sdk-registry/` retains the compiler, commands, raw exports,
+Rust flags and hashes of 563 build inputs. Its untracked SDK test file was
+saved byte for byte under `untracked/` and later committed as `58984cae`.
+The start/end input hashes agree and HTML has no SDK mapping warnings.
+These results do not establish MC/DC or cover the uncounted language constructs.
+
+## 2026-10-06 Backup on the delivered image
+
+The full optimized, partitioned-image laboratory passes with fifteen new
+backup operation rows: export, seed replacement, restored identity, certificate
+binding and signatures, stale-credential refusal, invalid AEAD-tag refusal,
+finalization and sealed state after reboot. The whole matrix has 96 native and
+105 image entries, including diagnostic controls. Backup's maximum observed
+core0 stack use is 33536 bytes; core1 uses at most 520 bytes in these rows.
+The known old/new seed and spent MSE key have zero matches in the four declared
+prefix/suffix scans; planting the seed in SRAM makes the residue check fail.
+These searches do not prove absence of every possible secret representation.
+
+The existing image CI command selected to native operations fails with a
+valid certificate over the superseded seed. Removing the backup matrix hook
+makes that same control pass; restoring all source bytes passes again. The
+ordinary full laboratory then passes on both backends, including ML-DSA-87,
+RSA-2048/3072/4096 generation in both applets and nineteen power cuts.
+`image-backup-final/` retains binary hashes and reports; the selected wiring
+controls are in `backup-image-native-row-controls.json`. No GitHub job or
+physical-key operation is implied by these local commands.
