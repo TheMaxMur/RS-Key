@@ -219,6 +219,10 @@ python tests/emu.py tests/10_fido_getinfo.py
   Delayed ROM reboots count the normal 1 MHz watchdog ticks independently of
   the CPU step quantum. Custom TICKS divisors and active debugger pauses are
   outside this model.
+- **Faults**: a HardFault or a PC inside either core's ELF panic handler marks
+  the image dead until a power cycle. A sampled PC past the handler's entry
+  still counts as a panic. The log names the instruction before its return
+  address, which may otherwise point into the next function.
 - **Presence and identity are the image's.** A `--features no-touch` build
   confirms presence; a touch build waits for BOOTSEL, which each line on the
   terminal holds down for half a second under `--touch`, and a keepalive asking

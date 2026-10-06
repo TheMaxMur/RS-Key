@@ -40,6 +40,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- Image emulation detects a panic anywhere inside either core's panic handler,
+  including after an instruction quantum, and names the caller before its
+  return address crosses into the next function.
+
 - Image emulation follows the firmware ELF's 2, 4, 8 or 16 MiB flash layout.
   NOR identity, upper-address reads, whole-chip erase and store-file sync use
   the same capacity, so larger builds can retain their KV partitions.

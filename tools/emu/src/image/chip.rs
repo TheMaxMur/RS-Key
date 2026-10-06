@@ -65,7 +65,7 @@ pub struct Chip {
     h_bootram: MmioHandle,
     h_watchdog: MmioHandle,
     hardfault: Option<u32>,
-    panic_fn: Option<u32>,
+    panic_fn: Option<(u32, u32)>,
     core1_released_seen: u32,
     core1_hold: bool,
     nsboot_seen: bool,
@@ -150,7 +150,9 @@ impl Chip {
             otp,
             log,
             hardfault: elf.symbol(&["HardFault_"]).map(|s| s.value & !1),
-            panic_fn: elf.symbol(&["rust_begin_unwind"]).map(|s| s.value & !1),
+            panic_fn: elf
+                .symbol(&["rust_begin_unwind"])
+                .map(|s| (s.value & !1, s.size)),
             elf,
             bootsel,
             h_psm,
@@ -267,8 +269,12 @@ impl Chip {
                 );
                 return Some(Stop::Dead(why));
             }
-            if Some(pc) == self.panic_fn {
-                let lr = self.where_is(core.regs.lr());
+            if self
+                .panic_fn
+                .is_some_and(|(start, size)| pc >= start && pc - start < size.max(1))
+            {
+                // A call at the end of a function returns into the next symbol.
+                let lr = self.where_is((core.regs.lr() & !1).saturating_sub(2));
                 return Some(Stop::Dead(format!("core {c} panicked, called from {lr}")));
             }
             if core.ppb.aircr & AIRCR_SYSRESETREQ != 0 {
@@ -374,3 +380,7 @@ fn reset_core1(emu: &mut Emulator) {
 
 #[path = "probe.rs"]
 mod probe;
+
+#[cfg(test)]
+#[path = "chip_tests.rs"]
+mod tests;
