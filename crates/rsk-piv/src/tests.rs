@@ -11076,3 +11076,6 @@ mod auth_decisions;
 
 #[path = "handshake_decisions_tests.rs"]
 mod handshake_decisions;
+
+#[path = "attestation_bounds_tests.rs"]
+mod attestation_bounds;
