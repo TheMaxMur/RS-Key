@@ -26,6 +26,7 @@ if [ "${1:-}" = --coverage ]; then
   # Run in .#fuzz: condition coverage belongs to its pinned nightly compiler.
   python3 - <<'PY'
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -52,9 +53,34 @@ identity = {
     "status": "incomplete",
     "commands": [],
 }
-(out / "source.patch").write_bytes(subprocess.check_output(["git", "diff", "--binary"]))
+(out / "source.patch").write_bytes(subprocess.check_output(["git", "diff", "HEAD", "--binary"]))
 (out / "toolchain.txt").write_text(identity["compiler"])
 env = dict(os.environ, RUSTFLAGS=os.environ.get("RUSTFLAGS", "") + " -Zcoverage-options=condition")
+identity["rustflags"] = env["RUSTFLAGS"]
+
+def source_hashes(save_untracked=False):
+    names = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], text=True).split("\0")
+    untracked = set(subprocess.check_output(
+        ["git", "ls-files", "--others", "--exclude-standard", "-z"], text=True).split("\0"))
+    hashes = {}
+    for name in sorted(set(names)):
+        if not (name.startswith(("crates/", "firmware/", "vendor/", ".cargo/"))
+                or name in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "clippy.toml",
+                            "flake.nix", "flake.lock", "scripts/metrics.sh")):
+            continue
+        path = root / name
+        if path.resolve().is_relative_to(out.resolve()):
+            continue
+        content = path.read_bytes() if path.is_file() else None
+        hashes[name] = hashlib.sha256(content).hexdigest() if content is not None else None
+        if save_untracked and name in untracked and content is not None:
+            saved = out / "untracked" / name
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            saved.write_bytes(content)
+    return hashes
+
+identity["source_sha256"] = source_hashes(save_untracked=True)
 
 def run(command, name):
     started = time.monotonic()
@@ -98,6 +124,8 @@ run(["cargo", "llvm-cov", "report", "--target", host, "--branch", "--lcov",
      "--output-path", str(out / "coverage.lcov")], "lcov.log")
 run(["cargo", "llvm-cov", "report", "--target", host, "--branch", "--html",
      "--output-dir", str(out / "html")], "html.log")
+if source_hashes() != identity["source_sha256"]:
+    raise SystemExit("coverage source changed during measurement; report remains incomplete")
 identity["status"] = "complete"
 (out / "manifest.json").write_text(json.dumps(identity, indent=2) + "\n")
 print(f"{profile}: {identity['totals']['lines']}; raw reports in {out}")

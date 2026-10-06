@@ -3,8 +3,10 @@
 """Exercise the coverage command's missing-evidence exits through its shell entry."""
 
 import json
+import hashlib
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -38,12 +40,15 @@ elif args[0] == "llvm-cov":
     report = {"data": [{"files": [] if count == 0 else [{"filename": "fixture.rs"}],
                         "totals": {"lines": {"count": count, "covered": count}}}]}
     Path(args[args.index("--output-path") + 1]).write_text(json.dumps(report))
+    if mode == "source-change":
+        with Path("crates/rsk-sdk/src/lib.rs").open("a") as source:
+            source.write("\n// changed while the report was being measured\n")
 else:
     raise SystemExit(f"unexpected cargo command: {args}")
 '''
 
 
-def run(tmp_path, mode, profile="always-uv"):
+def run(tmp_path, mode, profile="always-uv", repository=ROOT):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     cargo = bin_dir / "cargo"
@@ -52,8 +57,8 @@ def run(tmp_path, mode, profile="always-uv"):
     out = tmp_path / "report"
     env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
                COVERAGE_PROFILE=profile, COVERAGE_OUT=str(out), METRICS_FIXTURE=mode)
-    result = subprocess.run(["bash", str(ROOT / "scripts/metrics.sh"), "--coverage"],
-                            cwd=ROOT, env=env, capture_output=True, text=True)
+    result = subprocess.run(["bash", str(repository / "scripts/metrics.sh"), "--coverage"],
+                            cwd=repository, env=env, capture_output=True, text=True)
     return result, out
 
 
@@ -85,3 +90,41 @@ def test_unknown_shipping_feature_cannot_measure_default_silently(tmp_path):
     assert result.returncode != 0
     assert "unknown firmware feature" in result.stderr
     assert not out.exists()
+
+
+def checkout(tmp_path):
+    repository = tmp_path / "repo"
+    subprocess.run(["git", "clone", "--shared", "--no-hardlinks", str(ROOT), str(repository)],
+                   check=True, capture_output=True)
+    shutil.copyfile(ROOT / "scripts/metrics.sh", repository / "scripts/metrics.sh")
+    return repository
+
+
+@pytest.mark.parametrize("staged", [False, True])
+def test_staged_and_untracked_build_inputs_survive_the_actual_command(tmp_path, staged):
+    repository = checkout(tmp_path)
+    tracked = repository / "crates/rsk-sdk/src/lib.rs"
+    if staged:
+        with tracked.open("a") as source:
+            source.write("\n// staged coverage provenance fixture\n")
+        subprocess.run(["git", "add", str(tracked)], cwd=repository, check=True)
+    name = "crates/rsk-sdk/src/coverage_fixture.rs"
+    untracked = repository / name
+    untracked.write_text("// SPDX-License-Identifier: AGPL-3.0-only\n// Copyright (C) 2026 RS-Key contributors\nconst FIXTURE: u8 = 7;\n")
+    result, out = run(tmp_path, "present", repository=repository)
+    assert result.returncode == 0, result.stderr
+    if staged:
+        assert "staged coverage provenance fixture" in (out / "source.patch").read_text()
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["source_sha256"][name] == hashlib.sha256(untracked.read_bytes()).hexdigest()
+    assert (out / "untracked" / name).is_file(), "untracked build input was not retained"
+    assert (out / "untracked" / name).read_bytes() == untracked.read_bytes()
+    assert manifest["rustflags"].endswith("-Zcoverage-options=condition")
+
+
+def test_source_change_during_the_command_cannot_complete_a_measurement(tmp_path):
+    repository = checkout(tmp_path)
+    result, out = run(tmp_path, "source-change", repository=repository)
+    assert result.returncode != 0
+    assert "coverage source changed during measurement" in result.stderr
+    assert json.loads((out / "manifest.json").read_text())["status"] == "incomplete"
