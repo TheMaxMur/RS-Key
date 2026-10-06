@@ -697,3 +697,56 @@ fn the_otp_pin_opens_a_coded_applets_safe_and_never_the_applet() {
         Sw::SECURITY_STATUS_NOT_SATISFIED
     );
 }
+
+#[test]
+fn a_refused_code_write_after_rearming_keeps_the_standing_code() {
+    let (mut fs, medium) = new_cut_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let old = [0xCD; 20];
+    let new = [0xAB; 20];
+    assert_eq!(set_code(&mut app, &mut fs, &old), Sw::OK);
+    let (_, selected) = select(&mut app, &mut fs);
+    let challenge = find_tag(&selected, TAG_CHALLENGE as u16).unwrap();
+    let proof = [
+        tlv(TAG_RESPONSE, &hmac_sha1(&old, challenge)),
+        tlv(TAG_CHALLENGE, &[9; 8]),
+    ]
+    .concat();
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_VALIDATE, 0, 0, &proof)).0,
+        Sw::OK
+    );
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    let original = medium.value(EF_OATH_CODE.get());
+    medium.arm(1);
+    assert_eq!(set_code(&mut app, &mut fs, &new), Sw::MEMORY_FAILURE);
+    medium.arm(u32::MAX);
+    assert!(
+        !fs.has_data(rsk_fs::EF_HARDENED),
+        "the re-arm must have landed"
+    );
+    assert_eq!(medium.value(EF_OATH_CODE.get()), original);
+    assert!(
+        app.validated,
+        "a refused code write revoked the standing session"
+    );
+    assert_eq!(run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[])).0, Sw::OK);
+    let mut fresh = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let (_, selected) = select(&mut fresh, &mut fs);
+    let challenge = find_tag(&selected, TAG_CHALLENGE as u16).unwrap();
+    for (secret, expected) in [(&new, Sw::WRONG_DATA), (&old, Sw::OK)] {
+        let proof = [
+            tlv(TAG_RESPONSE, &hmac_sha1(secret, challenge)),
+            tlv(TAG_CHALLENGE, &[9; 8]),
+        ]
+        .concat();
+        assert_eq!(
+            run(&mut fresh, &mut fs, &apdu(INS_VALIDATE, 0, 0, &proof)).0,
+            expected
+        );
+    }
+    assert_eq!(set_code(&mut fresh, &mut fs, &new), Sw::OK);
+    assert!(!fresh.validated);
+}
