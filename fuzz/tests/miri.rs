@@ -48,6 +48,9 @@ mod otp_hid_oracle;
 #[path = "../fuzz_targets/fido_session.rs"]
 mod fido_session;
 
+#[path = "../fuzz_targets/power_cut.rs"]
+mod power_cut;
+
 #[path = "fixtures/fido_session.rs"]
 mod fido_session_seeds;
 
@@ -1484,190 +1487,14 @@ fn miri_fs_ops() {
 
 #[test]
 fn miri_power_cut() {
-    use std::cell::Cell;
-    use std::rc::Rc;
-
-    use embassy_futures::block_on;
-    use embedded_storage_async::nor_flash::{
-        ErrorType, MultiwriteNorFlash, NorFlash, ReadNorFlash,
-    };
-    use rsk_fs::Storage;
-    use sequential_storage::cache::Cache;
-    use sequential_storage::cache::key_pointers::ArrayKeyPointers;
-    use sequential_storage::cache::page_pointers::ArrayPagePointers;
-    use sequential_storage::cache::page_states::ArrayPageStates;
-    use sequential_storage::map::{MapConfig, MapStorage};
-    use sequential_storage::mock_flash::{
-        MockFlashBase, MockFlashError, Operation, WriteCountCheck,
-    };
-
-    type Mock = MockFlashBase<6, 4, 1024>;
-    const MAIN: core::ops::Range<u32> = 0..(4 * 4096);
-    const CNT: core::ops::Range<u32> = (4 * 4096)..(6 * 4096);
-
-    type MainCache = Cache<ArrayPageStates<4>, ArrayPagePointers<4>, ArrayKeyPointers<u16, 8>, u16>;
-    type CntCache = Cache<ArrayPageStates<2>, ArrayPagePointers<2>, ArrayKeyPointers<u16, 4>, u16>;
-
-    #[derive(Clone)]
-    struct SharedMock {
-        flash: Rc<RefCell<Mock>>,
-        dead: Rc<Cell<bool>>,
+    let mut put_cut_reboot = vec![0, 24];
+    put_cut_reboot.extend_from_slice(&[0xA5; 24]);
+    put_cut_reboot.extend_from_slice(&[0x28, 4, 1, 2, 3, 4, 0x40, 0, 10, 24]);
+    put_cut_reboot.extend_from_slice(&[0x5A; 24]);
+    put_cut_reboot.extend_from_slice(&[6, 1, 64, 0x29, 4]);
+    for data in [&[][..], &[0, 1, 0x5A, 6, 1, 64], &put_cut_reboot] {
+        power_cut::run(data);
     }
-    impl ErrorType for SharedMock {
-        type Error = MockFlashError;
-    }
-    impl ReadNorFlash for SharedMock {
-        const READ_SIZE: usize = <Mock as ReadNorFlash>::READ_SIZE;
-        async fn read(
-            &mut self,
-            offset: u32,
-            bytes: &mut [u8],
-        ) -> core::result::Result<(), Self::Error> {
-            block_on(self.flash.borrow_mut().read(offset, bytes))
-        }
-        fn capacity(&self) -> usize {
-            self.flash.borrow().capacity()
-        }
-    }
-    impl NorFlash for SharedMock {
-        const WRITE_SIZE: usize = <Mock as NorFlash>::WRITE_SIZE;
-        const ERASE_SIZE: usize = <Mock as NorFlash>::ERASE_SIZE;
-        async fn erase(&mut self, from: u32, to: u32) -> core::result::Result<(), Self::Error> {
-            if self.dead.get() {
-                return Err(MockFlashError::EarlyShutoff(from, Operation::Erase));
-            }
-            let r = block_on(self.flash.borrow_mut().erase(from, to));
-            if matches!(r, Err(MockFlashError::EarlyShutoff(..))) {
-                self.dead.set(true);
-            }
-            r
-        }
-        async fn write(
-            &mut self,
-            offset: u32,
-            bytes: &[u8],
-        ) -> core::result::Result<(), Self::Error> {
-            if self.dead.get() {
-                return Err(MockFlashError::EarlyShutoff(offset, Operation::Write));
-            }
-            let r = block_on(self.flash.borrow_mut().write(offset, bytes));
-            if matches!(r, Err(MockFlashError::EarlyShutoff(..))) {
-                self.dead.set(true);
-            }
-            r
-        }
-    }
-    impl MultiwriteNorFlash for SharedMock {}
-
-    struct TortureStorage {
-        main: MapStorage<u16, SharedMock, MainCache>,
-        counter: MapStorage<u16, SharedMock, CntCache>,
-        buf: [u8; 2048],
-    }
-    impl TortureStorage {
-        fn new(flash: SharedMock) -> Self {
-            Self {
-                main: MapStorage::new(
-                    flash.clone(),
-                    MapConfig::new(MAIN),
-                    MainCache::new(
-                        ArrayPageStates::new(),
-                        ArrayPagePointers::new(),
-                        ArrayKeyPointers::new(),
-                    ),
-                ),
-                counter: MapStorage::new(
-                    flash,
-                    MapConfig::new(CNT),
-                    CntCache::new(
-                        ArrayPageStates::new(),
-                        ArrayPagePointers::new(),
-                        ArrayKeyPointers::new(),
-                    ),
-                ),
-                buf: [0; 2048],
-            }
-        }
-    }
-    impl Storage for TortureStorage {
-        fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
-            let value = if fid == 0xC000 {
-                block_on(self.counter.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
-            } else {
-                block_on(self.main.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
-            };
-            let n = value.len().min(buf.len());
-            buf[..n].copy_from_slice(&value[..n]);
-            Some(value.len())
-        }
-        fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
-            if fid == 0xC000 {
-                block_on(self.counter.store_item::<&[u8]>(&mut self.buf, &fid, &data))
-            } else {
-                block_on(self.main.store_item::<&[u8]>(&mut self.buf, &fid, &data))
-            }
-            .map_err(|_| rsk_sdk::error::Error::MemoryFatal)
-        }
-        fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
-            if fid == 0xC000 {
-                block_on(self.counter.remove_item(&mut self.buf, &fid))
-            } else {
-                block_on(self.main.remove_item(&mut self.buf, &fid))
-            }
-            .map_err(|_| rsk_sdk::error::Error::MemoryFatal)
-        }
-        fn size(&mut self, fid: u16) -> Option<usize> {
-            let value = if fid == 0xC000 {
-                block_on(self.counter.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
-            } else {
-                block_on(self.main.fetch_item::<&[u8]>(&mut self.buf, &fid)).ok()??
-            };
-            Some(value.len())
-        }
-        // Non-enumerating stub: report "incomplete" so `scan` keeps confirm-on-miss.
-        fn for_each_key(&mut self, _f: &mut dyn FnMut(u16)) -> bool {
-            false
-        }
-    }
-
-    let flash = Rc::new(RefCell::new(Mock::new(
-        WriteCountCheck::Disabled,
-        None,
-        true,
-    )));
-    let dead = Rc::new(Cell::new(false));
-    let shared = SharedMock {
-        flash: flash.clone(),
-        dead: dead.clone(),
-    };
-
-    // Commit two files (one per partition) under stable power.
-    let mut fs = Fs::new(TortureStorage::new(shared.clone()));
-    fs.scan();
-    let old = [0xA5u8; 24];
-    fs.put(0xB000, &old).unwrap();
-    fs.put(0xC000, &[1, 2, 3, 4]).unwrap();
-
-    // Cut the power somewhere inside the next put, then reboot (fresh caches
-    // over the same bytes) until the mount survives. The interrupted file
-    // must read back as exactly old or new; the committed one must be intact.
-    flash.borrow_mut().bytes_until_shutoff = Some(10);
-    let new = [0x5Au8; 24];
-    let r = fs.put(0xB000, &new);
-    assert!(r.is_err() || !dead.get());
-    loop {
-        dead.set(false);
-        fs = Fs::new(TortureStorage::new(shared.clone()));
-        fs.scan();
-        if !dead.get() {
-            break;
-        }
-    }
-    let mut buf = [0u8; 64];
-    let n = fs.read(0xB000, &mut buf).expect("file lost after cut");
-    assert!(buf[..n] == old || buf[..n] == new, "torn put: garbage");
-    assert_eq!(fs.read(0xC000, &mut buf), Some(4));
-    assert_eq!(&buf[..4], &[1, 2, 3, 4]);
 }
 
 // =========================================================================

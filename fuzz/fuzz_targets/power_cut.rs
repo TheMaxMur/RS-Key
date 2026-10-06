@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
 //! Power-cut torture for the rsk-fs flash stack. `fs_ops` proves the `Fs`
 //! bookkeeping over clean reboots; this target cuts the power *mid-write* and
@@ -36,6 +36,7 @@ use std::rc::Rc;
 
 use embassy_futures::block_on;
 use embedded_storage_async::nor_flash::{ErrorType, MultiwriteNorFlash, NorFlash, ReadNorFlash};
+#[cfg(not(test))]
 use libfuzzer_sys::fuzz_target;
 use rsk_fs::Fs;
 use rsk_fs::powercut::{Device, Op, PowerCutModel};
@@ -360,7 +361,7 @@ fn scribble(flash: &mut Mock, len: usize, seed: &[u8]) {
     }
 }
 
-fuzz_target!(|data: &[u8]| {
+pub fn run(data: &[u8]) {
     if data.first().is_some_and(|b| b & 0xf0 == 0xf0) {
         reset_probe(data);
         return;
@@ -437,4 +438,7 @@ fuzz_target!(|data: &[u8]| {
         model.step(&mut dev, &mut fs, op);
     }
     report(dirty, ops, touched.count_ones(), from, &dev, &model);
-});
+}
+
+#[cfg(not(test))]
+fuzz_target!(|data: &[u8]| run(data));
