@@ -1673,6 +1673,11 @@ fn miri_seed_load_and_recovery() {
     assert!(torn.interrupted && torn.recovery_interrupted);
     let settled = power_cut::backup::run(&[0xE0, 0, 255, 255, 2, 188, 0x33]);
     assert!(!settled.interrupted && !settled.recovery_interrupted && settled.replaced);
+
+    let out = power_cut::backup::run(&[0xE0, 24, 1, 0, 0, 17, 0x33]);
+    assert!(out.interrupted);
+    assert_eq!(out.load_stats.erases, 1);
+    assert!(out.load_stats.bytes_written < 256);
 }
 
 #[test]
@@ -1702,4 +1707,35 @@ fn seed_load_and_recovery_byte_cuts() {
         reached, [true; 4],
         "a byte-cut/recovery arm was not exercised"
     );
+}
+
+#[test]
+#[cfg(not(miri))]
+fn seed_load_during_erase_byte_cuts() {
+    let page_bytes = u64::try_from(power_cut::backup::ERASE_BYTES).unwrap();
+    for churn in [24, 45] {
+        let mut data = [0xE0, churn, 255, 255, 255, 255, 0x33];
+        let healthy = power_cut::backup::run(&data);
+        assert!(healthy.replaced && !healthy.interrupted);
+        assert_eq!(healthy.load_stats.erases, 1, "LOAD never reached erase");
+        let end = u16::try_from(healthy.load_stats.bytes_written + page_bytes).unwrap();
+        let mut partial_erases = 0;
+        for cut in 0..=end {
+            data[2..4].copy_from_slice(&cut.to_be_bytes());
+            let out = power_cut::backup::run(&data);
+            if out.interrupted && out.load_stats.erases == 1 {
+                let erased = u64::from(cut)
+                    .checked_sub(out.load_stats.bytes_written)
+                    .unwrap();
+                if erased > 0 && erased < page_bytes {
+                    partial_erases += 1;
+                }
+            }
+        }
+        assert_eq!(
+            partial_erases,
+            page_bytes - 1,
+            "a partial erase cut was missed"
+        );
+    }
 }

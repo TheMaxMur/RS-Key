@@ -14,11 +14,13 @@ const OLD_SEED: [u8; 32] = [0x5A; 32];
 const MSE_KEY: [u8; 32] = [0x42; 32];
 const MSE_AAD: [u8; 65] = [4; 65];
 const SIGN_COUNTER: u32 = 73;
+pub const ERASE_BYTES: usize = <Mock as NorFlash>::ERASE_SIZE;
 
 pub struct Outcome {
     pub interrupted: bool,
     pub recovery_interrupted: bool,
     pub replaced: bool,
+    pub load_stats: sequential_storage::mock_flash::FlashStatsResult,
 }
 
 fn budget(data: &[u8], offset: usize) -> u32 {
@@ -133,6 +135,7 @@ pub fn run(data: &[u8]) -> Outcome {
     let n = e.writer().position();
     let mut state = rsk_fido::FidoState::new();
     state.establish_mse_for_test(MSE_KEY, MSE_AAD);
+    let before = flash.borrow().stats_snapshot();
     flash.borrow_mut().bytes_until_shutoff = Some(budget(data, 2));
     let result = rsk_fido::vendor::vendor(
         &mut rsk_fido::Ctx {
@@ -146,6 +149,7 @@ pub fn run(data: &[u8]) -> Outcome {
         &request[..n],
         &mut [0; 16],
     );
+    let load_stats = before.compare_to(flash.borrow().stats_snapshot());
     assert!(state.take_mse().is_none(), "LOAD kept its spent channel");
     assert!(
         matches!(result, Ok(0) | Err(rsk_fido::CtapError::Other)),
@@ -187,5 +191,6 @@ pub fn run(data: &[u8]) -> Outcome {
         interrupted,
         recovery_interrupted,
         replaced,
+        load_stats,
     }
 }

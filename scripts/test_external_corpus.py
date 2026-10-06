@@ -28,11 +28,12 @@ def test_backup_sequences_cover_churn_load_and_recovery_cuts():
     seeds = {(target, name): data for target, name, data in corpus.records()
              if name.startswith("rs-key-backup-")}
     assert {target for target, _ in seeds} == {"power_cut"}
-    assert {data[1] for data in seeds.values()} == {0, 31, 63}
+    assert {data[1] for data in seeds.values()} == {0, 24, 31, 45, 63}
     assert {int.from_bytes(data[2:4], "big") for data in seeds.values()} == {
-        0, 64, 256, 700, 65535}
+        0, 64, 116, 256, 700, 2047, 4211, 4212, 4716, 65535}
     assert {int.from_bytes(data[4:6], "big") for data in seeds.values()} == {0, 17, 700}
     assert seeds["power_cut", "rs-key-backup-0-64-17"] == bytes.fromhex("e0000040001133")
+    assert seeds["power_cut", "rs-key-backup-24-256-17"] == bytes.fromhex("e0180100001133")
 
 
 def test_opensk_generic_value_reaches_each_command():

@@ -50,8 +50,11 @@ def assertion_sequences():
 
 
 def backup_sequences():
-    for churn in (0, 31, 63):
-        for load_cut in (0, 64, 256, 700, 65535):
+    ordinary = (0, 64, 256, 700, 65535)
+    erase = (0, 116, 256, 2047, 4211, 4212, 4716, 65535)
+    for churn, cuts in ((0, ordinary), (31, ordinary), (63, ordinary),
+                        (24, erase), (45, erase)):
+        for load_cut in cuts:
             for recovery_cut in (0, 17, 700):
                 data = (bytes([0xE0, churn]) + load_cut.to_bytes(2, "big")
                         + recovery_cut.to_bytes(2, "big") + bytes([0x33]))
