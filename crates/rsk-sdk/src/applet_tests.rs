@@ -3,6 +3,9 @@
 
 use super::*;
 
+#[path = "applet_registry_tests.rs"]
+mod registry;
+
 struct Echo {
     selected: bool,
 }
