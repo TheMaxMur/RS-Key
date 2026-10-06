@@ -755,6 +755,24 @@ pub fn backdate_local(ms: u32) {
 // --- the crate root's own logic --------------------------------------------
 
 #[test]
+fn cloned_parked_cells_share_the_host_borrows_and_pin_state() {
+    let env = Env::new();
+    let original = env.cells();
+    let cloned = Clone::clone(&original);
+    assert!(core::ptr::eq(original.keys, cloned.keys));
+    assert_eq!(cloned.fs.try_pin_set(), Some(false));
+    {
+        let _host_store = original.fs.borrow_mut();
+        let _host_rng = original.rng.borrow_mut();
+        assert_eq!(cloned.fs.try_pin_set(), None);
+        assert!(cloned.rng.try_borrow_mut().is_err());
+    }
+    env.set_device_pin(PIN);
+    assert_eq!(cloned.fs.try_pin_set(), Some(true));
+    assert!(cloned.rng.try_borrow_mut().is_ok());
+}
+
+#[test]
 fn every_brightness_level_lights_the_panel() {
     // Level 0 does not exist; the clamp must not let it through as a 0 duty, which
     // is what `sleep` uses to blank the glass.
