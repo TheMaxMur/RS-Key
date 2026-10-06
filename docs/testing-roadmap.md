@@ -1144,3 +1144,50 @@ RSA-2048/3072/4096 generation in both applets and nineteen power cuts.
 `image-backup-final/` retains binary hashes and reports; the selected wiring
 controls are in `backup-image-native-row-controls.json`. No GitHub job or
 physical-key operation is implied by these local commands.
+
+## 2026-10-06 Byte-level seed recovery and PIV attestation
+
+The existing `power_cut` target now drives LOAD over the real `SeqStorage`
+with a latched, byte-granular NOR fault. Input bytes select preceding store
+churn, the LOAD cut, a second cut during certificate repair and the replacement
+seed. Fresh caches after each cut must observe exactly the old or new seed,
+a matching surviving certificate, a renewed credential-store tag with the new
+seed and unchanged backup seal, sign counter and largeBlob. Healthy repair
+preserves that seed and becomes write-free on its next invocation.
+
+A deterministic run covers 3505 histories: LOAD positions zero through 700
+at three initial churn states, then recovery positions zero through 700 at two
+interrupted LOAD positions. Its checks reach torn LOAD, torn repair, replaced
+seed and completed LOAD. Forty-five retained inputs replay through the existing
+`check.sh` fuzz row. Omitting certificate deletion or tag renewal fails the
+corresponding semantic assertion; omitting the new corpus inputs hides the
+certificate defect. Restored sources pass all 52 targets and the corpus row.
+The imported target body also passes Miri's eight execution seeds in both
+default and `flavours`; neither result is a physical flash experiment.
+The earlier separate Miri storage mirror was removed in `80e07f21`.
+
+Three PIV APDU tests cover missing F9/slot keys, incomplete and unsupported
+metadata, torn RSA/EC/Curve25519 records and short certificate output. Refusals
+return no certificate, write nothing and preserve standing PIN freshness and
+management authentication. Restoring healthy records permits attestation again.
+A control returning `9000` after a refused response append passes all 263
+previous PIV tests, with one ignored, but fails the new short-output case through
+the selected host-test row. Restoring the source passes. The new cases also
+pass under the FIPS profile. `backup-byte-*` and `piv-attestation-*` logs and
+control manifests remain under `target/testing-completion-20261005/`.
+
+A separate native/image backup repeat now signs with the same resident key
+created before a refused LOAD. The independent signature verifies and its image
+row has no known seed matches, with 14400 bytes of observed core0 stack use.
+That selected matrix has sixteen native rows and seventeen image entries,
+including its planted-leak control. It is retained in `backup-image-refusal/`;
+the earlier full image matrix retains its original counts.
+
+Reviewing the latest default report's 27 unexecuted function coordinates finds
+24 verification helpers, two compile-time UI initializers and one host thread-local
+storage helper. The selected file list and summed instantiations are retained in
+`raw-function-residual-classification.json`. The UI helpers run in constant
+assertions and the constant breathe palette; the ML-DSA probe belongs to an
+ignored stack test. Raw function coverage remains 3245/3272. This classification
+does not resolve the unexecuted production lines or condition outcomes, and
+other profiles still require their own residual review.
