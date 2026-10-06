@@ -93,8 +93,12 @@ struct Rig {
 
 impl Rig {
     fn new() -> Self {
+        Self::with_capacity(FLASH_BYTES)
+    }
+
+    fn with_capacity(bytes: usize) -> Self {
         let mut emu = Emulator::new(Config::default());
-        emu.load_flash(&vec![0xFFu8; FLASH_BYTES]);
+        emu.load_flash(&vec![0xFFu8; bytes]);
         let h = emu
             .mount_mmio(
                 QMI_BASE,
@@ -158,7 +162,25 @@ impl Rig {
 fn jedec_id_reads_back() {
     let mut r = Rig::new();
     r.tx(0x9F | TX_NOPUSH);
-    assert_eq!(r.put_get(&[], 3), JEDEC_ID);
+    assert_eq!(r.put_get(&[], 3), [0xef, 0x40, 0x16]);
+}
+
+#[test]
+fn an_eight_mib_part_reports_its_density_reads_upper_addresses_and_erases_all() {
+    let mut r = Rig::with_capacity(8 * 1024 * 1024);
+    r.tx(0x9f | TX_NOPUSH);
+    assert_eq!(r.put_get(&[], 3), [0xef, 0x40, 0x17]);
+    r.cmd_addr(0x90, 0);
+    assert_eq!(r.put_get(&[], 2), [0xef, 0x16]);
+    let upper = 6 * 1024 * 1024;
+    r.emu.bus.memory.xip_write(0, &[0x11; 4]);
+    r.emu.bus.memory.xip_write(upper, &[0x22; 4]);
+    r.cmd_addr(0x03, upper);
+    assert_eq!(r.put_get(&[], 4), [0x22; 4]);
+    r.cmd(0x06);
+    r.cmd(0xc7);
+    assert_eq!(r.q().flash.stats.erased_bytes, 8 * 1024 * 1024);
+    assert!(r.emu.bus.memory.xip_bytes().iter().all(|&b| b == 0xff));
 }
 
 #[test]

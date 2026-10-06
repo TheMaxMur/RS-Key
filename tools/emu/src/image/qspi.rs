@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! The QMI's direct mode in front of a bit-level 25-series SPI NOR (W25Q32JV
-//! command set, 4 MB). The array is the bus's XIP backing, so what the ROM's
+//! The QMI's direct mode in front of a bit-level 25-series SPI NOR (W25Q-JV
+//! command set). The array is the bus's XIP backing, so what the ROM's
 //! erase and program leave is what XIP reads; misuse is logged, not absorbed.
 
 use std::collections::VecDeque;
@@ -56,8 +56,10 @@ const M_RESET: [u32; 5] = [
 // The flash part
 // ---------------------------------------------------------------------------
 
-pub const FLASH_BYTES: usize = 4 * 1024 * 1024;
-const JEDEC_ID: [u8; 3] = [0xEF, 0x40, 0x16]; // Winbond W25Q32JV
+const MANUFACTURER_ID: u8 = 0xEF;
+const MEMORY_TYPE: u8 = 0x40;
+#[cfg(test)]
+use super::flash::FLASH_SIZE as FLASH_BYTES;
 /// The factory unique ID `4Bh` returns; obviously an emulator's.
 const UNIQUE_ID: [u8; 8] = *b"RSKEMUF1";
 
@@ -283,7 +285,7 @@ impl NorFlash {
                         0x20 => (4096, T_SECTOR_ERASE_NS),
                         0x52 => (32 * 1024, T_BLOCK32_ERASE_NS),
                         0xD8 => (64 * 1024, T_BLOCK64_ERASE_NS),
-                        _ => (FLASH_BYTES as u32, T_CHIP_ERASE_NS),
+                        _ => (ctx.flash().len() as u32, T_CHIP_ERASE_NS),
                     };
                     let addr = if chip { 0 } else { self.addr & !(len - 1) };
                     Some(ArrayOp::Erase { addr, len, ns })
@@ -492,6 +494,7 @@ impl NorFlash {
 
     /// Byte the flash drives for the current read command at `self.addr`.
     fn next_read_byte(&mut self, ctx: &MmioCtx) -> u8 {
+        let density = ctx.flash().len().checked_ilog2().unwrap_or(0) as u8;
         let b = match self.cmd {
             0x05 => {
                 self.stats.status_polls += 1;
@@ -499,14 +502,20 @@ impl NorFlash {
             }
             0x35 => self.sr[1],
             0x15 => self.sr[2],
-            0x9F => *JEDEC_ID.get(self.addr as usize).unwrap_or(&0xFF),
+            0x9F => *[MANUFACTURER_ID, MEMORY_TYPE, density]
+                .get(self.addr as usize)
+                .unwrap_or(&0xFF),
             0x4B => *UNIQUE_ID.get(self.addr as usize).unwrap_or(&0xFF),
-            0x90 => [0xEF, 0x15][(self.addr & 1) as usize],
-            0xAB => 0x15,
+            0x90 => [MANUFACTURER_ID, density.saturating_sub(1)][(self.addr & 1) as usize],
+            0xAB => density.saturating_sub(1),
             0x5A => 0xFF, // no SFDP table
             _ => {
-                let a = (self.addr as usize) % FLASH_BYTES;
-                *ctx.flash().get(a).unwrap_or(&0xFF)
+                let flash = ctx.flash();
+                (self.addr as usize)
+                    .checked_rem(flash.len())
+                    .and_then(|a| flash.get(a))
+                    .copied()
+                    .unwrap_or(0xFF)
             }
         };
         self.addr = self.addr.wrapping_add(1);

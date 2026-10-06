@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! The 4 MB flash array behind the QMI model, optionally backed by a file:
+//! The flash array behind the QMI model, optionally backed by a file:
 //! `--store` for this backend is the whole chip, image and KV store together.
 //! Placing an image rewrites only the sectors it covers, so the KV store stays.
 
@@ -12,10 +12,27 @@ use std::path::Path;
 use super::elf::Elf;
 
 pub const FLASH_SIZE: usize = 4 * 1024 * 1024;
+const MIN_FLASH_SIZE: usize = 2 * 1024 * 1024;
+const MAX_FLASH_SIZE: usize = 16 * 1024 * 1024;
 pub const XIP_BASE: u32 = 0x1000_0000;
-/// The end of the XIP window, of which the flash is the first `FLASH_SIZE` bytes.
+/// The end of the XIP window; the flash backing occupies its beginning.
 const XIP_END: u32 = 0x1400_0000;
 const SECTOR: usize = 4096;
+
+fn capacity(elf: &Elf) -> Result<usize, String> {
+    let Some(end) = elf.symbols.iter().find(|s| s.name == "__kvcnt_end") else {
+        return Ok(FLASH_SIZE);
+    };
+    let end = end.value as usize;
+    // The 16 MiB linker layout leaves the E10 absolute-block sector outside KV.
+    if end == MAX_FLASH_SIZE - SECTOR {
+        return Ok(MAX_FLASH_SIZE);
+    }
+    if end.is_power_of_two() && (MIN_FLASH_SIZE..=MAX_FLASH_SIZE).contains(&end) {
+        return Ok(end);
+    }
+    Err(format!("unsupported flash boundary __kvcnt_end={end:#x}"))
+}
 
 pub struct Flash {
     file: Option<File>,
@@ -27,7 +44,8 @@ impl Flash {
     /// the image's flash segments the way a loader would: erase each touched
     /// sector, then write. Returns whether the chip was blank.
     pub fn open(path: Option<&Path>, elf: &Elf) -> Result<(Self, bool), String> {
-        let mut bytes = vec![0xFFu8; FLASH_SIZE];
+        let size = capacity(elf)?;
+        let mut bytes = vec![0xFFu8; size];
         let mut fresh = true;
         let file = match path {
             None => None,
@@ -44,9 +62,9 @@ impl Flash {
                     let mut existing = Vec::new();
                     file.read_to_end(&mut existing)
                         .map_err(|e| format!("{}: {e}", path.display()))?;
-                    if existing.len() != FLASH_SIZE {
+                    if existing.len() != size {
                         return Err(format!(
-                            "{}: {} bytes, but a --image store is the whole {FLASH_SIZE}-byte chip",
+                            "{}: {} bytes, but a --image store is the whole {size}-byte chip",
                             path.display(),
                             existing.len()
                         ));
@@ -63,7 +81,7 @@ impl Flash {
             }
             let off = (seg.paddr - XIP_BASE) as usize;
             let end = off + seg.data.len();
-            if end > FLASH_SIZE {
+            if end > size {
                 return Err(format!("segment at {:#x} leaves the flash", seg.paddr));
             }
             placed.push((off, end, &seg.data));
@@ -76,7 +94,7 @@ impl Flash {
             bytes[off..end].copy_from_slice(data);
         }
         let mut f = Self { file, bytes };
-        f.persist(0, FLASH_SIZE)?;
+        f.persist(0, size)?;
         Ok((f, fresh))
     }
 
@@ -91,8 +109,15 @@ impl Flash {
     /// Bring this copy (and the file) in line with the chip's flash after the
     /// QMI model erased or programmed it: every sector that differs.
     pub fn sync_from(&mut self, backing: &[u8]) -> Result<usize, String> {
+        if backing.len() != self.bytes.len() {
+            return Err(format!(
+                "flash backing is {} bytes; expected {}",
+                backing.len(),
+                self.bytes.len()
+            ));
+        }
         let mut n = 0;
-        for s in (0..FLASH_SIZE.min(backing.len())).step_by(SECTOR) {
+        for s in (0..backing.len()).step_by(SECTOR) {
             if self.bytes[s..s + SECTOR] != backing[s..s + SECTOR] {
                 self.bytes[s..s + SECTOR].copy_from_slice(&backing[s..s + SECTOR]);
                 self.persist(s, SECTOR)?;

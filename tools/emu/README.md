@@ -203,10 +203,13 @@ python tests/emu.py tests/10_fido_getinfo.py
   three 10-second idle samples on the same no-touch ELF reduced median host
   CPU use from 68.7% to 22.4% of one core (2026-10-02). GetInfo after idle
   still completed in 15–17 ms. This measures idle CPU cost, not command speed.
-- **The store** is the whole 4 MB flash, image and KV store together, with the OTP
+- **The store** is the whole flash, image and KV store together, with the OTP
   rows beside it in `<store>.otp`. A new one starts blank but for the chip id,
   which is `--serial`. Placing the image rewrites only the sectors it covers, so
   the KV store stays when a rebuilt image goes in, as a reflashed board's does.
+  The ELF's `__kvcnt_end` selects a 2, 4, 8 or 16 MiB part; the 16 MiB layout's
+  reserved E10 sector is included in the chip. ELFs without that symbol retain
+  the 4 MiB default. A file with another length is refused rather than resized.
 - **Power**: a replug (`03`) is a power-on reset through the bootrom; a reboot the
   image asks for keeps the watchdog scratch, as a warm reset does — so the soft
   PIN lock and the reset window behave as on the board.

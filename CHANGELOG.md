@@ -40,6 +40,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- Image emulation follows the firmware ELF's 2, 4, 8 or 16 MiB flash layout.
+  NOR identity, upper-address reads, whole-chip erase and store-file sync use
+  the same capacity, so larger builds can retain their KV partitions.
+
 - The image emulator builds on ARM Linux: picoem's x86_64 affinity helpers
   now use the same architecture guard as its threaded runtime.
 - Image PICOBOOT/MSC tests retry a refused USB/IP detach request after a

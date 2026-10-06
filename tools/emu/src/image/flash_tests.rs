@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::image::elf::Segment;
+use crate::image::elf::{Segment, Symbol};
 
 const KV: usize = 0x28_0000;
 
@@ -77,4 +77,54 @@ fn an_image_that_leaves_the_flash_is_refused() {
     let mut elf = image(0, 4);
     elf.segments[0].paddr = XIP_BASE + FLASH_SIZE as u32 - 2;
     assert!(Flash::open(None, &elf).is_err());
+}
+
+#[test]
+fn the_linker_store_boundary_selects_the_whole_flash_capacity() {
+    for (end, size) in [
+        (2 * 1024 * 1024, 2 * 1024 * 1024),
+        (4 * 1024 * 1024, 4 * 1024 * 1024),
+        (8 * 1024 * 1024, 8 * 1024 * 1024),
+        (16 * 1024 * 1024 - SECTOR, 16 * 1024 * 1024),
+    ] {
+        let mut elf = image(0xa5, 16);
+        elf.symbols.push(Symbol {
+            name: "__kvcnt_end".into(),
+            value: end as u32,
+            size: 0,
+        });
+        let (mut flash, _) = Flash::open(None, &elf).unwrap();
+        assert_eq!(flash.bytes().len(), size);
+        let mut chip = flash.bytes().to_vec();
+        chip[end - 1] = 0x42;
+        assert_eq!(flash.sync_from(&chip).unwrap(), 1);
+        assert_eq!(flash.bytes()[end - 1], 0x42);
+        assert!(flash.sync_from(&chip[..size - SECTOR]).is_err());
+        elf.symbols[0].value = (size + SECTOR) as u32;
+        assert!(Flash::open(None, &elf).is_err());
+    }
+}
+
+#[test]
+fn a_large_chip_reload_preserves_the_upper_store_and_its_file_length() {
+    let path = scratch("eight-mib");
+    let _ = std::fs::remove_file(&path);
+    let mut elf = image(0x11, SECTOR);
+    elf.symbols.push(Symbol {
+        name: "__kvcnt_end".into(),
+        value: 8 * 1024 * 1024,
+        size: 0,
+    });
+    let (mut flash, _) = Flash::open(Some(&path), &elf).unwrap();
+    assert_eq!(flash.bytes().len(), 8 * 1024 * 1024);
+    let mut chip = flash.bytes().to_vec();
+    chip[6 * 1024 * 1024..][..4].copy_from_slice(b"KV!!");
+    assert_eq!(flash.sync_from(&chip).unwrap(), 1);
+    drop(flash);
+    elf.segments[0].data.fill(0x22);
+    let (flash, fresh) = Flash::open(Some(&path), &elf).unwrap();
+    assert!(!fresh);
+    assert_eq!(&flash.bytes()[6 * 1024 * 1024..][..4], b"KV!!");
+    assert_eq!(std::fs::read(&path).unwrap(), flash.bytes());
+    let _ = std::fs::remove_file(&path);
 }
