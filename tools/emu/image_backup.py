@@ -85,9 +85,11 @@ def run(ops):
         1: RP, 2: CDH, 3: [{"id": credential, "type": "public-key"}]}, 0x2E))
     export("backup_original_export", original)
     dev.power_cycle()
-    ops.run("backup_certificate_after_reboot", lambda: create(original), {"backup_seed": original})
+    credential, public = ops.run("backup_certificate_after_reboot", lambda: create(original),
+                                 {"backup_seed": original})
     ops.run("backup_finalize", lambda: dev.ctap(backup.CTAP_VENDOR, {1: backup.FINALIZE}))
     load("backup_invalid_tag_refused", REPLACEMENT, corrupt=True)
+    ops.run("backup_credential_after_refusal", sign, {"backup_seed": original})
     ops.run("backup_certificate_after_refusal", lambda: create(original), {"backup_seed": original})
     state = ops.run("backup_sealed_state", lambda: dev.ctap(backup.CTAP_VENDOR, {1: backup.STATE}))
     assert state[1] is True and state[2] is True and state[3] is False
