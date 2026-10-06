@@ -149,7 +149,7 @@ impl<'a> Apdu<'a> {
     /// True when the class byte asks for secure messaging, which this card does
     /// not implement — OpenPGP Extended Capabilities announces SM off, and PIV
     /// has no SM key. The caller answers `6E00`; see [`crate::Dispatcher`].
-    #[inline]
+    #[cfg_attr(not(coverage), inline)]
     pub fn is_secure_messaging(&self) -> bool {
         self.cla & CLA_SM_MASK != 0
     }
