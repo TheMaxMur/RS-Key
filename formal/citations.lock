@@ -242,7 +242,7 @@ assurance/bundle/SEC-FIDO-006.toml	formal/gen-configs.sh	34-44	companion_bug() {
 assurance/bundle/SEC-FIDO-006.toml	formal/gen-configs.sh	47-84	target_inv() {	esac
 assurance/bundle/SEC-FIDO-006.toml	formal/gen-configs.sh	171-176	if [ "$b" = "$on" ] || { [ -n "$on" ] && [ "$b" = "$(companion_bug "$on")" ]; }	done
 assurance/bundle/SEC-FIDO-006.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
-assurance/bundle/SEC-FIDO-006.toml	fuzz/fuzz_targets/power_cut.rs	228-230	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	}
+assurance/bundle/SEC-FIDO-006.toml	fuzz/fuzz_targets/power_cut.rs	229-231	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	}
 assurance/bundle/SEC-FIDO-006.toml	scripts/assurance_gate.py	122-142	def cfg_checked(path: pathlib.Path) -> list[str]:	return out
 assurance/bundle/SEC-FIDO-006.toml	scripts/check.sh	562-562	run "assurance-trace image identity" assurance_trace_is_image_neutral	run "assurance-trace image identity" assurance_trace_is_image_neutral
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/consts.rs	361-361	pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]	pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
@@ -270,7 +270,7 @@ assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620..
 assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	229-237	armed_n=$(armed_count "$cfg")	fi
 assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	248-250	"$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -Djava.io.tmpdir="$metaroot/java-tmp" -cp "$JAR" tlc2.TLC \	"${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
 assurance/bundle/SEC-FIDO-006A.toml	fuzz/fuzz_targets/power_cut.rs	29-31	//! After a real reboot it checks `ResetNeverWeakensSurvivingState` and its three	//! `ResetKeepsTheBackupSeal`. This is the byte-granular half of the phase-6
-assurance/bundle/SEC-FIDO-006A.toml	fuzz/fuzz_targets/power_cut.rs	228-228	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
+assurance/bundle/SEC-FIDO-006A.toml	fuzz/fuzz_targets/power_cut.rs	229-229	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
 assurance/bundle/SEC-FIDO-006A.toml	tests/29_reset_power_cut.py	12-14	This is the runtime witness for `ResetNeverWeakensSurvivingState` and its three	`ResetKeepsTheBackupSeal`. It provisions one owner seed, seals its export window,
 assurance/bundle/SEC-FIDO-006A.toml	tests/29_reset_power_cut.py	526-530	assertion_status = old_credential_without_gates(dev, cid, credential_id)	)
 assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/config.rs	316-316	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");
@@ -350,10 +350,10 @@ assurance/bundle/SEC-FIDO-006C.toml	formal/gen-configs.sh	121-121	CLAUSE_INV=(Re
 assurance/bundle/SEC-FIDO-006C.toml	formal/gen-configs.sh	348-348	clause_mutant() {	clause_mutant() {
 assurance/bundle/SEC-FIDO-006C.toml	formal/gen-configs.sh	358-358	SOLO=1 SOLO_INV="$i" emit "SoloClause_$i.cfg" "$(clause_mutant "$i")" FALSE TRUE	SOLO=1 SOLO_INV="$i" emit "SoloClause_$i.cfg" "$(clause_mutant "$i")" FALSE TRUE
 assurance/bundle/SEC-FIDO-006C.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
-assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	220-230	fn reset_property_holds<S: rsk_fs::Storage>(fs: &mut Fs<S>, owner_seed: &[u8]) -> bool {	}
-assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	256-259	fs.put(EF_CRED, &[0x5a; 96]).unwrap();	fs.put(EF_BACKUP_SEALED, &[1]).unwrap();
-assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	263-268	let budget = u32::from_be_bytes([	]);
-assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	271-273	let mut state = rsk_fido::FidoState::new();	state.keydev_dec = rsk_fido::seed::load_keydev(&identity, &mut fs);
+assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	221-231	fn reset_property_holds<S: rsk_fs::Storage>(fs: &mut Fs<S>, owner_seed: &[u8]) -> bool {	}
+assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	257-260	fs.put(EF_CRED, &[0x5a; 96]).unwrap();	fs.put(EF_BACKUP_SEALED, &[1]).unwrap();
+assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	264-269	let budget = u32::from_be_bytes([	]);
+assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	272-274	let mut state = rsk_fido::FidoState::new();	state.keydev_dec = rsk_fido::seed::load_keydev(&identity, &mut fs);
 assurance/bundle/SEC-FIDO-006C.toml	scripts/comutate.py	311-335	def armed_subject(config, companion: dict[str, str]) -> str | None:	return None
 assurance/bundle/SEC-FIDO-006C.toml	tests/29_reset_power_cut.py	526-527	assertion_status = old_credential_without_gates(dev, cid, credential_id)	assert assertion_status != 0, (
 assurance/bundle/SEC-FIDO-006C.toml	tests/29_reset_power_cut.py	537-537	assert current != owner_seed, "owner seed survived after its backup seal disappeared"	assert current != owner_seed, "owner seed survived after its backup seal disappeared"
@@ -571,7 +571,7 @@ assurance/platform.toml	firmware/src/worker.rs	428-428	crate::presence::set_wait
 assurance/platform.toml	formal/gen-configs.sh	211-225	# `clauses=1` HERE and on no other baseline, and the choice is a measurement.	# SeedReachable restatement).
 assurance/platform.toml	formal/gen-configs.sh	322-322	emit Historical_E76.cfg BugSeedDoesNotLead TRUE TRUE	emit Historical_E76.cfg BugSeedDoesNotLead TRUE TRUE
 assurance/platform.toml	fuzz/fuzz_targets/fido_session.rs	1440-1440	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"
-assurance/platform.toml	fuzz/fuzz_targets/power_cut.rs	228-228	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
+assurance/platform.toml	fuzz/fuzz_targets/power_cut.rs	229-229	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
 assurance/platform.toml	scripts/check.sh	172-221	assurance_trace_is_image_neutral() {	}
 assurance/platform.toml	scripts/check.sh	488-488	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"
 assurance/platform.toml	scripts/citation_gate.py	556-556	EXTS = "rs|sh|txt|py"	EXTS = "rs|sh|txt|py"

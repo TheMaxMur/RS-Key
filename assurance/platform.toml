@@ -1439,7 +1439,7 @@ supports = ["SEC-FIDO-006B"]
 [[assumption]]
 id = "PLAT-ORACLE-001"
 class = "model-abstraction"
-statement = "Below the model tier nothing can report `ResetKeepsThePinGate` rather than `ResetKeepsTheAlwaysUvGate`: `fuzz/fuzz_targets/power_cut.rs:228` folds both gates into one conjunct (`fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)`) and `tests/29_reset_power_cut.py:527-530` asserts one refused assertion for both, so a red run on either rung says a gate went and not which one."
+statement = "Below the model tier nothing can report `ResetKeepsThePinGate` rather than `ResetKeepsTheAlwaysUvGate`: `fuzz/fuzz_targets/power_cut.rs:229` folds both gates into one conjunct (`fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)`) and `tests/29_reset_power_cut.py:527-530` asserts one refused assertion for both, so a red run on either rung says a gate went and not which one."
 discharge = "Splitting either oracle: a second boolean in `reset_property_holds`, or a second assertion in tests/29_reset_power_cut.py reading getInfo's `options.alwaysUv` — which the script already fetches and prints in its failure message but does not test. Both are small; neither has been done. Both files NAME all three clauses in their doc comments, and the columns are not wrong — `assurance_gate` counts FILES — which is why nothing in the apparatus reports the gap. The backup-seal clause is separable on both rungs and is the sibling this does not cover."
 discharge_owner = "contributor"
 status = "pending"

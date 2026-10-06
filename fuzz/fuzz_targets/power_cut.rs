@@ -362,6 +362,10 @@ fn scribble(flash: &mut Mock, len: usize, seed: &[u8]) {
 }
 
 pub fn run(data: &[u8]) {
+    if data.first().is_some_and(|b| b & 0xf0 == 0xe0) {
+        backup::run(data);
+        return;
+    }
     if data.first().is_some_and(|b| b & 0xf0 == 0xf0) {
         reset_probe(data);
         return;
@@ -442,3 +446,6 @@ pub fn run(data: &[u8]) {
 
 #[cfg(not(test))]
 fuzz_target!(|data: &[u8]| run(data));
+
+#[path = "power_cut_backup.rs"]
+pub mod backup;

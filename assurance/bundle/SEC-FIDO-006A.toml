@@ -34,7 +34,7 @@
 #    nothing. See §8's four `code` rows and `result.c_cover_is_not_a_witness`.
 #  * THE TWO LOWER RUNGS HAVE NO CLAUSE A. `fuzz = 1` counts an oracle whose
 #    clause-A half is `&&`-folded with clause B's into one boolean
-#    (fuzz/fuzz_targets/power_cut.rs:228), and `test = 1` counts an assertion
+#    (fuzz/fuzz_targets/power_cut.rs:229), and `test = 1` counts an assertion
 #    that says an assertion was refused without saying which gate refused it
 #    (tests/29_reset_power_cut.py:526-530). Two of this row's four non-zero
 #    evidence columns cannot report this clause.

@@ -49,6 +49,15 @@ def assertion_sequences():
         yield "fido_session", f"rs-key-assertion-capacity-{capacity}", data
 
 
+def backup_sequences():
+    for churn in (0, 31, 63):
+        for load_cut in (0, 64, 256, 700, 65535):
+            for recovery_cut in (0, 17, 700):
+                data = (bytes([0xE0, churn]) + load_cut.to_bytes(2, "big")
+                        + recovery_cut.to_bytes(2, "big") + bytes([0x33]))
+                yield "power_cut", f"rs-key-backup-{churn}-{load_cut}-{recovery_cut}", data
+
+
 def records():
     for name, digest in HASHES.items():
         if hashlib.sha256((SOURCE / name).read_bytes()).hexdigest() != digest:
@@ -91,6 +100,7 @@ def records():
             elif group in APPLETS and 0 < len(data) < 255:
                 yield APPLETS[group], label, bytes([len(data)]) + data
     yield from assertion_sequences()
+    yield from backup_sequences()
 
 
 def prepare(destination):

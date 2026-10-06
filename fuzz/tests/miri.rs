@@ -1666,3 +1666,40 @@ fn miri_display_label() {
         let _ = rsk_ui::render::render(&mut sink, &Screen::Confirm(prompt));
     }
 }
+
+#[test]
+fn miri_seed_load_and_recovery() {
+    let torn = power_cut::backup::run(&[0xE0, 0, 0, 64, 0, 17, 0x33]);
+    assert!(torn.interrupted && torn.recovery_interrupted);
+    let settled = power_cut::backup::run(&[0xE0, 0, 255, 255, 2, 188, 0x33]);
+    assert!(!settled.interrupted && !settled.recovery_interrupted && settled.replaced);
+}
+
+#[test]
+#[cfg(not(miri))]
+fn seed_load_and_recovery_byte_cuts() {
+    let mut reached = [false; 4];
+    for churn in [0, 31, 63] {
+        for cut in 0u16..=700 {
+            let mut data = [0xE0, churn, 0, 0, 0, 0, 0x33];
+            data[2..4].copy_from_slice(&cut.to_be_bytes());
+            let out = power_cut::backup::run(&data);
+            reached[0] |= out.interrupted;
+            reached[1] |= out.recovery_interrupted;
+            reached[2] |= out.replaced;
+            reached[3] |= !out.interrupted;
+        }
+    }
+    for load_cut in [64u16, 256] {
+        for recovery_cut in 0u16..=700 {
+            let mut data = [0xE0, 0, 0, 0, 0, 0, 0x33];
+            data[2..4].copy_from_slice(&load_cut.to_be_bytes());
+            data[4..6].copy_from_slice(&recovery_cut.to_be_bytes());
+            power_cut::backup::run(&data);
+        }
+    }
+    assert_eq!(
+        reached, [true; 4],
+        "a byte-cut/recovery arm was not exercised"
+    );
+}
