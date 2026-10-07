@@ -293,6 +293,17 @@ names are `C=ES, O=RS-Key, CN=RS-Key PIV …`. Read the `f9` CA cert with:
 ykman piv certificates export f9 attestation-ca.pem
 ```
 
+SELECT rebuilds a missing, empty, truncated or preceding-key F9 certificate
+using the stored key. It also retires a stale public cache left by an older
+build, retaining a certificate that already names that key. Recreating a missing
+F9 key removes the preceding certificate before saving the replacement. A
+storage failure returns `6581`; retry after the storage fault is resolved.
+
+An unreadable or non-P-384 F9 key makes PIV SELECT answer `6581`.
+It is preserved, never regenerated. A replug retries boot migration of a key
+still sealed under the earlier root. The dispatcher retains selection after
+this refusal; raw APDUs can still reach PIV's command handlers and their gates.
+
 Attestation only works for **generated** keys; an imported key returns
 `6A80` / `WRONG DATA` (there is nothing to attest). For the FIDO side of
 attestation (org-provisioned enterprise attestation) see

@@ -22,8 +22,8 @@
 #
 # Scope, matching the roadmap's §3.4 so the counts reproduce: callers outside
 # `crates/rsk-fs` (which defines the family), outside `fuzz/`, and outside the
-# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 47 — 24 `delete`,
-# 5 `delete_key`, 2 `delete_over`, 5 `delete_key_over`, 6 `force_delete`,
+# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 48 — 24 `delete`,
+# 5 `delete_key`, 2 `delete_over`, 5 `delete_key_over`, 7 `force_delete`,
 # 5 `force_delete_halves`.
 #
 # Run the same derivation over `crates/rsk-fs` and it finds SEVEN more, which this
@@ -547,7 +547,7 @@ why = "and its second. Both slots' valid bits come off flash in the response tha
 
 [[site]]
 file = "crates/rsk-piv/src/files.rs"
-line = 652
+line = 684
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -555,6 +555,17 @@ class = "wipe-sweep"
 metadata = "drops-head"
 disposition = "must-read"
 why = "the site this audit was about: PIV key fids carry EF_META heads, so the record half is NOT vacuous here, and force_delete hid a faulted drop until 0x0987. GET METADATA answers from that head with no has_key probe. The head is reported at the end of the sweep rather than propagated out of it, so an orphan the medium forces is answered for without the rest of the range surviving with it."
+
+[[site]]
+file = "crates/rsk-piv/src/files.rs"
+line = 507
+call = "fs.force_delete(EF_ATTESTATION_CERT)"
+verb = "force_delete"
+answer = "read"
+class = "bookkeeping"
+metadata = "none"
+disposition = "must-read"
+why = "Retire a preceding or malformed F9 certificate before its repair and before committing a replacement key. A refused removal stops SELECT so GET DATA cannot name a different attestation key after a later certificate-write failure."
 
 [[site]]
 file = "crates/rsk-piv/src/objects.rs"

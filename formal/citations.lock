@@ -813,7 +813,7 @@ formal/README.md	crates/rsk-openpgp/src/terminate.rs	215-215	if deleted > WIPE_M
 formal/README.md	crates/rsk-piv/src/auth.rs	57-65	/// skips the PIN; listing known gated values made unknown bytes ungated.	}
 formal/README.md	crates/rsk-piv/src/auth.rs	63-63	PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,	PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh,
 formal/README.md	crates/rsk-piv/src/auth.rs	113-117	/// nothing clears the PIN's own status — 9B included, hence `is_key`.	self.sess.pin_fresh = false;
-formal/README.md	crates/rsk-piv/src/files.rs	645-645	if deleted > RESET_MAX_DELETES {	if deleted > RESET_MAX_DELETES {
+formal/README.md	crates/rsk-piv/src/files.rs	677-677	if deleted > RESET_MAX_DELETES {	if deleted > RESET_MAX_DELETES {
 formal/README.md	crates/rsk-piv/src/lib.rs	193-196	fn set_pin(&mut self, verified: bool) {	}
 formal/README.md	crates/rsk-piv/src/lib.rs	210-225	fn reset(&mut self) {	}
 formal/README.md	crates/rsk-piv/src/lib.rs	384-387	if !reselect {	// The default PIN/PUK/retry/mgmt/attestation files are provisioned once

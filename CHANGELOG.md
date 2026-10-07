@@ -40,6 +40,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV repairs an absent, empty, truncated or preceding-key F9 attestation
+  certificate on SELECT using its existing key, and retires a stale public cache
+  left by older builds. F9 recreation removes the preceding certificate before
+  committing a replacement key. bcdDevice → `0x0A8F`.
+
 - PIV retires a slot's old public-point cache before key replacement or MOVE.
   A missing source cache or refused cache refresh no longer publishes the
   preceding key's point; F9 recreation uses the same guard. bcdDevice → `0x0A8E`.

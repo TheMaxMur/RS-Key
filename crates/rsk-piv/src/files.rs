@@ -471,14 +471,47 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
             .meta_add(key_fid(SLOT_CARDMGM).get(), &[algo, pin, touch])
             .is_ok();
     }
-    if !provisioned(fs, key_fid(SLOT_ATTESTATION).get())? {
-        let key = PrivKey::generate(Curve::P384, &mut crate::EcRng(rng)).ok_or(Sw::EXEC_ERROR)?;
-        crate::keygen::drop_slot_meta(fs, SLOT_ATTESTATION)?;
+    let have_attestation_key = provisioned(fs, key_fid(SLOT_ATTESTATION).get())?;
+    let key = if have_attestation_key {
+        // A tear after the key write owes only its certificate, never a new key.
+        let key = seal::load_ec_key(dev, fs, key_fid(SLOT_ATTESTATION))?;
+        if key.curve() != Curve::P384 {
+            return Err(Sw::MEMORY_FAILURE);
+        }
+        key
+    } else {
+        PrivKey::generate(Curve::P384, &mut crate::EcRng(rng)).ok_or(Sw::EXEC_ERROR)?
+    };
+    let mut point = [0u8; MAX_EC_POINT];
+    let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
+    let point = point.get(..plen).ok_or(Sw::EXEC_ERROR)?;
+    let mut obj = [0u8; x509::MAX_CERT + 16];
+    let certificate_matches = have_attestation_key
+        && fs
+            .try_read(EF_ATTESTATION_CERT, &mut obj)
+            .map_err(|_| Sw::MEMORY_FAILURE)?
+            .and_then(|n| obj.get(..n))
+            .and_then(x509::attestation_point)
+            == Some(point);
+    let mut cached = [0u8; MAX_EC_POINT];
+    let cache_matches = fs
+        .try_read(pubkey_fid(SLOT_ATTESTATION), &mut cached)
+        .map_err(|_| Sw::MEMORY_FAILURE)?
+        .is_none_or(|n| cached.get(..n) == Some(point));
+    if certificate_matches && cache_matches {
+        return Ok(landed);
+    }
+    // Older firmware could leave either public record naming a preceding key.
+    crate::keygen::drop_slot_meta(fs, SLOT_ATTESTATION)?;
+    if !certificate_matches {
+        fs.force_delete(EF_ATTESTATION_CERT)
+            .map_err(|_| Sw::MEMORY_FAILURE)?;
+    }
+    if !have_attestation_key {
         seal::store_ec_key(dev, fs, rng, key_fid(SLOT_ATTESTATION), &key)?;
-        let mut point = [0u8; MAX_EC_POINT];
-        let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
-        let point = point.get(..plen).ok_or(Sw::EXEC_ERROR)?;
-        let _ = fs.put(pubkey_fid(SLOT_ATTESTATION), point);
+    }
+    let _ = fs.put(pubkey_fid(SLOT_ATTESTATION), point);
+    if !certificate_matches {
         let mut cert = [0u8; x509::MAX_CERT];
         let n = x509::build_cert(
             &x509::CertParams {
@@ -495,7 +528,6 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
             rng,
             &mut cert,
         )?;
-        let mut obj = [0u8; x509::MAX_CERT + 16];
         let on = crate::wrap_cert_object(cert.get(..n).ok_or(Sw::EXEC_ERROR)?, &mut obj);
         fs.put(EF_ATTESTATION_CERT, obj.get(..on).ok_or(Sw::EXEC_ERROR)?)
             .map_err(|_| Sw::MEMORY_FAILURE)?;

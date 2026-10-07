@@ -9,6 +9,7 @@
 use rsk_ec::PrivKey;
 use rsk_sdk::Rng;
 use rsk_sdk::Sw;
+use rsk_sdk::tlv::{Tlv, find_tag};
 pub use rsk_x509::{MAX_CERT, Spki};
 
 use crate::files::{ALGO_ECCP384, SLOT_ATTESTATION};
@@ -17,6 +18,19 @@ const OID_YK_FIRMWARE: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xC4, 0x0A,
 const OID_YK_SERIAL: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xC4, 0x0A, 0x03, 0x07];
 const OID_YK_POLICY: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xC4, 0x0A, 0x03, 0x08];
 const OID_YK_FORMFACTOR: &[u8] = &[0x2B, 0x06, 0x01, 0x04, 0x01, 0x82, 0xC4, 0x0A, 0x03, 0x09];
+const V3_SPKI_FIELD: usize = 6;
+
+/// The subject point in our device-owned v3 F9 object; not certificate validation.
+pub(crate) fn attestation_point(object: &[u8]) -> Option<&[u8]> {
+    let der = find_tag(object, 0x70)?;
+    let certificate = find_tag(der, 0x30)?;
+    let tbs = find_tag(certificate, 0x30)?;
+    let (tag, spki) = Tlv::new(tbs).nth(V3_SPKI_FIELD)?;
+    if tag != 0x30 {
+        return None;
+    }
+    find_tag(spki, 3)?.strip_prefix(&[0])
+}
 
 /// Yubico attestation-statement extensions.
 pub struct AttestExt {

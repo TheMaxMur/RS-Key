@@ -6046,9 +6046,15 @@ fn kbase_migration_reseals_slots_and_pin_falls_back() {
     let psig = p256::ecdsa::Signature::from_der(&der).unwrap();
     vk.verify_prehash(&digest, &psig).unwrap();
 
-    // A pre-OTP applet no longer accepts the migrated PIN verifier.
+    // The public-root applet cannot open migrated F9, so SELECT refuses it.
+    // The dispatcher retains selection after refusal, so a subsequent VERIFY
+    // still reaches the verifier and must refuse the migrated PIN.
     let mut app3 = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
-    select(&mut app3, &mut fs);
+    let mut output = [0u8; 256];
+    assert_eq!(
+        Applet::select(&mut app3, false, &mut fs, &mut ResBuf::new(&mut output)),
+        Sw::MEMORY_FAILURE
+    );
     let (sw, _) = run(&mut app3, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN);
     assert_eq!(sw, Sw::new(0x63, 0xC2));
 }
@@ -6093,6 +6099,7 @@ fn unblock_with_the_puk_re_arms_the_at_rest_lap() {
 
     // The OTP build. The PUK migrates on its own first use and re-arms the lap;
     // a boot then runs the lap and re-latches the marker.
+    assert!(!migrate_kbase(&dev_otp, &mut fs, &mut TestRng(9)));
     let mut app2 = PivApplet::new(SERIAL, HASH, Some(FusedKey::open(otp_source)), &rng, &pres);
     select(&mut app2, &mut fs);
     fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
@@ -9414,6 +9421,7 @@ fn every_scan_files_guard_refuses_its_own_faulted_probe() {
         (EF_RETRIES, "the retry counters"),
         (key_fid(SLOT_CARDMGM).get(), "the management key"),
         (key_fid(SLOT_ATTESTATION).get(), "the F9 attestation key"),
+        (EF_ATTESTATION_CERT, "the F9 attestation certificate"),
         (rsk_fs::EF_META, "the 9B metadata head"),
     ] {
         let before = medium.value(fid);
@@ -11088,3 +11096,6 @@ mod service_fault_decisions;
 
 #[path = "cache_retirement_tests.rs"]
 mod cache_retirement;
+
+#[path = "attestation_recovery_tests.rs"]
+mod attestation_recovery;

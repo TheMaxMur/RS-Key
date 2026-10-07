@@ -575,6 +575,15 @@ needs only the identifiers above. RS-Key implements:
   Key replacement and MOVE retire the prior per-slot public-point cache before
   committing a key; failed cache retirement answers `6581`. Missing or refused
   cache refreshes fall back to the current metadata point or that key's scalar.
+  SELECT compares F9's stored certificate point and public cache with its sealed
+  P-384 key. It repairs absent, empty, truncated or preceding-key certificates
+  under that key and retires stale caches from older builds. Recreating an absent
+  F9 key removes its preceding certificate before committing the replacement;
+  a failed read, retirement or repair answers `6581`.
+  An existing F9 key that the current root cannot open, or that names another
+  curve, also makes SELECT answer `6581`, preserving the key. A later boot
+  retries unfinished root migration. Selection remains current after refusal,
+  so subsequent raw APDUs still reach PIV's command handlers and their gates.
   `PUT DATA` answers `6982` without the management key, then `6A80` to a P1-P2
   other than `3FFF` and to a body that is not `5C 03 <id>` followed directly by
   `53` with its length in the shortest form; bytes after the object are ignored.
