@@ -9,6 +9,18 @@ use rsk_fs::storage::ram::RamStorage;
 #[path = "pin_recovery_bounds_tests.rs"]
 mod pin_recovery_bounds_tests;
 
+#[path = "pin_fault_decisions_tests.rs"]
+mod pin_fault_decisions_tests;
+
+#[path = "pin_recovery_cut_tests.rs"]
+mod pin_recovery_cut_tests;
+
+#[path = "pin_boundary_decisions_tests.rs"]
+mod pin_boundary_decisions_tests;
+
+#[path = "pin_recovery_commands_tests.rs"]
+mod pin_recovery_commands_tests;
+
 struct CountRng(u8);
 impl Rng for CountRng {
     fn fill(&mut self, buf: &mut [u8]) {

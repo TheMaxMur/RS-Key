@@ -6,6 +6,9 @@ use crate::dying_storage::DyingStorage;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_sdk::Sw;
 
+#[path = "init_dek_decisions_tests.rs"]
+mod dek_decisions;
+
 /// Deterministic counter RNG for tests.
 struct CountRng(u8);
 impl Rng for CountRng {
