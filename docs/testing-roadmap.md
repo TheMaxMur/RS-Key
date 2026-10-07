@@ -94,6 +94,13 @@ profiles on the journal, passkeys, OpenPGP and PIN-pad recovery test inputs;
 its source hashes match `coverage-recovery/`. The later Mac report,
 `coverage-openpgp-final/`, adds PIN-boundary, boot and retained-rendering
 fixtures. The shipping-image matrix below uses that later source selection.
+The latest `sqlite-autonomous-20261007/linux-service-profiles/` snapshot completes
+all eighteen profiles after the PIV cache repair and boot-failure fixtures. Its
+source hashes match the Mac `coverage-service-faults/` report.
+The later `sqlite-autonomous-20261007/attestation-recovery/linux-profiles/`
+snapshot completes all eighteen after the F9 repair and fifteen new fixtures.
+It matches `coverage-attestation-verified/`; a subsequent two-line fixture
+comment clarification leaves executable tokens and line coordinates unchanged.
 
 | Phase | Work | Depends on |
 |---|---|---|
@@ -111,11 +118,11 @@ The latest local completion boundary is:
 | Phase | Established | Remaining |
 |---|---|---|
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; unemitted and device code need separate evidence |
-| 2 | Additional command-level authorization, retry, buffer, stored-record and retained-rendering cases | 1004 raw unexecuted outcomes; the local coordinate index retains open cases |
-| 3 | Seed and journal cuts; compound OpenPGP record cuts and six command/recovery NOR byte-cut histories | Extend command-specific recovery histories to the remaining persistent operations |
+| 2 | Additional command-level authorization, retry, buffer, stored-record, retained-rendering and F9 identity cases | 996 raw unexecuted outcomes; the local coordinate index retains open cases |
+| 3 | Seed and journal cuts; compound OpenPGP PIN and boot-repair record cuts; command/recovery NOR byte cuts including F9 provisioning | Extend command-specific recovery histories to the remaining persistent operations |
 | 4 | Semantic controls through host, fuzz, Miri and image runners | Whole-core mutation closure and rare crypto fallback paths |
-| 5 | Independent OATH positions, journal histories and 576 retained OpenPGP command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
-| 6 | Eighteen host-profile maps; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, latest-fixture host-profile refresh, host-tool residuals and device interoperability |
+| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
+| 6 | Eighteen source-matched host-profile maps; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
 | 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
 
@@ -1884,3 +1891,253 @@ component logs and hashes. `openpgp-final-snapshot/` retains the source patch,
 untracked build inputs and local drivers; the final corpus archive retains the
 accumulated inputs. These local results do not close the remaining criteria
 in the completion table or establish actual CI/release provenance.
+
+## 2026-10-07 PIV cache identity and boot-repair failures
+
+The resumed default measurement includes fifteen new cases: five PIV service
+failures, four OpenPGP boot-repair histories, five public-cache regressions and
+a headless MOVE history. Latched key-read faults at the outer and protected
+management-key reads return the precise status with no response bytes, no
+replacement and no lost standing PIN status. RSA completion refuses a missing
+latched root without changing its output or slot. Empty fixed objects retain
+their declared refusal or CHUID synthesis; absent/short management metadata
+cannot replace the sealed key. A refused unblock re-arm preserves the PIN and
+retry record, grants no access and permits a later healthy retry.
+
+OpenPGP boot leaves unidentified short reset-code records and their DEK copy
+untouched. Short C4 records repair only existing max-length bytes; missing
+retry slots refuse authentication instead of inventing a budget. Restoring the
+complete status record reopens the same DEK. Each refused status repair retains
+its old bytes and reports a storage error. A Cartesian record-cut sweep drives
+RC-counter repair, max-length repair and legacy sex-code repair, interrupts the
+next recovery at every remaining boundary and remounts again. It reaches both
+failed/successful command and recovery arms, preserves both PIN verifiers and
+DEK copies, and becomes idempotent after a healthy boot.
+
+The MOVE cache case reproduced a firmware bug. With an absent source point
+cache and a destination orphan cache, MOVE transferred the correct sealed key
+but GET METADATA published the orphan point. The same failure appeared after
+GENERATE/IMPORT or F9 recreation when refreshing an older point cache was
+refused. The assertion compares metadata with the actual key's independently
+derived public point; the MOVE case also verifies a signature under that point.
+These are wrong-key-identity failures, separate from compiler or helper errors.
+
+Key replacement now retires the old public point and origin through the shared
+slot helper before committing a key. All eight replacement routes refuse a
+failed cache retirement before changing the key; the boot F9 writer uses the
+same helper. Unconditional removal also covers a truncated boot walk whose
+present cache missed the orphan. MOVE validates the source length before any
+retirement, retaining its refusal-without-mutation contract. Certificates and
+record formats keep their established contracts; existing valid keys are read
+as before. The firmware build counter advances to `0x0A8E`; protocol, guide
+and changelog text follow the change.
+
+The existing read-fault GENERATE sweep identifies its intentional head-only
+metadata fallback at the third EF_META read, formerly the second. The added
+cache retirement accounts for the extra probe. Its observed failure remains
+the same 15-byte head-only record, and its other refusal/whole-record assertions
+are unchanged. This is a reanchored fault position, not an erased verdict.
+
+Ten semantic controls compile and fail through the actual `check.sh` host-test
+row on a private source snapshot; baselines and byte-identical restorations
+pass. They include conditional/omitted cache retirement, ignored retirement
+errors, omitted F9 cleanup, invented management metadata, accepted empty data,
+ignored unblock/boot-repair errors and RSA sealing under the public serial after
+a latched-root failure. Their logs preserve each actual assertion and direction.
+The in-diff cargo-mutants selection tests eleven variants: eight caught and
+three unviable because `Sw` has no `Default`. Those three are compiler refusals,
+not semantic kills or survivors. No test-count floor or compiler pin changes.
+
+The new default Mac report passes 3268 unique cases plus the child repeat, with
+five ignored cases. It records 38541/39627 lines (97.26%), 6980/7975 condition
+outcomes (87.52%) and 3248/3275 functions (99.18%). Its raw denominator includes
+verification helpers; the remaining 995 outcomes are not exclusions or a
+completed reachability review. `coverage-service-faults/` under
+`target/sqlite-autonomous-20261007/` retains the measured source, feature closure
+and raw exports. Separate source-bound Linux profiles and image results retain
+their own completion records.
+
+`service-condition-residuals.json` preserves all 995 raw missing outcomes across
+114 source files, the 1086 missing function-group summary lines and 27 unexecuted functions.
+Sixteen condition coordinates have source-invariant reviews, with their current
+source hashes, supporting code/tests and limits. They include the exact-width
+EC generator, the finite PIV point roster and command dispatch, exact import
+widths, clamped metadata lengths, the outer GET DATA PIN gate and boot status
+provisioning before settlement. All other
+condition coordinates remain open. The earlier function classifications match
+the current source bytes and coordinates; no exclusion changes the percentages.
+
+The index also separates reviewed whole-file helper modules by their actual
+`cfg` declarations: conformance fixtures, concrete reset/cache projections,
+vector parsers and the OpenPGP test TLV helper. It retains each declaration and
+parent source hash. Other files can mix runtime code and verification helpers;
+they remain unclassified at file scope, and no production-only subtotal is
+inferred from a filename or from these partial reviews.
+
+Re-exporting JSON from the retained profile data gives identical parsed coverage
+data and totals. LCOV's DA records merge a whole source file: 38327/39047 mapped
+lines, with 720 zero-count entries. LLVM's summary instead adds the line counts
+of function groups, so overlapping functions and closures need not have the same
+denominator. The raw summary remains 38541/39627; neither scope replaces the
+other. [LLVM's report aggregation](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.6/llvm/tools/llvm-cov/CoverageReport.cpp#L414-L437)
+and [LCOV exporter](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.6/llvm/tools/llvm-cov/CoverageExporterLcov.cpp#L78-L88)
+use these separate paths.
+
+The local `line-scope-probe/` reproduces 16/16 summary lines over 15/15 file
+lines with one overlapping closure. Its two generic instantiations take opposite
+arms of the same condition: each retains an unexecuted arm, while their coordinate
+union has both sides. The raw summary is 5/6 outcomes and the union is 6/6.
+This calibration explains why merging coordinates cannot erase raw residuals or
+establish MC/DC. The first probe helper looked for the generic condition one line
+too late; the corrected lookup inspects the actual emitted condition records.
+
+Fresh host-tool measurements use the same pinned nightly and separate build
+directories. CLI passes 406 cases and retains 3640/4618 statements and 560/1012
+arc outcomes. TUI passes 56 cases and retains 1637/3424 lines, 192/302 condition
+outcomes and 150/294 functions. The current emulator passes 206 cases and records
+3961/6912 lines, 720/1262 outcomes and 411/726 functions, including the retained
+host TLS helper. `host-tools-retry/residuals.json` indexes each scope separately,
+including raw test-fixture entries; these figures are not firmware coverage.
+The first local helper selected stable rustc, and its later emulator link lacked
+the default shell's SDL2 library path. Both infrastructure failures are retained;
+the completed run checks the pinned nightly and carries the default SDL2 inputs.
+
+The full code gate passes on these Rust inputs, including 920 gate-script cases.
+The full assurance gate passes 2700 cases. The default report and local controls
+remain evidence for their measured source selection, separate from execution in
+GitHub CI or release provenance.
+
+All fourteen ordinary optimized release-flavour builds complete on the same
+source inputs, with thirteen image protocol passes; display retains build and
+partitioning evidence only. The matrix uses no `no-touch` feature. A separate
+partitioned default laboratory build explicitly enables `no-touch` and passes
+the full operation selection against both the freshly built native emulator
+and the actual ARM firmware image. Its reports contain 110 native/119 image
+entries, including backup and refusal histories, independent signatures,
+PIV/OpenPGP RSA-2048/3072/4096 generation with core1, secret-residue controls and
+OTP operations. The measured core0 maximum is 94316 bytes and core1 maximum
+8416 bytes in this selection; these are emulator observations, not silicon
+measurements or bounds for all workloads. Both RSA-4096 operations leave no
+posted core1 job, complete wind-down and retain zero factor-residue matches.
+`shipping-images/` and `image-operations/` bind each result to its ELF/emulator
+hash. The native operation binary includes the current PIV implementation;
+the ordinary matrix retains its separate image-transport binary identity.
+
+The refreshed ARM Linux matrix completes all eighteen declared host profiles,
+each with a successful nonempty test run, complete manifest and separate raw map.
+Every profile's source-hash map exactly matches the current Mac measurement;
+feature closures remain profile-specific. The reports are not unioned, and the
+ARM VM does not stand for the x86_64 GitHub lane or device interoperability.
+
+`coverage-replay/` preserves the merged profile data and all 28 executed unit
+binaries with hashes. A direct export from those saved inputs reproduces every
+raw total, per-file integer summary, condition record and segment. Some derived
+display percentages differ only in their last floating-point digits; both
+versions match the same exact integer ratios. The first replay helper required
+identical display decimals and stopped despite identical counters/maps. Its
+failed attempt and the corrected integer/ratio checks are retained separately.
+The final source snapshot and `service-results.json` retain the three new test
+files, working patch, local drivers and component hashes. These local results
+close the profile-refresh item, while the remaining completion criteria in the
+table stay open.
+
+## 2026-10-07 F9 certificate recovery and interrupted identity provisioning
+
+Fifteen host cases drive the PIV SELECT and command paths through certificate
+write, read and retirement failures. They reproduce the missing-certificate
+history after a committed key, a preceding certificate surviving F9 recreation,
+and stale public caches left by older firmware. Both-present historical pairs
+are included: a current key with its predecessor's certificate, and a matching
+certificate with a preceding cache. Independent X509 parsing checks the
+metadata point, CA self-signature and a generated slot's attestation signature.
+Malformed SPKI tags, unused-bit prefixes and truncated objects cannot preserve
+those broken fixtures. Matching certificates survive cache-only repair.
+
+SELECT now compares the device-owned certificate point and public cache with
+the sealed P-384 key. It preserves an existing key, retires a preceding public
+record before repair and removes an older certificate before a replacement key
+is committed. The bounded SPKI extractor uses the existing TLV iterator; it
+does not perform general certificate validation. No dependency, record format,
+capacity or compiler pin changes. The firmware build counter is `0x0A8F`.
+
+An unreadable or non-P-384 F9 makes SELECT answer `6581` without regenerating
+the key. A refused F9 root migration preserves its key, certificate and PIN/PUK
+records while other slots migrate; a later healthy boot restores selection.
+Two earlier OTP fixtures needed their actual boot order and wrong-root refusal
+made explicit. Their PIN/PUK refusal and at-rest re-arm assertions remain.
+The dispatcher retains selection even when SELECT refuses, so subsequent raw
+APDUs still reach the command handlers and their own gates. This continuation
+does not introduce applet quarantine after a failed SELECT.
+
+The existing `power_cut` target adds six F9 histories: first provisioning,
+recreation, missing/empty certificate repair and the latter two with a legacy
+stale point. Its 288 retained inputs vary entropy, churn and two byte-cut
+selectors independently. The native sweep cuts every operation byte on each
+clean trace, then every recovery byte after first cuts at zero, midpoint and
+the last incomplete operation byte. This is not a Cartesian sweep of every
+first and second NOR position. It reaches interrupted/completed operation and
+recovery arms in every history.
+
+After both remounts, before any repairing SELECT, the oracle checks all owner
+gate records, an unrelated value and metadata entry, and the complete counter
+partition. Every committed F9 key survives subsequent recovery byte-for-byte.
+Healthy GET METADATA is compared with an independently opened sealed key;
+the final certificate point must name that key and provisioning becomes
+idempotent. The existing Miri power-cut shard passes all eight configured seeds.
+
+Nine semantic controls compile and fail through the actual `check.sh` host-test
+row on a private snapshot; baselines and byte-identical restorations pass.
+The in-diff mutation run tests 26 variants: 18 caught, six compiler refusals and
+two survivors. Three compiler refusals require `Sw: Default`, and three try to
+introduce `Vec` into the no-alloc module; these are not semantic kills.
+Both survivors change the object buffer margin. The fixed F9 template has DER
+at most 546 bytes and a wrapped object at most 555, below both mutated buffers
+(1520 and 24576). Their F9 protocol/state outcomes are equivalent. Multiplication
+adds 23024 stack bytes; host mutation results do not establish equivalent
+embedded resources. `mutation-review.json` retains the bound and this limit.
+
+The default Mac measurement passes 3283 unique cases plus the child repeat,
+with five ignored cases. It records 38580/39667 lines (97.26%), 6997/7993 condition
+outcomes (87.54%) and 3251/3278 functions (99.18%). PIV provisioning has 79/84
+outcomes and 33/33 functions; its X509 wrapper has 7/8 outcomes and 6/6 functions.
+The 996 raw missing outcomes, function groups and LCOV zero lines remain in
+`attestation-recovery/condition-residuals.json`; no exclusion changes the raw
+denominators. `coverage-attestation-verified/` retains the measurement and maps.
+
+The ordinary image matrix rebuilds all fourteen release flavours, partitions
+them and passes thirteen protocol exercises. Each passing image additionally
+checks the F9 metadata/SPKI binding, independently verifies its self-signature
+and generated P-256 leaf, and preserves the same CA bytes and point across
+reboot. Display retains build/partitioning evidence only. These unsigned local
+ELFs do not establish Nix release provenance or silicon measurements.
+The first two image helper attempts misparsed multi-field TLVs; their failures
+are retained separately from the corrected protocol passes.
+Separate per-APDU measurement windows exercise F9 in default, FIPS and 16 MiB
+ordinary images. Existing SRAM-bound assertions pass; observed core0 maxima
+are 20976, 20936 and 20976 bytes. These selected emulator observations do not
+bound other workloads or establish resource equivalence of the buffer mutants.
+
+The nominal 300-second default and flavours campaigns execute 42635 and 44260
+inputs without a crash, adding 252 and 267 corpus units. These are whole-target
+counts, including older input classes. The first batch also completes 39836
+flavours inputs before rejecting its full-source check. Miri and that batch's
+full-source wrappers reject changes to two unit-only PIV fixture files. The
+underlying runners passed and their compiled production/fuzz inputs stayed
+byte-identical; `compiled-scope-validation.json` records that narrower scope
+without hiding the rejected full-source verdicts. A later fixture comment was
+corrected against the dispatcher's actual selection behavior.
+
+The complete uninterrupted code gate passes on the final behavior and fixtures.
+All eighteen ARM Linux profiles complete with separate raw maps and feature
+closures matching the Mac measurement. Reconstructing the measured fixture
+from HEAD plus its retained patch confirms that the later dispatcher clarification
+changes only two comment lines. `source-comment-drift.json` retains that check;
+the measured fixture remains saved rather than silently replacing its hash.
+The assurance results and retained component hashes have their own source
+selections. Their scopes do not complete MC/DC, remaining failure histories,
+display/device execution or actual CI/release evidence.
+The full assurance invocation passes 2700 cases. `results.json` under
+`target/sqlite-autonomous-20261007/attestation-recovery/` binds the local checks,
+profiles, image windows, controls, mutations, coverage and retained corpus to
+their logs and hashes. Its `whole_plan_complete` remains false; the completion
+table above retains the outstanding criteria.

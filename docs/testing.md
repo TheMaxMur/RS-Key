@@ -337,6 +337,14 @@ Separate image controls exercise strict-up presence and strict-config refusal;
 the display image has build evidence only. The roadmap retains source-bound
 reports, unsupported MC/DC and timing-calibration limits.
 
+The later [PIV cache and boot-repair continuation](testing-roadmap.md#2026-10-07-piv-cache-identity-and-boot-repair-failures)
+passes 3268 unique cases plus the child repeat and records 6980/7975 condition
+outcomes, retaining 995 raw residuals. It reproduces and fixes stale public-key
+metadata after PIV key replacement, exercises ten semantic controls through the
+host-test gate row and passes both full gates. The roadmap distinguishes LLVM's
+38541/39627 function-group line summary from LCOV's 38327/39047 file-line union,
+with a local calibration for overlapping closures and generic instantiations.
+
 The separate nightly corpus replay completed all 52 fuzz targets. Unioning
 their LCOV line records for repository sources reached 20568/32545 lines
 (63.20%), up from 16828/32545 (51.71%). This scope includes vendored sources
