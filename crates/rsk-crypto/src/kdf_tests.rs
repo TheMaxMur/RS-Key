@@ -237,8 +237,54 @@ fn hash_funcs_deterministic_and_empty_safe() {
         d.double_hash_pin(b"pin").expose()
     );
     // Must not hang / panic on empty input.
-    let _ = d.hash_multi(b"");
+    assert_eq!(d.hash_multi(b""), crate::hash::sha256(d.serial_id));
     let _ = d.double_hash_pin(b"");
+}
+
+#[test]
+fn short_aead_outputs_are_refused_before_any_write() {
+    let d = dev();
+    let token = [0x33; 32];
+    let nonce = [0x44; NONCE_LEN];
+    let plain = [0xDE; 32];
+    for version in [PinKdf::V1, PinKdf::V2] {
+        let mut encrypted = [0u8; NONCE_LEN + 32 + TAG_LEN];
+        let n = d
+            .encrypt_with_aad(&token, &plain, version, &nonce, &mut encrypted)
+            .unwrap();
+        for capacity in 0..=n + 1 {
+            let mut out = [0xA5; NONCE_LEN + 33 + TAG_LEN];
+            let result = d.encrypt_with_aad(&token, &plain, version, &nonce, &mut out[..capacity]);
+            if capacity < n {
+                assert_eq!(result, Err(Error::BadLength));
+                assert_eq!(out, [0xA5; NONCE_LEN + 33 + TAG_LEN]);
+            } else {
+                assert_eq!(result, Ok(n));
+                assert_eq!(&out[..n], &encrypted);
+                assert!(out[n..].iter().all(|&b| b == 0xA5));
+            }
+        }
+        for input_len in 0..NONCE_LEN + TAG_LEN {
+            let mut out = [0xA5; 33];
+            assert_eq!(
+                d.decrypt_with_aad(&token, &encrypted[..input_len], version, &mut out),
+                Err(Error::BadLength)
+            );
+            assert_eq!(out, [0xA5; 33]);
+        }
+        for capacity in 0..=plain.len() + 1 {
+            let mut out = [0xA5; 33];
+            let result = d.decrypt_with_aad(&token, &encrypted, version, &mut out[..capacity]);
+            if capacity < plain.len() {
+                assert_eq!(result, Err(Error::BadLength));
+                assert_eq!(out, [0xA5; 33]);
+            } else {
+                assert_eq!(result, Ok(plain.len()));
+                assert_eq!(&out[..plain.len()], &plain);
+                assert!(out[plain.len()..].iter().all(|&b| b == 0xA5));
+            }
+        }
+    }
 }
 
 #[test]
