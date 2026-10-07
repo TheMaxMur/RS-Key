@@ -82,6 +82,18 @@ their whole-scope criteria remain open. Phase 8 retains profile evidence in the
 existing CI jobs, whose changes have only been exercised locally. The dated
 results below identify their compiler, host and source selection. Mapping
 warnings, unsupported MC/DC and device-only gaps remain visible limitations.
+The latest default reports include the OATH preflight repair described below.
+The eighteen ARM Linux reports in `sqlite-completion-20261006/` precede that
+repair; the later `sqlite-autonomous-20261006/linux-profiles/` snapshot includes
+it and the OATH recovery tests, preceding the display and command-boundary
+fixtures. `sqlite-autonomous-20261006/linux-final-profiles/` includes the later
+display and command fixtures, preceding the journal slice below. Each snapshot
+retains its own source identity and raw maps.
+`sqlite-autonomous-20261006/linux-recovery-profiles-retry/` completes all eighteen
+profiles on the journal, passkeys, OpenPGP and PIN-pad recovery test inputs;
+its source hashes match `coverage-recovery/`. The later Mac report,
+`coverage-openpgp-final/`, adds PIN-boundary, boot and retained-rendering
+fixtures. The shipping-image matrix below uses that later source selection.
 
 | Phase | Work | Depends on |
 |---|---|---|
@@ -93,6 +105,19 @@ warnings, unsupported MC/DC and device-only gaps remain visible limitations.
 | 6 | Exercise build configurations and integration stress | 1; applies 2 through 5 |
 | 7 | Verify the delivered image and resource limits | 3, 4 and representative configurations from 6 |
 | 8 | Make the evidence reproducible in CI and before release | Incrementally from 1; completion after 2 through 7 |
+
+The latest local completion boundary is:
+
+| Phase | Established | Remaining |
+|---|---|---|
+| 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; unemitted and device code need separate evidence |
+| 2 | Additional command-level authorization, retry, buffer, stored-record and retained-rendering cases | 1004 raw unexecuted outcomes; the local coordinate index retains open cases |
+| 3 | Seed and journal cuts; compound OpenPGP record cuts and six command/recovery NOR byte-cut histories | Extend command-specific recovery histories to the remaining persistent operations |
+| 4 | Semantic controls through host, fuzz, Miri and image runners | Whole-core mutation closure and rare crypto fallback paths |
+| 5 | Independent OATH positions, journal histories and 576 retained OpenPGP command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
+| 6 | Eighteen host-profile maps; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, latest-fixture host-profile refresh, host-tool residuals and device interoperability |
+| 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
+| 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
 
 ## Phase 1 Establish trustworthy coverage measurements
 
@@ -1191,3 +1216,671 @@ assertions and the constant breathe palette; the ML-DSA probe belongs to an
 ignored stack test. Raw function coverage remains 3245/3272. This classification
 does not resolve the unexecuted production lines or condition outcomes, and
 other profiles still require their own residual review.
+
+## 2026-10-06 Refused commands, OATH read faults and crypto buffers
+
+New FIDO command cases independently vary UV and credProtect when judging
+resident and nonresident exclude-list entries. A supported algorithm under an
+unknown credential type cannot register. U2F cases cover malformed request
+widths and every short VERSION, REGISTER and AUTHENTICATE output; refusals emit
+no partial certificate, handle or signature, and authentication still spends
+its committed counter. PIV reset varies the two blocked retry references
+independently. MOVE and GENERATE cases preserve unrelated records, source keys
+and orphaned destination policy when persistence refuses the command.
+
+The OATH fault sweep found a production defect: a transient read failure in
+CALCULATE ALL's only-increasing preflight was collapsed into an absent record.
+The subsequent response pass could read it successfully and return an OTP
+without persisting its challenge mark. The preflight now retains storage
+errors and refuses with `6581` before installing a response chain. The persisted
+format is unchanged, and the firmware build counter advances to `0x0A8D`.
+Existing callers of the optional seal reader keep their previous behavior.
+
+Two command-path tests cover transient faults and a persistent fault at each
+of three credential positions. They check exact status and empty body, no
+SEND REMAINING tail, unchanged unread suffix and recovery. The committed prefix
+must refuse CALCULATE at its attempted challenge; ciphertext inequality alone
+would not establish that fact because a new nonce changes the seal. A control
+that re-seals without advancing the first challenge fails this new semantic
+assertion through the actual host-test row. The restored source passes.
+
+The shared OATH fuzz flow varies algorithms, digits, full/truncated output,
+credential counts, failed positions and transient/latched faults. Its prefix
+refuses the marked challenge, its unread suffix accepts that challenge after
+fault clearance, and a healthy bulk retry returns independently computed HMAC
+results. Forty-eight retained histories reach this flow through `oath_apdu`.
+The actual libFuzzer runner fails on the folded-read defect with a frozen input;
+removing the mark oracle makes that same mutated production source pass.
+Restoration passes. Separate 30-second default and flavours campaigns pass;
+these are OATH campaigns, not evidence for the entire target roster.
+
+Seven crypto tests cover short base64url, PIN-protocol ECDH/AES/HMAC and versioned
+AEAD outputs. They assert `BadLength`, unchanged full-buffer canaries, valid
+exact/extra capacities and unchanged output tails. Truncated IVs and AEAD
+envelopes are refused before writing plaintext. Empty `hash_multi` input has an
+exact serial-only SHA-256 oracle. Returning `Ok(0)` instead of each of eight
+length refusals compiles and fails its selected test through the host-test row;
+all restored controls pass.
+
+Three further crypto cases decode both URL alphabet symbols, refuse zero or
+out-of-range private scalars and propagate incomplete AES-CBC block errors
+with sufficient output. The latter exercise error exits that condition counters
+do not count. Six OATH command cases cover unsupported access-code algorithms,
+missing RENAME names, malformed GET CREDENTIAL names, a refused individual mark
+write, an only-increasing HOTP bulk placeholder and password-safe values at
+255/256 bytes through extended APDUs. Removing GET CREDENTIAL's first-tag guard
+returns the stored password on the new malformed input and fails the actual
+host-test row. The restored source passes. Malformed RENAME and GET CREDENTIAL
+retain their existing `6700` status; this slice changes no error policy there.
+
+The current default macOS condition report passes 3201 unit cases plus the
+child-process repeat, with five ignored cases. It records 38497/39623 lines
+(97.16%), 6910/7975 condition outcomes (86.65%) and 3248/3275 functions (99.18%).
+PIN-protocol helpers reach 125/125 lines and 12/12 outcomes. Base64url reaches
+74/74 lines and 10/10 outcomes; raw residuals remain visible. The report binds
+current tracked and untracked build inputs by hash and has no SDK mapping
+warnings. These are instrumented condition outcomes, with the same unsupported
+MC/DC and uncounted `match`/`?`/iteration limitations as earlier reports.
+
+The delivered-image error matrix adds invalid token MACs and spent-token
+refusals, invalid PIV peers and wrong-PIN status invalidation, and malformed or
+off-curve OpenPGP peers. Successful signatures or agreements after recovery
+are independently verified. Its retained pre-repair run has 110 native and
+119 image entries. The runner also refuses direct/chained APDU error bodies
+and partial CTAP error maps. Removing either guard fails the existing pytest
+row; healthy payloads and empty refusals pass.
+
+The local controls retain these scopes and failure directions:
+
+| Control | Observed failure | Entry point |
+|---|---|---|
+| Fold OATH preflight read failure | `9000` plus OTP instead of `6581` and an empty body | Host-test row; libFuzzer frozen-input run |
+| Omit the preflight call | A bulk OTP precedes its persistent mark | Host-test row |
+| Re-seal without the first mark | Prefix CALCULATE succeeds at its supposedly spent challenge | Host-test row |
+| Return success for a short crypto buffer | `Ok(0)` instead of `BadLength` | Host-test row, eight controls |
+| Weaken exclude visibility/type checks | Incorrect exclusion or registration status | Host-test row |
+| Ignore PIV reset/MOVE checks | A live retry reference resets, or an orphan destination gains a key | Host-test row |
+| Report successful short U2F output | Partial-output refusal becomes success | Host-test row |
+| Remove APDU/CTAP refusal-body checks | A deliberately leaked error body is accepted | Pytest row |
+| Remove GET CREDENTIAL's first-tag guard | A malformed name request returns the stored password | Host-test row |
+
+Reports, source snapshots, raw exports and control logs remain under
+`target/sqlite-completion-20261006/`. The pre-repair `coverage-default/` and
+eighteen `linux-profiles/` reports retain their original hashes; `coverage-final/`
+names the initial repaired source and `coverage-current/` includes the later
+command-field oracles. Every lock endpoint moved by citation repair
+retains its original text. No toolchain pin, capacity, assertion or coverage
+floor was weakened, and no CI job or physical-device operation is implied.
+
+The remaining KDF condition (`iters > 0`) cannot be false after entering its
+nonempty-input arm: `iters` starts at 256 and subtracts a positive `len` only
+while strictly greater than that value. It therefore stays positive. A valid
+nonzero P-256 scalar also produces a finite uncompressed point with both
+coordinates; the fixed 65-byte SEC1 encoding has the required prefix and width.
+These are source invariants, not new Kani results. Raw KDF coverage remains
+172/172 lines and 21/22 outcomes. They do not classify the rest of the core's
+1065 unexecuted outcomes or establish MC/DC.
+
+The final 52-target corpus replay passes in both configurations with unchanged
+start/end source hashes. Its separate repository-source maps record 20797/32561
+lines in default and 20441/32442 in flavours, including vendored sources.
+They are retained under `fuzz-coverage-verified/` and are not combined. Earlier
+exports interrupted by source changes remain incomplete. The final corpus is
+saved in `retained-fuzz-corpus.tar.gz`. The shared OATH flow passes Miri's eight
+execution seeds; its ordinary flavours replay also passes. The Miri roster
+contains 57 unique cases. Removing the new mark test makes the actual
+`miri-all.sh` command fail its 57-case floor before executing a shard;
+restoration passes the selected fast framing shard. This does not claim that
+every Miri case was executed in this slice.
+
+The complete current optimized, partitioned 4 MiB no-touch image passes the
+existing image-suites command: native comparison, ML-DSA-87, stack/residue
+positive controls, 110 native/119 image operation entries, RSA-2048/3072/4096
+generation in both applets and nineteen power cuts. `image-current/` records
+the binary hashes; its emulator identity reports `0x0A8D`. Physical presence,
+silicon behavior, the unoptimized-image failure and other build profiles
+retain their separate evidence scopes.
+
+The code gate is composed green: the full invocation reached a missing
+CHANGELOG build label, the resumed tail exposed three shifted deleter pointers,
+and the repaired tail passes all remaining rows, including 918 runner tests.
+Formatting, host Clippy/tests and the fuzz replay row were repeated after the
+additional tests. One full assurance invocation passes 2700 cases; final
+citations and documentation checks pass after the later prose and fixtures.
+`local-results.json` retains the component logs and source snapshot. This is
+not a single uninterrupted code-gate invocation or an actual GitHub run.
+
+The whole-plan criteria remain open. The next local scope includes classifying
+the remaining core outcomes, final-source profile measurements and extending
+fault/recovery histories for the remaining persistent commands. OATH's current
+byte selector also couples count and failed position: with three credentials,
+the fuzz flow generates failures at positions one and two, while position zero
+is covered by the independent command test. Decoupling those inputs remains
+phase-5 work. Unsupported MC/DC and device-only/actual-CI evidence remain
+visible gaps; none of these raw reports is a whole-project 100% claim.
+
+## 2026-10-06 Independent fault positions and recovery exits
+
+OATH's mark-flow selector now keeps fault mode separate from its other settings
+and reads the failed credential position from a second byte. A regression first
+observed `(3, 1)` where the requested three-credential first fault was `(3, 0)`.
+All six valid count/position pairs are now reachable; toggling the latched-fault
+bit preserves the pair. The corpus retains 144 three-byte histories, with an
+independent position and an enabled semantic-flow marker. Historical two-byte
+seeds remain valid inputs. Returning either the coupled position formula or the
+unmasked count fails the selected test through the actual `miri-all.sh` command;
+restoration passes. Its current roster is 58 cases. Both mark tests pass eight
+Miri execution seeds, and the ordinary flavours replay passes.
+
+The new first-position history also detects the original folded-read production
+defect through the actual libFuzzer runner: `9000` plus codes replaces the required
+`6581` and empty body. Removing the mark oracle makes that same defective source
+pass; restored sources pass. Both complete 52-target corpus replays pass with
+matching start/end source hashes, retaining separate default and flavours maps.
+This closes the selector restriction recorded in the preceding slice, not the
+whole stateful-fuzzing phase.
+
+Ten OATH tests extend recovery and stored-state evidence. A partly sent final
+LIST entry disappears through another applet instance; SEND REMAINING refuses
+and clears the tail. A truncated scan recovers and confirms missing slots
+without modifying a healthy neighbor. CHANGE's first PIN write spends a retry,
+then an injected fault refuses only its replacement write: both grants close,
+the old verifier remains intact and the old PIN works after remount. RESET
+receives duplicate FIDs across multiple batches and removes each owned value
+exactly once while preserving an unrelated record.
+
+Legacy plaintext access-code migration preserves mutual HMAC authentication and
+the protected credential's RFC OTP. Its record-level compound sweep interrupts
+migration and recovery, then remounts and repairs again. Healthy repetition is
+write-free. Oversized or NAME-only old records remain byte-identical; extended
+LIST skips a name whose extra property makes its length unrepresentable, and
+GET omits only an oversized password-safe field. The seal primitive rejects
+plaintext beyond its ceiling even when the destination is large enough. These
+are explicitly legacy/corrupt-record fixtures, not newly accepted PUT inputs.
+
+Seven host-row controls compile and fail their intended semantic assertion:
+lost LIST tail, duplicate deletion, skipped access-code migration, resealed
+invalid record, omitted plaintext ceiling, wrapped password-safe length and
+successful status after a refused final PIN write. All restored variants pass.
+The OATH suite passes 200 cases.
+
+The next slice exercises power and host cancellation through public presence
+requests with worker borrows held. A continuing Allow gesture cannot approve
+after power sleeps and locks the panel; a tap after CANCEL cannot save a
+registration. The tests check dark glass, backlight, lock, UP/cancel cleanup,
+LED restoration and a healthy later request. Backup confirmation is declined
+after the correct PIN: a previously spent retry resets, proving authentication
+reached the confirmation, while seal state, seed and export/finalize events
+remain unchanged. Secure-PIN tests cover OpenPGP's maximum length and the next
+byte with independently sufficient output space and whole-buffer canaries.
+
+The real `SeqStorage` scrub test derives cleanup's final program position from
+an identical clean run. A one-shot failure there must report `MemoryFatal`,
+preserve the complete counter partition and live records after remount, and
+leave a filler that a healthy retry removes. Ignoring that cleanup error fails
+the host-test row. Removing either power guard, registration cancellation,
+seal-confirm refusal or the PIN ceiling also fails its selected row in the
+correct direction. The initial registration script let Allow precede CANCEL;
+its baseline failure is retained as fixture diagnostics, not a mutant kill.
+The first backup script reached inactivity timeout; the final explicit-Back
+fixture completes in about half a second and has its own repeated control.
+
+The OATH snapshot passed 3211 unit cases plus the child repeat, with
+five ignored cases: 38500/39623 lines, 6917/7975 condition outcomes and
+3248/3275 functions. Eighteen separate ARM Linux profiles pass on that immutable
+snapshot with raw exports, feature closures and source hashes. Their default
+matches the Mac counters. They include the preflight repair and OATH recovery
+cases, preceding the later display/cleanup fixtures; they do not establish an
+x86_64 GitHub floor or an actual CI execution.
+
+The current Mac report includes 3216 unit cases plus the child repeat and
+five ignored cases. It records 38503/39623 lines (97.17%), 6922/7975 condition
+outcomes (86.80%) and 3248/3275 functions (99.18%). Per-file raw results include:
+
+| File | Lines | Condition outcomes |
+|---|---|---|
+| OATH root | 1263/1306 | 448/488 |
+| OATH seal | 98/100 | 6/8 |
+| Display presence | 170/170 | 16/16 |
+| Display backup | 272/276 | 84/96 |
+| Secure PIN | 36/36 | 14/14 |
+| Store backend | 88/88 | 14/14 |
+
+The seal test improves its semantic oracle while its raw generic subtotal
+remains unchanged. The three complete file subtotals do not count unsupported
+language constructs or establish whole-core MC/DC. All reports and selected
+runner controls remain local in `target/sqlite-autonomous-20261006/`; no
+firmware behavior, protocol capacity, dependency or toolchain pin changed in
+this test-only continuation.
+
+## 2026-10-06 Authenticated stored records and command ceilings
+
+Five further command tests cover authenticated configuration and stored-record
+failure exits. `authenticatorConfig` accepts a correctly MACed parameter map
+of exactly `MAX_RAW_SUBPARA` bytes and refuses the next byte with
+`RequestTooLarge`, preserving the stored alwaysUv record and write generation.
+The same test passes with alwaysUv and FIPS defaults enabled. Rejecting the
+exact limit fails the host-test row in the fail-closed direction. Allowing one
+extra byte instead reaches a real slice panic in `puat_subcommand_msg`: 419
+bytes exceed its 418-byte buffer. That control demonstrates the guard's
+no-panic role; it is not evidence of an unauthorized configuration write.
+
+PIV management-key replacement can commit its sealed key before the final
+escrow-revocation write fails. The narrow fault refuses only `EF_PIVMAN_DATA`:
+the command returns `6581` with no body, the prior admin bytes remain intact,
+and a fresh session mutually authenticates with the new AES-256 key. A healthy
+retry clears only the protected flag, retaining another flag and the timestamp;
+PRINTED no longer exposes the key. This tests the existing non-atomic contract,
+not an old-or-new guarantee for the whole command. MOVE KEY separately refuses
+an oversized stored source with `6581`, preserving its full bytes, metadata and
+write generation at a headless destination. Restoring the original seal allows
+the move, exact seal/metadata preservation and signing in the destination.
+Both PIV tests pass under FIPS as well as the default profile.
+
+Credential management refuses an authenticated user-information update when
+the selected resident record's ciphertext has been changed. Its identifier
+prefix and cached public point are unchanged, and the refusal preserves the
+complete corrupt record, output canary and credential-store tag. Restoration
+allows the update and enumeration with the same credential ID and new name.
+A second test makes the first RP record's tail a single `FF` byte, retaining
+its count and hash: it cannot form an AEAD box or a legacy UTF-8 domain.
+Authenticated RP enumeration returns `Other` without output or store mutation;
+restoration returns the exact domains, hashes and count for both RPs. The RAM
+walk cursor is not asserted unchanged: the current begin command advances it
+before opening the RP record.
+
+The first credential fixture changed the final write-only silent-tag byte and
+observed success. That is fixture diagnostics, retained in
+`credmgmt-corruption.log`, not an authentication defect or mutation kill. The
+corrected fixture derives its ciphertext offset from `cred_record_box` and
+`IV_LEN`. Ignoring the credential-open failure, substituting an empty domain
+after failed RP opening, ignoring the final escrow-write failure and clamping
+the oversized MOVE source all compile and cause unexpected success through
+the actual `check.sh` host-test row. Each restored row passes. Six controls,
+including the two config boundaries, retain baseline/mutant/restored logs in
+`applet-controls/`; setup and compilation errors do not count as kills.
+
+The remaining bounds below have source-bound explanations. These arguments
+retain their raw residuals; the CBOR/Pivman Kani harnesses do not prove the new
+stored-record authentication histories.
+
+| Residual | Invariant and scope |
+|---|---|
+| Config's final subcommand catch-all | The earlier match admits exactly ENABLE_EA, TOGGLE_ALWAYS_UV, SET_MIN_PIN and VENDOR; the request is immutable. |
+| Config MAC-buffer bound | With the guard retained, the message is `34 + raw_subpara.len()`, at most `34 + MAX_RAW_SUBPARA`, exactly the allocated capacity. |
+| RP tail range in enumeration | Selection requires `RP_PREFIX <= rp_len <= RP_REC_MAX` and copies the bounded buffer into `rp`; later reads modify the other buffer. |
+| Credential enumeration/update ranges | The read lengths are clamped to those same `CRED_REC_MAX` buffers before their ranges are selected. |
+| PIV metadata head/public range | Successful `slot_public` requires a nonempty head and bounds the EC/cache copy or checks RSA output capacity. |
+| PIV public length conversion | The public-key buffer is 512 bytes, within `u16`. |
+| PIV metadata response range | EC writes increment the length only through `iter_mut().zip`; the largest RSA body is 521 bytes within its 531-byte buffer. |
+| SET MGM KEY header/key ranges | Parsed APDUs have `data.len() == nc`; the preceding checks require `nc >= 5` and then `nc == 3 + klen`. Manually inconsistent `Apdu` structs are outside this argument. |
+
+The default/FIPS `tdes` condition is configuration-dependent rather than
+universally unreachable. Its profile evidence stays separate. These local
+tests do not change firmware behavior, capacity, dependencies or pins, and do
+not complete the whole-core branch or MC/DC criteria.
+
+The final default Mac run passes 3221 unit cases plus the single child-process
+repeat, with five ignored cases. Counts use the per-crate result summaries;
+combining display names in one set merged distinct cases from different crates.
+This corrects the preceding three snapshot case counts by seven each; their
+raw coverage maps are unchanged. The final report retains 38505/39623 lines
+(97.18%), 6925/7975 condition outcomes (86.83%) and 3248/3275 functions (99.18%).
+The two credential-management histories strengthen semantic error oracles
+without changing those raw counters: `?` and failed `Option` loading remain
+outside the measured Boolean outcomes.
+
+All 27 raw function residuals have a source classification, retained with
+coordinates and source hashes in `function-residuals.json`:
+
+| Residual scope | Count | Classification |
+|---|---|---|
+| FIDO conformance helpers/closures | 9 | `cfg(test)` |
+| FS fault, probe and assurance helpers | 11 | Test/test-util or test/Kani projections |
+| ML-DSA probe/vector helpers | 2 | `cfg(test)` |
+| OpenPGP test-TLV and RSA vector-parser closures | 2 | Test or test-util |
+| UI `rsk_slip39_max` and boot `rgb` | 2 | Called only during constant evaluation |
+| Native standard-library TLS initializer | 1 | External host test runtime |
+
+No firmware-runtime function was found in this residual list. The raw
+denominator remains 3275; this does not classify the remaining 1050 condition
+outcomes, unemitted code, other profiles or device-only paths. Unsupported
+MC/DC remains unknown. `coverage-final/` retains the current Mac source
+selection, feature closure and raw exports; ARM Linux profile reports keep
+their separate maps.
+
+The full code gate passes uninterrupted at the OATH snapshot. Formatting,
+Clippy and complete host tests pass again after the display/cleanup and final
+command fixtures. The full assurance gate passes 2700 tests after reanchoring
+the shifted store citation; subsequent citation, run-count, claim and docs
+checks pass. The production Rust diff is unchanged from the earlier seven
+caught in-diff cargo-mutants cases. These are local results with component
+logs, rather than a new full uninterrupted gate on the final test-only tree
+or an actual CI run.
+
+## 2026-10-06 Journal decisions and compound byte cuts
+
+Eight host tests extend the public journal operations. Invalid metadata versions,
+truncated records and windows wider than the ring cannot expose stale entries.
+A valid window crossing `u32` wrap skips a short slot, exports its readable
+entries and folds their exact head before scrubbing. Coalescing refuses faulted
+metadata, preserves an unreadable prior entry while appending a new event, and
+skips unrelated event classes. The display walk preserves its live-window count
+while omitting an unreadable slot. Refused checkpoint output and oversized
+challenges append no checkpoint event.
+
+The record-cut scrub sweep checks that the fold commit precedes every deletion,
+that remount preserves the head and that a healthy retry removes the details
+without touching another applet. A separate one-shot metadata-write refusal
+allows subsequent deletions to succeed: even there, the scrub must retain every
+unfolded detail. A latched power loss alone cannot falsify that guard because
+it refuses the later deletions as well.
+
+The existing `power_cut` target has a journal input class. Operation, short/full
+window, pre-cut churn, first cut and recovery cut have separate selectors. It
+uses the real `SeqStorage` with fresh caches on each remount. An independent
+SHA-256 fold constructs the expected history and verifies the exported CBOR,
+entry sequence numbers and exact head. An interrupted append retains the old
+head or its extension by the new event; a scrub retains the head. Interrupted
+recovery, a healthy second scrub and a later append must preserve continuity.
+The unrelated record and complete counter partition remain unchanged.
+
+The native release sweep passes every byte budget through each of four clean
+operation traces (append/scrub, three/full-ring entries), then every recovery
+budget after a zero-byte first cut. It derives each ceiling from measured
+program and erase work and reaches both interrupted and completed arms. The
+test takes 41.55 seconds after compilation. It does not enumerate the full
+Cartesian product of all first and second byte positions; the retained fuzz
+inputs cover selected compound histories. The earlier debug sweep was stopped
+for cost and remains incomplete, without a semantic failure verdict.
+
+The corpus adapter retains 96 Cartesian histories with local AGPL provenance.
+The existing Miri power-cut case calls the same flow; its 45/58 shard passes
+all eight execution seeds. The ordinary flavours replay also passes. No new
+Miri case, runner, numeric floor, dependency or shipping behavior was added.
+
+The selected controls compile and fail through these runner commands. Each
+unchanged baseline and restored source passes:
+
+| Control | Observed semantic failure | Entry point |
+|---|---|---|
+| Ignore metadata version | Stale `(start, next) = (0, 2)` instead of genesis `(0, 0)` | `check.sh` host-test row |
+| Widen the live-window ceiling | A 129-entry window is accepted instead of genesis | `check.sh` host-test row |
+| Ignore the refused fold commit | The live head loses the deleted, unfolded details | `check.sh` host-test row |
+| Log a refused checkpoint | Short-output refusal changes the head and sequence | `check.sh` host-test row |
+| Coalesce another config event class | The unrelated event is changed; no fresh third entry | `check.sh` host-test row |
+| Coalesce another run event class | The unrelated event is changed; no fresh third entry | `check.sh` host-test row |
+| Delete before committing the fold | Exported body is zero bytes where the live window requires 60 | Actual libFuzzer frozen-input run |
+
+The fresh Mac report passes 3229 unit cases plus the child-process repeat, with
+five ignored cases. It retains 38511/39623 lines (97.19%), 6934/7975 condition
+outcomes (86.95%) and 3248/3275 functions (99.18%). Journal coverage moves from
+294/310 to 300/310 lines and from 58/76 to 67/76 condition outcomes; its 27/27
+functions were already covered. These are raw summaries with no exclusions.
+
+`coverage-journal/` retains the measured source, feature closure and raw exports.
+`condition-residuals.json` indexes all 1041 raw missing outcomes across 115 files,
+with source hashes and raw branch records. Coordinates merged across generic
+instantiations are separate from LLVM's summary denominator. This index keeps
+unreviewed reachability cases open rather than classifying them as unreachable.
+The journal still lacks a full-ring eviction with an absent oldest entry and
+deterministic cases for a rejected derived P-256 scalar or eight rejected
+candidates. Its fixed 32-byte HKDF output cannot exceed the SHA-256 output
+ceiling, but that source invariant does not establish coverage of the scalar
+fallback. Unsupported MC/DC remains unknown.
+
+The preceding `linux-final-profiles/` snapshot completes all eighteen ARM Linux
+profiles, including display and command-boundary fixtures. Its default counters
+match the prior Mac report, before these eight journal tests. It remains separate
+from this report and from actual GitHub execution. Local reports and controls
+are retained under `target/sqlite-autonomous-20261006/`.
+
+The final 52-target corpus coverage replay passes in both configurations with
+unchanged start/end source hashes. `journal-fuzz-coverage/` retains separate
+repository-source maps: 20837/32561 lines in default and 20481/32442 in flavours,
+including vendored sources. The actual `check.sh` fuzz row also passes the final
+corpus, including all 96 journal histories. The complete assurance invocation
+passes 2700 tests. These remain local runner results, with whole-plan gaps
+retained in the completion table above.
+
+The full code invocation passes, including 919 gate-script tests. Its first
+fuzz row preceded the last corpus-adapter addition, so the final-tree verdict
+also includes the separately repeated fuzz row and final documentation check.
+The latter builds the book and reports zero link errors. Root build-input
+hashes differ from the prior applet snapshot only in the new journal test file
+and its test-module hook; shipping Rust is unchanged. `journal-results.json`
+records the component scopes and `journal-snapshot/` retains the final source,
+including untracked build inputs.
+
+## 2026-10-06 OpenPGP revocation and interrupted PIN recovery
+
+The resumed source includes the prior continuation's sparse-ring eviction and
+four passkeys-view fixtures. Its fresh default baseline passes 3234 unit cases
+plus the child-process repeat, with five ignored cases. It records 38512/39623
+lines and 6936/7975 condition outcomes. This baseline includes the previously
+unmeasured absent-oldest eviction arm; it is separate from `coverage-journal/`.
+
+Four further tests exercise revocation, retry restoration, compound recovery
+and the trusted PIN pad. Empty PUT DATA reset-code handling independently
+refuses a failed verifier deletion, committed DEK deletion, staging deletion
+or retry-counter write. Every other operation remains healthy. The assertions
+check the exact surviving record on the backend after dropping the `Fs` cache,
+the completed neighboring deletions, the revoked RAM reset-code status, the
+standing admin status and a healthy retry. The same DEK still opens, another
+applet's record remains unchanged, and the removed code cannot reset PW1.
+Together with the healthy retry, these four single refusals demonstrate the
+independent effect of each conjunct in the final revocation guard. They do not
+establish MC/DC for the rest of the applet or supply a compiler MC/DC percentage.
+
+VERIFY permits the charging write and refuses only its subsequent retry
+restoration, separately for PW1.81, PW1.82 and PW3. It returns `6581`, retains
+the spent retry, and grants no access status or session key. A healthy retry
+establishes only the requested status, opens its DEK and restores the budget.
+
+CHANGE PIN runs through both PW1 and PW3 with every record-mutation budget from
+zero through the measured clean command cost. Each interrupted store is
+remounted with fresh caches and authenticated with its standing old or new PIN.
+A separate identical history measures recovery's own mutation cost. The sweep
+then tests every recovery budget for each first cut, remounts again and checks
+the same DEK, the standing PIN, retirement of the target's stage and an unchanged
+neighboring applet. A refused recovery wipes the decrypted output. Both PIN
+states and both recovery outcomes must be reached. This is the Cartesian sweep
+of record boundaries for these two command histories, not a byte-cut sweep of
+the NOR backend or coverage of every persistent command.
+
+The PIN-pad case types five digits with output windows of zero, three, four
+and five bytes and a fixed four-digit minimum. An explicit Cancel ends entries
+that cannot meet the minimum; sufficient windows commit their exact length.
+Whole-buffer canaries and presence/LED assertions check bounds and cleanup.
+Its generous timeout is only a deadlock bound, not the expected exit.
+
+Seven controls compile and fail through the actual `check.sh` host-test row:
+ignoring each of the four revocation results, ignoring the retry-restoration
+error, omitting the recovery output wipe and widening the PIN-pad output guard.
+The last produces a real bounds panic; the recovery control leaves decrypted
+key bytes in a refused result. Every unchanged baseline and byte-identical
+restoration passes. `recovery-controls/` retains the separate logs and hashes.
+The unfinished passkeys fixtures also detect deletion of a prefix-short resident
+record and display of an RP whose domain cannot open, through that same host
+row. Their two controls and restored passes are retained in `passkeys-controls/`.
+The in-diff cargo-mutants run catches all seven production-line mutations;
+new test modules introduce no additional shipping code mutants.
+
+The current default Mac report passes 3238 unit cases plus the child-process
+repeat, with five ignored cases. It records 38512/39623 lines (97.20%),
+6940/7975 condition outcomes (87.02%) and 3248/3275 functions (99.18%). The
+remaining 1035 raw outcomes across 115 files retain coordinates, source hashes
+and branch records in `recovery-condition-residuals.json`. Reset projection
+outcomes remain in the raw totals despite their verification-only module cfg.
+`coverage-recovery/` retains the immutable measurement and feature closure.
+The PIN index records two source-bound private-call invariants: all shipping
+retry resets pass `force = true`, and stage selection admits only the three DEK
+targets. Invalid VERIFY P1, an unprivileged DEK load and malformed stored records
+remain concrete open cases; the invariants remove nothing from the raw report.
+Unsupported MC/DC, device-only paths and the whole-plan completion criteria
+remain open. These additions change only tests; firmware behavior, protocol
+capacities, dependencies and compiler pins are unchanged.
+
+The complete uninterrupted code invocation passes on these final Rust inputs.
+The complete assurance invocation passes 2700 tests. Their logs are
+`check-recovery.log` and `assurance-recovery.log`; the final documentation is
+checked separately after recording the results. These are local runner results,
+not an actual GitHub execution or a completed release-evidence bundle.
+
+All eighteen configured ARM Linux profiles complete on the same Rust source
+hashes as `coverage-recovery/`, with separate maps and actual feature closures
+in `linux-recovery-profiles-retry/`. Default matches the Mac line, branch,
+function and region counters. The first attempt exhausted Linux's `/tmp`
+tmpfs during compilation and ran no tests; its failed report remains in
+`linux-recovery-profiles/`. The completed retry uses the disk-backed `/var/tmp`.
+No failed attempt is counted as a semantic failure or successful run.
+
+`recovery-results.json` binds the gates, nine runner controls, in-diff mutations,
+coverage, complete profile matrix and final documentation to their logs and
+hashes. `recovery-snapshot/` retains the source patch and untracked build inputs.
+This closes the local verification of this continuation. The remaining criteria
+in the completion table still apply.
+
+## 2026-10-07 PIN boundaries, boot decisions and ordinary release images
+
+Fifteen additional host fixtures cover PIN parameters, missing and malformed
+records, access-status revocation, boot provisioning and retained passkeys
+rendering. VERIFY rejects an undefined P1 without changing a standing session.
+Missing query counters report zero; a refused first retry probe cannot bypass
+the block enforced by the charging write. DEK loading after logout refuses a
+cached session key. Empty and wrong-format committed copies recover only from
+a valid stage, and an absent PW1 migration copy preserves its admin counterpart.
+A zero-length reset reference cannot install a new PIN, and short retry records
+cannot turn partial reset-code revocation into success.
+
+RESET RETRY through both admin PIN and reset code, plus reset-code creation and
+replacement, sweep every command record boundary and every recovery boundary
+for each interrupted history. Remount uses fresh caches. The standing credential
+must open the same DEK; a second interruption and later healthy retry cannot
+change another applet. These are record-cut histories, separate from NOR cuts.
+
+Boot tests forbid entropy consumption when verifiers or existing DEK copies
+already rule out first-key generation. They cover both intact first-boot copies,
+either surviving verifier and orphan reset-code or legacy copies. Rendering
+tests independently change list contents, page, total, account identity and UV
+protection. Their full-buffer comparisons include deletion and empty-state
+transitions. Ignoring any independent update predicate, or omitting the body
+clear, fails through the host-test row.
+
+The actual `check.sh` host-test row detects nine PIN policy/recovery controls,
+one use of a cached PIN key after logout, eight rendering controls and five boot
+controls. Baselines and byte-identical restorations pass. These results are
+retained in `pin-policy-controls/`, `pin-revocation-control-after/` and
+`display-boot-controls/`. The pre-fixture logout control survived; its corrected
+fixture detects the unauthorized DEK load. That surviving attempt is retained
+separately rather than counted as a successful control.
+
+The existing `power_cut` input class now runs six OpenPGP commands: PW1 and PW3
+changes, both RESET RETRY authorities, reset-code installation and revocation.
+It checks the real `SeqStorage`, original DEK, unrelated record and complete
+counter partition across command, boot, interrupted recovery and healthy retry.
+Revocation also starts with a redundant valid staging copy in half its histories;
+the final retry must remove all three code records, zero the reset-code retry
+counter and refuse the removed code. The retained corpus contains 576 Cartesian
+histories with independent command, state, churn and two byte-cut selectors.
+
+The native release sweep covers every command byte boundary for each clean
+trace, then every recovery boundary after first cuts at zero, midpoint and the
+last incomplete command byte. Each command reaches interrupted/completed and
+refused/successful recovery arms. This is not the full Cartesian product of
+all first and second NOR byte positions. The same histories are called by the
+existing Miri power-cut shard, which passes its eight execution seeds. The
+flavours corpus coverage replay passes separately. A frozen libFuzzer input
+detects omitted PIN staging by loss of the standing credential; another detects
+omitted reset-code stage deletion by the surviving encrypted record. Their
+baseline and restored executions pass.
+
+The final default Mac measurement passes 3253 unique unit cases plus the one
+child-process repeat, with five ignored cases. It records 38530/39623 lines
+(97.24%), 6971/7975 condition outcomes (87.41%) and 3248/3275 functions (99.18%).
+The passkeys renderer has 50/50 condition outcomes, 16/16 functions and 369/372
+lines; its three raw line residuals remain visible. OpenPGP boot has 57/64
+condition outcomes; PIN handling has 185/202. These module results do not
+establish whole-core coverage or MC/DC. `coverage-openpgp-final/` retains the
+source selection, feature closure and raw exports. The 1004 raw missing outcomes
+across 114 files retain their coordinates and source hashes in
+`openpgp-final-condition-residuals.json`, including verification-only code.
+
+The image matrix takes its fourteen package names from `release-build.yml` and
+their features and board geometry from `nix/firmware.nix`. Every ordinary
+optimized build is partitioned with `pt.sh`; none enables `no-touch` or signing.
+Thirteen images execute the same contracts: advertised algorithms and PIN
+policies; rejection of short/trivial PINs in the strong profiles; a valid PIN
+persisting across reboot and authorizing a freshly negotiated token; real
+UPNEEDED followed by CANCEL; factory OpenPGP admin verification; independently
+computed OATH HMAC and persistence across another reboot. Shared source hashes
+match the current Mac coverage snapshot.
+
+| Release configuration | Local image result |
+|---|---|
+| default, PQC, FIPS and FIPS+PQC | All four protocol exercises pass |
+| strong-pin and strong-pin+PQC | Both pass, including the stronger PIN refusal arms |
+| always-uv and always-uv+PQC | Both pass, with alwaysUv advertised |
+| strict-up and strict-up+PQC | Both pass, including an up:false assertion that requires emulated touch |
+| 2 MiB, 16 MiB and strict-config | All three pass |
+| display | Ordinary 16 MiB build and partitioning pass; panel/touch-controller execution is outside this image laboratory |
+
+These are locally built unsigned ELF artifacts, not Nix release provenance or
+device measurements. The 2 MiB image uses the existing 896 KiB main-store preset;
+other configurations retain their declared geometry. No capacity, dependency,
+compiler pin or shipping behavior changes in this continuation. The first
+matrix attempt used the wrong factory OpenPGP PIN in its helper; its failure is
+retained as a harness error, separate from the corrected protocol passes.
+
+The same matrix exercise detects an ordinary ELF built without `strong-pin`
+when that declared profile requires a six-code-point floor: the observed floor
+is four. The correct strong-pin ELF passes before and after the substituted
+artifact, with fresh stores. `shipping-image-controls/` retains this control,
+the ELF hashes and the actual protocol results. This checks artifact selection
+as well as successful compilation; it does not cover every omitted build flag.
+
+The existing `fuzz-all.sh` power-cut shard completes in default and flavours
+with a nominal 300-second budget, respectively executing 50214 and 8843 inputs
+without a crash and adding 409 and 23 retained corpus units. Both source-hash
+snapshots remain unchanged. These counts cover the whole power-cut target,
+including older input classes, rather than only the new OpenPGP class.
+
+Timing is not calibrated by these runs. The flavours invocation's Python
+monotonic duration is 103.23 seconds while libFuzzer reports a 550-second slow
+unit. Replaying that saved 14-byte reset-class input in the same flavours
+configuration completes successfully in 0.92 seconds by both monotonic and
+wall clocks, with no reported slow unit. The discrepancy is retained in
+`openpgp-campaigns/` and `slow-unit-replay/`; it establishes neither a repeatable
+firmware latency defect nor an accurate campaign-duration/throughput baseline.
+No resource threshold is changed from these measurements.
+
+The ordinary-image policy continuation exercises a successful registration
+with an emulated BOOTSEL pulse only after typed UPNEEDED. For `up:false`
+assertions, default and strict-config answer without a presence request;
+strict-up and strict-up+PQC request and receive the pulse. All four keep the
+raw request's UP flag clear, set UV for the PIN authorization and produce a
+signature independently verified by Python cryptography. The first helper
+attempt incorrectly expected strict-up to set UP; that expectation was fixed
+against the existing wire contract, and its failed attempt is retained.
+
+HID Management WRITE CONFIG changes the DeviceInfo flags from `00` to `40`
+and persists them across reboot in the three permissive images. Strict-config
+answers CTAPHID ERROR/INVALID_CMD, leaves its whole DeviceInfo unchanged and
+retains flags `00` after reboot. Substituting the ordinary default ELF for
+either strict image fails the corresponding presence or refusal oracle.
+Correct strict images pass again on fresh stores after those controls.
+`shipping-policy-branches/` binds the results to the same ELF and emulator
+hashes as the matrix. Together with the preceding host, fuzz and image controls,
+this continuation detects 28 semantic controls. It does not complete whole-core
+mutation testing or the unexecuted condition outcomes.
+
+The full uninterrupted `check.sh` invocation passes on these final Rust and
+fuzz inputs, including 920 gate-script cases. The full assurance invocation
+passes 2700 tests. The final book builds with zero link errors after recording
+the results. All seven in-diff production mutations are caught on this final
+host-test selection. `openpgp-final-results.json` binds those verdicts, the
+28 controls, raw coverage, separate image exercises and campaigns to their
+component logs and hashes. `openpgp-final-snapshot/` retains the source patch,
+untracked build inputs and local drivers; the final corpus archive retains the
+accumulated inputs. These local results do not close the remaining criteria
+in the completion table or establish actual CI/release provenance.

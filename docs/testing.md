@@ -131,6 +131,12 @@ records additional Boolean operands that `--branch` misses outside branch
 conditions. It does not establish an MC/DC percentage. The calibration and
 remaining scope are recorded in the [testing roadmap](testing-roadmap.md#phase-1-establish-trustworthy-coverage-measurements).
 
+The [journal slice](testing-roadmap.md#2026-10-06-journal-decisions-and-compound-byte-cuts)
+adds refused fold commits, sparse wrapping windows, checkpoint output limits and
+combined byte-cut/recovery histories over `SeqStorage`. Its raw default Mac report
+records 38511/39623 lines and 6934/7975 condition outcomes. Source-bound raw maps
+and the full residual index remain local; no core-wide MC/DC claim follows.
+
 A second probe executed all arms of a three-way `match`, both exits of `?`,
 and empty/nonempty `for` loops. It reached 16/16 lines and 20/20 regions, but
 recorded zero branch outcomes, even in condition mode. Thus the branch totals
@@ -321,6 +327,15 @@ actual shell entry exercise those exits and metadata diagnostics on stderr.
 The scheduled coverage job retains its existing default 80% line floor and
 adds these reports: default daily, individual profiles on Sunday or manual runs.
 The workflow changes are local and have not been executed on GitHub.
+
+The [2026-10-07 continuation](testing-roadmap.md#2026-10-07-pin-boundaries-boot-decisions-and-ordinary-release-images)
+passes 3253 unique default host cases plus the child repeat and records
+38530/39623 lines, 6971/7975 condition outcomes and 3248/3275 functions.
+It retains all 1004 raw missing outcomes, extends six OpenPGP command/recovery
+byte-cut histories and checks thirteen ordinary release-flavour images.
+Separate image controls exercise strict-up presence and strict-config refusal;
+the display image has build evidence only. The roadmap retains source-bound
+reports, unsupported MC/DC and timing-calibration limits.
 
 The separate nightly corpus replay completed all 52 fuzz targets. Unioning
 their LCOV line records for repository sources reached 20568/32545 lines
