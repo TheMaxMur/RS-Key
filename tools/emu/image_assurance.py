@@ -126,6 +126,8 @@ class Device:
             body += bytes(more)
         sw = (hi << 8) | lo
         assert sw == expected, f"APDU {bytes(command[:4]).hex()}: {sw:04x}, expected {expected:04x}"
+        if expected != 0x9000:
+            assert not body, f"APDU refusal {sw:04x} returned {len(body)} bytes"
         return body
 
     def select(self, aid):
@@ -149,6 +151,8 @@ class Device:
     def ctap(self, command, body=None, expected=0):
         answer = send_cbor(self.hid, self.cid, bytes([command]) + (enc(body) if body is not None else b""))
         assert answer[0] == expected, f"CTAP {command}: status {answer[0]:02x}, expected {expected:02x}"
+        if expected:
+            assert len(answer) == 1, "CTAP refusal returned a partial response"
         return decode(answer[1:]) if len(answer) > 1 else None
 
     def measured(self, label, operation, report):

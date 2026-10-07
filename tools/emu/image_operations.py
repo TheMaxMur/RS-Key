@@ -188,6 +188,16 @@ def fido(ops):
             verify_fido(cose, answer[2] + CDH, answer[3])
 
         ops.run(f"fido_sign_{alg}", sign, shared)
+    current = ops.run("fido_token_before_auth_refusal", token, shared)
+    bad_auth = bytearray(hmac.digest(current, CDH, "sha256"))
+    bad_auth[0] ^= 1
+    ops.run("fido_bad_auth_refused", lambda: dev.ctap(2, {1: RP, 2: CDH,
+            3: [{"id": cred, "type": "public-key"}], 6: bytes(bad_auth), 7: 2}, 0x33), shared)
+    ops.run("fido_sign_after_auth_refusal", sign, shared)
+    ops.run("fido_spent_token_refused", lambda: dev.ctap(2, {1: RP, 2: CDH,
+            3: [{"id": cred, "type": "public-key"}],
+            6: hmac.digest(current, CDH, "sha256"), 7: 2}, 0x33), shared)
+    current = ops.run("fido_reauthorize_after_refusal", token, shared)
     old_hash = proto.encrypt(hashlib.sha256(PIN).digest()[:16])
     encrypted = proto.encrypt(NEW_PIN.ljust(64, b"\x00"))
     ops.run("fido_change_pin", lambda: dev.ctap(6, {1: 2, 2: 4, 3: proto.cose(),
@@ -237,6 +247,18 @@ def piv(ops, rsa_key):
         assert value(value(answer, 0x7C), 0x82) == peer.exchange(ec.ECDH(), ec_key.public_key())
 
     ops.run("piv_ecdh", exchange, secret)
+    bad_point = b"\x04" + bytes(64)
+    ops.run("piv_bad_peer_refused", lambda: dev.apdu(apdu(0x87, 0x11, 0x9D,
+            tlv(0x7C, tlv(0x82, b"") + tlv(0x85, bad_point))), 0x6A80), secret)
+    metadata = dev.apdu(apdu(0xF7, 0, 0x80))
+    assert metadata[-4:-2] == b"\x06\x02" and metadata[-1] > 1
+    ops.run("piv_wrong_pin_refused", lambda: dev.apdu(apdu(0x20, 0, 0x80,
+            b"654321\xff\xff"), 0x63C0 | (metadata[-1] - 1)), secret)
+    ops.run("piv_sign_after_wrong_pin_refused", lambda: dev.apdu(apdu(0x87, 0x11, 0x9D,
+            tlv(0x7C, tlv(0x82, b"") + tlv(0x81, CDH))), 0x6982), secret)
+    ops.run("piv_verify_after_refusal", lambda: dev.apdu(apdu(0x20, 0, 0x80,
+            b"123456\xff\xff")), secret)
+    ops.run("piv_sign_after_refusal", sign, secret)
     parts = rsa_key.private_numbers()
     p, q = parts.p.to_bytes(128, "big"), parts.q.to_bytes(128, "big")
     rsa_secrets = {"piv_rsa_p": p, "piv_rsa_q": q}
@@ -295,6 +317,12 @@ def openpgp(ops, rsa_key):
         assert answer == peer.exchange(ec.ECDH(), ec_key.public_key())
 
     ops.run("openpgp_ecdh", decipher, secrets)
+    bad_point = b"\x04" + bytes(64)
+    ops.run("openpgp_bad_encoding_refused", lambda: dev.apdu(apdu(0x2A, 0x80, 0x86,
+            tlv(0xA6, tlv(0x7F49, tlv(0x86, bad_point[:-1])))), 0x6A80), secrets)
+    ops.run("openpgp_off_curve_refused", lambda: dev.apdu(apdu(0x2A, 0x80, 0x86,
+            tlv(0xA6, tlv(0x7F49, tlv(0x86, bad_point)))), 0x6581), secrets)
+    ops.run("openpgp_ecdh_after_refusal", decipher, secrets)
     dev.select(PIV)
     dev.select(OPENPGP)
     ops.run("openpgp_auth_refused", lambda: dev.apdu(apdu(0x88, 0, 0, MESSAGE), 0x6982), secrets)
