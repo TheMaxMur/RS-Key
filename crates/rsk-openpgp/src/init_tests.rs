@@ -9,6 +9,9 @@ use rsk_sdk::Sw;
 #[path = "init_dek_decisions_tests.rs"]
 mod dek_decisions;
 
+#[path = "init_repair_decisions_tests.rs"]
+mod repair_decisions;
+
 /// Deterministic counter RNG for tests.
 struct CountRng(u8);
 impl Rng for CountRng {
