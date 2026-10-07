@@ -14,6 +14,9 @@ mod put_tests;
 #[path = "increasing_tests.rs"]
 mod increasing_tests;
 
+#[path = "increasing_read_tests.rs"]
+mod increasing_read_tests;
+
 /// The challenge itself: how wide it may be, and that both read paths HMAC all
 /// of it.
 #[path = "challenge_tests.rs"]

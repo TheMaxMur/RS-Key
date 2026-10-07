@@ -40,6 +40,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OATH CALCULATE ALL refuses a failed credential read during its only-increasing
+  preflight. A transient flash fault can no longer emit a code without first
+  persisting its challenge mark. bcdDevice → `0x0A8D`.
+
 - Image emulation detects a panic anywhere inside either core's panic handler,
   including after an instruction quantum, and names the caller before its
   return address crosses into the next function.

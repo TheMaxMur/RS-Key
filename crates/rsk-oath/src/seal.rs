@@ -16,6 +16,7 @@
 
 use rsk_crypto::{Device, aes256gcm_decrypt, aes256gcm_encrypt, hkdf_sha256};
 use rsk_fs::{Fs, KeyFid, Rearmed, Sealed, Storage};
+use rsk_sdk::error::Result;
 use rsk_secret::Secret;
 
 use crate::{CRED_MAX, Rng};
@@ -106,12 +107,22 @@ pub fn seal_read<S: Storage, const N: usize>(
     fid: KeyFid,
     out: &mut Secret<[u8; N]>,
 ) -> Option<usize> {
+    try_seal_read(dev, fs, fid, out).ok().flatten()
+}
+
+/// [`seal_read`] with a storage fault kept distinct from an absent or invalid seal.
+pub fn try_seal_read<S: Storage, const N: usize>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    fid: KeyFid,
+    out: &mut Secret<[u8; N]>,
+) -> Result<Option<usize>> {
     let mut blob = Secret::<[u8; MAX_BLOB]>::zeroed();
     let r = fs
-        .read_key(fid, blob.expose_mut())
+        .try_read_key(fid, blob.expose_mut())?
         .and_then(|n| open(dev, blob.expose().get(..n)?, out));
     blob.wipe();
-    r
+    Ok(r)
 }
 
 /// [`seal_read`] past its read: unseal `blob`, bytes already read, into `out`, for a caller

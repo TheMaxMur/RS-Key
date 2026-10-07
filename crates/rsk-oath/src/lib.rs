@@ -37,7 +37,8 @@ pub const OATH_AID: &[u8] = &[0xA0, 0x00, 0x00, 0x05, 0x27, 0x21, 0x01, 0x01];
 pub const VERSION: (u8, u8, u8) = rsk_sdk::FIRMWARE_VERSION;
 
 // FIDs.
-const EF_OATH_CRED: u16 = 0xBA00; // 255 cred slots, 0xBA00..=0xBAFE (each a sealed KeyFid)
+/// First credential slot, for fault injection through the storage interface.
+pub const EF_OATH_CRED: u16 = 0xBA00; // 255 cred slots, 0xBA00..=0xBAFE (each a sealed KeyFid)
 const EF_OATH_CODE: KeyFid = KeyFid::new(0xBAFF); // SET CODE validation key, sealed
 /// VALIDATE's read buffer, and so the widest access code that can still be
 /// read back — otherwise `seal_read` fails and (pre-fix) VALIDATE unlocked the
@@ -776,7 +777,9 @@ impl<'a> OathApplet<'a> {
         let fids = present_creds(fs, &mut buf);
         let mut scratch = Secret::<[u8; CRED_MAX]>::zeroed();
         for &fid in fids {
-            let Some(mut n) = seal::seal_read(&dev, fs, KeyFid::new(fid), &mut scratch) else {
+            let Some(mut n) = seal::try_seal_read(&dev, fs, KeyFid::new(fid), &mut scratch)
+                .map_err(|_| Sw::MEMORY_FAILURE)?
+            else {
                 continue;
             };
             let Some(blob) = scratch.expose().get(..n) else {

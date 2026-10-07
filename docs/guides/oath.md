@@ -80,6 +80,10 @@ are *not* computed there and show a placeholder instead:
 The **Yubico Authenticator** GUI shows all TOTP codes live and re-derives them
 each period. Touch and HOTP entries get a tap-to-reveal button instead.
 
+For only-increasing accounts, a bulk read persists the challenge marks before
+returning codes. A flash read failure refuses the command with `6581` and no
+codes; marks already saved for earlier accounts stay advanced.
+
 ## Touch-required accounts
 
 ```sh

@@ -195,6 +195,10 @@ mark, and `CALCULATE ALL` then reports it with `77` (no response) and computes
 the rest of the store rather than failing — its own `CALCULATE` still answers
 `6A80`.
 
+The bulk preflight refuses a flash read fault with `6581` and no response body,
+before a code can be emitted without its mark. Marks committed before the
+failing slot remain advanced; the operation is not atomic across credentials.
+
 The fourth is the challenge itself. `CALCULATE` (`0xA2`) and `CALCULATE ALL`
 (`0xA4`) take an opaque byte string of **0..=64 bytes** in the `74` TLV and HMAC
 all of it; 65 or more is `6A80`, judged before the credential is looked up and
