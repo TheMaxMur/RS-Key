@@ -11082,3 +11082,6 @@ mod attestation_bounds;
 
 #[path = "move_decisions_tests.rs"]
 mod move_decisions;
+
+#[path = "service_fault_decisions_tests.rs"]
+mod service_fault_decisions;
