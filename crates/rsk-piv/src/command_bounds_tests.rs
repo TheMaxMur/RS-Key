@@ -4,6 +4,141 @@
 use super::*;
 
 #[test]
+fn reset_requires_both_references_to_be_blocked_independently() {
+    for (pin_left, puk_left) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+        let rng = RefCell::new(TestRng(7));
+        let presence = RefCell::new(AlwaysConfirm);
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+        let mut fs = new_fs();
+        select(&mut app, &mut fs);
+        auth_mgm(&mut app, &mut fs);
+        verify_pin(&mut app, &mut fs);
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_ASYM_KEYGEN,
+                0,
+                SLOT_AUTHENTICATION,
+                &gen_template(ALGO_ECCP256)
+            )
+            .0,
+            Sw::OK
+        );
+        set_retries_left(&mut fs, RETRY_PIN, pin_left).unwrap();
+        set_retries_left(&mut fs, RETRY_PUK, puk_left).unwrap();
+        let generation = fs.write_gen();
+        let result = run(&mut app, &mut fs, INS_RESET, 0, 0, &[]);
+        if pin_left == 0 && puk_left == 0 {
+            assert_eq!(result, (Sw::OK, vec![]));
+            assert!(!fs.has_key(key_fid(SLOT_AUTHENTICATION)));
+            assert!(!app.sess.has_pin && !app.sess.pin_fresh && !app.sess.has_mgm);
+            assert_eq!(retries_left(&mut fs, RETRY_PIN), Ok(DEFAULT_RETRIES));
+            assert_eq!(retries_left(&mut fs, RETRY_PUK), Ok(DEFAULT_RETRIES));
+        } else {
+            assert_eq!(
+                result,
+                (Sw::WRONG_DATA, vec![]),
+                "PIN={pin_left}, PUK={puk_left}"
+            );
+            assert_eq!(fs.write_gen(), generation);
+            assert!(fs.has_key(key_fid(SLOT_AUTHENTICATION)));
+            assert!(app.sess.has_pin && app.sess.pin_fresh && app.sess.has_mgm);
+            assert_eq!(retries_left(&mut fs, RETRY_PIN), Ok(pin_left));
+            assert_eq!(retries_left(&mut fs, RETRY_PUK), Ok(puk_left));
+        }
+    }
+}
+
+#[test]
+fn data_paths_outside_the_supported_width_preserve_the_card() {
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    for path in [&[0x5C, 0, 0][..], &[0x5C, 4, 0, 0, 0, 0][..]] {
+        let generation = fs.write_gen();
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, path),
+            (Sw::FILE_NOT_FOUND, vec![])
+        );
+        assert_eq!(fs.write_gen(), generation);
+        assert!(app.sess.has_pin && app.sess.pin_fresh && app.sess.has_mgm);
+    }
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_GET_DATA,
+            0x3F,
+            0xFF,
+            &[0x5C, 1, DISCOVERY_ID as u8]
+        )
+        .0,
+        Sw::OK
+    );
+}
+
+#[test]
+fn printed_data_swallows_only_a_complete_management_key_escrow() {
+    for (outer, key_len, bytes, escrow) in [
+        (18, 16, 16, true),
+        (19, 16, 16, false),
+        (18, 15, 16, false),
+        (22, 20, 20, false),
+    ] {
+        let rng = RefCell::new(TestRng(7));
+        let presence = RefCell::new(AlwaysConfirm);
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+        let mut fs = new_fs();
+        select(&mut app, &mut fs);
+        auth_mgm(&mut app, &mut fs);
+        verify_pin(&mut app, &mut fs);
+        let path = [TAG_DATA_PATH, 3, 0x5F, 0xC1, 9];
+        let original = [TAG_DATA_OBJECT, 1, 0x42];
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_PUT_DATA,
+                0x3F,
+                0xFF,
+                &[path.as_slice(), &original].concat()
+            )
+            .0,
+            Sw::OK
+        );
+        let mut body = vec![PROTECTED_TAG, outer, PROTECTED_MGM_TAG, key_len];
+        body.extend(vec![0x5A; bytes]);
+        let mut object = vec![TAG_DATA_OBJECT, body.len() as u8];
+        object.extend_from_slice(&body);
+        let generation = fs.write_gen();
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                INS_PUT_DATA,
+                0x3F,
+                0xFF,
+                &[path.as_slice(), &object].concat()
+            ),
+            (Sw::OK, vec![])
+        );
+        if escrow {
+            assert_eq!(fs.write_gen(), generation);
+        }
+        assert_eq!(
+            run(&mut app, &mut fs, INS_GET_DATA, 0x3F, 0xFF, &path),
+            (Sw::OK, if escrow { original.to_vec() } else { object })
+        );
+        assert!(app.sess.has_pin && app.sess.pin_fresh && app.sess.has_mgm);
+    }
+}
+
+#[test]
 fn command_parameter_refusals_leave_management_key_and_pin_in_force() {
     let rng = RefCell::new(TestRng(7));
     let presence = RefCell::new(AlwaysConfirm);

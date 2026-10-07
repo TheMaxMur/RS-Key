@@ -13,6 +13,106 @@ fn device() -> Device<'static> {
 }
 
 #[test]
+fn a_failed_final_escrow_revocation_leaves_the_replacement_key_in_force() {
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    let refuse = Rc::new(Cell::new(None));
+    let mut fs = Fs::new(RefuseWrite {
+        inner: RamStorage::new(),
+        refuse: refuse.clone(),
+        refuse_remove: Rc::new(Cell::new(None)),
+    });
+    fs.scan();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let admin = [
+        PIVMAN_TAG,
+        9,
+        PIVMAN_FLAGS_TAG,
+        1,
+        1 | PIVMAN_FLAG_MGM_PROTECTED,
+        PIVMAN_TS_TAG,
+        4,
+        0xde,
+        0xad,
+        0xbe,
+        0xef,
+    ];
+    fs.put(EF_PIVMAN_DATA, &admin).unwrap();
+    verify_pin(&mut app, &mut fs);
+    let printed = [TAG_DATA_PATH, 3, 0x5f, 0xc1, 9];
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3f, 0xff, &printed).0,
+        Sw::OK
+    );
+    let replacement = [0x5a; 32];
+    let mut request = vec![ALGO_AES256, SLOT_CARDMGM, 32];
+    request.extend_from_slice(&replacement);
+    refuse.set(Some(EF_PIVMAN_DATA));
+    assert_eq!(
+        run(&mut app, &mut fs, INS_SET_MGMKEY, 0xff, 0xff, &request),
+        (Sw::MEMORY_FAILURE, vec![])
+    );
+    let key = mgm_read(&device(), &mut fs).unwrap();
+    assert_eq!(key.key(), replacement);
+    assert_eq!(key.policy, Some((ALGO_AES256, TOUCHPOLICY_NEVER)));
+    let mut stored = [0; 11];
+    assert_eq!(fs.read(EF_PIVMAN_DATA, &mut stored), Some(admin.len()));
+    assert_eq!(stored, admin);
+    assert!(mgm_is_protected(&mut fs));
+
+    let mut fresh = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    select(&mut fresh, &mut fs);
+    let (sw, witness) = run(
+        &mut fresh,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_AES256,
+        SLOT_CARDMGM,
+        &[0x7c, 2, 0x80, 0],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&witness[..4], &[0x7c, 0x12, 0x80, 0x10]);
+    let mut plain: [u8; 16] = witness[4..].try_into().unwrap();
+    rsk_crypto::aes_ecb_decrypt_block(&replacement, &mut plain).unwrap();
+    let challenge = [0xa5; 16];
+    let mut auth = vec![0x7c, 0x24, 0x80, 0x10];
+    auth.extend_from_slice(&plain);
+    auth.extend_from_slice(&[0x81, 0x10]);
+    auth.extend_from_slice(&challenge);
+    let (sw, response) = run(
+        &mut fresh,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_AES256,
+        SLOT_CARDMGM,
+        &auth,
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&response[..4], &[0x7c, 0x12, 0x82, 0x10]);
+    let mut expected = challenge;
+    rsk_crypto::aes_ecb_encrypt_block(&replacement, &mut expected).unwrap();
+    assert_eq!(&response[4..], expected);
+
+    refuse.set(None);
+    assert_eq!(
+        run(&mut fresh, &mut fs, INS_SET_MGMKEY, 0xff, 0xff, &request),
+        (Sw::OK, vec![])
+    );
+    let mut revoked = admin;
+    revoked[4] = 1;
+    assert_eq!(fs.read(EF_PIVMAN_DATA, &mut stored), Some(revoked.len()));
+    assert_eq!(stored, revoked);
+    assert!(!mgm_is_protected(&mut fs));
+    verify_pin(&mut fresh, &mut fs);
+    assert_eq!(
+        run(&mut fresh, &mut fs, INS_GET_DATA, 0x3f, 0xff, &printed),
+        (Sw::FILE_NOT_FOUND, vec![])
+    );
+}
+
+#[test]
 fn management_key_replacement_requires_its_complete_metadata_head() {
     for head in [
         None,
