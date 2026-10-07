@@ -61,6 +61,35 @@ def backup_sequences():
                 yield "power_cut", f"rs-key-backup-{churn}-{load_cut}-{recovery_cut}", data
 
 
+def journal_sequences():
+    for mode in (0xD0, 0xD1):
+        for settings in (0, 1, 48, 49):
+            for cut in (0, 17, 64, 65535):
+                for recovery_cut in (0, 17, 65535):
+                    data = (bytes([mode, settings]) + cut.to_bytes(2, "big")
+                            + recovery_cut.to_bytes(2, "big"))
+                    yield "power_cut", f"rs-key-journal-{mode}-{settings}-{cut}-{recovery_cut}", data
+
+
+def openpgp_cut_sequences():
+    for mode in (0xC0, 0xC1, 0xC2, 0xC3):
+        for command in range(6):
+            for churn in (0, 17):
+                for cut in (0, 17, 256, 65535):
+                    for recovery in (0, 17, 65535):
+                        data = (bytes([mode, command]) + cut.to_bytes(2, "big")
+                                + recovery.to_bytes(2, "big") + bytes([churn]))
+                        yield "power_cut", f"rs-key-openpgp-{mode}-{command}-{churn}-{cut}-{recovery}", data
+
+
+def oath_mark_sequences():
+    for selector in range(24):
+        for position in range(3):
+            for persistent in (0, 0x40):
+                data = bytes([selector | persistent, position, 1])
+                yield "oath_apdu", f"rs-key-oath-mark-read-{selector}-{position}-{persistent}", data
+
+
 def records():
     for name, digest in HASHES.items():
         if hashlib.sha256((SOURCE / name).read_bytes()).hexdigest() != digest:
@@ -104,6 +133,9 @@ def records():
                 yield APPLETS[group], label, bytes([len(data)]) + data
     yield from assertion_sequences()
     yield from backup_sequences()
+    yield from journal_sequences()
+    yield from openpgp_cut_sequences()
+    yield from oath_mark_sequences()
 
 
 def prepare(destination):

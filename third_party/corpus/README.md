@@ -47,6 +47,22 @@ replies and retries. They use public fixture values, not device secrets.
 the ordinary test and Miri, both calling the actual session harness. These
 local inputs are AGPL-3.0-only and are not upstream conformance vectors.
 
+The adapter also retains local seed-replacement and journal histories for
+`power_cut`. The 96 journal inputs vary append/scrub, short/full windows, churn,
+operation cuts and recovery cuts independently. They drive the real store and
+the journal's hash/export oracle. These inputs are also AGPL-3.0-only.
+
+The 576 local OpenPGP histories vary six PIN/reset-code commands, blocked PW1
+or prior reset-code state, main-partition churn and two independent byte cuts.
+They check the original DEK across command, boot and recovery on `SeqStorage`,
+and preserve another applet's record and the entire counter partition. The
+first-boot fixture seeds the two DEK copies before creating the verifiers;
+attestation generation is outside these PIN histories. These inputs are
+AGPL-3.0-only and are not upstream conformance vectors.
+Reset-code revocation also starts with a redundant staging copy in half its
+histories. Healthy recovery removes all three code records, clears its retry
+counter and proves the removed code cannot authorize a PW1 reset.
+
 ```sh
 nix develop -c python scripts/external_corpus.py
 ```

@@ -361,14 +361,21 @@ fn scribble(flash: &mut Mock, len: usize, seed: &[u8]) {
     }
 }
 
-pub fn run(data: &[u8]) {
+pub fn run(data: &[u8]) -> Option<openpgp::Outcome> {
+    if data.first().is_some_and(|b| b & 0xf0 == 0xc0) {
+        return Some(openpgp::run(data));
+    }
+    if data.first().is_some_and(|b| b & 0xf0 == 0xd0) {
+        journal::run(data);
+        return None;
+    }
     if data.first().is_some_and(|b| b & 0xf0 == 0xe0) {
         backup::run(data);
-        return;
+        return None;
     }
     if data.first().is_some_and(|b| b & 0xf0 == 0xf0) {
         reset_probe(data);
-        return;
+        return None;
     }
     let flash = Rc::new(RefCell::new(Mock::new(
         // Twice, not OnceOnly: remove_item rewrites the header once (erase_data,
@@ -442,10 +449,19 @@ pub fn run(data: &[u8]) {
         model.step(&mut dev, &mut fs, op);
     }
     report(dirty, ops, touched.count_ones(), from, &dev, &model);
+    None
 }
 
 #[cfg(not(test))]
-fuzz_target!(|data: &[u8]| run(data));
+fuzz_target!(|data: &[u8]| {
+    let _ = run(data);
+});
 
 #[path = "power_cut_backup.rs"]
 pub mod backup;
+
+#[path = "power_cut_journal.rs"]
+pub mod journal;
+
+#[path = "power_cut_openpgp.rs"]
+pub mod openpgp;

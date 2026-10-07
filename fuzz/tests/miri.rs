@@ -1081,6 +1081,46 @@ fn miri_oath_apdu() {
     }
 }
 
+#[path = "../fuzz_targets/oath_apdu/flows.rs"]
+mod oath_flows;
+
+#[test]
+fn miri_oath_mark_positions_cover_each_slot_without_changing_the_fault_mode() {
+    for position in 0..3 {
+        assert_eq!(
+            oath_flows::mark_position(8, position),
+            (3, u16::from(position))
+        );
+    }
+    let mut reached = std::collections::BTreeSet::new();
+    for selector in 0..=u8::MAX {
+        for position in 0..3 {
+            let ordinary = oath_flows::mark_position(selector, position);
+            assert_eq!(
+                oath_flows::mark_position(selector | 0x40, position),
+                ordinary
+            );
+            reached.insert(ordinary);
+        }
+    }
+    assert_eq!(
+        reached,
+        [(1, 0), (2, 0), (2, 1), (3, 0), (3, 1), (3, 2)].into()
+    );
+}
+
+#[test]
+fn miri_oath_mark_read_faults_and_recovery() {
+    for selector in [0, 5, 10, 15] {
+        let (count, _) = oath_flows::mark_position(selector, 0);
+        for position in 0..count {
+            let position = u8::try_from(position).unwrap();
+            oath_flows::check(&[selector, position, 1]);
+            oath_flows::check(&[selector | 0x40, position, 1]);
+        }
+    }
+}
+
 // =========================================================================
 // otp_apdu
 // =========================================================================
@@ -1493,8 +1533,130 @@ fn miri_power_cut() {
     put_cut_reboot.extend_from_slice(&[0x5A; 24]);
     put_cut_reboot.extend_from_slice(&[6, 1, 64, 0x29, 4]);
     for data in [&[][..], &[0, 1, 0x5A, 6, 1, 64], &put_cut_reboot] {
-        power_cut::run(data);
+        let _ = power_cut::run(data);
     }
+    let scrub = power_cut::journal::run(&[0xD1, 0, 0, 17, 0, 17]);
+    assert!(scrub.interrupted && scrub.recovery_interrupted && !scrub.appended);
+    let append = power_cut::journal::run(&[0xD0, 0, 255, 255, 255, 255]);
+    assert!(!append.interrupted && !append.recovery_interrupted && append.appended);
+    let torn = power_cut::run(&[0xC0, 0, 0, 17, 0, 17, 0]).expect("OpenPGP input route");
+    assert!(torn.interrupted && torn.recovery_interrupted);
+    let healthy = power_cut::run(&[0xC3, 4, 255, 255, 255, 255, 0]).expect("OpenPGP input route");
+    assert!(!healthy.interrupted && !healthy.recovery_interrupted);
+    assert!(healthy.operation_stats.bytes_written > 0);
+    assert!(healthy.recovery_stats.bytes_written > 0);
+    let revoke = power_cut::run(&[0xC0, 5, 0, 17, 0, 17, 0]).expect("OpenPGP input route");
+    assert!(revoke.interrupted && revoke.recovery_interrupted);
+}
+
+#[test]
+#[cfg(not(miri))]
+fn openpgp_commands_and_recovery_have_independent_byte_cut_selectors() {
+    let mut reached = [false; 4];
+    for mode in [0xC0, 0xC1, 0xC2, 0xC3] {
+        for command in 0..6 {
+            for churn in [0, 17] {
+                for cut in [0u16, 17, 256, u16::MAX] {
+                    for recovery in [0u16, 17, u16::MAX] {
+                        let mut data = [mode, command, 0, 0, 0, 0, churn];
+                        data[2..4].copy_from_slice(&cut.to_be_bytes());
+                        data[4..6].copy_from_slice(&recovery.to_be_bytes());
+                        let out = power_cut::run(&data).expect("OpenPGP input route");
+                        reached[0] |= out.interrupted;
+                        reached[1] |= !out.interrupted;
+                        reached[2] |= out.recovery_interrupted;
+                        reached[3] |= !out.recovery_interrupted;
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(reached, [true; 4]);
+}
+
+#[test]
+#[cfg(not(miri))]
+fn openpgp_command_and_recovery_byte_boundaries_are_exhaustive_for_clean_traces() {
+    for mode in [0xC0, 0xC3] {
+        for command in 0..6 {
+            let mut reached = [false; 4];
+            let mut data = [mode, command, 255, 255, 255, 255, 0];
+            let healthy = power_cut::openpgp::run(&data);
+            assert!(!healthy.interrupted && !healthy.recovery_interrupted);
+            let end = u16::try_from(
+                healthy.operation_stats.bytes_written
+                    + healthy.operation_stats.erases * power_cut::backup::ERASE_BYTES as u64,
+            )
+            .unwrap();
+            assert!(end > 0, "each command must program the store");
+            for cut in 0..=end {
+                data[2..4].copy_from_slice(&cut.to_be_bytes());
+                let out = power_cut::openpgp::run(&data);
+                reached[0] |= out.interrupted;
+                reached[1] |= !out.interrupted;
+            }
+            for first in [0, end / 2, end.saturating_sub(1)] {
+                data[2..4].copy_from_slice(&first.to_be_bytes());
+                data[4..6].copy_from_slice(&u16::MAX.to_be_bytes());
+                let clean = power_cut::openpgp::run(&data);
+                let recovery_end = u16::try_from(
+                    clean.recovery_stats.bytes_written
+                        + clean.recovery_stats.erases * power_cut::backup::ERASE_BYTES as u64,
+                )
+                .unwrap();
+                assert!(
+                    recovery_end > 0,
+                    "each recovery trace must program the store"
+                );
+                for cut in 0..=recovery_end {
+                    data[4..6].copy_from_slice(&cut.to_be_bytes());
+                    let out = power_cut::openpgp::run(&data);
+                    reached[2] |= out.recovery_interrupted;
+                    reached[3] |= !out.recovery_interrupted;
+                }
+            }
+            assert_eq!(reached, [true; 4], "mode {mode:02X}, command {command}");
+        }
+    }
+}
+
+#[test]
+#[cfg(not(miri))]
+fn audit_journal_operation_and_recovery_byte_cuts() {
+    let mut reached = [false; 4];
+    for (mode, settings) in [(0xD0, 0), (0xD0, 1), (0xD1, 0), (0xD1, 1)] {
+        let mut data = [mode, settings, 255, 255, 255, 255];
+        let healthy = power_cut::journal::run(&data);
+        assert!(!healthy.interrupted && !healthy.recovery_interrupted);
+        let end = u16::try_from(
+            healthy.operation_stats.bytes_written
+                + healthy.operation_stats.erases * power_cut::backup::ERASE_BYTES as u64,
+        )
+        .unwrap();
+        for cut in 0..=end {
+            data[2..4].copy_from_slice(&cut.to_be_bytes());
+            let out = power_cut::journal::run(&data);
+            reached[0] |= out.interrupted;
+            reached[1] |= !out.interrupted;
+        }
+        data[2..4].copy_from_slice(&0u16.to_be_bytes());
+        let recovery = power_cut::journal::run(&data);
+        let recovery_end = u16::try_from(
+            recovery.recovery_stats.bytes_written
+                + recovery.recovery_stats.erases * power_cut::backup::ERASE_BYTES as u64,
+        )
+        .unwrap();
+        for cut in 0..=recovery_end {
+            data[4..6].copy_from_slice(&cut.to_be_bytes());
+            let out = power_cut::journal::run(&data);
+            reached[2] |= out.recovery_interrupted;
+            reached[3] |= !out.recovery_interrupted;
+        }
+    }
+    assert_eq!(
+        reached, [true; 4],
+        "a journal cut/recovery arm was not exercised"
+    );
 }
 
 // =========================================================================

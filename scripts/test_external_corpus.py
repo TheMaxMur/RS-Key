@@ -36,6 +36,42 @@ def test_backup_sequences_cover_churn_load_and_recovery_cuts():
     assert seeds["power_cut", "rs-key-backup-24-256-17"] == bytes.fromhex("e0180100001133")
 
 
+def test_oath_mark_faults_retain_both_fault_modes_and_flow_selection():
+    seeds = [(target, data) for target, name, data in corpus.records()
+             if name.startswith("rs-key-oath-mark-read-")]
+    assert {target for target, _ in seeds} == {"oath_apdu"}
+    assert {data for _, data in seeds} == {
+        bytes([selector | mode, position, 1])
+        for selector in range(24) for position in range(3) for mode in (0, 0x40)}
+    assert bytes([8, 0, 1]) in {data for _, data in seeds}
+    assert bytes([8 | 0x40, 0, 1]) in {data for _, data in seeds}
+    assert all(data[-1] & 1 for _, data in seeds), "the semantic flow must execute"
+
+
+def test_journal_sequences_keep_operations_windows_and_both_cut_positions_independent():
+    seeds = {(target, name): data for target, name, data in corpus.records()
+             if name.startswith("rs-key-journal-")}
+    assert {target for target, _ in seeds} == {"power_cut"}
+    assert {data for data in seeds.values()} == {
+        bytes([mode, settings]) + cut.to_bytes(2, "big") + recovery.to_bytes(2, "big")
+        for mode in (0xD0, 0xD1) for settings in (0, 1, 48, 49)
+        for cut in (0, 17, 64, 65535) for recovery in (0, 17, 65535)}
+    assert seeds["power_cut", "rs-key-journal-209-0-17-17"] == bytes.fromhex("d10000110011")
+
+
+def test_openpgp_histories_keep_command_state_churn_and_both_cuts_independent():
+    seeds = {(target, name): data for target, name, data in corpus.records()
+             if name.startswith("rs-key-openpgp-")}
+    assert {target for target, _ in seeds} == {"power_cut"}
+    assert {data for data in seeds.values()} == {
+        bytes([mode, command]) + cut.to_bytes(2, "big")
+        + recovery.to_bytes(2, "big") + bytes([churn])
+        for mode in (0xC0, 0xC1, 0xC2, 0xC3) for command in range(6)
+        for churn in (0, 17) for cut in (0, 17, 256, 65535)
+        for recovery in (0, 17, 65535)}
+    assert seeds["power_cut", "rs-key-openpgp-194-3-17-256-17"] == bytes.fromhex("c2030100001111")
+
+
 def test_opensk_generic_value_reaches_each_command():
     seeds = [(target, data) for target, name, data in corpus.records()
              if name.startswith("opensk-0-")]

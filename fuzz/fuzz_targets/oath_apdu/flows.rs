@@ -3,6 +3,9 @@
 
 use super::*;
 use rsk_crypto::{hmac_sha1, hmac_sha256, hmac_sha512};
+use rsk_fs::Storage;
+use rsk_fs::storage::faults::ProbeStuck;
+use rsk_oath::{EF_OATH_CRED, OathApplet};
 use rsk_sdk::tlv::find_tag;
 
 const NAME: u8 = 0x71;
@@ -21,6 +24,11 @@ const LIST: u8 = 0xa1;
 const CALCULATE: u8 = 0xa2;
 const VALIDATE: u8 = 0xa3;
 const VERIFY_CODE: u8 = 0xb1;
+const CALCULATE_ALL: u8 = 0xa4;
+const PROPERTY: u8 = 0x78;
+const ONLY_INCREASING: u8 = 1;
+const PERSISTENT_READ: u8 = 0x40;
+const MAX_MARK_CREDS: u16 = 3;
 
 fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
     let mut body = vec![tag, u8::try_from(value.len()).unwrap()];
@@ -28,9 +36,9 @@ fn tlv(tag: u8, value: &[u8]) -> Vec<u8> {
     body
 }
 
-fn command(
+fn command<S: Storage>(
     app: &mut OathApplet,
-    fs: &mut Fs<RamStorage>,
+    fs: &mut Fs<S>,
     ins: u8,
     p2: u8,
     body: &[u8],
@@ -63,6 +71,7 @@ fn code(mac: &[u8], digits: u8) -> [u8; 4] {
 }
 
 pub(super) fn check(data: &[u8]) {
+    check_marks(data);
     let selector = data.first().copied().unwrap_or(0);
     let alg = selector % 3 + 1;
     let digits = selector / 3 % 3 + 6;
@@ -172,4 +181,101 @@ pub(super) fn check(data: &[u8]) {
         (Sw::OK, tlv(RESPONSE, &mac(alg, &secret, &auth_challenge)))
     );
     assert_eq!(command(&mut app, &mut fs, LIST, 0, &[]), (Sw::OK, vec![]));
+}
+
+pub(super) fn mark_position(selector: u8, position: u8) -> (u16, u16) {
+    let count = u16::from((selector & !PERSISTENT_READ) / 4) % MAX_MARK_CREDS + 1;
+    let failed = u16::from(position) % count;
+    (count, failed)
+}
+
+fn check_marks(data: &[u8]) {
+    let raw_selector = data.first().copied().unwrap_or(0);
+    let selector = raw_selector & !PERSISTENT_READ;
+    let (count, failed) = mark_position(raw_selector, data.get(1).copied().unwrap_or(0));
+    let alg = selector % 3 + 1;
+    let digits = selector / 3 % 3 + 6;
+    let p2 = selector & 1;
+    let mut secret = vec![selector; 14];
+    secret.extend(data.iter().skip(2).take(50));
+    let (backend, medium) = ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let rng = RefCell::new(CountRng(0));
+    let touch = RefCell::new(rsk_oath::AlwaysConfirm);
+    let mut app = OathApplet::new([1, 2, 3, 4, 5, 6, 7, 8], [0x22; 32], None, &rng, &touch);
+    let mut key = vec![0x20 | alg, digits];
+    key.extend(&secret);
+    for i in 0..count {
+        let name = [u8::try_from(i).unwrap()];
+        let put = [
+            tlv(NAME, &name),
+            tlv(KEY, &key),
+            vec![PROPERTY, ONLY_INCREASING],
+        ]
+        .concat();
+        assert_eq!(command(&mut app, &mut fs, PUT, 0, &put), (Sw::OK, vec![]));
+    }
+    let before: Vec<_> = (0..count).map(|i| medium.value(EF_OATH_CRED + i)).collect();
+    if raw_selector & PERSISTENT_READ == 0 {
+        medium.stick_once(EF_OATH_CRED + failed);
+    } else {
+        medium.stick(Some(EF_OATH_CRED + failed));
+    }
+    let challenge = u64::from(selector) + 1;
+    let body = tlv(CHALLENGE, &challenge.to_be_bytes());
+    assert_eq!(
+        command(&mut app, &mut fs, CALCULATE_ALL, p2, &body),
+        (Sw::MEMORY_FAILURE, vec![]),
+        "bulk code escaped a failed mark preflight"
+    );
+    for i in failed..count {
+        assert_eq!(medium.value(EF_OATH_CRED + i), before[usize::from(i)]);
+    }
+    for i in 0..failed {
+        let request = [tlv(NAME, &[u8::try_from(i).unwrap()]), body.clone()].concat();
+        assert_eq!(
+            command(&mut app, &mut fs, CALCULATE, p2, &request),
+            (Sw::WRONG_DATA, vec![]),
+            "the committed prefix must refuse its persisted challenge"
+        );
+    }
+    medium.stick(None);
+    let digest = mac(alg, &secret, &challenge.to_be_bytes());
+    let mut answer = vec![digits];
+    if p2 == 0 {
+        answer.extend(&digest);
+    } else {
+        answer.extend(code(&digest, digits));
+    }
+    for i in failed..count {
+        let request = [tlv(NAME, &[u8::try_from(i).unwrap()]), body.clone()].concat();
+        assert_eq!(
+            command(&mut app, &mut fs, CALCULATE, p2, &request),
+            (Sw::OK, tlv(RESPONSE + p2, &answer)),
+            "the unread suffix must still accept the unmarked challenge"
+        );
+    }
+    let challenge = (challenge + 1).to_be_bytes();
+    let digest = mac(alg, &secret, &challenge);
+    let mut answer = vec![digits];
+    if p2 == 0 {
+        answer.extend(&digest);
+    } else {
+        answer.extend(code(&digest, digits));
+    }
+    let mut expected = Vec::new();
+    for i in 0..count {
+        expected.extend(tlv(NAME, &[u8::try_from(i).unwrap()]));
+        expected.extend(tlv(RESPONSE + p2, &answer));
+    }
+    let body = tlv(CHALLENGE, &challenge);
+    assert_eq!(
+        command(&mut app, &mut fs, CALCULATE_ALL, p2, &body),
+        (Sw::OK, expected)
+    );
+    assert_eq!(
+        command(&mut app, &mut fs, CALCULATE_ALL, p2, &body),
+        (Sw::WRONG_DATA, vec![])
+    );
 }
