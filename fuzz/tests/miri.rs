@@ -1523,6 +1523,31 @@ fn miri_fs_ops() {
 
 // =========================================================================
 // power_cut
+
+fn openpgp_cut(data: &[u8]) -> power_cut::openpgp::Outcome {
+    match power_cut::run(data) {
+        power_cut::Outcome::OpenPgp(out) => out,
+        _ => panic!("OpenPGP input route"),
+    }
+}
+
+fn journal_cut(data: &[u8]) -> power_cut::journal::Outcome {
+    match power_cut::run(data) {
+        power_cut::Outcome::Journal(out) => out,
+        _ => panic!("journal input route"),
+    }
+}
+
+fn backup_cut(data: &[u8]) -> power_cut::backup::Outcome {
+    match power_cut::run(data) {
+        power_cut::Outcome::Backup(out) => out,
+        _ => panic!("backup input route"),
+    }
+}
+
+#[cfg(not(miri))]
+#[path = "miri/piv_attestation_cut_tests.rs"]
+mod piv_attestation_cuts;
 // =========================================================================
 
 #[test]
@@ -1535,18 +1560,27 @@ fn miri_power_cut() {
     for data in [&[][..], &[0, 1, 0x5A, 6, 1, 64], &put_cut_reboot] {
         let _ = power_cut::run(data);
     }
-    let scrub = power_cut::journal::run(&[0xD1, 0, 0, 17, 0, 17]);
+    let scrub = journal_cut(&[0xD1, 0, 0, 17, 0, 17]);
     assert!(scrub.interrupted && scrub.recovery_interrupted && !scrub.appended);
-    let append = power_cut::journal::run(&[0xD0, 0, 255, 255, 255, 255]);
+    let append = journal_cut(&[0xD0, 0, 255, 255, 255, 255]);
     assert!(!append.interrupted && !append.recovery_interrupted && append.appended);
-    let torn = power_cut::run(&[0xC0, 0, 0, 17, 0, 17, 0]).expect("OpenPGP input route");
+    let torn = openpgp_cut(&[0xC0, 0, 0, 17, 0, 17, 0]);
     assert!(torn.interrupted && torn.recovery_interrupted);
-    let healthy = power_cut::run(&[0xC3, 4, 255, 255, 255, 255, 0]).expect("OpenPGP input route");
+    let healthy = openpgp_cut(&[0xC3, 4, 255, 255, 255, 255, 0]);
     assert!(!healthy.interrupted && !healthy.recovery_interrupted);
     assert!(healthy.operation_stats.bytes_written > 0);
     assert!(healthy.recovery_stats.bytes_written > 0);
-    let revoke = power_cut::run(&[0xC0, 5, 0, 17, 0, 17, 0]).expect("OpenPGP input route");
+    let revoke = openpgp_cut(&[0xC0, 5, 0, 17, 0, 17, 0]);
     assert!(revoke.interrupted && revoke.recovery_interrupted);
+    let power_cut::Outcome::Piv(torn) = power_cut::run(&[0xB1, 7, 0, 17, 0, 17, 0]) else {
+        panic!("PIV input route");
+    };
+    assert!(torn.interrupted && torn.recovery_interrupted);
+    let power_cut::Outcome::Piv(healthy) = power_cut::run(&[0xB2, 7, 255, 255, 255, 255, 0]) else {
+        panic!("PIV input route");
+    };
+    assert!(!healthy.interrupted && !healthy.recovery_interrupted);
+    assert!(healthy.operation_stats.bytes_written > 0);
 }
 
 #[test]
@@ -1561,7 +1595,7 @@ fn openpgp_commands_and_recovery_have_independent_byte_cut_selectors() {
                         let mut data = [mode, command, 0, 0, 0, 0, churn];
                         data[2..4].copy_from_slice(&cut.to_be_bytes());
                         data[4..6].copy_from_slice(&recovery.to_be_bytes());
-                        let out = power_cut::run(&data).expect("OpenPGP input route");
+                        let out = openpgp_cut(&data);
                         reached[0] |= out.interrupted;
                         reached[1] |= !out.interrupted;
                         reached[2] |= out.recovery_interrupted;
@@ -1831,12 +1865,12 @@ fn miri_display_label() {
 
 #[test]
 fn miri_seed_load_and_recovery() {
-    let torn = power_cut::backup::run(&[0xE0, 0, 0, 64, 0, 17, 0x33]);
+    let torn = backup_cut(&[0xE0, 0, 0, 64, 0, 17, 0x33]);
     assert!(torn.interrupted && torn.recovery_interrupted);
-    let settled = power_cut::backup::run(&[0xE0, 0, 255, 255, 2, 188, 0x33]);
+    let settled = backup_cut(&[0xE0, 0, 255, 255, 2, 188, 0x33]);
     assert!(!settled.interrupted && !settled.recovery_interrupted && settled.replaced);
 
-    let out = power_cut::backup::run(&[0xE0, 24, 1, 0, 0, 17, 0x33]);
+    let out = backup_cut(&[0xE0, 24, 1, 0, 0, 17, 0x33]);
     assert!(out.interrupted);
     assert_eq!(out.load_stats.erases, 1);
     assert!(out.load_stats.bytes_written < 256);

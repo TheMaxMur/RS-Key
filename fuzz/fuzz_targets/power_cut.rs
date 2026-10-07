@@ -361,21 +361,31 @@ fn scribble(flash: &mut Mock, len: usize, seed: &[u8]) {
     }
 }
 
-pub fn run(data: &[u8]) -> Option<openpgp::Outcome> {
+pub enum Outcome {
+    Piv(piv::Outcome),
+    OpenPgp(openpgp::Outcome),
+    Journal(journal::Outcome),
+    Backup(backup::Outcome),
+    Reset,
+    Store,
+}
+
+pub fn run(data: &[u8]) -> Outcome {
+    if data.first().is_some_and(|b| b & 0xf0 == 0xb0) {
+        return Outcome::Piv(piv::run(data));
+    }
     if data.first().is_some_and(|b| b & 0xf0 == 0xc0) {
-        return Some(openpgp::run(data));
+        return Outcome::OpenPgp(openpgp::run(data));
     }
     if data.first().is_some_and(|b| b & 0xf0 == 0xd0) {
-        journal::run(data);
-        return None;
+        return Outcome::Journal(journal::run(data));
     }
     if data.first().is_some_and(|b| b & 0xf0 == 0xe0) {
-        backup::run(data);
-        return None;
+        return Outcome::Backup(backup::run(data));
     }
     if data.first().is_some_and(|b| b & 0xf0 == 0xf0) {
         reset_probe(data);
-        return None;
+        return Outcome::Reset;
     }
     let flash = Rc::new(RefCell::new(Mock::new(
         // Twice, not OnceOnly: remove_item rewrites the header once (erase_data,
@@ -449,7 +459,7 @@ pub fn run(data: &[u8]) -> Option<openpgp::Outcome> {
         model.step(&mut dev, &mut fs, op);
     }
     report(dirty, ops, touched.count_ones(), from, &dev, &model);
-    None
+    Outcome::Store
 }
 
 #[cfg(not(test))]
@@ -465,3 +475,6 @@ pub mod journal;
 
 #[path = "power_cut_openpgp.rs"]
 pub mod openpgp;
+
+#[path = "power_cut_piv.rs"]
+pub mod piv;
