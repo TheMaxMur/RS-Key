@@ -86,6 +86,23 @@ fn make_es256() -> Resp {
 }
 
 #[test]
+fn a_supported_algorithm_under_an_unknown_credential_type_cannot_register() {
+    let mut a = Authr::fresh();
+    let mut request = mc_request(ALG_ES256);
+    let at = request
+        .windows(PUBLIC_KEY_TYPE.len())
+        .position(|word| word == PUBLIC_KEY_TYPE.as_bytes())
+        .unwrap();
+    request[at..at + PUBLIC_KEY_TYPE.len()].copy_from_slice(b"other-kind");
+    let generation = a.fs.write_gen();
+    let refused = a.send(CTAP_MAKE_CREDENTIAL, &request);
+    assert_eq!(refused.status, CtapError::UnsupportedAlgorithm.as_u8());
+    assert!(refused.body.is_empty());
+    assert_eq!(a.fs.write_gen(), generation);
+    assert_ok(&a.send(CTAP_MAKE_CREDENTIAL, &mc_request(ALG_ES256)));
+}
+
+#[test]
 fn makecred_response_envelope() {
     let r = make_es256();
     assert_ok(&r);

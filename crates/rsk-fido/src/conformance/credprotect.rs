@@ -17,6 +17,9 @@ use crate::state::PERM_GA;
 use minicbor::Encoder;
 use minicbor::encode::write::Cursor;
 
+#[path = "exclude_decisions_tests.rs"]
+mod exclude_decisions;
+
 const RP_ID: &str = "protect.example";
 const USER_ID: &[u8] = &[7, 7, 7, 7];
 const CDH: [u8; 32] = [0xCD; 32];

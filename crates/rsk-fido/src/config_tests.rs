@@ -35,6 +35,43 @@ fn dev() -> Device<'static> {
 const TOKEN: [u8; 32] = [0x99; 32];
 
 #[test]
+fn raw_configuration_parameters_accept_the_limit_and_refuse_the_next_byte() {
+    let mut fs = Fs::new(RamStorage::new());
+    fs.put(EF_ALWAYS_UV, &[0]).unwrap();
+    for length in [MAX_RAW_SUBPARA, MAX_RAW_SUBPARA + 1] {
+        let mut params = vec![0; length];
+        let mut encoder = Encoder::new(Cursor::new(params.as_mut_slice()));
+        encoder
+            .map(1)
+            .unwrap()
+            .u8(8)
+            .unwrap()
+            .bytes(&vec![0; length - 5])
+            .unwrap();
+        assert_eq!(encoder.writer().position(), length);
+        let mut before = [0; 1];
+        let stored = fs.read(EF_ALWAYS_UV, &mut before);
+        let generation = fs.write_gen();
+        let result = run_fs(
+            &mut fs,
+            &mut armed(PERM_ACFG),
+            &config_request(CONFIG_TOGGLE_ALWAYS_UV as u8, &params, &TOKEN),
+        );
+        if length == MAX_RAW_SUBPARA {
+            assert_eq!(result, Ok(0));
+            assert!(always_uv_enabled(&mut fs));
+        } else {
+            assert_eq!(result, Err(CtapError::RequestTooLarge));
+            let mut after = [0; 1];
+            assert_eq!(fs.read(EF_ALWAYS_UV, &mut after), stored);
+            assert_eq!(after, before);
+            assert_eq!(fs.write_gen(), generation);
+            assert!(always_uv_enabled(&mut fs));
+        }
+    }
+}
+
+#[test]
 fn complexity_update_preserves_a_full_rp_list() {
     let mut fs = Fs::new(RamStorage::new());
     let mut policy = vec![MIN_PIN_LENGTH, 0];

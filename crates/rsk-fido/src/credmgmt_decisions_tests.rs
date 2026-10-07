@@ -4,6 +4,101 @@
 use super::*;
 
 #[test]
+fn updating_an_unauthentic_credential_preserves_its_record_and_store_tag() {
+    let (mut fs, mut rng) = setup();
+    let (id, ..) = register(&mut fs, &mut rng, "example.com", &[1], "alice");
+    let mut record = [0; CRED_REC_MAX];
+    let length = fs.read(EF_CRED, &mut record).unwrap();
+    let original = record[..length].to_vec();
+    let boxed = cred_record_box(&original);
+    assert!(boxed.len() > crate::credential::IV_LEN);
+    assert!(cred_record_pubkey(&original).is_some());
+    let ciphertext = length - boxed.len() + crate::credential::IV_LEN;
+    record[ciphertext] ^= 1;
+    let corrupt = &record[..length];
+    assert_eq!(&corrupt[..RECORD_PREFIX], &original[..RECORD_PREFIX]);
+    assert_eq!(cred_record_pubkey(corrupt), cred_record_pubkey(&original));
+    fs.put(EF_CRED, corrupt).unwrap();
+    let tag = crate::credential::cred_store_state(&mut fs).unwrap();
+    let generation = fs.write_gen();
+    let request = cm_request(
+        0x07,
+        Some(&subpara_update(&id, &[1], "alice2", "Alice Two")),
+        &TOKEN,
+    );
+    let mut state = armed(PERM_CM);
+    let mut out = [0xa5; 512];
+    assert_eq!(
+        run(&mut fs, &mut state, &request, &mut out),
+        Err(CtapError::NotAllowed)
+    );
+    assert_eq!(out, [0xa5; 512]);
+    let mut after = [0; CRED_REC_MAX];
+    assert_eq!(fs.read(EF_CRED, &mut after), Some(length));
+    assert_eq!(&after[..length], corrupt);
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(crate::credential::cred_store_state(&mut fs).unwrap(), tag);
+
+    fs.put(EF_CRED, &original).unwrap();
+    assert_eq!(run(&mut fs, &mut armed(PERM_CM), &request, &mut out), Ok(0));
+    let n = run(
+        &mut fs,
+        &mut armed(PERM_CM),
+        &cm_request(
+            0x04,
+            Some(&subpara_rpidhash(&sha256(b"example.com"))),
+            &TOKEN,
+        ),
+        &mut out,
+    )
+    .unwrap();
+    assert_eq!(enumerated_cred_id(&out[..n]), id);
+    assert_eq!(cred_user_name(&out[..n]), "alice2");
+    assert_ne!(crate::credential::cred_store_state(&mut fs).unwrap(), tag);
+}
+
+#[test]
+fn an_unopenable_relying_party_cannot_enter_the_authenticated_response() {
+    let (mut fs, mut rng) = setup();
+    register(&mut fs, &mut rng, "example.com", &[1], "alice");
+    register(&mut fs, &mut rng, "other.com", &[2], "bob");
+    let mut record = [0; RP_REC_MAX];
+    let length = fs.read(EF_RP, &mut record).unwrap();
+    let original = record[..length].to_vec();
+    let mut corrupt = original[..RP_PREFIX].to_vec();
+    corrupt.push(0xff);
+    fs.put(EF_RP, &corrupt).unwrap();
+    let tag = crate::credential::cred_store_state(&mut fs).unwrap();
+    let generation = fs.write_gen();
+    let request = cm_request(0x02, None, &TOKEN);
+    let mut out = [0xa5; 512];
+    assert_eq!(
+        run(&mut fs, &mut armed(PERM_CM), &request, &mut out),
+        Err(CtapError::Other)
+    );
+    assert_eq!(out, [0xa5; 512]);
+    let mut after = [0; RP_REC_MAX];
+    assert_eq!(fs.read(EF_RP, &mut after), Some(corrupt.len()));
+    assert_eq!(&after[..corrupt.len()], corrupt);
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(crate::credential::cred_store_state(&mut fs).unwrap(), tag);
+
+    fs.put(EF_RP, &original).unwrap();
+    let mut state = armed(PERM_CM);
+    let n = run(&mut fs, &mut state, &request, &mut out).unwrap();
+    assert_eq!(
+        parse_rp(&out[..n], true),
+        ("example.com".into(), sha256(b"example.com"), Some(2))
+    );
+    let n = run(&mut fs, &mut state, &cm_next(0x03), &mut out).unwrap();
+    assert_eq!(
+        parse_rp(&out[..n], false),
+        ("other.com".into(), sha256(b"other.com"), None)
+    );
+    assert_eq!(crate::credential::cred_store_state(&mut fs).unwrap(), tag);
+}
+
+#[test]
 fn malformed_request_ordering_preserves_the_authorized_walk_and_store() {
     let (mut fs, mut rng) = setup();
     register(&mut fs, &mut rng, "example.com", &[1], "alice");

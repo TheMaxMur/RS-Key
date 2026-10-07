@@ -10,6 +10,9 @@ use rsk_crypto::sha256;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "passkeys_fault_tests.rs"]
+mod faults;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {

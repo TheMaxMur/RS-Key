@@ -5,6 +5,9 @@ use super::*;
 use crate::{AlwaysConfirm, FidoState};
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "journal_decisions_tests.rs"]
+mod decisions;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {

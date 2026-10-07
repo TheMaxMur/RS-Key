@@ -11,6 +11,9 @@ use rsk_crypto::Device;
 use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "u2f_bounds_tests.rs"]
+mod bounds;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {
