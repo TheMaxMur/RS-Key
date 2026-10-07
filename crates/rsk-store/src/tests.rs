@@ -71,6 +71,8 @@ struct SharedMock {
     written: Rc<Cell<u64>>,
     // A single program fails before changing bits; later programs can clean up.
     fail_write_after: Rc<Cell<Option<usize>>>,
+    programs: Rc<RefCell<Vec<u32>>>,
+    refused_program: Rc<Cell<Option<usize>>>,
 }
 
 impl SharedMock {
@@ -82,6 +84,8 @@ impl SharedMock {
             refused_at: Rc::new(Cell::new(None)),
             written: Rc::new(Cell::new(0)),
             fail_write_after: Rc::new(Cell::new(None)),
+            programs: Rc::new(RefCell::new(Vec::new())),
+            refused_program: Rc::new(Cell::new(None)),
         }
     }
 
@@ -169,9 +173,12 @@ impl NorFlash for SharedMock {
     }
 
     async fn write(&mut self, offset: u32, data: &[u8]) -> Result2<()> {
+        let program = self.programs.borrow().len();
+        self.programs.borrow_mut().push(offset);
         if let Some(left) = self.fail_write_after.get() {
             if left == 0 {
                 self.fail_write_after.set(None);
+                self.refused_program.set(Some(program));
                 return Err(FlashFault);
             }
             self.fail_write_after.set(Some(left - 1));
@@ -192,6 +199,9 @@ impl NorFlash for SharedMock {
         Ok(())
     }
 }
+
+#[path = "compact_cleanup_tests.rs"]
+mod compact_cleanup;
 
 impl MultiwriteNorFlash for SharedMock {}
 
