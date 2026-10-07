@@ -233,13 +233,14 @@ pub(crate) fn meta_add_slot<S: Storage>(fs: &mut Fs<S>, fid: u16, rec: &[u8]) ->
         .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
-/// Drop a slot's meta record just before an IMPORT commits its key.
-///
-/// Power-cut ordering: a tear then leaves the previous key with no origin record,
-/// which [`attest`] refuses at its `meta_find`, rather than the imported key
-/// paired with the previous key's `ORIGIN_GENERATED` — which it would certify.
-pub(crate) fn drop_slot_meta<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<(), Sw> {
-    fs.meta_delete(fid).map_err(|_| Sw::MEMORY_FAILURE)
+/// Retire provenance and the legacy public-point cache before replacing a key.
+/// A refused cache refresh must not publish the preceding key's public point;
+/// origin retirement also prevents certifying an imported key as generated.
+pub(crate) fn drop_slot_meta<S: Storage>(fs: &mut Fs<S>, slot: u8) -> Result<(), Sw> {
+    fs.force_delete(pubkey_fid(slot))
+        .map_err(|_| Sw::MEMORY_FAILURE)?;
+    fs.meta_delete(key_fid(slot).get())
+        .map_err(|_| Sw::MEMORY_FAILURE)
 }
 
 /// The EC / Ed25519 / X25519 arm of GENERATE; RSA goes through
@@ -280,7 +281,7 @@ pub(crate) fn generate_ec<S: Storage>(
     // The old head goes before the key, as IMPORT's does: one that cannot be dropped
     // refuses with nothing written, and a tear leaves a key with no head, which nothing
     // uses, where writing the key first left it under the old key's policies.
-    if let Err(e) = drop_slot_meta(fs, key_fid(slot).get()) {
+    if let Err(e) = drop_slot_meta(fs, slot) {
         return e;
     }
     if let Err(e) = seal::store_ec_key(dev, fs, rng, key_fid(slot), &key) {
@@ -321,7 +322,7 @@ pub(crate) fn finish_rsa<S: Storage>(
     res: &mut ResBuf,
 ) -> Sw {
     // The old head first, for `generate_ec`'s reason.
-    if let Err(sw) = drop_slot_meta(fs, key_fid(slot).get()) {
+    if let Err(sw) = drop_slot_meta(fs, slot) {
         return sw;
     }
     if let Err(sw) = seal::store_rsa_key(dev, fs, rng, key_fid(slot), key) {
@@ -427,7 +428,7 @@ pub(crate) fn generate_retired_ec<S: Storage>(
     let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;
     let point = point.get(..plen).ok_or(Sw::EXEC_ERROR)?;
     // A stale head a failed MOVE left goes first, for `generate_ec`'s reason.
-    drop_slot_meta(fs, key_fid(slot).get())?;
+    drop_slot_meta(fs, slot)?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)?;
     let pol = resolved_policies(slot, None, None)?;
     let mut mbuf = [0u8; 4 + MAX_EC_POINT];
@@ -454,7 +455,7 @@ pub(crate) fn store_retired_rsa<S: Storage>(
         return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
     }
     let algo = rsa_algo_from_size(key.size()).ok_or(Sw::EXEC_ERROR)?;
-    drop_slot_meta(fs, key_fid(slot).get())?;
+    drop_slot_meta(fs, slot)?;
     seal::store_rsa_key(dev, fs, rng, key_fid(slot), key)?;
     let pol = resolved_policies(slot, None, None)?;
     fs.meta_add(
@@ -491,7 +492,7 @@ fn import_rsa<S: Storage>(
     // Composite factors pass `rsa_from_pqe` and fail only this trial signature.
     rsk_rsa::crt::pairwise_consistent(&key, &mut crate::RsaRng(&mut *rng))
         .map_err(|_| Sw::WRONG_DATA)?;
-    drop_slot_meta(fs, key_fid(slot).get())?;
+    drop_slot_meta(fs, slot)?;
     seal::store_rsa_key(dev, fs, rng, key_fid(slot), &key)
 }
 
@@ -528,7 +529,7 @@ fn import_ec<S: Storage>(
     if key.public_point(&mut pt).is_err() {
         return Err(Sw::WRONG_DATA);
     }
-    drop_slot_meta(fs, key_fid(slot).get())?;
+    drop_slot_meta(fs, slot)?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)
 }
 
@@ -576,7 +577,7 @@ fn import_edwards<S: Storage>(
     let Some(key) = key else {
         return Err(Sw::WRONG_DATA);
     };
-    drop_slot_meta(fs, key_fid(slot).get())?;
+    drop_slot_meta(fs, slot)?;
     seal::store_ec_key(dev, fs, rng, key_fid(slot), &key)
 }
 

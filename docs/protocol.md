@@ -572,6 +572,9 @@ needs only the identifiers above. RS-Key implements:
 - **PIV**: NIST SP 800-73 (Yubico PIV extensions for metadata). `GET DATA`
   answers `6A82` to a tag list it cannot read and to a P1-P2 other than `3FFF`,
   the answer for an object the card does not hold, as a YubiKey 5.8.0 does.
+  Key replacement and MOVE retire the prior per-slot public-point cache before
+  committing a key; failed cache retirement answers `6581`. Missing or refused
+  cache refreshes fall back to the current metadata point or that key's scalar.
   `PUT DATA` answers `6982` without the management key, then `6A80` to a P1-P2
   other than `3FFF` and to a body that is not `5C 03 <id>` followed directly by
   `53` with its length in the shortest form; bytes after the object are ignored.

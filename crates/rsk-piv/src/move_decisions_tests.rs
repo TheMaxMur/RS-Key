@@ -10,6 +10,71 @@ fn sealed_key<S: Storage>(fs: &mut Fs<S>, slot: u8) -> Vec<u8> {
 }
 
 #[test]
+fn a_headless_move_cannot_inherit_the_destination_policy_or_cache() {
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let (from, to) = (SLOT_AUTHENTICATION, SLOT_RETIRED_FIRST);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            from,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
+    );
+    let before = sealed_key(&mut fs, from);
+    fs.meta_delete(key_fid(from).get()).unwrap();
+    fs.delete(pubkey_fid(from)).unwrap();
+    fs.meta_add(
+        key_fid(to).get(),
+        &[
+            ALGO_ECCP256,
+            PINPOLICY_NEVER,
+            TOUCHPOLICY_NEVER,
+            ORIGIN_GENERATED,
+        ],
+    )
+    .unwrap();
+    fs.put(pubkey_fid(to), b"orphan point").unwrap();
+    fs.put(cert_fid_for_slot(from).unwrap(), b"source certificate")
+        .unwrap();
+    fs.put(cert_fid_for_slot(to).unwrap(), b"destination certificate")
+        .unwrap();
+    assert_eq!(
+        run(&mut app, &mut fs, INS_MOVE_KEY, to, from, &[]),
+        (Sw::OK, vec![])
+    );
+    assert_eq!(sealed_key(&mut fs, to), before);
+    assert!(!fs.has_key(key_fid(from)));
+    assert_eq!(fs.meta_find(key_fid(to).get(), &mut [0; 4]), None);
+    assert_eq!(fs.read(pubkey_fid(to), &mut [0; MAX_EC_POINT]), None);
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_METADATA, 0, to, &[]),
+        (Sw::REFERENCE_NOT_FOUND, vec![])
+    );
+    verify_pin(&mut app, &mut fs);
+    assert_eq!(sign_p256(&mut app, &mut fs, to), Sw::REFERENCE_NOT_FOUND);
+    for (slot, wanted) in [
+        (from, b"source certificate".as_slice()),
+        (to, b"destination certificate".as_slice()),
+    ] {
+        let mut bytes = [0; 32];
+        let n = fs
+            .read(cert_fid_for_slot(slot).unwrap(), &mut bytes)
+            .unwrap();
+        assert_eq!(&bytes[..n], wanted);
+    }
+}
+
+#[test]
 fn an_oversized_source_refuses_the_move_without_truncation_or_mutation() {
     let rng = RefCell::new(TestRng(7));
     let presence = RefCell::new(AlwaysConfirm);

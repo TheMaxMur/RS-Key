@@ -307,6 +307,11 @@ certify an imported key as generated on-device. An interrupted move keeps its
 source key, and the copy it left at the destination has no metadata and blocks a
 move onto that slot: delete it (`ykman piv keys delete`) and move again.
 
+Key replacement and MOVE also retire the destination's old public-point cache
+before writing the key. If a cache refresh fails, GET METADATA uses the new
+metadata's point or derives it from that key. A refused cache retirement stops
+the operation with `6581`; existing key and cache record formats stay readable.
+
 ## Move and delete keys
 
 `ykman piv` 5.7 can move a key (with its metadata) between slots, or delete it:

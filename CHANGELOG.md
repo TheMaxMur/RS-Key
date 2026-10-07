@@ -40,6 +40,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV retires a slot's old public-point cache before key replacement or MOVE.
+  A missing source cache or refused cache refresh no longer publishes the
+  preceding key's point; F9 recreation uses the same guard. bcdDevice → `0x0A8E`.
+
 - OATH CALCULATE ALL refuses a failed credential read during its only-increasing
   preflight. A transient flash fault can no longer emit a code without first
   persisting its challenge mark. bcdDevice → `0x0A8D`.

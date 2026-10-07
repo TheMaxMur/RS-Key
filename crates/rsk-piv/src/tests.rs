@@ -11085,3 +11085,6 @@ mod move_decisions;
 
 #[path = "service_fault_decisions_tests.rs"]
 mod service_fault_decisions;
+
+#[path = "cache_retirement_tests.rs"]
+mod cache_retirement;

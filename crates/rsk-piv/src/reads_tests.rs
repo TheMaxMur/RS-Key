@@ -134,7 +134,7 @@ fn a_faulted_read_fails_a_generate_or_lands_it_whole() {
         sends(INS_ASYM_KEYGEN, 0x00, 0x9A, &gen_template(ALGO_ECCP256)),
         &[(
             rsk_fs::EF_META,
-            2,
+            3,
             "a refused head-and-point record falls back to the head",
         )],
     );

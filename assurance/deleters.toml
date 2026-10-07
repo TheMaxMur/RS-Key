@@ -22,8 +22,8 @@
 #
 # Scope, matching the roadmap's §3.4 so the counts reproduce: callers outside
 # `crates/rsk-fs` (which defines the family), outside `fuzz/`, and outside the
-# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 46 — 24 `delete`,
-# 5 `delete_key`, 2 `delete_over`, 5 `delete_key_over`, 5 `force_delete`,
+# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 47 — 24 `delete`,
+# 5 `delete_key`, 2 `delete_over`, 5 `delete_key_over`, 6 `force_delete`,
 # 5 `force_delete_halves`.
 #
 # Run the same derivation over `crates/rsk-fs` and it finds SEVEN more, which this
@@ -547,7 +547,7 @@ why = "and its second. Both slots' valid bits come off flash in the response tha
 
 [[site]]
 file = "crates/rsk-piv/src/files.rs"
-line = 651
+line = 652
 call = "let gone = fs.force_delete_halves(fid);"
 verb = "force_delete_halves"
 answer = "read"
@@ -600,6 +600,17 @@ metadata = "none"
 disposition = "best-effort"
 why = "the source's cached public point. Heads live on key_fid alone, so this fid carries none, and GET METADATA derives the point when it is absent."
 
+
+[[site]]
+file = "crates/rsk-piv/src/keygen.rs"
+line = 240
+call = "fs.force_delete(pubkey_fid(slot))"
+verb = "force_delete"
+answer = "read"
+class = "bookkeeping"
+metadata = "none"
+disposition = "must-read"
+why = "Retire the preceding key's public point before replacement; a survivor outranks the new metadata point in GET METADATA. Refusal must stop the key write, including MOVE and F9 recreation."
 
 # --- the removals `Fs` performs on its own behalf ------------------------------
 # Derived, held both ways, and separate from the roster above for the reason the

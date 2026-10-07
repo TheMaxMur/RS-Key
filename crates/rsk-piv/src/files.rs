@@ -473,6 +473,7 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
     }
     if !provisioned(fs, key_fid(SLOT_ATTESTATION).get())? {
         let key = PrivKey::generate(Curve::P384, &mut crate::EcRng(rng)).ok_or(Sw::EXEC_ERROR)?;
+        crate::keygen::drop_slot_meta(fs, SLOT_ATTESTATION)?;
         seal::store_ec_key(dev, fs, rng, key_fid(SLOT_ATTESTATION), &key)?;
         let mut point = [0u8; MAX_EC_POINT];
         let plen = key.public_point(&mut point).map_err(crate::ec_sw)?;

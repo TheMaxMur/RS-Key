@@ -1185,17 +1185,17 @@ impl PivApplet<'_> {
             Err(_) => return Sw::MEMORY_FAILURE,
         };
         if to != 0xFF {
-            // Same power-cut ordering as IMPORT: the destination's own origin
-            // record goes before its new key, so a tear can never leave the moved
-            // key wearing the destination's provenance.
-            if let Err(sw) = keygen::drop_slot_meta(fs, key_fid(to).get()) {
-                blob.wipe();
-                return sw;
-            }
             let Some(sealed) = blob.expose().get(..blob_n) else {
                 blob.wipe();
                 return Sw::MEMORY_FAILURE;
             };
+            // Same power-cut ordering as IMPORT: the destination's own origin
+            // record goes before its new key, so a tear can never leave the moved
+            // key wearing the destination's provenance.
+            if let Err(sw) = keygen::drop_slot_meta(fs, to) {
+                blob.wipe();
+                return sw;
+            }
             if fs.put_key(key_fid(to), Sealed::wrap(sealed)).is_err() {
                 blob.wipe();
                 return Sw::MEMORY_FAILURE;
