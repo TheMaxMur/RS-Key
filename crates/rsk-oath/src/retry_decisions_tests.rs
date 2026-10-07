@@ -9,6 +9,7 @@ use std::rc::Rc;
 enum RetryFault {
     None,
     RefuseWrite,
+    RefuseFinalWrite,
     DropWrite,
     ShortReadback,
     WrongCounter,
@@ -47,6 +48,12 @@ impl Storage for RetryStorage {
                     self.hits.set(self.hits.get() + 1);
                     return Ok(());
                 }
+                RetryFault::RefuseFinalWrite => {
+                    self.hits.set(self.hits.get() + 1);
+                    if self.hits.get() == 2 {
+                        return Err(rsk_sdk::error::Error::MemoryFatal);
+                    }
+                }
                 RetryFault::ShortReadback | RetryFault::WrongCounter => self.pending = true,
                 RetryFault::None => {}
             }
@@ -65,6 +72,83 @@ impl Storage for RetryStorage {
     fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
         self.inner.for_each_key(f)
     }
+}
+
+#[test]
+fn a_refused_final_pin_change_keeps_the_old_verifier_and_spent_retry() {
+    let control = Rc::new(Cell::new(RetryFault::None));
+    let hits = Rc::new(Cell::new(0));
+    let mut fs = Fs::new(RetryStorage {
+        inner: RamStorage::new(),
+        fault: control.clone(),
+        pending: false,
+        hits: hits.clone(),
+    });
+    fs.scan();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let mut credential = put_data(b"bank", 0x21, 6, SECRET_SHA1, false, None);
+    credential.extend(tlv(TAG_PWS_PASSWORD, b"s3cr3t"));
+    assert_eq!(put(&mut app, &mut fs, &credential), Sw::OK);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_SET_PIN, 0, 0, &tlv(TAG_PASSWORD, b"1234"))
+        ),
+        (Sw::OK, vec![])
+    );
+    assert_eq!(pin_command(&mut app, &mut fs, INS_VERIFY_PIN), Sw::OK);
+    let mut before = [0; OTP_PIN_REC_V1];
+    assert_eq!(fs.read(EF_OTP_PIN, &mut before), Some(before.len()));
+    control.set(RetryFault::RefuseFinalWrite);
+    let change = [tlv(TAG_PASSWORD, b"1234"), tlv(TAG_NEW_PASSWORD, b"5678")].concat();
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_CHANGE_PIN, 0, 0, &change)),
+        (Sw::MEMORY_FAILURE, vec![])
+    );
+    assert_eq!(
+        hits.get(),
+        2,
+        "the decrement succeeds and the replacement write refuses"
+    );
+    assert!(!app.validated && !app.otp_pin_verified);
+    let mut after = [0; OTP_PIN_REC_V1];
+    assert_eq!(fs.read(EF_OTP_PIN, &mut after), Some(after.len()));
+    assert_eq!(after[0], before[0] - 1);
+    assert_eq!(&after[1..], &before[1..]);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_GET_CREDENTIAL, 0, 0, &tlv(TAG_NAME, b"bank"))
+        ),
+        (Sw::SECURITY_STATUS_NOT_SATISFIED, vec![])
+    );
+    control.set(RetryFault::None);
+    let mut fs = Fs::new(fs.into_storage());
+    fs.scan();
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_VERIFY_PIN, 0, 0, &tlv(TAG_PASSWORD, b"5678"))
+        ),
+        (Sw::SECURITY_STATUS_NOT_SATISFIED, vec![])
+    );
+    assert_eq!(pin_command(&mut app, &mut fs, INS_VERIFY_PIN), Sw::OK);
+    let (sw, body) = run(
+        &mut app,
+        &mut fs,
+        &apdu(INS_GET_CREDENTIAL, 0, 0, &tlv(TAG_NAME, b"bank")),
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        find_tag(&body, TAG_PWS_PASSWORD.into()),
+        Some(b"s3cr3t".as_slice())
+    );
 }
 
 fn pin_command<S: Storage>(app: &mut OathApplet, fs: &mut Fs<S>, ins: u8) -> Sw {

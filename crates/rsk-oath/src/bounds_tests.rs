@@ -3,6 +3,9 @@
 
 use super::*;
 
+#[path = "command_fields_tests.rs"]
+mod command_fields;
+
 #[test]
 fn public_enumeration_and_bulk_codes_skip_malformed_stored_credentials() {
     let mut fs = new_fs();
@@ -480,3 +483,12 @@ fn an_empty_or_unknown_pin_record_cannot_spend_a_retry() {
     }
     assert!(!fs.has_key(KeyFid::new(EF_OTP_PIN)));
 }
+
+#[path = "recovery_decisions_tests.rs"]
+mod recovery_decisions;
+
+#[path = "reset_walk_tests.rs"]
+mod reset_walk;
+
+#[path = "migration_decisions_tests.rs"]
+mod migration_decisions;

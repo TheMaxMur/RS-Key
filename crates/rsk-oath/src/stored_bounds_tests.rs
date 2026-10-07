@@ -13,6 +13,102 @@ fn device() -> Device<'static> {
 }
 
 #[test]
+fn extended_list_skips_a_legacy_name_that_cannot_fit_its_wire_length() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    assert_eq!(
+        put(
+            &mut app,
+            &mut fs,
+            &put_data(b"healthy", 0x21, 6, SECRET_SHA1, false, None)
+        ),
+        Sw::OK
+    );
+    let mut legacy = vec![TAG_NAME, 0x81, 254];
+    legacy.extend([b'x'; 254]);
+    let mut key = vec![0x21, 6];
+    key.extend(SECRET_SHA1);
+    legacy.extend(tlv(TAG_KEY, &key));
+    assert!(seal::seal_put(
+        &device(),
+        &mut fs,
+        &mut CountRng(3),
+        KeyFid::new(EF_OATH_CRED + 1),
+        &legacy
+    ));
+    let generation = fs.write_gen();
+    let mut expected = vec![TAG_NAME_LIST, 9, 0x21];
+    expected.extend(b"healthy");
+    expected.push(0);
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[1])),
+        (Sw::OK, expected)
+    );
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn get_omits_only_the_oversized_legacy_password_safe_field() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let mut legacy = put_data(b"site", 0x21, 6, SECRET_SHA1, false, None);
+    legacy.extend(tlv(TAG_PWS_LOGIN, b"login"));
+    legacy.extend([TAG_PWS_PASSWORD, 0x82, 1, 0]);
+    legacy.extend([0xA5; 256]);
+    legacy.extend(tlv(TAG_PWS_METADATA, b"metadata"));
+    assert!(seal::seal_put(
+        &device(),
+        &mut fs,
+        &mut CountRng(3),
+        KeyFid::new(EF_OATH_CRED),
+        &legacy
+    ));
+    let generation = fs.write_gen();
+    let expected = [
+        tlv(TAG_NAME, b"site"),
+        tlv(TAG_PWS_LOGIN, b"login"),
+        tlv(TAG_PWS_METADATA, b"metadata"),
+    ]
+    .concat();
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(INS_GET_CREDENTIAL, 0, 0, &tlv(TAG_NAME, b"site"))
+        ),
+        (Sw::OK, expected)
+    );
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn opening_beyond_the_plaintext_ceiling_cannot_touch_even_a_large_output() {
+    let oversized = vec![0xA5; seal::MAX_BLOB + 1];
+    let mut out = Secret::new([0x5A; CRED_MAX + 1]);
+    assert_eq!(seal::open(&device(), &oversized, &mut out), None);
+    assert_eq!(out.expose(), &[0x5A; CRED_MAX + 1]);
+    let mut fs = new_fs();
+    let fid = KeyFid::new(EF_OATH_CRED);
+    assert!(seal::seal_put(
+        &device(),
+        &mut fs,
+        &mut CountRng(3),
+        fid,
+        &[0xA5; CRED_MAX]
+    ));
+    assert_eq!(
+        seal::seal_read(&device(), &mut fs, fid, &mut out),
+        Some(CRED_MAX)
+    );
+    assert_eq!(&out.expose()[..CRED_MAX], &[0xA5; CRED_MAX]);
+    assert_eq!(out.expose()[CRED_MAX], 0x5A);
+}
+
+#[test]
 fn an_empty_or_unknown_access_code_cannot_validate_the_session() {
     for (code, expected) in [
         (&[][..], Sw::DATA_INVALID),
