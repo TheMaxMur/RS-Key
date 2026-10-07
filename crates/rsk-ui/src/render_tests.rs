@@ -8,6 +8,9 @@ use super::*;
 use crate::{HomeView, PANEL_H, SuccessKind};
 use embedded_graphics::{Pixel, geometry::OriginDimensions};
 
+#[path = "render_passkey_updates_tests.rs"]
+mod passkey_updates;
+
 fn has_color(d: &Rec, r: Rect, c: Rgb565) -> bool {
     (r.y..r.y + r.h).any(|y| (r.x..r.x + r.w).any(|x| d.at(x, y) == c))
 }

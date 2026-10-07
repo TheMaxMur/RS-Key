@@ -17,6 +17,9 @@ use crate::tests::{
     shuffled_layout,
 };
 
+#[path = "pin_bounds_tests.rs"]
+mod bounds;
+
 /// The T9 group the tests type from: `"2abc"`, so a cycle is visible in one press.
 const ABC: usize = 1;
 /// A second group, to prove a different key commits what the first left pending.

@@ -394,3 +394,51 @@ fn sealing_requires_pin_and_confirmation_and_changes_the_backup_status() {
     assert!(finalized);
     assert_eq!(exports(&env), 0);
 }
+
+#[test]
+fn backing_out_after_the_correct_pin_keeps_backup_exportable_and_unfinalized() {
+    let env = Env::new();
+    provision(&env);
+    env.set_device_pin(PIN);
+    assert!(
+        matches!(rsk_fido::passkeys::spend_and_verify_device_pin(&dev(), &mut env.fs.borrow_mut(), WRONG_PIN), rsk_fido::passkeys::LocalPin::Wrong { retries_left } if retries_left == rsk_fido::consts::MAX_PIN_RETRIES - 1)
+    );
+    assert_eq!(
+        rsk_fido::passkeys::device_pin_retries_left(&mut env.fs.borrow_mut()),
+        Some(rsk_fido::consts::MAX_PIN_RETRIES - 1)
+    );
+    let mut samples = vec![None; 4];
+    for point in pin_entry(PIN) {
+        samples.push(Some(point));
+        samples.extend([None; 4]);
+    }
+    samples.extend([None; 4]);
+    samples.push(Some(center(rsk_ui::TITLE_BACK_RECT)));
+    samples.extend([None; 4]);
+    let mut ui = env.ui(Pad::script(&samples));
+    ui.hooks.presence_ms = 3_000;
+    env.local(&mut ui).run_seal_backup();
+    assert_eq!(
+        rsk_fido::passkeys::device_pin_retries_left(&mut env.fs.borrow_mut()),
+        Some(rsk_fido::consts::MAX_PIN_RETRIES)
+    );
+    assert!(!ui.panel.pin_pads_painted().is_empty());
+    assert!(!rsk_fido::passkeys::backup_sealed(&mut env.fs.borrow_mut()));
+    assert_eq!(exports(&env), 0);
+    let mut finalized = false;
+    rsk_fido::journal::for_each_event(&dev(), &mut env.fs.borrow_mut(), |event| {
+        finalized |= event.event == rsk_fido::journal::EV_BACKUP_FINALIZE;
+        true
+    });
+    assert!(!finalized);
+    assert_eq!(
+        rsk_fido::passkeys::load_keydev(&dev(), &mut env.fs.borrow_mut())
+            .unwrap()
+            .expose(),
+        &SEED
+    );
+    assert_eq!(
+        env.local(&mut ui).load_backup().can_reveal,
+        !cfg!(feature = "fips-profile")
+    );
+}
