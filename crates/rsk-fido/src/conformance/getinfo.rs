@@ -144,8 +144,20 @@ fn getinfo_algorithms_policy() {
 
 #[test]
 fn getinfo_limits_and_formats() {
-    let r = Authr::fresh().get_info();
+    for complexity in [false, true] {
+        let mut a = Authr::fresh();
+        if complexity {
+            a.fs.put(
+                crate::consts::EF_MINPINLEN,
+                &[crate::consts::MIN_PIN_LENGTH, crate::pinpolicy::COMPLEXITY],
+            )
+            .unwrap();
+        }
+        check_limits_and_formats(&a.get_info());
+    }
+}
 
+fn check_limits_and_formats(r: &super::Resp) {
     let mut d = field_at(&r.body, 0x05).expect("maxMsgSize (0x05) present");
     assert_eq!(d.u64().unwrap(), MAX_MSG_SIZE);
 
@@ -161,7 +173,7 @@ fn getinfo_limits_and_formats() {
     assert!(n >= 1, "pinUvAuthProtocols must be non-empty");
     for _ in 0..n {
         let p = d.u32().unwrap();
-        assert!(p == 1 || p == 2, "unknown pinUvAuthProtocol {p}");
+        assert_pin_uv_protocol(p);
     }
 
     assert!(
@@ -228,11 +240,9 @@ fn the_sealed_members_are_published_before_any_token_is_issued() {
     assert_ok(&first);
     let second = a.get_info();
     for key in [0x19u32, 0x1E] {
-        let mut d = field_at(&first.body, key).unwrap_or_else(|| panic!("{key:#04x} present"));
-        let one = d.bytes().unwrap().to_vec();
+        let one = member_body(&first.body, key);
         assert_eq!(one.len(), 32, "{key:#04x} is iv ‖ one AES block");
-        let mut d2 = field_at(&second.body, key).unwrap_or_else(|| panic!("{key:#04x} present"));
-        let two = d2.bytes().unwrap().to_vec();
+        let two = member_body(&second.body, key);
         assert_ne!(one, two, "{key:#04x} must not repeat across calls");
         assert_ne!(one[..16], two[..16], "the IV is what must move");
     }
@@ -354,7 +364,11 @@ fn pcmr_grant(a: &mut Authr) -> [u8; 32] {
 /// getInfo member `key`, which must be present, as bytes.
 fn member(a: &mut Authr, key: u32) -> Vec<u8> {
     let r = a.get_info();
-    let mut d = field_at(&r.body, key).unwrap_or_else(|| panic!("{key:#04x} present"));
+    member_body(&r.body, key)
+}
+
+fn member_body(body: &[u8], key: u32) -> Vec<u8> {
+    let mut d = field_at(body, key).unwrap_or_else(|| panic!("{key:#04x} present"));
     d.bytes().unwrap().to_vec()
 }
 
@@ -430,4 +444,26 @@ fn a_reset_gives_the_credential_store_a_new_state() {
         new_state, state,
         "authenticatorReset must generate a new store state"
     );
+}
+
+#[test]
+#[should_panic(expected = "0x19 present")]
+fn a_required_member_oracle_refuses_an_absent_sealed_member() {
+    let body = enc(|e| {
+        e.map(1).unwrap().u8(0x1e).unwrap().bytes(&[7; 32]).unwrap();
+    });
+    assert_eq!(member_body(&body, 0x1e), [7; 32]);
+    let _ = member_body(&body, 0x19);
+}
+
+fn assert_pin_uv_protocol(p: u32) {
+    assert!(p == 1 || p == 2, "unknown pinUvAuthProtocol {p}");
+}
+
+#[test]
+#[should_panic(expected = "unknown pinUvAuthProtocol 3")]
+fn the_protocol_oracle_refuses_an_unassigned_protocol() {
+    assert_pin_uv_protocol(1);
+    assert_pin_uv_protocol(2);
+    assert_pin_uv_protocol(3);
 }

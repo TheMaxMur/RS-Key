@@ -24,7 +24,7 @@ const RP_ID: &str = "protect.example";
 const USER_ID: &[u8] = &[7, 7, 7, 7];
 const CDH: [u8; 32] = [0xCD; 32];
 
-/// makeCredential with a `credProtect` extension (request key 6), optionally rk.
+/// makeCredential with `credProtect` and `hmac-secret` (request key 6), optionally rk.
 fn mc_credprotect(level: u64, rk: bool) -> Vec<u8> {
     let mut buf = [0u8; 256];
     let n = {
@@ -47,12 +47,13 @@ fn mc_credprotect(level: u64, rk: bool) -> Vec<u8> {
         e.str("type").unwrap().str("public-key").unwrap();
         e.u8(6)
             .unwrap()
-            .map(1)
+            .map(2)
             .unwrap()
             .str("credProtect")
             .unwrap()
             .u64(level)
             .unwrap();
+        e.str("hmac-secret").unwrap().bool(true).unwrap();
         if rk {
             e.u8(7)
                 .unwrap()

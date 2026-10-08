@@ -64,12 +64,13 @@ fn ga_credblob() -> Vec<u8> {
         e.u8(2).unwrap().bytes(&CDH).unwrap();
         e.u8(4)
             .unwrap()
-            .map(1)
+            .map(2)
             .unwrap()
             .str("credBlob")
             .unwrap()
             .bool(true)
             .unwrap();
+        e.str("uvm").unwrap().bool(true).unwrap();
         e.writer().position()
     };
     buf[..n].to_vec()
@@ -275,9 +276,13 @@ fn third_party_payment_is_reported_on_the_assertion_only() {
         let mut a = Authr::fresh();
         let mc = a.send(
             CTAP_MAKE_CREDENTIAL,
-            &mc_ext_for(USER_ID, rk, 1, ask_third_party_payment),
+            &mc_ext_for(USER_ID, rk, 2, |e| {
+                e.str("hmac-secret").unwrap().bool(true).unwrap();
+                ask_third_party_payment(e);
+            }),
         );
         assert_ok(&mc);
+        assert_eq!(mc_ext_bool(&mc.body, "hmac-secret"), Some(true));
         assert!(
             !mc_ext_names(&mc.body)
                 .iter()
@@ -305,7 +310,10 @@ fn third_party_payment_is_reported_on_the_assertion_only() {
 fn third_party_payment_reads_false_for_a_credential_made_without_it() {
     for rk in [false, true] {
         let mut a = Authr::fresh();
-        let mc = a.send(CTAP_MAKE_CREDENTIAL, &mc_ext_for(USER_ID, rk, 0, |_| {}));
+        let mc = a.send(
+            CTAP_MAKE_CREDENTIAL,
+            &mc_ext_for(USER_ID, rk, 0, no_extensions),
+        );
         assert_ok(&mc);
         let g = a.send(
             CTAP_GET_ASSERTION,
@@ -327,7 +335,10 @@ fn third_party_payment_reads_false_for_a_credential_made_without_it() {
 #[test]
 fn credblob_reads_empty_for_a_credential_made_without_one() {
     let mut a = Authr::fresh();
-    let mc = a.send(CTAP_MAKE_CREDENTIAL, &mc_ext_for(USER_ID, true, 0, |_| {}));
+    let mc = a.send(
+        CTAP_MAKE_CREDENTIAL,
+        &mc_ext_for(USER_ID, true, 0, no_extensions),
+    );
     assert_ok(&mc);
     let g = a.send(
         CTAP_GET_ASSERTION,
@@ -420,7 +431,10 @@ fn a_non_boolean_large_blob_key_or_third_party_payment_is_the_wrong_type() {
         &["largeBlobKey", "thirdPartyPayment"]
     };
     let mut a = Authr::fresh();
-    let mc = a.send(CTAP_MAKE_CREDENTIAL, &mc_ext_for(USER_ID, true, 0, |_| {}));
+    let mc = a.send(
+        CTAP_MAKE_CREDENTIAL,
+        &mc_ext_for(USER_ID, true, 0, no_extensions),
+    );
     assert_ok(&mc);
     let id = cred_id(&mc.body);
     for &name in names {
@@ -491,7 +505,27 @@ fn extension_readers_skip_other_names_and_distinguish_absent_maps() {
     );
     assert_ok(&assertion);
     assert_eq!(ga_ext_output(&assertion.body, "unknown"), None);
-    let plain = authenticator.send(CTAP_GET_ASSERTION, &ga_ext_for(&id, 0, |_| {}));
+    let plain = authenticator.send(CTAP_GET_ASSERTION, &ga_ext_for(&id, 0, no_extensions));
     assert_ok(&plain);
     assert_eq!(ga_ext_output(&plain.body, "credBlob"), None);
+}
+
+fn no_extensions(_: &mut Encoder<Cursor<&mut [u8]>>) {}
+
+#[test]
+fn an_empty_extension_writer_cannot_satisfy_a_nonempty_map() {
+    let mut a = Authr::fresh();
+    assert_ok(&a.send(
+        CTAP_MAKE_CREDENTIAL,
+        &mc_ext_for(USER_ID, false, 0, no_extensions),
+    ));
+    let malformed = a.send(
+        CTAP_MAKE_CREDENTIAL,
+        &mc_ext_for(USER_ID, false, 1, no_extensions),
+    );
+    assert_eq!(
+        malformed.status,
+        crate::error::CtapError::InvalidCbor.as_u8()
+    );
+    assert!(malformed.body.is_empty());
 }

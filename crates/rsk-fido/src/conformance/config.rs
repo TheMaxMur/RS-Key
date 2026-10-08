@@ -328,3 +328,33 @@ fn set_min_pin_length_authorizes_a_full_length_rp_id_list() {
         "an RP off the list learns nothing"
     );
 }
+
+#[test]
+#[should_panic(expected = "getInfo 0xffffffff present")]
+fn a_required_boolean_oracle_refuses_an_absent_member() {
+    let _ = getinfo_bool(&mut Authr::fresh(), u32::MAX);
+}
+
+#[test]
+fn the_min_pin_oracle_skips_other_extension_values() {
+    let mut ad = vec![0; 55];
+    ad[32] = FLAG_ED;
+    ad.extend(enc(|e| {
+        e.map(0).unwrap();
+        e.map(2).unwrap().str("uvm").unwrap().array(0).unwrap();
+        e.str("minPinLength").unwrap().u8(7).unwrap();
+    }));
+    let body = enc(|e| {
+        e.map(1).unwrap().u8(2).unwrap().bytes(&ad).unwrap();
+    });
+    assert_eq!(min_pin_output(&body), Some(7));
+    ad.truncate(55);
+    ad.extend(enc(|e| {
+        e.map(0).unwrap();
+        e.map(1).unwrap().str("uvm").unwrap().array(0).unwrap();
+    }));
+    let body = enc(|e| {
+        e.map(1).unwrap().u8(2).unwrap().bytes(&ad).unwrap();
+    });
+    assert_eq!(min_pin_output(&body), None);
+}

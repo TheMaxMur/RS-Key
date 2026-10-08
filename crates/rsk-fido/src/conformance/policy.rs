@@ -99,10 +99,16 @@ fn mc_request(
 /// Go catalog: uvm P-1, pin-complexity-policy P-1/P-2, authenticator-config P-6.
 #[test]
 fn catalog_extensions_work_without_makecredential_options_and_false_is_a_policy_value() {
+    for complexity in [false, true] {
+        catalog_extension_policy(complexity);
+    }
+}
+
+fn catalog_extension_policy(complexity: bool) {
     let mut a = Authr::fresh();
     let mut params = Encoder::new(Cursor::new([0u8; 1024]));
     params
-        .map(1)
+        .map(2)
         .unwrap()
         .u8(2)
         .unwrap()
@@ -110,6 +116,7 @@ fn catalog_extensions_work_without_makecredential_options_and_false_is_a_policy_
         .unwrap()
         .str(RP)
         .unwrap();
+    params.u8(4).unwrap().bool(complexity).unwrap();
     assert_ok_empty(&config(&mut a, &finish(params)));
     let expected = field_at(&a.get_info().body, 0x1b).unwrap().bool().unwrap();
     let token = a.arm_token(PERM_MC);
@@ -356,4 +363,38 @@ fn complexity_config_is_monotonic_and_rp_scoped() {
     ));
     let r = mc(&mut a, 2, "pinComplexityPolicy", true, true);
     assert_eq!(extension(&r, true, "pinComplexityPolicy"), None);
+}
+
+fn assertion_extension_reply(names: &[&str]) -> Resp {
+    let mut ad = vec![0; 37];
+    ad[32] = FLAG_ED;
+    let mut e = Encoder::new(Cursor::new([0u8; 1024]));
+    e.map(names.len() as u64).unwrap();
+    for name in names {
+        e.str(name).unwrap().bool(true).unwrap();
+    }
+    ad.extend(finish(e));
+    let mut e = Encoder::new(Cursor::new([0u8; 1024]));
+    e.map(1).unwrap().u8(2).unwrap().bytes(&ad).unwrap();
+    Resp {
+        status: 0,
+        body: finish(e),
+    }
+}
+
+#[test]
+fn the_extension_oracle_checks_a_complete_canonical_map() {
+    let reply = assertion_extension_reply(&["uvm", "credBlob"]);
+    assert_eq!(extension(&reply, false, "credBlob"), Some(vec![0xf5]));
+    assert_eq!(extension(&reply, false, "missing"), None);
+}
+
+#[test]
+#[should_panic(expected = "canonical extension order")]
+fn the_extension_oracle_refuses_reversed_keys() {
+    let _ = extension(
+        &assertion_extension_reply(&["credBlob", "uvm"]),
+        false,
+        "uvm",
+    );
 }

@@ -86,7 +86,11 @@ fn reset_denied_without_presence() {
 /// platform reads as enterprise attestation unsupported, not disabled (§6.4).
 fn ep_option(a: &mut Authr) -> Option<bool> {
     let r = a.get_info();
-    let mut d = field_at(&r.body, 4).expect("options (0x04) present");
+    ep_option_body(&r.body)
+}
+
+fn ep_option_body(body: &[u8]) -> Option<bool> {
+    let mut d = field_at(body, 4).expect("options (0x04) present");
     let n = d.map().unwrap().unwrap();
     for _ in 0..n {
         let hit = d.str().unwrap() == "ep";
@@ -131,4 +135,20 @@ fn a_reset_disables_enterprise_attestation_and_still_advertises_it() {
         Some(false),
         "after a reset ep is present and false"
     );
+}
+
+#[test]
+fn the_enterprise_option_oracle_skips_other_names_and_reports_absence() {
+    for enabled in [false, true] {
+        let mut e = Encoder::new(Cursor::new([0u8; 32]));
+        e.map(1).unwrap().u8(4).unwrap().map(2).unwrap();
+        e.str("up").unwrap().bool(!enabled).unwrap();
+        e.str("ep").unwrap().bool(enabled).unwrap();
+        let n = e.writer().position();
+        assert_eq!(
+            ep_option_body(&e.into_writer().into_inner()[..n]),
+            Some(enabled)
+        );
+    }
+    assert_eq!(ep_option_body(&[0xa1, 4, 0xa0]), None);
 }

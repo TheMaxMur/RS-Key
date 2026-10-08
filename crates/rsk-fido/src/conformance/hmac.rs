@@ -910,3 +910,33 @@ fn discoverable_hmac_secret_agrees_with_the_same_credential_in_an_allowlist() {
     assert_eq!(auth_flags(&discovered.body) & crate::consts::FLAG_UV, 0);
     assert_eq!(channel.open(&hmac_output(&discovered.body)), named);
 }
+
+fn assertion_body_with_extensions(ext: &[u8]) -> Vec<u8> {
+    let mut ad = vec![0; 37];
+    ad.extend_from_slice(ext);
+    let mut e = Encoder::new(Cursor::new([0u8; 128]));
+    e.map(1).unwrap().u8(2).unwrap().bytes(&ad).unwrap();
+    finish_fixture(e)
+}
+
+#[test]
+fn the_hmac_oracle_skips_other_extension_values() {
+    let mut e = Encoder::new(Cursor::new([0u8; 128]));
+    e.map(2).unwrap().str("uvm").unwrap().array(0).unwrap();
+    e.str("hmac-secret").unwrap().bytes(&[7; 32]).unwrap();
+    assert_eq!(
+        hmac_output(&assertion_body_with_extensions(&finish_fixture(e))),
+        [7; 32]
+    );
+}
+
+#[test]
+#[should_panic(expected = "hmac-secret output missing from the assertion")]
+fn the_hmac_oracle_refuses_a_missing_output() {
+    let _ = hmac_output(&assertion_body_with_extensions(&[0xa0]));
+}
+
+fn finish_fixture(e: Encoder<Cursor<[u8; 128]>>) -> Vec<u8> {
+    let n = e.writer().position();
+    e.into_writer().into_inner()[..n].to_vec()
+}
