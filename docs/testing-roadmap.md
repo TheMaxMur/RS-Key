@@ -117,8 +117,8 @@ The latest local completion boundary is:
 
 | Phase | Established | Remaining |
 |---|---|---|
-| 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; unemitted and device code need separate evidence |
-| 2 | Additional command-level authorization, retry, buffer, stored-record, retained-rendering and F9 identity cases | 996 raw unexecuted outcomes; the local coordinate index retains open cases |
+| 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
+| 2 | Command-level cases and the completed default-profile review of 996 baseline outcomes and 27 function groups, including direct test-util cases | MC/DC evidence and closure in each declared profile remain open; current raw residuals and their dispositions are recorded in [Testing](testing.md) |
 | 3 | Seed and journal cuts; compound OpenPGP PIN and boot-repair record cuts; command/recovery NOR byte cuts including F9 provisioning | Extend command-specific recovery histories to the remaining persistent operations |
 | 4 | Semantic controls through host, fuzz, Miri and image runners | Whole-core mutation closure and rare crypto fallback paths |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
@@ -170,6 +170,121 @@ where supported; omitting a case removes the expected counter; the restored
 suite restores it. A full host baseline is reproducible with an explicit
 list of unsupported constructs and residuals. Missing profiles and zero tests
 are reported as missing evidence rather than success.
+
+### MC/DC decision recorded on 2026-10-08
+
+**Status: decision recorded; implementation deferred.** This change records the
+method and its acceptance criteria. It adds no instrumentation, tests, tools,
+dependencies, compiler pins, gate rows or CI jobs. Phases 1 and 2 remain open
+on their MC/DC criteria; recording this decision does not discharge them.
+
+The selected route has two steps. First, review independence pairs for named
+security decisions using existing command tests and bounded proofs. This can
+establish evidence for individual decisions without changing the compiler.
+Then evaluate compiler-generated MC/DC in an isolated host coverage build
+before considering wider adoption. Witness is also a candidate for a separate
+Wasm pilot under the scope restrictions below. A repository-wide measurement
+must come from a calibrated instrumenter with an explicit decision inventory; handwritten
+predicate copies and summed condition counters cannot supply that percentage.
+
+The present blocker is the compiler, not the report flag: the retained local
+probe rejects `mcdc` in `coverage-options`. Upstream has an
+[accepted goal to restore maintained MC/DC support](https://goals.rust-lang.org/2026/mcdc-coverage-support.html),
+which is a development plan rather than evidence that our pinned compiler
+supports it. The [GNATcoverage Rust workflow](https://docs.adacore.com/gnatcov-docs/gnatcov/cov_rust.html)
+also delegates instrumentation to rustc and targets GNAT Pro for Rust;
+compatibility with our toolchain is not guaranteed. That manual warns that
+requesting MC/DC analysis on insufficiently instrumented inputs can miss
+violations, and lists source-location, macro and pattern-matching limitations.
+
+| Option | Decision | Reason |
+|---|---|---|
+| Existing tests with reviewed independence pairs | First step, for a declared security subset | Reuses the actual Rust command paths and establishes a reference for a later instrumenter |
+| Maintained upstream rustc MC/DC with cargo-llvm-cov/LLVM | Preferred automatic measurement route when available and calibrated | Keeps decision identity and evaluation tracking in the compiler; availability must be verified |
+| GNATcoverage with a compatible Rust compiler | Alternative pilot if available | Evaluate compiler compatibility, licensing and CI availability before adopting it; an analyzer alone cannot instrument our current binaries |
+| Witness on separately compiled Wasm libraries | Additional pilot candidate, not the Rust-source measurement route | Reconstructs post-codegen decisions from Wasm branches and debug information; source and ARM correspondence must be established separately |
+| Historical nightly, a local rustc fork or a new custom instrumenter | Not selected | Adds compiler maintenance or a second decision parser to this task; supporting macros, cfg and evaluation order is substantial work |
+| Clang MC/DC for C components | Separate future scope | [Clang's source coverage](https://clang.llvm.org/docs/SourceBasedCodeCoverage.html) instruments its own frontend; its MC/DC support does not establish coverage of Rust decisions |
+
+**Criterion and scope.** Use masking MC/DC as the target for Boolean decisions,
+with Rust's short-circuit semantics preserved. Retain stricter unique-cause
+pairs when available, but identify the criterion in each report and never mix
+variants in one percentage. The [MC/DC variant definitions](https://docs.adacore.com/gnatcov-docs/gnatcov/cov_source.html#mcdc-variants)
+distinguish changes confined to the target condition from changes in other
+conditions whose influence is masked. A skipped operand is recorded as `-`,
+not as false or as an observed value. A claimed masking pair needs an explicit
+explanation of why other varying or skipped operands cannot explain the
+decision change.
+
+Start with FIDO PIN/token permissions, RP binding and expiration; PIV/OpenPGP
+PIN and grant gates; presence/CANCEL ownership; and storage commit/read-back
+decisions. Include Boolean expressions returned or assigned by helpers, not
+only `if` conditions. Follow the exact compiled profile and distinguish each
+condition occurrence, including repeated or coupled predicates. Constants,
+coupling or state invariants may make an independence pair infeasible: retain
+the reason and proof as a separate disposition, never as an executed pair.
+Pattern matching, `?`, iteration, macros the tool cannot map, device glue and
+C/assembly require their own scope and exit evidence until actually supported.
+
+For each reviewed decision, the future evidence must retain:
+
+- Its source span and content hash, enclosing function, compiler, target and
+  feature closure; the expression tree and its atomic condition occurrences.
+- The real test inputs and starting state, evaluated operand outcomes and
+  decision result for each execution, the selected pair for each condition,
+  and any masking or feasibility argument. Separate evaluations must not be
+  stitched into a synthetic vector.
+- Assertions for status, protected effects, persistent state and grant/retry
+  transitions. Final status alone does not identify which internal guard fired;
+  the test-to-operand and test-to-decision mapping needs source review or proof.
+- Separate results for witnessed conditions, untested feasible conditions,
+  infeasible pairs and unsupported decisions. A hand-reviewed subset stays a
+  scoped independence report; it does not establish native whole-core MC/DC.
+
+The review uses the existing implementation rather than a copied Boolean model
+as its only oracle. Future observation must evaluate each operand only where
+the original code evaluates it, and exactly once. It must preserve side effects,
+early exits and evaluation order; it must not call a skipped predicate to fill
+a trace. These observations belong to a test build, with no deployed tracing
+or secret bytes in the evidence.
+
+**Future pilot acceptance.** Begin only when implementation is requested. First
+calibrate the chosen tool on conjunction, disjunction, mixed operators,
+negation, short-circuit calls with side effects, repeated/coupled conditions,
+constants, macros, generics and relevant cfg variants. Include a control suite
+with all condition outcomes and both decision results but a missing independence
+pair; it must remain incomplete. Removing a necessary witness must expose the
+specific missing obligation, and restoring it must restore the result. Empty
+MC/DC maps, absent instrumentation, missing traces and unsupported constructs
+must be visible gaps, not successful zero-obligation reports.
+
+Only after calibration, compare a small security slice with the reviewed pairs
+and the ordinary host suite on the same sources. Retain binary and trace hashes,
+raw maps, unsupported constructs, source correspondence, runtime and memory
+cost. Change main toolchain pins or the gate only as a separately authorized
+step. Until then, preserve the current raw condition reports and continue the
+other roadmap phases; automatic MC/DC remains unmeasured.
+
+**Witness assessment.** The read-only review of
+[pulseengine/witness at `f3c70b7fed95`](https://github.com/pulseengine/witness/tree/f3c70b7fed95a9d3a704e8bb6d940cd49b38de60)
+found an existing Wasm instrumenter, per-evaluation traces, pair reports and a
+separate checker. Its [documented scope](https://github.com/pulseengine/witness/blob/f3c70b7fed95a9d3a704e8bb6d940cd49b38de60/docs/concepts.md)
+is post-codegen: optimization can merge source conditions or replace their
+branches with arithmetic. Source-line attribution alone does not establish
+the original expression tree. The [checker](https://github.com/pulseengine/witness/blob/f3c70b7fed95a9d3a704e8bb6d940cd49b38de60/crates/witness-mcdc-checker/src/lib.rs)
+checks supplied rows and outcomes; that does not by itself validate the
+instrumenter, decision reconstruction or correspondence with our ARM image.
+Its variant labels also need comparison with the criterion chosen above.
+
+A future Witness pilot would compile an unchanged, declared library subset
+for Wasm and compare its results with ordinary host tests and reviewed source
+pairs. Record the different target and cfg closure. Require controls for fused
+conditions, arithmetic-only decisions, branch polarity, multiple decisions on
+one line, inlining/macros, repeated evaluations and damaged or incomplete traces.
+Do not accept `0/0` when an intended source decision disappeared. Keep Wasm
+post-codegen coverage separate from Rust-source MC/DC and ARM image evidence.
+The tool is a candidate, not an adopted dependency; this review installs and
+executes nothing, and makes no compatibility or qualification claim for RS-Key.
 
 ## Phase 2 Cover branches and independent conditions
 
