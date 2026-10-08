@@ -992,3 +992,14 @@ fn yubico_attestation_extensions_share_the_registered_oid_prefix() {
         assert_eq!(expected[9], suffix);
     }
 }
+
+#[test]
+fn a_root_private_key_without_its_public_do_is_not_a_provisioned_root() {
+    let mut fs = provisioned_fs(RamStorage::new());
+    fs.put_key(EF_PK_ATT, rsk_fs::Sealed::wrap(b"retained private key"))
+        .unwrap();
+    fs.force_delete(EF_PB_ATT).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(provisioned(&mut fs), Ok(false));
+    assert_eq!(fs.write_gen(), generation);
+}

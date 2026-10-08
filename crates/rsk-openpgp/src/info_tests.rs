@@ -9,6 +9,49 @@ use rsk_fs::storage::ram::RamStorage;
 const ATTR_ED25519: &[u8] = &[0x16, 0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x01];
 const ATTR_P256: &[u8] = &[0x13, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
 
+#[test]
+fn empty_zero_and_short_public_records_keep_their_distinct_defaults() {
+    let mut fs = fs();
+    fs.put(EF_PK_SIG.get(), &[0xab; 40]).unwrap();
+    for attr in [
+        &[][..],
+        &[ALGO_RSA][..],
+        &[ALGO_RSA, 8][..],
+        &[ALGO_RSA, 8, 0][..],
+    ] {
+        fs.put(EF_ALGO_PRIV1, attr).unwrap();
+        let expected = if attr.is_empty() {
+            2048
+        } else if attr.len() < 3 {
+            0
+        } else {
+            2048
+        };
+        assert_eq!(read_info(&mut fs).slots[0].algo, SlotAlgo::Rsa(expected));
+    }
+    for empty in [&[][..], &[0][..]] {
+        for fid in [EF_FP_SIG, EF_TS_SIG, EF_UIF_SIG, EF_PW_PRIV] {
+            fs.put(fid, empty).unwrap();
+        }
+        let info = read_info(&mut fs);
+        assert_eq!(info.slots[0].fingerprint, None);
+        assert!(!info.slots[0].created);
+        assert!(!info.slots[0].touch);
+        assert_eq!((info.pw1_retries, info.pw3_retries), (3, 3));
+    }
+}
+
+#[test]
+fn each_cardholder_field_independently_makes_the_card_nonempty() {
+    for fid in [EF_CH_NAME, EF_LOGIN_DATA, EF_URI_URL, EF_LANG_PREF] {
+        let mut fs = fs();
+        fs.put(fid, b"en").unwrap();
+        assert!(read_cardholder(&mut fs).any(), "FID {fid:04x}");
+        fs.put(fid, &[]).unwrap();
+        assert!(!read_cardholder(&mut fs).any());
+    }
+}
+
 fn fs() -> Fs<RamStorage> {
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();

@@ -423,3 +423,83 @@ fn migration_of_an_absent_pw1_copy_keeps_the_admin_copy_and_can_be_repaired() {
     load_dek(&otp_dev(), &mut fs, &sess, &mut out).unwrap();
     assert_eq!(out.expose(), expected.expose());
 }
+
+#[test]
+fn empty_verifier_records_cannot_supply_a_length_or_authorize_pin_recovery() {
+    let mut fs = setup();
+    let mut sess = Session::new();
+    arm_all(&dev(), &mut fs, &mut sess);
+    let flags = (sess.has_pw1, sess.has_pw2, sess.has_pw3, sess.has_rc);
+    for fid in [EF_PW1, EF_PW3, EF_RC] {
+        fs.put(fid, &[]).unwrap();
+    }
+    let generation = fs.write_gen();
+    assert!(!offered_len_impossible(&mut fs, EF_PW1, PIN_MAX_LEN + 1));
+    assert_eq!(
+        change_pin(
+            &dev(),
+            &mut fs,
+            &mut sess,
+            &mut CountRng(0),
+            0,
+            PW1_MODE81,
+            PW1_DEFAULT
+        ),
+        Sw::REFERENCE_NOT_FOUND
+    );
+    assert_eq!(
+        reset_retry(
+            &dev(),
+            &mut fs,
+            &mut sess,
+            &mut CountRng(0),
+            0,
+            PW1_MODE81,
+            PW1_DEFAULT
+        ),
+        Sw::REFERENCE_NOT_FOUND
+    );
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(
+        (sess.has_pw1, sess.has_pw2, sess.has_pw3, sess.has_rc),
+        flags
+    );
+    fs.put(EF_PW3, &[0, 1, 0]).unwrap();
+    assert!(verifier_unusable(&mut fs, EF_PW3));
+}
+
+#[test]
+fn retry_restoration_refuses_both_missing_counter_positions_before_writing() {
+    for (fid, width, short_priv) in [
+        (EF_PW1, PW1_RETRY_IDX, true),
+        (EF_PW3, (EF_PW3 & 0xf) as usize, false),
+    ] {
+        let mut fs = setup();
+        fs.put(
+            if short_priv {
+                EF_PW_PRIV
+            } else {
+                EF_PW_RETRIES
+            },
+            &vec![1; width],
+        )
+        .unwrap();
+        let generation = fs.write_gen();
+        assert_eq!(
+            pin_reset_retries(&mut fs, fid, true),
+            Err(Sw::MEMORY_FAILURE)
+        );
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
+
+#[test]
+fn a_truncated_verifier_is_unusable_even_with_a_nonzero_length_byte() {
+    let mut fs = setup();
+    for value in [&[][..], &[1][..], &[1, 1][..]] {
+        fs.put(EF_PW3, value).unwrap();
+        let generation = fs.write_gen();
+        assert!(verifier_unusable(&mut fs, EF_PW3));
+        assert_eq!(fs.write_gen(), generation);
+    }
+}

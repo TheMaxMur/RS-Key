@@ -1470,18 +1470,20 @@ fn import_rsa_dec_then_pso_decipher() {
 
     verify_pin(&mut app, &mut fs, consts::PW1_MODE82, consts::PW1_DEFAULT);
 
-    // A "session key" OpenSSL encrypted to this public key; the card recovers it.
-    let (msg, ct) = rsk_rsa::vectors::ENCRYPT[2];
-    let (msg, ct) = (hx(msg), hx(ct));
-    let mut data = vec![0x00u8]; // OpenPGP padding-indicator byte
-    data.extend_from_slice(&ct);
-    let mut a = vec![0x00, consts::INS_PSO, 0x80, 0x86, 0x00];
-    a.push((data.len() >> 8) as u8);
-    a.push(data.len() as u8);
-    a.extend_from_slice(&data);
-    let (pt, sw) = run(&mut app, &mut fs, &a);
-    assert_eq!(sw, Sw::OK);
-    assert_eq!(pt, msg);
+    for (msg, ct) in rsk_rsa::vectors::ENCRYPT {
+        let (msg, ct) = (hx(msg), hx(ct));
+        let mut data = vec![0x00u8]; // OpenPGP padding-indicator byte
+        data.extend_from_slice(&ct);
+        let mut a = vec![0x00, consts::INS_PSO, 0x80, 0x86, 0x00];
+        a.push((data.len() >> 8) as u8);
+        a.push(data.len() as u8);
+        a.extend_from_slice(&data);
+        let (pt, sw) = run(&mut app, &mut fs, &a);
+        assert_eq!(sw, Sw::OK);
+        assert_eq!(pt, msg);
+        assert!(app.sess.has_pw2);
+        assert!(!app.sess.has_pw1);
+    }
 }
 
 #[test]
@@ -3948,3 +3950,6 @@ fn a_refused_rsa_import_keeps_the_slot_and_its_origin() {
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "reads_tests.rs"]
 mod reads;
+
+#[path = "command_boundaries_tests.rs"]
+mod command_boundaries;

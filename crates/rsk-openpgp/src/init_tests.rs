@@ -505,3 +505,12 @@ fn every_first_boot_dek_guard_refuses_its_own_faulted_probe() {
         fs = fs2;
     }
 }
+
+#[test]
+fn retry_and_maximum_repairs_can_observe_an_absent_status_record() {
+    let mut fs = Fs::new(RamStorage::new());
+    let generation = fs.write_gen();
+    assert!(settle_rc_retry_counter(&mut fs).is_ok());
+    assert!(settle_pw_status_maxima(&mut fs).is_ok());
+    assert_eq!(fs.write_gen(), generation);
+}

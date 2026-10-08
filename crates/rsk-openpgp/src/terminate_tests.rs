@@ -773,3 +773,74 @@ fn a_terminate_that_faults_mid_sweep_still_re_arms_the_lap() {
     );
     assert_eq!(sweep_only.answered, Sw::MEMORY_FAILURE);
 }
+
+#[test]
+fn all_resetting_code_and_staged_dek_copies_are_secrets_in_the_openpgp_domain() {
+    for fid in [
+        EF_DEK_RC,
+        EF_DEK_STAGE_PW1,
+        EF_DEK_STAGE_RC,
+        EF_DEK_STAGE_PW3,
+    ] {
+        assert!(is_openpgp_fid(fid.get()));
+        assert!(!is_openpgp_gate_fid(fid.get()));
+    }
+    let mut fs = seeded();
+    let bad = Apdu { p2: 1, ..apdu() };
+    let generation = fs.write_gen();
+    assert_eq!(
+        terminate_df(&dev(), &mut fs, &mut CountRng(0), true, &bad),
+        Sw::INCORRECT_P1P2
+    );
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn repeated_backend_versions_are_deleted_once_per_distinct_fid() {
+    struct Twice {
+        inner: RamStorage,
+        removes: usize,
+    }
+    impl Storage for Twice {
+        fn read(&mut self, fid: u16, out: &mut [u8]) -> Option<usize> {
+            self.inner.read(fid, out)
+        }
+        fn size(&mut self, fid: u16) -> Option<usize> {
+            self.inner.size(fid)
+        }
+        fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+            self.inner.write(fid, data)
+        }
+        fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+            self.removes += 1;
+            self.inner.remove(fid)
+        }
+        fn for_each_key(&mut self, visit: &mut dyn FnMut(u16)) -> bool {
+            self.inner.for_each_key(&mut |fid| {
+                visit(fid);
+                visit(fid);
+            })
+        }
+    }
+    let mut fs = Fs::new(Twice {
+        inner: RamStorage::new(),
+        removes: 0,
+    });
+    fs.scan();
+    fs.put(EF_LOGIN_DATA, b"login").unwrap();
+    assert_eq!(wipe_openpgp(&mut fs), Ok(()));
+    assert_eq!(fs.read(EF_LOGIN_DATA, &mut [0; 5]), None);
+    assert_eq!(fs.into_storage().removes, 1);
+}
+
+#[test]
+fn a_status_record_without_the_pw3_counter_allows_recovery_termination() {
+    let mut fs = seeded();
+    fs.put(EF_PW_PRIV, &[1]).unwrap();
+    let request = rsk_sdk::Apdu::parse(&[0, INS_TERMINATE_DF, 0, 0]).unwrap();
+    assert_eq!(
+        terminate_df(&dev(), &mut fs, &mut CountRng(0), false, &request),
+        Sw::OK
+    );
+    assert_eq!(lifecycle(&mut fs), Lifecycle::Terminated);
+}
