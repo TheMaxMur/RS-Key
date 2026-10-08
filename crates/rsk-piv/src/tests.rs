@@ -11114,3 +11114,6 @@ mod attestation_recovery;
 
 #[path = "coverage_boundaries_tests.rs"]
 mod coverage_boundaries;
+
+#[path = "restart_tests.rs"]
+mod restarts;
