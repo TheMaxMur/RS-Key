@@ -437,3 +437,6 @@ fn the_phy_and_led_writers_are_shut_while_a_code_is_set() {
     medium.stick(Some(EF_DEV_LOCK));
     assert_eq!(ensure_unlocked(&mut stuck), Err(DevConfError::Store));
 }
+
+#[path = "lock_recovery_tests.rs"]
+mod recovery;
