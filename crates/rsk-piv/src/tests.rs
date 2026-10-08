@@ -11099,3 +11099,6 @@ mod cache_retirement;
 
 #[path = "attestation_recovery_tests.rs"]
 mod attestation_recovery;
+
+#[path = "coverage_boundaries_tests.rs"]
+mod coverage_boundaries;

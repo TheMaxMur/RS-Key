@@ -392,6 +392,10 @@ fn block_mut(buf: &mut [u8; 16], len: usize) -> Result<&mut [u8], Sw> {
     buf.get_mut(..len).ok_or(Sw::EXEC_ERROR)
 }
 
+#[cfg(test)]
+#[path = "auth_freshness_tests.rs"]
+mod freshness_tests;
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn general_authenticate<S: Storage>(
     sess: &mut Session,

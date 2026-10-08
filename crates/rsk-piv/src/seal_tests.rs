@@ -39,6 +39,21 @@ fn dev(otp: Option<&'static [u8; 32]>) -> Device<'static> {
     }
 }
 
+#[test]
+fn migration_without_an_otp_root_keeps_every_record_and_draws_no_entropy() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    seal_put(&dev(None), &mut fs, &mut TestRng(7), fid, &[0x11; 33]).unwrap();
+    let generation = fs.write_gen();
+    let mut rng = TestRng(1);
+    assert!(!migrate_kbase(&dev(None), &mut fs, &mut rng));
+    assert_eq!(rng.0, 1);
+    assert_eq!(fs.write_gen(), generation);
+    let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
+    assert_eq!(seal_read(&dev(None), &mut fs, fid, &mut plain), Ok(33));
+    assert_eq!(&plain.expose()[..33], &[0x11; 33]);
+}
+
 /// The cap is checked before the nonce is drawn, so an over-long plaintext costs
 /// no randomness and leaves no half-written record for the next read to find.
 #[test]

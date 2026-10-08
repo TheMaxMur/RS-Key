@@ -120,3 +120,7 @@ pub fn build_cert(
 pub fn ecdsa_sig_der(raw: &[u8], out: &mut [u8]) -> Result<usize, Sw> {
     rsk_x509::ecdsa_der(raw, out).map_err(x509_sw)
 }
+
+#[cfg(test)]
+#[path = "x509_tests.rs"]
+mod tests;
