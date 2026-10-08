@@ -518,7 +518,7 @@ where
         let start = Instant::now();
         self.touch
             .wait_release(start, Duration::from_millis(MENU_INACTIVITY_MS));
-        let show = Duration::from_millis(5000);
+        let show = Duration::from_millis(NOTICE_DWELL_MS);
         let t0 = Instant::now();
         loop {
             // The power button dismisses the notice by sleeping (and auto-locking) too.
@@ -1227,6 +1227,8 @@ where
         }
     }
 }
+
+const NOTICE_DWELL_MS: u64 = 5000;
 
 #[cfg(test)]
 #[path = "pin_tests.rs"]

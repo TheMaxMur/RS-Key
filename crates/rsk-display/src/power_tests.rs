@@ -165,3 +165,22 @@ fn an_unpressed_wake_button_costs_a_modal_nothing() {
     assert!(!ui.asleep);
     assert!(start.elapsed() < Duration::from_millis(500));
 }
+
+#[test]
+fn a_held_wake_button_is_consumed_or_bounded_without_oscillating_sleep() {
+    for held in [3, u32::MAX] {
+        let env = Env::new();
+        let mut ui = env.ui(Pad::idle());
+        ui.hooks.press_wake(held);
+        let start = Instant::now();
+        assert!(ui.sleep_button_pressed());
+        assert!(ui.asleep);
+        if held == u32::MAX {
+            assert!(start.elapsed() >= Duration::from_millis(WAKE_RELEASE_TIMEOUT_MS));
+            assert!(start.elapsed() < Duration::from_secs(10));
+            assert!(ui.wake_pressed());
+        } else {
+            assert!(!ui.wake_pressed());
+        }
+    }
+}

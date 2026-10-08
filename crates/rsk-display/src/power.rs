@@ -109,7 +109,7 @@ where
     pub(super) fn wait_wake_release(&self) {
         let start = Instant::now();
         while self.wake_pressed() {
-            if start.elapsed() >= Duration::from_millis(2000) {
+            if start.elapsed() >= Duration::from_millis(WAKE_RELEASE_TIMEOUT_MS) {
                 break;
             }
             block_for(Duration::from_millis(TOUCH_POLL_MS));
@@ -134,6 +134,8 @@ where
         }
     }
 }
+
+const WAKE_RELEASE_TIMEOUT_MS: u64 = 2000;
 
 #[cfg(test)]
 #[path = "power_tests.rs"]

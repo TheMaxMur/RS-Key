@@ -87,6 +87,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   drift suite rejects a different header; the self-published and rootless
   attestation limits remain documented.
 
+### Changed
+
+- Trusted-display host controls share named boot, poll, notice and wake-release
+  delays with the firmware. The existing durations are unchanged.
+  bcdDevice → `0x0A92`.
+
 ### Added
 
 - A Linux MSC image runner reads BOOTSEL's FAT16 files with `usb-storage`

@@ -635,6 +635,26 @@ impl<S: Storage> Env<S> {
 
 pub type TestUi<'a> = Ui<'a, Panel, Pad, Board>;
 
+pub fn with_isolated_ui(
+    flow: impl for<'a> FnOnce(&mut TestUi<'a>, Parked<'a, RamStorage, TestRng>),
+) {
+    let fs = RefCell::new(Fs::new(RamStorage::new()));
+    let rng = RefCell::new(TestRng::new(0x0DDB_A11C_0FFE_E1E5));
+    let keys = keys();
+    let cells = Parked::new(&fs, &keys, &rng);
+    let mut ui = Ui::new(
+        Panel::new(),
+        Pad::idle(),
+        Board::new(),
+        DeviceInfo {
+            version: 0x0875,
+            chipid: 1,
+        },
+        cells,
+    );
+    flow(&mut ui, Parked::new(&fs, &keys, &rng));
+}
+
 /// The middle of a control, so a tap is expressed as the thing it lands on rather
 /// than as a pair of numbers that have to be kept in step with `rsk-ui`.
 pub fn center(r: rsk_ui::Rect) -> rsk_ui::Point {

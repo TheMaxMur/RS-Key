@@ -393,7 +393,7 @@ where
     S: rsk_fs::Storage,
     R: rsk_sdk::Rng,
 {
-    Timer::after_millis(600).await; // let the boot splash linger
+    Timer::after_millis(STATUS_BOOT_DELAY_MS).await; // let the boot splash linger
     note_local_activity(); // the fresh boot counts as activity, so the sleep clock starts now
     // Prime the Home status-card cache once before the first idle paint (boot has settled
     // the flash; the worker is parked here while this task runs, so the borrow is safe).
@@ -435,9 +435,12 @@ where
                 }
             }
         }
-        Timer::after_millis(100).await;
+        Timer::after_millis(STATUS_TICK_MS).await;
     }
 }
+
+const STATUS_TICK_MS: u64 = 100;
+const STATUS_BOOT_DELAY_MS: u64 = 600;
 
 #[cfg(test)]
 #[path = "status_tests.rs"]

@@ -17,6 +17,50 @@ fn home(status: StatusKind, pin_set: bool, passkeys: u16) -> Screen {
 }
 
 #[test]
+fn status_loop_respects_a_shared_borrow_quiet_handoff_sleep_and_button_wake() {
+    use core::future::Future;
+    let env = Env::new();
+    let ui = RefCell::new(env.ui(Pad::idle()));
+    let mut future = std::pin::pin!(status_loop(&ui, env.cells()));
+    let mut context = core::task::Context::from_waker(std::task::Waker::noop());
+    assert!(future.as_mut().poll(&mut context).is_pending());
+    std::thread::sleep(std::time::Duration::from_millis(STATUS_BOOT_DELAY_MS + 20));
+    assert!(future.as_mut().poll(&mut context).is_pending());
+    assert!(ui.borrow().panel.writes > 0);
+    {
+        let held = ui.borrow();
+        let writes = held.panel.writes;
+        std::thread::sleep(std::time::Duration::from_millis(STATUS_TICK_MS + 20));
+        assert!(future.as_mut().poll(&mut context).is_pending());
+        assert_eq!(held.panel.writes, writes);
+    }
+    {
+        let mut view = ui.borrow_mut();
+        view.hooks.led = rsk_led::STATUS_PROCESSING;
+    }
+    let writes = ui.borrow().panel.writes;
+    AMBIENT_QUIET_UNTIL_MS.store(
+        (Instant::now().as_millis() as u32).wrapping_add(1000),
+        Ordering::Relaxed,
+    );
+    std::thread::sleep(std::time::Duration::from_millis(STATUS_TICK_MS + 20));
+    assert!(future.as_mut().poll(&mut context).is_pending());
+    assert_eq!(ui.borrow().panel.writes, writes);
+    AMBIENT_QUIET_UNTIL_MS.store(0, Ordering::Relaxed);
+    ui.borrow_mut().enter_sleep();
+    let writes = ui.borrow().panel.writes;
+    std::thread::sleep(std::time::Duration::from_millis(STATUS_TICK_MS + 20));
+    assert!(future.as_mut().poll(&mut context).is_pending());
+    assert!(ui.borrow().asleep);
+    assert_eq!(ui.borrow().panel.writes, writes);
+    ui.borrow_mut().hooks.press_wake(1);
+    std::thread::sleep(std::time::Duration::from_millis(STATUS_TICK_MS + 20));
+    assert!(future.as_mut().poll(&mut context).is_pending());
+    assert!(!ui.borrow().asleep);
+    assert!(ui.borrow().panel.writes > writes);
+}
+
+#[test]
 fn the_panel_shows_the_status_the_led_would() {
     assert_eq!(status_to_kind(rsk_led::STATUS_IDLE), StatusKind::Idle);
     assert_eq!(
@@ -493,5 +537,84 @@ fn direct_tab_switches_return_to_a_refreshed_home() {
     assert!(started.elapsed() < Duration::from_secs(5));
     assert_eq!(ui.shown, Some(home(StatusKind::Idle, false, 0)));
     assert!(ui.panel.writes > before);
+    assert!(!ui.panel.oob);
+}
+
+#[test]
+fn ambient_input_routes_the_button_locked_tap_and_first_run_choice() {
+    {
+        let env = Env::new();
+        env.set_device_pin(PIN);
+        let mut ui = env.ui(Pad::idle());
+        ui.hooks.press_wake(1);
+        let generation = env.fs.borrow().write_gen();
+        assert!(env.local(&mut ui).handle_local_input(StatusKind::Idle));
+        assert!(ui.asleep && ui.locked);
+        assert_eq!(ui.hooks.backlight, 0);
+        assert_eq!(env.fs.borrow().write_gen(), generation);
+    }
+    for locked in [false, true] {
+        let env = Env::new();
+        if locked {
+            env.set_device_pin(PIN);
+        }
+        let points = if locked {
+            vec![nowhere(), center(rsk_ui::PIN_CANCEL_RECT)]
+        } else {
+            vec![center(rsk_ui::ONBOARD_SKIP_RECT)]
+        };
+        let mut ui = env.ui(Pad::taps(&points));
+        let generation = env.fs.borrow().write_gen();
+        assert!((0..8).any(|_| env.local(&mut ui).handle_local_input(StatusKind::Idle)));
+        assert!(!ui.asleep);
+        assert_eq!(ui.locked, locked);
+        assert_eq!(ui.hooks.sweeps, 1);
+        if locked {
+            assert_eq!(env.fs.borrow().write_gen(), generation);
+        } else {
+            assert!(!ui.onboarding);
+            assert!(ui.pin_declined);
+            assert!(env.fs.borrow().write_gen() > generation);
+        }
+    }
+}
+
+#[test]
+fn onboarding_and_tab_sleep_leave_the_panel_blank_and_host_handoff_skips_home() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.press_wake(1);
+    env.local(&mut ui)
+        .tap_onboarding(center(rsk_ui::ONBOARD_SET_RECT));
+    assert!(ui.asleep && ui.onboarding);
+    assert_eq!(ui.shown, None);
+    assert_eq!(ui.hooks.backlight, 0);
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.press_wake(1);
+    env.local(&mut ui).tap_nav(center(rsk_ui::nav_tab_rect(3)));
+    assert!(ui.asleep);
+    assert_eq!(ui.shown, None);
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.host_pending = true;
+    env.local(&mut ui).tap_nav(center(rsk_ui::nav_tab_rect(3)));
+    assert!(!ui.asleep);
+    assert_eq!(ui.shown, None);
+}
+
+#[test]
+fn the_locked_breathe_paints_only_on_its_scheduled_tick() {
+    let env = Env::new();
+    env.set_device_pin(PIN);
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.led = rsk_led::STATUS_IDLE;
+    let (mut spin, mut breathe) = (0, 0);
+    env.local(&mut ui)
+        .ambient_repaint(BREATHE_TICKS, &mut spin, &mut breathe);
+    assert_eq!(breathe, 1);
+    let writes = ui.panel.writes;
+    env.local(&mut ui)
+        .ambient_repaint(BREATHE_TICKS + 1, &mut spin, &mut breathe);
+    assert_eq!(breathe, 1);
+    assert_eq!(ui.panel.writes, writes);
     assert!(!ui.panel.oob);
 }

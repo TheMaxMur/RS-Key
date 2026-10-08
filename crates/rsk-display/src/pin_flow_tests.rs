@@ -29,6 +29,101 @@ impl TouchPad for IdleThenOk {
 }
 
 #[test]
+fn unattended_local_windows_return_at_their_real_inactivity_deadlines() {
+    let _env = Env::new();
+    std::thread::scope(|scope| {
+        macro_rules! window {
+            ($limit:expr, $run:expr) => {
+                scope.spawn(|| {
+                    crate::tests::with_isolated_ui(|ui, cells| {
+                        rsk_piv::files::scan_files(
+                            &crate::tests::dev(),
+                            &mut cells.fs.borrow_mut(),
+                            &mut *cells.rng.borrow_mut(),
+                        )
+                        .unwrap();
+                        let generation = cells.fs.borrow().write_gen();
+                        let started = Instant::now();
+                        let mut local = Local::new(ui, cells);
+                        $run(&mut local);
+                        let elapsed = started.elapsed();
+                        assert!(elapsed >= Duration::from_millis($limit));
+                        assert!(elapsed < Duration::from_millis($limit) + Duration::from_secs(10));
+                        assert!(!local.asleep);
+                        assert!(!local.hooks.host_request_pending());
+                        assert_eq!(local.cells.fs.borrow().write_gen(), generation);
+                        assert!(!local.panel.oob);
+                    });
+                });
+            };
+        }
+        window!(NOTICE_DWELL_MS, |local: &mut Local<
+            '_,
+            '_,
+            _,
+            _,
+            _,
+            _,
+            _,
+        >| local.hold_notice());
+        window!(MENU_INACTIVITY_MS, |local: &mut Local<
+            '_,
+            '_,
+            _,
+            _,
+            _,
+            _,
+            _,
+        >| assert_eq!(
+            local.run_rename(&Label::default(), &[0; 32]),
+            None
+        ));
+        window!(MENU_INACTIVITY_MS, |local: &mut Local<
+            '_,
+            '_,
+            _,
+            _,
+            _,
+            _,
+            _,
+        >| assert!(
+            !local.hold_to_confirm("Hold to delete", rsk_ui::theme::DANGER_FILL)
+        ));
+        window!(MENU_INACTIVITY_MS, |local: &mut Local<
+            '_,
+            '_,
+            _,
+            _,
+            _,
+            _,
+            _,
+        >| local
+            .show_success(SuccessKind::Deleted, None));
+        window!(MENU_INACTIVITY_MS, |local: &mut Local<
+            '_,
+            '_,
+            _,
+            _,
+            _,
+            _,
+            _,
+        >| local.run_piv_pins());
+        window!(MENU_INACTIVITY_MS, |local: &mut Local<
+            '_,
+            '_,
+            _,
+            _,
+            _,
+            _,
+            _,
+        >| assert_eq!(
+            local.run_settings(),
+            None
+        ));
+    });
+}
+
+#[test]
 fn a_revealed_pin_is_masked_after_idle_without_changing_the_entry() {
     let env = Env::new();
     let mut taps = pin_entry(PIN);
