@@ -412,6 +412,11 @@ verifying PW1 — even with the PIN that now works — puts the damaged copy bac
 front and the repair fails. `unblock` never verifies PW1, which is why it is the
 one that works there.
 
+A restart also retries removal of a legacy DEK wrapper sealed under the public
+factory reset code after its verifier was removed. The firmware authenticates
+that orphan before deleting it; it preserves unidentified wrappers and an
+owner-set reset code. PW1/PW3 and the keys they open are unchanged.
+
 ### Factory reset (OpenPGP only)
 
 ```sh
