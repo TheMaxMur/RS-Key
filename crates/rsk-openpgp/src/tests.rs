@@ -3953,3 +3953,6 @@ mod reads;
 
 #[path = "command_boundaries_tests.rs"]
 mod command_boundaries;
+
+#[path = "restart_commands_tests.rs"]
+mod restarts;
