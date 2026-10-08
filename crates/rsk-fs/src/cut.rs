@@ -57,6 +57,57 @@ pub fn sweep(
 /// records is doing something the sweep's per-budget replay cannot afford anyway.
 const SWEEP_MAX: u32 = 64;
 
+/// Cut every command mutation and every mutation of its next boot, then boot
+/// once more without faults. Returns whether a recovery hit a mutation cut;
+/// callers with read-only recovery assert `false` rather than invent a cut.
+/// The oracle receives both budgets, the command's answer and the final medium.
+pub fn sweep_restarts(
+    provision: impl Fn() -> (Fs<Cut>, CutMedium),
+    command: impl Fn(&mut Fs<Cut>) -> bool,
+    recover: impl Fn(&mut Fs<Cut>),
+    mut oracle: impl FnMut(&mut Fs<Cut>, u32, u32, bool, &CutMedium),
+) -> bool {
+    let mut torn = false;
+    let mut repaired = false;
+    for first in 0..SWEEP_MAX {
+        let (mut fs, medium) = provision();
+        medium.clear_ops();
+        medium.arm(first);
+        let completed = command(&mut fs);
+        let command_cut = medium.was_cut();
+        let mut recovered = false;
+        for second in 0..SWEEP_MAX {
+            let (storage, retry) = medium.fork();
+            retry.arm(second);
+            let mut fs = Fs::new(storage);
+            fs.scan();
+            recover(&mut fs);
+            let recovery_cut = retry.was_cut();
+            repaired |= recovery_cut;
+            retry.arm(u32::MAX);
+            let mut fs = Fs::new(fs.into_storage());
+            fs.scan();
+            recover(&mut fs);
+            oracle(&mut fs, first, second, completed, &retry);
+            if !recovery_cut {
+                recovered = true;
+                break;
+            }
+        }
+        assert!(
+            recovered,
+            "no recovery budget under {SWEEP_MAX} let recovery finish"
+        );
+        if !command_cut {
+            assert!(completed, "the command failed without reaching a cut");
+            assert!(torn, "vacuous: no command mutation was cut");
+            return repaired;
+        }
+        torn = true;
+    }
+    panic!("no budget under {SWEEP_MAX} let the command finish");
+}
+
 /// A RAM medium that serves a budget of mutations and refuses every one after
 /// it, as [`Cut`] does, and whose contents [`sweep_recovery`] carries from its
 /// first cut into each run of its second.

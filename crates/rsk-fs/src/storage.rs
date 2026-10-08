@@ -588,6 +588,7 @@ pub mod faults {
         inner: Rc<RefCell<RamStorage>>,
         budget: Rc<Cell<u32>>,
         log: Rc<RefCell<Vec<Op>>>,
+        refused: Rc<Cell<bool>>,
     }
 
     /// The other end of a [`Cut`]: arms the cut, and reads the log and the medium
@@ -597,6 +598,7 @@ pub mod faults {
         inner: Rc<RefCell<RamStorage>>,
         budget: Rc<Cell<u32>>,
         log: Rc<RefCell<Vec<Op>>>,
+        refused: Rc<Cell<bool>>,
     }
 
     impl Cut {
@@ -605,13 +607,20 @@ pub mod faults {
             let inner = Rc::new(RefCell::new(RamStorage::new()));
             let budget = Rc::new(Cell::new(u32::MAX));
             let log = Rc::new(RefCell::new(Vec::new()));
+            let refused = Rc::new(Cell::new(false));
             (
                 Self {
                     inner: inner.clone(),
                     budget: budget.clone(),
                     log: log.clone(),
+                    refused: refused.clone(),
                 },
-                CutMedium { inner, budget, log },
+                CutMedium {
+                    inner,
+                    budget,
+                    log,
+                    refused,
+                },
             )
         }
 
@@ -619,6 +628,7 @@ pub mod faults {
         fn serve(&self) -> bool {
             let left = self.budget.get();
             if left == 0 {
+                self.refused.set(true);
                 return false;
             }
             self.budget.set(left - 1);
@@ -631,6 +641,18 @@ pub mod faults {
         /// `u32::MAX` restores a healthy medium.
         pub fn arm(&self, budget: u32) {
             self.budget.set(budget);
+            self.refused.set(false);
+        }
+        /// Whether a mutation actually reached the armed cut.
+        pub fn was_cut(&self) -> bool {
+            self.refused.get()
+        }
+        /// Independent media over the same durable records, without shared caches.
+        pub fn fork(&self) -> (Cut, Self) {
+            let (storage, medium) = Cut::new();
+            *storage.inner.borrow_mut() = self.inner.borrow().clone();
+            *medium.log.borrow_mut() = self.log.borrow().clone();
+            (storage, medium)
         }
         /// The mutations that LANDED, in order.
         pub fn ops(&self) -> Vec<Op> {
