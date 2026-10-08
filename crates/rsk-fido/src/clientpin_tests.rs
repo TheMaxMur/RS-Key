@@ -3340,7 +3340,7 @@ mod perms;
 fn a_torn_set_pin_leaves_no_pin_or_a_usable_one() {
     use crate::consts::{EF_PAUTHTOKEN, MAX_PIN_RETRIES};
 
-    rsk_fs::cut::sweep(
+    assert!(!rsk_fs::cut::sweep_restarts(
         || {
             let (fs, medium, _) = setup_cut();
             (fs, medium)
@@ -3352,7 +3352,8 @@ fn a_torn_set_pin_leaves_no_pin_or_a_usable_one() {
             let mut out = [0u8; 256];
             run(fs, &mut rng, &mut state, &plat.set_pin_req(PIN), &mut out).is_ok()
         },
-        |fs, budget, completed, medium| {
+        |_| {},
+        |fs, budget, _second, completed, medium| {
             let mut stored = [0u8; PIN_FILE_LEN];
             let Some(len) = fs.read(EF_PIN, &mut stored) else {
                 assert!(
@@ -3386,7 +3387,7 @@ fn a_torn_set_pin_leaves_no_pin_or_a_usable_one() {
                 "budget {budget}: the PIN that survived does not verify"
             );
         },
-    );
+    ));
 }
 
 /// A PIN record cut short cannot be verified against and must not be spent from:

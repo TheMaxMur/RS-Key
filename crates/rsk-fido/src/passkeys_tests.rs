@@ -631,10 +631,13 @@ fn a_torn_on_device_delete_never_orphans_a_credential_or_hides_behind_the_tag() 
         let (mut fresh, _) = provision();
         let tag = cred_store_state(&mut fresh).unwrap();
         let victim = fids_under(&mut fresh, rp)[0];
-        rsk_fs::cut::sweep(
+        rsk_fs::cut::sweep_restarts(
             provision,
             |fs| delete_cred(fs, &mut SeqRng(3), victim),
-            |fs, budget, completed, medium| {
+            |fs| {
+                let _ = settle_rp_records(fs);
+            },
+            |fs, budget, _second, completed, medium| {
                 let live = fids_under(fs, rp).len();
                 let counted = rp_count(fs, rp);
                 if live > 0 {
