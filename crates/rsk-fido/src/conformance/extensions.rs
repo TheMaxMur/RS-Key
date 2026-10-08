@@ -515,10 +515,12 @@ fn no_extensions(_: &mut Encoder<Cursor<&mut [u8]>>) {}
 #[test]
 fn an_empty_extension_writer_cannot_satisfy_a_nonempty_map() {
     let mut a = Authr::fresh();
-    assert_ok(&a.send(
+    let plain = a.send(
         CTAP_MAKE_CREDENTIAL,
         &mc_ext_for(USER_ID, false, 0, no_extensions),
-    ));
+    );
+    assert_ok(&plain);
+    assert!(mc_ext_names(&plain.body).is_empty());
     let malformed = a.send(
         CTAP_MAKE_CREDENTIAL,
         &mc_ext_for(USER_ID, false, 1, no_extensions),
