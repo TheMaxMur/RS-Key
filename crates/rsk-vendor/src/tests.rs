@@ -530,3 +530,6 @@ fn a_short_counter_record_reads_as_the_default_without_rewriting_it() {
         assert_eq!(fs.write_gen(), generation);
     }
 }
+
+#[path = "restart_tests.rs"]
+mod restarts;
