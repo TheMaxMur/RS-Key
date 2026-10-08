@@ -4,6 +4,7 @@
 """Mutation table for the phase-5 concrete-event completeness gate."""
 
 from pathlib import Path
+import tomllib
 
 import pytest
 
@@ -579,16 +580,17 @@ def test_the_emulator_is_inside_the_import_scoped_sweep(tree: Tree):
 
 
 def test_the_volatile_floor_this_file_ships_is_above_nothing_at_all(tree: Tree):
-    """The floor is a PARAMETER, so falsify the shipped one against the real tree
-    rather than a fixture-sized stand-in. 12 discriminates and 10 does not: the
-    checkout derives 11, so any floor at or under it is green for a reason that
-    has nothing to do with the floor being read."""
+    """A floor above the current owned roster must refuse the real tree."""
     real = token_refinement_gate.FLOORS
     assert token_refinement_gate.audit(token_refinement_gate.ROOT, real)[0] == []
+    manifest = tomllib.loads(
+        (token_refinement_gate.ROOT / token_refinement_gate.MANIFEST).read_text()
+    )
+    count = len(manifest["volatile_writer"])
     over = token_refinement_gate.audit(
-        token_refinement_gate.ROOT, {**real, "volatile_writer": 12}
+        token_refinement_gate.ROOT, {**real, "volatile_writer": count + 1}
     )[0]
-    assert contains(over, "volatile: 11 site(s) derived, under the floor of 12"), over
+    assert contains(over, f"volatile: {count} site(s) derived, under the floor of {count + 1}"), over
 
 
 def test_a_permission_mask_in_a_scanned_unit_outside_the_applet_is_a_site(tree: Tree):

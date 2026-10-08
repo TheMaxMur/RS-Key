@@ -52,7 +52,7 @@ assurance/board/PLAT-TRNG-002.toml	scripts/platform_gate.py	1337-1337	OUTCOME_ST
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/clientpin.rs	795-795	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/state.rs	181-181	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/state.rs	297-297	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
-assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/ccid_tests.rs	1207-1207	fn both_transports_answer_from_one_session_state() {	fn both_transports_answer_from_one_session_state() {
+assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/ccid_tests.rs	1236-1236	fn both_transports_answer_from_one_session_state() {	fn both_transports_answer_from_one_session_state() {
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	4-21	//! Presence-scope arbitration: one physical button, four transports, and the	//! `NoCrossTransportTouchConsumption` (`formal/RSKeySecurityState.tla`).
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	13-14	//! touch the key for somebody else's operation. CTAP 2.1 §11.2.9.1.4 scopes a	//! cancel to its own channel.
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-device/src/presence.rs	26-32	pub const SCOPE_NONE: u8 = 0;	pub const SCOPE_OTP: u8 = 3;
@@ -180,8 +180,10 @@ assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	901-901	let
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	925-925	.and_then(|record| fs.put(EF_CRED + slot, record))	.and_then(|record| fs.put(EF_CRED + slot, record))
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	967-967	fn bump_rp<S: Storage>(	fn bump_rp<S: Storage>(
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	1003-1008	// Existing rp: bump the count, re-storing the boxed tail verbatim.	// every enumeration surface (audit run-35).
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	661-661	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	690-690	assert!(	assert!(
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	844-844	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	873-873	assert!(	assert!(
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	899-899	fn a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry() {	fn a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry() {
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	926-926	assert!(	assert!(
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	359-359	fn enumerate_rps<S: Storage, R: Rng>(	fn enumerate_rps<S: Storage, R: Rng>(
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	393-393	let Some(n) = ctx	let Some(n) = ctx
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	399-399	};	};
@@ -229,10 +231,10 @@ assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance.rs	18-19	
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance.rs	106-134	pub fn reset_keeps_the_pin_gate(&self, volatile: &ResetVolatileView) -> bool {	}
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance.rs	130-134	pub fn reset_never_weakens_surviving_state(&self, volatile: &ResetVolatileView) -> bool {	}
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance.rs	267-267	volatile_retired && phase_order && self.reset_never_weakens_surviving_state(volatile)	volatile_retired && phase_order && self.reset_never_weakens_surviving_state(volatile)
-assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	46-46	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	fn reset_property_controls_go_red_on_each_early_gate_mutant() {
-assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	46-63	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	}
-assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	130-130	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {
-assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_refinement_kani.rs	125-125	if !reset.well_formed(&volatile) {	if !reset.well_formed(&volatile) {
+assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	39-53	fn reset_properties_reject_corrupt_pre_state_claims_without_a_gate() {	}
+assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	189-189	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	fn reset_property_controls_go_red_on_each_early_gate_mutant() {
+assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	189-206	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	}
+assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	273-273	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_tests.rs	724-724	fn a_torn_reset_never_unseals_a_surviving_seed() {	fn a_torn_reset_never_unseals_a_surviving_seed() {
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_tests.rs	1205-1205	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/state.rs	544-544	/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.	/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
@@ -261,7 +263,7 @@ assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset.rs	255-260	fn is_f
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_assurance.rs	106-112	pub fn reset_keeps_the_pin_gate(&self, volatile: &ResetVolatileView) -> bool {	}
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_assurance.rs	144-151	self.snapshot = ResetSnapshot {	};
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_assurance.rs	267-267	volatile_retired && phase_order && self.reset_never_weakens_surviving_state(volatile)	volatile_retired && phase_order && self.reset_never_weakens_surviving_state(volatile)
-assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_assurance_tests.rs	46-46	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	fn reset_property_controls_go_red_on_each_early_gate_mutant() {
+assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_assurance_tests.rs	189-189	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	fn reset_property_controls_go_red_on_each_early_gate_mutant() {
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_refinement_kani.rs	122-122	fn reset_keeps_the_pin_gate() {	fn reset_keeps_the_pin_gate() {
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_refinement_kani.rs	125-125	if !reset.well_formed(&volatile) {	if !reset.well_formed(&volatile) {
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_refinement_kani.rs	133-138	kani::cover!(	);
@@ -291,8 +293,8 @@ assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/reset.rs	253-253	/// Ref
 assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/reset_assurance.rs	114-120	pub fn reset_keeps_the_always_uv_gate(&self, volatile: &ResetVolatileView) -> bool {	}
 assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/reset_assurance.rs	177-177	EF_ALWAYS_UV => self.persistent.always_uv = false,	EF_ALWAYS_UV => self.persistent.always_uv = false,
 assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/reset_assurance.rs	267-267	volatile_retired && phase_order && self.reset_never_weakens_surviving_state(volatile)	volatile_retired && phase_order && self.reset_never_weakens_surviving_state(volatile)
-assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/reset_assurance_tests.rs	45-63	#[test]	}
-assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/reset_assurance_tests.rs	57-57	assert!(!always_uv.reset_keeps_the_always_uv_gate(&volatile));	assert!(!always_uv.reset_keeps_the_always_uv_gate(&volatile));
+assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/reset_assurance_tests.rs	188-206	#[test]	}
+assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/reset_assurance_tests.rs	200-200	assert!(!always_uv.reset_keeps_the_always_uv_gate(&volatile));	assert!(!always_uv.reset_keeps_the_always_uv_gate(&volatile));
 assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/reset_refinement_kani.rs	141-159	#[kani::proof]	}
 assurance/bundle/SEC-FIDO-006B.toml	formal/floors.txt	50-50	\* AS-AUTH-2's other arm: its own nine invariants over a build that SHIPS	\* AS-AUTH-2's other arm: its own nine invariants over a build that SHIPS
 assurance/bundle/SEC-FIDO-006B.toml	formal/gen-configs.sh	105-107	ALL_INV=(NoAuthorizationBypass NoCrossTransportTouchConsumption	NoUnmanageableCredential ResetNeverWeakensSurvivingState)
@@ -324,15 +326,14 @@ assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance.rs	122-1
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance.rs	130-134	pub fn reset_never_weakens_surviving_state(&self, volatile: &ResetVolatileView) -> bool {	}
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance.rs	160-182	pub fn delete(&mut self, fid: u16) -> bool {	}
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance.rs	267-267	volatile_retired && phase_order && self.reset_never_weakens_surviving_state(volatile)	volatile_retired && phase_order && self.reset_never_weakens_surviving_state(volatile)
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance_tests.rs	46-46	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	fn reset_property_controls_go_red_on_each_early_gate_mutant() {
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance_tests.rs	46-63	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	}
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance_tests.rs	76-76	assert!(reset.delete(EF_BACKUP_SEALED));	assert!(reset.delete(EF_BACKUP_SEALED));
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance_tests.rs	110-128	/// SEC-FIDO-006C stated over the CLASSIFIER, which is the half no test asked.	/// green on the shipped tree, red on that mutant, with no map in the path.
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance_tests.rs	130-130	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance_tests.rs	39-53	fn reset_properties_reject_corrupt_pre_state_claims_without_a_gate() {	}
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance_tests.rs	189-189	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	fn reset_property_controls_go_red_on_each_early_gate_mutant() {
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance_tests.rs	219-219	assert!(reset.delete(EF_BACKUP_SEALED));	assert!(reset.delete(EF_BACKUP_SEALED));
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance_tests.rs	253-271	/// SEC-FIDO-006C stated over the CLASSIFIER, which is the half no test asked.	/// green on the shipped tree, red on that mutant, with no map in the path.
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_assurance_tests.rs	273-273	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs	56-94	fn apply_symbolic_step(reset: &mut ResetRefinement, volatile: &mut ResetVolatileView, action: u8) {	}
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs	77-77	reset.delete(EF_BACKUP_SEALED);	reset.delete(EF_BACKUP_SEALED);
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs	162-179	fn reset_keeps_the_backup_seal() {	}
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs	165-165	if !reset.well_formed(&volatile) {	if !reset.well_formed(&volatile) {
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs	173-178	kani::cover!(	);
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_tests.rs	639-639	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_tests.rs	1459-1459	fn a_seed_the_medium_kept_stops_the_wipe_before_the_gates() {	fn a_seed_the_medium_kept_stops_the_wipe_before_the_gates() {
@@ -764,8 +765,8 @@ formal/README.md	crates/rsk-fido/src/state.rs	659-675	/// `stopUsingPinUvAuthTok
 formal/README.md	crates/rsk-fido/src/state.rs	664-665	self.paut.in_use = false;	self.paut.permissions = 0;
 formal/README.md	crates/rsk-fido/src/state.rs	709-722	/// Expire an in-use token once its usage timer has run out (CTAP 2.1	}
 formal/README.md	crates/rsk-fido/src/state.rs	733-739	pub fn expire_stale_sequences(&mut self, now_ms: u64) {	}
-formal/README.md	crates/rsk-fido/src/state_tests.rs	120-120	assert_eq!(st.pin_lock(), LOCKED);	assert_eq!(st.pin_lock(), LOCKED);
-formal/README.md	crates/rsk-fido/src/state_tests.rs	135-135	assert_eq!(st.pin_lock().mismatches, 2);	assert_eq!(st.pin_lock().mismatches, 2);
+formal/README.md	crates/rsk-fido/src/state_tests.rs	174-174	assert_eq!(st.pin_lock(), LOCKED);	assert_eq!(st.pin_lock(), LOCKED);
+formal/README.md	crates/rsk-fido/src/state_tests.rs	189-189	assert_eq!(st.pin_lock().mismatches, 2);	assert_eq!(st.pin_lock().mismatches, 2);
 formal/README.md	crates/rsk-fido/src/u2f.rs	106-106	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
 formal/README.md	crates/rsk-fido/src/vendor.rs	589-618	fn unlock<S: Storage, R: Rng>(	None => Err(CtapError::InvalidParameter),
 formal/README.md	crates/rsk-fido/src/vendor.rs	976-988	fn backup_finalize<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {	.map_err(|_| CtapError::Other)?;
@@ -1154,11 +1155,11 @@ formal/comutants.toml	crates/rsk-fido/src/clientpin_tests.rs	1442-1442	assert_eq
 formal/comutants.toml	crates/rsk-fido/src/makecredential.rs	627-629	if always_uv {	}
 formal/comutants.toml	crates/rsk-fido/src/makecredential.rs	633-635	if pin_set && req.rk {	}
 formal/comutants.toml	crates/rsk-fido/src/reset.rs	244-250	/// **The list is FIVE and the clauses are three.** `EF_DEVICE_PIN` and	/// of what this predicate is for.
-formal/comutants.toml	crates/rsk-fido/src/reset_assurance_tests.rs	76-76	assert!(reset.delete(EF_BACKUP_SEALED));	assert!(reset.delete(EF_BACKUP_SEALED));
-formal/comutants.toml	crates/rsk-fido/src/reset_assurance_tests.rs	130-130	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {
+formal/comutants.toml	crates/rsk-fido/src/reset_assurance_tests.rs	219-219	assert!(reset.delete(EF_BACKUP_SEALED));	assert!(reset.delete(EF_BACKUP_SEALED));
+formal/comutants.toml	crates/rsk-fido/src/reset_assurance_tests.rs	273-273	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {
 formal/comutants.toml	crates/rsk-fido/src/reset_tests.rs	639-639	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
-formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	120-120	assert_eq!(st.pin_lock(), LOCKED);	assert_eq!(st.pin_lock(), LOCKED);
-formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	135-135	assert_eq!(st.pin_lock().mismatches, 2);	assert_eq!(st.pin_lock().mismatches, 2);
+formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	174-174	assert_eq!(st.pin_lock(), LOCKED);	assert_eq!(st.pin_lock(), LOCKED);
+formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	189-189	assert_eq!(st.pin_lock().mismatches, 2);	assert_eq!(st.pin_lock().mismatches, 2);
 formal/comutants.toml	crates/rsk-fs/src/fs.rs	847-847	self.storage.write(EF_META, &out[..w])?;	self.storage.write(EF_META, &out[..w])?;
 formal/comutants.toml	crates/rsk-fs/src/fs.rs	888-888	self.storage.write(EF_META, &out[..w]) // EF_META stays present	self.storage.write(EF_META, &out[..w]) // EF_META stays present
 formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	385-385	assert!(	assert!(

@@ -87,8 +87,8 @@ owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 owners_of_the_kills = [
   "crates/rsk-fido/src/reset_tests.rs:724 a_torn_reset_never_unseals_a_surviving_seed — the shipped twin RSKeySecurityState.tla:1827 names",
   "crates/rsk-fido/src/reset_tests.rs:1205 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed",
-  "crates/rsk-fido/src/reset_assurance_tests.rs:130 a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window",
-  "crates/rsk-fido/src/reset_assurance_tests.rs:46 reset_property_controls_go_red_on_each_early_gate_mutant — three mutants, one per clause, and the only per-clause negative control anywhere in the tree outside `formal/`",
+  "crates/rsk-fido/src/reset_assurance_tests.rs:273 a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window",
+  "crates/rsk-fido/src/reset_assurance_tests.rs:189 reset_property_controls_go_red_on_each_early_gate_mutant — three mutants, one per clause, and the only per-clause negative control anywhere in the tree outside `formal/`",
 ]
 
 # ---- 2. Commit, build and features -------------------------------------------
@@ -352,7 +352,7 @@ c_twin_honesty = "and one of the three carries a recorded correction that belong
 r_owners = "five `Refines` tags in three files for the parent and three more on one function for the clauses; the ordering the property IS carries no tag at all and is crates/rsk-fido/src/reset.rs:107-128. One of the five tags is on `survives_factory_reset`, the trusted-display wipe — a SECOND reset path with no action in the model, which formal/README.md names as the one that would make SEC-FIDO-007's invariant bite"
 r_column = "`rust = 3` is a count of FILES, not of tags: `assurance_gate.grep_word` matches the bare invariant name anywhere in a production file and returns file names, so the two extra tags in reset.rs move nothing. The three clause rows each derive `rust = 1` from one file holding all three of their tags"
 r_alpha = "the conjunction is written twice and the two agree: RSKeySecurityState.tla:1851-1854 and crates/rsk-fido/src/reset_assurance.rs:130-134. The α is FINER than the model in one place — it keeps `owner_seed` and `owner_locked_seed` apart (:18-19) where the model has one `store.seed` — and WIDER in another, adding `owner_seed_reachable` to clause C's antecedent where the TLA+ clause relies on `snap.seed` being retired by `KeepSurv`"
-r_no_negative_control = "and the parent conjunction has no negative control in the unit suite. Every use of `reset_never_weakens_surviving_state` and `well_formed` in crates/rsk-fido/src/reset_assurance_tests.rs — lines 31, 32, 79 and 98 — is a POSITIVE `assert!`, and weakening a conjunction can only make those easier. The three negative controls at :46-63 call each clause method directly and never the parent. So a conjunct silently dropped from the parent is invisible to `cargo test -p rsk-fido`; §8 records which rung would see it"
+r_no_negative_control = "At build.commit the parent conjunction had only positive unit assertions; the per-clause controls did not call it. The 2026-10 coverage review adds reset_properties_reject_corrupt_pre_state_claims_without_a_gate at crates/rsk-fido/src/reset_assurance_tests.rs:39-53: each of the three surviving gates is removed separately, and both the parent conjunction and well_formed must reject the state. This closes the unit-control gap; the historical Kani and mutation verdicts below have not been re-measured."
 
 # THE FUZZ AND BOARD RUNGS, and what each column is worth.
 f_fuzz = "`fuzz = 1` counts fuzz/fuzz_targets/power_cut.rs, whose `reset_probe` input class drives the real reset over a cuttable store and checks the property after a recovery mount AND a second boot. The only recorded run of it is a sentence: docs/reset-refinement.md records a local corpus run on 2026-08-16 completing 4 608 executions without a finding, and calls that sampled evidence rather than an exhaustive result. No log of it is in the tree and none is in this bundle"
@@ -368,7 +368,7 @@ readme_stale = "formal/README.md:887 publishes three run counts for the three So
 
 # The gates, each with the number it derives, transcribed from a live run.
 gate_ghost = "ghost-gate: ok — 21 action(s) record NoAuthorizationBypass over 24 route(s), consulting 11 guard(s) — unchanged by this bundle, and transcribed because the roster rule demands every gate line whether or not this property moved it. The ghost records a different invariant: no action in this module writes ResetNeverWeakensSurvivingState into `viol`, which is correct, because this property is a state predicate and not a step one"
-gate_ledger = "token-refinement-gate: GREEN keys=2 api=16 volatile=11/10 persistent=14/5 outcomes=7/6 walk=4 softlock=13 window=2 testonly=1 — the ledger owns the pinUvAuthToken axes and none of this property's owners is in it; the reset family's own ledger is `formal/comutants.toml` and the tag grep, neither of which is a site ledger"
+gate_ledger = "token-refinement-gate: GREEN keys=2 api=16 volatile=12/11 persistent=14/5 outcomes=7/6 walk=4 softlock=13 window=2 testonly=2 — the ledger owns the pinUvAuthToken axes and none of this property's owners is in it; the reset family's own ledger is `formal/comutants.toml` and the tag grep, neither of which is a site ledger"
 gate_assumption = "assumption-gate: 5 standing assumption(s) AlwaysUvShipped TRUE=5 FALSE=91 ForceChangeModelled TRUE=3 FALSE=93 PowerOnClearsScratch2 TRUE=11 FALSE=4 RekeyOrderModelled TRUE=2 FALSE=13 WidePerms TRUE=3 FALSE=93 — RE-DERIVED, and this time the roster did move. The line used to say all four denominators were unchanged between the two tiers, and `RekeyOrderModelled` plus the two `Historical_Boot*` configurations have since made that sentence false, which is the whole reason this leaf is derived rather than kept. The one that matters here is still the first: both arms of AlwaysUvShipped check this invariant, and the TRUE arm is the one on which its second clause cannot fail"
 gate_matrix = "matrix-gate: ok — 41 P0-family properties × 32 build configurations = 1312 cells (38 covered, 146 equivalent, 0 conditional, 109 out-of-scope, 1019 gap) — UNCHANGED by this bundle: a model check, a bounded proof and a review read no board preset and no flash geometry, so nothing here settles a cell"
 gate_registry = "assurance-gate: SEC-FIDO-006 BOUNDED, cfgs=40 mut=3 co=3 kani=1 fuzz=1 rust=3 test=1 — `test=1` is the only non-zero runtime column of the eleven and it counts a FILE, not a board run; `kani=1` counts harnesses whose name contains the snake form of the invariant, which the three clause harnesses do not, so the parent's proof column omits three of the four harnesses that are about it. Every clause row derives its own line beneath this one"
@@ -627,19 +627,19 @@ mutant = "one early-gate delete per clause, injected into the Rust α rather tha
 invocation = "cargo test -p rsk-fido --target aarch64-apple-darwin, the test reset_property_controls_go_red_on_each_early_gate_mutant"
 expected = "each clause method returns false, and its OWN clause, not a sibling's"
 verdict = "green — the test asserts `!pin.reset_keeps_the_pin_gate`, `!always_uv.reset_keeps_the_always_uv_gate` and `!backup.reset_keeps_the_backup_seal` after clearing one persistent gate each"
-fell = "nothing on the shipped tree, by construction: this is a NEGATIVE control that passes by observing three refusals, at crates/rsk-fido/src/reset_assurance_tests.rs:46-63"
+fell = "nothing on the shipped tree, by construction: this is a NEGATIVE control that passes by observing three refusals, at crates/rsk-fido/src/reset_assurance_tests.rs:189-206"
 direction = "modelled"
 reading = "this is the only per-clause negative control anywhere outside `formal/`, and it is the C-tier twin of the three SoloClause configurations: three mutants, three clauses, each asserted to fail its own. It is also invisible to every derived column — the `rust` axis drops filenames containing `tests` and the `test` axis reads only `tests/**/*.py` — so a tree that deleted it would look identical from the registry."
 
 [[mutation]]
 level = "code"
 mutant = "the parent conjunction loses a conjunct — `reset_never_weakens_surviving_state` returning two of its three clauses"
-invocation = "argued from the call sites rather than driven; every use is enumerated by `grep -rn 'well_formed\\|reset_never_weakens_surviving_state' crates/`"
-expected = "invisible to `cargo test -p rsk-fido`, and caught only through the Kani precondition"
-verdict = "NOT DRIVEN, and the argument is monotone rather than a guess: all four uses in crates/rsk-fido/src/reset_assurance_tests.rs — lines 31, 32, 79 and 98 — are positive `assert!`s, and weakening a conjunction can only make a positive assertion easier, so no unit test can fail"
-fell = "nothing would fall in the unit suite; the three clause harnesses would, because `well_formed` is their PRECONDITION at reset_refinement_kani.rs:125, :145 and :165, and weakening a precondition admits pre-states violating the dropped clause while their assertions still name it directly"
+invocation = "historical argument at build.commit from the conjunction and well_formed call sites; not a driven mutation"
+expected = "at build.commit: invisible to the unit suite, caught through the clause Kani precondition; the current unit suite now has negative parent controls"
+verdict = "NOT DRIVEN at build.commit: the argument relied on the then-positive parent assertions. The current negative parent controls invalidate that argument for the current suite; no new mutation verdict is claimed here."
+fell = "historically, no unit assertion was expected to fall; the clause Kani preconditions would admit a violating pre-state. Current negative parent controls require refusal of each missing gate; see crates/rsk-fido/src/reset_assurance_tests.rs:39-53."
 direction = "modelled"
-reading = "recorded as an argued row and labelled as one. It is the answer to §3's subsumption note: on the tree as it stands the three clause harnesses prove nothing the parent does not, and under this mutation they are the ONLY rung that would notice — the parent harness asserts `well_formed(post)`, which weakens with the definition, so it would stay green too. That is what the clause split buys at tier C, and it is the same thing SoloClause_*.cfg buys at tier B."
+reading = "Historical argued row, retained as such. Clause Kani assertions are subsumed on the shipped definition, while the separate clause harness can detect a weakened parent precondition. The coverage review adds unit assertions of the negative parent cases; that strengthens the current suite without changing this recorded Kani evidence."
 
 # ---- 9. Timestamp, freshness and revalidation inputs -------------------------
 

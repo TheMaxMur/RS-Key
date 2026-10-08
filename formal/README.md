@@ -2054,11 +2054,11 @@ each failure read for its direction rather than its colour:
 `crates/rsk-fs/src/fs_tests.rs:505` — the marker is PRESENT over a torn lap,
 read off the medium past `Fs`'s cache), `BugPartialLockCarry`
 (`pin_lock_round_trips_and_boot_leaves_it_alone` at
-`crates/rsk-fido/src/state_tests.rs:135`, `left: 0 right: 2` — a live batch
+`crates/rsk-fido/src/state_tests.rs:189`, `left: 0 right: 2` — a live batch
 ERASED by the restore). The last is patched CONDITIONALLY on `engaged`, because
 the model's switch diverges only at `recorded = "batch"`: an unconditional drop
 also fires where the model says the restore is correct, and killed on
-`crates/rsk-fido/src/state_tests.rs:120`, an assertion whose model image is
+`crates/rsk-fido/src/state_tests.rs:174`, an assertion whose model image is
 unchanged behaviour. Its slice is `-p rsk-fido` and stays there. Widening it to
 `-p rsk-fido -p rsk-device` was driven as a 2x2 against the rsk-device case
 present and absent, and every arm read `killed`, because `run_one` keys on ONE

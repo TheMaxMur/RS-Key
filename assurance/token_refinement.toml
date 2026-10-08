@@ -89,6 +89,12 @@ function = "arm_token"
 op = "IssueToken"
 test_only = true
 
+[[volatile_writer]]
+file = "crates/rsk-fido/src/tests.rs"
+function = "dispatch_without_response_space_has_no_effect"
+op = "IssueToken"
+test_only = true
+
 [[persistent_writer]]
 file = "crates/rsk-fido/src/clientpin.rs"
 function = "spend_and_verify_pin_hash"
