@@ -10984,7 +10984,7 @@ fn a_torn_move_key_never_loses_the_key_or_serves_it_headless() {
     let rng = RefCell::new(TestRng(7));
     let pres = RefCell::new(AlwaysConfirm);
     let app_on = || PivApplet::new(SERIAL, HASH, None, &rng, &pres);
-    rsk_fs::cut::sweep(
+    assert!(!rsk_fs::cut::sweep_restarts(
         || {
             let (mut fs, medium) = new_cut_fs();
             let mut app = app_on();
@@ -11003,7 +11003,19 @@ fn a_torn_move_key_never_loses_the_key_or_serves_it_headless() {
             auth_mgm(&mut app, fs);
             run(&mut app, fs, INS_MOVE_KEY, 0x82, 0x9A, &[]).0 == Sw::OK
         },
-        |fs, budget, completed, medium| {
+        |fs| {
+            let _ = files::scan_files(
+                &Device {
+                    serial_hash: &HASH,
+                    serial_id: &SERIAL,
+                    otp_key: None,
+                    latched: false,
+                },
+                fs,
+                &mut TestRng(91),
+            );
+        },
+        |fs, budget, _second, completed, medium| {
             let held: Vec<u8> = [0x9A, 0x82]
                 .into_iter()
                 .filter(|&s| fs.has_key(key_fid(s)))
@@ -11038,7 +11050,7 @@ fn a_torn_move_key_never_loses_the_key_or_serves_it_headless() {
                 );
             }
         },
-    );
+    ));
 }
 
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
