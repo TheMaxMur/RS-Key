@@ -903,20 +903,10 @@ pub fn credential_store<S: Storage>(
         return Err(e);
     }
 
-    // A freshly created (or re-registered) credential restarts its per-credential
-    // signature counter: makeCredential reported signCount 0, so the next
-    // operation reports 1. This also clears any stale entry a prior occupant of a
-    // reused slot may have left in the packed EF_CRED_CTR file.
-    //
-    // BEFORE the credential and not after: it was the one fallible step with no
-    // rollback under it, and it fails on the same no-fault route the write above
-    // does, so a failure there answered KEY_STORE_FULL over a credential that
-    // was already live. A counter written for a slot the next line then fails to
-    // fill is inert — the slot's next occupant overwrites it.
-    if let Err(e) = crate::seed::set_cred_sign_counter(fs, slot, 1) {
-        if new_record {
-            let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
-        }
+    // A free slot has no live key whose counter could be rolled back. An occupied
+    // slot must keep its preceding counter until the replacement key commits.
+    if new_record && let Err(e) = crate::seed::set_cred_sign_counter(fs, slot, 1) {
+        let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
         return Err(e);
     }
     if let Err(e) = rec
@@ -928,6 +918,9 @@ pub fn credential_store<S: Storage>(
             let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
         }
         return Err(e);
+    }
+    if !new_record {
+        crate::seed::set_cred_sign_counter(fs, slot, 1)?;
     }
     Ok(())
 }

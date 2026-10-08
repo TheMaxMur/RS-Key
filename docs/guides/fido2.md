@@ -138,6 +138,11 @@ the device could not count is not one it signs, so a read fault costs you the lo
 instead of the tripwire. So is a counter the flash cannot advance: the login fails
 instead of signing a number the next one would repeat.
 
+Replacing a passkey resets its counter only after its new credential record
+commits. An interruption can leave the preceding passkey with its preceding
+counter, or the replacement with that high counter until the owner retries.
+A completed replacement starts its next assertion at 1.
+
 Upgrading an existing key is forward-safe for passkeys: each seeds its counter from
 the old global value on first use, so the reported number never counts backwards.
 

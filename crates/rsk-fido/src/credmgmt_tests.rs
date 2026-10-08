@@ -2866,3 +2866,6 @@ fn command_rng<S: Storage>(fs: &Fs<S>) -> SeqRng {
 
 #[path = "credmgmt_decisions_tests.rs"]
 mod decisions;
+
+#[path = "credential_restart_tests.rs"]
+mod credential_restarts;
