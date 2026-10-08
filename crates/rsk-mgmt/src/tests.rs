@@ -13,6 +13,37 @@ use rsk_fs::storage::ram::RamStorage;
 use rsk_sdk::Apdu;
 
 struct DenyPresence;
+
+#[test]
+fn decimal_version_fields_cover_every_u8_without_padding() {
+    for value in 0..=u8::MAX {
+        let mut out = [0; 3];
+        let mut response = ResBuf::new(&mut out);
+        push_dec(&mut response, value);
+        assert_eq!(response.as_slice(), value.to_string().as_bytes());
+    }
+}
+
+#[test]
+fn malformed_configuration_lengths_preserve_the_record() {
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = ManagementApplet::new([0; 8], &presence);
+    let mut fs = fs();
+    fs.put(EF_DEV_CONF, &[TAG_DEVICE_FLAGS, 1, 0x20]).unwrap();
+    let generation = fs.write_gen();
+    for raw in [
+        vec![0, INS_WRITE_CONFIG, 0, 0],
+        vec![0, INS_WRITE_CONFIG, 0, 0, 2, 2, 0],
+        [
+            vec![0, INS_WRITE_CONFIG, 0, 0, 0, 0, 0xe2, 0xe1],
+            vec![0; 225],
+        ]
+        .concat(),
+    ] {
+        assert_eq!(process(&mut app, &mut fs, &raw).0, Sw::WRONG_DATA);
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
 impl UserPresence for DenyPresence {
     fn request(&mut self, _c: Confirm<'_>) -> Presence {
         Presence::Declined

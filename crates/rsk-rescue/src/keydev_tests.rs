@@ -42,6 +42,71 @@ fn fs() -> Fs<RamStorage> {
     Fs::new(RamStorage::new())
 }
 
+#[test]
+fn key_generation_retries_an_invalid_scalar_and_refuses_an_unpersisted_key() {
+    struct RejectFirst(usize);
+    impl Rng for RejectFirst {
+        fn fill(&mut self, out: &mut [u8]) {
+            if out.len() == 32 {
+                out.fill(if self.0 == 0 { 0xff } else { 1 });
+                self.0 += 1;
+            } else {
+                out.fill(0x22);
+            }
+        }
+    }
+    let mut fs = fs();
+    let mut rng = RejectFirst(0);
+    let key = load_or_generate(&dev(), None, &mut fs, &mut rng).unwrap();
+    assert_eq!(rng.0, 2);
+    assert_eq!(key.to_bytes().as_slice(), &[1; 32]);
+    assert_eq!(
+        load_or_generate(&dev(), None, &mut fs, &mut rng)
+            .unwrap()
+            .to_bytes(),
+        key.to_bytes()
+    );
+    assert_eq!(rng.0, 2);
+
+    let (backend, medium) = Cut::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    medium.arm(0);
+    assert!(load_or_generate(&dev(), None, &mut fs, &mut LcgRng(7)).is_none());
+    assert_eq!(medium.value(EF_DEVCERT_KEY.get()), None);
+    assert_eq!(fs.write_gen(), 0);
+    medium.arm(u32::MAX);
+    assert!(load_or_generate(&dev(), None, &mut fs, &mut LcgRng(7)).is_some());
+}
+
+#[test]
+fn otp_tagged_legacy_cbc_keeps_its_scalar_when_migrated_to_gcm() {
+    let mut fs = fs();
+    let mut iv = [0; 16];
+    iv.copy_from_slice(&otp_dev().serial_hash[..16]);
+    let key = otp_dev().derive_kbase();
+    let mut cipher = rsk_secret::Secret::new([0x11; 32]);
+    aes_encrypt(key.expose(), &iv, Mode::Cbc, cipher.expose_mut()).unwrap();
+    let mut legacy = [0; 33];
+    legacy[0] = TAG_OTP;
+    legacy[1..].copy_from_slice(cipher.expose());
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&legacy)).unwrap();
+    let mut rng = LcgRng(7);
+    let before = load_or_generate(&otp_dev(), None, &mut fs, &mut rng).unwrap();
+    assert_eq!(before.to_bytes().as_slice(), &[0x11; 32]);
+    assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut rng));
+    assert_eq!(fs.size(EF_DEVCERT_KEY.get()), Some(GCM_LEN));
+    assert_eq!(
+        load_or_generate(&otp_dev(), None, &mut fs, &mut rng)
+            .unwrap()
+            .to_bytes(),
+        before.to_bytes()
+    );
+    let generation = fs.write_gen();
+    assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut rng));
+    assert_eq!(fs.write_gen(), generation);
+}
+
 /// Manually CBC-seal a scalar the pre-#16 way (fixed serial-hash IV, bare 32
 /// bytes) so the migration path can be exercised without the old code.
 fn write_legacy_cbc(dev: &Device, fs: &mut Fs<RamStorage>, scalar: &[u8; 32]) {
@@ -306,4 +371,9 @@ fn a_keydev_no_arm_opens_is_not_reported_left() {
     fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&[0xEE; GCM_LEN]))
         .unwrap();
     assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut LcgRng(5)));
+}
+
+#[test]
+fn a_legacy_otp_width_with_an_unknown_tag_is_not_a_decryption_candidate() {
+    assert!(cbc_open(&dev(), &[0; 33]).is_none());
 }

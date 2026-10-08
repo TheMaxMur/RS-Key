@@ -3,6 +3,17 @@
 
 use super::*;
 
+#[test]
+fn response_truncate_never_extends_or_overwrites_the_buffer() {
+    let mut bytes = [0xa5; 8];
+    let mut response = ResBuf::new(&mut bytes);
+    assert!(response.extend(b"abcd"));
+    response.truncate(8);
+    assert_eq!(response.as_slice(), b"abcd");
+    response.truncate(2);
+    assert_eq!(response.as_slice(), b"ab");
+}
+
 #[path = "applet_registry_tests.rs"]
 mod registry;
 

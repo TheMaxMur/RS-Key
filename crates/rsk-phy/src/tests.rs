@@ -4,6 +4,18 @@
 use super::*;
 
 #[test]
+fn invalid_utf8_is_copied_with_a_bound_and_empty_needles_do_not_match() {
+    let mut out = [0xa5; 8];
+    assert_eq!(clamp_usb_string(&[0xff], &mut out), 1);
+    assert_eq!(out, [0xff, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5, 0xa5]);
+    for predicate in [contains as fn(&[u8], &[u8]) -> bool, contains_ci] {
+        assert!(!predicate(b"a", b""));
+        assert!(!predicate(b"a", b"ab"));
+        assert!(predicate(b"ab", b"ab"));
+    }
+}
+
+#[test]
 fn roundtrip_all_fields() {
     let phy = PhyData {
         vid_pid: Some((0x1050, 0x0407)),

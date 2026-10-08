@@ -4,6 +4,35 @@
 use super::*;
 use rsk_fs::storage::ram::RamStorage;
 
+#[test]
+fn calendar_fields_refuse_each_invalid_boundary_and_round_trip_months() {
+    for (month, day, hour, minute, second) in [
+        (12, 1, 0, 0, 0),
+        (0, 0, 0, 0, 0),
+        (0, 32, 0, 0, 0),
+        (0, 1, 24, 0, 0),
+        (0, 1, 0, 60, 0),
+        (0, 1, 0, 0, 61),
+    ] {
+        assert_eq!(
+            epoch_from_civil(2026, month, day, hour, minute, second),
+            None
+        );
+    }
+    for year in [1970, 2000, 2026, 2100] {
+        for month in 0..12 {
+            let epoch = epoch_from_civil(year, month, 1, 12, 34, 56).unwrap();
+            let civil = civil_from_epoch(epoch);
+            assert_eq!(
+                (
+                    civil.year, civil.mon0, civil.mday, civil.hour, civil.min, civil.sec
+                ),
+                (year as u16, month, 1, 12, 34, 56)
+            );
+        }
+    }
+}
+
 #[path = "command_bounds_tests.rs"]
 mod command_bounds;
 
@@ -47,6 +76,7 @@ struct FakePlatform {
     /// Simulated anti-rollback rows; `None` models a read error.
     rollback_raw: Option<rollback::RollbackRaw>,
     rollback_writes: u32,
+    rollback_lands: bool,
     /// What the boot's seal passes left under the pre-burn key.
     pre_otp_left: Option<u16>,
 }
@@ -65,6 +95,7 @@ impl Default for FakePlatform {
                 version1: [0; 3],
             }),
             rollback_writes: 0,
+            rollback_lands: true,
             pre_otp_left: Some(0),
         }
     }
@@ -104,7 +135,9 @@ impl Platform for FakePlatform {
     fn set_rollback_required(&mut self) -> bool {
         // OR the bit into every copy, like the firmware burn does.
         self.rollback_writes += 1;
-        if let Some(raw) = self.rollback_raw.as_mut() {
+        if self.rollback_lands
+            && let Some(raw) = self.rollback_raw.as_mut()
+        {
             for row in raw.flags0.iter_mut() {
                 *row |= rollback::ROLLBACK_REQUIRED_BIT;
             }
@@ -1370,4 +1403,25 @@ fn a_torn_latch_is_completed_only_over_a_finished_migration() {
             "{torn:#08x}"
         );
     }
+}
+
+#[test]
+fn rollback_require_refuses_a_reported_success_whose_readback_stays_clear() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform {
+        rollback_lands: false,
+        ..secure_platform()
+    });
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = lock_app(&rng, &platform, &presence, None);
+    let mut fs = Fs::new(RamStorage::new());
+    let generation = fs.write_gen();
+    assert_eq!(
+        run(&mut app, &mut fs, &rollback_apdu()),
+        (Sw::EXEC_ERROR, vec![])
+    );
+    assert_eq!(platform.borrow().rollback_writes, 1);
+    assert_eq!(platform.borrow().rollback_raw.unwrap().flags0, [0; 3]);
+    assert_eq!(fs.write_gen(), generation);
+    assert!(platform.borrow().reboots.is_empty());
 }

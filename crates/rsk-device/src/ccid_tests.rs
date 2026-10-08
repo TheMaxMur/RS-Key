@@ -13,6 +13,35 @@ fn serial() -> [u8; 4] {
     rsk_sdk::serial4(crate::tests::SERIAL_ID)
 }
 
+#[test]
+fn fido_select_refuses_a_response_buffer_shorter_than_the_selected_version() {
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let mut full = [0; 16];
+    let mut response = ResBuf::new(&mut full);
+    assert_eq!(
+        ccid.fido
+            .select(false, &mut env.fs.borrow_mut(), &mut response),
+        Sw::OK
+    );
+    let version = response.as_slice().to_vec();
+    assert!(!version.is_empty());
+    for room in 0..=version.len() {
+        let mut out = vec![0xa5; room];
+        let mut response = ResBuf::new(&mut out);
+        let sw = ccid
+            .fido
+            .select(false, &mut env.fs.borrow_mut(), &mut response);
+        if room < version.len() {
+            assert_eq!(sw, Sw::WRONG_LENGTH);
+            assert!(response.as_slice().is_empty());
+        } else {
+            assert_eq!(sw, Sw::OK);
+            assert_eq!(response.as_slice(), version);
+        }
+    }
+}
+
 /// The eight AIDs in registration order, so a test can walk the whole set.
 const AIDS: [(&str, &[u8]); 8] = [
     ("vendor", rsk_vendor::VENDOR_AID),
@@ -2582,4 +2611,38 @@ fn the_boot_keyboard_status_record_starts_unprogrammed() {
     let (major, minor, patch) = rsk_sdk::FIRMWARE_VERSION;
     assert_eq!(ccid.otp_status_record(), [major, minor, patch, 1, 0, 0, 0]);
     assert_eq!(ccid.otp_status_record(), [major, minor, patch, 1, 0, 0, 0]);
+}
+
+#[test]
+fn keygen_fast_paths_leave_wrong_parameter_commands_to_normal_dispatch() {
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    assert_eq!(
+        sw(ccid.handle_apdu(&select(rsk_openpgp::consts::OPENPGP_AID), 0)),
+        Sw::OK
+    );
+    let generation = env.fs.borrow().write_gen();
+    assert_eq!(
+        ccid.try_rsa_keygen(&[0, INS_KEYPAIR_GEN, 0x81, 0, 2, 0xb6, 0]),
+        None
+    );
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert_eq!(sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0)), Sw::OK);
+    let generation = env.fs.borrow().write_gen();
+    assert_eq!(
+        ccid.try_piv_rsa_keygen(&[0, rsk_piv::INS_ASYM_KEYGEN, 1, 0]),
+        None
+    );
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}
+
+#[test]
+fn a_successful_otp_config_command_returns_only_the_updated_status_frame() {
+    const CONFIGURE_SLOT: u8 = 0x01;
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let before = ccid.otp.hid_status_frame(&mut env.fs.borrow_mut());
+    let (_, n, after) = ccid.handle_otp_hid(CONFIGURE_SLOT, &[0; rsk_otp::hid::PAYLOAD_SIZE]);
+    assert_eq!(n, 0);
+    assert_eq!(after[4], before[4].wrapping_add(1));
 }

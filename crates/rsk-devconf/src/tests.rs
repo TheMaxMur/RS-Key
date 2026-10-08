@@ -828,3 +828,41 @@ fn a_write_config_does_not_carry_a_legacy_lock_code_forward() {
     );
     assert_eq!(tlv_get(&rec[..n], TAG_USB_ENABLED), Some(&[0x02, 0x3B][..]));
 }
+
+#[test]
+fn a_legacy_unlock_tag_is_retired_by_both_boot_scrub_and_delta_write() {
+    for scrub in [false, true] {
+        let mut fs = fs();
+        let mut stored = vec![TAG_CONFIG_UNLOCK, 16];
+        stored.extend_from_slice(&[0xab; 16]);
+        stored.extend_from_slice(&[TAG_USB_ENABLED, 2, 0x02, 0x3b]);
+        fs.put(EF_DEV_CONF, &stored).unwrap();
+        if scrub {
+            scrub_legacy_lock(&mut fs).unwrap();
+        } else {
+            persist_touched(&SERIAL, &mut fs, &[TAG_CHALRESP_TIMEOUT, 1, 0x0f]).unwrap();
+        }
+        let mut out = [0; EF_DEV_CONF_READ_MAX];
+        let n = fs.read(EF_DEV_CONF, &mut out).unwrap();
+        assert_eq!(tlv_get(&out[..n], TAG_CONFIG_UNLOCK), None);
+        assert_eq!(tlv_get(&out[..n], TAG_USB_ENABLED), Some(&[0x02, 0x3b][..]));
+        assert_eq!(
+            tlv_get(&out[..n], TAG_CHALRESP_TIMEOUT),
+            if scrub { None } else { Some(&[0x0f][..]) }
+        );
+    }
+}
+
+#[test]
+fn boot_scrub_preserves_an_unreadable_tail_of_an_overlong_legacy_record() {
+    let mut fs = fs();
+    let mut stored = legacy_locked_record();
+    stored.resize(EF_DEV_CONF_READ_MAX + 1, 0x55);
+    fs.put(EF_DEV_CONF, &stored).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(scrub_legacy_lock(&mut fs), Ok(()));
+    assert_eq!(fs.write_gen(), generation);
+    let mut out = vec![0; stored.len()];
+    assert_eq!(fs.read(EF_DEV_CONF, &mut out), Some(stored.len()));
+    assert_eq!(out, stored);
+}

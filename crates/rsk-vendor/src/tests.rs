@@ -519,3 +519,14 @@ fn a_locked_configuration_refuses_set_led() {
     assert_eq!(run(&mut app, &mut fs, &set).0, Sw::OK);
     assert!(fs.has_data(EF_LED_CONF));
 }
+
+#[test]
+fn a_short_counter_record_reads_as_the_default_without_rewriting_it() {
+    for len in 0..4 {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.put_counter(COUNTER_FID, &vec![0xa5; len]).unwrap();
+        let generation = fs.write_gen();
+        assert_eq!(read_counter(&mut fs), 0);
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
