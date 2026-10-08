@@ -124,3 +124,7 @@ fn outcome(field: &str) -> Outcome {
         v => panic!("a Wycheproof result of {v:?}"),
     }
 }
+
+#[cfg(test)]
+#[path = "wycheproof_reader_tests.rs"]
+mod reader_tests;
