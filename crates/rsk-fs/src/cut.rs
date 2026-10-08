@@ -166,6 +166,7 @@ pub fn sweep_recovery<C>(
         command(&mut fs, &mut cx);
         let cut = medium.arm(None);
         let after = medium.map.borrow().clone();
+        let mut recovered = false;
         for second in 0..SWEEP_MAX {
             let (mut fs, medium) = Snap::over(after.clone());
             medium.arm(Some(second));
@@ -176,9 +177,14 @@ pub fn sweep_recovery<C>(
             recover(&mut fs);
             oracle(&mut fs, first, second);
             if !recovery_cut {
+                recovered = true;
                 break;
             }
         }
+        assert!(
+            recovered,
+            "no recovery budget under {SWEEP_MAX} let recovery finish"
+        );
         if !cut {
             assert!(
                 torn && repaired,
@@ -190,3 +196,7 @@ pub fn sweep_recovery<C>(
     }
     panic!("no budget under {SWEEP_MAX} let the command finish");
 }
+
+#[cfg(test)]
+#[path = "cut_tests.rs"]
+mod tests;
