@@ -1287,3 +1287,44 @@ fn declining_the_named_u2f_card_never_opens_the_builtin_pin_pad() {
     assert_eq!(fs.write_gen(), generation);
     assert_eq!(rng.0, entropy);
 }
+
+#[test]
+fn direct_u2f_calls_refuse_inconsistent_apdu_lengths_before_loading_a_key() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = crate::FidoState::new();
+    let mut rng = SeqRng(1);
+    let mut presence = crate::AlwaysConfirm;
+    let empty = Apdu::parse(&[0, CTAP_REGISTER, 0, 0]).unwrap();
+    let mut out = [0xa5; 512];
+    let mut ctx = Ctx {
+        dev: dev(),
+        fs: &mut fs,
+        state: &mut state,
+        rng: &mut rng,
+        presence: &mut presence,
+        now_ms: 0,
+    };
+    assert_eq!(
+        cmd_register(&mut ctx, &Apdu { nc: 64, ..empty }, &mut out),
+        (Sw::WRONG_LENGTH, 0)
+    );
+    assert_eq!(out, [0xa5; 512]);
+    let mut header = [0; 65];
+    header[64] = KEY_HANDLE_LEN as u8;
+    for data in [&header[..64], &header[..]] {
+        let request = Apdu {
+            ins: CTAP_AUTHENTICATE,
+            p1: U2F_AUTH_ENFORCE,
+            nc: 65 + KEY_HANDLE_LEN,
+            data,
+            ..empty
+        };
+        assert_eq!(
+            cmd_authenticate(&mut ctx, &request, &mut out),
+            (Sw::WRONG_DATA, 0)
+        );
+        assert_eq!(out, [0xa5; 512]);
+    }
+    assert_eq!(fs.write_gen(), 0);
+    assert_eq!(rng.0, 1);
+}
