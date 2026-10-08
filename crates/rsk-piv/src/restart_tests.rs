@@ -410,3 +410,6 @@ fn fixed_and_pooled_objects_are_whole_after_two_boots() {
         }
     }
 }
+
+#[path = "restart_repair_tests.rs"]
+mod repair;
