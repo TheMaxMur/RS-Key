@@ -13,7 +13,7 @@ assurance/abstractions.toml	crates/rsk-fido/src/state.rs	651-651	if self.paut.in
 assurance/abstractions.toml	crates/rsk-oath/src/lib.rs	369-371	if !self.validated {	}
 assurance/assumptions.toml	crates/rsk-fido/src/clientpin.rs	411-417	if force_change_pending(ctx) {	}
 assurance/assumptions.toml	crates/rsk-fido/src/clientpin.rs	882-890	let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;	.map_err(|_| CtapError::Other)?;
-assurance/assumptions.toml	crates/rsk-fs/src/fs_tests.rs	392-392	fn a_reset_between_a_re_key_and_its_rescrub_leaves_the_marker_lying() {	fn a_reset_between_a_re_key_and_its_rescrub_leaves_the_marker_lying() {
+assurance/assumptions.toml	crates/rsk-fs/src/fs_tests.rs	393-393	fn a_reset_between_a_re_key_and_its_rescrub_leaves_the_marker_lying() {	fn a_reset_between_a_re_key_and_its_rescrub_leaves_the_marker_lying() {
 assurance/assumptions.toml	crates/rsk-fs/src/lib.rs	48-63	/// **Call it BEFORE the write, and make that write conditional on `Ok`.** Order is	pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<Rearmed> {
 assurance/assumptions.toml	firmware/src/pin_lock.rs	36-37	const TAG: u32 = 0x5253_4B00;	const TAG_MASK: u32 = 0xFFFF_FF00;
 assurance/assumptions.toml	firmware/src/pin_lock.rs	54-54	rp_pac::WATCHDOG.scratch2().write_value(encode(lock));	rp_pac::WATCHDOG.scratch2().write_value(encode(lock));
@@ -784,8 +784,8 @@ formal/README.md	crates/rsk-fs/src/fs.rs	605-605	meta	meta
 formal/README.md	crates/rsk-fs/src/fs.rs	830-830	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
 formal/README.md	crates/rsk-fs/src/fs.rs	867-867	// Absent means there is nothing to drop; a FAILED read means we do not	// Absent means there is nothing to drop; a FAILED read means we do not
 formal/README.md	crates/rsk-fs/src/fs.rs	869-869	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
-formal/README.md	crates/rsk-fs/src/fs_tests.rs	385-385	assert!(	assert!(
-formal/README.md	crates/rsk-fs/src/fs_tests.rs	505-505	assert!(	assert!(
+formal/README.md	crates/rsk-fs/src/fs_tests.rs	386-386	assert!(	assert!(
+formal/README.md	crates/rsk-fs/src/fs_tests.rs	506-506	assert!(	assert!(
 formal/README.md	crates/rsk-fs/src/lib.rs	29-124	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	}
 formal/README.md	crates/rsk-fs/src/lib.rs	64-64	let _ = fs.delete(EF_HARDENED);	let _ = fs.delete(EF_HARDENED);
 formal/README.md	crates/rsk-fs/src/lib.rs	126-144	/// Run the one-shot at-rest scrub lap: iff [`EF_HARDENED`] is absent, drive a full	}
@@ -1162,8 +1162,8 @@ formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	174-174	assert_eq!(st.p
 formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	189-189	assert_eq!(st.pin_lock().mismatches, 2);	assert_eq!(st.pin_lock().mismatches, 2);
 formal/comutants.toml	crates/rsk-fs/src/fs.rs	847-847	self.storage.write(EF_META, &out[..w])?;	self.storage.write(EF_META, &out[..w])?;
 formal/comutants.toml	crates/rsk-fs/src/fs.rs	888-888	self.storage.write(EF_META, &out[..w]) // EF_META stays present	self.storage.write(EF_META, &out[..w]) // EF_META stays present
-formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	385-385	assert!(	assert!(
-formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	505-505	assert!(	assert!(
+formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	386-386	assert!(	assert!(
+formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	506-506	assert!(	assert!(
 formal/comutants.toml	crates/rsk-fs/src/storage.rs	78-78	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,
 formal/comutants.toml	crates/rsk-oath/src/code_tests.rs	155-155	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/increasing_tests.rs	36-36	assert_eq!(sw, Sw::WRONG_DATA, "a refusal must read as 6A80");	assert_eq!(sw, Sw::WRONG_DATA, "a refusal must read as 6A80");

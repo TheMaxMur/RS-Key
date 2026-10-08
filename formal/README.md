@@ -2048,10 +2048,10 @@ firmware keeps only the OTP gate and the placement of the stall.
 All three switches are registered co-mutants now, each measured `killed` and
 each failure read for its direction rather than its colour:
 `BugRekeyKeepsTheMarker` (`requesting_a_rescrub_clears_the_hardened_marker`,
-`crates/rsk-fs/src/fs_tests.rs:385` — the marker SURVIVED),
+`crates/rsk-fs/src/fs_tests.rs:386` — the marker SURVIVED),
 `BugMarkerBeforeScrub`
 (`the_at_rest_lap_writes_its_marker_only_after_a_completed_scrub`,
-`crates/rsk-fs/src/fs_tests.rs:505` — the marker is PRESENT over a torn lap,
+`crates/rsk-fs/src/fs_tests.rs:506` — the marker is PRESENT over a torn lap,
 read off the medium past `Fs`'s cache), `BugPartialLockCarry`
 (`pin_lock_round_trips_and_boot_leaves_it_alone` at
 `crates/rsk-fido/src/state_tests.rs:189`, `left: 0 right: 2` — a live batch
