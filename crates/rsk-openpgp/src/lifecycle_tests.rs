@@ -375,3 +375,6 @@ fn the_rsa_keygen_fast_path_generates_nothing_on_a_terminated_applet() {
         Err(Sw::TERMINATED)
     );
 }
+
+#[path = "lifecycle_restart_tests.rs"]
+mod restarts;
