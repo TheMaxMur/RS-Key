@@ -22,8 +22,8 @@
 #
 # Scope, matching the roadmap's §3.4 so the counts reproduce: callers outside
 # `crates/rsk-fs` (which defines the family), outside `fuzz/`, and outside the
-# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 48 — 24 `delete`,
-# 5 `delete_key`, 2 `delete_over`, 5 `delete_key_over`, 7 `force_delete`,
+# cfg-gated `*_tests.rs` / `*_kani.rs` sources. That leaves 51 — 24 `delete`,
+# 6 `delete_key`, 2 `delete_over`, 5 `delete_key_over`, 9 `force_delete`,
 # 5 `force_delete_halves`.
 #
 # Run the same derivation over `crates/rsk-fs` and it finds SEVEN more, which this
@@ -360,7 +360,7 @@ why = "wipe_oath's sweep, credentials first then the unlock records; OATH fids c
 
 [[site]]
 file = "crates/rsk-openpgp/src/init.rs"
-line = 204
+line = 232
 call = "let _ = fs.delete(EF_RC);"
 verb = "delete"
 answer = "discarded"
@@ -371,7 +371,7 @@ why = "scan_files runs neutralize_default_reset_code and it is idempotent, so a 
 
 [[site]]
 file = "crates/rsk-openpgp/src/init.rs"
-line = 205
+line = 233
 call = "let _ = fs.delete_key(EF_DEK_RC);"
 verb = "delete_key"
 answer = "discarded"
@@ -379,6 +379,39 @@ class = "secret-or-gate"
 metadata = "none"
 disposition = "best-effort"
 why = "the DEK half of the same idempotent repair, retried on the next boot rather than the next select, and it only ever fires for the PUBLISHED factory reset code."
+
+[[site]]
+file = "crates/rsk-openpgp/src/init.rs"
+line = 206
+call = "let _ = fs.delete_key(EF_DEK_RC);"
+verb = "delete_key"
+answer = "discarded"
+class = "secret-or-gate"
+metadata = "none"
+disposition = "best-effort"
+why = "Completes the same obsolete reset-wrapper cleanup after its verifier tombstone landed. Only an exact V3 record authenticated under the published default qualifies; unread or unidentified orphan wrappers and staging records remain available. A refused tombstone leaves the authenticated public wrapper for the next boot to retry; this repair does not acknowledge a host erase command. The interrupted-recovery tests require eventual removal on a healthy boot."
+
+[[site]]
+file = "crates/rsk-openpgp/src/attest.rs"
+line = 67
+call = "fs.force_delete(EF_ATT_CERT)"
+verb = "force_delete"
+answer = "read"
+class = "secret-or-gate"
+metadata = "none"
+disposition = "must-read"
+why = "Retires the preceding root certificate before committing a replacement signer. A refused retirement must prevent that key commit, or a cut can leave a complete root whose certificate names the preceding signer. The error propagates as MEMORY_FAILURE; record-cut tests check the state before recovery."
+
+[[site]]
+file = "crates/rsk-openpgp/src/attest.rs"
+line = 147
+call = "fs.force_delete(EF_ATT_CERT)"
+verb = "force_delete"
+answer = "read"
+class = "secret-or-gate"
+metadata = "none"
+disposition = "must-read"
+why = "Retires a missing or mismatched root certificate before publishing repaired records from the surviving signer. Failure stops repair with MEMORY_FAILURE; an interrupted repair is retried rather than accepted as a matching certificate. This public object carries no PIV metadata head."
 
 [[site]]
 file = "crates/rsk-openpgp/src/lib.rs"
