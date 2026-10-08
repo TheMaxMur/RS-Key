@@ -222,3 +222,12 @@ fn abandoning_a_one_prime_search_does_not_complete_the_next_search() {
     };
     assert_eq!(key.n_be(), hex(N_HEX));
 }
+
+#[test]
+fn a_failed_modexp_self_test_latch_disables_an_otherwise_supported_keygen() {
+    let mut keygen = RsaKeygen::new(2048);
+    assert!(keygen.usable());
+    keygen.asm_ok = false;
+    assert!(!keygen.usable());
+    assert_eq!(keygen.half_bytes(), 128);
+}

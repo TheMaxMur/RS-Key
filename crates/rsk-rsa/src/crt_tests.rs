@@ -233,3 +233,15 @@ fn a_key_on_composite_factors_fails_the_pairwise_test() {
     assert_eq!(pairwise_consistent(&test_key(), &mut rng), Ok(()));
     assert_eq!(pairwise_consistent(&test_key_1024(), &mut rng), Ok(()));
 }
+
+#[test]
+fn a_direct_crt_field_copy_refuses_a_short_destination_without_writing() {
+    let mut output = [0xa5; 4];
+    assert_eq!(
+        put_field(&mut output[..1], &[0x12, 0x34]),
+        Err(RsaError::BadWidth)
+    );
+    assert_eq!(output, [0xa5; 4]);
+    assert_eq!(put_field(&mut output, &[0x12, 0x34]), Ok(()));
+    assert_eq!(output, [0xa5, 0xa5, 0x12, 0x34]);
+}
