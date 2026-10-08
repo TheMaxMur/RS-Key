@@ -389,3 +389,63 @@ fn import_judges_the_password_before_any_body() {
         }
     });
 }
+
+#[test]
+fn a_direct_public_key_read_clamps_to_every_supplied_output_width() {
+    let mut fs = Fs::new(RamStorage::new());
+    fs.scan();
+    let public = [0x7f, 0x49, 3, 0x86, 1, 7];
+    fs.put(slot_pub_fid(EF_PK_SIG), &public).unwrap();
+    let generation = fs.write_gen();
+    for capacity in 0..=public.len() {
+        let mut out = [0xa5; 8];
+        assert_eq!(
+            read_public(&mut fs, EF_PK_SIG, &mut out[..capacity]),
+            Ok(capacity)
+        );
+        assert_eq!(&out[..capacity], &public[..capacity]);
+        assert_eq!(&out[capacity..], &[0xa5; 8][capacity..]);
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
+
+#[test]
+#[should_panic(expected = "no 0x0093")]
+fn a_tlv_oracle_refuses_a_missing_required_child() {
+    let run = crate::test_tlv::children(&[0x5e, 1, 7]);
+    assert_eq!(crate::test_tlv::child(&run, 0x5e), [7]);
+    let _ = crate::test_tlv::child(&run, 0x93);
+}
+
+#[test]
+fn a_public_key_read_that_shrinks_after_the_probe_emits_no_stale_scratch_bytes() {
+    use rsk_sdk::Applet;
+    let (backend, control) = rsk_fs::read_change::ChangingRead::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    let serial = [1, 2, 3, 4, 5, 6, 7, 8];
+    let hash = [0x22; 32];
+    let dev = Device {
+        serial_hash: &hash,
+        serial_id: &serial,
+        otp_key: None,
+        latched: false,
+    };
+    crate::init::scan_files(&dev, &mut fs, &mut Lcg(1)).unwrap();
+    let fid = slot_pub_fid(EF_PK_SIG);
+    fs.put(fid, &[0x7f, 0x49, 3, 0x86, 1, 7]).unwrap();
+    let rng = core::cell::RefCell::new(Lcg(2));
+    let presence = core::cell::RefCell::new(crate::AlwaysConfirm);
+    let mut app = crate::OpenpgpApplet::new(serial, hash, None, &rng, &presence);
+    app.scratch.fill(0xa5);
+    control.replace_on_read(fid, 0, Some(&[]));
+    let generation = fs.write_gen();
+    let request = rsk_sdk::Apdu::parse(&[0, INS_KEYPAIR_GEN, 0x81, 0, 2, CRT_SIG, 0]).unwrap();
+    let mut out = [0xa5; 32];
+    let mut res = rsk_sdk::ResBuf::new(&mut out);
+    assert_eq!(app.process(&request, &mut fs, &mut res), Sw::OK);
+    assert!(res.as_slice().is_empty());
+    assert_eq!(out, [0xa5; 32]);
+    assert!(control.served());
+    assert_eq!(fs.write_gen(), generation);
+}
