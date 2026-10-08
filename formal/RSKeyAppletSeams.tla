@@ -466,7 +466,7 @@ PgpKeyOpPolicy(r) == held[r]
 
 \* `spend_one_shot_pw1` and its callers' one decision, served or refused alike:
 \* after a PSO:CDS past its PIN check (crates/rsk-openpgp/src/pso.rs:44-48) and
-\* an ATTEST past its touch (crates/rsk-openpgp/src/attest.rs:127-128).
+\* an ATTEST past its touch (crates/rsk-openpgp/src/attest.rs:203-204).
 PgpOneShotSpend(r) ==
     IF (r = "pw1" \/ BugDecipherPinSpentLikeSig) /\ oneShotSig
          /\ ~BugSigPinNotSpent
@@ -480,7 +480,7 @@ PgpSigFreshness(r) ==
       THEN FALSE ELSE psig
 
 \* A served key operation. ATTEST is PW1 no. 81's as well
-\* (crates/rsk-openpgp/src/attest.rs:113-115), so `PgpKeyOp("pw1")` is a
+\* (crates/rsk-openpgp/src/attest.rs:189-191), so `PgpKeyOp("pw1")` is a
 \* signature or an attestation.
 PgpKeyOp(r) ==
     /\ sel = Pgp

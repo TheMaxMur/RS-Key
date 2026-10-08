@@ -177,9 +177,9 @@ assurance/bundle/SEC-FIDO-004.toml	scripts/platform_gate.py	1894-1922	def check_
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	811-811	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.	/// Refines `RSKeySecurityState!NoUnmanageableCredential` — SEC-FIDO-005.
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	887-887	bump_rp(fs, seed, rp_id_hash, rp_id)?;	bump_rp(fs, seed, rp_id_hash, rp_id)?;
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	901-901	let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);	let _ = crate::credmgmt::decrement_rp(fs, rp_id_hash);
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	925-925	.and_then(|record| fs.put(EF_CRED + slot, record))	.and_then(|record| fs.put(EF_CRED + slot, record))
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	967-967	fn bump_rp<S: Storage>(	fn bump_rp<S: Storage>(
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	1003-1008	// Existing rp: bump the count, re-storing the boxed tail verbatim.	// every enumeration surface (audit run-35).
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	915-915	.and_then(|record| fs.put(EF_CRED + slot, record))	.and_then(|record| fs.put(EF_CRED + slot, record))
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	960-960	fn bump_rp<S: Storage>(	fn bump_rp<S: Storage>(
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	996-1001	// Existing rp: bump the count, re-storing the boxed tail verbatim.	// every enumeration surface (audit run-35).
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	844-844	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	873-873	assert!(	assert!(
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	899-899	fn a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry() {	fn a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry() {
@@ -244,7 +244,7 @@ assurance/bundle/SEC-FIDO-006.toml	formal/gen-configs.sh	34-44	companion_bug() {
 assurance/bundle/SEC-FIDO-006.toml	formal/gen-configs.sh	47-84	target_inv() {	esac
 assurance/bundle/SEC-FIDO-006.toml	formal/gen-configs.sh	171-176	if [ "$b" = "$on" ] || { [ -n "$on" ] && [ "$b" = "$(companion_bug "$on")" ]; }	done
 assurance/bundle/SEC-FIDO-006.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
-assurance/bundle/SEC-FIDO-006.toml	fuzz/fuzz_targets/power_cut.rs	229-231	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	}
+assurance/bundle/SEC-FIDO-006.toml	fuzz/fuzz_targets/power_cut.rs	248-250	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	}
 assurance/bundle/SEC-FIDO-006.toml	scripts/assurance_gate.py	122-142	def cfg_checked(path: pathlib.Path) -> list[str]:	return out
 assurance/bundle/SEC-FIDO-006.toml	scripts/check.sh	562-562	run "assurance-trace image identity" assurance_trace_is_image_neutral	run "assurance-trace image identity" assurance_trace_is_image_neutral
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/consts.rs	361-361	pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]	pub const EF_PIN: u16 = 0x1080; // PIN: [retries, len, format, verifier(32)]
@@ -272,7 +272,7 @@ assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620..
 assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	229-237	armed_n=$(armed_count "$cfg")	fi
 assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	248-250	"$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -Djava.io.tmpdir="$metaroot/java-tmp" -cp "$JAR" tlc2.TLC \	"${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
 assurance/bundle/SEC-FIDO-006A.toml	fuzz/fuzz_targets/power_cut.rs	29-31	//! After a real reboot it checks `ResetNeverWeakensSurvivingState` and its three	//! `ResetKeepsTheBackupSeal`. This is the byte-granular half of the phase-6
-assurance/bundle/SEC-FIDO-006A.toml	fuzz/fuzz_targets/power_cut.rs	229-229	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
+assurance/bundle/SEC-FIDO-006A.toml	fuzz/fuzz_targets/power_cut.rs	248-248	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
 assurance/bundle/SEC-FIDO-006A.toml	tests/29_reset_power_cut.py	12-14	This is the runtime witness for `ResetNeverWeakensSurvivingState` and its three	`ResetKeepsTheBackupSeal`. It provisions one owner seed, seals its export window,
 assurance/bundle/SEC-FIDO-006A.toml	tests/29_reset_power_cut.py	526-530	assertion_status = old_credential_without_gates(dev, cid, credential_id)	)
 assurance/bundle/SEC-FIDO-006B.toml	crates/rsk-fido/src/config.rs	316-316	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");
@@ -351,10 +351,10 @@ assurance/bundle/SEC-FIDO-006C.toml	formal/gen-configs.sh	121-121	CLAUSE_INV=(Re
 assurance/bundle/SEC-FIDO-006C.toml	formal/gen-configs.sh	348-348	clause_mutant() {	clause_mutant() {
 assurance/bundle/SEC-FIDO-006C.toml	formal/gen-configs.sh	358-358	SOLO=1 SOLO_INV="$i" emit "SoloClause_$i.cfg" "$(clause_mutant "$i")" FALSE TRUE	SOLO=1 SOLO_INV="$i" emit "SoloClause_$i.cfg" "$(clause_mutant "$i")" FALSE TRUE
 assurance/bundle/SEC-FIDO-006C.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
-assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	221-231	fn reset_property_holds<S: rsk_fs::Storage>(fs: &mut Fs<S>, owner_seed: &[u8]) -> bool {	}
-assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	257-260	fs.put(EF_CRED, &[0x5a; 96]).unwrap();	fs.put(EF_BACKUP_SEALED, &[1]).unwrap();
-assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	264-269	let budget = u32::from_be_bytes([	]);
-assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	272-274	let mut state = rsk_fido::FidoState::new();	state.keydev_dec = rsk_fido::seed::load_keydev(&identity, &mut fs);
+assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	240-250	fn reset_property_holds<S: rsk_fs::Storage>(fs: &mut Fs<S>, owner_seed: &[u8]) -> bool {	}
+assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	276-279	fs.put(EF_CRED, &[0x5a; 96]).unwrap();	fs.put(EF_BACKUP_SEALED, &[1]).unwrap();
+assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	283-288	let budget = u32::from_be_bytes([	]);
+assurance/bundle/SEC-FIDO-006C.toml	fuzz/fuzz_targets/power_cut.rs	291-293	let mut state = rsk_fido::FidoState::new();	state.keydev_dec = rsk_fido::seed::load_keydev(&identity, &mut fs);
 assurance/bundle/SEC-FIDO-006C.toml	scripts/comutate.py	311-335	def armed_subject(config, companion: dict[str, str]) -> str | None:	return None
 assurance/bundle/SEC-FIDO-006C.toml	tests/29_reset_power_cut.py	526-527	assertion_status = old_credential_without_gates(dev, cid, credential_id)	assert assertion_status != 0, (
 assurance/bundle/SEC-FIDO-006C.toml	tests/29_reset_power_cut.py	537-537	assert current != owner_seed, "owner seed survived after its backup seal disappeared"	assert current != owner_seed, "owner seed survived after its backup seal disappeared"
@@ -572,7 +572,7 @@ assurance/platform.toml	firmware/src/worker.rs	428-428	crate::presence::set_wait
 assurance/platform.toml	formal/gen-configs.sh	211-225	# `clauses=1` HERE and on no other baseline, and the choice is a measurement.	# SeedReachable restatement).
 assurance/platform.toml	formal/gen-configs.sh	322-322	emit Historical_E76.cfg BugSeedDoesNotLead TRUE TRUE	emit Historical_E76.cfg BugSeedDoesNotLead TRUE TRUE
 assurance/platform.toml	fuzz/fuzz_targets/fido_session.rs	1440-1440	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"	"NoTokenAfterInvalidation: getPinToken re-issued the standing token"
-assurance/platform.toml	fuzz/fuzz_targets/power_cut.rs	229-229	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
+assurance/platform.toml	fuzz/fuzz_targets/power_cut.rs	248-248	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))	(!credential_usable || (fs.has_data(EF_PIN) && fs.has_data(EF_ALWAYS_UV)))
 assurance/platform.toml	scripts/check.sh	172-221	assurance_trace_is_image_neutral() {	}
 assurance/platform.toml	scripts/check.sh	488-488	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"	run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"
 assurance/platform.toml	scripts/citation_gate.py	556-556	EXTS = "rs|sh|txt|py"	EXTS = "rs|sh|txt|py"
@@ -711,7 +711,7 @@ formal/README.md	crates/rsk-fido/src/consts.rs	371-371	pub const MAX_PIN_RETRIES
 formal/README.md	crates/rsk-fido/src/consts.rs	375-375	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;
 formal/README.md	crates/rsk-fido/src/credential.rs	849-861	if n < RECORD_PREFIX || rec[..32] != *rp_id_hash {	}
 formal/README.md	crates/rsk-fido/src/credential.rs	872-879	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	// delete it, while `getAssertion` (which scans EF_CRED) authenticates with it
-formal/README.md	crates/rsk-fido/src/credential.rs	875-932	// Order so that any truncation of this non-transactional sequence leaves an RP	Ok(())
+formal/README.md	crates/rsk-fido/src/credential.rs	875-926	// Order so that any truncation of this non-transactional sequence leaves an RP	}
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	262-264	if authorized_by_ppuat(ctx, proto, payload, param) {	}
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	271-288	/// Whether the MAC was made with the persistent token (CTAP 2.2 §6.8.2 step 4).	let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	300-300	fn verify_cm_token(	fn verify_cm_token(
@@ -889,8 +889,8 @@ formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1230-1261	// Any attempt 
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1286-1305	/// `select` recomputes `validated` from whether a code is set.	*chain = Chain::None;
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1336-1340	// A code-less applet is open on every SELECT. With a code, a re-SELECT keeps a	self.otp_pin_verified = false;
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	1339-1339	self.validated = !code_set || (reselect && self.validated);	self.validated = !code_set || (reselect && self.validated);
-formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/attest.rs	113-115	if !sess.has_pw1 {	}
-formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/attest.rs	127-128	let r = write_statement(dev, fs, sess, rng, apdu.p1, serial);	spend_one_shot_pw1(fs, sess);
+formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/attest.rs	189-191	if !sess.has_pw1 {	}
+formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/attest.rs	203-204	let r = write_statement(dev, fs, sess, rng, apdu.p1, serial);	spend_one_shot_pw1(fs, sess);
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/keys.rs	443-458	/// Spend PW1 if the PW-status "PW1 valid for one signature" flag is set	sess.has_pw1 = false;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/lib.rs	257-259	// moved the tag below the ACL and left this one above it.	return Sw::SECURITY_STATUS_NOT_SATISFIED;
 formal/RSKeyAppletSeams.tla	crates/rsk-openpgp/src/pin.rs	20-39	pub struct Session {	session_rc: [u8; 32],
@@ -1013,8 +1013,8 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/consts.rs	371-371	pub const MA
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/consts.rs	375-375	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/consts.rs	404-404	/// display honors a reset only this long after power-up, so the wipe takes a	/// display honors a reset only this long after power-up, so the wipe takes a
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	872-879	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	// delete it, while `getAssertion` (which scans EF_CRED) authenticates with it
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	872-932	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	Ok(())
-formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	875-932	// Order so that any truncation of this non-transactional sequence leaves an RP	Ok(())
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	872-926	let total = compose_cred_record(rp_id_hash, &resident, pubkey, cred_id, &mut rec)	}
+formal/RSKeySecurityState.tla	crates/rsk-fido/src/credential.rs	875-926	// Order so that any truncation of this non-transactional sequence leaves an RP	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	262-264	if authorized_by_ppuat(ctx, proto, payload, param) {	}
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	262-319	if authorized_by_ppuat(ctx, proto, payload, param) {	return Ok(());
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/credmgmt.rs	271-288	/// Whether the MAC was made with the persistent token (CTAP 2.2 §6.8.2 step 4).	let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {
@@ -1222,7 +1222,7 @@ scripts/security_trace.py	tools/emu/src/device.rs	810-811	crate::security_trace:
 scripts/test_run_tlc.py	scripts/verdict_gate.py	619-634	if row["invariant"] is not None:	" that name")
 scripts/test_security_trace.py	tools/emu/src/device.rs	810-811	crate::security_trace::POWER_CYCLE,	0,
 scripts/test_token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
-scripts/test_token_refinement_gate.py	crates/rsk-fido/src/credential.rs	985-985	let fid = EF_RP + i;	let fid = EF_RP + i;
+scripts/test_token_refinement_gate.py	crates/rsk-fido/src/credential.rs	978-978	let fid = EF_RP + i;	let fid = EF_RP + i;
 scripts/test_token_refinement_gate.py	firmware/src/main.rs	1270-1270	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
 scripts/token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
 scripts/token_refinement_gate.py	firmware/src/main.rs	1270-1270	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
