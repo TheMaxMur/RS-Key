@@ -147,7 +147,7 @@ fn a_torn_management_key_change_leaves_one_whole_key() {
         let rng = RefCell::new(TestRng(7));
         let pres = RefCell::new(Scripted { confirm: true });
         let app_on = || PivApplet::new(SERIAL, HASH, None, &rng, &pres);
-        rsk_fs::cut::sweep(
+        assert!(rsk_fs::cut::sweep_restarts(
             || {
                 let (mut fs, medium) = new_cut_fs();
                 select(&mut app_on(), &mut fs);
@@ -172,7 +172,10 @@ fn a_torn_management_key_change_leaves_one_whole_key() {
                 select(&mut app, fs);
                 change(&mut app, fs, from, to) == Sw::OK
             },
-            |fs, budget, completed, medium| {
+            |fs| {
+                let _ = files::scan_files(&dev(), fs, &mut TestRng(91));
+            },
+            |fs, budget, _second, completed, medium| {
                 let mut app = app_on();
                 select(&mut app, fs);
                 let new = touch_in_force(&mut app, fs, &pres, to);
@@ -198,7 +201,7 @@ fn a_torn_management_key_change_leaves_one_whole_key() {
                 );
                 assert_eq!(metadata(&mut app, fs), (m.algo, m.touch));
             },
-        );
+        ));
     }
 }
 

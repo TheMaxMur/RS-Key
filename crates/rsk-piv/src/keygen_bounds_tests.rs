@@ -16,6 +16,7 @@ fn device() -> Device<'static> {
 
 fn retired_fixture() -> (Fs<Cut>, CutMedium) {
     let (mut fs, medium) = new_cut_fs();
+    files::scan_files(&device(), &mut fs, &mut TestRng(91)).unwrap();
     let key = PrivKey::from_scalar(Curve::P256, &[0x39; 32]).unwrap();
     seal::store_ec_key(
         &device(),
@@ -119,7 +120,7 @@ fn retired_ec_generation_cuts_never_inherit_a_stale_policy() {
         (ALGO_X25519, 32),
     ] {
         let mut headless = false;
-        rsk_fs::cut::sweep(
+        assert!(!rsk_fs::cut::sweep_restarts(
             retired_fixture,
             |fs| match crate::info::generate_slot_key(
                 &device(),
@@ -132,7 +133,10 @@ fn retired_ec_generation_cuts_never_inherit_a_stale_policy() {
                 Err(Sw::MEMORY_FAILURE) => false,
                 other => panic!("unexpected generation result: {other:?}"),
             },
-            |fs, _, completed, medium| {
+            |fs| {
+                let _ = files::scan_files(&device(), fs, &mut TestRng(91));
+            },
+            |fs, _, _second, completed, medium| {
                 if retired_cut_state(fs, medium, &other_key, algo, completed) {
                     let key =
                         seal::load_ec_key(&device(), fs, key_fid(SLOT_RETIRED_FIRST)).unwrap();
@@ -142,7 +146,7 @@ fn retired_ec_generation_cuts_never_inherit_a_stale_policy() {
                         .is_none();
                 }
             },
-        );
+        ));
         assert!(headless, "the key-before-head cut was not reached");
     }
 }
@@ -153,7 +157,7 @@ fn retired_rsa_persistence_cuts_never_inherit_a_stale_policy() {
     let other_key = baseline.value(key_fid(SLOT_RETIRED_LAST).get()).unwrap();
     let key = rsk_rsa::generate_rsa(&mut RsaRng(&mut TestRng(99)), RSA_FIXTURE_BYTES * 8).unwrap();
     let mut headless = false;
-    rsk_fs::cut::sweep(
+    assert!(!rsk_fs::cut::sweep_restarts(
         retired_fixture,
         |fs| match crate::info::store_retired_rsa(
             &device(),
@@ -166,7 +170,10 @@ fn retired_rsa_persistence_cuts_never_inherit_a_stale_policy() {
             Err(Sw::MEMORY_FAILURE) => false,
             other => panic!("unexpected persistence result: {other:?}"),
         },
-        |fs, _, completed, medium| {
+        |fs| {
+            let _ = files::scan_files(&device(), fs, &mut TestRng(91));
+        },
+        |fs, _, _second, completed, medium| {
             if retired_cut_state(fs, medium, &other_key, ALGO_RSA_FIXTURE, completed) {
                 let mut modulus = [0; MAX_RSA_BYTES];
                 assert_eq!(
@@ -184,7 +191,7 @@ fn retired_rsa_persistence_cuts_never_inherit_a_stale_policy() {
                     .is_none();
             }
         },
-    );
+    ));
     assert!(headless, "the key-before-head cut was not reached");
 }
 
