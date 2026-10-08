@@ -374,3 +374,27 @@ fn a_flat_record_that_outgrows_its_size_probe_refuses_the_short_output() {
     );
     assert_eq!(&retained, b"old");
 }
+
+#[test]
+fn a_direct_do_walk_distinguishes_sizing_from_emission() {
+    let mut store = fs();
+    store.put(EF_LOGIN_DATA, b"login").unwrap();
+    let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+    let generation = store.write_gen();
+    let mut out = [0xa5; 64];
+    let mut writer = DoWriter::new(&mut out, &mut store, &aid);
+    assert_eq!(writer.emit_do(&[], 1), 0);
+    assert!(writer.is_empty());
+    assert_eq!(writer.emit_do(&[2, EF_LOGIN_DATA, EF_LOGIN_DATA], 0), 10);
+    assert!(writer.is_empty());
+    assert_eq!(writer.out, &[0xa5; 64]);
+    assert_eq!(writer.fs.write_gen(), generation);
+    let mut out = [0xa5; 64];
+    let mut writer = DoWriter::new(&mut out, &mut store, &aid);
+    assert_eq!(writer.emit_do(&[2, EF_LOGIN_DATA, EF_LOGIN_DATA], 1), 10);
+    assert_eq!(
+        writer.bytes(),
+        [b"login".as_slice(), &[0x5e, 5], b"login"].concat()
+    );
+    assert_eq!(writer.fs.write_gen(), generation);
+}

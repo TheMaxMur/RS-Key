@@ -503,3 +503,38 @@ fn a_truncated_verifier_is_unusable_even_with_a_nonzero_length_byte() {
         assert_eq!(fs.write_gen(), generation);
     }
 }
+
+#[test]
+fn a_non_forced_retry_reset_preserves_a_blocked_reference() {
+    let mut fs = setup();
+    let mut counters = [0; 8];
+    let n = fs.read(EF_PW_PRIV, &mut counters).unwrap();
+    counters[pw_retry_idx(EF_PW1)] = 0;
+    fs.put(EF_PW_PRIV, &counters[..n]).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(
+        pin_reset_retries(&mut fs, EF_PW1, false),
+        Err(Sw::PIN_BLOCKED)
+    );
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(pin_reset_retries(&mut fs, EF_PW1, true), Ok(()));
+    let mut repaired = [0; 8];
+    assert_eq!(fs.read(EF_PW_PRIV, &mut repaired), Some(n));
+    assert_eq!(repaired[pw_retry_idx(EF_PW1)], PW_RETRIES_DEFAULT);
+}
+
+#[test]
+fn an_unknown_dek_target_cannot_select_or_commit_another_targets_stage() {
+    let mut fs = setup();
+    let target = KeyFid::new(0x1fff);
+    let generation = fs.write_gen();
+    assert_eq!(stage_fid(target), None);
+    let key = Secret::new([0; 32]);
+    let mut out = Secret::new([0xa5; DEK_SIZE]);
+    assert_eq!(
+        recover_staged_dek(&dev(), &mut fs, target, key.expose(), &mut out),
+        Err(Sw::EXEC_ERROR)
+    );
+    assert_eq!(out.expose(), &[0xa5; DEK_SIZE]);
+    assert_eq!(fs.write_gen(), generation);
+}
