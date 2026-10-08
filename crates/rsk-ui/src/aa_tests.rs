@@ -746,3 +746,33 @@ fn direct_central_strip_and_unfilled_color_queries_keep_the_background_contract(
         );
     }
 }
+
+#[test]
+fn direct_fixed_strips_handle_a_border_wider_than_the_corner_band() {
+    let rect = Rect::new(2, 2, 20, 20);
+    let mut target = Rec::new(24, Rgb565::BLUE);
+    fill_fixed_strips(
+        &mut target,
+        rect,
+        8,
+        Some(Rgb565::WHITE),
+        Some((Rgb565::RED, 5)),
+        Rgb565::BLUE,
+    )
+    .unwrap();
+    assert!(!target.oob);
+    for y in (2..6).chain(18..22) {
+        for x in 2..22 {
+            assert_eq!(
+                target.at(x, y),
+                blend_coverage(
+                    Rgb565::RED,
+                    Rgb565::BLUE,
+                    rounded_coverage_slow(rect, 8, x as i32, y as i32)
+                ),
+                "strip pixel ({x}, {y})"
+            );
+        }
+    }
+    assert_eq!(target.at(12, 12), Rgb565::BLUE);
+}

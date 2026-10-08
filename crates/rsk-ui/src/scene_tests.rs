@@ -1649,3 +1649,53 @@ fn a_band_skips_rasters_disjoint_in_each_axis_and_keeps_partial_rows() {
         }
     }
 }
+
+#[test]
+fn a_direct_raster_encoder_splits_a_run_before_its_u16_length_overflows() {
+    let mut scene = Scene::default();
+    let mut encoder = RasterEncoder::new(0, u32::MAX);
+    let pixels = u32::from(u16::MAX) + 1;
+    for _ in 0..pixels {
+        encoder
+            .push(&mut scene, Rgb565::RED.into_storage())
+            .unwrap();
+    }
+    assert_eq!(encoder.run_length, 1);
+    encoder.flush_run(&mut scene).unwrap();
+    assert_eq!(encoder.palette_len, 1);
+    assert_eq!(encoder.palette[0], Rgb565::RED.into_storage());
+    assert_eq!(scene.checkpoint_len, 0);
+    let mut position = 0;
+    let mut decoded_pixels = 0u32;
+    while position < encoder.write {
+        let token = scene.stream[position];
+        position += 1;
+        assert_eq!(token >> 3, 0);
+        decoded_pixels += if token & 7 == 7 {
+            let length = u32::from(scene.stream[position]) + 8;
+            position += 1;
+            length
+        } else {
+            u32::from(token & 7) + 1
+        };
+    }
+    assert_eq!(decoded_pixels, pixels);
+    assert_eq!(encoder.pixels, pixels);
+    assert_eq!(scene.stream[encoder.write - 1], 0);
+    assert_eq!(scene.error(), None);
+}
+
+#[test]
+fn a_direct_pixel_encoder_splits_at_the_panel_width() {
+    let mut scene = Scene::default();
+    for x in 0..=PANEL_W {
+        scene.push_pixel(x, 0, Rgb565::RED).unwrap();
+    }
+    let commands: Vec<_> = scene.commands().collect();
+    assert_eq!(commands.len(), 2);
+    assert_eq!(commands[0].rect, Rect::new(0, 0, PANEL_W, 1));
+    assert_eq!(commands[1].rect, Rect::new(PANEL_W, 0, 1, 1));
+    assert_eq!(commands[0].color, Rgb565::RED);
+    assert_eq!(commands[1].color, Rgb565::RED);
+    assert_eq!(scene.error(), None);
+}
