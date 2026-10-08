@@ -721,3 +721,28 @@ fn a_complete_arc_matches_its_circle_at_every_rotation() {
         }
     }
 }
+
+#[test]
+fn direct_central_strip_and_unfilled_color_queries_keep_the_background_contract() {
+    let rect = Rect::new(0, 0, 20, 20);
+    for (x, y) in [(10, 1), (1, 10), (10, 10)] {
+        assert_eq!(
+            fixed_rounded_coverage(rect, 10, x, y),
+            (SAMPLES * SAMPLES) as u8
+        );
+    }
+    assert_eq!(
+        rounded_color(rect, 10, None, None, Rgb565::BLUE, 1, 1),
+        Rgb565::BLUE
+    );
+    for inside in [false, true] {
+        assert_eq!(
+            straight_color(None, None, Rgb565::BLUE, inside),
+            Rgb565::BLUE
+        );
+        assert_eq!(
+            straight_color(Some(Rgb565::WHITE), None, Rgb565::BLUE, inside),
+            Rgb565::WHITE
+        );
+    }
+}

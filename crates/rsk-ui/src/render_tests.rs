@@ -252,14 +252,14 @@ fn has_aa_color(d: &Rec, r: Rect, fg: Rgb565, bg: Rgb565) -> bool {
 /// A `DrawTarget` that records into a 240×320 buffer and, like a real panel,
 /// clips out-of-bounds pixels — but flags that it had to (`oob`), so a test can
 /// assert a screen stayed inside the panel.
-struct Rec {
-    px: std::vec::Vec<Rgb565>,
+pub(super) struct Rec {
+    pub(super) px: std::vec::Vec<Rgb565>,
     writes: std::vec::Vec<bool>,
-    oob: bool,
+    pub(super) oob: bool,
 }
 
 impl Rec {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             px: std::vec![BG; PANEL_W as usize * PANEL_H as usize],
             writes: std::vec![false; PANEL_W as usize * PANEL_H as usize],
@@ -2615,4 +2615,18 @@ fn marked_multibyte_labels_stop_at_a_valid_byte_prefix() {
     }
     assert_eq!(full.px, prefix.px);
     assert!(full.drew_anything());
+}
+
+#[test]
+fn an_accent_outline_uses_its_own_tint_and_field_border() {
+    let mut target = Rec::new();
+    let rect = Rect::new(10, 10, 80, 40);
+    outline_button(&mut target, rect, "", theme::ACCENT).unwrap();
+    assert_eq!(
+        target.at(rect.x + rect.w / 2, rect.y + rect.h / 2),
+        theme::TINT_BLUE
+    );
+    assert!(has_color(&target, rect, theme::BORDER_FIELD));
+    assert!(!has_color(&target, rect, theme::DANGER_BORDER));
+    assert!(!target.oob);
 }

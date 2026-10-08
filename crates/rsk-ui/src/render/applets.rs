@@ -1155,3 +1155,7 @@ where
         theme::CAPTION,
     )
 }
+
+#[cfg(test)]
+#[path = "applets_helper_tests.rs"]
+mod helper_tests;

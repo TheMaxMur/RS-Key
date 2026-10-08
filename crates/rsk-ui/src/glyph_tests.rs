@@ -391,3 +391,35 @@ fn glyphs_respect_their_symmetry_axes() {
         }
     }
 }
+
+#[test]
+fn runtime_bitmap_selection_prefers_the_larger_tie_in_either_table_order() {
+    static SMALL_ROWS: [&str; 3] = ["###", "#.#", "###"];
+    static LARGE_ROWS: [&str; 5] = ["#####", "#...#", "#.#.#", "#...#", "#####"];
+    static ASCENDING: [Bitmap; 2] = [
+        Bitmap {
+            size: 3,
+            rows: &SMALL_ROWS,
+        },
+        Bitmap {
+            size: 5,
+            rows: &LARGE_ROWS,
+        },
+    ];
+    static DESCENDING: [Bitmap; 2] = [
+        Bitmap {
+            size: 5,
+            rows: &LARGE_ROWS,
+        },
+        Bitmap {
+            size: 3,
+            rows: &SMALL_ROWS,
+        },
+    ];
+    for table in [&ASCENDING[..], &DESCENDING[..]] {
+        let table = std::hint::black_box(table);
+        let size = std::hint::black_box(4);
+        assert_eq!(pick(table, size).size, 5);
+        assert_eq!(table[pick_index(table, size)].size, 5);
+    }
+}
