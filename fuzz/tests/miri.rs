@@ -51,6 +51,9 @@ mod fido_session;
 #[path = "../fuzz_targets/power_cut.rs"]
 mod power_cut;
 
+#[path = "miri/config_recovery_cut_tests.rs"]
+mod config_recovery_cuts;
+
 #[path = "fixtures/fido_session.rs"]
 mod fido_session_seeds;
 
