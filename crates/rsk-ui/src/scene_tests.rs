@@ -8,6 +8,137 @@ use embedded_graphics::{geometry::OriginDimensions, pixelcolor::RgbColor};
 
 const DAMAGE_KEY: DamageKey = [0x0123_4567_89AB_CDEF, 0xFEDC_BA98_7654_3210];
 
+#[test]
+fn raster_header_palette_and_checkpoint_exhaustion_roll_back_the_record() {
+    for palette in [false, true] {
+        let mut scene = Scene::default();
+        if palette {
+            scene
+                .fill_contiguous(
+                    &Rectangle::new(Point::zero(), Size::new(1, 1)),
+                    [Rgb565::RED],
+                )
+                .unwrap();
+        }
+        let limit = if palette {
+            STREAM_CAPACITY - 15
+        } else {
+            STREAM_CAPACITY
+        };
+        while usize::from(scene.stream_len) + SOLID_BYTES <= limit {
+            scene
+                .fill_solid(
+                    &Rectangle::new(Point::zero(), Size::new(1, 1)),
+                    Rgb565::BLUE,
+                )
+                .unwrap();
+        }
+        let before = (scene.stream_len, scene.command_count, scene.checkpoint_len);
+        let stream = scene.stream[..usize::from(scene.stream_len)].to_vec();
+        assert_eq!(
+            scene.fill_contiguous(
+                &Rectangle::new(Point::zero(), Size::new(1, 1)),
+                [Rgb565::RED]
+            ),
+            Err(SceneError::Capacity)
+        );
+        assert_eq!(
+            (scene.stream_len, scene.command_count, scene.checkpoint_len),
+            before
+        );
+        assert_eq!(&scene.stream[..usize::from(scene.stream_len)], stream);
+        assert_eq!(scene.error(), Some(SceneError::Capacity));
+    }
+    let mut scene = Scene::default();
+    let area = Rectangle::new(Point::zero(), Size::new(1, PANEL_H.into()));
+    let mut failed = false;
+    for _ in 0..=CHECKPOINT_CAPACITY {
+        let before = (scene.stream_len, scene.command_count, scene.checkpoint_len);
+        let result =
+            scene.fill_contiguous(&area, core::iter::repeat_n(Rgb565::WHITE, PANEL_H as usize));
+        if result.is_err() {
+            assert_eq!(result, Err(SceneError::Capacity));
+            assert_eq!(
+                (scene.stream_len, scene.command_count, scene.checkpoint_len),
+                before
+            );
+            assert!(usize::from(scene.stream_len) < STREAM_CAPACITY);
+            failed = true;
+            break;
+        }
+    }
+    assert!(failed);
+}
+
+#[test]
+fn clipped_pixels_solids_and_rasters_match_a_direct_panel() {
+    let pixels = [
+        Pixel(Point::new(-1, 0), Rgb565::RED),
+        Pixel(Point::new(0, -1), Rgb565::RED),
+        Pixel(Point::new(PANEL_W as i32, 0), Rgb565::RED),
+        Pixel(Point::new(0, PANEL_H as i32), Rgb565::RED),
+        Pixel(Point::new(0, 0), Rgb565::WHITE),
+    ];
+    let mut scene = Scene::default();
+    let mut direct = Canvas::new();
+    scene.draw_iter(pixels).unwrap();
+    direct.draw_iter(pixels).unwrap();
+    for (x, y, w, h) in [
+        (-3, 0, 2, 2),
+        (0, -3, 2, 2),
+        (-1, 4, 4, 2),
+        (4, -1, 2, 4),
+        (PANEL_W as i32 - 1, 4, 4, 2),
+        (4, PANEL_H as i32 - 1, 2, 4),
+        (PANEL_W as i32, 0, 2, 2),
+        (0, PANEL_H as i32, 2, 2),
+    ] {
+        let area = Rectangle::new(Point::new(x, y), Size::new(w, h));
+        let colors = (0..w * h).map(|i| {
+            if i % 2 == 0 {
+                Rgb565::WHITE
+            } else {
+                Rgb565::BLUE
+            }
+        });
+        scene.fill_contiguous(&area, colors.clone()).unwrap();
+        direct.fill_contiguous(&area, colors).unwrap();
+        let mut replay = Canvas::new();
+        scene.replay(&mut replay).unwrap();
+        assert_eq!(replay.pixels, direct.pixels, "raster at ({x}, {y})");
+        scene.fill_solid(&area, Rgb565::GREEN).unwrap();
+        direct.fill_solid(&area, Rgb565::GREEN).unwrap();
+    }
+    let mut replay = Canvas::new();
+    scene.replay(&mut replay).unwrap();
+    assert_eq!(replay.pixels, direct.pixels);
+}
+
+#[test]
+fn empty_solid_and_nonadjacent_pixel_runs_preserve_the_scene() {
+    let mut scene = Scene::default();
+    for rect in [Rect::new(0, 0, 0, 1), Rect::new(0, 0, 1, 0)] {
+        scene.push_solid(rect, Rgb565::WHITE).unwrap();
+        assert_eq!(scene.stream_len, 0);
+    }
+    for (x, y, color) in [
+        (0, 0, Rgb565::WHITE),
+        (1, 0, Rgb565::RED),
+        (3, 0, Rgb565::RED),
+        (4, 1, Rgb565::RED),
+    ] {
+        scene.push_pixel(x, y, color).unwrap();
+    }
+    scene.flush_pending().unwrap();
+    let mut canvas = Canvas::new();
+    scene.replay(&mut canvas).unwrap();
+    assert_eq!(canvas.pixel(0, 0), Rgb565::WHITE);
+    assert_eq!(canvas.pixel(1, 0), Rgb565::RED);
+    assert_eq!(canvas.pixel(2, 0), Rgb565::BLACK);
+    assert_eq!(canvas.pixel(3, 0), Rgb565::RED);
+    assert_eq!(canvas.pixel(4, 1), Rgb565::RED);
+}
+
 struct Canvas {
     pixels: std::vec::Vec<Rgb565>,
 }
@@ -180,6 +311,29 @@ fn clear_damage_frame_presents_the_whole_panel() {
 #[test]
 fn incomplete_raster_damage_does_not_erase_its_unwritten_gap() {
     let marker = Rgb565::BLUE;
+    let mut partial = DamageSink::filled(marker);
+    {
+        let mut frame = DamageFrame::new(&mut partial);
+        frame
+            .fill_contiguous(
+                &Rectangle::new(Point::new(10, 20), Size::new(4, 2)),
+                [Rgb565::RED],
+            )
+            .unwrap();
+    }
+    assert_eq!(partial.rects, [Rect::new(10, 20, 1, 1)]);
+    for y in 0..PANEL_H {
+        for x in 0..PANEL_W {
+            assert_eq!(
+                partial.canvas.pixel(x, y),
+                if (x, y) == (10, 20) {
+                    Rgb565::RED
+                } else {
+                    marker
+                }
+            );
+        }
+    }
     let mut sink = DamageSink::filled(marker);
     {
         let mut frame = DamageFrame::new(&mut sink);
@@ -1424,4 +1578,74 @@ fn damage_rectangle_overflow_reports_capacity_without_overwriting_the_list() {
     );
     assert_eq!(out, [sentinel; DAMAGE_RECT_CAPACITY]);
     assert_eq!(len, DAMAGE_RECT_CAPACITY);
+}
+
+#[test]
+fn dirty_tiles_merge_only_equal_adjacent_horizontal_spans() {
+    let mut scene = Scene::default();
+    scene.clear(Rgb565::BLACK).unwrap();
+    scene.finalize(DAMAGE_KEY).unwrap();
+    let mut previous = [0; DAMAGE_TILES];
+    let mut rects = [Rect::new(0, 0, 0, 0); DAMAGE_TILES];
+    for row in 0..DAMAGE_ROWS {
+        for col in 0..DAMAGE_COLS {
+            previous[row * DAMAGE_COLS + col] = scene.tile_tag(col, row);
+        }
+    }
+    for (row, col) in [(0, 0), (1, 1), (2, 1), (3, 1), (3, 2), (5, 1)] {
+        previous[row * DAMAGE_COLS + col] ^= 1;
+    }
+    let mut tags = [0; DAMAGE_TILES];
+    let n = scene.damage_rects(&previous, true, &mut tags, &mut rects);
+    assert_eq!(
+        &rects[..n],
+        &[
+            Rect::new(0, 0, DAMAGE_TILE, DAMAGE_TILE),
+            Rect::new(DAMAGE_TILE, DAMAGE_TILE, DAMAGE_TILE, DAMAGE_TILE * 2),
+            Rect::new(DAMAGE_TILE, DAMAGE_TILE * 3, DAMAGE_TILE * 2, DAMAGE_TILE),
+            Rect::new(DAMAGE_TILE, DAMAGE_TILE * 5, DAMAGE_TILE, DAMAGE_TILE),
+        ]
+    );
+}
+
+#[test]
+fn a_band_skips_rasters_disjoint_in_each_axis_and_keeps_partial_rows() {
+    let mut scene = Scene::default();
+    scene.clear(Rgb565::BLACK).unwrap();
+    scene
+        .fill_contiguous(
+            &Rectangle::new(Point::new(20, 4), Size::new(4, 2)),
+            [Rgb565::RED],
+        )
+        .unwrap();
+    scene
+        .fill_contiguous(
+            &Rectangle::new(Point::new(80, 4), Size::new(4, 1)),
+            [Rgb565::BLUE; 4],
+        )
+        .unwrap();
+    scene
+        .fill_solid(
+            &Rectangle::new(Point::new(40, 4), Size::new(1, 1)),
+            Rgb565::GREEN,
+        )
+        .unwrap();
+    scene.finalize(DAMAGE_KEY).unwrap();
+    let mut full = Canvas::new();
+    scene.replay(&mut full).unwrap();
+    assert_eq!(full.pixel(20, 4), Rgb565::RED);
+    assert_eq!(full.pixel(21, 4), Rgb565::BLACK);
+    for rect in [
+        Rect::new(0, 0, 4, 1),
+        Rect::new(0, 4, 4, 1),
+        Rect::new(160, 4, 4, 1),
+        Rect::new(20, 4, 4, 1),
+    ] {
+        let mut band = [0xa5; 8];
+        scene.raster_band(rect, rect.y, rect.h, &mut band);
+        for i in 0..4 {
+            let expected = full.pixel(rect.x + i, rect.y).into_storage().to_be_bytes();
+            assert_eq!(&band[usize::from(i) * 2..usize::from(i) * 2 + 2], &expected);
+        }
+    }
 }

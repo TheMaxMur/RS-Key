@@ -3,6 +3,12 @@
 
 use super::*;
 
+#[test]
+fn backup_action_geometry_has_an_explicit_outside_region() {
+    assert_eq!(hit_backup(Point::new(0, 0)), None);
+    assert_eq!(std::hint::black_box(rsk_slip39_max)(), 16);
+}
+
 /// The printed digit order. Every case here is about geometry or dispatch, not about
 /// the scrambled layout, so they all read the pad the way a default device draws it.
 const ID: PinLayout = PinLayout::identity();

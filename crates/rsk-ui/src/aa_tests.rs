@@ -94,6 +94,53 @@ fn narrow_and_empty_rounded_shapes_match_the_sample_oracle() {
 }
 
 #[test]
+fn fully_consuming_borders_match_geometry_and_empty_height_writes_nothing() {
+    for (width, height) in [(6, 6), (8, 6)] {
+        let rect = Rect::new(2, 2, width, height);
+        let mut expected = Rec::new(16, Rgb565::BLUE);
+        legacy_rounded_rect(
+            &mut expected,
+            rect,
+            6,
+            None,
+            Some((Rgb565::WHITE, 3)),
+            Rgb565::BLACK,
+        );
+        let mut actual = Rec::new(16, Rgb565::BLUE);
+        rounded_rect(
+            &mut actual,
+            rect,
+            6,
+            None,
+            Some((Rgb565::WHITE, 3)),
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        assert_eq!(actual.pixels, expected.pixels);
+        assert!(!actual.oob);
+    }
+    let mut empty = Rec::new(16, Rgb565::BLUE);
+    rounded_rect(
+        &mut empty,
+        Rect::new(2, 2, 4, 0),
+        6,
+        Some(Rgb565::WHITE),
+        None,
+        Rgb565::BLACK,
+    )
+    .unwrap();
+    assert!(empty.pixels.iter().all(|color| *color == Rgb565::BLUE));
+    assert!(!empty.oob);
+}
+
+#[test]
+fn cardinal_angles_and_the_origin_have_their_geometric_values() {
+    for (x, y, expected) in [(0, 0, 0), (7, 0, 0), (0, 7, 90), (-7, 0, 180), (0, -7, 270)] {
+        assert_eq!(angle_deg(x, y), expected);
+    }
+}
+
+#[test]
 fn wide_strokes_and_small_rectangles_match_the_original_renderer() {
     for rect in [
         Rect::new(2, 2, 3, 9),
@@ -122,6 +169,43 @@ fn wide_strokes_and_small_rectangles_match_the_original_renderer() {
             }
         }
     }
+}
+
+#[test]
+fn uncached_and_overswept_arcs_obey_circle_geometry() {
+    for (diameter, width) in [(0, 3), (12, 0), (14, 2), (12, 13), (50, 4)] {
+        let mut arc = Rec::new(64, Rgb565::BLACK);
+        let mut reference = Rec::new(64, Rgb565::BLACK);
+        ring_arc(
+            &mut arc,
+            EgPoint::new(32, 32),
+            diameter,
+            width,
+            17,
+            361,
+            Rgb565::RED,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        circle(
+            &mut reference,
+            EgPoint::new(32 - diameter as i32 / 2, 32 - diameter as i32 / 2),
+            diameter,
+            width,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        assert_eq!(
+            arc.pixels, reference.pixels,
+            "diameter {diameter} width {width}"
+        );
+        assert!(!arc.oob);
+    }
+    assert_eq!(angle_deg(0, 0), 0);
+    assert!(!angle_in_arc(0, 0, 0, 0));
+    assert!(angle_in_arc(0, 0, 0, 361));
 }
 
 #[test]

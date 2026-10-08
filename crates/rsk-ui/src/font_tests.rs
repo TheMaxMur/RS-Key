@@ -110,6 +110,29 @@ fn metrics_cover_ascii_em_dash_and_fallback() {
 }
 
 #[test]
+fn whitespace_and_fully_clipped_text_leave_the_target_untouched() {
+    for (text, at) in [
+        ("", EgPoint::new(20, 40)),
+        ("   ", EgPoint::new(20, 40)),
+        ("A", EgPoint::new(20, 100)),
+        ("A", EgPoint::new(20, -40)),
+    ] {
+        let mut target = Rec::new();
+        left(
+            &mut target,
+            text,
+            at,
+            Role::Body,
+            Rgb565::WHITE,
+            Rgb565::BLACK,
+        )
+        .unwrap();
+        assert!(target.pixels.iter().all(|color| *color == Rgb565::BLACK));
+    }
+    assert_eq!(glyph_index('\n'), glyph_index('?'));
+}
+
+#[test]
 fn middle_dot_has_its_own_glyph() {
     let mut dot = Rec::new();
     let mut question = Rec::new();

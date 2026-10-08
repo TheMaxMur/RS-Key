@@ -15,6 +15,230 @@ fn has_color(d: &Rec, r: Rect, c: Rgb565) -> bool {
     (r.y..r.y + r.h).any(|y| (r.x..r.x + r.w).any(|x| d.at(x, y) == c))
 }
 
+#[test]
+fn home_updates_with_an_unchanged_pin_match_a_full_render() {
+    for (old, new) in [
+        (StatusKind::Idle, StatusKind::Idle),
+        (StatusKind::Processing, StatusKind::Touch),
+    ] {
+        let previous = HomeView {
+            status: old,
+            pin_set: true,
+            passkeys: 1,
+        };
+        let next = HomeView {
+            status: new,
+            passkeys: 2,
+            ..previous
+        };
+        let mut actual = Rec::new();
+        render(&mut actual, &Screen::Home(previous)).unwrap();
+        render_home_change(&mut actual, &previous, &next).unwrap();
+        let mut expected = Rec::new();
+        render(&mut expected, &Screen::Home(next)).unwrap();
+        assert_eq!(actual.px, expected.px);
+        assert!(!actual.oob);
+    }
+}
+
+#[test]
+fn a_list_row_without_an_icon_chip_keeps_the_row_background() {
+    let mut chipped = Rec::new();
+    let mut plain = Rec::new();
+    for (target, chip) in [(&mut chipped, true), (&mut plain, false)] {
+        components::list::row(
+            target,
+            PK_LIST_TOP,
+            0,
+            Glyph::Key,
+            "example.com",
+            None,
+            false,
+            chip,
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(!target.oob);
+    }
+    assert_ne!(chipped.px, plain.px);
+    assert!(has_color(
+        &chipped,
+        crate::row_rect(PK_LIST_TOP, 0),
+        theme::CHIP
+    ));
+    assert!(!has_color(
+        &plain,
+        crate::row_rect(PK_LIST_TOP, 0),
+        theme::CHIP
+    ));
+}
+
+#[test]
+fn an_empty_add_passkey_account_has_no_placeholder_label() {
+    let rp = Label::clamp(b"example.com");
+    let mut empty = Rec::new();
+    render_add_passkey(&mut empty, &rp, &Label::default()).unwrap();
+    let mut named = Rec::new();
+    render_add_passkey(&mut named, &rp, &Label::clamp(b"alice")).unwrap();
+    assert_ne!(empty.px, named.px);
+    assert!(!empty.oob);
+}
+
+#[test]
+fn singleton_and_absent_applet_metadata_have_distinct_panel_images() {
+    let mut plural = Rec::new();
+    render_apps(
+        &mut plural,
+        &AppsView {
+            openpgp_keys: 2,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut singleton = Rec::new();
+    render_apps(
+        &mut singleton,
+        &AppsView {
+            openpgp_keys: 1,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_ne!(singleton.px, plural.px);
+    assert!(!singleton.oob);
+    let mut recorded = Rec::new();
+    render_openpgp_key(
+        &mut recorded,
+        &PgpKeyView {
+            present: true,
+            created: true,
+            has_fp: true,
+            fingerprint: [0x55; 20],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let mut absent = Rec::new();
+    render_openpgp_key(
+        &mut absent,
+        &PgpKeyView {
+            present: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_ne!(recorded.px, absent.px);
+    assert!(!absent.oob);
+    let mut preceding = None;
+    for cert in [false, true] {
+        let mut target = Rec::new();
+        render_piv_extra(
+            &mut target,
+            &[PivExtraRow {
+                slot: 0x82,
+                cert,
+                ..Default::default()
+            }],
+            0,
+            1,
+        )
+        .unwrap();
+        assert!(!target.oob);
+        if let Some(pixels) = preceding {
+            assert_ne!(target.px, pixels);
+        }
+        preceding = Some(target.px);
+    }
+    let mut target = Rec::new();
+    render_backup(
+        &mut target,
+        &BackupView {
+            sealed: false,
+            has_seed: true,
+            exportable: false,
+            can_reveal: false,
+        },
+    )
+    .unwrap();
+    assert!(target.drew_anything());
+    assert!(!target.oob);
+}
+
+#[test]
+fn optional_header_row_and_empty_group_variants_stay_inside_the_panel() {
+    for accent in [false, true] {
+        for right in [None, Some(Glyph::Globe)] {
+            let mut target = Rec::new();
+            render_header(&mut target, "Header", accent, right).unwrap();
+            assert!(target.drew_anything());
+            assert!(!target.oob);
+        }
+    }
+    for chip in [false, true] {
+        for chevron in [false, true] {
+            let mut target = Rec::new();
+            row_body(
+                &mut target,
+                Rect::new(16, 60, 208, 48),
+                Glyph::Globe,
+                "Service",
+                None,
+                chevron,
+                chip,
+            )
+            .unwrap();
+            assert!(target.drew_anything());
+            assert!(!target.oob);
+        }
+    }
+    let mut target = Rec::new();
+    group_card(&mut target, 60, 0).unwrap();
+    assert!(!target.wrote_anything());
+    assert_eq!(service_glyph("SSH: example.com"), Glyph::Terminal);
+    assert_eq!(service_glyph("example.com"), Glyph::Globe);
+    let mut count = [0; 1];
+    assert_eq!(fmt_count(65535, "accounts", &mut count), "");
+}
+
+#[test]
+fn multibyte_ellipses_preserve_character_boundaries_and_clip_every_pixel() {
+    let clip = Rect::new(16, 60, 80, 32);
+    for text in [
+        "éééééééééééééééé",
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    ] {
+        for right in [false, true] {
+            let mut target = Rec::new();
+            if right {
+                text_right_ellipsized(
+                    &mut target,
+                    text,
+                    EgPoint::new(16, 80),
+                    Role::Body,
+                    theme::TEXT,
+                    clip,
+                    true,
+                )
+                .unwrap();
+            } else {
+                text_left_ellipsized(
+                    &mut target,
+                    text,
+                    EgPoint::new(16, 80),
+                    Role::Body,
+                    theme::TEXT,
+                    clip,
+                    true,
+                )
+                .unwrap();
+            }
+            assert!(target.wrote_in(clip));
+            assert!(!target.wrote_outside(clip));
+        }
+    }
+}
+
 fn has_aa_color(d: &Rec, r: Rect, fg: Rgb565, bg: Rgb565) -> bool {
     (r.y..r.y + r.h).any(|y| {
         (r.x..r.x + r.w).any(|x| {
@@ -2348,4 +2572,47 @@ fn a_truncated_cardholder_value_paints_its_marker() {
         "a clipped cardholder value painted identically to a whole one"
     );
     assert!(!cut.oob, "the marker drew outside the panel");
+}
+
+#[test]
+fn a_zero_hold_denominator_draws_the_same_label_without_a_fraction() {
+    let rect = Rect::new(20, 100, 180, 44);
+    let mut previous = None;
+    for (before, now) in [(0, 0), (3, 9), (u16::MAX, u16::MAX)] {
+        let mut target = Rec::new();
+        render_hold_fill(&mut target, rect, "Hold", before, now, 0, theme::APPROVE).unwrap();
+        assert!(target.drew_anything());
+        assert!(!target.oob);
+        if let Some(pixels) = previous {
+            assert_eq!(target.px, pixels);
+        }
+        previous = Some(target.px);
+    }
+}
+
+#[test]
+fn marked_multibyte_labels_stop_at_a_valid_byte_prefix() {
+    let full_label = "\u{2423}".repeat(40);
+    let prefix_label = "\u{2423}".repeat(21);
+    let clip = Rect::new(0, 20, PANEL_W, 40);
+    let budget = u32::from(clip.w) - font::width("...", Role::MonoSmall).unwrap();
+    assert!(font::width(&"\u{2423}".repeat(22), Role::MonoSmall).unwrap() <= budget);
+    let mut full = Rec::new();
+    let mut prefix = Rec::new();
+    for (target, label) in [(&mut full, &full_label), (&mut prefix, &prefix_label)] {
+        text_left_ellipsized_on(
+            target,
+            label,
+            EgPoint::new(0, 40),
+            Role::MonoSmall,
+            theme::TEXT,
+            BG,
+            clip,
+            true,
+        )
+        .unwrap();
+        assert!(!target.oob);
+    }
+    assert_eq!(full.px, prefix.px);
+    assert!(full.drew_anything());
 }
