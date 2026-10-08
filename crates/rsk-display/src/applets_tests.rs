@@ -4,6 +4,87 @@
 use super::*;
 use crate::tests::{Env, Pad, center, nowhere};
 
+#[test]
+fn every_applet_browse_window_yields_to_a_queued_host_request_or_sleep() {
+    let _env = Env::new();
+    for sleep in [false, true] {
+        macro_rules! window {
+            ($run:expr) => {
+                crate::tests::with_isolated_ui(|ui, cells| {
+                    if sleep {
+                        ui.hooks.press_wake(1);
+                    } else {
+                        ui.hooks.host_pending = true;
+                    }
+                    let before = cells.fs.borrow().write_gen();
+                    let start = Instant::now();
+                    let mut local = Local::new(ui, cells);
+                    $run(&mut local);
+                    assert!(start.elapsed() < Duration::from_secs(5));
+                    assert_eq!(local.asleep, sleep);
+                    assert_eq!(local.cells.fs.borrow().write_gen(), before);
+                    assert!(!local.panel.oob);
+                });
+            };
+        }
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert_eq!(local.run_apps(), None));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert_eq!(local.run_openpgp(), None));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local.run_openpgp_key(0));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local.run_openpgp_cardholder());
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert_eq!(local.run_piv(), None));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local
+            .run_piv_slot(rsk_piv::files::SLOT_AUTHENTICATION));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local.run_piv_extra());
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert_eq!(local.run_oath(), None));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local.run_oath_cred(0));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local.run_auditlog());
+    }
+}
+
+#[test]
+fn every_idle_browse_window_returns_at_the_real_inactivity_deadline() {
+    let _env = Env::new();
+    std::thread::scope(|scope| {
+        macro_rules! window {
+            ($run:expr) => {
+                scope.spawn(|| {
+                    crate::tests::with_isolated_ui(|ui, cells| {
+                        let before = cells.fs.borrow().write_gen();
+                        let start = Instant::now();
+                        let mut local = Local::new(ui, cells);
+                        $run(&mut local);
+                        assert!(start.elapsed() >= Duration::from_millis(MENU_INACTIVITY_MS));
+                        assert!(!local.asleep);
+                        assert!(!local.hooks.host_request_pending());
+                        assert_eq!(local.cells.fs.borrow().write_gen(), before);
+                        assert!(!local.panel.oob);
+                    })
+                });
+            };
+        }
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert_eq!(local.run_passkeys(), None));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert!(matches!(
+            local.run_service(&Label::clamp(b"example.com"), &Label::default(), &[0; 32]),
+            ServiceResult::Leave(None)
+        )));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert_eq!(local.run_apps(), None));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert_eq!(local.run_openpgp(), None));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local.run_openpgp_key(0));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local.run_openpgp_cardholder());
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert_eq!(local.run_piv(), None));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local
+            .run_piv_slot(rsk_piv::files::SLOT_AUTHENTICATION));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local.run_piv_extra());
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert!(matches!(
+            local.pick_row(rsk_ui::PK_LIST_TOP, 1),
+            Pick::Leave
+        )));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| assert_eq!(local.run_oath(), None));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local.run_oath_cred(0));
+        window!(|local: &mut Local<'_, '_, _, _, _, _, _>| local.run_auditlog());
+    });
+}
+
 fn view(nick: &[u8]) -> ServiceView {
     ServiceView {
         accts: [AccountRow::default(); rsk_ui::PK_ROWS_MAX],

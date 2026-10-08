@@ -112,3 +112,13 @@ fn an_empty_or_disabled_audit_log_yields_on_host_requests_and_power() {
         );
     }
 }
+
+#[test]
+fn a_zero_row_output_keeps_the_journal_total_without_writing_a_row() {
+    let env = Env::new();
+    seed_log(&env);
+    let mut ui = env.ui(Pad::idle());
+    let generation = env.fs.borrow().write_gen();
+    assert_eq!(env.local(&mut ui).load_events(&mut [], 0), (0, 7));
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}

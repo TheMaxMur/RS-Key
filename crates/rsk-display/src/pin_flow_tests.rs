@@ -4,30 +4,6 @@
 use super::*;
 use crate::tests::{Env, PIN, Pad, center, nowhere, pin_entry, pin_key};
 
-struct IdleThenOk {
-    samples: std::collections::VecDeque<Option<rsk_ui::Point>>,
-    pause: bool,
-    ok: bool,
-}
-
-impl TouchPad for IdleThenOk {
-    fn read(&mut self) -> Option<rsk_ui::Point> {
-        if let Some(sample) = self.samples.pop_front() {
-            return sample;
-        }
-        if !self.pause {
-            self.pause = true;
-            block_for(Duration::from_millis(REVEAL_MASK_MS + 50));
-            None
-        } else if !self.ok {
-            self.ok = true;
-            Some(pin_key(PinKey::Ok))
-        } else {
-            None
-        }
-    }
-}
-
 #[test]
 fn unattended_local_windows_return_at_their_real_inactivity_deadlines() {
     let _env = Env::new();
@@ -121,6 +97,54 @@ fn unattended_local_windows_return_at_their_real_inactivity_deadlines() {
             None
         ));
     });
+}
+
+#[test]
+fn rename_settlement_repaints_the_committed_character_before_cancellation() {
+    let env = Env::new();
+    let mut samples = vec![None; 4];
+    samples.push(Some(center(rsk_ui::t9_key_rect(0, 1))));
+    samples.extend(vec![None; (T9_COMMIT_MS / TOUCH_POLL_MS + 4) as usize]);
+    samples.push(Some(center(rsk_ui::TITLE_BACK_RECT)));
+    let mut ui = env.ui(Pad::script(&samples));
+    let generation = env.fs.borrow().write_gen();
+    assert_eq!(
+        env.local(&mut ui).run_rename(&Label::default(), &[0; 32]),
+        None
+    );
+    let mut expected = env.ui(Pad::idle());
+    rsk_ui::render_rename(&mut expected.panel, "2", None, None).unwrap();
+    let panel = rsk_ui::Rect::new(0, 0, rsk_ui::PANEL_W, rsk_ui::PANEL_H);
+    assert_eq!(
+        ui.panel.area_pixels(panel),
+        expected.panel.area_pixels(panel)
+    );
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert!(!ui.panel.oob);
+}
+
+struct IdleThenOk {
+    samples: std::collections::VecDeque<Option<rsk_ui::Point>>,
+    pause: bool,
+    ok: bool,
+}
+
+impl TouchPad for IdleThenOk {
+    fn read(&mut self) -> Option<rsk_ui::Point> {
+        if let Some(sample) = self.samples.pop_front() {
+            return sample;
+        }
+        if !self.pause {
+            self.pause = true;
+            block_for(Duration::from_millis(REVEAL_MASK_MS + 50));
+            None
+        } else if !self.ok {
+            self.ok = true;
+            Some(pin_key(PinKey::Ok))
+        } else {
+            None
+        }
+    }
 }
 
 #[test]
@@ -254,4 +278,191 @@ fn unread_fused_key_cannot_store_a_new_device_pin_or_enumerate_accounts() {
     assert!(!rsk_fido::passkeys::device_pin_is_set(
         &mut env.fs.borrow_mut()
     ));
+}
+
+#[test]
+fn queued_host_work_abandons_rename_and_a_released_hold_without_writes() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.host_pending = true;
+    let generation = env.fs.borrow().write_gen();
+    assert_eq!(
+        env.local(&mut ui).run_rename(&Label::default(), &[0; 32]),
+        None
+    );
+    let started = Instant::now();
+    assert!(
+        !env.local(&mut ui)
+            .hold_to_confirm("Hold to delete", rsk_ui::theme::DANGER_FILL)
+    );
+    assert!(started.elapsed() >= Duration::from_millis(UI_YIELD_FLOOR_MS));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert!(!ui.asleep);
+}
+
+#[test]
+fn notices_and_both_success_windows_honor_the_sleep_button() {
+    let env = Env::new();
+    for success in [None, Some(None), Some(Some(1000))] {
+        let mut ui = env.ui(Pad::idle());
+        ui.hooks.press_wake(1);
+        let generation = env.fs.borrow().write_gen();
+        let mut local = env.local(&mut ui);
+        match success {
+            None => local.hold_notice(),
+            Some(hold) => local.show_success(SuccessKind::Deleted, hold),
+        }
+        assert!(local.asleep);
+        assert_eq!(local.hooks.backlight, 0);
+        assert_eq!(local.cells.fs.borrow().write_gen(), generation);
+    }
+}
+
+#[test]
+fn a_success_window_ignores_missed_done_taps_and_yields_to_host_work() {
+    let env = Env::new();
+    let generation = env.fs.borrow().write_gen();
+    let mut ui = env.ui(Pad::taps(&[nowhere(), center(rsk_ui::DEL_HOLD_RECT)]));
+    env.local(&mut ui).show_success(SuccessKind::Deleted, None);
+    assert!(!ui.asleep);
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.host_pending = true;
+    env.local(&mut ui).show_success(SuccessKind::Deleted, None);
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert!(!ui.panel.oob);
+}
+
+#[test]
+fn a_completed_delete_hold_on_an_absent_account_does_not_claim_success() {
+    let env = Env::new();
+    let mut samples = vec![None; 4];
+    samples.extend(core::iter::repeat_n(
+        Some(center(rsk_ui::DEL_HOLD_RECT)),
+        (HOLD_MS / TOUCH_POLL_MS + 4) as usize,
+    ));
+    let mut ui = env.ui(Pad::script(&samples));
+    let generation = env.fs.borrow().write_gen();
+    env.local(&mut ui).run_delete(
+        &Label::clamp(b"example.com"),
+        &Label::clamp(b"alice"),
+        rsk_fido::consts::EF_CRED,
+    );
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert!(!ui.asleep);
+    let mut expected = env.ui(Pad::idle());
+    rsk_ui::render_success(&mut expected.panel, SuccessKind::Deleted, true).unwrap();
+    assert_ne!(
+        ui.panel
+            .area_pixels(rsk_ui::Rect::new(0, 0, rsk_ui::PANEL_W, rsk_ui::PANEL_H)),
+        expected
+            .panel
+            .area_pixels(rsk_ui::Rect::new(0, 0, rsk_ui::PANEL_W, rsk_ui::PANEL_H))
+    );
+}
+
+#[test]
+fn a_trivial_fido_pin_is_refused_before_confirmation_when_policy_requires_complexity() {
+    let env = Env::new();
+    env.fs
+        .borrow_mut()
+        .put(rsk_fido::consts::EF_MINPINLEN, &[6, 2])
+        .unwrap();
+    let mut taps = pin_entry(b"111111");
+    taps.push(center(rsk_ui::PIN_CANCEL_RECT));
+    let mut ui = env.ui(Pad::taps(&taps));
+    let generation = env.fs.borrow().write_gen();
+    env.local(&mut ui).run_set_pin(PinScope::Fido);
+    assert!(!rsk_fido::passkeys::pin_is_set(&mut env.fs.borrow_mut()));
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert!(!ui.asleep);
+}
+
+#[test]
+fn unequal_confirmation_and_a_refused_fido_pin_store_grant_no_pin_change() {
+    {
+        let env = Env::new();
+        let mut taps = pin_entry(PIN);
+        taps.extend(pin_entry(crate::tests::WRONG_PIN));
+        taps.push(center(rsk_ui::PIN_CANCEL_RECT));
+        let mut ui = env.ui(Pad::taps(&taps));
+        let generation = env.fs.borrow().write_gen();
+        env.local(&mut ui).run_set_pin(PinScope::Fido);
+        assert!(!rsk_fido::passkeys::pin_is_set(&mut env.fs.borrow_mut()));
+        assert_eq!(env.fs.borrow().write_gen(), generation);
+        assert_eq!(ui.hooks.pin_changed, 0);
+    }
+    let (backend, medium) = rsk_fs::storage::faults::Cut::new();
+    let env = Env::over(backend);
+    let mut taps = pin_entry(PIN);
+    taps.extend(pin_entry(PIN));
+    let mut ui = env.ui(Pad::taps(&taps));
+    let generation = env.fs.borrow().write_gen();
+    medium.arm(0);
+    Local::new(&mut ui, env.cells()).run_set_pin(PinScope::Fido);
+    assert!(!rsk_fido::passkeys::pin_is_set(&mut env.fs.borrow_mut()));
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert_eq!(ui.hooks.pin_changed, 0);
+}
+
+#[test]
+fn a_cancelled_device_pin_gate_cannot_start_factory_reset() {
+    let env = Env::new();
+    env.set_device_pin(PIN);
+    let mut ui = env.ui(Pad::taps(&[center(rsk_ui::PIN_CANCEL_RECT)]));
+    let generation = env.fs.borrow().write_gen();
+    assert!(!env.local(&mut ui).run_factory_reset());
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert_eq!(ui.hooks.reboot, None);
+}
+
+#[test]
+fn an_empty_local_pin_pad_stays_open_past_the_host_yield_floor_without_a_request() {
+    let env = Env::new();
+    let mut samples = vec![None; (UI_YIELD_FLOOR_MS / TOUCH_POLL_MS + 20) as usize];
+    samples.push(Some(center(rsk_ui::PIN_CANCEL_RECT)));
+    samples.push(None);
+    let mut ui = env.ui(Pad::script(&samples));
+    ui.hooks.presence_ms = UI_YIELD_FLOOR_MS as u32 + 2000;
+    let started = Instant::now();
+    let mut out = [0; 8];
+    assert!(matches!(
+        ui.collect_pin("PIN", None, 6, 6, &mut out, true),
+        rsk_sdk::PinEntry::Declined
+    ));
+    assert!(started.elapsed() >= Duration::from_millis(UI_YIELD_FLOOR_MS));
+    assert!(!ui.hooks.host_request_pending());
+    assert_eq!(out, [0; 8]);
+}
+
+#[test]
+fn sliding_off_a_destructive_hold_cancels_its_partial_progress() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::script(&[
+        Some(center(rsk_ui::DEL_HOLD_RECT)),
+        Some(nowhere()),
+        Some(center(rsk_ui::TITLE_BACK_RECT)),
+    ]));
+    let generation = env.fs.borrow().write_gen();
+    assert!(
+        !env.local(&mut ui)
+            .hold_to_confirm("Hold to delete", rsk_ui::theme::DANGER_FILL)
+    );
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert!(!ui.panel.oob);
+}
+
+#[test]
+fn unequal_pin_lengths_never_store_either_confirmation() {
+    for scope in [PinScope::Device, PinScope::Fido] {
+        let env = Env::new();
+        let mut taps = pin_entry(PIN);
+        taps.extend(pin_entry(b"4816297"));
+        taps.push(center(rsk_ui::PIN_CANCEL_RECT));
+        let mut ui = env.ui(Pad::taps(&taps));
+        let generation = env.fs.borrow().write_gen();
+        env.local(&mut ui).run_set_pin(scope);
+        assert_eq!(env.fs.borrow().write_gen(), generation);
+        assert_eq!(ui.hooks.pin_changed, 0);
+    }
 }

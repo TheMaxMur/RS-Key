@@ -433,3 +433,141 @@ fn a_faulted_phy_probe_does_not_wipe_the_record_the_timeout_shares() {
     );
     assert_eq!(after, before, "a refused save must leave the record alone");
 }
+
+#[test]
+fn a_quiet_brightness_edit_is_on_flash_before_host_handoff() {
+    struct AfterSettle<'a> {
+        samples: std::collections::VecDeque<Option<rsk_ui::Point>>,
+        fs: &'a RefCell<Fs<rsk_fs::storage::ram::RamStorage>>,
+        signal: std::rc::Rc<core::cell::Cell<crate::tests::PanelSignal>>,
+        checked: bool,
+    }
+    impl TouchPad for AfterSettle<'_> {
+        fn read(&mut self) -> Option<rsk_ui::Point> {
+            if let Some(sample) = self.samples.pop_front() {
+                return sample;
+            }
+            if !self.checked {
+                assert_eq!(
+                    stored_display(self.fs)
+                        .expect("quiet edit must precede handoff")
+                        .brightness,
+                    BRIGHTNESS_LEVELS - 1
+                );
+                self.checked = true;
+                self.signal.set(crate::tests::PanelSignal::HostRequest);
+            }
+            None
+        }
+    }
+    let env = Env::new();
+    let Ui {
+        panel, hooks, info, ..
+    } = env.ui(Pad::idle());
+    let mut samples = std::collections::VecDeque::from([None; 4]);
+    for point in [
+        settings_row(
+            rsk_ui::SETTINGS_ROWS,
+            rsk_ui::hit_settings_root,
+            RootEntry::Display,
+        ),
+        settings_row(
+            rsk_ui::DISPLAY_ROWS,
+            rsk_ui::hit_display,
+            DisplayEntry::Brightness,
+        ),
+        center(rsk_ui::ADJ_MINUS_RECT),
+        nowhere(),
+    ] {
+        samples.extend([Some(point), None, None, None, None]);
+    }
+    samples.extend(core::iter::repeat_n(
+        None,
+        (SETTINGS_PERSIST_QUIET_MS / TOUCH_POLL_MS + 8) as usize,
+    ));
+    let touch = AfterSettle {
+        samples,
+        fs: &env.fs,
+        signal: std::rc::Rc::clone(&hooks.signal),
+        checked: false,
+    };
+    let mut ui = Ui::new(panel, touch, hooks, info, env.cells());
+    ui.set_brightness(BRIGHTNESS_LEVELS);
+    assert_eq!(Local::new(&mut ui, env.cells()).run_settings(), None);
+    assert!(ui.touch.checked);
+    assert_eq!(env.fs.borrow().write_gen(), 1);
+    assert!(!ui.asleep);
+}
+
+#[test]
+fn cancelling_firmware_and_sleep_adjustment_repaints_only_the_active_menu() {
+    let env = Env::new();
+    let taps = [
+        settings_row(
+            rsk_ui::SETTINGS_ROWS,
+            rsk_ui::hit_settings_root,
+            RootEntry::Display,
+        ),
+        settings_row(
+            rsk_ui::DISPLAY_ROWS,
+            rsk_ui::hit_display,
+            DisplayEntry::Sleep,
+        ),
+        center(rsk_ui::TITLE_BACK_RECT),
+        center(rsk_ui::TITLE_BACK_RECT),
+        settings_row(
+            rsk_ui::SETTINGS_ROWS,
+            rsk_ui::hit_settings_root,
+            RootEntry::Firmware,
+        ),
+        center(rsk_ui::PK_BACK_RECT),
+        center(rsk_ui::nav_tab_rect(0)),
+    ];
+    let mut ui = env.ui(Pad::taps(&taps));
+    let generation = env.fs.borrow().write_gen();
+    assert_eq!(env.local(&mut ui).run_settings(), None);
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert_eq!(ui.hooks.reboot, None);
+    assert!(!ui.panel.oob);
+}
+
+#[test]
+fn sleeping_from_the_security_pin_menu_unwinds_settings() {
+    use crate::tests::{PanelSignal, SignalAfterTouches};
+    let env = Env::new();
+    rsk_piv::files::scan_files(
+        &crate::tests::dev(),
+        &mut env.fs.borrow_mut(),
+        &mut *env.rng.borrow_mut(),
+    )
+    .unwrap();
+    let generation = env.fs.borrow().write_gen();
+    let Ui {
+        panel, hooks, info, ..
+    } = env.ui(Pad::idle());
+    let mut samples = std::collections::VecDeque::from([None; 4]);
+    for point in [
+        settings_row(
+            rsk_ui::SETTINGS_ROWS,
+            rsk_ui::hit_settings_root,
+            RootEntry::Security,
+        ),
+        settings_row(
+            rsk_ui::SECURITY_ROWS,
+            rsk_ui::hit_security,
+            SecurityEntry::PivPin,
+        ),
+    ] {
+        samples.extend([Some(point), None, None, None, None]);
+    }
+    let touch = SignalAfterTouches {
+        samples,
+        signal: std::rc::Rc::clone(&hooks.signal),
+        event: PanelSignal::Wake,
+        sent: false,
+    };
+    let mut ui = Ui::new(panel, touch, hooks, info, env.cells());
+    assert_eq!(Local::new(&mut ui, env.cells()).run_settings(), None);
+    assert!(ui.asleep);
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}

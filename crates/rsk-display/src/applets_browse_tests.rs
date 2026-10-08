@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{Env, Pad, center, nowhere};
+use crate::tests::{Env, Pad, PanelSignal, SignalAfterTouches, center, nowhere};
 use rsk_sdk::{Apdu, Applet, ResBuf, Sw};
 
 fn nav(tab: NavTab) -> rsk_ui::Point {
@@ -12,6 +12,36 @@ fn nav(tab: NavTab) -> rsk_ui::Point {
 
 fn row(i: u16) -> rsk_ui::Point {
     center(rsk_ui::row_rect(rsk_ui::PK_LIST_TOP, i))
+}
+
+#[test]
+fn sleeping_in_each_applet_detail_unwinds_the_overview_and_hub() {
+    for entry in 0..3 {
+        let env = Env::new();
+        seed_metadata(&env);
+        seed_oath(&env, 1);
+        let generation = env.fs.borrow().write_gen();
+        let Ui {
+            panel, hooks, info, ..
+        } = env.ui(Pad::idle());
+        let mut samples = std::collections::VecDeque::from([None; 4]);
+        for point in [row(entry), row(0)] {
+            samples.extend([Some(point), None, None, None, None]);
+        }
+        let touch = SignalAfterTouches {
+            samples,
+            signal: std::rc::Rc::clone(&hooks.signal),
+            event: PanelSignal::Wake,
+            sent: false,
+        };
+        let mut ui = Ui::new(panel, touch, hooks, info, env.cells());
+        let started = Instant::now();
+        assert_eq!(Local::new(&mut ui, env.cells()).run_apps(), None);
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(ui.asleep);
+        assert_eq!(env.fs.borrow().write_gen(), generation);
+        assert!(!ui.panel.oob);
+    }
 }
 
 fn seed_metadata(env: &Env) {
@@ -282,4 +312,82 @@ fn an_unread_fused_key_hides_oath_records_and_the_audit_log() {
     assert_eq!(local.load_oath(&mut oath, 0), (0, 0));
     assert_eq!(local.load_oath_cred(0).name.as_str(), "");
     assert_eq!(local.load_events(&mut events, 0), (0, 0));
+}
+
+#[test]
+fn an_unread_device_key_publishes_no_passkey_count_rows_or_audit_entry() {
+    let mut env = Env::new();
+    seed_oath(&env, 1);
+    env.keys.mkek_source = Some(FusedKey::latched(|_| false));
+    let mut ui = env.ui(Pad::idle());
+    let generation = env.fs.borrow().write_gen();
+    let mut local = env.local(&mut ui);
+    let mut rows = [RpRow::default(); rsk_ui::PK_ROWS_MAX];
+    let mut hashes = [[0; 32]; rsk_ui::PK_ROWS_MAX];
+    assert_eq!(local.load_rps(&mut rows, &mut hashes, 0), (0, 0));
+    local.refresh_home_stats();
+    assert_eq!(local.home_passkeys, 0);
+    local.journal_local(rsk_fido::journal::EV_BACKUP_EXPORT);
+    assert_eq!(local.cells.fs.borrow().write_gen(), generation);
+}
+
+#[test]
+fn overview_back_missed_navigation_and_first_page_pagers_preserve_metadata() {
+    for piv in [false, true] {
+        let env = Env::new();
+        seed_metadata(&env);
+        let generation = env.fs.borrow().write_gen();
+        let mut ui = env.ui(Pad::taps(&[nowhere(), center(rsk_ui::TITLE_BACK_RECT)]));
+        let next = if piv {
+            env.local(&mut ui).run_piv()
+        } else {
+            env.local(&mut ui).run_openpgp()
+        };
+        assert_eq!(next, None);
+        assert_eq!(env.fs.borrow().write_gen(), generation);
+        assert!(!ui.asleep);
+    }
+    let env = Env::new();
+    seed_metadata(&env);
+    seed_oath(&env, 7);
+    let generation = env.fs.borrow().write_gen();
+    for piv in [false, true] {
+        let mut ui = env.ui(Pad::taps(&[
+            center(rsk_ui::PAGER_PREV_RECT),
+            nowhere(),
+            center(rsk_ui::TITLE_BACK_RECT),
+        ]));
+        if piv {
+            env.local(&mut ui).run_piv_extra();
+        } else {
+            assert_eq!(env.local(&mut ui).run_oath(), None);
+        }
+        assert!(!ui.asleep);
+        assert!(!ui.panel.oob);
+    }
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}
+
+#[test]
+fn the_retired_row_from_primary_piv_can_open_generation_then_sleep_without_writing() {
+    let env = Env::new();
+    let generation = env.fs.borrow().write_gen();
+    let Ui {
+        panel, hooks, info, ..
+    } = env.ui(Pad::idle());
+    let mut samples = std::collections::VecDeque::from([None; 6]);
+    for point in [row(4), row(0)] {
+        samples.extend([Some(point), None, None, None, None, None, None]);
+    }
+    let touch = SignalAfterTouches {
+        samples,
+        signal: std::rc::Rc::clone(&hooks.signal),
+        event: PanelSignal::Wake,
+        sent: false,
+    };
+    let mut ui = Ui::new(panel, touch, hooks, info, env.cells());
+    assert_eq!(Local::new(&mut ui, env.cells()).run_piv(), None);
+    assert!(ui.asleep);
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert!(!ui.panel.oob);
 }

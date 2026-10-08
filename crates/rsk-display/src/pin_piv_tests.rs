@@ -257,3 +257,85 @@ fn protecting_the_management_key_requires_device_pin_and_hold() {
         rsk_sdk::Sw::OK
     );
 }
+
+#[test]
+fn an_unread_fused_key_or_refused_write_cannot_protect_the_management_key() {
+    {
+        let mut env = Env::new();
+        env.keys.mkek_source = Some(FusedKey::latched(|_| false));
+        let mut samples = vec![None; 4];
+        samples.extend(core::iter::repeat_n(
+            Some(center(rsk_ui::DEL_HOLD_RECT)),
+            3 * (HOLD_MS / TOUCH_POLL_MS) as usize,
+        ));
+        let mut ui = env.ui(Pad::script(&samples));
+        let generation = env.fs.borrow().write_gen();
+        env.local(&mut ui).run_protect_mgm_key();
+        assert_eq!(env.fs.borrow().write_gen(), generation);
+        assert_eq!(ui.hooks.pin_changed, 0);
+    }
+    let (backend, medium) = rsk_fs::storage::faults::Cut::new();
+    let env = Env::over(backend);
+    files::scan_files(&dev(), &mut env.fs.borrow_mut(), &mut *env.rng.borrow_mut()).unwrap();
+    let mut samples = vec![None; 4];
+    samples.extend(core::iter::repeat_n(
+        Some(center(rsk_ui::DEL_HOLD_RECT)),
+        3 * (HOLD_MS / TOUCH_POLL_MS) as usize,
+    ));
+    let mut ui = env.ui(Pad::script(&samples));
+    let generation = env.fs.borrow().write_gen();
+    medium.arm(0);
+    Local::new(&mut ui, env.cells()).run_protect_mgm_key();
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert_eq!(ui.hooks.pin_changed, 0);
+}
+
+#[test]
+fn unequal_piv_confirmation_lengths_do_not_change_either_reference() {
+    let env = Env::new();
+    provision(&env);
+    let mut taps = pin_entry(PIN);
+    taps.extend(pin_entry(b"4816297"));
+    taps.push(center(rsk_ui::PIN_CANCEL_RECT));
+    let mut ui = env.ui(Pad::taps(&taps));
+    let generation = env.fs.borrow().write_gen();
+    assert!(env.local(&mut ui).collect_new_piv_pin("PIV PIN").is_none());
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}
+
+#[test]
+fn the_piv_menu_can_cancel_without_a_device_key_and_sleep_inside_a_pin_subflow() {
+    use crate::tests::{PanelSignal, SignalAfterTouches};
+    {
+        let mut env = Env::new();
+        env.keys.mkek_source = Some(FusedKey::latched(|_| false));
+        let mut ui = env.ui(Pad::taps(&[center(rsk_ui::TITLE_BACK_RECT)]));
+        let generation = env.fs.borrow().write_gen();
+        env.local(&mut ui).run_piv_pins();
+        assert_eq!(env.fs.borrow().write_gen(), generation);
+    }
+    let env = Env::new();
+    provision(&env);
+    let generation = env.fs.borrow().write_gen();
+    let Ui {
+        panel, hooks, info, ..
+    } = env.ui(Pad::idle());
+    let mut samples = std::collections::VecDeque::from([None; 4]);
+    samples.extend([
+        Some(center(rsk_ui::row_rect(rsk_ui::PIV_KEYGEN_PICK_TOP, 0))),
+        None,
+        None,
+        None,
+        None,
+    ]);
+    let touch = SignalAfterTouches {
+        samples,
+        signal: std::rc::Rc::clone(&hooks.signal),
+        event: PanelSignal::Wake,
+        sent: false,
+    };
+    let mut ui = Ui::new(panel, touch, hooks, info, env.cells());
+    Local::new(&mut ui, env.cells()).run_piv_pins();
+    assert!(ui.asleep);
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}

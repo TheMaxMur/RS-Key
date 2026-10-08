@@ -27,6 +27,10 @@ use rsk_fs::storage::ram::RamStorage;
 
 use super::*;
 
+#[path = "event_pad.rs"]
+mod event_pad;
+pub use event_pad::SignalAfterTouches;
+
 /// The pad's key cells, indexed the way [`rsk_ui::pin_grid_key`] indexes them
 /// (`row * PIN_COLS + col`), so cell 9 is Del, cell 10 the `0` key and cell 11 OK.
 const PIN_CELLS: usize = (rsk_ui::PIN_COLS * rsk_ui::PIN_ROWS) as usize;

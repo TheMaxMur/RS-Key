@@ -2,19 +2,46 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{Env, PIN, Pad, PanelSignal, WRONG_PIN, center, dev, nowhere, pin_entry};
+use crate::tests::{
+    Env, PIN, Pad, PanelSignal, SignalAfterTouches, WRONG_PIN, center, dev, nowhere, pin_entry,
+};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::vec;
 
 const SEED: [u8; 32] = [0x5A; 32];
 
-fn provision(env: &Env) {
+fn provision<S: rsk_fs::Storage>(env: &Env<S>) {
     rsk_fido::seed::encrypt_keydev_f1(&dev(), &mut env.fs.borrow_mut(), &SEED).unwrap();
     env.fs
         .borrow_mut()
         .put(rsk_fido::consts::EF_AUDIT_ENABLED, &[1])
         .unwrap();
+}
+
+#[cfg(not(feature = "fips-profile"))]
+#[test]
+fn an_unread_locked_seed_probe_withholds_reveal_even_when_plain_seed_survived() {
+    use rsk_fido::consts::EF_KEY_DEV_ENC;
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let env = Env::over(backend);
+    provision(&env);
+    env.set_device_pin(PIN);
+    let locked = rsk_fido::seed::seal_seed_locked(&mut *env.rng.borrow_mut(), &[0x11; 32], &SEED);
+    env.fs
+        .borrow_mut()
+        .put_key(EF_KEY_DEV_ENC, rsk_fs::Sealed::wrap(&locked))
+        .unwrap();
+    let mut ui = env.ui(Pad::idle());
+    assert!(env.local(&mut ui).load_backup().can_reveal);
+    let generation = env.fs.borrow().write_gen();
+    medium.stick(Some(EF_KEY_DEV_ENC.get()));
+    let view = env.local(&mut ui).load_backup();
+    assert!(view.has_seed && view.exportable && !view.sealed);
+    assert!(!view.can_reveal);
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    medium.stick(None);
+    assert!(env.local(&mut ui).load_backup().can_reveal);
 }
 
 fn held_then_taps(before: &[rsk_ui::Point], after: &[rsk_ui::Point]) -> Pad {
@@ -42,26 +69,6 @@ fn exports(env: &Env) -> usize {
         true
     });
     count
-}
-
-struct SignalAfterTouches {
-    samples: VecDeque<Option<rsk_ui::Point>>,
-    signal: Rc<core::cell::Cell<PanelSignal>>,
-    event: PanelSignal,
-    sent: bool,
-}
-
-impl TouchPad for SignalAfterTouches {
-    fn read(&mut self) -> Option<rsk_ui::Point> {
-        if let Some(sample) = self.samples.pop_front() {
-            return sample;
-        }
-        if !self.sent {
-            self.sent = true;
-            self.signal.set(self.event);
-        }
-        None
-    }
 }
 
 #[cfg(not(feature = "fips-profile"))]
@@ -441,4 +448,88 @@ fn backing_out_after_the_correct_pin_keeps_backup_exportable_and_unfinalized() {
         env.local(&mut ui).load_backup().can_reveal,
         !cfg!(feature = "fips-profile")
     );
+}
+
+#[test]
+fn unattended_recovery_steps_return_at_the_real_inactivity_deadline() {
+    let _env = Env::new();
+    std::thread::scope(|scope| {
+        macro_rules! window {
+            ($prepare:expr, $run:expr) => {
+                scope.spawn(|| {
+                    crate::tests::with_isolated_ui(|ui, cells| {
+                        rsk_fido::seed::encrypt_keydev_f1(
+                            &dev(),
+                            &mut cells.fs.borrow_mut(),
+                            &SEED,
+                        )
+                        .unwrap();
+                        $prepare(ui);
+                        let generation = cells.fs.borrow().write_gen();
+                        let started = Instant::now();
+                        let mut local = Local::new(ui, cells);
+                        $run(&mut local);
+                        assert!(started.elapsed() >= Duration::from_millis(MENU_INACTIVITY_MS));
+                        assert!(
+                            started.elapsed()
+                                < Duration::from_millis(MENU_INACTIVITY_MS + 4 * HOLD_MS)
+                                    + Duration::from_secs(10)
+                        );
+                        assert!(!local.asleep);
+                        assert!(!local.hooks.host_request_pending());
+                        assert_eq!(local.cells.fs.borrow().write_gen(), generation);
+                        assert!(!local.panel.oob);
+                        assert_eq!(
+                            rsk_fido::passkeys::load_keydev(
+                                &dev(),
+                                &mut local.cells.fs.borrow_mut()
+                            )
+                            .unwrap()
+                            .expose(),
+                            &SEED
+                        );
+                    });
+                });
+            };
+        }
+        window!(
+            |_: &mut crate::tests::TestUi<'_>| {},
+            |local: &mut Local<'_, '_, _, _, _, _, _>| local.run_backup()
+        );
+        window!(
+            |_: &mut crate::tests::TestUi<'_>| {},
+            |local: &mut Local<'_, '_, _, _, _, _, _>| local.run_reveal_recovery()
+        );
+        window!(
+            |_: &mut crate::tests::TestUi<'_>| {},
+            |local: &mut Local<'_, '_, _, _, _, _, _>| local.reveal_shares()
+        );
+        window!(
+            |_: &mut crate::tests::TestUi<'_>| {},
+            |local: &mut Local<'_, '_, _, _, _, _, _>| local.show_shares(
+                &[[0; rsk_slip39::WORDS_PER_SHARE]; rsk_slip39::MAX_SHARES],
+                2,
+            )
+        );
+        window!(
+            |ui: &mut crate::tests::TestUi<'_>| {
+                ui.touch = held_then_taps(&[], &[]);
+            },
+            |local: &mut Local<'_, '_, _, _, _, _, _>| local.reveal_phrase()
+        );
+    });
+}
+
+#[cfg(not(feature = "fips-profile"))]
+#[test]
+fn a_tap_outside_backup_actions_with_a_revealable_seed_changes_nothing() {
+    let env = Env::new();
+    provision(&env);
+    env.set_device_pin(PIN);
+    let generation = env.fs.borrow().write_gen();
+    let mut ui = env.ui(Pad::taps(&[nowhere(), center(rsk_ui::TITLE_BACK_RECT)]));
+    assert!(env.local(&mut ui).load_backup().can_reveal);
+    env.local(&mut ui).run_backup();
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert_eq!(exports(&env), 0);
 }

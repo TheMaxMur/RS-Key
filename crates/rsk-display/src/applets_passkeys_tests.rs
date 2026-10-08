@@ -7,6 +7,65 @@ use rsk_fido::credential::{CredExt, CredInput, credential_create, credential_sto
 
 const SEED: [u8; 32] = [0x5A; 32];
 
+#[test]
+fn account_labels_fall_back_to_display_name_then_the_placeholder() {
+    let env = Env::new();
+    let hash = rsk_crypto::sha256(b"example.com");
+    let cases = [
+        ("login", "Display", "login"),
+        ("", "Display", "Display"),
+        ("", "", "(no name)"),
+    ];
+    {
+        let mut fs = env.fs.borrow_mut();
+        rsk_fido::seed::encrypt_keydev_f1(&dev(), &mut fs, &SEED).unwrap();
+        for (i, (name, display, _)) in cases.iter().enumerate() {
+            let user = [i as u8];
+            let input = CredInput {
+                rp_id: "example.com",
+                user_id: &user,
+                user_name: name,
+                user_display_name: display,
+                use_sign_count: false,
+                rk: true,
+                created_ms: 1,
+                alg: rsk_fido::consts::ALG_ES256,
+                curve: i64::from(rsk_fido::consts::CURVE_P256),
+                ext: CredExt::default(),
+            };
+            let mut boxed = [0; 512];
+            let n = credential_create(&SEED, &dev(), &input, &hash, &[i as u8; 12], &mut boxed)
+                .unwrap();
+            credential_store(
+                &SEED,
+                &dev(),
+                &mut fs,
+                &mut *env.rng.borrow_mut(),
+                &boxed[..n],
+                &hash,
+                "example.com",
+                &user,
+                &[],
+            )
+            .unwrap();
+        }
+    }
+    let mut ui = env.ui(Pad::idle());
+    let mut rows = [AccountRow::default(); rsk_ui::PK_ROWS_MAX];
+    let mut fids = [0; rsk_ui::PK_ROWS_MAX];
+    let generation = env.fs.borrow().write_gen();
+    assert_eq!(
+        env.local(&mut ui)
+            .load_accts(&hash, &mut rows, &mut fids, 0),
+        (3, 3)
+    );
+    for (i, (_, _, expected)) in cases.iter().enumerate() {
+        assert_eq!(rows[i].name.as_str(), *expected);
+        assert_eq!(fids[i], rsk_fido::consts::EF_CRED + i as u16);
+    }
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}
+
 fn nav(tab: NavTab) -> rsk_ui::Point {
     center(rsk_ui::nav_tab_rect(
         rsk_ui::NAV_TABS.iter().position(|t| *t == tab).unwrap() as u16,
@@ -333,4 +392,42 @@ fn home_refresh_counts_credentials_across_rps_and_forgets_a_cleared_store() {
     env.local(&mut ui).refresh_home_stats();
     assert!(!ui.home_pin_set);
     assert_eq!(ui.home_passkeys, 0);
+}
+
+#[test]
+fn sleeping_from_rename_or_delete_unwinds_the_service_without_changing_accounts() {
+    use crate::tests::{PanelSignal, SignalAfterTouches};
+    for edit in [false, true] {
+        let env = Env::new();
+        seed_accounts(&env, 1, 1);
+        let generation = env.fs.borrow().write_gen();
+        let Ui {
+            panel, hooks, info, ..
+        } = env.ui(Pad::idle());
+        let point = if edit {
+            center(rsk_ui::TITLE_EDIT_RECT)
+        } else {
+            row(0)
+        };
+        let mut samples = std::collections::VecDeque::from([None; 4]);
+        samples.extend([Some(point), None, None, None, None]);
+        let touch = SignalAfterTouches {
+            samples,
+            signal: std::rc::Rc::clone(&hooks.signal),
+            event: PanelSignal::Wake,
+            sent: false,
+        };
+        let mut ui = Ui::new(panel, touch, hooks, info, env.cells());
+        assert!(matches!(
+            Local::new(&mut ui, env.cells()).run_service(&service(), &Label::default(), &hash()),
+            ServiceResult::Leave(None)
+        ));
+        assert!(ui.asleep);
+        assert_eq!(env.fs.borrow().write_gen(), generation);
+        assert_eq!(
+            rsk_fido::passkeys::for_each_cred(&dev(), &mut env.fs.borrow_mut(), &hash(), |_| {}),
+            1
+        );
+        assert!(!ui.panel.oob);
+    }
 }

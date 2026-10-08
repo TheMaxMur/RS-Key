@@ -227,3 +227,33 @@ fn a_real_rsa_result_is_stored_only_when_a_slot_and_the_fused_key_are_available(
         assert!(!ui.panel.oob);
     }
 }
+
+#[test]
+fn a_missed_chooser_row_and_failed_generation_do_not_fill_a_slot() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::taps(&[
+        crate::tests::nowhere(),
+        center(rsk_ui::TITLE_BACK_RECT),
+    ]));
+    assert!(matches!(
+        env.local(&mut ui).pick_row(rsk_ui::PIV_KEYGEN_PICK_TOP, 1),
+        Pick::Back
+    ));
+    drop(ui);
+    drop(env);
+    let mut env = Env::new();
+    env.keys.mkek_source = Some(FusedKey::latched(|_| false));
+    let mut samples = vec![None; 6];
+    samples.push(Some(pick(2)));
+    samples.extend([None; 6]);
+    samples.extend(core::iter::repeat_n(
+        Some(center(rsk_ui::DEL_HOLD_RECT)),
+        3 * (HOLD_MS / TOUCH_POLL_MS) as usize,
+    ));
+    let mut ui = env.ui(Pad::script(&samples));
+    let generation = env.fs.borrow().write_gen();
+    env.local(&mut ui).run_piv_generate();
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert!(!rsk_piv::info::read_slot(&mut env.fs.borrow_mut(), 0x82).present);
+    assert!(!ui.asleep);
+}
