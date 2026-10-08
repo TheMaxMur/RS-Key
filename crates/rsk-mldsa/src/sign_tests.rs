@@ -313,3 +313,48 @@ fn a_bounded_corrupt_t0_precompute_cannot_reuse_the_first_accepted_challenge() {
         "the norm-violating candidate was accepted"
     );
 }
+
+#[test]
+#[should_panic(expected = "params/dimension mismatch")]
+fn expansion_refuses_mismatched_row_dimensions_before_using_the_seed() {
+    let mut params = ML_DSA_44;
+    params.k += 1;
+    ExpandedKey::<4, 4>::zeroed().expand(&params, &[0; SEED_LEN]);
+}
+
+#[test]
+#[should_panic(expected = "params/dimension mismatch")]
+fn expansion_refuses_mismatched_column_dimensions_before_using_the_seed() {
+    let mut params = ML_DSA_44;
+    params.l += 1;
+    ExpandedKey::<4, 4>::zeroed().expand(&params, &[0; SEED_LEN]);
+}
+
+#[test]
+#[should_panic(expected = "assertion failed: K == p.k && L == p.l")]
+fn verification_refuses_mismatched_row_dimensions_before_decoding() {
+    let mut params = ML_DSA_44;
+    params.k += 1;
+    let _ = verify::<4, 4>(&params, &[], &[], &[], &[]);
+}
+
+#[test]
+#[should_panic(expected = "assertion failed: K == p.k && L == p.l")]
+fn verification_refuses_mismatched_column_dimensions_before_decoding() {
+    let mut params = ML_DSA_44;
+    params.l += 1;
+    let _ = verify::<4, 4>(&params, &[], &[], &[], &[]);
+}
+
+#[test]
+fn the_keygen_probe_byte_matches_the_public_key_hash() {
+    use sha3::digest::{ExtendableOutput, Update, XofReader};
+    let key = ExpandedKey::<4, 4>::from_seed(&ML_DSA_44, &[0x42; SEED_LEN]);
+    let mut public = vec![0; ML_DSA_44.pk_len];
+    key.write_public_key(&ML_DSA_44, &mut public);
+    let mut hash = sha3::Shake256::default();
+    hash.update(&public);
+    let mut expected = [0; 1];
+    hash.finalize_xof().read(&mut expected);
+    assert_eq!(std::hint::black_box(&key).probe_byte(), expected[0]);
+}
