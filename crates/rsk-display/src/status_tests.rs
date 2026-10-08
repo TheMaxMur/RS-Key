@@ -618,3 +618,17 @@ fn the_locked_breathe_paints_only_on_its_scheduled_tick() {
     assert_eq!(ui.panel.writes, writes);
     assert!(!ui.panel.oob);
 }
+
+#[test]
+fn a_direct_nav_call_on_an_awake_locked_ui_repaints_locked_instead_of_home() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::idle());
+    ui.locked = true;
+    let generation = env.fs.borrow().write_gen();
+    env.local(&mut ui).tap_nav(center(rsk_ui::nav_tab_rect(0)));
+    assert!(ui.locked);
+    assert!(!ui.asleep);
+    assert_eq!(ui.shown, Some(Screen::Locked));
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert!(!ui.panel.oob);
+}
