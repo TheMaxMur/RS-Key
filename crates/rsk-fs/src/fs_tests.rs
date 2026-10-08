@@ -2,6 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
 use crate::storage::faults::{Cut, RemoveStuck, TruncatedWalk};
 use crate::storage::ram::RamStorage;
 
@@ -2073,4 +2074,14 @@ fn the_rearm_order_oracle_refuses_a_missing_scrub_marker_removal() {
     let mut store = Fs::new(backend);
     store.put(KEY_DEV, b"replacement").unwrap();
     medium.assert_re_armed_before(KEY_DEV, |_| false, "missing marker");
+}
+
+#[test]
+fn fault_operation_diagnostics_name_the_fid_and_value_length() {
+    use crate::storage::faults::Op;
+    assert_eq!(
+        format!("{:?}", Op::Write(0x1234, vec![7; 300])),
+        "Write(0x1234, 300B)"
+    );
+    assert_eq!(format!("{:?}", Op::Remove(0x1234)), "Remove(0x1234)");
 }
