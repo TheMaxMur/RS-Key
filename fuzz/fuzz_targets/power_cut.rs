@@ -362,6 +362,7 @@ fn scribble(flash: &mut Mock, len: usize, seed: &[u8]) {
 }
 
 pub enum Outcome {
+    Config(config::Outcome),
     Piv(piv::Outcome),
     OpenPgp(openpgp::Outcome),
     Journal(journal::Outcome),
@@ -371,6 +372,12 @@ pub enum Outcome {
 }
 
 pub fn run(data: &[u8]) -> Outcome {
+    if data
+        .first()
+        .is_some_and(|b| b & 0xf0 == config::MODE_PREFIX)
+    {
+        return Outcome::Config(config::run(data));
+    }
     if data.first().is_some_and(|b| b & 0xf0 == 0xb0) {
         return Outcome::Piv(piv::run(data));
     }
@@ -478,3 +485,6 @@ pub mod openpgp;
 
 #[path = "power_cut_piv.rs"]
 pub mod piv;
+
+#[path = "power_cut_config.rs"]
+pub mod config;
