@@ -32,6 +32,36 @@ const FIDS: [u16; 3] = [A, B, C];
 /// `fs.rs`'s private `META_MAX`, which the model takes as a parameter.
 const META_MAX: usize = 1024;
 
+#[test]
+fn deletion_oracle_accepts_ordered_intermediates_and_refuses_changed_metadata() {
+    let value = Some(&b"value"[..]);
+    let policy = Some(&b"policy"[..]);
+    assert!(delete_landed(value, policy, value, policy));
+    assert!(delete_landed(value, policy, value, None));
+    assert!(delete_landed(value, policy, None, None));
+    assert!(!delete_landed(value, policy, None, policy));
+    assert!(!delete_landed(
+        value,
+        policy,
+        value,
+        Some(b"another policy")
+    ));
+    assert!(!delete_landed(value, policy, Some(b"another value"), None));
+}
+
+#[test]
+fn metadata_oracles_refuse_a_nonfitting_append_or_an_invented_value() {
+    let old = Some(&b"old"[..]);
+    let new = &b"new"[..];
+    assert!(meta_add_landed(old, new, false, old));
+    assert!(!meta_add_landed(old, new, false, Some(new)));
+    assert!(meta_add_landed(old, new, true, Some(new)));
+    assert!(!meta_add_landed(old, new, true, Some(b"third")));
+    assert!(meta_delete_landed(old, old));
+    assert!(meta_delete_landed(old, None));
+    assert!(!meta_delete_landed(old, Some(b"third")));
+}
+
 /// What the cut does to the mutation it lands on.
 #[derive(Clone, Copy, PartialEq)]
 enum Tear {
@@ -60,6 +90,8 @@ struct Medium {
     /// the power is a sweep that proves nothing, and it looks exactly like one
     /// that did.
     cuts: Rc<Cell<u32>>,
+    read_cut: Rc<Cell<Option<u16>>>,
+    walk_cut: Rc<Cell<Option<usize>>>,
 }
 
 impl Medium {
@@ -105,6 +137,11 @@ impl Medium {
 
 impl Storage for Medium {
     fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        if self.read_cut.get() == Some(fid) {
+            self.read_cut.set(None);
+            self.cut();
+            return None;
+        }
         let kept = self.kept.borrow();
         let value = kept.get(&fid)?;
         let n = value.len().min(buf.len());
@@ -134,6 +171,14 @@ impl Storage for Medium {
     }
 
     fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        if let Some(skip) = self.walk_cut.get() {
+            if skip == 0 {
+                self.walk_cut.set(None);
+                self.cut();
+                return false;
+            }
+            self.walk_cut.set(Some(skip - 1));
+        }
         let keys: Vec<u16> = self.kept.borrow().keys().copied().collect();
         for key in keys {
             f(key);
@@ -146,11 +191,13 @@ impl Storage for Medium {
 /// chosen number of mutations.
 struct RamDevice {
     medium: Medium,
+    boots: usize,
 }
 
 impl RamDevice {
     fn new(tear: Tear) -> Self {
         Self {
+            boots: 0,
             medium: Medium {
                 kept: Rc::new(RefCell::new(HashMap::new())),
                 budget: Rc::new(Cell::new(None)),
@@ -158,6 +205,8 @@ impl RamDevice {
                 tear,
                 forget: Rc::new(Cell::new(None)),
                 cuts: Rc::new(Cell::new(0)),
+                read_cut: Rc::new(Cell::new(None)),
+                walk_cut: Rc::new(Cell::new(None)),
             },
         }
     }
@@ -179,6 +228,7 @@ impl Device for RamDevice {
     type Storage = Medium;
 
     fn boot(&mut self) -> Fs<Medium> {
+        self.boots += 1;
         if let Some(fid) = self.medium.forget.get() {
             self.medium.kept.borrow_mut().remove(&fid);
         }
@@ -385,4 +435,61 @@ fn adopting_after_a_power_cut_recovers_before_driving_the_model() {
     assert_eq!(model.live(), 1);
     model.step(&mut dev, &mut fs, Op::Read(A, 3));
     model.reboot(&mut dev, &mut fs);
+}
+
+#[test]
+fn a_fourth_valid_metadata_entry_that_exceeds_the_store_is_refused() {
+    let fourth = C + 1;
+    let fids = [A, B, C, fourth];
+    let mut dev = RamDevice::new(Tear::Before);
+    let mut fs = dev.mount();
+    let mut model = PowerCutModel::new(&fids, META_MAX);
+    for fid in fids {
+        model.step(&mut dev, &mut fs, Op::Put(fid, b"value".to_vec()));
+    }
+    for fid in fids {
+        model.step(
+            &mut dev,
+            &mut fs,
+            Op::MetaAdd(fid, vec![0xa5; u8::MAX as usize]),
+        );
+    }
+    let mut out = [0; u8::MAX as usize];
+    assert_eq!(fs.meta_add(fourth, &out), Err(Error::NoMemory));
+    assert_eq!(fs.meta_find(fourth, &mut out), None);
+    for fid in [A, B, C] {
+        assert_eq!(fs.meta_find(fid, &mut out), Some(out.len()));
+    }
+    model.reboot(&mut dev, &mut fs);
+}
+
+#[test]
+fn the_power_cut_model_recovers_when_reads_or_mount_walks_lose_power() {
+    for cut in 0..5 {
+        let mut dev = RamDevice::new(Tear::Before);
+        let mut fs = dev.mount();
+        let mut model = PowerCutModel::new(&FIDS, META_MAX);
+        model.step(&mut dev, &mut fs, Op::Put(A, b"value".to_vec()));
+        model.step(&mut dev, &mut fs, Op::MetaAdd(A, b"policy".to_vec()));
+        match cut {
+            0 => dev.medium.read_cut.set(Some(A)),
+            1 => dev.medium.read_cut.set(Some(crate::EF_META)),
+            2 | 3 => dev.medium.walk_cut.set(Some(cut - 2)),
+            _ => dev.medium.read_cut.set(Some(A)),
+        }
+        match cut {
+            0 => model.step(&mut dev, &mut fs, Op::Read(A, 5)),
+            1 => model.step(&mut dev, &mut fs, Op::MetaFind(A)),
+            _ => model.reboot(&mut dev, &mut fs),
+        }
+        assert_eq!(dev.medium.cuts.get(), 1);
+        assert_eq!(dev.boots, if cut < 2 { 1 } else { 2 });
+        assert!(!dev.dead());
+        let mut value = [0; 5];
+        assert_eq!(fs.read(A, &mut value), Some(value.len()));
+        assert_eq!(&value, b"value");
+        let mut record = [0; 6];
+        assert_eq!(fs.meta_find(A, &mut record), Some(record.len()));
+        assert_eq!(&record, b"policy");
+    }
 }

@@ -311,3 +311,7 @@ fn judge(clean: &Run, faulted: &Run) -> Option<String> {
         )
     })
 }
+
+#[cfg(test)]
+#[path = "probe_tests.rs"]
+mod tests;

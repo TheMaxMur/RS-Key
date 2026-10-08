@@ -1873,3 +1873,99 @@ fn an_enumeration_that_yields_a_key_twice_registers_it_once() {
     fs.scan();
     assert_eq!(fs.free_dynamic(), MAX_DYNAMIC_FILES - 2);
 }
+
+#[test]
+fn the_metadata_fault_medium_fails_only_the_armed_metadata_read() {
+    let (mut backend, medium) = crate::storage::faults::MetaStuck::new();
+    backend.write(EF_META, b"metadata").unwrap();
+    backend.write(KEY_DEV, b"other").unwrap();
+    let mut data = [0; 8];
+    assert_eq!(backend.read(EF_META, &mut data), Some(8));
+    assert_eq!(backend.size(EF_META), Some(8));
+    assert_eq!(&data, b"metadata");
+    assert!(!backend.last_error());
+    medium.stick(true);
+    assert_eq!(backend.read(KEY_DEV, &mut data), Some(5));
+    assert_eq!(&data[..5], b"other");
+    assert!(!backend.last_error());
+    assert_eq!(backend.read(EF_META, &mut data), None);
+    assert!(backend.last_error());
+    assert_eq!(backend.size(KEY_DEV), Some(5));
+    assert!(!backend.last_error());
+    assert_eq!(backend.size(EF_META), None);
+    assert!(backend.last_error());
+    medium.stick(false);
+    assert_eq!(backend.read(EF_META, &mut data), Some(8));
+    assert!(!backend.last_error());
+}
+
+#[test]
+fn the_undead_medium_starts_removing_exactly_after_its_ceiling() {
+    let (mut backend, count) = crate::storage::faults::Undead::new(2);
+    backend.write(KEY_DEV, b"value").unwrap();
+    for n in 1..=3 {
+        backend.remove(KEY_DEV).unwrap();
+        assert_eq!(count.removals(), n);
+        assert_eq!(backend.size(KEY_DEV), (n <= 2).then_some(5));
+    }
+}
+
+#[test]
+fn a_one_read_change_leaves_other_fids_and_the_physical_value_alone() {
+    let (mut backend, control) = crate::read_change::ChangingRead::new();
+    backend.write(KEY_DEV, b"original").unwrap();
+    backend.write(KEY_DEV + 1, b"other").unwrap();
+    control.replace_on_read(KEY_DEV, 1, Some(b"changed"));
+    let mut data = [0; 8];
+    assert_eq!(backend.read(KEY_DEV + 1, &mut data), Some(5));
+    assert_eq!(&data[..5], b"other");
+    assert!(!control.served());
+    assert_eq!(backend.read(KEY_DEV, &mut data), Some(8));
+    assert_eq!(&data, b"original");
+    assert_eq!(backend.read(KEY_DEV, &mut data), Some(7));
+    assert_eq!(&data[..7], b"changed");
+    assert!(control.served());
+    assert_eq!(backend.value(KEY_DEV, &mut data), Some(8));
+    assert_eq!(&data, b"original");
+    assert_eq!(backend.size(KEY_DEV), Some(8));
+    let mut seen = std::vec::Vec::new();
+    assert!(backend.for_each_key(&mut |fid| seen.push(fid)));
+    seen.sort_unstable();
+    assert_eq!(seen, [KEY_DEV, KEY_DEV + 1]);
+    backend.remove(KEY_DEV).unwrap();
+    assert_eq!(backend.size(KEY_DEV), None);
+    assert_eq!(backend.read(KEY_DEV, &mut data), None);
+    assert_eq!(backend.value(KEY_DEV, &mut data), None);
+}
+
+#[test]
+#[should_panic(expected = "vacuous: no cut left a store whose recovery wrote anything")]
+fn a_recovery_sweep_refuses_a_command_that_never_mutates() {
+    crate::cut::sweep_recovery(|_| (), |_, ()| {}, |_| {}, |_, _, _| {});
+}
+
+#[test]
+#[should_panic(expected = "vacuous: no cut left a store whose recovery wrote anything")]
+fn a_recovery_sweep_refuses_a_recovery_that_never_mutates() {
+    crate::cut::sweep_recovery(
+        |_| (),
+        |fs, ()| {
+            let _ = fs.put(0xb000, b"value");
+        },
+        |_| {},
+        |_, _, _| {},
+    );
+}
+
+#[test]
+fn the_rearm_order_oracle_skips_an_unrelated_remove_before_the_marker() {
+    let (backend, medium) = crate::storage::faults::Cut::new();
+    let mut fs = Fs::new(backend);
+    fs.put(0xb001, b"unrelated").unwrap();
+    fs.put(0xb000, b"weak").unwrap();
+    medium.clear_ops();
+    fs.force_delete(0xb001).unwrap();
+    fs.force_delete(crate::EF_HARDENED).unwrap();
+    fs.put(0xb000, b"strong").unwrap();
+    medium.assert_re_armed_before(0xb000, |value| value == b"weak", "unrelated-remove control");
+}
