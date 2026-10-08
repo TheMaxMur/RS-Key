@@ -1769,7 +1769,38 @@ The final pre-commit host snapshot recorded 7488/8003 condition outcomes
 235 source-bound reviews, one tested recovery path with a zero counter, and
 279 net outcomes from aggregation and folded-span accounting. These reviews
 classify the measured profile and current callers; they do not claim complete
-execution of host/test-util APIs. `Undead` and `FaultBackend` methods and direct
-undersized private-helper calls remain possible unit-test cases. The retained
-snapshot used bcdDevice `0x0A91`; splitting the timing refactor into its own
+execution of host/test-util APIs. At that snapshot, `Undead` and `FaultBackend`
+methods and direct undersized private-helper calls still lacked dedicated tests.
+That snapshot used bcdDevice `0x0A91`; splitting the timing refactor into its own
 commit moves only the firmware build counter to `0x0A92`.
+
+The 2026-10-08 follow-up adds 54 host tests across storage, device configuration,
+FIDO, OpenPGP, PIV, OATH, RSA, ML-DSA, UI and display. They exercise fault-medium
+forwarding and diagnostics, short helper buffers, inconsistent direct APDUs,
+unknown algorithm and DEK targets, blocked retry resets, dimension assertions,
+unsorted glyph tables, wide strip borders and encoder run limits. Conformance
+oracles now also see multiple extensions, missing mandatory fields, reversed
+CBOR keys and incomplete vector rows. Six duplicate test callbacks were
+consolidated into shared helpers. Negative controls exercise their missing-field
+failure and the malformed request made by an empty extension writer.
+
+The frozen snapshot at `91835e3683b2` records 7546/8005 raw condition outcomes
+(94.27%), 39233/39950 lines (98.21%) and 3313/3314 function groups. Every
+repository function group executes. The sole zero group is the standard
+library's TLS initializer alternative selected only when `needs_drop::<T>()` is
+true; all five recorded TLS types contain only Copy data, so that alternative
+cannot be installed for these keys. This is a type invariant, not an exclusion
+based on the absence of a firmware caller.
+
+Of the previously reviewed baseline outcome sides, 59 now execute. The remaining
+source-coordinate union has 177 missing sides: 176 source invariants or fixed
+profile conditions and the existing recovery witness whose merged counter stays
+zero. No remaining reason relies solely on the current caller's narrower
+arguments. The raw 459 missing sides reconcile as `177 + 293 - 19 + 8`: the 293
+come from LLVM's maximum over function instantiations rather than a union of
+executed source coordinates; 19 folded-span adjustments and eight repeated
+coordinates reconcile the exported denominators. No percentage exclusions were
+applied. Reports, source hashes, all 27 original function-group dispositions and
+the updated 773-side baseline map are retained in
+`target/callgraph-coverage-20261008/`, including `coverage-direct-final/`,
+`audit-coverage-direct-final.json` and `baseline-through-direct-final.json`.
