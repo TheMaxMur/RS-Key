@@ -307,9 +307,8 @@ pub fn run(data: &[u8]) -> Outcome {
     if !interrupted {
         assert_eq!(sw, Sw::OK, "a healthy {cmd:?} was refused");
     }
-    fs = revive(&mut dev);
     let before = flash.borrow().stats_snapshot();
-    flash.borrow_mut().bytes_until_shutoff = Some(budget(data, 4));
+    fs = recovery_mount(&mut dev, budget(data, 4));
     let mut out = Secret::<[u8; DEK_SIZE]>::zeroed();
     let recovered = recover(&mut fs, &mut rng, cmd, &mut out);
     let recovery_stats = before.compare_to(flash.borrow().stats_snapshot());

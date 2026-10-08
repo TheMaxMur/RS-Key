@@ -201,6 +201,25 @@ impl Device for MockDevice {
     }
 }
 
+fn diagnostic_mount(dev: &MockDevice) -> Fs<TortureStorage> {
+    let mut snapshot = dev.shared.flash.borrow().clone();
+    snapshot.bytes_until_shutoff = None;
+    let mut fs = Fs::new(new_storage(SharedMock {
+        flash: Rc::new(RefCell::new(snapshot)),
+        dead: Rc::new(Cell::new(false)),
+    }));
+    fs.scan();
+    fs
+}
+
+fn recovery_mount(dev: &mut MockDevice, budget: u32) -> Fs<TortureStorage> {
+    dev.revive();
+    dev.shared.flash.borrow_mut().bytes_until_shutoff = Some(budget);
+    let mut fs = dev.boot();
+    fs.scan();
+    fs
+}
+
 struct ResetRng(u8);
 
 impl rsk_fido::Rng for ResetRng {

@@ -162,17 +162,6 @@ fn remount(dev: &mut MockDevice) -> Fs<TortureStorage> {
     fs
 }
 
-fn inspect(flash: &Rc<RefCell<Mock>>) -> Fs<TortureStorage> {
-    let mut snapshot = flash.borrow().clone();
-    snapshot.bytes_until_shutoff = None;
-    let mut fs = Fs::new(new_storage(SharedMock {
-        flash: Rc::new(RefCell::new(snapshot)),
-        dead: Rc::new(Cell::new(false)),
-    }));
-    fs.scan();
-    fs
-}
-
 pub fn run(data: &[u8]) -> Outcome {
     let change = match data.get(1).copied().unwrap_or(0) % CASE_COUNT {
         0 => Change::Arm,
@@ -234,16 +223,12 @@ pub fn run(data: &[u8]) -> Outcome {
         assert_eq!(result, Ok(()));
     }
     // Diagnose on a clone so the first real recovery mount remains cuttable.
-    let mut observed = inspect(&flash);
+    let mut observed = diagnostic_mount(&dev);
     partial(&mut observed, &before, &after);
     preserved(&mut observed, &flash, &counter);
-    flash.borrow_mut().bytes_until_shutoff = None;
-    dev.revive();
     // Arm before mount: repair of a torn NOR header is recovery too.
     let start = flash.borrow().stats_snapshot();
-    flash.borrow_mut().bytes_until_shutoff = Some(budget(4));
-    fs = dev.boot();
-    fs.scan();
+    fs = recovery_mount(&mut dev, budget(4));
     let result = execute(&mut fs, change, true);
     let recovery_stats = start.compare_to(flash.borrow().stats_snapshot());
     let recovery_interrupted = dev.dead();

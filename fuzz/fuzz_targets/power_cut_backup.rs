@@ -156,20 +156,17 @@ pub fn run(data: &[u8]) -> Outcome {
         "{result:?}"
     );
     let interrupted = dev.dead();
-    flash.borrow_mut().bytes_until_shutoff = None;
-    dev.revive();
-    fs = dev.boot();
-    fs.scan();
-    let replaced = check(&mut fs, &identity, &new);
+    let mut observed = diagnostic_mount(&dev);
+    let replaced = check(&mut observed, &identity, &new);
     if result.is_ok() {
         assert!(replaced, "LOAD succeeded without the new seed");
         assert!(
-            fs.has_data(EF_EE_DEV),
+            observed.has_data(EF_EE_DEV),
             "LOAD succeeded without its certificate"
         );
     }
 
-    flash.borrow_mut().bytes_until_shutoff = Some(budget(data, 4));
+    fs = recovery_mount(&mut dev, budget(data, 4));
     let _ = rsk_fido::seed::ensure_seed(&identity, &mut fs, &mut rng);
     let recovery_interrupted = dev.dead();
     flash.borrow_mut().bytes_until_shutoff = None;
