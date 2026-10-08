@@ -967,27 +967,37 @@ fn a_faulted_min_pin_probe_does_not_lower_the_floor() {
 #[test]
 fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
     use crate::consts::EF_PAUTHTOKEN;
+    let old_token = std::cell::RefCell::new(None);
 
-    assert!(!rsk_fs::cut::sweep_restarts(
+    assert!(rsk_fs::cut::sweep_restarts(
         || {
             let (cut, medium) = rsk_fs::storage::faults::Cut::new();
             let mut fs = Fs::new(cut);
-            let mut pin_file = [0u8; 35];
-            pin_file[0] = 8; // retries
-            pin_file[1] = 4; // a 4-code-point PIN, under the floor this raises
-            pin_file[2] = 1; // verifier format
-            fs.put(EF_PIN, &pin_file).unwrap();
-            fs.put(EF_MINPINLEN, &[4, 0]).unwrap();
+            fs.scan();
+            crate::clientpin::store_local_pin(&dev(), &mut fs, crate::test_pins::PIN).unwrap();
+            fs.put(EF_MINPINLEN, &[6, 0]).unwrap();
             // The grant the old PIN's holder carries, minted as provisioning mints it.
-            crate::seed::ensure_ppuat(&dev(), &mut fs, &mut SeqRng(3)).unwrap();
+            crate::seed::ensure_seed(&dev(), &mut fs, &mut SeqRng(3)).unwrap();
+            *old_token.borrow_mut() = medium.value(EF_PAUTHTOKEN.get());
             (fs, medium)
         },
         |fs| {
             let mut state = armed(PERM_ACFG);
-            let req = config_request(0x03, &subpara_min_pin(6), &TOKEN);
+            let req = config_request(0x03, &subpara_min_pin(8), &TOKEN);
             run_fs(fs, &mut state, &req).is_ok()
         },
-        |_| {},
+        |fs| {
+            let mut policy = [0; 2];
+            fs.read(EF_MINPINLEN, &mut policy).unwrap();
+            if policy[1] & crate::pinpolicy::FORCE_CHANGE != 0 {
+                let mut record = [0; 64];
+                let current = fs
+                    .read_key(EF_PAUTHTOKEN, &mut record)
+                    .map(|n| record[..n].to_vec());
+                assert_ne!(current, *old_token.borrow());
+            }
+            let _ = crate::seed::ensure_seed(&dev(), fs, &mut SeqRng(91));
+        },
         |fs, budget, _second, completed, medium| {
             let mut buf = [0u8; 2];
             let n = fs
@@ -998,14 +1008,14 @@ fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
                 "budget {budget}: the record that landed is not a policy record"
             );
             assert!(
-                buf[0] == 4 || buf[0] == 6,
-                "budget {budget}: the floor is neither the old one (4) nor the new one (6): {} — {:?}",
+                buf[0] == 6 || buf[0] == 8,
+                "budget {budget}: the floor is neither the old one (6) nor the new one (8): {} — {:?}",
                 buf[0],
                 medium.ops()
             );
             if buf[1] & crate::pinpolicy::FORCE_CHANGE != 0 {
                 assert!(
-                    !fs.has_data(EF_PAUTHTOKEN.get()),
+                    medium.value(EF_PAUTHTOKEN.get()) != *old_token.borrow(),
                     "budget {budget}: a forced PIN change landed over the old holder's grant — {:?}",
                     medium.ops()
                 );
@@ -1014,7 +1024,7 @@ fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
                 assert_eq!(
                     buf,
                     [
-                        6,
+                        8,
                         crate::pinpolicy::FORCE_CHANGE
                             | (u8::from(crate::consts::PIN_COMPLEXITY_POLICY)
                                 * crate::pinpolicy::COMPLEXITY)
