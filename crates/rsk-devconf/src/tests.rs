@@ -866,3 +866,101 @@ fn boot_scrub_preserves_an_unreadable_tail_of_an_overlong_legacy_record() {
     assert_eq!(fs.read(EF_DEV_CONF, &mut out), Some(stored.len()));
     assert_eq!(out, stored);
 }
+
+#[test]
+fn a_direct_overlay_refuses_each_short_output_without_rewriting_the_record() {
+    let mut store = fs();
+    let stored = [TAG_USB_ENABLED, 2, 0x02, 0x3b];
+    let incoming = [TAG_CHALRESP_TIMEOUT, 1, 0x0f];
+    store.put(EF_DEV_CONF, &stored).unwrap();
+    let generation = store.write_gen();
+    let expected = [
+        TAG_USB_ENABLED,
+        2,
+        0x02,
+        0x3b,
+        TAG_CHALRESP_TIMEOUT,
+        1,
+        0x0f,
+    ];
+    for room in 0..=expected.len() {
+        let mut output = [0xa5; 16];
+        let result = overlay_dev_conf(&mut store, &incoming, &mut output[..room]);
+        assert_eq!(
+            result,
+            if room < expected.len() {
+                Err(DevConfError::TooLong)
+            } else {
+                Ok(expected.len())
+            }
+        );
+        if room == expected.len() {
+            assert_eq!(&output[..room], &expected);
+        }
+        assert_eq!(&output[room..], &[0xa5; 16][room..]);
+        assert_eq!(store.write_gen(), generation);
+    }
+    let mut retained = [0; 4];
+    assert_eq!(store.read(EF_DEV_CONF, &mut retained), Some(stored.len()));
+    assert_eq!(retained, stored);
+}
+
+#[test]
+fn stripping_with_a_short_direct_output_never_writes_past_its_window() {
+    for blob in [
+        &[TAG_USB_ENABLED, 2, 0x02, 0x3b][..],
+        &[TAG_USB_ENABLED, 4, 0x02, 0x3b][..],
+    ] {
+        for room in 0..=blob.len() {
+            let mut output = [0xa5; 8];
+            assert_eq!(strip_config_lock(blob, &mut output[..room]), blob.len());
+            if room == blob.len() {
+                assert_eq!(&output[..room], blob);
+            } else {
+                assert_eq!(output, [0xa5; 8]);
+            }
+            assert_eq!(&output[room..], &[0xa5; 8][room..]);
+        }
+    }
+}
+
+#[test]
+fn clamping_skips_wrong_width_enabled_masks_and_keeps_the_following_tlv() {
+    for width in [0, 1, 3] {
+        let mut blob = vec![TAG_USB_ENABLED, width];
+        blob.extend(core::iter::repeat_n(0xff, width as usize));
+        blob.extend([TAG_USB_ENABLED, 2, 0xff, 0xff]);
+        let prefix = blob[..width as usize + 2].to_vec();
+        clamp_usb_enabled(&mut blob);
+        assert_eq!(&blob[..prefix.len()], &prefix);
+        assert_eq!(
+            &blob[prefix.len()..],
+            &[
+                TAG_USB_ENABLED,
+                2,
+                SUPPORTED_CAPS.to_be_bytes()[0],
+                SUPPORTED_CAPS.to_be_bytes()[1]
+            ]
+        );
+    }
+}
+
+#[test]
+fn a_tlv_append_refuses_an_overwide_value_or_short_window_without_advancing() {
+    for (room, cursor, value) in [
+        (16, 0, &vec![0x42; 256][..]),
+        (2, 0, &b"x"[..]),
+        (16, 17, &b"x"[..]),
+    ] {
+        let mut output = [0xa5; 16];
+        let mut n = cursor;
+        push_tlv(&mut output[..room], &mut n, TAG_DEVICE_FLAGS, value);
+        assert_eq!(n, cursor);
+        assert_eq!(output, [0xa5; 16]);
+    }
+    let mut output = [0xa5; 3];
+    let mut n = 0;
+    push_tlv(&mut output, &mut n, TAG_DEVICE_FLAGS, &[1]);
+    assert_eq!(n, output.len());
+    assert_eq!(output, [TAG_DEVICE_FLAGS, 1, 1]);
+}
