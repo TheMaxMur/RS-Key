@@ -34,6 +34,8 @@ rsk-crypto = { workspace = true }
 rsk-devconf = { workspace = true }
 
 [dev-dependencies]
+# Inspect the shared configuration record written by the OTP transport.
+rsk-devconf = { workspace = true, features = ["test-util"] }
 # RamStorage for the host tests (the same backend the other applets use).
 rsk-fs = { workspace = true, features = ["test-util"] }
 # An independent AES-128 for the typed Yubico-OTP round-trip test (decrypt the

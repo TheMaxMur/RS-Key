@@ -2764,3 +2764,6 @@ mod decisions;
 
 #[path = "recovery_tests.rs"]
 mod recovery;
+
+#[path = "restart_tests.rs"]
+mod restarts;
