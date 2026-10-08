@@ -111,3 +111,7 @@ fn verdict(field: &str) -> bool {
         v => panic!("a sigVer verdict of {v:?}, not 1 or 0"),
     }
 }
+
+#[cfg(test)]
+#[path = "testvectors_reader_tests.rs"]
+mod reader_tests;
