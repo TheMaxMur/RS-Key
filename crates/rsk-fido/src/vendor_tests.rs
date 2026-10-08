@@ -3285,6 +3285,20 @@ fn mse_without_a_coordinate_is_missing_parameter() {
         Err(CtapError::MissingParameter)
     );
     assert!(!st.mse_live(), "a refused MSE left a channel open");
+    let (_, hy) = P256Key::from_scalar(&[0x42u8; 32]).unwrap().public_xy();
+    let n = build_mse_coords(&mut req, &[], &hy);
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut st,
+            &mut AlwaysConfirm,
+            &req[..n],
+            &mut out
+        ),
+        Err(CtapError::MissingParameter)
+    );
+    assert!(!st.mse_live());
 }
 
 /// `{1: subcmd, 3: 2, 4: mac}`: a vendor subcommand with no parameters, carrying a
@@ -3540,3 +3554,6 @@ mod vendor_pad_tests;
 
 #[path = "vendor_recovery_tests.rs"]
 mod recovery;
+
+#[path = "vendor_coverage_tests.rs"]
+mod coverage_boundaries;

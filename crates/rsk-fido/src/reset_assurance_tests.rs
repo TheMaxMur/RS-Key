@@ -15,6 +15,149 @@ fn protected() -> ResetPersistentView {
 }
 
 #[test]
+fn a_volatile_only_owner_identity_is_retired_before_the_reset_snapshot() {
+    let mut reset = ResetRefinement::new(ResetPersistentView {
+        credential: true,
+        pin: true,
+        always_uv: true,
+        backup_sealed: true,
+        ..Default::default()
+    });
+    let mut volatile = ResetVolatileView {
+        owner_seed: true,
+        token_active: true,
+    };
+    assert!(reset.owner_credential_usable(&volatile));
+    assert!(reset.begin(&mut volatile));
+    assert!(!reset.snapshot.owner_seed);
+    assert!(!reset.snapshot.credential);
+    assert!(!reset.owner_credential_usable(&volatile));
+    assert!(reset.well_formed(&volatile));
+}
+
+#[test]
+fn reset_properties_reject_corrupt_pre_state_claims_without_a_gate() {
+    for field in 0..3 {
+        let mut reset = ResetRefinement::new(protected());
+        let mut volatile = ResetVolatileView::default();
+        assert!(reset.begin(&mut volatile));
+        match field {
+            0 => reset.persistent.pin = false,
+            1 => reset.persistent.always_uv = false,
+            2 => reset.persistent.backup_sealed = false,
+            _ => unreachable!(),
+        }
+        assert!(!reset.reset_never_weakens_surviving_state(&volatile));
+        assert!(!reset.well_formed(&volatile));
+    }
+}
+
+#[test]
+fn every_initial_persistent_combination_can_complete_or_abort_an_ordered_reset() {
+    for bits in 0..64 {
+        let persistent = ResetPersistentView {
+            owner_seed: bits & 1 != 0,
+            owner_locked_seed: bits & 2 != 0,
+            credential: bits & 4 != 0,
+            pin: bits & 8 != 0,
+            always_uv: bits & 16 != 0,
+            backup_sealed: bits & 32 != 0,
+        };
+        let mut volatile = ResetVolatileView {
+            owner_seed: true,
+            token_active: true,
+        };
+        let mut reset = ResetRefinement::new(persistent);
+        assert!(reset.well_formed(&volatile));
+        assert!(!reset.finish());
+        assert!(reset.begin(&mut volatile));
+        assert!(!reset.begin(&mut volatile));
+        assert_eq!(volatile, ResetVolatileView::default());
+        assert!(reset.well_formed(&volatile));
+        let mut aborted = reset;
+        assert!(aborted.abort());
+        assert!(!aborted.abort());
+        assert_eq!(aborted.persistent, persistent);
+        assert!(aborted.well_formed(&volatile));
+        for fid in [EF_KEY_DEV.get(), EF_KEY_DEV_ENC.get()] {
+            assert!(reset.delete(fid));
+            assert!(reset.well_formed(&volatile));
+        }
+        assert!(reset.advance());
+        assert!(reset.delete(EF_CRED));
+        assert!(reset.well_formed(&volatile));
+        assert!(reset.advance());
+        for fid in [EF_PIN, EF_ALWAYS_UV, EF_BACKUP_SEALED] {
+            assert!(reset.delete(fid));
+            assert!(reset.well_formed(&volatile));
+        }
+        assert!(reset.advance());
+        assert!(!reset.delete(EF_PIN));
+        assert!(reset.well_formed(&volatile));
+        assert!(reset.finish());
+        assert_eq!(reset.persistent, ResetPersistentView::default());
+        assert!(reset.well_formed(&volatile));
+    }
+}
+
+#[test]
+fn each_remaining_secret_and_gate_stops_the_next_reset_phase() {
+    let mut persistent = protected();
+    persistent.owner_locked_seed = true;
+    let mut reset = ResetRefinement::new(persistent);
+    let mut volatile = ResetVolatileView::default();
+    assert!(reset.begin(&mut volatile));
+    assert!(reset.advance());
+    assert!(!reset.advance());
+    assert!(reset.delete(EF_CRED));
+    assert!(reset.delete(EF_KEY_DEV.get()));
+    assert!(!reset.advance());
+    assert!(reset.delete(EF_KEY_DEV_ENC.get()));
+    assert!(reset.advance());
+    assert!(!reset.advance());
+    assert!(reset.delete(EF_PIN));
+    assert!(!reset.advance());
+    assert!(reset.delete(EF_ALWAYS_UV));
+    assert!(!reset.advance());
+    assert!(reset.delete(EF_BACKUP_SEALED));
+    assert!(reset.advance());
+    assert!(reset.well_formed(&volatile));
+    assert!(reset.finish());
+}
+
+#[test]
+fn late_phase_validation_refuses_every_surviving_secret_or_gate() {
+    for phase in [ResetProgress::Gates, ResetProgress::Reprovision] {
+        for bits in 1..64 {
+            let persistent = ResetPersistentView {
+                owner_seed: bits & 1 != 0,
+                owner_locked_seed: bits & 2 != 0,
+                credential: bits & 4 != 0,
+                pin: bits & 8 != 0,
+                always_uv: bits & 16 != 0,
+                backup_sealed: bits & 32 != 0,
+            };
+            let mut reset = ResetRefinement::new(persistent);
+            reset.progress = phase;
+            let rejected = phase == ResetProgress::Reprovision || bits & 7 != 0;
+            assert_eq!(reset.well_formed(&ResetVolatileView::default()), !rejected);
+            for volatile in [
+                ResetVolatileView {
+                    owner_seed: true,
+                    token_active: false,
+                },
+                ResetVolatileView {
+                    owner_seed: false,
+                    token_active: true,
+                },
+            ] {
+                assert!(!reset.well_formed(&volatile));
+            }
+        }
+    }
+}
+
+#[test]
 fn reset_projection_stitches_a_torn_epoch_to_the_next_boot() {
     let mut state = FidoState::new();
     state.keydev_dec = Some(rsk_secret::Secret::new([0x5a; 32]));
@@ -176,5 +319,18 @@ fn a_storage_abort_ends_each_reset_phase_without_changing_persistent_state() {
         assert!(!reset.abort());
         assert!(reset.well_formed(&volatile));
         assert!(reset.reset_never_weakens_surviving_state(&volatile));
+    }
+}
+
+#[test]
+fn a_reset_projection_never_deletes_a_record_outside_the_fido_domain() {
+    let mut reset = ResetRefinement::new(protected());
+    let mut volatile = ResetVolatileView::default();
+    assert!(reset.begin(&mut volatile));
+    let persistent = reset.persistent;
+    for fid in [0, u16::MAX] {
+        assert!(!reset.delete(fid));
+        assert_eq!(reset.persistent, persistent);
+        assert!(reset.well_formed(&volatile));
     }
 }

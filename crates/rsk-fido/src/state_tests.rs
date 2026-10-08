@@ -30,6 +30,60 @@ fn dev() -> Device<'static> {
 }
 
 #[test]
+fn credential_walk_requires_its_owner_and_an_unspent_cursor() {
+    let mut state = FidoState::new();
+    state.cm.channel = 7;
+    state.cm.cred_total = 2;
+    state.cm.cred_counter = 2;
+    assert!(state.cm.may_walk_creds(7));
+    assert!(!state.cm.may_walk_creds(8));
+    assert!(state.cm.walking());
+    state.cm.cred_counter = 3;
+    assert!(!state.cm.may_walk_creds(7));
+    assert!(!state.cm.walking());
+    state.cm.rp_total = 1;
+    assert!(state.cm.walking());
+}
+
+#[test]
+fn token_presence_flag_requires_a_live_token() {
+    let mut state = FidoState::new();
+    for (live, present, expected) in [
+        (false, true, false),
+        (true, false, false),
+        (true, true, true),
+    ] {
+        state.paut.in_use = live;
+        state.paut.user_present = present;
+        assert_eq!(state.user_present(), expected);
+    }
+    state.stop_using_token();
+    assert!(!state.user_present());
+}
+
+#[test]
+fn ephemeral_generation_retries_invalid_scalars_and_caches_the_accepted_point() {
+    struct RejectFirst(usize);
+    impl Rng for RejectFirst {
+        fn fill(&mut self, out: &mut [u8]) {
+            out.fill(match self.0 {
+                0 => 0,
+                1 => 0xff,
+                _ => 1,
+            });
+            self.0 += 1;
+            assert!(self.0 <= 3);
+        }
+    }
+    let mut state = FidoState::new();
+    let mut rng = RejectFirst(0);
+    state.regenerate(&mut rng);
+    assert_eq!(rng.0, 3);
+    assert_eq!(state.ephemeral_scalar(), &[1; 32]);
+    assert_eq!(state.ephemeral_public(), public_xy(&[1; 32]));
+}
+
+#[test]
 fn abstract_token_exposes_only_the_security_projection() {
     let mut state = FidoState::new();
     state.paut.in_use = true;
@@ -264,4 +318,18 @@ fn an_idle_cursor_expires_on_its_own_timer() {
 
     st.expire_stale_sequences(1_000 + STATEFUL_WALK_IDLE_MS);
     assert_eq!(next_rp(&mut st), Err(CtapError::NotAllowed));
+}
+
+#[test]
+fn the_generated_relation_refuses_an_out_of_domain_pre_state() {
+    let pre = AState {
+        permission_mc: true,
+        ..AState::default()
+    };
+    assert!(!crate::generated_token_edges::allowed_event(
+        pre,
+        crate::AbstractOp::RevokeToken,
+        crate::AbstractOutcome::Silent,
+        AState::default(),
+    ));
 }

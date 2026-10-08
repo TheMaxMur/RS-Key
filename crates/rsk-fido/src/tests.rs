@@ -86,6 +86,33 @@ fn dispatch_empty_is_invalid_length() {
 }
 
 #[test]
+fn dispatch_without_response_space_has_no_effect() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = FidoState::new();
+    state.paut.in_use = true;
+    state.paut.issued_at_ms = 0;
+    let mut rng = SeqRng(1);
+    let mut presence = AlwaysConfirm;
+    let mut ctx = Ctx {
+        dev: Device {
+            serial_hash: &[0xAB; 32],
+            serial_id: &[1; 8],
+            otp_key: None,
+            latched: false,
+        },
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: u64::MAX,
+        presence: &mut presence,
+    };
+    assert_eq!(process_cbor(&mut ctx, &[consts::CTAP_RESET], &mut []), 0);
+    assert!(state.paut.in_use);
+    assert_eq!(fs.write_gen(), 0);
+    assert_eq!(rng.0, 1);
+}
+
+#[test]
 fn dispatch_get_assertion_routes_to_handler() {
     // getAssertion with empty params is malformed CBOR.
     let mut out = [0u8; 64];
