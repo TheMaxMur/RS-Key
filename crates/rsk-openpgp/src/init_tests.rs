@@ -514,3 +514,6 @@ fn retry_and_maximum_repairs_can_observe_an_absent_status_record() {
     assert!(settle_pw_status_maxima(&mut fs).is_ok());
     assert_eq!(fs.write_gen(), generation);
 }
+
+#[path = "init_restart_tests.rs"]
+mod restarts;

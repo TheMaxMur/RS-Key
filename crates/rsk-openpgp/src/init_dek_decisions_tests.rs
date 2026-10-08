@@ -82,7 +82,11 @@ fn orphan_records_at_rc_or_legacy_fids_inhibit_dek_generation() {
         fs.put(orphan, &copy).unwrap();
         scan_files(&dev(), &mut fs, &mut NoEntropy).unwrap();
         assert_eq!(stored(&mut fs, EF_DEK_PW3.get()).unwrap(), copy);
-        assert_eq!(stored(&mut fs, orphan).unwrap(), copy);
+        if orphan == EF_DEK_RC.get() {
+            assert!(stored(&mut fs, orphan).is_none());
+        } else {
+            assert_eq!(stored(&mut fs, orphan).unwrap(), copy);
+        }
         assert!(stored(&mut fs, EF_DEK_PW1.get()).is_none());
         opens_the_original_key(&mut fs, PW3_MODE83, PW3_DEFAULT);
     }

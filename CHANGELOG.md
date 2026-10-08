@@ -40,6 +40,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP boot cleanup retries deletion of an obsolete public-reset-code DEK
+  wrapper after an interruption removed its verifier first. Cleanup authenticates
+  the orphan under the public default; unidentified wrappers and live reset codes
+  are preserved. Existing PW1/PW3 key material keeps its format and identity.
+  bcdDevice → `0x0A93`.
+
 - OpenPGP GET DATA refuses an undersized construction buffer instead of
   panicking on an empty buffer or reporting a partially written template as
   complete. GET DATA `7A` refuses a missing, unreadable or wrong-width signature
