@@ -3559,3 +3559,6 @@ mod recovery;
 
 #[path = "vendor_coverage_tests.rs"]
 mod coverage_boundaries;
+
+#[path = "vendor_restart_tests.rs"]
+mod restarts;
