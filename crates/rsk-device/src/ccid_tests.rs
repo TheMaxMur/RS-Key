@@ -2646,3 +2646,6 @@ fn a_successful_otp_config_command_returns_only_the_updated_status_frame() {
     assert_eq!(n, 0);
     assert_eq!(after[4], before[4].wrapping_add(1));
 }
+
+#[path = "factory_restart_tests.rs"]
+mod factory_restarts;
