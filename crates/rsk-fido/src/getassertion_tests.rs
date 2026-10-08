@@ -5241,3 +5241,6 @@ fn a_u2f_credential_whose_counter_will_not_read_is_not_asserted() {
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
 #[path = "getassertion_reads_tests.rs"]
 mod reads;
+
+#[path = "getassertion_restart_tests.rs"]
+mod restarts;

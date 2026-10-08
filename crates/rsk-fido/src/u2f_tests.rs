@@ -1328,3 +1328,6 @@ fn direct_u2f_calls_refuse_inconsistent_apdu_lengths_before_loading_a_key() {
     assert_eq!(fs.write_gen(), 0);
     assert_eq!(rng.0, 1);
 }
+
+#[path = "u2f_restart_tests.rs"]
+mod restarts;
