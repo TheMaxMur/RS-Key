@@ -2844,3 +2844,6 @@ mod retry_decisions;
 
 #[path = "response_decisions_tests.rs"]
 mod response_decisions;
+
+#[path = "restart_tests.rs"]
+mod restarts;
