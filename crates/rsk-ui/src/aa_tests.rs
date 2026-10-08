@@ -74,6 +74,57 @@ fn blend_has_exact_endpoints_and_intermediate_coverage() {
 }
 
 #[test]
+fn narrow_and_empty_rounded_shapes_match_the_sample_oracle() {
+    for width in 0..9 {
+        for height in 0..9 {
+            let rect = Rect::new(2, 2, width, height);
+            for diameter in [0, 1, 4, 8, 11, 33] {
+                for y in 1..12 {
+                    for x in 1..12 {
+                        assert_eq!(
+                            rounded_coverage(rect, diameter, x, y),
+                            rounded_coverage_slow(rect, diameter, x, y),
+                            "{rect:?} diameter {diameter} pixel ({x},{y})"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn wide_strokes_and_small_rectangles_match_the_original_renderer() {
+    for rect in [
+        Rect::new(2, 2, 3, 9),
+        Rect::new(2, 2, 9, 3),
+        Rect::new(2, 2, 9, 9),
+    ] {
+        for diameter in [0, 4, 8, 11, 33] {
+            for border in [
+                None,
+                Some((Rgb565::RED, 0)),
+                Some((Rgb565::RED, 1)),
+                Some((Rgb565::RED, 5)),
+                Some((Rgb565::RED, 12)),
+            ] {
+                for fill in [None, Some(Rgb565::WHITE)] {
+                    let mut actual = Rec::new(16, Rgb565::BLACK);
+                    let mut expected = Rec::new(16, Rgb565::BLACK);
+                    rounded_rect(&mut actual, rect, diameter, fill, border, Rgb565::BLACK).unwrap();
+                    legacy_rounded_rect(&mut expected, rect, diameter, fill, border, Rgb565::BLACK);
+                    assert_eq!(
+                        actual.pixels, expected.pixels,
+                        "{rect:?} diameter {diameter} border {border:?} fill {fill:?}"
+                    );
+                    assert!(!actual.oob);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn circle_and_rounded_rect_have_aa_edges_inside_their_boxes() {
     let mut circle_target = Rec::new(24, Rgb565::BLACK);
     filled_circle(

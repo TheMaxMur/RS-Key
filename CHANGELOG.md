@@ -40,6 +40,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- Narrow rounded display shapes use the geometric path when cached corner
+  masks would overlap. One-pixel corners keep their inner halves solid.
+  bcdDevice → `0x0A90`.
+
 - PIV repairs an absent, empty, truncated or preceding-key F9 attestation
   certificate on SELECT using its existing key, and retires a stale public cache
   left by older builds. F9 recreation removes the preceding certificate before

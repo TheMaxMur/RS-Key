@@ -27,7 +27,8 @@ unaffected.
 The full GUI uses always-on antialiasing. Text uses four-bit IBM Plex Sans and
 Mono coverage data. Icons, circles, status rings, rounded cards, and controls
 blend their edges into the surface below them. The device does this with integer
-math and retained panel writes. It does not use a framebuffer or a heap. A full
+geometry even for controls narrower than their rounded corners.
+It uses retained panel writes without a framebuffer or a heap. A full
 page is recorded once as compact drawing commands. The firmware compares keyed
 128-bit tags for 32×32 visual-state tiles and merges the changed tiles. Typed UI
 components can provide smaller exact damage before composition. Each changed

@@ -349,10 +349,7 @@ fn rounded_coverage(rect: Rect, diameter: u32, px: i32, py: i32) -> u8 {
         return (SAMPLES * SAMPLES) as u8;
     }
 
-    if diameter <= ROUND_MASK_SIDE as u32
-        && u32::from(rect.w) >= diameter
-        && u32::from(rect.h) >= diameter
-    {
+    if fixed_round_supported(rect, diameter) {
         let local_x = (px - i32::from(rect.x)).min(i32::from(rect.x + rect.w - 1) - px) as usize;
         let local_y = (py - i32::from(rect.y)).min(i32::from(rect.y + rect.h - 1) - py) as usize;
         let corner = diameter.div_ceil(2) as usize;
@@ -385,7 +382,9 @@ fn inset(rect: Rect, amount: u16) -> Rect {
 }
 
 fn fixed_round_supported(rect: Rect, diameter: u32) -> bool {
-    if diameter > ROUND_MASK_SIDE as u32 {
+    // A one-pixel circle mask also rounds the pixel's inner halves; a rounded
+    // rectangle must keep those halves solid.
+    if diameter == 1 || diameter > ROUND_MASK_SIDE as u32 {
         return false;
     }
     let half = diameter.div_ceil(2);
