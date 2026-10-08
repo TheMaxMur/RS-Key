@@ -282,3 +282,25 @@ fn a_store_that_changes_between_frames_neither_shifts_nor_breaks_a_page() {
         "the lost response left a page owed"
     );
 }
+
+#[test]
+fn shortening_the_entry_under_a_list_cursor_refuses_its_missing_tail() {
+    let name = vec![b'x'; NAME_MAX];
+    let (mut fs, rng, touch) = oath_with(core::slice::from_ref(&name));
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let mut other = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let (sw, head) = run_fw(&mut app, &mut fs, &[0, INS_LIST, 0, 0, 10]);
+    assert_eq!(sw.sw1(), 0x61);
+    assert_eq!(head.len(), 10);
+    let body = [tlv(TAG_NAME, &name), tlv(TAG_NAME, b"a")].concat();
+    assert_eq!(
+        run(&mut other, &mut fs, &apdu(INS_RENAME, 0, 0, &body)).0,
+        Sw::OK
+    );
+    let generation = fs.write_gen();
+    assert_eq!(
+        run_fw(&mut app, &mut fs, &[0, INS_SEND_REMAINING, 0, 0, 10]),
+        (Sw::MEMORY_FAILURE, vec![])
+    );
+    assert_eq!(fs.write_gen(), generation);
+}

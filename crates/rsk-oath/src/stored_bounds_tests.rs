@@ -222,3 +222,66 @@ fn renaming_a_full_legacy_record_refuses_without_replacing_it() {
     assert_eq!(after, before);
     assert_eq!(fs.write_gen(), generation);
 }
+
+#[test]
+fn renaming_a_legacy_duplicate_name_changes_only_its_first_name_tlv() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    let mut plaintext = put_data(b"first", 0x21, 6, SECRET_SHA1, false, None);
+    plaintext.extend(tlv(TAG_NAME, b"second"));
+    let fid = KeyFid::new(EF_OATH_CRED);
+    assert!(seal::seal_put(
+        &device(),
+        &mut fs,
+        &mut *rng.borrow_mut(),
+        fid,
+        &plaintext
+    ));
+    assert_eq!(select(&mut app, &mut fs).0, Sw::OK);
+    let mut pair = tlv(TAG_NAME, b"first");
+    pair.extend(tlv(TAG_NAME, b"renamed"));
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_RENAME, 0, 0, &pair)).0,
+        Sw::OK
+    );
+    let mut output = Secret::<[u8; CRED_MAX]>::zeroed();
+    let n = seal::seal_read(&device(), &mut fs, fid, &mut output).unwrap();
+    let names: Vec<_> = rsk_sdk::tlv::Tlv::new(&output.expose()[..n])
+        .filter(|(tag, _)| *tag == TAG_NAME as u16)
+        .map(|(_, value)| value.to_vec())
+        .collect();
+    assert_eq!(names, [b"renamed".to_vec(), b"second".to_vec()]);
+}
+
+#[test]
+fn an_unvalidated_reselect_keeps_the_access_code_gate_closed() {
+    let mut fs = new_fs();
+    let rng = RefCell::new(CountRng(7));
+    let touch = RefCell::new(AlwaysConfirm);
+    let mut code = vec![ALG_HMAC_SHA1];
+    code.extend_from_slice(&[0x5a; 16]);
+    assert!(seal::seal_put(
+        &device(),
+        &mut fs,
+        &mut *rng.borrow_mut(),
+        EF_OATH_CODE,
+        &code
+    ));
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    assert_eq!(select(&mut app, &mut fs).0, Sw::OK);
+    assert!(!app.validated);
+    let generation = fs.write_gen();
+    let mut out = [0; 128];
+    assert_eq!(
+        Applet::select(&mut app, true, &mut fs, &mut ResBuf::new(&mut out)),
+        Sw::OK
+    );
+    assert!(!app.validated);
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_LIST, 0, 0, &[])).0,
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    assert_eq!(fs.write_gen(), generation);
+}

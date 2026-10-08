@@ -89,3 +89,24 @@ fn reset_removes_each_repeated_fid_once_across_multiple_batches() {
         (Sw::OK, vec![])
     );
 }
+
+#[test]
+fn a_removed_value_with_unremoved_metadata_cannot_complete_either_wipe_phase() {
+    use rsk_fs::storage::faults::MetaStuck;
+    for fid in [EF_OATH_CRED, EF_OATH_CODE.get()] {
+        let (backend, medium) = MetaStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        fs.put_key(KeyFid::new(fid), rsk_fs::Sealed::wrap(b"value"))
+            .unwrap();
+        fs.meta_add(fid, b"policy").unwrap();
+        medium.stick(true);
+        assert_eq!(wipe_oath(&mut fs), Err(Sw::MEMORY_FAILURE));
+        assert!(!medium.live(fid));
+        assert!(medium.live(rsk_fs::EF_META));
+        medium.stick(false);
+        let mut retained = [0; 6];
+        assert_eq!(fs.meta_find(fid, &mut retained), Some(6));
+        assert_eq!(&retained, b"policy");
+    }
+}
