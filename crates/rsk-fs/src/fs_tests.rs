@@ -1969,3 +1969,108 @@ fn the_rearm_order_oracle_skips_an_unrelated_remove_before_the_marker() {
     fs.put(0xb000, b"strong").unwrap();
     medium.assert_re_armed_before(0xb000, |value| value == b"weak", "unrelated-remove control");
 }
+
+#[test]
+fn the_undead_medium_keeps_forwarding_reads_and_walks_across_refused_removals() {
+    let (backend, count) = crate::storage::faults::Undead::new(2);
+    let mut store = Fs::new(backend);
+    store.put(KEY_DEV, b"value").unwrap();
+    store.put(KEY_DEV + 1, b"other").unwrap();
+    for removal in 0..=3 {
+        let mut value = [0xa5; 8];
+        assert_eq!(store.read(KEY_DEV, &mut value), (removal < 3).then_some(5));
+        if removal < 3 {
+            assert_eq!(&value[..5], b"value");
+            assert_eq!(&value[5..], &[0xa5; 3]);
+        }
+        let mut seen = std::vec::Vec::new();
+        assert!(store.for_each_key(&mut |fid| seen.push(fid)));
+        seen.sort_unstable();
+        assert_eq!(
+            seen,
+            if removal < 3 {
+                vec![KEY_DEV, KEY_DEV + 1]
+            } else {
+                vec![KEY_DEV + 1]
+            }
+        );
+        assert_eq!(count.removals(), removal);
+        if removal < 3 {
+            assert_eq!(store.force_delete_halves(KEY_DEV).value, Ok(()));
+            store = Fs::new(store.into_storage());
+            store.scan();
+        }
+    }
+}
+
+#[test]
+fn the_fault_projection_backend_exercises_the_real_cache_return_paths() {
+    use super::store_assurance::{CacheView, fresh};
+    for faulted in [false, true] {
+        let mut store = fresh(faulted);
+        let mut value = [0xa5; 8];
+        assert_eq!(store.cache_view(KEY_DEV), CacheView::CLEAR);
+        store
+            .put(KEY_DEV, b"not persisted by the projection")
+            .unwrap();
+        assert_eq!(store.cache_view(KEY_DEV), CacheView::LIVE);
+        assert_eq!(
+            store.try_read(KEY_DEV, &mut value),
+            if faulted {
+                Err(Error::MemoryFatal)
+            } else {
+                Ok(None)
+            }
+        );
+        assert_eq!(value, [0xa5; 8]);
+        assert_eq!(
+            store.cache_view(KEY_DEV),
+            if faulted {
+                CacheView::LIVE
+            } else {
+                CacheView::ABSENT
+            }
+        );
+        assert!(!store.has_data(KEY_DEV + 1));
+        assert_eq!(
+            store.cache_view(KEY_DEV + 1),
+            if faulted {
+                CacheView::CLEAR
+            } else {
+                CacheView::ABSENT
+            }
+        );
+        let mut seen = std::vec::Vec::new();
+        assert!(store.for_each_key(&mut |fid| seen.push(fid)));
+        assert!(seen.is_empty());
+        let removal = store.force_delete_halves(KEY_DEV);
+        assert_eq!(removal.value, Ok(()));
+        assert_eq!(
+            removal.record,
+            if faulted {
+                Err(Error::MemoryFatal)
+            } else {
+                Ok(())
+            }
+        );
+        assert_eq!(store.cache_view(KEY_DEV), CacheView::ABSENT);
+    }
+}
+
+#[test]
+#[should_panic(expected = "nothing superseded")]
+fn the_rearm_order_oracle_refuses_a_missing_supersession() {
+    let (backend, medium) = crate::storage::faults::Cut::new();
+    let mut store = Fs::new(backend);
+    store.force_delete(crate::EF_HARDENED).unwrap();
+    medium.assert_re_armed_before(KEY_DEV, |_| false, "missing supersession");
+}
+
+#[test]
+#[should_panic(expected = "nothing re-armed the at-rest lap")]
+fn the_rearm_order_oracle_refuses_a_missing_scrub_marker_removal() {
+    let (backend, medium) = crate::storage::faults::Cut::new();
+    let mut store = Fs::new(backend);
+    store.put(KEY_DEV, b"replacement").unwrap();
+    medium.assert_re_armed_before(KEY_DEV, |_| false, "missing marker");
+}
