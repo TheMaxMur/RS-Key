@@ -4,6 +4,12 @@ A full OpenPGP card 3.4 over CCID: three key slots (signature, decryption,
 authentication), works with stock GnuPG. The same slots cover commit signing,
 SSH login (via gpg-agent), and end-to-end mail/file encryption.
 
+GET DATA returns `6581` if its output buffer cannot hold the complete data
+object. An undersized buffer does not produce a successful partial template.
+GET DATA `7A` also returns `6581` when the signature counter is absent,
+unreadable or not exactly three bytes; it never publishes a partial counter
+template as a successful response.
+
 Prereqs: on Linux, `pcscd` + the `scdaemon.conf` lines from
 [linux.md](../linux.md). Check the card is visible:
 

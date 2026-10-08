@@ -142,11 +142,12 @@ fn discretionary_contains_key_information() {
     // looks for it — a bare child of 0x6E is invisible to that parser.
     let mut fs = fs();
     let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
-    let mut out = [0u8; 256];
+    let mut out = [0u8; 512];
     let n = {
         let mut w = DoWriter::new(&mut out, &mut fs, &aid);
         w.build(EF_DISCRETE_DO)
     };
+    assert!(n <= out.len(), "the whole discretionary template must fit");
     assert!(
         out[..n]
             .windows(10)
@@ -308,4 +309,68 @@ fn fixed_short_lengths_refuse_a_long_form_body() {
         assert_eq!(usize::from(length(n)), n);
     }
     assert!(std::panic::catch_unwind(|| length(0x80)).is_err());
+}
+
+#[test]
+fn a_stored_legacy_rsa_attribute_refuses_each_short_constructed_template() {
+    let mut store = fs();
+    store
+        .put(EF_ALGO_PRIV1, &[ALGO_RSA, 8, 0, 0, 0x20, 0])
+        .unwrap();
+    let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+    let mut full = [0; 512];
+    let length = DoWriter::new(&mut full, &mut store, &aid).build(EF_DISCRETE_DO);
+    assert!(length <= full.len());
+    assert!(
+        full[..length]
+            .windows(8)
+            .any(|w| w == [0xc1, 6, ALGO_RSA, 8, 0, 0, 17, 0])
+    );
+    let generation = store.write_gen();
+    for room in 0..length {
+        let mut output = vec![0xa5; room];
+        let claimed = DoWriter::new(&mut output, &mut store, &aid).build(EF_DISCRETE_DO);
+        assert!(claimed > output.len(), "room {room} answered success");
+        assert_eq!(store.write_gen(), generation);
+    }
+}
+
+#[test]
+fn a_flash_tail_that_exactly_fits_is_a_complete_template() {
+    let mut store = fs();
+    store.put(EF_SEX, &[0x39]).unwrap();
+    let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+    let mut full = [0; 512];
+    let n = DoWriter::new(&mut full, &mut store, &aid).build(EF_CH_DATA);
+    assert!(n < 0x80);
+    assert!(full[..n].ends_with(&[0x5f, 0x35, 1, 0x39]));
+    let generation = store.write_gen();
+    let mut exact = vec![0xa5; n];
+    assert_eq!(
+        DoWriter::new(&mut exact, &mut store, &aid).build(EF_CH_DATA),
+        n
+    );
+    assert_eq!(exact, full[..n]);
+    assert_eq!(store.write_gen(), generation);
+}
+
+#[test]
+fn a_flat_record_that_outgrows_its_size_probe_refuses_the_short_output() {
+    let (backend, control) = rsk_fs::read_change::ChangingRead::new();
+    let mut store = Fs::new(backend);
+    store.scan();
+    store.put(EF_LOGIN_DATA, b"old").unwrap();
+    control.replace_on_read(EF_LOGIN_DATA, 0, Some(&[0x42; 32]));
+    let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+    let mut output = [0xa5; 8];
+    let generation = store.write_gen();
+    assert!(DoWriter::new(&mut output, &mut store, &aid).build(EF_LOGIN_DATA) > output.len());
+    assert!(control.served());
+    assert_eq!(store.write_gen(), generation);
+    let mut retained = [0; 3];
+    assert_eq!(
+        store.into_storage().value(EF_LOGIN_DATA, &mut retained),
+        Some(3)
+    );
+    assert_eq!(&retained, b"old");
 }

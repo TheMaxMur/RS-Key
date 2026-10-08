@@ -55,9 +55,8 @@ pub fn get_data<S: Storage>(
         let mut w = DoWriter::new(out, fs, full_aid);
         w.build(fid)
     };
-    // `build` reports a stored DO's full length, and no PUT DATA of any build wrote
-    // one past `out`: only a damaged or restored record gets here. Refuse, since a
-    // short body under `9000` reads as whole and `&out[..data_len]` would panic.
+    // A failed build reports past the output bound: insufficient room or an
+    // unreadable mandatory counter must never publish a partial template.
     if data_len > out.len() {
         return (0, Sw::MEMORY_FAILURE);
     }

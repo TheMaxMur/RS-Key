@@ -40,6 +40,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP GET DATA refuses an undersized construction buffer instead of
+  panicking on an empty buffer or reporting a partially written template as
+  complete. GET DATA `7A` refuses a missing, unreadable or wrong-width signature
+  counter with `6581`, instead of returning an incomplete security-support
+  template under `9000`. Existing three-byte records keep their format.
+  bcdDevice → `0x0A91`.
+
 - Narrow rounded display shapes use the geometric path when cached corner
   masks would overlap. One-pixel corners keep their inner halves solid.
   bcdDevice → `0x0A90`.

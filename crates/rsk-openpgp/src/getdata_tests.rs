@@ -18,6 +18,118 @@ fn aid() -> [u8; 16] {
 }
 
 #[test]
+fn a_missing_or_wrong_width_signature_counter_cannot_form_a_successful_template() {
+    for counter in [
+        None,
+        Some(&[][..]),
+        Some(&[1, 2][..]),
+        Some(&[1, 2, 3, 4][..]),
+    ] {
+        let mut fs = fs();
+        if let Some(counter) = counter {
+            fs.put(EF_SIG_COUNT, counter).unwrap();
+        }
+        let generation = fs.write_gen();
+        let mut out = [0xa5; 32];
+        assert_eq!(
+            get_data(
+                EF_SEC_TPL,
+                false,
+                false,
+                &mut fs,
+                &aid(),
+                &mut None,
+                &mut out
+            ),
+            (0, Sw::MEMORY_FAILURE)
+        );
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
+
+#[test]
+fn constructed_data_with_tiny_outputs_refuses_without_panicking_or_writing_flash() {
+    let mut fs = fs();
+    fs.put(EF_SIG_COUNT, &[0; 3]).unwrap();
+    let aid = aid();
+    for fid in [EF_CH_DATA, EF_APP_DATA, EF_SEC_TPL, EF_ALGO_INFO] {
+        let generation = fs.write_gen();
+        for room in 0..4 {
+            let mut out = [0xa5; 8];
+            let mut current = None;
+            assert_eq!(
+                get_data(
+                    fid,
+                    false,
+                    false,
+                    &mut fs,
+                    &aid,
+                    &mut current,
+                    &mut out[..room]
+                ),
+                (0, Sw::MEMORY_FAILURE),
+                "FID {fid:04x}, room {room}"
+            );
+            assert_eq!(current, Some(fid));
+            assert_eq!(fs.write_gen(), generation);
+            assert_eq!(&out[room..], &[0xa5; 8][room..]);
+        }
+    }
+}
+
+#[test]
+fn every_constructed_output_capacity_either_returns_the_whole_template_or_refuses() {
+    let mut fs = fs();
+    fs.put(EF_SIG_COUNT, &[0; 3]).unwrap();
+    let aid = aid();
+    for name_len in [0, 120, 128, 248, 256] {
+        fs.put(EF_CH_NAME, &vec![b'A'; name_len]).unwrap();
+        fs.put(EF_FP_SIG, &[0xab; 1000]).unwrap();
+        fs.put(EF_TS_SIG, &[0xcd; 1000]).unwrap();
+        for fid in [EF_CH_DATA, EF_APP_DATA, EF_SEC_TPL, EF_ALGO_INFO] {
+            let mut reference = [0; 1024];
+            let mut current = None;
+            let (n, sw) = get_data(
+                fid,
+                false,
+                false,
+                &mut fs,
+                &aid,
+                &mut current,
+                &mut reference,
+            );
+            assert_eq!(sw, Sw::OK);
+            assert!(n <= reference.len());
+            let generation = fs.write_gen();
+            for room in 0..=n + 2 {
+                let mut out = [0xa5; 1024];
+                let result = get_data(
+                    fid,
+                    false,
+                    false,
+                    &mut fs,
+                    &aid,
+                    &mut current,
+                    &mut out[..room],
+                );
+                if room < n {
+                    assert_eq!(
+                        result,
+                        (0, Sw::MEMORY_FAILURE),
+                        "FID {fid:04x}, name {name_len}, room {room}"
+                    );
+                } else {
+                    assert_eq!(result, (n, Sw::OK));
+                    assert_eq!(&out[..n], &reference[..n]);
+                }
+                assert_eq!(&out[room..], &[0xa5; 1024][room..]);
+                assert_eq!(fs.write_gen(), generation);
+            }
+        }
+    }
+}
+
+#[test]
 fn full_aid_returns_16_raw_bytes() {
     let mut fs = fs();
     let a = aid();

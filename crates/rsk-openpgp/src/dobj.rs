@@ -171,6 +171,7 @@ pub(crate) fn same_algo(a: &[u8], b: &[u8]) -> bool {
 pub struct DoWriter<'a, S: Storage> {
     out: &'a mut [u8],
     pos: usize,
+    failed: bool,
     fs: &'a mut Fs<S>,
     full_aid: &'a [u8; 16],
 }
@@ -180,28 +181,31 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         Self {
             out,
             pos: 0,
+            failed: false,
             fs,
             full_aid,
         }
     }
 
     pub fn len(&self) -> usize {
-        self.pos
+        self.pos.min(self.out.len())
     }
 
     pub fn is_empty(&self) -> bool {
-        self.pos == 0
+        self.len() == 0
     }
 
     pub fn bytes(&self) -> &[u8] {
-        self.out.get(..self.pos).unwrap_or_default()
+        self.out.get(..self.len()).unwrap_or_default()
     }
 
     fn push(&mut self, b: u8) {
         if let Some(slot) = self.out.get_mut(self.pos) {
             *slot = b;
-            self.pos += 1;
+        } else {
+            self.failed = true;
         }
+        self.pos += 1;
     }
 
     fn extend(&mut self, s: &[u8]) {
@@ -210,7 +214,8 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         for (dst, src) in room.iter_mut().zip(s) {
             *dst = *src;
         }
-        self.pos += n;
+        self.failed |= n < s.len();
+        self.pos += s.len();
     }
 
     /// BER-TLV length encoding: 1 byte (<128), `81 LL` (<256), or `82 HH LL`.
@@ -232,16 +237,19 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     fn read_flash(&mut self, fid: u16) {
         let cap = self.out.get_mut(self.pos..).unwrap_or_default();
         if let Some(n) = self.fs.read(fid, cap) {
-            // `fs.read` returns the value's FULL stored length while it copies only
-            // `min(len, cap.len())`; advance by what actually fit, or an over-long
-            // stored DO would push `pos` past `out` and panic on the next slice.
-            self.pos += n.min(cap.len());
+            self.failed |= n > cap.len();
+            self.pos += n;
         }
     }
 
     /// Top-level builder for a GET DATA tag: `[1, fid]` with `mode == 1`.
     pub fn build(&mut self, fid: u16) -> usize {
-        self.emit_do(&[1, fid], 1)
+        let len = self.emit_do(&[1, fid], 1);
+        if self.failed {
+            self.out.len().saturating_add(1)
+        } else {
+            len
+        }
     }
 
     /// Walk a fid list, appending each sub-DO. For a multi-element list (a
@@ -314,33 +322,33 @@ impl<'a, S: Storage> DoWriter<'a, S> {
         self.close(lp)
     }
 
-    /// Open a constructed DO: its tag and room for the longest length form, which
-    /// [`Self::close`] fills.
+    /// Reserve the shortest header: a growing header never needs temporary
+    /// space beyond the completed response's size.
     fn open(&mut self, tag: u8) -> usize {
         self.push(tag);
-        self.push(0x82);
         let lp = self.pos;
-        self.pos += 2;
+        self.push(0);
         lp
     }
 
     /// Close what [`Self::open`] began and return its size, tag included. The length
-    /// takes BER's shortest form, as a YubiKey 5.8.0 writes `65 09`, the body moving
-    /// back over what the long form had reserved.
+    /// takes BER's shortest form, moving the body forward for a long-form length.
     fn close(&mut self, lp: usize) -> usize {
-        let body = self.pos - lp - 2;
+        let body = self.pos - lp - 1;
         let mut head = [0u8; 3];
         let n = rsk_sdk::tlv::format_len(u16::try_from(body).unwrap_or(u16::MAX), &mut head);
-        let at = lp - 1;
-        // Only what was written moves: `open` reserves its two bytes even when full.
         let written = self.pos.min(self.out.len());
-        if lp + 2 <= written && at + n + (written - lp - 2) <= self.out.len() {
-            self.out.copy_within(lp + 2..written, at + n);
+        if lp < written && lp + n + body <= self.out.len() {
+            self.out.copy_within(lp + 1..written, lp + n);
+        } else {
+            self.failed = true;
         }
-        if let (Some(dst), Some(src)) = (self.out.get_mut(at..at + n), head.get(..n)) {
+        if let (Some(dst), Some(src)) = (self.out.get_mut(lp..lp + n), head.get(..n)) {
             dst.copy_from_slice(src);
+        } else {
+            self.failed = true;
         }
-        self.pos = at + n + body;
+        self.pos = lp + n + body;
         1 + n + body
     }
 
@@ -385,17 +393,17 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     }
 
     fn emit_sec_tpl(&mut self) -> usize {
+        let mut count = [0u8; 3];
+        if self.fs.try_read(EF_SIG_COUNT, &mut count) != Ok(Some(count.len())) {
+            self.failed = true;
+            return 0;
+        }
         let start = self.pos;
         self.push((EF_SEC_TPL & 0xff) as u8);
         self.push(5);
-        if self.fs.has_data(EF_SIG_COUNT) {
-            self.push((EF_SIG_COUNT & 0xff) as u8);
-            self.push(3);
-            self.read_flash(EF_SIG_COUNT);
-        }
-        // Return what was actually written: when EF_SIG_COUNT is absent (or short)
-        // only the 2-byte header lands, so a constant `5 + 2` would over-read the
-        // scratch tail (stale bytes from a prior command).
+        self.push((EF_SIG_COUNT & 0xff) as u8);
+        self.push(3);
+        self.extend(&count);
         self.pos - start
     }
 
@@ -404,18 +412,16 @@ impl<'a, S: Storage> DoWriter<'a, S> {
     /// stale scratch from a prior command leaks past what was written.
     fn emit_fixed(&mut self, fids: &[u16], size: usize) -> usize {
         for &f in fids {
-            let before = self.pos;
-            if self.fs.has_data(f) {
-                self.read_flash(f);
-            }
-            let written = self.pos - before;
-            if written < size {
-                for _ in written..size {
-                    self.push(0);
+            let end = self.pos + size;
+            if let Some(window) = self.out.get_mut(self.pos..end) {
+                window.fill(0);
+                if self.fs.has_data(f) {
+                    let _ = self.fs.read(f, window);
                 }
             } else {
-                self.pos = before + size;
+                self.failed = true;
             }
+            self.pos = end;
         }
         fids.len() * size
     }

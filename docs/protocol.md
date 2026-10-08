@@ -695,6 +695,13 @@ writable ones. A YubiKey 5.8.0 answers the same, with keys and a name set. The
 Gnuk-derived suite in `third_party/openpgp-card-tests` reads them one by one; a
 host written that way has to read the template instead.
 
+GET DATA answers `6581` with no response body if its construction buffer cannot
+hold the complete object. A constructed template keeps BER's shortest length
+form; fixed-width fingerprint and timestamp fields still truncate older long
+records and pad short records with zeroes.
+The `7A` security-support template requires its three-byte DS-Counter (`93`);
+an absent, unreadable or wrong-width counter answers `6581` with no body.
+
 **OpenPGP TERMINATE DF leaves the applet terminated until ACTIVATE FILE.** As on a
 YubiKey 5.8.0, TERMINATE DF (`00 E6 00 00`, PW3 verified or blocked, `6982`
 otherwise) wipes the applet and then every command answers `6285`, SELECT
