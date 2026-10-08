@@ -459,3 +459,6 @@ fn product_text_is_utf8_checked_without_altering_the_stored_bytes() {
         assert_eq!(product.as_str(), core::str::from_utf8(bytes).ok());
     }
 }
+
+#[path = "restart_tests.rs"]
+mod restarts;
