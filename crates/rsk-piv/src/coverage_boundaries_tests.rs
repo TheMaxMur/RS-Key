@@ -189,3 +189,64 @@ fn a_disappearing_escrow_record_between_probes_produces_no_rewrite() {
     assert!(medium.served());
     assert_eq!(fs.write_gen(), generation);
 }
+
+#[test]
+fn a_direct_escrow_read_without_pin_grant_preserves_the_response_and_store() {
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    let mut fs = new_fs();
+    let mut out = [0xa5; 64];
+    let generation = fs.write_gen();
+    let mut res = ResBuf::new(&mut out);
+    assert_eq!(
+        app.get_protected_mgm(&mut fs, &mut res),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    assert!(res.is_empty());
+    assert_eq!(out, [0xa5; 64]);
+    assert_eq!(fs.write_gen(), generation);
+    assert!(!app.sess.has_pin);
+}
+
+#[test]
+fn a_direct_retry_setter_refuses_an_unknown_pair_without_rewriting_counters() {
+    let mut fs = new_fs();
+    let counters = [3, 2, 3, 1];
+    fs.put(EF_RETRIES, &counters).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(
+        set_retries_left(&mut fs, 3, 9),
+        Err(Sw::REFERENCE_NOT_FOUND)
+    );
+    assert_eq!(fs.write_gen(), generation);
+    let mut retained = [0; 4];
+    assert_eq!(fs.read(EF_RETRIES, &mut retained), Some(4));
+    assert_eq!(retained, counters);
+}
+
+#[test]
+fn direct_management_key_updates_refuse_inconsistent_apdu_windows_without_retirement() {
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    app.sess.has_mgm = true;
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let mut fs = new_fs();
+    let empty = Apdu::parse(&[0, INS_SET_MGMKEY, 0xff, 0xff]).unwrap();
+    for data in [&[][..], &[ALGO_AES128, SLOT_CARDMGM, 16][..]] {
+        let request = Apdu {
+            nc: 19,
+            data,
+            ..empty
+        };
+        assert_eq!(app.set_mgmkey(&dev, &mut fs, &request), Sw::WRONG_LENGTH);
+        assert_eq!(fs.write_gen(), 0);
+        assert!(app.sess.has_mgm);
+    }
+}

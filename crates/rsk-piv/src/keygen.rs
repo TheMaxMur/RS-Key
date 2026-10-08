@@ -800,3 +800,7 @@ pub(crate) fn attest<S: Storage>(
 pub(crate) fn nist_field_len(algo: u8) -> usize {
     if algo == ALGO_ECCP256 { 32 } else { 48 }
 }
+
+#[cfg(test)]
+#[path = "keygen_direct_tests.rs"]
+mod direct_tests;
