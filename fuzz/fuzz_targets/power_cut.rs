@@ -381,6 +381,7 @@ fn scribble(flash: &mut Mock, len: usize, seed: &[u8]) {
 }
 
 pub enum Outcome {
+    Credentials(credentials::Outcome),
     Config(config::Outcome),
     Piv(piv::Outcome),
     OpenPgp(openpgp::Outcome),
@@ -391,6 +392,12 @@ pub enum Outcome {
 }
 
 pub fn run(data: &[u8]) -> Outcome {
+    if data
+        .first()
+        .is_some_and(|b| b & 0xf0 == credentials::MODE_PREFIX)
+    {
+        return Outcome::Credentials(credentials::run(data));
+    }
     if data
         .first()
         .is_some_and(|b| b & 0xf0 == config::MODE_PREFIX)
@@ -507,3 +514,6 @@ pub mod piv;
 
 #[path = "power_cut_config.rs"]
 pub mod config;
+
+#[path = "power_cut_credential.rs"]
+pub mod credentials;

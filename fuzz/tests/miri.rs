@@ -1938,3 +1938,6 @@ fn seed_load_during_erase_byte_cuts() {
         );
     }
 }
+
+#[path = "miri/credential_cut_tests.rs"]
+mod credential_cuts;
