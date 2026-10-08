@@ -7,6 +7,9 @@ use rsk_fs::storage::ram::RamStorage;
 
 use super::*;
 
+#[path = "keydev_restart_tests.rs"]
+mod restarts;
+
 struct LcgRng(u64);
 impl Rng for LcgRng {
     fn fill(&mut self, buf: &mut [u8]) {
