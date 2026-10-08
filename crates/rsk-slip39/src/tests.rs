@@ -9,6 +9,14 @@
 //! the raw shares back to the secret (the inverse the host runs on restore).
 
 use super::*;
+
+#[test]
+fn interpolation_at_a_member_returns_that_member() {
+    let shares = [(1, [0x11; SECRET_LEN]), (2, [0x22; SECRET_LEN])];
+    for (index, value) in shares {
+        assert_eq!(interpolate(&shares, index), value);
+    }
+}
 extern crate std;
 use std::string::String;
 use std::vec::Vec;

@@ -478,4 +478,7 @@ fn ecdsa_der_is_minimal_and_sign_safe() {
     want.extend_from_slice(&[0; 30]);
     assert_eq!(&out[..n], &want[..]);
     assert_eq!(ecdsa_der(&[1, 2, 3], &mut out), Err(Error::Encoding));
+    let before = out;
+    assert_eq!(ecdsa_der(&[], &mut out), Err(Error::Encoding));
+    assert_eq!(out, before);
 }

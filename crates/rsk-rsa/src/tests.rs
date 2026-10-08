@@ -368,3 +368,43 @@ fn modexp_pub_matches_biguint() {
     assert!(modexp_pub(&base_le, &[0x01, 0x00, 0x01], &n_le, &mut out));
     assert_eq!(BigUint::from_bytes_le(&out), want, "base^e mod n mismatch");
 }
+
+#[test]
+fn a_fermat_residue_with_a_one_low_byte_is_still_composite() {
+    let n =
+        crate::fixtures::hex("e5110000000000000000000000000000000000000000000000000000000000c0");
+    let modulus = BigUint::from_bytes_le(&n);
+    assert_eq!(&modulus % BigUint::from(3u8), BigUint::from(0u8));
+    let residue = BigUint::from(2u8).modpow(&(&modulus - BigUint::from(1u8)), &modulus);
+    assert!(residue > BigUint::from(1u8));
+    assert_eq!(residue.to_bytes_le()[0], 1);
+    assert!(!passes_fermat_base2(&n));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "m != 0 && m < (1 << 23)")]
+fn a_zero_small_modulus_is_refused_before_division() {
+    let _ = mod_small(&[1], 0);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "m != 0 && m < (1 << 23)")]
+fn a_small_modulus_outside_the_horner_bound_is_refused() {
+    let _ = mod_small(&[1], 1 << 23);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "len >= 2 && n_le[0] & 1 == 1")]
+fn a_short_miller_rabin_candidate_is_refused_before_indexing() {
+    let _ = passes_strong_mr_base2(&[]);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "len >= 2 && n_le[0] & 1 == 1")]
+fn an_even_miller_rabin_candidate_is_refused_before_the_odd_number_algorithm() {
+    let _ = passes_strong_mr_base2(&[2, 0]);
+}

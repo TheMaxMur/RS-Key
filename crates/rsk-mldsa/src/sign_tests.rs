@@ -246,3 +246,70 @@ fn acvp_sigver_accept_reject() {
         );
     }
 }
+
+#[test]
+fn a_bounded_corrupt_t0_precompute_cannot_reuse_the_first_accepted_challenge() {
+    let p = &ML_DSA_44;
+    let mut key = ExpandedKey::<4, 4>::from_seed(p, &[0x42; SEED_LEN]);
+    key.s1_hat_mont = zero_vec();
+    key.s2_hat_mont = zero_vec();
+    key.t0_hat_mont = zero_vec();
+    let mut baseline = vec![0; p.sig_len];
+    key.sign(p, b"norm-control", &[], &[0; SEED_LEN], &mut baseline);
+    let (challenge, z, _) =
+        sig_decode::<4, 4>(p.gamma1, p.omega, p.lambda_div4, &baseline).unwrap();
+    let c = sample_in_ball(p.tau, &challenge[..p.lambda_div4]);
+    let mut t0 = zero_vec::<4>();
+    let bound = (1 << (D - 1)) - 1;
+    t0[0].0[0] = c.0[0] * bound;
+    for i in 1..crate::params::N {
+        t0[0].0[crate::params::N - i] = -c.0[i] * bound;
+    }
+    let coefficient = c.0[0] * t0[0].0[0]
+        - (1..crate::params::N)
+            .map(|i| c.0[i] * t0[0].0[crate::params::N - i])
+            .sum::<i32>();
+    assert_eq!(coefficient, p.tau * bound);
+    assert!(coefficient >= p.gamma2);
+    key.t0_hat_mont = to_mont_vec(&ntt_vec(&t0));
+    let mut c_hat = c.clone();
+    ntt_inplace(&mut c_hat);
+    let c_t0: [Poly; 4] = core::array::from_fn(|i| {
+        let mut product = pointwise_mont(&c_hat, &key.t0_hat_mont[i]);
+        inv_ntt_inplace(&mut product);
+        product
+    });
+    assert_eq!(center_mod(c_t0[0].0[0]), coefficient);
+    let mut w = matrix_mul_streaming::<4, 4>(&key.rho, &ntt_vec(&z));
+    reduce_vec(&mut w);
+    for row in &mut w {
+        inv_ntt_inplace(row);
+    }
+    let weight: usize = (0..4)
+        .flat_map(|row| (0..crate::params::N).map(move |column| (row, column)))
+        .filter(|&(row, column)| {
+            make_hint(
+                p.gamma2,
+                Q - c_t0[row].0[column],
+                partial_reduce32(w[row].0[column] + c_t0[row].0[column]),
+            )
+        })
+        .count();
+    assert!(
+        weight <= p.omega as usize,
+        "the hint guard must not own this rejection"
+    );
+    let mut refused_challenge = vec![0; p.sig_len];
+    key.sign(
+        p,
+        b"norm-control",
+        &[],
+        &[0; SEED_LEN],
+        &mut refused_challenge,
+    );
+    assert_ne!(
+        &refused_challenge[..p.lambda_div4],
+        &baseline[..p.lambda_div4],
+        "the norm-violating candidate was accepted"
+    );
+}

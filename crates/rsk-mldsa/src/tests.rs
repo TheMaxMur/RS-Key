@@ -54,3 +54,36 @@ fn every_parameter_set_rejects_short_buffers_and_unexpanded_keys_without_writing
     assert_eq!(k87.sign(b"m", &[0; 32], &mut out), Err(Error::NotExpanded));
     assert!(out.iter().all(|&b| b == 0xA5));
 }
+
+#[test]
+fn verifier_refuses_context_public_key_signature_and_norm_boundaries() {
+    let key = MlDsa44::from_seed(&[7; SEED_LEN]);
+    let pk = key.public_key();
+    let mut signature = [0; MLDSA44_SIG_LEN];
+    key.sign(b"message", &[0; 32], &mut signature).unwrap();
+    let verify = |pk: &[u8], context: &[u8], sig: &[u8]| {
+        sign::verify::<4, 4>(&params::ML_DSA_44, pk, b"message", context, sig)
+    };
+    assert!(verify(&pk, &[], &signature));
+    assert!(!verify(&pk, &[0; 256], &signature));
+    assert!(!verify(&pk[..pk.len() - 1], &[], &signature));
+    assert!(!verify(&pk, &[], &signature[..signature.len() - 1]));
+    assert!(!verify(&pk, &[], &[0; MLDSA44_SIG_LEN]));
+}
+
+#[test]
+fn hedged_ml_dsa65_signatures_remain_verifiable_across_many_rejection_walks() {
+    let mut rng = testutil::Rng::new(0x5eed);
+    let mut seed = [0; SEED_LEN];
+    rng.fill(&mut seed);
+    let key = MlDsa65::from_seed(&seed);
+    let public = key.public_key();
+    for number in 0u32..1024 {
+        let mut random = [0; SEED_LEN];
+        rng.fill(&mut random);
+        let mut sig = [0; MLDSA65_SIG_LEN];
+        let message = number.to_be_bytes();
+        assert_eq!(key.sign(&message, &random, &mut sig), Ok(MLDSA65_SIG_LEN));
+        assert!(mldsa65_verify(&public, &message, &sig), "walk {number}");
+    }
+}

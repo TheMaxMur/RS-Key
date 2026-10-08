@@ -10,7 +10,7 @@ use crate::params::Q;
 use crate::poly::Poly;
 
 /// Montgomery reduction (FIPS 204 Alg 49): returns `a·2^-32 mod q` in (−q, q).
-/// Input must satisfy `−2^31·q ≤ a ≤ 2^31·q`.
+/// Input must satisfy `−2^31·q ≤ a < 2^31·q`.
 pub(crate) const fn mont_reduce(a: i64) -> i32 {
     const QINV: i32 = 58_728_449; // q·QINV ≡ 1 (mod 2^32)
     let t = (a as i32).wrapping_mul(QINV);

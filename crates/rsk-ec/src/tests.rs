@@ -3,6 +3,45 @@
 
 use super::*;
 
+#[test]
+fn p521_signing_rejects_non_sha512_digest_lengths() {
+    let scalar = scalar_p521();
+    for length in [0, 32, 63, 65, 66] {
+        assert!(
+            sign_p521(&scalar, &std::vec![0x5a; length], &mut |_| panic!(
+                "invalid digest drew a nonce"
+            ))
+            .is_none()
+        );
+    }
+    assert!(sign_p521(&scalar, &[0x5a; 64], &mut |b| b.fill(1)).is_some());
+}
+
+#[test]
+fn p521_signing_retries_out_of_range_zero_and_zero_signature_nonces() {
+    use p521::ecdsa::signature::hazmat::PrehashVerifier;
+    use p521::elliptic_curve::{PrimeField, ops::Reduce, point::AffineCoordinates};
+    let r = <p521::Scalar as Reduce<p521::FieldBytes>>::reduce(&p521::AffinePoint::GENERATOR.x());
+    let scalar = -Option::<p521::Scalar>::from(r.invert()).unwrap();
+    let mut digest = [0; 64];
+    digest[63] = 1;
+    let mut draws = 0;
+    let signature = sign_p521(&scalar, &digest, &mut |b| {
+        draws += 1;
+        b.fill(if draws == 1 { 0xff } else { 0 });
+        if draws >= 3 {
+            b[65] = (draws - 2) as u8;
+        }
+        assert!(draws <= 4, "nonce retry did not terminate");
+    })
+    .unwrap();
+    assert_eq!(draws, 4);
+    let key = p521::ecdsa::SigningKey::from_bytes(&scalar.to_repr()).unwrap();
+    p521::ecdsa::VerifyingKey::from(&key)
+        .verify_prehash(&digest, &signature)
+        .unwrap();
+}
+
 // A fixed, in-range nonzero scalar per curve (high byte small so it is < n).
 fn scalar_p256() -> p256::Scalar {
     use p256::elliptic_curve::PrimeField;

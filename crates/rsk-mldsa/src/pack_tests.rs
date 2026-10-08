@@ -6,6 +6,33 @@ use crate::params::{D, ML_DSA_44, ML_DSA_65};
 use crate::testutil::{Rng, rand_poly_range};
 
 #[test]
+fn unsigned_unpack_refuses_unused_bit_patterns_for_a_partial_width_range() {
+    let b = 5;
+    let valid = vec![0; 32 * bit_length(b)];
+    assert_eq!(simple_bit_unpack(&valid, b).unwrap().0, [0; 256]);
+    let invalid = vec![0xff; valid.len()];
+    assert!(simple_bit_unpack(&invalid, b).is_err());
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "bit_pack input out of [-a,b]")]
+fn signed_pack_refuses_a_coefficient_below_its_declared_range() {
+    let mut poly = Poly::zero();
+    poly.0[0] = -6;
+    bit_pack(&poly, 5, 5, &mut vec![0; 32 * bit_length(10)]);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "bit_pack input out of [-a,b]")]
+fn signed_pack_refuses_a_coefficient_above_its_declared_range() {
+    let mut poly = Poly::zero();
+    poly.0[0] = 6;
+    bit_pack(&poly, 5, 5, &mut vec![0; 32 * bit_length(10)]);
+}
+
+#[test]
 fn bit_pack_roundtrip_s_vectors() {
     for p in [ML_DSA_44, ML_DSA_65] {
         let mut rng = Rng::new(p.eta as u64);
@@ -68,6 +95,17 @@ fn hint_pack_roundtrip() {
     for i in 0..K {
         assert_eq!(h[i].0, back[i].0);
     }
+}
+
+#[test]
+fn hint_row_limits_cannot_go_backwards_or_exceed_the_capacity() {
+    let mut buf = [0; 84];
+    buf[80] = 1;
+    assert!(hint_bit_unpack::<4>(80, &buf).is_err());
+    buf[81] = 81;
+    assert!(hint_bit_unpack::<4>(80, &buf).is_err());
+    buf[80..].fill(1);
+    assert!(hint_bit_unpack::<4>(80, &buf).is_ok());
 }
 
 #[test]

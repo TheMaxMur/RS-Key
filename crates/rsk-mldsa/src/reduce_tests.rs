@@ -4,6 +4,33 @@
 use super::*;
 
 #[test]
+fn montgomery_reduction_holds_both_admitted_input_boundaries() {
+    let limit = (1i64 << 31) * i64::from(Q);
+    for input in [-limit, -limit + 1, 0, limit - 1] {
+        let reduced = mont_reduce(input);
+        assert!((-Q + 1..Q).contains(&reduced));
+        assert_eq!(
+            (i128::from(reduced) * (1i128 << 32) - i128::from(input)).rem_euclid(i128::from(Q)),
+            0
+        );
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "mont_reduce out of range")]
+fn montgomery_reduction_refuses_the_excluded_upper_endpoint() {
+    mont_reduce((1i64 << 31) * i64::from(Q));
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "mont_reduce out of range")]
+fn montgomery_reduction_refuses_a_value_below_its_input_interval() {
+    mont_reduce(-3 * (1i64 << 31) * i64::from(Q));
+}
+
+#[test]
 fn full_reduce_is_canonical() {
     assert_eq!(full_reduce32(0), 0);
     assert_eq!(full_reduce32(Q), 0);

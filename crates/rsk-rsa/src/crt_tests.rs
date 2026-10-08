@@ -7,6 +7,22 @@ use crate::fixtures::{
 };
 use crate::vectors::SIGN_SHA256;
 
+#[test]
+fn crt_plaintext_refuses_short_output_and_degenerate_collision_without_panicking() {
+    let key = test_key();
+    let mut out = [0xa5; 640];
+    assert_eq!(
+        crt_plaintext(&key, &mut out[..639]),
+        Err(RsaError::BadWidth)
+    );
+    assert_eq!(out, [0xa5; 640]);
+    for value in [0, 1] {
+        let mut ambiguous = [0; 320];
+        ambiguous[63] = value;
+        assert_eq!(parse_rsa_blob(&ambiguous), Ok((160, false)));
+    }
+}
+
 // A 256-byte PKCS#1-shaped block guaranteed < n (leads 00 01), so the raw private
 // op is well-defined and the fault check passes.
 fn sample_block() -> [u8; 256] {

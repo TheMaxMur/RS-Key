@@ -13,6 +13,53 @@ fn e65537() -> BigUint {
     big(crate::RSA_E)
 }
 
+#[test]
+fn public_exponent_refusals_are_not_masked_by_a_missing_inverse() {
+    for (p, q, e) in [
+        (big(11), big(13), big(1)),
+        (big(11), big(13), BigUint::from(*PUB_EXP_RANGE.end() + 6)),
+        (big(3), big(5), big(17)),
+        (big(2), big(5), big(3)),
+    ] {
+        let lambda = (&p - big(1)).lcm(&(&q - big(1)));
+        assert_eq!(e.gcd(&lambda), big(1));
+        assert!(RsaKey::from_p_q(p, q, e).is_none());
+    }
+}
+
+#[test]
+fn private_operations_refuse_each_output_width_before_drawing_a_blind() {
+    let oversized = RsaKey::from_p_q(
+        (BigUint::from(1u8) << (MAX_RSA_BYTES * 8)) + big(1),
+        big(17),
+        big(3),
+    )
+    .unwrap();
+    assert!(oversized.size() > MAX_RSA_BYTES);
+    let mut rng = SeqRng(9);
+    let mut out = [0xa5; MAX_RSA_BYTES];
+    assert_eq!(
+        crate::pkcs1v15::rsa_decrypt(&oversized, &[1], &mut rng, &mut out),
+        Err(RsaError::BadWidth)
+    );
+    assert_eq!(out, [0xa5; MAX_RSA_BYTES]);
+    assert_eq!(rng.0, 9);
+    let ordinary = test_key();
+    for (key, room) in [
+        (&oversized, MAX_RSA_BYTES),
+        (&ordinary, ordinary.size() - 1),
+    ] {
+        let mut rng = SeqRng(9);
+        let mut out = vec![0xa5; room];
+        assert_eq!(
+            key.private_op(&[1], &mut rng, &mut out),
+            Err(RsaError::BadWidth)
+        );
+        assert_eq!(out, vec![0xa5; room]);
+        assert_eq!(rng.0, 9);
+    }
+}
+
 fn p() -> BigUint {
     BigUint::from_bytes_be(&hex(P_HEX))
 }
