@@ -1715,3 +1715,61 @@ cognitive-complexity ceiling (`COGNITIVE_CEILING`), catching a new hotspot the
 day it lands. Lower the ceiling as the peak falls; raise it only for a justified
 growth, in the same commit. `firmware/` is out of scope: it is embedded glue plus
 the trusted-display UI state machines, whose complexity is a separate concern.
+
+### Condition-outcome review, 2026-10-08
+
+The reviewed default-host baseline contained 6997/7993 condition outcomes and
+3251/3278 function groups: 996 missing outcomes and 27 unexecuted groups. These
+are coverage observations. The baseline's measured Rust sources were reconstructed
+from its saved commit, patch and untracked inputs and verified against all 521
+recorded SHA-256 digests before comparing source coordinates.
+
+LLVM merges each function group's maximum covered and total counts across its
+instantiations. Joining witnesses at source coordinates answers a different
+question. The baseline has 773 missing source outcomes; the raw 996 also includes
+234 witnesses distributed across copies, offset by 19 folded outcomes and eight
+duplicate exported spans: `773 + 234 - (19 - 8) = 996`. JSON does not export the
+folded flags. Keep that adjustment explicit rather than attributing it to a
+particular unexecuted guard, or replacing the raw percentage with the source
+union. No exclusions or coverage floors were changed in this review.
+
+The added tests exercise malformed and restored records, changing storage reads,
+protocol refusals, nested display navigation and real inactivity deadlines.
+Geometry and RSA results have independent oracles. The bounded ML-DSA norm
+witness uses a corrupt internal precomputation; it does not establish that a
+normal seed-generated key reaches that refusal. Its isolated mutation must fail
+because it accepts the norm-violating candidate. Similarly, the recovery sweep
+control must fail because it returns after a final read cut without the second
+boot, not because its test cannot build.
+
+The working-tree mutation sweep retains these four semantic survivors. They are
+local review findings, not additions to the weekly accepted-survivor roster:
+
+| Changed guard | Why the surviving mutation does not defeat the tested contract |
+|---|---|
+| `DoWriter::extend`, `failed \|= n < s.len()`, `\|=` → `&=` | For its current fixed/ROM and constructed callers, the oversized required length also refuses the response. The separate non-capacity failure for a mandatory signature counter remains necessary. |
+| `DoWriter::extend`, `n < s.len()` → `n > s.len()` | The same required-length refusal covers capacity exhaustion in those callers. This does not excuse `read_flash`: the growing-record test observes its failure flag when a size probe and read disagree. |
+| `DoWriter::close`, `lp < written` → `lp <= written` | The other conjunct requires `lp + n + body <= capacity`, with `n >= 1`; `pos = lp + 1 + body` then gives `written >= lp + 1`. Equality cannot enter the copy. |
+| `fixed_round_supported`, `diameter > mask_side` → `>=` | The maximum cached diameter takes the independently checked geometry fallback and produces the same pixels. Rendering cost and primitive call counts are not claimed identical. |
+
+The unviable mutations are recorded separately: invalid `||` let chains,
+`Vec`/`vec!` in the `no_alloc` writer, and `Default` for `Sw`, which has no such
+implementation. Their compiler failures are not behavioural kills.
+
+The raw manifests, source-bound outcome reviews, complete baseline mapping,
+27 function-group reviews, independent witnesses and mutation diagnostics are
+retained in `target/sqlite-coverage-closure-20261007/`. The final closure report
+separates executed outcomes, source invariants, replaced defective conditions and
+semantic witnesses whose LLVM counter remains zero. Unused host helpers and
+pinned-fixture error callbacks remain in the raw function totals; absence from
+firmware alone is not a proof about an arbitrary test API.
+
+The final pre-commit host snapshot recorded 7488/8003 condition outcomes
+(93.56%) and 38998/39805 lines (97.97%). Its 515 raw missing outcomes include
+235 source-bound reviews, one tested recovery path with a zero counter, and
+279 net outcomes from aggregation and folded-span accounting. These reviews
+classify the measured profile and current callers; they do not claim complete
+execution of host/test-util APIs. `Undead` and `FaultBackend` methods and direct
+undersized private-helper calls remain possible unit-test cases. The retained
+snapshot used bcdDevice `0x0A91`; splitting the timing refactor into its own
+commit moves only the firmware build counter to `0x0A92`.
