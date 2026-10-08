@@ -234,12 +234,12 @@ pub fn run(data: &[u8]) -> Outcome {
     if !interrupted {
         assert_eq!(sw, Sw::OK, "healthy {mode:?} provisioning was refused");
     }
-    fs = remount(&mut dev);
-    check_preserved(&mut fs, &flash, &gates, &counter_bytes);
-    check(&mut fs, &rng, !interrupted);
-    let committed_key = record(&mut fs, key_fid(SLOT_ATTESTATION).get());
+    let mut observed = diagnostic_mount(&dev);
+    check_preserved(&mut observed, &flash, &gates, &counter_bytes);
+    check(&mut observed, &rng, !interrupted);
+    let committed_key = record(&mut observed, key_fid(SLOT_ATTESTATION).get());
     let before = flash.borrow().stats_snapshot();
-    flash.borrow_mut().bytes_until_shutoff = Some(budget(data, 4));
+    fs = recovery_mount(&mut dev, budget(data, 4));
     let sw = select(&mut fs, &rng);
     let recovery_stats = before.compare_to(flash.borrow().stats_snapshot());
     let recovery_interrupted = dev.dead();
