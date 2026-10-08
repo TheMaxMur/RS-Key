@@ -1752,3 +1752,6 @@ fn two_resets_in_a_row_leave_two_different_store_tags() {
         [before, once, twice]
     );
 }
+
+#[path = "reset_restart_tests.rs"]
+mod restarts;
