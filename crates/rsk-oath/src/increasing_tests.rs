@@ -486,3 +486,14 @@ fn a_confirmed_press_advances_the_mark() {
         [Sw::OK, Sw::WRONG_DATA, Sw::OK],
     );
 }
+
+#[test]
+fn a_direct_mark_update_refuses_an_oversized_challenge_or_nonexistent_live_window() {
+    for (len, challenge) in [(0, vec![1; MARK_LEN + 1]), (17, vec![1; 8])] {
+        let mut blob = [0xa5; 16];
+        let mut n = len;
+        assert!(!raise_mark(&mut blob, &mut n, &challenge));
+        assert_eq!(n, len);
+        assert_eq!(blob, [0xa5; 16]);
+    }
+}
