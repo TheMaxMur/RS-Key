@@ -2324,7 +2324,7 @@ fn a_torn_delete_never_leaves_a_credential_without_its_rp() {
 fn a_torn_update_user_never_changes_a_credential_behind_the_store_state() {
     let before = std::cell::Cell::new(0u128);
     let cred_id = std::cell::RefCell::new(std::vec::Vec::new());
-    rsk_fs::cut::sweep(
+    assert!(!rsk_fs::cut::sweep_restarts(
         || {
             let (cut, medium) = rsk_fs::storage::faults::Cut::new();
             let mut fs = Fs::new(cut);
@@ -2353,7 +2353,10 @@ fn a_torn_update_user_never_changes_a_credential_behind_the_store_state() {
             );
             run(fs, &mut state, &req, &mut out).is_ok()
         },
-        |fs, budget, completed, medium| {
+        |fs| {
+            let _ = crate::credmgmt::settle_rp_records(fs);
+        },
+        |fs, budget, _second, completed, medium| {
             let mut state = armed(PERM_CM);
             let mut out = [0u8; 512];
             let rp_hash = sha256(b"example.com");
@@ -2388,7 +2391,7 @@ fn a_torn_update_user_never_changes_a_credential_behind_the_store_state() {
                 );
             }
         },
-    );
+    ));
 }
 
 /// Every live `EF_CRED` slot, in order.

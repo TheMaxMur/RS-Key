@@ -2895,7 +2895,7 @@ fn a_device_pin_no_pad_can_collect_is_not_a_gate_that_may_be_skipped() {
 /// a chain with no key can survive, and that one falls back to self-attestation.
 #[test]
 fn a_torn_att_clear_never_leaves_the_key_without_its_chain() {
-    rsk_fs::cut::sweep(
+    assert!(!rsk_fs::cut::sweep_restarts(
         || {
             let (cut, medium) = rsk_fs::storage::faults::Cut::new();
             let mut fs = Fs::new(cut);
@@ -2923,7 +2923,8 @@ fn a_torn_att_clear_never_leaves_the_key_without_its_chain() {
             )
             .is_ok()
         },
-        |fs, budget, completed, medium| {
+        |_| {},
+        |fs, budget, _second, completed, medium| {
             let (key, chain) = (fs.has_key(EF_ATT_KEY), fs.has_data(EF_ATT_CHAIN));
             assert!(
                 chain || !key,
@@ -2937,7 +2938,7 @@ fn a_torn_att_clear_never_leaves_the_key_without_its_chain() {
                 );
             }
         },
-    );
+    ));
 }
 
 /// LOAD re-keys every credential on the device, and with no PIN `gate` is one touch,
@@ -3480,10 +3481,11 @@ fn a_torn_config_write_never_journals_a_record_that_did_not_land() {
         assert_eq!(write(&mut healthy), Ok(0), "{name}");
         let after = record(&mut healthy, fid);
         assert!(after.is_some(), "{name}: the write stored nothing to sweep");
-        rsk_fs::cut::sweep(
+        assert!(!rsk_fs::cut::sweep_restarts(
             provision,
             |fs| write(fs).is_ok() && journals(&dev(), fs, crate::journal::EV_CONFIG_WRITE),
-            |fs, budget, completed, medium| {
+            |_| {},
+            |fs, budget, _second, completed, medium| {
                 let now = record(fs, fid);
                 assert!(
                     now.is_none() || now == after,
@@ -3502,7 +3504,7 @@ fn a_torn_config_write_never_journals_a_record_that_did_not_land() {
                     assert_eq!(now, after, "{name}, budget {budget}: reported done, is not");
                 }
             },
-        );
+        ));
     }
 }
 

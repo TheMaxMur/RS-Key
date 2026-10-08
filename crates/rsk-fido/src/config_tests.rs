@@ -186,7 +186,7 @@ fn complexity_update_refuses_to_truncate_an_older_wider_rp_list() {
 
 #[test]
 fn enabling_complexity_survives_every_flash_cut_without_losing_the_rp_list() {
-    rsk_fs::cut::sweep(
+    assert!(!rsk_fs::cut::sweep_restarts(
         || {
             let (cut, medium) = rsk_fs::storage::faults::Cut::new();
             let mut fs = Fs::new(cut);
@@ -203,7 +203,8 @@ fn enabling_complexity_survives_every_flash_cut_without_losing_the_rp_list() {
             )
             .is_ok()
         },
-        |fs, budget, completed, _medium| {
+        |_| {},
+        |fs, budget, _second, completed, _medium| {
             let mut record = [0u8; 34];
             assert_eq!(fs.read(EF_MINPINLEN, &mut record), Some(34), "cut {budget}");
             assert_eq!(record[0], MIN_PIN_LENGTH);
@@ -213,7 +214,7 @@ fn enabling_complexity_survives_every_flash_cut_without_losing_the_rp_list() {
                 assert_eq!(record[1], crate::pinpolicy::COMPLEXITY);
             }
         },
-    );
+    ));
 }
 
 fn armed(perms: u8) -> FidoState {
@@ -967,7 +968,7 @@ fn a_faulted_min_pin_probe_does_not_lower_the_floor() {
 fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
     use crate::consts::EF_PAUTHTOKEN;
 
-    rsk_fs::cut::sweep(
+    assert!(!rsk_fs::cut::sweep_restarts(
         || {
             let (cut, medium) = rsk_fs::storage::faults::Cut::new();
             let mut fs = Fs::new(cut);
@@ -986,7 +987,8 @@ fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
             let req = config_request(0x03, &subpara_min_pin(6), &TOKEN);
             run_fs(fs, &mut state, &req).is_ok()
         },
-        |fs, budget, completed, medium| {
+        |_| {},
+        |fs, budget, _second, completed, medium| {
             let mut buf = [0u8; 2];
             let n = fs
                 .read(EF_MINPINLEN, &mut buf)
@@ -1021,7 +1023,7 @@ fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
                 );
             }
         },
-    );
+    ));
 }
 
 /// A present-but-empty `EF_MINPINLEN` sets no policy, so the floor the monotonic
@@ -1227,10 +1229,11 @@ fn a_torn_one_record_config_write_never_journals_a_change_that_did_not_land() {
             after, before,
             "{name}: the command changes nothing to sweep"
         );
-        rsk_fs::cut::sweep(
+        assert!(!rsk_fs::cut::sweep_restarts(
             provision,
             |fs| run_fs(fs, &mut armed(PERM_ACFG), &req).is_ok() && journals(&dev(), fs, ev),
-            |fs, budget, completed, medium| {
+            |_| {},
+            |fs, budget, _second, completed, medium| {
                 let now = read_record(fs, fid);
                 assert!(
                     now == before || now == after,
@@ -1249,7 +1252,7 @@ fn a_torn_one_record_config_write_never_journals_a_change_that_did_not_land() {
                     assert_eq!(now, after, "{name}, budget {budget}: reported done, is not");
                 }
             },
-        );
+        ));
     }
 }
 

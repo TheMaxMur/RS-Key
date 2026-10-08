@@ -734,7 +734,7 @@ fn a_faulted_pin_probe_does_not_open_the_large_blob_write_gate() {
 fn a_torn_large_blob_write_leaves_a_whole_array() {
     let blob = valid_blob(&[0xCD; 60]);
     let split = 50;
-    rsk_fs::cut::sweep(
+    assert!(!rsk_fs::cut::sweep_restarts(
         || {
             let (cut, medium) = rsk_fs::storage::faults::Cut::new();
             let mut fs = Fs::new(cut);
@@ -749,7 +749,8 @@ fn a_torn_large_blob_write_leaves_a_whole_array() {
             run(fs, &mut state, &first, &mut out).is_ok()
                 && run(fs, &mut state, &second, &mut out).is_ok()
         },
-        |fs, budget, completed, medium| {
+        |_| {},
+        |fs, budget, _second, completed, medium| {
             let mut stored = [0u8; 256];
             let n = fs
                 .read(EF_LARGEBLOB, &mut stored)
@@ -776,7 +777,7 @@ fn a_torn_large_blob_write_leaves_a_whole_array() {
                 );
             }
         },
-    );
+    ));
 }
 
 // The read-fault sweep lives in its own file; it needs this module's fixtures.
