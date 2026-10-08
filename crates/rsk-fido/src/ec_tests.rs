@@ -479,3 +479,19 @@ fn cached_point_encodes_identically_to_derived() {
     assert!(mldsa.public_point(&mut [0u8; CRED_PUBKEY_MAX]).is_none());
     assert_eq!(cached_point_len(CURVE_MLDSA44 as i64), None);
 }
+
+#[test]
+fn unknown_and_wrong_width_cached_points_do_not_emit_cose_bytes() {
+    for (curve, point) in [
+        (CURVE_ED25519 as i64, &[][..]),
+        (CURVE_ED25519 as i64, &[0; 31][..]),
+        (CURVE_ED25519 as i64, &[0; 33][..]),
+        (i64::MAX, &[0; 32][..]),
+    ] {
+        let mut output = [0xa5; 128];
+        let mut encoder = Encoder::new(&mut output[..]);
+        assert!(cose_public_from_point(curve, ALG_EDDSA, point, &mut encoder).is_err());
+        assert_eq!(output, [0xa5; 128]);
+    }
+    assert!(CredKey::from_raw(i64::MAX, &[1; 32]).is_none());
+}

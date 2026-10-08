@@ -1025,6 +1025,7 @@ enum McHmacShape {
     Boolean,
     /// Some fields, salts missing.
     PartialMap,
+    EncOnly,
 }
 
 /// A makeCredential whose `hmac-secret-mc` takes `shape`, with the `hmac-secret`
@@ -1059,6 +1060,11 @@ fn mc_request_hmac_mc(shape: &McHmacShape, flag: bool) -> std::vec::Vec<u8> {
                 e.map(1).unwrap();
                 e.u8(4).unwrap().u8(2).unwrap();
             }
+            McHmacShape::EncOnly => {
+                e.map(2).unwrap();
+                e.u8(2).unwrap().bytes(&[0; 32]).unwrap();
+                e.u8(4).unwrap().u8(2).unwrap();
+            }
         }
         e.u8(7).unwrap().map(1).unwrap();
         e.str("rk").unwrap().bool(true).unwrap();
@@ -1077,6 +1083,10 @@ fn mc_request_hmac_mc(shape: &McHmacShape, flag: bool) -> std::vec::Vec<u8> {
 /// reference does not do.
 #[test]
 fn hmac_secret_mc_with_no_subfields_is_absent_a_partial_one_is_not() {
+    assert_eq!(
+        run_err(&mc_request_hmac_mc(&McHmacShape::EncOnly, true)),
+        CtapError::MissingParameter
+    );
     assert!(
         !run(&mc_request_hmac_mc(&McHmacShape::EmptyMap, true))
             .0
@@ -1099,6 +1109,29 @@ fn hmac_secret_mc_with_no_subfields_is_absent_a_partial_one_is_not() {
         run_err(&mc_request_hmac_mc(&McHmacShape::PartialMap, true)),
         CtapError::MissingParameter
     );
+}
+
+#[cfg(not(feature = "largeblob-ext"))]
+#[test]
+fn a_nonresident_request_cannot_opt_in_or_opt_out_of_large_blob_key() {
+    for enabled in [false, true] {
+        let mut request = build_request(false);
+        assert_eq!(Decoder::new(&request).map().unwrap(), Some(4));
+        request[0] += 1;
+        let mut field = [0; 32];
+        let mut e = Encoder::new(Cursor::new(&mut field[..]));
+        e.u8(6)
+            .unwrap()
+            .map(1)
+            .unwrap()
+            .str("largeBlobKey")
+            .unwrap()
+            .bool(enabled)
+            .unwrap();
+        let n = e.writer().position();
+        request.extend_from_slice(&field[..n]);
+        assert_eq!(run_err(&request), CtapError::InvalidOption);
+    }
 }
 
 #[test]
@@ -3517,4 +3550,49 @@ fn an_org_key_that_will_not_open_is_the_device_attestation_without_ep() {
             "{what}: the device's own cert"
         );
     }
+}
+
+#[test]
+fn empty_device_certificate_refuses_attestation_and_short_resident_records_are_not_excluded() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    fs.put(EF_EE_DEV, &[]).unwrap();
+    let generation = fs.write_gen();
+    let mut state = crate::FidoState::new();
+    let mut presence = crate::AlwaysConfirm;
+    let mut ctx = Ctx {
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        presence: &mut presence,
+        now_ms: 0,
+    };
+    let mut att = AttBufs::new();
+    assert_eq!(
+        make_attestation(
+            &mut ctx,
+            &[0x42; 32],
+            b"attestation",
+            &OrgAtt::None,
+            &mut att
+        ),
+        Err(CtapError::Other)
+    );
+    assert_eq!(fs.write_gen(), generation);
+    fs.put(crate::consts::EF_CRED, &[0; RECORD_PREFIX - 1])
+        .unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(
+        exclude_hit(
+            &mut fs,
+            &[0x42; 32],
+            &[0; 32],
+            &[0; CRED_RESIDENT_LEN],
+            true
+        ),
+        Ok(false)
+    );
+    assert_eq!(fs.write_gen(), generation);
 }

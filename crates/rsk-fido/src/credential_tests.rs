@@ -17,6 +17,189 @@ fn dev() -> Device<'static> {
 const SEED: [u8; 32] = [0x42; 32];
 const IV: [u8; 12] = [0x11; 12];
 
+#[test]
+fn empty_short_and_foreign_slots_cannot_replace_the_new_account() {
+    let hash = sha256(b"example.com");
+    let mut boxed = [0; 512];
+    let n = credential_create(&SEED, &dev(), &input(), &hash, &IV, &mut boxed).unwrap();
+    for old in [vec![], vec![0; RECORD_PREFIX - 1], vec![0; RECORD_PREFIX]] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.put(EF_CRED, &old).unwrap();
+        credential_store(
+            &SEED,
+            &dev(),
+            &mut fs,
+            &mut SeqRng(1),
+            &boxed[..n],
+            &hash,
+            "example.com",
+            input().user_id,
+            &[],
+        )
+        .unwrap();
+        let mut saved = [0; CRED_REC_MAX];
+        let written = fs.read(EF_CRED + 1, &mut saved).unwrap();
+        let mut scratch = [0; CRED_REC_MAX];
+        let loaded = credential_load(
+            &SEED,
+            cred_record_box(&saved[..written]),
+            &hash,
+            &mut scratch,
+        )
+        .unwrap();
+        assert_eq!(loaded.rp_id, "example.com");
+        assert_eq!(loaded.user_id, input().user_id);
+        assert_eq!(rp_count(&mut fs, &hash), Ok(1));
+        let mut medium = fs.into_storage();
+        let mut retained = vec![0; old.len()];
+        assert_eq!(medium.read(EF_CRED, &mut retained), Some(old.len()));
+        assert_eq!(retained, old);
+    }
+}
+
+#[test]
+fn relying_party_count_distinguishes_foreign_short_and_unread_records() {
+    let hash = sha256(b"example.com");
+    let foreign = sha256(b"other.com");
+    let mut record = vec![1];
+    record.extend_from_slice(&foreign);
+    for value in [&record[..], &[1][..]] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.put(EF_RP, value).unwrap();
+        let generation = fs.write_gen();
+        assert_eq!(rp_count(&mut fs, &hash), Ok(0));
+        assert_eq!(fs.write_gen(), generation);
+    }
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    fs.put(EF_RP, &record).unwrap();
+    let generation = fs.write_gen();
+    medium.stick(Some(EF_RP));
+    assert_eq!(rp_count(&mut fs, &hash), Err(Error::MemoryFatal));
+    assert_eq!(fs.write_gen(), generation);
+    medium.stick(None);
+    assert_eq!(rp_count(&mut fs, &foreign), Ok(1));
+}
+
+#[test]
+fn an_unauthentic_stored_box_is_not_mistaken_for_the_account_being_replaced() {
+    let hash = sha256(b"example.com");
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    let mut boxed = [0; 512];
+    let n = credential_create(&SEED, &dev(), &input(), &hash, &IV, &mut boxed).unwrap();
+    credential_store(
+        &SEED,
+        &dev(),
+        &mut fs,
+        &mut rng,
+        &boxed[..n],
+        &hash,
+        "example.com",
+        input().user_id,
+        &[],
+    )
+    .unwrap();
+    let mut old = [0; CRED_REC_MAX];
+    let size = fs.read(EF_CRED, &mut old).unwrap();
+    let cipher = size - cred_record_box(&old[..size]).len() + IV_LEN;
+    old[cipher] ^= 1;
+    fs.put(EF_CRED, &old[..size]).unwrap();
+    let n = credential_create(&SEED, &dev(), &input(), &hash, &[0x22; 12], &mut boxed).unwrap();
+    credential_store(
+        &SEED,
+        &dev(),
+        &mut fs,
+        &mut rng,
+        &boxed[..n],
+        &hash,
+        "example.com",
+        input().user_id,
+        &[],
+    )
+    .unwrap();
+    let mut retained = [0; CRED_REC_MAX];
+    assert_eq!(fs.read(EF_CRED, &mut retained), Some(size));
+    assert_eq!(retained, old);
+    let mut added = [0; CRED_REC_MAX];
+    let size = fs.read(EF_CRED + 1, &mut added).unwrap();
+    let mut scratch = [0; CRED_REC_MAX];
+    let loaded =
+        credential_load(&SEED, cred_record_box(&added[..size]), &hash, &mut scratch).unwrap();
+    assert_eq!(loaded.user_id, input().user_id);
+    assert_eq!(rp_count(&mut fs, &hash), Ok(2));
+}
+
+#[test]
+fn resident_id_escapes_a_reproducible_legacy_marker_collision() {
+    let input = 6_760_416_248u64.to_le_bytes();
+    let digest = hmac_sha512(dev().serial_id, &input);
+    assert_eq!(&digest[4..8], CRED_PROTO_RESIDENT);
+    let id = derive_resident(&input, &dev());
+    assert!(!is_resident(&id));
+    let mut expected = [0; CRED_RESIDENT_LEN];
+    expected.copy_from_slice(&digest[..CRED_RESIDENT_LEN]);
+    expected[4] ^= 1;
+    assert_eq!(id, expected);
+    assert_eq!(derive_resident(&input, &dev()), id);
+    assert_eq!(resident_key_input(b"resealed box", Some(&id)), id);
+}
+
+#[test]
+fn legacy_resident_records_keep_their_box_without_a_public_cache() {
+    let hash = sha256(b"example.com");
+    for version in [0, RESIDENT_VERSION_V2, RESIDENT_VERSION_V3] {
+        let id = legacy_resident_id(b"old credential", &dev(), version);
+        let mut out = [0; 512];
+        let n = compose_cred_record(&hash, &id, &[4; 65], b"box", &mut out).unwrap();
+        assert_eq!(cred_record_box(&out[..n]), b"box");
+        if version == RESIDENT_VERSION_V3 {
+            assert_eq!(cred_record_pubkey(&out[..n]), Some(&[4; 65][..]));
+        } else {
+            assert_eq!(n, RECORD_PREFIX + 3);
+            assert_eq!(cred_record_pubkey(&out[..n]), None);
+        }
+    }
+}
+
+#[test]
+fn short_rp_and_nickname_outputs_refuse_without_partial_writes() {
+    let hash = sha256(b"example.com");
+    for room in [0, IV_LEN + TAG_LEN - 1, IV_LEN + TAG_LEN + 2] {
+        let mut out = [0xa5; NICK_BOX_MAX];
+        assert!(seal_rp_id(&SEED, "example.com", &hash, &mut out[..room]).is_err());
+        assert_eq!(out, [0xa5; NICK_BOX_MAX]);
+        assert!(seal_nick(&SEED, &hash, "Work", &mut out[..room]).is_err());
+        assert_eq!(out, [0xa5; NICK_BOX_MAX]);
+    }
+}
+
+#[test]
+fn rp_migration_keeps_unopenable_or_unboxable_records_unchanged() {
+    let hash = sha256(b"example.com");
+    let mut fs = Fs::new(RamStorage::new());
+    migrate_rp_seal(&dev(), &mut fs);
+    fs.put(EF_RP, &[1]).unwrap();
+    let generation = fs.write_gen();
+    migrate_rp_seal(&dev(), &mut fs);
+    assert_eq!(fs.write_gen(), generation);
+    crate::seed::ensure_seed(&dev(), &mut fs, &mut SeqRng(7)).unwrap();
+    for record in [
+        vec![1],
+        [&[1][..], &hash, &[0xff; 28][..]].concat(),
+        [&[1][..], &hash, &[b'x'; RP_ID_MAX + 1][..]].concat(),
+    ] {
+        fs.put(EF_RP, &record).unwrap();
+        let generation = fs.write_gen();
+        migrate_rp_seal(&dev(), &mut fs);
+        let mut after = [0; RP_REC_MAX];
+        assert_eq!(fs.read(EF_RP, &mut after), Some(record.len()));
+        assert_eq!(&after[..record.len()], &record);
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
+
 fn input() -> CredInput<'static> {
     CredInput {
         rp_id: "example.com",
@@ -1292,3 +1475,42 @@ fn provisioning_otp_changes_only_the_write_only_silent_tag() {
 
 #[path = "credential_decisions_tests.rs"]
 mod decisions;
+
+#[test]
+fn an_occupied_rp_snapshot_does_not_turn_a_missing_or_short_read_into_a_match() {
+    use rsk_fs::read_change::ChangingRead;
+    let hash = sha256(b"example.com");
+    for replacement in [None, Some(&[1][..])] {
+        let (backend, control) = ChangingRead::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        bump_rp(&mut fs, &SEED, &hash, "example.com").unwrap();
+        let mut old = [0; RP_REC_MAX];
+        let n = fs.read(EF_RP, &mut old).unwrap();
+        control.replace_on_read(EF_RP, 0, replacement);
+        bump_rp(&mut fs, &SEED, &hash, "example.com").unwrap();
+        assert!(control.served());
+        let mut new = [0; RP_REC_MAX];
+        assert!(fs.read(EF_RP + 1, &mut new).unwrap() >= RP_PREFIX);
+        assert_eq!(&new[..RP_PREFIX], &old[..RP_PREFIX]);
+        let mut retained = [0; RP_REC_MAX];
+        assert_eq!(fs.into_storage().value(EF_RP, &mut retained), Some(n));
+        assert_eq!(retained, old);
+    }
+}
+
+#[test]
+fn an_unauthentic_legacy_is22_box_cannot_fall_back_to_another_framing() {
+    let hash = sha256(b"example.com");
+    let mut boxed = [0; 512];
+    let n = credential_create(&SEED, &dev(), &input(), &hash, &IV, &mut boxed).unwrap();
+    let core = n - SILENT_TAG_LEN;
+    let mut legacy = CRED_PROTO.to_vec();
+    legacy.extend_from_slice(&boxed[..core]);
+    let tag = silent_tag(&dev(), &legacy, &hash).unwrap();
+    legacy.extend_from_slice(&tag);
+    legacy[PROTO_LEN + IV_LEN] ^= 1;
+    let mut scratch = [0; 512];
+    assert!(verify_decrypt(&SEED, &legacy, &hash, &mut scratch).is_none());
+    assert!(credential_load(&SEED, &legacy, &hash, &mut scratch).is_none());
+}

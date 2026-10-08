@@ -1184,3 +1184,106 @@ fn an_org_key_the_flash_would_not_read_fails_the_registration() {
         );
     }
 }
+
+#[test]
+fn registration_cannot_return_a_missing_unreadable_or_malformed_certificate() {
+    for (org, value, fault) in [
+        (true, None, false),
+        (true, Some(&[][..]), false),
+        (true, Some(&[1, 0, 0][..]), false),
+        (true, Some(&[1, 0, 8, 0x30][..]), false),
+        (true, Some(&[1, 0, 1, 0x30][..]), true),
+        (false, None, false),
+        (false, Some(&[][..]), false),
+        (false, Some(&[0x30, 0][..]), true),
+    ] {
+        let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        crate::tests::uv_optional(&mut fs);
+        let mut rng = SeqRng(1);
+        ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+        let fid = if org {
+            crate::seed::store_att_key(&dev(), &mut fs, &[0x21; 32]).unwrap();
+            EF_ATT_CHAIN
+        } else {
+            EF_EE_DEV
+        };
+        match value {
+            Some(value) => fs.put(fid, value).unwrap(),
+            None => fs.delete(fid).unwrap(),
+        }
+        let generation = fs.write_gen();
+        medium.stick(fault.then_some(fid));
+        let raw = ext_apdu(CTAP_REGISTER, 0, &[CHAL, APP].concat());
+        let mut state = crate::FidoState::new();
+        let mut presence = crate::AlwaysConfirm;
+        let mut ctx = Ctx {
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+            presence: &mut presence,
+        };
+        let mut out = [0xa5; 1024];
+        assert_eq!(
+            process_u2f(&mut ctx, &Apdu::parse(&raw).unwrap(), &mut out),
+            (Sw::EXEC_ERROR, 0)
+        );
+        assert_eq!(out, [0xa5; 1024]);
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
+
+#[test]
+fn declining_the_named_u2f_card_never_opens_the_builtin_pin_pad() {
+    struct DecliningCard {
+        cards: usize,
+        pins: usize,
+    }
+    impl crate::UserPresence for DecliningCard {
+        fn request(&mut self, _: crate::Confirm<'_>) -> crate::Presence {
+            self.cards += 1;
+            crate::Presence::Timeout
+        }
+        fn shows_confirm(&self) -> bool {
+            true
+        }
+        fn uv_available(&self) -> bool {
+            true
+        }
+        fn collect_pin(&mut self, _: usize, _: &mut [u8]) -> crate::PinEntry {
+            self.pins += 1;
+            crate::PinEntry::Cancelled
+        }
+    }
+    let mut fs = Fs::new(RamStorage::new());
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    crate::clientpin::store_local_pin(&dev(), &mut fs, PIN).unwrap();
+    fs.put(EF_ALWAYS_UV, &[1]).unwrap();
+    let request = ext_apdu(CTAP_REGISTER, 0, &[CHAL, APP].concat());
+    let apdu = Apdu::parse(&request).unwrap();
+    let generation = fs.write_gen();
+    let entropy = rng.0;
+    let mut state = crate::FidoState::new();
+    let mut presence = DecliningCard { cards: 0, pins: 0 };
+    let mut output = [0xa5; 1024];
+    let mut ctx = Ctx {
+        dev: dev(),
+        fs: &mut fs,
+        rng: &mut rng,
+        state: &mut state,
+        now_ms: 0,
+        presence: &mut presence,
+    };
+    assert_eq!(
+        process_u2f(&mut ctx, &apdu, &mut output),
+        (Sw::CONDITIONS_NOT_SATISFIED, 0)
+    );
+    assert_eq!((presence.cards, presence.pins), (1, 0));
+    assert_eq!(output, [0xa5; 1024]);
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(rng.0, entropy);
+}

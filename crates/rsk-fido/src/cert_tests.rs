@@ -6,6 +6,61 @@ use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 
 #[test]
+fn certificate_template_rejects_each_independent_binding_change() {
+    let key = P256Key::from_scalar(&[0x33; 32]).unwrap();
+    let mut cert = [0; 512];
+    let n = build_attestation_cert(&key, &[0x11; 16], &mut cert).unwrap();
+    for offset in [4, SPKI_POINT_OFF, SPKI_POINT_OFF + 1, SPKI_POINT_OFF + 33] {
+        let mut corrupt = cert;
+        corrupt[offset] ^= 1;
+        assert!(!matches_template(&corrupt[..n], &key), "offset {offset}");
+        assert!(matches_template(&cert[..n], &key));
+    }
+}
+
+#[test]
+fn certificate_builder_refuses_negative_serial_and_short_output() {
+    let key = P256Key::from_scalar(&[0x33; 32]).unwrap();
+    let mut out = [0xa5; 512];
+    assert_eq!(build_attestation_cert(&key, &[0x80; 16], &mut out), None);
+    assert_eq!(out, [0xa5; 512]);
+    let n = build_attestation_cert(&key, &[0x11; 16], &mut out).unwrap();
+    for room in [0, n - 1] {
+        out.fill(0xa5);
+        assert_eq!(
+            build_attestation_cert(&key, &[0x11; 16], &mut out[..room]),
+            None
+        );
+        assert_eq!(out, [0xa5; 512]);
+    }
+    assert_eq!(
+        build_attestation_cert(&key, &[0x11; 16], &mut out[..n]),
+        Some(n)
+    );
+}
+
+#[test]
+fn attestation_chain_refuses_each_framing_and_capacity_boundary() {
+    let cert = [0x30, 1, 0];
+    let mut out = [0xa5; ATT_CHAIN_REC_MAX];
+    for chain in [
+        vec![],
+        vec![0; ATT_CHAIN_MAX + 1],
+        vec![0x30, 2, 0],
+        cert.repeat(ATT_CHAIN_MAX_CERTS + 1),
+    ] {
+        assert_eq!(att_chain_pack(&chain, &mut out), None);
+    }
+    assert_eq!(att_chain_pack(&cert, &mut out[..5]), None);
+    assert_eq!(att_chain_pack(&cert, &mut out[..6]), Some(6));
+    assert_eq!(&out[..6], &[1, 3, 0, 0x30, 1, 0]);
+    assert!(att_chain_intact(&out[..6]));
+    assert!(!att_chain_intact(&[]));
+    assert!(!att_chain_intact(&[0]));
+    assert!(!att_chain_intact(&out[..5]));
+}
+
+#[test]
 fn cert_is_well_formed_and_self_signed() {
     let key = P256Key::from_scalar(&[0x33; 32]).unwrap();
     let serial = [0x7F; 16];

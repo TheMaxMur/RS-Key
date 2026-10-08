@@ -464,3 +464,34 @@ fn a_non_boolean_large_blob_key_or_third_party_payment_is_the_wrong_type() {
         }
     }
 }
+
+#[test]
+fn extension_readers_skip_other_names_and_distinguish_absent_maps() {
+    let mut authenticator = Authr::fresh();
+    let registered = authenticator.send(
+        CTAP_MAKE_CREDENTIAL,
+        &mc_with_ext(2, |encoder| {
+            encoder.str("credBlob").unwrap().bytes(&BLOB).unwrap();
+            encoder.str("hmac-secret").unwrap().bool(true).unwrap();
+        }),
+    );
+    assert_ok(&registered);
+    assert_eq!(mc_ext_bool(&registered.body, "hmac-secret"), Some(true));
+    assert_eq!(mc_ext_bool(&registered.body, "unknown"), None);
+    assert_eq!(
+        mc_ext_names(&registered.body),
+        vec!["credBlob", "hmac-secret"]
+    );
+    let id = cred_id(&registered.body);
+    let assertion = authenticator.send(
+        CTAP_GET_ASSERTION,
+        &ga_ext_for(&id, 1, |encoder| {
+            encoder.str("credBlob").unwrap().bool(true).unwrap();
+        }),
+    );
+    assert_ok(&assertion);
+    assert_eq!(ga_ext_output(&assertion.body, "unknown"), None);
+    let plain = authenticator.send(CTAP_GET_ASSERTION, &ga_ext_for(&id, 0, |_| {}));
+    assert_ok(&plain);
+    assert_eq!(ga_ext_output(&plain.body, "credBlob"), None);
+}

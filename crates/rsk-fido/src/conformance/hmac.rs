@@ -893,3 +893,20 @@ fn hmac_secret_mc_refuses_a_short_salt_as_the_assertion_does() {
         }
     }
 }
+
+#[test]
+fn discoverable_hmac_secret_agrees_with_the_same_credential_in_an_allowlist() {
+    let mut authenticator = Authr::fresh();
+    let registered = authenticator.send(CTAP_MAKE_CREDENTIAL, &mc_prf(&[1], true, None, None));
+    assert_ok(&registered);
+    let id = cred_id(&registered.body);
+    let channel = ProtoEcdh::establish(&mut authenticator, PinProto::Two);
+    let named = prf(&mut authenticator, &channel, &id, &SALT, None);
+    let discovered = authenticator.send(
+        CTAP_GET_ASSERTION,
+        &ga_prf(&channel, &SALT, None, true, None),
+    );
+    assert_ok(&discovered);
+    assert_eq!(auth_flags(&discovered.body) & crate::consts::FLAG_UV, 0);
+    assert_eq!(channel.open(&hmac_output(&discovered.body)), named);
+}

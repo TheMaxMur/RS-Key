@@ -44,6 +44,74 @@ impl Rng for SeqRng {
 
 const OTP_KEY: [u8; 32] = [0x77; 32];
 
+#[test]
+fn out_of_range_credential_counters_preserve_every_existing_slot() {
+    let mut fs = fs();
+    set_cred_sign_counter(&mut fs, 0, 7).unwrap();
+    set_cred_sign_counter(&mut fs, MAX_RESIDENT_CREDENTIALS - 1, 9).unwrap();
+    let generation = fs.write_gen();
+    for slot in [MAX_RESIDENT_CREDENTIALS, u16::MAX] {
+        assert_eq!(
+            set_cred_sign_counter(&mut fs, slot, 0),
+            Err(Error::ExecError)
+        );
+        assert_eq!(fs.write_gen(), generation);
+        assert_eq!(cred_sign_counter(&mut fs, 0).unwrap(), Some(7));
+        assert_eq!(
+            cred_sign_counter(&mut fs, MAX_RESIDENT_CREDENTIALS - 1).unwrap(),
+            Some(9)
+        );
+    }
+}
+
+#[test]
+fn first_boot_retries_invalid_keys_and_zero_serials_without_changing_identity() {
+    struct RetryRng {
+        keys: usize,
+        serials: usize,
+    }
+    impl Rng for RetryRng {
+        fn fill(&mut self, out: &mut [u8]) {
+            match out.len() {
+                32 => {
+                    out.fill(match self.keys {
+                        0 => 0,
+                        1 => 0xff,
+                        _ => 1,
+                    });
+                    self.keys += 1;
+                }
+                16 => {
+                    out.fill(1);
+                    if self.serials == 0 {
+                        out[0] = 0x80;
+                    }
+                    self.serials += 1;
+                }
+                _ => out.fill(1),
+            }
+            assert!(self.keys < 8 && self.serials < 8);
+        }
+    }
+    let mut rng = RetryRng {
+        keys: 0,
+        serials: 0,
+    };
+    let mut fs = fs();
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    assert_eq!(load_keydev(&dev(), &mut fs).unwrap().expose(), &[1; 32]);
+    // Three seed candidates, followed by the persistent token's independent draw.
+    assert_eq!((rng.keys, rng.serials), (4, 2));
+    let mut certificate = [0; 512];
+    let n = fs.read(EF_EE_DEV, &mut certificate).unwrap();
+    assert!(cert_matches_template(
+        &certificate[..n],
+        &P256Key::from_scalar(&[1; 32]).unwrap()
+    ));
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    assert_eq!((rng.keys, rng.serials), (4, 2));
+}
+
 fn dev() -> Device<'static> {
     Device {
         serial_hash: &[0xAB; 32],
@@ -1312,4 +1380,43 @@ fn an_existing_seed_keeps_its_store_state() {
         !f.has_data(crate::consts::EF_CRED_STATE),
         "a boot over an existing seed must not mint a store state"
     );
+}
+
+#[test]
+fn each_pre_otp_pin_wrapped_slot_keeps_the_boot_migration_pending() {
+    let mut source = fs();
+    wrap_keydev_legacy(&dev(), &mut source, &[0x5a; 32], &[0x99; 16]);
+    let mut blob = [0; KEYDEV_F3_LEN];
+    assert_eq!(source.read(EF_KEY_DEV.get(), &mut blob), Some(blob.len()));
+    for fid in [EF_KEY_DEV, EF_ATT_KEY, EF_PAUTHTOKEN] {
+        let mut store = fs();
+        store.put_key(fid, Sealed::wrap(&blob)).unwrap();
+        let generation = store.write_gen();
+        assert_eq!(migrate_keydev_boot(&otp_dev(), &mut store), Ok(true));
+        assert_eq!(store.write_gen(), generation);
+        let mut retained = [0; KEYDEV_F3_LEN];
+        assert_eq!(store.read(fid.get(), &mut retained), Some(blob.len()));
+        assert_eq!(retained, blob);
+    }
+}
+
+#[test]
+fn a_current_tag_with_an_invalid_authenticator_is_not_resealed_as_a_seed() {
+    let mut store = fs();
+    encrypt_keydev_f1(&dev(), &mut store, &[0x5a; 32]).unwrap();
+    let mut blob = [0; KEYDEV_G1_LEN];
+    assert_eq!(store.read(EF_KEY_DEV.get(), &mut blob), Some(blob.len()));
+    assert_eq!(blob[0], FORMAT_G1);
+    blob[KEYDEV_G1_LEN - 1] ^= 1;
+    store.put_key(EF_KEY_DEV, Sealed::wrap(&blob)).unwrap();
+    let generation = store.write_gen();
+    assert_eq!(migrate_keydev_boot(&dev(), &mut store), Ok(false));
+    assert!(load_keydev(&dev(), &mut store).is_none());
+    assert_eq!(store.write_gen(), generation);
+    let mut retained = [0; KEYDEV_G1_LEN];
+    assert_eq!(
+        store.read(EF_KEY_DEV.get(), &mut retained),
+        Some(blob.len())
+    );
+    assert_eq!(retained, blob);
 }
