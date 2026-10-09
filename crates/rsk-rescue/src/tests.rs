@@ -1425,3 +1425,6 @@ fn rollback_require_refuses_a_reported_success_whose_readback_stays_clear() {
     assert_eq!(fs.write_gen(), generation);
     assert!(platform.borrow().reboots.is_empty());
 }
+
+#[path = "restart_tests.rs"]
+mod restarts;
