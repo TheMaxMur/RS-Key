@@ -8,6 +8,9 @@ use minicbor::encode::write::Cursor;
 use rsk_crypto::Device;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "largeblobext_restart_tests.rs"]
+mod restarts;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {
