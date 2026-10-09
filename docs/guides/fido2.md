@@ -1,5 +1,11 @@
 # FIDO2 / WebAuthn / U2F
 
+The shared flash backend verifies programmed bytes and erased sectors before
+accepting a mutation. A refused readback reports a storage error even if the
+new value already landed. Retry from the persistent state rather than assuming
+rollback; the firmware rebuilds its inventory and reports no spare capacity
+until an incomplete scan can finish. Record formats are unchanged.
+
 The FIDO half of the device: passkeys, two-factor security-key logins, and
 legacy U2F. It speaks CTAP2 (`FIDO_2_0`) and CTAP1 (`U2F_V2`) over the HID
 interface, so standard WebAuthn browsers and OS dialogs drive it without extra

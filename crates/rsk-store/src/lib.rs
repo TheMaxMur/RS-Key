@@ -28,6 +28,9 @@ use sequential_storage::map::{MapConfig, MapStorage};
 use rsk_fs::Storage;
 use rsk_sdk::error::{Error, Result};
 
+mod verified_flash;
+use verified_flash::VerifiedFlash;
+
 /// Scratch for one map op; must fit the largest stored key+value.
 const KV_BUF: usize = 4080;
 
@@ -64,8 +67,8 @@ pub struct SeqStorage<
     CM: CacheImpl<u16>,
     CC: CacheImpl<u16>,
 > {
-    main: MapStorage<u16, F, CM>,
-    counter: MapStorage<u16, F, CC>,
+    main: MapStorage<u16, VerifiedFlash<F>, CM>,
+    counter: MapStorage<u16, VerifiedFlash<F>, CC>,
     buf: [u8; KV_BUF],
     /// Bytes one [`Storage::compact`] lap must push through the main ring to
     /// sweep it. Taken from the range, not a build constant: the `power_cut`
@@ -100,6 +103,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, CM: CacheImpl<u16>, CC: CacheImpl
         counter_cache: CC,
     ) -> Self {
         let main_len = (main_range.end - main_range.start) as usize;
+        let flash = VerifiedFlash::new(flash);
         Self {
             main: MapStorage::new(flash.clone(), MapConfig::new(main_range), main_cache),
             counter: MapStorage::new(flash, MapConfig::new(counter_range), counter_cache),

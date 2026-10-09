@@ -90,12 +90,12 @@ gap = "the CTAPHID reassembler's channel/sequence/length state machine is modell
 [crate.rsk-fs]
 class = "state-partial"
 model = "RSKeyStore"
-gap = "the committed store, the delete write-order and the present-cache soundness are modelled (M3 lifted powercut_model.rs to TLA+ and ties R0p to it); phase 6 composes the FIDO reset projection with delete_landed and the real byte-cuttable Fs stack. Values are still two opaque tokens, so a content-corrupting defect is out of reach, and Fs::factory_wipe's two-phase sweep remains the security module's ordering (SeedLeadsTheWipe), not this one's."
+gap = "the committed store, the delete write-order and the present-cache soundness are modelled (M3 lifted powercut_model.rs to TLA+ and ties R0p to it); phase 6 composes the FIDO reset projection with delete_landed and the real byte-cuttable Fs stack. Command status, uncertain-write rescan, mutation generation and dynamic-capacity admission are outside this status-free projection and are exercised by real-NOR fault tests. Values are still two opaque tokens, so a content-corrupting defect is out of reach, and Fs::factory_wipe's two-phase sweep remains the security module's ordering (SeedLeadsTheWipe), not this one's."
 
 [crate.rsk-store]
 class = "state-partial"
 model = "RSKeyStore"
-gap = "the Storage contract it implements — atomic append, an enumeration-completeness flag — is taken as RSKeyStore's backend assumption; the two-partition counter/main ring, is_counter_fid routing, wear and page reclaim, and compact are backend mechanics the model abstracts."
+gap = "the Storage contract it implements — atomic append, an enumeration-completeness flag — is taken as RSKeyStore's backend assumption; the two-partition counter/main ring, is_counter_fid routing, wear and page reclaim, and compact are backend mechanics the model abstracts. Program/erase readback, a committed mutation followed by an error, and multi-fault recovery are held by real-backend controls rather than that model's pre-commit-refusal arm."
 # Which of the six the `gap` sentence names are OBLIGATIONS, one candidate each
 # for scripts/platform_gate.py. The list is here and not there so that deleting a
 # `PLAT-STORE-*` row from assurance/platform.toml alone goes red instead of green;

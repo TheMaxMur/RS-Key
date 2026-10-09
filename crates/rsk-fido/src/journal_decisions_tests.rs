@@ -241,7 +241,7 @@ fn a_refused_fold_commit_preserves_details_even_when_deletion_would_succeed() {
     for seq in 0..3 {
         assert!(fs.has_data(slot_fid(seq)), "an unfolded detail was deleted");
     }
-    assert_eq!(fs.write_gen(), 0);
+    assert_eq!(fs.write_gen(), 1);
     assert!(generation > 0);
     with_ctx(&mut fs, fold_and_scrub);
     assert_eq!(chain_head(&dev(), &mut fs).unwrap().0, head);

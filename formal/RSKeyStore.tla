@@ -92,9 +92,10 @@ CONSTANTS
     \* fs.rs:847 -- `self.storage.write(EF_META, &out[..w])?`. The model faulted the
     \* metadata READ in two places and never the WRITE, so the one step that can
     \* lose every record at once was the only one with no failing arm (stage 2 item 1).
-    \* A failed write leaves `meta` untouched, which is a CLAIM about the backend
-    \* and not a fact: it holds only because an append is old-or-new per item. This
-    \* switch denies that -- the blob afterwards is an ARBITRARY subset -- so
+    \* The failing arm here models refusal BEFORE commit. Old-or-new atomicity
+    \* does not imply that an error leaves the old value: failed readback can
+    \* follow committed new bytes. That status/cache history is outside this model.
+    \* This switch denies item atomicity -- the blob is an ARBITRARY subset -- so
     \* `PLAT-FLASH-001` gains a row that goes red when it is false, instead of being
     \* prose no configuration can contradict.
     BugMetaWriteTearsBlob,
@@ -202,10 +203,11 @@ MetaAdd(f) ==
             (IF \E g \in Fids : (g # f) /\ meta[g]
                THEN {"NoRecordLostToMetaWrite"} ELSE {})
        /\ UNCHANGED << val, present, decided, dead >>
-    \* THE WRITE ITSELF TEARS (fs.rs:847). The shipped arm of a failed write is a
-    \* STUTTER -- nothing on flash moved, `mark_present` is not reached, the caller
-    \* has the error -- and a stutter is what `[][Next]_vars` already admits, so it
-    \* is not written as a disjunct. What is written is the denial: the backend is
+    \* THE WRITE ITSELF TEARS (fs.rs:847). A pre-commit refusal is a persistent
+    \* STUTTER, which `[][Next]_vars` admits without another disjunct. A committed
+    \* write followed by readback failure has the new persistent value, but command
+    \* status, rescan, generation and dynamic capacity are not model variables.
+    \* Those histories have separate real-backend tests. This denial says the backend is
     \* not old-or-new per item, so the readable blob afterwards is an arbitrary
     \* subset of what was there plus what was being added.
     \*
@@ -239,8 +241,9 @@ MetaDelete(f) ==
             (IF \E g \in Fids : meta[g] THEN {"NoFalseMetaAbsent"} ELSE {})
        /\ UNCHANGED << val, meta, present, decided, dead >>
     \* THE REWRITE ITSELF TEARS (fs.rs:888). Written the way `MetaAdd`'s tear is:
-    \* the shipped arm of a failed rewrite is a STUTTER, which `[][Next]_vars`
-    \* already admits, so only the denial of the backend assumption is a disjunct.
+    \* a pre-commit refusal is a STUTTER, which `[][Next]_vars` admits. Readback
+    \* failure after committed bytes is outside this status-free projection, as
+    \* above; only the item-atomicity denial is an explicit disjunct here.
     \* Two things keep it from being that arm under a second name, and both are
     \* read off the code rather than chosen. (1) `metaAbsent' = FALSE`, because
     \* fs.rs:875 marks EF_META present BEFORE this write; the sibling leaves it

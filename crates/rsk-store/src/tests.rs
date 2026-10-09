@@ -203,6 +203,9 @@ impl NorFlash for SharedMock {
 #[path = "compact_cleanup_tests.rs"]
 mod compact_cleanup;
 
+#[path = "nor_fault_tests.rs"]
+mod nor_faults;
+
 impl MultiwriteNorFlash for SharedMock {}
 
 type Result2<T> = core::result::Result<T, FlashFault>;

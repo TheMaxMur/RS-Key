@@ -2612,8 +2612,8 @@ fn a_sweep_clears_more_credentials_than_one_batch_holds() {
 #[test]
 fn a_truncated_enumeration_fails_the_sweep_instead_of_reading_it_as_clear() {
     let mut fs = Fs::new(TruncatedWalk::new());
-    fs.scan();
     fs.put(EF_OATH_CRED, &[0x11; 24]).unwrap();
+    fs.scan();
     assert_eq!(sweep(&mut fs, is_oath_cred_fid), Err(Sw::MEMORY_FAILURE));
     let mut buf = [0u8; 24];
     assert_eq!(

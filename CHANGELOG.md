@@ -40,6 +40,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- Storage checks the bytes programmed and the complete erased NOR window before
+  accepting success. Dropped or partial mutations and failed readback propagate
+  as storage failures, including during tombstones, migration and scrub. An
+  uncertain write rebuilds Fs presence/capacity and invalidates derived caches;
+  an incomplete scan grants no new capacity until a complete retry. Persistent
+  records remain compatible. bcdDevice → `0x0A96`.
+
 - FIDO resident credential replacement resets its signature counter after the
   replacement record commits. A power cut cannot leave the preceding credential
   with a rolled-back counter. A partially committed replacement may retain the

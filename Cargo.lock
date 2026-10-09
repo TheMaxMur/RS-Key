@@ -2375,6 +2375,7 @@ dependencies = [
  "embedded-storage-async",
  "rsk-fs",
  "rsk-sdk",
+ "rsk-secret",
  "sequential-storage",
 ]
 

@@ -572,8 +572,8 @@ fn a_faulted_metadata_drop_is_carried_to_the_end_of_the_sweep_and_still_answered
 #[test]
 fn a_truncated_enumeration_fails_the_sweep_instead_of_reading_it_as_clear() {
     let mut fs = Fs::new(TruncatedWalk::new());
-    fs.scan();
     fs.put(EF_CRED, &[0xC0; 8]).unwrap();
+    fs.scan();
     let mut rng = SeqRng(5);
     let mut state = FidoState::new();
     let mut presence = crate::AlwaysConfirm;
