@@ -38,9 +38,9 @@ const _: () = assert!(rsk_fido::consts::MAX_MSG_SIZE as usize == RESP_CAP);
 #[cfg(feature = "security-trace")]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SecurityTraceSnapshot {
-    pub pin_record_len: Option<u8>,
+    pub pin_record_len: Option<usize>,
     pub pin_retries_raw: Option<u8>,
-    pub always_uv_record_len: Option<u8>,
+    pub always_uv_record_len: Option<usize>,
     pub always_uv_raw: Option<u8>,
     pub persistent_grant_record: bool,
     pub backup_sealed_record: bool,
@@ -206,10 +206,10 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
         };
 
         let mut fs = self.fs.borrow_mut();
-        let pin_size = fs.size(EF_PIN).and_then(|n| u8::try_from(n).ok());
+        let pin_size = fs.size(EF_PIN);
         let pin_retries = rsk_fido::clientpin::pin_retries_left(&mut fs);
         let mut always_uv = [0u8; 1];
-        let always_uv_size = fs.size(EF_ALWAYS_UV).and_then(|n| u8::try_from(n).ok());
+        let always_uv_size = fs.size(EF_ALWAYS_UV);
         let always_uv_raw = match fs.read(EF_ALWAYS_UV, &mut always_uv) {
             Some(1) => Some(always_uv[0]),
             _ => None,
