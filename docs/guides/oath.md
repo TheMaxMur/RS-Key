@@ -5,7 +5,7 @@ on-card, over Yubico's YKOATH protocol (CCID). The HMAC secret is written once
 and never leaves the chip again: every code is derived inside the firmware and
 only the digits come back. Up to **255 accounts**.
 
-An existing damaged access-code or OTP-PIN record keeps its authentication
+An existing empty access-code or OTP-PIN record keeps its authentication
 gate closed. It cannot open the password safe or authorize a replacement PIN.
 An access-code record without secret key material cannot validate a session.
 
