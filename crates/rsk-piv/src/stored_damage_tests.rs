@@ -40,6 +40,11 @@ fn select_never_reprovisions_an_empty_owner_security_record() {
                 run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
                 Sw::OK
             );
+        } else {
+            assert_eq!(
+                run(&mut app, &mut fs, INS_VERIFY, 0, 0x80, &DEFAULT_PIN).0,
+                Sw::OK
+            );
         }
     }
 }
