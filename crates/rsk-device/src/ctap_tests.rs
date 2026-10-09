@@ -411,6 +411,66 @@ fn the_security_trace_keeps_empty_persistent_security_records_present() {
     assert!(ctap.security_trace_abstract_token().pin_set);
 }
 
+#[cfg(feature = "security-trace")]
+#[test]
+fn the_security_trace_preserves_present_record_widths_beyond_a_byte() {
+    use rsk_fido::consts::{EF_ALWAYS_UV, EF_PIN};
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    for width in [
+        None,
+        Some(0),
+        Some(1),
+        Some(34),
+        Some(35),
+        Some(36),
+        Some(255),
+        Some(256),
+        Some(rsk_fs::MAX_VALUE_BYTES),
+    ] {
+        {
+            let mut fs = env.fs.borrow_mut();
+            for fid in [EF_PIN, EF_ALWAYS_UV] {
+                if let Some(width) = width {
+                    fs.put(fid, &vec![0; width]).unwrap();
+                } else {
+                    fs.force_delete(fid).unwrap();
+                }
+            }
+        }
+        let raw = ctap.security_trace_snapshot();
+        assert_eq!(raw.pin_record_len, width);
+        assert_eq!(raw.always_uv_record_len, width);
+        assert_eq!(
+            ctap.security_trace_abstract_token().pin_set,
+            width.is_some()
+        );
+        let reply = ctap.handle_cbor(0x1234_5678, &GET_INFO, 0).to_vec();
+        assert_eq!(reply[0], 0);
+        let mut decoder = minicbor::Decoder::new(&reply[1..]);
+        let count = decoder.map().unwrap().unwrap();
+        let mut enabled = None;
+        for _ in 0..count {
+            if decoder.u8().unwrap() == 4 {
+                for _ in 0..decoder.map().unwrap().unwrap() {
+                    let key = decoder.str().unwrap();
+                    let flag = decoder.bool().unwrap();
+                    if key == "alwaysUv" {
+                        enabled = Some(flag);
+                    }
+                }
+            } else {
+                decoder.skip().unwrap();
+            }
+        }
+        if let Some(width) = width {
+            assert_eq!(enabled, Some(width != 1));
+        } else {
+            assert!(enabled.is_some());
+        }
+    }
+}
+
 /// CTAPHID_MSG carries U2F in U2F HID's extended-length framing alone: a YubiKey
 /// 5.8.0 answers each of these, measured, as written here, and a malformed length
 /// is refused before the instruction is looked at.

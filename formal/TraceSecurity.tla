@@ -29,10 +29,11 @@ PermsFromRaw(raw) ==
       [] OTHER    -> {"unsupported-raw-permissions"}
 
 Beta(raw) ==
-    [ pinSet       |-> raw.pinRecordLen = 35,
+    [ pinSet       |-> raw.pinRecordLen # -1,
       pinRetries   |-> IF raw.pinRetriesRaw = -1
                          THEN MaxRetries ELSE raw.pinRetriesRaw,
-      alwaysUv     |-> raw.alwaysUvRecordLen = 1 /\ raw.alwaysUvRaw = 1,
+      alwaysUv     |-> IF raw.alwaysUvRecordLen = -1 THEN AlwaysUvShipped
+                         ELSE raw.alwaysUvRecordLen # 1 \/ raw.alwaysUvRaw # 0,
       grant        |-> raw.persistentGrantRecord,
       backupSealed |-> raw.backupSealedRecord,
       seed         |-> raw.seedPlainRecord \/ raw.seedEncryptedRecord,
