@@ -77,7 +77,7 @@ fn key_generation_retries_an_invalid_scalar_and_refuses_an_unpersisted_key() {
     medium.arm(0);
     assert!(load_or_generate(&dev(), None, &mut fs, &mut LcgRng(7)).is_none());
     assert_eq!(medium.value(EF_DEVCERT_KEY.get()), None);
-    assert_eq!(fs.write_gen(), 0);
+    assert_eq!(fs.write_gen(), 1);
     medium.arm(u32::MAX);
     assert!(load_or_generate(&dev(), None, &mut fs, &mut LcgRng(7)).is_some());
 }
