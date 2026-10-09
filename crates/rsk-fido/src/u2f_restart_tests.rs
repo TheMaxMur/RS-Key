@@ -28,34 +28,54 @@ fn u2f_counter_cuts_issue_only_a_signature_with_a_durable_advance() {
             let (sw, n) = process_u2f(&mut ctx, &Apdu::parse(raw).unwrap(), &mut out);
             (sw, out[..n].to_vec())
         };
-        assert!(!sweep_restarts(
-            || {
-                let (storage, medium) = Cut::new();
-                let mut fs = Fs::new(storage);
+        let provision = || {
+            let (storage, medium) = Cut::new();
+            let mut fs = Fs::new(storage);
+            fs.scan();
+            crate::tests::uv_optional(&mut fs);
+            ensure_seed(&dev(), &mut fs, &mut SeqRng(1)).unwrap();
+            let (sw, reg) = send(
+                &mut fs,
+                &ext_apdu(CTAP_REGISTER, 0, &[&CHAL[..], &APP].concat()),
+            );
+            assert_eq!(sw, Sw::OK);
+            *point.borrow_mut() = reg[1..66].to_vec();
+            *handle.borrow_mut() = reg[67..67 + KEY_HANDLE_LEN].to_vec();
+            fs.put_counter(crate::consts::EF_COUNTER, &73u32.to_le_bytes())
+                .unwrap();
+            fs.put(0xB000, b"another applet").unwrap();
+            (fs, medium)
+        };
+        let authenticate = |fs: &mut Fs<Cut>| {
+            let body = [
+                &CHAL[..],
+                &APP,
+                &[KEY_HANDLE_LEN as u8],
+                handle.borrow().as_slice(),
+            ]
+            .concat();
+            send(fs, &ext_apdu(CTAP_AUTHENTICATE, mode, &body))
+        };
+        if cfg!(feature = "strict-up") && mode == U2F_AUTH_NO_ENFORCE {
+            let (mut fs, medium) = provision();
+            let before = medium.value(crate::consts::EF_COUNTER.get());
+            for _ in 0..2 {
+                let generation = fs.write_gen();
+                assert_eq!(authenticate(&mut fs), (Sw::INCORRECT_P1P2, Vec::new()));
+                assert_eq!(fs.write_gen(), generation);
+                assert_eq!(medium.value(crate::consts::EF_COUNTER.get()), before);
+                fs = rsk_fs::Fs::new(fs.into_storage());
                 fs.scan();
-                crate::tests::uv_optional(&mut fs);
-                ensure_seed(&dev(), &mut fs, &mut SeqRng(1)).unwrap();
-                let (sw, reg) = send(
-                    &mut fs,
-                    &ext_apdu(CTAP_REGISTER, 0, &[&CHAL[..], &APP].concat()),
-                );
-                assert_eq!(sw, Sw::OK);
-                *point.borrow_mut() = reg[1..66].to_vec();
-                *handle.borrow_mut() = reg[67..67 + KEY_HANDLE_LEN].to_vec();
-                fs.put_counter(crate::consts::EF_COUNTER, &73u32.to_le_bytes())
-                    .unwrap();
-                fs.put(0xB000, b"another applet").unwrap();
-                (fs, medium)
-            },
+                let generation = fs.write_gen();
+                ensure_seed(&dev(), &mut fs, &mut SeqRng(7)).unwrap();
+                assert_eq!(fs.write_gen(), generation);
+            }
+            continue;
+        }
+        assert!(!sweep_restarts(
+            provision,
             |fs| {
-                let body = [
-                    &CHAL[..],
-                    &APP,
-                    &[KEY_HANDLE_LEN as u8],
-                    handle.borrow().as_slice(),
-                ]
-                .concat();
-                let (sw, out) = send(fs, &ext_apdu(CTAP_AUTHENTICATE, mode, &body));
+                let (sw, out) = authenticate(fs);
                 *signed.borrow_mut() = out;
                 sw == Sw::OK
             },
