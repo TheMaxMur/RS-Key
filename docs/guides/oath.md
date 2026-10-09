@@ -5,6 +5,10 @@ on-card, over Yubico's YKOATH protocol (CCID). The HMAC secret is written once
 and never leaves the chip again: every code is derived inside the firmware and
 only the digits come back. Up to **255 accounts**.
 
+An existing damaged access-code or OTP-PIN record keeps its authentication
+gate closed. It cannot open the password safe or authorize a replacement PIN.
+An access-code record without secret key material cannot validate a session.
+
 Clients are the stock Yubico tooling: `ykman oath` on the command line and the
 **Yubico Authenticator** desktop/mobile app over USB. There is no `rsk oath`
 subcommand; OATH is driven entirely through those. Both `ykman oath` and the

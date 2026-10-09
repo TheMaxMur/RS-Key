@@ -9,6 +9,9 @@
 
 use super::*;
 
+#[path = "stored_damage_tests.rs"]
+mod damage;
+
 fn fixture() -> (Fs<RamStorage>, RefCell<CountRng>) {
     (new_fs(), RefCell::new(CountRng(7)))
 }

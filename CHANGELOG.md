@@ -40,6 +40,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OATH keeps damaged access-code and OTP-PIN records configured. Empty or
+  truncated owner records cannot reopen the applet, expose password-safe
+  entries or be replaced through SET PIN. VALIDATE rejects an algorithm-only
+  access code with a public empty HMAC key. bcdDevice → `0x0A9A`.
+
 - OpenPGP boot preserves present empty verifiers, DEKs and security settings.
   Damaged UIF records require touch, malformed signature counters cannot be
   restarted, and ATTEST refuses malformed subject fields instead of certifying
