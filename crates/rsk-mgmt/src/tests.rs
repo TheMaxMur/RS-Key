@@ -12,6 +12,9 @@ use rsk_fs::Fs;
 use rsk_fs::storage::ram::RamStorage;
 use rsk_sdk::Apdu;
 
+#[path = "restart_tests.rs"]
+mod restarts;
+
 struct DenyPresence;
 
 #[test]
