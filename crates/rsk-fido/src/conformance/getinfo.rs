@@ -103,6 +103,26 @@ fn getinfo_options_dependencies() {
 }
 
 #[test]
+fn getinfo_keeps_an_empty_owner_pin_record_configured() {
+    let mut auth = Authr::fresh();
+    auth.fs.put(crate::consts::EF_PIN, &[]).unwrap();
+    let reply = auth.get_info();
+    assert_ok(&reply);
+    let mut options = field_at(&reply.body, 0x04).unwrap();
+    let count = options.map().unwrap().unwrap();
+    let mut configured = None;
+    for _ in 0..count {
+        let name = options.str().unwrap();
+        let value = options.bool().unwrap();
+        if name == "clientPin" {
+            configured = Some(value);
+        }
+    }
+    assert_eq!(configured, Some(true));
+    assert_eq!(auth.fs.read(crate::consts::EF_PIN, &mut [0; 34]), Some(0));
+}
+
+#[test]
 fn getinfo_algorithms_policy() {
     let r = Authr::fresh().get_info();
     let mut d = field_at(&r.body, 0x0A).expect("algorithms (0x0A) present");

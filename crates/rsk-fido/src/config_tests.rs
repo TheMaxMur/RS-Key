@@ -380,9 +380,31 @@ fn always_uv_read_prefers_explicit_override() {
     fs.put(EF_ALWAYS_UV, &[0]).unwrap();
     assert!(!always_uv_enabled(&mut fs));
     fs.put(EF_ALWAYS_UV, &[]).unwrap();
-    assert_eq!(always_uv_enabled(&mut fs), DEFAULT_ALWAYS_UV);
+    assert!(always_uv_enabled(&mut fs));
     fs.delete(EF_ALWAYS_UV).unwrap();
     assert_eq!(always_uv_enabled(&mut fs), DEFAULT_ALWAYS_UV);
+}
+
+#[test]
+fn malformed_always_uv_records_keep_the_gate_and_cannot_be_toggled() {
+    for malformed in [&[][..], &[2][..], &[1, 0][..]] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.put(EF_ALWAYS_UV, malformed).unwrap();
+        assert!(always_uv_enabled(&mut fs));
+        let generation = fs.write_gen();
+        assert_eq!(
+            run_fs(
+                &mut fs,
+                &mut armed(PERM_ACFG),
+                &config_request(CONFIG_TOGGLE_ALWAYS_UV as u8, &[0xa0], &TOKEN)
+            ),
+            Err(CtapError::Other)
+        );
+        assert_eq!(fs.write_gen(), generation);
+        let mut after = [0; 2];
+        assert_eq!(fs.read(EF_ALWAYS_UV, &mut after), Some(malformed.len()));
+        assert_eq!(&after[..malformed.len()], malformed);
+    }
 }
 
 #[test]

@@ -198,7 +198,7 @@ fn set_pin<S: Storage, R: Rng>(
     // Only changePIN replaces a PIN. The YubiKey answers NOT_ALLOWED, newPinEnc or none,
     // where §6.5.5.5 names PIN_AUTH_INVALID. Not `has_data`: a faulted probe read as "no
     // PIN" let an unauthenticated host install its own PIN over the owner's.
-    if ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)? {
+    if ctx.fs.try_exists(EF_PIN).map_err(|_| CtapError::Other)? {
         return Err(CtapError::NotAllowed);
     }
     let new_pin_enc = req.new_pin_enc.ok_or(CtapError::MissingParameter)?;
@@ -636,7 +636,7 @@ pub(crate) fn builtin_uv_step<S: Storage, R: Rng>(
 /// `UV_BLOCKED` — where the host-PIN path reports PIN_NOT_SET / PIN_BLOCKED for the
 /// very same states. Built-in UV shares EF_PIN and its counter with clientPIN.
 fn builtin_uv_ready<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {
-    if !ctx.fs.has_data(EF_PIN) {
+    if !ctx.fs.exists(EF_PIN) {
         return Err(CtapError::NotAllowed);
     }
     if pin_retries(ctx) == 0 || ctx.state.needs_power_cycle {
@@ -674,7 +674,7 @@ fn consent_for_permissions<S: Storage, R: Rng>(
 /// PIN is configured, i.e. built-in user verification is both capable and
 /// "presently configured". `false` on every screenless build.
 pub(crate) fn builtin_uv_enabled<S: Storage>(fs: &mut Fs<S>, presence: &dyn UserPresence) -> bool {
-    presence.uv_available() && fs.has_data(EF_PIN)
+    presence.uv_available() && fs.exists(EF_PIN)
 }
 
 /// `performBuiltInUv(internalRetry = true)` — the spec's built-in user
@@ -748,7 +748,7 @@ fn pin_retries<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> u8 {
 }
 
 fn pin_set_and_unblocked<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> Result<(), CtapError> {
-    if !ctx.fs.has_data(EF_PIN) {
+    if !ctx.fs.exists(EF_PIN) {
         return Err(CtapError::PinNotSet);
     }
     if pin_retries(ctx) == 0 {
@@ -1156,7 +1156,7 @@ pub enum SetPinError {
 /// [`device_pin_is_set`]: `local_pin_gate` returns `true` outright when no PIN of the
 /// scope exists, so the collapsed `false` waived the gate rather than raising it.
 pub fn pin_is_set<S: Storage>(fs: &mut Fs<S>) -> bool {
-    fs.try_has_data(EF_PIN).unwrap_or(true)
+    fs.try_exists(EF_PIN).unwrap_or(true)
 }
 
 /// The PIN's remaining retry budget (the `EF_PIN` counter), or `None` when no PIN is
@@ -1181,7 +1181,7 @@ pub fn device_pin_is_set<S: Storage>(fs: &mut Fs<S>) -> bool {
 /// and `Fs::has_data` answers the same `false` for "no device PIN" and "I could not
 /// look".
 pub fn try_device_pin_is_set<S: Storage>(fs: &mut Fs<S>) -> Result<bool, rsk_sdk::error::Error> {
-    fs.try_has_data(EF_DEVICE_PIN)
+    fs.try_exists(EF_DEVICE_PIN)
 }
 
 /// The device PIN's remaining retry budget (read-only, like [`pin_retries_left`]).

@@ -378,6 +378,17 @@ impl<S: Storage> Fs<S> {
         Ok(self.try_size(fid)?.is_some_and(|n| n > 0))
     }
 
+    /// Whether a record exists, including a malformed empty security record.
+    /// A zero-length record is not authority to initialize a gate or secret.
+    pub fn try_exists(&mut self, fid: u16) -> Result<bool> {
+        Ok(self.try_size(fid)?.is_some())
+    }
+
+    /// [`try_exists`](Self::try_exists), with read failures collapsed to false.
+    pub fn exists(&mut self, fid: u16) -> bool {
+        self.try_exists(fid).unwrap_or(false)
+    }
+
     /// Invoke `f` once per live key in the backend, in a single storage pass.
     /// Use this instead of probing a fixed FID range with `read`: a `read` of an
     /// *absent* key rescans the whole flash, so probing 256 slots is O(256·items)

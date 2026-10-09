@@ -9,6 +9,9 @@ use rsk_fs::storage::ram::RamStorage;
 #[path = "seed_restart_tests.rs"]
 mod restarts;
 
+#[path = "seed_damage_tests.rs"]
+mod damage;
+
 /// Test-only: `seed` AES-CBC-encrypted under `dev`'s arm (fixed serial-hash IV)
 /// as the pre-AEAD legacy record (tag 0x01 pre-OTP / 0x11 OTP), to exercise the
 /// boot upgrade path without the old write code.

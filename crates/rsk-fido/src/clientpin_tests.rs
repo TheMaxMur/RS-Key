@@ -13,6 +13,9 @@ use rsk_fs::Fs;
 use rsk_fs::storage::faults::{Cut, CutMedium, ProbeStuck};
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "clientpin_damage_tests.rs"]
+mod damage;
+
 #[test]
 fn an_already_cleared_force_change_does_not_require_a_flash_write() {
     let (storage, medium) = Cut::new();
@@ -3392,7 +3395,7 @@ fn a_torn_set_pin_leaves_no_pin_or_a_usable_one() {
 
 /// A PIN record cut short cannot be verified against and must not be spent from:
 /// getPinToken answers ERR_OTHER before the decrement and leaves the record as it
-/// was. An empty one reads as no PIN at all, with the full budget on offer.
+/// was. An empty stored record is damaged, rather than a new unset PIN.
 #[test]
 fn a_pin_record_of_the_wrong_length_is_neither_verified_nor_spent() {
     let (mut fs, mut rng) = setup();
@@ -3440,7 +3443,7 @@ fn a_pin_record_of_the_wrong_length_is_neither_verified_nor_spent() {
             &plat.get_token_req(PIN),
             &mut out
         ),
-        Err(CtapError::PinNotSet)
+        Err(CtapError::Other)
     );
     let n = run(
         &mut fs,
