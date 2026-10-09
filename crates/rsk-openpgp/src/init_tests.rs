@@ -12,6 +12,9 @@ mod dek_decisions;
 #[path = "init_repair_decisions_tests.rs"]
 mod repair_decisions;
 
+#[path = "init_damage_tests.rs"]
+mod damage;
+
 /// Deterministic counter RNG for tests.
 struct CountRng(u8);
 impl Rng for CountRng {

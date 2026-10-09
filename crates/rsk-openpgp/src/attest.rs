@@ -170,7 +170,13 @@ fn provisioned<S: Storage>(fs: &mut Fs<S>) -> Result<bool, Sw> {
 /// A fixed-width DO for the statement: zero-filled when absent, as `C5`/`CD` show it.
 fn read_fixed<S: Storage, const N: usize>(fs: &mut Fs<S>, fid: u16) -> Result<[u8; N], Sw> {
     let mut v = [0u8; N];
-    fs.try_read(fid, &mut v).map_err(|_| Sw::MEMORY_FAILURE)?;
+    if fs
+        .try_read(fid, &mut v)
+        .map_err(|_| Sw::MEMORY_FAILURE)?
+        .is_some_and(|n| n != N)
+    {
+        return Err(Sw::MEMORY_FAILURE);
+    }
     Ok(v)
 }
 
@@ -263,8 +269,12 @@ fn write_statement<S: Storage>(
     fp_der[2..].copy_from_slice(&read_fixed::<S, FP_LEN>(fs, fp)?);
     let mut ts_der = [0x04, TS_LEN as u8, 0, 0, 0, 0];
     ts_der[2..].copy_from_slice(&read_fixed::<S, TS_LEN>(fs, ts)?);
-    let uif = read_fixed::<S, 1>(fs, slot_uif(pk))?;
-    let counter = read_fixed::<S, 3>(fs, EF_SIG_COUNT)?;
+    let uif = read_fixed::<S, 2>(fs, slot_uif(pk))?;
+    let counter = if pk == EF_PK_SIG {
+        read_fixed::<S, 3>(fs, EF_SIG_COUNT)?
+    } else {
+        [0; 3]
+    };
     let (major, minor, patch) = rsk_sdk::FIRMWARE_VERSION;
     let (mut serial_der, mut counter_der) = ([0u8; 7], [0u8; 7]);
     let serial_len = rsk_x509::der_uint(&serial, &mut serial_der).map_err(x509_sw)?;

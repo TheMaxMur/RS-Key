@@ -40,6 +40,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP boot preserves present empty verifiers, DEKs and security settings.
+  Damaged UIF records require touch, malformed signature counters cannot be
+  restarted, and ATTEST refuses malformed subject fields instead of certifying
+  zero padding. An unrelated signature counter does not block DEC/AUT
+  attestation. bcdDevice → `0x0A99`.
+
 - PIV SELECT preserves present empty PIN, PUK, retry and private-key records.
   It cannot replace damaged owner material with factory credentials or a new
   attestation identity. Public F9 certificate repair still uses its original

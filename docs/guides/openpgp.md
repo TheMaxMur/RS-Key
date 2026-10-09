@@ -10,6 +10,11 @@ GET DATA `7A` also returns `6581` when the signature counter is absent,
 unreadable or not exactly three bytes; it never publishes a partial counter
 template as a successful response.
 
+Boot preserves present damaged security records rather than provisioning
+factory PINs or a new DEK over them. A malformed UIF record requires touch.
+Signing refuses a malformed signature counter without returning a signature;
+attestation refuses malformed subject fields instead of certifying zero padding.
+
 Prereqs: on Linux, `pcscd` + the `scdaemon.conf` lines from
 [linux.md](../linux.md). Check the card is visible:
 
