@@ -178,6 +178,12 @@ op = "SetPin"
 test_only = true
 
 [[persistent_writer]]
+file = "crates/rsk-fido/src/conformance/getinfo.rs"
+function = "getinfo_keeps_an_empty_owner_pin_record_configured"
+op = "SetPin"
+test_only = true
+
+[[persistent_writer]]
 file = "crates/rsk-fido/src/reset.rs"
 function = "sweep"
 op = "ClearPin"

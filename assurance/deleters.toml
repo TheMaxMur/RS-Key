@@ -107,7 +107,7 @@ why = "the record IS the configuration lock; a verifier that survives a clear ke
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
-line = 355
+line = 356
 call = "ctx.fs.delete(EF_ALWAYS_UV).map_err(|_| CtapError::Other)?;"
 verb = "delete"
 answer = "read"
@@ -118,7 +118,7 @@ why = "the record IS the alwaysUv policy, and toggleAlwaysUv's whole effect is m
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
-line = 392
+line = 393
 call = ".and_then(|()| ctx.fs.delete_key(EF_KEY_DEV))"
 verb = "delete_key"
 answer = "read"
@@ -129,7 +129,7 @@ why = "AUT_ENABLE wraps the seed and then drops the plain copy: a survivor means
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
-line = 432
+line = 433
 call = ".delete_key(EF_KEY_DEV_ENC)"
 verb = "delete_key"
 answer = "read"
@@ -140,7 +140,7 @@ why = "AUT_DISABLE's mirror — a surviving wrapped copy keeps lock_engaged true
 
 [[site]]
 file = "crates/rsk-fido/src/config.rs"
-line = 445
+line = 446
 call = "ctx.fs.delete(EF_EA_RPIDS).map_err(|_| CtapError::Other)?;"
 verb = "delete"
 answer = "read"
@@ -316,7 +316,7 @@ why = "the chain half of the same erase, ordered after the key so the surviving 
 
 [[site]]
 file = "crates/rsk-fido/src/vendor.rs"
-line = 957
+line = 956
 call = "if ctx.fs.delete(EF_EE_DEV).is_err() {"
 verb = "delete"
 answer = "read"
@@ -415,7 +415,7 @@ why = "Retires a missing or mismatched root certificate before publishing repair
 
 [[site]]
 file = "crates/rsk-openpgp/src/lib.rs"
-line = 285
+line = 286
 call = "let _ = fs.delete(stor);"
 verb = "delete"
 answer = "discarded"
@@ -662,7 +662,7 @@ why = "Retire the preceding key's public point before replacement; a survivor ou
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 519
+line = 534
 method = "factory_wipe"
 call = "self.storage.remove(fid)?;"
 rearms = true
@@ -671,7 +671,7 @@ why = "the device-wide wipe, and the reason this table exists. Its `compact()` t
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 600
+line = 621
 method = "delete"
 call = "self.storage.remove(fid)?;"
 rearms = false
@@ -680,7 +680,7 @@ why = "the family's own conditional removal. It cannot re-arm: `request_rescrub`
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 649
+line = 670
 method = "force_delete_halves"
 call = "if let Err(refused) = self.storage.remove(fid) {"
 rearms = false
@@ -689,7 +689,7 @@ why = "the unconditional twin, and `force_delete`'s body as well. Same reason: t
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 884
+line = 905
 method = "meta_delete"
 call = "self.storage.remove(EF_META)?;"
 rearms = false
