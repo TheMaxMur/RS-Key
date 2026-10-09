@@ -40,6 +40,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- OpenPGP ATTEST repairs an incomplete or mismatched attestation public key and
+  FC certificate from the surviving private key. Replacement retires the preceding
+  FC before its new key lands, so a repeated interruption cannot make a complete
+  root name another signer. Existing current and legacy key seals remain readable.
+  bcdDevice → `0x0A94`.
+
 - OpenPGP boot cleanup retries deletion of an obsolete public-reset-code DEK
   wrapper after an interruption removed its verifier first. Cleanup authenticates
   the orphan under the public default; unidentified wrappers and live reset codes

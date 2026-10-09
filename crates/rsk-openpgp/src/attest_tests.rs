@@ -545,7 +545,7 @@ fn every_key_a_slot_holds_is_attested_with_its_own_public_key() {
 
 /// A card an older build provisioned has no attestation key, and nothing but a
 /// verified PIN opens the DEK to seal one under: the first ATTEST mints it. A card
-/// torn between the key and FC mints it again the same way.
+/// torn between the key and FC repairs its public records using the surviving key.
 #[test]
 fn a_card_without_its_attestation_key_mints_one_at_the_first_attest() {
     for torn in [false, true] {
@@ -569,7 +569,14 @@ fn a_card_without_its_attestation_key_mints_one_at_the_first_attest() {
             assert_eq!(attest(app, fs, KEY_REF_SIG), Sw::OK, "torn: {torn}");
             let (after, sw) = run(app, fs, &read);
             assert_eq!(sw, Sw::OK);
-            assert_ne!(after, before, "a new key, torn: {torn}");
+            if torn {
+                assert_eq!(
+                    after, before,
+                    "repair must retain the surviving private key"
+                );
+            } else {
+                assert_ne!(after, before, "an absent private key needs a new root");
+            }
             assert_eq!(get(app, fs, EF_KEY_INFO).0[6..], [KEY_REF_ATT, 0x01]);
             let der = occurrence(app, fs, 2);
             signed_by(&parse(&der), &root(app, fs));
@@ -1003,3 +1010,6 @@ fn a_root_private_key_without_its_public_do_is_not_a_provisioned_root() {
     assert_eq!(provisioned(&mut fs), Ok(false));
     assert_eq!(fs.write_gen(), generation);
 }
+
+#[path = "attest_restart_tests.rs"]
+mod restarts;

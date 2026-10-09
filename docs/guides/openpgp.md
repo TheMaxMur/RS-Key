@@ -412,6 +412,11 @@ verifying PW1 — even with the PIN that now works — puts the damaged copy bac
 front and the repair fails. `unblock` never verifies PW1, which is why it is the
 one that works there.
 
+ATTEST repairs missing or mismatched root public records from the surviving
+attestation private key before issuing a statement. Repeating an interrupted
+repair preserves that key. If the private key itself is absent, ATTEST creates
+a replacement root after retiring the preceding FC certificate.
+
 A restart also retries removal of a legacy DEK wrapper sealed under the public
 factory reset code after its verifier was removed. The firmware authenticates
 that orphan before deleting it; it preserves unidentified wrappers and an

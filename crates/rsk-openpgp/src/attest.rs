@@ -11,6 +11,7 @@ use rsk_crypto::Device;
 use rsk_ec::{Curve, MAX_EC_POINT, MAX_EC_PUBDO, PrivKey, make_ec_pubkey_do};
 use rsk_fs::{Fs, KeyFid, Storage};
 use rsk_sdk::apdu::CLA_PROPRIETARY;
+use rsk_sdk::tlv::{Tlv, find_tag};
 use rsk_sdk::{Apdu, Sw, UserPresence};
 use rsk_x509::{Cert, MAX_CERT, Spki};
 
@@ -25,6 +26,7 @@ use crate::pin::{Session, load_dek};
 
 /// The attestation key's common name, and the stem of every one it signs.
 const ATT_CN: &[u8] = b"RS-Key OPGP Attestation";
+const V3_SPKI_FIELD: usize = 6;
 
 /// Yubico's OpenPGP attestation extensions, `1.3.6.1.4.1.41482.5.<n>`.
 const fn yubico_oid(n: u8) -> [u8; 10] {
@@ -48,8 +50,7 @@ fn x509_sw(e: rsk_x509::Error) -> Sw {
 }
 
 /// Mint the attestation key under `dek`, its public-key DO and its self-signed
-/// certificate `FC`. A tear leaves the three incomplete, which [`attest`] reads as
-/// unprovisioned and mints again.
+/// certificate `FC`. [`attest`] repairs an incomplete root from its surviving key.
 pub(crate) fn provision<S: Storage>(
     dev: &Device,
     fs: &mut Fs<S>,
@@ -61,6 +62,25 @@ pub(crate) fn provision<S: Storage>(
     let plen = key.public_point(&mut point).map_err(ec_sw)?;
     let point = &point[..plen];
     let mut cert = [0u8; MAX_CERT];
+    let n = root_certificate(&key, point, rng, &mut cert)?;
+    // A replacement must not leave a complete root with its preceding FC.
+    fs.force_delete(EF_ATT_CERT)
+        .map_err(|_| Sw::MEMORY_FAILURE)?;
+    store_ec_key_under(dev, fs, dek, EF_PK_ATT, &key)?;
+    let mut pub_do = [0u8; MAX_EC_PUBDO];
+    let pn = make_ec_pubkey_do(point, &mut pub_do);
+    fs.put(EF_PB_ATT, &pub_do[..pn])
+        .map_err(|_| Sw::MEMORY_FAILURE)?;
+    fs.put(EF_ATT_CERT, &cert[..n])
+        .map_err(|_| Sw::MEMORY_FAILURE)
+}
+
+fn root_certificate(
+    key: &PrivKey,
+    point: &[u8],
+    rng: &mut dyn Rng,
+    out: &mut [u8],
+) -> Result<usize, Sw> {
     let root = Cert {
         subject_cn: ATT_CN,
         issuer_cn: ATT_CN,
@@ -72,14 +92,70 @@ pub(crate) fn provision<S: Storage>(
         ca_pathlen: Some(0),
         extra: &[],
     };
-    let n = rsk_x509::build(&root, &key, rng, &mut cert).map_err(x509_sw)?;
-    store_ec_key_under(dev, fs, dek, EF_PK_ATT, &key)?;
-    let mut pub_do = [0u8; MAX_EC_PUBDO];
-    let pn = make_ec_pubkey_do(point, &mut pub_do);
-    fs.put(EF_PB_ATT, &pub_do[..pn])
-        .map_err(|_| Sw::MEMORY_FAILURE)?;
-    fs.put(EF_ATT_CERT, &cert[..n])
-        .map_err(|_| Sw::MEMORY_FAILURE)
+    rsk_x509::build(&root, key, rng, out).map_err(x509_sw)
+}
+
+/// The identity in our device-owned v3 root, not general certificate validation.
+fn root_point(der: &[u8]) -> Option<&[u8]> {
+    let certificate = find_tag(der, 0x30)?;
+    let tbs = find_tag(certificate, 0x30)?;
+    let (tag, spki) = Tlv::new(tbs).nth(V3_SPKI_FIELD)?;
+    (tag == 0x30).then_some(())?;
+    find_tag(spki, 3)?.strip_prefix(&[0])
+}
+
+fn ensure_signer<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    sess: &Session,
+    rng: &mut dyn Rng,
+) -> Result<PrivKey, Sw> {
+    if !provisioned(fs)? && !fs.try_has_key(EF_PK_ATT).map_err(|_| Sw::MEMORY_FAILURE)? {
+        let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
+        load_dek(dev, fs, sess, &mut dek)?;
+        provision(dev, fs, rng, dek.expose())?;
+    }
+    let signer = load_ec_key(dev, fs, sess, EF_PK_ATT)?;
+    if signer.curve() != Curve::P384 {
+        return Err(Sw::MEMORY_FAILURE);
+    }
+    let mut point = [0; MAX_EC_POINT];
+    let plen = signer.public_point(&mut point).map_err(ec_sw)?;
+    let point = point.get(..plen).ok_or(Sw::EXEC_ERROR)?;
+    let mut expected = [0; MAX_EC_PUBDO];
+    let pn = make_ec_pubkey_do(point, &mut expected);
+    let expected = expected.get(..pn).ok_or(Sw::EXEC_ERROR)?;
+    let mut cached = [0; MAX_EC_PUBDO];
+    let public_matches = fs
+        .try_read(EF_PB_ATT, &mut cached)
+        .map_err(|_| Sw::MEMORY_FAILURE)?
+        .and_then(|n| cached.get(..n))
+        == Some(expected);
+    let mut cert = [0; MAX_CERT];
+    let certificate_matches = fs
+        .try_read(EF_ATT_CERT, &mut cert)
+        .map_err(|_| Sw::MEMORY_FAILURE)?
+        .and_then(|n| cert.get(..n))
+        .and_then(root_point)
+        == Some(point);
+    let n = if certificate_matches {
+        0
+    } else {
+        root_certificate(&signer, point, rng, &mut cert)?
+    };
+    if !certificate_matches {
+        fs.force_delete(EF_ATT_CERT)
+            .map_err(|_| Sw::MEMORY_FAILURE)?;
+    }
+    if !public_matches {
+        fs.put(EF_PB_ATT, expected)
+            .map_err(|_| Sw::MEMORY_FAILURE)?;
+    }
+    if !certificate_matches {
+        fs.put(EF_ATT_CERT, cert.get(..n).ok_or(Sw::EXEC_ERROR)?)
+            .map_err(|_| Sw::MEMORY_FAILURE)?;
+    }
+    Ok(signer)
 }
 
 /// Whether the key, its public-key DO and `FC` are all present. A probe the flash
@@ -150,16 +226,7 @@ fn write_statement<S: Storage>(
     if !held || origin::of(fs, pk) != origin::ORIGIN_GENERATED {
         return Err(Sw::CONDITIONS_NOT_SATISFIED);
     }
-    // A card provisioned before this build has no attestation key, and only a
-    // verified PIN can open the DEK it must be sealed under.
-    if !provisioned(fs)? {
-        let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
-        let r =
-            load_dek(dev, fs, sess, &mut dek).and_then(|()| provision(dev, fs, rng, dek.expose()));
-        dek.wipe();
-        r?;
-    }
-    let signer = load_ec_key(dev, fs, sess, EF_PK_ATT)?;
+    let signer = ensure_signer(dev, fs, sess, rng)?;
 
     // A name an older build let past NAME_MAX goes in cut to it, all a YubiKey holds.
     let mut name = [0u8; 2 + NAME_MAX];
