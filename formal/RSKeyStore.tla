@@ -183,8 +183,8 @@ Put(f, v) ==
 \* rewrite that drops another FID's record -- which is exactly what treating a
 \* faulted EF_META read as an empty blob does. Modelled as the success write,
 \* plus the buggy faulted-rewrite as its own disjunct so the shipped tree never
-\* offers it (a faulted `meta_add` on the shipped tree returns an error and
-\* changes nothing, so it is not a transition).
+\* offers it. The model's ordinary pre-commit refusal stutters; concrete errors
+\* after commitment and their cache reconciliation are outside this projection.
 MetaAdd(f) ==
     \* The SHIPPED read: a cache that says EF_META is absent is trusted, and the
     \* blob is rebuilt from empty (fs.rs:851-853). Correct while the cache is
@@ -214,9 +214,9 @@ MetaAdd(f) ==
     \* Two things separate this from `BugMetaAddDropsOnFault`, and the first draft
     \* had NEITHER -- its arm was that switch's arm character for character, so the
     \* two induced the same relation and the "new" mutant was a second name for one
-    \* behaviour. (1) `metaAbsent` is UNCHANGED, because a write that failed never
-    \* reaches `mark_present`; the sibling sets it FALSE because its write
-    \* SUCCEEDED over a blob it had rebuilt from empty. (2) the survivors are an
+    \* behaviour. (1) `metaAbsent` is UNCHANGED in this model's failed-write arm;
+    \* concrete post-commit errors and rescan are not projected. The sibling sets
+    \* it FALSE after success over an empty rebuild. (2) the survivors are an
     \* arbitrary subset rather than exactly `{f}`: a torn append has no reason to
     \* land the record it was adding.
     \/ /\ BugMetaWriteTearsBlob
