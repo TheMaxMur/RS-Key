@@ -40,6 +40,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- PIV SELECT preserves present empty PIN, PUK, retry and private-key records.
+  It cannot replace damaged owner material with factory credentials or a new
+  attestation identity. Public F9 certificate repair still uses its original
+  private key. bcdDevice → `0x0A98`.
+
 - FIDO treats an existing empty security record as damaged material, rather
   than an unset PIN, seed, lock or irreversible backup marker. Unauthenticated
   SET PIN cannot replace a truncated owner verifier, seed boot cannot mint over

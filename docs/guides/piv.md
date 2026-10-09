@@ -11,6 +11,10 @@ PKCS#11 / OpenSC and OS-native (macOS CryptoTokenKit, Windows) routes below
 identify the card by its applet, not the reader name, so they work on the default
 build.
 
+SELECT preserves damaged empty PIN, PUK, retry and private-key records rather
+than provisioning factory credentials over them. A missing or damaged public
+attestation certificate remains repairable from its unchanged private key.
+
 > **Windows note:** the card serves a default CHUID automatically — the Windows
 > PIV minidriver needs it to enumerate the certificate containers, so no manual
 > `ykman piv objects generate chuid` step is required.
