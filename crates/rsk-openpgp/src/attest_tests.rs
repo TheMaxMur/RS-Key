@@ -1013,3 +1013,6 @@ fn a_root_private_key_without_its_public_do_is_not_a_provisioned_root() {
 
 #[path = "attest_restart_tests.rs"]
 mod restarts;
+
+#[path = "attest_damage_tests.rs"]
+mod damage;

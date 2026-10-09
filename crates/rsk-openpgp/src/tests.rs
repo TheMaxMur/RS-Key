@@ -3956,3 +3956,6 @@ mod command_boundaries;
 
 #[path = "restart_commands_tests.rs"]
 mod restarts;
+
+#[path = "stored_damage_tests.rs"]
+mod stored_damage;

@@ -60,8 +60,9 @@ pub(crate) fn check_uif<S: Storage>(
 ) -> Result<(), Sw> {
     let mut buf = [0u8; 2];
     let on = match fs.try_read(fid, &mut buf) {
-        Ok(stored) => matches!(stored, Some(n) if n >= 1 && buf[0] > 0),
-        Err(_) => true,
+        Ok(Some(2)) => buf[0] > 0,
+        Ok(None) => false,
+        Ok(Some(_)) | Err(_) => true,
     };
     if on {
         // The trusted screen names which key operation the UIF is gating (the

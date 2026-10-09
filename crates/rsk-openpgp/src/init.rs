@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 //! Applet initialisation: creates the absent EFs (DEK, PIN verifiers, default
-//! working DOs). Idempotent — every write is guarded by an emptiness check —
+//! working DOs). Idempotent — every write is guarded by a presence check —
 //! and run once at boot.
 
 use rsk_crypto::{Device, PinKdf};
@@ -45,7 +45,7 @@ fn put<S: Storage>(fs: &mut Fs<S>, fid: u16, data: &[u8]) -> Result<(), Error> {
 /// both — so one faulted `EF_PW1` probe put `PW1_DEFAULT` back over the owner's
 /// verifier and handed `123456` the PW1 security status.
 fn provisioned<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<bool, Error> {
-    fs.try_has_data(fid).map_err(|_| Error::Storage)
+    fs.try_exists(fid).map_err(|_| Error::Storage)
 }
 
 /// [`provisioned`] for the repairs that need the bytes as well.

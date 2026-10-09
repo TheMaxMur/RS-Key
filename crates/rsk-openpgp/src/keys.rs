@@ -462,8 +462,14 @@ pub fn spend_one_shot_pw1<S: Storage>(fs: &mut Fs<S>, sess: &mut Session) {
 /// Bump the 3-byte big-endian PSO:CDS counter, after a signature and only then.
 pub fn inc_sig_count<S: Storage>(fs: &mut Fs<S>) -> Result<(), Sw> {
     let mut c = [0u8; 3];
-    fs.read(EF_SIG_COUNT, &mut c)
-        .ok_or(Sw::REFERENCE_NOT_FOUND)?;
+    match fs
+        .try_read(EF_SIG_COUNT, &mut c)
+        .map_err(|_| Sw::MEMORY_FAILURE)?
+    {
+        Some(3) => {}
+        Some(_) => return Err(Sw::MEMORY_FAILURE),
+        None => return Err(Sw::REFERENCE_NOT_FOUND),
+    }
     let v = (((c[0] as u32) << 16) | ((c[1] as u32) << 8) | c[2] as u32).wrapping_add(1);
     let q = [(v >> 16) as u8, (v >> 8) as u8, v as u8];
     fs.put(EF_SIG_COUNT, &q).map_err(|_| Sw::MEMORY_FAILURE)
