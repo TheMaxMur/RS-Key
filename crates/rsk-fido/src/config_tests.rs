@@ -968,6 +968,7 @@ fn a_faulted_min_pin_probe_does_not_lower_the_floor() {
 fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
     use crate::consts::EF_PAUTHTOKEN;
     let old_token = std::cell::RefCell::new(None);
+    let seed_record = std::cell::RefCell::new(None);
 
     assert!(rsk_fs::cut::sweep_restarts(
         || {
@@ -979,6 +980,7 @@ fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
             // The grant the old PIN's holder carries, minted as provisioning mints it.
             crate::seed::ensure_seed(&dev(), &mut fs, &mut SeqRng(3)).unwrap();
             *old_token.borrow_mut() = medium.value(EF_PAUTHTOKEN.get());
+            *seed_record.borrow_mut() = medium.value(crate::consts::EF_KEY_DEV.get());
             (fs, medium)
         },
         |fs| {
@@ -999,6 +1001,11 @@ fn a_torn_set_min_pin_length_never_lowers_the_floor_or_keeps_the_grant() {
             let _ = crate::seed::ensure_seed(&dev(), fs, &mut SeqRng(91));
         },
         |fs, budget, _second, completed, medium| {
+            assert!(crate::seed::load_ppuat(&dev(), fs).is_some());
+            assert_eq!(
+                medium.value(crate::consts::EF_KEY_DEV.get()),
+                *seed_record.borrow()
+            );
             let mut buf = [0u8; 2];
             let n = fs
                 .read(EF_MINPINLEN, &mut buf)
