@@ -441,6 +441,7 @@ fn the_security_trace_preserves_present_record_widths_beyond_a_byte() {
         let raw = ctap.security_trace_snapshot();
         assert_eq!(raw.pin_record_len, width);
         assert_eq!(raw.always_uv_record_len, width);
+        assert_eq!(raw.always_uv_raw, (width == Some(1)).then_some(0));
         assert_eq!(
             ctap.security_trace_abstract_token().pin_set,
             width.is_some()
