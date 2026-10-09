@@ -139,6 +139,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Changed
 
+- Verification trace capture preserves full stored-record widths. Firmware
+  behavior is unchanged; the build counter advances for changes within a
+  production crate's gated region, as required by the existing bcd gate.
+  bcdDevice → `0x0A9B`.
+
 - Trusted-display host controls share named boot, poll, notice and wake-release
   delays with the firmware. The existing durations are unchanged.
   bcdDevice → `0x0A92`.
