@@ -574,12 +574,10 @@ impl<'a> OathApplet<'a> {
         // LOCKED — a fail-open here unlocked it without the access code. A truly
         // absent code leaves the applet as select() set it (unlocked, no code).
         //
-        // The collapsing probe stands: `select` reads a code it could not probe as
-        // SET and starts the session locked, so `validated` is already false in every
-        // state this arm can be reached in. Measured — a `try_has_key` twin here is
-        // bit-identical, and a guard nothing can falsify is a comment with a type.
+        // SELECT starts an unreadable code locked; a visible damaged record also
+        // revokes a prior validation here, including a zero-length record.
         let Some(n) = seal::seal_read(&dev, fs, EF_OATH_CODE, &mut code) else {
-            if fs.has_key(EF_OATH_CODE) {
+            if fs.exists(EF_OATH_CODE.get()) {
                 self.validated = false;
             }
             return Sw::DATA_INVALID;
@@ -588,6 +586,10 @@ impl<'a> OathApplet<'a> {
             self.validated = false;
             return Sw::DATA_INVALID;
         };
+        if secret.is_empty() && alg_supported(alg) {
+            self.validated = false;
+            return Sw::DATA_INVALID;
+        }
         let mut mac = Secret::<[u8; 64]>::zeroed();
         let Some(proof) = oath_hmac(alg, secret, &self.challenge, mac.expose_mut()) else {
             return Sw::WRONG_DATA;
@@ -1061,9 +1063,7 @@ impl<'a> OathApplet<'a> {
     /// `Fs::has_data` collapses the two, and the absent arm here hands the stored
     /// credentials to an unauthenticated host.
     fn otp_pin_gate<S: Storage>(&self, fs: &mut Fs<S>) -> Result<(), Sw> {
-        let set = fs
-            .try_has_data(EF_OTP_PIN)
-            .map_err(|_| Sw::MEMORY_FAILURE)?;
+        let set = fs.try_exists(EF_OTP_PIN).map_err(|_| Sw::MEMORY_FAILURE)?;
         if set && !self.otp_pin_verified {
             return Err(Sw::SECURITY_STATUS_NOT_SATISFIED);
         }
@@ -1081,7 +1081,7 @@ impl<'a> OathApplet<'a> {
         // it proves nothing and this command is otherwise unauthenticated: a host
         // could plant a PIN on a factory-state key and unlock the store later,
         // through the access code the owner sets afterwards. Require the operator.
-        if !fs.has_key(EF_OATH_CODE)
+        if !fs.exists(EF_OATH_CODE.get())
             && self
                 .presence
                 .borrow_mut()
@@ -1097,7 +1097,7 @@ impl<'a> OathApplet<'a> {
         };
         // A faulted probe must not read as "no PIN yet": that arm overwrites the
         // owner's OTP-PIN with the caller's.
-        match fs.try_has_data(EF_OTP_PIN) {
+        match fs.try_exists(EF_OTP_PIN) {
             Ok(true) => return Sw::CONDITIONS_NOT_SATISFIED,
             Err(_) => return Sw::MEMORY_FAILURE,
             Ok(false) => {}
@@ -1229,7 +1229,7 @@ impl<'a> OathApplet<'a> {
         };
         // Any attempt clears a prior unlock; only a correct PIN restores one below. A
         // probe the flash failed reads as a code set, whose lock the PIN cannot open.
-        let code_set = fs.try_has_key(EF_OATH_CODE).unwrap_or(true);
+        let code_set = fs.try_exists(EF_OATH_CODE.get()).unwrap_or(true);
         let unlocked = self.validated;
         self.validated = false;
         self.otp_pin_verified = false;
@@ -1321,7 +1321,7 @@ impl<S: Storage> Applet<Fs<S>> for OathApplet<'_> {
         // the access-code gate on every protected command, SELECT is unauthenticated
         // and host-driven, and the collapsed `false` opened the whole store for the
         // session — so the failed probe must lock it, not unlock it.
-        let code_set = fs.try_has_key(EF_OATH_CODE).unwrap_or(true);
+        let code_set = fs.try_exists(EF_OATH_CODE.get()).unwrap_or(true);
         if code_set {
             self.rng.borrow_mut().fill(&mut self.challenge);
             res.push(TAG_CHALLENGE);
