@@ -119,7 +119,7 @@ The latest local completion boundary is:
 |---|---|---|
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
 | 2 | Command-level cases and the completed default-profile review of 996 baseline outcomes and 27 function groups, including direct test-util cases | MC/DC evidence and closure in each declared profile remain open; current raw residuals and their dispositions are recorded in [Testing](testing.md) |
-| 3 | Seed and journal cuts; compound OpenPGP PIN and boot-repair record cuts; command/recovery NOR byte cuts including F9 provisioning | Extend command-specific recovery histories to the remaining persistent operations |
+| 3 | Persistent write families have bounded command → fresh boot → interrupted recovery → fresh boot histories, including owner replay and older layouts; selected NOR byte sweeps arm recovery before mount | Broaden read/erase/corruption/exhaustion/silent-write combinations and retained campaigns; these record and selected-byte sweeps do not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners | Whole-core mutation closure and rare crypto fallback paths |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
 | 6 | Eighteen source-matched host-profile maps; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
@@ -2256,3 +2256,94 @@ The full assurance invocation passes 2700 cases. `results.json` under
 profiles, image windows, controls, mutations, coverage and retained corpus to
 their logs and hashes. Its `whole_plan_complete` remains false; the completion
 table above retains the outstanding criteria.
+
+## 2026-10-09 Persistent writes and a second interrupted recovery
+
+The command/recovery extension is complete for the persistent write families
+listed below. The inventory follows the applet dispatchers and their storage
+writers, including panel calls to the same public persistence helpers. An
+operation without a boot repair keeps its committed prefix through two fresh
+stores; completing it requires the owner's authorized repeat command. A
+read-only recovery is asserted as such, rather than given an invented write.
+
+`rsk_fs::cut::sweep_restarts` arms each first record budget, forks independent
+copies of the resulting medium, and arms each recovery budget **before**
+constructing and scanning the next `Fs`. A healthy final boot runs the same
+recovery and oracle. Both loops have a 64-mutation ceiling and fail if an
+uncut command or uncut recovery pass is never reached. Best-effort commands
+can report success after a refused write; the sweep uses the medium's cut
+witness rather than that status as its stopping condition. The older
+`sweep_recovery` helper now also requires an uncut second pass for every first
+state. Final oracles assert semantic completion; controls include a repair
+exceeding the ceiling.
+
+| Area and persistent operations | Recovery and committed-state oracle | Tests |
+|---|---|---|
+| Shared DeviceInfo: merge, arm/replace/clear configuration lock, legacy lock cleanup | Authorized owner replay preserves whole lock/config records, rejects wrong or absent codes before repair, and retains unrelated TLVs and records. Plaintext cleanup is retried at boot. CCID management and its non-CCID helper have route tests, including strict-config. | `rsk-devconf/lock_recovery_tests.rs`, `rsk-mgmt/restart_tests.rs`, FIDO vendor configuration tests and OTP DeviceInfo row |
+| FIDO makeCredential: create and replace resident records, RP counts, per-credential counter | Boot settles RP records. A surviving preceding key retains its counter, including the legacy global-counter fallback; the new identity permits the declared partial replacement prefix. A completed replacement starts at 1. Neighbor credential/counter and metadata stay intact. | `rsk-fido/credential_restart_tests.rs`, `power_cut_credential.rs` |
+| FIDO credential management and panel deletion/user update | Boot settles RP counts and orphan nicknames; retained credentials, their user identities and unaffected neighbors remain usable. | `credmgmt_recovery_tests.rs`, `credmgmt_tests.rs`, `passkeys_tests.rs` |
+| FIDO ClientPIN SET, CHANGE, PIN-token and permission-token requests, built-in UV 0x06, local/device PIN set and verify | Cold state discards volatile grants. Real seed boot remints a revoked persistent grant; it must differ from the old grant after PIN/policy change. Correct/wrong attempts preserve the allowed retry depletion, and the independent device PIN leaves FIDO's grant unchanged. Both PIN protocols run. | `clientpin_restart_tests.rs`, `clientpin_policy_restart_tests.rs` |
+| FIDO forced/minimum PIN policy, alwaysUv, enterprise attestation enable and RP list | A forced policy never keeps its old grant; the remint boot is cut too. Clearing FORCE_CHANGE follows the new verifier and preserves the minimum/RP hash list. Other settled one-record policy boots are read-only. | `config_tests.rs`, `clientpin_policy_restart_tests.rs` |
+| FIDO/U2F getAssertion, getNextAssertion and AUTHENTICATE | Only an acknowledged signature requires the durable advance; it verifies independently and reports the preceding count. Resident counters stay independent. A U2F handle uses one global sequence across U2F and CTAP2. Fresh state loses the getNext walk. Strict-up refuses don't-enforce without a write across both boots. | `getassertion_restart_tests.rs`, `u2f_restart_tests.rs` |
+| FIDO global largeBlob array, per-credential largeBlob extension, RP nickname create/replace/clear | Whole old/new values, credential-bound blob authentication and unchanged neighbors. The full largeblob-ext assertion allows the documented blob-before-counter prefix but checks signature, count and written flag on completion. Nickname clear retains its best-effort delete contract. | `largeblobs_tests.rs`, `largeblobext_restart_tests.rs`, `getassertion_restart_tests.rs`, `passkeys_restart_tests.rs` |
+| FIDO seed load/rekey, backup finalization, RESET, soft-lock enable/disable, attestation import/clear | Boot repairs the seed's certificate without changing a committed identity. RESET and import use fresh owner authorization for replay. A disable interrupted with both seed forms uses the real enable → unlock → disable owner route. Attestation import retains its chain-before-key prefix; reset preserves organization identity and gates over surviving secrets. | `vendor_recovery_tests.rs`, `vendor_restart_tests.rs`, `reset_restart_tests.rs`, `power_cut_backup.rs` |
+| FIDO seed, attestation key and persistent grant migrations, PIN-wrapped seed, RP sealing; audit enable/disable/append/scrub | Older CBC, pre-OTP AEAD and both PIN-wrap root generations retain their plaintext identity. Pre-OTP replacement rearms the scrub; an OTP-rooted wrap leaves the completed marker intact. Settled migrations are write-free. Journal repair preserves authenticated chain continuity and append position. | `seed_restart_tests.rs`, `credmgmt_recovery_tests.rs`, journal tests, `power_cut_journal.rs` |
+| PIV regular and retired EC keys, RSA import/generation finish, MOVE/delete, fixed and pooled data objects | Regular boot does not repair a missing key head. Headless survivors cannot authenticate or attest; a new head has the intended policy/origin. MOVE retains its non-atomic prefix and certificate behavior. Object bytes are whole old/new values. RSA persistence uses a prepared valid result; existing generation tests cover the generator wiring. | `restart_tests.rs`, `restart_repair_tests.rs`, `keygen_bounds_tests.rs` |
+| PIV SELECT provisioning, F9 key/public/certificate, legacy management head, management-key rotate and protected escrow | Boot and owner replay are cut independently. F9 key/certificate points match. Newly enabling protection requires the new management tuple; an escrowed rotation retains protection over the old key until replacement commits. Policy, timestamp and unrelated flag bits survive. | `restart_repair_tests.rs`, `mgmkey_restart_tests.rs`, `mgmkey_tests.rs`, `power_cut_piv.rs` |
+| PIV VERIFY, PIN/PUK CHANGE, UNBLOCK, SET RETRIES and RESET; pre-OTP seal migration | Whole verifiers and exact permitted retry prefixes; reset cannot expose surviving keys under factory gates. Owner reset replay blocks references through real commands. Migrations retain key and management identities and rearm the scrub. | `restart_tests.rs`, `restart_repair_tests.rs` |
+| OpenPGP VERIFY, CHANGE, RESET RETRY, reset-code create/replace/clear and boot initialization/compatibility repair | Both old/new PIN authorities and all staged DEK wrappers are considered. Authenticated obsolete public-reset wrappers finish cleanup across two cuts; unknown or unread orphan records stay preserved. Boot keeps the surviving DEK. | `pin_recovery_commands_tests.rs`, `init_restart_tests.rs`, `power_cut_openpgp.rs` |
+| OpenPGP ordinary/private DOs, fingerprints/timestamps, UIF/password status, certificates and AES replacement | Whole record values, PW2 ownership for private DO1/3 and fixed widths for fingerprint/timestamp writes. Valid empty Sex/UIF writes are followed by a separately interrupted boot reseed. Certificate occurrence neighbors and the owner DEK remain unchanged. | `restart_commands_tests.rs`, `restart_metadata_tests.rs` |
+| OpenPGP EC generation/import, RSA import/generation finish, algorithm invalidation and PSO signature count | New public DO implies new private key; imported-origin marking precedes key commit. Generated-origin/AES tails retain their best-effort contract. SIG reset follows publication. A changed attribute has no old key/public DO, and a returned signature has a committed counter advance. RSA finish uses a prepared valid key rather than generating primes at every cut. | `restart_commands_tests.rs`, `restart_metadata_tests.rs` |
+| OpenPGP KDF single/three-salt/on/off, TERMINATE and ACTIVATE | KDF replay chooses the password matching the committed verifier, then uses real VERIFY. It does not burn extra attempts by guessing both values. A terminated marker keeps normal dispatch closed until ACTIVATE completes the wipe/reseed; unrelated applets remain intact. | `kdf_restart_tests.rs`, `lifecycle_restart_tests.rs` |
+| OpenPGP attestation root and certificate repair, lazy EC/AES32/RSA CFB upgrades | Repair derives public identity and certificates from the surviving readable signer. New-key commit first retires the old certificate. Independent root/leaf signature checks, read-fault refusals and no-entropy repair controls remain. Both older RSA plaintext layouts and both loaders settle without rekeying or another write. | `attest_restart_tests.rs`, `keys_restart_tests.rs` |
+| OATH PUT/DELETE/RENAME, HOTP and increasing bulk updates, access code, OTP-PIN and RESET | Per-record prefixes and exact factors/retry budgets; neighbor credentials and metadata remain. Owner reset replay preserves gates until secrets retire. Plaintext and pre-OTP credential/PIN layouts are retried under the corresponding authority. VERIFY_CODE is read-only. | `rsk-oath/restart_tests.rs`, `restart_migration_tests.rs` |
+| OTP four slots and dedicated-slot writes, SWAP, NDEF/scan map/device config, HOTP/Yubico counter reservation and migrations | Boot does not replay SWAP. Its allowed loss/duplication prefixes are explicit, rather than falsely atomic. Counter reservations retain positions across initial boot and session wrap. Older slot formats preserve full counter/tail bytes. Best-effort auxiliary APDUs have healthy effect witnesses. | `rsk-otp/restart_tests.rs`, `restart_migration_tests.rs` |
+| Shared PHY save/merge/update, vendor LED/config counter, rescue certificate/PHY/device-key persistence | Whole records and unchanged board fields/neighbors. Missing LED/device keys provision through their real entry points; existing identity is inspected before replay without generating it. Older rescue keys retain their scalar across both migration cuts. | `rsk-phy/restart_tests.rs`, `rsk-vendor/restart_tests.rs`, `rsk-rescue/restart_tests.rs`, `keydev_restart_tests.rs` |
+| Panel factory wipe | The storage wipe uses the actual device caller's survivor, seed and gate predicates. Every gate remains while any applet secret survives; organization attestation survives the completed wipe. Recovery is an explicit owner retry. This is persistence evidence, not execution of a display image or a physical power cut. | `rsk-device/factory_restart_tests.rs` |
+
+The inventory excludes buffer/encoder `put` methods, read-only commands,
+volatile RTC/session state and maintainer-only fuse writes. Older synthetic
+AES-CFB widths below 32 do not run a migration write: that loader only reseals
+the 32-byte legacy layout older GENERATE produced. These dispositions are
+about reachable persistence paths, not exclusions from raw LLVM coverage.
+
+The real NOR `power_cut` target covers seed/rekey, journal, OpenPGP PIN, PIV F9,
+DeviceInfo and resident-credential histories. Diagnostics remount a **clone**;
+they cannot heal the medium before its second cut. Actual recovery budgets
+include mount repair and applet recovery. Deterministic native tests walk every
+command program/erase byte and every recovery byte at three representative
+first positions per trace. This is not the Cartesian product of all byte pairs.
+The record sweeps exercise the corresponding pairs within their 64-mutation
+bound; neither model establishes arbitrary hardware interruption coverage.
+
+Three firmware defects were reproduced and corrected in separate commits:
+obsolete OpenPGP public-reset wrapper cleanup (`67a2ca09ac7c`), attestation
+repair accepting records from different signers (`afa72a354685`), and resetting
+the preceding resident credential's counter before its replacement committed
+(`c453c2442e25`). Their regression controls fail on the preceding code.
+In-diff mutation runs report respectively 3 caught/1 unviable, 15 caught/4
+unviable and 2 caught/1 unviable, with no survivors; unviable builds are not
+test kills. Firmware changes advance `bcdDevice` through `0x0A95`.
+
+Per-group host suites, affected-profile rows and host/fuzz clippy runs accompany
+the signed local commit stack. Native byte-sweep, Miri, regression/control and
+mutation logs are retained in `target/recovery-matrix-20261008/`, together with
+the exact commit/file ledger. This extension does not implement MC/DC, repeat
+the earlier raw coverage measurement, close the remaining Phase 3 fault kinds,
+or claim device/display execution.
+
+The final gate verdict is composed. `check-final.log` contains the passing
+prefix; `check-resumed.log` repeats the fido-conformance row after correcting
+the test's strict-up expectation, and `check-resumed-2.log` completes the delete
+dispositions and remaining rows. The default/strict-up U2F controls and final
+PIN-policy completion oracle have additional passing test/clippy logs.
+Assurance similarly resumes after reviewed citation updates and regeneration
+of its existing pages; its final script battery passes all 2700 cases. The
+updated deleter registry also passes its 43 direct controls. No failed row
+remains unresolved and no gate, dependency or toolchain pin was weakened.
+
+The new credential NOR class passes its full deterministic native byte sweep.
+Its initial Miri batch passes seeds 0 through 7; after strengthening the final
+RP/count oracles, the complete selected trace matrix passes a further Miri run
+with seed 0 and strict provenance. Those runs do not stand for arbitrary
+power-loss timing, other fault kinds, or all supported profile combinations.
