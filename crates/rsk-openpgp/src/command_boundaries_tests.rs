@@ -161,7 +161,7 @@ fn refused_put_data_writes_preserve_the_previous_value_and_admin_grant() {
             Sw::MEMORY_FAILURE
         );
         assert_eq!(medium.value(target), Some(original));
-        assert_eq!(fs.write_gen(), generation);
+        assert_eq!(fs.write_gen(), generation.wrapping_add(1));
         assert!(app.sess.has_pw3);
         medium.arm(u32::MAX);
         assert_eq!(

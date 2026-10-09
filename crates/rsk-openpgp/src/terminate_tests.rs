@@ -502,8 +502,8 @@ fn a_wipe_clears_more_files_than_one_batch_holds() {
 #[test]
 fn a_truncated_enumeration_fails_the_wipe_instead_of_reading_it_as_clear() {
     let mut fs = Fs::new(rsk_fs::storage::faults::TruncatedWalk::new());
-    fs.scan();
     fs.put(EF_PK_SIG.get(), &[0xAB; 40]).unwrap();
+    fs.scan();
     assert_eq!(wipe_openpgp(&mut fs), Err(Sw::MEMORY_FAILURE));
     let mut buf = [0u8; 40];
     assert_eq!(

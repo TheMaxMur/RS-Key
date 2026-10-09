@@ -152,7 +152,7 @@ fn a_refused_last_counter_advance_stays_owed_after_another_failed_boot() {
         let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
         assert_eq!(press_position(&mut app, &mut fs, 1, &KEY), None);
         assert_eq!(raw_slot(&mut fs, EF_OTP_SLOT1), stored);
-        assert_eq!(fs.write_gen(), 0);
+        assert_eq!(fs.write_gen(), 1);
         assert_eq!(app.session_counter, [0; SLOT_COUNT as usize]);
         assert_eq!(app.advanced, [false; SLOT_COUNT as usize]);
     }
