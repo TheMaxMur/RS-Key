@@ -282,7 +282,7 @@ fn authorized_by_ppuat<S: Storage, R: Rng>(
     // Both issuance paths gate on `EF_PIN` (§6.5.5.7.2/.3), but a record can stand
     // without one: provisioning mints it before any PIN exists, and an older build's
     // torn wipe could drop the PIN under a grant it had handed out. Neither authorizes.
-    if !ctx.fs.has_data(EF_PIN) {
+    if !ctx.fs.exists(EF_PIN) {
         return false;
     }
     let Some(mut tok) = load_ppuat(&ctx.dev, ctx.fs) else {

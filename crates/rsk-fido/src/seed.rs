@@ -99,7 +99,7 @@ pub fn lock_state<S: Storage>(fs: &mut Fs<S>) -> Result<bool> {
     // operation worked and BACKUP_EXPORT still handed out the seed without the lock
     // key. Reading the torn state as *unlocked* is the truth, and it lets
     // `rsk lock enable` simply be retried (audit run-33).
-    Ok(fs.try_has_key(EF_KEY_DEV_ENC)? && !fs.try_has_key(EF_KEY_DEV)?)
+    Ok(fs.try_exists(EF_KEY_DEV_ENC.get())? && !fs.try_exists(EF_KEY_DEV.get())?)
 }
 
 /// Wrap the seed value under a host-supplied 32-byte lock key (AUT_ENABLE).
@@ -659,7 +659,7 @@ pub fn migrate_keydev_pin<S: Storage>(dev: &Device, fs: &mut Fs<S>, pin_hash: &[
 /// Refines `RSKeySecurityState!RamNeverOutlivesFlashSeed` — SEC-FIDO-007.
 pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng) -> Result<()> {
     let locked = lock_state(fs)?;
-    if !fs.try_has_key(EF_KEY_DEV)? && !locked {
+    if !fs.try_exists(EF_KEY_DEV.get())? && !locked {
         let mut seed = Secret::<[u8; 32]>::zeroed();
         loop {
             rng.fill(seed.expose_mut());
@@ -678,10 +678,10 @@ pub fn ensure_seed<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut impl Rng)
     // Not `has_data`: a faulted probe here would roll the signature counter back
     // to zero and overwrite the large-blob array — the same absent-means-first-boot
     // reading the seed guard above makes, at two records the owner cannot rebuild.
-    if !fs.try_has_counter(EF_COUNTER)? {
+    if !fs.try_exists(EF_COUNTER.get())? {
         fs.put_counter(EF_COUNTER, &[0u8; 4])?;
     }
-    if !fs.try_has_data(EF_LARGEBLOB)? {
+    if !fs.try_exists(EF_LARGEBLOB)? {
         fs.put(EF_LARGEBLOB, &LARGEBLOB_INITIAL)?;
     }
     if !locked {
@@ -763,7 +763,7 @@ pub fn rebuild_att_cert<S: Storage>(
 }
 
 /// The global signature counter, stored little-endian; 0 when the record is
-/// absent or short (`authenticatorReset` deletes it, `ensure_seed` recreates it
+/// absent (`authenticatorReset` deletes it, `ensure_seed` recreates it
 /// at the next boot).
 ///
 /// Not `Fs::read`, and no collapsing sibling: signCount is the ONLY clone
@@ -774,7 +774,8 @@ pub fn global_sign_counter<S: Storage>(fs: &mut Fs<S>) -> Result<u32> {
     let mut buf = [0u8; 4];
     Ok(match fs.try_read_counter(EF_COUNTER, &mut buf)? {
         Some(4) => u32::from_le_bytes(buf),
-        _ => 0,
+        Some(_) => return Err(Error::MemoryFatal),
+        None => 0,
     })
 }
 

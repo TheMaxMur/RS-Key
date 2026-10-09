@@ -227,9 +227,9 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
             always_uv_record_len: always_uv_size,
             always_uv_raw,
             persistent_grant_record: fs.has_key(EF_PAUTHTOKEN),
-            backup_sealed_record: fs.has_data(EF_BACKUP_SEALED),
-            seed_plain_record: fs.has_key(EF_KEY_DEV),
-            seed_encrypted_record: fs.has_key(EF_KEY_DEV_ENC),
+            backup_sealed_record: fs.exists(EF_BACKUP_SEALED),
+            seed_plain_record: fs.exists(EF_KEY_DEV.get()),
+            seed_encrypted_record: fs.exists(EF_KEY_DEV_ENC.get()),
             credential_slots_raw: credentials.iter().filter(|present| **present).count() as u16,
             rp_slots_raw: rps.iter().filter(|present| **present).count() as u16,
             token_in_use_raw: st.paut.in_use,
@@ -260,7 +260,7 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
         self.fido_state
             .borrow_mut()
             .abstract_token(rsk_fido::TokenPersistentView {
-                pin_set: fs.has_data(EF_PIN),
+                pin_set: fs.exists(EF_PIN),
                 persistent_grant: fs.has_key(EF_PAUTHTOKEN),
             })
     }

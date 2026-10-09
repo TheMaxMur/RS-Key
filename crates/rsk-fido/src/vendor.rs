@@ -391,7 +391,7 @@ fn att_import<S: Storage, R: Rng>(
     // An import replaces the attestation identity every U2F REGISTER signs with, and
     // `gate` waives its PIN half when no PIN is set — leaving the whole handover on
     // one unlabelled touch. Name it explicitly when there is no PIN to authorise it.
-    if !ctx.fs.has_data(EF_PIN)
+    if !ctx.fs.exists(EF_PIN)
         && !ctx.check_user_presence(crate::Confirm::titled("Replace this identity?"))
     {
         return Err(CtapError::OperationDenied);
@@ -427,7 +427,7 @@ fn att_clear<S: Storage, R: Rng>(
 ) -> CtapResult {
     // The identity this destroys survives a factory reset and only the org's HSM
     // can restore it, so it gets the same explicit prompt the import gained.
-    if !ctx.fs.has_data(EF_PIN)
+    if !ctx.fs.exists(EF_PIN)
         && !ctx.check_user_presence(crate::Confirm::titled("Erase this identity?"))
     {
         return Err(CtapError::OperationDenied);
@@ -486,8 +486,7 @@ fn att_state<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, out: &mut [u8]) -> CtapRes
 /// RP-usage history. No MSE channel: no key material moves.
 fn audit_read<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req, out: &mut [u8]) -> CtapResult {
     pin_gate(ctx, req)?;
-    if !ctx.fs.has_data(EF_PIN)
-        && !ctx.check_user_presence(crate::Confirm::titled("Read audit log?"))
+    if !ctx.fs.exists(EF_PIN) && !ctx.check_user_presence(crate::Confirm::titled("Read audit log?"))
     {
         return Err(CtapError::OperationDenied);
     }
@@ -782,7 +781,7 @@ fn pin_gate<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> Result<(), Ct
     // `try_*` on BOTH probes: this is the only PIN half of the gate on the seed
     // export, the attestation identity and the audit chain, and a probe that read as
     // "no PIN configured" waived it outright.
-    if ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)? {
+    if ctx.fs.try_exists(EF_PIN).map_err(|_| CtapError::Other)? {
         // A present-but-unsupported protocol is judged first — `0` is a value the
         // platform sent — and an absent one only where the token needs it.
         let proto = crate::clientpin::checked_proto(req.proto_present.then_some(req.proto))?;
@@ -924,7 +923,7 @@ fn backup_load<S: Storage, R: Rng>(
     // state a fresh or just-reset key is in), which left the whole operation on a
     // single touch under a generic prompt — so name the destruction explicitly
     // when there is no PIN to authorise it.
-    if !ctx.fs.has_data(EF_PIN)
+    if !ctx.fs.exists(EF_PIN)
         && !ctx.check_user_presence(crate::Confirm::titled("Replace device seed?"))
     {
         return Err(CtapError::OperationDenied);
@@ -1081,7 +1080,7 @@ pub fn backup_sealed<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> bool {
 pub fn try_backup_sealed<S: Storage>(
     fs: &mut rsk_fs::Fs<S>,
 ) -> Result<bool, rsk_sdk::error::Error> {
-    fs.try_has_data(EF_BACKUP_SEALED)
+    fs.try_exists(EF_BACKUP_SEALED)
 }
 
 /// `CONFIG_COMMANDS`: `{1: [vendorCommandId, …]}`, every authenticatorConfig vendor

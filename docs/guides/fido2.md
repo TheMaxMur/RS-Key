@@ -6,6 +6,12 @@ new value already landed. Retry from the persistent state rather than assuming
 rollback; the firmware rebuilds its inventory and reports no spare capacity
 until an incomplete scan can finish. Record formats are unchanged.
 
+Empty PIN/seed/lock records are damaged state, not a fresh device. Firmware
+preserves them and refuses the affected operation instead of installing a new
+PIN or identity. A damaged irreversible backup marker keeps export closed.
+Malformed global counters refuse advancement; malformed alwaysUv overrides
+keep user verification required until an authenticated reset clears them.
+
 The FIDO half of the device: passkeys, two-factor security-key logins, and
 legacy U2F. It speaks CTAP2 (`FIDO_2_0`) and CTAP1 (`U2F_V2`) over the HID
 interface, so standard WebAuthn browsers and OS dialogs drive it without extra

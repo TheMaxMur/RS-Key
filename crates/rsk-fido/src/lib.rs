@@ -176,7 +176,9 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
             let enc_id = seed::enc_identifier(&ctx.dev, ctx.fs, ctx.rng);
             let enc_css = seed::enc_cred_store_state(&ctx.dev, ctx.fs, ctx.rng);
             getinfo::get_info(
-                ctx.fs.has_data(consts::EF_PIN),
+                ctx.fs
+                    .try_exists(consts::EF_PIN)
+                    .map_err(|_| CtapError::Other)?,
                 policy.min,
                 policy.force,
                 policy.complexity,

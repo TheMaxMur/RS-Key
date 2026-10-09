@@ -335,8 +335,9 @@ pub(crate) fn always_uv_enabled<S: Storage>(fs: &mut Fs<S>) -> bool {
 fn always_uv_state<S: Storage>(fs: &mut Fs<S>) -> rsk_sdk::error::Result<bool> {
     let mut v = [0u8; 1];
     Ok(match fs.try_read(EF_ALWAYS_UV, &mut v)? {
-        Some(n) if n >= 1 => v[0] != 0,
-        _ => DEFAULT_ALWAYS_UV,
+        Some(1) if v[0] <= 1 => v[0] != 0,
+        Some(_) => return Err(rsk_sdk::error::Error::MemoryFatal),
+        None => DEFAULT_ALWAYS_UV,
     })
 }
 
@@ -487,7 +488,7 @@ fn set_min_pin_length<S: Storage, R: Rng>(
     // no change demanded, `force_change_pending` reads the cleared flag for good,
     // and the live token is not invalidated. Nothing is written yet here, so
     // refusing costs a retry.
-    let pin_set = ctx.fs.try_has_data(EF_PIN).map_err(|_| CtapError::Other)?;
+    let pin_set = ctx.fs.try_exists(EF_PIN).map_err(|_| CtapError::Other)?;
     if force_change && !pin_set {
         return Err(CtapError::PinNotSet);
     }

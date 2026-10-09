@@ -40,6 +40,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- FIDO treats an existing empty security record as damaged material, rather
+  than an unset PIN, seed, lock or irreversible backup marker. Unauthenticated
+  SET PIN cannot replace a truncated owner verifier, seed boot cannot mint over
+  an empty identity record, and a damaged backup marker keeps export closed.
+  Malformed global counters cannot restart at zero, and a damaged alwaysUv
+  override keeps verification required and cannot be toggled from a fallback.
+  Non-empty data queries retain their existing meaning. bcdDevice → `0x0A97`.
+
 - Storage checks the bytes programmed and the complete erased NOR window before
   accepting success. Dropped or partial mutations and failed readback propagate
   as storage failures, including during tombstones, migration and scrub. An

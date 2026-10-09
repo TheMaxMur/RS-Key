@@ -441,7 +441,7 @@ fn enforce_pin<S: Storage, R: Rng>(
         // code a selection-managing platform reads to move on to PIN entry.
         Some(&[]) => {
             ctx.require_presence(crate::Confirm::titled("Use this key?"))?;
-            Err(if ctx.fs.has_data(EF_PIN) {
+            Err(if ctx.fs.exists(EF_PIN) {
                 CtapError::PinInvalid
             } else {
                 CtapError::PinNotSet

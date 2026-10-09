@@ -581,6 +581,33 @@ fn an_empty_record_is_not_data() {
 }
 
 #[test]
+fn record_existence_distinguishes_empty_absent_and_unreadable_across_mounts() {
+    use crate::storage::faults::ProbeStuck;
+    const OWNER: u16 = 0xCC10;
+    const ABSENT: u16 = 0xCC11;
+    let (backend, medium) = ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    fs.put(OWNER, &[]).unwrap();
+    for _ in 0..2 {
+        assert_eq!(fs.try_exists(OWNER), Ok(true));
+        assert!(fs.exists(OWNER));
+        assert!(!fs.has_data(OWNER));
+        assert_eq!(fs.try_exists(ABSENT), Ok(false));
+        assert!(!fs.exists(ABSENT));
+        fs = Fs::new(fs.into_storage());
+        fs.scan();
+    }
+    medium.stick(Some(OWNER));
+    assert_eq!(fs.try_exists(OWNER), Err(Error::MemoryFatal));
+    assert!(!fs.exists(OWNER));
+    medium.stick(None);
+    assert_eq!(fs.try_exists(OWNER), Ok(true));
+    assert!(fs.exists(OWNER));
+    assert_eq!(fs.read(OWNER, &mut []), Some(0));
+}
+
+#[test]
 fn a_factory_wipe_clears_more_keys_than_one_batch_holds() {
     // `factory_wipe` deletes in [`WIPE_BATCH`] batches. Nothing drove it past the
     // first one, so the bound that keeps `batch[n]` in range was untested — and

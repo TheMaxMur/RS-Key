@@ -388,6 +388,29 @@ fn the_security_trace_reports_the_pad_and_not_a_constant() {
     );
 }
 
+#[cfg(feature = "security-trace")]
+#[test]
+fn the_security_trace_keeps_empty_persistent_security_records_present() {
+    use rsk_fido::consts::{EF_BACKUP_SEALED, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_PIN};
+    let env = Env::new();
+    let mut ctap = env.ctap();
+    assert!(!ctap.security_trace_abstract_token().pin_set);
+    {
+        let mut fs = env.fs.borrow_mut();
+        fs.put(EF_PIN, &[]).unwrap();
+        fs.put(EF_BACKUP_SEALED, &[]).unwrap();
+        fs.put_key(EF_KEY_DEV, rsk_fs::Sealed::wrap(&[])).unwrap();
+        fs.put_key(EF_KEY_DEV_ENC, rsk_fs::Sealed::wrap(&[]))
+            .unwrap();
+    }
+    let snapshot = ctap.security_trace_snapshot();
+    assert_eq!(snapshot.pin_record_len, Some(0));
+    assert!(snapshot.backup_sealed_record);
+    assert!(snapshot.seed_plain_record);
+    assert!(snapshot.seed_encrypted_record);
+    assert!(ctap.security_trace_abstract_token().pin_set);
+}
+
 /// CTAPHID_MSG carries U2F in U2F HID's extended-length framing alone: a YubiKey
 /// 5.8.0 answers each of these, measured, as written here, and a malformed length
 /// is refused before the instruction is looked at.
