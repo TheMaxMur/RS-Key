@@ -8,6 +8,9 @@ use alloc::vec;
 use alloc::vec::Vec;
 use rsk_fs::storage::ram::RamStorage;
 
+#[path = "kdf_restart_tests.rs"]
+mod restarts;
+
 struct CountRng(u8);
 impl Rng for CountRng {
     fn fill(&mut self, buf: &mut [u8]) {
