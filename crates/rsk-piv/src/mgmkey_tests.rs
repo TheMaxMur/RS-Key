@@ -687,3 +687,6 @@ fn a_select_that_could_not_read_the_key_leaves_its_head_owed() {
     select(&mut app, &mut fs);
     assert!(authenticates(&mut app, &mut fs, FACTORY));
 }
+
+#[path = "mgmkey_restart_tests.rs"]
+mod restarts;
