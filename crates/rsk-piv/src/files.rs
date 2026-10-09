@@ -373,12 +373,12 @@ pub fn put_pin_verifier<S: Storage>(
 /// file it reads absent, so one faulted `EF_PIN` probe replaced the owner's
 /// verifier and `VERIFY 123456` opened the card. `Fs::has_data` collapses the two.
 fn provisioned<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Result<bool, Sw> {
-    fs.try_has_data(fid).map_err(|_| Sw::MEMORY_FAILURE)
+    fs.try_exists(fid).map_err(|_| Sw::MEMORY_FAILURE)
 }
 
 /// Create the PIN/PUK/retry files, the default management key and the F9
 /// attestation key + its self-signed P-384 certificate on first use.
-/// Idempotent — every step is guarded by a has-data check. Answers `false` when the
+/// Idempotent — every step is guarded by a record-presence check. Answers `false` when the
 /// 9B head could not be written, or the key behind it read: the next SELECT runs
 /// this again, and a RESET reports it.
 pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -> Result<bool, Sw> {

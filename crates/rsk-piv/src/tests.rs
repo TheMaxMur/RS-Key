@@ -5643,9 +5643,9 @@ fn reset_fails_when_the_enumeration_is_truncated() {
         latched: false,
     };
     let mut fs = Fs::new(rsk_fs::storage::faults::TruncatedWalk::new());
-    fs.scan();
     let obj = data_object_fid(0x01).unwrap();
     fs.put(obj, &[0x41]).unwrap();
+    fs.scan();
     assert_eq!(
         reset_files(&dev, &mut fs, &mut TestRng(3)),
         Err(Sw::MEMORY_FAILURE)
@@ -11117,3 +11117,6 @@ mod coverage_boundaries;
 
 #[path = "restart_tests.rs"]
 mod restarts;
+
+#[path = "stored_damage_tests.rs"]
+mod stored_damage;
