@@ -119,7 +119,7 @@ The latest local completion boundary is:
 |---|---|---|
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
 | 2 | Command-level cases and the completed default-profile review of 996 baseline outcomes and 27 function groups, including direct test-util cases | MC/DC evidence and closure in each declared profile remain open; current raw residuals and their dispositions are recorded in [Testing](testing.md) |
-| 3 | Persistent write families have bounded command → fresh boot → interrupted recovery → fresh boot histories, including owner replay and older layouts; selected NOR byte sweeps arm recovery before mount | Broaden read/erase/corruption/exhaustion/silent-write combinations and retained campaigns; these record and selected-byte sweeps do not close the whole phase |
+| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns, arbitrary correlated faults and semantic record-loss detection beyond the current CRC/legacy formats remain open; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners | Whole-core mutation closure and rare crypto fallback paths |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
 | 6 | Eighteen source-matched host-profile maps; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
@@ -2257,7 +2257,7 @@ profiles, image windows, controls, mutations, coverage and retained corpus to
 their logs and hashes. Its `whole_plan_complete` remains false; the completion
 table above retains the outstanding criteria.
 
-## 2026-10-09 Persistent writes and a second interrupted recovery
+## Persistent writes and a second interrupted recovery
 
 The command/recovery extension is complete for the persistent write families
 listed below. The inventory follows the applet dispatchers and their storage
@@ -2347,3 +2347,86 @@ Its initial Miri batch passes seeds 0 through 7; after strengthening the final
 RP/count oracles, the complete selected trace matrix passes a further Miri run
 with seed 0 and strict provenance. Those runs do not stand for arbitrary
 power-loss timing, other fault kinds, or all supported profile combinations.
+
+
+## Storage fault matrix
+
+The remaining fault kinds were exercised through the actual two-partition
+`SeqStorage` and through applet entry points. `FaultFlash` wraps the store tests'
+NOR mock; byte-cut histories use a separate `MockFlashBase` implementation.
+Both drive the real backend. The fault fixture counts read/program/erase occurrences
+and records whether each independent fault fired. One-shot and latched refusal,
+dropped mutations and partial mutations are distinct controls. Tests permit an
+old or complete new value after an error: failed readback can follow commitment.
+An error is not a rollback receipt.
+
+| Fault family | Observable contract and exercised boundary | Evidence |
+|---|---|---|
+| Failed reads, including readback and a second failed inventory scan | A failed lookup is not confirmed absence. An incomplete dynamic inventory advertises zero free capacity and refuses admission until a complete rescan. Main/counter routing and unrelated owners remain intact. | `rsk-store/src/nor_fault_tests.rs`, `nor_damage_capacity_tests.rs`, `rsk-fs/src/fs_tests.rs` |
+| Refused, dropped or partial erase | Verify the complete erased window, including its last word; retain live data and the counter partition during main-ring scrub. Failed scrub cannot latch the at-rest marker. Healthy retry completes the intended scrub. | `nor_fault_tests.rs` |
+| Successful status without programming, partial program, failed program readback | Compare programmed bytes before accepting success; cover both partitions, overwrite/insert/tombstone and chunks beyond 256 bytes. A complete write followed by read failure is visible after recovery; Fs invalidates derived caches and reconciles its inventory before reuse. | `nor_fault_tests.rs`, `verified_flash.rs` |
+| Physical and logical capacity exhaustion | Fill each real NOR partition to `FullStorage`; retain every acknowledged owner and the unrelated partition, remove an entry and retry. At the unchanged 1280-file logical cap, an uncertain committed insert and another scan fault cannot authorize one more entry. | `nor_damage_capacity_tests.rs`, `nor_fault_tests.rs` |
+| Truncated and corrupt visible security records | The tested distinguishably malformed layouts preserve owner material rather than minting a seed, DEK, factory verifier or F9 key. Their PIN/code gates refuse unauthenticated access; PWS refuses plaintext, counters refuse restart, malformed UIF requires touch and ATTEST refuses padded subject claims. Healthy unrelated PIN and DEC/AUT attestation controls remain usable. Valid legacy/default collisions remain below. | FIDO `seed_damage_tests.rs`, `clientpin_damage_tests.rs`, `config_tests.rs`; PIV `stored_damage_tests.rs`; OpenPGP `init_damage_tests.rs`, `stored_damage_tests.rs`, `attest_damage_tests.rs`; OATH `stored_damage_tests.rs` |
+| CRC-invalid NOR payload | Flip every value payload byte of a current record, with and without an older copy, in both partitions. Damaged bytes never escape as unchecked data; a neighbor survives and an owner replacement remains possible. The permitted old/absent answer has the limitation described below. | `nor_damage_capacity_tests.rs` |
+| Combined faults | Read refusal followed by refused programming, and committed-write readback refusal followed by another failed scan. Both rules must actually fire; a latched first read that masks the second fault is not combination evidence. Clear faults, reopen or rescan and check whole records, neighbors, generation and admission. | `nor_damage_capacity_tests.rs`, `nor_fault_tests.rs` |
+| Verification capture and decoder | PIN and alwaysUv widths 0,1,34,35,36,255,256 and the current maximum remain exact through runtime capture and JSON. Actual TLA Beta classifies present PIN material as configured and malformed present UV overrides as required. Restoring old predicates fails named invariants through the copied existing gate row. | `rsk-device/src/ctap_tests.rs`, `tools/emu/src/security_trace_tests.rs`, `scripts/test_security_trace_damage.py` |
+
+Five firmware fix groups were reproduced before repair: unchecked NOR success
+and uncertain-write caches (`a943b5416469`), damaged FIDO state
+(`7154cf0c55cc`), PIV factory reprovisioning (`5728ac293b44`), OpenPGP gates,
+counters and attestation fields (`2cf485f1`), and OATH gates/empty-key validation
+(`65d4aa90`). The applet controls use actual SET PIN, SELECT, VERIFY, PSO, ATTEST,
+VALIDATE and password-safe commands. Their original failures expose the defect:
+factory credentials or attempted identity regeneration, an actual signature/password response,
+a restarted counter or an incorrectly successful attestation.
+
+Compatibility is explicit. Empty/one-byte minPINLength policies and sparse
+packed credential counters are supported older layouts, not generic corruption
+errors. A short nonempty legacy OATH secret remains usable. A public F9
+certificate can be repaired from its unchanged key; a damaged private key
+cannot authorize another identity. PIV empty-reference VERIFY retains its
+existing non-attempt behavior for an already authorized session; fresh SELECT
+cannot turn that damaged record into a factory PIN.
+
+These are bounded software controls. Raw CRC framing can discard a damaged
+record and return an older copy or absence; it cannot distinguish a torn append
+from later loss of the last usable copy. Absence then remains indistinguishable
+from first provisioning through the current Storage interface. This is a
+reachable integrity limitation, not an unreachable path and not closed by
+readback. Damage that becomes another valid legacy/default layout has the same
+information limit. Detecting those losses requires an independently justified
+persistent authority/format decision. Readback also relies on a truthful fresh
+read; correlated lying writes and reads, arbitrary wear/ECC faults, total media
+loss and silicon execution are outside this matrix.
+
+The trace controls validate logical record decoding, not a fabricated replay of
+malformed applet commands. Snapshot read faults still collapse to nullable raw
+observations and cannot establish their refinement; the committed healthy
+recording contains no such boundary. The Store model retains its old/new append
+assumption and pre-commit-refusal arm; command status, uncertain completion,
+generation and inventory reconciliation are checked by concrete controls.
+Its two arbitrary-subset co-refutation dispositions are scoped accordingly.
+
+Native suites and both selected real-NOR Miri cases pass with seed 0 and strict
+provenance. Mutation controls distinguish caught assertions from compilation
+failures and timeouts: backend loops and PIV provisioning have additional
+bounded, focused controls, and disabled trace code is tested with its feature.
+The composed in-diff results are 44 caught/1 unviable for the backend, 49/10
+for FIDO, 2/0 for PIV, 12/0 for OpenPGP and 3/4 for OATH: 110 caught and
+15 unviable over 125 selected mutations. No selected survivor or timeout remains
+unresolved. A further feature control catches deletion of the UV raw-byte arm;
+these counts do not turn unviable builds or unrelated filtered controls into kills.
+Both gates pass as composed runs. The `check-final`/`check-resumed` logs retain
+the quality rows and their repairs; a complete separate host-doctest run covers
+the packages whose unit-test prefixes were retained. The
+`check-assurance-final`/`check-assurance-resumed` logs retain the assurance rows,
+including the full script suite and the corrected provenance test repeated
+through the same gate row. The freshly recorded full safety/liveness roster is
+bound to `bd3b0649`; safety ran as two disjoint official shards. The
+[published formal results](formal.md) and `formal/runs.toml` own its counts and
+provenance. `results.json` binds this bounded matrix to source and log hashes,
+selected mutations and the signed commit/file ledger; `whole_plan_complete`
+remains false.
+Logs, the signed commit/file ledger and composed gate evidence are retained in
+`target/storage-faults-20261009/`. MC/DC implementation, toolchain pins, capacity
+limits, model actions and release/hardware operations are unchanged.
