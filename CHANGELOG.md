@@ -40,6 +40,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ### Fixed
 
+- FIDO resident credential replacement resets its signature counter after the
+  replacement record commits. A power cut cannot leave the preceding credential
+  with a rolled-back counter. A partially committed replacement may retain the
+  preceding high counter until an owner retry; completed replacement starts at 1.
+  Existing credential and counter record layouts are unchanged.
+  bcdDevice → `0x0A95`.
+
 - OpenPGP ATTEST repairs an incomplete or mismatched attestation public key and
   FC certificate from the surviving private key. Replacement retires the preceding
   FC before its new key lands, so a repeated interruption cannot make a complete
