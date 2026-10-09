@@ -113,15 +113,15 @@ pub struct Fs<S: Storage> {
     /// which memoises the answer, so a false-absent is impossible either way. See
     /// [`known_absent`](Self::known_absent) and [`scan`](Self::scan).
     decided: [u8; FID_PRESENT_BYTES],
-    /// Monotonic counter bumped on every content-changing `put`/`delete`. A caller
+    /// Monotonic counter bumped on `put`/`delete` and an uncertain failed write. A caller
     /// caching a derived view of the store (e.g. the credMgmt slot→rpIdHash index)
     /// snapshots it and rebuilds when it moves, so no mutation path can leave that
     /// cache stale. In-RAM only (resets to 0 each boot); `u32` never realistically
     /// wraps between two reads of a mutation-free session.
     write_gen: u32,
     /// Set by [`scan`](Self::scan) when the boot enumeration was cut short, so the
-    /// FIDs it never reached are unknown rather than absent. Only
-    /// [`present_slots`](Self::present_slots) reads it: the per-key probes fall
+    /// FIDs it never reached are unknown rather than absent. The slot bitmap and
+    /// capacity admission read it: the per-key probes fall
     /// through to the backend on an undecided FID and are sound already, but the
     /// slot bitmap answers from RAM alone and has no such fallback. Distinct from
     /// "nothing decided yet" — a fresh `Fs` that has not scanned has an empty
@@ -163,7 +163,7 @@ impl<S: Storage> Fs<S> {
     }
 
     /// The store's mutation generation — bumped by every content-changing
-    /// `put`/`delete`. Snapshot it beside a cached derived view and rebuild when it
+    /// `put`/`delete`, including an uncertain failed write. Rebuild a derived view when it
     /// changes (see [`write_gen`](Self#structfield.write_gen)).
     pub fn write_gen(&self) -> u32 {
         self.write_gen
@@ -428,7 +428,11 @@ impl<S: Storage> Fs<S> {
     /// remaining-credential estimate, which must not promise slots a PIV or OATH
     /// fill has already consumed.
     pub fn free_dynamic(&self) -> usize {
-        MAX_DYNAMIC_FILES - self.dynamic.len()
+        if self.scan_truncated {
+            0
+        } else {
+            MAX_DYNAMIC_FILES - self.dynamic.len()
+        }
     }
 
     /// Physically scrub superseded records from the backing store (a full
@@ -539,6 +543,12 @@ impl<S: Storage> Fs<S> {
         if data.len() > S::MAX_VALUE {
             return Err(Error::WrongLength);
         }
+        if self.scan_truncated {
+            self.scan();
+            if self.scan_truncated {
+                return Err(Error::MemoryFatal);
+            }
+        }
         // A new dynamic file that would overflow the set is rejected *before* the
         // flash write: registering only after committing would strand the value
         // on flash — readable yet unregistered — and leave `scan` to re-drop it
@@ -547,7 +557,7 @@ impl<S: Storage> Fs<S> {
         if register && self.dynamic.is_full() {
             return Err(Error::NoMemory);
         }
-        self.storage.write(fid, data)?;
+        self.write_record(fid, data)?;
         self.mark_present(fid);
         self.write_gen = self.write_gen.wrapping_add(1);
         if register {
@@ -844,7 +854,7 @@ impl<S: Storage> Fs<S> {
         // bytes free (rebuild_meta bounds its output by the slice length).
         let limit = META_MAX.saturating_sub(reserve);
         let w = rebuild_meta(&scratch[..n], fid, Some(data), &mut out[..limit])?;
-        self.storage.write(EF_META, &out[..w])?;
+        self.write_record(EF_META, &out[..w])?;
         self.mark_present(EF_META);
         Ok(())
     }
@@ -885,8 +895,19 @@ impl<S: Storage> Fs<S> {
             self.mark_absent(EF_META);
             Ok(())
         } else {
-            self.storage.write(EF_META, &out[..w]) // EF_META stays present
+            self.write_record(EF_META, &out[..w]) // EF_META stays present
         }
+    }
+
+    fn write_record(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+        if let Err(error) = self.storage.write(fid, data) {
+            // A failed readback may follow a committed write. Rebuild the cache
+            // and dynamic budget instead of retaining a pre-write absence.
+            self.write_gen = self.write_gen.wrapping_add(1);
+            self.scan();
+            return Err(error);
+        }
+        Ok(())
     }
 }
 

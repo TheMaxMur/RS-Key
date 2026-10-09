@@ -17,6 +17,8 @@ workspace = true
 [dependencies]
 rsk-fs = { workspace = true }
 rsk-sdk = { workspace = true }
+# Readback can meet legacy plaintext remnants when a NOR erase did not land.
+rsk-secret = { workspace = true }
 sequential-storage = "8"
 # The async NorFlash traits the backend is generic over (the same 0.4
 # `sequential-storage` uses).

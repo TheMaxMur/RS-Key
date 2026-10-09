@@ -284,9 +284,16 @@ fn an_unread_fused_key_or_refused_write_cannot_protect_the_management_key() {
     ));
     let mut ui = env.ui(Pad::script(&samples));
     let generation = env.fs.borrow().write_gen();
+    let fids = [
+        files::key_fid(files::SLOT_CARDMGM).get(),
+        files::EF_PIVMAN_DATA,
+        rsk_fs::EF_META,
+    ];
+    let before = fids.map(|fid| medium.value(fid));
     medium.arm(0);
     Local::new(&mut ui, env.cells()).run_protect_mgm_key();
-    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert_ne!(env.fs.borrow().write_gen(), generation);
+    assert_eq!(fids.map(|fid| medium.value(fid)), before);
     assert_eq!(ui.hooks.pin_changed, 0);
 }
 

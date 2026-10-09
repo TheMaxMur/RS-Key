@@ -200,7 +200,7 @@ fn refused_attestation_chain_write_preserves_the_identity_and_spends_the_channel
         Err(CtapError::Other)
     );
     assert_eq!(out, [0xa5; 256]);
-    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(fs.write_gen(), generation.wrapping_add(1));
     assert_eq!(medium.value(crate::consts::EF_ATT_KEY.get()), Some(old_key));
     assert_eq!(medium.value(EF_ATT_CHAIN), Some(old_chain.to_vec()));
     assert!(state.mse_key_for_test().is_none());
