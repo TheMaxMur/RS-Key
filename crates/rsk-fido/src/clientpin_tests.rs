@@ -4421,3 +4421,6 @@ mod uv_outcomes;
 
 #[path = "clientpin_decisions_tests.rs"]
 mod decisions;
+
+#[path = "clientpin_restart_tests.rs"]
+mod restarts;
