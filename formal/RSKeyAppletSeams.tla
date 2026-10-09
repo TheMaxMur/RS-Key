@@ -379,7 +379,7 @@ OathChangeRefused ==
 
 \* The access code is a MAC challenge-response with NO retry counter, so a wrong
 \* answer costs nothing and keeps the standing unlock
-\* (crates/rsk-oath/src/lib.rs:597-599) -- measured on a YubiKey 5.7.4 from a
+\* (crates/rsk-oath/src/lib.rs:599-601) -- measured on a YubiKey 5.7.4 from a
 \* genuinely locked applet. Two failed-auth rules inside one applet, and this is
 \* the second: it must NOT write `refused`, because nothing was refused that had
 \* a budget to protect.
@@ -466,7 +466,7 @@ PgpKeyOpPolicy(r) == held[r]
 
 \* `spend_one_shot_pw1` and its callers' one decision, served or refused alike:
 \* after a PSO:CDS past its PIN check (crates/rsk-openpgp/src/pso.rs:44-48) and
-\* an ATTEST past its touch (crates/rsk-openpgp/src/attest.rs:203-204).
+\* an ATTEST past its touch (crates/rsk-openpgp/src/attest.rs:209-210).
 PgpOneShotSpend(r) ==
     IF (r = "pw1" \/ BugDecipherPinSpentLikeSig) /\ oneShotSig
          /\ ~BugSigPinNotSpent
@@ -480,7 +480,7 @@ PgpSigFreshness(r) ==
       THEN FALSE ELSE psig
 
 \* A served key operation. ATTEST is PW1 no. 81's as well
-\* (crates/rsk-openpgp/src/attest.rs:189-191), so `PgpKeyOp("pw1")` is a
+\* (crates/rsk-openpgp/src/attest.rs:195-197), so `PgpKeyOp("pw1")` is a
 \* signature or an attestation.
 PgpKeyOp(r) ==
     /\ sel = Pgp
@@ -506,7 +506,7 @@ PgpKeyOpRefused(r) ==
 \* PUT DATA C4 -- the PW status byte that makes PW1.81 one-shot -- is an
 \* ADMINISTRATIVE write, gated on PW3 by `write_authorized`
 \* (crates/rsk-openpgp/src/putdata.rs:60-66, called at
-\* crates/rsk-openpgp/src/lib.rs:257-259), and it is the only writer of that
+\* crates/rsk-openpgp/src/lib.rs:258-260), and it is the only writer of that
 \* status. The gate was `held["pw3"]` and nothing else: an enabling conjunct with
 \* no Policy, in the family this module's sibling README spends four sections on.
 \* Removing it left the reachable space BIT-IDENTICAL at 666 distinct states,
@@ -618,7 +618,7 @@ PowerCycle ==
 \* step that changes nothing, so a mutant that made it reach would be visible.
 FidoReset == UNCHANGED vars
 
-\* `Fs::factory_wipe` (crates/rsk-fs/src/fs.rs:463-514) is FLASH-only: it never
+\* `Fs::factory_wipe` (crates/rsk-fs/src/fs.rs:478-529) is FLASH-only: it never
 \* sees an applet, so every in-RAM status here stands over freshly-defaulted
 \* verifiers until the reboot its one caller queues immediately after
 \* (crates/rsk-display/src/pin.rs:770-779).
@@ -710,7 +710,7 @@ NoKeyOpOnTheAdminStatus ==
 \* than by a cross-applet principle. PIV's CHANGE REFERENCE DATA takes no
 \* `&mut Session` at all (crates/rsk-piv/src/lib.rs:554-593) -- SP 800-73-4 pt2
 \* 3.2.2/3.2.3, plus a measured YubiKey 5.7.4. OATH's access-code VALIDATE keeps
-\* the standing unlock (crates/rsk-oath/src/lib.rs:597-599), because a MAC
+\* the standing unlock (crates/rsk-oath/src/lib.rs:599-601), because a MAC
 \* challenge-response has no retry counter for a refusal to protect.
 \*
 \* So THREE APPLETS KEEP THREE RULES and no single one can be written: OpenPGP's

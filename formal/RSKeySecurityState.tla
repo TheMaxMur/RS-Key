@@ -111,7 +111,7 @@ CONSTANT BugFairnessFoldsLocalCeremony
 
 (* A PROPOSED fix, not a defect: order phase 1 of the reset sweep so no EF_RP  *)
 (* entry is dropped while its EF_CRED record is still live. The shipped        *)
-(* `sweep` batches both in `for_each_key` order, which fs.rs:386-389 documents *)
+(* `sweep` batches both in `for_each_key` order, which fs.rs:397-400 documents *)
 (* as store order rather than FID order, so the batch can delete the metadata  *)
 (* first. TRUE models the fix; FALSE is the tree as it stands.                 *)
 CONSTANT FixSweepDropsCredsBeforeRpEntries
@@ -661,7 +661,7 @@ PinAttemptPolicy == pin.set /\ pin.retries > 0 /\ lock.policyMism < MismatchLimi
 \* with no code behind it, and review found that, not a gate.
 \*
 \* setMinPINLength sets it over a PIN that exists and, in the SAME branch, ends
-\* the session token and the persistent grant (config.rs:491-511). The module
+\* the session token and the persistent grant (config.rs:492-512). The module
 \* carried three conjuncts where the code has four until PLAT-MODEL-010 measured
 \* the gap, and a defect that waives the pending change is a live token.
 TokenIssuanceGuard  == IF BugForceChangeIgnored THEN TRUE ELSE ~gate.forceChange
@@ -1109,12 +1109,12 @@ ConfigOp ==
     /\ ConfigGuard
     /\ viol' = IF ConfigPolicy THEN viol ELSE viol \cup TokenBypass
     \* TWO authenticatorConfig subcommands over one gate: toggleAlwaysUv, and
-    \* setMinPINLength's forced-change byte, which config.rs:491 refuses unless a
+    \* setMinPINLength's forced-change byte, which config.rs:492 refuses unless a
     \* PIN exists. A choice inside the action rather than a second action, so the
     \* refinement's one `UseAcfg`/`Authorized` clause keeps covering both.
     /\ \/ /\ gate' = [gate EXCEPT !.alwaysUv = ~gate.alwaysUv]
           /\ UNCHANGED << tok, plat, walk >>
-       \* config.rs:508-511: the forced-change branch calls
+       \* config.rs:509-512: the forced-change branch calls
        \* reset_pin_uv_auth_token AND clear_ppuat, so it ENDS the session token,
        \* the credMgmt cursor and the persistent grant before refusing to issue
        \* anything new. Modelled as the two sibling PIN sites already are -- the
@@ -1131,12 +1131,12 @@ ConfigOp ==
     /\ UNCHANGED << pin, store, lock, pres, sys, op, upSpent, ram >>
 
 (***************************************************************************)
-(* Vendor BACKUP_FINALIZE -- vendor.rs:981-988, and its on-device twin      *)
-(* mark_backup_sealed (vendor.rs:1057-1063).                                  *)
+(* Vendor BACKUP_FINALIZE -- vendor.rs:980-987, and its on-device twin      *)
+(* mark_backup_sealed (vendor.rs:1056-1062).                                  *)
 (***************************************************************************)
 
 \* Writing EF_BACKUP_SEALED closes the one-time seed-export window: after it,
-\* BACKUP_EXPORT refuses (vendor.rs:875) and the display's recovery-phrase
+\* BACKUP_EXPORT refuses (vendor.rs:874) and the display's recovery-phrase
 \* reveal is gone, until a reset reopens the window. Modelled UNGATED -- the
 \* real one carries the PIN half and a deliberate hold -- which widens only the
 \* states the marker can be SET in, never the states it can be LOST in, and it
@@ -1148,7 +1148,7 @@ BackupFinalize ==
     /\ UNCHANGED << pin, store, lock, tok, plat, pres, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* Vendor UNLOCK (vendor.rs:589-618): the host presents the 32-byte lock key over
+\* Vendor UNLOCK (vendor.rs:588-617): the host presents the 32-byte lock key over
 \* the MSE channel, the wrapped seed on flash decrypts, and `state.keydev_dec`
 \* holds it until power-off. No PIN and no touch -- knowing the lock key IS the
 \* authorization -- so this is not modelled as a gate, only as the one door
@@ -1157,7 +1157,7 @@ BackupFinalize ==
 \* WIDER than the firmware in two directions, both sound: the model has no device
 \* lock, so it does not require the seed to be stored WRAPPED (only a locked
 \* device has an EF_KEY_DEV_ENC to open), and it omits AUT_DISABLE
-\* (config.rs:433-434), which only ever CLEARS the copy.
+\* (config.rs:434-435), which only ever CLEARS the copy.
 DeviceUnlock ==
     /\ Idle
     /\ store.seed

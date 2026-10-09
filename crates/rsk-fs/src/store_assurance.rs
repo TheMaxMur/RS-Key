@@ -96,12 +96,12 @@ impl<S: Storage> Fs<S> {
         }
     }
 
-    /// `Put`'s cache clause (`fs.rs:537-557` → `mark_present`).
+    /// `Put`'s cache clause (`fs.rs:552-578` → `mark_present`).
     pub fn step_put(&mut self, fid: u16) {
         self.mark_present(fid);
     }
 
-    /// `Delete`'s cache clause (`fs.rs:597-606` → `mark_absent`).
+    /// `Delete`'s cache clause (`fs.rs:618-627` → `mark_absent`).
     pub fn step_delete(&mut self, fid: u16) {
         self.mark_absent(fid);
     }
