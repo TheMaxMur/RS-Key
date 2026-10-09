@@ -3,6 +3,9 @@
 
 use super::*;
 
+#[path = "keys_restart_tests.rs"]
+mod restarts;
+
 #[test]
 fn seal_and_unseal_refuse_short_windows_and_keep_legacy_widths_distinct() {
     let key = [0x11; 32];
