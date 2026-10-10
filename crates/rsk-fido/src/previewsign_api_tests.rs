@@ -90,3 +90,58 @@ fn a_valid_mac_does_not_authorize_the_wrong_parameter_array_count() {
         );
     }
 }
+
+#[test]
+fn unknown_nested_make_credential_options_preserve_the_following_preview_fields() {
+    let algs = enc(|e| {
+        e.array(1).unwrap().i64(ALG_ESP256_SPLIT_ARKG).unwrap();
+    });
+    let body = enc(|e| {
+        e.map(3).unwrap().i64(99).unwrap();
+        e.array(2).unwrap().null().unwrap().map(0).unwrap();
+        e.i64(KEY_ALG)
+            .unwrap()
+            .array(1)
+            .unwrap()
+            .i64(ALG_ESP256_SPLIT_ARKG)
+            .unwrap();
+        e.i64(KEY_FLAGS).unwrap().u8(1).unwrap();
+    });
+    let mut decoder = Decoder::new(&body);
+    let input = parse_mc(&mut decoder).unwrap();
+    assert!(input.present);
+    assert_eq!(input.algs, Some(algs.as_slice()));
+    assert_eq!(input.flags, Some(1));
+    assert_eq!(decoder.position(), body.len());
+}
+
+#[test]
+fn unknown_nested_assertion_options_preserve_the_following_preview_fields() {
+    let body = enc(|e| {
+        e.map(4).unwrap().i64(99).unwrap();
+        e.array(2).unwrap().null().unwrap().map(0).unwrap();
+        e.i64(KEY_KH).unwrap().bytes(b"kh").unwrap();
+        e.i64(KEY_TBS).unwrap().bytes(b"tbs").unwrap();
+        e.i64(KEY_ARGS).unwrap().bytes(b"args").unwrap();
+    });
+    let mut decoder = Decoder::new(&body);
+    let input = parse_ga(&mut decoder).unwrap();
+    assert!(input.present);
+    assert_eq!(input.kh, Some(&b"kh"[..]));
+    assert_eq!(input.tbs, Some(&b"tbs"[..]));
+    assert_eq!(input.args, Some(&b"args"[..]));
+    assert_eq!(decoder.position(), body.len());
+}
+
+#[test]
+fn a_truncated_unknown_preview_option_is_invalid_cbor_in_both_commands() {
+    let body = b"\xa1\x18\x63\x82\xf6";
+    assert_eq!(
+        parse_mc(&mut Decoder::new(body)).err(),
+        Some(CtapError::InvalidCbor)
+    );
+    assert_eq!(
+        parse_ga(&mut Decoder::new(body)).err(),
+        Some(CtapError::InvalidCbor)
+    );
+}
