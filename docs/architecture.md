@@ -201,9 +201,11 @@ Counter values and their authority are committed together and mirrored before
 success. Invalid occupied suffixes retain authenticated progress as a minimum
 generation; an older replica cannot silently replace that progress.
 
-Boot mounts authority before scanning or provisioning applets. An unrecognized
-medium enters CCID rescue mode. Initialization and legacy import require
-[attended rescue commands](guides/cli.md#storage-initialization-and-upgrades).
+Boot mounts authority before scanning or provisioning applets. Wholly blank
+media and readable legacy stores are initialized or imported automatically.
+Read faults, damaged v2 authority and malformed legacy page layouts enter CCID
+rescue mode; [attended commands](guides/cli.md#storage-initialization-and-upgrades)
+remain available for recovery.
 Import freezes the main set and four routed counter values in a signed manifest,
 verifies backups in KVMAIN before counter erasure, and resumes after interruption.
 Backend-owned FIDs `CEF8..CEFD` stay outside the public map and dynamic-file

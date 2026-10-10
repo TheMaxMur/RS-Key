@@ -29,31 +29,35 @@ flowchart LR
 
 ### Storage initialization and upgrades
 
-Storage v2 starts an unrecognized device in CCID rescue mode. Ordinary applets
-and automatic seed/PIN provisioning stay closed until authority is established.
-Use `rsk storage status` to read its state. A wholly erased device requires
-`rsk storage initialize` and confirmation on the device. This command refuses
-occupied storage; it does not erase an existing device.
+Storage v2 initializes wholly erased storage and migrates readable legacy
+storage automatically during boot, before ordinary applets or seed/PIN
+provisioning run. Firmware upgrades require no storage command or physical
+confirmation. Use `rsk storage status` to read the resulting state.
 
-For a device provisioned by an older build, use `rsk storage import-legacy`
-and confirm the import on the device. Keep an independent backup before an
-upgrade. Import preserves readable routed values and existing keys, needs
-temporary main-partition space for its manifest and counter backups, and
-refuses before counter erasure if those backups cannot be verified. A started
-import resumes after replug. Successful setup restarts the device.
+Migration preserves readable routed values and existing keys, needs temporary
+main-partition space for its manifest and counter backups, and refuses before
+counter erasure if those backups cannot be verified. An interrupted migration
+resumes automatically at the next boot. Keep an independent backup before an
+upgrade.
+
+Damaged v2 authority, unreadable storage or a malformed legacy page layout
+keeps the device in CCID rescue mode. Automatic boot never erases occupied
+storage to turn it into a fresh device. The attended `rsk storage initialize`
+and `rsk storage import-legacy` commands remain recovery tools, with physical
+confirmation; normal initialization and upgrades do not need them.
 
 Import trusts the legacy records currently readable. It cannot reconstruct a
 record already discarded by CRC or identify damage that already formed a valid
 legacy record. After activation, integrity is checked before codec interpretation;
-unavailable authority never silently falls back to legacy. An activated v2 store
+remaining v2 witnesses prevent unavailable authority from falling back to legacy. An activated v2 store
 requires v2-aware firmware: downgrading to the old backend is unsupported.
 Preserve the flash image when recovery fails; initialization does not repair
 occupied media. Endurance costs and remaining freshness limits are described
 in [Limitations](../limitations.md).
 
-The software emulator initializes only an image it creates itself. Existing
-images retain their magic and geometry and follow the same explicit import
-and recovery rules. Authority is bound to the configured serial.
+The software emulator follows the same automatic initialization, migration and
+recovery rules. Existing images retain their magic and geometry. Authority is
+bound to the configured serial.
 
 In the Nix dev shell, `rsk` is already on `PATH` with every dependency pinned:
 

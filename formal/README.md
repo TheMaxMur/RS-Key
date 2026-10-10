@@ -2001,11 +2001,11 @@ it off the medium. `EF_HARDENED` says the lap has run
 and writes the marker only after `compact()` returns Ok
 (`crates/rsk-fs/src/lib.rs:126-144`) — marker AFTER scrub, the same write-order
 family as the store's delete and the PIN flows' revoke. The boot glue keeps only
-the OTP gate and the placement of the stall (`firmware/src/main.rs:743-759`).
+the OTP gate and the placement of the stall (`firmware/src/main.rs:747-763`).
 Every *lazy* re-key **or delete** after the lap must re-arm it — a tombstone
 appends too: **run-35 found four of five re-key sites skipping exactly that**,
 and the swept sites are the module's citations. *After the lap* means after any
-lap this device ever ran, the boot pass at `firmware/src/main.rs:691-739`
+lap this device ever ran, the boot pass at `firmware/src/main.rs:706-743`
 included: the marker latches once, so a boot that skipped a record — a faulted
 `read_key`, a refused `put` — leaves it standing over the boot that finally
 migrates that record. Those six arms re-arm for that reason, not because they
@@ -2048,10 +2048,10 @@ firmware keeps only the OTP gate and the placement of the stall.
 All three switches are registered co-mutants now, each measured `killed` and
 each failure read for its direction rather than its colour:
 `BugRekeyKeepsTheMarker` (`requesting_a_rescrub_clears_the_hardened_marker`,
-`crates/rsk-fs/src/fs_tests.rs:386` — the marker SURVIVED),
+`crates/rsk-fs/src/fs_tests.rs:420` — the marker SURVIVED),
 `BugMarkerBeforeScrub`
 (`the_at_rest_lap_writes_its_marker_only_after_a_completed_scrub`,
-`crates/rsk-fs/src/fs_tests.rs:506` — the marker is PRESENT over a torn lap,
+`crates/rsk-fs/src/fs_tests.rs:540` — the marker is PRESENT over a torn lap,
 read off the medium past `Fs`'s cache), `BugPartialLockCarry`
 (`pin_lock_round_trips_and_boot_leaves_it_alone` at
 `crates/rsk-fido/src/state_tests.rs:189`, `left: 0 right: 2` — a live batch
@@ -3080,7 +3080,7 @@ it does not promote MODELLED-ONLY to a proof or turn bounded Kani into PROVEN.
 behaviour than the firmware, "which is sound for safety". That was false**, and
 the one that broke it was holding the green run up: `PowerCut` left the seed as
 the cut found it, while the firmware regenerates a missing seed on **every**
-boot that can read its fused key (`firmware/src/main.rs:738`,
+boot that can read its fused key (`firmware/src/main.rs:742`,
 `tools/emu/src/device.rs:513`). A cut device
 was permanently seedless in the model and could never hold a usable credential
 again — the model was *narrower* than the code, which is the one direction a
@@ -3107,7 +3107,7 @@ abstractions producing traces the firmware cannot follow.
 - **Any boot may mint the grant record, or not.** `BootEnsuresSeed` leaves
   `gate.ppuatRec` either way. `ensure_seed` skips the mint on a vendor-soft-locked
   key (`seed.rs:687`), and mints nothing when a step before it fails or the record
-  cannot be read or opened — an error `firmware/src/main.rs:738` drops. The trace
+  cannot be read or opened — an error `firmware/src/main.rs:742` drops. The trace
   mapper pins the mint it predicts for the unlocked emulator, so R4a still holds
   the recording to one branch.
 - **A regenerated seed still opens the credentials made under the old one.**

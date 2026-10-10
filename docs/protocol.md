@@ -986,7 +986,10 @@ firmware predates the rescue applet.
 | `20` | `01` | `00` | `"IMPORTV2"` | — | Explicitly trust and import readable legacy records; physical confirmation required; success queues a warm restart |
 
 Storage recovery mode exposes CCID with the Rescue AID only. It permits READ
-selectors `03`, `04`, `06`, `07`, `08`, reboot and storage setup. Other rescue
+selectors `03`, `04`, `06`, `07`, `08`, reboot and storage setup.
+Normal boot automatically initializes wholly blank
+media or migrates readable legacy storage; neither setup command nor physical
+confirmation is required for a firmware upgrade. Other rescue
 operations answer `6581`; other applets cannot be selected. Normal FIDO/U2F,
 OTP and management dispatch stay closed. Setup returns `6985` for declined
 confirmation or incompatible state, `6581` for a storage failure, `6A86` for

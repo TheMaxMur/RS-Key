@@ -29,6 +29,9 @@ fn source() -> KeySource {
     KeySource::new([0x43; 32], auth_blank, false)
 }
 
+#[path = "automatic_boot_tests.rs"]
+mod automatic_boot;
+
 #[test]
 fn construction_and_mount_can_use_separate_frames_without_exposing_unmounted_data() {
     let flash = provision_legacy();

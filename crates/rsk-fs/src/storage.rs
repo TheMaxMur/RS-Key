@@ -26,6 +26,10 @@ pub trait Storage {
     fn mount(&mut self) -> Result<()> {
         Ok(())
     }
+    /// Boot may initialize blank media or migrate legacy records with a fresh epoch.
+    fn boot(&mut self, _epoch: [u8; 16]) -> Result<()> {
+        self.mount()
+    }
     fn state(&self) -> StorageState {
         StorageState::Ready
     }

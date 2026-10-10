@@ -951,6 +951,15 @@ impl<S: Storage> Fs<S> {
         }
         Ok(())
     }
+
+    /// Boot can change authority; invalidate every derived absence before migration.
+    pub fn boot_storage(&mut self, epoch: [u8; 16]) -> Result<()> {
+        self.present.fill(0);
+        self.decided.fill(0);
+        self.scan_truncated = true;
+        self.dynamic.clear();
+        self.storage.boot(epoch)
+    }
 }
 
 /// Copy all meta records except `fid` into `out`, then optionally append a new

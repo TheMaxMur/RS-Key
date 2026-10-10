@@ -24,6 +24,8 @@ struct CountingStorage {
     /// What `for_each_key` reports as its completion (models a read-fault-truncated
     /// boot scan when `false`); the keys are still yielded either way.
     scan_complete: bool,
+    mount_calls: u32,
+    mount_error: bool,
 }
 impl CountingStorage {
     fn new() -> Self {
@@ -34,10 +36,20 @@ impl CountingStorage {
             remove_calls: 0,
             write_calls: 0,
             scan_complete: true,
+            mount_calls: 0,
+            mount_error: false,
         }
     }
 }
 impl Storage for CountingStorage {
+    fn mount(&mut self) -> Result<()> {
+        self.mount_calls += 1;
+        if self.mount_error {
+            Err(Error::MemoryFatal)
+        } else {
+            Ok(())
+        }
+    }
     fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
         self.read_calls += 1;
         self.inner.read(fid, buf)
@@ -57,6 +69,28 @@ impl Storage for CountingStorage {
     fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
         let _ = self.inner.for_each_key(f);
         self.scan_complete
+    }
+}
+
+#[test]
+fn boot_delegates_mount_and_invalidates_cached_absence_even_when_mount_fails() {
+    for fail in [false, true] {
+        let mut fs = Fs::new(CountingStorage::new());
+        fs.scan();
+        assert_eq!(fs.try_has_data(KEY_DEV), Ok(false));
+        fs.storage.inner.write(KEY_DEV, b"new authority").unwrap();
+        fs.storage.mount_error = fail;
+        assert_eq!(
+            fs.boot_storage([0x4B; 16]),
+            if fail {
+                Err(Error::MemoryFatal)
+            } else {
+                Ok(())
+            }
+        );
+        assert_eq!(fs.storage.mount_calls, 1);
+        assert_eq!(fs.try_has_data(KEY_DEV), Ok(true));
+        assert!(fs.scan_truncated);
     }
 }
 
