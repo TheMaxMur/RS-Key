@@ -253,6 +253,125 @@ impl ButtonWait {
     }
 }
 
+/// Press-and-hold threshold (ms): a press held past this is a *decline* gesture
+/// on the one-button screen builds (hold-to-deny). Mirrors the touch build's
+/// 800 ms hold-to-approve (`HOLD_MS`) — the same deliberate cost with the
+/// opposite meaning, so both builds share one feel. Kept as a local copy:
+/// `rsk-device` is the layer beneath the display crates and must not depend on
+/// one.
+pub const HOLD_MS: u64 = 800;
+
+/// Result of a one-button gesture wait on a screen+button build.
+///
+/// [`Confirmed`](Self::Confirmed) is a press released before [`HOLD_MS`];
+/// [`Declined`](Self::Declined) is a hold past it — the button-only decline
+/// gesture the on-screen hint teaches. The remaining variants map to the same
+/// `rsk_sdk::Presence` values the button wait's `Outcome` does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Gesture {
+    Confirmed,
+    Declined,
+    Timeout,
+    Cancelled,
+}
+
+/// The one-button gesture wait: a release-before-hold confirms, a hold past
+/// [`HOLD_MS`] declines, a scoped cancel or the timeout ends the wait. Carries
+/// the same `spent` latch as [`ButtonWait`] — one hold satisfies one ceremony,
+/// never two, whatever transport owns the next.
+#[derive(Default)]
+pub struct GestureWait {
+    spent: bool,
+}
+
+impl GestureWait {
+    pub const fn new() -> Self {
+        Self { spent: false }
+    }
+
+    /// Block until a short press (released before [`HOLD_MS`]) confirms, the
+    /// button is held past the threshold (a decline), a cancel scoped to this
+    /// wait's transport arrives, or the timeout expires.
+    ///
+    /// The caller owns the screen: the confirm page is painted before this and
+    /// the status wash restored after, so nothing here needs to know a board
+    /// has one. Same arbitration protocol as [`ButtonWait::wait`]: the
+    /// `up_pending` flag drives the keepalive `UPNEEDED`, and a press already
+    /// consumed by an earlier ceremony (`spent`) is not consent for this one.
+    pub fn wait<B: Board>(&mut self, arb: &Arbiter, board: &mut B) -> Gesture {
+        // Drop any cancel left from an earlier (already-finished) request so
+        // this wait starts clean.
+        arb.set_cancel_requested(false);
+        arb.set_up_pending(true);
+        let start = board.now_us();
+        let timeout_us = arb.timeout_ms() as u64 * US_PER_MS;
+        let hold_us = HOLD_MS * US_PER_MS;
+        let outcome = loop {
+            if !board.pressed() {
+                self.spent = false;
+            } else if self.spent {
+                // A press an earlier ceremony already consumed is not consent
+                // for this one; it stays spent until the finger actually lifts
+                // (the release arms the sample below).
+            } else {
+                // A fresh press: poll inside it. A release before the hold
+                // threshold confirms (the release edge *is* the confirm, so a
+                // level-triggered press can't double-spend); holding past it
+                // declines; a scoped cancel or the deadline ends the wait.
+                let press = board.now_us();
+                let inner = loop {
+                    if !board.pressed() {
+                        break None;
+                    }
+                    if arb.cancel_requested() {
+                        break Some(Gesture::Cancelled);
+                    }
+                    if board.now_us().wrapping_sub(press) >= hold_us {
+                        // Decline. Wait for the finger to lift inside the
+                        // wait's remaining budget (mirrors `ButtonWait`'s
+                        // debounce) so the same hold can't linger into the
+                        // next ceremony — the `spent` latch below carries it
+                        // either way.
+                        let elapsed = board.now_us().wrapping_sub(start);
+                        let release = board.now_us();
+                        while board.pressed() {
+                            if board.now_us().wrapping_sub(release)
+                                >= timeout_us.saturating_sub(elapsed)
+                            {
+                                break;
+                            }
+                            board.block_for_ms(POLL_MS);
+                        }
+                        break Some(Gesture::Declined);
+                    }
+                    if board.now_us().wrapping_sub(start) >= timeout_us {
+                        break Some(Gesture::Timeout);
+                    }
+                    board.block_for_ms(POLL_MS);
+                };
+                if let Some(result) = inner {
+                    break result;
+                }
+                // Released before the hold threshold: the confirm gesture.
+                break Gesture::Confirmed;
+            }
+            if arb.cancel_requested() {
+                break Gesture::Cancelled;
+            }
+            if board.now_us().wrapping_sub(start) >= timeout_us {
+                break Gesture::Timeout;
+            }
+            board.block_for_ms(POLL_MS);
+        };
+        // Whatever the outcome, a button still down carries no new consent.
+        self.spent = board.pressed();
+        arb.set_up_pending(false);
+        // Clear any cancel that raced in so it can't leak into the next wait.
+        arb.set_cancel_requested(false);
+        outcome
+    }
+}
+
 #[cfg(test)]
 #[path = "presence_tests.rs"]
 mod tests;

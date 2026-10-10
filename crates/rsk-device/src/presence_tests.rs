@@ -477,3 +477,94 @@ fn a_scope_change_mid_wait_moves_the_advertisement_and_the_cancel_right() {
     assert!(board.saw_pending[SCOPE_FIDO as usize]);
     assert!(board.saw_pending[SCOPE_CCID as usize]);
 }
+
+// ------------------------------------------------------- GestureWait (G1..)
+
+/// A short press — released before `HOLD_MS` — is the confirm gesture.
+#[test]
+fn g_short_press_confirms() {
+    let arb = armed(SCOPE_FIDO, 8);
+    // Sample 1 idle, sample 2 press, sample 3 release.
+    let mut board = TestBoard::new(&arb, vec![false, true, false]);
+    assert_eq!(
+        GestureWait::new().wait(&arb, &mut board),
+        Gesture::Confirmed
+    );
+}
+
+/// Holding past `HOLD_MS` is the decline gesture.
+#[test]
+fn g_hold_past_the_threshold_declines() {
+    // Budget 60 polls (960 ms): the press holds past the 800 ms threshold and
+    // the release wait spends the rest of the budget.
+    let arb = armed(SCOPE_FIDO, 60);
+    let mut board = TestBoard::new(&arb, vec![true]);
+    assert_eq!(GestureWait::new().wait(&arb, &mut board), Gesture::Declined);
+}
+
+/// A hold satisfies exactly one ceremony: while the same finger is still down,
+/// the next wait can neither confirm nor decline — only time out.
+#[test]
+fn g_a_spent_hold_confirms_nothing_until_the_finger_lifts() {
+    let arb = armed(SCOPE_FIDO, 60);
+    let mut latch = GestureWait::new();
+
+    // Ceremony 1: pressed and never released inside the budget → declined.
+    let mut b1 = TestBoard::new(&arb, vec![true]);
+    assert_eq!(latch.wait(&arb, &mut b1), Gesture::Declined);
+
+    // Ceremony 2, same hold: spent, so it can only time out.
+    let mut b2 = TestBoard::new(&arb, vec![true]);
+    assert_eq!(latch.wait(&arb, &mut b2), Gesture::Timeout);
+}
+
+/// The latch clears on release: a released short press, then another one,
+/// confirms twice.
+#[test]
+fn g_the_latch_clears_on_release() {
+    let arb = armed(SCOPE_FIDO, 8);
+    let mut latch = GestureWait::new();
+    let mut b1 = TestBoard::new(&arb, vec![true, false]);
+    assert_eq!(latch.wait(&arb, &mut b1), Gesture::Confirmed);
+    let mut b2 = TestBoard::new(&arb, vec![true, false]);
+    assert_eq!(latch.wait(&arb, &mut b2), Gesture::Confirmed);
+}
+
+/// A cancel from the owning transport ends the wait mid-poll.
+#[test]
+fn g_a_cancel_from_the_owning_transport_ends_the_wait() {
+    for (owner, ev) in [(SCOPE_FIDO, Ev::FidoCancel), (SCOPE_OTP, Ev::OtpCancel)] {
+        let arb = armed(owner, 8);
+        let mut board = TestBoard::new(&arb, vec![false]).with_events(vec![ev]);
+        assert_eq!(
+            GestureWait::new().wait(&arb, &mut board),
+            Gesture::Cancelled,
+            "{owner} could not cancel its own gesture wait"
+        );
+    }
+}
+
+/// No press and no cancel times out on the budget, spending it exactly.
+#[test]
+fn g_no_press_times_out_on_the_budget() {
+    let arb = armed(SCOPE_CCID, 3);
+    let mut board = TestBoard::new(&arb, vec![false]);
+    assert_eq!(GestureWait::new().wait(&arb, &mut board), Gesture::Timeout);
+    assert_eq!(board.delays, 3, "the budget was not spent exactly");
+}
+
+/// A host cancel mid-hold ends the wait before the decline threshold: the
+/// transport aborting the command takes precedence over the gesture that would
+/// have declined it (the command is already being torn down, so the wait's
+/// answer is `Cancelled`, not `OPERATION_DENIED`).
+#[test]
+fn g_a_cancel_during_a_hold_ends_the_wait() {
+    let arb = armed(SCOPE_FIDO, 60);
+    // Press holds forever; a single cancel fires during the press, before the
+    // 800 ms threshold is reached.
+    let mut board = TestBoard::new(&arb, vec![true]).with_events(vec![Ev::FidoCancel]);
+    assert_eq!(
+        GestureWait::new().wait(&arb, &mut board),
+        Gesture::Cancelled
+    );
+}

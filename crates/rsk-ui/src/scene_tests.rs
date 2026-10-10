@@ -1112,6 +1112,14 @@ const PARTIAL_RENDERERS: &[&str] = &[
     "render_hold_button",
     "render_hold_fill",
     "render_home_change",
+    // The touchless `keys` pages paint straight onto the (smaller) panel — no
+    // Scene of their own, covered by render/keys_tests.rs.
+    "render_keys_checking",
+    "render_keys_confirm",
+    "render_keys_decision",
+    "render_keys_status",
+    "render_keys_status_phase",
+    "render_keys_status_step",
     "render_locked_breathe",
     "render_nav",
     "render_oath_page",

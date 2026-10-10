@@ -422,10 +422,16 @@ note = "eab4b5c reverted: EF_PAUTHTOKEN back in the deferred gate phase (it is a
 status = "patch"
 file = "crates/rsk-device/src/presence.rs"
 find = """
+    pub fn wait<B: Board>(&mut self, arb: &Arbiter, board: &mut B) -> Outcome {
+        // Drop any cancel left from an earlier (already-finished) request so
+        // this wait starts clean.
         arb.set_cancel_requested(false);
         arb.set_up_pending(true);
 """
 replace = """
+    pub fn wait<B: Board>(&mut self, arb: &Arbiter, board: &mut B) -> Outcome {
+        // Drop any cancel left from an earlier (already-finished) request so
+        // this wait starts clean.
         arb.set_up_pending(true);
 """
 slice = ["cargo", "test", "-p", "rsk-device"]

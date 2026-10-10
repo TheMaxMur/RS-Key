@@ -438,7 +438,7 @@ def test_an_unowned_concrete_site_fails(tree: Tree, body: str, finding: str):
         "fn stray(gna: &RefCell<AssertionState>) {\n"
         "    let mut st = gna.borrow_mut();\n    *st = Default::default();\n}\n",
         # CONTROL for the swap clause: BUILDING a fresh state replaces nothing.
-        # `firmware/src/main.rs:1167` is exactly this, and a rule reading
+        # `firmware/src/main.rs:1310` is exactly this, and a rule reading
         # `FidoState::new` anywhere would own the boot that makes the one cell.
         "fn stray() { let cell = RefCell::new(FidoState::new()); hand(cell); }\n",
     ],
