@@ -2486,6 +2486,19 @@ accidental damage but is public. The page-58 latch closes that arm only after
 storage and applet migrations finish. The measured counter-write endurance
 cost is recorded in [limitations](limitations.md).
 
+Hardware upgrade was exercised on an RP2350 A2, 4 MiB, secure boot disabled
+(chip `170d3860ecf780fe`). The original SDK test program carried only E10
+padding in the storage window. A legacy `0x0A8B` image provisioned known OATH,
+resident FIDO, OpenPGP admin-PIN, device-key and counter fixtures. Upgrade to
+`0x0A9D` refused its unused `0xEF` suffix; the bounded legacy-view correction
+in `0x0A9E` reached ready storage without any INITV2 or IMPORTV2 command.
+The OATH oracle, OpenPGP verifier, identical device public key and vendor
+counter, and signatures under the original FIDO public key all passed, including
+two warm restarts. The final shipping touch image retained ready storage and
+the same readable fixtures.
+This is one physical A2 upgrade; interruption matrices remain software evidence.
+Logs and the original flash backup are retained in `target/store-hw-20261010/`.
+
 Evidence is retained in `target/store-v2-20261010/`: native fault matrices,
 Miri codec controls, selected in-diff mutations, seeded fuzzing, image execution,
 frame inspection, gate logs and the signed local commit ledger. Each result is

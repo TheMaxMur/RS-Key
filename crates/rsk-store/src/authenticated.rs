@@ -45,6 +45,7 @@ mod storage;
 pub use storage::{Authenticated, Layout};
 
 mod import;
+mod legacy;
 mod managed;
 pub use managed::Managed;
 

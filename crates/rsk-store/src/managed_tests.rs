@@ -100,7 +100,7 @@ fn provision_legacy() -> FaultFlash {
     flash
 }
 
-fn assert_imported(store: &mut ManagedStore) {
+fn assert_imported(store: &mut impl Storage) {
     assert_eq!(store.state(), StorageState::Ready);
     let mut out = [0; rsk_fs::MAX_VALUE_BYTES];
     assert_eq!(store.read(CRED, &mut out), Some(16));

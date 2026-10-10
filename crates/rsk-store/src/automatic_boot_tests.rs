@@ -243,6 +243,190 @@ fn activation_without_a_readable_manifest_reports_damage_before_legacy_fallback(
 }
 
 #[test]
+fn the_sdk_e10_padding_in_an_unused_counter_page_does_not_block_legacy_upgrade() {
+    let flash = provision_legacy();
+    let end = MAIN.end as usize + 128 * 1024;
+    flash.inner.bytes.borrow_mut()[end - 256..end].fill(0xEF);
+    let mut store = unmounted(&flash);
+    store.boot([0x4B; 16]).unwrap();
+    assert_imported(&mut store);
+}
+
+#[test]
+fn a_blank_device_with_only_sdk_e10_padding_initializes_automatically() {
+    let flash = FaultFlash::new();
+    let mut store = managed(&flash, source());
+    let end = MAIN.end as usize + 128 * 1024;
+    flash.inner.bytes.borrow_mut()[end - 256..end].fill(0xEF);
+    store.boot([0x4B; 16]).unwrap();
+    assert_eq!(store.state(), StorageState::Ready);
+    assert_eq!(store.read(CRED, &mut []), None);
+    assert!(!store.last_error());
+}
+
+#[test]
+fn e10_padding_never_excuses_other_counter_page_data_or_a_partial_suffix() {
+    for damaged in [1, 255, 256, 4095] {
+        let flash = provision_legacy();
+        let end = MAIN.end as usize + 128 * 1024;
+        flash.inner.bytes.borrow_mut()[end - 256..end].fill(0xEF);
+        flash.inner.bytes.borrow_mut()[end - damaged] = 0xEE;
+        let saved = flash.inner.bytes.borrow().clone();
+        flash.arm(&[]);
+        assert_eq!(unmounted(&flash).boot([0x4B; 16]), Err(Error::MemoryFatal));
+        assert_eq!(*flash.inner.bytes.borrow(), saved);
+        assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+    }
+}
+
+#[test]
+fn e10_padding_import_resumes_after_backup_and_recovery_cuts() {
+    let flash = provision_legacy();
+    let end = MAIN.end as usize + 128 * 1024;
+    flash.inner.bytes.borrow_mut()[end - 256..end].fill(0xEF);
+    let saved = flash.inner.bytes.borrow().clone();
+    flash.arm(&[]);
+    unmounted(&flash).boot([0x4B; 16]).unwrap();
+    let trace = flash.events();
+    for io in [Io::Program, Io::Erase] {
+        let count = trace.iter().filter(|event| event.0 == io).count();
+        assert!(count > 0);
+        for skip in 0..count {
+            *flash.inner.bytes.borrow_mut() = saved.clone();
+            flash.arm(&[Rule {
+                io,
+                skip,
+                effect: Effect::KeepTail,
+                latched: true,
+            }]);
+            let _first = unmounted(&flash).boot([0x4B; 16]);
+            assert!(flash.hits()[0] > 0);
+            flash.arm(&[Rule {
+                io: Io::Program,
+                skip: 0,
+                effect: Effect::KeepTail,
+                latched: true,
+            }]);
+            let _second = unmounted(&flash).boot([0x5A; 16]);
+            flash.arm(&[]);
+            let mut reboot = unmounted(&flash);
+            reboot
+                .boot([0x6A; 16])
+                .unwrap_or_else(|error| panic!("{io:?} {skip}: {error:?}"));
+            assert_imported(&mut reboot);
+        }
+    }
+}
+
+#[test]
+fn e10_padding_remains_the_open_buffer_page_of_an_otherwise_closed_counter_ring() {
+    let flash = provision_legacy();
+    let end = MAIN.end as usize + 128 * 1024;
+    let word = FaultFlash::WRITE_SIZE.max(FaultFlash::READ_SIZE);
+    flash.inner.bytes.borrow_mut()[end - 256..end].fill(0xEF);
+    for page in (MAIN.end as usize..end - FaultFlash::ERASE_SIZE).step_by(FaultFlash::ERASE_SIZE) {
+        let mut bytes = flash.inner.bytes.borrow_mut();
+        bytes[page..page + word].fill(0);
+        let tail = page + FaultFlash::ERASE_SIZE;
+        bytes[tail - word..tail].fill(0);
+    }
+    let saved = flash.inner.bytes.borrow().clone();
+    flash.arm(&[Rule {
+        io: Io::Erase,
+        skip: 0,
+        effect: Effect::Refuse,
+        latched: true,
+    }]);
+    assert!(unmounted(&flash).boot([0x4B; 16]).is_err());
+    assert!(flash.hits()[0] > 0);
+    flash.arm(&[]);
+    let mut reboot = unmounted(&flash);
+    reboot.boot([0x5A; 16]).unwrap();
+    assert_imported(&mut reboot);
+    *flash.inner.bytes.borrow_mut() = saved;
+    flash.arm(&[]);
+    let mut healthy = unmounted(&flash);
+    healthy.boot([0x4B; 16]).unwrap();
+    assert_imported(&mut healthy);
+}
+
+#[derive(Clone)]
+struct WideReads(FaultFlash);
+impl ErrorType for WideReads {
+    type Error = <FaultFlash as ErrorType>::Error;
+}
+impl ReadNorFlash for WideReads {
+    const READ_SIZE: usize = 4;
+    async fn read(&mut self, at: u32, out: &mut [u8]) -> core::result::Result<(), Self::Error> {
+        self.0.read(at, out).await
+    }
+    fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+}
+impl NorFlash for WideReads {
+    const WRITE_SIZE: usize = FaultFlash::WRITE_SIZE;
+    const ERASE_SIZE: usize = FaultFlash::ERASE_SIZE;
+    async fn write(&mut self, at: u32, bytes: &[u8]) -> core::result::Result<(), Self::Error> {
+        self.0.write(at, bytes).await
+    }
+    async fn erase(&mut self, from: u32, to: u32) -> core::result::Result<(), Self::Error> {
+        self.0.erase(from, to).await
+    }
+}
+impl MultiwriteNorFlash for WideReads {}
+
+#[test]
+fn e10_legacy_view_supports_wider_page_markers_during_import_and_resume() {
+    let flash = provision_legacy();
+    let end = MAIN.end as usize + 128 * 1024;
+    flash.inner.bytes.borrow_mut()[end - 256..end].fill(0xEF);
+    let word = FaultFlash::WRITE_SIZE;
+    for page in (MAIN.end as usize..end - FaultFlash::ERASE_SIZE).step_by(FaultFlash::ERASE_SIZE) {
+        let mut bytes = flash.inner.bytes.borrow_mut();
+        bytes[page..page + word].fill(0);
+        let tail = page + FaultFlash::ERASE_SIZE;
+        bytes[tail - word..tail].fill(0);
+    }
+    let mount = || {
+        Managed::new_unmounted(
+            WideReads(flash.clone()),
+            MAIN,
+            MAIN.end..MAIN.end + 128 * 1024,
+            source(),
+            cache,
+        )
+    };
+    let saved = flash.inner.bytes.borrow().clone();
+    flash.arm(&[]);
+    mount().boot([0x4B; 16]).unwrap();
+    let programs = flash
+        .events()
+        .iter()
+        .take_while(|event| event.0 != Io::Erase)
+        .filter(|event| event.0 == Io::Program)
+        .count();
+    assert!(programs > 0);
+    for skip in 0..programs {
+        *flash.inner.bytes.borrow_mut() = saved.clone();
+        flash.arm(&[Rule {
+            io: Io::Program,
+            skip,
+            effect: Effect::KeepTail,
+            latched: true,
+        }]);
+        let _cut = mount().boot([0x4B; 16]);
+        assert!(flash.hits()[0] > 0);
+        flash.arm(&[]);
+        let mut reboot = mount();
+        reboot
+            .boot([0x5A; 16])
+            .unwrap_or_else(|error| panic!("backup program {skip}: {error:?}"));
+        assert_imported(&mut reboot);
+    }
+}
+
+#[test]
 fn automatic_import_survives_command_and_recovery_program_or_erase_cuts() {
     let flash = provision_legacy();
     let saved = flash.inner.bytes.borrow().clone();

@@ -208,6 +208,9 @@ rescue mode; [attended commands](guides/cli.md#storage-initialization-and-upgrad
 remain available for recovery.
 Import freezes the main set and four routed counter values in a signed manifest,
 verifies backups in KVMAIN before counter erasure, and resumes after interruption.
+The legacy counter reader treats the exact SDK E10 256-byte `0xEF` suffix as
+erased only when the remainder of that final sector is unused. Its view cannot
+write or erase; authenticated banks read the actual flash bytes.
 Backend-owned FIDs `CEF8..CEFD` stay outside the public map and dynamic-file
 budget. The activation witness survives applet resets. Pre-OTP authority is
 re-keyed before the page-58 latch can report migration complete.

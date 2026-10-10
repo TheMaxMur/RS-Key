@@ -10,6 +10,7 @@ use rsk_secret::Secret;
 use sequential_storage::cache::{Cache, Uncached};
 use sequential_storage::map::{MapConfig, MapStorage};
 
+use super::legacy::{CounterFlash, read_e10_padding};
 use super::record::{field, take};
 use super::{
     Authenticated, Directory, Entry, Identity, KeySource, MAX_MAIN_ENTRIES, Partition, RootArm,
@@ -131,7 +132,8 @@ impl Manifest {
 /// The manifest is published before backups; no counter sector is erased until all verify.
 pub(super) struct Import<F: NorFlash + MultiwriteNorFlash + Clone> {
     main: LegacyMap<F>,
-    counter: LegacyMap<F>,
+    counter: LegacyMap<CounterFlash<F>>,
+    flash: F,
     main_range: Range<u32>,
     counter_range: Range<u32>,
     source: KeySource,
@@ -147,7 +149,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
                 Cache::new_uncached(),
             ),
             counter: MapStorage::new(
-                VerifiedFlash::new(flash.clone()),
+                VerifiedFlash::new(CounterFlash::new(flash.clone(), None)),
                 MapConfig::try_new(counter.clone()).map_err(|_| Error::MemoryFatal)?,
                 Cache::new_uncached(),
             ),
@@ -155,6 +157,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
             counter_range: counter,
             source,
             buffer: Secret::zeroed(),
+            flash,
         })
     }
 
@@ -216,6 +219,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
         if self.has_activation()? || self.has_manifest()? {
             return Err(Error::Blocked);
         }
+        self.counter_view()?;
         for fid in BACKUP_FIRST..ACTIVATION_FID {
             if block_on(
                 self.main
@@ -322,6 +326,9 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
             return Err(Error::MemoryFatal);
         }
         let ready = self.has_activation()?;
+        if !ready {
+            self.counter_view()?;
+        }
         let mut counters = Directory::new();
         for (index, entry) in manifest.counters.iter().enumerate() {
             let Some(length) = entry.length() else {
@@ -446,6 +453,16 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
                 .map_err(|_| Error::MemoryFatal)?;
         }
         self.buffer.wipe();
+        Ok(())
+    }
+
+    fn counter_view(&mut self) -> Result<()> {
+        let padding = read_e10_padding(self.flash.clone(), self.counter_range.clone())?;
+        self.counter = MapStorage::new(
+            VerifiedFlash::new(CounterFlash::new(self.flash.clone(), padding)),
+            MapConfig::try_new(self.counter_range.clone()).map_err(|_| Error::MemoryFatal)?,
+            Cache::new_uncached(),
+        );
         Ok(())
     }
 }

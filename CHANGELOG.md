@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Preserve legacy storage upgrades when an SDK UF2 left the RP2350-E10
+  `0xEF` padding block at the end of a smaller flash chip. Accept only the exact
+  256-byte suffix in an otherwise erased counter sector; expose that suffix
+  as erased only to the read-only legacy counter view. Authenticated v2 reads
+  and all other occupied/corrupt page refusals keep their existing meaning.
+  bcdDevice `0x0A9D` → `0x0A9E`.
+
 - Initialize blank storage and migrate readable legacy storage automatically
   during boot, without a CLI command or physical confirmation. Resume interrupted
   imports before exposing applets; existing v2 witnesses select authenticated
