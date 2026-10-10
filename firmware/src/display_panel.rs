@@ -20,7 +20,7 @@ use embedded_graphics::{
     Pixel,
     draw_target::DrawTarget,
     geometry::{OriginDimensions, Point as EgPoint, Size},
-    pixelcolor::{IntoStorage, Rgb565},
+    pixelcolor::{IntoStorage, Rgb565, RgbColor},
     primitives::Rectangle,
 };
 use mipidsi::options::{ColorInversion, ColorOrder};
@@ -119,6 +119,14 @@ pub(crate) struct Panel {
     dc: Output<'static>,
     // Keep the panel out of reset. Dropping an embassy GPIO output disconnects it.
     _rst: Output<'static>,
+    // GRAM window offset for partial-glass modules: the visible glass sits away
+    // from the GRAM origin, so every CASET/RASET window is shifted by it (the
+    // Waveshare GEEK demo uses 40/53 in landscape). 0 for a full-glass panel.
+    win_off: (u16, u16),
+    // The MADCTL byte the panel was brought up with (scan direction | BGR), so
+    // the display-keys build's runtime 180° flip toggles the axis bits without
+    // re-encoding the colour-order bit.
+    madctl: u8,
     damage_key: rsk_ui::scene::DamageKey,
     tile_tags: [rsk_ui::scene::DamageTag; rsk_ui::scene::DAMAGE_TILES],
     tags_valid: bool,
@@ -141,18 +149,47 @@ impl Panel {
         damage_key: rsk_ui::scene::DamageKey,
         invert: ColorInversion,
         color_order: ColorOrder,
+        madctl_scan: u8,
+        win_off: (u16, u16),
     ) -> Self {
         let mut panel = Self {
             spi,
             cs,
             dc,
             _rst: rst,
+            win_off,
+            madctl: madctl_scan
+                | if matches!(color_order, ColorOrder::Bgr) {
+                    0x08
+                } else {
+                    0
+                },
             damage_key,
             tile_tags: [0; rsk_ui::scene::DAMAGE_TILES],
             tags_valid: false,
         };
-        panel.reset_and_init(invert, color_order);
+        // GRAM is blanked inside `reset_and_init`, before display-on — see
+        // that function's note.
+        panel.reset_and_init(invert);
         panel
+    }
+
+    /// Flip the panel 180° (the USB-C port is reversible, so a plug one way
+    /// round presents the glass upside-down to its user). Toggles the MADCTL
+    /// mirror bits (MX|MY) around the byte the panel was initialised with —
+    /// the exact mirror pair is board-agnostic; a driver that encodes the
+    /// scan differently only needs this mask revisited. The caller repaints
+    /// the next frame after flipping, which rewrites every pixel the right
+    /// way up. Only the display-keys build flips at runtime (its SETTINGS
+    /// option); the touch build never does.
+    #[cfg(feature = "display-keys")]
+    pub(crate) fn set_scan_flip(&mut self, flip: bool) {
+        let madctl = if flip {
+            self.madctl ^ 0xC0
+        } else {
+            self.madctl
+        };
+        self.command(0x36, &[madctl]);
     }
 
     fn command(&mut self, command: u8, params: &[u8]) {
@@ -166,21 +203,45 @@ impl Panel {
         self.cs.set_high();
     }
 
-    fn reset_and_init(&mut self, invert: ColorInversion, color_order: ColorOrder) {
+    fn reset_and_init(&mut self, invert: ColorInversion) {
         self._rst.set_low();
         block_for(Duration::from_micros(10));
         self._rst.set_high();
         block_for(Duration::from_millis(150));
-        self.command(0x11, &[]);
-        block_for(Duration::from_millis(10));
+        // MADCTL = the board's scan-direction bits (MY|MX|MV — 0 for the touch
+        // build's portrait panel, 0x70 for the GEEK's landscape 1.14") plus the
+        // BGR bit from the colour order; the composed byte is kept on the panel
+        // for the runtime 180° flip.
+        self.command(0x36, &[self.madctl]);
+        // The remainder is the Waveshare ST7789V2 init register set: the porch /
+        // gate / VCOM / gamma defaults that place a *partial* glass (240×135,
+        // 135×240, …) on this controller's larger GRAM. Omitting them leaves the
+        // panel's display window on the controller defaults, which misplace the
+        // frame and clip it (measured on the RP2350-GEEK: content shifted and
+        // cut at the top/left). The touch board's 240×320 glass shows these
+        // settings' full-GRAM defaults the same either way.
+        self.command(0x3A, &[PANEL_PIXEL_FORMAT_RGB565]);
+        self.command(0xB2, &[0x0C, 0x0C, 0x00, 0x33, 0x33]); // porch control
+        self.command(0xB7, &[0x35]); // gate control
+        self.command(0xBB, &[0x19]); // VCOM setting
+        self.command(0xC0, &[0x2C]); // LCM control
+        self.command(0xC2, &[0x01]); // VDV and VRH command enable
+        self.command(0xC3, &[0x12]); // VRH set
+        self.command(0xC4, &[0x20]); // VDV set
+        self.command(0xC6, &[0x0F]); // frame rate control
+        self.command(0xD0, &[0xA4, 0xA1]); // power control 1
         self.command(
-            0x36,
-            &[if matches!(color_order, ColorOrder::Bgr) {
-                0x08
-            } else {
-                0
-            }],
-        );
+            0xE0,
+            &[
+                0xD0, 0x04, 0x0D, 0x11, 0x13, 0x2B, 0x3F, 0x54, 0x4C, 0x18, 0x0D, 0x0B, 0x1F, 0x23,
+            ],
+        ); // positive gamma
+        self.command(
+            0xE1,
+            &[
+                0xD0, 0x04, 0x0C, 0x11, 0x13, 0x2C, 0x3F, 0x44, 0x51, 0x2F, 0x1F, 0x1F, 0x20, 0x23,
+            ],
+        ); // negative gamma
         self.command(
             if matches!(invert, ColorInversion::Inverted) {
                 0x21
@@ -189,24 +250,34 @@ impl Panel {
             },
             &[],
         );
-        self.command(0x3A, &[PANEL_PIXEL_FORMAT_RGB565]);
-        block_for(Duration::from_millis(10));
-        self.command(0x13, &[]);
-        block_for(Duration::from_millis(10));
-        self.command(0x29, &[]);
+        self.command(0x11, &[]); // sleep out
+        block_for(Duration::from_millis(120));
+        // Blank GRAM while the display is still OFF: a freshly-powered GRAM
+        // shows a random pattern the moment display-on lands, and no amount of
+        // post-on clearing can hide that first frame. Written to black here,
+        // the first on-frame is already clean (measured on the GEEK).
+        let all = Rectangle::new(
+            EgPoint::zero(),
+            Size::new(rsk_ui::PANEL_W.into(), rsk_ui::PANEL_H.into()),
+        );
+        let _ = self.fill_solid(&all, Rgb565::BLACK);
+        self.command(0x29, &[]); // display on
         block_for(Duration::from_millis(120));
     }
 
     fn begin_window(&mut self, rect: rsk_ui::Rect) {
-        let right = rect.x + rect.w - 1;
-        let bottom = rect.y + rect.h - 1;
+        let (ox, oy) = self.win_off;
+        let right = rect.x + rect.w - 1 + ox;
+        let bottom = rect.y + rect.h - 1 + oy;
+        let left = rect.x + ox;
+        let top = rect.y + oy;
         self.cs.set_low();
         self.dc.set_low();
         self.spi.blocking_write(&[0x2A]);
         self.dc.set_high();
         self.spi.blocking_write(&[
-            (rect.x >> 8) as u8,
-            rect.x as u8,
+            (left >> 8) as u8,
+            left as u8,
             (right >> 8) as u8,
             right as u8,
         ]);
@@ -214,8 +285,8 @@ impl Panel {
         self.spi.blocking_write(&[0x2B]);
         self.dc.set_high();
         self.spi.blocking_write(&[
-            (rect.y >> 8) as u8,
-            rect.y as u8,
+            (top >> 8) as u8,
+            top as u8,
             (bottom >> 8) as u8,
             bottom as u8,
         ]);

@@ -11,6 +11,24 @@ fn fs() -> Fs<RamStorage> {
 }
 
 #[test]
+fn slot_labels_match_the_ui_screens() {
+    // The consent prompt's label; the touch build's detail screens show the same
+    // strings (rsk-ui render/applets.rs), so this pins the shared vocabulary.
+    let mut buf = [0u8; SLOT_LABEL_MAX];
+    assert_eq!(slot_label(SLOT_AUTHENTICATION, &mut buf), "9A Auth");
+    assert_eq!(slot_label(SLOT_SIGNATURE, &mut buf), "9C Sign");
+    assert_eq!(slot_label(SLOT_KEYMGM, &mut buf), "9D Key Mgmt");
+    assert_eq!(slot_label(SLOT_CARDAUTH, &mut buf), "9E Card Auth");
+    assert_eq!(slot_label(SLOT_CARDMGM, &mut buf), "9B Mgmt");
+    assert_eq!(slot_label(SLOT_ATTESTATION, &mut buf), "F9 Attestation");
+    // Retired slots are numbered from 0x82; a bare name could not tell two of
+    // them apart, which is the whole point of the number.
+    assert_eq!(slot_label(SLOT_RETIRED_FIRST, &mut buf), "Retired #1");
+    assert_eq!(slot_label(SLOT_RETIRED_LAST, &mut buf), "Retired #20");
+    assert_eq!(slot_label(0x81, &mut buf), "PIV slot");
+}
+
+#[test]
 fn empty_card_has_no_slots_and_default_retries() {
     let mut fs = fs();
     let info = read_info(&mut fs);

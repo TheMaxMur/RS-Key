@@ -443,6 +443,29 @@ fn service_title_clips_a_wide_nickname_in_panel() {
     assert!(d.any_non_bg_in(crate::TITLE_EDIT_RECT));
 }
 
+/// The consent primary line keeps the registrable suffix on **both** screen
+/// builds (one shared rule — see `consent_primary`): two ids that differ only in
+/// their tail must render differently on the touch prompt and on the touchless
+/// confirm page alike. A build that head-cut instead (or dropped the forced
+/// marker) would paint the same prefix on both and fail here.
+#[test]
+fn consent_primary_keeps_the_suffix_on_both_screens() {
+    let prompt = |tail: &str| {
+        let id = format!("{}.{tail}", "accounts".repeat(6));
+        crate::ConfirmPrompt::new("Sign in?", id.as_bytes(), &[])
+    };
+    // Touch: the ceremony approve page (240×320).
+    let (mut ta, mut tb) = (Rec::new(), Rec::new());
+    confirm(&mut ta, &prompt("example.com")).unwrap();
+    confirm(&mut tb, &prompt("attacker.co")).unwrap();
+    assert_ne!(ta.px, tb.px, "the touch prompt lost the suffix");
+    // Touchless: the GEEK confirm page (240×135, drawn in the same target).
+    let (mut ka, mut kb) = (Rec::new(), Rec::new());
+    render_keys_confirm(&mut ka, &prompt("example.com")).unwrap();
+    render_keys_confirm(&mut kb, &prompt("attacker.co")).unwrap();
+    assert_ne!(ka.px, kb.px, "the touchless confirm page lost the suffix");
+}
+
 #[test]
 fn passkey_manager_keeps_the_registrable_domain_suffix() {
     // A wide attacker-chosen rpId whose registrable domain is the tail: the passkey list row

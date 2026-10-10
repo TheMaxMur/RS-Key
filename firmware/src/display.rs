@@ -28,10 +28,8 @@ use rsk_rsa::RsaKey;
 use crate::flash_storage::FlashStorage;
 use crate::handler::{FidoRng, Store};
 
-#[path = "display_panel.rs"]
-mod display_panel;
-use display_panel::Panel;
-pub(crate) use display_panel::PioDisplayTx;
+use crate::display_panel::Panel;
+pub(crate) use crate::display_panel::PioDisplayTx;
 
 pub use rsk_display::{DeviceInfo, DeviceKeys, UI_YIELD_FLOOR_MS, piv_ref_title};
 
@@ -261,7 +259,17 @@ pub fn build(
         u64::from_le_bytes(damage_key_bytes[..8].try_into().unwrap()),
         u64::from_le_bytes(damage_key_bytes[8..].try_into().unwrap()),
     ];
-    let panel = Panel::new(spi, cs, dc, rst, damage_key, invert, color_order);
+    let panel = Panel::new(
+        spi,
+        cs,
+        dc,
+        rst,
+        damage_key,
+        invert,
+        color_order,
+        crate::BUILD_DISPLAY_MADCTL_SCAN,
+        crate::BUILD_DISPLAY_WIN_OFF,
+    );
 
     // CST328 reset pulse (high → low → high), then normal reporting mode.
     tp_rst.set_high();

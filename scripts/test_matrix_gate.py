@@ -323,7 +323,7 @@ class Tree:
 
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
-    # The shipped floors are about the real tree's 19 packages, 6 boards and 40
+    # The shipped floors are about the real tree's 22 packages, 7 boards and 40
     # rows. Scaled to the fixture's so the collapse cases below still trip.
     monkeypatch.setattr(matrix_gate, "FLOOR_PACKAGES", 2)
     monkeypatch.setattr(matrix_gate, "FLOOR_BOARDS", 1)

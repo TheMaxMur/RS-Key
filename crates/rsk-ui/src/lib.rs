@@ -19,6 +19,7 @@
 pub mod aa;
 pub mod font;
 pub mod glyph;
+pub mod menu_conf;
 mod page_templates;
 pub mod render;
 pub mod scene;
@@ -27,20 +28,22 @@ pub mod theme;
 pub mod touch;
 pub use glyph::Glyph;
 pub use render::{
-    PIN_TITLE_BAND, SEED_WORDS_PER_PAGE, STATUS_ARC_START, pin_title_overflows, render,
-    render_add_passkey, render_apps, render_audit_log, render_audit_page, render_backup,
-    render_backup_format, render_confirm_delete, render_confirm_factory_reset, render_erasing,
-    render_firmware, render_hold_button, render_hold_fill, render_home_change,
-    render_locked_breathe, render_oath, render_oath_cred, render_oath_page, render_openpgp,
-    render_openpgp_cardholder, render_openpgp_key, render_passkeys_list, render_passkeys_page,
-    render_pin_blocked, render_pin_dots, render_pin_title, render_piv, render_piv_extra,
-    render_piv_extra_page, render_piv_keygen_confirm, render_piv_keygen_pick,
-    render_piv_keygen_rsa_pick, render_piv_keygen_working, render_piv_pin_menu,
-    render_piv_protect_confirm, render_piv_slot, render_rebooting, render_rename,
-    render_rename_field, render_rename_keys, render_reveal_warning, render_seal_confirm,
-    render_seed_phrase, render_service, render_service_page, render_share_picker,
-    render_slip39_share, render_status_arc, render_success, render_success_circle,
-    render_wipe_failed,
+    KEYS_MENU_ROWS_PER_PAGE, PIN_TITLE_BAND, SEED_WORDS_PER_PAGE, STATUS_ARC_START,
+    keys_menu_page_slice, pin_title_overflows, render, render_add_passkey, render_apps,
+    render_audit_log, render_audit_page, render_backup, render_backup_format,
+    render_confirm_delete, render_confirm_factory_reset, render_erasing, render_firmware,
+    render_hold_button, render_hold_fill, render_home_change, render_keys_checking,
+    render_keys_confirm, render_keys_decision, render_keys_menu_page, render_keys_status,
+    render_keys_status_phase, render_keys_status_step, render_locked_breathe, render_oath,
+    render_oath_cred, render_oath_page, render_openpgp, render_openpgp_cardholder,
+    render_openpgp_key, render_passkeys_list, render_passkeys_page, render_pin_blocked,
+    render_pin_dots, render_pin_title, render_piv, render_piv_extra, render_piv_extra_page,
+    render_piv_keygen_confirm, render_piv_keygen_pick, render_piv_keygen_rsa_pick,
+    render_piv_keygen_working, render_piv_pin_menu, render_piv_protect_confirm, render_piv_slot,
+    render_rebooting, render_rename, render_rename_field, render_rename_keys,
+    render_reveal_warning, render_seal_confirm, render_seed_phrase, render_service,
+    render_service_page, render_share_picker, render_slip39_share, render_status_arc,
+    render_success, render_success_circle, render_wipe_failed,
 };
 pub use settings_store::{CONF_LEN as DISPLAY_CONF_LEN, DisplayConfig};
 
@@ -1096,6 +1099,33 @@ impl StatusKind {
             StatusKind::Touch => "Touch to confirm",
         }
     }
+}
+
+/// The value-column emphasis of one menu row: status tones keep their theme
+/// colours, [`Tone::Plain`] reads as the secondary grey.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Tone {
+    /// Neutral secondary text.
+    Plain,
+    /// A good/healthy state (sealed, enabled, present).
+    Good,
+    /// A degraded-but-working state (open export window, unlocked).
+    Warn,
+    /// A bad/locked state (retries spent, soft-locked).
+    Bad,
+}
+
+/// One label/value row of a no-host idle menu page. The rows are pre-formatted
+/// ASCII (the firmware assembles them from applet metadata); `left` is the
+/// label or item name, `right` the value (empty draws no value column).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct KeysMenuRow<'a> {
+    pub left: &'a str,
+    pub right: &'a str,
+    pub tone: Tone,
+    /// Emphasise the whole row: the *label* then paints in the value's tone
+    /// too (green for the select-mode cursor row), not just the value column.
+    pub emph: bool,
 }
 
 /// What the Home tab shows: the device status (mirrored from the LED engine) plus the two

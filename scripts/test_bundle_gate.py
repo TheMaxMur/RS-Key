@@ -983,7 +983,7 @@ def test_a_disposed_inverse_kill_is_admitted_and_counted_apart(tmp_path, disposi
      ("gate_ledger", "walk=4", "walk=5"),
      ("gate_assumption", "FALSE=91", "FALSE=90"),
      ("gate_ghost", "24 route(s)", "25 route(s)"),
-     ("gate_matrix", "1240 cells", "1241 cells")],
+     ("gate_matrix", "1400 cells", "1401 cells")],
 )
 def test_a_transcribed_gate_line_that_the_gate_does_not_derive(tmp_path, key, old, new):
     """The second half of the hole `35afe59` named and did not close: editing
@@ -1090,12 +1090,12 @@ def test_the_assumption_total_read_is_the_line_s_first():
 
 @pytest.mark.parametrize(
     "key,old,new,says",
-    [("gate_matrix", "(37 covered", "(106 covered", "106 covered"),
+    [("gate_matrix", "(37 covered", "(109 covered", "109 covered"),
      ("gate_ghost", "21 action(s)", "24 action(s)", "24 action(s) record"),
-     ("gate_matrix", "954 gap", "106 gap", "106 gap"),
+     ("gate_matrix", "1111 gap", "109 gap", "109 gap"),
      ("gate_ghost", "11 guard(s)", "21 guard(s)", "21 guard(s)"),
      ("gate_matrix", "0 conditional", "37 conditional", "37 conditional"),
-     ("gate_matrix", "40 P0-family", "31 P0-family", "31 P0-family properties")],
+     ("gate_matrix", "40 P0-family", "35 P0-family", "35 P0-family properties")],
 )
 def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
     tmp_path, key, old, new, says
@@ -1105,8 +1105,8 @@ def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
     bare-integer rule — "do these digits stand somewhere in the derived line".
 
     Every swap here takes its digits off a SIBLING count of the very line it
-    falsifies (`106` off `106 out-of-scope`, `24` off `24 route(s)`, `21` off `21
-    action(s)`, `37` off `37 covered`, `31` off `31 build`), so the old rules are
+    falsifies (`109` off `109 out-of-scope`, `24` off `24 route(s)`, `21` off `21
+    action(s)`, `37` off `37 covered`, `35` off `35 build`), so the old rules are
     all satisfied and only [`bundle_gate.CLAIMED_UNIT`] can speak: measured, every
     one was exit 0 before it. A swap onto a number the line NO LONGER carries is
     a case the bare-integer rule answers as well, which is how `(139 covered`
@@ -1119,17 +1119,18 @@ def test_a_transcribed_unit_count_is_the_one_that_noun_was_written_for(
 
     The READING is asserted too, and two of them are two words long. Each claim
     position is reported once, on the LONGEST spelling the gate wrote a count
-    for, so `40 P0-family properties → 31` is one finding about `P0-family
+    for, so `40 P0-family properties → 35` is one finding about `P0-family
     properties` rather than two about the same drift. Typed out rather than
     derived for the reason every count here is: it is the third copy that fails
     loudly instead of the one that agrees with itself.
 
-    `gap` has already moved once under these arms — four cells went from `gap` to
-    `equivalent` while this case was being written, so `958 gap` is `954 gap` and
-    this parameter went red for the right reason: the bundles had been re-derived
-    and the case had not. It stays a typed number for the neighbour's reason one
-    case up — a third copy that fails loudly beats one that passes over a bundle
-    nobody re-derived."""
+    `gap` has moved twice under these arms — four cells went from `gap` to
+    `equivalent` while this case was being written, so `958 gap` became `954 gap`,
+    and the three `display-keys` packages plus the GEEK board took it to `1111
+    gap`. Each time this parameter went red for the right reason: the bundles had
+    been re-derived and the case had not. It stays a typed number for the
+    neighbour's reason one case up — a third copy that fails loudly beats one that
+    passes over a bundle nobody re-derived."""
     root = tree(tmp_path)
 
     def retype(doc):
@@ -1155,13 +1156,13 @@ def test_a_unit_count_the_gate_line_quotes_again_is_prose(tmp_path):
     before it and 0 written after — measured end to end, both ways. Both halves
     are here, because a carve-out with no negative arm is a rule switched off.
 
-    `106` is a number the derived line HAS — off `106 out-of-scope` — so the
+    `109` is a number the derived line HAS — off `109 out-of-scope` — so the
     bare-integer rule stays quiet and this case is about the carve-out and nothing
     else."""
     root = tree(tmp_path)
 
     def quote(doc):
-        doc["result"]["gate_matrix"] += " The tier this replaced read `106 covered`."
+        doc["result"]["gate_matrix"] += " The tier this replaced read `109 covered`."
 
     rewrite(root, quote)
     assert findings(root) == [], findings(root)
@@ -1175,20 +1176,20 @@ def test_a_unit_count_the_gate_line_restates_unquoted_is_a_transcription(tmp_pat
     root = tree(tmp_path)
 
     def restate(doc):
-        doc["result"]["gate_matrix"] += " The tier this replaced read 106 covered."
+        doc["result"]["gate_matrix"] += " The tier this replaced read 109 covered."
 
     rewrite(root, restate)
     problems = findings(root)
-    assert [p for p in problems if "says `106 covered`" in p], problems
+    assert [p for p in problems if "says `109 covered`" in p], problems
     assert len(problems) == 1, problems
 
 
 @pytest.mark.parametrize(
     "key,old,new,says",
-    [("gate_matrix", "31 build configurations", "37 build-configurations",
+    [("gate_matrix", "35 build configurations", "37 build-configurations",
       "37 build-configurations"),
-     ("gate_matrix", "954 gap)", "106 gaps)", "106 gaps"),
-     ("gate_matrix", "1240 cells", "106 cell", "106 cell"),
+     ("gate_matrix", "1111 gap)", "109 gaps)", "109 gaps"),
+     ("gate_matrix", "1400 cells", "109 cell", "109 cell"),
      ("gate_ghost", "11 guard(s)", "24 guards", "24 guards"),
      ("gate_ghost", "21 action(s) record", "24 actions record", "24 actions")],
 )
@@ -1198,7 +1199,7 @@ def test_a_transcribed_unit_count_is_read_however_its_noun_is_spelt(
     """One character of noun drift used to skip the comparison entirely.
 
     The vocabulary is the gate's own words, and a claim noun that was not one of
-    them literally was not read at all — so `31 build configurations → 37
+    them literally was not read at all — so `35 build configurations → 37
     build-configurations` was exit 0 while the byte-identical `37 build
     configurations` was exit 1, naming the drift it was supposed to catch. Every
     swap here is that shape: a plural, a singular, a `(s)` spelled out, a space

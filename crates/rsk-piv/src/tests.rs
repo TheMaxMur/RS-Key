@@ -176,6 +176,59 @@ impl UserPresence for Scripted {
     }
 }
 
+/// A presence stand-in that records the confirm it was asked, so a test can
+/// assert what the consent prompt would have shown.
+struct LabelSpy {
+    primary: Vec<u8>,
+}
+impl UserPresence for LabelSpy {
+    fn request(&mut self, confirm: rsk_sdk::Confirm<'_>) -> Presence {
+        self.primary = confirm.primary.to_vec();
+        Presence::Confirmed
+    }
+}
+
+/// A touch-policy sign must name the slot it is asking about: the primary slot's
+/// label ("9A Auth") for a primary slot, the numbered retired label for a
+/// retired one — "Retired" alone would not say which key is being authorized.
+#[test]
+fn touch_prompt_names_the_slot() {
+    let rng = RefCell::new(TestRng(7));
+    let pres = RefCell::new(LabelSpy {
+        primary: Vec::new(),
+    });
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &pres);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    verify_pin(&mut app, &mut fs);
+    // 9A asks for touch ALWAYS (the card's own default is NEVER).
+    let mut tmpl = gen_template(ALGO_ECCP256);
+    tmpl.extend_from_slice(&[0xAB, 0x01, TOUCHPOLICY_ALWAYS]);
+    tmpl[1] += 3;
+    assert_eq!(
+        run(&mut app, &mut fs, INS_ASYM_KEYGEN, 0, 0x9A, &tmpl).0,
+        Sw::OK
+    );
+    assert_eq!(sign_p256(&mut app, &mut fs, 0x9A), Sw::OK);
+    assert_eq!(pres.borrow().primary, b"9A Auth");
+    // The same prompt for a retired slot carries its number.
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            SLOT_RETIRED_FIRST,
+            &tmpl
+        )
+        .0,
+        Sw::OK
+    );
+    assert_eq!(sign_p256(&mut app, &mut fs, SLOT_RETIRED_FIRST), Sw::OK);
+    assert_eq!(pres.borrow().primary, b"Retired #1");
+}
+
 /// Extract `point` from the keygen response `7F49 { 86 point }` (P-256 and
 /// P-384 bodies use short-form lengths).
 fn ec_point_of(resp: &[u8]) -> Vec<u8> {

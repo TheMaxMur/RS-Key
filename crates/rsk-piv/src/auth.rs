@@ -34,8 +34,10 @@ enum Dir {
 /// `NEVER` passes through; every other byte — `ALWAYS`, `CACHED` (treated as
 /// ALWAYS: with no wall clock the 15-second window cannot be honoured, so it errs
 /// strict) and anything an older build stored — requires a physical touch, and a
-/// non-confirmation fails the operation.
-fn check_touch(policy: u8, presence: &mut dyn UserPresence) -> Result<(), Sw> {
+/// non-confirmation fails the operation. The prompt names the slot
+/// ([`crate::info::slot_label`]) so the owner can see which key is being asked
+/// for; the title stays a fixed literal.
+fn check_touch(policy: u8, presence: &mut dyn UserPresence, slot: u8) -> Result<(), Sw> {
     // `NEVER` is the only value that skips the prompt. Listing the values that
     // *require* one instead made every other byte — an explicit `DEFAULT`, or a
     // record an older build stored verbatim — mean "no touch", while `info`
@@ -45,7 +47,9 @@ fn check_touch(policy: u8, presence: &mut dyn UserPresence) -> Result<(), Sw> {
     if policy == TOUCHPOLICY_NEVER {
         return Ok(());
     }
-    match presence.request(rsk_sdk::Confirm::titled("Use PIV key?")) {
+    let mut buf = [0u8; crate::info::SLOT_LABEL_MAX];
+    let label = crate::info::slot_label(slot, &mut buf);
+    match presence.request(rsk_sdk::Confirm::new("Use PIV key?", label.as_bytes(), &[])) {
         Presence::Confirmed => Ok(()),
         _ => Err(Sw::SECURITY_STATUS_NOT_SATISFIED),
     }
@@ -201,7 +205,7 @@ impl<S: Storage> GenAuth<'_, S> {
             if self.key_ref != SLOT_CARDMGM {
                 return Err(Sw::WRONG_DATA);
             }
-            check_touch(self.touch_policy, self.presence)?;
+            check_touch(self.touch_policy, self.presence, self.key_ref)?;
             self.rng.fill(&mut self.sess.challenge[..self.chal_len]);
             let mut enc = [0u8; 16];
             enc[..self.chal_len].copy_from_slice(&self.sess.challenge[..self.chal_len]);
@@ -260,7 +264,7 @@ impl<S: Storage> GenAuth<'_, S> {
         self.algo_is_the_keys(c)?;
         match self.algo {
             ALGO_RSA1024 | ALGO_RSA2048 | ALGO_RSA3072 | ALGO_RSA4096 => {
-                check_touch(self.touch_policy, self.presence)?;
+                check_touch(self.touch_policy, self.presence, self.key_ref)?;
                 let crt = seal::load_rsa_crt(self.dev, self.fs, key_fid(self.key_ref))?;
                 self.spend_pin();
                 if c.len() != crt.modulus_len() {
@@ -273,7 +277,7 @@ impl<S: Storage> GenAuth<'_, S> {
                 out.zeroize();
             }
             ALGO_ECCP256 | ALGO_ECCP384 => {
-                check_touch(self.touch_policy, self.presence)?;
+                check_touch(self.touch_policy, self.presence, self.key_ref)?;
                 let key = self.load_ec()?;
                 let mut raw = [0u8; 96];
                 let rn = key.sign(c, &mut raw).map_err(crate::ec_sw)?;
@@ -282,7 +286,7 @@ impl<S: Storage> GenAuth<'_, S> {
                 dyn_auth_resp(res, TAG_AUTH_RESPONSE, &der[..dn])?;
             }
             ALGO_ED25519 => {
-                check_touch(self.touch_policy, self.presence)?;
+                check_touch(self.touch_policy, self.presence, self.key_ref)?;
                 let key = self.load_ec()?;
                 // PureEdDSA signs the raw message `c`; the 64-byte signature is
                 // returned bare (no ASN.1 wrapping).
@@ -317,7 +321,7 @@ impl<S: Storage> GenAuth<'_, S> {
         {
             return Err(Sw::WRONG_DATA);
         }
-        check_touch(self.touch_policy, self.presence)?;
+        check_touch(self.touch_policy, self.presence, self.key_ref)?;
         self.sess.has_challenge = false;
         self.sess.chal_kind = ChallengeKind::None;
         if r.len() != self.chal_len {
@@ -343,7 +347,7 @@ impl<S: Storage> GenAuth<'_, S> {
         if !matches!(self.algo, ALGO_ECCP256 | ALGO_ECCP384 | ALGO_X25519) {
             return Err(Sw::WRONG_DATA);
         }
-        check_touch(self.touch_policy, self.presence)?;
+        check_touch(self.touch_policy, self.presence, self.key_ref)?;
         // The point is judged by the curve, after the key is loaded and the
         // freshness spent — including an empty one. Measured on a YubiKey 5.7.4:
         // an unusable point still closes every ALWAYS slot, because the request

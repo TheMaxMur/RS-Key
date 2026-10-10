@@ -503,7 +503,11 @@ run "rustdoc (host private)"   env RUSTDOCFLAGS="-D warnings" cargo doc --worksp
 # turns on `display`, whose compile_error guard demands it. rsk-wipe declares no
 # features, so only the firmware needs the second permutation.
 run "rustdoc (embedded)"       env BOARD=waveshare-one RUSTDOCFLAGS="-D warnings" cargo doc -p firmware -p rsk-wipe --no-deps
-run "rustdoc (firmware all-feat)" env BOARD=waveshare-one LED_KIND=none RUSTDOCFLAGS="-D warnings" cargo doc -p firmware --no-deps --all-features
+run "rustdoc (firmware all-feat)" env BOARD=waveshare-one LED_KIND=none RUSTDOCFLAGS="-D warnings" cargo doc -p firmware --no-deps --features display,no-touch,advertise-pqc,fips-profile,strong-pin,keygen-bench,core1-stats,bench,fido-conformance,ea-conformance-rpid,strict-up,always-uv,largeblob-ext,strict-config
+# `display-keys` (screen + button) is mutually exclusive with `display` (screen +
+# touch): both claim the same panel/PIO on a real board, so all-features cannot
+# cover both. Document the touchless build on its own permutation instead.
+run "rustdoc (firmware keys)"   env BOARD=waveshare-geek LED_KIND=none RUSTDOCFLAGS="-D warnings" cargo doc -p firmware --no-deps --features display-keys
 run "rustdoc (tui)"            env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path tools/tui/Cargo.toml --no-deps --target "$HOST"
 run "rustdoc (emu)"            env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path tools/emu/Cargo.toml --no-deps --target "$HOST"
 # `--bins` is load-bearing: cargo-fuzz writes `doc = false` on all 53 targets, so
@@ -565,6 +569,9 @@ run "clippy (display firmware)" env LED_KIND=none cargo clippy -p firmware --fea
 # The trusted-display PIN pad's trivial-PIN reject is display+strong-pin-gated, so the
 # plain display clippy above never compiles it — lint the combination explicitly.
 run "clippy (display strong-pin)" env LED_KIND=none cargo clippy -p firmware --features display,strong-pin -- -D warnings
+# The touchless screen + button form (the fork-adapted GEEK board): its own
+# feature and board file, mutually exclusive with `display`.
+run "clippy (display keys)" env BOARD=waveshare-geek LED_KIND=none cargo clippy -p firmware --features display-keys -- -D warnings
 # The `display` feature of the WIRING adds the CCID secure-PIN gate
 # (`pin_ref_ready`) and the chaining reset the on-pad VERIFY needs. Neither is
 # compiled by any run above, and the gate is the one that decides whether the
@@ -622,6 +629,9 @@ run "partition table fences the store (16M)" partition_table_fences_the_store
 # produced at 4 MB.
 run "build firmware (display)" env LED_KIND=none FLASH_SIZE=16M cargo build --release -p firmware --features display
 run "firmware stack floor (display)" display_stack_floor
+# And the touchless screen + button form, so the second panel build cannot rot
+# unnoticed; it stays before the no-touch build below, which owns target/.
+run "build firmware (display keys)" env BOARD=waveshare-geek LED_KIND=none cargo build --release -p firmware --features display-keys
 # Machine-checked "no size cost for keys without a screen": the display UI crate
 # and its driver stack must be absent from the DEFAULT firmware dependency tree, so
 # a standard key can not pull any of the screen code in.
@@ -770,10 +780,10 @@ run "generated TLC configs"    python scripts/config_gen_gate.py
 run "formal citations"         python scripts/citation_gate.py
 run "assurance registry"       python scripts/assurance_gate.py
 # The registry above says WHAT is claimed; this says of WHICH IMAGE. `nix build`
-# makes nineteen, `largeblob-ext` swaps the CTAP surface with no flake package at
-# all, and four no-touch builds remove the consent gate the authorization
+# makes twenty-two, `largeblob-ext` swaps the CTAP surface with no flake package
+# at all, and four no-touch builds remove the consent gate the authorization
 # properties are about — so a claim proved on the default build was being
-# asserted about eighteen others by silence.
+# asserted about twenty-one others by silence.
 run "build-configuration matrix" python scripts/matrix_gate.py
 # And of WHICH THREAT. The threat model is the root of every evidence chain here
 # and was cited by the file name alone on 33 rows, which names no threat. This

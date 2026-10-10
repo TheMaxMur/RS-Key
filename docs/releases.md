@@ -7,7 +7,7 @@ It builds every artifact reproducibly, hashes it, and signs the manifest.
 
 ## What a release contains
 
-- **Fourteen firmware images**: `rs-key-<tag>-<flavor>.uf2`. Every published image
+- **Seventeen firmware images**: `rs-key-<tag>-<flavor>.uf2`. Every published image
   requires a physical touch; the `no-touch` test builds are never released (a
   signed presence-bypass asset would remove the consent gate):
 
@@ -24,11 +24,12 @@ It builds every artifact reproducibly, hashes it, and signs the manifest.
   | `strict-up` | + strict-up | **not spec-conformant:** a touch on *every* assertion, so a WebAuthn `allowCredentials` login asks for two touches ([build.md](build.md)). Pick it only if you want that stricter stance |
   | `strict-up-pqc` | + both | |
   | `display` | + display | experimental trusted-display build (Waveshare RP2350-Touch-LCD-2.8, [guides/display.md](guides/display.md)) |
+  | `display-keys` | + display-keys, `BOARD=waveshare-geek` | experimental touchless screen + button build (Waveshare RP2350-GEEK: ambient status, one-key confirm, no-host idle menu; [guides/display.md](guides/display.md)) |
   | `2mb` | `FLASH_SIZE=2M KVMAIN=896K` | 2 MB boards (Seeed XIAO RP2350, Waveshare RP2350-Zero-CM) |
   | `16mb` | `FLASH_SIZE=16M` | 16 MB boards (e.g. TenStar RP2350-USB) |
   | `strict-config` | + strict-config | the historical strict admin-write posture: config writes stay presence/PIN-gated and the ungated transport writes are refused ([build.md](build.md), [threat-model.md](threat-model.md)). The `default` build is now the permissive full-ykman admin surface |
 
-  All fourteen present the default **RS-Key** USB identity (`0x1209:0x0001`). For the
+  All fifteen present the default **RS-Key** USB identity (`0x1209:0x0001`). For the
   YubiKey-interop identity, build `VIDPID=Yubikey5` yourself ([build.md](build.md)).
 - **`SHA256SUMS`**: a checksum for every image and the SBOM.
 - **`SHA256SUMS.sigstore.json`**: a keyless [cosign](https://docs.sigstore.dev/)

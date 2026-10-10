@@ -23,7 +23,9 @@
 #[cfg(not(feature = "display"))]
 use embassy_rp::Peri;
 #[cfg(not(feature = "display"))]
-use embassy_rp::gpio::{AnyPin, Input, Pull};
+use embassy_rp::gpio::Input;
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
+use embassy_rp::gpio::{AnyPin, Pull};
 #[cfg(not(feature = "display"))]
 use embassy_rp::peripherals::BOOTSEL;
 
@@ -32,13 +34,19 @@ use embassy_rp::bootsel::is_bootsel_pressed;
 #[cfg(all(not(feature = "no-touch"), not(feature = "display")))]
 use embassy_time::{Duration, Instant, block_for};
 
-#[cfg(not(feature = "display"))]
-use rsk_device::presence::ButtonWait;
 #[cfg(all(not(feature = "no-touch"), not(feature = "display")))]
-use rsk_device::presence::{Board, Outcome};
+use rsk_device::presence::Board;
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
+use rsk_device::presence::ButtonWait;
+#[cfg(all(
+    not(feature = "no-touch"),
+    not(any(feature = "display", feature = "display-keys"))
+))]
+use rsk_device::presence::Outcome;
 
 use rsk_device::presence::Arbiter;
 
+#[cfg(any(feature = "display", not(led_kind = "none")))]
 pub(crate) use rsk_device::presence::MIN_TIMEOUT_SECS;
 pub use rsk_device::presence::{SCOPE_CCID, SCOPE_FIDO, SCOPE_NONE, SCOPE_OTP};
 
@@ -89,15 +97,17 @@ pub fn cancel_otp_wait() {
 
 /// Override the touch-wait timeout from the phy record — value in **seconds**,
 /// matching PicoForge's tag `0x08`. `0` (or an absent tag) keeps the built-in
-/// 30 s default; anything below [`MIN_TIMEOUT_SECS`] is raised to it, which
+/// 30 s default; anything below `MIN_TIMEOUT_SECS` is raised to it, which
 /// `main.rs`'s `effective_timeout_secs` has to mirror by hand. Call once at
 /// boot, before any applet runs.
 pub fn set_timeout_secs(secs: u8) {
     ARBITER.set_timeout_secs(secs);
 }
 
-/// User presence via BOOTSEL (default) or a dedicated GPIO button.
-#[cfg(not(feature = "display"))]
+/// User presence via BOOTSEL (default) or a dedicated GPIO button. The screen
+/// builds take presence from their own backend instead, so this only exists on
+/// the button-only build.
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
 pub struct ButtonPresence {
     #[cfg_attr(feature = "no-touch", allow(dead_code))]
     button: Button,
@@ -106,10 +116,13 @@ pub struct ButtonPresence {
 }
 
 /// The presence source: the BOOTSEL hardware button, or a GPIO button (the bool is
-/// `active_high` — `true` reads a press as logic high, `false` as logic low).
+/// `active_high` — `true` reads a press as logic high, `false` as logic low). Also
+/// the sampling half of the touchless screen build's `display_keys` backend
+/// (a `display-keys` build has `display` off, so this is compiled there — where the
+/// GPIO variant stays unconstructed until a touchless board uses a GPIO key).
 #[cfg(not(feature = "display"))]
-#[cfg_attr(feature = "no-touch", allow(dead_code))]
-enum Button {
+#[cfg_attr(any(feature = "no-touch", feature = "display-keys"), allow(dead_code))]
+pub(crate) enum Button {
     Bootsel(Peri<'static, BOOTSEL>),
     Gpio(Input<'static>, bool),
 }
@@ -158,14 +171,25 @@ impl Board for Button {
 /// time so the worker wiring stays backend-agnostic. The standard key confirms
 /// with the BOOTSEL button (or a `PRESENCE_PIN` GPIO); the `display` build swaps
 /// this alias to the `crate::display::TouchPresence` that renders on-screen
-/// Approve/Deny and returns a real `Declined`. Both satisfy the one
-/// `rsk_sdk::UserPresence` every applet asks through, so only this alias changes.
-#[cfg(not(feature = "display"))]
+/// Approve/Deny and returns a real `Declined`; the `display-keys` build names
+/// `crate::display_keys::KeysPresence`, the panel + button backend. All three
+/// satisfy the one `rsk_sdk::UserPresence` every applet asks through, so only
+/// this alias changes.
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
 pub type Presence = ButtonPresence;
 #[cfg(feature = "display")]
 pub type Presence = crate::display::TouchPresence;
+#[cfg(feature = "display-keys")]
+pub type Presence = crate::display_keys::KeysPresence;
 
-#[cfg(not(feature = "display"))]
+/// The one presence arbiter the touchless screen backend waits on, reached
+/// through here (the module keeps the static private).
+#[cfg(feature = "display-keys")]
+pub(crate) fn arbiter() -> &'static Arbiter {
+    &ARBITER
+}
+
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
 impl ButtonPresence {
     /// Build the default BOOTSEL-backed presence source.
     pub fn new_bootsel(bootsel: Peri<'static, BOOTSEL>) -> Self {
@@ -221,7 +245,7 @@ impl ButtonPresence {
     }
 }
 
-#[cfg(not(feature = "display"))]
+#[cfg(not(any(feature = "display", feature = "display-keys")))]
 impl rsk_sdk::UserPresence for ButtonPresence {
     /// A smartcard touch policy (OpenPGP UIF, a PIV slot, OATH/OTP, management,
     /// rescue, vendor). Those applets are reached over CCID, which carries no

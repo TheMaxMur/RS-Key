@@ -474,6 +474,8 @@ where
     t.clear(BG)?;
     status_bar(t)?;
     let mut tb = [0u8; 12];
+    // Deliberately duplicated in `rsk_piv::info::slot_label`, which the consent
+    // prompt shows (rsk-ui stays dependency-free); keep the two in step.
     let (title, purpose): (&str, &str) = match v.slot {
         0x9A => ("9A Auth", "Authentication / login"),
         0x9C => ("9C Sign", "Digital signatures"),

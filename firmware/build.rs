@@ -77,6 +77,9 @@ struct BoardConfig {
     display_i2c_freq_hz: Option<u32>,
     display_invert_colors: Option<bool>,
     display_color_order: Option<String>,
+    display_madctl_scan: Option<u8>,
+    display_win_x: Option<u16>,
+    display_win_y: Option<u16>,
 }
 
 fn read_board() -> Option<BoardConfig> {
@@ -120,6 +123,9 @@ fn parse_toml(raw: &str) -> BoardConfig {
         display_i2c_freq_hz: None,
         display_invert_colors: None,
         display_color_order: None,
+        display_madctl_scan: None,
+        display_win_x: None,
+        display_win_y: None,
     };
     let mut sec = "";
     fn strip_comment(s: &str) -> &str {
@@ -220,6 +226,16 @@ fn parse_toml(raw: &str) -> BoardConfig {
             ("display", "i2c_freq_hz") => c.display_i2c_freq_hz = Some(u32(v)),
             ("display", "invert_colors") => c.display_invert_colors = Some(b(v)),
             ("display", "color_order") => c.display_color_order = Some(u(v).to_string()),
+            // ST7789 MADCTL scan-direction bits (MY|MX|MV) for panels whose
+            // glass is mounted the other way round — e.g. a 240×135 landscape
+            // build on the 135-wide 1.14" module (Waveshare's demo uses 0x70
+            // for the GEEK). 0 = the touch build's portrait layout.
+            ("display", "madctl_scan") => c.display_madctl_scan = Some(u8(v)),
+            // GRAM window offset: partial-glass modules (e.g. the GEEK's 1.14"
+            // 240×135) place the visible glass away from the GRAM origin; the
+            // Waveshare demo adds (40, 53) in landscape mode. 0 = full-glass.
+            ("display", "win_x") => c.display_win_x = Some(u32(v) as u16),
+            ("display", "win_y") => c.display_win_y = Some(u32(v) as u16),
             _ => {}
         }
     }
@@ -554,6 +570,24 @@ fn main() {
             println!("cargo:rustc-env=PK_DISPLAY_COLOR_ORDER={}", v);
         }
     }
+    {
+        let v = disp_cfg.and_then(|b| b.display_madctl_scan).unwrap_or(0);
+        if env::var("PK_DISPLAY_MADCTL_SCAN").is_err() {
+            println!("cargo:rustc-env=PK_DISPLAY_MADCTL_SCAN={v}");
+        }
+    }
+    {
+        let v = disp_cfg.and_then(|b| b.display_win_x).unwrap_or(0);
+        if env::var("PK_DISPLAY_WIN_X").is_err() {
+            println!("cargo:rustc-env=PK_DISPLAY_WIN_X={v}");
+        }
+    }
+    {
+        let v = disp_cfg.and_then(|b| b.display_win_y).unwrap_or(0);
+        if env::var("PK_DISPLAY_WIN_Y").is_err() {
+            println!("cargo:rustc-env=PK_DISPLAY_WIN_Y={v}");
+        }
+    }
 
     // Display knobs flow from `board.toml`/env var into PK_DISPLAY_*; any change
     // lets `env!("PK_DISPLAY_*")` go stale and bake the wrong pins into the
@@ -563,6 +597,9 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_DC");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_RST");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_BL_PIN");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_MADCTL_SCAN");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_WIN_X");
+    println!("cargo:rerun-if-env-changed=PK_DISPLAY_WIN_Y");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_BL_PWM_SLICE");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_BL_PWM_CHANNEL");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_TP_RST");

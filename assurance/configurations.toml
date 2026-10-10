@@ -233,7 +233,7 @@ columns = [
   "firmware-2mb", "firmware-16mb", "firmware-strict-config", "keygen-bench",
   "core1-stats", "bench", "fido-conformance", "ea-conformance-rpid",
   "largeblob-ext", "abrobot-16m", "abrobot-4m", "seeed-xiao", "tenstar-usb",
-  "waveshare-one", "waveshare-touch-lcd",
+  "waveshare-one", "waveshare-touch-lcd", "waveshare-geek",
 ]
 disposition = "out-of-scope"
 basis = "crate-absent"
@@ -974,3 +974,54 @@ in `check.sh` builds `firmware` on it at all. The board loop builds `rsk-wipe`, 
 and both `BOARD=` firmware rows pin `waveshare-one`. So the column is real and \
 WHOLLY UNEXERCISED, and what is left to decide is whether the tree should build \
 it, or whether it should be a knob of `firmware-display` instead."""
+
+[[question]]
+column = "firmware-display-keys"
+owner = "contributor"
+settled_by = "evidence"
+text = """
+The second screen build, and the first with no touch pad: `uv` is unadvertised, \
+CCID pinpad is off, and the consent source is the BOOTSEL button driven through \
+`GestureWait` — an edge-and-hold machine, not the touch controller's level. \
+`SEC-DISP-001`/`-002`/`-003` are implemented a second time here rather than \
+absent, and the three rows that build the column are `rustdoc`/`clippy`/\
+`build`, none of which is an evidence class. Which class would carry them, and \
+does any of the other 37 want a row built at this column?"""
+
+[[question]]
+column = "firmware-display-keys-strong-pin"
+owner = "contributor"
+settled_by = "evidence"
+text = """
+As `firmware-display-keys`, plus: a six-code-point PIN floor and a \
+trivially-guessable-PIN refusal. No PIN is ever entered on this build's own \
+screen — there is no touch pad — so does either rule reach a row here, or are \
+both of them host-side only?"""
+
+[[question]]
+column = "firmware-display-keys-always-uv"
+owner = "contributor"
+settled_by = "evidence"
+text = """
+As `firmware-display-keys`, plus: `always-uv` demands the touch on every \
+operation, and this build's touch IS the confirm page's button. Does that leave \
+`SEC-POL-*`'s comparisons identical to `firmware-always-uv`'s, stronger (one \
+gesture for one operation, nothing ambient to spend), or undecidable without a \
+row that builds it?"""
+
+[[question]]
+column = "waveshare-geek"
+owner = "maintainer"
+settled_by = "ruling"
+text = """
+The display-keys BOARD without the `display-keys` feature: 16 MB geometry, \
+`LED_KIND=none`, and the panel keys the touchless build reads (`madctl_scan`, \
+`win_x`/`win_y`, `cs`/`dc`/`rst`, `bl_pin`, `bl_pwm_*`) compiled as inert \
+constants. Its `SEC-DISP-001`/`-002`/`-003` rows are the `crate-absent` cell's. \
+Nothing in `check.sh` builds `firmware` on this preset either — all three GEEK \
+rows pass `--features display-keys` — so the column is real and WHOLLY \
+UNEXERCISED, and the sharper half is the question `waveshare-touch-lcd` already \
+asks: should the tree build this preset, or is the panel a knob of \
+`firmware-display-keys`? The board file's `bl_pwm_slice`/`bl_pwm_channel` exist \
+only to keep it shaped like a `display` board it is never built as, which is \
+the shape of the answer."""

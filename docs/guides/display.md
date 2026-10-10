@@ -321,9 +321,28 @@ This is an experimental variant. Read [threat-model.md](../threat-model.md) and
 [limitations.md](../limitations.md) for what the trusted display does and does not
 defend against.
 
+## The touchless variant
+
+The same trusted-display idea without a touch pad: the **Waveshare
+RP2350-GEEK** (1.14″ screen + a single button — the `display-keys` build)
+shows the ambient status (Ready / Working / Starting) and a one-key confirm
+page naming the pending operation — a short press approves, a hold past ~0.8 s
+declines. With no touch pad there is no on-device PIN entry, so PINs stay
+host-side as on a button-only key. See [hardware.md](../hardware.md) for the
+board and [releases.md](../releases.md) for the images that ship with it.
+
+When no host has configured it for a while (30 s), the STARTING wash becomes a
+read-only, single-button menu of the device's own metadata — per-applet counts
+and slot states, PIV slot policies, the OpenPGP and OATH listings, one row per
+passkey relying party (a hold opens its account list), backup state and
+firmware identity — plus a SETTINGS page for the menu entry delay and the
+screen direction (the USB-C plug is reversible). Taps step next, a double
+steps back, a hold opens a level; the only flash the menu writes is its own
+settings record, and plugging into a host leaves it immediately.
+
 ## See also
 
-- [Build options](../build.md): the `display` feature and its knobs.
+- [Build options](../build.md): the `display` and `display-keys` features and their knobs.
 - [Hardware](../hardware.md): boards and flashing.
 - [Host protocol §1.3](../protocol.md): CCID pinpad secure PIN entry.
 - [FIDO2 / WebAuthn](fido2.md) · [PIV](piv.md) · [OpenPGP](openpgp.md) · [Seed backup](seed-backup.md).
