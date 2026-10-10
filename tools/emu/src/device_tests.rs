@@ -46,7 +46,7 @@ fn sealed_as() -> ([u8; 8], [u8; 32]) {
 }
 
 fn mount(path: &Path) -> Fs<crate::store::EmuStore> {
-    let mut fs = Fs::new(crate::store::open(Some(path.to_path_buf()), None).unwrap());
+    let mut fs = Fs::new(crate::store::open(Some(path.to_path_buf()), None, &SERIAL).unwrap());
     fs.scan();
     fs
 }
@@ -351,7 +351,7 @@ fn management_1e_and_1f_wipe_nothing() {
 #[test]
 fn a_waiting_request_is_answered_before_the_panels_reboot() {
     let fs: &'static RefCell<Fs<EmuStore>> = Box::leak(Box::new(RefCell::new(Fs::new(
-        crate::store::open(None, None).expect("an in-memory store"),
+        crate::store::open(None, None, &SERIAL).expect("an in-memory store"),
     ))));
     let rng: &'static RefCell<EmuRng> =
         Box::leak(Box::new(RefCell::new(EmuRng::from_seed(&[0x5e; 32]))));

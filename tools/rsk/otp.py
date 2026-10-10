@@ -64,6 +64,8 @@ PRE_OTP_ACTIONS = (
              "then replug (a forgotten or blocked one: `ykman oath access change` drops it, "
              "or `ykman oath reset`)"),
     (0x0010, "OTP slots: replug once"),
+    (0x0020, "storage authority: replug once to finish root migration; if recovery "
+             "persists, preserve the flash image and check `rsk storage status`"),
 )
 
 

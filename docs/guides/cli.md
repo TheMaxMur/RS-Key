@@ -27,6 +27,34 @@ flowchart LR
 
 ## Running it
 
+### Storage initialization and upgrades
+
+Storage v2 starts an unrecognized device in CCID rescue mode. Ordinary applets
+and automatic seed/PIN provisioning stay closed until authority is established.
+Use `rsk storage status` to read its state. A wholly erased device requires
+`rsk storage initialize` and confirmation on the device. This command refuses
+occupied storage; it does not erase an existing device.
+
+For a device provisioned by an older build, use `rsk storage import-legacy`
+and confirm the import on the device. Keep an independent backup before an
+upgrade. Import preserves readable routed values and existing keys, needs
+temporary main-partition space for its manifest and counter backups, and
+refuses before counter erasure if those backups cannot be verified. A started
+import resumes after replug. Successful setup restarts the device.
+
+Import trusts the legacy records currently readable. It cannot reconstruct a
+record already discarded by CRC or identify damage that already formed a valid
+legacy record. After activation, integrity is checked before codec interpretation;
+unavailable authority never silently falls back to legacy. An activated v2 store
+requires v2-aware firmware: downgrading to the old backend is unsupported.
+Preserve the flash image when recovery fails; initialization does not repair
+occupied media. Endurance costs and remaining freshness limits are described
+in [Limitations](../limitations.md).
+
+The software emulator initializes only an image it creates itself. Existing
+images retain their magic and geometry and follow the same explicit import
+and recovery rules. Authority is bound to the configured serial.
+
 In the Nix dev shell, `rsk` is already on `PATH` with every dependency pinned:
 
 ```sh
