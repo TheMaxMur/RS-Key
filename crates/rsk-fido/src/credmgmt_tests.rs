@@ -2969,3 +2969,71 @@ fn incomplete_slot_inventory_probes_absent_records_without_inventing_owners() {
     assert_eq!(decrement_rp(&mut fs, &[0x66; 32]), Ok(()));
     assert_eq!(fs.write_gen(), generation);
 }
+
+#[cfg(feature = "largeblob-ext")]
+#[test]
+fn legacy_large_blob_key_credentials_do_not_expose_the_retired_field() {
+    use crate::credential::{CredExt, credential_store};
+    let (mut fs, mut rng) = setup();
+    let rp_hash = sha256(b"example.com");
+    let seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
+    let input = CredInput {
+        rp_id: "example.com",
+        user_id: b"legacy",
+        user_name: "alice",
+        user_display_name: "Alice",
+        use_sign_count: true,
+        rk: true,
+        created_ms: 1,
+        alg: ALG_ES256,
+        curve: i64::from(crate::consts::CURVE_P256),
+        ext: CredExt {
+            large_blob_key: true,
+            ..CredExt::default()
+        },
+    };
+    let mut boxed = [0; CRED_BOX_MAX];
+    let n = credential_create(
+        seed.expose(),
+        &dev(),
+        &input,
+        &rp_hash,
+        &[0x55; crate::credential::IV_LEN],
+        &mut boxed,
+    )
+    .unwrap();
+    let mut scratch = [0; CRED_REC_MAX];
+    assert!(
+        credential_load(seed.expose(), &boxed[..n], &rp_hash, &mut scratch)
+            .unwrap()
+            .ext
+            .large_blob_key
+    );
+    credential_store(
+        seed.expose(),
+        &dev(),
+        &mut fs,
+        &mut rng,
+        &boxed[..n],
+        &rp_hash,
+        input.rp_id,
+        input.user_id,
+        &[],
+    )
+    .unwrap();
+    let mut state = armed(PERM_CM);
+    let mut response = [0; 1024];
+    let n = run(
+        &mut fs,
+        &mut state,
+        &cm_request(0x04, Some(&subpara_rpidhash(&rp_hash)), &TOKEN),
+        &mut response,
+    )
+    .unwrap();
+    let mut decoder = Decoder::new(&response[..n]);
+    for _ in 0..decoder.map().unwrap().unwrap() {
+        assert_ne!(decoder.u8().unwrap(), 0x0B);
+        decoder.skip().unwrap();
+    }
+    assert_eq!(decoder.position(), n);
+}

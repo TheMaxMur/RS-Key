@@ -3726,40 +3726,47 @@ fn secp256k1_negotiation_follows_the_compiled_profile() {
 
 #[test]
 fn direct_response_encoding_handles_large_blob_output_in_every_profile() {
-    for supported in [false, true] {
-        let mut expected = b"\xa3\x01\x64none\x02\x42ad\x03\xa0".to_vec();
-        if supported {
-            expected[0] = 0xa4;
-            expected.extend_from_slice(b"\x06\xa1\x69largeBlob\xa1\x69supported\xf5");
-        }
-        let encode = |out: &mut [u8]| {
-            encode_mc_response(
-                out,
-                b"ad",
-                &AttBufs::new(),
-                AttShape {
-                    sig_len: 0,
-                    chain_len: 0,
-                    certs: 0,
-                    ea_performed: false,
-                    omitted: true,
-                },
-                None,
-                supported,
-                #[cfg(feature = "preview-sign")]
-                None,
-            )
-        };
-        let mut out = [0xa5; 128];
-        assert_eq!(encode(&mut out), Ok(expected.len()));
-        assert_eq!(&out[..expected.len()], expected);
-        assert!(out[expected.len()..].iter().all(|&byte| byte == 0xa5));
-        for capacity in 0..expected.len() {
-            assert_eq!(
-                encode(&mut out[..capacity]),
-                Err(CtapError::Other),
-                "supported={supported}, capacity={capacity}"
-            );
+    for large_blob_key in [None, Some([0x55; 32])] {
+        for supported in [false, true] {
+            let mut expected = b"\xa3\x01\x64none\x02\x42ad\x03\xa0".to_vec();
+            if let Some(key) = large_blob_key {
+                expected[0] += 1;
+                expected.extend_from_slice(b"\x05\x58\x20");
+                expected.extend_from_slice(&key);
+            }
+            if supported {
+                expected[0] += 1;
+                expected.extend_from_slice(b"\x06\xa1\x69largeBlob\xa1\x69supported\xf5");
+            }
+            let encode = |out: &mut [u8]| {
+                encode_mc_response(
+                    out,
+                    b"ad",
+                    &AttBufs::new(),
+                    AttShape {
+                        sig_len: 0,
+                        chain_len: 0,
+                        certs: 0,
+                        ea_performed: false,
+                        omitted: true,
+                    },
+                    large_blob_key,
+                    supported,
+                    #[cfg(feature = "preview-sign")]
+                    None,
+                )
+            };
+            let mut out = [0xa5; 128];
+            assert_eq!(encode(&mut out), Ok(expected.len()));
+            assert_eq!(&out[..expected.len()], expected);
+            assert!(out[expected.len()..].iter().all(|&byte| byte == 0xa5));
+            for capacity in 0..expected.len() {
+                assert_eq!(
+                    encode(&mut out[..capacity]),
+                    Err(CtapError::Other),
+                    "key={large_blob_key:?}, supported={supported}, capacity={capacity}"
+                );
+            }
         }
     }
 }
