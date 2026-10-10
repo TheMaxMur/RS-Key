@@ -288,6 +288,10 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
     }
 
     pub fn handle_msg(&mut self, apdu: &[u8], now_ms: u64) -> &[u8] {
+        if self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Recovery {
+            self.resp[..2].copy_from_slice(&rsk_sdk::Sw::MEMORY_FAILURE.to_bytes());
+            return &self.resp[..2];
+        }
         // U2F (CTAP1) has no SELECT over CTAPHID: route its INS straight to the
         // FIDO applet when nothing else is selected, in U2F HID's own framing. A
         // vendor AID SELECT takes the dispatcher path below.
@@ -341,6 +345,10 @@ impl<S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> AppletHand
     /// reset window a host has to hit runs from the moment the device could answer
     /// at all. The transport owns that clock, so it supplies it.
     pub fn handle_cbor(&mut self, cid: u32, data: &[u8], now_ms: u64) -> &[u8] {
+        if self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Recovery {
+            self.resp[0] = rsk_fido::CtapError::Other.as_u8();
+            return &self.resp[..1];
+        }
         // The trusted display re-keyed or rejected the clientPIN, or wiped the device,
         // since the last command: end every session credential the PIN authorized before
         // this one can use it. Set on the display task, taken by whichever transport runs first.

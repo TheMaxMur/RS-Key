@@ -31,6 +31,8 @@ use rsk_sdk::error::{Error, Result};
 mod verified_flash;
 use verified_flash::VerifiedFlash;
 
+pub mod authenticated;
+
 /// Scratch for one map op; must fit the largest stored key+value.
 const KV_BUF: usize = 4080;
 

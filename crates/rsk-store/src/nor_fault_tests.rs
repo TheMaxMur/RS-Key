@@ -35,6 +35,9 @@ fn verified_driver_preserves_capacity_and_makes_bounded_readback_progress() {
 #[path = "nor_damage_capacity_tests.rs"]
 mod damage_capacity;
 
+#[path = "raw_bank_tests.rs"]
+mod raw_bank;
+
 #[test]
 fn a_committed_insert_with_failed_readback_is_not_cached_as_absent_by_fs() {
     const FID: u16 = 0xB000;

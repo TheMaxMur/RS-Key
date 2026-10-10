@@ -3,6 +3,72 @@
 
 use super::*;
 
+#[path = "authenticated_fault_tests.rs"]
+mod authenticated_faults;
+
+#[path = "managed_tests.rs"]
+mod managed;
+
+fn auth_blank(_: &mut [u8; 32]) -> crate::authenticated::RootRead {
+    crate::authenticated::RootRead::Blank
+}
+
+type AuthStore = crate::authenticated::Authenticated<FaultFlash, MainCache>;
+
+fn mount_authenticated(flash: &FaultFlash) -> AuthStore {
+    let end = MAIN.end + 128 * 1024;
+    flash.inner.bytes.borrow_mut().resize(end as usize, 0xFF);
+    crate::authenticated::Authenticated::new(
+        flash.clone(),
+        MAIN,
+        MAIN.end..end,
+        MainCache::new(
+            ArrayPageStates::new(),
+            ArrayPagePointers::new(),
+            ArrayKeyPointers::new(),
+        ),
+        crate::authenticated::KeySource::new([0x43; 32], auth_blank, false),
+        [0x4B; 16],
+        crate::authenticated::RootArm::PreOtp,
+    )
+    .unwrap()
+}
+
+#[test]
+fn committed_payload_damage_is_not_absence_or_an_older_authorized_value() {
+    const OLD: &[u8] = b"previous owner security state";
+    const NEW: &[u8] = b"acknowledged owner security state";
+    for fid in [CRED, CTR] {
+        for older in [false, true] {
+            let flash = FaultFlash::new();
+            let mut store = mount_authenticated(&flash);
+            store.initialize_blank().unwrap();
+            if older {
+                store.write(fid, OLD).unwrap();
+            }
+            store.write(fid, NEW).unwrap();
+            let offsets: Vec<_> = flash
+                .inner
+                .bytes
+                .borrow()
+                .windows(NEW.len())
+                .enumerate()
+                .filter_map(|(offset, bytes)| (bytes == NEW).then_some(offset))
+                .collect();
+            assert!(!offsets.is_empty());
+            for offset in offsets {
+                flash.inner.bytes.borrow_mut()[offset] ^= 0x80;
+            }
+            let mut fs = rsk_fs::Fs::new(mount_authenticated(&flash));
+            assert_eq!(
+                fs.try_read(fid, &mut [0; 64]),
+                Err(Error::MemoryFatal),
+                "an acknowledged security record must not become absent or revert"
+            );
+        }
+    }
+}
+
 #[test]
 fn filling_each_real_partition_refuses_without_evicting_any_acknowledged_owner() {
     for counter in [false, true] {

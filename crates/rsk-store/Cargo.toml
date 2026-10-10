@@ -19,6 +19,10 @@ rsk-fs = { workspace = true }
 rsk-sdk = { workspace = true }
 # Readback can meet legacy plaintext remnants when a NOR erase did not land.
 rsk-secret = { workspace = true }
+# The existing crypto facade authenticates the directory and complete payloads.
+rsk-crypto = { workspace = true }
+# The live directory has the filesystem's fixed file budget; no heap is used.
+heapless = "0.8"
 sequential-storage = "8"
 # The async NorFlash traits the backend is generic over (the same 0.4
 # `sequential-storage` uses).

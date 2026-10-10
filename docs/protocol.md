@@ -981,6 +981,18 @@ firmware predates the rescue applet.
 | `1B` | `48` | `00` | `"ROLLBK"` | — | ⚠️ **IRREVERSIBLE** — set ROLLBACK_REQUIRED fuse (user-presence-gated) |
 | `1F` | `00` | `00` | — | — | REBOOT (warm; device drops off bus) |
 | `1F` | `01` | `00` | — | — | REBOOT to BOOTSEL bootloader |
+| `1E` | `08` | `00` | — | `format(1) ‖ ready(1)` | Storage state: `02 01` means active v2 authority; `02 00` means recovery required |
+| `20` | `00` | `00` | `"INITV2"` | — | Initialize wholly erased storage; physical confirmation required, occupied/active media refused; success queues a warm restart |
+| `20` | `01` | `00` | `"IMPORTV2"` | — | Explicitly trust and import readable legacy records; physical confirmation required; success queues a warm restart |
+
+Storage recovery mode exposes CCID with the Rescue AID only. It permits READ
+selectors `03`, `04`, `06`, `07`, `08`, reboot and storage setup. Other rescue
+operations answer `6581`; other applets cannot be selected. Normal FIDO/U2F,
+OTP and management dispatch stay closed. Setup returns `6985` for declined
+confirmation or incompatible state, `6581` for a storage failure, `6A86` for
+invalid selectors and `6A80` for a wrong magic payload. READ `1E/07` includes
+bit `0020` while storage authority remains under the pre-OTP root. Storage
+setup performs no OTP operation.
 
 Every P1 this applet implements is in that table. **A P1 outside it answers
 `6A86`** (RS-Key `0x088E`+; earlier builds answered `9000` to an unimplemented

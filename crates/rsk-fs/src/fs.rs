@@ -189,6 +189,36 @@ impl<S: Storage> Fs<S> {
         self.storage
     }
 
+    pub fn storage_state(&self) -> crate::storage::StorageState {
+        self.storage.state()
+    }
+
+    pub fn storage_root_closed(&self) -> bool {
+        self.storage.root_closed()
+    }
+
+    /// Mount may change authority; discard every derived absence before recovery.
+    pub fn mount_storage(&mut self) -> Result<()> {
+        self.present.fill(0);
+        self.decided.fill(0);
+        self.scan_truncated = true;
+        self.dynamic.clear();
+        self.storage.mount()
+    }
+
+    /// Administration changes authority; invalidate every derived absence first.
+    pub fn administer_storage(
+        &mut self,
+        action: crate::storage::StorageAction,
+        epoch: [u8; 16],
+    ) -> Result<()> {
+        self.present.fill(0);
+        self.decided.fill(0);
+        self.scan_truncated = true;
+        self.dynamic.clear();
+        self.storage.administer(action, epoch)
+    }
+
     /// Raw present bit (does NOT consult `decided`). Authoritative only for a
     /// FID known present; for the trustworthy absent test use
     /// [`known_absent`](Self::known_absent).
@@ -284,7 +314,8 @@ impl<S: Storage> Fs<S> {
             // scrub filler is written by `Storage::compact` straight through the
             // backend. Counting the filler as a dynamic file is what cost a live key
             // its registration at the cap (audit run-36).
-            if fid == EF_META || fid == EF_SCRUB_FILLER {
+            if fid == EF_META || fid == EF_SCRUB_FILLER || crate::STORE_INTERNAL_FIDS.contains(&fid)
+            {
                 return;
             }
             if !dynamic.contains(&fid) {

@@ -576,6 +576,45 @@ fn kvcnt_range() -> core::ops::Range<u32> {
     start..end
 }
 
+#[inline(never)]
+fn initialize_storage(
+    flash: &'static RefCell<flash_storage::AsyncFlash>,
+    serial_hash: [u8; 32],
+    latched: bool,
+) -> &'static RefCell<Store> {
+    FS.init_with(|| {
+        RefCell::new(Fs::new(flash_storage::new_storage(
+            flash,
+            kvmain_range(),
+            kvcnt_range(),
+            rsk_store::authenticated::KeySource::new(
+                serial_hash,
+                flash_storage::read_storage_root,
+                latched,
+            ),
+        )))
+    })
+}
+
+static STORAGE_READY: embassy_sync::signal::Signal<
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    (),
+> = embassy_sync::signal::Signal::new();
+
+#[embassy_executor::task]
+async fn storage_task(
+    flash: &'static RefCell<flash_storage::AsyncFlash>,
+    serial_hash: [u8; 32],
+    latched: bool,
+    result: &'static core::cell::Cell<Option<&'static RefCell<Store>>>,
+) {
+    // A separate poll keeps constructor frames off main's peripheral-init frame.
+    let fs = initialize_storage(flash, serial_hash, latched);
+    let _recovery_required = fs.borrow_mut().mount_storage().is_err();
+    result.set(Some(fs));
+    STORAGE_READY.signal(());
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     arm_stack_limit();
@@ -622,167 +661,197 @@ async fn main(spawner: Spawner) {
 
     let flash = Flash::<_, Blocking, FLASH_SIZE>::new_blocking(p.FLASH);
     let flash_cell = FLASH_CELL.init(RefCell::new(flash_storage::wrap_flash(flash)));
-    let storage = flash_storage::new_storage(flash_cell, kvmain_range(), kvcnt_range());
-    let mut fs = Fs::new(storage);
-    fs.scan(); // recover dynamic files (counter, resident creds) from flash
+    static MOUNTED: StaticCell<core::cell::Cell<Option<&'static RefCell<Store>>>> =
+        StaticCell::new();
+    let mounted = MOUNTED.init(core::cell::Cell::new(None));
+    spawner.spawn(storage_task(flash_cell, serial_hash, latched, mounted).unwrap());
+    STORAGE_READY.wait().await;
+    let fs_ref = mounted
+        .take()
+        .expect("storage task publishes its handle before signaling");
+    let (usb_vid, usb_pid, phy_product, phy_manufacturer, usb_itf, _phy, rng) = {
+        let mut fs = fs_ref.borrow_mut();
+        fs.scan(); // recover dynamic files (counter, resident creds) from flash
 
-    let mut usb_vid = USB_VID;
-    let mut usb_pid = USB_PID;
-    // Explicit phy string overrides; `None` ⇒ the VID-derived default, then the
-    // build const, are chosen at the identity assembly below. The product is
-    // normalized against the ykman YK4_ crash; the manufacturer is copied verbatim
-    // (that crash is a product/reader-name concern only). Both need a StaticCell so
-    // the descriptor's `&'static str` outlives the USB Builder. The phy record also
-    // drives the LED hardware, applied at the spawn site below.
-    let mut phy_product: Option<&str> = None;
-    let mut phy_manufacturer: Option<&str> = None;
-    // Not `rsk_phy::load`: it folds "never written" into "the flash would not say",
-    // and the second one then takes the build defaults -- including the interface
-    // mask, which is the one field here that is a gate rather than an identity.
-    let phy_boot = rsk_phy::boot_load(&mut fs);
-    let usb_itf = phy_boot.usb_itf();
-    let phy = phy_boot.record();
-    if let Some(phy) = phy {
-        if let Some((vid, pid)) = phy.vid_pid {
-            (usb_vid, usb_pid) = (vid, pid);
-        }
-        if let Some(s) = phy.usb_product.as_ref().and_then(|prod| prod.as_str()) {
-            let buf = PHY_PRODUCT.init([0; 64]);
-            let n = rsk_phy::normalize_usb_product(s.as_bytes(), buf);
-            phy_product = core::str::from_utf8(&buf[..n]).ok();
-        }
-        if let Some(s) = phy.usb_manufacturer.as_ref().and_then(|m| m.as_str()) {
-            // Clamp to the descriptor ceiling, not the buffer: the binding limit is
-            // the 64-byte USB control buffer (USB_STR_MAX code units), not this cell.
-            let buf = PHY_MANUFACTURER.init([0; 64]);
-            let n = rsk_phy::clamp_usb_string(s.as_bytes(), buf);
-            phy_manufacturer = core::str::from_utf8(&buf[..n]).ok();
-        }
-        // Touch-wait timeout (phy tag 0x08, seconds; 0/absent = default).
-        presence::set_timeout_secs(phy.presence_timeout.unwrap_or(0));
-    }
-
-    // Provision/recover all persistent state BEFORE attaching to USB. `builder.build()`
-    // below asserts the bus pull-up (embassy `driver.start` -> `set_pullup_en`), so the
-    // host starts enumerating the instant we attach. The task that answers control
-    // transfers (`usb_task` -> `device.run()`) must then be spawned with no blocking
-    // work in between — otherwise the host enumerates into a device that is attached
-    // but mute and times out the first descriptor request. That window (heaviest on a
-    // fresh device: seed + attestation cert + OpenPGP DEK + flash writes) was the
-    // "blink red / not recognised until several replugs" report on a Waveshare RP2350.
-    let mut trng_cfg = TrngConfig::default();
-    // The default sample_count (25) is too low for some RP2350 ROSC units: the
-    // TRNG's autocorrelation health-check fails, the hardware soft-resets and
-    // re-samples in a loop, so seeding the DRBG (48 B, `FidoRng::new`) blocked
-    // ~90 s on EVERY boot on one Waveshare RP2350 unit (variable 30–105 s). A
-    // higher sample_count decorrelates consecutive ROSC samples so the check
-    // passes the first time (~1.5 s boot, HW-verified). Entropy quality is
-    // unchanged — the NIST health checks stay enabled, the source is unchanged.
-    trng_cfg.sample_count = 1000;
-    let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
-    let mut rng = FidoRng::new(trng);
-
-    // Boot is the one place the firmware needs the MKEK's value rather than a way
-    // to read it, and this block is that place: the read dies at its closing brace,
-    // and everything past it carries only `mkek_source`.
-    {
-        use rsk_rescue::otp_lock::{
-            KeyRows, PRE_OTP_DEVICE_KEY, PRE_OTP_FIDO, PRE_OTP_KEY_UNREADABLE, PRE_OTP_OATH,
-            PRE_OTP_OTP, PRE_OTP_PIV,
-        };
-        let mut key = rsk_secret::Secret::<[u8; 32]>::zeroed();
-        let rows = match otp_keys::read_boot_mkek(key.expose_mut()) {
-            // The latch burns only over fused keys, so blank rows past it are a fault
-            // too: taken for a blank page, the passes would provision under the serial.
-            KeyRows::Blank if latched => KeyRows::Unreadable,
-            rows => rows,
-        };
-        let mkek = (rows == KeyRows::Fused).then_some(&key);
-        let dev = Device {
-            serial_hash: &serial_hash,
-            serial_id: &serial_id,
-            otp_key: mkek.map(|k| k.expose()),
-            latched,
-        };
-        // A fused key the boot cannot read is no blank page: each step in the else
-        // would re-seal, provision or migrate under the chip-serial arm what only the
-        // fused root should hold. None runs, and READ 1E/07 says why.
-        if rows == KeyRows::Unreadable {
-            rescue_platform::record_pre_otp_left(Some(PRE_OTP_KEY_UNREADABLE));
+        let mut usb_vid = USB_VID;
+        let mut usb_pid = USB_PID;
+        // Explicit phy string overrides; `None` ⇒ the VID-derived default, then the
+        // build const, are chosen at the identity assembly below. The product is
+        // normalized against the ykman YK4_ crash; the manufacturer is copied verbatim
+        // (that crash is a product/reader-name concern only). Both need a StaticCell so
+        // the descriptor's `&'static str` outlives the USB Builder. The phy record also
+        // drives the LED hardware, applied at the spawn site below.
+        let mut phy_product: Option<&str> = None;
+        let mut phy_manufacturer: Option<&str> = None;
+        // Not `rsk_phy::load`: it folds "never written" into "the flash would not say",
+        // and the second one then takes the build defaults -- including the interface
+        // mask, which is the one field here that is a gate rather than an identity.
+        let phy_boot = rsk_phy::boot_load(&mut fs);
+        let storage_ready = fs.storage_state() == rsk_fs::storage::StorageState::Ready;
+        let usb_itf = if storage_ready {
+            phy_boot.usb_itf()
         } else {
-            // What each pass left under the pre-burn key is what the page-58 lock waits on.
-            let passes = [
-                (
-                    rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs).unwrap_or(true),
-                    PRE_OTP_FIDO,
-                ),
-                (
-                    rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng),
-                    PRE_OTP_DEVICE_KEY,
-                ),
-                (rsk_piv::migrate_kbase(&dev, &mut fs, &mut rng), PRE_OTP_PIV),
-                (
-                    rsk_oath::migrate_seal(&dev, &mut fs, &mut rng),
-                    PRE_OTP_OATH,
-                ),
-                (rsk_otp::migrate_seal(&dev, &mut fs, &mut rng), PRE_OTP_OTP),
-            ];
-            let left = passes
-                .iter()
-                .filter(|(l, _)| *l)
-                .fold(0, |m, (_, bit)| m | bit);
-            rescue_platform::record_pre_otp_left(dev.otp_key.is_some().then_some(left));
-            rsk_fido::credential::migrate_rp_seal(&dev, &mut fs);
-            let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
-            let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
+            rsk_phy::USB_ITF_CCID
+        };
+        let phy = phy_boot.record().copied();
+        if let Some(phy) = phy {
+            if let Some((vid, pid)) = phy.vid_pid {
+                (usb_vid, usb_pid) = (vid, pid);
+            }
+            if let Some(s) = phy.usb_product.as_ref().and_then(|prod| prod.as_str()) {
+                let buf = PHY_PRODUCT.init([0; 64]);
+                let n = rsk_phy::normalize_usb_product(s.as_bytes(), buf);
+                phy_product = core::str::from_utf8(&buf[..n]).ok();
+            }
+            if let Some(s) = phy.usb_manufacturer.as_ref().and_then(|m| m.as_str()) {
+                // Clamp to the descriptor ceiling, not the buffer: the binding limit is
+                // the 64-byte USB control buffer (USB_STR_MAX code units), not this cell.
+                let buf = PHY_MANUFACTURER.init([0; 64]);
+                let n = rsk_phy::clamp_usb_string(s.as_bytes(), buf);
+                phy_manufacturer = core::str::from_utf8(&buf[..n]).ok();
+            }
+            // Touch-wait timeout (phy tag 0x08, seconds; 0/absent = default).
+            presence::set_timeout_secs(phy.presence_timeout.unwrap_or(0));
         }
-        let _ = rsk_devconf::scrub_legacy_lock(&mut fs);
-        let _ = rsk_fido::credmgmt::settle_rp_records(&mut fs);
-        // One-shot at-rest hardening: the seal migrations above leave the superseded
-        // chip-serial-sealed copies recoverable from a flash dump until a GC lap
-        // reclaims the page. The marker, the write order and the crash-safety are
-        // `rsk_fs::run_at_rest_lap`; here because the lap is a multi-second stall
-        // that belongs before USB attach, at an attended provisioning boot, and
-        // because the OTP gate is ours — a pre-OTP board has nothing weaker to
-        // supersede. See `flash_storage::FlashStorage::compact`.
-        //
-        // Standing here AFTER the migrations is not what makes the order hold, and
-        // each of them re-arms before its own superseding write for that reason: a
-        // boot where one silently skipped a record — a faulted `read_key`, a refused
-        // `put` — latches the marker anyway, and the boot that finally migrates that
-        // record finds the lap gated shut for the life of the key. The re-arm costs
-        // nothing at this position: it clears the marker the lap below re-latches.
-        if mkek.is_some() {
-            rsk_fs::run_at_rest_lap(&mut fs);
-        }
-    }
-    // PHY carries the boot-default LED brightness + steady (PicoForge's global LED
-    // knobs) and the RS-Key wire-order tag. Apply them BEFORE `load_led_config` so
-    // a per-status `EF_LED_CONF` (set via `rsk led`) overrides brightness/steady;
-    // the wire order is not in EF_LED_CONF, so it stands.
-    #[cfg(not(led_kind = "none"))]
-    if let Some(phy) = &phy {
-        // OPT_DIMM ("LED Dimmable") gates the global brightness override: without
-        // it, the boot brightness is not forced and the per-status EF_LED_CONF /
-        // defaults stand, so the toggle actually means something.
-        if phy.opts & rsk_phy::OPT_DIMM != 0
-            && let Some(b) = phy.led_brightness
-        {
-            led::set_all_brightness(b);
-        }
-        led::set_steady(phy.opts & rsk_phy::OPT_LED_STEADY != 0);
-        if let Some(order) = phy.led_order {
-            led::set_rg_swap(order != 0);
-        }
-        // Runtime LED count from phy; 0 or None means "use the build default"
-        // (already set as `RUNTIME_LEDS = MAX_LEDS` at init).
-        if let Some(n) = phy.led_num.filter(|&n| n > 0) {
-            led::set_runtime_leds(n);
-        }
-    }
-    vendor::load_led_config(&mut fs);
 
-    let fs_ref = FS.init(RefCell::new(fs));
+        // Provision/recover all persistent state BEFORE attaching to USB. `builder.build()`
+        // below asserts the bus pull-up (embassy `driver.start` -> `set_pullup_en`), so the
+        // host starts enumerating the instant we attach. The task that answers control
+        // transfers (`usb_task` -> `device.run()`) must then be spawned with no blocking
+        // work in between — otherwise the host enumerates into a device that is attached
+        // but mute and times out the first descriptor request. That window (heaviest on a
+        // fresh device: seed + attestation cert + OpenPGP DEK + flash writes) was the
+        // "blink red / not recognised until several replugs" report on a Waveshare RP2350.
+        let mut trng_cfg = TrngConfig::default();
+        // The default sample_count (25) is too low for some RP2350 ROSC units: the
+        // TRNG's autocorrelation health-check fails, the hardware soft-resets and
+        // re-samples in a loop, so seeding the DRBG (48 B, `FidoRng::new`) blocked
+        // ~90 s on EVERY boot on one Waveshare RP2350 unit (variable 30–105 s). A
+        // higher sample_count decorrelates consecutive ROSC samples so the check
+        // passes the first time (~1.5 s boot, HW-verified). Entropy quality is
+        // unchanged — the NIST health checks stay enabled, the source is unchanged.
+        trng_cfg.sample_count = 1000;
+        let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
+        let mut rng = FidoRng::new(trng);
+
+        // Boot is the one place the firmware needs the MKEK's value rather than a way
+        // to read it, and this block is that place: the read dies at its closing brace,
+        // and everything past it carries only `mkek_source`.
+        {
+            use rsk_rescue::otp_lock::{
+                KeyRows, PRE_OTP_DEVICE_KEY, PRE_OTP_FIDO, PRE_OTP_KEY_UNREADABLE, PRE_OTP_OATH,
+                PRE_OTP_OTP, PRE_OTP_PIV, PRE_OTP_STORAGE,
+            };
+            let mut key = rsk_secret::Secret::<[u8; 32]>::zeroed();
+            let rows = match otp_keys::read_boot_mkek(key.expose_mut()) {
+                // The latch burns only over fused keys, so blank rows past it are a fault
+                // too: taken for a blank page, the passes would provision under the serial.
+                KeyRows::Blank if latched => KeyRows::Unreadable,
+                rows => rows,
+            };
+            let mkek = (rows == KeyRows::Fused).then_some(&key);
+            let dev = Device {
+                serial_hash: &serial_hash,
+                serial_id: &serial_id,
+                otp_key: mkek.map(|k| k.expose()),
+                latched,
+            };
+            // A fused key the boot cannot read is no blank page: each step in the else
+            // would re-seal, provision or migrate under the chip-serial arm what only the
+            // fused root should hold. None runs, and READ 1E/07 says why.
+            if rows == KeyRows::Unreadable || !storage_ready {
+                rescue_platform::record_pre_otp_left(Some(PRE_OTP_KEY_UNREADABLE));
+            } else {
+                // What each pass left under the pre-burn key is what the page-58 lock waits on.
+                let passes = [
+                    (
+                        rsk_fido::seed::migrate_keydev_boot(&dev, &mut fs).unwrap_or(true),
+                        PRE_OTP_FIDO,
+                    ),
+                    (
+                        rsk_rescue::keydev::migrate_kbase(&dev, &mut fs, &mut rng),
+                        PRE_OTP_DEVICE_KEY,
+                    ),
+                    (rsk_piv::migrate_kbase(&dev, &mut fs, &mut rng), PRE_OTP_PIV),
+                    (
+                        rsk_oath::migrate_seal(&dev, &mut fs, &mut rng),
+                        PRE_OTP_OATH,
+                    ),
+                    (rsk_otp::migrate_seal(&dev, &mut fs, &mut rng), PRE_OTP_OTP),
+                ];
+                let left = passes.iter().filter(|(l, _)| *l).fold(
+                    if fs.storage_root_closed() {
+                        0
+                    } else {
+                        PRE_OTP_STORAGE
+                    },
+                    |m, (_, bit)| m | bit,
+                );
+                rescue_platform::record_pre_otp_left(dev.otp_key.is_some().then_some(left));
+                rsk_fido::credential::migrate_rp_seal(&dev, &mut fs);
+                let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
+                let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
+            }
+            if storage_ready {
+                let _ = rsk_devconf::scrub_legacy_lock(&mut fs);
+                let _ = rsk_fido::credmgmt::settle_rp_records(&mut fs);
+                // One-shot at-rest hardening: the seal migrations above leave the superseded
+                // chip-serial-sealed copies recoverable from a flash dump until a GC lap
+                // reclaims the page. The marker, the write order and the crash-safety are
+                // `rsk_fs::run_at_rest_lap`; here because the lap is a multi-second stall
+                // that belongs before USB attach, at an attended provisioning boot, and
+                // because the OTP gate is ours — a pre-OTP board has nothing weaker to
+                // supersede. See `flash_storage::FlashStorage::compact`.
+                //
+                // Standing here AFTER the migrations is not what makes the order hold, and
+                // each of them re-arms before its own superseding write for that reason: a
+                // boot where one silently skipped a record — a faulted `read_key`, a refused
+                // `put` — latches the marker anyway, and the boot that finally migrates that
+                // record finds the lap gated shut for the life of the key. The re-arm costs
+                // nothing at this position: it clears the marker the lap below re-latches.
+                if mkek.is_some() {
+                    rsk_fs::run_at_rest_lap(&mut fs);
+                }
+            }
+        }
+        // PHY carries the boot-default LED brightness + steady (PicoForge's global LED
+        // knobs) and the RS-Key wire-order tag. Apply them BEFORE `load_led_config` so
+        // a per-status `EF_LED_CONF` (set via `rsk led`) overrides brightness/steady;
+        // the wire order is not in EF_LED_CONF, so it stands.
+        #[cfg(not(led_kind = "none"))]
+        if let Some(phy) = &phy {
+            // OPT_DIMM ("LED Dimmable") gates the global brightness override: without
+            // it, the boot brightness is not forced and the per-status EF_LED_CONF /
+            // defaults stand, so the toggle actually means something.
+            if phy.opts & rsk_phy::OPT_DIMM != 0
+                && let Some(b) = phy.led_brightness
+            {
+                led::set_all_brightness(b);
+            }
+            led::set_steady(phy.opts & rsk_phy::OPT_LED_STEADY != 0);
+            if let Some(order) = phy.led_order {
+                led::set_rg_swap(order != 0);
+            }
+            // Runtime LED count from phy; 0 or None means "use the build default"
+            // (already set as `RUNTIME_LEDS = MAX_LEDS` at init).
+            if let Some(n) = phy.led_num.filter(|&n| n > 0) {
+                led::set_runtime_leds(n);
+            }
+        }
+        vendor::load_led_config(&mut fs);
+
+        (
+            usb_vid,
+            usb_pid,
+            phy_product,
+            phy_manufacturer,
+            usb_itf,
+            phy,
+            rng,
+        )
+    };
+    #[cfg(not(led_kind = "none"))]
+    let phy = _phy;
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
 
     let driver = UsbDriver::new(p.USB, Irqs);
@@ -810,7 +879,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A9B;
+    let device_release: u16 = 0x0A9C;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

@@ -19,6 +19,37 @@ use super::{
     item, run_with_auto_repair,
 };
 
+fn item_key<K: Key, E>(item: &Item<'_>) -> Result<(K, usize), Error<E>> {
+    let bytes = item.data().get(..usize::from(item.header.length))
+        .ok_or(Error::SerializationError(SerializationError::BufferTooSmall))?;
+    K::deserialize_from(bytes).map_err(Error::SerializationError)
+}
+
+/// An allocated item span. Publication is owned by the caller's authority log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ReservedItem {
+    address: u32,
+    length: u16,
+}
+
+impl ReservedItem {
+    /// Restore a reservation from authenticated recovery metadata.
+    /// Every operation checks that the complete span stays in this map.
+    pub const fn resume(address: u32, length: u16) -> Self {
+        Self { address, length }
+    }
+
+    /// Flash-relative address of the reserved header.
+    pub const fn address(self) -> u32 {
+        self.address
+    }
+
+    /// Full serialized key/value length, excluding the item header.
+    pub const fn length(self) -> u16 {
+        self.length
+    }
+}
+
 /// Configuration for a map
 pub struct MapConfig<S> {
     flash_range: Range<u32>,
@@ -204,10 +235,184 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
             None => K::get_len(&data_buffer[..data_len])?,
         };
 
-        let (value, _size) =
-            V::deserialize_from(&data_buffer[item_key_len..][..data_len - item_key_len])
-                .map_err(Error::SerializationError)?;
+        let value_bytes = data_buffer.get(item_key_len..data_len).ok_or_else(|| Error::Corrupted {
+            #[cfg(feature = "_test")]
+            backtrace: std::backtrace::Backtrace::capture(),
+        })?;
+        let (value, _size) = V::deserialize_from(value_bytes).map_err(Error::SerializationError)?;
         Ok(Some(value))
+    }
+
+    /// Read the newest value without permitting flash repair or reclamation.
+    pub async fn fetch_item_unrepaired<'d, V: Value<'d>>(
+        &mut self,
+        data_buffer: &'d mut [u8],
+        search_key: &K,
+    ) -> Result<Option<V>, Error<S::Error>> {
+        let Some((item, _, key_len)) = self.fetch_item_with_location(data_buffer, search_key).await?
+        else {
+            return Ok(None);
+        };
+        let data_len = item.header.length as usize;
+        let key_len = match key_len {
+            Some(length) => length,
+            None => K::get_len(&data_buffer[..data_len])?,
+        };
+        let value_bytes = data_buffer.get(key_len..data_len).ok_or_else(|| Error::Corrupted {
+            #[cfg(feature = "_test")]
+            backtrace: std::backtrace::Backtrace::capture(),
+        })?;
+        let (value, _) = V::deserialize_from(value_bytes).map_err(Error::SerializationError)?;
+        Ok(Some(value))
+    }
+
+    /// Search raw item spans without repair. `accept` must authenticate the full value.
+    /// This can recover an authority-selected copy during interrupted page migration.
+    pub async fn fetch_matching_item<'d>(
+        &mut self,
+        data_buffer: &'d mut [u8],
+        search_key: &K,
+        mut accept: impl FnMut(&[u8]) -> bool,
+    ) -> Result<Option<&'d [u8]>, Error<S::Error>> {
+        let mut matched = None;
+        'pages: for page in self.inner.get_pages(0) {
+            let start = calculate_page_address::<S>(self.flash_range(), page) + S::WORD_SIZE as u32;
+            let end = calculate_page_end_address::<S>(self.flash_range(), page) - S::WORD_SIZE as u32;
+            let mut iter = ItemIter::new(start, end);
+            while let Some((item, _)) = iter.next(&mut self.inner.flash, data_buffer).await? {
+                let (key, key_len) = item_key::<K, S::Error>(&item)?;
+                let length = item.header.length as usize;
+                let Some(value) = item.data().get(key_len..length) else {
+                    return Err(Error::Corrupted {
+                        #[cfg(feature = "_test")]
+                        backtrace: std::backtrace::Backtrace::capture(),
+                    });
+                };
+                if key == *search_key && accept(value) {
+                    matched = Some((key_len, length));
+                    break 'pages;
+                }
+            }
+        }
+        Ok(matched.and_then(|(start, end)| data_buffer.get(start..end)))
+    }
+
+    /// Whether page metadata describes an interrupted erase or migration.
+    pub async fn needs_repair(&mut self) -> Result<bool, Error<S::Error>> {
+        for page in self.inner.get_pages(0) {
+            match self.inner.get_page_state(page).await {
+                Err(Error::Corrupted { .. }) => return Ok(true),
+                Ok(PageState::PartialOpen) => {
+                    match self.inner.get_page_state(self.inner.next_page(page)).await {
+                        Ok(state) if state.is_open() => {},
+                        Ok(_) | Err(Error::Corrupted { .. }) => return Ok(true),
+                        Err(error) => return Err(error),
+                    }
+                }
+                Ok(_) => {},
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(false)
+    }
+
+    async fn read_repaired_page_state(&mut self, page: usize) -> Result<PageState, Error<S::Error>> {
+        match self.inner.get_page_state(page).await {
+            Err(Error::Corrupted { .. }) => Ok(PageState::Open),
+            state => state,
+        }
+    }
+
+    /// Repair only if every protected key has an authenticated copy outside pages to erase.
+    /// `accept` authenticates the full value; ordinary newest-value checks still follow repair.
+    pub async fn repair_preserving(
+        &mut self, data_buffer: &mut [u8], keys: &[K],
+        mut accept: impl FnMut(&K, &[u8]) -> bool,
+    ) -> Result<(), Error<S::Error>> {
+        self.inner.cache.invalidate_cache_state();
+        let mut partial = None;
+        let mut first_open = None;
+        for page in self.inner.get_pages(0) {
+            match self.read_repaired_page_state(page).await? {
+                PageState::PartialOpen if partial.is_none() => partial = Some(page),
+                PageState::Open if first_open.is_none() => first_open = Some(page),
+                _ => {},
+            }
+        }
+        let reset_target = match partial {
+            Some(page) if !self.read_repaired_page_state(self.inner.next_page(page)).await?.is_open() => Some(page),
+            _ => None,
+        };
+        let last_used = match partial {
+            Some(page) => Some(page),
+            None => match first_open {
+                Some(page) => {
+                    let previous = self.inner.previous_page(page);
+                    self.read_repaired_page_state(previous).await?.is_closed().then_some(previous)
+                }
+                None => None,
+            },
+        };
+        for wanted in keys {
+            let mut page = last_used.ok_or_else(|| Error::Corrupted {
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            })?;
+            let mut newest = None;
+            for _ in self.inner.get_pages(0) {
+                if reset_target != Some(page) && !self.read_repaired_page_state(page).await?.is_open() {
+                    let start = calculate_page_address::<S>(self.flash_range(), page) + S::WORD_SIZE as u32;
+                    let end = calculate_page_end_address::<S>(self.flash_range(), page) - S::WORD_SIZE as u32;
+                    let mut iter = ItemIter::new(start, end);
+                    while let Some((item, _)) = iter.next(&mut self.inner.flash, data_buffer).await? {
+                        let (key, key_len) = item_key::<K, S::Error>(&item)?;
+                        if key != *wanted { continue; }
+                        let value = item.data().get(key_len..item.header.length as usize).ok_or_else(|| Error::Corrupted {
+                            #[cfg(feature = "_test")]
+                            backtrace: std::backtrace::Backtrace::capture(),
+                        })?;
+                        newest = Some(accept(&key, value));
+                    }
+                    if newest.is_some() { break; }
+                }
+                page = self.inner.previous_page(page);
+            }
+            if newest != Some(true) { return Err(Error::Corrupted {
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            }); }
+            let mut found = false;
+            'pages: for page in self.inner.get_pages(0) {
+                let retained = match self.inner.get_page_state(page).await {
+                    Ok(PageState::Closed) => true,
+                    Ok(PageState::PartialOpen) => match self.inner.get_page_state(self.inner.next_page(page)).await {
+                        Ok(state) => state.is_open(),
+                        Err(Error::Corrupted { .. }) => true,
+                        Err(error) => return Err(error),
+                    },
+                    Ok(PageState::Open) | Err(Error::Corrupted { .. }) => false,
+                    Err(error) => return Err(error),
+                };
+                if !retained { continue; }
+                let start = calculate_page_address::<S>(self.flash_range(), page) + S::WORD_SIZE as u32;
+                let end = calculate_page_end_address::<S>(self.flash_range(), page) - S::WORD_SIZE as u32;
+                let mut iter = ItemIter::new(start, end);
+                while let Some((item, _)) = iter.next(&mut self.inner.flash, data_buffer).await? {
+                    let (key, key_len) = item_key::<K, S::Error>(&item)?;
+                    let length = item.header.length as usize;
+                    let value = item.data().get(key_len..length).ok_or_else(|| Error::Corrupted {
+                        #[cfg(feature = "_test")]
+                        backtrace: std::backtrace::Backtrace::capture(),
+                    })?;
+                    if key == *wanted && accept(&key, value) { found = true; break 'pages; }
+                }
+            }
+            if !found { return Err(Error::Corrupted {
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            }); }
+        }
+        self.try_repair(data_buffer).await
     }
 
     /// Fetch the item, but with the item unborrowed, the address of the item and the length of the key
@@ -271,7 +476,12 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
                         break 'cache;
                     }
                     item::MaybeItem::Present(item) => {
-                        return Ok(Some((item.unborrow(), cached_location, None)));
+                        let (key, key_len) = item_key::<K, S::Error>(&item)?;
+                        if key != *search_key {
+                            self.inner.cache.invalidate_cache_state();
+                            break 'cache;
+                        }
+                        return Ok(Some((item.unborrow(), cached_location, Some(key_len))));
                     }
                 }
             }
@@ -328,7 +538,7 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
 
             let mut it = ItemIter::new(page_data_start_address, page_data_end_address);
             while let Some((item, address)) = it.next(&mut self.inner.flash, data_buffer).await? {
-                let (found_key, found_key_len) = K::deserialize_from(item.data())?;
+                let (found_key, found_key_len) = item_key::<K, S::Error>(&item)?;
                 if found_key == *search_key {
                     newest_found_item_data = Some((address, found_key_len));
                 }
@@ -433,6 +643,166 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
         key: &K,
         item: &V,
     ) -> Result<(), Error<S::Error>> {
+        let reserved = self.reserve_item_inner(data_buffer, key, item).await?;
+        self.append_reserved(data_buffer, key, item, reserved).await
+    }
+
+    /// Allocate/repair/reclaim before persisting an authenticated write intent.
+    /// No other mutation may intervene before `append_reserved` or cancellation.
+    pub async fn reserve_item<'d, V: Value<'d>>(
+        &mut self,
+        data_buffer: &mut [u8],
+        key: &K,
+        item: &V,
+    ) -> Result<ReservedItem, Error<S::Error>> {
+        run_with_auto_repair!(
+            function = self.reserve_item_inner::<dyn Value>(data_buffer, key, item).await,
+            repair = self.try_repair(data_buffer).await?
+        )
+    }
+
+    fn reserved_end(&self, reserved: ReservedItem) -> Result<u32, Error<S::Error>> {
+        let range = self.flash_range();
+        if reserved.address < range.start || reserved.address >= range.end
+            || !reserved.address.is_multiple_of(S::WORD_SIZE as u32)
+        {
+            return Err(Error::Corrupted {
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            });
+        }
+        let page = calculate_page_index::<S>(range.clone(), reserved.address);
+        let start = calculate_page_address::<S>(range.clone(), page) + S::WORD_SIZE as u32;
+        let end = calculate_page_end_address::<S>(range, page) - S::WORD_SIZE as u32;
+        let span = ItemHeader::data_address::<S>(0)
+            + crate::round_up_to_alignment::<S>(u32::from(reserved.length));
+        let reserved_end = reserved.address.checked_add(span).ok_or_else(|| Error::Corrupted {
+            #[cfg(feature = "_test")]
+            backtrace: std::backtrace::Backtrace::capture(),
+        })?;
+        if reserved.address < start || reserved_end > end {
+            return Err(Error::Corrupted {
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            });
+        }
+        Ok(reserved_end)
+    }
+
+    /// Append at the authenticated reservation without repair or garbage collection.
+    pub async fn append_reserved<'d, V: Value<'d> + ?Sized>(
+        &mut self,
+        data_buffer: &mut [u8],
+        key: &K,
+        item: &V,
+        reserved: ReservedItem,
+    ) -> Result<(), Error<S::Error>> {
+        let end = self.reserved_end(reserved)?;
+        let key_len = key.serialize_into(data_buffer)?;
+        let length = key_len + item.serialize_into(&mut data_buffer[key_len..])
+            .map_err(Error::SerializationError)?;
+        if length != usize::from(reserved.length) {
+            return Err(Error::ItemTooBig);
+        }
+        let mut scratch = [0; MAX_WORD_SIZE];
+        let mut at = reserved.address;
+        while at < end {
+            let count = (end - at).min(MAX_WORD_SIZE as u32) as usize;
+            self.inner.flash.read(at, &mut scratch[..count]).await.map_err(|value| Error::Storage {
+                value,
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            })?;
+            if scratch[..count].iter().any(|&byte| byte != 0xFF) {
+                return Err(Error::Corrupted {
+                    #[cfg(feature = "_test")]
+                    backtrace: std::backtrace::Backtrace::capture(),
+                });
+            }
+            at += count as u32;
+        }
+        self.inner.cache.notice_key_location(key, reserved.address, true);
+        Item::write_new(&mut self.inner.flash, self.inner.flash_range.clone(),
+            &mut self.inner.cache, reserved.address, &data_buffer[..length]).await?;
+        self.inner.cache.unmark_dirty();
+        Ok(())
+    }
+
+    /// Read exactly the reserved candidate; another equal value is not evidence of programming.
+    pub async fn read_reserved<'d>(
+        &mut self,
+        data_buffer: &'d mut [u8],
+        key: &K,
+        reserved: ReservedItem,
+    ) -> Result<Option<&'d [u8]>, Error<S::Error>> {
+        self.reserved_end(reserved)?;
+        let page = calculate_page_index::<S>(self.flash_range(), reserved.address);
+        let end = calculate_page_end_address::<S>(self.flash_range(), page) - S::WORD_SIZE as u32;
+        let Some(header) = ItemHeader::read_new(&mut self.inner.flash, reserved.address, end).await?
+        else { return Ok(None); };
+        if header.length != reserved.length {
+            return Err(Error::Corrupted {
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            });
+        }
+        let key_len = match header.read_item(&mut self.inner.flash, data_buffer, reserved.address, end).await? {
+            item::MaybeItem::Present(item) => {
+                let (found_key, key_len) = item_key::<K, S::Error>(&item)?;
+                if found_key != *key {
+                    return Err(Error::Corrupted {
+                        #[cfg(feature = "_test")]
+                        backtrace: std::backtrace::Backtrace::capture(),
+                    });
+                }
+                key_len
+            }
+            item::MaybeItem::Erased(_, _) | item::MaybeItem::Corrupted(_, _) => return Ok(None),
+        };
+        Ok(data_buffer.get(key_len..usize::from(reserved.length)))
+    }
+
+    /// Cancel only the authenticated candidate, even when its header is torn.
+    pub async fn discard_reserved(&mut self, reserved: ReservedItem) -> Result<(), Error<S::Error>>
+    where S: MultiwriteNorFlash,
+    {
+        self.reserved_end(reserved)?;
+        let header = ItemHeader { length: reserved.length, crc: None };
+        let page = calculate_page_index::<S>(self.flash_range(), reserved.address);
+        let end = calculate_page_end_address::<S>(self.flash_range(), page) - S::WORD_SIZE as u32;
+        match ItemHeader::read_new(&mut self.inner.flash, reserved.address, end).await {
+            Ok(Some(existing)) => {
+                if existing.length != reserved.length {
+                    return Err(Error::Corrupted {
+                        #[cfg(feature = "_test")]
+                        backtrace: std::backtrace::Backtrace::capture(),
+                    });
+                }
+                if existing.crc.is_none() {
+                    self.inner.cache.invalidate_cache_state();
+                    return Ok(());
+                }
+            }
+            Ok(None) | Err(Error::Corrupted { .. }) => {}
+            Err(error) => return Err(error),
+        }
+        let range = self.inner.flash_range.clone();
+        let result = header.erase_data(&mut self.inner.flash, range, &mut self.inner.cache, reserved.address).await;
+        self.inner.cache.invalidate_cache_state();
+        result.map(|_| ())
+    }
+
+    /// Raw recovery changes must invalidate the key and page pointer caches together.
+    pub fn invalidate_cache(&mut self) {
+        self.inner.cache.invalidate_cache_state();
+    }
+
+    async fn reserve_item_inner<'d, V: Value<'d> + ?Sized>(
+        &mut self,
+        data_buffer: &mut [u8],
+        key: &K,
+        item: &V,
+    ) -> Result<ReservedItem, Error<S::Error>> {
         if self.inner.cache.is_dirty() {
             self.inner.cache.invalidate_cache_state();
         }
@@ -502,20 +872,11 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
                     .await?;
 
                 if let Some(free_spot_address) = free_spot_address {
-                    self.inner
-                        .cache
-                        .notice_key_location(key, free_spot_address, true);
-                    Item::write_new(
-                        &mut self.inner.flash,
-                        self.inner.flash_range.clone(),
-                        &mut self.inner.cache,
-                        free_spot_address,
-                        &data_buffer[..item_data_length],
-                    )
-                    .await?;
-
                     self.inner.cache.unmark_dirty();
-                    return Ok(());
+                    return Ok(ReservedItem {
+                        address: free_spot_address,
+                        length: item_data_length as u16,
+                    });
                 }
 
                 // The item doesn't fit here, so we need to close this page and move to the next
@@ -715,7 +1076,7 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
                     item::MaybeItem::Corrupted(_, _) | item::MaybeItem::Erased(_, _) => continue,
                     item::MaybeItem::Present(item) => {
                         let item_match = match search_key {
-                            Some(search_key) => K::deserialize_from(item.data())?.0 == *search_key,
+                            Some(search_key) => item_key::<K, S::Error>(&item)?.0 == *search_key,
                             _ => true,
                         };
                         // If this item has the same key as the key we're trying to erase, then erase the item.
@@ -885,7 +1246,7 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
             calculate_page_end_address::<S>(self.flash_range(), source_page) - S::WORD_SIZE as u32,
         );
         while let Some((item, item_address)) = it.next(&mut self.inner.flash, data_buffer).await? {
-            let (key, _) = K::deserialize_from(item.data())?;
+            let (key, _) = item_key::<K, S::Error>(&item)?;
 
             // We're in a decent state here
             self.inner.cache.unmark_dirty();
@@ -944,7 +1305,13 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
     async fn try_repair(&mut self, data_buffer: &mut [u8]) -> Result<(), Error<S::Error>> {
         self.inner.cache.invalidate_cache_state();
 
-        self.inner.try_general_repair().await?;
+        for page in self.inner.get_pages(0) {
+            match self.inner.get_page_state(page).await {
+                Err(Error::Corrupted { .. }) => self.inner.open_page(page).await?,
+                Ok(_) => {},
+                Err(error) => return Err(error),
+            }
+        }
 
         // Let's check if we corrupted in the middle of a migration
         if let Some(partial_open_page) = self
@@ -1145,7 +1512,7 @@ impl<K: Key, S: NorFlash, C: CacheImpl<K>> MapItemIter<'_, K, S, C> {
         };
 
         let data_len = item.header.length as usize;
-        let (key, key_len) = K::deserialize_from(item.data())?;
+        let (key, key_len) = item_key::<K, S::Error>(&item)?;
         let (value, _value_len) = V::deserialize_from(&data_buffer[..data_len][key_len..])
             .map_err(Error::SerializationError)?;
 

@@ -206,6 +206,9 @@ mod compact_cleanup;
 #[path = "nor_fault_tests.rs"]
 mod nor_faults;
 
+#[path = "staged_map_tests.rs"]
+mod staged_map;
+
 impl MultiwriteNorFlash for SharedMock {}
 
 type Result2<T> = core::result::Result<T, FlashFault>;

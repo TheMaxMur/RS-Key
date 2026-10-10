@@ -44,7 +44,6 @@ const SECTOR: usize = 4096;
 const MAIN_LEN: usize = crate::env_u32(env!("PK_KVMAIN_LEN")) as usize;
 const COUNTER_LEN: usize = 128 * 1024;
 const MAIN_PAGES: usize = MAIN_LEN / SECTOR; // KVMAIN / SECTOR (352 at the 1408K default)
-const COUNTER_PAGES: usize = COUNTER_LEN / SECTOR; // 32
 
 /// Cached key→location maps. A hit lets `store_item`'s `migrate_items` take the O(1)
 /// path per item instead of a full-partition scan — the difference between a ~0.2 s
@@ -56,8 +55,7 @@ const COUNTER_PAGES: usize = COUNTER_LEN / SECTOR; // 32
 /// dynamic-file budget — without it a maxed device holds 1281 main keys against a
 /// 1280-slot cache and one key pays the O(flash) first fetch. Counter only needs its
 /// few keys.
-const MAIN_CACHE_KEYS: usize = rsk_fs::MAX_DYNAMIC_FILES + 1;
-const COUNTER_CACHE_KEYS: usize = 16;
+const MAIN_CACHE_KEYS: usize = rsk_store::authenticated::MAX_MAIN_ENTRIES;
 
 pub type AsyncFlash = BlockingAsync<Flash<'static, FLASH, Blocking, FLASH_SIZE>>;
 // sequential-storage 8.0 replaced the `KeyPointerCache` alias with a composite
@@ -69,15 +67,8 @@ type MainCache = Cache<
     ArrayKeyPointers<u16, MAIN_CACHE_KEYS>,
     u16,
 >;
-type CounterCache = Cache<
-    ArrayPageStates<COUNTER_PAGES>,
-    ArrayPagePointers<COUNTER_PAGES>,
-    ArrayKeyPointers<u16, COUNTER_CACHE_KEYS>,
-    u16,
->;
-
 /// The store this board runs.
-pub type FlashStorage = rsk_store::SeqStorage<SharedFlash, MainCache, CounterCache>;
+pub type FlashStorage = rsk_store::authenticated::Managed<SharedFlash, MainCache>;
 
 /// A `'static`, shared handle to the one flash peripheral, so the two partitions can
 /// each own a `MapStorage` over it. `MapStorage` takes its flash *by value* and the
@@ -135,22 +126,33 @@ pub fn new_storage(
     flash: &'static RefCell<AsyncFlash>,
     main_range: Range<u32>,
     counter_range: Range<u32>,
+    source: rsk_store::authenticated::KeySource,
 ) -> FlashStorage {
     debug_assert!((main_range.end - main_range.start) as usize == MAIN_LEN);
     debug_assert!((counter_range.end - counter_range.start) as usize == COUNTER_LEN);
-    FlashStorage::new(
+    FlashStorage::new_unmounted(
         SharedFlash { inner: flash },
         main_range,
         counter_range,
-        MainCache::new(
-            ArrayPageStates::new(),
-            ArrayPagePointers::new(),
-            ArrayKeyPointers::new(),
-        ),
-        CounterCache::new(
-            ArrayPageStates::new(),
-            ArrayPagePointers::new(),
-            ArrayKeyPointers::new(),
-        ),
+        source,
+        main_cache,
     )
+}
+
+fn main_cache() -> MainCache {
+    MainCache::new(
+        ArrayPageStates::new(),
+        ArrayPagePointers::new(),
+        ArrayKeyPointers::new(),
+    )
+}
+
+pub fn read_storage_root(out: &mut [u8; 32]) -> rsk_store::authenticated::RootRead {
+    use rsk_rescue::otp_lock::KeyRows;
+    use rsk_store::authenticated::RootRead;
+    match crate::otp_keys::read_boot_mkek(out) {
+        KeyRows::Blank => RootRead::Blank,
+        KeyRows::Fused => RootRead::Fused,
+        KeyRows::Unreadable => RootRead::Unreadable,
+    }
 }
