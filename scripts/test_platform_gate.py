@@ -676,7 +676,7 @@ def test_the_checkout_derives_what_it_is_measured_at():
     assert len(kinds["unsafe"]) >= 22, kinds["unsafe"]
     assert all("#" in k for k in kinds["unsafe"]), kinds["unsafe"]
     steals = [k for k in kinds["unsafe"] if "anypin-steal" in k]
-    assert len(steals) == 8, steals
+    assert len(steals) == 11, steals
 
 
 # --- rule 1: every derived candidate is claimed --------------------------------

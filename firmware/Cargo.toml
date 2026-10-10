@@ -173,6 +173,13 @@ strict-config = ["rsk-mgmt/strict-config", "rsk-fido/strict-config", "rsk-otp/st
 # firmware --features display` (the panel is the status indicator, so there is no
 # addressable LED, which also frees GPIO16 for the backlight).
 display = ["rsk-device/display", "dep:rsk-display", "dep:rsk-ui", "dep:rsk-bip39", "dep:rsk-slip39", "dep:mipidsi", "dep:embedded-graphics"]
+# Status-only panel build for a board whose screen is a plain SPI module with no
+# touch (ALIENTEK RP2350A small-system board: 1.14" ST7789V2, 240x135, on SPI1).
+# It paints the device's own status and adds NO presence or PIN surface — user
+# presence stays on the BOOTSEL button — so it is NOT the trusted display. OFF by
+# default and `dep:`-gated, so a standard key without a screen compiles none of it.
+# Mutually exclusive with `display`; see the guard in `main.rs`.
+panel = ["dep:rsk-ui", "dep:embedded-graphics"]
 
 [[bin]]
 name = "firmware"

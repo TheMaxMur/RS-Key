@@ -39,6 +39,10 @@ use rsk_device::presence::{Board, Outcome};
 
 use rsk_device::presence::Arbiter;
 
+// Read by `main`'s phy-publishing block (compiled out on `LED_KIND=none`) and by
+// the display assert below, so a `none` build without a screen — the `panel` flavor
+// — uses it nowhere and would otherwise carry an unused re-export.
+#[cfg(any(feature = "display", not(led_kind = "none")))]
 pub(crate) use rsk_device::presence::MIN_TIMEOUT_SECS;
 pub use rsk_device::presence::{SCOPE_CCID, SCOPE_FIDO, SCOPE_NONE, SCOPE_OTP};
 
@@ -156,11 +160,14 @@ impl Board for Button {
 
 /// The presence backend the [`crate::worker::Worker`] owns, selected at build
 /// time so the worker wiring stays backend-agnostic. The standard key confirms
-/// with the BOOTSEL button (or a `PRESENCE_PIN` GPIO); the `display` build swaps
-/// this alias to the `crate::display::TouchPresence` that renders on-screen
-/// Approve/Deny and returns a real `Declined`. Both satisfy the one
+/// with the BOOTSEL button (or a `PRESENCE_PIN` GPIO); the `panel` build wraps
+/// that same button so the screen can show a press is wanted; the `display` build
+/// swaps this alias to the `crate::display::TouchPresence` that renders on-screen
+/// Approve/Deny and returns a real `Declined`. All satisfy the one
 /// `rsk_sdk::UserPresence` every applet asks through, so only this alias changes.
-#[cfg(not(feature = "display"))]
+#[cfg(all(not(feature = "display"), feature = "panel"))]
+pub type Presence = crate::panel::PanelPresence;
+#[cfg(all(not(feature = "display"), not(feature = "panel")))]
 pub type Presence = ButtonPresence;
 #[cfg(feature = "display")]
 pub type Presence = crate::display::TouchPresence;
