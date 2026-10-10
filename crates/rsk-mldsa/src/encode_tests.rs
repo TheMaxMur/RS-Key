@@ -50,3 +50,16 @@ fn sig_encode_decode_roundtrip() {
     check::<4, 4>(&ML_DSA_44);
     check::<6, 5>(&ML_DSA_65);
 }
+
+#[test]
+fn a_complete_public_key_encoding_accepts_the_full_coefficient_range() {
+    for (byte, coefficient) in [(0, 0), (0xff, 1023)] {
+        let (rho, coefficients) = pk_decode::<4>(&[byte; crate::MLDSA44_PK_LEN]).unwrap();
+        assert_eq!(rho, [byte; 32]);
+        assert!(
+            coefficients
+                .iter()
+                .all(|poly| poly.0.iter().all(|&value| value == coefficient))
+        );
+    }
+}

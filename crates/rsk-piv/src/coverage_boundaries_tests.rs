@@ -250,3 +250,20 @@ fn direct_management_key_updates_refuse_inconsistent_apdu_windows_without_retire
         assert!(app.sess.has_mgm);
     }
 }
+
+#[test]
+fn direct_retry_reads_refuse_indices_without_a_complete_pair() {
+    let mut fs = new_fs();
+    fs.put(EF_RETRIES, &[3, 2, 5, 4]).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(crate::retries(&mut fs, RETRY_PIN), Ok((3, 2)));
+    assert_eq!(crate::retries(&mut fs, RETRY_PUK), Ok((5, 4)));
+    for idx in [3, 4] {
+        assert_eq!(crate::retries(&mut fs, idx), Err(Sw::REFERENCE_NOT_FOUND));
+        assert_eq!(
+            crate::retries_left(&mut fs, idx),
+            Err(Sw::REFERENCE_NOT_FOUND)
+        );
+    }
+    assert_eq!(fs.write_gen(), generation);
+}

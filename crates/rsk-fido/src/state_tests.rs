@@ -321,6 +321,22 @@ fn an_idle_cursor_expires_on_its_own_timer() {
 }
 
 #[test]
+fn a_direct_large_blob_transfer_expires_in_every_compiled_profile() {
+    let mut state = FidoState::new();
+    state.lba.expected_length = 32;
+    state.lba.expected_next_offset = 16;
+    state.lba.last_fragment_ms = 1_000;
+    state.lba.temp.fill(0xA5);
+    state.expire_stale_sequences(1_000 + STATEFUL_WALK_IDLE_MS - 1);
+    assert_eq!(state.lba.expected_length, 32);
+    assert_eq!(state.lba.expected_next_offset, 16);
+    state.expire_stale_sequences(1_000 + STATEFUL_WALK_IDLE_MS);
+    assert_eq!(state.lba.expected_length, 0);
+    assert_eq!(state.lba.expected_next_offset, 0);
+    assert!(state.lba.temp.iter().all(|&byte| byte == 0xA5));
+}
+
+#[test]
 fn the_generated_relation_refuses_an_out_of_domain_pre_state() {
     let pre = AState {
         permission_mc: true,

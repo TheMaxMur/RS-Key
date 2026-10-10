@@ -156,3 +156,51 @@ fn a_restart_sweep_requires_a_complete_recovery_for_each_command_state() {
         |_, _, _, _, _| {},
     );
 }
+
+#[test]
+#[should_panic(expected = "no budget under")]
+fn a_command_sweep_cannot_report_success_when_the_command_never_finishes() {
+    sweep(
+        || {
+            let (storage, medium) = Cut::new();
+            (Fs::new(storage), medium)
+        },
+        |_| false,
+        |_, _, _, _| {},
+    );
+}
+
+fn exceed_command_budget<S: Storage>(fs: &mut Fs<S>) {
+    const RECORD: u16 = 0xb000;
+    for value in 0..=SWEEP_MAX {
+        let _ = fs.put(RECORD, &value.to_be_bytes());
+    }
+}
+
+#[test]
+#[should_panic(expected = "no budget under")]
+fn a_restart_sweep_refuses_a_command_that_exceeds_every_budget() {
+    sweep_restarts(
+        || {
+            let (storage, medium) = Cut::new();
+            (Fs::new(storage), medium)
+        },
+        |fs| {
+            exceed_command_budget(fs);
+            false
+        },
+        |_| {},
+        |_, _, _, _, _| {},
+    );
+}
+
+#[test]
+#[should_panic(expected = "no budget under")]
+fn a_recovery_sweep_refuses_a_command_that_exceeds_every_budget() {
+    sweep_recovery(
+        |_| (),
+        |fs, ()| exceed_command_budget(fs),
+        |_| {},
+        |_, _, _| {},
+    );
+}

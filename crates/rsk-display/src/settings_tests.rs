@@ -571,3 +571,37 @@ fn sleeping_from_the_security_pin_menu_unwinds_settings() {
     assert!(ui.asleep);
     assert_eq!(env.fs.borrow().write_gen(), generation);
 }
+
+#[test]
+fn empty_settings_taps_and_cancelled_security_rows_preserve_configuration() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.host_pending = true;
+    let generation = env.fs.borrow().write_gen();
+    let mut last = Instant::now();
+    let mut dirty = false;
+    assert!(matches!(
+        env.local(&mut ui).settings_root(nowhere(), &mut last),
+        Nav::Idle
+    ));
+    assert!(matches!(
+        env.local(&mut ui)
+            .settings_security(nowhere(), &mut last, &mut dirty),
+        Nav::Idle
+    ));
+    for entry in [
+        SecurityEntry::DevicePin,
+        SecurityEntry::FidoPin,
+        SecurityEntry::AuditLog,
+        SecurityEntry::Backup,
+    ] {
+        let tap = settings_row(rsk_ui::SECURITY_ROWS, rsk_ui::hit_security, entry);
+        assert!(matches!(
+            env.local(&mut ui)
+                .settings_security(tap, &mut last, &mut dirty),
+            Nav::Stay
+        ));
+        assert!(!dirty);
+        assert_eq!(env.fs.borrow().write_gen(), generation);
+    }
+}

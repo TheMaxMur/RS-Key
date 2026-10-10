@@ -3,6 +3,51 @@
 
 use super::*;
 
+#[test]
+fn authenticated_deletion_recovery_handles_prepared_absence_at_each_program_cut() {
+    let baseline = FaultFlash::new();
+    let mut healthy = mount_authenticated(&baseline);
+    healthy.initialize_blank().unwrap();
+    healthy.write(CRED, b"owner").unwrap();
+    healthy.write(CRED + 1, b"neighbor").unwrap();
+    let original = baseline.image();
+    baseline.arm(&[]);
+    healthy.remove(CRED).unwrap();
+    let programs = baseline
+        .events()
+        .iter()
+        .filter(|(io, _, _)| *io == Io::Program)
+        .count();
+    assert!(programs > 0);
+    for skip in 0..programs {
+        let flash = FaultFlash::new();
+        *flash.inner.bytes.borrow_mut() = original.clone();
+        let mut store = mount_authenticated(&flash);
+        flash.arm(&[Rule {
+            io: Io::Program,
+            skip,
+            effect: Effect::KeepTail,
+            latched: true,
+        }]);
+        let _interrupted = store.remove(CRED);
+        assert!(flash.hits()[0] > 0);
+        flash.clear();
+        let mut reboot = mount_authenticated(&flash);
+        let owner = authenticated_value(&mut reboot, CRED).unwrap();
+        assert!(owner.is_none() || owner.as_deref() == Some(&b"owner"[..]));
+        assert_eq!(
+            authenticated_value(&mut reboot, CRED + 1)
+                .unwrap()
+                .as_deref(),
+            Some(&b"neighbor"[..])
+        );
+        assert_eq!(
+            authenticated_value(&mut mount_authenticated(&flash), CRED).unwrap(),
+            owner
+        );
+    }
+}
+
 fn authenticated_value(store: &mut AuthStore, fid: u16) -> Result<Option<Vec<u8>>> {
     let mut out = [0; 128];
     let value = store.read(fid, &mut out);

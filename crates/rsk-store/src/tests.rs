@@ -15,6 +15,8 @@
 
 extern crate std;
 
+pub(crate) use nor_faults::flash::{Effect, FaultFlash, Io, Rule};
+
 use core::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::vec;
@@ -126,6 +128,25 @@ impl SharedMock {
     fn bytes_written(&self) -> u64 {
         self.written.get()
     }
+}
+
+pub(crate) fn flash_for_authenticated_tests() -> impl MultiwriteNorFlash + Clone {
+    let flash = SharedMock::new();
+    flash
+        .bytes
+        .borrow_mut()
+        .resize(MAIN.end as usize + 128 * 1024, 0xFF);
+    flash
+}
+
+pub(crate) fn fault_flash_for_authenticated_tests() -> FaultFlash {
+    let flash = FaultFlash::new();
+    flash
+        .inner
+        .bytes
+        .borrow_mut()
+        .resize(MAIN.end as usize + 128 * 1024, 0xFF);
+    flash
 }
 
 impl ErrorType for SharedMock {

@@ -46,6 +46,32 @@ fn select(aid: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+fn recovery_allows_attended_bootsel_reboot_without_touching_storage() {
+    let env = Env::with_storage(Recovery {
+        writes: 0,
+        action: None,
+    });
+    let mut ccid = env.ccid();
+    ccid.handle_apdu(&select(rsk_rescue::RESCUE_AID), 0);
+    env.finger.borrow_mut().answer = false;
+    assert_eq!(
+        ccid.handle_apdu(&[0x80, 0x1F, 1, 0, 0], 0),
+        rsk_sdk::Sw::CONDITIONS_NOT_SATISFIED.to_bytes()
+    );
+    assert!(env.rescue.borrow().reboots.is_empty());
+    env.finger.borrow_mut().answer = true;
+    assert_eq!(
+        ccid.handle_apdu(&[0x80, 0x1F, 1, 0, 0], 0),
+        rsk_sdk::Sw::OK.to_bytes()
+    );
+    drop(ccid);
+    let storage = env.fs.into_inner().into_storage();
+    assert_eq!(storage.writes, 0);
+    assert_eq!(storage.action, None);
+    assert_eq!(env.rescue.borrow().reboots, [true]);
+}
+
+#[test]
 fn unknown_authority_exposes_only_rescue_and_requires_presence_for_storage_actions() {
     let env = Env::with_storage(Recovery {
         writes: 0,

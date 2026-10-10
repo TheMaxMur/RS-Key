@@ -444,3 +444,31 @@ fn user_status_does_not_authorise_admin_recovery_doors() {
         );
     }
 }
+
+#[test]
+fn missing_retry_records_are_not_recreated_by_an_authenticated_update() {
+    for fid in [consts::EF_PW_RETRIES, consts::EF_PW_PRIV] {
+        let mut fs = boot(RamStorage::new());
+        let mut sess = Session::new();
+        assert_eq!(
+            crate::pin::verify(
+                &dev(),
+                &mut fs,
+                &mut sess,
+                &mut CountRng(0),
+                0,
+                consts::PW3_MODE83,
+                consts::PW3_DEFAULT
+            ),
+            Sw::OK
+        );
+        fs.delete(fid).unwrap();
+        let generation = fs.write_gen();
+        assert_eq!(
+            crate::retries::set_pin_retries(&mut fs, &sess, &[1, 1, 1]),
+            Sw::REFERENCE_NOT_FOUND
+        );
+        assert_eq!(fs.write_gen(), generation);
+        assert!(sess.has_pw3);
+    }
+}

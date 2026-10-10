@@ -5,6 +5,12 @@ use super::*;
 use crate::tests::unhex;
 use p256::elliptic_curve::PrimeField;
 
+#[test]
+fn hash_to_scalar_refuses_oversized_messages_after_an_admitted_domain() {
+    assert!(hash_to_scalar(&[0; MSG_MAX], &[b"domain"]).is_some());
+    assert!(hash_to_scalar(&[0; MSG_MAX + 1], &[b"domain"]).is_none());
+}
+
 // draft-bradleylundberg-cfrg-arkg-11 A.1 (ARKG-P256), as python-fido2 2.2.1's
 // `tests/test_arkg.py` carries them: the seed from ikm_bl = 00..1f, ikm_kem = 20..3f.
 const IKM_BL: &str = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f";

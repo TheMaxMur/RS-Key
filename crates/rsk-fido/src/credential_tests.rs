@@ -18,6 +18,50 @@ const SEED: [u8; 32] = [0x42; 32];
 const IV: [u8; 12] = [0x11; 12];
 
 #[test]
+fn unknown_nested_credential_fields_preserve_the_following_owner_and_policy() {
+    let mut buffer = [0; 128];
+    let mut e = Encoder::new(Cursor::new(&mut buffer[..]));
+    e.map(4)
+        .unwrap()
+        .u8(12)
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.u8(1)
+        .unwrap()
+        .str("example.com")
+        .unwrap()
+        .u8(3)
+        .unwrap()
+        .bytes(b"user")
+        .unwrap();
+    e.u8(7)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("credProtect").unwrap().u8(3).unwrap();
+    let n = e.writer().position();
+    let req = parse_body(&buffer[..n]).unwrap();
+    assert_eq!(req.rp_id, "example.com");
+    assert_eq!(req.user_id, b"user");
+    assert_eq!(req.ext.cred_protect, 3);
+    assert!(parse_body(&[0xa1, 12, 0x82, 0xf6]).is_none());
+    assert!(parse_body(&[0xa1, 7, 0xa1, 0x61, b'x', 0x82, 0xf6]).is_none());
+}
+
+#[test]
 fn empty_short_and_foreign_slots_cannot_replace_the_new_account() {
     let hash = sha256(b"example.com");
     let mut boxed = [0; 512];

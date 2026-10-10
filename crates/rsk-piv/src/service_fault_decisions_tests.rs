@@ -274,3 +274,19 @@ fn a_refused_unblock_rearm_preserves_the_pin_and_requires_a_healthy_retry() {
     );
     assert_eq!(stored(&mut fs, rsk_fs::EF_HARDENED), None);
 }
+
+#[test]
+fn unreadable_management_key_metadata_refuses_without_changing_the_owner() {
+    let (mut app, mut fs, medium, _, _) = moved_card();
+    let fid = key_fid(SLOT_CARDMGM).get();
+    let before = stored(&mut fs, fid).unwrap();
+    let generation = fs.write_gen();
+    medium.stick(Some(fid));
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_METADATA, 0, SLOT_CARDMGM, &[]),
+        (Sw::REFERENCE_NOT_FOUND, vec![])
+    );
+    assert_eq!(fs.write_gen(), generation);
+    medium.stick(None);
+    assert_eq!(stored(&mut fs, fid), Some(before));
+}

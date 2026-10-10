@@ -362,3 +362,9 @@ fn each_signature_oracle_refuses_malformed_encodings_before_verification() {
         }
     }
 }
+
+#[test]
+#[should_panic(expected = "algorithm / key-type mismatch")]
+fn the_signature_oracle_refuses_an_algorithm_and_key_type_mismatch() {
+    let _ = verifies(ALG_ES256, &CoseKey::Okp { x: [0; 32] }, b"", b"");
+}

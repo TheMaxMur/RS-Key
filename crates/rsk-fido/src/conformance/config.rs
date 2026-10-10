@@ -358,3 +358,10 @@ fn the_min_pin_oracle_skips_other_extension_values() {
     });
     assert_eq!(min_pin_output(&body), None);
 }
+
+#[test]
+fn an_unknown_getinfo_option_has_the_helpers_explicit_absent_answer() {
+    let mut authr = Authr::fresh();
+    assert!(!getinfo_option(&mut authr, "unknown-option"));
+    assert!(getinfo_option(&mut authr, "rk"));
+}

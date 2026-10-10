@@ -844,3 +844,16 @@ fn a_status_record_without_the_pw3_counter_allows_recovery_termination() {
     );
     assert_eq!(lifecycle(&mut fs), Lifecycle::Terminated);
 }
+
+#[test]
+fn a_missing_pw_status_is_not_recreated_by_authenticated_termination() {
+    let mut fs = seeded();
+    fs.delete(EF_PW_PRIV).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(
+        terminate_df(&dev(), &mut fs, &mut CountRng(0), true, &apdu()),
+        Sw::REFERENCE_NOT_FOUND
+    );
+    assert_eq!(fs.write_gen(), generation);
+    assert!(!fs.has_data(EF_PW_PRIV));
+}

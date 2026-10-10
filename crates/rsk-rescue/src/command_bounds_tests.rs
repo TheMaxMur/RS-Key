@@ -25,6 +25,27 @@ fn malformed_commands_do_not_write_or_request_a_reboot() {
         (INS_WRITE, 2, 3, &b"body"[..], Sw::INCORRECT_P1P2),
         (INS_READ, 3, 0, &b"body"[..], Sw::WRONG_LENGTH),
         (INS_READ, 4, 3, &b""[..], Sw::INCORRECT_P1P2),
+        (INS_READ, 8, 1, &b""[..], Sw::INCORRECT_P1P2),
+        (INS_READ, 0xFF, 0, &b""[..], Sw::INCORRECT_P1P2),
+        (INS_STORAGE, 2, 0, &b"INITV2"[..], Sw::INCORRECT_P1P2),
+        (INS_STORAGE, 0, 1, &b"INITV2"[..], Sw::INCORRECT_P1P2),
+        (INS_STORAGE, 1, 1, &b"IMPORTV2"[..], Sw::INCORRECT_P1P2),
+        (INS_STORAGE, 0, 0, &b"IMPORTV2"[..], Sw::DATA_INVALID),
+        (INS_STORAGE, 1, 0, &b"INITV2"[..], Sw::DATA_INVALID),
+        (
+            INS_STORAGE,
+            0,
+            0,
+            &b"INITV2"[..],
+            Sw::CONDITIONS_NOT_SATISFIED,
+        ),
+        (
+            INS_STORAGE,
+            1,
+            0,
+            &b"IMPORTV2"[..],
+            Sw::CONDITIONS_NOT_SATISFIED,
+        ),
         (INS_REBOOT_BOOTSEL, 0, 0, &b"body"[..], Sw::WRONG_LENGTH),
     ] {
         assert_eq!(

@@ -400,3 +400,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Ma
         self.active.as_mut().ok_or(Error::MemoryFatal)?.compact()
     }
 }
+
+#[cfg(test)]
+#[path = "managed_tests.rs"]
+mod tests;

@@ -83,3 +83,31 @@ fn read_fault_exceptions_bind_to_both_the_fid_and_the_read_number() {
     );
     assert_eq!(answer, Some(b"clean".to_vec()));
 }
+
+#[test]
+fn a_provisioned_traced_inventory_can_be_rescanned_without_losing_records() {
+    let answer = sweep(
+        |fs| {
+            fs.put(RECORD, b"owner").unwrap();
+            fs.put(RECORD + 1, b"neighbor").unwrap();
+            fs.scan();
+        },
+        |fs, _| {
+            let mut keys = Vec::new();
+            assert!(fs.for_each_key(&mut |fid| keys.push(fid)));
+            assert_eq!(keys, [RECORD, RECORD + 1]);
+            let mut value = [0; 5];
+            let n = fs.try_read(RECORD, &mut value).ok()??;
+            assert_eq!(n, 5);
+            Some(value.to_vec())
+        },
+        &[],
+    );
+    assert_eq!(answer, Some(b"owner".to_vec()));
+}
+
+#[test]
+#[should_panic(expected = "internal error: entered unreachable code")]
+fn a_healthy_run_cannot_be_assigned_a_fault_landing() {
+    let _ = landing(&[], Fault::Healthy);
+}

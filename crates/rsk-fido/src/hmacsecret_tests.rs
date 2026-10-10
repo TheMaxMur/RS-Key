@@ -2,6 +2,17 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[test]
+fn unknown_nested_hmac_fields_are_consumed_before_the_protocol() {
+    let req = parse_bytes(&[0xa2, 5, 0x82, 0xa0, 0xf6, 4, 2]).unwrap();
+    assert!(req.present);
+    assert_eq!(req.proto, 2);
+    assert!(matches!(
+        parse_bytes(&[0xa1, 5, 0x82, 0xf6]),
+        Err(CtapError::InvalidCbor)
+    ));
+}
 use rsk_crypto::hmac_sha256;
 use rsk_crypto::pinproto::{authenticate, encrypt, public_xy};
 

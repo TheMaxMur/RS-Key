@@ -328,3 +328,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Au
         result
     }
 }
+
+#[cfg(test)]
+#[path = "storage_tests.rs"]
+mod tests;

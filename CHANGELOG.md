@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Current host-profile coverage: exercise authenticated storage v2 APIs and
+  reachable parser, applet, display and test-util paths across the declared
+  feature profiles. One-shot test hooks exercise rare U2F key-construction and
+  PIV RSA-generation failures. bcdDevice `0x0A9E` → `0x0A9F`: the build gate
+  counts the inline test hooks as a build change; no firmware behaviour change.
+
+
 - Preserve legacy storage upgrades when an SDK UF2 left the RP2350-E10
   `0xEF` padding block at the end of a smaller flash chip. Accept only the exact
   256-byte suffix in an otherwise erased counter sector; expose that suffix

@@ -2,9 +2,8 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::tests::{
-    Env, PIN, Pad, PanelSignal, SignalAfterTouches, WRONG_PIN, center, dev, nowhere, pin_entry,
-};
+use crate::tests::{Env, PIN, Pad, WRONG_PIN, center, dev, nowhere, pin_entry};
+use crate::tests::{PanelSignal, SignalAfterTouches};
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::vec;
@@ -532,4 +531,63 @@ fn a_tap_outside_backup_actions_with_a_revealable_seed_changes_nothing() {
     env.local(&mut ui).run_backup();
     assert_eq!(env.fs.borrow().write_gen(), generation);
     assert_eq!(exports(&env), 0);
+}
+
+#[test]
+fn direct_recovery_modal_yields_to_power_and_host_events_in_every_profile() {
+    for event in [PanelSignal::Wake, PanelSignal::HostRequest] {
+        let env = Env::new();
+        provision(&env);
+        env.set_device_pin(PIN);
+        let Ui {
+            panel,
+            mut hooks,
+            info,
+            ..
+        } = env.ui(Pad::idle());
+        hooks.presence_ms = 3000;
+        let mut points = pin_entry(PIN);
+        points.push(center(rsk_ui::FMT_PHRASE_RECT));
+        let mut samples = VecDeque::from([None; 4]);
+        for point in points {
+            samples.extend([Some(point), None, None, None, None]);
+        }
+        samples.extend(vec![
+            Some(center(rsk_ui::DEL_HOLD_RECT));
+            3 * (HOLD_MS / TOUCH_POLL_MS) as usize
+        ]);
+        samples.extend([None; 4]);
+        let touch = SignalAfterTouches {
+            samples,
+            signal: Rc::clone(&hooks.signal),
+            event,
+            sent: false,
+        };
+        let mut ui = Ui::new(panel, touch, hooks, info, env.cells());
+        let original = rsk_fido::passkeys::load_keydev(&dev(), &mut env.fs.borrow_mut()).unwrap();
+        let started = Instant::now();
+        Local::new(&mut ui, env.cells()).run_reveal_recovery();
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(exports(&env), 1);
+        assert_eq!(ui.asleep, event == PanelSignal::Wake);
+        assert!(!ui.panel.oob);
+        if ui.asleep {
+            assert!(
+                ui.panel
+                    .area_pixels(rsk_ui::Rect::new(0, 0, rsk_ui::PANEL_W, rsk_ui::PANEL_H))
+                    .iter()
+                    .all(|&pixel| pixel == Rgb565::BLACK)
+            );
+        }
+        assert_eq!(
+            rsk_fido::passkeys::load_keydev(&dev(), &mut env.fs.borrow_mut())
+                .unwrap()
+                .expose(),
+            original.expose()
+        );
+        use crate::TouchPad;
+        assert_eq!(ui.touch.read(), None);
+        assert_eq!(ui.touch.read(), None);
+        assert!(ui.touch.sent);
+    }
 }

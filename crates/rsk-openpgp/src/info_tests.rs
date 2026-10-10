@@ -10,6 +10,29 @@ const ATTR_ED25519: &[u8] = &[0x16, 0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x
 const ATTR_P256: &[u8] = &[0x13, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x03, 0x01, 0x07];
 
 #[test]
+fn every_slot_algorithm_has_its_public_label() {
+    for (algo, label) in [
+        (SlotAlgo::None, "—"),
+        (SlotAlgo::Rsa(1024), "RSA 1024"),
+        (SlotAlgo::Rsa(2048), "RSA 2048"),
+        (SlotAlgo::Rsa(3072), "RSA 3072"),
+        (SlotAlgo::Rsa(4096), "RSA 4096"),
+        (SlotAlgo::Rsa(512), "RSA"),
+        (SlotAlgo::Ec(Curve::P256), "NIST P-256"),
+        (SlotAlgo::Ec(Curve::P384), "NIST P-384"),
+        (SlotAlgo::Ec(Curve::P521), "NIST P-521"),
+        (SlotAlgo::Ec(Curve::Bp256), "brainpoolP256r1"),
+        (SlotAlgo::Ec(Curve::Bp384), "brainpoolP384r1"),
+        (SlotAlgo::Ec(Curve::K256), "secp256k1"),
+        (SlotAlgo::Ec(Curve::Ed25519), "Ed25519"),
+        (SlotAlgo::Ec(Curve::X25519), "Cv25519"),
+        (SlotAlgo::Unknown, "Key set"),
+    ] {
+        assert_eq!(algo.label(), label);
+    }
+}
+
+#[test]
 fn empty_zero_and_short_public_records_keep_their_distinct_defaults() {
     let mut fs = fs();
     fs.put(EF_PK_SIG.get(), &[0xab; 40]).unwrap();

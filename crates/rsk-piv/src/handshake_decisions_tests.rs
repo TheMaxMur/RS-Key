@@ -237,3 +237,83 @@ fn a_correct_witness_authenticates_even_when_the_host_challenge_has_the_wrong_wi
         auth_mgm(&mut app, &mut fs);
     }
 }
+
+#[test]
+fn already_stored_legacy_3des_management_keys_authenticate_in_every_profile() {
+    for mutual in [false, true] {
+        let rng = RefCell::new(TestRng(7));
+        let presence = RefCell::new(AlwaysConfirm);
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+        let mut fs = new_fs();
+        select(&mut app, &mut fs);
+        let dev = Device {
+            serial_hash: &HASH,
+            serial_id: &SERIAL,
+            otp_key: None,
+            latched: false,
+        };
+        files::mgm_put(
+            &dev,
+            &mut fs,
+            &mut *rng.borrow_mut(),
+            ALGO_3DES,
+            TOUCHPOLICY_NEVER,
+            &DEFAULT_MGM,
+        )
+        .unwrap();
+        let generation = fs.write_gen();
+        let tag = if mutual {
+            TAG_AUTH_WITNESS
+        } else {
+            TAG_AUTH_CHALLENGE
+        };
+        let (sw, response) = run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_3DES,
+            SLOT_CARDMGM,
+            &body(tag, &[], None),
+        );
+        assert_eq!(sw, Sw::OK);
+        let mut block: [u8; 8] = find_tag(
+            find_tag(&response, u16::from(TAG_DYN_AUTH)).unwrap(),
+            u16::from(tag),
+        )
+        .unwrap()
+        .try_into()
+        .unwrap();
+        let request = if mutual {
+            rsk_crypto::des3_decrypt_block(&DEFAULT_MGM, &mut block);
+            body(TAG_AUTH_WITNESS, &block, Some(&[0x5a; 8]))
+        } else {
+            rsk_crypto::des3_encrypt_block(&DEFAULT_MGM, &mut block);
+            body(TAG_AUTH_RESPONSE, &block, None)
+        };
+        let (sw, response) = run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_3DES,
+            SLOT_CARDMGM,
+            &request,
+        );
+        assert_eq!(sw, Sw::OK);
+        assert!(app.sess.has_mgm && !app.sess.has_challenge);
+        if mutual {
+            let mut expected = [0x5a; 8];
+            rsk_crypto::des3_encrypt_block(&DEFAULT_MGM, &mut expected);
+            assert_eq!(
+                find_tag(
+                    find_tag(&response, u16::from(TAG_DYN_AUTH)).unwrap(),
+                    u16::from(TAG_AUTH_RESPONSE)
+                ),
+                Some(expected.as_slice())
+            );
+        } else {
+            assert!(response.is_empty());
+        }
+        assert_eq!(fs.write_gen(), generation);
+        assert_eq!(files::mgm_read(&dev, &mut fs).unwrap().key(), &DEFAULT_MGM);
+    }
+}

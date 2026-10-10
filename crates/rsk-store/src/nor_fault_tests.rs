@@ -4,7 +4,7 @@
 use super::*;
 
 #[path = "nor_fault_flash.rs"]
-mod flash;
+pub(super) mod flash;
 use flash::{Effect, FaultFlash, Io, Rule};
 
 type FaultStore = SeqStorage<FaultFlash, MainCache, CounterCache>;

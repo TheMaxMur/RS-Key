@@ -466,3 +466,20 @@ fn unequal_pin_lengths_never_store_either_confirmation() {
         assert_eq!(ui.hooks.pin_changed, 0);
     }
 }
+
+#[test]
+fn cancelling_the_reentered_pin_does_not_set_either_pin_scope() {
+    for scope in [PinScope::Device, PinScope::Fido] {
+        let env = Env::new();
+        let mut taps = pin_entry(PIN);
+        taps.push(center(rsk_ui::PIN_CANCEL_RECT));
+        let mut ui = env.ui(Pad::taps(&taps));
+        let generation = env.fs.borrow().write_gen();
+        env.local(&mut ui).run_set_pin(scope);
+        assert_eq!(env.fs.borrow().write_gen(), generation);
+        assert!(!rsk_fido::passkeys::device_pin_is_set(
+            &mut env.fs.borrow_mut()
+        ));
+        assert!(!env.fs.borrow_mut().has_data(rsk_fido::consts::EF_PIN));
+    }
+}

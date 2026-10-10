@@ -332,6 +332,8 @@ fn cmd_authenticate<S: Storage, R: Rng>(
         return (Sw::CONDITIONS_NOT_SATISFIED, 0);
     }
     let key = P256Key::from_scalar(scalar.expose());
+    #[cfg(test)]
+    let key = tests::primitives::key_result_with_injected_failure(key);
     scalar.wipe();
     let key = match key {
         Some(k) => k,

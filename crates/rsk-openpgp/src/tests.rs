@@ -3959,3 +3959,123 @@ mod restarts;
 
 #[path = "stored_damage_tests.rs"]
 mod stored_damage;
+
+#[test]
+fn absent_uif_needs_no_prompt_and_decryption_names_its_declined_prompt() {
+    struct Recording(Vec<&'static str>);
+    impl UserPresence for Recording {
+        fn request(&mut self, confirm: Confirm<'_>) -> Presence {
+            self.0.push(confirm.title);
+            Presence::Cancelled
+        }
+    }
+    let mut fs = Fs::new(RamStorage::new());
+    let mut presence = Recording(Vec::new());
+    assert_eq!(
+        check_uif(&mut fs, consts::EF_UIF_DEC, &mut presence),
+        Ok(())
+    );
+    assert!(presence.0.is_empty());
+    fs.put(consts::EF_UIF_DEC, &[1, 0x20]).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(
+        check_uif(&mut fs, consts::EF_UIF_DEC, &mut presence),
+        Err(Sw::SECURE_MESSAGE_EXEC_ERROR)
+    );
+    assert_eq!(presence.0, ["Decrypt data?"]);
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn an_unsupported_direct_pso_parameter_pair_changes_neither_output_nor_storage() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut session = Session::new();
+    let apdu = Apdu::parse(&[0, consts::INS_PSO, 0, 0]).unwrap();
+    let mut output = [0xA5; 64];
+    let generation = fs.write_gen();
+    assert_eq!(
+        pso::pso(
+            &dev(),
+            &mut fs,
+            &mut session,
+            &mut CountRng(7),
+            &mut AlwaysConfirm,
+            &apdu,
+            &mut output
+        ),
+        (0, Sw::INCORRECT_P1P2)
+    );
+    assert_eq!(output, [0xA5; 64]);
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn an_ec_import_without_its_scalar_does_not_replace_the_existing_key() {
+    let rng = RefCell::new(CountRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut fs = make_fs();
+    verify_pin(&mut app, &mut fs, consts::PW3_MODE83, consts::PW3_DEFAULT);
+    assert_eq!(put(&mut app, &mut fs, 0, 0xC1, ATTR_P256), Sw::OK);
+    assert_eq!(
+        run(&mut app, &mut fs, &ec_import(0xB6, &[0x11; 32])).1,
+        Sw::OK
+    );
+    let mut before = [0; 256];
+    let n = fs.read(consts::EF_PK_SIG.get(), &mut before).unwrap();
+    let generation = fs.write_gen();
+    let mut body = vec![
+        0x4D, 0x2A, 0xB6, 0, 0x7F, 0x48, 2, 0x93, 0x20, 0x5F, 0x48, 0x20,
+    ];
+    body.extend_from_slice(&[0x22; 32]);
+    let mut apdu = vec![0, 0xDB, 0x3F, 0xFF, u8::try_from(body.len()).unwrap()];
+    apdu.extend_from_slice(&body);
+    assert_eq!(run(&mut app, &mut fs, &apdu), (vec![], Sw::WRONG_DATA));
+    assert_eq!(fs.write_gen(), generation);
+    let mut after = [0; 256];
+    assert_eq!(fs.read(consts::EF_PK_SIG.get(), &mut after), Some(n));
+    assert_eq!(&after[..n], &before[..n]);
+}
+
+#[test]
+fn a_short_challenge_response_window_spends_no_entropy_or_storage() {
+    let rng = RefCell::new(CountRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = OpenpgpApplet::new(SERIAL_ID, SERIAL_HASH, None, &rng, &presence);
+    let mut fs = make_fs();
+    let apdu = Apdu::parse(&[0, consts::INS_CHALLENGE, 0, 0, 16]).unwrap();
+    let generation = fs.write_gen();
+    let mut output = [0xA5; 8];
+    assert_eq!(
+        app.process(&apdu, &mut fs, &mut ResBuf::new(&mut output)),
+        Sw::WRONG_LENGTH
+    );
+    assert_eq!(rng.borrow().0, 7);
+    assert_eq!(output, [0xA5; 8]);
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn direct_uif_checks_use_the_generic_caption_for_an_unknown_file() {
+    struct Caption(usize);
+    impl UserPresence for Caption {
+        fn request(&mut self, confirm: Confirm<'_>) -> Presence {
+            assert_eq!(confirm.title, "Confirm?");
+            self.0 += 1;
+            Presence::Cancelled
+        }
+    }
+    let mut fs = Fs::new(RamStorage::new());
+    fs.put(0x4242, &[1, 0]).unwrap();
+    let generation = fs.write_gen();
+    let mut presence = Caption(0);
+    assert_eq!(
+        check_uif(&mut fs, 0x4242, &mut presence),
+        Err(Sw::SECURE_MESSAGE_EXEC_ERROR)
+    );
+    assert_eq!(presence.0, 1);
+    assert_eq!(fs.write_gen(), generation);
+    let mut retained = [0; 2];
+    assert_eq!(fs.read(0x4242, &mut retained), Some(2));
+    assert_eq!(retained, [1, 0]);
+}

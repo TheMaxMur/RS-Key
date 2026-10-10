@@ -743,3 +743,22 @@ fn the_kdf_layouts_end_at_the_documented_record_widths() {
         }
     }
 }
+
+#[test]
+fn an_unreadable_key_slot_does_not_allow_kdf_reseeding() {
+    for slot in [EF_PK_SIG, EF_PK_DEC, EF_PK_AUT] {
+        let (storage, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+        let mut fs = Fs::new(storage);
+        fs.scan();
+        scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+        let mut sess = Session::new();
+        admin(&mut fs, &mut sess);
+        fs.put_key(slot, rsk_fs::Sealed::wrap(b"opaque owner"))
+            .unwrap();
+        medium.stick(Some(slot.get()));
+        let generation = fs.write_gen();
+        assert_eq!(write(&mut fs, &mut sess, &[0x81, 1, 0]), Sw::MEMORY_FAILURE);
+        assert_eq!(fs.write_gen(), generation);
+        assert!(sess.has_pw3);
+    }
+}

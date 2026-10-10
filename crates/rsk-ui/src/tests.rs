@@ -4,8 +4,36 @@
 use super::*;
 
 #[test]
+fn every_status_and_audit_kind_has_its_public_label() {
+    for (kind, label) in [
+        (StatusKind::Boot, "Starting..."),
+        (StatusKind::Idle, "Ready"),
+        (StatusKind::Processing, "Working..."),
+        (StatusKind::Touch, "Touch to confirm"),
+    ] {
+        assert_eq!(kind.label(), label);
+    }
+    for (kind, label) in [
+        (AuditKind::Login, "Signed in"),
+        (AuditKind::Register, "Passkey added"),
+        (AuditKind::Pin, "PIN changed"),
+        (AuditKind::Denied, "PIN blocked"),
+        (AuditKind::Boot, "Powered on"),
+        (AuditKind::Reset, "Factory reset"),
+        (AuditKind::Lock, "Lock changed"),
+        (AuditKind::Config, "Setting changed"),
+        (AuditKind::Backup, "Backup"),
+        (AuditKind::Other, "Event"),
+    ] {
+        assert_eq!(kind.label(), label);
+    }
+}
+
+#[test]
 fn backup_action_geometry_has_an_explicit_outside_region() {
     assert_eq!(hit_backup(Point::new(0, 0)), None);
+    assert_eq!(hit_backup(ctr(BACKUP_REVEAL_RECT)), Some(BackupKey::Reveal));
+    assert_eq!(hit_backup(ctr(BACKUP_SEAL_RECT)), Some(BackupKey::Seal));
     assert_eq!(std::hint::black_box(rsk_slip39_max)(), 16);
 }
 
@@ -785,5 +813,13 @@ fn a_tap_off_the_panel_selects_no_nav_tab() {
         hit_nav(Point::new(PANEL_W - 1, NAV_TOP - 1)),
         None,
         "above the bar"
+    );
+}
+
+#[test]
+fn exhausted_rejection_entropy_keeps_the_unshuffled_pin_layout() {
+    assert_eq!(
+        PinLayout::shuffled(&[0xFF; PIN_SHUFFLE_ENTROPY]),
+        PinLayout::identity()
     );
 }

@@ -302,3 +302,7 @@ fn key_label(k: PinKey) -> &'static str {
         PinKey::Reveal => "",
     }
 }
+
+#[cfg(test)]
+#[path = "pin_tests.rs"]
+mod tests;

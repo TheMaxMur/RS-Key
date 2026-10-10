@@ -13,6 +13,23 @@ fn fs() -> Fs<RamStorage> {
     fs
 }
 
+#[test]
+fn unknown_internal_and_separately_served_objects_do_not_emit_or_write() {
+    let mut fs = fs();
+    let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+    fs.put(EF_AES_KEY.get(), b"private").unwrap();
+    let generation = fs.write_gen();
+    for fid in [0xFFFF, EF_AES_KEY.get(), EF_CH_CERT] {
+        let mut output = [0xA5; 64];
+        assert_eq!(DoWriter::new(&mut output, &mut fs, &aid).build(fid), 0);
+        assert_eq!(output, [0xA5; 64]);
+        assert_eq!(fs.write_gen(), generation);
+    }
+    let mut private = [0; 7];
+    assert_eq!(fs.read(EF_AES_KEY.get(), &mut private), Some(7));
+    assert_eq!(&private, b"private");
+}
+
 /// A template's length goes in BER's shortest form, as a YubiKey 5.8.0 writes `65 09`:
 /// one byte under 128, `81 LL` under 256, `82 HH LL` from there.
 #[test]
@@ -397,4 +414,16 @@ fn a_direct_do_walk_distinguishes_sizing_from_emission() {
         [b"login".as_slice(), &[0x5e, 5], b"login"].concat()
     );
     assert_eq!(writer.fs.write_gen(), generation);
+}
+
+#[test]
+fn advertised_algorithms_refuse_an_unknown_file_even_for_a_valid_attribute() {
+    for (fid, attr) in [
+        (EF_ALGO_SIG, ATTR_P256R1),
+        (EF_ALGO_AUT, ATTR_P384R1),
+        (EF_ALGO_DEC, ATTR_CV25519),
+    ] {
+        assert!(advertised_algo(fid, &attr[1..]));
+        assert!(!advertised_algo(0xffff, &attr[1..]));
+    }
 }

@@ -25,6 +25,96 @@ impl Rng for SeqRng {
 const CDH: [u8; 32] = [0xCD; 32];
 const TOKEN: [u8; 32] = [0x99; 32];
 
+#[test]
+fn unknown_nested_management_fields_and_transports_preserve_the_owner_ids() {
+    let mut buffer = [0; 256];
+    let mut e = Encoder::new(Cursor::new(&mut buffer[..]));
+    e.map(4)
+        .unwrap()
+        .u8(1)
+        .unwrap()
+        .u8(1)
+        .unwrap()
+        .u8(2)
+        .unwrap()
+        .map(3)
+        .unwrap();
+    e.u8(2)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("transports")
+        .unwrap()
+        .array(2)
+        .unwrap();
+    e.str("usb")
+        .unwrap()
+        .str("nfc")
+        .unwrap()
+        .str("id")
+        .unwrap()
+        .bytes(b"credential")
+        .unwrap();
+    e.u8(3)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("id").unwrap().bytes(b"user").unwrap();
+    e.u8(99)
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    let end = e.writer().position();
+    e.u8(5)
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap()
+        .u8(6)
+        .unwrap()
+        .null()
+        .unwrap();
+    let n = e.writer().position();
+    let req = parse(&buffer[..n]).unwrap();
+    assert_eq!(req.cred_id, Some(&b"credential"[..]));
+    assert_eq!(req.user_id, Some(&b"user"[..]));
+    assert_eq!(req.raw_subpara, &buffer[4..end]);
+    for (case, truncated) in [
+        &[0xa2, 1, 1, 5, 0x82, 0xf6][..],
+        &[0xa2, 1, 1, 2, 0xa1, 0x18, 99, 0x82, 0xf6][..],
+        &[0xa2, 1, 1, 2, 0xa1, 3, 0xa1, 0x61, b'x', 0x82, 0xf6][..],
+        &[
+            0xa2, 1, 1, 2, 0xa1, 2, 0xa1, 0x6a, b't', b'r', b'a', b'n', b's', b'p', b'o', b'r',
+            b't', b's', 0x81, 0xf6,
+        ][..],
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let expected = if case == 3 {
+            CtapError::CborUnexpectedType
+        } else {
+            CtapError::InvalidCbor
+        };
+        assert!(matches!(parse(truncated), Err(error) if error == expected));
+    }
+}
+
 fn dev() -> Device<'static> {
     Device {
         serial_hash: &[0xAB; 32],
@@ -2869,3 +2959,13 @@ mod decisions;
 
 #[path = "credential_restart_tests.rs"]
 mod credential_restarts;
+
+#[test]
+fn incomplete_slot_inventory_probes_absent_records_without_inventing_owners() {
+    let mut fs = Fs::new(rsk_fs::storage::faults::TruncatedWalk::new());
+    fs.scan();
+    let generation = fs.write_gen();
+    assert_eq!(find_resident(&mut fs, &[0x55; CRED_RESIDENT_LEN]), Ok(None));
+    assert_eq!(decrement_rp(&mut fs, &[0x66; 32]), Ok(()));
+    assert_eq!(fs.write_gen(), generation);
+}

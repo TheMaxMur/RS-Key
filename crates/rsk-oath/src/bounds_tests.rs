@@ -492,3 +492,51 @@ mod reset_walk;
 
 #[path = "migration_decisions_tests.rs"]
 mod migration_decisions;
+
+#[test]
+fn direct_page_entry_with_no_chain_emits_nothing_for_a_readable_credential() {
+    let mut fs = new_fs();
+    let dev = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let body = [tlv(TAG_NAME, b"helper"), tlv(TAG_KEY, &[0x21, 6, 1])].concat();
+    assert!(seal::seal_put(
+        &dev,
+        &mut fs,
+        &mut CountRng(7),
+        KeyFid::new(EF_OATH_CRED),
+        &body
+    ));
+    let generation = fs.write_gen();
+    let mut scratch = Secret::new([0; CRED_MAX]);
+    let mut out = [0xa5; PAGE_ENTRY_MAX];
+    assert_eq!(
+        page_entry(
+            &Chain::None,
+            &dev,
+            &mut fs,
+            EF_OATH_CRED,
+            &mut scratch,
+            &mut out
+        ),
+        None
+    );
+    assert_eq!(out, [0xa5; PAGE_ENTRY_MAX]);
+    let expected = [vec![TAG_NAME_LIST, 7, 0x21], b"helper".to_vec()].concat();
+    assert_eq!(
+        page_entry(
+            &Chain::List { ext: false },
+            &dev,
+            &mut fs,
+            EF_OATH_CRED,
+            &mut scratch,
+            &mut out
+        ),
+        Some(expected.len())
+    );
+    assert_eq!(&out[..expected.len()], expected);
+    assert_eq!(fs.write_gen(), generation);
+}

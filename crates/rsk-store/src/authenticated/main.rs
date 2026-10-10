@@ -679,3 +679,11 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         outcome
     }
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "Private store fixtures check invalid API arguments and exact journal boundaries."
+)]
+#[path = "main_tests.rs"]
+mod tests;

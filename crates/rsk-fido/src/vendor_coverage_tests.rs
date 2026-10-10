@@ -248,3 +248,17 @@ fn a_short_backup_response_cannot_publish_an_export_journal_entry() {
     assert_eq!(fs.write_gen(), generation);
     assert!(state.mse_key_for_test().is_none());
 }
+
+#[test]
+fn device_configuration_errors_keep_their_ctap_status() {
+    for (error, status) in [
+        (DevConfError::TooLong, CtapError::InvalidLength),
+        (DevConfError::BadTlv, CtapError::InvalidParameter),
+        (DevConfError::Store, CtapError::Other),
+        (DevConfError::Locked, CtapError::NotAllowed),
+        (DevConfError::WrongCode, CtapError::OperationDenied),
+        (DevConfError::NotConfirmed, CtapError::OperationDenied),
+    ] {
+        assert_eq!(dev_conf_error(error), status);
+    }
+}

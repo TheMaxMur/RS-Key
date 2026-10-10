@@ -1428,3 +1428,6 @@ fn rollback_require_refuses_a_reported_success_whose_readback_stays_clear() {
 
 #[path = "restart_tests.rs"]
 mod restarts;
+
+#[path = "storage_admin_tests.rs"]
+mod storage_admin;
