@@ -53,7 +53,9 @@ def fields(reply):
 
 
 class Device:
-    def __init__(self, binary, image, store, directory, label, usbip=None, rom=None):
+    def __init__(self, binary, image, store, directory, label, usbip=None, rom=None,
+                 storage_action=None):
+        new_store = not store.exists()
         self.fido_port, self.ccid_port, self.inspect_port = port(), port(), port()
         self.log_path = directory / f"{label}.log"
         self.log = self.log_path.open("w")
@@ -75,12 +77,32 @@ class Device:
             os.environ[emu.ENV_CCID_ADDR] = f"127.0.0.1:{self.ccid_port}"
             self.card = emu.EmuCard()
             self.card.connect()
+            self.activate_storage(storage_action or ("initialize" if new_store else None))
             self.hid = emu.EmuHid()
             self.hid.open_path()
             self.cid = ctaphid_init(self.hid)
         except BaseException:
             self.close()
             raise
+
+    def activate_storage(self, action):
+        self.select(bytes.fromhex("a0583fc19b7e4f21"))
+        body, hi, lo = self.card.transmit(bytes.fromhex("801e080000"))
+        if (hi, lo) == (0x6A, 0x86):
+            return  # Historical release images predate storage v2.
+        assert (hi, lo) == (0x90, 0) and bytes(body) in (b"\x02\x00", b"\x02\x01")
+        if body[1] == 1:
+            return
+        assert action in ("initialize", "import-legacy"), "owned image needs explicit storage recovery"
+        p1, magic = (0, b"INITV2") if action == "initialize" else (1, b"IMPORTV2")
+        state = fields(self.inspect("status")) if self.image else None
+        self.apdu(bytes([0x80, 0x20, p1, 0, len(magic)]) + magic)
+        self.wait_ready(power_ups=int(state["power_ups"]) + 1 if state else 1)
+        self.card.sock.close()
+        self.card = emu.EmuCard()
+        self.card.connect()
+        self.select(bytes.fromhex("a0583fc19b7e4f21"))
+        assert self.apdu(bytes.fromhex("801e080000")) == b"\x02\x01"
 
     def inspect(self, command):
         with socket.create_connection(("127.0.0.1", self.inspect_port), timeout=30) as sock:
@@ -272,7 +294,8 @@ def upgrade(args, work, report):
         assert calculate(old) == expected_oath(KEY)
     upgraded = work / "upgrade.flash"
     copy_store(store, upgraded)
-    with device(args.emulator, args.image, upgraded, work, "upgrade") as new:
+    with device(args.emulator, args.image, upgraded, work, "upgrade",
+                storage_action="import-legacy") as new:
         assert calculate(new) == expected_oath(KEY), "upgrade lost the OATH credential"
         assertion(new, cred, public)
         new.select(OPENPGP)

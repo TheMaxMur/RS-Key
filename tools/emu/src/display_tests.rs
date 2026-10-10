@@ -424,7 +424,7 @@ fn panel_bench_over(
     image: Option<PathBuf>,
     host: impl FnOnce(Jobs, SyncSender<Tap>, Arc<Signals>) + Send + 'static,
 ) -> PanelLinks {
-    let store = crate::store::open(image, None).expect("the bench's store");
+    let store = crate::store::open(image, None, &crate::DEFAULT_SERIAL).expect("the bench's store");
     let fs: &'static RefCell<rsk_fs::Fs<crate::store::EmuStore>> =
         Box::leak(Box::new(RefCell::new(rsk_fs::Fs::new(store))));
     let rng: &'static RefCell<crate::rng::EmuRng> = Box::leak(Box::new(RefCell::new(
@@ -893,7 +893,7 @@ const WIPE_BOUND: Duration = Duration::from_secs(30);
 fn stored(image: &Path, fid: u16) -> Option<bool> {
     let copy = image.with_extension("probe");
     std::fs::copy(image, &copy).ok()?;
-    let store = crate::store::open(Some(copy), None).ok()?;
+    let store = crate::store::open(Some(copy), None, &crate::DEFAULT_SERIAL).ok()?;
     let mut fs = rsk_fs::Fs::new(store);
     fs.scan();
     Some(fs.has_data(fid))

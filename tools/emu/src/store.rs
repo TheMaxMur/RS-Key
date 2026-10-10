@@ -19,6 +19,7 @@
 use std::cell::RefCell;
 use std::fs;
 use std::io;
+use std::io::Read;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -46,8 +47,7 @@ const COUNTER_RANGE: std::ops::Range<u32> = (MAIN_PAGES as u32 * SECTOR)..(PAGES
 
 /// Cache geometry, mirroring the firmware's: main must cover every live
 /// main-partition file or a full device pays the O(flash) fetch cliff.
-const MAIN_CACHE_KEYS: usize = rsk_fs::MAX_DYNAMIC_FILES + 1;
-const COUNTER_CACHE_KEYS: usize = 16;
+const MAIN_CACHE_KEYS: usize = rsk_store::authenticated::MAX_MAIN_ENTRIES;
 
 type Mock = MockFlashBase<PAGES, WORD, PAGE_WORDS>;
 type MainCache = Cache<
@@ -56,15 +56,8 @@ type MainCache = Cache<
     ArrayKeyPointers<u16, MAIN_CACHE_KEYS>,
     u16,
 >;
-type CounterCache = Cache<
-    ArrayPageStates<COUNTER_PAGES>,
-    ArrayPagePointers<COUNTER_PAGES>,
-    ArrayKeyPointers<u16, COUNTER_CACHE_KEYS>,
-    u16,
->;
-
 /// The store the emulator runs — the firmware's, over the mock medium.
-pub type EmuStore = rsk_store::SeqStorage<FlashFile, MainCache, CounterCache>;
+pub type EmuStore = rsk_store::authenticated::Managed<FlashFile, MainCache>;
 
 /// File magic + layout version. A flash image is only meaningful to the geometry
 /// that wrote it, so a mismatch is refused rather than mounted.
@@ -153,21 +146,37 @@ impl NorFlash for FlashFile {
 impl MultiwriteNorFlash for FlashFile {}
 
 /// Build the store over a fresh mount of `path`.
-pub fn open(path: Option<PathBuf>, power_cut_after: Option<u32>) -> io::Result<EmuStore> {
+pub fn open(
+    path: Option<PathBuf>,
+    power_cut_after: Option<u32>,
+    serial: &[u8; 8],
+) -> io::Result<EmuStore> {
+    use rsk_fs::Storage;
+    use rsk_fs::storage::StorageAction;
+    let owned_blank = path.as_ref().is_none_or(|path| !path.exists());
     let flash = FlashFile::open(path, power_cut_after)?;
-    Ok(EmuStore::new(
-        flash,
-        MAIN_RANGE,
-        COUNTER_RANGE,
-        MainCache::new(
-            ArrayPageStates::new(),
-            ArrayPagePointers::new(),
-            ArrayKeyPointers::new(),
-        ),
-        CounterCache::new(
-            ArrayPageStates::new(),
-            ArrayPagePointers::new(),
-            ArrayKeyPointers::new(),
-        ),
-    ))
+    let source =
+        rsk_store::authenticated::KeySource::new(rsk_crypto::sha256(serial), blank_root, false);
+    let mut storage = EmuStore::new(flash, MAIN_RANGE, COUNTER_RANGE, source, main_cache);
+    if owned_blank {
+        // Only this newly created test medium is owned for initialization.
+        let mut epoch = [0; 16];
+        std::fs::File::open("/dev/urandom")?.read_exact(&mut epoch)?;
+        storage
+            .administer(StorageAction::Initialize, epoch)
+            .map_err(|error| io::Error::other(format!("storage initialization: {error:?}")))?;
+    }
+    Ok(storage)
+}
+
+fn blank_root(_: &mut [u8; 32]) -> rsk_store::authenticated::RootRead {
+    rsk_store::authenticated::RootRead::Blank
+}
+
+fn main_cache() -> MainCache {
+    MainCache::new(
+        ArrayPageStates::new(),
+        ArrayPagePointers::new(),
+        ArrayKeyPointers::new(),
+    )
 }

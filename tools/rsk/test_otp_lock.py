@@ -47,8 +47,8 @@ def test_an_unreadable_key_is_its_own_remedy():
 
 
 def test_the_bits_are_the_firmware_s():
-    # rsk-rescue `otp_lock::PRE_OTP_*`, in order: FIDO, device key, PIV, OATH, OTP.
-    assert [bit for bit, _ in otp.PRE_OTP_ACTIONS] == [0x01, 0x02, 0x04, 0x08, 0x10]
+    # rsk-rescue `otp_lock::PRE_OTP_*`: FIDO, device key, PIV, OATH, OTP, storage.
+    assert [bit for bit, _ in otp.PRE_OTP_ACTIONS] == [0x01, 0x02, 0x04, 0x08, 0x10, 0x20]
 
 
 # --- the command, driven against a rescue applet that answers as the firmware does
@@ -157,3 +157,11 @@ def test_a_lock_row_that_does_not_read_is_reported_not_taken_for_latched(monkeyp
     out = capsys.readouterr().out
     assert e.value.code == 2 and "6400" in out and "EXEC_ERROR" in out
     assert "already locked" not in out
+
+
+def test_storage_root_migration_prevents_burn_and_names_its_remedy(monkeypatch, capsys):
+    card = Rescue(left=0x0020, row=OLD_LOCK)
+    with pytest.raises(SystemExit) as error:
+        drive(monkeypatch, card)
+    assert error.value.code == 2 and not card.burnt
+    assert "storage authority" in capsys.readouterr().out

@@ -1773,6 +1773,8 @@ version = "0.1.0"
 dependencies = [
  "embassy-futures",
  "embedded-storage-async",
+ "heapless 0.8.0",
+ "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
  "rsk-secret",

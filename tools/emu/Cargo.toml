@@ -89,6 +89,11 @@ rsk-otp = { path = "../../crates/rsk-otp", features = ["test-util"] }
 
 [workspace]
 
+# Match the root's dev optimization: fixed no-alloc buffers otherwise acquire
+# debug-only move temporaries large enough to overflow a host test thread.
+[profile.dev]
+opt-level = "s"
+
 # Same vendored sequential-storage patch as the root workspace and `fuzz/`. Without
 # it this detached workspace resolved upstream from crates.io, so the suites ran
 # against a DIFFERENT store library than the device: the fork aborts a walk on a

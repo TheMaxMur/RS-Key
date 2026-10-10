@@ -34,7 +34,7 @@ sys.modules.setdefault("fido2", types.ModuleType("fido2"))
 import pytest  # noqa: E402
 
 from rsk import (audit, backup, ccid, common, fido, hw, inventory, led, lock,  # noqa: E402
-                 offboard, openpgp, otp)
+                 offboard, openpgp, otp, storage)
 
 PKG = pathlib.Path(__file__).parent
 
@@ -99,6 +99,9 @@ SITES = {
     ],
     "status": [
         ("_secure_boot", "ccid.connect", None),
+    ],
+    "storage": [
+        ("run", "ccid.connect", "args.action != 'status'"),
     ],
 }
 
@@ -278,6 +281,9 @@ DRIVEN = [
     (openpgp, ["openpgp", "reset"], ("ccid.connect", True)),
     (otp, ["otp", "lock-page58"], ("ccid.connect", True)),
     (otp, ["otp", "rollback-require"], ("ccid.connect", True)),
+    (storage, ["storage", "status"], ("ccid.connect", False)),
+    (storage, ["storage", "initialize"], ("ccid.connect", True)),
+    (storage, ["storage", "import-legacy"], ("ccid.connect", True)),
 ]
 
 

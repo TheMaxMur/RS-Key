@@ -191,6 +191,7 @@ suites run unchanged.
 nix develop -c cargo build --release -p firmware --features no-touch
 nix develop -c cargo run --release --manifest-path tools/emu/Cargo.toml --target "$HOST" -- \
   --image target/thumbv8m.main-none-eabihf/release/firmware --store ./image.store
+# First approve `rsk storage initialize` through the owned CCID socket.
 python tests/emu.py tests/10_fido_getinfo.py
 ```
 
@@ -210,6 +211,11 @@ python tests/emu.py tests/10_fido_getinfo.py
   The ELF's `__kvcnt_end` selects a 2, 4, 8 or 16 MiB part; the 16 MiB layout's
   reserved E10 sector is included in the chip. ELFs without that symbol retain
   the 4 MiB default. A file with another length is refused rather than resized.
+- **Storage setup**: a fresh firmware image exposes recovery until the attended
+  storage initialization command succeeds. `image_assurance.py` initializes only
+  the fresh image fixture it owns; its upgrade scenario explicitly imports the
+  legacy fixture. Existing unknown images are refused rather than automatically
+  interpreted as blank or legacy.
 - **Power**: a replug (`03`) is a power-on reset through the bootrom; a reboot the
   image asks for keeps the watchdog scratch, as a warm reset does — so the soft
   PIN lock and the reset window behave as on the board.

@@ -5,10 +5,10 @@
 import argparse
 
 from . import (__version__, audit, backup, bench, fido, flash, hw, identify, inventory, led,
-               lock, offboard, openpgp, otp, pair, reboot, secureboot, status)
+               lock, offboard, openpgp, otp, pair, reboot, secureboot, status, storage)
 
 GROUPS = [status, inventory, identify, backup, pair, lock, flash, secureboot, otp, fido, led,
-          hw, openpgp, reboot, audit, offboard, bench]
+          hw, openpgp, reboot, audit, offboard, bench, storage]
 
 
 def main():
