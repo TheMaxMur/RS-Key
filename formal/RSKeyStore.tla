@@ -53,43 +53,43 @@ CONSTANTS
     \* `BugMetaAddDropsOnFault` is GREEN over one FID and RED from two, and
     \* no mutant in this roster needs a third (formal/scopes.txt).
     Fids,
-    \* crates/rsk-fs/src/fs.rs:592-612 -- `Fs::delete` drops the metadata FIRST,
+    \* crates/rsk-fs/src/fs.rs:623-643 -- `Fs::delete` drops the metadata FIRST,
     \* then the value, so no cut inside it can leave value-gone-meta-alive
     \* (powercut.rs:43-51 `delete_landed`). The switch reverses the two writes.
     BugDeleteValueBeforeMeta,
     \* The 0x077C databug: `delete` dropped EF_META only under `if present_bit`,
     \* so a file given metadata but never `put` (present_bit = FALSE) kept its
     \* record after deletion and read back alive -- the metadata cleanup is
-    \* unconditional now (fs.rs:619). The switch gates it on the value again.
+    \* unconditional now (fs.rs:650). The switch gates it on the value again.
     BugDeleteMetaOnlyUnderPresent,
-    \* fs.rs:619-626 -- a FAILED EF_META read cannot drop the record, and the
+    \* fs.rs:650-657 -- a FAILED EF_META read cannot drop the record, and the
     \* value goes regardless: EF_META is one blob shared by every applet, so
     \* refusing here would stop every delete on the device, wipes included. What
     \* keeps that honest is that `delete` RETURNS the error. The switch swallows
     \* it, which is the shipped tree before that fix, and the difference is not
     \* the orphan -- both arms leave one -- but whether the caller was told.
     BugDeleteHidesFaultedDrop,
-    \* audit run-36: `settle` (fs.rs:248-254) refuses to cache a
+    \* audit run-36: `settle` (fs.rs:278-284) refuses to cache a
     \* read that FAILED, because `Storage::read` returns None for both "absent"
     \* and "the read faulted" and caching the second as a decided absence turns
     \* one transient fault into a permanent false-absent. The switch caches it.
     BugCacheFaultAsAbsent,
-    \* fs.rs:305-307 -- `scan` fills the decided bitmap for the WHOLE FID space
+    \* fs.rs:336-338 -- `scan` fills the decided bitmap for the WHOLE FID space
     \* only when `for_each_key` ran to completion; a walk a flash read fault
     \* truncated leaves the un-yielded FIDs UNDECIDED, to be re-probed. The
     \* switch decides the whole space regardless, so a missed live key reads
     \* absent.
     BugTruncatedScanDecidesAll,
-    \* The 0x077C databug's meta half: `meta_add_reserve` (fs.rs:858-860) treats
+    \* The 0x077C databug's meta half: `meta_add_reserve` (fs.rs:889-891) treats
     \* a FAILED EF_META read as fatal, because rebuilding the blob from an empty
     \* scratch would drop every other applet's record. The switch treats the
     \* faulted read as an empty blob, wiping them.
     BugMetaAddDropsOnFault,
-    \* fs.rs:890 -- `meta_delete` refuses a FAILED EF_META read (MemoryFatal)
+    \* fs.rs:921 -- `meta_delete` refuses a FAILED EF_META read (MemoryFatal)
     \* rather than caching it as absence. The switch caches it, and the damage is
     \* the write AFTER: `meta_add` trusts `known_absent` and rebuilds from empty.
     BugMetaDeleteDropsOnFault,
-    \* fs.rs:868 -- `self.write_record(EF_META, &out[..w])?`. The model faulted the
+    \* fs.rs:899 -- `self.write_record(EF_META, &out[..w])?`. The model faulted the
     \* metadata READ in two places and never the WRITE, so the one step that can
     \* lose every record at once was the only one with no failing arm (stage 2 item 1).
     \* The failing arm here models refusal BEFORE commit. Old-or-new atomicity
@@ -99,11 +99,11 @@ CONSTANTS
     \* `PLAT-FLASH-001` gains a row that goes red when it is false, instead of being
     \* prose no configuration can contradict.
     BugMetaWriteTearsBlob,
-    \* fs.rs:909 -- `meta_delete`'s own rewrite, EF_META's SECOND write site and the
+    \* fs.rs:940 -- `meta_delete`'s own rewrite, EF_META's SECOND write site and the
     \* one the switch above does not reach: `meta_add` was given a failing arm and
     \* `meta_delete` was left with a faulted READ only. Same denial of
     \* `PLAT-FLASH-001`, a different moment -- `mark_present(EF_META)` runs at
-    \* fs.rs:896, BEFORE this write, where its sibling's sits AFTER (fs.rs:869).
+    \* fs.rs:927, BEFORE this write, where its sibling's sits AFTER (fs.rs:900).
     \* Dropping `f`'s record is what the call is FOR, so only a bystander's loss
     \* is the violation.
     BugMetaDeleteTearsBlob
@@ -123,7 +123,7 @@ VARIABLES
     present,  \* [Fids -> BOOLEAN]: the in-RAM present-cache bit (fs.rs:106)
     \* [Fids -> BOOLEAN]: the authority bit paired with `present` (fs.rs:115). A
     \* clear `present` is trusted as absent ONLY once `decided` confirms it
-    \* (`known_absent`, fs.rs:215-217); an undecided FID falls through to the
+    \* (`known_absent`, fs.rs:245-247); an undecided FID falls through to the
     \* reliable backend, which is the whole tri-state defence.
     decided,
     \* Whether the power is gone: a torn multi-write leaves the device dead until
@@ -170,15 +170,15 @@ Init ==
 (* Delete does.                                                             *)
 (***************************************************************************)
 
-\* `Fs::put` (fs.rs:552-578): write the value, then `mark_present` -- which
-\* sets BOTH the present and the decided bit (fs.rs:231-235).
+\* `Fs::put` (fs.rs:583-609): write the value, then `mark_present` -- which
+\* sets BOTH the present and the decided bit (fs.rs:261-265).
 Put(f, v) ==
     /\ val'     = [val     EXCEPT ![f] = v]
     /\ present' = [present EXCEPT ![f] = TRUE]
     /\ decided' = [decided EXCEPT ![f] = TRUE]
     /\ UNCHANGED << meta, dead, metaAbsent, viol >>
 
-\* `Fs::meta_add_reserve` (fs.rs:845-871): rewrite EF_META with `fid`'s record
+\* `Fs::meta_add_reserve` (fs.rs:876-902): rewrite EF_META with `fid`'s record
 \* added, EVERY OTHER record preserved. The one shape that must not happen is a
 \* rewrite that drops another FID's record -- which is exactly what treating a
 \* faulted EF_META read as an empty blob does. Modelled as the success write,
@@ -187,7 +187,7 @@ Put(f, v) ==
 \* after commitment and their cache reconciliation are outside this projection.
 MetaAdd(f) ==
     \* The SHIPPED read: a cache that says EF_META is absent is trusted, and the
-    \* blob is rebuilt from empty (fs.rs:851-853). Correct while the cache is
+    \* blob is rebuilt from empty (fs.rs:882-884). Correct while the cache is
     \* honest -- which is what NoFalseMetaAbsent is for.
     \/ /\ meta' = IF metaAbsent THEN [g \in Fids |-> g = f]
                                  ELSE [meta EXCEPT ![f] = TRUE]
@@ -203,7 +203,7 @@ MetaAdd(f) ==
             (IF \E g \in Fids : (g # f) /\ meta[g]
                THEN {"NoRecordLostToMetaWrite"} ELSE {})
        /\ UNCHANGED << val, present, decided, dead >>
-    \* THE WRITE ITSELF TEARS (fs.rs:868). A pre-commit refusal is a persistent
+    \* THE WRITE ITSELF TEARS (fs.rs:899). A pre-commit refusal is a persistent
     \* STUTTER, which `[][Next]_vars` admits without another disjunct. A committed
     \* write followed by readback failure has the new persistent value, but command
     \* status, rescan, generation and dynamic capacity are not model variables.
@@ -227,8 +227,8 @@ MetaAdd(f) ==
                     THEN {"NoRecordLostToMetaWrite"} ELSE {})
        /\ UNCHANGED << val, present, decided, dead, metaAbsent >>
 
-\* `Fs::meta_delete` (fs.rs:881-922): drop `fid`'s record, and clear EF_META
-\* once the last one goes. A FAILED read of EF_META must refuse (fs.rs:890) --
+\* `Fs::meta_delete` (fs.rs:912-953): drop `fid`'s record, and clear EF_META
+\* once the last one goes. A FAILED read of EF_META must refuse (fs.rs:921) --
 \* the switch caches it as absence instead, which is the door `meta_add`'s twin
 \* mutant does not reach: the loss happens on the NEXT write, not this one.
 MetaDelete(f) ==
@@ -240,14 +240,14 @@ MetaDelete(f) ==
        /\ viol' = viol \cup
             (IF \E g \in Fids : meta[g] THEN {"NoFalseMetaAbsent"} ELSE {})
        /\ UNCHANGED << val, meta, present, decided, dead >>
-    \* THE REWRITE ITSELF TEARS (fs.rs:909). Written the way `MetaAdd`'s tear is:
+    \* THE REWRITE ITSELF TEARS (fs.rs:940). Written the way `MetaAdd`'s tear is:
     \* a pre-commit refusal is a STUTTER, which `[][Next]_vars` admits. Readback
     \* failure after committed bytes is outside this status-free projection, as
     \* above; only the item-atomicity denial is an explicit disjunct here.
     \* Two things keep it from being that arm under a second name, and both are
     \* read off the code rather than chosen. (1) `metaAbsent' = FALSE`, because
-    \* fs.rs:896 marks EF_META present BEFORE this write; the sibling leaves it
-    \* UNCHANGED because a `meta_add` that failed never reaches its fs.rs:869.
+    \* fs.rs:927 marks EF_META present BEFORE this write; the sibling leaves it
+    \* UNCHANGED because a `meta_add` that failed never reaches its fs.rs:900.
     \* (2) the survivors are a subset of the records that STOOD -- a rewrite that
     \* drops records cannot mint one -- where the sibling's `torn` ranges over the
     \* whole domain, the record it was adding included.
@@ -265,7 +265,7 @@ MetaDelete(f) ==
 
 (***************************************************************************)
 (* Delete -- the only op with a cut point, because it is two backend        *)
-(* writes: metadata FIRST, then the value (fs.rs:619-626). `k` is how many   *)
+(* writes: metadata FIRST, then the value (fs.rs:650-657). `k` is how many   *)
 (* of the two landed before the power went: k=2 is the clean delete, k=1 is  *)
 (* the torn one that leaves the device dead. The switch decides the ORDER    *)
 (* of the two writes, and the second switch whether the metadata write runs  *)
@@ -326,7 +326,7 @@ Delete(f) ==
 (***************************************************************************)
 
 \* A confirm-on-miss: `read`/`size`/`has_data` consult the backend and cache the
-\* answer through `record_unless_faulted` (fs.rs:315-360). `fault` is whether
+\* answer through `record_unless_faulted` (fs.rs:346-391). `fault` is whether
 \* that backend read FAILED rather than found the key absent. The shipped code
 \* refuses to cache a fault; the bug caches it as a decided absence.
 Confirm(f) ==
@@ -344,7 +344,7 @@ Confirm(f) ==
                   /\ decided' = [decided EXCEPT ![f] = TRUE]
         /\ UNCHANGED << val, meta, dead, metaAbsent, viol >>
 
-\* `Fs::scan` (fs.rs:269-308): clear the caches, then walk the backend. `seen`
+\* `Fs::scan` (fs.rs:299-339): clear the caches, then walk the backend. `seen`
 \* is the set the walk yielded; `complete` is `for_each_key`'s completeness flag
 \* (FALSE means a flash read fault truncated it). A complete walk yields every
 \* live key and lets `scan` decide the WHOLE space (un-yielded => truly absent);
@@ -402,7 +402,7 @@ NoOrphanedMetadata == "NoOrphanedMetadata" \notin viol
 
 \* ENUMERATION, the half a faulted medium reaches. `Fs::delete` removes the value
 \* even when the record cannot be dropped, so an orphan is a state the shipped
-\* tree can be in -- what it may not do is REPORT SUCCESS from it (fs.rs:626).
+\* tree can be in -- what it may not do is REPORT SUCCESS from it (fs.rs:657).
 \* Ghost, one writer: Delete's faulted arm. This is the invariant that separates
 \* the reported orphan from the silent one; `NoOrphanedMetadata` above still owns
 \* every arm where the drop itself landed.
@@ -426,7 +426,7 @@ NoFalseAbsent ==
 NoRecordLostToMetaWrite == "NoRecordLostToMetaWrite" \notin viol
 
 \* SEC-STORE-004. EF_META's presence cache may say "absent" only when it really
-\* is: `meta_add` TRUSTS this bit and rebuilds the blob from empty (fs.rs:851),
+\* is: `meta_add` TRUSTS this bit and rebuilds the blob from empty (fs.rs:882),
 \* so a false absent here loses every record on the next write rather than this
 \* one. A step recorder, because the losing write is legitimate once the cache
 \* has lied -- no state predicate over `meta` can tell the two apart.

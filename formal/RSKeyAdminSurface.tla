@@ -57,7 +57,7 @@ CONSTANTS
     \* admin channel to the mask being non-empty, the shape a naive
     \* "nothing selectable when all disabled" would take.
     BugAdminGateable,
-    \* crates/rsk-rescue/src/lib.rs:142-144 -- `require_presence` gates every
+    \* crates/rsk-rescue/src/lib.rs:143-145 -- `require_presence` gates every
     \* privileged runtime command (keydev sign, cert/config write, BOOTSEL
     \* reboot, fuse burns) so a USB host alone cannot drive them. The switch
     \* removes the gate.
@@ -73,8 +73,8 @@ CONSTANTS
     \* the persisted mask echoed in DeviceInfo while SELECT and dispatch never
     \* consulted it, so `ykman config usb --disable PIV` disabled nothing. The
     \* enforcement is Dispatcher::set_enabled (crates/rsk-sdk/src/applet.rs:254-256)
-    \* fed from the mask (crates/rsk-device/src/ccid.rs:255-263) and consulted at
-    \* select AND dispatch-to-current (crates/rsk-device/src/ccid.rs:380). The
+    \* fed from the mask (crates/rsk-device/src/ccid.rs:255-266) and consulted at
+    \* select AND dispatch-to-current (crates/rsk-device/src/ccid.rs:386). The
     \* switch removes exactly that consultation.
     BugMaskIsCosmetic
 

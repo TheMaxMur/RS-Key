@@ -9,6 +9,11 @@ the `Fs` primitives that write them. **RS-Key is not formally verified**: this i
 one half of one model bridged to the code that maintains it, and the statuses
 below are what that buys and no more.
 
+Storage v2 adds authenticated authority and an explicit recovery lifecycle below
+this cache contract. This pilot does not prove the MAC construction, replicated
+journal, import or root transition. Those mechanisms have concrete native and
+real-NOR fuzz controls; the model still assumes its backend append contract.
+
 ## Why only half
 
 `RSKeyStore` has seven variables. Five of them — `val`, `meta`, `dead`,

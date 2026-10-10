@@ -147,3 +147,51 @@ surface = "PIV PIN/PUK reference verify"
 [[caller]]
 symbol = "rsk_piv::ct_eq"
 surface = "PIV's forwarder onto the canonical comparator"
+
+[[caller]]
+symbol = "rsk_store::authenticated::checkpoint::Checkpoint::verify"
+surface = "storage v2 authority-header MAC at boot and before persistent operations"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counter_bank::CounterBank<F>::scan"
+surface = "storage v2 complete counter-bank authentication before counter reads or updates"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counter_bank::CounterBank<F>::write_snapshot"
+surface = "storage v2 counter checkpoint publication and full-set digest validation"
+
+[[caller]]
+symbol = "rsk_store::authenticated::counters::Counters<F>::resolve"
+surface = "storage v2 replicated counter authority agreement and recovery"
+
+[[caller]]
+symbol = "rsk_store::authenticated::import::Import<F>::load_manifest"
+surface = "attended storage v2 legacy-import manifest authentication"
+
+[[caller]]
+symbol = "rsk_store::authenticated::import::Manifest::verify"
+surface = "attended storage v2 legacy-import root, epoch and frozen-set validation"
+
+[[caller]]
+symbol = "rsk_store::authenticated::journal::Journal<F>::scan"
+surface = "storage v2 main journal replay and complete-directory validation"
+
+[[caller]]
+symbol = "rsk_store::authenticated::journal::Journal<F>::write_snapshot"
+surface = "storage v2 main authority checkpoint and complete-directory validation"
+
+[[caller]]
+symbol = "rsk_store::authenticated::main::Main<F,C>::resolve"
+surface = "storage v2 main authority selection and repeated recovery"
+
+[[caller]]
+symbol = "rsk_store::authenticated::record::Entry::verify"
+surface = "storage v2 full-value MAC before decoding stored security records"
+
+[[caller]]
+symbol = "rsk_store::authenticated::transaction::Delta::verify"
+surface = "storage v2 authenticated main write/delete transaction decoding"
+
+[[caller]]
+symbol = "rsk_store::authenticated::transaction::TransactionState::apply"
+surface = "storage v2 main transaction chain and publication validation"
