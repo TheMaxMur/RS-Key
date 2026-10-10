@@ -18,8 +18,11 @@ banks while leaving KVMAIN unchanged. An old signed import manifest cannot
 override surviving verified newer progress; complete loss or replay of that
 evidence remains outside the guarantee. Arbitrary correlated corruption,
 interruption, lying reads/writes and total media loss can require recovery.
-Import cannot retroactively establish integrity of damaged but readable legacy
-bytes.
+Automatic import cannot retroactively establish integrity of damaged but
+readable legacy bytes. If corruption destroys every v2 witness and leaves a
+valid-looking legacy layout, boot cannot distinguish it from an actual legacy
+store. Recognizable v2 evidence and invalid legacy page layouts never authorize
+a fresh import.
 
 Metadata and mirrored values cost endurance. In a retained 20,000-update,
 single four-byte-counter NOR workload, v2 programs 1,929,024 bytes and erases

@@ -606,11 +606,12 @@ async fn storage_task(
     flash: &'static RefCell<flash_storage::AsyncFlash>,
     serial_hash: [u8; 32],
     latched: bool,
+    epoch: [u8; 16],
     result: &'static core::cell::Cell<Option<&'static RefCell<Store>>>,
 ) {
     // A separate poll keeps constructor frames off main's peripheral-init frame.
     let fs = initialize_storage(flash, serial_hash, latched);
-    let _recovery_required = fs.borrow_mut().mount_storage().is_err();
+    let _recovery_required = fs.borrow_mut().boot_storage(epoch).is_err();
     result.set(Some(fs));
     STORAGE_READY.signal(());
 }
@@ -659,12 +660,26 @@ async fn main(spawner: Spawner) {
     let devk_source: Option<FusedKey> = Some(FusedKey::open(otp_keys::read_devk));
     otp_keys::sw_lock_key_page();
 
+    let mut trng_cfg = TrngConfig::default();
+    // The default sample_count (25) is too low for some RP2350 ROSC units: the
+    // TRNG's autocorrelation health-check fails, the hardware soft-resets and
+    // re-samples in a loop, so seeding the DRBG (48 B, `FidoRng::new`) blocked
+    // ~90 s on EVERY boot on one Waveshare RP2350 unit (variable 30–105 s). A
+    // higher sample_count decorrelates consecutive ROSC samples so the check
+    // passes the first time (~1.5 s boot, HW-verified). Entropy quality is
+    // unchanged — the NIST health checks stay enabled, the source is unchanged.
+    trng_cfg.sample_count = 1000;
+    let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
+    let mut rng = FidoRng::new(trng);
+    let mut storage_epoch = [0; 16];
+    rsk_sdk::Rng::fill(&mut rng, &mut storage_epoch);
+
     let flash = Flash::<_, Blocking, FLASH_SIZE>::new_blocking(p.FLASH);
     let flash_cell = FLASH_CELL.init(RefCell::new(flash_storage::wrap_flash(flash)));
     static MOUNTED: StaticCell<core::cell::Cell<Option<&'static RefCell<Store>>>> =
         StaticCell::new();
     let mounted = MOUNTED.init(core::cell::Cell::new(None));
-    spawner.spawn(storage_task(flash_cell, serial_hash, latched, mounted).unwrap());
+    spawner.spawn(storage_task(flash_cell, serial_hash, latched, storage_epoch, mounted).unwrap());
     STORAGE_READY.wait().await;
     let fs_ref = mounted
         .take()
@@ -722,17 +737,6 @@ async fn main(spawner: Spawner) {
         // but mute and times out the first descriptor request. That window (heaviest on a
         // fresh device: seed + attestation cert + OpenPGP DEK + flash writes) was the
         // "blink red / not recognised until several replugs" report on a Waveshare RP2350.
-        let mut trng_cfg = TrngConfig::default();
-        // The default sample_count (25) is too low for some RP2350 ROSC units: the
-        // TRNG's autocorrelation health-check fails, the hardware soft-resets and
-        // re-samples in a loop, so seeding the DRBG (48 B, `FidoRng::new`) blocked
-        // ~90 s on EVERY boot on one Waveshare RP2350 unit (variable 30–105 s). A
-        // higher sample_count decorrelates consecutive ROSC samples so the check
-        // passes the first time (~1.5 s boot, HW-verified). Entropy quality is
-        // unchanged — the NIST health checks stay enabled, the source is unchanged.
-        trng_cfg.sample_count = 1000;
-        let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
-        let mut rng = FidoRng::new(trng);
 
         // Boot is the one place the firmware needs the MKEK's value rather than a way
         // to read it, and this block is that place: the read dies at its closing brace,
@@ -879,7 +883,7 @@ async fn main(spawner: Spawner) {
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0A9C;
+    let device_release: u16 = 0x0A9D;
     config.device_release = device_release;
 
     let mut builder = Builder::new(

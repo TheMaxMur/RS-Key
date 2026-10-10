@@ -2440,15 +2440,26 @@ FID from a missing expected payload. Version, partition, epoch, generation,
 length and the full payload are bound. Both counter banks carry authenticated
 values; neither an erased header nor a damaged suffix proves a blank bank.
 Loss of every usable expected copy produces a storage error rather than first
-provisioning. An unrecognized medium exposes attended rescue administration,
-with initialization limited to wholly blank storage and legacy import explicit.
+provisioning. Boot automatically initializes wholly blank storage or imports
+readable legacy media after checking raw page layout. Existing v2 authority,
+activation or an import manifest selects authenticated recovery instead; read
+faults and incompatible page markers refuse before legacy map repair.
 
 Migration freezes the legacy live set, verifies counter backups before
 repurposing KVCNT, resumes a previously authenticated manifest and removes that
 manifest before its temporary backups. Newer or ambiguous surviving progress
 refuses re-import. A counter found only in the wrong legacy partition remains
 absent according to the old routed-read contract. Import cannot retrospectively
-prove that already readable legacy bytes were never damaged.
+prove that already readable legacy bytes were never damaged. Destruction of
+every v2 witness and a coincidentally valid legacy layout remains
+indistinguishable from an actual legacy store. No automatic importer can infer
+the missing history from those bytes alone.
+
+Automatic boot controls exercise fresh initialization, an upgrade with owner
+keys and four maximum counters, every pre-mutation read refusal, damage to v2
+headers, incompatible legacy pages, first program/erase cuts and second cuts
+at the first and last recovery operation. Image upgrade assertions issue no
+storage initialization or import commands.
 
 The native controls drive the actual v2 backend, including program refusal,
 dropped and partial writes, erase failures, readback, full-value damage,

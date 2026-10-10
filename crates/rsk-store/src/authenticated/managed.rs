@@ -6,12 +6,13 @@ use embedded_storage_async::nor_flash::{MultiwriteNorFlash, NorFlash};
 use rsk_fs::Storage;
 use rsk_fs::storage::{StorageAction, StorageState};
 use rsk_sdk::error::{Error, Result};
+use sequential_storage::PageState;
 use sequential_storage::cache::CacheImpl;
 
 use super::import::Import;
 use super::{Authenticated, Checkpoint, KeySource, Layout, Partition, RawBank, RootArm};
 
-/// Boot never interprets missing authority as permission to provision a device.
+/// Established authority never falls back to importing unauthenticated records.
 pub struct Managed<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> {
     active: Option<Authenticated<F, C>>,
     flash: F,
@@ -216,11 +217,79 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
     pub fn root_closed(&self) -> bool {
         self.ready && self.active.as_ref().is_some_and(Authenticated::root_closed)
     }
+
+    fn legacy_page(&mut self, range: Range<u32>) -> Result<PageState> {
+        let mut bank = RawBank::new(self.flash.clone(), range)?;
+        let mut bytes = [0; super::CHECKPOINT_BYTES];
+        let word = F::WRITE_SIZE.max(F::READ_SIZE);
+        let marker = bytes.get_mut(..word).ok_or(Error::MemoryFatal)?;
+        bank.read(0, marker)?;
+        let start_erased = marker.iter().all(|&byte| byte == 0xFF);
+        if !start_erased && !marker.iter().all(|&byte| byte == 0) {
+            return Err(Error::MemoryFatal);
+        }
+        let tail = bank
+            .capacity()
+            .checked_sub(u32::try_from(word).map_err(|_| Error::MemoryFatal)?)
+            .ok_or(Error::MemoryFatal)?;
+        bank.read(tail, marker)?;
+        let end_erased = marker.iter().all(|&byte| byte == 0xFF);
+        if !end_erased && !marker.iter().all(|&byte| byte == 0) {
+            return Err(Error::MemoryFatal);
+        }
+        match (start_erased, end_erased) {
+            (true, true) if bank.read_erased(0)? => Ok(PageState::Open),
+            (false, true) => Ok(PageState::PartialOpen),
+            (false, false) => Ok(PageState::Closed),
+            _ => Err(Error::MemoryFatal),
+        }
+    }
+
+    fn check_legacy_pages(&mut self) -> Result<()> {
+        let sector = u32::try_from(F::ERASE_SIZE).map_err(|_| Error::MemoryFatal)?;
+        for range in [self.main_range.clone(), self.counter_range.clone()] {
+            let mut at = range.start;
+            let mut partial = 0;
+            let mut open = false;
+            while at < range.end {
+                let end = at.checked_add(sector).ok_or(Error::MemoryFatal)?;
+                match self.legacy_page(at..end)? {
+                    PageState::Open => open = true,
+                    PageState::PartialOpen => partial += 1,
+                    PageState::Closed => {}
+                }
+                at = end;
+            }
+            if partial > 1 || partial == 0 && !open {
+                return Err(Error::MemoryFatal);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Storage for Managed<F, C> {
     fn mount(&mut self) -> Result<()> {
         self.mount_inner()
+    }
+    fn boot(&mut self, epoch: [u8; 16]) -> Result<()> {
+        self.ready = false;
+        let mut import = Import::new(
+            self.flash.clone(),
+            self.main_range.clone(),
+            self.counter_range.clone(),
+            self.source,
+        )?;
+        self.source.current_arm()?;
+        if import.has_manifest()?
+            || import.has_activation()?
+            || self.headers()?.iter().any(Option::is_some)
+        {
+            return self.mount();
+        }
+        // Reject raw v2 banks and incomplete legacy erasures before any map repair.
+        self.check_legacy_pages()?;
+        self.administer(StorageAction::ImportLegacy, epoch)
     }
     fn root_closed(&self) -> bool {
         Managed::root_closed(self)

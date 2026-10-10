@@ -59,3 +59,23 @@ def test_empty_refusals_and_successful_payloads_still_pass(laboratory, monkeypat
     assert device.ctap(2, expected=0x33) is None
     monkeypatch.setattr(module, "send_cbor", lambda *args: b"\x00\xa0")
     assert device.ctap(2) == {}
+
+
+@pytest.mark.parametrize("state", [b"\x02\x00", b"\x02\x01"])
+def test_image_boot_checks_ready_without_issuing_a_setup_command(laboratory, monkeypatch, state):
+    _, device = laboratory
+    commands = []
+
+    class Card:
+        def transmit(self, command):
+            commands.append(bytes(command))
+            return list(state), 0x90, 0
+
+    device.card = Card()
+    monkeypatch.setattr(device, "select", lambda aid: None)
+    if state[1]:
+        device.check_storage_ready()
+    else:
+        with pytest.raises(AssertionError, match="automatic storage boot failed"):
+            device.check_storage_ready()
+    assert commands == [bytes.fromhex("801e080000")]

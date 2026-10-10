@@ -152,20 +152,13 @@ pub fn open(
     serial: &[u8; 8],
 ) -> io::Result<EmuStore> {
     use rsk_fs::Storage;
-    use rsk_fs::storage::StorageAction;
-    let owned_blank = path.as_ref().is_none_or(|path| !path.exists());
     let flash = FlashFile::open(path, power_cut_after)?;
     let source =
         rsk_store::authenticated::KeySource::new(rsk_crypto::sha256(serial), blank_root, false);
-    let mut storage = EmuStore::new(flash, MAIN_RANGE, COUNTER_RANGE, source, main_cache);
-    if owned_blank {
-        // Only this newly created test medium is owned for initialization.
-        let mut epoch = [0; 16];
-        std::fs::File::open("/dev/urandom")?.read_exact(&mut epoch)?;
-        storage
-            .administer(StorageAction::Initialize, epoch)
-            .map_err(|error| io::Error::other(format!("storage initialization: {error:?}")))?;
-    }
+    let mut storage = EmuStore::new_unmounted(flash, MAIN_RANGE, COUNTER_RANGE, source, main_cache);
+    let mut epoch = [0; 16];
+    std::fs::File::open("/dev/urandom")?.read_exact(&mut epoch)?;
+    let _recovery_required = storage.boot(epoch).is_err();
     Ok(storage)
 }
 
@@ -180,3 +173,7 @@ fn main_cache() -> MainCache {
         ArrayKeyPointers::new(),
     )
 }
+
+#[cfg(test)]
+#[path = "store_tests.rs"]
+mod tests;

@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Initialize blank storage and migrate readable legacy storage automatically
+  during boot, without a CLI command or physical confirmation. Resume interrupted
+  imports before exposing applets; existing v2 witnesses select authenticated
+  recovery, and read faults or incompatible legacy page markers refuse mutation.
+  The image upgrade harness asserts ready storage without issuing setup APDUs.
+  bcdDevice `0x0A9C` → `0x0A9D`.
+
 - Add authenticated storage v2 over the existing payload partition, with mirrored
   counters, exact-candidate recovery and full-value integrity before decoding.
   Lost expected records fail closed instead of becoming a first boot or an older
