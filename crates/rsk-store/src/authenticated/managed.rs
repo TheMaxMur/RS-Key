@@ -247,13 +247,21 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Managed<F, C> 
 
     fn check_legacy_pages(&mut self) -> Result<()> {
         let sector = u32::try_from(F::ERASE_SIZE).map_err(|_| Error::MemoryFatal)?;
+        let padding =
+            super::legacy::read_e10_padding(self.flash.clone(), self.counter_range.clone())?;
         for range in [self.main_range.clone(), self.counter_range.clone()] {
             let mut at = range.start;
             let mut partial = 0;
             let mut open = false;
             while at < range.end {
                 let end = at.checked_add(sector).ok_or(Error::MemoryFatal)?;
-                match self.legacy_page(at..end)? {
+                let state = if range == self.counter_range && end == range.end && padding.is_some()
+                {
+                    PageState::Open
+                } else {
+                    self.legacy_page(at..end)?
+                };
+                match state {
                     PageState::Open => open = true,
                     PageState::PartialOpen => partial += 1,
                     PageState::Closed => {}

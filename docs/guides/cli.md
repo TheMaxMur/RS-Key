@@ -37,7 +37,9 @@ confirmation. Use `rsk storage status` to read the resulting state.
 Migration preserves readable routed values and existing keys, needs temporary
 main-partition space for its manifest and counter backups, and refuses before
 counter erasure if those backups cannot be verified. An interrupted migration
-resumes automatically at the next boot. Keep an independent backup before an
+resumes automatically at the next boot. A known SDK E10 padding suffix in an
+otherwise unused counter sector is ignored by the legacy reader. Other occupied
+page data still requires a compatible storage layout. Keep an independent backup before an
 upgrade.
 
 Damaged v2 authority, unreadable storage or a malformed legacy page layout
