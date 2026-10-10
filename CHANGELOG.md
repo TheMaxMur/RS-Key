@@ -38,6 +38,19 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Fixed
+
+- **PIV serves a Card Capability Container** (`5FC107`) where it previously
+  answered `6A82` on a card whose host had never written one. It is a mandatory
+  PIV object (SP 800-73-4 pt1 §3.1.1), and the Windows inbox PIV minidriver
+  reads it while opening a key container — the shape here follows Table 8's
+  mandatory elements in table order, with `F5` carrying the PIV data model
+  number `0x10`. `get_data` reads flash first, so a host `PUT DATA` still
+  overrides it and an empty one falls back to the default, exactly like the
+  synthesized CHUID.
+- `bcdDevice` moves to **0x09DB**: the applet is shared, so every board's image
+  gains the object.
+
 ## [0.4.11] - 2026-09-08
 
 The catch-up release, and the one where the instruments were audited harder than

@@ -128,6 +128,14 @@ RULES = [
     ("*.timestamp", Ignore("key generation timestamp")),
     ("*.guid", Ignore("random GUID")),
     ("piv.chuid", Ignore("random CHUID/CCC GUID")),
+    (
+        "piv.ccc",
+        ExpectDiff(
+            None,
+            r"f000f100f200f50110",
+            "RS-Key serves a synthesized CCC; the reference card may serve none or empty",
+        ),
+    ),
     ("oath.deviceId", Ignore("random OATH device id / SELECT salt")),
     ("*.salt", Ignore("random salt")),
     ("otp.slot*.publicId", Ignore("Yubico-OTP public id / device serial")),

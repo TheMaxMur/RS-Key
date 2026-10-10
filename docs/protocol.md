@@ -507,6 +507,11 @@ needs only the identifiers above. RS-Key implements:
   the CHUID (`5FC102`) returns a synthesized default (non-federal FASC-N + a
   device-stable GUID = `sha256(serial)[..16]`) when the host has not written one,
   so the Windows minidriver can enumerate the card; a host-written CHUID overrides it.
+  The Card Capability Container (`5FC107`, mandatory per SP 800-73-4 pt1 §3.1.1)
+  is served on the same terms: with no host-written object the card answers a
+  9-byte synthesized default (`F0 00 F1 00 F2 00 F5 01 10` — zero-length mandatory
+  elements plus the PIV data model number `0x10`) instead of `6A82`, a host
+  `PUT DATA` overrides it, and an empty `PUT DATA` falls back to the default again.
 - **OATH**: Yubico OATH (TOTP/HOTP).
 - **OTP**: Yubico OTP / HOTP keyboard + CCID.
 - **OpenPGP card 3.x.** PUT DATA C1/C2/C3 changes a slot's algorithm

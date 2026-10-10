@@ -1000,7 +1000,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1312."
+note = "spend_pin_retry stops charging the attempt: unlimited PW1/PW3/RC guesses at full speed. Deliberately the OpenPGP half of this switch, so the lattice's three entries cover both applets rather than PIV three times; PIV's twin is the `set_retries_left(fs, retry, left - 1)` at crates/rsk-piv/src/lib.rs:1321."
 
 [comutant.BugRecoveryWithoutSecret]
 status = "patch"
@@ -1250,7 +1250,7 @@ note = "637ed98 taken back out on the PIV half: every SELECT resets, including t
 status = "unreachable"
 evidence = """the applets' deselect is redundant with their own fresh SELECT, so
 removing it from the ICC power transition changes nothing observable. Three
-applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:390-392
+applets carry an access status and implement deselect — crates/rsk-piv/src/lib.rs:392-394
 (sess.reset), crates/rsk-openpgp/src/lib.rs:337-339 (reset_session), crates/rsk-oath/src/lib.rs:1222-1229
 (validated + otp_pin_verified) — and all three ALSO re-lock in select: piv and
 openpgp on `if !reselect`, oath by recomputing `validated = !code_set` and clearing
@@ -1362,7 +1362,7 @@ note = "both layers, as the model's switch has them: the ALWAYS arm stops readin
 
 [comutant.BugPinFreshOutlivesPin]
 status = "unreachable"
-evidence = "the clamp is unobservable in today's Rust. `pin_fresh` has exactly one reader — crates/rsk-piv/src/auth.rs:63, `PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh` — and it is CONJOINED with the status it refines, so a freshness that outlives `has_pin` authorises nothing: the guard is already false on the other half. `Session::set_pin` (crates/rsk-piv/src/lib.rs:183-186) is the only writer that sets it TRUE, and `GenAuth::spend_pin` (crates/rsk-piv/src/auth.rs:115-119) only ever sets it false. The first patch here scored a false kill by taking `self.pin_fresh = verified` out of `set_pin`, which is the INVERSE defect — it makes freshness unreachable rather than immortal, fail-closed rather than fail-open, and all 11 failures were 9000-expected-got-6982. The faithful mutant (`if verified { self.pin_fresh = true; }` — grant kept, clamp dropped) measures GREEN over 130 tests. The model keeps `pfresh` as a second requirement-side copy precisely to expose a split the Rust does not have."
+evidence = "the clamp is unobservable in today's Rust. `pin_fresh` has exactly one reader — crates/rsk-piv/src/auth.rs:63, `PINPOLICY_ALWAYS => sess.has_pin && sess.pin_fresh` — and it is CONJOINED with the status it refines, so a freshness that outlives `has_pin` authorises nothing: the guard is already false on the other half. `Session::set_pin` (crates/rsk-piv/src/lib.rs:185-188) is the only writer that sets it TRUE, and `GenAuth::spend_pin` (crates/rsk-piv/src/auth.rs:115-119) only ever sets it false. The first patch here scored a false kill by taking `self.pin_fresh = verified` out of `set_pin`, which is the INVERSE defect — it makes freshness unreachable rather than immortal, fail-closed rather than fail-open, and all 11 failures were 9000-expected-got-6982. The faithful mutant (`if verified { self.pin_fresh = true; }` — grant kept, clamp dropped) measures GREEN over 130 tests. The model keeps `pfresh` as a second requirement-side copy precisely to expose a split the Rust does not have."
 
 [comutant.BugSigPinNotSpent]
 status = "patch"
@@ -1400,7 +1400,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-openpgp"]
 expect = "killed"
-note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:288, 594, 676, 804, 1053, 1113 and crates/rsk-piv/src/keygen.rs:600), none of them patched here."
+note = "the converse of BugAdminOpensKeyOps: a USER status opens PUT DATA's administrative surface. PIV states the same rule at seven separate 9B management-key gates (crates/rsk-piv/src/lib.rs:290, 596, 678, 813, 1062, 1122 and crates/rsk-piv/src/keygen.rs:600), none of them patched here."
 
 [comutant.BugRefusedValidateGrants]
 status = "patch"

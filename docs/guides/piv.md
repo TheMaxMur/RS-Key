@@ -12,8 +12,10 @@ identify the card by its applet, not the reader name, so they work on the defaul
 build.
 
 > **Windows note:** the card serves a default CHUID automatically — the Windows
-> PIV minidriver needs it to enumerate the certificate containers, so no manual
-> `ykman piv objects generate chuid` step is required.
+> PIV minidriver needs it to enumerate the certificate containers — and the
+> mandatory Card Capability Container (`5FC107`) on the same terms, so neither
+> `ykman piv objects generate chuid` nor `ykman piv objects generate ccc` is
+> required on firmware 0x09DB or later.
 
 Prereqs: on Linux, `pcscd` plus the polkit rule from [linux.md](../linux.md);
 if you also use GnuPG, the `disable-ccid` line so `scdaemon` and `pcscd` stop

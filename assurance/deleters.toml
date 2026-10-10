@@ -522,7 +522,7 @@ why = "the site this audit was about: PIV key fids carry EF_META heads, so the r
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 858
+line = 867
 call = "return match fs.delete(fid) {"
 verb = "delete"
 answer = "read"
@@ -533,7 +533,7 @@ why = "PUT DATA with an empty body IS the object delete, so the removal is the w
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1172
+line = 1181
 call = "let _ = fs.delete(tofid);"
 verb = "delete"
 answer = "discarded"
@@ -544,7 +544,7 @@ why = "clearing the destination's certificate when the source has none. A public
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1207
+line = 1216
 call = "let dropped = fs.delete_key(key_fid(from));"
 verb = "delete_key"
 answer = "read"
@@ -555,7 +555,7 @@ why = "MOVE with to = 0xFF, the slot delete. The head earns a retry because one 
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1208
+line = 1217
 call = "let _ = fs.delete(pubkey_fid(from));"
 verb = "delete"
 answer = "discarded"
@@ -566,7 +566,7 @@ why = "the source's cached public point. Heads live on key_fid alone, so this fi
 
 [[site]]
 file = "crates/rsk-piv/src/lib.rs"
-line = 1210
+line = 1219
 call = "let _ = fs.delete(f);"
 verb = "delete"
 answer = "discarded"
