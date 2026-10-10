@@ -28,11 +28,16 @@ struct Armed {
     remaining: usize,
     hits: usize,
 }
+struct ReadImage {
+    remaining: usize,
+    bytes: Vec<u8>,
+}
 #[derive(Clone)]
 pub struct FaultFlash {
     pub inner: SharedMock,
     rules: Rc<RefCell<Vec<Armed>>>,
     events: Rc<RefCell<Vec<(Io, u32, usize)>>>,
+    read_image: Rc<RefCell<Option<ReadImage>>>,
 }
 
 impl FaultFlash {
@@ -41,6 +46,7 @@ impl FaultFlash {
             inner: SharedMock::new(),
             rules: Rc::new(RefCell::new(Vec::new())),
             events: Rc::new(RefCell::new(Vec::new())),
+            read_image: Rc::new(RefCell::new(None)),
         }
     }
     pub fn arm(&self, rules: &[Rule]) {
@@ -65,6 +71,12 @@ impl FaultFlash {
     }
     pub fn hits(&self) -> Vec<usize> {
         self.rules.borrow().iter().map(|rule| rule.hits).collect()
+    }
+    pub fn replace_image_before_read(&self, skip: usize, image: Vec<u8>) {
+        *self.read_image.borrow_mut() = Some(ReadImage {
+            remaining: skip,
+            bytes: image,
+        });
     }
     fn effect(&self, io: Io, address: u32, len: usize) -> Option<Effect> {
         self.events.borrow_mut().push((io, address, len));
@@ -92,6 +104,15 @@ impl ReadNorFlash for FaultFlash {
     async fn read(&mut self, offset: u32, bytes: &mut [u8]) -> Result2<()> {
         if self.effect(Io::Read, offset, bytes.len()).is_some() {
             return Err(FlashFault);
+        }
+        let image = self.read_image.borrow_mut().take();
+        if let Some(mut image) = image {
+            if image.remaining == 0 {
+                *self.inner.bytes.borrow_mut() = image.bytes;
+            } else {
+                image.remaining -= 1;
+                *self.read_image.borrow_mut() = Some(image);
+            }
         }
         self.inner.read(offset, bytes).await
     }

@@ -36,6 +36,7 @@ const INS_OTP_LOCK: u8 = 0x1B;
 const INS_WRITE: u8 = 0x1C;
 const INS_READ: u8 = 0x1E;
 const INS_REBOOT_BOOTSEL: u8 = 0x1F;
+const INS_STORAGE: u8 = 0x20;
 
 /// OTP_LOCK payload guard: the irreversible page-58 lock fires only for this
 /// exact data, so a stray or fuzzed APDU on INS 0x1B can never trigger it.
@@ -350,6 +351,14 @@ impl<'a> RescueApplet<'a> {
                 res.extend(&left.unwrap_or(otp_lock::PRE_OTP_UNCHECKED).to_be_bytes());
                 Sw::OK
             }
+            0x08 => {
+                if apdu.p2 != 0 {
+                    return Sw::INCORRECT_P1P2;
+                }
+                let ready = fs.storage_state() == rsk_fs::storage::StorageState::Ready;
+                res.extend(&[2, u8::from(ready)]);
+                Sw::OK
+            }
             _ => Sw::INCORRECT_P1P2,
         }
     }
@@ -499,7 +508,52 @@ impl<S: Storage> Applet<Fs<S>> for RescueApplet<'_> {
         if apdu.cla != 0x80 {
             return Sw::CLA_NOT_SUPPORTED;
         }
+        if fs.storage_state() == rsk_fs::storage::StorageState::Recovery
+            && !(apdu.ins == INS_STORAGE
+                || apdu.ins == INS_REBOOT_BOOTSEL
+                || apdu.ins == INS_READ && matches!(apdu.p1, 0x03 | 0x04 | 0x06 | 0x07 | 0x08))
+        {
+            return Sw::MEMORY_FAILURE;
+        }
         match apdu.ins {
+            INS_STORAGE => {
+                use rsk_fs::storage::{StorageAction, StorageState};
+                let (action, magic, title) = match apdu.p1 {
+                    0 => (
+                        StorageAction::Initialize,
+                        b"INITV2".as_slice(),
+                        "Initialize empty storage?",
+                    ),
+                    1 => (
+                        StorageAction::ImportLegacy,
+                        b"IMPORTV2".as_slice(),
+                        "Import legacy storage?",
+                    ),
+                    _ => return Sw::INCORRECT_P1P2,
+                };
+                if apdu.p2 != 0 {
+                    return Sw::INCORRECT_P1P2;
+                }
+                if apdu.data != magic {
+                    return Sw::DATA_INVALID;
+                }
+                if fs.storage_state() != StorageState::Recovery {
+                    return Sw::CONDITIONS_NOT_SATISFIED;
+                }
+                if !self.require_presence(Confirm::titled(title)) {
+                    return Sw::CONDITIONS_NOT_SATISFIED;
+                }
+                let mut epoch = [0; 16];
+                self.rng.borrow_mut().fill(&mut epoch);
+                match fs.administer_storage(action, epoch) {
+                    Ok(()) => {
+                        self.platform.borrow_mut().request_reboot(false);
+                        Sw::OK
+                    }
+                    Err(rsk_sdk::error::Error::Blocked) => Sw::CONDITIONS_NOT_SATISFIED,
+                    Err(_) => Sw::MEMORY_FAILURE,
+                }
+            }
             INS_KEYDEV_SIGN => self.keydev_sign(apdu, fs, res),
             INS_OTP_LOCK => self.otp_lock(apdu),
             INS_WRITE => self.write(apdu, fs),

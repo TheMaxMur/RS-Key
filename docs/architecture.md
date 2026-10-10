@@ -96,7 +96,7 @@ The workspace splits along a strict dependency gradient: the `firmware` binary
 is thin glue over the applet crates, which build on a handful of host-tested
 platform libraries. The per-crate detail is in the table. The shape is:
 
-![Crate dependency layers: 30 crates in 10 tiers, from the 2 flashable binaries at the top, down through the 8 applets, to the 1 secrets crate at the bottom. All 126 in-workspace dependencies point strictly downward, and applet-to-applet edges number 0.](images/crate-graph.svg)
+![Crate dependency layers: 30 crates in 10 tiers, from the 2 flashable binaries at the top, down through the 8 applets, to the 1 secrets crate at the bottom. All 127 in-workspace dependencies point strictly downward, and applet-to-applet edges number 0.](images/crate-graph.svg)
 
 **No applet names another applet — the count is zero, in code and in the manifests.** This page used to name three cross-edges (`piv→openpgp`, `openpgp→rsa`, `piv→rsa`), only the first of which was one applet reaching sideways; the manifests carried **six** — `fido→mgmt`, `fido→rescue`, `openpgp→mgmt`, `piv→mgmt`, `piv→openpgp`, `otp→mgmt`. The machinery under each moved *down* instead: the phy record into `rsk-phy`, the DeviceInfo record into `rsk-devconf`, RSA into `rsk-rsa`, and the EC key type both card applets seal (`PrivKey` over `Curve`, the `[curve_id] ‖ scalar` blob) into `rsk-ec`. Six `rsk_<applet>::` mentions do survive across the applet tier, every one inside a comment where one applet explains its ordering by pointing at a sibling — a cross-reference, not a dependency.
 
@@ -185,6 +185,30 @@ keeps verifying. Resident credentials from older firmware carry an implicit `0`
 compatible across the upgrade.
 
 ## Capacity — why the flash is mostly empty
+
+Storage v2 keeps the partition offsets and the 4078-byte value ceiling. KVMAIN
+still carries the existing payload map. The 128 KiB KVCNT window now contains
+two 44 KiB main-directory journals and two 20 KiB counter banks. The directory
+signs the complete live FID set; each entry authenticates its partition, epoch,
+generation, length and full payload. CRC-discarded expected values and damaged
+bytes resembling legacy layouts fail as storage errors. Counter traffic leaves
+KVMAIN and the main-directory journals unchanged.
+
+Main writes reserve a candidate before publishing an authenticated intent,
+verify that exact candidate, and then publish to both journals. Recovery
+finishes a complete candidate or cancels its reserved span before allowing GC.
+Counter values and their authority are committed together and mirrored before
+success. Invalid occupied suffixes retain authenticated progress as a minimum
+generation; an older replica cannot silently replace that progress.
+
+Boot mounts authority before scanning or provisioning applets. An unrecognized
+medium enters CCID rescue mode. Initialization and legacy import require
+[attended rescue commands](guides/cli.md#storage-initialization-and-upgrades).
+Import freezes the main set and four routed counter values in a signed manifest,
+verifies backups in KVMAIN before counter erasure, and resumes after interruption.
+Backend-owned FIDs `CEF8..CEFD` stay outside the public map and dynamic-file
+budget. The activation witness survives applet resets. Pre-OTP authority is
+re-keyed before the page-58 latch can report migration complete.
 
 The KV store is 1.5 MB by default whatever the `FLASH_SIZE`, so a larger flash only
 grows the code region, most of which no firmware writes ([build.md](build.md)). That

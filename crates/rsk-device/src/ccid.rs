@@ -254,6 +254,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// The `Dispatcher::set_enabled` index-mask derived from the current cap mask:
     /// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.
     fn applet_enable_mask(&self) -> u32 {
+        if self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Recovery {
+            return 1 << 6;
+        }
         let mut mask = 0u32;
         for (i, &cap) in APPLET_CAPS.iter().enumerate() {
             if rsk_devconf::cap_enabled(self.enabled_caps, cap) {
@@ -270,6 +273,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
     /// the FIDO-transport twin of the CCID `INS_READ_CONFIG` / OTP slot 0x13 paths,
     /// so all three report the same caps/serial/version DeviceInfo.
     pub fn ctap_mgmt(&mut self, cmd: u8, _data: &[u8]) -> Option<&[u8]> {
+        if self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Recovery {
+            return None;
+        }
         match cmd {
             CTAP_READ_CONFIG => {
                 let n = {
@@ -444,6 +450,7 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         // where `00 47 …` is `6982`, and `10 47 …` is accumulated, never executed.
         let fast_cap = Apdu::parse(apdu)
             .ok()
+            .filter(|_| self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Ready)
             .filter(|p| !p.is_chaining() && !p.is_secure_messaging())
             // Nor one while a chain is open: the dispatcher joins it to that chain,
             // or refuses it `6883` as a YubiKey 5.8.0 does.
@@ -506,6 +513,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         slot_id: u8,
         payload: &[u8; 64],
     ) -> ([u8; 64], usize, [u8; 8]) {
+        if self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Recovery {
+            return ([0; 64], 0, [0; 8]);
+        }
         // OTP disabled: the function slots (program/update/swap/challenge-response)
         // go inert, but the identify/config slots (serial, READ/WRITE CONFIG,
         // status) stay live so the host can still read DeviceInfo and re-enable OTP.
@@ -550,6 +560,9 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         slot: u8,
         ts_secs: u32,
     ) -> Option<([u8; rsk_otp::ticket::MAX_TICKET], usize, bool)> {
+        if self.fs.borrow().storage_state() == rsk_fs::storage::StorageState::Recovery {
+            return None;
+        }
         if !self.caps_enabled(rsk_devconf::CAP_OTP) {
             return None; // OTP disabled — a button press types nothing.
         }

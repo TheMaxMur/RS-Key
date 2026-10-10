@@ -38,6 +38,17 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Add authenticated storage v2 over the existing payload partition, with mirrored
+  counters, exact-candidate recovery and full-value integrity before decoding.
+  Lost expected records fail closed instead of becoming a first boot or an older
+  CRC-valid record. Unknown media exposes attended CCID rescue setup;
+  `rsk storage initialize` and `import-legacy` establish or migrate authority.
+  Preserve backups before upgrading; activated stores need v2-aware firmware.
+  File/value limits and partition offsets remain unchanged. The smaller mirrored
+  counter area increases programming and erase costs; measured workload figures
+  and remaining freshness limits are in `docs/limitations.md`.
+  bcdDevice → `0x0A9C`; rsk CLI → `0.3.50`.
+
 ### Fixed
 
 - OATH keeps damaged access-code and OTP-PIN records configured. Empty or

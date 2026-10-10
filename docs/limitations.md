@@ -6,6 +6,29 @@ covers the security boundary. This page covers feature and hardware gaps.
 
 ## Cryptography
 
+Storage v2 detects loss or alteration of expected records using authenticated
+authority. Before OTP provisioning its authentication key derives from the
+public serial; it detects accidental corruption but cannot defeat an attacker
+who can forge public-root authority. The page-58 latch closes this arm after
+authority and applet seal migrations finish.
+
+Authentication is not an independent freshness counter. Replaying all relevant
+authority copies can restore older state, including replaying both counter
+banks while leaving KVMAIN unchanged. An old signed import manifest cannot
+override surviving verified newer progress; complete loss or replay of that
+evidence remains outside the guarantee. Arbitrary correlated corruption,
+interruption, lying reads/writes and total media loss can require recovery.
+Import cannot retroactively establish integrity of damaged but readable legacy
+bytes.
+
+Metadata and mirrored values cost endurance. In a retained 20,000-update,
+single four-byte-counter NOR workload, v2 programs 1,929,024 bytes and erases
+each of its ten counter sectors 47 times. The CRC-only backend programs 320,628
+bytes and erases each of its 32 counter sectors once or twice. This is a software
+workload measurement, not a hardware lifetime estimate. Its peak erase count is
+23.5 times the legacy peak. Main payload and main authority remain byte-identical.
+Other workloads and the physical flash's endurance need separate measurements.
+
 - **brainpoolP512r1 (OpenPGP)**: not offered. brainpoolP256r1 and P384r1 are
   supported (advertised in DO `0xFA`, generate / keytocard / sign / decrypt), but
   no Rust arithmetic for the 512-bit brainpool curve exists yet, so the applet

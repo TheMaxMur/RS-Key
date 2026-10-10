@@ -168,6 +168,9 @@ pub const EF_META: u16 = 0x0017;
 /// the backend and `scan` share one definition of what to skip.
 pub const EF_SCRUB_FILLER: u16 = 0xCEFE;
 
+/// Backend-owned migration manifest, counter backups and activation witness.
+pub const STORE_INTERNAL_FIDS: core::ops::RangeInclusive<u16> = 0xCEF8..=0xCEFD;
+
 /// Largest value one FID may hold, and the value every [`Storage`] backend
 /// declares as `MAX_VALUE`. The device backend serialises the 2-byte key and the
 /// value through one scratch buffer sized to what a single flash page holds

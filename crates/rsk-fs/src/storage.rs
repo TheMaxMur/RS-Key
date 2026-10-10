@@ -4,10 +4,37 @@
 //! The FID → bytes persistence backend. On device this is `sequential-storage`
 //! over embassy-rp flash (implemented in `firmware`); tests use `RamStorage`.
 
-use rsk_sdk::error::Result;
+use rsk_sdk::error::{Error, Result};
+
+/// Only ready authority may answer application reads and confirmed absence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageState {
+    Ready,
+    Recovery,
+}
+
+/// Attended storage administration; an epoch is freshly drawn by the caller.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StorageAction {
+    Initialize,
+    ImportLegacy,
+}
 
 /// A persistent map from 16-bit file id to a byte value.
 pub trait Storage {
+    /// Recover an already constructed backend before exposing its contents.
+    fn mount(&mut self) -> Result<()> {
+        Ok(())
+    }
+    fn state(&self) -> StorageState {
+        StorageState::Ready
+    }
+    fn root_closed(&self) -> bool {
+        true
+    }
+    fn administer(&mut self, _action: StorageAction, _epoch: [u8; 16]) -> Result<()> {
+        Err(Error::Blocked)
+    }
     /// Largest value this backend can store for one FID. A log-structured backend
     /// serialises key+value through one scratch buffer, so the real ceiling is
     /// smaller than the buffer and was previously an unstated property of it —

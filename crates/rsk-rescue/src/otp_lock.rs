@@ -43,6 +43,7 @@ pub const PRE_OTP_DEVICE_KEY: u16 = 1 << 1;
 pub const PRE_OTP_PIV: u16 = 1 << 2;
 pub const PRE_OTP_OATH: u16 = 1 << 3;
 pub const PRE_OTP_OTP: u16 = 1 << 4;
+pub const PRE_OTP_STORAGE: u16 = 1 << 5;
 
 /// READ `1E/07`'s answer for a boot that ran its seal passes without the fused key,
 /// so checked nothing: every bit set.
