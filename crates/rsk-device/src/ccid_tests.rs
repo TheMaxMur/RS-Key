@@ -2710,5 +2710,34 @@ fn a_successful_otp_config_command_returns_only_the_updated_status_frame() {
     assert_eq!(env.fs.borrow().write_gen(), generation);
 }
 
+#[test]
+fn a_refused_otp_config_command_preserves_the_status_and_storage() {
+    const CONFIGURE_SLOT: u8 = 0x01;
+    const RFU_OFFSET: usize = 48;
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let before = ccid.otp.hid_status_frame(&mut env.fs.borrow_mut());
+    let generation = env.fs.borrow().write_gen();
+    let mut payload = [0; rsk_otp::hid::PAYLOAD_SIZE];
+    payload[RFU_OFFSET] = 1;
+    let mut response = [0; rsk_otp::hid::PAYLOAD_SIZE];
+    let mut output = ResBuf::new(&mut response);
+    assert_eq!(
+        ccid.otp.process_hid(
+            CONFIGURE_SLOT,
+            &payload,
+            &mut env.fs.borrow_mut(),
+            &mut output
+        ),
+        Sw::WRONG_LENGTH
+    );
+    assert!(output.as_slice().is_empty());
+    let (body, length, after) = ccid.handle_otp_hid(CONFIGURE_SLOT, &payload);
+    assert_eq!(body, [0; rsk_otp::hid::PAYLOAD_SIZE]);
+    assert_eq!(length, 0);
+    assert_eq!(after, before);
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}
+
 #[path = "factory_restart_tests.rs"]
 mod factory_restarts;

@@ -964,3 +964,17 @@ fn a_tlv_append_refuses_an_overwide_value_or_short_window_without_advancing() {
     assert_eq!(n, output.len());
     assert_eq!(output, [TAG_DEVICE_FLAGS, 1, 1]);
 }
+
+#[test]
+fn every_device_config_error_has_its_distinct_status_word() {
+    for (error, status) in [
+        (DevConfError::TooLong, Sw::WRONG_DATA),
+        (DevConfError::BadTlv, Sw::WRONG_DATA),
+        (DevConfError::Store, Sw::MEMORY_FAILURE),
+        (DevConfError::Locked, Sw::COMMAND_NOT_ALLOWED),
+        (DevConfError::WrongCode, Sw::retries(0)),
+        (DevConfError::NotConfirmed, Sw::CONDITIONS_NOT_SATISFIED),
+    ] {
+        assert_eq!(error.sw(), status);
+    }
+}
