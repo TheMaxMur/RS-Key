@@ -759,7 +759,8 @@ def test_a_surface_that_stopped_routing_through_it_is_a_finding():
     `cmd_update` and the row stayed green."""
     findings, _ = ct_gate.audit(ROOT, lines=CLEAN.splitlines(), **NO_FLOORS)
     stale = [f for f in findings if "inlines no site in the image" in f]
-    assert len(stale) == 28, stale
+    _, callers = ct_gate.registry(ROOT, [])
+    assert len(stale) == len(callers) - 1, stale
 
 
 #: The scope clause as it read before `a4b53c2` refuted it, and the clause that

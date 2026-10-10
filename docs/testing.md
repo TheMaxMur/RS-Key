@@ -118,6 +118,12 @@ No exclusions or floors were changed to remove these rows.
 
 ### Branch and condition measurements
 
+The [authenticated storage v2 slice](testing-roadmap.md#authenticated-storage-v2)
+adds a separate real-NOR backend and fault oracle. Its complete-set authority
+turns missing expected payloads into errors; the legacy `power_cut` driver and
+Store model keep their earlier, narrower scope. Native matrices, seeded fuzzing,
+Miri codecs and image execution answer different parts of that slice.
+
 The pinned nightly can also measure branches. A default host baseline on
 2026-10-04 recorded 6509/7646 outcomes (85.13%) before the new LargeBlobs and
 broadcast-continuation cases. It retained the same 38379/39591 source lines

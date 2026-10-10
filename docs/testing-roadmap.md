@@ -2430,3 +2430,53 @@ remains false.
 Logs, the signed commit/file ledger and composed gate evidence are retained in
 `target/storage-faults-20261009/`. MC/DC implementation, toolchain pins, capacity
 limits, model actions and release/hardware operations are unchanged.
+
+
+## Authenticated storage v2
+
+The 2026-10-10 format change addresses the CRC-only limitation in the preceding
+matrix. A complete authenticated directory distinguishes a deliberately absent
+FID from a missing expected payload. Version, partition, epoch, generation,
+length and the full payload are bound. Both counter banks carry authenticated
+values; neither an erased header nor a damaged suffix proves a blank bank.
+Loss of every usable expected copy produces a storage error rather than first
+provisioning. An unrecognized medium exposes attended rescue administration,
+with initialization limited to wholly blank storage and legacy import explicit.
+
+Migration freezes the legacy live set, verifies counter backups before
+repurposing KVCNT, resumes a previously authenticated manifest and removes that
+manifest before its temporary backups. Newer or ambiguous surviving progress
+refuses re-import. A counter found only in the wrong legacy partition remains
+absent according to the old routed-read contract. Import cannot retrospectively
+prove that already readable legacy bytes were never damaged.
+
+The native controls drive the actual v2 backend, including program refusal,
+dropped and partial writes, erase failures, readback, full-value damage,
+authority disagreement, import backup exhaustion, interrupted GC and authority
+rollover. Command interruption, interrupted recovery and a healthy second boot
+retain whole old/new values and unrelated owners. Root rekey has program/erase
+refusal, dropped/partial operations and a second recovery cut. These are bounded
+software matrices, not every pair of physical interruption times or arbitrary
+correlated damage. The full 1280-file logical budget, 4078-byte values and four
+maximum counters remain exercised without lowering the applet capacities.
+
+`authenticated_store` supplies a separate real-NOR v2 fuzz driver. Its oracle
+retains acknowledged values after injected damage; it never adopts the damaged
+medium as the next expected state. Seeded warm histories exercise GC and bank
+rollover. The historical `power_cut` driver continues to exercise the CRC-only
+fork and applet ordering and is not evidence of v2 lifecycle coverage.
+
+The existing Store model remains an abstract append/cache contract. No new
+TLA+ claim follows from these controls. MC/DC remains decision-only. Independent
+freshness, physical endurance and device execution remain separate obligations:
+replaying both authorities can restore old authenticated state, including just
+both counter banks. Before OTP provisioning the serial-derived root detects
+accidental damage but is public. The page-58 latch closes that arm only after
+storage and applet migrations finish. The measured counter-write endurance
+cost is recorded in [limitations](limitations.md).
+
+Evidence is retained in `target/store-v2-20261010/`: native fault matrices,
+Miri codec controls, selected in-diff mutations, seeded fuzzing, image execution,
+frame inspection, gate logs and the signed local commit ledger. Each result is
+scoped to its recorded source and workload; this format change does not close
+the whole testing plan or establish hardware certification.

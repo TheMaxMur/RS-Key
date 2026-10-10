@@ -662,7 +662,7 @@ why = "Retire the preceding key's public point before replacement; a survivor ou
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 534
+line = 565
 method = "factory_wipe"
 call = "self.storage.remove(fid)?;"
 rearms = true
@@ -671,7 +671,7 @@ why = "the device-wide wipe, and the reason this table exists. Its `compact()` t
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 621
+line = 652
 method = "delete"
 call = "self.storage.remove(fid)?;"
 rearms = false
@@ -680,7 +680,7 @@ why = "the family's own conditional removal. It cannot re-arm: `request_rescrub`
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 670
+line = 701
 method = "force_delete_halves"
 call = "if let Err(refused) = self.storage.remove(fid) {"
 rearms = false
@@ -689,7 +689,7 @@ why = "the unconditional twin, and `force_delete`'s body as well. Same reason: t
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 905
+line = 936
 method = "meta_delete"
 call = "self.storage.remove(EF_META)?;"
 rearms = false

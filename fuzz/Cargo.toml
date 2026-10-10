@@ -395,6 +395,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "authenticated_store"
+path = "fuzz_targets/authenticated_store.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "kv_durability"
 path = "fuzz_targets/kv_durability.rs"
 test = false

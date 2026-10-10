@@ -1628,6 +1628,8 @@ version = "0.1.0"
 dependencies = [
  "embassy-futures 0.1.2 (git+https://github.com/embassy-rs/embassy?branch=main)",
  "embedded-storage-async",
+ "heapless 0.8.0",
+ "rsk-crypto",
  "rsk-fs",
  "rsk-sdk",
  "rsk-secret",

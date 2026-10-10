@@ -28,10 +28,10 @@ assurance/board/PLAT-TIMER-002.toml	crates/rsk-usb/src/ctaphid.rs	838-838	Timer:
 assurance/board/PLAT-TIMER-002.toml	firmware/src/led.rs	618-618	Timer::after_millis(5).await;	Timer::after_millis(5).await;
 assurance/board/PLAT-TIMER-002.toml	firmware/src/led.rs	692-692	const PERIOD_US: u64 = 2000;	const PERIOD_US: u64 = 2000;
 assurance/board/PLAT-TIMER-002.toml	firmware/src/led.rs	727-727	Timer::after_millis(5).await;	Timer::after_millis(5).await;
-assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	583-583	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
-assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1056-1056	hp.spawn(led::gpio_task(led).unwrap());	hp.spawn(led::gpio_task(led).unwrap());
-assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1064-1064	hp.spawn(led::pimoroni_task(rg, b).unwrap());	hp.spawn(led::pimoroni_task(rg, b).unwrap());
-assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1118-1118	hp.spawn(led::ws2812_task(ws2812).unwrap());	hp.spawn(led::ws2812_task(ws2812).unwrap());
+assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	622-622	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
+assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1123-1123	_ => gpio_pin!(p.PIN_29),	_ => gpio_pin!(p.PIN_29),
+assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1131-1131	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());
+assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1185-1185	_ => ws2812_pin!(p.PIN_29),	_ => ws2812_pin!(p.PIN_29),
 assurance/board/PLAT-TIMER-002.toml	firmware/src/presence.rs	237-240	#[cfg(feature = "no-touch")]	}
 assurance/board/PLAT-TIMER-002.toml	firmware/src/usb_attach.rs	34-36	/// Milliseconds since the attach — the clock the FIDO layer gets as `Ctx::now_ms`,	pub fn elapsed_ms() -> u64 {
 assurance/board/PLAT-TIMER-002.toml	firmware/src/worker.rs	306-306	const BTN_POLL_MS: u64 = 16;	const BTN_POLL_MS: u64 = 16;
@@ -40,14 +40,14 @@ assurance/board/PLAT-TIMER-002.toml	scripts/platform_gate.py	1337-1337	OUTCOME_S
 assurance/board/PLAT-TIMER-002.toml	tools/rsk/audit.py	170-170	print(f"{'seq':>6}  {'uptime':>10}  {'event':<18} aux  detail")	print(f"{'seq':>6}  {'uptime':>10}  {'event':<18} aux  detail")
 assurance/board/PLAT-TIMER-003.toml	crates/rsk-fido/src/journal.rs	215-217	if !ctx.state.audit_boot_logged {	let _ = raw_append(&ctx.dev, ctx.fs, ctx.now_ms, EV_BOOT, 0, &[]);
 assurance/board/PLAT-TIMER-003.toml	crates/rsk-fido/src/vendor.rs	493-493	journal::vendor_read(ctx, out)	journal::vendor_read(ctx, out)
-assurance/board/PLAT-TIMER-003.toml	firmware/src/main.rs	583-583	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
-assurance/board/PLAT-TIMER-003.toml	firmware/src/main.rs	896-896	usb_attach::mark();	usb_attach::mark();
+assurance/board/PLAT-TIMER-003.toml	firmware/src/main.rs	622-622	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
+assurance/board/PLAT-TIMER-003.toml	firmware/src/main.rs	963-963	// Everything above is boot work no host could have used, so the CTAP 2.1 §6.6	// Everything above is boot work no host could have used, so the CTAP 2.1 §6.6
 assurance/board/PLAT-TIMER-003.toml	firmware/src/pin_lock.rs	54-54	rp_pac::WATCHDOG.scratch2().write_value(encode(lock));	rp_pac::WATCHDOG.scratch2().write_value(encode(lock));
 assurance/board/PLAT-TIMER-003.toml	firmware/src/usb_attach.rs	34-36	/// Milliseconds since the attach — the clock the FIDO layer gets as `Ctx::now_ms`,	pub fn elapsed_ms() -> u64 {
 assurance/board/PLAT-TIMER-003.toml	scripts/platform_gate.py	1337-1337	OUTCOME_STATUS = {"pass": "discharged", "fail": "refuted"}	OUTCOME_STATUS = {"pass": "discharged", "fail": "refuted"}
 assurance/board/PLAT-TIMER-003.toml	tools/rsk/audit.py	170-170	print(f"{'seq':>6}  {'uptime':>10}  {'event':<18} aux  detail")	print(f"{'seq':>6}  {'uptime':>10}  {'event':<18} aux  detail")
-assurance/board/PLAT-TRNG-002.toml	firmware/src/main.rs	681-681	trng_cfg.sample_count = 1000;	trng_cfg.sample_count = 1000;
-assurance/board/PLAT-TRNG-002.toml	firmware/src/main.rs	682-682	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
+assurance/board/PLAT-TRNG-002.toml	firmware/src/main.rs	733-733	trng_cfg.sample_count = 1000;	trng_cfg.sample_count = 1000;
+assurance/board/PLAT-TRNG-002.toml	firmware/src/main.rs	734-734	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
 assurance/board/PLAT-TRNG-002.toml	scripts/platform_gate.py	1337-1337	OUTCOME_STATUS = {"pass": "discharged", "fail": "refuted"}	OUTCOME_STATUS = {"pass": "discharged", "fail": "refuted"}
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/clientpin.rs	795-795	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
 assurance/bundle/SEC-FIDO-001.toml	crates/rsk-fido/src/state.rs	181-181	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.	/// Refines `RSKeySecurityState!NoAuthorizationBypass` — SEC-FIDO-001.
@@ -343,9 +343,9 @@ assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	986-986	.put(E
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	1062-1062	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	1073-1073	pub fn backup_sealed<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> bool {	pub fn backup_sealed<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> bool {
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	1083-1083	fs.try_exists(EF_BACKUP_SEALED)	fs.try_exists(EF_BACKUP_SEALED)
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fs/src/fs.rs	405-405	pub fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {	pub fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fs/src/storage.rs	78-78	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fs/src/storage.rs	105-105	fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {	fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fs/src/fs.rs	436-436	pub fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {	pub fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fs/src/storage.rs	105-105	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fs/src/storage.rs	132-132	fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {	fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
 assurance/bundle/SEC-FIDO-006C.toml	formal/gen-configs.sh	34-34	companion_bug() {	companion_bug() {
 assurance/bundle/SEC-FIDO-006C.toml	formal/gen-configs.sh	121-121	CLAUSE_INV=(ResetKeepsThePinGate ResetKeepsTheAlwaysUvGate ResetKeepsTheBackupSeal)	CLAUSE_INV=(ResetKeepsThePinGate ResetKeepsTheAlwaysUvGate ResetKeepsTheBackupSeal)
 assurance/bundle/SEC-FIDO-006C.toml	formal/gen-configs.sh	348-348	clause_mutant() {	clause_mutant() {
@@ -417,41 +417,41 @@ assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	33-33	fn r
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	1205-1205	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/state.rs	626-626	pub fn begin_using_token(&mut self, user_is_present: bool, now_ms: u64) {	pub fn begin_using_token(&mut self, user_is_present: bool, now_ms: u64) {
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/state_kani.rs	86-86	st.begin_using_token(false, now_ms);	st.begin_using_token(false, now_ms);
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fs/src/fs.rs	493-493	pub fn factory_wipe(	pub fn factory_wipe(
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fs/src/fs.rs	524-524	pub fn factory_wipe(	pub fn factory_wipe(
 assurance/bundle/SEC-FIDO-008.toml	formal/gen-configs.sh	109-114	# Structural facts the model's own arguments rest on, asserted on the baseline	EXTRA_INV=(RamNeverOutlivesFlashSeed NoLiveTokenWithoutPinRecord)
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	72-77	# The invariant a MUTATION configuration says it targets, for the rows where	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	77-77	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	234-237	if [ -z "${inv:-}" ] || [ "$inv" = "-" ]; then	fi
 assurance/bundle/SEC-FIDO-008.toml	scripts/citation_gate.py	368-374	def bundle_pages(root):	)
-assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	618-618	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	618-627	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
-assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	647-647	pub fn force_delete(&mut self, fid: u16) -> Result<()> {	pub fn force_delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	668-668	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	649-649	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	649-658	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	678-678	pub fn force_delete(&mut self, fid: u16) -> Result<()> {	pub fn force_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	699-699	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {
 assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/powercut.rs	43-43	pub fn delete_landed(	pub fn delete_landed(
 assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/store_assurance.rs	235-235	pub fn delete_orphaned_metadata(after: &StoreView, subject: usize) -> bool {	pub fn delete_orphaned_metadata(after: &StoreView, subject: usize) -> bool {
-assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	215-215	fn known_absent(&self, fid: u16) -> bool {	fn known_absent(&self, fid: u16) -> bool {
-assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	248-248	fn settle<T>(&mut self, fid: u16, r: Option<T>) -> Result<Option<T>> {	fn settle<T>(&mut self, fid: u16, r: Option<T>) -> Result<Option<T>> {
-assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	269-269	pub fn scan(&mut self) {	pub fn scan(&mut self) {
-assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	344-344	pub fn try_read(&mut self, fid: u16, buf: &mut [u8]) -> Result<Option<usize>> {	pub fn try_read(&mut self, fid: u16, buf: &mut [u8]) -> Result<Option<usize>> {
-assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	845-845	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {
-assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	881-881	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	927-927	fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Result<usize> {	fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Result<usize> {
+assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	245-245	fn known_absent(&self, fid: u16) -> bool {	fn known_absent(&self, fid: u16) -> bool {
+assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	278-278	fn settle<T>(&mut self, fid: u16, r: Option<T>) -> Result<Option<T>> {	fn settle<T>(&mut self, fid: u16, r: Option<T>) -> Result<Option<T>> {
+assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	299-299	pub fn scan(&mut self) {	pub fn scan(&mut self) {
+assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	375-375	pub fn try_read(&mut self, fid: u16, buf: &mut [u8]) -> Result<Option<usize>> {	pub fn try_read(&mut self, fid: u16, buf: &mut [u8]) -> Result<Option<usize>> {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	876-876	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	912-912	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	958-958	fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Result<usize> {	fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Result<usize> {
 assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/powercut.rs	56-56	pub fn meta_add_landed(old: Option<&[u8]>, new: &[u8], fits: bool, got: Option<&[u8]>) -> bool {	pub fn meta_add_landed(old: Option<&[u8]>, new: &[u8], fits: bool, got: Option<&[u8]>) -> bool {
 assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/store_assurance.rs	244-244	pub fn meta_add_lost_a_record(before: &StoreView, after: &StoreView, subject: usize) -> bool {	pub fn meta_add_lost_a_record(before: &StoreView, after: &StoreView, subject: usize) -> bool {
-assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	258-258	fn mark_absent(&mut self, fid: u16) {	fn mark_absent(&mut self, fid: u16) {
-assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	881-881	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	885-892	let mut scratch = [0u8; META_MAX];	self.mark_absent(EF_META);
+assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	288-288	fn mark_absent(&mut self, fid: u16) {	fn mark_absent(&mut self, fid: u16) {
+assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	912-912	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	916-923	let mut scratch = [0u8; META_MAX];	self.mark_absent(EF_META);
 assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/powercut.rs	61-61	pub fn meta_delete_landed(old: Option<&[u8]>, got: Option<&[u8]>) -> bool {	pub fn meta_delete_landed(old: Option<&[u8]>, got: Option<&[u8]>) -> bool {
 assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/store_assurance.rs	252-252	pub fn meta_delete_false_absent(after: &StoreView) -> bool {	pub fn meta_delete_false_absent(after: &StoreView) -> bool {
-assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	215-215	fn known_absent(&self, fid: u16) -> bool {	fn known_absent(&self, fid: u16) -> bool {
-assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	258-258	fn mark_absent(&mut self, fid: u16) {	fn mark_absent(&mut self, fid: u16) {
-assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	881-881	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	885-892	let mut scratch = [0u8; META_MAX];	self.mark_absent(EF_META);
-assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	618-618	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	640-643	/// value may be live. This folds the two into one answer, which is what a caller	/// [`force_delete_halves`](Self::force_delete_halves) instead.
-assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	647-647	pub fn force_delete(&mut self, fid: u16) -> Result<()> {	pub fn force_delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	668-668	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {
+assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	245-245	fn known_absent(&self, fid: u16) -> bool {	fn known_absent(&self, fid: u16) -> bool {
+assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	288-288	fn mark_absent(&mut self, fid: u16) {	fn mark_absent(&mut self, fid: u16) {
+assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	912-912	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	916-923	let mut scratch = [0u8; META_MAX];	self.mark_absent(EF_META);
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	649-649	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	671-674	/// value may be live. This folds the two into one answer, which is what a caller	/// [`force_delete_halves`](Self::force_delete_halves) instead.
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	678-678	pub fn force_delete(&mut self, fid: u16) -> Result<()> {	pub fn force_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	699-699	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {
 assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/powercut.rs	43-43	pub fn delete_landed(	pub fn delete_landed(
 assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/store_assurance.rs	224-228	// A FOURTH step clause has no projection here, deliberately. `NoSilentOrphan` —	// projection over `StoreView` alone could not see the half that decides it.
 assurance/crates.toml	crates/rsk-device/src/ctap.rs	82-93	fido_state: &'a RefCell<rsk_fido::FidoState>,	}
@@ -519,18 +519,18 @@ assurance/platform.toml	crates/rsk-fido/src/vendor.rs	869-872	// material; the M
 assurance/platform.toml	crates/rsk-fido/src/vendor.rs	1073-1073	pub fn backup_sealed<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> bool {	pub fn backup_sealed<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> bool {
 assurance/platform.toml	crates/rsk-fido/src/vendor.rs	1083-1083	fs.try_exists(EF_BACKUP_SEALED)	fs.try_exists(EF_BACKUP_SEALED)
 assurance/platform.toml	crates/rsk-fs/src/fs.rs	101-107	/// `for_each_key` returning *complete* means it enumerated every live key (its	/// Authority bit for [`present`](Self#structfield.present): set iff `fid`'s
-assurance/platform.toml	crates/rsk-fs/src/fs.rs	296-303	});	// (`complete == false`); then leave the un-yielded FIDs *undecided* so
-assurance/platform.toml	crates/rsk-fs/src/fs.rs	493-493	pub fn factory_wipe(	pub fn factory_wipe(
+assurance/platform.toml	crates/rsk-fs/src/fs.rs	327-334	});	// (`complete == false`); then leave the un-yielded FIDs *undecided* so
+assurance/platform.toml	crates/rsk-fs/src/fs.rs	524-524	pub fn factory_wipe(	pub fn factory_wipe(
 assurance/platform.toml	crates/rsk-oath/src/seal.rs	52-52	pub fn seal_put<S: Storage>(	pub fn seal_put<S: Storage>(
 assurance/platform.toml	crates/rsk-openpgp/src/pin.rs	292-292	if let Err(sw) = migrate_pin_kbase(dev, fs, rng, fid, data) {	if let Err(sw) = migrate_pin_kbase(dev, fs, rng, fid, data) {
 assurance/platform.toml	crates/rsk-openpgp/src/pin.rs	357-357	if n < 1 || blob[0] != DEK_FORMAT_V3 {	if n < 1 || blob[0] != DEK_FORMAT_V3 {
 assurance/platform.toml	crates/rsk-openpgp/src/pin.rs	817-817	rec.expose_mut()[1] = PIN_FORMAT_V1;	rec.expose_mut()[1] = PIN_FORMAT_V1;
 assurance/platform.toml	crates/rsk-otp/src/seal.rs	65-65	pub fn seal_put<S: Storage>(	pub fn seal_put<S: Storage>(
 assurance/platform.toml	crates/rsk-piv/src/lib.rs	1391-1391	// kbase-migration fallback: the correct PIN against a verifier stored	// kbase-migration fallback: the correct PIN against a verifier stored
-assurance/platform.toml	crates/rsk-store/src/lib.rs	147-154	/// Removes from BOTH partitions, not just the one [`is_counter_fid`] routes to.	/// the second call finds nothing and costs one ring walk.
-assurance/platform.toml	crates/rsk-store/src/lib.rs	181-183	let main_done = for_each_in(&mut self.main, &mut self.buf, f);	main_done && counter_done
+assurance/platform.toml	crates/rsk-store/src/lib.rs	149-156	/// Removes from BOTH partitions, not just the one [`is_counter_fid`] routes to.	/// the second call finds nothing and costs one ring walk.
+assurance/platform.toml	crates/rsk-store/src/lib.rs	183-185	let main_done = for_each_in(&mut self.main, &mut self.buf, f);	main_done && counter_done
 assurance/platform.toml	crates/rsk-store/src/tests.rs	59-62	/// Every read from here on fails, unconditionally and for every address —	/// memoise as absence.
-assurance/platform.toml	crates/rsk-store/src/tests.rs	418-427	#[test]	assert!(!complete);
+assurance/platform.toml	crates/rsk-store/src/tests.rs	421-430	#[test]	assert!(!complete);
 assurance/platform.toml	crates/rsk-usb/src/ccid.rs	479-479	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {
 assurance/platform.toml	crates/rsk-usb/src/ctaphid.rs	838-838	Timer::after_millis(KEEPALIVE_MS),	Timer::after_millis(KEEPALIVE_MS),
 assurance/platform.toml	firmware/src/display.rs	203-203	crate::presence::set_cancel_requested(requested);	crate::presence::set_cancel_requested(requested);
@@ -552,15 +552,15 @@ assurance/platform.toml	firmware/src/led.rs	692-692	const PERIOD_US: u64 = 2000;
 assurance/platform.toml	firmware/src/led.rs	695-695	let c = blinker.tick();	let c = blinker.tick();
 assurance/platform.toml	firmware/src/led.rs	719-719	let c = blinker.tick();	let c = blinker.tick();
 assurance/platform.toml	firmware/src/led.rs	727-727	Timer::after_millis(5).await;	Timer::after_millis(5).await;
-assurance/platform.toml	firmware/src/main.rs	583-583	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
-assurance/platform.toml	firmware/src/main.rs	627-627	fs.scan(); // recover dynamic files (counter, resident creds) from flash	fs.scan(); // recover dynamic files (counter, resident creds) from flash
-assurance/platform.toml	firmware/src/main.rs	673-673	let mut trng_cfg = TrngConfig::default();	let mut trng_cfg = TrngConfig::default();
-assurance/platform.toml	firmware/src/main.rs	674-680	// The default sample_count (25) is too low for some RP2350 ROSC units: the	// unchanged — the NIST health checks stay enabled, the source is unchanged.
-assurance/platform.toml	firmware/src/main.rs	681-681	trng_cfg.sample_count = 1000;	trng_cfg.sample_count = 1000;
-assurance/platform.toml	firmware/src/main.rs	682-682	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
-assurance/platform.toml	firmware/src/main.rs	1056-1056	hp.spawn(led::gpio_task(led).unwrap());	hp.spawn(led::gpio_task(led).unwrap());
-assurance/platform.toml	firmware/src/main.rs	1064-1064	hp.spawn(led::pimoroni_task(rg, b).unwrap());	hp.spawn(led::pimoroni_task(rg, b).unwrap());
-assurance/platform.toml	firmware/src/main.rs	1118-1118	hp.spawn(led::ws2812_task(ws2812).unwrap());	hp.spawn(led::ws2812_task(ws2812).unwrap());
+assurance/platform.toml	firmware/src/main.rs	622-622	let mut config = embassy_rp::config::Config::default();	let mut config = embassy_rp::config::Config::default();
+assurance/platform.toml	firmware/src/main.rs	674-674	fs.scan(); // recover dynamic files (counter, resident creds) from flash	fs.scan(); // recover dynamic files (counter, resident creds) from flash
+assurance/platform.toml	firmware/src/main.rs	725-725	let mut trng_cfg = TrngConfig::default();	let mut trng_cfg = TrngConfig::default();
+assurance/platform.toml	firmware/src/main.rs	726-732	// The default sample_count (25) is too low for some RP2350 ROSC units: the	// unchanged — the NIST health checks stay enabled, the source is unchanged.
+assurance/platform.toml	firmware/src/main.rs	733-733	trng_cfg.sample_count = 1000;	trng_cfg.sample_count = 1000;
+assurance/platform.toml	firmware/src/main.rs	734-734	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);	let trng = Trng::new(p.TRNG, Irqs, trng_cfg);
+assurance/platform.toml	firmware/src/main.rs	1123-1123	_ => gpio_pin!(p.PIN_29),	_ => gpio_pin!(p.PIN_29),
+assurance/platform.toml	firmware/src/main.rs	1131-1131	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());
+assurance/platform.toml	firmware/src/main.rs	1185-1185	_ => ws2812_pin!(p.PIN_29),	_ => ws2812_pin!(p.PIN_29),
 assurance/platform.toml	firmware/src/presence.rs	99-101	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	pub struct ButtonPresence {
 assurance/platform.toml	firmware/src/presence.rs	137-137	const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);	const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);
 assurance/platform.toml	firmware/src/presence.rs	163-166	#[cfg(not(feature = "display"))]	pub type Presence = crate::display::TouchPresence;
@@ -615,8 +615,8 @@ crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/makecredential.rs	603-6
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/state.rs	644-657	/// The CTAP 2.1 §6.5.5.7 post-user-presence triad — `clearUserPresentFlag()`,	}
 crates/rsk-fido/src/credmgmt_kani.rs	crates/rsk-fido/src/state.rs	659-675	/// `stopUsingPinUvAuthToken` — drop the in-use state, permissions, and	}
 crates/rsk-fido/src/reset_assurance_tests.rs	crates/rsk-fido/src/reset.rs	244-250	/// **The list is FIVE and the clauses are three.** `EF_DEVICE_PIN` and	/// of what this predicate is for.
-crates/rsk-fido/src/reset_assurance_tests.rs	crates/rsk-fs/src/storage.rs	78-78	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,
-crates/rsk-fido/src/reset_assurance_tests.rs	crates/rsk-fs/src/storage.rs	105-105	fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {	fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+crates/rsk-fido/src/reset_assurance_tests.rs	crates/rsk-fs/src/storage.rs	105-105	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,
+crates/rsk-fido/src/reset_assurance_tests.rs	crates/rsk-fs/src/storage.rs	132-132	fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {	fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/clientpin.rs	464-471	ctx.state.reset_pin_uv_auth_token(ctx.rng);	ctx.state.paut.permissions = permissions;
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/clientpin.rs	472-478	match rp_id {	}
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/config.rs	245-247	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
@@ -637,13 +637,13 @@ crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	178-188	/// Wheth
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	392-396	/// redirect one. Fail closed both ways. The channel's `cid` is defence in depth	/// to a second process is that the channel is one-shot.
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	417-421	/// Transport channel of the request being dispatched — the CTAPHID CID, or 0	pub channel: u32,
 crates/rsk-fido/src/vendor_tests.rs	crates/rsk-sdk/src/presence.rs	92-92	fn uv_available(&self) -> bool {	fn uv_available(&self) -> bool {
-crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	215-217	fn known_absent(&self, fid: u16) -> bool {	}
-crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	552-578	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
-crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	618-627	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
-crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	287-287	if fid == EF_META || fid == EF_SCRUB_FILLER {	if fid == EF_META || fid == EF_SCRUB_FILLER {
-crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	858-860	if r.is_none() && self.storage.last_error() {	}
-crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	890-890	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
-crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	619-619	let meta = self.meta_delete(fid);	let meta = self.meta_delete(fid);
+crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	245-247	fn known_absent(&self, fid: u16) -> bool {	}
+crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	583-609	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
+crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	649-658	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
+crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	317-317	if fid == EF_META || fid == EF_SCRUB_FILLER || crate::STORE_INTERNAL_FIDS.contains(&fid)	if fid == EF_META || fid == EF_SCRUB_FILLER || crate::STORE_INTERNAL_FIDS.contains(&fid)
+crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	889-891	if r.is_none() && self.storage.last_error() {	}
+crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	921-921	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
+crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	650-650	let meta = self.meta_delete(fid);	let meta = self.meta_delete(fid);
 crates/rsk-piv/src/tests.rs	crates/rsk-fido/src/clientpin.rs	835-835	if !matched && ctx.dev.otp_key.is_some() {	if !matched && ctx.dev.otp_key.is_some() {
 crates/rsk-usb/src/ctaphid.rs	tools/emu/src/hid.rs	52-87	pub fn serve(mut stream: TcpStream, shared: Arc<Shared>) -> io::Result<()> {	}
 crates/rsk-usb/src/ctaphid_tests.rs	crates/rsk-usb/src/ctaphid.rs	461-465	if self.cid != cid {	}
@@ -662,9 +662,9 @@ crates/rsk-usb/src/transport_refinement_kani.rs	crates/rsk-usb/src/ctaphid.rs	67
 formal/README.md	crates/rsk-devconf/src/lib.rs	310-317	// MERGE onto the stored record; do not replace it. ykman sends only the fields	let m = merged_dev_conf(fs, stripped.get(..n).unwrap_or_default(), &mut merged)?;
 formal/README.md	crates/rsk-device/src/ccid.rs	80-87	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
 formal/README.md	crates/rsk-device/src/ccid.rs	104-122	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
-formal/README.md	crates/rsk-device/src/ccid.rs	255-263	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
-formal/README.md	crates/rsk-device/src/ccid.rs	380-380	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
-formal/README.md	crates/rsk-device/src/ccid.rs	394-409	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
+formal/README.md	crates/rsk-device/src/ccid.rs	255-266	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
+formal/README.md	crates/rsk-device/src/ccid.rs	386-386	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
+formal/README.md	crates/rsk-device/src/ccid.rs	400-415	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
 formal/README.md	crates/rsk-device/src/ctap.rs	82-93	fido_state: &'a RefCell<rsk_fido::FidoState>,	}
 formal/README.md	crates/rsk-device/src/ctap.rs	128-128	st.restore_pin_lock(boot.lock);	st.restore_pin_lock(boot.lock);
 formal/README.md	crates/rsk-device/src/ctap.rs	205-209	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN);
@@ -770,20 +770,20 @@ formal/README.md	crates/rsk-fido/src/state_tests.rs	189-189	assert_eq!(st.pin_lo
 formal/README.md	crates/rsk-fido/src/u2f.rs	106-106	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
 formal/README.md	crates/rsk-fido/src/vendor.rs	588-617	fn unlock<S: Storage, R: Rng>(	None => Err(CtapError::InvalidParameter),
 formal/README.md	crates/rsk-fido/src/vendor.rs	975-987	fn backup_finalize<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, req: &Req) -> CtapResult {	.map_err(|_| CtapError::Other)?;
-formal/README.md	crates/rsk-fs/src/fs.rs	234-234	self.decided[i] |= m;	self.decided[i] |= m;
-formal/README.md	crates/rsk-fs/src/fs.rs	282-282	decided[i] |= m;	decided[i] |= m;
-formal/README.md	crates/rsk-fs/src/fs.rs	287-287	if fid == EF_META || fid == EF_SCRUB_FILLER {	if fid == EF_META || fid == EF_SCRUB_FILLER {
-formal/README.md	crates/rsk-fs/src/fs.rs	290-290	if !dynamic.contains(&fid) {	if !dynamic.contains(&fid) {
-formal/README.md	crates/rsk-fs/src/fs.rs	300-302	// key from it. An un-yielded FID is then authoritatively absent — decide the	// full-partition scan. Only a flash READ FAULT can truncate the walk
-formal/README.md	crates/rsk-fs/src/fs.rs	378-378	Ok(self.try_size(fid)?.is_some_and(|n| n > 0))	Ok(self.try_size(fid)?.is_some_and(|n| n > 0))
-formal/README.md	crates/rsk-fs/src/fs.rs	392-395	/// Invoke `f` once per live key in the backend, in a single storage pass.	/// while one `for_each_key` pass is O(items).
-formal/README.md	crates/rsk-fs/src/fs.rs	519-519	if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {	if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {
-formal/README.md	crates/rsk-fs/src/fs.rs	619-621	let meta = self.meta_delete(fid);	self.storage.remove(fid)?;
-formal/README.md	crates/rsk-fs/src/fs.rs	625-625	self.dynamic.retain(|&f| f != fid);	self.dynamic.retain(|&f| f != fid);
-formal/README.md	crates/rsk-fs/src/fs.rs	626-626	meta	meta
-formal/README.md	crates/rsk-fs/src/fs.rs	851-851	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
-formal/README.md	crates/rsk-fs/src/fs.rs	888-888	// Absent means there is nothing to drop; a FAILED read means we do not	// Absent means there is nothing to drop; a FAILED read means we do not
-formal/README.md	crates/rsk-fs/src/fs.rs	890-890	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
+formal/README.md	crates/rsk-fs/src/fs.rs	264-264	self.decided[i] |= m;	self.decided[i] |= m;
+formal/README.md	crates/rsk-fs/src/fs.rs	296-296	/// owner of the truncated-scan half of the cache-soundness property.	/// owner of the truncated-scan half of the cache-soundness property.
+formal/README.md	crates/rsk-fs/src/fs.rs	312-312	decided[i] |= m;	decided[i] |= m;
+formal/README.md	crates/rsk-fs/src/fs.rs	321-321	if !dynamic.contains(&fid) {	if !dynamic.contains(&fid) {
+formal/README.md	crates/rsk-fs/src/fs.rs	331-333	// key from it. An un-yielded FID is then authoritatively absent — decide the	// full-partition scan. Only a flash READ FAULT can truncate the walk
+formal/README.md	crates/rsk-fs/src/fs.rs	409-409	Ok(self.try_size(fid)?.is_some_and(|n| n > 0))	Ok(self.try_size(fid)?.is_some_and(|n| n > 0))
+formal/README.md	crates/rsk-fs/src/fs.rs	423-426	/// Invoke `f` once per live key in the backend, in a single storage pass.	/// while one `for_each_key` pass is O(items).
+formal/README.md	crates/rsk-fs/src/fs.rs	550-550	if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {	if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {
+formal/README.md	crates/rsk-fs/src/fs.rs	650-652	let meta = self.meta_delete(fid);	self.storage.remove(fid)?;
+formal/README.md	crates/rsk-fs/src/fs.rs	656-656	self.dynamic.retain(|&f| f != fid);	self.dynamic.retain(|&f| f != fid);
+formal/README.md	crates/rsk-fs/src/fs.rs	657-657	meta	meta
+formal/README.md	crates/rsk-fs/src/fs.rs	882-882	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
+formal/README.md	crates/rsk-fs/src/fs.rs	919-919	// Absent means there is nothing to drop; a FAILED read means we do not	// Absent means there is nothing to drop; a FAILED read means we do not
+formal/README.md	crates/rsk-fs/src/fs.rs	921-921	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
 formal/README.md	crates/rsk-fs/src/fs_tests.rs	386-386	assert!(	assert!(
 formal/README.md	crates/rsk-fs/src/fs_tests.rs	506-506	assert!(	assert!(
 formal/README.md	crates/rsk-fs/src/lib.rs	29-124	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	}
@@ -821,7 +821,7 @@ formal/README.md	crates/rsk-piv/src/lib.rs	384-387	if !reselect {	// The default
 formal/README.md	crates/rsk-piv/src/lib.rs	408-408	self.sess.reset();	self.sess.reset();
 formal/README.md	crates/rsk-piv/src/lib.rs	554-593	// the retry counter … shall be decremented by one." A YubiKey 5.7.4 does	/// `6A88` for anything but `P1 = 00, P2 = 80`, as on `change_pin` — and here
 formal/README.md	crates/rsk-piv/src/lib.rs	1386-1386	&& ct_eq(	&& ct_eq(
-formal/README.md	crates/rsk-rescue/src/lib.rs	142-144	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
+formal/README.md	crates/rsk-rescue/src/lib.rs	143-145	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/README.md	crates/rsk-sdk/src/applet.rs	259-261	fn selectable(&self, i: usize) -> bool {	}
 formal/README.md	crates/rsk-sdk/src/applet.rs	444-464	let found = applets.iter().enumerate().position(|(i, app)| {	None => Sw::FILE_NOT_FOUND,
 formal/README.md	crates/rsk-sdk/src/applet.rs	449-449	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
@@ -837,9 +837,9 @@ formal/README.md	crates/rsk-usb/src/ctaphid.rs	639-639	pub async fn run(&mut sel
 formal/README.md	crates/rsk-usb/src/ctaphid.rs	928-940	async fn write_frames<S, T, F>(sink: &mut S, cid: u32, cmd: u8, data: &[u8], mut timeout: F)	}
 formal/README.md	crates/rsk-usb/src/ctaphid_tests.rs	478-478	fn write_frames_abandons_when_host_stalls() {	fn write_frames_abandons_when_host_stalls() {
 formal/README.md	crates/rsk-usb/src/ctaphid_tests.rs	500-500	fn write_frames_writes_every_frame_when_host_drains() {	fn write_frames_writes_every_frame_when_host_drains() {
-formal/README.md	firmware/src/main.rs	689-737	use rsk_rescue::otp_lock::{	let _ = rsk_openpgp::scan_files(&dev, &mut fs, &mut rng);
-formal/README.md	firmware/src/main.rs	736-736	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
-formal/README.md	firmware/src/main.rs	741-757	// One-shot at-rest hardening: the seal migrations above leave the superseded	}
+formal/README.md	firmware/src/main.rs	691-739	let usb_itf = if storage_ready {	// and everything past it carries only `mkek_source`.
+formal/README.md	firmware/src/main.rs	738-738	// to read it, and this block is that place: the read dies at its closing brace,	// to read it, and this block is that place: the read dies at its closing brace,
+formal/README.md	firmware/src/main.rs	743-759	PRE_OTP_OTP, PRE_OTP_PIV, PRE_OTP_STORAGE,	// A fused key the boot cannot read is no blank page: each step in the else
 formal/README.md	firmware/src/pin_lock.rs	18-21	//! a real power cycle clears it. The *whole* lock moves: carrying the engaged flag	//!
 formal/README.md	firmware/src/presence.rs	99-106	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
 formal/README.md	firmware/src/worker.rs	411-424	/// One transport (CTAPHID/CCID) request: run the synchronous dispatch and	let mut ex = EXCHANGE.lock().await;
@@ -847,15 +847,15 @@ formal/README.md	firmware/src/worker.rs	428-428	crate::presence::set_wait_scope(
 formal/README.md	firmware/src/worker.rs	525-527	// Nothing is in flight again: a wait started from here on is an on-panel	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
 formal/README.md	firmware/src/worker.rs	527-527	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
 formal/README.md	firmware/src/worker.rs	663-665	// Scope any touch wait this command starts to the OTP transport, so a host	crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
-formal/README.md	tools/emu/src/device.rs	510-510	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);
+formal/README.md	tools/emu/src/device.rs	513-513	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);
 formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	280-280	/// the enabled-applications TLV *without* any transport length prefix; the caller	/// the enabled-applications TLV *without* any transport length prefix; the caller
 formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	302-316	// verifier, and READ CONFIG echoes this blob to any unauthenticated host (audit	let mut merged = [0u8; DEV_CONF_MERGE_MAX];
 formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	688-688	return u16::from_be_bytes(mask) & SUPPORTED_CAPS;	return u16::from_be_bytes(mask) & SUPPORTED_CAPS;
 formal/RSKeyAdminSurface.tla	crates/rsk-devconf/src/lib.rs	692-692	SUPPORTED_CAPS	SUPPORTED_CAPS
 formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	80-87	/// Refines `RSKeyAdminSurface!AdminSurfaceAlwaysReachable` — SEC-ADM-001.	rsk_devconf::CAP_PIV,
-formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	255-263	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
-formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	380-380	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
-formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	142-144	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
+formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	255-266	/// bit `i` set → applet `i` (in `APPLET_CAPS` order) is selectable.	mask
+formal/RSKeyAdminSurface.tla	crates/rsk-device/src/ccid.rs	386-386	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])	self.disp.current() == Some(idx) && self.caps_enabled(APPLET_CAPS[idx])
+formal/RSKeyAdminSurface.tla	crates/rsk-rescue/src/lib.rs	143-145	/// Refines `RSKeyAdminSurface!PrivilegedOpNeedsPresence` — SEC-ADM-002.	self.presence.borrow_mut().request(confirm) == Presence::Confirmed
 formal/RSKeyAdminSurface.tla	crates/rsk-sdk/src/applet.rs	254-256	pub fn set_enabled(&mut self, mask: u32) {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-oath/src/lib.rs	656-686	// gated here, before the HOTP counter burns.	if !self.store_cred(&dev, fs, fid, scratch.expose(), n) {
 formal/RSKeyAppletPolicies.tla	crates/rsk-openpgp/src/keypairgen.rs	123-166	let priv_fid = slot_algo_fid(fid);	// sibling reader `info::slot_algo` has the same `attr.len() >= 3` gate.
@@ -872,11 +872,11 @@ formal/RSKeyAppletPolicies.tla	crates/rsk-otp/src/tests.rs	1721-1721	fn configur
 formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	58-66	fn pin_satisfied(sess: &Session, pinpol: u8) -> bool {	}
 formal/RSKeyAppletPolicies.tla	crates/rsk-piv/src/auth.rs	114-118	/// Refines `RSKeyAppletPolicies!PivAlwaysSpendsFreshness` — SEC-POL-002.	}
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	104-122	pub struct CcidApplets<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform> {	enabled_caps: u16,
-formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	394-409	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
+formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	400-415	/// Drop the selected applet's security status on an ICC power transition, so a	self.disp.reset_card(&mut applets, &mut *fsb);
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ctap.rs	205-209	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN);
 formal/RSKeyAppletSeams.tla	crates/rsk-display/src/pin.rs	770-779	let _ = rsk_ui::render_erasing(&mut self.frame());	)
 formal/RSKeyAppletSeams.tla	crates/rsk-fido/src/reset.rs	270-313	/// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus	}
-formal/RSKeyAppletSeams.tla	crates/rsk-fs/src/fs.rs	478-529	/// that is still live and, for PIV, not PIN-bound at rest — or, for OATH, leaves	return Err(Error::MemoryFatal);
+formal/RSKeyAppletSeams.tla	crates/rsk-fs/src/fs.rs	509-560	/// that is still live and, for PIV, not PIN-bound at rest — or, for OATH, leaves	return Err(Error::MemoryFatal);
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	201-209	/// allowed); with a code set, a new SELECT resets it, a re-SELECT keeps it,	otp_pin_verified: bool,
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	235-236	presence,	validated: true,
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	369-371	if !self.validated {	}
@@ -1083,39 +1083,39 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	588-617	fn unlock<S:
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	874-874	if try_backup_sealed(ctx.fs).map_err(|_| CtapError::Other)? {	if try_backup_sealed(ctx.fs).map_err(|_| CtapError::Other)? {
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	980-987	// no MSE handshake — and say what the touch actually authorises.	.map_err(|_| CtapError::Other)?;
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	1056-1062	/// `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or** shown as	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
-formal/RSKeySecurityState.tla	crates/rsk-fs/src/fs.rs	397-400	/// A FID can be yielded MORE THAN ONCE — the log-structured backend walks	/// below does).
+formal/RSKeySecurityState.tla	crates/rsk-fs/src/fs.rs	428-431	/// A FID can be yielded MORE THAN ONCE — the log-structured backend walks	/// below does).
 formal/RSKeySecurityState.tla	crates/rsk-usb/src/ctaphid.rs	830-835	// frames during fast/crypto processing would consume — and then	if up_pending() {
-formal/RSKeySecurityState.tla	firmware/src/main.rs	736-736	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
+formal/RSKeySecurityState.tla	firmware/src/main.rs	792-792	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
 formal/RSKeySecurityState.tla	firmware/src/presence.rs	99-106	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	428-428	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	525-527	// Nothing is in flight again: a wait started from here on is an on-panel	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	527-527	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	648-673	/// dirty latch, so the CCID / FIDO2 / U2F / OTP gates all act on the new set	// confirms on an already-held button — so without this the release edge of
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	663-665	// Scope any touch wait this command starts to the OTP transport, so a host	crate::presence::set_wait_scope(crate::presence::SCOPE_OTP);
-formal/RSKeySecurityState.tla	tools/emu/src/device.rs	510-510	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);
+formal/RSKeySecurityState.tla	tools/emu/src/device.rs	513-513	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);	let seeded = rsk_fido::seed::ensure_seed(&dev(), &mut fsb, &mut *rngb);
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	106-106	present: [u8; FID_PRESENT_BYTES],	present: [u8; FID_PRESENT_BYTES],
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	115-115	decided: [u8; FID_PRESENT_BYTES],	decided: [u8; FID_PRESENT_BYTES],
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	215-217	fn known_absent(&self, fid: u16) -> bool {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	231-235	fn mark_present(&mut self, fid: u16) {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	248-254	fn settle<T>(&mut self, fid: u16, r: Option<T>) -> Result<Option<T>> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	269-308	pub fn scan(&mut self) {	self.scan_truncated = !complete;
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	305-307	if complete {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	315-360	pub fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {	/// [`size`](Self::size), fallible — see [`try_read`](Self::try_read).
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	552-578	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	592-612	/// with no `put`) without its contents ever being present, so gating the meta	/// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	619-619	let meta = self.meta_delete(fid);	let meta = self.meta_delete(fid);
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	619-626	let meta = self.meta_delete(fid);	meta
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	626-626	meta	meta
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	845-871	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	851-851	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	851-853	let n = if self.known_absent(EF_META) {	} else {
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	858-860	if r.is_none() && self.storage.last_error() {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	868-868	self.write_record(EF_META, &out[..w])?;	self.write_record(EF_META, &out[..w])?;
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	869-869	self.mark_present(EF_META);	self.mark_present(EF_META);
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	881-922	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	890-890	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	896-896	self.mark_present(EF_META);	self.mark_present(EF_META);
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	909-909	self.write_record(EF_META, &out[..w]) // EF_META stays present	self.write_record(EF_META, &out[..w]) // EF_META stays present
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	245-247	fn known_absent(&self, fid: u16) -> bool {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	261-265	fn mark_present(&mut self, fid: u16) {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	278-284	fn settle<T>(&mut self, fid: u16, r: Option<T>) -> Result<Option<T>> {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	299-339	pub fn scan(&mut self) {	self.scan_truncated = !complete;
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	336-338	if complete {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	346-391	pub fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {	/// [`size`](Self::size), fallible — see [`try_read`](Self::try_read).
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	583-609	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	623-643	/// with no `put`) without its contents ever being present, so gating the meta	/// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	650-650	let meta = self.meta_delete(fid);	let meta = self.meta_delete(fid);
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	650-657	let meta = self.meta_delete(fid);	meta
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	657-657	meta	meta
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	876-902	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	882-882	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	882-884	let n = if self.known_absent(EF_META) {	} else {
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	889-891	if r.is_none() && self.storage.last_error() {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	899-899	self.write_record(EF_META, &out[..w])?;	self.write_record(EF_META, &out[..w])?;
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	900-900	self.mark_present(EF_META);	self.mark_present(EF_META);
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	912-953	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	921-921	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	927-927	self.mark_present(EF_META);	self.mark_present(EF_META);
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	940-940	self.write_record(EF_META, &out[..w]) // EF_META stays present	self.write_record(EF_META, &out[..w]) // EF_META stays present
 formal/RSKeyStore.tla	crates/rsk-fs/src/powercut.rs	43-51	pub fn delete_landed(	}
 formal/RSKeyStore.tla	crates/rsk-fs/src/powercut_model.rs	47-47	fn dead(&self) -> bool;	fn dead(&self) -> bool;
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	220-220	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 128 * CONT_DATA; // 7609	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 128 * CONT_DATA; // 7609
@@ -1160,11 +1160,11 @@ formal/comutants.toml	crates/rsk-fido/src/reset_assurance_tests.rs	273-273	fn a_
 formal/comutants.toml	crates/rsk-fido/src/reset_tests.rs	639-639	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
 formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	174-174	assert_eq!(st.pin_lock(), LOCKED);	assert_eq!(st.pin_lock(), LOCKED);
 formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	189-189	assert_eq!(st.pin_lock().mismatches, 2);	assert_eq!(st.pin_lock().mismatches, 2);
-formal/comutants.toml	crates/rsk-fs/src/fs.rs	868-868	self.write_record(EF_META, &out[..w])?;	self.write_record(EF_META, &out[..w])?;
-formal/comutants.toml	crates/rsk-fs/src/fs.rs	909-909	self.write_record(EF_META, &out[..w]) // EF_META stays present	self.write_record(EF_META, &out[..w]) // EF_META stays present
+formal/comutants.toml	crates/rsk-fs/src/fs.rs	899-899	self.write_record(EF_META, &out[..w])?;	self.write_record(EF_META, &out[..w])?;
+formal/comutants.toml	crates/rsk-fs/src/fs.rs	940-940	self.write_record(EF_META, &out[..w]) // EF_META stays present	self.write_record(EF_META, &out[..w]) // EF_META stays present
 formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	386-386	assert!(	assert!(
 formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	506-506	assert!(	assert!(
-formal/comutants.toml	crates/rsk-fs/src/storage.rs	78-78	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,
+formal/comutants.toml	crates/rsk-fs/src/storage.rs	105-105	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,
 formal/comutants.toml	crates/rsk-oath/src/code_tests.rs	155-155	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-oath/src/increasing_tests.rs	36-36	assert_eq!(sw, Sw::WRONG_DATA, "a refusal must read as 6A80");	assert_eq!(sw, Sw::WRONG_DATA, "a refusal must read as 6A80");
 formal/comutants.toml	crates/rsk-oath/src/lib.rs	1284-1306	/// Drop the VALIDATE result on deselect / card reset, so a later session must	}
@@ -1218,13 +1218,13 @@ scripts/security_trace.py	crates/rsk-fido/src/clientpin.rs	145-145	match req.sub
 scripts/security_trace.py	crates/rsk-fido/src/config.rs	250-250	ctx.state.mark_token_used(ctx.now_ms);	ctx.state.mark_token_used(ctx.now_ms);
 scripts/security_trace.py	crates/rsk-fido/src/consts.rs	407-407	pub const RESET_WINDOW_MS: u64 = 10_000;	pub const RESET_WINDOW_MS: u64 = 10_000;
 scripts/security_trace.py	crates/rsk-fido/src/reset.rs	267-267	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS	!ctx.state.warm_boot && ctx.now_ms <= RESET_WINDOW_MS
-scripts/security_trace.py	tools/emu/src/device.rs	810-811	crate::security_trace::POWER_CYCLE,	0,
+scripts/security_trace.py	tools/emu/src/device.rs	813-814	crate::security_trace::POWER_CYCLE,	0,
 scripts/test_run_tlc.py	scripts/verdict_gate.py	619-634	if row["invariant"] is not None:	" that name")
-scripts/test_security_trace.py	tools/emu/src/device.rs	810-811	crate::security_trace::POWER_CYCLE,	0,
+scripts/test_security_trace.py	tools/emu/src/device.rs	813-814	crate::security_trace::POWER_CYCLE,	0,
 scripts/test_token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
 scripts/test_token_refinement_gate.py	crates/rsk-fido/src/credential.rs	978-978	let fid = EF_RP + i;	let fid = EF_RP + i;
-scripts/test_token_refinement_gate.py	firmware/src/main.rs	1270-1270	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
+scripts/test_token_refinement_gate.py	firmware/src/main.rs	1337-1337	let (kvm, kvc) = (kvmain_range(), kvcnt_range());	let (kvm, kvc) = (kvmain_range(), kvcnt_range());
 scripts/token_refinement_gate.py	crates/rsk-device/src/ctap.rs	122-122	*st = rsk_fido::FidoState::new();	*st = rsk_fido::FidoState::new();
-scripts/token_refinement_gate.py	firmware/src/main.rs	1270-1270	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));	let fido_state_ref = FIDO_STATE.init(RefCell::new(rsk_fido::FidoState::new()));
+scripts/token_refinement_gate.py	firmware/src/main.rs	1337-1337	let (kvm, kvc) = (kvmain_range(), kvcnt_range());	let (kvm, kvc) = (kvmain_range(), kvcnt_range());
 scripts/trace_map.py	crates/rsk-sdk/src/applet.rs	449-449	let reselect = self.current == Some(i);	let reselect = self.current == Some(i);
 tools/emu/src/hid.rs	crates/rsk-usb/src/ctaphid.rs	676-689	async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {	}
