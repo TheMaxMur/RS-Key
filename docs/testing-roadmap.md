@@ -118,11 +118,11 @@ The latest local completion boundary is:
 | Phase | Established | Remaining |
 |---|---|---|
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
-| 2 | Command-level cases and the completed default-profile review of 996 baseline outcomes and 27 function groups, including direct test-util cases | MC/DC evidence and closure in each declared profile remain open; current raw residuals and their dispositions are recorded in [Testing](testing.md) |
+| 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
 | 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns, arbitrary correlated faults and semantic record-loss detection beyond the current CRC/legacy formats remain open; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners | Whole-core mutation closure and rare crypto fallback paths |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
-| 6 | Eighteen source-matched host-profile maps; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
+| 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
 | 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
 
@@ -2504,3 +2504,27 @@ Miri codec controls, selected in-diff mutations, seeded fuzzing, image execution
 frame inspection, gate logs and the signed local commit ledger. Each result is
 scoped to its recorded source and workload; this format change does not close
 the whole testing plan or establish hardware certification.
+
+## Current declared-profile coverage, 2026-10-11
+
+The [current audit](coverage-current.md) closes the reachable host statement,
+function and condition-outcome review in all eighteen declared profiles on source
+matching `45481f9735392a7474c748cda8c123e6cb098f24`, including authenticated
+storage v2. Its [finite catalogue](coverage-profile-audit.toml) records every
+residual with its
+actual feature closure, source hashes, invariant or conditional assumption. The
+raw percentages remain unchanged by exclusions; source-coordinate union and
+LLVM's generic-instantiation maxima retain their separate meanings.
+
+Seven additional strict-config, largeblob-ext and preview-sign API/parser cases
+were found during profile review and tested before the final matrix. The full
+storage suite, direct error/status helpers and negative oracle cases are included.
+Every selected binary was freshly built and roster-checked; complete successful
+executions are reused only by exact binary SHA256 in the common runtime. The
+original default-only review and partial discovery snapshots do not establish
+this current all-profile result.
+
+Phase 2's MC/DC criterion remains decision-only and unimplemented. Embedded glue,
+C/assembly, physical fault timing, interoperability, retained campaigns and actual
+CI/release execution remain separate work; this item does not complete the whole
+plan. Evidence is retained in `target/profile-coverage-20261010/audited-linux/`.

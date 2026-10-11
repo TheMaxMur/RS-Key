@@ -1810,3 +1810,27 @@ applied. Reports, source hashes, all 27 original function-group dispositions and
 the updated 773-side baseline map are retained in
 `target/callgraph-coverage-20261008/`, including `coverage-direct-final/`,
 `audit-coverage-direct-final.json` and `baseline-through-direct-final.json`.
+
+### All declared host profiles, including storage v2, 2026-10-11
+
+The [current host-profile audit](coverage-current.md) completes all eighteen
+profiles declared by the coverage workflow on source matching
+`45481f9735392a7474c748cda8c123e6cb098f24`.
+Default records 8207/8723 (94.08%) condition outcomes,
+42688/43370 (98.43%) lines and 3607/3609 (99.94%) function groups.
+The [profile catalogue](coverage-profile-audit.toml) accounts for every remaining
+source side, zero-DA line and function group with source hashes and actual
+feature bindings; raw counts and the LLVM aggregation adjustment remain visible.
+Reachable typed helper inputs, legacy stored flags and test-util refusals now have
+separate tests. The storage v2 geometry, lifecycle, import, recovery, counter and
+raw-fault cases are included in every selected profile's complete store suite.
+
+Reports, executable/test-log/raw hashes, compiler/source bindings, semantic
+controls and gate logs are retained in `target/profile-coverage-20261010/`.
+Execution reuse requires a byte-identical freshly compiled binary and its actual
+current test roster; it is not eighteen independent executions of unchanged
+binaries. The full gate and assurance run passed, with final affected host suites,
+feature clippy, source registries and documentation checks completing the later
+test additions. This closes the host-profile coverage item; MC/DC implementation
+remains deferred by the recorded decision, and device/C/backend scopes retain
+their own criteria.

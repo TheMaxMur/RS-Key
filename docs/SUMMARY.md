@@ -69,6 +69,7 @@
 - [Host protocol](protocol.md)
 - [Testing](testing.md)
   - [Testing roadmap](testing-roadmap.md)
+  - [Current host-profile coverage](coverage-current.md)
 - [Reproducing the evidence](reproducing.md)
 - [Interop matrix](interop.md)
 - [Versions](versioning.md)

@@ -1,0 +1,132 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+[metadata]
+date = "2026-10-10"
+scope = "Current authenticated storage v2; raw condition counts retained"
+raw_outcomes_excluded = 0
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/bank.rs"
+span = [25, 16, 25, 33]
+missing_sides = [0]
+source_sha256 = "afb4dc80555a6788e9fd1a29d2b2bef383bbfd1f36a988506c97c316319e9ae8"
+kind = "source-invariant"
+reason = "VerifiedFlash::new has an inline const requiring 0 < F::READ_SIZE <= 256. RawBank instantiations with READ_SIZE 0 and 512 fail compilation with E0080, as retained in invalid-read-geometry-probe.log; the guarded types cannot produce a callable bank."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/bank.rs"
+span = [26, 16, 26, 39]
+missing_sides = [0]
+source_sha256 = "afb4dc80555a6788e9fd1a29d2b2bef383bbfd1f36a988506c97c316319e9ae8"
+kind = "source-invariant"
+reason = "The same inline const excludes READ_SIZE above IO_CHUNK=256 before a RawBank instance can be compiled."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/bank.rs"
+span = [62, 12, 62, 36]
+missing_sides = [0]
+source_sha256 = "afb4dc80555a6788e9fd1a29d2b2bef383bbfd1f36a988506c97c316319e9ae8"
+kind = "source-invariant"
+reason = "start is obtained from range.start.checked_add(offset). A successful checked nonnegative sum cannot be less than range.start. Overflow exits before the comparison. The end-bound refusal is executed by direct span/range tests."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/counter_bank.rs"
+span = [61, 12, 61, 44]
+missing_sides = [0]
+source_sha256 = "375b488eed8430ea195defa66448a14477995d1b43c4426fa60d35c6976a77e6"
+kind = "source-invariant"
+reason = "Entry fields are private. Entry::live rejects values above MAX_VALUE_BYTES; Entry::decode rejects larger non-deletion lengths. Entry::deleted has no length and padded_length maps it to zero. No public Entry constructor can supply a larger live length."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/counter_bank.rs"
+span = [208, 16, 208, 47]
+missing_sides = [0]
+source_sha256 = "375b488eed8430ea195defa66448a14477995d1b43c4426fa60d35c6976a77e6"
+kind = "source-invariant"
+reason = "counter_index admits only the four distinct COUNTER_FIDS. The directory has capacity four, maintains unique FIDs, updates existing live entries, removes deletions and ignores absent deletions. A fifth distinct admitted counter FID cannot be inserted, so apply cannot exhaust the directory."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/counter_bank.rs"
+span = [281, 17, 281, 41]
+missing_sides = [0]
+source_sha256 = "375b488eed8430ea195defa66448a14477995d1b43c4426fa60d35c6976a77e6"
+kind = "source-invariant"
+reason = "Directory::apply removes deletions rather than retaining them; push_snapshot rejects a deletion. Its entries() returns an immutable slice. Every entry yielded by a valid Directory therefore has a live length, independently of caller arguments."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/counters.rs"
+span = [126, 16, 126, 41]
+missing_sides = [0]
+source_sha256 = "93ed548ee7c981a2cbfea41fc7019c28dfb86557c3b9c37e899a56087013a118"
+kind = "source-invariant"
+reason = "resolve freezes the directory and the corresponding CounterScan. Every live directory entry equals the entry in that scan's location. write_snapshot sizes out from this same Entry::length. read_value returns that fixed entry length after MAC verification, or returns an error before the comparison; changing medium bytes cannot change the returned length."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/counters.rs"
+span = [207, 16, 207, 89]
+missing_sides = [0]
+source_sha256 = "93ed548ee7c981a2cbfea41fc7019c28dfb86557c3b9c37e899a56087013a118"
+kind = "source-invariant"
+reason = "rekey's rewritten live entry uses the successfully read source entry length. Its loader sizes out from that rewritten length, while source.read_value retains the same immutable source-scan entry. Successful lengths are identical; corrupt data returns an error before comparison."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/counters.rs"
+span = [268, 27, 268, 100]
+missing_sides = [0]
+source_sha256 = "93ed548ee7c981a2cbfea41fc7019c28dfb86557c3b9c37e899a56087013a118"
+kind = "source-invariant"
+reason = "A rollover's unchanged owner comes from the frozen current directory and source scan. CounterBank::write_snapshot sizes its output from that Entry; read_value reports the identical immutable Entry length or errors first."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/journal.rs"
+span = [176, 13, 176, 37]
+missing_sides = [0]
+source_sha256 = "aebde38164ccfc29701b563ab6263b0b0318f259dd68dc616f666f3d5aa9cd8c"
+kind = "source-invariant"
+reason = "Directory's public mutation roster never retains a deletion: apply removes it and push_snapshot refuses it. A valid directory's immutable entries slice cannot contain Entry::deleted."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/main.rs"
+span = [328, 16, 328, 42]
+missing_sides = [1]
+source_sha256 = "b367292ffaa664ab03c01567791eef018f7535e098d8f0329d86fd0e4aa726e3"
+kind = "source-invariant"
+reason = "Source selection returns unless at least one complete sequence is Some. If zero_seq == one_seq after that selection, both must be the same Some value, and sequence is that selected value. The next equality cannot be false."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/main.rs"
+span = [341, 20, 342, 62]
+missing_sides = [0]
+source_sha256 = "b367292ffaa664ab03c01567791eef018f7535e098d8f0329d86fd0e4aa726e3"
+kind = "conditional-crypto"
+reason = "The rescan object includes the verified checkpoint digest and journal chain hash. A different reconstructed directory with an identical scan would require a collision in the authenticated directory digest or SHA-256-linked metadata. This is conditional on the storage authentication assumptions, not a mathematical no-collision theorem or an executed outcome."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/managed.rs"
+span = [200, 46, 200, 66]
+missing_sides = [0]
+source_sha256 = "7383786d89c23718f33154d02f4e7b8fd63a1c1143e72a23a699b65e1d6cd23b"
+kind = "source-invariant"
+reason = "Journal::scan assigns lower_bound with its verified checkpoint sequence before installing state, and updates both from state.sequence after each accepted delta. On refused suffixes it retains the previous pair. state.sequence > 0 therefore implies lower_bound > 0, which already short-circuited this later predicate."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/managed.rs"
+span = [345, 13, 345, 25]
+missing_sides = [1]
+source_sha256 = "7383786d89c23718f33154d02f4e7b8fd63a1c1143e72a23a699b65e1d6cd23b"
+kind = "source-invariant"
+reason = "Managed constructors start ready=false. mount_inner is the only writer of ready=true and first requires active.as_mut through the successful authority/import and repair path. No operation removes active or changes it to None. Thus ready implies active.is_some in every valid reachable instance; the earlier !ready return protects failed constructors."
+
+[[condition]]
+file = "crates/rsk-store/src/authenticated/managed.rs"
+span = [388, 13, 388, 25]
+missing_sides = [1]
+source_sha256 = "7383786d89c23718f33154d02f4e7b8fd63a1c1143e72a23a699b65e1d6cd23b"
+kind = "source-invariant"
+reason = "The same private ready=>active.is_some invariant holds at for_each_key, after its earlier !ready refusal."
+
+[empty_loader]
+file = "crates/rsk-store/src/authenticated/storage.rs"
+line = 150
+reason = "initialize_blank passes an immutable empty Directory to counter initialization. The snapshot loader is called only for directory entries, so this local closure has no invocation in that context."
