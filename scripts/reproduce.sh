@@ -121,6 +121,7 @@ CLAIM_RUNNERS=(
   "scripts/image-suites.sh|image|"
   "scripts/miri-all.sh|miri|"
   "scripts/fuzz-all.sh|fuzz|"
+  "scripts/fuzz-dicts.sh|-|the per-target dictionary mapping, sourced by scripts/fuzz-all.sh and the gate's `fuzz targets alive` row; nothing runs it directly"
   "scripts/mutants-all.sh|mutants|"
   "scripts/ci-scope.sh|gate|"
   "scripts/ci-knobs.sh|gate|"

@@ -101,10 +101,15 @@ if [ "${#mine[@]}" -eq 0 ]; then
 fi
 echo "shard ${FUZZ_SHARD}: ${#mine[@]} of ${#targets[@]} targets"
 
+# Per-target `-dict=` arguments: the same mapping the PR gate's liveness row
+# parses, one copy so the two rows cannot disagree about which file to load.
+. scripts/fuzz-dicts.sh
+
 failed=""
 for t in "${mine[@]}"; do
   echo "::group::${t} (${FUZZ_SECONDS}s)"
-  if ! cargo fuzz run ${config_args[@]+"${config_args[@]}"} "$t" -- -max_total_time="$FUZZ_SECONDS" -print_final_stats=1; then
+  read -ra dict_args <<<"$(dict_args_for "$t")"
+  if ! cargo fuzz run ${config_args[@]+"${config_args[@]}"} "$t" -- ${dict_args[@]+"${dict_args[@]}"} -max_total_time="$FUZZ_SECONDS" -print_final_stats=1; then
     failed="$failed $t"
   fi
   echo "::endgroup::"

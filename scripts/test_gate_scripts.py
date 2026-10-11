@@ -334,6 +334,9 @@ UNROSTERED = {
                    " here — `check.sh` runs its `--self-test`, so the table is"
                    " inside the script and the row IS the drive",
     "ci-knobs.sh": "the same: a `--self-test` row",
+    "fuzz-dicts.sh": "not a guard and not a row: `check.sh` and `fuzz-all.sh`"
+                     " source it for the per-target `-dict=` mapping, which is a"
+                     " table rather than an assertion",
 }
 
 #: A `scripts/…` path as a `check.sh` row spells it, with or without `python`.

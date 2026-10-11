@@ -1,0 +1,94 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+# ISO-7816 APDU tokens for the applet replay targets (cross_applet, *_apdu) and
+# the TLV parsers. Every value is a copy of a named constant under
+# crates/rsk-*/src — a new INS, AID or tag belongs here too.
+#
+# A token prefixed with a length byte fits `apdu_frame`'s [len][apdu…] framing,
+# so one splice plants a whole command rather than a header a mutator must finish.
+# libFuzzer caps a token at 64 bytes; the longest here is the PIV SELECT.
+
+# --- selection ---
+sel_openpgp="\x0b\x00\xa4\x04\x00\x06\xd2\x76\x00\x01\x24\x01"
+sel_mgmt="\x0d\x00\xa4\x04\x00\x08\xa0\x00\x00\x05\x27\x47\x11\x17"
+sel_oath="\x0c\x00\xa4\x04\x00\x07\xa0\x00\x00\x05\x27\x21\x01"
+sel_otp="\x0c\x00\xa4\x04\x00\x07\xa0\x00\x00\x05\x27\x20\x01"
+sel_piv="\x10\x00\xa4\x04\x00\x0b\xa0\x00\x00\x03\x08\x00\x00\x10\x00\x01\x00"
+hdr_select="\x00\xa4\x04\x00"
+hdr_select_p2_04="\x00\xa4\x04\x04"
+hdr_mf="\x00\xa4\x00\x0c"
+aid_openpgp="\xd2\x76\x00\x01\x24\x01"
+aid_mgmt="\xa0\x00\x00\x05\x27\x47\x11\x17"
+aid_oath="\xa0\x00\x00\x05\x27\x21\x01"
+aid_otp="\xa0\x00\x00\x05\x27\x20\x01"
+aid_piv="\xa0\x00\x00\x03\x08\x00\x00\x10\x00\x01\x00"
+
+# --- OpenPGP (crates/rsk-openpgp/src/consts.rs) ---
+pgp_verify="\x00\x20\x00\x83"
+pgp_verify81="\x00\x20\x00\x81"
+pgp_verify82="\x00\x20\x00\x82"
+pgp_change="\x00\x24\x00\x83"
+pgp_reset_retry="\x00\x2c\x00\x81"
+pgp_getdata="\x00\xca"
+pgp_putdata="\x00\xda"
+pgp_import="\x00\xdb\x3f\xff"
+pgp_pso="\x00\x2a\x9e\x9a"
+pgp_pso_dec="\x00\x2a\x80\x86"
+pgp_intaut="\x00\x88\x00\x00"
+pgp_mse="\x00\x22\x41\xb6"
+pgp_challenge="\x00\x84\x00\x00"
+pgp_terminate="\x00\xe6\x00\x00"
+pgp_activate="\x00\x44\x00\x00"
+pgp_pw3_default="123456789012"
+pgp_pw1_default="123456"
+
+# --- PIV (crates/rsk-piv/src) ---
+piv_verify="\x00\x20\x00\x80"
+piv_change="\x00\x24\x00\x80"
+piv_reset_retry="\x00\x2c\x00\x80"
+piv_gen="\x00\x47\x00\x9a"
+piv_auth="\x00\x87\x0a\x9b"
+piv_getdata="\x00\xcb\x3f\xff"
+piv_putdata="\x00\xdb\x3f\xff"
+piv_movekey="\x00\xf6"
+piv_metadata="\x00\xf7\x00\x9a"
+piv_serial="\x00\xf8\x00\x00"
+piv_attest="\x00\xf9\x00\x9a"
+piv_setretries="\x00\xfa"
+piv_reset="\x00\xfb\x00\x00"
+piv_version="\x00\xfd\x00\x00"
+piv_import="\x00\xfe\x11\x9a"
+piv_setmgm="\x00\xff\xff\xff"
+piv_tag_5c="\x5c"
+piv_tag_53="\x53"
+piv_tag_7c="\x7c"
+
+# --- OATH (crates/rsk-oath/src/lib.rs) ---
+oath_put="\x00\x01\x00\x00"
+oath_delete="\x00\x02\x00\x00"
+oath_setcode="\x00\x03\x00\x00"
+oath_reset="\x00\x04\xde\xad"
+oath_rename="\x00\x05\x00\x00"
+oath_list="\x00\xa1\x00\x00"
+oath_calc="\x00\xa2\x00\x01"
+oath_validate="\x00\xa3\x00\x00"
+oath_calcall="\x00\xa4\x00\x01"
+oath_sendrem="\x00\xa5\x00\x00"
+oath_verifycode="\x00\xb1\x00\x00"
+oath_verifypin="\x00\xb2\x00\x00"
+oath_changepin="\x00\xb3\x00\x00"
+oath_setpin="\x00\xb4\x00\x00"
+oath_getcred="\x00\xb5\x00\x00"
+oath_tag_name="\x71"
+oath_tag_key="\x73"
+oath_tag_chal="\x74"
+oath_tag_imf="\x7a"
+oath_tag_pw="\x80"
+
+# --- OTP / management ---
+otp_config="\x00\x01\x01\x00"
+otp_status="\x00\x03\x00\x00"
+mgmt_readcfg="\x00\x1d\x00\x00"
+mgmt_writecfg="\x00\x1c\x00\x00"
+cla_chain="\x10"
