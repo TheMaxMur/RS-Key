@@ -51,6 +51,9 @@ mod fido_session;
 #[path = "../fuzz_targets/power_cut.rs"]
 mod power_cut;
 
+#[path = "../fuzz_targets/kv_durability.rs"]
+mod kv_durability;
+
 #[path = "miri/config_recovery_cut_tests.rs"]
 mod config_recovery_cuts;
 
@@ -1936,6 +1939,467 @@ fn seed_load_during_erase_byte_cuts() {
             page_bytes - 1,
             "a partial erase cut was missed"
         );
+    }
+}
+
+// authenticated_store's own target IS Miri-clean — `run` passes under Miri — but
+// `initialize_blank` over its 40-page flash costs ~54 min per seed, so the full
+// mirror would sink the weekly shard. The write path it would cover (the bank's
+// staged flash write) is driven directly and cheaply below instead. Re-check the
+// full target by hand with:
+//   cargo miri test --manifest-path fuzz/Cargo.toml -- --exact miri_authenticated_store
+
+// =========================================================================
+// raw bank flash write
+// =========================================================================
+
+#[test]
+fn miri_raw_bank_stages_an_aligned_flash_buffer() {
+    use sequential_storage::mock_flash::{MockFlashBase, WriteCountCheck};
+
+    use rsk_store::authenticated::RawBank;
+
+    // `alignment_check = true`: the mock panics if the pointer handed to a flash
+    // write is not 4-byte aligned, which is the RP2350 ROM's own requirement.
+    // Before `FlashBuf` the scratch was an align-1 `[u8; _]`, so this is the row
+    // that notices the staging buffer losing its alignment.
+    type Flash = MockFlashBase<8, 4, 1024>;
+    let flash = Flash::new(WriteCountCheck::Twice, None, true);
+    let mut bank = RawBank::new(flash, 0..(8 * 4096)).unwrap();
+    bank.erase().unwrap();
+    let data = [0xA5u8; 64];
+    bank.program(0, &data).unwrap();
+    let mut out = [0u8; 64];
+    bank.read(0, &mut out).unwrap();
+    assert_eq!(out, data);
+}
+
+// =========================================================================
+// kv_durability
+// =========================================================================
+
+#[test]
+fn miri_kv_durability() {
+    for data in [
+        &b""[..],
+        &[0x00, 4, 0x01, 8, 0x03],
+        &[0x40, 0, 64, 0x80, 16, 0x82, 0x03],
+        &[0x41, 0, 32, 0x09, 12, 0x0a],
+    ] {
+        kv_durability::run(data);
+    }
+}
+
+// =========================================================================
+// otp_slot_seal
+// =========================================================================
+
+#[test]
+fn miri_otp_slot_seal() {
+    use rsk_fs::KeyFid;
+    use rsk_otp::SlotRecord;
+    use rsk_otp::seal::{seal_put, seal_read};
+    use rsk_secret::Secret;
+
+    const SLOT_FID: u16 = 0xBB00;
+    let dev_old = dev();
+    let dev_new = Device {
+        otp_key: Some(&[0x5A; 32]),
+        ..dev_old
+    };
+    for data in [&b""[..], &[0u8; 60], &[0xA5; 60], &[0x03; 80]] {
+        let mut rng = CountRng(1);
+        let fid = KeyFid::new(SLOT_FID);
+        let mut out = Secret::<[u8; 256]>::zeroed();
+        if let Some(rec) = SlotRecord::from_bytes(data) {
+            let mut fs = Fs::new(RamStorage::new());
+            fs.scan();
+            if seal_put(&dev_old, &mut fs, &mut rng, fid, &rec) {
+                let n = seal_read(&dev_old, &mut fs, fid, &mut out).expect("fresh seal");
+                assert_eq!(&out.expose()[..n], data);
+                let _ = seal_read(&dev_new, &mut fs, fid, &mut out);
+                rsk_otp::migrate_seal(&dev_new, &mut fs, &mut rng);
+                let m = seal_read(&dev_new, &mut fs, fid, &mut out).expect("migrated seal");
+                assert_eq!(&out.expose()[..m], data);
+                rsk_otp::migrate_seal(&dev_new, &mut fs, &mut rng);
+                let _ = seal_read(&dev_new, &mut fs, fid, &mut out);
+            }
+        }
+        let mut fs = Fs::new(RamStorage::new());
+        fs.scan();
+        let _ = fs.put(SLOT_FID, data);
+        rsk_otp::migrate_seal(&dev_new, &mut fs, &mut rng);
+        rsk_otp::migrate_seal(&dev_old, &mut fs, &mut rng);
+        let _ = seal_read(&dev_new, &mut fs, fid, &mut out);
+    }
+}
+
+// =========================================================================
+// keydev_seal
+// =========================================================================
+
+#[test]
+fn miri_keydev_seal() {
+    use rsk_rescue::keydev::{EF_DEVCERT_KEY, load_or_generate, migrate_kbase};
+
+    let dev_old = dev();
+    let dev_new = Device {
+        otp_key: Some(&[0x5A; 32]),
+        ..dev_old
+    };
+    for data in [&b""[..], &[0u8; 16], &[0x03; 64], &[0xA5; 128]] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.scan();
+        let mut rng = CountRng(1);
+        if fs.put(EF_DEVCERT_KEY.get(), data).is_err() {
+            continue;
+        }
+        let _ = load_or_generate(&dev_old, None, &mut fs, &mut rng);
+        let _ = load_or_generate(&dev_new, None, &mut fs, &mut rng);
+        migrate_kbase(&dev_new, &mut fs, &mut rng);
+        let after = load_or_generate(&dev_new, None, &mut fs, &mut rng).map(|k| k.to_bytes());
+        migrate_kbase(&dev_new, &mut fs, &mut rng);
+        let again = load_or_generate(&dev_new, None, &mut fs, &mut rng).map(|k| k.to_bytes());
+        assert_eq!(after, again);
+    }
+}
+
+// =========================================================================
+// oath_otp_pin
+// =========================================================================
+
+#[test]
+fn miri_oath_otp_pin() {
+    use rsk_crypto::FusedKey;
+    use rsk_oath::OathApplet;
+
+    const EF_OTP_PIN: u16 = 0x10A0;
+    const INS_VERIFY_PIN: u8 = 0xB2;
+    const INS_CHANGE_PIN: u8 = 0xB3;
+    const TAG_PASSWORD: u8 = 0x80;
+    const TAG_NEW_PASSWORD: u8 = 0x81;
+    fn fused_mkek(out: &mut [u8; 32]) -> bool {
+        *out = [0x5A; 32];
+        true
+    }
+    fn tlv(tag: u8, val: &[u8]) -> Vec<u8> {
+        let mut v = vec![tag, val.len() as u8];
+        v.extend_from_slice(val);
+        v
+    }
+    fn apdu(ins: u8, data: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x00, ins, 0x00, 0x00, data.len() as u8];
+        v.extend_from_slice(data);
+        v
+    }
+    fn drive(app: &mut OathApplet, fs: &mut Fs<RamStorage>, raw: &[u8]) {
+        if let Ok(a) = Apdu::parse(raw) {
+            let mut buf = [0u8; 512];
+            let mut res = ResBuf::new(&mut buf);
+            let _ = app.process(&a, fs, &mut res);
+        }
+    }
+
+    for data in [
+        &b"\0"[..],
+        b"\x00password",
+        &[4, 1, 2, 3, 4, b'p', b'i', b'n'],
+        &[34, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5, 0xA5],
+    ] {
+        let Some((&rlen, rest)) = data.split_first() else {
+            continue;
+        };
+        let rlen = (rlen as usize).min(rest.len()).min(40);
+        let (rec, pw) = rest.split_at(rlen);
+        let pw = &pw[..pw.len().min(64)];
+        for otp in [None, Some(FusedKey::open(fused_mkek))] {
+            let mut fs = Fs::new(RamStorage::new());
+            fs.scan();
+            if fs.put(EF_OTP_PIN, rec).is_err() {
+                continue;
+            }
+            let rng = RefCell::new(CountRng(0));
+            let touch = RefCell::new(rsk_oath::AlwaysConfirm);
+            let mut app = OathApplet::new([1, 2, 3, 4, 5, 6, 7, 8], [0x22; 32], otp, &rng, &touch);
+            drive(
+                &mut app,
+                &mut fs,
+                &apdu(INS_VERIFY_PIN, &tlv(TAG_PASSWORD, pw)),
+            );
+            let mut chg = tlv(TAG_PASSWORD, pw);
+            chg.extend_from_slice(&tlv(TAG_NEW_PASSWORD, pw));
+            drive(&mut app, &mut fs, &apdu(INS_CHANGE_PIN, &chg));
+        }
+    }
+}
+
+// =========================================================================
+// sha512_diff
+// =========================================================================
+
+#[test]
+fn miri_sha512_diff() {
+    use sha2::Digest;
+
+    for data in [&b""[..], b"abc", &[0xA5; 128], &[0x5A; 257]] {
+        assert_eq!(
+            rsk_sha512::Sha512::digest(data)[..],
+            sha2::Sha512::digest(data)[..],
+        );
+        assert_eq!(
+            rsk_sha512::Sha384::digest(data)[..],
+            sha2::Sha384::digest(data)[..],
+        );
+        let mut ours = rsk_sha512::Sha512::new();
+        let mut reff = sha2::Sha512::new();
+        let mut rest = data;
+        let mut guard = 0u32;
+        while !rest.is_empty() && guard < 8192 {
+            let step = (1 + rest[0] as usize % 200).min(rest.len());
+            ours.update(&rest[..step]);
+            reff.update(&rest[..step]);
+            rest = &rest[step..];
+            guard += 1;
+        }
+        assert_eq!(ours.finalize()[..], reff.finalize()[..]);
+    }
+}
+
+// =========================================================================
+// ccid_secure_pin
+// =========================================================================
+
+#[test]
+fn miri_ccid_secure_pin() {
+    use rsk_usb::secure_pin::{MAX_PIN, assemble_verify, parse_secure};
+
+    for data in [&b""[..], b"\x00", b"\x041234\x00\x20\x00\x81", &[0x20; 80]] {
+        let Some((&plen, abdata)) = data.split_first() else {
+            continue;
+        };
+        let plen = (plen as usize).min(abdata.len()).min(MAX_PIN);
+        let pin = &abdata[..plen];
+        if let Some(req) = parse_secure(abdata) {
+            assert!(req.apdu_template.len() >= 4);
+            let out_cap = 5 + abdata.len() % 130;
+            let mut out = [0u8; 5 + 129];
+            if let Some(n) = assemble_verify(req.apdu_template, pin, &mut out[..out_cap]) {
+                assert!(n <= out_cap);
+                assert_eq!(n, out[4] as usize + 5);
+                assert!(pin.len() <= out[4] as usize);
+            }
+        }
+    }
+}
+
+// =========================================================================
+// fido_audit_journal
+// =========================================================================
+
+#[test]
+fn miri_fido_audit_journal() {
+    use rsk_fido::consts::{AUDIT_RING_SLOTS, EF_AUDIT_META, EF_AUDIT_RING};
+    use rsk_fido::journal::{ENTRY_LEN, chain_head, for_each_event, vendor_read};
+
+    for data in [
+        &[0u8; 8][..],
+        &[1, 0, 0, 0, 0, 0, 0, 0, 1, 3, 5],
+        &[0xff, 0xff, 0xff, 0xff, 0, 0, 0, 0, 1],
+        &[0xA5; 48],
+    ] {
+        if data.len() < 8 {
+            continue;
+        }
+        let seq_next = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
+        let start = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
+        let mut epoch = [0u8; 32];
+        let esrc = &data[8..data.len().min(40)];
+        epoch[..esrc.len()].copy_from_slice(esrc);
+        let d = dev();
+        let mut fs = Fs::new(RamStorage::new());
+        fs.scan();
+        let mut meta = [0u8; 41];
+        meta[0] = 1;
+        meta[1..5].copy_from_slice(&seq_next.to_le_bytes());
+        meta[5..9].copy_from_slice(&start.to_le_bytes());
+        meta[9..].copy_from_slice(&epoch);
+        let _ = fs.put(EF_AUDIT_META, &meta);
+        for i in 0..AUDIT_RING_SLOTS as u16 {
+            if data.get(8 + i as usize).is_some_and(|b| b & 1 == 1) {
+                let entry = [(i as u8).wrapping_add(1); ENTRY_LEN];
+                let _ = fs.put(EF_AUDIT_RING + i, &entry);
+            }
+        }
+        let raw_window = seq_next.wrapping_sub(start);
+        let (_, m) = chain_head(&d, &mut fs).expect("RAM read");
+        if raw_window > AUDIT_RING_SLOTS {
+            assert_eq!((m.start, m.seq_next), (0, 0));
+        } else {
+            assert_eq!((m.start, m.seq_next), (start, seq_next));
+        }
+        let _ = for_each_event(&d, &mut fs, |_| true);
+        let mut state = FidoState::new();
+        let mut rng = SeqRng(1);
+        let mut presence = rsk_fido::AlwaysConfirm;
+        let mut out = [0u8; AUDIT_RING_SLOTS as usize * ENTRY_LEN + 128];
+        let mut ctx = Ctx {
+            presence: &mut presence,
+            dev: d,
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+        };
+        if let Ok(n) = vendor_read(&mut ctx, &mut out) {
+            assert!(n <= out.len());
+        }
+    }
+}
+
+// =========================================================================
+// openpgp_key_load
+// =========================================================================
+
+#[test]
+fn miri_openpgp_key_load() {
+    use num_bigint_dig::BigUint;
+    use rsk_rsa::rsa_from_pqe;
+
+    for data in [
+        &b""[..],
+        b"\x00\x00\x03\x05\x07",
+        &[0x01, 0x02, 0x01, 0x00, 0x11, 0x13, 0x17],
+        &[0x07; 24],
+    ] {
+        if data.len() < 3 {
+            continue;
+        }
+        let le = 1 + data[0] as usize % 8;
+        let lp = data[1] as usize;
+        let body = &data[2..];
+        if body.len() < le {
+            continue;
+        }
+        let e = &body[..le];
+        let after_e = &body[le..];
+        let lp = lp.min(after_e.len());
+        let p = &after_e[..lp];
+        let q = &after_e[lp..];
+        if let Some(key) = rsa_from_pqe(e, p, q) {
+            let n = BigUint::from_bytes_be(p) * BigUint::from_bytes_be(q);
+            assert_eq!(key.n_be(), n.to_bytes_be());
+            assert_eq!(key.e_be(), BigUint::from_bytes_be(e).to_bytes_be());
+        }
+    }
+}
+
+// =========================================================================
+// piv_info_read
+// =========================================================================
+
+#[test]
+fn miri_piv_info_read() {
+    use rsk_piv::files::{EF_RETRIES, cert_fid_for_slot, key_fid};
+    use rsk_piv::info::{
+        MAX_EXTRA_SLOTS, PRIMARY_SLOTS, PivSlot, read_extra, read_info, read_slot,
+    };
+
+    for data in [
+        &b""[..],
+        &[0x9A, 0x07, 2, 1, 2],
+        &[0x9C, 0x03, 8, 0xA5, 0x5A, 1, 2, 3, 4, 5],
+        &[0xff, 0x07, 3, 7, 8, 9, 0x82, 1, 0],
+    ] {
+        let mut fs = Fs::new(RamStorage::new());
+        fs.scan();
+        let mut rest = data;
+        while rest.len() >= 3 {
+            let slot = rest[0];
+            let flags = rest[1];
+            let mlen = (rest[2] as usize).min(rest.len() - 3).min(8);
+            let meta = &rest[3..3 + mlen];
+            if flags & 1 == 1 {
+                let _ = fs.put(key_fid(slot).get(), &[0xAB; 8]);
+            }
+            if flags & 2 == 2 {
+                let _ = fs.meta_add(key_fid(slot).get(), meta);
+            }
+            if flags & 4 == 4
+                && let Some(cf) = cert_fid_for_slot(slot)
+            {
+                let _ = fs.put(cf, &[0x30, 0x00]);
+            }
+            rest = &rest[3 + mlen..];
+        }
+        if let Some(&b) = data.first() {
+            let _ = fs.put(EF_RETRIES, &[b, b, b, b]);
+        }
+        let info = read_info(&mut fs);
+        assert!(info.populated() as usize <= PRIMARY_SLOTS.len());
+        for &s in &PRIMARY_SLOTS {
+            let _ = read_slot(&mut fs, s);
+        }
+        let mut extra = [PivSlot::default(); MAX_EXTRA_SLOTS];
+        let n = read_extra(&mut fs, &mut extra);
+        assert!(n <= MAX_EXTRA_SLOTS);
+    }
+}
+
+// =========================================================================
+// otp_ticket
+// =========================================================================
+
+#[test]
+fn miri_otp_ticket() {
+    use rsk_fs::KeyFid;
+    use rsk_otp::seal::seal_put;
+    use rsk_otp::ticket::MAX_TICKET;
+    use rsk_otp::{AlwaysConfirm, OtpApplet, SlotRecord};
+
+    const SLOT1_FID: u16 = 0xBB00;
+    for data in [&b""[..], &[0; 62], &[0xA5; 96], &[0, 1, 2, 3, 4, 5, 6, 7]] {
+        if data.len() < 3 {
+            continue;
+        }
+        let rnd = [data[0], data[1]];
+        let ts = data.len() as u32;
+        let d = Device {
+            serial_hash: &[0x22; 32],
+            serial_id: &[1, 2, 3, 4, 5, 6, 7, 8],
+            otp_key: None,
+            latched: false,
+        };
+        let mut fs = Fs::new(RamStorage::new());
+        fs.scan();
+        let mut seed_rng = CountRng(1);
+        let body = &data[2..];
+        for slot in 0..4u16 {
+            let mut rec = [0u8; 60];
+            let off = (slot as usize * 7).min(body.len());
+            let src = &body[off..];
+            let n = src.len().min(60);
+            rec[..n].copy_from_slice(&src[..n]);
+            let _ = seal_put(
+                &d,
+                &mut fs,
+                &mut seed_rng,
+                KeyFid::new(SLOT1_FID + slot),
+                &SlotRecord::from_bytes(&rec).expect("a full record"),
+            );
+        }
+        let presence = RefCell::new(AlwaysConfirm);
+        let rng = RefCell::new(CountRng(7));
+        let mut out = [0u8; MAX_TICKET];
+        for _boot in 0..2 {
+            let mut app =
+                OtpApplet::new([1, 2, 3, 4, 5, 6, 7, 8], [0x22; 32], None, &rng, &presence);
+            for slot_no in 1..=4u8 {
+                if let Some((len, _ascii)) = app.button_ticket(slot_no, ts, rnd, &mut fs, &mut out)
+                {
+                    assert!(len <= MAX_TICKET);
+                }
+            }
+        }
     }
 }
 

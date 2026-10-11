@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+# CCID message tokens for the transport targets (ccid, ccid_secure_pin).
+# Values are copies of named constants in crates/rsk-usb/src/ccid.rs.
+#
+# `ccid_frame` frames its input as [len][message…], so each token starts with the
+# length byte. A CCID message is a 10-byte header — bMessageType, dwLength (LE),
+# bSlot, bSeq, bStatus, bError — then payload; byte 8 also picks the output
+# capacity in the harness, so the variants that set it reach the short-buffer path.
+
+# --- header-only messages: type, dwLength=0, slot 0, seq 6, status 0, error 0 ---
+rpd_power_on="\x0a\x62\x00\x00\x00\x00\x00\x06\x00\x00"
+rpd_power_off="\x0a\x63\x00\x00\x00\x00\x00\x06\x00\x00"
+rpd_slot_status="\x0a\x65\x00\x00\x00\x00\x00\x06\x00\x00"
+rpd_slot_status_cap="\x0a\x65\x00\x00\x00\x00\x00\x06\x00\x04"
+
+# --- XfrBlock APDUs: SELECT, PIV SELECT, GET DATA ---
+rpd_xfr_select="\x0e\x6f\x04\x00\x00\x00\x00\x06\x00\x00\x00\xa4\x04\x00"
+rpd_xfr_piv="\x1a\x6f\x10\x00\x00\x00\x00\x06\x00\x00\x00\xa4\x04\x00\x0b\xa0\x00\x00\x03\x08\x00\x00\x10\x00\x01\x00"
+rpd_xfr_getdata="\x0e\x6f\x04\x00\x00\x00\x00\x06\x00\x00\x00\xca\x3f\xff"
+
+# --- bare bytes: message types and the status/error fields ---
+msg_type_power_on="\x62"
+msg_type_power_off="\x63"
+msg_type_slot_status="\x65"
+msg_type_xfr_block="\x6f"
+msg_type_escape="\x6b"
+ret_data_block="\x80"
+ret_slot_status="\x81"

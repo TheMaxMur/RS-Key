@@ -34,6 +34,9 @@ gate_cleanup() {
 trap gate_cleanup EXIT
 # `run`, the signal traps and the pytest base; scripts/gate-lib.sh says why each.
 . scripts/gate-lib.sh
+# The per-target `-dict=` mapping, shared with scripts/fuzz-all.sh so the
+# liveness row parses the same dictionaries the nightly fuzz row loads.
+. scripts/fuzz-dicts.sh
 
 # `cargo test` calls a selection of nothing a pass: a name filter that matches
 # no test prints "0 passed; …; N filtered out" and exits 0. Five rows below take
@@ -333,12 +336,16 @@ release_image_retires_its_unsigned_image_def() {
 # target on the empty file. Liveness only — no sanitizer, no coverage, no
 # fuzzing; those stay in deep-checks.
 #
+# Each target also gets its `-dict=` (scripts/fuzz-dicts.sh): libFuzzer parses a
+# dictionary at startup and exits non-zero on a malformed one, so this row fails
+# on a broken dict rather than the nightly fuzz job — the same file it loads.
+#
 # Same floor, and the same reason, as scripts/fuzz-coverage.sh and
 # scripts/fuzz-all.sh: a `for` over an empty word list runs nothing and exits
 # 0. Lower all three in the commit that removes a target.
 FUZZ_TARGET_FLOOR=52
 fuzz_targets_are_alive() {
-  local manifest log empty bins dead=""
+  local manifest log empty bins dead="" name dict_args
   manifest=$(mktemp)
   log=$(mktemp)
   empty=$(mktemp)
@@ -356,7 +363,9 @@ fuzz_targets_are_alive() {
     exit 1
   fi
   for b in "${bins[@]}"; do
-    "$b" "$empty" >"$log" 2>&1 || { dead="$dead ${b##*/}"; cat "$log" >&2; }
+    name="${b##*/}"
+    read -ra dict_args <<<"$(dict_args_for "$name")"
+    "$b" ${dict_args[@]+"${dict_args[@]}"} "$empty" >"$log" 2>&1 || { dead="$dead $name"; cat "$log" >&2; }
   done
   python scripts/external_corpus.py --replay "$manifest"
   rm -f "$manifest" "$log" "$empty"

@@ -81,7 +81,7 @@ WINDOW = 3
 #: so a measurement landing as data would otherwise have been the one file in
 #: assurance/ whose terms a reader guesses.
 CHECKED = frozenset({".rs", ".py", ".sh", ".nix", ".svg", ".x", ".tla", ".js", ".mjs", ".html",
-                     ".c", ".h", ".S", ".yml", ".tsv"})
+                     ".c", ".h", ".S", ".yml", ".tsv", ".dict"})
 
 #: Below this the guard is green over nothing. It has no roster to go empty, but
 #: it does walk a tree, and a walk that returns nothing exits 0 — the shape four
