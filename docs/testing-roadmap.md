@@ -120,7 +120,7 @@ The latest local completion boundary is:
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
 | 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns, arbitrary correlated faults and semantic record-loss detection beyond the current CRC/legacy formats remain open; the bounded matrix does not close the whole phase |
-| 4 | Semantic controls through host, fuzz, Miri and image runners | Whole-core mutation closure and rare crypto fallback paths |
+| 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations | Whole-core weekly-shard closure, device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
@@ -341,6 +341,13 @@ and recovery scenarios preserve the command's security and durability
 contract. Omitted commit/read-back protections are caught by the real suite.
 
 ## Phase 4 Strengthen independent oracles and mutation tests
+
+The 2026-10-11 critical host slice is recorded in
+[testing](testing.md#critical-policy-and-cryptographic-mutations-2026-10-11).
+It covers the complete current semantic co-mutant roster and the declared host
+crypto libraries, with independent boundary vectors and live destructor probes.
+Device-only wrappers and resource-only changes retain explicit dispositions;
+this slice is not a whole-core or silicon mutation-closure claim.
 
 Keep crypto reference vectors and independent implementations, storage shadow
 models, protocol specifications and native/image comparisons as distinct

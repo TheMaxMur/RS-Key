@@ -21,3 +21,140 @@
 #   [masked]       a guard a deeper guard repeats, so removing it changes nothing
 #   [unpinned]     a value no test pins on purpose, a colour or a coordinate
 #   [const-assert] a compile-time assert, which no runtime test can kill
+
+[bit-lanes] OR and XOR combine disjoint bit lanes; SHA-512 Ch/Maj replacements retain the complete bit truth table, including Rust operator precedence.
+crates/rsk-crypto/src/base64url.rs: replace | with ^ in decode
+crates/rsk-crypto/src/base64url.rs: replace | with ^ in encode
+crates/rsk-crypto/src/base64url.rs: replace | with ^ in encode
+crates/rsk-crypto/src/base64url.rs: replace | with ^ in encode
+crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
+crates/rsk-mldsa/src/sample.rs: replace | with ^ in coeff_from_three_bytes
+crates/rsk-rsa/src/lib.rs: replace | with ^ in mod_small
+crates/rsk-rsa/src/lib.rs: replace | with ^ in shr_into_be
+crates/rsk-sha512/src/block.rs: replace ^ with | in compress
+crates/rsk-sha512/src/block.rs: replace ^ with | in compress
+crates/rsk-sha512/src/block.rs: replace ^ with | in compress
+
+[centering-gap] Decompose's pre-centering low part cannot equal the one-unit changed midpoint for either shipped gamma2; Q/2 and (Q-1)/2 are also identical integers.
+crates/rsk-mldsa/src/round.rs: replace - with + in decompose
+crates/rsk-mldsa/src/round.rs: replace - with / in decompose
+
+[decoded-range] The widened negative bound contains every decoded signed coefficient b-t, t in 0..2^bitlen-1; the independent unsigned upper bound still refuses unused encodings.
+crates/rsk-mldsa/src/pack.rs: replace + with * in bit_unpack
+crates/rsk-mldsa/src/pack.rs: replace + with - in bit_unpack
+crates/rsk-mldsa/src/pack.rs: replace - with + in bit_unpack
+
+[device-only] This mutation belongs to a target_os=none C/assembly wrapper. Host tests compile the separate fallback; there is no host kill or silicon-refutation claim.
+crates/rsk-rsa/src/lib.rs: delete ! in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace * with + in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace * with + in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace * with + in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace * with + in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace * with + in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace * with + in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace * with + in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace * with + in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace * with + in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace * with + in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with + in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with + in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with + in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with + in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with + in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with / in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace * with / in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace * with / in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace * with / in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace * with / in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace * with / in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace * with / in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace * with / in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace * with / in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace * with / in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with / in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with / in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with / in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with / in sign_crt
+crates/rsk-rsa/src/lib.rs: replace * with / in sign_crt
+crates/rsk-rsa/src/lib.rs: replace + with * in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace + with - in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace / with % in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace / with % in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace / with % in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace / with % in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace / with % in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace / with % in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace / with % in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace / with % in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace / with % in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace / with % in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with % in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with % in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with % in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with % in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with % in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with % in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with * in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace / with * in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace / with * in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace / with * in modexp_priv
+crates/rsk-rsa/src/lib.rs: replace / with * in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace / with * in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace / with * in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace / with * in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace / with * in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
+crates/rsk-rsa/src/lib.rs: replace / with * in sign_crt
+crates/rsk-rsa/src/lib.rs: replace == with != in modexp_pub
+crates/rsk-rsa/src/lib.rs: replace modexp_priv with ()
+crates/rsk-rsa/src/lib.rs: replace modexp_pub -> bool with false
+crates/rsk-rsa/src/lib.rs: replace modexp_pub -> bool with true
+crates/rsk-rsa/src/lib.rs: replace sign_crt with ()
+
+[empty-or-final-update] The final full hash_multi chunk can move into the loop, and updating SHA-256 with an empty slice has no effect.
+crates/rsk-crypto/src/kdf.rs: replace > with >= in Device<'_>::hash_multi
+crates/rsk-crypto/src/kdf.rs: replace > with >= in Device<'_>::hash_multi
+
+[even-exponent] The only changed exponent is 2; the inverse and odd-exponent/modulus checks refuse it independently.
+crates/rsk-rsa/src/key.rs: replace < with <= in RsaKey::from_p_q
+
+[identical-quotient] For the fixed FIPS 204 parameter sets, (Q-1), Q and (Q+1) give the same integer quotient at these divisors; the derived value is identical.
+crates/rsk-mldsa/src/encode.rs: replace - with + in w1_encode
+crates/rsk-mldsa/src/encode.rs: replace - with / in w1_encode
+crates/rsk-mldsa/src/params.rs: replace - with +
+crates/rsk-mldsa/src/params.rs: replace - with +
+crates/rsk-mldsa/src/params.rs: replace - with +
+crates/rsk-mldsa/src/params.rs: replace - with /
+crates/rsk-mldsa/src/params.rs: replace - with /
+crates/rsk-mldsa/src/params.rs: replace - with /
+
+[inverse-identity] d=e^-1 mod lcm(p-1,q-1) already satisfies both congruences for every key reaching this guard, conditional on the modular-inverse implementation's contract.
+crates/rsk-rsa/src/key.rs: replace || with && in RsaKey::from_p_q
+
+[modular-result] The extra multiples of p disappear at the subsequent modulo p or pq reduction. Result/error equivalence is scoped to the current producers; allocation and timing equivalence are not established.
+crates/rsk-rsa/src/key.rs: replace % with + in RsaKey::private_op
+crates/rsk-rsa/src/key.rs: replace % with + in RsaKey::private_op
+crates/rsk-rsa/src/key.rs: replace % with + in RsaKey::private_op
+
+[repeated-width-guard] decoded_len repeats the modulo-four refusal before decode consumes input; removing the outer refusal preserves the same error and effects.
+crates/rsk-crypto/src/base64url.rs: replace % with + in decode
+
+[right-aligned-field] The changed start only enlarges an unused prefix. put_field writes at the unchanged right endpoint, and RsaKey's derived CRT values fit the original half-width. Output and errors agree for that producer invariant.
+crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
+crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
+crates/rsk-rsa/src/crt.rs: replace * with + in crt_plaintext
+crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext
+crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext
+crates/rsk-rsa/src/crt.rs: replace * with / in crt_plaintext
+
+[seed-stack-cost] The enlarged temporary seed array still fills, consumes and wipes the same half_bytes prefix. Device stack-cost equivalence is not established by host output tests.
+crates/rsk-rsa/src/keygen.rs: replace / with * in RsaKeygen::try_candidate
+
+[sieve-cost] These arms choose the cheap small-prime prefilter roster. Strong Miller-Rabin and Lucas still own acceptance; changed search cost is outside the result oracle.
+crates/rsk-rsa/src/lib.rs: delete match arm 129..= 192 in sieve_count
+crates/rsk-rsa/src/lib.rs: delete match arm 65..= 128 in sieve_count
