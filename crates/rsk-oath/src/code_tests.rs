@@ -171,3 +171,31 @@ fn a_faulted_code_probe_does_not_unlock_the_session() {
         "a faulted EF_OATH_CODE probe unlocked the whole store for the session"
     );
 }
+
+#[test]
+fn a_locked_applet_refuses_a_calculate_request_that_would_return_the_rfc_code() {
+    let (mut fs, rng, touch) = fixture();
+    let mut app = OathApplet::new(SERIAL, [0x22; 32], None, &rng, &touch);
+    assert_eq!(
+        put(
+            &mut app,
+            &mut fs,
+            &put_data(b"t", 0x21, 8, SECRET_SHA1, false, None)
+        ),
+        Sw::OK
+    );
+    assert_eq!(
+        calc_bytes(&mut app, &mut fs, b"t", 1),
+        (8, 94_287_082u32.to_be_bytes())
+    );
+    lock_with_code(&mut app, &mut fs);
+    let mut request = tlv(TAG_NAME, b"t");
+    request.extend(tlv(TAG_CHALLENGE, &1u64.to_be_bytes()));
+    let (sw, body) = run(&mut app, &mut fs, &apdu(INS_CALCULATE, 0, 0x01, &request));
+    assert_eq!(
+        sw,
+        Sw::SECURITY_STATUS_NOT_SATISFIED,
+        "a valid calculation was served without VALIDATE: {body:?}"
+    );
+    assert!(body.is_empty());
+}
