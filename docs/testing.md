@@ -1813,6 +1813,7 @@ the updated 773-side baseline map are retained in
 
 ### All declared host profiles, including storage v2, 2026-10-11
 
+
 The [current host-profile audit](coverage-current.md) completes all eighteen
 profiles declared by the coverage workflow on source matching
 `45481f9735392a7474c748cda8c123e6cb098f24`.
@@ -1834,3 +1835,94 @@ feature clippy, source registries and documentation checks completing the later
 test additions. This closes the host-profile coverage item; MC/DC implementation
 remains deferred by the recorded decision, and device/C/backend scopes retain
 their own criteria.
+
+### Critical policy and cryptographic mutations, 2026-10-11
+
+The reviewed slice uses the complete `formal/comutants.toml` roster and host
+mutation sweeps of `rsk-crypto`, `rsk-ec`, `rsk-mldsa`, `rsk-rsa`, `rsk-secret`
+and `rsk-sha512`, on `aarch64-apple-darwin` with the pinned stable shell.
+All 97 executable semantic patches were killed, including the registered Kani
+half. The six existing non-patch dispositions remain scoped model/code
+exceptions; they are not six measured host kills.
+
+Reading the failures exposed three insufficient semantic witnesses. The
+`BugPpuatIsAGate` fixture retained `ensure_seed`'s bootstrap grant ahead of its
+PIN, so the alleged PIN-first tear never occurred. Minting the issued grant
+after the PIN now exposes it over a deleted PIN in both actual wipe runners.
+`BugLocalPinIgnoresBudget` changed a caption while the shared verifier still
+blocked access; its repaired patch permits the clientPIN comparison at zero,
+and the caller test detects successful PIN entry after the budget is spent.
+`BugOathCodeIgnored` only changed the error on an empty CALCULATE request;
+the added valid-request control observes RFC 6238's code before locking, then
+detects that same code served without VALIDATE under the patch.
+
+| Initial complete host sweep | Tested | Caught | Missed | Unviable | Timeout |
+|---|---:|---:|---:|---:|---:|
+| Crypto, RSA and ML-DSA | 1730 | 1347 | 191 | 156 | 36 |
+| EC | 135 | 106 | 4 | 24 | 1 |
+| Secret and SHA-512 | 91 | 79 | 3 | 9 | 0 |
+
+The repeated survivor/timeout selection tested 206 mutations: 130 caught,
+40 missed, one unviable and 35 timed out. Its two remaining ML-DSA verifier
+survivors exposed a genuine missing oracle and were subsequently killed;
+all 19 operator mutations of that verifier now fall. The RSA backend review
+distinguishes definitions by their actual `cfg`, not their shared function
+names: eight host-fallback cases fall in a further 24-case selection, while
+its sixteen matching device-definition cases remain unexecuted on the host.
+The ordinary `mutants-all.sh --in-diff HEAD` row also completed: 15 caught and
+three unviable of eighteen selected mutations. Compilation failures are not
+behavioural kills. Timeouts are retained as bounded liveness failures, separately
+from assertion failures; they do not establish an on-device deadline.
+An additional exact-test selection resolves 21 of the 35 repeated timeouts:
+20 assertion failures and one unseeded-sieve arithmetic panic. It includes
+bounded sieve state transitions, modulus-width blinding draws, coefficient
+vectors and centered rounding. The remaining fourteen lose loop progress in
+DRBG, repeated hashing, hint decoding, rejection sampling or signing counters;
+their observed host timeouts remain distinct from assertion kills.
+
+Independent and boundary oracles added by this slice include:
+
+- NIST ACVP ML-KEM-768 public keys, encapsulation and decapsulation, including
+  implicit rejection: 60 cases from the existing pinned ACVP-Server revision.
+  The malformed-key test separately checks the first unreduced coefficient.
+- Python `hashlib` vectors for the legacy PIN hash at empty, repeated and
+  truncated-input boundaries; exact CTAP MAC widths and empty CBC/AEAD results.
+- RustCrypto ECDSA comparisons across short and long prehash widths, plus
+  one-shot test-only nonce substitution for out-of-range, zero and zero-S
+  refusals. The substitution is thread-local and consumed before returning.
+- A real ML-DSA-65 signature with all 55 allowed hints, byte-identical to
+  deterministic OpenSSL. A `>` to `>=` mutation previously selected a different
+  valid signature and escaped verification-only tests.
+- An ML-DSA-65 candidate with `||z|| = gamma1-beta`. It passes the unchanged
+  challenge and hint checks under the one-unit relaxed bound, while the standard
+  Rust and OpenSSL verifiers refuse it. This isolates the norm refusal from a
+  challenge mismatch and kills both boundary widening mutations.
+- NIST public-key comparisons through in-place ML-DSA expansion and positive
+  and negative cases through all three public verifier wrappers.
+- RSA exact-width codecs, maximum-width software decipher, minimum PKCS#1
+  padding, full-width sieve carry and every failed primality self-test arm.
+  Faulted software and CRT operations preserve the entire output canary.
+
+Destructor tests observe live fields immediately after the actual wipe, before
+their lifetimes end. They cover the FIDO session secrets, every EC key variant,
+RSA key/CRT/search state, ML-DSA byte fields and every polynomial coefficient.
+They neither read freed storage nor establish erasure of earlier moved copies.
+Six controls omit individual wipe sites. The FIDO token control fails the exact
+workspace host-test row; the RSA, EC and ML-DSA controls fail their ordinary crate
+runners. Clean and byte-identically restored workspace rows pass. An initial
+RSA probe that compared a zeroized, unnormalized `BigUint` arithmetically was
+rejected as apparatus failure; the repaired probe inspects bytes instead.
+
+The existing accepted-survivor file now records 111 reviewed occurrences:
+41 result-equivalent or explicitly resource/cost-only cases, and 70
+`target_os=none` wrapper cases. Reasons preserve the relevant producer bounds,
+integer quotients, bit truth tables and modular-inverse assumptions. Increased
+seed-buffer size, cheaper sieve selection and changed modular intermediates
+do not receive a timing or allocation-equivalence claim. This is the critical
+host slice, not completion of all weekly workspace shards or C/assembly and
+silicon mutation execution.
+
+Raw rosters, per-mutation build/test logs, source copies, assertion directions,
+OpenSSL checks, exact restoration hashes and scope dispositions are retained in
+`target/critical-mutations-20261011/`. They are local evidence, not a release
+bundle or a new formal whole-firmware claim.
