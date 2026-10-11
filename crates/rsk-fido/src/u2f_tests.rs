@@ -1331,3 +1331,6 @@ fn direct_u2f_calls_refuse_inconsistent_apdu_lengths_before_loading_a_key() {
 
 #[path = "u2f_restart_tests.rs"]
 mod restarts;
+
+#[path = "u2f_primitive_tests.rs"]
+pub(super) mod primitives;

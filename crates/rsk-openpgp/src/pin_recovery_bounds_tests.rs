@@ -173,7 +173,7 @@ fn staging_target_and_format_must_match_on_both_recovery_and_commit() {
 #[test]
 fn a_tampered_stage_never_replaces_the_live_dek_copy() {
     let mut fs = setup();
-    let (session, _, _) = interrupted_update(&mut fs);
+    let (session, key, _) = interrupted_update(&mut fs);
     let mut staged = [0; DEK_FILE_SIZE + 1];
     let n = fs.read_key(EF_DEK_STAGE_PW1, &mut staged).unwrap();
     staged[n - 1] ^= 1;
@@ -184,6 +184,10 @@ fn a_tampered_stage_never_replaces_the_live_dek_copy() {
     let mut out = Secret::<[u8; DEK_SIZE]>::zeroed();
     assert_eq!(
         load_dek(&dev(), &mut fs, &session, &mut out),
+        Err(Sw::EXEC_ERROR)
+    );
+    assert_eq!(
+        recover_staged_dek(&dev(), &mut fs, EF_DEK_PW1, key.expose(), &mut out),
         Err(Sw::EXEC_ERROR)
     );
     assert_eq!(out.expose(), &[0; DEK_SIZE]);
@@ -199,6 +203,8 @@ fn refused_recovery_rearm_wipes_the_decrypted_output_and_keeps_the_stage() {
     let (session, _, _) = interrupted_update(&mut fs);
     let old_copy = medium.value(EF_DEK_PW1.get());
     let stage = medium.value(EF_DEK_STAGE_PW1.get());
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    medium.clear_ops();
     medium.arm(0);
     let mut out = Secret::new([0x55; DEK_SIZE]);
     assert_eq!(
@@ -206,6 +212,8 @@ fn refused_recovery_rearm_wipes_the_decrypted_output_and_keeps_the_stage() {
         Err(Sw::MEMORY_FAILURE)
     );
     assert_eq!(out.expose(), &[0; DEK_SIZE]);
+    assert!(medium.was_cut() && fs.rescrub_refused());
+    assert_eq!(medium.value(rsk_fs::EF_HARDENED), Some(vec![1]));
     assert_eq!(medium.value(EF_DEK_PW1.get()), old_copy);
     assert_eq!(medium.value(EF_DEK_STAGE_PW1.get()), stage);
 }
@@ -290,4 +298,56 @@ fn pin_command_parameter_errors_leave_the_session_and_pin_unchanged() {
         ),
         Sw::OK
     );
+}
+
+#[test]
+fn direct_staged_recovery_rearm_refusal_wipes_output_and_keeps_both_copies() {
+    let (mut fs, medium) = setup_cut();
+    let (session, key, _) = interrupted_update(&mut fs);
+    let old_copy = medium.value(EF_DEK_PW1.get());
+    let stage = medium.value(EF_DEK_STAGE_PW1.get());
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    medium.clear_ops();
+    medium.arm(0);
+    let mut output = Secret::new([0x55; DEK_SIZE]);
+    assert_eq!(
+        recover_staged_dek(&dev(), &mut fs, EF_DEK_PW1, key.expose(), &mut output),
+        Err(Sw::MEMORY_FAILURE)
+    );
+    assert_eq!(output.expose(), &[0; DEK_SIZE]);
+    assert!(medium.was_cut() && fs.rescrub_refused());
+    assert!(medium.ops().is_empty());
+    assert_eq!(medium.value(rsk_fs::EF_HARDENED), Some(vec![1]));
+    assert_eq!(medium.value(EF_DEK_PW1.get()), old_copy);
+    assert_eq!(medium.value(EF_DEK_STAGE_PW1.get()), stage);
+    medium.arm(u32::MAX);
+    recover_staged_dek(&dev(), &mut fs, EF_DEK_PW1, key.expose(), &mut output).unwrap();
+    let mut loaded = Secret::<[u8; DEK_SIZE]>::zeroed();
+    load_dek(&dev(), &mut fs, &session, &mut loaded).unwrap();
+    assert_eq!(loaded.expose(), output.expose());
+    assert!(!fs.has_key(EF_DEK_STAGE_PW1));
+}
+
+#[test]
+fn direct_pin_rekey_helpers_refuse_an_unknown_file_before_entropy_or_writes() {
+    let mut fs = setup();
+    let generation = fs.write_gen();
+    let mut rng = CountRng(7);
+    assert_eq!(
+        migrate_pin_kbase(&dev(), &mut fs, &mut rng, 0xffff, PW1_DEFAULT),
+        Err(Sw::EXEC_ERROR)
+    );
+    assert!(matches!(
+        reseed_pin(
+            &dev(),
+            &mut fs,
+            &mut rng,
+            0xffff,
+            PW1_DEFAULT,
+            &[0x55; DEK_SIZE]
+        ),
+        Err(Sw::EXEC_ERROR)
+    ));
+    assert_eq!(rng.0, 7);
+    assert_eq!(fs.write_gen(), generation);
 }

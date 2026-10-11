@@ -2,6 +2,42 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[test]
+fn unknown_nested_vendor_fields_preserve_the_following_command_and_target() {
+    let mut buffer = [0; 64];
+    let mut e = minicbor::Encoder::new(minicbor::encode::write::Cursor::new(&mut buffer[..]));
+    e.map(3)
+        .unwrap()
+        .u8(99)
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.u8(1)
+        .unwrap()
+        .u64(VENDOR_CONFIG_READ)
+        .unwrap()
+        .u8(2)
+        .unwrap()
+        .map(1)
+        .unwrap()
+        .u8(1)
+        .unwrap()
+        .u8(7)
+        .unwrap();
+    let n = e.writer().position();
+    let req = parse(&buffer[..n]).unwrap();
+    assert_eq!(req.subcommand, VENDOR_CONFIG_READ);
+    assert_eq!(req.target, 7);
+    assert!(matches!(
+        parse(&[0xa1, 0x18, 99, 0x82, 0xf6]),
+        Err(CtapError::InvalidCbor)
+    ));
+}
 use crate::seed::{ensure_seed, load_keydev};
 use crate::{AlwaysConfirm, FidoState, Presence, UserPresence};
 use rsk_crypto::Device;
@@ -2527,7 +2563,9 @@ fn a_faulted_sealed_probe_does_not_reopen_the_export_window() {
 
 /// A presence that offers built-in UV and declines the pad entry — the device-PIN
 /// half of [`pin_gate`] runs only when `uv_available`.
+#[cfg(not(feature = "fips-profile"))]
 struct UvDecline;
+#[cfg(not(feature = "fips-profile"))]
 impl UserPresence for UvDecline {
     fn request(&mut self, _confirm: crate::Confirm<'_>) -> Presence {
         Presence::Confirmed
@@ -3562,3 +3600,115 @@ mod coverage_boundaries;
 
 #[path = "vendor_restart_tests.rs"]
 mod restarts;
+
+#[test]
+fn a_full_width_off_curve_mse_peer_cannot_publish_a_channel() {
+    let (mut fs, mut rng, mut state) = setup();
+    let mut request = [0; 256];
+    let n = build_mse(&mut request, &[0; 32], &[0; 32]);
+    let generation = fs.write_gen();
+    let mut output = [0xA5; 256];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &mut AlwaysConfirm,
+            &request[..n],
+            &mut output
+        ),
+        Err(CtapError::InvalidParameter)
+    );
+    assert!(!state.mse_live());
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(output, [0xA5; 256]);
+}
+
+#[test]
+fn a_tampered_channel_key_cannot_be_opened_or_grant_the_seed() {
+    let (mut fs, mut rng, mut state) = setup();
+    let host = handshake(&mut fs, &mut rng, &mut state);
+    let mut blob = host_wrap(&host, &[0x55; 32], &[0x11; 12]);
+    let channel = state.take_mse().unwrap();
+    assert_eq!(
+        open_channel_key(&channel, &blob).unwrap().expose(),
+        &[0x55; 32]
+    );
+    blob[LOCK_BLOB_LEN - 1] ^= 1;
+    assert!(matches!(
+        open_channel_key(&channel, &blob),
+        Err(CtapError::InvalidParameter)
+    ));
+    assert!(state.keydev_dec.is_none());
+}
+
+#[test]
+fn repeated_mse_refuses_and_scrubs_the_live_channel_in_every_profile() {
+    let (mut fs, mut rng, mut state) = setup();
+    let host = handshake(&mut fs, &mut rng, &mut state);
+    assert_eq!(state.mse_key_for_test(), Some(host.key));
+    let (x, y) = P256Key::from_scalar(&[0x43; 32]).unwrap().public_xy();
+    let mut request = [0; 200];
+    let n = build_mse(&mut request, &x, &y);
+    let generation = fs.write_gen();
+    let mut out = [0xa5; 200];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &mut AlwaysConfirm,
+            &request[..n],
+            &mut out
+        ),
+        Err(CtapError::NotAllowed)
+    );
+    assert_eq!(state.mse_key_for_test(), None);
+    assert!(!state.mse_live());
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(out, [0xa5; 200]);
+    handshake(&mut fs, &mut rng, &mut state);
+    assert!(state.mse_live());
+}
+
+#[test]
+fn declining_the_shared_load_gate_preserves_the_owner_and_spends_the_channel() {
+    struct DeclineSecond(usize);
+    impl UserPresence for DeclineSecond {
+        fn request(&mut self, _: crate::Confirm<'_>) -> Presence {
+            self.0 += 1;
+            if self.0 == 1 {
+                Presence::Confirmed
+            } else {
+                Presence::Timeout
+            }
+        }
+    }
+    let (mut fs, mut rng, mut state) = setup();
+    let original = load_keydev(&dev(), &mut fs).unwrap();
+    let host = handshake(&mut fs, &mut rng, &mut state);
+    let mut request = [0; 128];
+    let n = load_req(&mut request, &wrap32(&host, &[0x33; 32]));
+    let generation = fs.write_gen();
+    let mut presence = DeclineSecond(0);
+    let mut out = [0xa5; 16];
+    assert_eq!(
+        call(
+            &mut fs,
+            &mut rng,
+            &mut state,
+            &mut presence,
+            &request[..n],
+            &mut out
+        ),
+        Err(CtapError::OperationDenied)
+    );
+    assert_eq!(presence.0, 2);
+    assert!(!state.mse_live());
+    assert_eq!(
+        load_keydev(&dev(), &mut fs).unwrap().expose(),
+        original.expose()
+    );
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(out, [0xa5; 16]);
+}

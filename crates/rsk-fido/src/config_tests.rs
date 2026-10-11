@@ -35,6 +35,80 @@ fn dev() -> Device<'static> {
 const TOKEN: [u8; 32] = [0x99; 32];
 
 #[test]
+fn unknown_nested_configuration_fields_preserve_following_fields_and_mac_bytes() {
+    for command in [CONFIG_SET_MIN_PIN, CONFIG_VENDOR] {
+        let mut buffer = [0; 64];
+        let mut e = Encoder::new(Cursor::new(&mut buffer[..]));
+        e.map(4)
+            .unwrap()
+            .u8(1)
+            .unwrap()
+            .u64(command)
+            .unwrap()
+            .u8(2)
+            .unwrap();
+        let start = e.writer().position();
+        e.map(2)
+            .unwrap()
+            .u8(99)
+            .unwrap()
+            .array(2)
+            .unwrap()
+            .map(0)
+            .unwrap()
+            .null()
+            .unwrap();
+        e.u8(1).unwrap().u8(6).unwrap();
+        let end = e.writer().position();
+        e.u8(5)
+            .unwrap()
+            .array(2)
+            .unwrap()
+            .map(0)
+            .unwrap()
+            .null()
+            .unwrap()
+            .u8(6)
+            .unwrap()
+            .null()
+            .unwrap();
+        let n = e.writer().position();
+        let req = parse(&buffer[..n]).unwrap();
+        assert_eq!(req.subcommand, command);
+        assert_eq!(req.raw_subpara, &buffer[start..end]);
+        if command == CONFIG_SET_MIN_PIN {
+            assert_eq!(req.new_min_pin, 6);
+        } else {
+            assert_eq!(req.vendor_id, 6);
+        }
+        let mut bad = [0; 32];
+        let mut e = Encoder::new(Cursor::new(&mut bad[..]));
+        e.map(2)
+            .unwrap()
+            .u8(1)
+            .unwrap()
+            .u64(command)
+            .unwrap()
+            .u8(2)
+            .unwrap();
+        e.map(1)
+            .unwrap()
+            .u8(99)
+            .unwrap()
+            .array(2)
+            .unwrap()
+            .null()
+            .unwrap();
+        let n = e.writer().position();
+        assert!(matches!(parse(&bad[..n]), Err(CtapError::InvalidCbor)));
+    }
+    assert!(matches!(
+        parse(&[0xa2, 1, 1, 5, 0x82, 0xf6]),
+        Err(CtapError::InvalidCbor)
+    ));
+}
+
+#[test]
 fn malformed_configuration_keys_do_not_change_policy_or_token() {
     for (request, error) in [
         (&[0xa1, 2, 0xa0][..], CtapError::MissingParameter),
@@ -1388,4 +1462,21 @@ fn a_pin_record_missing_after_its_presence_probe_does_not_invent_its_length() {
     assert_eq!(fs.into_storage().value(EF_PIN, &mut retained), Some(2));
     assert_eq!(retained, [1, 8]);
     assert!(state.paut.in_use);
+}
+
+#[test]
+fn directly_constructed_policy_flags_encode_each_boolean_in_every_profile() {
+    for (force, complexity, expected) in [
+        (false, false, 0),
+        (true, false, 1),
+        (false, true, 2),
+        (true, true, 3),
+    ] {
+        let policy = crate::pinpolicy::Policy {
+            min: MIN_PIN_LENGTH,
+            force,
+            complexity,
+        };
+        assert_eq!(policy.flags(), expected);
+    }
 }

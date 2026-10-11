@@ -173,6 +173,32 @@ fn set_led_applies_and_persists_the_block() {
     );
 }
 
+#[cfg(feature = "strict-config")]
+#[test]
+fn declining_a_strict_led_write_preserves_live_and_stored_configuration() {
+    let pres = RefCell::new(Declining);
+    let owner = [0x11; CONF_LEN];
+    let mut app = VendorApplet::new(
+        FullPlatform {
+            led: owner,
+            ..Default::default()
+        },
+        &pres,
+    );
+    let mut fs = Fs::new(RamStorage::default());
+    fs.put(EF_LED_CONF, &owner).unwrap();
+    let before = fs.write_gen();
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(INS_SET_LED, 200, 0x10, &[])),
+        (Sw::SECURITY_STATUS_NOT_SATISFIED, Vec::new())
+    );
+    assert_eq!(app.platform.led, owner);
+    assert_eq!(fs.write_gen(), before);
+    let mut stored = [0; CONF_LEN];
+    assert_eq!(fs.read(EF_LED_CONF, &mut stored), Some(CONF_LEN));
+    assert_eq!(stored, owner);
+}
+
 #[test]
 fn an_effect_only_update_keeps_the_speed() {
     let pres = RefCell::new(AlwaysConfirm);

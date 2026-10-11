@@ -334,3 +334,17 @@ fn a_reset_projection_never_deletes_a_record_outside_the_fido_domain() {
         assert!(reset.well_formed(&volatile));
     }
 }
+
+#[test]
+fn an_unmodelled_secret_fid_is_swept_without_changing_modelled_records() {
+    let mut reset = ResetRefinement::new(protected());
+    let mut volatile = ResetVolatileView::default();
+    assert!(reset.begin(&mut volatile));
+    assert!(reset.delete(EF_KEY_DEV.get()));
+    assert!(reset.delete(EF_KEY_DEV_ENC.get()));
+    assert!(reset.advance());
+    let before = reset.persistent;
+    assert!(reset.delete(crate::consts::EF_RP));
+    assert_eq!(reset.persistent, before);
+    assert!(reset.well_formed(&volatile));
+}

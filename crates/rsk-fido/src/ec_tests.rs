@@ -475,9 +475,16 @@ fn cached_point_encodes_identically_to_derived() {
     }
 
     // The lattice schemes are not cached (their public keys exceed the record).
-    let mldsa = CredKey::from_raw(CURVE_MLDSA44 as i64, &raw).unwrap();
-    assert!(mldsa.public_point(&mut [0u8; CRED_PUBKEY_MAX]).is_none());
-    assert_eq!(cached_point_len(CURVE_MLDSA44 as i64), None);
+    for (curve, alg) in [
+        (CURVE_MLDSA44, ALG_MLDSA44),
+        (CURVE_MLDSA65, ALG_MLDSA65),
+        (CURVE_MLDSA87, ALG_MLDSA87),
+    ] {
+        let mldsa = CredKey::from_raw(i64::from(curve), &raw).unwrap();
+        assert_eq!(mldsa.alg(), alg);
+        assert!(mldsa.public_point(&mut [0u8; CRED_PUBKEY_MAX]).is_none());
+        assert_eq!(cached_point_len(i64::from(curve)), None);
+    }
 }
 
 #[test]

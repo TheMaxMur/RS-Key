@@ -2564,6 +2564,34 @@ fn mgm_3des_roundtrip() {
     let mut expect = host_chal;
     rsk_crypto::des3_encrypt_block(&key24, &mut expect);
     assert_eq!(&resp[4..12], &expect);
+    select(&mut app, &mut fs);
+    let (sw, challenge) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        ALGO_3DES,
+        0x9B,
+        &[0x7C, 0x02, 0x81, 0x00],
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(&challenge[..4], &[0x7C, 0x0A, 0x81, 0x08]);
+    let mut encrypted: [u8; 8] = challenge[4..12].try_into().unwrap();
+    rsk_crypto::des3_encrypt_block(&key24, &mut encrypted);
+    let mut response = vec![0x7C, 0x0A, 0x82, 0x08];
+    response.extend_from_slice(&encrypted);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_AUTHENTICATE,
+            ALGO_3DES,
+            0x9B,
+            &response
+        )
+        .0,
+        Sw::OK
+    );
+    assert!(app.sess.has_mgm);
 }
 
 #[test]
@@ -11120,3 +11148,103 @@ mod restarts;
 
 #[path = "stored_damage_tests.rs"]
 mod stored_damage;
+
+#[test]
+fn an_unknown_stored_slot_algorithm_cannot_enter_a_private_operation() {
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_ASYM_KEYGEN,
+            0,
+            SLOT_AUTHENTICATION,
+            &gen_template(ALGO_ECCP256)
+        )
+        .0,
+        Sw::OK
+    );
+    fs.meta_add(
+        key_fid(SLOT_AUTHENTICATION).get(),
+        &[0xFF, PINPOLICY_NEVER, TOUCHPOLICY_NEVER, ORIGIN_GENERATED],
+    )
+    .unwrap();
+    let generation = fs.write_gen();
+    let (sw, output) = run(
+        &mut app,
+        &mut fs,
+        INS_AUTHENTICATE,
+        0xFF,
+        SLOT_AUTHENTICATION,
+        &[0x7C, 5, 0x82, 0, 0x81, 1, 0],
+    );
+    assert_eq!(sw, Sw::WRONG_DATA);
+    assert!(output.is_empty());
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn an_imported_key_survives_a_refused_optional_public_cache_reload() {
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    let (backend, medium) = ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    files::scan_files(&dev, &mut fs, &mut TestRng(7)).unwrap();
+    let scalar = [0x33; 32];
+    let mut body = vec![0x06, 32];
+    body.extend_from_slice(&scalar);
+    let session = Session {
+        has_mgm: true,
+        ..Default::default()
+    };
+    medium.stick_once(key_fid(SLOT_AUTHENTICATION).get());
+    assert_eq!(
+        keygen::import(
+            &session,
+            &dev,
+            &mut fs,
+            &mut TestRng(7),
+            ALGO_ECCP256,
+            SLOT_AUTHENTICATION,
+            &body
+        ),
+        Sw::OK
+    );
+    assert!(!fs.has_data(files::pubkey_fid(SLOT_AUTHENTICATION)));
+    let mut metadata = [0; 128];
+    assert_eq!(
+        fs.meta_find(key_fid(SLOT_AUTHENTICATION).get(), &mut metadata),
+        Some(4)
+    );
+    assert_eq!(
+        &metadata[..4],
+        &[
+            ALGO_ECCP256,
+            PINPOLICY_ONCE,
+            TOUCHPOLICY_NEVER,
+            ORIGIN_IMPORTED
+        ]
+    );
+    let loaded = seal::load_ec_key(&dev, &mut fs, key_fid(SLOT_AUTHENTICATION)).unwrap();
+    let expected = PrivKey::from_scalar(Curve::P256, &scalar).unwrap();
+    let mut actual_point = [0; MAX_EC_POINT];
+    let mut expected_point = [0; MAX_EC_POINT];
+    assert_eq!(
+        loaded.public_point(&mut actual_point).unwrap(),
+        expected.public_point(&mut expected_point).unwrap()
+    );
+    assert_eq!(actual_point, expected_point);
+}
+
+#[path = "move_absence_tests.rs"]
+mod move_absence;

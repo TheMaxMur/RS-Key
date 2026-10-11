@@ -380,3 +380,14 @@ fn a_keydev_no_arm_opens_is_not_reported_left() {
 fn a_legacy_otp_width_with_an_unknown_tag_is_not_a_decryption_candidate() {
     assert!(cbc_open(&dev(), &[0; 33]).is_none());
 }
+
+#[test]
+fn migrating_an_absent_device_certificate_key_is_a_noop() {
+    let mut fs = fs();
+    let mut rng = LcgRng(7);
+    let generation = fs.write_gen();
+    assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut rng));
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(rng.0, 7);
+    assert!(!fs.has_key(EF_DEVCERT_KEY));
+}

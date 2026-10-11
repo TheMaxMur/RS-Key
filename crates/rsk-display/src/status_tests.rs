@@ -130,6 +130,17 @@ fn journal_events_map_onto_their_display_class() {
     assert_eq!(audit_kind(j::EV_PIN_LOCKOUT), K::Denied);
     assert_eq!(audit_kind(j::EV_RESET), K::Reset);
     assert_eq!(audit_kind(j::EV_BACKUP_EXPORT), K::Backup);
+    for event in [j::EV_LOCK_ENGAGE, j::EV_LOCK_RELEASE] {
+        assert_eq!(audit_kind(event), K::Lock);
+    }
+    for event in [
+        j::EV_CFG_MIN_PIN,
+        j::EV_CFG_EA,
+        j::EV_CFG_ALWAYS_UV,
+        j::EV_AUDIT_CFG,
+    ] {
+        assert_eq!(audit_kind(event), K::Config);
+    }
     // An event a newer firmware wrote must still list, unclassified rather than lost.
     assert_eq!(audit_kind(u8::MAX), K::Other);
 }

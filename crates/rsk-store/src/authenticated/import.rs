@@ -466,3 +466,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone> Import<F> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "import_tests.rs"]
+mod tests;

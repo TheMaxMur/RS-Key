@@ -10,6 +10,15 @@ use crate::authenticated::{
 #[path = "counter_replica_tests.rs"]
 mod counter_replica;
 
+#[path = "raw_bank_geometry_tests.rs"]
+mod api;
+
+#[path = "journal_api_tests.rs"]
+mod journal_api;
+
+#[path = "counter_bank_api_tests.rs"]
+mod counter_api;
+
 #[test]
 fn raw_bank_preserves_adjacent_bytes_during_unaligned_programs() {
     let flash = FaultFlash::new();

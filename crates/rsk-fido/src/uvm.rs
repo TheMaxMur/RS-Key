@@ -45,3 +45,11 @@ pub(crate) fn write<W: Write>(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "Independent factor tables decode every directly supplied ceremony state."
+)]
+#[path = "uvm_tests.rs"]
+mod tests;

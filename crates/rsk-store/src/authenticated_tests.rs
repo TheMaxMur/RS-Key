@@ -11,6 +11,99 @@ const IDENTITY: Identity = Identity {
 };
 
 #[test]
+fn deleting_an_absent_owner_preserves_empty_and_nonempty_directories() {
+    let mut directory = Directory::<1>::new();
+    for live in [false, true] {
+        if live {
+            directory
+                .apply(Entry::live(IDENTITY, &KEY, 1, 1, b"owner").unwrap())
+                .unwrap();
+        }
+        let before = directory.digest(IDENTITY, &KEY, 1).unwrap();
+        directory
+            .apply(Entry::deleted(IDENTITY, &KEY, 7, 1).unwrap())
+            .unwrap();
+        assert_eq!(directory.digest(IDENTITY, &KEY, 1).unwrap(), before);
+        assert_eq!(directory.entries().len(), usize::from(live));
+        assert_eq!(directory.find(7), None);
+    }
+}
+
+#[test]
+fn directory_defaults_and_snapshot_refusals_preserve_the_existing_live_set() {
+    let mut directory = Directory::<1>::default();
+    assert!(directory.entries().is_empty());
+    let live = Entry::live(IDENTITY, &KEY, 1, 1, b"owner").unwrap();
+    let deleted = Entry::deleted(IDENTITY, &KEY, 1, 1).unwrap();
+    assert_eq!(directory.push_snapshot(deleted, 1), Err(Error::MemoryFatal));
+    assert_eq!(directory.push_snapshot(live, 0), Err(Error::MemoryFatal));
+    directory.push_snapshot(live, 1).unwrap();
+    let neighbor = Entry::live(IDENTITY, &KEY, 2, 1, b"neighbor").unwrap();
+    assert_eq!(directory.push_snapshot(neighbor, 1), Err(Error::NoMemory));
+    assert_eq!(directory.find(1), Some(live));
+    assert_eq!(directory.find(2), None);
+    directory.clear();
+    assert!(directory.entries().is_empty());
+}
+
+#[test]
+fn signed_transaction_contradictions_and_truncated_frames_are_refused() {
+    let entry = Entry::live(IDENTITY, &KEY, 0xCE10, 1, b"owner").unwrap();
+    let valid = Delta {
+        kind: DeltaKind::Prepare,
+        partition: Partition::Main,
+        sequence: 1,
+        address: 4096,
+        entry,
+        previous: [0; 32],
+    };
+    let encoded = valid.encode(&KEY).unwrap();
+    for width in 0..DELTA_BYTES {
+        assert_eq!(
+            Delta::verify(&encoded[..width], &KEY),
+            Err(Error::MemoryFatal)
+        );
+    }
+    let zero = Entry::live(IDENTITY, &KEY, entry.fid(), 0, b"owner").unwrap();
+    let deleted = Entry::deleted(IDENTITY, &KEY, entry.fid(), 1).unwrap();
+    for bad in [
+        Delta {
+            sequence: 2,
+            ..valid
+        },
+        Delta {
+            sequence: 0,
+            entry: zero,
+            ..valid
+        },
+        Delta {
+            partition: Partition::Counter,
+            ..valid
+        },
+        Delta {
+            entry: deleted,
+            ..valid
+        },
+    ] {
+        assert_eq!(bad.encode(&KEY), Err(Error::MemoryFatal));
+    }
+    for offset in [8, 9] {
+        let mut bad = encoded;
+        bad[offset] = 0xFF;
+        let tag = rsk_crypto::hmac_sha256(&KEY, &bad[..96]);
+        bad[96..112].copy_from_slice(&tag[..TAG_BYTES]);
+        assert_eq!(Delta::verify(&bad, &KEY), Err(Error::MemoryFatal));
+    }
+    let mut invalid_length = entry.encode().unwrap();
+    invalid_length[2..4].copy_from_slice(
+        &u16::try_from(rsk_fs::MAX_VALUE_BYTES + 1)
+            .unwrap()
+            .to_le_bytes(),
+    );
+    assert_eq!(Entry::decode(&invalid_length), Err(Error::MemoryFatal));
+}
+
+#[test]
 fn a_valid_mac_does_not_authorize_an_unknown_transaction_layout() {
     let entry = Entry::live(IDENTITY, &KEY, 0xCE10, 7, b"owner").unwrap();
     let delta = Delta {

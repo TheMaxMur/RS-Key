@@ -458,3 +458,14 @@ fn a_faulted_public_slot_probe_does_not_skip_its_retirement() {
     assert_eq!(put_data(&mut fs, &sess, EF_ALGO_SIG, DEFAULT_ALGO), Sw::OK);
     assert!(!fs.has_data(EF_PB_SIG));
 }
+
+#[test]
+fn a_missing_pw_status_is_not_recreated_by_an_authenticated_update() {
+    let (mut fs, mut sess) = setup();
+    admin(&mut fs, &mut sess);
+    fs.delete(EF_PW_PRIV).unwrap();
+    let generation = fs.write_gen();
+    assert_eq!(put_pw_status(&mut fs, &sess, &[1]), Sw::REFERENCE_NOT_FOUND);
+    assert_eq!(fs.write_gen(), generation);
+    assert!(sess.has_pw3);
+}

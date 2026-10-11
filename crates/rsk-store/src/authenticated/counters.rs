@@ -287,3 +287,12 @@ impl<F: NorFlash + MultiwriteNorFlash> Counters<F> {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "Counter API fixtures retain exact bank geometry and deliberate authenticated contradictions."
+)]
+#[path = "counters_tests.rs"]
+mod tests;

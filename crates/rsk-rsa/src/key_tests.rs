@@ -267,3 +267,25 @@ fn size_is_the_modulus_width_not_the_prime_width() {
     assert_eq!(test_key_640().size(), 80);
     assert_eq!(test_key_640().n_be().len(), 80);
 }
+
+#[test]
+fn a_non_coprime_blind_is_discarded_before_an_invertible_pair() {
+    struct Scripted(usize);
+    impl Rng for Scripted {
+        fn fill(&mut self, output: &mut [u8]) {
+            assert_eq!(output.len(), 1);
+            output[0] = match self.0 {
+                0 => 3,
+                1 => 2,
+                _ => panic!("unexpected draw"),
+            };
+            self.0 += 1;
+        }
+    }
+    let mut rng = Scripted(0);
+    let (r, inverse) = blind_pair(&big(15), 1, &mut rng);
+    assert_eq!(rng.0, 2);
+    assert_eq!(r.expose(), &big(2));
+    assert_eq!(inverse.expose(), &big(8));
+    assert_eq!((r.expose() * inverse.expose()) % big(15), big(1));
+}

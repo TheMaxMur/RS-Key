@@ -4,6 +4,43 @@
 use super::*;
 
 #[test]
+fn ram_lifecycle_defaults_keep_records_and_refuse_storage_administration() {
+    use crate::storage::{StorageAction, StorageState};
+    let mut storage = RamStorage::new();
+    storage.write(KEY_DEV, b"owner").unwrap();
+    assert_eq!(storage.mount(), Ok(()));
+    assert_eq!(storage.boot([0x4B; 16]), Ok(()));
+    assert_eq!(storage.state(), StorageState::Ready);
+    assert!(storage.root_closed());
+    for action in [StorageAction::Initialize, StorageAction::ImportLegacy] {
+        assert_eq!(storage.administer(action, [0x4B; 16]), Err(Error::Blocked));
+    }
+    let mut value = [0; 5];
+    assert_eq!(storage.read(KEY_DEV, &mut value), Some(5));
+    assert_eq!(&value, b"owner");
+}
+
+#[test]
+fn scan_hides_storage_witnesses_and_counter_presence_retains_read_failures() {
+    let counter = crate::counter::EF_COUNTER;
+    let mut storage = RamStorage::new();
+    for fid in crate::STORE_INTERNAL_FIDS {
+        storage.write(fid, b"witness").unwrap();
+    }
+    let mut fs = Fs::new(storage);
+    fs.scan();
+    assert_eq!(fs.free_dynamic(), crate::MAX_DYNAMIC_FILES);
+    assert_eq!(fs.try_has_counter(counter), Ok(false));
+    fs.put_counter(counter, b"counter").unwrap();
+    assert_eq!(fs.try_has_counter(counter), Ok(true));
+    let (backend, medium) = crate::storage::faults::ProbeStuck::new();
+    let mut failed = Fs::new(backend);
+    failed.put_counter(counter, b"counter").unwrap();
+    medium.stick(Some(counter.get()));
+    assert_eq!(failed.try_has_counter(counter), Err(Error::MemoryFatal));
+}
+
+#[test]
 fn metadata_reservation_failures_preserve_existing_records_without_a_write() {
     let mut fs = Fs::new(CountingStorage::new());
     fs.meta_add(KEY_DEV, b"original").unwrap();

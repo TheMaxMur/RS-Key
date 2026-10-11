@@ -940,3 +940,11 @@ fn finish_fixture(e: Encoder<Cursor<[u8; 128]>>) -> Vec<u8> {
     let n = e.writer().position();
     e.into_writer().into_inner()[..n].to_vec()
 }
+
+#[test]
+#[should_panic(expected = "hmac-secret-mc output missing from the registration")]
+fn the_hmac_mc_oracle_refuses_a_registration_with_only_the_legacy_output() {
+    let response = Authr::fresh().send(CTAP_MAKE_CREDENTIAL, &mc_hmac());
+    assert_ok(&response);
+    let _ = hmac_mc_output(&response.body);
+}

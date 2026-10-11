@@ -437,6 +437,10 @@ fn a_transient_fault_costs_the_boot_nothing() {
         "the retry must reach it"
     );
     assert_eq!(boot.usb_itf(), USB_ITF_HID);
+    let record = boot.record().unwrap();
+    assert_eq!(record.vid_pid, owner.vid_pid);
+    assert_eq!(record.usb_product, owner.usb_product);
+    assert_eq!(record.enabled_usb_itf, Some(USB_ITF_HID));
 }
 
 /// And a device nobody has configured still gets everything — the arm that must

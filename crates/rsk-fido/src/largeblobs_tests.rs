@@ -33,6 +33,17 @@ fn dev() -> Device<'static> {
 
 const TOKEN: [u8; 32] = [0x99; 32];
 
+#[test]
+fn unknown_nested_largeblob_fields_preserve_an_explicit_zero_read() {
+    let req = parse(&[0xa4, 1, 0, 3, 0, 7, 0x82, 0xa0, 0xf6, 8, 0xf6]).unwrap();
+    assert!(req.get_present);
+    assert_eq!((req.get, req.offset), (0, 0));
+    assert!(matches!(
+        parse(&[0xa1, 7, 0x82, 0xf6]),
+        Err(CtapError::InvalidCbor)
+    ));
+}
+
 fn armed(perms: u8) -> FidoState {
     let mut s = FidoState::new();
     s.paut.token = TOKEN;

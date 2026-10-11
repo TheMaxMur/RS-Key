@@ -27,6 +27,104 @@ impl Rng for SeqRng {
 const ATT_FMT: &str = "packed";
 
 #[test]
+fn unknown_nested_creation_fields_preserve_each_following_known_field() {
+    let mut buffer = [0; 512];
+    let mut e = Encoder::new(Cursor::new(&mut buffer[..]));
+    e.map(5).unwrap().u8(1).unwrap().bytes(&[0xCD; 32]).unwrap();
+    e.u8(2)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("id").unwrap().str("example.com").unwrap();
+    e.u8(3)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("id").unwrap().bytes(b"user").unwrap();
+    e.u8(4)
+        .unwrap()
+        .array(1)
+        .unwrap()
+        .map(3)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("type")
+        .unwrap()
+        .str("public-key")
+        .unwrap()
+        .str("alg")
+        .unwrap()
+        .i64(ALG_ES256)
+        .unwrap();
+    e.u8(6)
+        .unwrap()
+        .map(2)
+        .unwrap()
+        .str("future")
+        .unwrap()
+        .array(2)
+        .unwrap()
+        .map(0)
+        .unwrap()
+        .null()
+        .unwrap();
+    e.str("credProtect").unwrap().u8(3).unwrap();
+    let n = e.writer().position();
+    let req = parse(&buffer[..n]).unwrap();
+    assert_eq!(req.client_data_hash, &[0xCD; 32]);
+    assert!(req.rp_id_present && req.user_id_present);
+    assert_eq!(req.rp_id, "example.com");
+    assert_eq!(req.user_id, b"user");
+    assert_eq!(
+        (req.sel_alg, req.sel_curve),
+        (ALG_ES256, i64::from(CURVE_P256))
+    );
+    assert_eq!(req.ext_cred_protect, Some(3));
+
+    let baseline = build_request(false);
+    for field in [2, 3, 4, 6] {
+        let mut req = parse(&baseline).unwrap();
+        let truncated = if field == 4 {
+            &[0x81, 0xa1, 0x61, b'x', 0x82, 0xf6][..]
+        } else {
+            &[0xa1, 0x61, b'x', 0x82, 0xf6][..]
+        };
+        let mut d = Decoder::new(truncated);
+        let result = match field {
+            2 => parse_rp_entity(&mut d, &mut req),
+            3 => parse_user_entity(&mut d, &mut req),
+            4 => parse_pubkey_params(&mut d, &mut req),
+            6 => parse_extensions(&mut d, &mut req),
+            _ => unreachable!(),
+        };
+        assert_eq!(result, Err(CtapError::InvalidCbor));
+    }
+}
+
+#[test]
 fn all_extension_outputs_fit_the_makecredential_buffer() {
     let bytes = build_request(false);
     let mut req = parse(&bytes).unwrap();
@@ -3595,4 +3693,73 @@ fn empty_device_certificate_refuses_attestation_and_short_resident_records_are_n
         Ok(false)
     );
     assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn incomplete_slot_inventory_does_not_turn_absent_records_into_exclusions() {
+    let mut fs = Fs::new(rsk_fs::storage::faults::TruncatedWalk::new());
+    fs.scan();
+    let generation = fs.write_gen();
+    assert_eq!(
+        exclude_hit(
+            &mut fs,
+            &[0x11; 32],
+            &[0x66; 32],
+            &[0x55; CRED_RESIDENT_LEN],
+            true
+        ),
+        Ok(false)
+    );
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[path = "makecredential_capacity_tests.rs"]
+mod backend_capacity;
+
+#[test]
+fn secp256k1_negotiation_follows_the_compiled_profile() {
+    assert_eq!(
+        alg_to_curve(ALG_ES256K),
+        (!cfg!(feature = "fips-profile")).then_some((ALG_ES256K, CURVE_P256K1))
+    );
+}
+
+#[test]
+fn direct_response_encoding_handles_large_blob_output_in_every_profile() {
+    for supported in [false, true] {
+        let mut expected = b"\xa3\x01\x64none\x02\x42ad\x03\xa0".to_vec();
+        if supported {
+            expected[0] = 0xa4;
+            expected.extend_from_slice(b"\x06\xa1\x69largeBlob\xa1\x69supported\xf5");
+        }
+        let encode = |out: &mut [u8]| {
+            encode_mc_response(
+                out,
+                b"ad",
+                &AttBufs::new(),
+                AttShape {
+                    sig_len: 0,
+                    chain_len: 0,
+                    certs: 0,
+                    ea_performed: false,
+                    omitted: true,
+                },
+                None,
+                supported,
+                #[cfg(feature = "preview-sign")]
+                None,
+            )
+        };
+        let mut out = [0xa5; 128];
+        assert_eq!(encode(&mut out), Ok(expected.len()));
+        assert_eq!(&out[..expected.len()], expected);
+        assert!(out[expected.len()..].iter().all(|&byte| byte == 0xa5));
+        for capacity in 0..expected.len() {
+            assert_eq!(
+                encode(&mut out[..capacity]),
+                Err(CtapError::Other),
+                "supported={supported}, capacity={capacity}"
+            );
+        }
+    }
 }

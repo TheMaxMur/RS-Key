@@ -231,3 +231,14 @@ fn a_failed_modexp_self_test_latch_disables_an_otherwise_supported_keygen() {
     assert!(!keygen.usable());
     assert_eq!(keygen.half_bytes(), 128);
 }
+
+#[test]
+fn offered_primes_that_cannot_support_the_public_exponent_fail_assembly() {
+    let mut generator = RsaKeygen::new(2048);
+    assert!(generator.usable());
+    assert!(matches!(generator.offer(BigUint::from(3u8)), RsaStep::More));
+    assert!(matches!(
+        generator.offer(BigUint::from(5u8)),
+        RsaStep::Failed
+    ));
+}

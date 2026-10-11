@@ -1168,6 +1168,43 @@ const GET_KEY_AGREEMENT: &[u8] = &[
     0x02,
 ];
 
+#[cfg(feature = "display")]
+#[test]
+fn display_verify_reset_drops_both_incoming_chain_and_response_tail() {
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    ccid.handle_apdu(&select(rsk_fido::consts::FIDO_AID), 0);
+    assert_eq!(
+        sw(ccid.handle_apdu(&apdu(0x90, 0x10, 0, 0, &GET_KEY_AGREEMENT[..2]), 0)),
+        Sw::OK
+    );
+    ccid.reset_chaining();
+    let (reply, status) = exchange_chained(&mut ccid, &apdu(0x80, 0x10, 0, 0, GET_KEY_AGREEMENT));
+    assert_eq!(status, Sw::OK);
+    assert_eq!(reply.first(), Some(&0));
+    let mut short = apdu(0x80, 0x10, 0, 0, GET_INFO);
+    short.push(1);
+    let first = ccid.handle_apdu(&short, 0).to_vec();
+    assert_eq!(first.get(first.len() - 2), Some(&0x61));
+    ccid.reset_chaining();
+    assert_eq!(ccid.handle_apdu(&[0, 0xC0, 0, 0, 1], 0).len(), 2);
+    assert_eq!(
+        exchange_chained(&mut ccid, &apdu(0x80, 0x10, 0, 0, GET_KEY_AGREEMENT)).1,
+        Sw::OK
+    );
+}
+
+#[test]
+fn an_unknown_otp_hid_slot_returns_no_body_and_preserves_storage() {
+    let env = Env::new();
+    let mut ccid = env.ccid();
+    let before = env.fs.borrow().write_gen();
+    let (body, length, _) = ccid.handle_otp_hid(0xFF, &[0; 64]);
+    assert_eq!(length, 0);
+    assert_eq!(body, [0; 64]);
+    assert_eq!(env.fs.borrow().write_gen(), before);
+}
+
 #[test]
 fn selecting_fido_over_ccid_answers_the_u2f_version_string() {
     // `CtapPcscDevice._select` raises unless SELECT returns 9000, and sets its
@@ -2627,6 +2664,14 @@ fn keygen_fast_paths_leave_wrong_parameter_commands_to_normal_dispatch() {
         None
     );
     assert_eq!(env.fs.borrow().write_gen(), generation);
+    let unverified = [0, INS_KEYPAIR_GEN, 0x80, 0, 2, 0xb6, 0];
+    assert_eq!(ccid.try_rsa_keygen(&unverified), None);
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert_eq!(
+        sw(ccid.handle_apdu(&unverified, 0)),
+        Sw::SECURITY_STATUS_NOT_SATISFIED
+    );
+    assert_eq!(env.fs.borrow().write_gen(), generation);
     assert_eq!(sw(ccid.handle_apdu(&select(rsk_piv::PIV_AID), 0)), Sw::OK);
     let generation = env.fs.borrow().write_gen();
     assert_eq!(
@@ -2645,6 +2690,24 @@ fn a_successful_otp_config_command_returns_only_the_updated_status_frame() {
     let (_, n, after) = ccid.handle_otp_hid(CONFIGURE_SLOT, &[0; rsk_otp::hid::PAYLOAD_SIZE]);
     assert_eq!(n, 0);
     assert_eq!(after[4], before[4].wrapping_add(1));
+    let config: [u8; 52] = [
+        0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04,
+        0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04,
+        0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x20, 0x20, 0x00, 0x00, 0x8a, 0x40,
+    ];
+    let mut payload = [0; rsk_otp::hid::PAYLOAD_SIZE];
+    payload[..config.len()].copy_from_slice(&config);
+    let (_, n, status) = ccid.handle_otp_hid(CONFIGURE_SLOT, &payload);
+    assert_eq!(n, 0);
+    assert_ne!(status[5] & 1, 0);
+    let generation = env.fs.borrow().write_gen();
+    let (ticket, n, ascii) = ccid.otp_button_ticket(1, 0).unwrap();
+    assert_eq!(n, 39);
+    assert!(!ascii);
+    assert_eq!(&ticket[..38], &[4; 38]);
+    assert_eq!(ticket[38], 0x28);
+    assert_eq!(env.fs.borrow().write_gen(), generation);
 }
 
 #[path = "factory_restart_tests.rs"]

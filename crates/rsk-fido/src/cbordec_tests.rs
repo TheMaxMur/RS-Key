@@ -31,6 +31,25 @@ fn parse(entries: &[(&str, &[u8])], cap: usize) -> Result<usize, CtapError> {
 const ID: &[u8] = &[1, 2, 3, 4];
 
 #[test]
+fn unknown_nested_descriptor_fields_are_consumed_before_the_id() {
+    let bytes = [
+        0x81, 0xa3, 0x66, b'f', b'u', b't', b'u', b'r', b'e', 0x82, 0xa0, 0xf6, 0x62, b'i', b'd',
+        0x44, 1, 2, 3, 4, 0x64, b't', b'y', b'p', b'e', 0x6a, b'p', b'u', b'b', b'l', b'i', b'c',
+        b'-', b'k', b'e', b'y',
+    ];
+    let mut decoder = Decoder::new(&bytes);
+    let mut ids = [&[][..]; 1];
+    assert_eq!(parse_credential_descriptors(&mut decoder, &mut ids), Ok(1));
+    assert_eq!(ids, [ID]);
+    assert_eq!(decoder.position(), bytes.len());
+    let truncated = [0x81, 0xa1, 0x61, b'x', 0x82, 0xf6];
+    assert_eq!(
+        parse_credential_descriptors(&mut Decoder::new(&truncated), &mut ids),
+        Err(CtapError::InvalidCbor)
+    );
+}
+
+#[test]
 fn at_the_ceiling_is_accepted() {
     assert_eq!(parse(&[("public-key", ID); 4], 4), Ok(4));
 }

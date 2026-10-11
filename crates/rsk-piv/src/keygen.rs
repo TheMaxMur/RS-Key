@@ -367,6 +367,8 @@ pub(crate) fn generate_rsa_blocking<S: Storage>(
         Ok(p) => p,
         Err(sw) => return sw,
     };
+    #[cfg(test)]
+    let generate_rsa = direct_tests::generate_rsa_with_injected_failure;
     let key = match generate_rsa(&mut crate::RsaRng(&mut *rng), nbytes * 8) {
         Ok(k) => k,
         Err(e) => return crate::rsa_sw(e),

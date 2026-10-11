@@ -63,3 +63,12 @@ fn legacy_record_widths_accept_only_the_layouts_older_builds_wrote() {
         );
     }
 }
+
+#[test]
+fn a_missing_signature_counter_is_not_created_by_increment() {
+    let mut fs = rsk_fs::Fs::new(rsk_fs::storage::ram::RamStorage::new());
+    let generation = fs.write_gen();
+    assert_eq!(inc_sig_count(&mut fs), Err(Sw::REFERENCE_NOT_FOUND));
+    assert_eq!(fs.write_gen(), generation);
+    assert!(!fs.has_data(EF_SIG_COUNT));
+}

@@ -9,6 +9,9 @@ mod authenticated_faults;
 #[path = "managed_tests.rs"]
 mod managed;
 
+#[path = "authenticated_api_tests.rs"]
+mod api;
+
 fn auth_blank(_: &mut [u8; 32]) -> crate::authenticated::RootRead {
     crate::authenticated::RootRead::Blank
 }

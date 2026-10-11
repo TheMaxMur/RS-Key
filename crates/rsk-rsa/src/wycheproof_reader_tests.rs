@@ -14,3 +14,9 @@ fn vector_rows_preserve_comments_and_empty_fields() {
 fn a_short_vector_row_is_refused() {
     let _ = cases::<2>("incomplete").next();
 }
+
+#[test]
+#[should_panic(expected = "a Wycheproof result")]
+fn an_unknown_corpus_outcome_cannot_be_treated_as_a_rejection() {
+    let _ = outcome("unknown");
+}

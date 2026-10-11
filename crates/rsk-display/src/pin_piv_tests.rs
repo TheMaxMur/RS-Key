@@ -346,3 +346,75 @@ fn the_piv_menu_can_cancel_without_a_device_key_and_sleep_inside_a_pin_subflow()
     assert!(ui.asleep);
     assert_eq!(env.fs.borrow().write_gen(), generation);
 }
+
+std::thread_local! {
+    static LATE_FUSED_READS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+fn one_fused_read(output: &mut [u8; 32]) -> bool {
+    LATE_FUSED_READS.with(|reads| {
+        let count = reads.get();
+        reads.set(count + 1);
+        if count == 0 {
+            output.fill(0x66);
+            true
+        } else {
+            false
+        }
+    })
+}
+
+#[test]
+fn a_late_fused_read_failure_abandons_piv_change_and_unblock() {
+    for unblock in [false, true] {
+        let mut env = Env::new();
+        let key = [0x66; 32];
+        let mut fused_device = dev();
+        fused_device.otp_key = Some(&key);
+        fused_device.latched = true;
+        files::scan_files(
+            &fused_device,
+            &mut env.fs.borrow_mut(),
+            &mut *env.rng.borrow_mut(),
+        )
+        .unwrap();
+        env.keys.mkek_source = Some(FusedKey::latched(one_fused_read));
+        LATE_FUSED_READS.with(|reads| reads.set(0));
+        let mut taps = pin_entry(if unblock {
+            default(PinRef::Puk)
+        } else {
+            default(PinRef::Pin)
+        });
+        taps.extend(pin_entry(NEW_PIN));
+        taps.extend(pin_entry(NEW_PIN));
+        let mut ui = env.ui(Pad::taps(&taps));
+        ui.hooks.presence_ms = 3000;
+        let mut before = [0; 256];
+        let length = env
+            .fs
+            .borrow_mut()
+            .read(files::EF_PIN, &mut before)
+            .unwrap();
+        if unblock {
+            env.local(&mut ui).run_unblock_piv_pin();
+        } else {
+            env.local(&mut ui).run_change_piv_ref(PinRef::Pin);
+        }
+        assert_eq!(LATE_FUSED_READS.with(core::cell::Cell::get), 2);
+        let mut after = [0; 256];
+        assert_eq!(
+            env.fs.borrow_mut().read(files::EF_PIN, &mut after),
+            Some(length)
+        );
+        assert_eq!(&after[..length], &before[..length]);
+        assert_eq!(
+            rsk_piv::verify_reference(
+                &fused_device,
+                &mut env.fs.borrow_mut(),
+                PinRef::Pin,
+                rsk_piv::pad_pin(default(PinRef::Pin)).unwrap().expose()
+            ),
+            rsk_sdk::Sw::OK
+        );
+    }
+}

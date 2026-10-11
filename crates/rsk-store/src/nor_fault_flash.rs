@@ -34,7 +34,7 @@ struct ReadImage {
 }
 #[derive(Clone)]
 pub struct FaultFlash {
-    pub inner: SharedMock,
+    pub(in crate::tests) inner: SharedMock,
     rules: Rc<RefCell<Vec<Armed>>>,
     events: Rc<RefCell<Vec<(Io, u32, usize)>>>,
     read_image: Rc<RefCell<Option<ReadImage>>>,
@@ -68,6 +68,9 @@ impl FaultFlash {
     }
     pub fn events(&self) -> Vec<(Io, u32, usize)> {
         self.events.borrow().clone()
+    }
+    pub fn image(&self) -> Vec<u8> {
+        self.inner.bytes.borrow().clone()
     }
     pub fn hits(&self) -> Vec<usize> {
         self.rules.borrow().iter().map(|rule| rule.hits).collect()

@@ -169,3 +169,7 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
         block_on(self.flash.erase(self.range.start, self.range.end)).map_err(|_| Error::MemoryFatal)
     }
 }
+
+#[cfg(test)]
+#[path = "bank_tests.rs"]
+mod tests;

@@ -1426,3 +1426,14 @@ fn a_current_tag_with_an_invalid_authenticator_is_not_resealed_as_a_seed() {
     );
     assert_eq!(retained, blob);
 }
+
+#[test]
+fn an_absent_global_signature_counter_reads_zero_without_initializing_it() {
+    let mut fs = Fs::new(rsk_fs::storage::ram::RamStorage::new());
+    fs.scan();
+    let generation = fs.write_gen();
+    assert_eq!(global_sign_counter(&mut fs), Ok(0));
+    assert_eq!(fs.write_gen(), generation);
+    fs.put_counter(EF_COUNTER, &7u32.to_le_bytes()).unwrap();
+    assert_eq!(global_sign_counter(&mut fs), Ok(7));
+}

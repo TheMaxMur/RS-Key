@@ -932,3 +932,23 @@ fn makecred_large_blob_key_must_be_a_boolean() {
         assert_refused(&r, CtapError::CborUnexpectedType, label);
     }
 }
+
+#[test]
+fn an_unknown_extension_output_has_the_helpers_explicit_absent_answer() {
+    let response = mc_hmac_secret(PinProto::Two, true, &|encoder| {
+        encoder.bool(true).unwrap();
+    });
+    assert_ok(&response);
+    let data = auth_data(&response);
+    assert!(ext_output(&data, "hmac-secret").unwrap().bool().unwrap());
+    assert!(ext_output(&data, "unknown-extension").is_none());
+}
+
+#[test]
+#[should_panic(expected = "the credential public key carries no alg")]
+fn the_public_key_oracle_refuses_a_response_without_its_algorithm() {
+    let mut data = auth_data(&make_es256());
+    data.truncate(cose_start(&data));
+    data.push(0xa0);
+    let _ = cose_alg(&data);
+}
