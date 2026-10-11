@@ -38,6 +38,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Critical mutation verification: add independent ML-KEM ACVP and legacy PIN-KDF
+  vectors, OpenSSL-checked ML-DSA boundary candidates, one-shot crypto fault
+  probes, and live-field checks of secret destructors. Restore behavioral
+  witnesses for torn grant removal and OATH authorization, and repair the
+  local clientPIN budget defect injected by co-refutation.
+  bcdDevice `0x0A9F` → `0x0AA0`: the build gate counts inline test probes as a build change; no
+  firmware behaviour change.
+
 - Current host-profile coverage: exercise authenticated storage v2 APIs and
   reachable parser, applet, display and test-util paths across the declared
   feature profiles. One-shot test hooks exercise rare U2F key-construction and

@@ -127,3 +127,46 @@ fn hint_unpack_rejects_overlarge_count() {
     buf[omega as usize] = (omega + 1) as u8; // row-0 count > omega
     assert!(hint_bit_unpack::<K>(omega, &buf).is_err());
 }
+
+#[test]
+fn signed_unpack_reads_the_entire_encoded_range_without_clamping() {
+    for (a, b, bits) in [(2, 2, 3), (4, 4, 4), (4095, 4096, 13)] {
+        for byte in [0, 1, 0x55, 0xaa, 0xff] {
+            let encoded = vec![byte; 32 * bits];
+            let decoded = bit_unpack(&encoded, a, b).unwrap();
+            for i in 0..crate::params::N {
+                let raw: i32 = (0..bits)
+                    .map(|bit| {
+                        let position = i * bits + bit;
+                        i32::from((encoded[position / 8] >> (position % 8)) & 1) << bit
+                    })
+                    .sum();
+                assert_eq!(
+                    decoded.0[i],
+                    b - raw,
+                    "a={a} b={b} byte={byte} coefficient={i}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn hint_positions_must_increase_strictly_within_each_row() {
+    for positions in [[7, 7], [8, 7]] {
+        let mut encoded = [0; 84];
+        encoded[..2].copy_from_slice(&positions);
+        encoded[80..].fill(2);
+        assert!(
+            hint_bit_unpack::<4>(80, &encoded).is_err(),
+            "accepted {positions:?}"
+        );
+    }
+    let mut encoded = [0; 84];
+    encoded[..2].copy_from_slice(&[7, 8]);
+    encoded[80..].fill(2);
+    let decoded = hint_bit_unpack::<4>(80, &encoded).unwrap();
+    assert_eq!(decoded[0].0[7], 1);
+    assert_eq!(decoded[0].0[8], 1);
+    assert_eq!(decoded[0].0.iter().sum::<i32>(), 2);
+}

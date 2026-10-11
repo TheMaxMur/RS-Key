@@ -26,6 +26,8 @@ impl Drop for Poly {
     fn drop(&mut self) {
         let Self(coeffs) = self;
         coeffs.zeroize();
+        #[cfg(test)]
+        crate::tests::observe_poly_drop(coeffs);
     }
 }
 

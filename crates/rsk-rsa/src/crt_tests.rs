@@ -23,6 +23,28 @@ fn crt_plaintext_refuses_short_output_and_degenerate_collision_without_panicking
     }
 }
 
+#[test]
+fn an_exact_crt_buffer_accepts_each_five_field_blob() {
+    for key in [test_key_1024(), test_key()] {
+        let length = key.size() / 2 * 5;
+        let mut output = vec![0; length + 1];
+        output[length] = 0xa5;
+        assert_eq!(crt_plaintext(&key, &mut output[..length]), Ok(length));
+        assert_eq!(output[length], 0xa5);
+        let crt = crt_from_plain(&output[..length]).unwrap();
+        assert_eq!(crt.modulus_len(), key.size());
+    }
+}
+
+#[test]
+fn the_layout_discriminator_accepts_the_smallest_modulus_with_an_inverse() {
+    let mut record = [0; 320];
+    record[63] = 2;
+    record[127] = 3;
+    record[319] = 1;
+    assert_eq!(parse_rsa_blob(&record), Ok((64, true)));
+}
+
 // A 256-byte PKCS#1-shaped block guaranteed < n (leads 00 01), so the raw private
 // op is well-defined and the fault check passes.
 fn sample_block() -> [u8; 256] {
@@ -112,10 +134,15 @@ fn private_op_refuses_a_faulted_crt_intermediate() {
         faulted[(field + 1) * 128 - 1] ^= 0x01;
         assert_eq!(parse_rsa_blob(&faulted[..n]).unwrap(), (128, true));
         let crt = crt_from_plain(&faulted[..n]).unwrap();
+        sig.fill(0xa5);
         assert_eq!(
             private_op(&crt, &c, &mut SeqRng(1), &mut sig),
             Err(RsaError::Failed),
             "a signature over a faulted {what} left private_op"
+        );
+        assert_eq!(
+            sig, [0xa5; MAX_RSA_BYTES],
+            "faulted {what} published output"
         );
     }
 }

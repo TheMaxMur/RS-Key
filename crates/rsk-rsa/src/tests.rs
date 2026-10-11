@@ -2,6 +2,167 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DropSite {
+    Key,
+    Params,
+    Crt,
+    Search,
+}
+
+std::thread_local! {
+    static DROP_WIPED: core::cell::Cell<Option<(DropSite, bool)>> = const {
+        core::cell::Cell::new(None)
+    };
+}
+
+fn observe_drop(site: DropSite, wiped: bool) {
+    DROP_WIPED.with(|observed| {
+        if observed.get().is_some_and(|(expected, _)| expected == site) {
+            observed.set(Some((site, wiped)));
+        }
+    });
+}
+
+fn bignum_wiped(value: &num_bigint_dig::BigUint) -> bool {
+    // Zeroize leaves zero limbs without normalizing the integer for arithmetic.
+    let bytes = rsk_secret::Secret::new(value.to_bytes_le());
+    bytes.expose().iter().all(|&byte| byte == 0)
+}
+
+pub(crate) fn observe_bignum_drop(site: DropSite, values: &[&num_bigint_dig::BigUint]) {
+    observe_drop(site, values.iter().all(|value| bignum_wiped(value)));
+}
+
+pub(crate) fn observe_crt_drop(fields: &[&[u8]]) {
+    observe_drop(
+        DropSite::Crt,
+        fields
+            .iter()
+            .all(|field| field.iter().all(|&byte| byte == 0)),
+    );
+}
+
+pub(crate) fn observe_search_drop(prime: Option<&num_bigint_dig::BigUint>) {
+    observe_drop(DropSite::Search, prime.is_none_or(bignum_wiped));
+}
+
+#[test]
+fn dropping_keys_crt_parameters_and_an_abandoned_search_wipes_live_secrets() {
+    for site in [
+        DropSite::Key,
+        DropSite::Params,
+        DropSite::Crt,
+        DropSite::Search,
+    ] {
+        let key = crate::fixtures::test_key();
+        let crt = crate::fixtures::crt_of(&key);
+        let mut search = RsaKeygen::new(2048);
+        let prime =
+            num_bigint_dig::BigUint::from_bytes_be(&crate::fixtures::hex(crate::fixtures::P_HEX));
+        assert!(matches!(search.offer(prime), RsaStep::More));
+        DROP_WIPED.with(|observed| observed.set(Some((site, false))));
+        match site {
+            DropSite::Key | DropSite::Params => drop(key),
+            DropSite::Crt => drop(crt),
+            DropSite::Search => drop(search),
+        }
+        DROP_WIPED.with(|observed| {
+            assert_eq!(
+                observed.replace(None),
+                Some((site, true)),
+                "{site:?} survived Drop"
+            );
+        });
+    }
+}
+
+#[test]
+fn device_word_adapters_match_integer_byte_order_and_preserve_the_tail() {
+    for words in [0, 1, 2, 8, 16, 128] {
+        let expected: Vec<u32> = (0..words)
+            .map(|i| 0x89abcdef ^ (i as u32 * 0x01020304))
+            .collect();
+        let le: Vec<_> = expected
+            .iter()
+            .flat_map(|word| word.to_le_bytes())
+            .collect();
+        let be: Vec<_> = expected
+            .iter()
+            .rev()
+            .flat_map(|word| word.to_be_bytes())
+            .collect();
+        let mut output = vec![0xa5a5a5a5; words + 1];
+        bytes_to_words_le(&le, &mut output[..words]);
+        assert_eq!(&output[..words], &expected);
+        assert_eq!(output[words], 0xa5a5a5a5);
+        output.fill(0xa5a5a5a5);
+        be_bytes_to_words_le(&be, &mut output[..words]);
+        assert_eq!(&output[..words], &expected);
+        assert_eq!(output[words], 0xa5a5a5a5);
+        let mut bytes = vec![0xa5; le.len() + 1];
+        words_to_bytes_le(&expected, &mut bytes[..le.len()]);
+        assert_eq!(&bytes[..le.len()], &le);
+        assert_eq!(bytes[le.len()], 0xa5);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PrimalityGate {
+    Fermat,
+    StrongMr,
+}
+
+std::thread_local! {
+    static PRIMALITY_FAULT: core::cell::Cell<Option<(PrimalityGate, bool)>> = const {
+        core::cell::Cell::new(None)
+    };
+}
+
+pub(crate) fn inject_primality_fault(gate: PrimalityGate, modulus: &[u8]) -> Option<bool> {
+    PRIMALITY_FAULT.with(|fault| {
+        let (expected, prime) = fault.get()?;
+        let wanted = if prime {
+            &KAT_PRIME_LE
+        } else {
+            &KAT_COMPOSITE_LE
+        };
+        if gate != expected || modulus != wanted {
+            return None;
+        }
+        fault.set(None);
+        Some(!prime)
+    })
+}
+
+#[test]
+fn every_failed_primality_self_test_disables_key_generation() {
+    assert!(self_test());
+    for gate in [PrimalityGate::Fermat, PrimalityGate::StrongMr] {
+        for prime in [false, true] {
+            PRIMALITY_FAULT.with(|fault| fault.set(Some((gate, prime))));
+            assert!(!self_test(), "self-test accepted {gate:?}, prime={prime}");
+            PRIMALITY_FAULT.with(|fault| assert!(fault.get().is_none()));
+            assert!(self_test());
+            PRIMALITY_FAULT.with(|fault| fault.set(Some((gate, prime))));
+            assert!(
+                !RsaKeygen::new(2048).usable(),
+                "keygen accepted {gate:?}, prime={prime}"
+            );
+            PRIMALITY_FAULT.with(|fault| assert!(fault.get().is_none()));
+            assert!(RsaKeygen::new(2048).usable());
+        }
+    }
+}
+
+#[test]
+fn a_maximum_width_sieve_carry_exhausts_the_window_without_running_past_it() {
+    let mut sieve = IncrementalSieve::new();
+    sieve.reseed(MAX_RSA_BYTES / 2, &[0xff; MAX_RSA_BYTES / 2]);
+    assert_eq!(sieve.step(), None);
+    assert_eq!(sieve.step(), None);
+}
 use num_bigint_dig::BigUint;
 
 #[test]
@@ -163,11 +324,16 @@ fn scrubbing_a_sieve_erases_candidates_and_residues_and_allows_reuse() {
 #[test]
 fn overflow_and_the_window_limit_require_a_new_seed() {
     let mut sieve = IncrementalSieve::new();
+    assert!(sieve.needs_seed());
+    assert_eq!(sieve.step(), None);
     sieve.reseed(128, &[0xFF; 128]);
+    assert!(!sieve.needs_seed());
     assert_eq!(sieve.step(), None);
     assert!(sieve.needs_seed());
     sieve.reseed(128, &[0x11; 128]);
-    for _ in 1..SIEVE_WINDOW {
+    assert!(!sieve.needs_seed());
+    assert!(sieve.step().is_some());
+    for _ in 2..SIEVE_WINDOW {
         assert!(sieve.step().is_some());
     }
     assert_eq!(sieve.step(), None);

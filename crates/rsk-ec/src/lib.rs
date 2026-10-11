@@ -157,6 +157,8 @@ pub fn sign_p256(d: &p256::Scalar, prehash: &[u8]) -> Option<p256::ecdsa::Signat
     );
     let mut kb = p256::FieldBytes::default();
     kgen.fill_next_k(&mut kb);
+    #[cfg(test)]
+    tests::override_nonce(&mut kb);
     let k = Option::<p256::Scalar>::from(p256::Scalar::from_repr(kb))?;
     let k_inv = Option::<p256::Scalar>::from(k.invert())?;
     let reduce = |b: &[u8]| <p256::Scalar as Reduce<U256>>::reduce(&U256::from_be_slice(b));
@@ -187,6 +189,8 @@ pub fn sign_p384(d: &p384::Scalar, prehash: &[u8]) -> Option<p384::ecdsa::Signat
     );
     let mut kb = p384::FieldBytes::default();
     kgen.fill_next_k(&mut kb);
+    #[cfg(test)]
+    tests::override_nonce(&mut kb);
     let k = Option::<p384::Scalar>::from(p384::Scalar::from_repr(kb))?;
     let k_inv = Option::<p384::Scalar>::from(k.invert())?;
     let reduce = |b: &[u8]| <p384::Scalar as Reduce<U384>>::reduce(&U384::from_be_slice(b));
@@ -217,6 +221,8 @@ pub fn sign_k256(d: &k256::Scalar, prehash: &[u8]) -> Option<k256::ecdsa::Signat
     );
     let mut kb = k256::FieldBytes::default();
     kgen.fill_next_k(&mut kb);
+    #[cfg(test)]
+    tests::override_nonce(&mut kb);
     let k = Option::<k256::Scalar>::from(k256::Scalar::from_repr(kb))?;
     let k_inv = Option::<k256::Scalar>::from(k.invert())?;
     let reduce = |b: &[u8]| <k256::Scalar as Reduce<U256>>::reduce(&U256::from_be_slice(b));

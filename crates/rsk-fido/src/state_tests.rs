@@ -349,3 +349,31 @@ fn the_generated_relation_refuses_an_out_of_domain_pre_state() {
         AState::default(),
     ));
 }
+
+std::thread_local! {
+    static DROP_WIPED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+pub(super) fn observe_drop(ephemeral: &[u8; 32], token: &[u8; 32]) {
+    DROP_WIPED.with(|observed| {
+        if observed.get().is_some() {
+            observed.set(Some(*ephemeral == [0; 32] && *token == [0; 32]));
+        }
+    });
+}
+
+#[test]
+fn dropping_fido_state_wipes_both_session_secrets_before_their_lifetimes_end() {
+    let mut state = FidoState::new();
+    state.ephemeral.fill(0x5a);
+    state.paut.token.fill(0xa5);
+    DROP_WIPED.with(|observed| observed.set(Some(false)));
+    drop(state);
+    DROP_WIPED.with(|observed| {
+        assert_eq!(
+            observed.replace(None),
+            Some(true),
+            "session secrets survived Drop"
+        );
+    });
+}

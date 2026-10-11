@@ -17,14 +17,33 @@ fn e65537() -> BigUint {
 fn public_exponent_refusals_are_not_masked_by_a_missing_inverse() {
     for (p, q, e) in [
         (big(11), big(13), big(1)),
-        (big(11), big(13), BigUint::from(*PUB_EXP_RANGE.end() + 6)),
+        (
+            (big(1) << 64) + big(3),
+            big(5),
+            BigUint::from(*PUB_EXP_RANGE.end() + 6),
+        ),
         (big(3), big(5), big(17)),
-        (big(2), big(5), big(3)),
+        (big(4), big(7), big(5)),
     ] {
         let lambda = (&p - big(1)).lcm(&(&q - big(1)));
         assert_eq!(e.gcd(&lambda), big(1));
         assert!(RsaKey::from_p_q(p, q, e).is_none());
     }
+}
+
+#[test]
+fn the_largest_supported_public_exponent_is_still_accepted() {
+    let exponent = BigUint::from(*PUB_EXP_RANGE.end());
+    let mut seen = 0;
+    for prime in [p(), q()] {
+        if exponent.gcd(&(&prime - big(1))) != big(1) {
+            continue;
+        }
+        let key = RsaKey::from_p_q(prime, big(5), exponent.clone()).unwrap();
+        assert_eq!(key.e_be(), exponent.to_bytes_be());
+        seen += 1;
+    }
+    assert!(seen > 0, "no coprime exponent-boundary fixture ran");
 }
 
 #[test]
@@ -203,10 +222,12 @@ fn private_op_refuses_a_faulted_crt_intermediate() {
     );
 
     k.crt.as_mut().unwrap().dp += big(1);
+    out.fill(0xa5);
     assert_eq!(
         k.private_op(&em[..mlen], &mut SeqRng(5), &mut out),
         Err(RsaError::Failed)
     );
+    assert_eq!(out, [0xa5; MAX_RSA_BYTES], "faulted CRT published output");
 }
 
 #[test]
@@ -288,4 +309,32 @@ fn a_non_coprime_blind_is_discarded_before_an_invertible_pair() {
     assert_eq!(r.expose(), &big(2));
     assert_eq!(inverse.expose(), &big(8));
     assert_eq!((r.expose() * inverse.expose()) % big(15), big(1));
+}
+
+#[test]
+fn private_operation_requests_one_modulus_width_blind() {
+    struct Blind;
+    impl Rng for Blind {
+        fn fill(&mut self, output: &mut [u8]) {
+            assert_eq!(
+                output.len(),
+                hex(N_HEX).len(),
+                "blinding draw has the wrong width"
+            );
+            output.fill(0);
+            *output.last_mut().unwrap() = 1;
+        }
+    }
+    let key = test_key();
+    let mut ciphertext = [0; 256];
+    ciphertext[255] = 42;
+    let mut output = [0xa5; MAX_RSA_BYTES];
+    assert_eq!(
+        key.private_op(&ciphertext, &mut Blind, &mut output),
+        Ok(256)
+    );
+    assert_eq!(&output[256..], &[0xa5; MAX_RSA_BYTES - 256]);
+    let recovered = BigUint::from_bytes_be(&output[..256])
+        .modpow(&e65537(), &BigUint::from_bytes_be(&hex(N_HEX)));
+    assert_eq!(recovered, big(42));
 }

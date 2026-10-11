@@ -66,3 +66,18 @@ fn make_use_hint_roundtrip() {
         }
     }
 }
+
+#[test]
+fn use_hint_matches_the_spec_at_zero_low_bits_and_both_wraps() {
+    for (p, modulus) in [(ML_DSA_44, 44), (ML_DSA_65, 16)] {
+        for high in 0..modulus {
+            for low in [-1, 0, 1] {
+                let r = (high * 2 * p.gamma2 + low).rem_euclid(Q);
+                assert_eq!(decompose(p.gamma2, r), (high, low));
+                assert_eq!(use_hint(p.gamma2, 0, r), high);
+                let expected = (high + if low > 0 { 1 } else { -1 }).rem_euclid(modulus);
+                assert_eq!(use_hint(p.gamma2, 1, r), expected, "high={high} low={low}");
+            }
+        }
+    }
+}

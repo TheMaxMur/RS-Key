@@ -3,6 +3,94 @@
 
 use super::*;
 
+std::thread_local! {
+    static NONCE: std::cell::RefCell<Option<std::vec::Vec<u8>>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+pub(super) fn override_nonce(output: &mut [u8]) {
+    NONCE.with(|nonce| {
+        if let Some(bytes) = nonce.borrow_mut().take() {
+            output.copy_from_slice(&bytes);
+        }
+    });
+}
+
+macro_rules! nonce_refusals {
+    ($name:ident, $curve:ident, $sign:ident, $scalar:ident, $width:expr) => {
+        #[test]
+        fn $name() {
+            use $curve::ecdsa::signature::hazmat::PrehashVerifier;
+            use $curve::elliptic_curve::{PrimeField, ops::Reduce, point::AffineCoordinates};
+
+            let mut digest = [0; $width];
+            digest[$width - 1] = 1;
+            let ordinary = $scalar();
+            let baseline = $sign(&ordinary, &digest).unwrap();
+            let r = <$curve::Scalar as Reduce<$curve::FieldBytes>>::reduce(
+                &$curve::AffinePoint::GENERATOR.x(),
+            );
+            let zero_s = -Option::<$curve::Scalar>::from(r.invert()).unwrap();
+            assert_eq!($curve::Scalar::ONE + r * zero_s, $curve::Scalar::ZERO);
+
+            for (nonce, key, refusal) in [
+                (std::vec![0xff; $width], ordinary, "out-of-range nonce"),
+                (std::vec![0; $width], ordinary, "non-invertible nonce"),
+                ({
+                    let mut one = std::vec![0; $width];
+                    one[$width - 1] = 1;
+                    one
+                }, zero_s, "zero signature scalar"),
+            ] {
+                NONCE.with(|slot| *slot.borrow_mut() = Some(nonce));
+                assert!($sign(&key, &digest).is_none(), "accepted {refusal}");
+                NONCE.with(|slot| assert!(slot.borrow().is_none()));
+                assert_eq!($sign(&ordinary, &digest).unwrap().to_bytes(), baseline.to_bytes());
+            }
+
+            let key = $curve::ecdsa::SigningKey::from_bytes(&ordinary.to_repr()).unwrap();
+            $curve::ecdsa::VerifyingKey::from(&key)
+                .verify_prehash(&digest, &baseline)
+                .unwrap();
+        }
+    };
+}
+
+nonce_refusals!(p256_nonce_refusals, p256, sign_p256, scalar_p256, 32);
+nonce_refusals!(p384_nonce_refusals, p384, sign_p384, scalar_p384, 48);
+nonce_refusals!(k256_nonce_refusals, k256, sign_k256, scalar_k256, 32);
+
+macro_rules! prehash_reference {
+    ($name:ident, $curve:ident, $sign:ident, $scalar:ident, $width:expr) => {
+        #[test]
+        fn $name() {
+            use $curve::ecdsa::signature::hazmat::{PrehashSigner, PrehashVerifier};
+            use $curve::elliptic_curve::PrimeField;
+
+            let scalar = $scalar();
+            let key = $curve::ecdsa::SigningKey::from_bytes(&scalar.to_repr()).unwrap();
+            for length in [$width / 2, $width - 1, $width, $width + 1, $width * 2] {
+                let digest: std::vec::Vec<_> = (0..length).map(|i| (i * 37) as u8).collect();
+                let actual = $sign(&scalar, &digest).unwrap();
+                let expected: $curve::ecdsa::Signature = key.sign_prehash(&digest).unwrap();
+                assert_eq!(
+                    actual.to_bytes(),
+                    expected.to_bytes(),
+                    "digest length {length}"
+                );
+                $curve::ecdsa::VerifyingKey::from(&key)
+                    .verify_prehash(&digest, &actual)
+                    .unwrap();
+            }
+        }
+    };
+}
+
+prehash_reference!(p256_prehash_widths, p256, sign_p256, scalar_p256, 32);
+prehash_reference!(p384_prehash_widths, p384, sign_p384, scalar_p384, 48);
+prehash_reference!(k256_prehash_widths, k256, sign_k256, scalar_k256, 32);
+
 #[test]
 fn p521_signing_rejects_non_sha512_digest_lengths() {
     let scalar = scalar_p521();
@@ -14,7 +102,15 @@ fn p521_signing_rejects_non_sha512_digest_lengths() {
             .is_none()
         );
     }
-    assert!(sign_p521(&scalar, &[0x5a; 64], &mut |b| b.fill(1)).is_some());
+    let mut draws = 0;
+    assert!(
+        sign_p521(&scalar, &[0x5a; 64], &mut |b| {
+            draws += 1;
+            assert_eq!(draws, 1, "a valid P-521 nonce was discarded");
+            b.fill(1);
+        })
+        .is_some()
+    );
 }
 
 #[test]

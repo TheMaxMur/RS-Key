@@ -3,6 +3,44 @@
 
 use super::*;
 
+std::thread_local! {
+    static DROP_WIPED: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
+}
+
+pub(super) fn observe_drop(scalar: &[u8]) {
+    DROP_WIPED.with(|observed| {
+        if observed.get().is_some() {
+            observed.set(Some(scalar.iter().all(|&byte| byte == 0)));
+        }
+    });
+}
+
+#[test]
+fn dropping_each_private_key_variant_wipes_its_live_scalar() {
+    for key in [
+        PrivKey::P256([0x5a; 32]),
+        PrivKey::P384([0x5a; 48]),
+        PrivKey::P521([0x5a; 66]),
+        PrivKey::K256([0x5a; 32]),
+        PrivKey::Bp256([0x5a; 32]),
+        PrivKey::Bp384([0x5a; 48]),
+        PrivKey::Ed25519([0x5a; 32]),
+        PrivKey::X25519([0x5a; 32]),
+    ] {
+        let curve = key.curve();
+        assert!(key.scalar().iter().all(|&byte| byte == 0x5a));
+        DROP_WIPED.with(|observed| observed.set(Some(false)));
+        drop(key);
+        DROP_WIPED.with(|observed| {
+            assert_eq!(
+                observed.replace(None),
+                Some(true),
+                "{curve:?} survived Drop"
+            );
+        });
+    }
+}
+
 #[test]
 fn imported_scalars_cannot_exceed_any_curves_field_width() {
     for (curve, width) in [

@@ -72,6 +72,8 @@ impl<const K: usize, const L: usize> Drop for ExpandedKey<K, L> {
         rho.zeroize();
         cap_k.zeroize();
         tr.zeroize();
+        #[cfg(test)]
+        tests::observe_drop(rho, cap_k, tr);
     }
 }
 

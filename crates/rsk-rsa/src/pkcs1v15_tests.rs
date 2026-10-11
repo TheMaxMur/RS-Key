@@ -2,6 +2,45 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[test]
+fn minimum_padding_accepts_an_empty_message_and_an_exact_output() {
+    let mut encoded = [0xff; 11];
+    encoded[..2].copy_from_slice(&[0, 2]);
+    encoded[10] = 0;
+    assert_eq!(unpad_encrypt(&encoded, &mut []), Ok(0));
+    let mut message = encoded.to_vec();
+    message.extend_from_slice(b"msg");
+    let mut output = [0xa5; 4];
+    assert_eq!(unpad_encrypt(&message, &mut output[..3]), Ok(3));
+    assert_eq!(&output, b"msg\xa5");
+}
+
+#[test]
+fn software_decipher_accepts_a_maximum_width_wycheproof_key() {
+    let case = crate::wycheproof::decrypt()
+        .into_iter()
+        .find(|case| {
+            case.bits == (MAX_RSA_BYTES * 8) as u16
+                && case.result == crate::wycheproof::Outcome::Valid
+        })
+        .unwrap();
+    let key =
+        crate::rsa_from_pqe(crate::RSA_PUB_EXP_BE, &hex(case.crt[0]), &hex(case.crt[1])).unwrap();
+    let expected = hex(case.msg);
+    let mut output = vec![0xa5; expected.len() + 1];
+    assert_eq!(
+        rsa_decrypt(
+            &key,
+            &hex(case.ct),
+            &mut SeqRng(3),
+            &mut output[..expected.len()]
+        ),
+        Ok(expected.len())
+    );
+    assert_eq!(&output[..expected.len()], &expected);
+    assert_eq!(output[expected.len()], 0xa5);
+}
 use crate::fixtures::{DI_SHA256, SeqRng, crt_of, test_key};
 use crate::vectors::{ENCRYPT, SIGN_SHA256, hex};
 

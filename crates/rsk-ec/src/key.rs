@@ -57,6 +57,8 @@ impl Drop for PrivKey {
             PrivKey::P384(s) | PrivKey::Bp384(s) => s.zeroize(),
             PrivKey::P521(s) => s.zeroize(),
         }
+        #[cfg(test)]
+        tests::observe_drop(self.scalar());
     }
 }
 

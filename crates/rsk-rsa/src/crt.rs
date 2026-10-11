@@ -186,6 +186,8 @@ impl Drop for RsaCrt {
         dp.zeroize();
         dq.zeroize();
         qinv.zeroize();
+        #[cfg(test)]
+        crate::tests::observe_crt_drop(&[p, q, dp, dq, qinv]);
     }
 }
 
