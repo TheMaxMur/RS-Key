@@ -779,7 +779,7 @@ impl Drop for FidoState {
     fn drop(&mut self) {
         // Exhaustive on purpose: a field added later stops this pattern compiling
         // until someone decides whether it is a secret. Nothing else would catch a
-        // new key that misses the scrub — a dropped value has no test that reads it.
+        // new key that misses the scrub — the host probe observes only today's keys.
         let Self {
             ephemeral,
             ephemeral_set: _,
@@ -830,6 +830,9 @@ impl Drop for FidoState {
             ephemeral.zeroize();
             token.zeroize();
         }
+        // Host tests observe live fields, without reading storage after Drop.
+        #[cfg(test)]
+        tests::observe_drop(ephemeral, token);
     }
 }
 

@@ -44,6 +44,8 @@ impl Drop for CrtParams {
         dp.zeroize();
         dq.zeroize();
         qinv.zeroize();
+        #[cfg(test)]
+        crate::tests::observe_bignum_drop(crate::tests::DropSite::Params, &[dp, dq, qinv]);
     }
 }
 
@@ -75,6 +77,8 @@ impl Drop for RsaKey {
         d.zeroize();
         p.zeroize();
         q.zeroize();
+        #[cfg(test)]
+        crate::tests::observe_bignum_drop(crate::tests::DropSite::Key, &[d, p, q]);
     }
 }
 

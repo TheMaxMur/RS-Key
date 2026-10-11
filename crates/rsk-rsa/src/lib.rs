@@ -353,7 +353,7 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-#[cfg(target_os = "none")]
+#[cfg(any(test, target_os = "none"))]
 fn bytes_to_words_le(src: &[u8], dst: &mut [u32]) {
     for (i, w) in dst.iter_mut().enumerate() {
         let b = i * 4;
@@ -361,7 +361,7 @@ fn bytes_to_words_le(src: &[u8], dst: &mut [u32]) {
     }
 }
 
-#[cfg(target_os = "none")]
+#[cfg(any(test, target_os = "none"))]
 fn words_to_bytes_le(src: &[u32], dst: &mut [u8]) {
     for (i, w) in src.iter().enumerate() {
         dst[i * 4..i * 4 + 4].copy_from_slice(&w.to_le_bytes());
@@ -450,7 +450,7 @@ pub(crate) fn modexp_priv(
 
 /// The i-th least-significant 32-bit limb of a big-endian value: fill `dst`
 /// (length = `be.len() / 4`) with `be` re-read as little-endian u32 words.
-#[cfg(target_os = "none")]
+#[cfg(any(test, target_os = "none"))]
 fn be_bytes_to_words_le(be: &[u8], dst: &mut [u32]) {
     for (i, w) in dst.iter_mut().enumerate() {
         let hi = be.len() - 4 * i;
@@ -639,6 +639,10 @@ pub(crate) fn modexp_pub(
 /// be caught by the vetted final primality test), and a prime always passes — so
 /// this never rejects a real prime.
 pub fn passes_fermat_base2(n_le: &[u8]) -> bool {
+    #[cfg(test)]
+    if let Some(verdict) = tests::inject_primality_fault(tests::PrimalityGate::Fermat, n_le) {
+        return verdict;
+    }
     let mod_len = n_le.len();
     // exponent = n − 1 in big-endian. n is odd, so n − 1 just clears bit 0.
     let mut exp_be = Secret::<[u8; MAX_MOD]>::zeroed();
@@ -707,6 +711,10 @@ fn is_one_le(v: &[u8]) -> bool {
 /// tests hold the two implementations equal over random candidates and the
 /// canonical pseudoprime families.
 pub fn passes_strong_mr_base2(n_le: &[u8]) -> bool {
+    #[cfg(test)]
+    if let Some(verdict) = tests::inject_primality_fault(tests::PrimalityGate::StrongMr, n_le) {
+        return verdict;
+    }
     let len = n_le.len();
     debug_assert!(len >= 2 && n_le[0] & 1 == 1);
 

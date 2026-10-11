@@ -68,6 +68,8 @@ impl Drop for RsaKeygen {
         if let Some(p) = p {
             p.zeroize();
         }
+        #[cfg(test)]
+        crate::tests::observe_search_drop(p.as_ref());
     }
 }
 

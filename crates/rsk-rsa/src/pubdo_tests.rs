@@ -5,6 +5,13 @@ use super::*;
 use crate::fixtures::{N_HEX, hex, test_key};
 
 #[test]
+fn the_public_object_budget_is_the_widest_body_plus_its_wrapper() {
+    let mut out = [0; MAX_RSA_PUBDO];
+    let body = make_rsa_pub_body(&[0x5a; crate::MAX_RSA_BYTES], &[1; 8], &mut out);
+    assert_eq!(MAX_RSA_PUBDO - body, 5);
+}
+
+#[test]
 fn import_recovers_modulus() {
     // from_p_q must reconstruct N = P·Q (the make_rsa_response modulus).
     let key = test_key();
