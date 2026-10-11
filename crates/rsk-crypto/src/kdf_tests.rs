@@ -308,3 +308,58 @@ fn wiping_a_fused_read_clears_its_key_without_changing_its_latch() {
     assert_eq!(absent.key(), None);
     assert!(!absent.latched);
 }
+
+#[test]
+fn legacy_pin_hashes_match_independent_vectors_at_repeat_boundaries() {
+    fn digest(hex: &str) -> [u8; 32] {
+        assert_eq!(hex.len(), 64);
+        core::array::from_fn(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).unwrap())
+    }
+    let d = dev();
+    let mut seen = 0;
+    for line in include_str!("kdf_legacy_vectors.txt").lines() {
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let fields: std::vec::Vec<_> = line.split_whitespace().collect();
+        assert_eq!(fields.len(), 3);
+        let length: usize = fields[0].parse().unwrap();
+        let pin: std::vec::Vec<_> = (0..length).map(|i| (i * 37) as u8).collect();
+        assert_eq!(d.hash_multi(&pin), digest(fields[1]), "length {length}");
+        assert_eq!(
+            *d.double_hash_pin(&pin).expose(),
+            digest(fields[2]),
+            "length {length}"
+        );
+        seen += 1;
+    }
+    assert!(seen > 0, "no independent PIN-KDF vectors ran");
+}
+
+#[test]
+fn authenticated_empty_plaintext_round_trips_in_both_kdf_versions() {
+    let d = dev();
+    for version in [PinKdf::V1, PinKdf::V2] {
+        let mut encrypted = [0; NONCE_LEN + TAG_LEN];
+        assert_eq!(
+            d.encrypt_with_aad(
+                &[0x33; 32],
+                &[],
+                version,
+                &[0x44; NONCE_LEN],
+                &mut encrypted
+            ),
+            Ok(encrypted.len()),
+        );
+        let mut output = [0xa5; 1];
+        assert_eq!(
+            d.decrypt_with_aad(&[0x33; 32], &encrypted, version, &mut output),
+            Ok(0)
+        );
+        assert_eq!(output, [0xa5; 1]);
+        assert_eq!(
+            d.decrypt_with_aad(&[0x33; 32], &encrypted, version, &mut []),
+            Ok(0)
+        );
+    }
+}

@@ -50,6 +50,101 @@ fn malformed_ek_rejected() {
     assert!(mlkem768_encapsulate(&[0xFF; MLKEM768_EK_LEN], &[0u8; 32]).is_err());
 }
 
+fn hex(value: &str) -> std::vec::Vec<u8> {
+    assert!(value.len().is_multiple_of(2));
+    value
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| u8::from_str_radix(core::str::from_utf8(pair).unwrap(), 16).unwrap())
+        .collect()
+}
+
+#[test]
+fn acvp_keygen_matches_nists_encapsulation_keys() {
+    let mut seen = 0;
+    for line in include_str!("../../../third_party/acvp/mlkem-keygen.txt").lines() {
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let fields: std::vec::Vec<_> = line.split_whitespace().collect();
+        assert_eq!(fields.len(), 4);
+        assert_eq!(fields[1], "keyGen");
+        let seed = hex(fields[2]).try_into().unwrap();
+        let pair = MlKem768Pair::from_seed(&seed);
+        assert_eq!(
+            pair.encapsulation_key().as_slice(),
+            hex(fields[3]),
+            "tcId {}",
+            fields[0]
+        );
+        seen += 1;
+    }
+    assert!(seen > 0, "no ACVP keyGen cases ran");
+}
+
+#[test]
+#[expect(
+    deprecated,
+    reason = "ACVP decapsulation vectors supply expanded keys, not seeds"
+)]
+fn acvp_encapsulation_and_decapsulation_match_nist_including_implicit_rejection() {
+    let mut seen = [0; 2];
+    for line in include_str!("../../../third_party/acvp/mlkem-encapdecap.txt").lines() {
+        if line.starts_with('#') || line.is_empty() {
+            continue;
+        }
+        let fields: std::vec::Vec<_> = line.split_whitespace().collect();
+        match fields[1] {
+            "encapsulation" => {
+                assert_eq!(fields.len(), 6);
+                let ek = hex(fields[2]).try_into().unwrap();
+                let m = hex(fields[3]).try_into().unwrap();
+                let (ct, ss) = mlkem768_encapsulate(&ek, &m).unwrap();
+                assert_eq!(
+                    ct.as_slice(),
+                    hex(fields[4]),
+                    "tcId {} ciphertext",
+                    fields[0]
+                );
+                assert_eq!(ss.as_slice(), hex(fields[5]), "tcId {} secret", fields[0]);
+                seen[0] += 1;
+            }
+            "decapsulation" => {
+                assert_eq!(fields.len(), 5);
+                let expanded = ml_kem::ExpandedDecapsulationKey::<MlKem768>::try_from(
+                    hex(fields[2]).as_slice(),
+                )
+                .unwrap();
+                let pair = MlKem768Pair {
+                    dk: DecapsulationKey::from_expanded(&expanded).unwrap(),
+                };
+                let ct = hex(fields[3]).try_into().unwrap();
+                assert_eq!(
+                    pair.decapsulate(&ct).as_slice(),
+                    hex(fields[4]),
+                    "tcId {}",
+                    fields[0]
+                );
+                seen[1] += 1;
+            }
+            _ => panic!("unknown ACVP function"),
+        }
+    }
+    assert!(
+        seen.into_iter().all(|count| count > 0),
+        "an ACVP operation ran no cases"
+    );
+}
+
+#[test]
+fn encapsulation_key_modulus_check_refuses_the_first_unreduced_coefficient() {
+    let mut ek = [0; MLKEM768_EK_LEN];
+    ek[..2].copy_from_slice(&[0x00, 0x0d]);
+    assert!(mlkem768_encapsulate(&ek, &[0; 32]).is_ok());
+    ek[0] = 1;
+    assert_eq!(mlkem768_encapsulate(&ek, &[0; 32]), Err(Error::Pqc));
+}
+
 /// Emit a deterministic KAT (fixed `d‖z` seed + fixed `m`) so the host
 /// toolchain's ML-KEM-768 (OpenSSL, via `cryptography`) can be cross-checked
 /// against this RustCrypto implementation off-device: same seed must give the

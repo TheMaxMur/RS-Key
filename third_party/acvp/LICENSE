@@ -1,12 +1,17 @@
-The ML-DSA test vectors in this directory come from NIST's ACVP-Server,
+The ML-DSA and ML-KEM test vectors in this directory come from NIST's ACVP-Server,
 https://github.com/usnistgov/ACVP-Server, tag v1.1.0.43, commit
 975de31eb83d87039ec88934fdc47d8c312b892d: the keyGen, sigGen and sigVer files
-gen-val/json-files/ML-DSA-*-FIPS204/internalProjection.json. Their source is the
+gen-val/json-files/ML-DSA-*-FIPS204/internalProjection.json and
+gen-val/json-files/ML-KEM-*-FIPS203/internalProjection.json. Their source is the
 National Institute of Standards and Technology.
 
 Changed by RS-Key on 2026-09-22: filtered to the cases crates/rsk-mldsa can
 express and rewritten one case per line by scripts/acvp_vectors.py. Each file's
 header names its filter and the sha256 of the JSON it was written from.
+
+Changed by RS-Key on 2026-10-11: added ML-KEM-768 keyGen, encapsulation and
+decapsulation cases from the same revision, rewritten by that script. KeyGen
+retains d||z and ek; the operation cases retain their exact input/output bytes.
 
 ACVP-Server carries the notice below in its README rather than in a LICENSE
 file. It is reproduced intact, as it asks.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
-"""Regenerate third_party/acvp/mldsa-*.txt from NIST's ACVP-Server.
+"""Regenerate third_party/acvp/{mldsa,mlkem}-*.txt from NIST's ACVP-Server.
 
 `crates/rsk-mldsa` is checked against NIST's own expected results rather than a
 second implementation: key generation, signing and verification, for ML-DSA-44,
@@ -9,7 +9,8 @@ second implementation: key generation, signing and verification, for ML-DSA-44,
 pinned ACVP-Server commit, keeps the cases the crate's API can express — the
 external interface, pure (no pre-hash), mu computed inside — and writes one line
 of hex per case, so the tests need no JSON parser. A rerun at the same commit
-rewrites the files byte for byte. Run inside `nix develop`.
+rewrites the files byte for byte. ML-KEM-768 key generation, encapsulation and
+decapsulation use the corresponding FIPS 203 vectors. Run inside `nix develop`.
 """
 
 import hashlib
@@ -31,8 +32,7 @@ EXPRESSIBLE = {"signatureInterface": "external", "preHash": "pure", "externalMu"
 DETERMINISTIC_RND = "00" * 32
 
 
-def fetch(mode):
-    path = SOURCE.format(mode=mode)
+def fetch(path):
     with urllib.request.urlopen(URL.format(commit=COMMIT, path=path)) as reply:
         raw = reply.read()
     return path, hashlib.sha256(raw).hexdigest(), json.loads(raw)
@@ -67,7 +67,7 @@ FILES = (
 def main():
     OUT.mkdir(exist_ok=True)
     for mode, name, row, filtered, fields in FILES:
-        path, digest, data = fetch(mode)
+        path, digest, data = fetch(SOURCE.format(mode=mode))
         total, lines = 0, []
         for group in data["testGroups"]:
             total += len(group["tests"])
@@ -90,6 +90,41 @@ def main():
         ]
         (OUT / name).write_text("\n".join(header + lines) + "\n")
         print(f"{name}: {len(lines)} of {total} cases")
+    mlkem()
+
+
+def mlkem():
+    for mode in ["keyGen", "encapDecap"]:
+        path, digest, data = fetch(
+            f"gen-val/json-files/ML-KEM-{mode}-FIPS203/internalProjection.json"
+        )
+        lines = []
+        for group in data["testGroups"]:
+            if group["parameterSet"] != "ML-KEM-768":
+                continue
+            function = group.get("function", "keyGen")
+            for case in group["tests"]:
+                if function == "keyGen":
+                    fields = [case["d"] + case["z"], case["ek"]]
+                elif function == "encapsulation":
+                    fields = [case["ek"], case["m"], case["c"], case["k"]]
+                elif function == "decapsulation":
+                    fields = [case["dk"], case["c"], case["k"]]
+                else:
+                    continue
+                lines.append(" ".join([str(case["tcId"]), function, *fields]))
+        name = f"mlkem-{mode.lower()}.txt"
+        header = [
+            "# SPDX-License-Identifier: AGPL-3.0-only",
+            "# Copyright (C) 2026 RS-Key contributors",
+            f"# NIST ACVP ML-KEM-768 {mode} (FIPS 203). Written by scripts/acvp_vectors.py.",
+            f"# Source: usnistgov/ACVP-Server {TAG} ({COMMIT}),",
+            f"#   {path}, sha256 {digest}.",
+            "# Kept: ML-KEM-768 keyGen/encapsulation/decapsulation; NIST's notice in LICENSE.",
+            "# Fields: tcId function; keyGen: seed ek; encapsulation: ek m c k; decapsulation: dk c k.",
+        ]
+        (OUT / name).write_text("\n".join(header + lines) + "\n")
+        print(f"{name}: {len(lines)} cases")
 
 
 if __name__ == "__main__":
