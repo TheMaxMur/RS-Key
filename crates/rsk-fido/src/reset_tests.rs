@@ -1080,6 +1080,8 @@ fn provisioned_with_a_grant() -> TearAfter {
     pin_file[1] = 4; // the PIN's own length, in code points
     pin_file[2] = 1;
     fs.put(EF_PIN, &pin_file).unwrap();
+    // ensure_seed minted an unissued bootstrap grant before the PIN existed.
+    fs.force_delete(EF_PAUTHTOKEN.get()).unwrap();
     crate::seed::ensure_ppuat(&dev(), &mut fs, &mut rng).unwrap();
     fs.into_storage()
 }

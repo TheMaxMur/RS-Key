@@ -420,7 +420,15 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-fido"]
 expect = "killed"
-note = "eab4b5c reverted: EF_PAUTHTOKEN back in the deferred gate phase (it is a KeyFid, so `.get()`, not a match arm), where a torn wipe strands a grant with no PIN behind it."
+note = """eab4b5c reverted: EF_PAUTHTOKEN back in the deferred gate phase (it is a
+KeyFid, so `.get()`, not a match arm), where a torn wipe strands a grant with no
+PIN behind it. The 2026-10-11 direction audit found only the classifier-list
+test red: ensure_seed now mints an unissued grant before the fixture writes its
+PIN, so ensure_ppuat retained that earlier record and the alleged PIN-first
+fixture was grant-first. The fixture now removes that bootstrap grant and mints
+the issued one after the PIN. a_torn_reset_never_leaves_a_grant_without_its_pin
+then reads the issued grant from the medium over a deleted PIN under this patch;
+its device-wide sibling exercises the same order through factory_wipe."""
 
 # ---- rsk-device: presence arbitration + the PinLock carry -------------------
 
@@ -903,12 +911,28 @@ note = "the INIT length ceiling clamped-away instead of refused: a header declar
 
 [comutant.BugLocalPinIgnoresBudget]
 status = "patch"
-file = "crates/rsk-display/src/gates.rs"
-find = "                PinScope::Fido => rsk_fido::passkeys::pin_retries_left(&mut fs),"
-replace = "                PinScope::Fido => Some(255),"
+file = "crates/rsk-fido/src/clientpin.rs"
+find = """
+    if n != PIN_FILE_LEN || pin_data[0] == 0 {
+        return LocalPin::Blocked;
+    }
+    pin_data[0] -= 1;
+"""
+replace = """
+    if n != PIN_FILE_LEN || (fid != EF_PIN && pin_data[0] == 0) {
+        return LocalPin::Blocked;
+    }
+    pin_data[0] = pin_data[0].saturating_sub(1);
+"""
 slice = ["cargo", "test", "-p", "rsk-display"]
 expect = "killed"
-note = "the on-pad PIN pad ignores the exhausted EF_PIN counter, offering unlimited attempts past the lockout."
+note = """The on-pad clientPIN compares and grants access past its exhausted
+EF_PIN counter. The shared verifier owns that decision now: the old Some(255)
+caption patch still hit Blocked and killed only the token-notification count,
+not an authorization defect. This patch retains the device-PIN and record-width
+guards and lets the clientPIN compare at zero, saturating its decrement so a
+debug underflow is not the kill. The ordinary rsk-display caller must refuse the
+correct PIN on a fresh visit to the spent counter."""
 
 [comutant.BugLocalPinKeepsToken]
 status = "patch"
@@ -1190,7 +1214,11 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-oath"]
 expect = "killed"
-note = "CALCULATE runs without the access-code session: every credential's code is readable off an unvalidated applet."
+note = """CALCULATE runs without the access-code session: every credential's
+code is readable off an unvalidated applet. The old empty-body test only changed
+6982 to 6A80, with no credential served. The valid-request control in
+code_tests.rs first observes RFC 6238's 94287082, then locks the applet; the same
+request must refuse without VALIDATE. Under this patch it serves that code."""
 
 [comutant.BugOathTouchIgnored]
 status = "patch"

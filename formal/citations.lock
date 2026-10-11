@@ -147,8 +147,8 @@ assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset.rs	255-259	fn is_fi
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset.rs	283-283	|| fid == EF_PAUTHTOKEN.get()	|| fid == EF_PAUTHTOKEN.get()
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_assurance.rs	11-11	use crate::consts::{EF_ALWAYS_UV, EF_BACKUP_SEALED, EF_CRED, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_PIN};	use crate::consts::{EF_ALWAYS_UV, EF_BACKUP_SEALED, EF_CRED, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_PIN};
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	627-627	fn the_gate_set_defers_every_record_whose_absence_is_permissive() {	fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
-assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	1166-1166	fn a_torn_reset_never_leaves_a_grant_without_its_pin() {	fn a_torn_reset_never_leaves_a_grant_without_its_pin() {
-assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	1187-1187	fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {	fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {
+assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	1168-1168	fn a_torn_reset_never_leaves_a_grant_without_its_pin() {	fn a_torn_reset_never_leaves_a_grant_without_its_pin() {
+assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	1189-1189	fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {	fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/seed.rs	325-325	pub fn load_ppuat<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<Secret<[u8; 32]>> {	pub fn load_ppuat<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<Secret<[u8; 32]>> {
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/seed.rs	325-336	pub fn load_ppuat<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<Secret<[u8; 32]>> {	) -> Result<Secret<[u8; 32]>> {
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/seed.rs	329-330	/// [`load_ppuat`], minting a fresh token only when the record is confirmed absent —	/// the `pcmr` half of §6.5.5.7.2/.3. Unlike the session token it outlives the power
@@ -236,7 +236,7 @@ assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	189-206	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	}
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	273-273	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_tests.rs	724-724	fn a_torn_reset_never_unseals_a_surviving_seed() {	fn a_torn_reset_never_unseals_a_surviving_seed() {
-assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_tests.rs	1205-1205	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
+assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_tests.rs	1207-1207	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/state.rs	544-544	/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.	/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/state.rs	550-550	*self = Self::new();	*self = Self::new();
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-sdk/src/presence.rs	81-81	/// overrides this. CTAP 2.1 §6.6 exempts exactly such an authenticator from the	/// overrides this. CTAP 2.1 §6.6 exempts exactly such an authenticator from the
@@ -336,7 +336,7 @@ assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs	162-179	fn reset_keeps_the_backup_seal() {	}
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs	173-178	kani::cover!(	);
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_tests.rs	639-639	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_tests.rs	1459-1459	fn a_seed_the_medium_kept_stops_the_wipe_before_the_gates() {	fn a_seed_the_medium_kept_stops_the_wipe_before_the_gates() {
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_tests.rs	1461-1461	fn a_seed_the_medium_kept_stops_the_wipe_before_the_gates() {	fn a_seed_the_medium_kept_stops_the_wipe_before_the_gates() {
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	869-872	// material; the MSE channel is ChaCha20-Poly1305 — not approved transport).	return Err(CtapError::NotAllowed);
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	874-874	if try_backup_sealed(ctx.fs).map_err(|_| CtapError::Other)? {	if try_backup_sealed(ctx.fs).map_err(|_| CtapError::Other)? {
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	986-986	.put(EF_BACKUP_SEALED, &[1])	.put(EF_BACKUP_SEALED, &[1])
@@ -375,7 +375,7 @@ assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_assurance.rs	18-19	
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_assurance.rs	49-49	owner_seed: state.keydev_dec.is_some(),	owner_seed: state.keydev_dec.is_some(),
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_assurance.rs	245-268	pub fn well_formed(&self, volatile: &ResetVolatileView) -> bool {	}
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_refinement_kani.rs	41-46	fn symbolic_volatile() -> ResetVolatileView {	}
-assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_tests.rs	1205-1205	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
+assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_tests.rs	1207-1207	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/seed.rs	102-102	Ok(fs.try_exists(EF_KEY_DEV_ENC.get())? && !fs.try_exists(EF_KEY_DEV.get())?)	Ok(fs.try_exists(EF_KEY_DEV_ENC.get())? && !fs.try_exists(EF_KEY_DEV.get())?)
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/seed.rs	659-659	/// Refines `RSKeySecurityState!RamNeverOutlivesFlashSeed` — SEC-FIDO-007.	/// Refines `RSKeySecurityState!RamNeverOutlivesFlashSeed` — SEC-FIDO-007.
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/state.rs	398-399	/// Soft-lock: the seed decrypted by a vendor `UNLOCK`. RAM-only — held until	/// power-off, a reset, or an `AUT_DISABLE`; zeroized on `Drop` and on overwrite.
@@ -414,7 +414,7 @@ assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset.rs	187-187	/// `Fs:
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset.rs	235-259	pub fn is_fido_gate_fid(fid: u16) -> bool {	)
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset.rs	258-258	EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED	EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	33-33	fn reset_wipes_state_and_regenerates() {	fn reset_wipes_state_and_regenerates() {
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	1205-1205	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	1207-1207	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/state.rs	626-626	pub fn begin_using_token(&mut self, user_is_present: bool, now_ms: u64) {	pub fn begin_using_token(&mut self, user_is_present: bool, now_ms: u64) {
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/state_kani.rs	86-86	st.begin_using_token(false, now_ms);	st.begin_using_token(false, now_ms);
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fs/src/fs.rs	524-524	pub fn factory_wipe(	pub fn factory_wipe(

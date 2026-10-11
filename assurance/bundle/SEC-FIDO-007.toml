@@ -101,7 +101,7 @@ owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 # The unit test that kills that twin, recorded here because it counts in NO
 # derived column: `assurance_gate.py`'s `rust` axis drops filenames containing
 # `tests`, and its `test` axis reads only `tests/**/*.py`.
-owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1205 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed"
+owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1207 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed"
 
 # ---- 2. Commit, build and features -------------------------------------------
 

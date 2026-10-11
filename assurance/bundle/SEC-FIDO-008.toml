@@ -119,7 +119,7 @@ owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 # The test that falls when that twin is applied — and it asserts about the RAM
 # SEED, not about the token. Recorded because the `co = 1` column says nothing
 # about which half of which invariant the killing assertion is about.
-owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1205 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed — its assertion is `state.keydev_dec.is_none()`, which is `SEC-FIDO-007`'s consequent and not this one's antecedent"
+owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1207 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed — its assertion is `state.keydev_dec.is_none()`, which is `SEC-FIDO-007`'s consequent and not this one's antecedent"
 # The nearest thing in the suite to a shipped twin of THIS implication, and why
 # it is not one: it drives an UNTORN reset, where the twin's patch still runs
 # `ctx.state.reset()` before returning, so the assertion holds under the mutant.
