@@ -8,6 +8,7 @@ use embedded_storage_async::nor_flash::{MultiwriteNorFlash, NorFlash, ReadNorFla
 use rsk_sdk::error::{Error, Result};
 use rsk_secret::Secret;
 
+use crate::FlashBuf;
 use crate::verified_flash::VerifiedFlash;
 
 const IO_CHUNK: usize = 256;
@@ -68,7 +69,7 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
     pub fn read(&mut self, offset: u32, out: &mut [u8]) -> Result<()> {
         let span = self.span(offset, out.len())?;
         let read_size = u32::try_from(F::READ_SIZE).map_err(|_| Error::MemoryFatal)?;
-        let mut scratch = Secret::<[u8; IO_CHUNK]>::zeroed();
+        let mut scratch = Secret::new(FlashBuf::<IO_CHUNK>::new());
         let mut at = span.start;
         let mut copied = 0;
         while at < span.end {
@@ -101,7 +102,7 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
     pub fn program(&mut self, offset: u32, data: &[u8]) -> Result<()> {
         let span = self.span(offset, data.len())?;
         let write_size = u32::try_from(F::WRITE_SIZE).map_err(|_| Error::MemoryFatal)?;
-        let mut scratch = Secret::<[u8; IO_CHUNK]>::zeroed();
+        let mut scratch = Secret::new(FlashBuf::<IO_CHUNK>::new());
         let mut at = span.start;
         let mut copied = 0;
         while at < span.end {
@@ -142,7 +143,7 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
         if offset > self.capacity() {
             return Err(Error::MemoryFatal);
         }
-        let mut scratch = Secret::<[u8; IO_CHUNK]>::zeroed();
+        let mut scratch = Secret::new(FlashBuf::<IO_CHUNK>::new());
         let mut at = offset;
         while at < self.capacity() {
             let count = usize::try_from(self.capacity() - at)

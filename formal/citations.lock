@@ -527,8 +527,8 @@ assurance/platform.toml	crates/rsk-openpgp/src/pin.rs	357-357	if n < 1 || blob[0
 assurance/platform.toml	crates/rsk-openpgp/src/pin.rs	817-817	rec.expose_mut()[1] = PIN_FORMAT_V1;	rec.expose_mut()[1] = PIN_FORMAT_V1;
 assurance/platform.toml	crates/rsk-otp/src/seal.rs	65-65	pub fn seal_put<S: Storage>(	pub fn seal_put<S: Storage>(
 assurance/platform.toml	crates/rsk-piv/src/lib.rs	1391-1391	// kbase-migration fallback: the correct PIN against a verifier stored	// kbase-migration fallback: the correct PIN against a verifier stored
-assurance/platform.toml	crates/rsk-store/src/lib.rs	149-156	/// Removes from BOTH partitions, not just the one [`is_counter_fid`] routes to.	/// the second call finds nothing and costs one ring walk.
-assurance/platform.toml	crates/rsk-store/src/lib.rs	183-185	let main_done = for_each_in(&mut self.main, &mut self.buf, f);	main_done && counter_done
+assurance/platform.toml	crates/rsk-store/src/lib.rs	152-159	/// Removes from BOTH partitions, not just the one [`is_counter_fid`] routes to.	/// the second call finds nothing and costs one ring walk.
+assurance/platform.toml	crates/rsk-store/src/lib.rs	186-188	let main_done = for_each_in(&mut self.main, &mut self.buf, f);	main_done && counter_done
 assurance/platform.toml	crates/rsk-store/src/tests.rs	61-64	/// Every read from here on fails, unconditionally and for every address —	/// memoise as absence.
 assurance/platform.toml	crates/rsk-store/src/tests.rs	442-451	#[test]	assert!(!complete);
 assurance/platform.toml	crates/rsk-usb/src/ccid.rs	479-479	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {	match select(fut.as_mut(), Timer::after_millis(WTX_INTERVAL_MS)).await {

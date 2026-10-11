@@ -19,6 +19,9 @@ rsk-fs = { workspace = true }
 rsk-sdk = { workspace = true }
 # Readback can meet legacy plaintext remnants when a NOR erase did not land.
 rsk-secret = { workspace = true }
+# `FlashBuf` implements `Zeroize` so a flashed staging buffer can live in a
+# `Secret`; the trait must be nameable here (the wrapper crate only bounds it).
+zeroize = { workspace = true }
 # The existing crypto facade authenticates the directory and complete payloads.
 rsk-crypto = { workspace = true }
 # The live directory has the filesystem's fixed file budget; no heap is used.
