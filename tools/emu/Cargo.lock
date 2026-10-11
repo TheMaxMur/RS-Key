@@ -1779,6 +1779,7 @@ dependencies = [
  "rsk-sdk",
  "rsk-secret",
  "sequential-storage",
+ "zeroize",
 ]
 
 [[package]]

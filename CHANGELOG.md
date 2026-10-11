@@ -38,6 +38,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Align the store's flash staging buffer to the flash write unit. `rsk-store`
+  wrote to flash through an align-1 `[u8; _]`, which only lands 4-byte aligned
+  by how the compiler happened to place the stack; the RP2350 ROM program (`and
+  the vendored NOR mock`) require a word-aligned buffer. A new `FlashBuf` type
+  makes the staging pointer aligned, and every buffer handed to
+  `NorFlash::write` goes through it. Found by driving the storage fuzz targets
+  under Miri. bcdDevice `0x0AA0` → `0x0AA1`: the build gate counts the change as
+  a build change; no observable firmware behaviour change.
+
 - Critical mutation verification: add independent ML-KEM ACVP and legacy PIN-KDF
   vectors, OpenSSL-checked ML-DSA boundary candidates, one-shot crypto fault
   probes, and live-field checks of secret destructors. Restore behavioral

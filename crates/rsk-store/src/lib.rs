@@ -31,6 +31,9 @@ use rsk_sdk::error::{Error, Result};
 mod verified_flash;
 use verified_flash::VerifiedFlash;
 
+mod flash_buf;
+pub use flash_buf::FlashBuf;
+
 pub mod authenticated;
 
 /// Scratch for one map op; must fit the largest stored key+value.
@@ -71,7 +74,7 @@ pub struct SeqStorage<
 > {
     main: MapStorage<u16, VerifiedFlash<F>, CM>,
     counter: MapStorage<u16, VerifiedFlash<F>, CC>,
-    buf: [u8; KV_BUF],
+    buf: FlashBuf<KV_BUF>,
     /// Bytes one [`Storage::compact`] lap must push through the main ring to
     /// sweep it. Taken from the range, not a build constant: the `power_cut`
     /// fuzz target's ring is 8 pages against the board's 352, and a lap sized for
@@ -109,7 +112,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, CM: CacheImpl<u16>, CC: CacheImpl
         Self {
             main: MapStorage::new(flash.clone(), MapConfig::new(main_range), main_cache),
             counter: MapStorage::new(flash, MapConfig::new(counter_range), counter_cache),
-            buf: [0; KV_BUF],
+            buf: FlashBuf::new(),
             main_len,
             last_err: false,
         }
