@@ -473,3 +473,7 @@ fn an_unknown_member_in_the_assertion_input_is_invalid_cbor() {
         assert!(r.body.is_empty(), "a refused assertion returns nothing");
     }
 }
+
+#[cfg(test)]
+#[path = "largeblobext_tests.rs"]
+mod tests;
