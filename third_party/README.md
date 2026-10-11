@@ -22,6 +22,7 @@ unrelated kinds live here:
   carries. OFL governs the font data, AGPL-3.0-only the rest of the image; the
   two coexist because neither is a derivative of the other.
 - **Test vectors** — `acvp/`, NIST's ACVP-Server ML-DSA keyGen/sigGen/sigVer
+  and ML-KEM-768 keyGen/encapsulation/decapsulation
   cases, filtered to what `crates/rsk-mldsa` can express and written one line of
   hex per case by `scripts/acvp_vectors.py`; and `wycheproof/`, C2SP
   Wycheproof's RSA PKCS#1 v1.5 decryption and signing cases and its ECDH and

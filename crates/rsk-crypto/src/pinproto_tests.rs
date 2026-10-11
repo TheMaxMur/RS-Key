@@ -3,6 +3,50 @@
 
 use super::*;
 
+#[test]
+fn mac_widths_are_the_ctap_wire_lengths() {
+    let shared = [0x5a; 64];
+    let data = b"pin protocol length";
+    let expected = hmac_sha256(&shared[..32], data);
+    for (proto, width) in [(PinProto::One, 16), (PinProto::Two, 32)] {
+        assert_eq!(proto.mac_len(), width);
+        let mut out = [0xa5; 33];
+        assert_eq!(authenticate(proto, &shared, data, &mut out), Ok(width));
+        assert_eq!(&out[..width], &expected[..width]);
+        assert_eq!(&out[width..], &std::vec![0xa5; out.len() - width]);
+        assert!(verify(proto, &shared, data, &out[..width]));
+        for length in 0..=33 {
+            if length != width {
+                assert!(!verify(proto, &shared, data, &out[..length]));
+            }
+        }
+    }
+}
+
+#[test]
+fn empty_cbc_plaintext_has_only_the_protocol_two_iv() {
+    let shared = [0x5a; 64];
+    let iv = [0x44; IV_SIZE];
+    for (proto, width) in [(PinProto::One, 0), (PinProto::Two, IV_SIZE)] {
+        let mut encrypted = [0xa5; IV_SIZE + 1];
+        assert_eq!(encrypt(proto, &shared, &iv, &[], &mut encrypted), Ok(width));
+        if width != 0 {
+            assert_eq!(&encrypted[..width], &iv);
+        }
+        assert_eq!(
+            &encrypted[width..],
+            &std::vec![0xa5; encrypted.len() - width]
+        );
+        let mut output = [0xa5; 1];
+        assert_eq!(
+            decrypt(proto, &shared, &encrypted[..width], &mut output),
+            Ok(0)
+        );
+        assert_eq!(output, [0xa5; 1]);
+        assert_eq!(decrypt(proto, &shared, &encrypted[..width], &mut []), Ok(0));
+    }
+}
+
 // A deterministic scalar known to be in range (low value, far below n).
 fn scalar(seed: u8) -> [u8; 32] {
     let mut s = [0u8; 32];
