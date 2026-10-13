@@ -107,6 +107,22 @@ fn raw_bank_bounds_and_refused_read_do_not_touch_other_authority_windows() {
     assert_eq!(*flash.inner.bytes.borrow(), before);
 }
 
+#[test]
+fn raw_bank_refuses_nonempty_spans_that_reach_a_neighbor_partition_before_io() {
+    let flash = FaultFlash::new();
+    let mut bank = RawBank::new(flash.clone(), MAIN).unwrap();
+    assert!(flash.capacity() > usize::try_from(MAIN.end + 4).unwrap());
+    let before = flash.inner.bytes.borrow().clone();
+    for offset in [bank.capacity() - 1, bank.capacity(), bank.capacity() + 1] {
+        let mut output = [0xA5; 2];
+        assert_eq!(bank.read(offset, &mut output), Err(Error::MemoryFatal));
+        assert_eq!(output, [0xA5; 2]);
+        assert_eq!(bank.program(offset, &[0x7F; 2]), Err(Error::MemoryFatal));
+        assert!(flash.events().is_empty());
+        assert_eq!(*flash.inner.bytes.borrow(), before);
+    }
+}
+
 const JOURNAL_KEY: [u8; 32] = [0x7A; 32];
 const JOURNAL_ID: Identity = Identity {
     partition: Partition::Main,

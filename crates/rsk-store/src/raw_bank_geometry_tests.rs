@@ -59,6 +59,35 @@ fn unsupported_raw_bank_geometry_refuses_before_io() {
 }
 
 #[test]
+fn an_unaligned_bank_read_crosses_scratch_windows_without_growing_them() {
+    let flash = FaultFlash::new();
+    let mut bank = RawBank::new(Geometry::<4, 4, SECTOR>(flash), MAIN).unwrap();
+    let mut data = [0; 520];
+    for (index, byte) in data.iter_mut().enumerate() {
+        *byte = u8::try_from(index % 251).unwrap();
+    }
+    bank.program(0, &data).unwrap();
+    let mut output = [0; 516];
+    bank.read(3, &mut output).unwrap();
+    assert_eq!(output, data[3..519]);
+}
+
+#[test]
+fn an_unaligned_bank_program_crosses_scratch_windows_without_growing_them() {
+    let flash = FaultFlash::new();
+    let mut bank = RawBank::new(Geometry::<4, 4, SECTOR>(flash.clone()), MAIN).unwrap();
+    let neighbor = flash.inner.snapshot(COUNTER);
+    let data = [0x5A; 520];
+    bank.program(3, &data).unwrap();
+    let mut output = [0; 528];
+    bank.read(0, &mut output).unwrap();
+    assert_eq!(output[..3], [0xFF; 3]);
+    assert_eq!(output[3..523], data);
+    assert_eq!(output[523..], [0xFF; 5]);
+    assert_eq!(flash.inner.snapshot(COUNTER), neighbor);
+}
+
+#[test]
 #[expect(
     clippy::reversed_empty_ranges,
     reason = "An inverted bank window must be refused before any flash access."

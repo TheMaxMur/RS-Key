@@ -253,6 +253,34 @@ fn a_complete_directory_binds_presence_revision_order_and_closed_world_absence()
 }
 
 #[test]
+fn directory_digest_matches_independent_complete_frame_vectors() {
+    let mut directory = Directory::<2>::new();
+    // Python hmac/hashlib assembled format-2 prefixes and 64-byte links independently.
+    assert_eq!(
+        directory.digest(IDENTITY, &KEY, 2).unwrap(),
+        [
+            0x6a, 0x31, 0x57, 0x65, 0x30, 0x4c, 0xa4, 0xe7, 0x06, 0x6d, 0xa6, 0x82, 0x58, 0x87,
+            0x23, 0x57, 0x7e, 0x46, 0xab, 0x32, 0x29, 0x7a, 0x77, 0xe4, 0x67, 0x1c, 0x55, 0x33,
+            0xe4, 0xab, 0x71, 0x2f,
+        ]
+    );
+    directory
+        .apply(Entry::live(IDENTITY, &KEY, 9, 2, b"owner").unwrap())
+        .unwrap();
+    directory
+        .apply(Entry::live(IDENTITY, &KEY, 1, 1, &[]).unwrap())
+        .unwrap();
+    assert_eq!(
+        directory.digest(IDENTITY, &KEY, 2).unwrap(),
+        [
+            0x4f, 0x04, 0x67, 0xf8, 0xe8, 0x34, 0x25, 0xd6, 0x95, 0x55, 0xe2, 0x57, 0x3a, 0xc7,
+            0xc7, 0xbc, 0xfd, 0xb1, 0xab, 0xa4, 0x86, 0x2b, 0xc7, 0x86, 0x51, 0x03, 0x17, 0x99,
+            0xe5, 0xec, 0x4f, 0x35,
+        ]
+    );
+}
+
+#[test]
 fn obsolete_deletions_do_not_exhaust_the_live_file_budget() {
     let mut directory = Directory::<1>::new();
     for fid in 0..=u16::MAX {
@@ -349,6 +377,57 @@ fn checkpoint_header_has_no_unauthenticated_version_count_or_publication_fields(
         ..checkpoint
     };
     assert_eq!(counter.encode(&KEY), Err(Error::MemoryFatal));
+}
+
+#[test]
+fn a_valid_mac_cannot_authorize_noncanonical_checkpoint_padding() {
+    let checkpoint = Checkpoint {
+        identity: IDENTITY,
+        arm: RootArm::PreOtp,
+        sequence: 37,
+        entries: 12,
+        digest: [0xc3; 32],
+    };
+    let encoded = checkpoint.encode(&KEY).unwrap();
+    assert_eq!(Checkpoint::decode(&encoded), Ok(checkpoint));
+    for offset in [0, 10, 11, 72, 79, 96, 127] {
+        let mut changed = encoded;
+        changed[offset] ^= 1;
+        let tag = rsk_crypto::hmac_sha256(&KEY, &changed[..80]);
+        changed[80..96].copy_from_slice(&tag[..16]);
+        assert_eq!(
+            Checkpoint::decode(&changed),
+            Err(Error::MemoryFatal),
+            "offset {offset}"
+        );
+        assert_eq!(
+            Checkpoint::verify(&changed, &KEY),
+            Err(Error::MemoryFatal),
+            "offset {offset}"
+        );
+    }
+}
+
+#[test]
+fn checkpoint_counts_preserve_the_public_main_directory_ceiling() {
+    let ceiling = rsk_fs::MAX_DYNAMIC_FILES + 1 + rsk_fs::STORE_INTERNAL_FIDS.count();
+    let checkpoint = Checkpoint {
+        identity: IDENTITY,
+        arm: RootArm::PreOtp,
+        sequence: 37,
+        entries: u32::try_from(ceiling).unwrap(),
+        digest: [0xc3; 32],
+    };
+    let encoded = checkpoint.encode(&KEY).unwrap();
+    assert_eq!(Checkpoint::verify(&encoded, &KEY), Ok(checkpoint));
+    assert_eq!(
+        Checkpoint {
+            entries: checkpoint.entries + 1,
+            ..checkpoint
+        }
+        .encode(&KEY),
+        Err(Error::MemoryFatal)
+    );
 }
 
 fn prepare(sequence: u64, previous: [u8; 32]) -> Delta {
