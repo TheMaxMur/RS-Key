@@ -114,13 +114,15 @@ class Tree:
         (self.fake / "bin").mkdir()
         shutil.copy(SCRIPT, self.root / "scripts" / SCRIPT.name)
         shutil.copy(ROOT / "scripts/mutants-nextest.sh", self.root / "scripts/mutants-nextest.sh")
-        # The row's verdict uses synthetic cgroups; real enforcement is tested in Linux.
+        # Control-flow tests use synthetic Linux limits; real enforcement is tested in Linux.
         cgroup = self.fake / "cgroup"
         cgroup.mkdir()
         (cgroup / "memory.max").write_text("4294967296\n")
         (cgroup / "memory.swap.max").write_text("0\n")
         adapter = self.root / "scripts/mutants-nextest.sh"
-        adapter.write_text(adapter.read_text().replace("/sys/fs/cgroup", str(cgroup)))
+        adapter.write_text(adapter.read_text().replace("/sys/fs/cgroup", str(cgroup)).replace(
+            "set -euo pipefail\n", "set -euo pipefail\nulimit() { :; }\n", 1
+        ))
         uname = self.fake / "bin/uname"
         uname.write_text("#!/usr/bin/env bash\necho Linux\n")
         uname.chmod(0o755)
