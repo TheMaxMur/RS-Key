@@ -4,6 +4,19 @@
 use super::*;
 
 #[test]
+fn the_basic_channel_has_only_the_two_unadorned_classes() {
+    for cla in 0..=255 {
+        let raw = [cla, 0, 0, 0];
+        let command = Apdu::parse(&raw).unwrap();
+        assert_eq!(
+            command.is_basic_class(),
+            [0x00, 0x80].contains(&cla),
+            "CLA {cla:02x}"
+        );
+    }
+}
+
+#[test]
 fn case1() {
     let a = Apdu::parse(&[0x00, 0xA4, 0x04, 0x00]).unwrap();
     assert_eq!((a.cla, a.ins, a.p1, a.p2), (0x00, 0xA4, 0x04, 0x00));

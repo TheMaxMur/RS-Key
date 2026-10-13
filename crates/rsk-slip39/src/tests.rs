@@ -17,6 +17,19 @@ fn interpolation_at_a_member_returns_that_member() {
         assert_eq!(interpolate(&shares, index), value);
     }
 }
+
+#[test]
+fn all_sixteen_shares_preserve_the_nonzero_identifier_on_the_wire() {
+    let mut out = Secret::new([[0u16; WORDS_PER_SHARE]; MAX_SHARES]);
+    let mut rng = |bytes: &mut [u8]| {
+        assert_eq!(bytes.len(), 2);
+        bytes.copy_from_slice(&[0xab, 0xcd]);
+    };
+    generate(&[0x5a; 32], 1, 16, &mut rng, out.expose_mut()).unwrap();
+    for share in out.expose() {
+        assert_eq!(&share[..2], &[350, 417]);
+    }
+}
 extern crate std;
 use std::string::String;
 use std::vec::Vec;
