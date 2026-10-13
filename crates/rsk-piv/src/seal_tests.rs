@@ -68,6 +68,28 @@ fn a_plaintext_over_the_cap_is_refused_and_writes_nothing() {
     assert!(!fs.has_key(fid), "a refused seal left a record behind");
 }
 
+#[test]
+fn the_largest_crt_plaintext_fits_its_seal_and_roundtrips() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    let mut plain = Secret::<[u8; MAX_PLAIN]>::zeroed();
+    for (i, byte) in plain.expose_mut().iter_mut().enumerate() {
+        *byte = (i % 251) as u8;
+    }
+    seal_put(&dev(None), &mut fs, &mut TestRng(2), fid, plain.expose()).unwrap();
+    let mut sealed = Secret::<[u8; MAX_BLOB]>::zeroed();
+    assert_eq!(
+        fs.read_key(fid, sealed.expose_mut()),
+        Some(NONCE_LEN + MAX_PLAIN + TAG_LEN)
+    );
+    let mut back = Secret::<[u8; MAX_PLAIN]>::zeroed();
+    assert_eq!(
+        seal_read(&dev(None), &mut fs, fid, &mut back),
+        Ok(MAX_PLAIN)
+    );
+    assert_eq!(back.expose(), plain.expose());
+}
+
 /// A record too short to hold its own `nonce ‖ tag` framing cannot be a blob this
 /// applet wrote. It must answer MEMORY_FAILURE rather than underflow `pt_len` —
 /// the at-rest corruption class [`rsk_fs`] exists to fail closed on.
@@ -141,6 +163,45 @@ fn an_ec_blob_without_a_scalar_is_refused() {
         load_ec_key(&dev(None), &mut fs, fid).err(),
         Some(Sw::MEMORY_FAILURE)
     );
+}
+
+#[test]
+fn a_minimal_ec_scalar_loads_with_its_leading_zeroes() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    seal_put(
+        &dev(None),
+        &mut fs,
+        &mut TestRng(4),
+        fid,
+        &[Curve::P256.id(), 1],
+    )
+    .unwrap();
+    let key = load_ec_key(&dev(None), &mut fs, fid).unwrap();
+    assert_eq!(key.curve(), Curve::P256);
+    let mut expected = [0; 32];
+    expected[31] = 1;
+    assert_eq!(key.scalar(), &expected);
+}
+
+#[test]
+fn the_ec_writer_seals_a_full_p521_scalar() {
+    let mut fs = new_fs();
+    let fid = key_fid(SLOT_AUTHENTICATION);
+    let key = PrivKey::from_scalar(Curve::P521, &[1]).unwrap();
+    assert_eq!(key.scalar().len(), 66);
+    store_ec_key(&dev(None), &mut fs, &mut TestRng(4), fid, &key).unwrap();
+    let mut plain = Secret::<[u8; 67]>::zeroed();
+    assert_eq!(seal_read(&dev(None), &mut fs, fid, &mut plain), Ok(67));
+    assert_eq!(plain.expose()[0], Curve::P521.id());
+    assert_eq!(&plain.expose()[1..], key.scalar());
+    let generation = fs.write_gen();
+    assert_eq!(
+        load_ec_key(&dev(None), &mut fs, fid).err(),
+        Some(Sw::MEMORY_FAILURE),
+        "the public writer's P521 blob keeps the unsupported-curve refusal"
+    );
+    assert_eq!(fs.write_gen(), generation);
 }
 
 /// The at-rest lap is re-armed BEFORE the re-seal it covers, and the re-seal is

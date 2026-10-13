@@ -559,3 +559,6 @@ fn a_select_with_a_byte_past_its_le_is_wrong_length_here_too() {
     );
     assert!(ctap.disp.current().is_none());
 }
+
+#[path = "ctap_provider_contract_tests.rs"]
+mod provider_contracts;

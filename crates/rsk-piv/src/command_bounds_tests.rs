@@ -4,6 +4,100 @@
 use super::*;
 
 #[test]
+fn crypto_rng_bridges_forward_the_whole_requested_window() {
+    struct Entropy(Vec<usize>);
+    impl Rng for Entropy {
+        fn fill(&mut self, bytes: &mut [u8]) {
+            self.0.push(bytes.len());
+            bytes.fill(0x43);
+        }
+    }
+    for rsa in [false, true] {
+        let mut entropy = Entropy(vec![]);
+        for n in [0, 1, 16, 32, 64] {
+            let mut bytes = [0xa5; 66];
+            if rsa {
+                rsk_rsa::Rng::fill(&mut RsaRng(&mut entropy), &mut bytes[1..n + 1]);
+            } else {
+                rsk_ec::Rng::fill(&mut EcRng(&mut entropy), &mut bytes[1..n + 1]);
+            }
+            assert_eq!(&bytes[1..n + 1], vec![0x43; n]);
+            assert_eq!(bytes[0], 0xa5);
+            assert!(bytes[n + 1..].iter().all(|byte| *byte == 0xa5));
+        }
+        assert_eq!(entropy.0, [0, 1, 16, 32, 64]);
+    }
+}
+
+#[test]
+fn a_short_object_id_cannot_alias_a_pooled_object() {
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    auth_mgm(&mut app, &mut fs);
+    let object = object_body([0x5f, 0x12, 0x34], b"stored");
+    assert_eq!(
+        run(&mut app, &mut fs, INS_PUT_DATA, 0x3f, 0xff, &object).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, INS_GET_DATA, 0x3f, 0xff, &object[..5]),
+        (Sw::OK, [b"\x53\x06".as_slice(), b"stored"].concat())
+    );
+    let generation = fs.write_gen();
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            INS_GET_DATA,
+            0x3f,
+            0xff,
+            &[TAG_DATA_PATH, 2, 0x12, 0x34]
+        ),
+        (Sw::FILE_NOT_FOUND, vec![])
+    );
+    assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn management_protection_preserves_the_maximum_timestamp() {
+    let rng = RefCell::new(TestRng(7));
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+    let mut fs = new_fs();
+    select(&mut app, &mut fs);
+    let fid = EF_PIVMAN_DATA;
+    let mut prior = vec![PIVMAN_TAG, 18, PIVMAN_TS_TAG, 16];
+    prior.extend([0x55; 16]);
+    fs.put(fid, &prior).unwrap();
+    let dev = Device {
+        serial_hash: &HASH,
+        serial_id: &SERIAL,
+        otp_key: None,
+        latched: false,
+    };
+    assert_eq!(
+        protect_mgm_key(&dev, &mut fs, &mut *rng.borrow_mut()),
+        Sw::OK
+    );
+    let mut stored = [0; 64];
+    let n = fs.read(fid, &mut stored).unwrap();
+    let mut expected = vec![
+        PIVMAN_TAG,
+        21,
+        PIVMAN_FLAGS_TAG,
+        1,
+        PIVMAN_FLAG_MGM_PROTECTED,
+        PIVMAN_TS_TAG,
+        16,
+    ];
+    expected.extend([0x55; 16]);
+    assert_eq!(&stored[..n], expected);
+}
+
+#[test]
 fn reset_requires_both_references_to_be_blocked_independently() {
     for (pin_left, puk_left) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
         let rng = RefCell::new(TestRng(7));

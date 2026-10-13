@@ -30,6 +30,63 @@ fn dev() -> Device<'static> {
     }
 }
 
+#[test]
+fn a_reminted_management_key_drops_a_matching_heads_stale_pin_policy() {
+    let mut fs = new_fs();
+    files::scan_files(&dev(), &mut fs, &mut TestRng(7)).unwrap();
+    let fid = key_fid(SLOT_CARDMGM);
+    fs.force_delete(fid.get()).unwrap();
+    fs.meta_add(
+        fid.get(),
+        &[ALGO_AES192, PINPOLICY_ALWAYS, TOUCHPOLICY_NEVER],
+    )
+    .unwrap();
+    assert_eq!(
+        files::scan_files(&dev(), &mut fs, &mut TestRng(9)),
+        Ok(true)
+    );
+    let mut head = [0; 3];
+    assert_eq!(fs.meta_find(fid.get(), &mut head), Some(3));
+    assert_eq!(head, [ALGO_AES192, MGM_PIN_POLICY, TOUCHPOLICY_NEVER]);
+    assert_eq!(
+        files::mgm_read(&dev(), &mut fs).unwrap().key(),
+        &DEFAULT_MGM
+    );
+}
+
+#[test]
+fn a_tagged_management_key_with_its_matching_head_needs_no_repair_write() {
+    let refuse = Rc::new(Cell::new(false));
+    let mut fs = Fs::new(Flaky {
+        inner: RamStorage::new(),
+        refuse_meta: refuse.clone(),
+        fail_read: Rc::new(Cell::new(None)),
+        err: false,
+    });
+    fs.scan();
+    files::scan_files(&dev(), &mut fs, &mut TestRng(7)).unwrap();
+    files::mgm_put(
+        &dev(),
+        &mut fs,
+        &mut TestRng(8),
+        ALGO_AES256,
+        TOUCHPOLICY_ALWAYS,
+        &AES256_KEY,
+    )
+    .unwrap();
+    fs.meta_add(
+        key_fid(SLOT_CARDMGM).get(),
+        &[ALGO_AES256, MGM_PIN_POLICY, TOUCHPOLICY_ALWAYS],
+    )
+    .unwrap();
+    refuse.set(true);
+    assert_eq!(
+        files::scan_files(&dev(), &mut fs, &mut TestRng(9)),
+        Ok(true)
+    );
+    assert_eq!(files::mgm_read(&dev(), &mut fs).unwrap().key(), &AES256_KEY);
+}
+
 /// Whether a mutual authentication on 9B with `m`'s key under its algorithm
 /// completes.
 fn authenticates<S: Storage>(app: &mut PivApplet, fs: &mut Fs<S>, m: Mgm) -> bool {

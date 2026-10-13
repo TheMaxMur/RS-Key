@@ -114,6 +114,9 @@ fn yubico_otp_is_decryptable_and_bumps_counter() {
     aes128_decrypt_block(&aes, &mut block);
     assert_eq!(&block[..6], &uid); // private uid
     assert_eq!(u16::from_le_bytes([block[6], block[7]]), 1); // counter
+    assert_eq!(&block[8..11], &[50, 0, 0]);
+    assert_eq!(block[11], 0);
+    assert_eq!(&block[12..14], &[0xaa, 0xbb]);
     let mut chk = [0u8; 16];
     chk.copy_from_slice(&block);
     // CRC over the first 14 bytes ‖ stored ~CRC ⇒ X.25 residual.

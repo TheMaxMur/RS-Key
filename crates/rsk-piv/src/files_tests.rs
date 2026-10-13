@@ -7,6 +7,39 @@
 use super::*;
 use rsk_fs::storage::faults::{RemoveStuck, Undead};
 
+#[test]
+fn an_early_management_key_wipe_clears_the_live_record() {
+    struct NonceRng;
+    impl Rng for NonceRng {
+        fn fill(&mut self, bytes: &mut [u8]) {
+            bytes.fill(0x11);
+        }
+    }
+    let dev = Device {
+        serial_hash: &[0x22; 32],
+        serial_id: &[0x33; 8],
+        otp_key: None,
+        latched: false,
+    };
+    let mut fs = Fs::new(rsk_fs::storage::ram::RamStorage::new());
+    fs.scan();
+    mgm_put(
+        &dev,
+        &mut fs,
+        &mut NonceRng,
+        ALGO_AES256,
+        TOUCHPOLICY_ALWAYS,
+        &[0x55; 32],
+    )
+    .unwrap();
+    let mut key = mgm_read(&dev, &mut fs).unwrap();
+    assert_eq!(key.key(), &[0x55; 32]);
+    assert_eq!(key.policy, Some((ALGO_AES256, TOUCHPOLICY_ALWAYS)));
+    key.wipe();
+    assert!(key.rec.expose().iter().all(|byte| *byte == 0));
+    assert_eq!(key.key(), &[0; 32]);
+}
+
 /// `RESET_MAX_DELETES` is the sweep's progress guard, and the applet test that
 /// looks like it drives it does not: `reset_reports_failure_when_the_sweep_cannot_converge`
 /// re-yields ONE file, and 1 divides everything, so `>` → `==` merely trips the

@@ -7,6 +7,18 @@ use super::*;
 mod tx;
 
 #[test]
+fn a_valid_frame_without_write_flags_releases_nothing() {
+    let mut rx = FrameRx::new();
+    let mut out = Secret::new([0xa5; PAYLOAD_SIZE]);
+    for mut report in split_frame(&[0x5a; PAYLOAD_SIZE], 0x30) {
+        report[REPORT_DATA] &= SEQ_MASK;
+        assert_eq!(rx.feed(&report, &mut out), RxOutcome::None);
+        assert_eq!(out.expose(), &[0xa5; PAYLOAD_SIZE]);
+        assert_eq!(rx.buf.expose(), &[0; FRAME_SIZE]);
+    }
+}
+
+#[test]
 fn reassembles_a_full_frame() {
     let mut payload = [0u8; PAYLOAD_SIZE];
     for (i, b) in payload.iter_mut().enumerate() {
@@ -25,6 +37,7 @@ fn reassembles_a_full_frame() {
         }
         other => panic!("expected Frame, got {other:?}"),
     }
+    assert_eq!(rx.buf.expose(), &[0; FRAME_SIZE]);
 }
 
 #[test]
@@ -38,15 +51,20 @@ fn rejects_corrupted_crc() {
         rx.feed(r, &mut out);
     }
     assert_eq!(rx.feed(&reports[9], &mut out), RxOutcome::BadCrc);
+    assert_eq!(rx.buf.expose(), &[0; FRAME_SIZE]);
 }
 
 #[test]
 fn reset_byte_clears_state() {
     let mut rx = FrameRx::new();
     let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
+    let reports = split_frame(&[0x5a; PAYLOAD_SIZE], 0x30);
+    assert_eq!(rx.feed(&reports[0], &mut out), RxOutcome::None);
+    assert_eq!(&rx.buf.expose()[..REPORT_DATA], &[0x5a; REPORT_DATA]);
     let mut reset = [0u8; REPORT_SIZE];
     reset[REPORT_DATA] = FLAG_RESET;
     assert_eq!(rx.feed(&reset, &mut out), RxOutcome::Reset);
+    assert_eq!(rx.buf.expose(), &[0; FRAME_SIZE]);
 }
 
 #[test]
@@ -56,9 +74,13 @@ fn dummy_write_aborts_like_a_reset() {
     // touch, and again to reset the read mode after collecting a response).
     let mut rx = FrameRx::new();
     let mut out = Secret::<[u8; PAYLOAD_SIZE]>::zeroed();
+    let reports = split_frame(&[0x5a; PAYLOAD_SIZE], 0x30);
+    assert_eq!(rx.feed(&reports[0], &mut out), RxOutcome::None);
+    assert_eq!(&rx.buf.expose()[..REPORT_DATA], &[0x5a; REPORT_DATA]);
     let mut dummy = [0u8; REPORT_SIZE];
     dummy[REPORT_DATA] = FLAG_WRITE | 0x0F;
     assert_eq!(rx.feed(&dummy, &mut out), RxOutcome::Reset);
+    assert_eq!(rx.buf.expose(), &[0; FRAME_SIZE]);
 }
 
 #[test]

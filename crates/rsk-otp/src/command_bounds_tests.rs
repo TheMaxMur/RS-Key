@@ -4,6 +4,81 @@
 use super::*;
 
 #[test]
+fn all_four_slots_answer_hmac_challenges() {
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let mut fs = new_fs();
+    let cfg = chalresp_config(&[0x0b; 20], &[0; ACC_CODE_SIZE], CFG_HMAC_LT64);
+    let mut challenge = [0; hid::PAYLOAD_SIZE];
+    challenge[..8].copy_from_slice(b"Hi There");
+    let expected = [
+        0xb6, 0x17, 0x31, 0x86, 0x55, 0x05, 0x72, 0x64, 0xe2, 0x8b, 0xc0, 0xb6, 0xfb, 0x37, 0x8c,
+        0x8e, 0xf1, 0x46, 0xbe, 0x00,
+    ];
+    for offset in 0..SLOT_COUNT {
+        assert_eq!(
+            configure(
+                &mut app,
+                &mut fs,
+                P1_CONFIG_SLOT1,
+                offset,
+                &cfg,
+                &[0; ACC_CODE_SIZE]
+            )
+            .0,
+            Sw::OK
+        );
+        let generation = fs.write_gen();
+        assert_eq!(
+            run(
+                &mut app,
+                &mut fs,
+                &otp_apdu(P1_CHAL_HMAC_SLOT1, offset, &challenge)
+            ),
+            (Sw::OK, expected.to_vec()),
+            "slot {} must return RFC 2202 case 1",
+            offset + 1
+        );
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
+
+#[cfg(not(feature = "strict-config"))]
+#[test]
+fn a_short_stored_scan_map_keeps_the_ascii_ticket_path() {
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let mut fs = new_fs();
+    let cfg = build_config(
+        &[0, 1, 2, 3, 4, 5],
+        &[1; 6],
+        &[2; 16],
+        &[0; 6],
+        0,
+        TKT_APPEND_CR,
+        0,
+    );
+    assert_eq!(
+        configure(&mut app, &mut fs, P1_CONFIG_SLOT1, 0, &cfg, &[0; 6]).0,
+        Sw::OK
+    );
+    let mut out = [0; ticket::MAX_TICKET];
+    fs.put(EF_OTP_SCANMAP, &[0x04; SCANMAP_LEN]).unwrap();
+    assert_eq!(
+        app.button_ticket(1, 100, [1, 2], &mut fs, &mut out),
+        Some((45, false))
+    );
+    fs.put(EF_OTP_SCANMAP, &[0x04; SCANMAP_LEN - 1]).unwrap();
+    assert_eq!(
+        app.button_ticket(1, 100, [1, 2], &mut fs, &mut out),
+        Some((45, true))
+    );
+    assert_eq!(out[44], b'\r');
+}
+
+#[test]
 fn slot_offsets_and_missing_codes_refuse_without_changing_a_programmed_slot() {
     let presence = RefCell::new(AlwaysConfirm);
     let rng = RefCell::new(CountRng(7));

@@ -58,6 +58,19 @@ fn cert_without_key_counts_as_populated() {
 }
 
 #[test]
+fn card_authentication_and_attestation_report_their_certificate_objects() {
+    for (slot, object) in [(SLOT_CARDAUTH, 0x5fc101), (SLOT_ATTESTATION, 0x5fff01)] {
+        let mut fs = fs();
+        assert!(!read_slot(&mut fs, slot).cert);
+        fs.put(object_fid(object).unwrap(), &[0x30, 0]).unwrap();
+        let info = read_slot(&mut fs, slot);
+        assert!(info.cert);
+        assert!(!info.present);
+        assert_eq!(info.slot, slot);
+    }
+}
+
+#[test]
 fn retries_come_from_ef_retries() {
     let mut fs = fs();
     fs.put(EF_RETRIES, &[3, 2, 3, 0]).unwrap();

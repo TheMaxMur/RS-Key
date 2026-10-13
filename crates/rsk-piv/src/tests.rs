@@ -11248,3 +11248,6 @@ fn an_imported_key_survives_a_refused_optional_public_cache_reload() {
 
 #[path = "move_absence_tests.rs"]
 mod move_absence;
+
+#[path = "raw_record_contract_tests.rs"]
+mod raw_record_contracts;

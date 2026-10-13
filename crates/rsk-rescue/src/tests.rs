@@ -801,6 +801,31 @@ fn time_set_and_get_both_forms() {
     let bad = [0x07, 0xEA, 12, 11, 0, 0, 0, 0];
     let (sw, _) = run(&mut app, &mut fs, &apdu(0x80, INS_WRITE, 0x02, 0x01, &bad));
     assert_eq!(sw, Sw::DATA_INVALID);
+
+    let last = [0x07, 0xe0, 11, 31, 0, 23, 59, 60];
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_WRITE, 0x02, 0x01, &last)).0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x04, 0x02, &[])),
+        (Sw::OK, 1483228800u32.to_be_bytes().to_vec())
+    );
+
+    let leap_day = 951782400u32.to_be_bytes();
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(0x80, INS_WRITE, 0x02, 0x02, &leap_day)
+        )
+        .0,
+        Sw::OK
+    );
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x04, 0x01, &[])),
+        (Sw::OK, vec![0x07, 0xd0, 1, 29, 2, 0, 0, 0])
+    );
 }
 
 #[test]
@@ -1176,11 +1201,19 @@ fn otp_lock_waits_for_a_boot_that_left_nothing_under_the_pre_burn_key() {
         }
     }
     let lefts = [
-        Some(otp_lock::PRE_OTP_PIV),
-        Some(otp_lock::PRE_OTP_FIDO | otp_lock::PRE_OTP_OTP),
-        None,
+        (Some(otp_lock::PRE_OTP_FIDO), [0, 1]),
+        (Some(otp_lock::PRE_OTP_DEVICE_KEY), [0, 2]),
+        (Some(otp_lock::PRE_OTP_PIV), [0, 4]),
+        (Some(otp_lock::PRE_OTP_OATH), [0, 8]),
+        (Some(otp_lock::PRE_OTP_OTP), [0, 16]),
+        (Some(otp_lock::PRE_OTP_STORAGE), [0, 32]),
+        (
+            Some(otp_lock::PRE_OTP_FIDO | otp_lock::PRE_OTP_OTP),
+            [0, 17],
+        ),
+        (None, [0xff, 0xff]),
     ];
-    for left in lefts {
+    for (left, want) in lefts {
         let rng = RefCell::new(LcgRng(7));
         let platform = RefCell::new(FakePlatform {
             pre_otp_left: left,
@@ -1215,7 +1248,6 @@ fn otp_lock_waits_for_a_boot_that_left_nothing_under_the_pre_burn_key() {
         );
         let (sw, body) = run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x07, 0, &[]));
         assert_eq!(sw, Sw::OK);
-        let want = left.unwrap_or(otp_lock::PRE_OTP_UNCHECKED).to_be_bytes();
         assert_eq!(body, want, "{left:?}");
     }
 }

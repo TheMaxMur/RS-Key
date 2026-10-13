@@ -42,6 +42,49 @@ impl Storage for Recovery {
 }
 
 #[test]
+fn recovery_serves_its_status_and_bootsel_but_refuses_other_storage_and_time_access() {
+    let rng = RefCell::new(LcgRng(7));
+    let platform = RefCell::new(FakePlatform::default());
+    let presence = RefCell::new(AlwaysConfirm);
+    let mut app = lock_app(&rng, &platform, &presence, None);
+    let mut ready = Fs::new(RamStorage::new());
+    let status = apdu(0x80, INS_READ, 0x08, 0, &[]);
+    assert_eq!(run(&mut app, &mut ready, &status), (Sw::OK, vec![2, 1]));
+    let calls = Rc::new(Cell::new(0));
+    let mut fs = Fs::new(Recovery {
+        inner: RamStorage::new(),
+        error: Error::MemoryFatal,
+        action: StorageAction::Initialize,
+        calls: Rc::clone(&calls),
+    });
+    fs.scan();
+    assert_eq!(run(&mut app, &mut fs, &status), (Sw::OK, vec![2, 0]));
+    assert_eq!(
+        run(&mut app, &mut fs, &apdu(0x80, INS_READ, 0x01, 0, &[])),
+        (Sw::MEMORY_FAILURE, vec![])
+    );
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(0x80, INS_WRITE, 0x02, 0x02, &1u32.to_be_bytes())
+        ),
+        (Sw::MEMORY_FAILURE, vec![])
+    );
+    assert_eq!(platform.borrow().time, None);
+    assert_eq!(calls.get(), 0);
+    assert_eq!(
+        run(
+            &mut app,
+            &mut fs,
+            &apdu(0x80, INS_REBOOT_BOOTSEL, 1, 0, &[])
+        ),
+        (Sw::OK, vec![])
+    );
+    assert_eq!(platform.borrow().reboots, [true]);
+}
+
+#[test]
 fn refused_storage_administration_keeps_its_distinct_status_and_does_not_reboot() {
     for (error, status) in [
         (Error::Blocked, Sw::CONDITIONS_NOT_SATISFIED),
