@@ -262,10 +262,15 @@ impl Chip {
             let core = self.emu.core(c);
             let pc = core.regs.pc();
             if core.regs.ipsr() == IPSR_HARDFAULT || Some(pc) == self.hardfault {
+                let lr = core.regs.lr();
                 let why = format!(
-                    "core {c} took a HardFault (CFSR {:#010x}), lr {}",
-                    core.ppb.cfsr,
-                    self.where_is(core.regs.lr())
+                    "core {c} took a HardFault (CFSR {:#010x}, BFAR {:#010x}), pc {}, lr {}, MSP_S {:#010x}, MSP_NS {:#010x}",
+                    self.emu.core(c).ppb.cfsr,
+                    self.emu.core(c).ppb.bfar,
+                    self.where_is(pc),
+                    self.where_is(lr),
+                    core.regs.msp,
+                    core.regs.msp_ns
                 );
                 return Some(Stop::Dead(why));
             }

@@ -18,15 +18,19 @@ use core::cell::RefCell;
 use embassy_sync::blocking_mutex::Mutex as BlockingMutex;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_usb::class::hid::{HidWriter, ReportId, RequestHandler};
+#[cfg(not(rsk_trustzone_prototype))]
+use embassy_usb::class::hid::HidWriter;
+use embassy_usb::class::hid::{ReportId, RequestHandler};
 use embassy_usb::control::OutResponse;
 use zeroize::Zeroize;
 
+#[cfg(not(rsk_trustzone_prototype))]
 use rsk_usb::kbd::keystroke;
 
 use rsk_otp::hid::{OtpHid, PAYLOAD_SIZE, REPORT_SIZE, status_frame};
 use rsk_secret::Secret;
 
+#[cfg(not(rsk_trustzone_prototype))]
 use crate::Drv;
 use crate::presence::otp_up_pending;
 
@@ -40,6 +44,10 @@ pub static OTP_REQ: Signal<Cs, ()> = Signal::new();
 /// The control-request handler for the keyboard interface: marshals the OTP frame
 /// protocol's GET/SET_REPORT feature transfers in and out of [`OTP_HID`]. A ZST —
 /// all state is in the static.
+#[cfg_attr(
+    rsk_trustzone_prototype,
+    expect(dead_code, reason = "the prototype USB handler lives in Non-secure")
+)]
 pub struct OtpHidHandler;
 
 impl RequestHandler for OtpHidHandler {
@@ -159,7 +167,7 @@ pub fn enqueue(bytes: &[u8], encode: bool) {
     TYPE_SIG.signal(());
 }
 
-fn pop_char() -> Option<(u8, bool)> {
+pub(crate) fn pop_char() -> Option<(u8, bool)> {
     TYPE_Q.lock(|c| {
         let mut q = c.borrow_mut();
         if q.pos < q.len {
@@ -178,6 +186,7 @@ fn pop_char() -> Option<(u8, bool)> {
 
 /// Drains the typed-ticket queue, emitting one press + release input report per
 /// character.
+#[cfg(not(rsk_trustzone_prototype))]
 #[embassy_executor::task]
 pub async fn kbd_task(mut writer: HidWriter<'static, Drv, 8>) {
     use embassy_time::Timer;

@@ -39,6 +39,13 @@ use rsk_device::presence::{Board, Outcome};
 
 use rsk_device::presence::Arbiter;
 
+#[cfg_attr(
+    rsk_trustzone_prototype,
+    expect(
+        unused_imports,
+        reason = "the prototype USB handler lives in Non-secure"
+    )
+)]
 pub(crate) use rsk_device::presence::MIN_TIMEOUT_SECS;
 pub use rsk_device::presence::{SCOPE_CCID, SCOPE_FIDO, SCOPE_NONE, SCOPE_OTP};
 

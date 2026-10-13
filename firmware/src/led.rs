@@ -747,6 +747,10 @@ pub fn pimoroni_cfg() -> PwmConfig {
 /// host with no PC/SC daemon (and nothing else probing the key) that first
 /// command may never arrive even though the key is healthy and enumerated, which
 /// looked like a hang. The worker still drives processing/idle per command.
+#[cfg_attr(
+    rsk_trustzone_prototype,
+    expect(dead_code, reason = "the prototype USB handler lives in Non-secure")
+)]
 pub struct StatusHandler;
 
 impl embassy_usb::Handler for StatusHandler {

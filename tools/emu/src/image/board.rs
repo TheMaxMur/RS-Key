@@ -24,6 +24,7 @@ use super::hc::{Completion, Hc, Outcome, Transfer};
 use super::inspect::{self, Command};
 use super::otp;
 use super::sockets::{self, CcidReply, Report, Request, UsbipInfo, UsbipPort};
+use super::transport::Trace;
 use super::trng::next_boot_seed;
 use crate::usbip::{BUSID, ESHUTDOWN, Ret, Urb, UsbDeviceInfo};
 
@@ -245,6 +246,8 @@ struct Board {
     device: Option<Device>,
     configure: Configure,
     hid: HidRoutes,
+    transport: Trace,
+    control: Option<(u64, Sender<Result<String, String>>)>,
     held: VecDeque<Report>,
     fido_in: Option<u64>,
     ccid_queue: VecDeque<(Vec<u8>, Sender<CcidReply>)>,
@@ -383,6 +386,8 @@ impl Board {
             device: None,
             configure: Configure::Idle,
             hid: HidRoutes::default(),
+            transport: Trace::default(),
+            control: None,
             held: VecDeque::new(),
             fido_in: None,
             ccid_queue: VecDeque::new(),
@@ -404,6 +409,7 @@ impl Board {
     /// The device leaves the bus: its flash and fuses are kept, and whatever was
     /// in flight to it fails.
     fn unplug(&mut self) -> Result<(), String> {
+        self.transport = Trace::default();
         self.chip.sync_flash(&mut self.flash)?;
         self.save_otp(&self.chip.otp_rows())?;
         self.configure = Configure::Failed;
@@ -629,6 +635,25 @@ impl Board {
             self.cut_at = Some(self.chip.cycles().saturating_add(after));
         }
         match r {
+            Request::Inspect {
+                command: Command::UsbControl(setup),
+                reply,
+            } => {
+                if dead || !self.hc.ready() || self.control.is_some() || setup[6..] != [0, 0] {
+                    let _ = reply.send(Err(
+                        "control requires a ready bus and zero data length".into()
+                    ));
+                } else {
+                    let id = self.hc.submit(Transfer {
+                        ep: 0,
+                        dir_in: false,
+                        setup,
+                        out: Vec::new(),
+                        want: 0,
+                    });
+                    self.control = Some((id, reply));
+                }
+            }
             Request::Inspect { command, reply } => {
                 let result = self.inspect(command, dead);
                 let _ = reply.send(result);
@@ -642,6 +667,7 @@ impl Board {
                 match (&self.configure, self.fido_out()) {
                     _ if !bridged => {}
                     (Configure::Done, Some(ep)) => {
+                        self.transport.hid_out(&report, self.chip.now_ns());
                         self.hc.submit(out(ep, &report));
                     }
                     (Configure::Done | Configure::Failed, _) => {}
@@ -693,6 +719,7 @@ impl Board {
 
     fn inspect(&mut self, command: Command, dead: bool) -> Result<String, String> {
         match command {
+            Command::Where => Ok(self.chip.whereabouts()),
             Command::Status => Ok(format!(
                 "cycle={} emulated_ns={} ready={} dead={} bootloader={} power_ups={} programmed_bytes={} last_cut={}",
                 self.chip.cycles(),
@@ -704,11 +731,44 @@ impl Board {
                 self.chip.programmed_bytes(),
                 self.last_cut
             )),
-            Command::Begin if !matches!(self.configure, Configure::Done) || dead => {
+            Command::Begin | Command::TransportBegin
+                if !matches!(self.configure, Configure::Done) || dead =>
+            {
                 Err("device is not ready".into())
             }
             Command::Begin => self.chip.begin_measurement(),
             Command::End => self.chip.end_measurement(),
+            Command::TransportBegin => {
+                self.transport.arm();
+                Ok("armed=transport".into())
+            }
+            Command::TransportEnd => self.transport.report(),
+            Command::UsbControl(_) => Err("control must run through the host queue".into()),
+            Command::UsbReset | Command::UsbDisconnect => {
+                if dead || !self.hc.ready() {
+                    return Err("USB is not ready".into());
+                }
+                let active = self.transport.running();
+                self.unplug()?;
+                self.hid.owners.clear();
+                self.hid.inits.clear();
+                let now = self.chip.now_ns();
+                let cycle = self.chip.cycles();
+                if command == Command::UsbReset {
+                    self.hc.reset_port(now, cycle);
+                    self.configure = Configure::Idle;
+                } else {
+                    self.chip.usb.lock().unwrap().host_connection(false, cycle);
+                }
+                Ok(format!("in_flight={active} power_ups={}", self.power_ups))
+            }
+            Command::UsbConnect => {
+                let cycle = self.chip.cycles();
+                self.chip.usb.lock().unwrap().host_connection(true, cycle);
+                self.hc = Hc::new(self.chip.usb.clone());
+                self.configure = Configure::Idle;
+                Ok(format!("power_ups={}", self.power_ups))
+            }
             Command::Scan(pattern) => Ok(self.chip.scan_sram(&pattern)),
             Command::Read { address, length } => Ok(self.chip.read_sram(address, length)),
             Command::Plant { address, bytes } => {
@@ -802,6 +862,17 @@ impl Board {
     }
 
     fn completed(&mut self, c: Completion, now: u64) {
+        if self.control.as_ref().is_some_and(|(id, _)| *id == c.id) {
+            if let Some((_, reply)) = self.control.take() {
+                let result = match c.outcome {
+                    Outcome::Done(_) => Ok("control=accepted".into()),
+                    Outcome::Stall => Err("control stalled".into()),
+                    Outcome::Gone => Err("control disconnected".into()),
+                };
+                let _ = reply.send(result);
+            }
+            return;
+        }
         if self.configure.waits_on(c.id) {
             self.configured_step(c);
             return;
@@ -820,6 +891,7 @@ impl Board {
         if Some(c.id) == self.fido_in {
             self.fido_in = None;
             if let Outcome::Done(data) = c.outcome {
+                self.transport.hid_in(&data, now);
                 self.fido_report(&data);
             }
             return;
@@ -850,6 +922,9 @@ impl Board {
                 return;
             }
         } else if f.in_id == c.id {
+            if let Outcome::Done(m) = &c.outcome {
+                self.transport.ccid_in(m, now);
+            }
             if let Outcome::Done(m) = &c.outcome
                 && is_time_extension(m)
             {
@@ -896,6 +971,7 @@ impl Board {
         let Some((msg, reply)) = self.ccid_queue.pop_front() else {
             return;
         };
+        self.transport.ccid_out(&msg, self.chip.now_ns());
         let out_id = self.hc.submit(out(bulk_out, &msg));
         let in_id = self.hc.submit(ccid_in(bulk_in));
         self.ccid = Some(CcidFlight {

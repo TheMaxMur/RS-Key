@@ -19,6 +19,7 @@ mod psm;
 mod qspi;
 mod sha256;
 mod sockets;
+mod transport;
 mod trng;
 mod usb;
 mod watchdog;

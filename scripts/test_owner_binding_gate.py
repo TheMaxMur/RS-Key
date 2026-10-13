@@ -839,6 +839,21 @@ def test_the_default_images_closure_is_walked_and_leaves_the_optional_crates_out
         "crates/rsk-slip39", "crates/rsk-ui"}
 
 
+def test_a_nested_workspace_cannot_shadow_the_images_package(tmp_path):
+    (tmp_path / "Cargo.toml").write_text(
+        '[workspace]\nmembers = ["firmware", "crates/thing"]\n', encoding="utf-8")
+    for directory, manifest in {
+        "firmware": '[package]\nname = "firmware"\n[dependencies]\nthing = {}\n',
+        "crates/thing": '[package]\nname = "thing"\n',
+        "firmware/experiment": '[package]\nname = "firmware"\n[workspace]\n',
+    }.items():
+        path = tmp_path / directory
+        path.mkdir(parents=True)
+        (path / "Cargo.toml").write_text(manifest, encoding="utf-8")
+    assert gate.crates(tmp_path) == {"firmware": "firmware", "thing": "crates/thing"}
+    assert gate.linked_crates(tmp_path) == {"firmware", "crates/thing"}
+
+
 def test_an_optional_dependency_a_default_feature_turns_on_is_linked(tmp_path):
     """The arm the real tree cannot drive: no manifest in it declares a `default`
     list, so an optional dependency is out whatever the walk does with features.

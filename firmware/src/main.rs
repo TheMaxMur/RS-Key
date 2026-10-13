@@ -11,6 +11,12 @@
 #![no_main]
 #![expect(unsafe_code, reason = "board glue; docs/unsafe.md lists every site")]
 
+#[cfg(all(
+    rsk_trustzone_prototype,
+    any(feature = "display", not(led_kind = "none"))
+))]
+compile_error!("the first TrustZone prototype requires LED_KIND=none and no display");
+
 use core::cell::RefCell;
 
 use embassy_executor::{InterruptExecutor, Spawner};
@@ -18,6 +24,7 @@ use embassy_rp::bind_interrupts;
 use embassy_rp::dma::InterruptHandler as DmaIrq;
 use embassy_rp::flash::{Blocking, Flash};
 use embassy_rp::interrupt;
+#[cfg(not(rsk_trustzone_prototype))]
 use embassy_rp::interrupt::{InterruptExt, Priority};
 use embassy_rp::peripherals::{DMA_CH0, PIO0, TRNG, USB};
 use embassy_rp::pio::InterruptHandler as PioIrq;
@@ -31,18 +38,25 @@ use embassy_rp::pio::Pio;
 #[cfg(not(led_kind = "none"))]
 use embassy_rp::pio_programs::ws2812::{PioWs2812, PioWs2812Program};
 use embassy_rp::trng::{Config as TrngConfig, InterruptHandler as TrngIrq, Trng};
-use embassy_rp::usb::{Driver as UsbDriver, InterruptHandler as UsbIrq};
+#[cfg(not(rsk_trustzone_prototype))]
+use embassy_rp::usb::Driver as UsbDriver;
+use embassy_rp::usb::InterruptHandler as UsbIrq;
+#[cfg(not(rsk_trustzone_prototype))]
 use embassy_time::Timer;
+#[cfg(not(rsk_trustzone_prototype))]
 use embassy_usb::class::hid::{
     Config as HidConfig, HidBootProtocol, HidReaderWriter, HidSubclass, HidWriter,
     State as HidState,
 };
+#[cfg(not(rsk_trustzone_prototype))]
 use embassy_usb::{Builder, Config as UsbConfig, UsbDevice};
 use static_cell::StaticCell;
 
 use rsk_crypto::{Device, FusedKey};
 use rsk_fs::Fs;
+#[cfg(not(rsk_trustzone_prototype))]
 use rsk_usb::ccid::{ATR_RSKEY, ATR_YUBIKEY, Ccid};
+#[cfg(not(rsk_trustzone_prototype))]
 use rsk_usb::ctaphid::{CtapHid, FIDO_REPORT_DESCRIPTOR};
 
 mod core1;
@@ -57,6 +71,8 @@ mod pin_lock;
 mod presence;
 mod rescue_platform;
 mod sweep;
+#[cfg(rsk_trustzone_prototype)]
+mod trustzone;
 mod usb_attach;
 mod vendor;
 mod worker;
@@ -76,7 +92,9 @@ use flash_storage::FLASH_SIZE;
 use handler::{FidoRng, Store};
 #[cfg(not(feature = "display"))]
 use presence::ButtonPresence;
-use worker::{ClientCcid, ClientCtap, Worker};
+use worker::Worker;
+#[cfg(not(rsk_trustzone_prototype))]
+use worker::{ClientCcid, ClientCtap};
 
 use panic_halt as _;
 
@@ -434,6 +452,7 @@ const BUILD_DRIVER: u8 = 1;
 #[cfg(led_kind = "pimoroni")]
 const BUILD_DRIVER: u8 = 2;
 
+#[cfg(not(rsk_trustzone_prototype))]
 type Drv = UsbDriver<'static, USB>;
 
 static EXECUTOR_HIGH: InterruptExecutor = InterruptExecutor::new();
@@ -445,17 +464,25 @@ unsafe fn SWI_IRQ_1() {
     unsafe { EXECUTOR_HIGH.on_interrupt() }
 }
 
+#[cfg(not(rsk_trustzone_prototype))]
 static CONFIG_DESC: StaticCell<[u8; 256]> = StaticCell::new();
+#[cfg(not(rsk_trustzone_prototype))]
 static BOS_DESC: StaticCell<[u8; 256]> = StaticCell::new();
+#[cfg(not(rsk_trustzone_prototype))]
 static MSOS_DESC: StaticCell<[u8; 64]> = StaticCell::new();
+#[cfg(not(rsk_trustzone_prototype))]
 static CONTROL_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+#[cfg(not(rsk_trustzone_prototype))]
 static HID_STATE: StaticCell<HidState> = StaticCell::new();
+#[cfg(not(rsk_trustzone_prototype))]
 static KBD_STATE: StaticCell<HidState> = StaticCell::new();
 // The OTP frame protocol is served on the keyboard interface only. macOS gates a
 // Generic Desktop/Keyboard HID nub behind Input Monitoring while the 0xF1D0 FIDO nub
 // opens unprompted, so answering OTP on the FIDO interface would hand slot programming
 // and challenge-response to any unprivileged console-user process (audit run-30).
+#[cfg(not(rsk_trustzone_prototype))]
 static OTP_HID_HANDLER_KBD: StaticCell<otp_kbd::OtpHidHandler> = StaticCell::new();
+#[cfg(not(rsk_trustzone_prototype))]
 static USB_HANDLER: StaticCell<led::StatusHandler> = StaticCell::new();
 // Holds the LED power-enable `Output` for the device's lifetime; dropping it would
 // release the pad and let the gated LED rail fall (see the LED block below).
@@ -502,9 +529,11 @@ static UI: StaticCell<RefCell<display::Ui>> = StaticCell::new();
 #[cfg(feature = "display")]
 static DISPLAY_KEYS: StaticCell<display::DeviceKeys> = StaticCell::new();
 
+#[cfg(not(rsk_trustzone_prototype))]
 struct SendUsb(UsbDevice<'static, Drv>);
 // SAFETY: moved once into `usb_task` and never touched elsewhere; the handlers it
 // carries reach only critical-section and atomic statics (docs/unsafe.md §3).
+#[cfg(not(rsk_trustzone_prototype))]
 unsafe impl Send for SendUsb {}
 
 /// Hold core0's stack to the floor the linker gave it.
@@ -526,6 +555,7 @@ fn arm_stack_limit() {
     unsafe { cortex_m::register::msplim::write(&raw const _stack_end as u32) };
 }
 
+#[cfg(not(rsk_trustzone_prototype))]
 #[embassy_executor::task]
 async fn usb_task(mut device: SendUsb) {
     device.0.run().await;
@@ -533,15 +563,19 @@ async fn usb_task(mut device: SendUsb) {
 
 // The tasks take their state by reference: an async fn keeps a by-value argument
 // twice in its future, the argument and the local it is moved into.
+#[cfg(not(rsk_trustzone_prototype))]
 static CTAP_STATE: StaticCell<CtapHid<'static, Drv, ClientCtap>> = StaticCell::new();
+#[cfg(not(rsk_trustzone_prototype))]
 static CCID_STATE: StaticCell<Ccid<'static, Drv, ClientCcid>> = StaticCell::new();
 static WORKER_STATE: StaticCell<Worker<'static>> = StaticCell::new();
 
+#[cfg(not(rsk_trustzone_prototype))]
 #[embassy_executor::task]
 async fn ctap_task(ctap: &'static mut CtapHid<'static, Drv, ClientCtap>) {
     ctap.run().await;
 }
 
+#[cfg(not(rsk_trustzone_prototype))]
 #[embassy_executor::task]
 async fn ccid_task(ccid: &'static mut Ccid<'static, Drv, ClientCcid>) {
     ccid.run().await;
@@ -552,6 +586,7 @@ async fn ccid_task(ccid: &'static mut Ccid<'static, Drv, ClientCcid>) {
 // crypto runs. Awaiting it inline kept that frame live under every dispatch, which
 // left ML-DSA-65 keygen flush against the stack ceiling (it halted on the next
 // interrupt). Must stay on the thread executor, never `hp`, so keepalives keep flowing.
+#[cfg(not(rsk_trustzone_prototype))]
 #[embassy_executor::task]
 async fn worker_task(worker: &'static mut Worker<'static>) {
     worker.run().await;
@@ -858,140 +893,148 @@ async fn main(spawner: Spawner) {
     let phy = _phy;
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
 
-    let driver = UsbDriver::new(p.USB, Irqs);
-    Timer::after_millis(200).await;
-
-    // Manufacturer + product strings and the OpenPGP AID vendor follow the
-    // EFFECTIVE (phy-overridden) VID, so a runtime Yubico VID yields a consistent
-    // Yubico identity that ykman / Yubico Authenticator recognize. Precedence per
-    // string: an explicit phy override > the VID-derived default > the build const.
-    // ⚠ a phy-repointed key can thus present a full Yubico identity at runtime —
-    // a deliberate masquerade capability (docs/threat-model).
-    let (vid_manufacturer, vid_product) = if usb_vid == YUBICO_VID {
-        (YUBICO_MANUFACTURER, YUBICO_PRODUCT)
-    } else {
-        (USB_MANUFACTURER, USB_PRODUCT)
-    };
-    let usb_manufacturer = phy_manufacturer.unwrap_or(vid_manufacturer);
-    let usb_product = phy_product.unwrap_or(vid_product);
+    #[cfg(rsk_trustzone_prototype)]
+    let _transport_identity = (usb_pid, phy_product, phy_manufacturer, usb_itf);
+    let device_release: u16 = 0x0AA5;
+    #[cfg(rsk_trustzone_prototype)]
+    let _ = device_release;
     let openpgp_mfr = openpgp_mfr_for(usb_vid);
+    #[cfg(not(rsk_trustzone_prototype))]
+    let _hp = {
+        let driver = UsbDriver::new(p.USB, Irqs);
+        Timer::after_millis(200).await;
 
-    let mut config = UsbConfig::new(usb_vid, usb_pid);
-    config.manufacturer = Some(usb_manufacturer);
-    config.product = Some(usb_product);
-    config.serial_number = Some("rs-key-0001");
-    config.max_power = 100;
-    config.max_packet_size_0 = 64;
-    // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
-    let device_release: u16 = 0x0AA3;
-    config.device_release = device_release;
+        // Manufacturer + product strings and the OpenPGP AID vendor follow the
+        // EFFECTIVE (phy-overridden) VID, so a runtime Yubico VID yields a consistent
+        // Yubico identity that ykman / Yubico Authenticator recognize. Precedence per
+        // string: an explicit phy override > the VID-derived default > the build const.
+        // ⚠ a phy-repointed key can thus present a full Yubico identity at runtime —
+        // a deliberate masquerade capability (docs/threat-model).
+        let (vid_manufacturer, vid_product) = if usb_vid == YUBICO_VID {
+            (YUBICO_MANUFACTURER, YUBICO_PRODUCT)
+        } else {
+            (USB_MANUFACTURER, USB_PRODUCT)
+        };
+        let usb_manufacturer = phy_manufacturer.unwrap_or(vid_manufacturer);
+        let usb_product = phy_product.unwrap_or(vid_product);
 
-    let mut builder = Builder::new(
-        driver,
-        config,
-        CONFIG_DESC.init([0; 256]),
-        BOS_DESC.init([0; 256]),
-        MSOS_DESC.init([0; 64]),
-        CONTROL_BUF.init([0; 64]),
-    );
+        let mut config = UsbConfig::new(usb_vid, usb_pid);
+        config.manufacturer = Some(usb_manufacturer);
+        config.product = Some(usb_product);
+        config.serial_number = Some("rs-key-0001");
+        config.max_power = 100;
+        config.max_packet_size_0 = 64;
+        // bcdDevice build counter; also surfaced on the trusted-display Firmware screen.
+        config.device_release = device_release;
 
-    // The keyboard (OTP) interface is built FIRST so it lands on interface 0 like a
-    // stock YubiKey: the libusb backend ykpers/ykcore ships — KeePassXC, ykchalresp,
-    // pam_yubico — claims interface 0 and sends the OTP frame reports there blind.
-    let otp_enabled = usb_itf & rsk_phy::USB_ITF_KB != 0;
-    let kbd = otp_enabled.then(|| {
-        HidWriter::<_, 8>::new(
-            &mut builder,
-            KBD_STATE.init(HidState::new()),
-            HidConfig {
-                report_descriptor: rsk_usb::kbd::KEYBOARD_REPORT_DESCRIPTOR,
-                request_handler: Some(OTP_HID_HANDLER_KBD.init(otp_kbd::OtpHidHandler)),
-                poll_ms: 10,
-                max_packet_size: 8,
-                hid_subclass: HidSubclass::No,
-                hid_boot_protocol: HidBootProtocol::None,
-            },
-        )
-    });
+        let mut builder = Builder::new(
+            driver,
+            config,
+            CONFIG_DESC.init([0; 256]),
+            BOS_DESC.init([0; 256]),
+            MSOS_DESC.init([0; 64]),
+            CONTROL_BUF.init([0; 64]),
+        );
 
-    // The keyboard interface (built above, always index 0 when present) is what
-    // ykpers/ykcore's libusb backend addresses for OTP — the interface reorder is what
-    // fixed issue #55. Serving the frame protocol on the FIDO interface too gains no
-    // host that needs it and only removes the macOS Input Monitoring gate (see
-    // OTP_HID_HANDLER_KBD), so keep this interface CTAP-only (audit run-30).
-    let hid = (usb_itf & rsk_phy::USB_ITF_HID != 0).then(|| {
-        HidReaderWriter::<_, 64, 64>::new(
-            &mut builder,
-            HID_STATE.init(HidState::new()),
-            HidConfig {
-                report_descriptor: FIDO_REPORT_DESCRIPTOR,
-                request_handler: None,
-                // 1 ms HID interval: a credMgmt/getAssertion response is several
-                // 64-byte IN frames; at 5 ms/frame that framing dominated once the
-                // per-call flash scan was removed. Full-speed floor is 1 ms.
-                poll_ms: 1,
-                max_packet_size: 64,
-                hid_subclass: HidSubclass::No,
-                hid_boot_protocol: HidBootProtocol::None,
-            },
-        )
-    });
+        // The keyboard (OTP) interface is built FIRST so it lands on interface 0 like a
+        // stock YubiKey: the libusb backend ykpers/ykcore ships — KeePassXC, ykchalresp,
+        // pam_yubico — claims interface 0 and sends the OTP frame reports there blind.
+        let otp_enabled = usb_itf & rsk_phy::USB_ITF_KB != 0;
+        let kbd = otp_enabled.then(|| {
+            HidWriter::<_, 8>::new(
+                &mut builder,
+                KBD_STATE.init(HidState::new()),
+                HidConfig {
+                    report_descriptor: rsk_usb::kbd::KEYBOARD_REPORT_DESCRIPTOR,
+                    request_handler: Some(OTP_HID_HANDLER_KBD.init(otp_kbd::OtpHidHandler)),
+                    poll_ms: 10,
+                    max_packet_size: 8,
+                    hid_subclass: HidSubclass::No,
+                    hid_boot_protocol: HidBootProtocol::None,
+                },
+            )
+        });
 
-    // Advertise CCID secure PIN entry (bPINSupport = VERIFY) only on the display
-    // build, where the trusted touchscreen can collect the PIN; a button build has
-    // no pad and leaves it off. The byte is the single switch every host CCID stack
-    // reads to drive on-device PIN entry.
-    let ccid_pin_support: u8 = if cfg!(feature = "display") {
-        0x01
-    } else {
-        0x00
+        // The keyboard interface (built above, always index 0 when present) is what
+        // ykpers/ykcore's libusb backend addresses for OTP — the interface reorder is what
+        // fixed issue #55. Serving the frame protocol on the FIDO interface too gains no
+        // host that needs it and only removes the macOS Input Monitoring gate (see
+        // OTP_HID_HANDLER_KBD), so keep this interface CTAP-only (audit run-30).
+        let hid = (usb_itf & rsk_phy::USB_ITF_HID != 0).then(|| {
+            HidReaderWriter::<_, 64, 64>::new(
+                &mut builder,
+                HID_STATE.init(HidState::new()),
+                HidConfig {
+                    report_descriptor: FIDO_REPORT_DESCRIPTOR,
+                    request_handler: None,
+                    // 1 ms HID interval: a credMgmt/getAssertion response is several
+                    // 64-byte IN frames; at 5 ms/frame that framing dominated once the
+                    // per-call flash scan was removed. Full-speed floor is 1 ms.
+                    poll_ms: 1,
+                    max_packet_size: 64,
+                    hid_subclass: HidSubclass::No,
+                    hid_boot_protocol: HidBootProtocol::None,
+                },
+            )
+        });
+
+        // Advertise CCID secure PIN entry (bPINSupport = VERIFY) only on the display
+        // build, where the trusted touchscreen can collect the PIN; a button build has
+        // no pad and leaves it off. The byte is the single switch every host CCID stack
+        // reads to drive on-device PIN entry.
+        let ccid_pin_support: u8 = if cfg!(feature = "display") {
+            0x01
+        } else {
+            0x00
+        };
+        // Present the YubiKey ATR only when the effective VID is Yubico's, mirroring
+        // the iManufacturer / OpenPGP AID: a default (non-Yubico) build must not
+        // impersonate a YubiKey on the wire — it carries the "RS-Key" ATR instead.
+        let card_atr: &'static [u8] = if usb_vid == YUBICO_VID {
+            ATR_YUBIKEY
+        } else {
+            ATR_RSKEY
+        };
+        let ccid = (usb_itf & rsk_phy::USB_ITF_CCID != 0)
+            .then(|| Ccid::new(&mut builder, ClientCcid, card_atr, ccid_pin_support));
+
+        // Go green (idle) the moment the host configures us, not on the first applet
+        // command — a healthy, enumerated key with no PC/SC client talking to it would
+        // otherwise sit on the red boot status. (See `led::StatusHandler`.)
+        builder.handler(USB_HANDLER.init(led::StatusHandler));
+
+        // Attach to the host (pull-up) and immediately start servicing it: no blocking
+        // work between `build()` and the `usb_task` spawn (see the init note above).
+        // Everything above is boot work no host could have used, so the CTAP 2.1 §6.6
+        // reset window starts here rather than at the time driver's zero.
+        usb_attach::mark();
+        let usb = builder.build();
+        let ctap = hid.map(|h| {
+            let (reader, writer) = h.split();
+            CtapHid::new(
+                reader,
+                writer,
+                ClientCtap,
+                presence::up_pending,
+                presence::request_cancel,
+            )
+        });
+
+        interrupt::SWI_IRQ_1.set_priority(Priority::P2);
+        let hp = EXECUTOR_HIGH.start(interrupt::SWI_IRQ_1);
+        hp.spawn(usb_task(SendUsb(usb)).unwrap());
+        if let Some(ctap) = ctap {
+            hp.spawn(ctap_task(CTAP_STATE.init(ctap)).unwrap());
+        }
+        if let Some(ccid) = ccid {
+            hp.spawn(ccid_task(CCID_STATE.init(ccid)).unwrap());
+        }
+        if let Some(kbd) = kbd {
+            hp.spawn(otp_kbd::kbd_task(kbd).unwrap());
+        }
+
+        hp
     };
-    // Present the YubiKey ATR only when the effective VID is Yubico's, mirroring
-    // the iManufacturer / OpenPGP AID: a default (non-Yubico) build must not
-    // impersonate a YubiKey on the wire — it carries the "RS-Key" ATR instead.
-    let card_atr: &'static [u8] = if usb_vid == YUBICO_VID {
-        ATR_YUBIKEY
-    } else {
-        ATR_RSKEY
-    };
-    let ccid = (usb_itf & rsk_phy::USB_ITF_CCID != 0)
-        .then(|| Ccid::new(&mut builder, ClientCcid, card_atr, ccid_pin_support));
-
-    // Go green (idle) the moment the host configures us, not on the first applet
-    // command — a healthy, enumerated key with no PC/SC client talking to it would
-    // otherwise sit on the red boot status. (See `led::StatusHandler`.)
-    builder.handler(USB_HANDLER.init(led::StatusHandler));
-
-    // Attach to the host (pull-up) and immediately start servicing it: no blocking
-    // work between `build()` and the `usb_task` spawn (see the init note above).
-    // Everything above is boot work no host could have used, so the CTAP 2.1 §6.6
-    // reset window starts here rather than at the time driver's zero.
-    usb_attach::mark();
-    let usb = builder.build();
-    let ctap = hid.map(|h| {
-        let (reader, writer) = h.split();
-        CtapHid::new(
-            reader,
-            writer,
-            ClientCtap,
-            presence::up_pending,
-            presence::request_cancel,
-        )
-    });
-
-    interrupt::SWI_IRQ_1.set_priority(Priority::P2);
-    let hp = EXECUTOR_HIGH.start(interrupt::SWI_IRQ_1);
-    hp.spawn(usb_task(SendUsb(usb)).unwrap());
-    if let Some(ctap) = ctap {
-        hp.spawn(ctap_task(CTAP_STATE.init(ctap)).unwrap());
-    }
-    if let Some(ccid) = ccid {
-        hp.spawn(ccid_task(CCID_STATE.init(ccid)).unwrap());
-    }
-    if let Some(kbd) = kbd {
-        hp.spawn(otp_kbd::kbd_task(kbd).unwrap());
-    }
-
     // Hold a nuisance onboard user LED off (`USR_LED_PIN`), independent of the
     // addressable status LED so it also applies on a `none` build. Drive the pad to
     // the LED's OFF level and park the `Output` for the device's lifetime — dropping
@@ -1126,7 +1169,7 @@ async fn main(spawner: Spawner) {
                     28 => gpio_pin!(p.PIN_28),
                     _ => gpio_pin!(p.PIN_29),
                 };
-                hp.spawn(led::gpio_task(led).unwrap());
+                _hp.spawn(led::gpio_task(led).unwrap());
             }
             2 => {
                 // `pimoroni`: a 3-pin PWM RGB on fixed pins (Pimoroni Tiny 2350) —
@@ -1134,7 +1177,7 @@ async fn main(spawner: Spawner) {
                 // common-anode polarity is in `led::pimoroni_cfg`. led_gpio is N/A.
                 let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());
                 let b = Pwm::new_output_a(p.PWM_SLICE2, p.PIN_20, led::pimoroni_cfg());
-                hp.spawn(led::pimoroni_task(rg, b).unwrap());
+                _hp.spawn(led::pimoroni_task(rg, b).unwrap());
             }
             _ => {
                 // `ws2812` (driver 3, and the safe fallback): the single addressable
@@ -1188,7 +1231,7 @@ async fn main(spawner: Spawner) {
                     28 => ws2812_pin!(p.PIN_28),
                     _ => ws2812_pin!(p.PIN_29),
                 };
-                hp.spawn(led::ws2812_task(ws2812).unwrap());
+                _hp.spawn(led::ws2812_task(ws2812).unwrap());
             }
         }
     }
@@ -1358,5 +1401,11 @@ async fn main(spawner: Spawner) {
             openpgp_mfr,
         )
     });
+    #[cfg(not(rsk_trustzone_prototype))]
     spawner.spawn(worker_task(worker).unwrap());
+    #[cfg(rsk_trustzone_prototype)]
+    {
+        trustzone::start_worker(worker);
+        spawner.spawn(trustzone::launch().unwrap());
+    }
 }

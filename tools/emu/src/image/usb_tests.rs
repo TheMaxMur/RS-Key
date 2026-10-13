@@ -16,6 +16,22 @@ fn arm(u: &mut UsbCore, off: usize, v: u32) {
 }
 
 #[test]
+fn disconnect_stops_packets_and_reset_clears_suspend_and_resume_latches() {
+    let mut u = attached();
+    u.host_connection(false, 1);
+    assert!(!u.attached());
+    assert_eq!(u.host_setup(0, [0; 8], 1), Handshake::Timeout);
+    assert_ne!(u.reg_read(SIE_STATUS, 0) & ST_SUSPENDED, 0);
+    u.host_connection(true, 2);
+    assert!(u.attached());
+    assert_ne!(u.reg_read(SIE_STATUS, 0) & ST_RESUME, 0);
+    u.host_bus_reset(3);
+    assert_eq!(u.reg_read(SIE_STATUS, 0) & (ST_SUSPENDED | ST_RESUME), 0);
+    assert_ne!(u.reg_read(SIE_STATUS, 0) & ST_BUS_RESET, 0);
+    assert!(u.attached());
+}
+
+#[test]
 fn setup_lands_in_dpram_raises_setup_req_and_disarms_stall() {
     let mut u = attached();
     u.reg_write(INTE, IN_SETUP_REQ, 0, 0);

@@ -328,3 +328,11 @@ flowchart TD
 - The two UF2 flavors on a release build of this repo:
   `firmware.uf2` (touch) and `firmware-test.uf2` (no-touch). `scripts/check.sh`
   builds both.
+
+## TrustZone transport prototype
+
+The separate [TrustZone prototype](../firmware/trustzone/README.md) keeps the
+worker and applets Secure while USB transports run Non-secure. Build it with
+`nix develop -c bash firmware/trustzone/build.sh`. It currently supports a
+4 MiB no-touch test image without display; ordinary firmware builds do not
+enable it. The image-level keepalive test uses an explicit emulator socket.

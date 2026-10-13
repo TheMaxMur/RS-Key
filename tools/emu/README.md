@@ -260,11 +260,20 @@ disabled for an ordinary protocol run.
 |---|---|
 | `status` | Current cycle, readiness, fault state, power-up count and last injected cut |
 | `begin`, then `end` | Paint unused stacks, step by one cycle and record each core's lowest SP until `end` |
+| `transport-begin`, then `transport-end` | Time the next socket CBOR/CCID request at USB completion: elapsed nanoseconds, keepalive count and largest gap, including the first and final gaps |
+| `usb-reset` | Reset and re-enumerate the USB bus without restarting either CPU; returns whether a measured request was in flight |
+| `where` | Report the current symbol/PC of both CPU cores for a stalled-operation diagnosis |
+| `usb-disconnect`, then `usb-connect` | Remove/reconnect the host link with device RAM retained; loss of the link raises USB suspend, reconnect drives a new bus reset |
+| `usb-control HEX` | Submit an eight-byte SETUP packet with zero data length; wait for acceptance, STALL or disconnection |
 | `scan HEX` | Count and SRAM addresses of an exact 1–256-byte pattern; no secret bytes printed |
 | `plant ADDRESS HEX` | Write a synthetic positive-control pattern at a hexadecimal SRAM address |
 | `cut-cycles N` | Cut N cycles after the next socket HID report or CCID request is accepted |
 | `cut-program N` | Cut after N accepted page-program bytes, counted across programs |
 | `cut-program-cycles N` | Cut N cycles after the next page program starts |
+
+Transport timing ends at the first final HID report or complete CCID message.
+Later response fragments, GET RESPONSE commands and host scheduling delays do
+not extend it. It retains the ordinary stepping quantum and changes no USB bytes.
 
 Fault arms replace one another and clear on reboot. An injected cut immediately
 disconnects in-flight transfers, saves flash and cold-boots. With `--store`, a

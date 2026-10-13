@@ -82,6 +82,22 @@ challenges it had in fact completed.
 
 ### 1.1 CCID APDU framing
 
+The experimental TrustZone image supports two-phase CCID ABORT (CCID 1.1 §4.1):
+an EP0 class request `bmRequestType=21`, `bRequest=01`, `wValue=bSlot | bSeq<<8`
+at the CCID interface, followed by `PC_to_RDR_Abort` (`72`) with the matching
+slot/sequence. Slot 0 is the only slot. Until the matching bulk command arrives,
+commands fail with `CMD_ABORTED` (`FF`); the bulk acknowledgement is
+`RDR_to_PC_SlotStatus` (`81`). An unmatched bulk sequence is refused with field
+offset `06`. Cancellation suppresses the response; synchronous computation and
+already committed flash updates are completed at their normal safe point.
+
+In this image, CTAPHID_CANCEL is also accepted while CBOR computation runs and
+answers the original request with `CTAP2_ERR_KEEPALIVE_CANCEL` (`2D`). USB reset,
+deconfiguration or suspend invalidates pending replies and clears transient
+applet authorization in Secure before new work is accepted. Persisted keys and
+the FIDO per-boot PIN mismatch budget survive a bus event. The ordinary image
+retains its existing transport configuration.
+
 Standard ISO-7816 short APDUs. SELECT is always `00 A4 04 00 Lc <AID> 00`; a
 `P2` of `04` selects too, where a YubiKey 5.8.0 answers `6D00`, because PicoForge
 sends it ([limitations](limitations.md)). The

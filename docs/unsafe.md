@@ -343,3 +343,46 @@ never ships inside the firmware.
 No `unsafe` in any parser, applet, crypto wrapper, or the flash filesystem.
 The attacker-facing surface is entirely safe Rust, and `cargo clippy -D
 warnings` plus the fuzz targets ([testing.md](testing.md)) keep it that way.
+
+## Experimental TrustZone transport build
+
+These sites are compiled only by the transport prototype, separately from the
+ordinary runtime count above. See [its build and scope](../firmware/trustzone/README.md).
+
+- `firmware/src/trustzone/mod.rs`: transfer the worker to its sole Secure IRQ
+  executor (`SendWorker`); service that executor; configure SAU, ITNS,
+  VTOR_NS, MSP_NS and MSPLIM_NS; enter the Non-secure reset vector. Startup
+  owns these registers. The worker is initialized before transfer and the
+  boot thread never borrows its cells afterwards. No Non-secure caller can
+  write this attribution or the Secure vector table.
+- `firmware/src/worker.rs`: turn CMSE-validated request/response spans into
+  slices. The C entry wrapper checks the whole span through Rust's
+  `TestTarget::check_range` before calling the implementation. The request
+  is copied into Secure memory; lengths are capped and request tickets plus
+  the exchange mutex serialize ownership. A reset or dropped future invalidates
+  its ticket; the worker wipes abandoned data before accepting another request.
+  Output contains only the existing
+  applet's authorized response and is wiped from the Secure exchange on drain.
+- `firmware/src/trustzone/gateway.c`: CMSE entry declarations let Arm GCC
+  generate SG veneers, register cleanup and BXNS returns. The wrappers pass
+  integer lengths and checked NS buffers, not Rust references or callbacks.
+- `firmware/trustzone/nonsecure/src/main.rs`: core0-local critical-section
+  implementation; the one `SendUsb` transfer to the
+  NS executor; USB peripheral `steal` after Secure hands that peripheral
+  over; the executor IRQ entry; and calls to the three SG entries. No
+  Secure spinlock, waker or peripheral reference is shared with this image.
+  Invalid-pointer probes deliberately call SG with Secure/cross-boundary
+  addresses and must be rejected before USB attachment.
+- `firmware/trustzone/nonsecure/src/time.rs`: enable TIMER1's NS interrupt
+  after installing its handler and bounded NS-owned timer queue.
+- `firmware/trustzone/nonsecure/src/session.rs`: the SG control call passes
+  numeric actions and tickets. A pending request's drop abandons that ticket;
+  USB reset/suspend callbacks queue Secure session cleanup, and CCID ABORT
+  is scoped to the single card slot. No Secure object reference crosses SG.
+- `firmware/trustzone/nonsecure/src/keyboard.rs`: SG calls report OTP touch
+  state, cancel only the Secure OTP wait, and consume a character already
+  authorized by Secure's physical-button flow. The transport never reads
+  stored OTP keys or controls the Secure authorization decision.
+
+The prototype is not a complete hardware isolation claim: bus filters, fault
+recovery, production image verification and update policy require further work.

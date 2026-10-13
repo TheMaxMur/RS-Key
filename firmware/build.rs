@@ -231,6 +231,9 @@ fn parse_toml(raw: &str) -> BoardConfig {
 /// out-of-range pin would otherwise reach a register with no pad behind it.
 const MAX_GPIO: u8 = 29;
 
+#[path = "trustzone/build.rs"]
+mod trustzone_build;
+
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     println!("cargo:rerun-if-env-changed=BOARD");
@@ -319,11 +322,17 @@ fn main() {
     let kvmain_len = resolve_kvmain_len();
     assert_layout_fits(flash_size, kvmain_len);
     let template = std::fs::read_to_string("memory.x").expect("read memory.x");
-    let memory_x = if flash_size == DEFAULT_FLASH_SIZE && kvmain_len == DEFAULT_KVMAIN {
+    let mut memory_x = if flash_size == DEFAULT_FLASH_SIZE && kvmain_len == DEFAULT_KVMAIN {
         template
     } else {
         splice_memory_block(&template, flash_size, kvmain_len)
     };
+    println!("cargo:rustc-check-cfg=cfg(rsk_trustzone_prototype)");
+    println!("cargo:rerun-if-env-changed=RSK_TRUSTZONE_PROTOTYPE");
+    if env::var_os("RSK_TRUSTZONE_PROTOTYPE").is_some() {
+        println!("cargo:rustc-cfg=rsk_trustzone_prototype");
+        trustzone_build::configure(&out, &mut memory_x);
+    }
     File::create(out.join("memory.x"))
         .unwrap()
         .write_all(memory_x.as_bytes())

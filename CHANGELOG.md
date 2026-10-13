@@ -38,6 +38,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Add an experimental TrustZone transport build: USB/CTAPHID/CCID/OTP framing
+  runs Non-secure while the existing worker and applets remain Secure. A
+  three-second synchronous getInfo workload exercises keepalive scheduling.
+  Image tests also verify RSA-2048 and ML-DSA-44/65/87 operations with keepalive
+  timestamps taken at USB completion.
+  The first prototype is a 4 MiB no-touch test image without display support.
+  bcdDevice `0x0AA3` → `0x0AA4`.
+- Keep TrustZone transport replies scoped to their request and USB session.
+  Processing CTAPHID_CANCEL and two-phase CCID ABORT discard the old response;
+  USB reset/disconnect clear applet authorization before accepting new work,
+  preserving the per-boot FIDO PIN failure budget. bcdDevice `0x0AA4` → `0x0AA5`.
+
 - Keep resident FIDO discovery's first assertion and continuation queue in the
   same order, including equal creation times and more matches than the queue
   holds. Each reported credential is returned once; the bounded queue retains

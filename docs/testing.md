@@ -788,11 +788,11 @@ command with it. "Peak" is the tier's `maximum resident set size` under
 
 | Tier | Crates | Harnesses | Covers | Solve | Wall | Peak | Slowest harness |
 |---|---|---|---|---|---|---|---|
-| `pr` | 13 | 70 | 58 | 229 s | 251 s | 2.8 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 39 s |
+| `pr` | 13 | 72 | 58 | 229 s | 251 s | 2.8 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 39 s |
 | `state` | 2 | 32 | 39 | 1341 s | 1365 s | 15.3 GiB | `rsk-fido::…_at_call_site`, 6 m 06 s |
-| `all` | 17 | 102 | 87 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
+| `all` | 17 | 104 | 87 | 3735 s | 3770 s | 19.0 GiB | `rsk-phy::serialize_parse_roundtrip`, 19 m 07 s |
 | `light1` | 4 | 35 | 38 | 528 s | 538 s | 9.3 GiB | `rsk-fido::…_at_call_site`, 5 m 35 s |
-| `light2` | 5 | 29 | 12 | 1289 s | 1300 s | 8.9 GiB | `rsk-rsa::sieve_step_keeps_residues`, 17 m 38 s |
+| `light2` | 5 | 31 | 12 | 1289 s | 1300 s | 8.9 GiB | `rsk-rsa::sieve_step_keeps_residues`, 17 m 38 s |
 | `light3` | 7 | 33 | 36 | 162 s | 176 s | 2.4 GiB | `rsk-usb::no_buffer_overrun_after_any_single_frame`, 36 s |
 | `heavy` | 1 | 5 | 1 | 1785 s | 1788 s | 19.9 GiB | `rsk-phy::serialize_parse_roundtrip`, 18 m 35 s |
 
@@ -829,12 +829,12 @@ shards ran separately in the same session and checked the same harness names as
 `all` did, compared name by name out of the four logs against `all`'s own
 listing, for 3763 s of solving against `all`'s 3735 s. That count was the `all`
 roster **of the 2026-08-26 tree: 89 names**. The same tier is **today's
-`FLOOR_all` of 102** — the `all` row above, thirteen harnesses later — and the four
+`FLOOR_all` of 104** — the `all` row above, fifteen harnesses later — and the four
 weekly floors still sum to it, because the shards partition the crates and
 `kani.sh` refuses to run when they stop. The count adds up; the *solving* does
 not, which is what 3763 s against 3735 s says. So `FLOOR_all` and `COVERS_all`
 are numbers a run has reached, and the reading they have reached is the 89 —
-moving it onto the 102 takes a fresh run of the four shards.
+moving it onto the 104 takes a fresh run of the four shards.
 
 Two figures this page carried are refuted by that run rather than confirmed.
 `rsk-phy`'s tier peaks at **19.9 GiB** against the 11.1 GB recorded for the
@@ -853,9 +853,9 @@ and not as a side effect of measuring.
 20 m 33 s, `light2` 54 m 52 s, `light3` 4 m 59 s and `heavy` 1 h 33 m 41 s on
 hosted `ubuntu-latest` runners, all four inside the 6 h job cap — and only one of
 the four is a reading of the roster above. That run was `main` at `06813cc1`,
-where `FLOOR_all` was 66 against today's `FLOOR_all` of 102, `light1` carried 17
+where `FLOOR_all` was 66 against today's `FLOOR_all` of 104, `light1` carried 17
 harnesses against today's `FLOOR_light1` of 35 and `light2` 21 against today's
-`FLOOR_light2` of 29. A run that proved 17 of `light1` is not evidence for a
+`FLOOR_light2` of 31. A run that proved 17 of `light1` is not evidence for a
 `light1` floor of 35.
 
 By *cost* it reads better than by count, and the two answers should not be
@@ -2002,3 +2002,42 @@ Source bindings, failed apparatus attempts and clean directional repeats are
 retained in `target/mutation-shards-20261012/safe/store-boundary-*` and
 `target/mutation-shards-20261012/safe/counter-peer-rekey-*`. The full sweep remains
 in progress. These tests preserve firmware behavior and the existing limits.
+
+## TrustZone prototype keepalive
+
+The [transport prototype](../firmware/trustzone/README.md) uses the image backend
+to check CTAPHID keepalive while Secure executes a three-second synchronous
+SHA-256 workload, then calls the existing getInfo handler. Run
+`python tests/94_trustzone_keepalive.py --port 7899 --inspect-port 7901` inside
+`nix develop`, against that image's explicit HID and inspection sockets. The
+test checks image-clock gaps and reports wall time separately; a busy host can
+slow interpretation without starving the firmware's USB executor. It requires
+a successful framed getInfo response and at least ten PROCESSING keepalives.
+The recorded final-image runs each produced 32; delaying keepalive until after
+the operation completed made the same test fail with zero. Hardware timing and
+production isolation are outside this experiment's result.
+
+For real operations, use a fresh image instance and run
+`python tests/95_trustzone_crypto_keepalive.py --fido-port 7899 --ccid-port 7900 --inspect-port 7901`.
+It verifies PIV RSA-2048 key generation and three signatures, plus registration
+and three assertions for each ML-DSA set (44/65/87). RSA uses CCID time extensions;
+ML-DSA uses CTAPHID PROCESSING keepalives. Assertions verify with both OpenSSL
+and dilithium-py; tampered signatures fail both verifiers. The image inspection
+commands `transport-begin`/`transport-end` measure USB completion times, so
+socket scheduling and idle catch-up cannot inflate the final gap. This test
+does not call the synthetic getInfo workload and requires explicit loopback
+ports; the ordinary applet-backend suite sweep excludes the TrustZone image tests.
+The recorded real-operation maxima were 200 ms for CCID and 110 ms for CTAPHID.
+
+For cancellation and session cleanup, start a fresh prototype image and run
+`python tests/96_trustzone_sessions.py --fido-port 7899 --ccid-port 7900 --inspect-port 7901`.
+It waits for a keepalive/time-extension barrier before injecting CANCEL, CCID
+ABORT, USB bus reset or disconnect/reconnect during real RSA and ML-DSA work.
+Every case checks recovery with a new verified signature and a bounded worker
+response; endless keepalives fail the deadline. New channels and sequences must
+not receive the previous session's result. Card power-off/on clears PIV PIN and
+management authorization; bus reset also invalidates a previously working FIDO
+largeBlobWrite token without changing its PIN retry count. USB injection leaves
+the MCU and RAM powered, with unchanged power-up count. It is not a power-cut
+or physical-board result. The final FIDO case sets a PIN, so reuse requires a
+fresh image instance.

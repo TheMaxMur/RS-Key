@@ -25,7 +25,7 @@ use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_time::{Instant, Timer};
 use embassy_usb::class::hid::{HidReader, HidWriter};
 use embassy_usb::driver::Driver;
-use rsk_secret::WipeGuard;
+use rsk_secret::{Secret, WipeGuard};
 
 pub const HID_RPT_SIZE: usize = 64;
 const INIT_DATA: usize = HID_RPT_SIZE - 7; // 57
@@ -69,6 +69,8 @@ pub const STATUS_UPNEEDED: u8 = 0x02;
 // Stream a KEEPALIVE this often while the worker runs a long synchronous op
 // (slow P-521, flash GC) — well under any host CTAP timeout.
 pub const KEEPALIVE_MS: u64 = 100;
+/// CTAP 2.1 §11.2.9.1.5: cancellation answers the original CBOR request.
+pub const CTAP_KEEPALIVE_CANCEL: u8 = 0x2d;
 
 /// Which keepalive status to stream while a request is in flight, or `None` to
 /// stay silent. U2F (MSG) is fast apart from the touch wait, and U2FHID hosts —
@@ -260,6 +262,14 @@ pub const FIDO_REPORT_DESCRIPTOR: &[u8] = &[
 /// task stays responsive and streams keepalives while slow crypto/flash runs.
 #[allow(async_fn_in_trait)] // crate-internal, single-threaded executor — no Send bound needed
 pub trait MsgHandler {
+    /// A new epoch invalidates in-flight replies when the USB session changes.
+    fn session_epoch() -> u32 {
+        0
+    }
+    /// The handler can discard a copied compute request before its reply is sent.
+    fn cancel_processing() -> bool {
+        false
+    }
     /// Handle a U2F (ISO-7816) command APDU, writing the response APDU (body +
     /// SW1 SW2) into `out`; returns its length. `cid` is the channel it arrived on:
     /// the MSG applet selection is cross-message state, and U2F has no SELECT of
@@ -609,6 +619,9 @@ pub struct CtapHid<'d, D: Driver<'d>, H: MsgHandler> {
     cids: CidAllocator,
     /// The current `CTAPHID_LOCK` holder, if any.
     lock: ChannelLock,
+    pending_frame: Option<u32>,
+    pending_bytes: Secret<[u8; HID_RPT_SIZE]>,
+    session_epoch: u32,
 }
 
 impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
@@ -625,6 +638,9 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             handler,
             asm: Reassembler::new(),
             scratch: [0; CTAP_MAX_MESSAGE],
+            pending_frame: None,
+            pending_bytes: Secret::zeroed(),
+            session_epoch: H::session_epoch(),
             up_pending,
             request_cancel,
             cids: CidAllocator::new(),
@@ -639,6 +655,18 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
     pub async fn run(&mut self) -> ! {
         let mut frame = [0u8; HID_RPT_SIZE];
         loop {
+            self.reset_if_new_session();
+            if let Some(epoch) = self.pending_frame.take() {
+                let mut pending = Secret::<[u8; HID_RPT_SIZE]>::zeroed();
+                pending
+                    .expose_mut()
+                    .copy_from_slice(self.pending_bytes.expose());
+                self.pending_bytes.wipe();
+                if epoch == H::session_epoch() {
+                    self.on_frame(pending.expose()).await;
+                }
+                continue;
+            }
             if self.asm.in_progress() {
                 match select(
                     self.reader.read(&mut frame),
@@ -649,6 +677,9 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                     Either::First(Ok(n)) if n == HID_RPT_SIZE => self.on_frame(&frame).await,
                     Either::First(_) => {}
                     Either::Second(_) => {
+                        if self.session_epoch != H::session_epoch() {
+                            continue;
+                        }
                         let cid = self.asm.current_cid();
                         self.asm.abort();
                         write_message(&mut self.writer, cid, CTAPHID_ERROR, &[ERR_MSG_TIMEOUT])
@@ -667,6 +698,19 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         }
     }
 
+    fn reset_if_new_session(&mut self) {
+        let epoch = H::session_epoch();
+        if epoch != self.session_epoch {
+            self.asm.scrub();
+            self.lock = ChannelLock::default();
+            if self.pending_frame != Some(epoch) {
+                self.pending_frame = None;
+                self.pending_bytes.wipe();
+            }
+            self.session_epoch = epoch;
+        }
+    }
+
     // Refines `RSKeyTransport!NoCrossChannelSplice` — SEC-TRANS-001.
     // Refines `RSKeyTransport!NoSequenceGap` — SEC-TRANS-002.
     // Refines `RSKeyTransport!NoBufferOverrun` — SEC-TRANS-003.
@@ -674,6 +718,7 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
     // nowhere else IN THE IMAGE. The emulator has its own, `serve`
     // (`tools/emu/src/hid.rs:52-87`), and it is what `tests/*.py` run against.
     async fn on_frame(&mut self, f: &[u8; HID_RPT_SIZE]) {
+        self.reset_if_new_session();
         match self.asm.feed(f) {
             Outcome::None => {}
             Outcome::Error(cid, code) => {
@@ -801,6 +846,8 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
             scratch,
             up_pending,
             request_cancel,
+            pending_frame,
+            pending_bytes,
             ..
         } = self;
         let up_pending = *up_pending;
@@ -809,8 +856,11 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
         // Frames read while the worker runs are inspected only for CTAPHID_CANCEL,
         // never reassembled (the message buffer is in use), so a scratch buffer
         // disjoint from `asm` is enough.
-        let mut watch = [0u8; HID_RPT_SIZE];
+        let mut watch = Secret::<[u8; HID_RPT_SIZE]>::zeroed();
         let is_cbor = matches!(call, Call::Cbor);
+        let epoch = H::session_epoch();
+        let monitor = is_cbor && H::cancel_processing();
+        let mut cancelled = false;
         let n = {
             let mut fut = core::pin::pin!(async {
                 match call {
@@ -824,25 +874,22 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 }
             });
             loop {
-                // Only watch the reader for CTAPHID_CANCEL while a touch is
-                // pending. That is the only window the platform sends CANCEL, and
-                // the only time it is not pipelining the next request. Reading
-                // frames during fast/crypto processing would consume — and then
-                // drop — a pipelined next command (e.g. the rapid getPinToken loop
-                // in conformance ClientPin-GetRetries), wedging the transport. So
-                // off the touch wait we race only the worker and the keepalive,
-                // exactly like before the CANCEL support was added.
-                if up_pending() {
-                    match select3(
-                        fut.as_mut(),
-                        Timer::after_millis(KEEPALIVE_MS),
-                        reader.read(&mut watch),
-                    )
+                // One deferred frame preserves pipelining while compute cancellation watches OUT.
+                if pending_frame.is_none()
+                    && epoch == H::session_epoch()
+                    && (up_pending() || monitor)
+                {
+                    match select3(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS), async {
+                        reader.ready().await;
+                        reader.read(watch.expose_mut()).await
+                    })
                     .await
                     {
                         Either3::First(n) => break n,
                         Either3::Second(_) => {
-                            if let Some(status) = keepalive_status(is_cbor, up_pending()) {
+                            if epoch == H::session_epoch()
+                                && let Some(status) = keepalive_status(is_cbor, up_pending())
+                            {
                                 write_message(writer, cid, CTAPHID_KEEPALIVE, &[status]).await;
                             }
                         }
@@ -850,8 +897,15 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                         // touch wait; the command then returns KEEPALIVE_CANCEL
                         // itself. Any other mid-flight frame is ignored.
                         Either3::Third(read) => {
-                            if matches!(read, Ok(k) if is_cancel_frame(&watch, k, cid)) {
+                            if matches!(read, Ok(k) if is_cancel_frame(watch.expose(), k, cid)) {
                                 request_cancel();
+                                cancelled |= monitor;
+                            } else if matches!(read, Ok(k) if k == HID_RPT_SIZE)
+                                && watch.expose()[4] != CTAPHID_CANCEL
+                                && monitor
+                            {
+                                pending_bytes.expose_mut().copy_from_slice(watch.expose());
+                                *pending_frame = Some(H::session_epoch());
                             }
                         }
                     }
@@ -859,7 +913,9 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                     match select(fut.as_mut(), Timer::after_millis(KEEPALIVE_MS)).await {
                         Either::First(n) => break n,
                         Either::Second(_) => {
-                            if let Some(status) = keepalive_status(is_cbor, up_pending()) {
+                            if epoch == H::session_epoch()
+                                && let Some(status) = keepalive_status(is_cbor, up_pending())
+                            {
                                 write_message(writer, cid, CTAPHID_KEEPALIVE, &[status]).await;
                             }
                         }
@@ -867,12 +923,21 @@ impl<'d, D: Driver<'d>, H: MsgHandler> CtapHid<'d, D, H> {
                 }
             }
         };
+        if epoch != H::session_epoch() {
+            let _response = WipeGuard::new(scratch);
+            asm.scrub();
+            return;
+        }
         let cmd = match call {
             Call::Cbor => CTAPHID_CBOR,
             Call::Msg => CTAPHID_MSG,
             Call::Vendor(cmd) => cmd,
         };
         match n {
+            _ if cancelled => {
+                let _response = WipeGuard::new(scratch);
+                write_message(writer, cid, CTAPHID_CBOR, &[CTAP_KEEPALIVE_CANCEL]).await;
+            }
             Some(n) => {
                 // Request and response both carried secrets (PINs, tokens, key blobs).
                 let resp = WipeGuard::new(scratch.get_mut(..n).unwrap_or_default());

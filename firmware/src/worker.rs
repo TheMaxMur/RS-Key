@@ -20,8 +20,11 @@ use zeroize::Zeroize;
 use rsk_crypto::FusedKey;
 use rsk_device::click::Clicks;
 use rsk_secret::WipeGuard;
+#[cfg(not(rsk_trustzone_prototype))]
 use rsk_usb::ccid::{ApduHandler, SecureResult};
-use rsk_usb::ctaphid::{CTAP_MAX_MESSAGE, MsgHandler};
+use rsk_usb::ctaphid::CTAP_MAX_MESSAGE;
+#[cfg(not(rsk_trustzone_prototype))]
+use rsk_usb::ctaphid::MsgHandler;
 
 use crate::handler::{Ccid, Ctap, DeviceHooks, FidoRng, Store};
 use crate::otp_kbd;
@@ -49,6 +52,8 @@ enum Kind {
     /// status. Carries no payload and returns none — the dispatcher state it clears
     /// lives on the worker, which is why it needs a round-trip at all.
     ResetCard,
+    #[cfg(rsk_trustzone_prototype)]
+    Otp,
 }
 
 /// The shared request/response buffer the transport fills and the worker drains.
@@ -86,6 +91,7 @@ static EXCHANGE: Mutex<Cs, Exchange> = Mutex::new(Exchange {
     resp: [0; RESP_CAP],
 });
 /// Serializes the two transports — only one request is processed at a time.
+#[cfg(not(rsk_trustzone_prototype))]
 static WORKER_LOCK: Mutex<Cs, ()> = Mutex::new(());
 /// Transport → worker: a request is ready in [`EXCHANGE`].
 static REQ: Signal<Cs, ()> = Signal::new();
@@ -130,6 +136,7 @@ pub(crate) fn host_request_pending_after(since: embassy_time::Instant) -> bool {
 /// return the length. The caller (a transport on the high-priority executor) wraps
 /// the `DONE.wait()` in a keepalive `select`, so keepalives keep flowing while the
 /// worker is blocked in synchronous crypto / flash.
+#[cfg(not(rsk_trustzone_prototype))]
 async fn roundtrip(kind: Kind, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
     let _serialize = WORKER_LOCK.lock().await;
     {
@@ -158,6 +165,7 @@ fn drain_resp(ex: &mut Exchange, out: &mut [u8]) -> usize {
 /// Hand a vendor command to the worker and await its response. Like [`roundtrip`]
 /// but carries the logical command number and returns `None` when the worker
 /// reports the command unsupported (so the transport replies `CTAPHID_ERROR`).
+#[cfg(not(rsk_trustzone_prototype))]
 async fn roundtrip_vendor(cmd: u8, data: &[u8], out: &mut [u8]) -> Option<usize> {
     let _serialize = WORKER_LOCK.lock().await;
     {
@@ -182,6 +190,7 @@ async fn roundtrip_vendor(cmd: u8, data: &[u8], out: &mut [u8]) -> Option<usize>
 /// Hand a CCID `PC_to_RDR_Secure` payload to the worker and await its response.
 /// Like [`roundtrip`] but returns the [`SecureResult`] (the CCID `bStatus`/`bError`
 /// the worker chose for a card result vs. a pad cancel/timeout) alongside the body.
+#[cfg(not(rsk_trustzone_prototype))]
 async fn roundtrip_secure(data: &[u8], out: &mut [u8]) -> SecureResult {
     let _serialize = WORKER_LOCK.lock().await;
     {
@@ -204,8 +213,10 @@ async fn roundtrip_secure(data: &[u8], out: &mut [u8]) -> SecureResult {
 
 /// CTAPHID client handler (runs on the high-priority executor) — forwards to the
 /// worker. Holds no state; the applet layer + flash live in the [`Worker`].
+#[cfg(not(rsk_trustzone_prototype))]
 pub struct ClientCtap;
 
+#[cfg(not(rsk_trustzone_prototype))]
 impl MsgHandler for ClientCtap {
     async fn handle_cbor(&mut self, cid: u32, data: &[u8], out: &mut [u8]) -> usize {
         roundtrip(Kind::Cbor, cid, data, out).await
@@ -242,8 +253,10 @@ impl MsgHandler for ClientCtap {
 }
 
 /// CCID client handler (high-priority executor) — forwards to the worker.
+#[cfg(not(rsk_trustzone_prototype))]
 pub struct ClientCcid;
 
+#[cfg(not(rsk_trustzone_prototype))]
 impl ApduHandler for ClientCcid {
     async fn handle_apdu(&mut self, apdu: &[u8], out: &mut [u8]) -> usize {
         roundtrip(Kind::Apdu, 0, apdu, out).await
@@ -304,6 +317,135 @@ pub struct Worker<'a> {
 /// Button-watcher poll cadence; also the idle tick that lets the
 /// worker re-arm the press timer between requests.
 const BTN_POLL_MS: u64 = 16;
+
+#[cfg(rsk_trustzone_prototype)]
+static SESSION: embassy_sync::blocking_mutex::Mutex<
+    Cs,
+    core::cell::RefCell<rsk_device::transport_session::Session>,
+> = embassy_sync::blocking_mutex::Mutex::new(core::cell::RefCell::new(
+    rsk_device::transport_session::Session::new(),
+));
+
+#[cfg(rsk_trustzone_prototype)]
+fn session<T>(f: impl FnOnce(&mut rsk_device::transport_session::Session) -> T) -> T {
+    SESSION.lock(|state| f(&mut state.borrow_mut()))
+}
+
+#[cfg(rsk_trustzone_prototype)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsk_tz_submit_impl(
+    tag: u32,
+    cid: u32,
+    request: *const u8,
+    length: u32,
+) -> u32 {
+    use crate::trustzone::abi;
+    let Ok(length) = usize::try_from(length) else {
+        return abi::INVALID;
+    };
+    if length > REQ_CAP {
+        return abi::INVALID;
+    }
+    let kind = match tag & 0xff {
+        abi::CBOR => Kind::Cbor,
+        abi::MSG => Kind::Msg,
+        abi::APDU => Kind::Apdu,
+        abi::SECURE_PIN => Kind::Secure,
+        abi::VENDOR => Kind::Vendor,
+        abi::RESET_CARD => Kind::ResetCard,
+        abi::OTP => Kind::Otp,
+        _ => return abi::INVALID,
+    };
+    if tag > 0xffff || (kind != Kind::Vendor && tag > 0xff) {
+        return abi::INVALID;
+    }
+    let Ok(mut ex) = EXCHANGE.try_lock() else {
+        return abi::PENDING;
+    };
+    let Some(ticket) = session(|state| state.submit()) else {
+        return abi::PENDING;
+    };
+    ex.kind = kind;
+    ex.cid = cid;
+    ex.vcmd = u8::try_from(tag >> 8).unwrap_or(0);
+    ex.req_len = length;
+    if length != 0 {
+        // SAFETY: the CMSE entry wrapper validated this complete NS-readable span.
+        let request = unsafe { core::slice::from_raw_parts(request, length) };
+        ex.req[..length].copy_from_slice(request);
+    }
+    REQ.signal(());
+    ticket
+}
+
+#[cfg(rsk_trustzone_prototype)]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rsk_tz_poll_impl(ticket: u32, response: *mut u8, capacity: u32) -> u32 {
+    use crate::trustzone::abi;
+    match session(|state| state.poll(ticket)) {
+        rsk_device::transport_session::Poll::Pending => return abi::PENDING,
+        rsk_device::transport_session::Poll::Abandoned => return abi::ABANDONED,
+        rsk_device::transport_session::Poll::Ready => {}
+    }
+    let Ok(mut ex) = EXCHANGE.try_lock() else {
+        return abi::PENDING;
+    };
+    let Ok(capacity) = usize::try_from(capacity) else {
+        return abi::INVALID;
+    };
+    if capacity < ex.resp_len + abi::REPLY_HEADER {
+        return abi::INVALID;
+    }
+    // SAFETY: the CMSE entry wrapper validated this complete NS-writable span.
+    let response = unsafe { core::slice::from_raw_parts_mut(response, capacity) };
+    response[..abi::REPLY_HEADER].copy_from_slice(&[
+        u8::from(ex.vendor_ok),
+        ex.sec_status,
+        ex.sec_error,
+    ]);
+    let n = drain_resp(&mut ex, &mut response[abi::REPLY_HEADER..]);
+    DONE.reset();
+    if !session(|state| state.release(ticket)) {
+        return abi::ABANDONED;
+    }
+    u32::try_from(n + abi::REPLY_HEADER).unwrap_or(abi::INVALID)
+}
+
+#[cfg(rsk_trustzone_prototype)]
+#[unsafe(no_mangle)]
+pub extern "C" fn rsk_tz_control_impl(action: u32, ticket: u32) -> u32 {
+    use crate::trustzone::abi;
+    match action {
+        abi::ABANDON => {
+            session(|state| state.abandon(ticket));
+            REQ.signal(());
+            0
+        }
+        abi::RESET_SESSION => {
+            session(|state| state.reset());
+            REQ.signal(());
+            0
+        }
+        abi::UP_PENDING => u32::from(crate::presence::up_pending()),
+        abi::CANCEL => {
+            crate::presence::request_cancel();
+            0
+        }
+        abi::OTP_PENDING => u32::from(crate::presence::otp_up_pending()),
+        abi::CANCEL_OTP => {
+            crate::presence::cancel_otp_wait();
+            0
+        }
+        abi::DESELECT_MSG => {
+            MSG_DESELECT.store(true, core::sync::atomic::Ordering::Release);
+            0
+        }
+        abi::KEYBOARD_CHAR => crate::otp_kbd::pop_char().map_or(0, |(byte, encode)| {
+            u32::from(byte) | abi::KEY_PRESENT | if encode { abi::KEY_ENCODE } else { 0 }
+        }),
+        _ => abi::INVALID,
+    }
+}
 
 impl<'a> Worker<'a> {
     /// `presence` is the one BOOTSEL button, shared (through its `RefCell`) by the
@@ -381,6 +523,9 @@ impl<'a> Worker<'a> {
             .await
             {
                 Either3::First(_) => {
+                    #[cfg(rsk_trustzone_prototype)]
+                    self.handle_portal_work().await;
+                    #[cfg(not(rsk_trustzone_prototype))]
                     self.handle_transport().await;
                     crate::sweep::dead_stack();
                     // A reboot the dispatch queued (a vendor REBOOT, a TRNG fault) runs only
@@ -408,12 +553,59 @@ impl<'a> Worker<'a> {
         }
     }
 
+    #[cfg(rsk_trustzone_prototype)]
+    async fn handle_portal_work(&mut self) {
+        use rsk_device::transport_session::Job;
+        while let Some(job) = session(|state| state.next_job()) {
+            match job {
+                Job::Dispatch(ticket) => {
+                    self.handle_transport().await;
+                    if session(|state| state.finish(ticket)) {
+                        DONE.signal(());
+                    }
+                }
+                Job::Discard(ticket) => {
+                    let mut exchange = EXCHANGE.lock().await;
+                    {
+                        let _request = WipeGuard::new(&mut exchange.req);
+                    }
+                    {
+                        let _response = WipeGuard::new(&mut exchange.resp);
+                    }
+                    exchange.req_len = 0;
+                    exchange.resp_len = 0;
+                    DONE.reset();
+                    session(|state| state.release(ticket));
+                }
+                Job::Reset => {
+                    self.ccid.reset_card();
+                    self.ctap.reset_transport_session();
+                    self.last_msg_cid = None;
+                    session(|state| state.reset_complete());
+                }
+            }
+        }
+    }
+
     /// One transport (CTAPHID/CCID) request: run the synchronous dispatch and
     /// signal the response. Holding the `EXCHANGE` lock across the (possibly
     /// multi-second) dispatch is fine — the requesting transport only re-locks
     /// `EXCHANGE` after `DONE`, and the lock's critical section is momentary, so
     /// the high-priority executor is never blocked.
     async fn handle_transport(&mut self) {
+        #[cfg(rsk_trustzone_prototype)]
+        {
+            let info = EXCHANGE
+                .try_lock()
+                .is_ok_and(|ex| ex.kind == Kind::Cbor && ex.req.get(..ex.req_len) == Some(&[0x04]));
+            if info {
+                let until = Instant::now()
+                    + Duration::from_millis(crate::trustzone::abi::LONG_OPERATION_MS);
+                while Instant::now() < until {
+                    core::hint::black_box(rsk_crypto::sha256(b"Secure keepalive prototype"));
+                }
+            }
+        }
         // A config write since the last request may have changed the enabled set;
         // reload it before any gate consults it.
         self.refresh_caps_if_dirty();
@@ -428,11 +620,20 @@ impl<'a> Worker<'a> {
             crate::presence::set_wait_scope(match ex.kind {
                 Kind::Cbor | Kind::Msg | Kind::Vendor => crate::presence::SCOPE_FIDO,
                 Kind::Apdu | Kind::Secure | Kind::ResetCard => crate::presence::SCOPE_CCID,
+                #[cfg(rsk_trustzone_prototype)]
+                Kind::Otp => crate::presence::SCOPE_OTP,
             });
             // A CCID pinpad VERIFY collects the PIN on the screen and runs the
             // VERIFY itself, so it needs both `self.presence` and `self.ccid`; keep
             // it out of the borrow-the-whole-Exchange match below.
-            if ex.kind == Kind::Secure {
+            #[cfg(rsk_trustzone_prototype)]
+            let otp = ex.kind == Kind::Otp;
+            #[cfg(not(rsk_trustzone_prototype))]
+            let otp = false;
+            if otp {
+                #[cfg(rsk_trustzone_prototype)]
+                self.handle_otp_portal(&mut ex);
+            } else if ex.kind == Kind::Secure {
                 self.handle_secure_req(&mut ex);
             } else {
                 // FIDO2 (CBOR) / U2F (MSG) disabled via `ykman config usb` answer a
@@ -503,6 +704,8 @@ impl<'a> Worker<'a> {
                         }
                     }
                     Kind::Secure => &[], // handled above
+                    #[cfg(rsk_trustzone_prototype)]
+                    Kind::Otp => &[], // handled above
                 };
                 let n = r.len().min(resp.len());
                 resp[..n].copy_from_slice(&r[..n]);
@@ -527,6 +730,7 @@ impl<'a> Worker<'a> {
         crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
         self.forget_pending_click();
         crate::led::set_status(crate::led::STATUS_IDLE);
+        #[cfg(not(rsk_trustzone_prototype))]
         DONE.signal(());
     }
 
@@ -674,6 +878,26 @@ impl<'a> Worker<'a> {
         // the press just consumed is counted as a click and types a ticket as well.
         self.forget_pending_click();
         crate::led::set_status(crate::led::STATUS_IDLE);
+    }
+
+    #[cfg(rsk_trustzone_prototype)]
+    fn handle_otp_portal(&mut self, ex: &mut Exchange) {
+        let Some(request) = ex
+            .req
+            .get(..ex.req_len)
+            .and_then(|b| b.first_chunk::<{ crate::trustzone::abi::OTP_REQUEST_LEN }>())
+        else {
+            ex.resp_len = 0;
+            return;
+        };
+        let mut payload = rsk_secret::Secret::<[u8; rsk_otp::hid::PAYLOAD_SIZE]>::zeroed();
+        payload.expose_mut().copy_from_slice(&request[1..]);
+        let (mut body, n, status) = self.ccid.handle_otp_hid(request[0], payload.expose());
+        let body = WipeGuard::new(&mut body);
+        ex.resp[..status.len()].copy_from_slice(&status);
+        ex.resp[status.len()..status.len() + n].copy_from_slice(&body[..n]);
+        ex.resp_len = status.len() + n;
+        self.ccid.scrub();
     }
 
     /// Sample the button and run the click-counter state machine; on a completed

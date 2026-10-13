@@ -190,6 +190,13 @@ impl<'a, S: Storage, R: rsk_sdk::Rng + 'static, VP: rsk_vendor::Platform>
         resp.zeroize();
         fido_state.borrow_mut().reset();
     }
+
+    /// A transport reset drops authorization without granting a new per-boot PIN budget.
+    pub fn reset_transport_session(&mut self) {
+        let lock = self.fido_state.borrow().pin_lock();
+        self.scrub_secrets();
+        self.fido_state.borrow_mut().restore_pin_lock(lock);
+    }
 }
 
 // Synchronous dispatch called by the worker (`crate::worker`) on the thread
