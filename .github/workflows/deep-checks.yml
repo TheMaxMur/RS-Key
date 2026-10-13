@@ -490,10 +490,9 @@ jobs:
       # The denominator is `strategy.job-total` and not a second hand-kept 12 —
       # two numbers that must agree is how the shard space silently loses a slice.
       - name: mutants — would a test notice if this line changed?
-        run: nix develop -c ./scripts/mutants-all.sh
+        run: nix develop -c ./scripts/mutants-container.sh
         env:
           MUTANTS_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
-          MUTANTS_JOBS: "3"
           HOST_TARGET: x86_64-unknown-linux-gnu
 
       # What seeding and triage start from: the survivors the baseline does not

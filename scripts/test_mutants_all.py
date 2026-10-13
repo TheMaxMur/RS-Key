@@ -57,6 +57,17 @@ if [ "$list" = 1 ]; then
   exit 0
 fi
 mkdir -p "$out/mutants.out"
+if [ -e "$FAKE/doc-only-mutant" ]; then
+  for kind in missed caught timeout unviable; do : > "$out/mutants.out/$kind.txt"; done
+  if cargo-nextest nextest run --verbose --package=rsk-a --target=x86_64-unknown-linux-gnu; then
+    kind=missed
+  else
+    kind=caught
+  fi
+  cp "$FAKE/doc-only-mutant" "$out/mutants.out/$kind.txt"
+  echo "1 mutants tested in 1s: 1 $kind"
+  exit 2
+fi
 cp "$FAKE"/out/*.txt "$out/mutants.out/"
 cat "$FAKE/summary" 2>/dev/null
 exit 2
@@ -102,11 +113,25 @@ class Tree:
         (self.fake / "out").mkdir(parents=True)
         (self.fake / "bin").mkdir()
         shutil.copy(SCRIPT, self.root / "scripts" / SCRIPT.name)
+        shutil.copy(ROOT / "scripts/mutants-nextest.sh", self.root / "scripts/mutants-nextest.sh")
+        # The row's verdict uses synthetic cgroups; real enforcement is tested in Linux.
+        cgroup = self.fake / "cgroup"
+        cgroup.mkdir()
+        (cgroup / "memory.max").write_text("4294967296\n")
+        (cgroup / "memory.swap.max").write_text("0\n")
+        adapter = self.root / "scripts/mutants-nextest.sh"
+        adapter.write_text(adapter.read_text().replace("/sys/fs/cgroup", str(cgroup)))
+        uname = self.fake / "bin/uname"
+        uname.write_text("#!/usr/bin/env bash\necho Linux\n")
+        uname.chmod(0o755)
         (self.root / "scripts/mutants-accepted.txt").write_text(ACCEPTED)
         (self.root / LIB).write_text("pub fn f() -> bool { false }\n")
         tool = self.fake / "bin" / "cargo-mutants"
         tool.write_text(FAKE)
         tool.chmod(0o755)
+        nextest = self.fake / "bin" / "cargo-nextest"
+        nextest.write_text("#!/usr/bin/env bash\nexit 0\n")
+        nextest.chmod(0o755)
         # The roster floor is 10000, so the fixture roster clears it with filler.
         filler = [f"crates/rsk-a/src/fill.rs:{i}:1: replace fill{i} -> bool with true"
                   for i in range(10000)]
@@ -168,6 +193,176 @@ def test_the_control_passes(tree):
     code, out = tree.run()
     assert code == 0, out
     assert "every survivor of shard 1/1 is accepted" in out
+
+
+def test_an_unbounded_native_host_is_refused_through_the_shard_row(tree):
+    uname = tree.fake / "bin/uname"
+    uname.write_text("#!/usr/bin/env bash\necho Darwin\n")
+    uname.chmod(0o755)
+    code, out = tree.run()
+    assert code == 1, "the shard row should refuse an unbounded native host"
+    assert "mutations require a Linux cgroup" in out
+    assert not (tree.fake / "argv").exists()
+
+
+def test_the_shard_row_cannot_increase_mutation_concurrency(tree):
+    code, out = tree.run(MUTANTS_JOBS="8")
+    assert code == 0, out
+    argv = (tree.fake / "argv").read_text().splitlines()
+    assert argv[argv.index("-j") + 1] == "1"
+
+
+@pytest.mark.parametrize("memory,swap", [("max", "0"), ("4294967297", "0"),
+                                        ("4294967296", "1"), ("0", "0"),
+                                        ("18446744073709551615", "0")])
+def test_invalid_memory_limits_are_refused_through_the_shard_row(tree, memory, swap):
+    (tree.fake / "cgroup/memory.max").write_text(f"{memory}\n")
+    (tree.fake / "cgroup/memory.swap.max").write_text(f"{swap}\n")
+    code, out = tree.run()
+    assert code == 1, "the shard row should refuse an unsafe memory limit"
+    assert "FAIL: mutation" in out
+    assert not (tree.fake / "argv").exists()
+
+
+def test_the_container_launcher_enforces_the_whole_tree_limit(tree):
+    script = tree.root / "scripts/mutants-container.sh"
+    shutil.copy(ROOT / "scripts/mutants-container.sh", script)
+    docker = tree.fake / "bin/docker"
+    docker.write_text("#!/usr/bin/env bash\n"
+                      "if [ \"$1\" = image ]; then printf 'nixos/nix@sha256:%064d\\n' 0; exit 0; fi\n"
+                      "if [ \"$1\" != create ]; then exit 0; fi\n"
+                      "printf '%s\\n' \"$@\" > \"$FAKE/docker-argv\"\n"
+                      "while [ $# -gt 0 ]; do\n"
+                      "  if [ \"$1\" = --cidfile ]; then printf '%064d\\n' 1 > \"$2\"; fi\n"
+                      "  shift\n"
+                      "done\n")
+    docker.chmod(0o755)
+    done = subprocess.run(["bash", str(script)], cwd=tree.root, capture_output=True,
+                          text=True, env=tree.env())
+    assert done.returncode == 0, done.stderr
+    argv = (tree.fake / "docker-argv").read_text().splitlines()
+    for flag in ["--memory=4g", "--memory-swap=4g", "--cpus=2", "--pids-limit=256",
+                 "--cap-drop=ALL", "--security-opt=no-new-privileges", "--init"]:
+        assert flag in argv, f"the actual launcher must enforce {flag}"
+    assert argv[argv.index("--name") + 1] == "rsk-mutants-safe"
+    assert argv[-2:] == ["-c", "./scripts/mutants-all.sh"]
+
+
+def test_a_container_name_conflict_cannot_stop_the_existing_runner(tree):
+    script = tree.root / "scripts/mutants-container.sh"
+    shutil.copy(ROOT / "scripts/mutants-container.sh", script)
+    docker = tree.fake / "bin/docker"
+    docker.write_text("#!/usr/bin/env bash\n"
+                      "case \"$1\" in\n"
+                      "image) printf 'nixos/nix@sha256:%064d\\n' 0;;\n"
+                      "create) echo 'name is already in use' >&2; exit 125;;\n"
+                      "rm) touch \"$FAKE/existing-runner-stopped\";;\n"
+                      "esac\n")
+    docker.chmod(0o755)
+    done = subprocess.run(["bash", str(script)], cwd=tree.root, capture_output=True,
+                          text=True, env=tree.env())
+    assert done.returncode == 125
+    assert not (tree.fake / "existing-runner-stopped").exists()
+
+
+@pytest.mark.parametrize("status", [0, 2, 125])
+def test_finished_launcher_preserves_the_container_verdict_and_removes_it(tree, status):
+    script = tree.root / "scripts/mutants-container.sh"
+    shutil.copy(ROOT / "scripts/mutants-container.sh", script)
+    docker = tree.fake / "bin/docker"
+    docker.write_text("#!/usr/bin/env bash\n"
+                      "if [ \"$1\" = image ]; then printf 'nixos/nix@sha256:%064d\\n' 0; exit 0; fi\n"
+                      f"if [ \"$1\" = start ]; then exit {status}; fi\n"
+                      "if [ \"$1\" = rm ]; then printf '%s\\n' \"$3\" > \"$FAKE/removed-id\"; exit 0; fi\n"
+                      "while [ $# -gt 0 ]; do\n"
+                      "  if [ \"$1\" = --cidfile ]; then printf '%064d\\n' 1 > \"$2\"; fi\n"
+                      "  shift\n"
+                      "done\n")
+    docker.chmod(0o755)
+    done = subprocess.run(["bash", str(script)], cwd=tree.root, capture_output=True,
+                          text=True, env=tree.env())
+    assert done.returncode == status
+    assert (tree.fake / "removed-id").read_text().strip() == f"{1:064d}"
+
+
+@pytest.mark.parametrize("whole_group", [False, True])
+@pytest.mark.parametrize("before_cid", [False, True])
+def test_cancelled_launcher_removes_only_the_container_it_created(tree, whole_group, before_cid):
+    import signal
+    import time
+
+    script = tree.root / "scripts/mutants-container.sh"
+    shutil.copy(ROOT / "scripts/mutants-container.sh", script)
+    docker = tree.fake / "bin/docker"
+    docker.write_text("#!/usr/bin/env bash\n"
+                      "if [ \"$1\" = image ]; then printf 'nixos/nix@sha256:%064d\\n' 0; exit 0; fi\n"
+                      "if [ \"$1\" = rm ]; then printf '%s\\n' \"$3\" > \"$FAKE/removed-id\"; exit 0; fi\n"
+                      "if [ \"$1\" = start ]; then touch \"$FAKE/tests-started\"; sleep 60; exit 0; fi\n"
+                      "touch \"$FAKE/creation-started\"\n"
+                      "sleep 0.3\n"
+                      "while [ $# -gt 0 ]; do\n"
+                      "  if [ \"$1\" = --cidfile ]; then printf '%064d\\n' 1 > \"$2\"; fi\n"
+                      "  shift\n"
+                      "done\n"
+                      "touch \"$FAKE/container-created\"\n")
+    docker.chmod(0o755)
+    process = subprocess.Popen(["bash", str(script)], cwd=tree.root,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               env=tree.env(), start_new_session=True)
+    try:
+        marker = "creation-started" if before_cid else "tests-started"
+        for _ in range(100):
+            if (tree.fake / marker).exists():
+                break
+            time.sleep(0.01)
+        assert (tree.fake / marker).exists()
+        if whole_group:
+            os.killpg(process.pid, signal.SIGTERM)
+        else:
+            process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=3) == 143
+        assert (tree.fake / "removed-id").read_text().strip() == f"{1:064d}"
+        if before_cid:
+            assert not (tree.fake / "tests-started").exists()
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        if process.poll() is None:
+            process.wait()
+
+
+def test_a_doc_only_defect_is_still_caught_through_the_shard_row(tree):
+    tree.accept("[doc-control] the native runner passes; the doctest must still fail\n")
+    (tree.fake / "doc-only-mutant").write_text(f"{F}\n")
+    cargo = tree.fake / "bin/cargo"
+    cargo.write_text("#!/usr/bin/env bash\n"
+                     "printf '%s\\n' \"$@\" > \"$FAKE/doc-argv\"\n"
+                     "echo 'doctest: protected output differs'\nexit 101\n")
+    cargo.chmod(0o755)
+    code, out = tree.run()
+    assert code == 0, out
+    assert "doctest: protected output differs" in out
+    assert (tree.fake / "doc-argv").read_text().splitlines() == [
+        "test", "--doc", "--verbose", "--package=rsk-a", "--target=x86_64-unknown-linux-gnu"
+    ]
+    assert (tree.root / "target/mutants/mutants.out/caught.txt").read_text() == f"{F}\n"
+
+
+def test_a_native_failure_cannot_be_overwritten_by_passing_doctests(tree):
+    tree.accept("[native-control] a native failure must end the mutation test\n")
+    (tree.fake / "doc-only-mutant").write_text(f"{F}\n")
+    (tree.fake / "bin/cargo-nextest").write_text("#!/usr/bin/env bash\n"
+                                               "echo 'native: protected output differs'\nexit 100\n")
+    cargo = tree.fake / "bin/cargo"
+    cargo.write_text("#!/usr/bin/env bash\ntouch \"$FAKE/doc-invoked\"\nexit 0\n")
+    cargo.chmod(0o755)
+    code, out = tree.run()
+    assert code == 0, out
+    assert "native: protected output differs" in out
+    assert not (tree.fake / "doc-invoked").exists()
+    assert (tree.root / "target/mutants/mutants.out/caught.txt").read_text() == f"{F}\n"
 
 
 def test_a_new_survivor_fails_the_shard(tree):

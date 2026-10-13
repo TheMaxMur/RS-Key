@@ -1660,7 +1660,7 @@ exercise its user flows.
 CI runs each as its own job on every pull request (`check` and `assurance`),
 plus the `proofs` job — `scripts/kani.sh`, which cannot join `check.sh` because
 Kani is not in the dev shell — plus the advisory `mutants-diff` job, cargo-mutants
-over the lines the pull request touches (`scripts/mutants-all.sh --in-diff`, the
+over the lines the pull request touches (`scripts/mutants-container.sh --in-diff`, the
 same command the fix loop runs locally) — plus, on a runner with the board
 attached, the `tests/` scripts. The scheduled
 `deep-checks` workflow runs on two cadences. Daily: the Miri and fuzz commands
@@ -1673,6 +1673,29 @@ the `cargo-mutants` sweep held against the accepted
 survivors in `scripts/mutants-accepted.txt`, the semantic
 co-refutation roster, TLC's formal safety tier and `check-assurance.sh` again
 over `main`. No hidden state.
+
+Run mutation sweeps through `nix develop -c ./scripts/mutants-container.sh`.
+Docker supplies a Linux cgroup with a 4 GiB limit for the entire runner,
+zero swap, two CPUs and 256 processes. The fixed container name admits one
+runner per host; each runner executes one mutant and one test at a time.
+The native entry point refuses an unbounded cgroup or a macOS process.
+The launcher obtains its container ID before starting tests. Cancellation
+removes only that container, including cancellation during creation, and the
+launcher preserves the container's exit status.
+
+The `mutants` nextest profile kills a test and its process group after
+20 seconds. Only the three display matrices that exercise the real one-minute
+inactivity deadline receive 80 seconds. Four exhaustive storage wear/recovery
+matrices measured at 47–671 seconds receive a 15-minute ceiling. Short readback
+oracles run first to refute nonprogress before those matrices. Native test
+processes inherit a 1 GiB address-space limit; compilation remains under the
+container's 4 GiB limit.
+Doctests have a separate 60-second command timeout.
+
+Cargo-mutants reports a failed nextest invocation as caught even when nextest
+timed it out or an allocation failed. Keep those resource terminations separate
+from assertion kills when reviewing the raw logs; they do not establish that
+an assertion noticed the intended defect.
 
 ```mermaid
 flowchart TB

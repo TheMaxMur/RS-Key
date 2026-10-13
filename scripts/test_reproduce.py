@@ -94,6 +94,13 @@ def test_the_shipped_tree_passes_its_own_self_test(tree):
     assert "self-test ok" in out
 
 
+def test_the_refusal_check_drains_the_complete_printed_block(tree):
+    footer = 'echo "  The board half is maintainer-only and written down in $HIL_PAGE."'
+    edit(tree, footer, footer + '\n  for ((i=0; i<4096; i++)); do echo "refusal detail"; done')
+    rc, out = self_test(tree)
+    assert rc == 0, "the printed page must be recognized without a producer SIGPIPE: " + out
+
+
 # --- clause: rows -------------------------------------------------------------
 
 

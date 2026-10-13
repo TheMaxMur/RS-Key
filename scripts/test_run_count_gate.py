@@ -1789,6 +1789,31 @@ def test_recording_a_whole_tier_leaves_a_green_tree(tree, tmp_path):
     assert tree.problems() == []
 
 
+def test_linux_host_metadata_uses_the_local_isa_and_logged_core_count(monkeypatch):
+    machine = os.uname_result(("Linux", "fixture", "release", "version", "aarch64"))
+    monkeypatch.setattr(run_count_gate.os, "uname", lambda: machine)
+
+    def reject_sysctl(*_args, **_kwargs):
+        raise AssertionError("Linux host metadata must not require macOS sysctl")
+
+    monkeypatch.setattr(run_count_gate.subprocess, "run", reject_sysctl)
+    assert run_count_gate.host(2) == "aarch64 (2 cores)"
+
+
+@pytest.mark.parametrize("status, brand, expected", [(0, "Apple fixture\n", "Apple fixture"), (1, "", "arm64")])
+def test_darwin_host_metadata_keeps_brand_and_isa_fallback(monkeypatch, status, brand, expected):
+    machine = os.uname_result(("Darwin", "fixture", "release", "version", "arm64"))
+    monkeypatch.setattr(run_count_gate.os, "uname", lambda: machine)
+
+    def sysctl(command, **kwargs):
+        assert command == ["sysctl", "-n", "machdep.cpu.brand_string"]
+        assert kwargs == {"capture_output": True, "text": True}
+        return subprocess.CompletedProcess(command, status, brand, "")
+
+    monkeypatch.setattr(run_count_gate.subprocess, "run", sysctl)
+    assert run_count_gate.host(3) == f"{expected} (3 cores)"
+
+
 # --- the row itself --------------------------------------------------------
 
 

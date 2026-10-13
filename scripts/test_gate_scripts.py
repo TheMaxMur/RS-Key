@@ -99,9 +99,10 @@ NAMED = {
     # `UNROSTERED`, and the one of that shape with a table of its own, so it
     # belongs here rather than in the carve-out that forbids one.
     "reproduce.sh": ("test_reproduce.py", "check.sh"),
-    # The accepted-survivors baseline made the weekly mutants row a guard. It is
-    # no gate row, so its runner is the workflow, like `run-tlc.sh`'s.
-    "mutants-all.sh": ("test_mutants_all.py", "../.github/workflows/deep-checks.yml"),
+    # The container is the workflow entry point and owns the bounded runner.
+    "mutants-all.sh": ("test_mutants_all.py", "mutants-container.sh"),
+    "mutants-container.sh": ("test_mutants_all.py", "../.github/workflows/deep-checks.yml"),
+    "mutants-nextest.sh": ("test_mutants_all.py", "mutants-all.sh"),
 }
 #: The board-only scripts under `tests/` that have a host table here, as
 #: **(script, its table)**. They are not guards and no `check.sh` row runs them —
@@ -296,7 +297,7 @@ def test_ci_runs_both_runners():
     advisory mutants over each pull request's lines. Read out of the `run:` scalars,
     so a step name or a comment naming one is not a run."""
     wanted = {"ci.yml": ("./scripts/check.sh", "./scripts/check-assurance.sh",
-                         "./scripts/mutants-all.sh --in-diff"),
+                         "./scripts/mutants-container.sh --in-diff"),
               "deep-checks.yml": ("./scripts/check-assurance.sh",)}
     for workflow, commands in wanted.items():
         text = (ROOT / ".github/workflows" / workflow).read_text()

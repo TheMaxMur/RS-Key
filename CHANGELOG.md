@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Run mutation tests in one Docker container capped at 4 GiB with no swap,
+  one mutant and one test at a time. Native mutation entry points refuse an
+  unbounded environment. Nextest terminates ordinary tests after 20 seconds;
+  measured display and storage matrices retain explicit bounded exceptions.
+  Test processes also inherit a 1 GiB address-space limit, and doctests have
+  a separate 60-second timeout.
+
 - Align the store's flash staging buffer to the flash write unit. `rsk-store`
   wrote to flash through an align-1 `[u8; _]`, which only lands 4-byte aligned
   by how the compiler happened to place the stack; the RP2350 ROM program (`and

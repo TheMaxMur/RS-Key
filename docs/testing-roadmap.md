@@ -363,7 +363,7 @@ visible under the existing divergence policy; repairing a harness failure
 does not authorize weakening its assertion. Hardware comparisons against a
 YubiKey remain a separate, explicitly authorized lane.
 
-Run `scripts/mutants-all.sh` on changed production lines and the existing full
+Run `scripts/mutants-container.sh` on changed production lines and the existing full
 weekly shards. Prioritize weakened authorization conjunctions, omitted wipes,
 wrong counter updates, wrong errors and interrupted commit ordering. Classify
 every survivor as a missing oracle, equivalent mutation or unsupported run;

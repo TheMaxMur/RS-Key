@@ -158,14 +158,14 @@ name = "tlaplus"
 role = "checker"
 provenance = "flake.lock:nixpkgs"
 pin = "331800de5053fcebacf6813adb5db9c9dca22a0c"
-statement = "TLC, and the tla2tools.jar formal/run-tlc.sh runs (nix/devshells.nix:62). Every model verdict in assurance/configurations.toml is this tool's answer."
+statement = "TLC, and the tla2tools.jar formal/run-tlc.sh runs (nix/devshells.nix:69). Every model verdict in assurance/configurations.toml is this tool's answer."
 
 [[tool]]
 name = "jre8"
 role = "runtime"
 provenance = "flake.lock:nixpkgs"
 pin = "331800de5053fcebacf6813adb5db9c9dca22a0c"
-statement = "The JVM TLC runs on (nix/devshells.nix:63). It was taken from the contributor's PATH before it was pinned, which made a prover's runtime differ per machine."
+statement = "The JVM TLC runs on (nix/devshells.nix:70). It was taken from the contributor's PATH before it was pinned, which made a prover's runtime differ per machine."
 
 # ---- Root inputs that are not in the TCB --------------------------------------
 # The other half of the both-ways rule. An input listed here provides nothing to

@@ -2003,11 +2003,14 @@ def host(cores):
     fact of the three the JVM does not print, so it stays local and the arch is
     held against the banner to say the two are the same box.
     """
-    brand = subprocess.run(
-        ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True
-    )
-    name = brand.stdout.strip() if brand.returncode == 0 else ""
-    return f"{name or os.uname().machine} ({cores} cores)"
+    machine = os.uname()
+    name = ""
+    if machine.sysname == "Darwin":
+        brand = subprocess.run(
+            ["sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True
+        )
+        name = brand.stdout.strip() if brand.returncode == 0 else ""
+    return f"{name or machine.machine} ({cores} cores)"
 
 
 #: The one ISA under two names each. Folded rather than substring-matched: the
