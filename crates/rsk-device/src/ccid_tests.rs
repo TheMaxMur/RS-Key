@@ -8,6 +8,9 @@ use crate::tests::{
     Env, FIDO_PIN, TestRng, VendorBoard, apdu, dev_conf, get_creds_metadata, select, sw,
 };
 
+#[path = "ccid_mutation_tests.rs"]
+mod mutation_boundaries;
+
 /// The DeviceInfo serial the management applet reports for [`crate::tests::SERIAL_ID`].
 fn serial() -> [u8; 4] {
     rsk_sdk::serial4(crate::tests::SERIAL_ID)
@@ -371,6 +374,10 @@ fn a_write_config_whose_length_byte_lies_is_refused() {
     let env = Env::new();
     let mut ccid = env.ccid();
     assert!(ccid.ctap_mgmt(0x43, &[]).is_none(), "an empty body");
+    assert!(
+        ccid.ctap_mgmt(0x43, &[1]).is_none(),
+        "a missing declared byte"
+    );
     assert!(
         ccid.ctap_mgmt(0x43, &[0x40, 0x03, 0x02]).is_none(),
         "a length past the end of the payload"

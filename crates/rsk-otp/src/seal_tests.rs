@@ -85,6 +85,34 @@ fn an_output_buffer_under_the_plaintext_reads_as_unprogrammed() {
 }
 
 #[test]
+fn authenticated_plaintext_cannot_exceed_a_slot_record() {
+    let (dev, mut fs) = fixture();
+    for n in [MAX_PLAIN, MAX_PLAIN + 1] {
+        let nonce = [0x33; NONCE_LEN];
+        let mut blob = nonce.to_vec();
+        blob.extend(std::iter::repeat_n(0x55, n));
+        let key = kenc(&dev);
+        let tag = aes256gcm_encrypt(
+            key.expose(),
+            &nonce,
+            dev.serial_hash,
+            &mut blob[NONCE_LEN..],
+        );
+        blob.extend_from_slice(&tag);
+        fs.put_key(FID, Sealed::wrap(&blob)).unwrap();
+        let mut out = Secret::new([0xa5; MAX_PLAIN + 1]);
+        let expected = if n == MAX_PLAIN { Some(n) } else { None };
+        assert_eq!(try_seal_read(&dev, &mut fs, FID, &mut out), Ok(expected));
+        if expected.is_some() {
+            assert_eq!(&out.expose()[..n], &[0x55; MAX_PLAIN]);
+            assert_eq!(out.expose()[n], 0xa5);
+        } else {
+            assert_eq!(out.expose(), &[0xa5; MAX_PLAIN + 1]);
+        }
+    }
+}
+
+#[test]
 fn the_optional_slot_reader_authenticates_and_checks_the_callers_capacity() {
     let (dev, mut fs) = fixture();
     let mut output = Secret::<[u8; CONFIG_SIZE]>::zeroed();

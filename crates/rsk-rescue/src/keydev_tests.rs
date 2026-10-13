@@ -63,6 +63,9 @@ fn key_generation_retries_an_invalid_scalar_and_refuses_an_unpersisted_key() {
     let key = load_or_generate(&dev(), None, &mut fs, &mut rng).unwrap();
     assert_eq!(rng.0, 2);
     assert_eq!(key.to_bytes().as_slice(), &[1; 32]);
+    let mut record = [0; GCM_LEN];
+    assert_eq!(fs.read_key(EF_DEVCERT_KEY, &mut record), Some(GCM_LEN));
+    assert_eq!(&record[1..13], &[0x22; 12]);
     assert_eq!(
         load_or_generate(&dev(), None, &mut fs, &mut rng)
             .unwrap()
@@ -97,7 +100,14 @@ fn otp_tagged_legacy_cbc_keeps_its_scalar_when_migrated_to_gcm() {
     let mut rng = LcgRng(7);
     let before = load_or_generate(&otp_dev(), None, &mut fs, &mut rng).unwrap();
     assert_eq!(before.to_bytes().as_slice(), &[0x11; 32]);
+    legacy[0] = TAG_OTP + 1;
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&legacy)).unwrap();
+    assert!(load_or_generate(&otp_dev(), None, &mut fs, &mut rng).is_none());
+    legacy[0] = TAG_OTP;
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&legacy)).unwrap();
+    fs.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
     assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut rng));
+    assert_eq!(fs.read(rsk_fs::EF_HARDENED, &mut [0; 1]), Some(1));
     assert_eq!(fs.size(EF_DEVCERT_KEY.get()), Some(GCM_LEN));
     assert_eq!(
         load_or_generate(&otp_dev(), None, &mut fs, &mut rng)
@@ -108,6 +118,16 @@ fn otp_tagged_legacy_cbc_keeps_its_scalar_when_migrated_to_gcm() {
     let generation = fs.write_gen();
     assert!(!migrate_kbase(&otp_dev(), &mut fs, &mut rng));
     assert_eq!(fs.write_gen(), generation);
+}
+
+#[test]
+fn an_empty_device_key_record_refuses_without_minting_or_panicking() {
+    let mut fs = fs();
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&[])).unwrap();
+    let generation = fs.write_gen();
+    assert!(load_or_generate(&otp_dev(), None, &mut fs, &mut LcgRng(7)).is_none());
+    assert_eq!(fs.write_gen(), generation);
+    assert_eq!(fs.size(EF_DEVCERT_KEY.get()), Some(0));
 }
 
 /// Manually CBC-seal a scalar the pre-#16 way (fixed serial-hash IV, bare 32
@@ -150,6 +170,10 @@ fn fresh_key_is_gcm_sealed_and_authenticated() {
     // malleability): the GCM tag rejects it, so the key no longer loads.
     let mut blob = [0u8; GCM_LEN];
     assert_eq!(fs.read_key(EF_DEVCERT_KEY, &mut blob), Some(GCM_LEN));
+    blob[0] ^= 1;
+    fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&blob)).unwrap();
+    assert!(load_or_generate(&otp_dev(), None, &mut fs, &mut rng).is_none());
+    blob[0] ^= 1;
     blob[1 + NONCE_LEN] ^= 0x01;
     fs.put_key(EF_DEVCERT_KEY, Sealed::wrap(&blob)).unwrap();
     assert!(load_or_generate(&otp_dev(), None, &mut fs, &mut rng).is_none());
