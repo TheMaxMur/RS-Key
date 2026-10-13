@@ -2,6 +2,23 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[path = "makecredential_mutation_tests.rs"]
+mod mutation;
+
+#[test]
+fn an_enterprise_attestation_wipes_its_live_org_key_early() {
+    let mut attestation = OrgAtt::Chain {
+        key: Secret::new([0x5a; 32]),
+        len: 7,
+    };
+    attestation.wipe();
+    let OrgAtt::Chain { key, len } = &attestation else {
+        panic!("the chain was lost while wiping its key");
+    };
+    assert_eq!(key.expose(), &[0; 32]);
+    assert_eq!(*len, 7);
+}
 use crate::consts::{ALG_ED25519, ALG_ESP256, ALG_ESP384, ALG_ESP512, EF_ALWAYS_UV, FLAG_UP};
 use crate::seed::ensure_seed;
 use crate::test_pins::PIN;
@@ -25,6 +42,33 @@ impl Rng for SeqRng {
 
 // Every makeCredential ships packed basic attestation with the device x5c.
 const ATT_FMT: &str = "packed";
+
+#[test]
+fn cose_algorithm_numbers_keep_their_registered_curves_and_echoed_identity() {
+    for (alg, curve) in [
+        (-7, 1),
+        (-9, 1),
+        (-35, 2),
+        (-51, 2),
+        (-36, 3),
+        (-52, 3),
+        (-8, 6),
+        (-19, 6),
+        (-48, 0x2c),
+        (-49, 0x2d),
+        (-50, 0x2e),
+    ] {
+        assert_eq!(alg_to_curve(alg), Some((alg, curve)), "COSE alg {alg}");
+    }
+    assert_eq!(
+        alg_to_curve(-47),
+        if cfg!(feature = "fips-profile") {
+            None
+        } else {
+            Some((-47, 8))
+        }
+    );
+}
 
 #[test]
 fn unknown_nested_creation_fields_preserve_each_following_known_field() {

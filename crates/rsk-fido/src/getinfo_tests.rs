@@ -186,7 +186,7 @@ fn get_info_fields() {
 
     // 0x08 maxCredentialIdLength
     assert_eq!(d.u8().unwrap(), 0x08);
-    assert_eq!(d.u64().unwrap(), MAX_CRED_ID_LENGTH);
+    assert_eq!(d.u64().unwrap(), 748);
 
     // 0x09 transports ["usb", "smart-card"] — the FIDO AID is routed onto CCID too
     assert_eq!(d.u8().unwrap(), 0x09);

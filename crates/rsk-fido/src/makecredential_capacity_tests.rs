@@ -4,14 +4,14 @@
 use super::*;
 use crate::consts::{EF_CRED, MAX_RESIDENT_CREDENTIALS};
 
-struct NoCredentialSpace(RamStorage);
+struct NoCredentialSpace(RamStorage, rsk_sdk::error::Error);
 impl Storage for NoCredentialSpace {
     fn read(&mut self, fid: u16, output: &mut [u8]) -> Option<usize> {
         self.0.read(fid, output)
     }
     fn write(&mut self, fid: u16, value: &[u8]) -> rsk_sdk::error::Result<()> {
         if (EF_CRED..EF_CRED + MAX_RESIDENT_CREDENTIALS).contains(&fid) {
-            Err(rsk_sdk::error::Error::NoMemory)
+            Err(self.1)
         } else {
             self.0.write(fid, value)
         }
@@ -29,7 +29,16 @@ impl Storage for NoCredentialSpace {
 
 #[test]
 fn a_backend_that_fills_during_resident_publication_reports_key_store_full() {
-    let mut fs = Fs::new(NoCredentialSpace(RamStorage::new()));
+    assert_publication_error(rsk_sdk::error::Error::NoMemory, CtapError::KeyStoreFull);
+}
+
+#[test]
+fn a_failed_resident_publication_reports_a_retryable_fault() {
+    assert_publication_error(rsk_sdk::error::Error::MemoryFatal, CtapError::Other);
+}
+
+fn assert_publication_error(error: rsk_sdk::error::Error, expected: CtapError) {
+    let mut fs = Fs::new(NoCredentialSpace(RamStorage::new(), error));
     crate::tests::uv_optional(&mut fs);
     let mut rng = SeqRng(1);
     ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
@@ -46,7 +55,7 @@ fn a_backend_that_fills_during_resident_publication_reports_key_store_full() {
     let mut output = [0; 4096];
     assert_eq!(
         make_credential(&mut ctx, &build_request(true), &mut output),
-        Err(CtapError::KeyStoreFull)
+        Err(expected)
     );
     assert_eq!(fs.read(EF_CRED, &mut [0; 1]), None);
     assert!(fs.has_key(crate::consts::EF_KEY_DEV));

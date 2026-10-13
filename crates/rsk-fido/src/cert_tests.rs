@@ -5,6 +5,48 @@ use super::*;
 use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 
+fn framed_sequence(total: usize) -> Vec<u8> {
+    let body = u16::try_from(total - 4).unwrap();
+    let mut der = vec![0x30, 0x82];
+    der.extend_from_slice(&body.to_be_bytes());
+    der.resize(total, 0x55);
+    der
+}
+
+#[test]
+fn the_mac_ceiling_chain_fills_the_four_certificate_record() {
+    let ceiling = crate::vendor::MAX_RAW_SUBPARA - crate::vendor::ATT_SUBPARA_OVERHEAD;
+    let cert = framed_sequence(ceiling / 4);
+    let chain = cert.repeat(4);
+    assert_eq!(chain.len(), ceiling);
+    let mut packed = vec![0; ATT_CHAIN_REC_MAX];
+    let n = att_chain_pack(&chain, &mut packed).unwrap();
+    assert_eq!(n, 1 + 4 * 2 + ceiling);
+    assert_eq!(att_chain_count(&packed[..n]), 4);
+    for index in 0..4 {
+        assert_eq!(att_chain_cert(&packed[..n], index), Some(cert.as_slice()));
+    }
+    assert!(att_chain_intact(&packed[..n]));
+}
+
+#[test]
+fn a_framed_chain_past_the_mac_ceiling_is_refused_with_ample_output() {
+    let ceiling = crate::vendor::MAX_RAW_SUBPARA - crate::vendor::ATT_SUBPARA_OVERHEAD;
+    let chain = framed_sequence(ceiling + 1);
+    let mut packed = vec![0x55; ceiling + 32];
+    assert_eq!(att_chain_pack(&chain, &mut packed), None);
+    assert!(packed.iter().all(|byte| *byte == 0x55));
+}
+
+#[test]
+fn the_framing_codec_accepts_an_empty_der_sequence() {
+    let mut packed = [0; 5];
+    assert_eq!(att_chain_pack(&[0x30, 0], &mut packed), Some(5));
+    assert_eq!(packed, [1, 2, 0, 0x30, 0]);
+    assert!(att_chain_intact(&packed));
+    assert_eq!(att_chain_cert(&packed, 0), Some(&[0x30, 0][..]));
+}
+
 #[test]
 fn certificate_template_rejects_each_independent_binding_change() {
     let key = P256Key::from_scalar(&[0x33; 32]).unwrap();

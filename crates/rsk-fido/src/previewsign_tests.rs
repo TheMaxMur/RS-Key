@@ -476,8 +476,8 @@ fn attested_key(att_obj: &[u8]) -> AttestedKey {
     let handle = ad[55..55 + id_len].to_vec();
     let mut k = Decoder::new(&ad[55 + id_len..]);
     assert_eq!(k.map().unwrap(), Some(5));
-    assert_eq!((k.u8().unwrap(), k.i64().unwrap()), (1, KTY_ARKG_PUB));
-    assert_eq!((k.u8().unwrap(), k.i64().unwrap()), (3, ALG_ARKG_P256));
+    assert_eq!((k.u8().unwrap(), k.i64().unwrap()), (1, -65537));
+    assert_eq!((k.u8().unwrap(), k.i64().unwrap()), (3, -65700));
     assert_eq!(k.i8().unwrap(), PUB_BL);
     let bl = ec2(&mut k, ALG_ES256);
     assert_eq!(k.i8().unwrap(), PUB_KEM);
@@ -557,7 +557,7 @@ fn asserted(resp: &[u8]) -> (Vec<u8>, Option<Vec<u8>>, Vec<String>) {
 /// Register a credential with previewSign `[ESP256-split-ARKG]` at `flags`; the
 /// credential id and its signing key.
 fn register(board: &mut Board, flags: Option<u64>, rk: bool) -> (Vec<u8>, AttestedKey) {
-    let input = generate_key(&[ALG_ESP256_SPLIT_ARKG], flags);
+    let input = generate_key(&[-65539], flags);
     let reg = registered(
         &board
             .mc(&mc_req(ALG_ES256, Some(&input), rk, false))

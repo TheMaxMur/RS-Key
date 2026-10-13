@@ -2589,6 +2589,9 @@ mod reads;
 #[path = "credmgmt_recovery_tests.rs"]
 mod recovery;
 
+#[path = "credmgmt_mutation_tests.rs"]
+mod mutation;
+
 /// deleteCredential and updateUserInformation name a credential by its id, and a
 /// record the flash would not serve may hold it: `NO_CREDENTIALS` there tells a
 /// platform to forget a passkey that is still stored, so the lookup fails instead.

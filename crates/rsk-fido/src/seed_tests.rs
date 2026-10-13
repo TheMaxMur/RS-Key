@@ -51,6 +51,46 @@ impl Rng for SeqRng {
 const OTP_KEY: [u8; 32] = [0x77; 32];
 
 #[test]
+fn the_attestation_record_matches_an_independent_chacha_and_nonce_vector() {
+    // Python hashlib/hmac HKDF-SHA256 and cryptography ChaCha20Poly1305,
+    // serial=0xab*32, no OTP, value=0x5a*32, fid=0xce10.
+    let expected = [
+        0x02, 0x13, 0xc6, 0xe1, 0xd0, 0xfd, 0xdf, 0xa3, 0xf2, 0x61, 0x40, 0x0c, 0xff, 0xd8, 0x96,
+        0x78, 0x46, 0xbd, 0xa9, 0x20, 0xf3, 0xcd, 0xcf, 0xe7, 0xc8, 0x47, 0xc0, 0xb4, 0x8a, 0x78,
+        0xa1, 0xfe, 0x44, 0xa5, 0xa2, 0xd7, 0x2a, 0xe5, 0x57, 0x3f, 0xad, 0x07, 0x5b, 0x43, 0xf7,
+        0x71, 0x84, 0x6f, 0x86, 0xa7, 0xaa, 0xb2, 0x66, 0xea, 0x37, 0x61, 0xe8, 0x2c, 0x56, 0x52,
+        0xd8,
+    ];
+    let mut store = fs();
+    store_att_key(&dev(), &mut store, &[0x5a; 32]).unwrap();
+    let mut record = [0; 61];
+    assert_eq!(store.read_key(EF_ATT_KEY, &mut record), Some(61));
+    assert_eq!(record, expected);
+    assert_eq!(
+        load_att_key(&dev(), &mut store).unwrap().expose(),
+        &[0x5a; 32]
+    );
+}
+
+#[test]
+fn upgrading_an_otp_rooted_cbc_record_preserves_the_completed_scrub_marker() {
+    let mut store = fs();
+    write_legacy_cbc(&otp_dev(), &mut store, EF_ATT_KEY, &[0x5a; 32]);
+    store.put(rsk_fs::EF_HARDENED, &[1]).unwrap();
+    migrate_keydev_boot(&otp_dev(), &mut store).unwrap();
+    let mut marker = [0; 1];
+    assert_eq!(store.read(rsk_fs::EF_HARDENED, &mut marker), Some(1));
+    assert_eq!(marker, [1]);
+    assert_eq!(
+        load_att_key(&otp_dev(), &mut store).unwrap().expose(),
+        &[0x5a; 32]
+    );
+    let mut record = [0; 61];
+    assert_eq!(store.read_key(EF_ATT_KEY, &mut record), Some(61));
+    assert_eq!(record[0], 0x12);
+}
+
+#[test]
 fn out_of_range_credential_counters_preserve_every_existing_slot() {
     let mut fs = fs();
     set_cred_sign_counter(&mut fs, 0, 7).unwrap();

@@ -17,6 +17,9 @@ use rsk_fs::storage::ram::RamStorage;
 #[path = "getassertion_walk_tests.rs"]
 mod walk;
 
+#[path = "getassertion_mutation_tests.rs"]
+mod mutation;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {

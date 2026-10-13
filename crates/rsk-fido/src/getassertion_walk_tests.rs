@@ -94,14 +94,22 @@ fn open_walk() -> (Fs<RamStorage>, SeqRng, crate::FidoState) {
 fn a_disappearing_or_replaced_credential_disarms_the_open_walk() {
     for replacement in [
         None,
+        Some(vec![0; 32]),
         Some(vec![0; RECORD_PREFIX - 1]),
         Some(vec![0; RECORD_PREFIX]),
     ] {
         let (mut fs, mut rng, mut state) = open_walk();
         let fid = EF_CRED + state.gna.slots[state.gna.counter as usize];
+        let mut original = [0; CRED_REC_MAX];
+        let original_len = fs.read(fid, &mut original).unwrap();
         match replacement {
             None => fs.delete(fid).unwrap(),
-            Some(record) => fs.put(fid, &record).unwrap(),
+            Some(mut record) => {
+                if record.len() == 32 {
+                    record.copy_from_slice(&original[..32]);
+                }
+                fs.put(fid, &record).unwrap();
+            }
         }
         let mut presence = crate::AlwaysConfirm;
         let mut out = [0x55; 1024];
@@ -119,6 +127,7 @@ fn a_disappearing_or_replaced_credential_disarms_the_open_walk() {
         );
         assert!(!ctx.state.gna.active);
         assert_eq!(out, [0x55; 1024]);
+        ctx.fs.put(fid, &original[..original_len]).unwrap();
         assert_eq!(
             get_next_assertion(&mut ctx, &mut out),
             Err(CtapError::NotAllowed)
