@@ -513,7 +513,7 @@ registered = "yes — assurance/platform.toml PLAT-SOURCE-001, pending"
 id = "AS-NTAI-3"
 statement = "Both Kani harnesses cover the SESSION token only. The persistent `pcmr` grant lives in EF_PAUTHTOKEN, needs a `Ctx` with flash behind it, and both harness headers say so."
 kind = "model fidelity"
-discharger = "a harness over clear_ppuat and write_pin_verifier with a Ctx — which is the `p256`-in-the-reachable-set problem credmgmt_kani.rs's own header records, where Kani 0.67.0 aborts in codegen on crypto-bigint 0.7.5. Until then the persistent half is held by the model and by host tests (crates/rsk-fido/src/clientpin_tests.rs:2461 and its neighbours), not by a proof — so `kani = 2` is two harnesses over one of three conjuncts, and BOUNDED keys on a harness NAME"
+discharger = "a harness over clear_ppuat and write_pin_verifier with a Ctx — which is the `p256`-in-the-reachable-set problem credmgmt_kani.rs's own header records, where Kani 0.67.0 aborts in codegen on crypto-bigint 0.7.5. Until then the persistent half is held by the model and by host tests (crates/rsk-fido/src/clientpin_tests.rs:2464 and its neighbours), not by a proof — so `kani = 2` is two harnesses over one of three conjuncts, and BOUNDED keys on a harness NAME"
 expressible = "no — a scope statement about two existing proofs"
 registered = "yes — assurance/platform.toml PLAT-MODEL-013, pending"
 

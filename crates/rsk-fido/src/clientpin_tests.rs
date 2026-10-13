@@ -16,6 +16,9 @@ use rsk_fs::storage::ram::RamStorage;
 #[path = "clientpin_damage_tests.rs"]
 mod damage;
 
+#[path = "clientpin_mutation_tests.rs"]
+mod mutation_boundaries;
+
 #[test]
 fn an_already_cleared_force_change_does_not_require_a_flash_write() {
     let (storage, medium) = Cut::new();
@@ -346,7 +349,7 @@ fn key_agreement<S: rsk_fs::Storage>(
     assert_eq!(d.u8().unwrap(), 1);
     assert_eq!(d.u8().unwrap(), 2);
     assert_eq!(d.u8().unwrap(), 3);
-    assert_eq!(d.i64().unwrap(), crate::consts::ALG_ECDH_ES_HKDF_256);
+    assert_eq!(d.i64().unwrap(), -25);
     assert_eq!(d.i8().unwrap(), -1);
     assert_eq!(d.u8().unwrap(), 1);
     assert_eq!(d.i8().unwrap(), -2);
@@ -3737,6 +3740,14 @@ fn store_device_pin_enforces_its_length_bounds() {
         other => panic!("expected TooLong, got {other:?}"),
     }
     assert!(!fs.has_data(EF_DEVICE_PIN));
+    for pin in [&PIN[..usize::from(MIN_PIN_LENGTH)], &[b'5'; 63][..]] {
+        store_device_pin(&dev(), &mut fs, pin).unwrap();
+        assert!(matches!(
+            spend_and_verify_device_pin(&dev(), &mut fs, pin),
+            LocalPin::Ok
+        ));
+        assert_eq!(device_pin_retries_left(&mut fs), Some(MAX_PIN_RETRIES));
+    }
 }
 
 /// The pad's verify reads its decrement back before trusting it, as the host's does

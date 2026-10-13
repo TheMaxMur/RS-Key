@@ -400,6 +400,17 @@ fn set_min_pin_length_stores_policy() {
 }
 
 #[test]
+fn the_maximum_host_pin_length_is_an_allowed_policy_floor() {
+    let mut fs = Fs::new(RamStorage::new());
+    let mut state = armed(PERM_ACFG);
+    let request = config_request(0x03, &subpara_min_pin(63), &TOKEN);
+    assert_eq!(run_fs(&mut fs, &mut state, &request), Ok(0));
+    let mut policy = [0; 2];
+    assert_eq!(fs.read(EF_MINPINLEN, &mut policy), Some(2));
+    assert_eq!(policy[0], 63);
+}
+
+#[test]
 fn set_min_pin_length_rejects_truncating_value() {
     // run-3 #3: a newMinPINLength above the max PIN length must be rejected
     // before the `as u8` store, which would truncate (256 -> 0) and pass the

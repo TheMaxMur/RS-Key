@@ -194,6 +194,38 @@ fn get_offset_beyond_size_rejected() {
 }
 
 #[test]
+fn a_read_at_the_stored_end_returns_an_empty_fragment() {
+    let mut fs = seeded_fs();
+    let mut state = FidoState::new();
+    let mut out = [0; 64];
+    let n = run(&mut fs, &mut state, &get_request(10, 17), &mut out).unwrap();
+    assert_eq!(get_bytes(&out, n), Vec::<u8>::new());
+}
+
+#[test]
+fn an_authenticated_array_at_the_storage_limit_commits_in_fragments() {
+    let mut body = vec![0x81, 0x59, 0x0f, 0xda];
+    body.extend_from_slice(&[0x5a; 4058]);
+    let blob = valid_blob(&body);
+    assert_eq!(blob.len(), 4078);
+    let mut fs = seeded_fs_with_pin();
+    let mut state = armed(PERM_LBW);
+    let mut out = [0; 4096];
+    for (index, fragment) in blob.chunks(1000).enumerate() {
+        let offset = index * 1000;
+        let req = set_request(
+            offset as u64,
+            (offset == 0).then_some(4078),
+            fragment,
+            &TOKEN,
+        );
+        assert_eq!(run(&mut fs, &mut state, &req, &mut out), Ok(0));
+    }
+    let n = run(&mut fs, &mut state, &get_request(4078, 0), &mut out).unwrap();
+    assert_eq!(get_bytes(&out, n), blob);
+}
+
+#[test]
 fn set_single_fragment_roundtrips() {
     let mut fs = seeded_fs();
     let mut state = armed(PERM_LBW);

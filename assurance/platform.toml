@@ -711,7 +711,7 @@ failure_direction = "security: the model proves the authorization invariants ove
 # the module has no PIN VALUE to compare. (3b) The refusal is a DISABLED ACTION
 # here, where the firmware refuses only after the ladder has spent a try, read
 # the counter back and REFILLED it (clientpin.rs:811-885, pinned by
-# clientpin_tests.rs:1379-1381) — so a refused-but-verified getPinToken has two
+# clientpin_tests.rs:1382-1384) — so a refused-but-verified getPinToken has two
 # EF_PIN writes in the code and no position at all in this model. (4) The
 # BUILT-IN UV door (`getPinUvAuthTokenUsingUvWithPermissions`,
 # clientpin.rs:544-546) carries the same refusal in the firmware and has no
@@ -841,7 +841,7 @@ supports = ["SEC-FIDO-003"]
 id = "PLAT-MODEL-013"
 class = "model-abstraction"
 statement = "The two Kani harnesses named for this property cover the SESSION token only. `crates/rsk-fido/src/state_kani.rs::no_token_after_invalidation` and `credmgmt_kani.rs::no_token_after_invalidation_at_call_site` drive `FidoState` in RAM; the persistent `pcmr` grant lives in EF_PAUTHTOKEN, needs a `Ctx` with flash behind it, and both harness headers say so in as many words. So the second conjunct of the invariant is bounded-proved and the first and third are not."
-discharge = "A harness over `clear_ppuat` and `write_pin_verifier` with a `Ctx`, which is the `p256`-in-the-reachable-set problem `credmgmt_kani.rs`'s own header records: Kani 0.67.0 aborts in codegen on `crypto-bigint 0.7.5 UintRef::lowest_u64`. Until that is answered the persistent half is held by host tests (`crates/rsk-fido/src/clientpin_tests.rs:2197` and its neighbours) and by the model, not by a proof."
+discharge = "A harness over `clear_ppuat` and `write_pin_verifier` with a `Ctx`, which is the `p256`-in-the-reachable-set problem `credmgmt_kani.rs`'s own header records: Kani 0.67.0 aborts in codegen on `crypto-bigint 0.7.5 UintRef::lowest_u64`. Until that is answered the persistent half is held by host tests (`crates/rsk-fido/src/clientpin_tests.rs:2200` and its neighbours) and by the model, not by a proof."
 discharge_owner = "contributor"
 status = "pending"
 failure_direction = "coverage: `kani = 2` reads as the whole property bounded, and it is one of the invariant's three conjuncts"

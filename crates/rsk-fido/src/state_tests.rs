@@ -204,6 +204,8 @@ fn warm_boot_survives_reset_but_session_state_does_not() {
     st.paut.permissions = PERM_ACFG;
     st.begin_using_token(true, 0);
     st.establish_mse_for_test([0x11; 32], [0x04; 65]);
+    assert!(st.mse_live());
+    assert_eq!(st.mse_key_for_test(), Some([0x11; 32]));
     st.cm.rp_total = 4;
     st.gna.active = true;
     st.restore_pin_lock(LOCKED);

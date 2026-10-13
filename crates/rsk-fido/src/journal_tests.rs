@@ -55,6 +55,35 @@ fn dev() -> Device<'static> {
     }
 }
 
+#[test]
+fn the_empty_journal_has_the_serial_bound_genesis_hash() {
+    // Python hashlib SHA-256("RSK-AUDIT-GENESIS-v1" || 0xab * 32).
+    assert_eq!(
+        genesis(&dev()),
+        [
+            0xfa, 0xb1, 0x57, 0x4d, 0xf4, 0xcb, 0x5f, 0xa5, 0x32, 0x8b, 0x2e, 0xfa, 0xdc, 0x93,
+            0xa4, 0x39, 0xc7, 0x14, 0xae, 0x71, 0x2c, 0x20, 0xa8, 0x46, 0xb8, 0x4b, 0x2c, 0x6f,
+            0x27, 0x5a, 0x8d, 0x11,
+        ]
+    );
+}
+
+#[test]
+fn an_opted_in_local_action_is_exported_without_a_host_boot_event() {
+    let mut fs = Fs::new(RamStorage::new());
+    set_enabled(&mut fs, true).unwrap();
+    append_local(&dev(), &mut fs, 1234, EV_PIN_SET, 7);
+    let mut events = Vec::new();
+    assert_eq!(
+        for_each_event(&dev(), &mut fs, |event| {
+            events.push((event.event, event.uptime_ms));
+            true
+        }),
+        1
+    );
+    assert_eq!(events, [(EV_PIN_SET, 1234)]);
+}
+
 fn run_ctx<S: Storage, T>(
     fs: &mut Fs<S>,
     state: &mut FidoState,
@@ -451,7 +480,9 @@ fn read_exports_window_that_folds_to_head() {
     let mut out = [0u8; 4096];
     let n = run_ctx(&mut fs, &mut state, |ctx| {
         append(ctx, EV_MAKE_CRED, 1, &[2; 8]);
-        append(ctx, EV_PIN_SET, 0, &[]);
+        for _ in 0..10 {
+            append(ctx, EV_PIN_SET, 0, &[]);
+        }
         vendor_read(ctx, &mut out)
     })
     .unwrap();
@@ -468,8 +499,8 @@ fn read_exports_window_that_folds_to_head() {
     let entries = d.bytes().unwrap();
 
     assert_eq!(start, 0);
-    assert_eq!(seq_next, 3); // BOOT + two events
-    assert_eq!(entries.len(), 3 * ENTRY_LEN);
+    assert_eq!(seq_next, 12); // BOOT + eleven events
+    assert_eq!(entries.len(), 12 * ENTRY_LEN);
     for e in entries.chunks_exact(ENTRY_LEN) {
         epoch = chain(&epoch, e.try_into().unwrap());
     }

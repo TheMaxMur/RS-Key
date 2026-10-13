@@ -101,7 +101,7 @@ assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	544-546	if f
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	822-822	// the retry budget. If the stored value doesn't match, fail closed (treat as	// the retry budget. If the stored value doesn't match, fail closed (treat as
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	905-905	fn write_pin_verifier<S: Storage>(	fn write_pin_verifier<S: Storage>(
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin.rs	1366-1366	let _ = clear_force_change(fs);	let _ = clear_force_change(fs);
-assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin_tests.rs	2461-2461	/// The revocation sits in `write_pin_verifier`, the one function every `EF_PIN`	/// The revocation sits in `write_pin_verifier`, the one function every `EF_PIN`
+assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/clientpin_tests.rs	2464-2464	/// The revocation sits in `write_pin_verifier`, the one function every `EF_PIN`	/// The revocation sits in `write_pin_verifier`, the one function every `EF_PIN`
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/config.rs	245-247	if !ctx.state.verify_token(proto, &vp[..vp_len], param)	{
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/consts.rs	371-371	pub const MAX_PIN_RETRIES: u8 = 8;	pub const MAX_PIN_RETRIES: u8 = 8;
 assurance/bundle/SEC-FIDO-003.toml	crates/rsk-fido/src/consts.rs	375-375	pub const PIN_MISMATCH_LIMIT: u8 = 3;	pub const PIN_MISMATCH_LIMIT: u8 = 3;
@@ -146,9 +146,9 @@ assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset.rs	255-255	fn is_fi
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset.rs	255-259	fn is_fido_gate_record(fid: u16) -> bool {	)
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset.rs	283-283	|| fid == EF_PAUTHTOKEN.get()	|| fid == EF_PAUTHTOKEN.get()
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_assurance.rs	11-11	use crate::consts::{EF_ALWAYS_UV, EF_BACKUP_SEALED, EF_CRED, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_PIN};	use crate::consts::{EF_ALWAYS_UV, EF_BACKUP_SEALED, EF_CRED, EF_KEY_DEV, EF_KEY_DEV_ENC, EF_PIN};
-assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	627-627	fn the_gate_set_defers_every_record_whose_absence_is_permissive() {	fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
-assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	1168-1168	fn a_torn_reset_never_leaves_a_grant_without_its_pin() {	fn a_torn_reset_never_leaves_a_grant_without_its_pin() {
-assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	1189-1189	fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {	fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {
+assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	630-630	fn the_gate_set_defers_every_record_whose_absence_is_permissive() {	fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
+assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	1171-1171	fn a_torn_reset_never_leaves_a_grant_without_its_pin() {	fn a_torn_reset_never_leaves_a_grant_without_its_pin() {
+assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/reset_tests.rs	1192-1192	fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {	fn a_torn_device_wide_wipe_never_leaves_a_grant_without_its_pin() {
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/seed.rs	325-325	pub fn load_ppuat<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<Secret<[u8; 32]>> {	pub fn load_ppuat<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<Secret<[u8; 32]>> {
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/seed.rs	325-336	pub fn load_ppuat<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Option<Secret<[u8; 32]>> {	) -> Result<Secret<[u8; 32]>> {
 assurance/bundle/SEC-FIDO-004.toml	crates/rsk-fido/src/seed.rs	329-330	/// [`load_ppuat`], minting a fresh token only when the record is confirmed absent —	/// the `pcmr` half of §6.5.5.7.2/.3. Unlike the session token it outlives the power
@@ -235,8 +235,8 @@ assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	189-189	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	fn reset_property_controls_go_red_on_each_early_gate_mutant() {
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	189-206	fn reset_property_controls_go_red_on_each_early_gate_mutant() {	}
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_assurance_tests.rs	273-273	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {
-assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_tests.rs	724-724	fn a_torn_reset_never_unseals_a_surviving_seed() {	fn a_torn_reset_never_unseals_a_surviving_seed() {
-assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_tests.rs	1207-1207	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
+assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_tests.rs	727-727	fn a_torn_reset_never_unseals_a_surviving_seed() {	fn a_torn_reset_never_unseals_a_surviving_seed() {
+assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/reset_tests.rs	1210-1210	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/state.rs	544-544	/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.	/// Refines `RSKeySecurityState!ResetNeverWeakensSurvivingState` — SEC-FIDO-006.
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-fido/src/state.rs	550-550	*self = Self::new();	*self = Self::new();
 assurance/bundle/SEC-FIDO-006.toml	crates/rsk-sdk/src/presence.rs	81-81	/// overrides this. CTAP 2.1 §6.6 exempts exactly such an authenticator from the	/// overrides this. CTAP 2.1 §6.6 exempts exactly such an authenticator from the
@@ -267,7 +267,7 @@ assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_assurance_tests.rs
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_refinement_kani.rs	122-122	fn reset_keeps_the_pin_gate() {	fn reset_keeps_the_pin_gate() {
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_refinement_kani.rs	125-125	if !reset.well_formed(&volatile) {	if !reset.well_formed(&volatile) {
 assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_refinement_kani.rs	133-138	kani::cover!(	);
-assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_tests.rs	627-627	fn the_gate_set_defers_every_record_whose_absence_is_permissive() {	fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
+assurance/bundle/SEC-FIDO-006A.toml	crates/rsk-fido/src/reset_tests.rs	630-630	fn the_gate_set_defers_every_record_whose_absence_is_permissive() {	fn the_gate_set_defers_every_record_whose_absence_is_permissive() {
 assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	229-237	armed_n=$(armed_count "$cfg")	fi
 assurance/bundle/SEC-FIDO-006A.toml	formal/run-tlc.sh	248-250	"$JAVA" -XX:+UseParallelGC -Xmx"${HEAP_OVERRIDE:-${heap:-$HEAP}}" -Djava.io.tmpdir="$metaroot/java-tmp" -cp "$JAR" tlc2.TLC \	"${cov[@]+"${cov[@]}"}" -config "$cfg" "$SPEC" \
@@ -335,8 +335,8 @@ assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs	77-77	reset.delete(EF_BACKUP_SEALED);	reset.delete(EF_BACKUP_SEALED);
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs	162-179	fn reset_keeps_the_backup_seal() {	}
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_refinement_kani.rs	173-178	kani::cover!(	);
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_tests.rs	639-639	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_tests.rs	1461-1461	fn a_seed_the_medium_kept_stops_the_wipe_before_the_gates() {	fn a_seed_the_medium_kept_stops_the_wipe_before_the_gates() {
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_tests.rs	642-642	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/reset_tests.rs	1464-1464	fn a_seed_the_medium_kept_stops_the_wipe_before_the_gates() {	fn a_seed_the_medium_kept_stops_the_wipe_before_the_gates() {
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	869-872	// material; the MSE channel is ChaCha20-Poly1305 — not approved transport).	return Err(CtapError::NotAllowed);
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	874-874	if try_backup_sealed(ctx.fs).map_err(|_| CtapError::Other)? {	if try_backup_sealed(ctx.fs).map_err(|_| CtapError::Other)? {
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	986-986	.put(EF_BACKUP_SEALED, &[1])	.put(EF_BACKUP_SEALED, &[1])
@@ -375,7 +375,7 @@ assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_assurance.rs	18-19	
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_assurance.rs	49-49	owner_seed: state.keydev_dec.is_some(),	owner_seed: state.keydev_dec.is_some(),
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_assurance.rs	245-268	pub fn well_formed(&self, volatile: &ResetVolatileView) -> bool {	}
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_refinement_kani.rs	41-46	fn symbolic_volatile() -> ResetVolatileView {	}
-assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_tests.rs	1207-1207	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
+assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/reset_tests.rs	1210-1210	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/seed.rs	102-102	Ok(fs.try_exists(EF_KEY_DEV_ENC.get())? && !fs.try_exists(EF_KEY_DEV.get())?)	Ok(fs.try_exists(EF_KEY_DEV_ENC.get())? && !fs.try_exists(EF_KEY_DEV.get())?)
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/seed.rs	659-659	/// Refines `RSKeySecurityState!RamNeverOutlivesFlashSeed` — SEC-FIDO-007.	/// Refines `RSKeySecurityState!RamNeverOutlivesFlashSeed` — SEC-FIDO-007.
 assurance/bundle/SEC-FIDO-007.toml	crates/rsk-fido/src/state.rs	398-399	/// Soft-lock: the seed decrypted by a vendor `UNLOCK`. RAM-only — held until	/// power-off, a reset, or an `AUT_DISABLE`; zeroized on `Drop` and on overwrite.
@@ -413,8 +413,8 @@ assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset.rs	128-128	orphaned
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset.rs	187-187	/// `Fs::factory_wipe` bypasses [`reset`] and needs the same rule — it is the only	/// `Fs::factory_wipe` bypasses [`reset`] and needs the same rule — it is the only
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset.rs	235-259	pub fn is_fido_gate_fid(fid: u16) -> bool {	)
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset.rs	258-258	EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED	EF_PIN | EF_DEVICE_PIN | EF_ALWAYS_UV | EF_MINPINLEN | EF_BACKUP_SEALED
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	33-33	fn reset_wipes_state_and_regenerates() {	fn reset_wipes_state_and_regenerates() {
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	1207-1207	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	36-36	fn reset_wipes_state_and_regenerates() {	fn reset_wipes_state_and_regenerates() {
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	1210-1210	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/state.rs	626-626	pub fn begin_using_token(&mut self, user_is_present: bool, now_ms: u64) {	pub fn begin_using_token(&mut self, user_is_present: bool, now_ms: u64) {
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/state_kani.rs	86-86	st.begin_using_token(false, now_ms);	st.begin_using_token(false, now_ms);
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fs/src/fs.rs	524-524	pub fn factory_wipe(	pub fn factory_wipe(
@@ -484,8 +484,8 @@ assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	900-900	/// Establishin
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	1030-1057	fn store_new_pin<S: Storage, R: Rng>(	}
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	1344-1344	let cps = pin_code_points(pin).ok_or(SetPinError::TooShort { min })?;	let cps = pin_code_points(pin).ok_or(SetPinError::TooShort { min })?;
 assurance/platform.toml	crates/rsk-fido/src/clientpin.rs	1354-1354	if pin.len() > MAX_PIN_LENGTH {	if pin.len() > MAX_PIN_LENGTH {
-assurance/platform.toml	crates/rsk-fido/src/clientpin_tests.rs	1379-1381	// `forced_pin_change_0x09_is_policy_violation`). The verify already	assert_eq!(
-assurance/platform.toml	crates/rsk-fido/src/clientpin_tests.rs	2197-2197	state.begin_using_token(false, 1_000);	state.begin_using_token(false, 1_000);
+assurance/platform.toml	crates/rsk-fido/src/clientpin_tests.rs	1382-1384	// `forced_pin_change_0x09_is_policy_violation`). The verify already	assert_eq!(
+assurance/platform.toml	crates/rsk-fido/src/clientpin_tests.rs	2200-2200	state.begin_using_token(false, 1_000);	state.begin_using_token(false, 1_000);
 assurance/platform.toml	crates/rsk-fido/src/config.rs	316-316	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");	const DEFAULT_ALWAYS_UV: bool = cfg!(feature = "always-uv");
 assurance/platform.toml	crates/rsk-fido/src/config.rs	353-361	fn toggle_always_uv<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>) -> CtapResult {	}
 assurance/platform.toml	crates/rsk-fido/src/config.rs	492-492	if force_change && !pin_set {	if force_change && !pin_set {
@@ -1150,14 +1150,14 @@ formal/comutants.toml	crates/rsk-display/src/settings_tests.rs	270-270	env.local
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	230-230	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;	clear_ppuat(ctx.fs).map_err(|_| CtapError::Other)?;
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	544-546	if force_change_pending(ctx) {	}
 formal/comutants.toml	crates/rsk-fido/src/clientpin.rs	914-916	if fid == EF_PIN {	}
-formal/comutants.toml	crates/rsk-fido/src/clientpin_tests.rs	1381-1381	assert_eq!(	assert_eq!(
-formal/comutants.toml	crates/rsk-fido/src/clientpin_tests.rs	1445-1445	assert_eq!(	assert_eq!(
+formal/comutants.toml	crates/rsk-fido/src/clientpin_tests.rs	1384-1384	assert_eq!(	assert_eq!(
+formal/comutants.toml	crates/rsk-fido/src/clientpin_tests.rs	1448-1448	assert_eq!(	assert_eq!(
 formal/comutants.toml	crates/rsk-fido/src/makecredential.rs	627-629	if always_uv {	}
 formal/comutants.toml	crates/rsk-fido/src/makecredential.rs	633-635	if pin_set && req.rk {	}
 formal/comutants.toml	crates/rsk-fido/src/reset.rs	244-250	/// **The list is FIVE and the clauses are three.** `EF_DEVICE_PIN` and	/// of what this predicate is for.
 formal/comutants.toml	crates/rsk-fido/src/reset_assurance_tests.rs	219-219	assert!(reset.delete(EF_BACKUP_SEALED));	assert!(reset.delete(EF_BACKUP_SEALED));
 formal/comutants.toml	crates/rsk-fido/src/reset_assurance_tests.rs	273-273	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {	fn a_backup_seal_swept_with_the_secrets_is_a_reopened_export_window() {
-formal/comutants.toml	crates/rsk-fido/src/reset_tests.rs	639-639	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
+formal/comutants.toml	crates/rsk-fido/src/reset_tests.rs	642-642	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
 formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	174-174	assert_eq!(st.pin_lock(), LOCKED);	assert_eq!(st.pin_lock(), LOCKED);
 formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	189-189	assert_eq!(st.pin_lock().mismatches, 2);	assert_eq!(st.pin_lock().mismatches, 2);
 formal/comutants.toml	crates/rsk-fs/src/fs.rs	899-899	self.write_record(EF_META, &out[..w])?;	self.write_record(EF_META, &out[..w])?;

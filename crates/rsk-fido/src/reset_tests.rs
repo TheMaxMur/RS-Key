@@ -2,6 +2,9 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
+
+#[path = "reset_mutation_tests.rs"]
+mod mutation;
 use crate::FidoState;
 use crate::consts::{EF_BACKUP_SEALED, EF_CRED, EF_LARGEBLOB, EF_PIN, EF_RP, RESET_WINDOW_MS};
 use crate::seed::{bump_sign_counter, global_sign_counter, load_keydev};

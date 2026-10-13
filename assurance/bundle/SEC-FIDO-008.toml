@@ -119,11 +119,11 @@ owners_co_refuted = ["crates/rsk-fido/src/reset.rs"]
 # The test that falls when that twin is applied — and it asserts about the RAM
 # SEED, not about the token. Recorded because the `co = 1` column says nothing
 # about which half of which invariant the killing assertion is about.
-owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1207 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed — its assertion is `state.keydev_dec.is_none()`, which is `SEC-FIDO-007`'s consequent and not this one's antecedent"
+owner_of_the_kill = "crates/rsk-fido/src/reset_tests.rs:1210 a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed — its assertion is `state.keydev_dec.is_none()`, which is `SEC-FIDO-007`'s consequent and not this one's antecedent"
 # The nearest thing in the suite to a shipped twin of THIS implication, and why
 # it is not one: it drives an UNTORN reset, where the twin's patch still runs
 # `ctx.state.reset()` before returning, so the assertion holds under the mutant.
-owner_of_the_near_miss = "crates/rsk-fido/src/reset_tests.rs:33 reset_wipes_state_and_regenerates — asserts `!fs.has_data(EF_PIN)` at :77 and `state.paut.permissions == 0` at :96, which is both halves in one test; it tears nothing, so the ordering the invariant is about is exactly what it cannot see"
+owner_of_the_near_miss = "crates/rsk-fido/src/reset_tests.rs:36 reset_wipes_state_and_regenerates — asserts `!fs.has_data(EF_PIN)` at :77 and `state.paut.permissions == 0` at :96, which is both halves in one test; it tears nothing, so the ordering the invariant is about is exactly what it cannot see"
 # The sibling that owns the OTHER kind of grant. Written down because a reader
 # who finds no `gate.ppuat` clause here should not conclude the model has none.
 sibling_clause = "the persistent grant's half of the same shape is `NoAccessibleSecretWithoutGate`'s third clause, `Idle => (gate.ppuat => pin.set)` at formal/RSKeySecurityState.tla:1788 — SEC-FIDO-004's, not this one's. This invariant is the SESSION token's half and carries no `Idle` guard, so it also holds mid-operation, which the sibling clause does not claim"

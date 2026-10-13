@@ -16,6 +16,9 @@ mod faults;
 #[path = "passkeys_restart_tests.rs"]
 mod restarts;
 
+#[path = "passkeys_record_tests.rs"]
+mod records;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {
@@ -188,18 +191,8 @@ fn true_total_even_when_visitor_keeps_fewer() {
     assert_eq!(kept, 1, "visitor may keep a subset");
 }
 
-/// `for_each_rp` skips a slot at `n < RP_PREFIX || buf[0] == 0`, and neither half
-/// was tested (the reverse mutation pass, D2). Both shapes are reachable from a
-/// torn write, and neither may be read as a relying party: a record too short
-/// for its own header would have its rpIdHash copied out of the buffer's stale
-/// tail, and a zero count is the emptied slot every enumeration must pass over.
-///
-/// The boundary itself is deliberately NOT pinned here. A record of exactly
-/// `RP_PREFIX` bytes — header, no payload — is enumerated today, because
-/// `unseal_rp_id` falls through to its legacy cleartext domain and an empty tail
-/// decodes as the empty string. Measured, not assumed: it arrives as a relying
-/// party whose `rp_id` is `""`. Whether that should be skipped is a decision,
-/// and a test that pinned either side would cement an accident.
+// Short headers and zero counts are skipped; the header-only legacy domain
+// remains visible and has a separate compatibility test.
 #[test]
 fn a_malformed_rp_slot_is_skipped_by_the_enumeration() {
     for (label, rec) in [
@@ -257,7 +250,8 @@ fn delete_drops_cred_and_decrements_rp() {
     add(&mut fs, &seed, 3, "google.com", b"u-c", "c", "C", 0);
 
     let gh = fids_under(&mut fs, "github.com");
-    assert_eq!(gh.len(), 2);
+    assert_eq!(gh, [EF_CRED, EF_CRED + 1]);
+    assert_eq!(fids_under(&mut fs, "google.com"), [EF_CRED + 2]);
     assert!(delete_cred(&mut fs, &mut SeqRng(3), gh[0]));
 
     // The other github account survives, google is untouched.
@@ -425,6 +419,47 @@ fn nickname_is_per_rp_and_survives_a_new_account() {
     add(&mut fs, &seed, 3, "github.com", b"u-c", "c", "C", 0);
     assert_eq!(nick_of(&mut fs, "github.com").as_deref(), Some("GH"));
     assert_eq!(nick_of(&mut fs, "google.com").as_deref(), Some("GG"));
+    assert!(set_rp_nickname(&dev(), &mut fs, &gg, ""));
+    assert_eq!(nick_of(&mut fs, "google.com"), None);
+    assert_eq!(nick_of(&mut fs, "github.com").as_deref(), Some("GH"));
+}
+
+#[test]
+fn deleting_slot_two_discards_only_its_own_large_blob() {
+    let (mut fs, seed) = provisioned();
+    for uid in [1, 2, 3] {
+        add(&mut fs, &seed, uid, "example.com", &[uid], "", "", 0);
+    }
+    let mut state = crate::FidoState::new();
+    let mut rng = SeqRng(9);
+    let mut presence = crate::AlwaysConfirm;
+    for slot in [0, 2] {
+        let mut record = [0; 1024];
+        let n = fs.read(EF_CRED + slot, &mut record).unwrap();
+        assert!(n > 74);
+        let id: [u8; 42] = record[32..74].try_into().unwrap();
+        let mut ctx = crate::Ctx {
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            presence: &mut presence,
+            now_ms: 0,
+        };
+        assert!(crate::largeblobext::write(
+            &mut ctx,
+            &seed,
+            &id,
+            slot,
+            b"compressed",
+            20
+        ));
+    }
+    let neighbor = fs.size(crate::consts::EF_CRED_BLOB).unwrap();
+    assert!(delete_cred(&mut fs, &mut rng, EF_CRED + 2));
+    assert_eq!(fs.size(crate::consts::EF_CRED_BLOB + 2), None);
+    assert_eq!(fs.size(crate::consts::EF_CRED_BLOB), Some(neighbor));
+    assert_eq!(fids_under(&mut fs, "example.com"), [EF_CRED, EF_CRED + 1]);
 }
 
 #[test]

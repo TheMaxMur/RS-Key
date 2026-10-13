@@ -18,6 +18,9 @@ impl Rng for SeqRng {
 const SEED: [u8; 32] = [0x42; 32];
 const APP: [u8; 32] = [0xA5; 32];
 
+#[path = "keyderiv_mutation_tests.rs"]
+mod mutation;
+
 #[test]
 fn ratchet_is_deterministic_and_path_sensitive() {
     let p1 = [0x11u8; 32];

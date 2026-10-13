@@ -295,6 +295,9 @@ fn assertion_writes_require_presence_a_named_credential_and_a_resident_slot() {
                 let permitted = up && named && slot.is_some();
                 assert!(matches!(out, GaOutput::Written(written) if written == permitted));
                 assert!(out.emits());
+                if permitted {
+                    assert_eq!(&h.state.lba.temp[..43], &[0; 43]);
+                }
                 let (blob, size) = h.read_blob(&CRED_A, 0).unwrap();
                 if permitted {
                     assert_eq!(blob, b"replacement");

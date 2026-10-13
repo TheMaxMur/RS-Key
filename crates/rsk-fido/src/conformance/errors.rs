@@ -244,7 +244,7 @@ fn trailing_bytes_after_the_request_map_are_invalid_cbor() {
     // there, so this gate must not reach it.
     assert_eq!(
         Authr::fresh()
-            .send(crate::consts::CTAP_GET_INFO, &[0x00])
+            .send(crate::consts::CTAP_GET_INFO, &[0xA0, 0x00])
             .status,
         0
     );
