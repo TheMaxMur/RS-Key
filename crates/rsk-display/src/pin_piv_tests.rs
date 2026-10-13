@@ -47,6 +47,55 @@ fn the_piv_menu_materializes_defaults_and_runs_each_subflow() {
 }
 
 #[test]
+fn each_piv_pin_menu_action_changes_only_its_selected_reference() {
+    for selection in 0..3 {
+        let env = Env::new();
+        provision(&env);
+        if selection == 2 {
+            for _ in 0..3 {
+                assert_ne!(verify(&env, PinRef::Pin, NEW_PIN), rsk_sdk::Sw::OK);
+            }
+        }
+        let current = if selection == 0 {
+            PinRef::Pin
+        } else {
+            PinRef::Puk
+        };
+        let mut taps = vec![center(rsk_ui::row_rect(
+            rsk_ui::PIV_KEYGEN_PICK_TOP,
+            selection,
+        ))];
+        taps.extend(pin_entry(default(current)));
+        taps.extend(pin_entry(NEW_PIN));
+        taps.extend(pin_entry(NEW_PIN));
+        taps.extend([
+            nowhere(),
+            center(rsk_ui::TITLE_BACK_RECT),
+            center(rsk_ui::TITLE_BACK_RECT),
+        ]);
+        let mut ui = env.ui(Pad::taps(&taps));
+        ui.hooks.presence_ms = 5000;
+        env.local(&mut ui).run_piv_pins();
+        let changed = if selection == 1 {
+            PinRef::Puk
+        } else {
+            PinRef::Pin
+        };
+        let other = if selection == 1 {
+            PinRef::Pin
+        } else {
+            PinRef::Puk
+        };
+        assert_eq!(
+            rsk_piv::reference_retries_left(&mut env.fs.borrow_mut(), changed),
+            Some(3)
+        );
+        assert_eq!(verify(&env, changed, NEW_PIN), rsk_sdk::Sw::OK);
+        assert_eq!(verify(&env, other, default(other)), rsk_sdk::Sw::OK);
+    }
+}
+
+#[test]
 fn the_piv_menu_yields_on_host_requests_and_power() {
     for power in [false, true] {
         let env = Env::new();
@@ -174,6 +223,19 @@ fn the_puk_unblocks_the_pin_and_restores_the_retry_budget() {
     let mut ui = env.ui(Pad::taps(&taps));
     ui.hooks.presence_ms = 3000;
     env.local(&mut ui).run_unblock_piv_pin();
+    let mut reference = env.ui(Pad::idle());
+    rsk_ui::render_success(
+        &mut env.local(&mut reference).frame(),
+        SuccessKind::Approved,
+        false,
+    )
+    .unwrap();
+    assert!(
+        ui.panel
+            .frame_hashes
+            .contains(&reference.panel.raster_hash()),
+        "a completed unblock must show its success"
+    );
     assert_eq!(
         rsk_piv::reference_retries_left(&mut env.fs.borrow_mut(), PinRef::Pin),
         Some(3)

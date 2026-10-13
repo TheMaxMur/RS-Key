@@ -27,6 +27,10 @@ use rsk_fs::storage::ram::RamStorage;
 
 use super::*;
 
+#[path = "timed_holds_tests.rs"]
+mod timed_holds;
+pub use timed_holds::TimedHolds;
+
 #[path = "event_pad.rs"]
 mod event_pad;
 pub use event_pad::SignalAfterTouches;
@@ -57,9 +61,15 @@ pub struct Panel {
     pub damage_presentations: usize,
     /// Exact panel windows used by retained semantic presentation.
     pub damage_rects: Vec<rsk_ui::Rect>,
+    pub contiguous_blits: Vec<(Rectangle, usize)>,
+    pub frame_hashes: Vec<u64>,
 }
 
 impl Panel {
+    pub fn pixels(&self) -> &[Rgb565] {
+        &self.px
+    }
+
     fn new() -> Self {
         Self {
             px: vec![Rgb565::BLACK; rsk_ui::PANEL_W as usize * rsk_ui::PANEL_H as usize],
@@ -69,6 +79,8 @@ impl Panel {
             grids: Vec::new(),
             damage_presentations: 0,
             damage_rects: Vec::new(),
+            contiguous_blits: Vec::new(),
+            frame_hashes: Vec::new(),
         }
     }
 
@@ -80,6 +92,18 @@ impl Panel {
                 })
             })
             .collect()
+    }
+
+    pub fn raster_hash(&self) -> u64 {
+        let mut hash = 0xcbf2_9ce4_8422_2325u64;
+        for pixel in &self.px {
+            let packed =
+                (u16::from(pixel.r()) << 11) | (u16::from(pixel.g()) << 5) | u16::from(pixel.b());
+            for byte in packed.to_le_bytes() {
+                hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+            }
+        }
+        hash
     }
 
     /// FNV-1a per key rect, over that rect's pixels alone. Every key is the same size
@@ -144,6 +168,22 @@ impl DrawTarget for Panel {
     type Color = Rgb565;
     type Error = core::convert::Infallible;
 
+    fn fill_contiguous<I: IntoIterator<Item = Rgb565>>(
+        &mut self,
+        area: &Rectangle,
+        colors: I,
+    ) -> Result<(), Self::Error> {
+        use embedded_graphics::primitives::PointsIter;
+        let pixels = area.size.width as usize * area.size.height as usize;
+        let colors: Vec<_> = colors.into_iter().take(pixels).collect();
+        self.contiguous_blits.push((*area, colors.len()));
+        self.draw_iter(
+            area.points()
+                .zip(colors)
+                .map(|(point, color)| Pixel(point, color)),
+        )
+    }
+
     fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(
         &mut self,
         pixels: I,
@@ -183,7 +223,9 @@ impl rsk_ui::scene::FrameTarget for Panel {
         // empty and `pin_pads_painted` sees only the last screen of a whole flow.
         self.grids.push(self.pin_cell_hashes());
         self.frames += 1;
-        scene.replay(self).is_ok()
+        let painted = scene.replay(self).is_ok();
+        self.frame_hashes.push(self.raster_hash());
+        painted
     }
 
     fn present_damage(&mut self, scene: &rsk_ui::scene::Scene, rects: &[rsk_ui::Rect]) -> bool {
@@ -338,6 +380,7 @@ pub struct Board {
     pub sweeps: usize,
     pub rsa_key: Option<Box<rsk_openpgp::keys::RsaKey>>,
     pub rsa_requests: Vec<usize>,
+    pub rsa_late_tick_only: bool,
     pub signal: Rc<core::cell::Cell<PanelSignal>>,
 }
 
@@ -363,6 +406,7 @@ impl Board {
             sweeps: 0,
             rsa_key: None,
             rsa_requests: Vec::new(),
+            rsa_late_tick_only: false,
             signal: Rc::new(core::cell::Cell::new(PanelSignal::None)),
         }
     }
@@ -449,6 +493,11 @@ impl Hooks for Board {
         on_tick: &mut dyn FnMut(),
     ) -> Option<Box<rsk_openpgp::keys::RsaKey>> {
         self.rsa_requests.push(nbits);
+        if self.rsa_late_tick_only {
+            block_for(Duration::from_millis(status::KEYGEN_SPIN_MS + 1));
+            on_tick();
+            return self.rsa_key.take();
+        }
         on_tick();
         if self.rsa_key.is_some() {
             block_for(Duration::from_millis(status::KEYGEN_SPIN_MS + 1));
@@ -615,7 +664,7 @@ impl<S: Storage> Env<S> {
     }
 
     /// The flow, wired to `pad` — panel, board and store as a fresh boot sees them.
-    pub fn ui(&self, pad: Pad) -> Ui<'_, Panel, Pad, Board> {
+    pub fn ui<T: TouchPad>(&self, pad: T) -> Ui<'_, Panel, T, Board> {
         Ui::new(
             Panel::new(),
             pad,
@@ -629,10 +678,10 @@ impl<S: Storage> Env<S> {
     }
 
     /// `ui` as a screen the device raises, with the cells beside it.
-    pub fn local<'u, 'a>(
+    pub fn local<'u, 'a, T: TouchPad>(
         &'a self,
-        ui: &'u mut Ui<'a, Panel, Pad, Board>,
-    ) -> Local<'u, 'a, Panel, Pad, Board, S, TestRng> {
+        ui: &'u mut Ui<'a, Panel, T, Board>,
+    ) -> Local<'u, 'a, Panel, T, Board, S, TestRng> {
         Local::new(ui, self.cells())
     }
 }
@@ -840,6 +889,45 @@ fn the_marquee_buffer_preserves_partial_coverage() {
         partial
     );
     assert_eq!(packed_coverage(&coverage, 1), 0);
+}
+
+#[test]
+fn the_marquee_buffer_packs_and_overwrites_both_nibbles() {
+    let mut coverage = [0xff; 2];
+    {
+        let mut target = BandCoverage::new(&mut coverage, rsk_ui::Rect::new(0, 0, 4, 1));
+        for (index, value) in [1, 15, 8, 2].into_iter().enumerate() {
+            target.set(index, value);
+        }
+        assert_eq!(target.coverage, &[0xf1, 0x28]);
+        target.set(1, 3);
+        target.set(0, 12);
+    }
+    assert_eq!(coverage, [0x3c, 0x28]);
+    for (index, value) in [12, 3, 8, 2].into_iter().enumerate() {
+        assert_eq!(packed_coverage(&coverage, index), value);
+    }
+}
+
+#[test]
+fn the_marquee_draw_target_places_each_row_and_clips_all_four_edges() {
+    let mut coverage = [0; 4];
+    let mut target = BandCoverage::new(&mut coverage, rsk_ui::Rect::new(10, 20, 4, 2));
+    target
+        .draw_iter(
+            [(11, 20), (10, 21), (13, 21)]
+                .into_iter()
+                .map(|(x, y)| Pixel(EgPoint::new(x, y), rsk_ui::theme::TEXT)),
+        )
+        .unwrap();
+    target
+        .draw_iter(
+            [(9, 20), (10, 19), (14, 20), (10, 22)]
+                .into_iter()
+                .map(|(x, y)| Pixel(EgPoint::new(x, y), rsk_ui::theme::PANEL_BG)),
+        )
+        .unwrap();
+    assert_eq!(coverage, [0xf0, 0, 0x0f, 0xf0]);
 }
 
 #[test]

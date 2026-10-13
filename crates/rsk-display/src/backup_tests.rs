@@ -8,6 +8,9 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::vec;
 
+#[path = "backup_page_tests.rs"]
+mod pages;
+
 const SEED: [u8; 32] = [0x5A; 32];
 
 fn provision<S: rsk_fs::Storage>(env: &Env<S>) {

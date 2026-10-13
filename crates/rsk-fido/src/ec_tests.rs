@@ -5,6 +5,64 @@ use super::*;
 use p256::Sec1Point;
 use p256::ecdsa::{Signature, VerifyingKey, signature::Verifier};
 
+std::thread_local! {
+    static DROP_WIPED: core::cell::Cell<Option<bool>> = const { core::cell::Cell::new(None) };
+}
+
+pub(super) fn observe_drop(key: &CredKey) {
+    DROP_WIPED.with(|observed| {
+        if observed.get().is_none() {
+            return;
+        }
+        // NonZeroScalar::zeroize finishes at ONE to preserve its type invariant.
+        let wiped = match key {
+            CredKey::P256(s) => **s == p256::Scalar::ONE,
+            CredKey::P384(s) => **s == p384::Scalar::ONE,
+            CredKey::P521(s) => **s == p521::Scalar::ONE,
+            CredKey::K256(s) => **s == k256::Scalar::ONE,
+            CredKey::Ed25519(_)
+            | CredKey::MlDsa44(_)
+            | CredKey::MlDsa65(_)
+            | CredKey::MlDsa87(_) => {
+                return;
+            }
+        };
+        observed.set(Some(wiped));
+    });
+}
+
+#[test]
+fn dropping_each_weierstrass_credential_key_clears_its_live_scalar() {
+    for curve in [1, 2, 3, 8] {
+        {
+            let key = CredKey::from_raw(curve, &[0x5a; 66]).unwrap();
+            DROP_WIPED.with(|observed| observed.set(Some(false)));
+            observe_drop(&key);
+            DROP_WIPED.with(|observed| assert_eq!(observed.get(), Some(false)));
+        }
+        DROP_WIPED.with(|observed| {
+            assert_eq!(
+                observed.replace(None),
+                Some(true),
+                "curve {curve} survived Drop"
+            );
+        });
+    }
+}
+
+#[test]
+fn an_ed25519_credential_keeps_the_existing_seed_mask() {
+    let mut raw = [0x11; 32];
+    raw[0] = 0x80;
+    let key = CredKey::from_raw(6, &raw).unwrap();
+    let mut expected = [0x11; 32];
+    expected[0] = 0x40;
+    let expected = ed25519_dalek::SigningKey::from_bytes(&expected);
+    let mut point = [0; 32];
+    assert_eq!(key.public_point(&mut point), Some(32));
+    assert_eq!(point, expected.verifying_key().to_bytes());
+}
+
 #[test]
 fn sign_is_deterministic_and_verifies() {
     let scalar = [0x11u8; 32];
@@ -49,6 +107,23 @@ use minicbor::encode::write::Cursor;
 use minicbor::{Decoder, Encoder};
 
 const MSG: &[u8] = b"authData||clientDataHash";
+
+#[test]
+fn an_akp_public_key_uses_the_negative_public_bytes_label() {
+    let mut out = [0; 32];
+    let mut encoder = Encoder::new(Cursor::new(&mut out[..]));
+    crate::cose::cose_key_akp(&mut encoder, -48, b"public").unwrap();
+    let n = encoder.writer().position();
+    let mut decoder = Decoder::new(&out[..n]);
+    assert_eq!(decoder.map().unwrap(), Some(3));
+    assert_eq!(decoder.i8().unwrap(), 1);
+    assert_eq!(decoder.u8().unwrap(), 7);
+    assert_eq!(decoder.i8().unwrap(), 3);
+    assert_eq!(decoder.i64().unwrap(), -48);
+    assert_eq!(decoder.i8().unwrap(), -1);
+    assert_eq!(decoder.bytes().unwrap(), b"public");
+    assert_eq!(decoder.position(), n);
+}
 
 #[test]
 fn p521_comb_matches_mul_by_generator() {

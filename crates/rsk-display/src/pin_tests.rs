@@ -1,20 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! ⚠️ These scripts count **polls**; `pin.rs` and `touch.rs` measure `Instant::now()`.
-//! Under load a poll outlasts `TOUCH_POLL_MS`, so a script sized at a fraction of
-//! `HOLD_MS` spans more wall-clock than it names and a hold completes where the
-//! test expects it not to. Three of them have been seen to fail that way inside a
-//! loaded `check.sh` and pass on every isolated re-run. Widening a script does not
-//! fix it and narrowing it removes what the assertion tests; the fix is a clock
-//! seam through the crate, which nothing has yet.
+//! Some gestures count polls while production measures real time; rendering can
+//! stretch those scripts past their intended deadline. Interrupted holds use
+//! `TimedHolds`; the remaining poll scripts still have that scheduling limitation.
 
 use std::vec;
 
 use super::*;
 use crate::tests::{
-    Env, NEW_PIN, PIN, Pad, WRONG_PIN, center, dev, pin_cells_of, pin_entry, pin_entry_on, pin_key,
-    shuffled_layout,
+    Env, NEW_PIN, PIN, Pad, TimedHolds, WRONG_PIN, center, dev, pin_cells_of, pin_entry,
+    pin_entry_on, pin_key, shuffled_layout,
 };
 
 #[path = "pin_bounds_tests.rs"]
@@ -523,16 +519,13 @@ fn a_completed_hold_confirms() {
 
 #[test]
 fn a_hold_that_is_released_starts_over() {
-    // Two half-holds are not one whole one — lifting the finger resets the fill.
-    let half = (HOLD_MS as usize * 3 / 4) / TOUCH_POLL_MS as usize;
-    let on = center(rsk_ui::DEL_HOLD_RECT);
-    let mut script = vec![Some(on); half];
-    script.push(None);
-    script.extend(vec![Some(on); half]);
-    script.push(Some(center(rsk_ui::PK_BACK_RECT)));
     let env = Env::new();
-    let mut ui = env.ui(Pad::script(&script));
+    let mut ui = env.ui(TimedHolds::new(
+        center(rsk_ui::DEL_HOLD_RECT),
+        center(rsk_ui::PK_BACK_RECT),
+    ));
     assert!(!ui.hold_to_confirm("Delete", rsk_ui::theme::DANGER_FILL));
+    assert_eq!(ui.touch.completed, 2);
 }
 
 #[test]

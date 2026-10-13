@@ -6,6 +6,9 @@ use std::vec::Vec;
 use super::*;
 use crate::tests::{Env, PIN, Pad, WRONG_PIN, center, dev, nowhere, pin_entry};
 
+// These scripts test retry consumption; loaded rendering must not expire an entry.
+const RETRY_ENTRY_TIMEOUT_MS: u32 = 5_000;
+
 #[test]
 fn every_pad_names_which_credential_it_is_collecting() {
     // The reported confusion behind a factory reset: one bare "Enter PIN" served
@@ -103,23 +106,31 @@ fn a_spent_retry_budget_shuts_the_gate_for_good() {
     env.set_device_pin(PIN);
     let budget = rsk_fido::consts::MAX_PIN_RETRIES as usize;
     let mut taps = Vec::new();
-    // One past the budget: the last entry is the one that meets a spent counter and
-    // is refused outright rather than compared.
-    for _ in 0..=budget {
+    for _ in 0..budget {
         taps.extend(pin_entry(WRONG_PIN));
     }
+    taps.push(nowhere());
     let mut ui = env.ui(Pad::taps(&taps));
-    // The "PIN blocked" notice holds until a tap or ~5 s; a queued host command
-    // dismisses it too, which is what keeps this test to the entries themselves.
-    ui.hooks.host_pending = true;
+    ui.hooks.presence_ms = RETRY_ENTRY_TIMEOUT_MS;
+    // Dismiss the blocked notice after the entries; a queued host could yield early.
     assert!(!env.local(&mut ui).local_pin_gate(PinScope::Device));
     assert_eq!(
         rsk_fido::passkeys::device_pin_retries_left(&mut env.fs.borrow_mut()),
         Some(0)
     );
+    let mut reference = env.ui(Pad::idle());
+    rsk_ui::render_pin_blocked(&mut env.local(&mut reference).frame()).unwrap();
+    assert!(
+        ui.panel
+            .frame_hashes
+            .contains(&reference.panel.raster_hash()),
+        "exhausting retries must explain the blocked PIN"
+    );
 
-    let mut ui = env.ui(Pad::taps(&pin_entry(PIN)));
-    ui.hooks.host_pending = true;
+    let mut taps = pin_entry(PIN);
+    taps.push(nowhere());
+    let mut ui = env.ui(Pad::taps(&taps));
+    ui.hooks.presence_ms = RETRY_ENTRY_TIMEOUT_MS;
     assert!(
         !env.local(&mut ui).local_pin_gate(PinScope::Device),
         "the right PIN does not revive a spent counter"
@@ -202,8 +213,9 @@ fn a_pad_entry_that_compares_nothing_ends_nothing() {
     for _ in 0..budget {
         taps.extend(pin_entry(WRONG_PIN));
     }
+    taps.push(nowhere());
     let mut ui = env.ui(Pad::taps(&taps));
-    ui.hooks.host_pending = true; // dismisses the "PIN blocked" notice
+    ui.hooks.presence_ms = RETRY_ENTRY_TIMEOUT_MS;
     assert!(!env.local(&mut ui).local_pin_gate(PinScope::Fido));
     assert_eq!(
         rsk_fido::passkeys::pin_retries_left(&mut env.fs.borrow_mut()),
@@ -215,8 +227,10 @@ fn a_pad_entry_that_compares_nothing_ends_nothing() {
     );
 
     // A fresh visit to a spent counter compares nothing.
-    let mut ui = env.ui(Pad::taps(&pin_entry(PIN)));
-    ui.hooks.host_pending = true;
+    let mut taps = pin_entry(PIN);
+    taps.push(nowhere());
+    let mut ui = env.ui(Pad::taps(&taps));
+    ui.hooks.presence_ms = RETRY_ENTRY_TIMEOUT_MS;
     assert!(!env.local(&mut ui).local_pin_gate(PinScope::Fido));
     assert_eq!(ui.hooks.pin_failed, 0);
 }

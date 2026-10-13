@@ -107,6 +107,36 @@ fn seed_oath(env: &Env, count: usize) {
 }
 
 #[test]
+fn oath_pages_open_the_named_credential_at_the_selected_global_index() {
+    let env = Env::new();
+    seed_oath(&env, 7);
+    let generation = env.fs.borrow().write_gen();
+    for (page, index) in [(0, 1), (1, 6)] {
+        let mut taps = Vec::new();
+        if page != 0 {
+            taps.push(center(rsk_ui::PAGER_NEXT_RECT));
+        }
+        taps.extend([
+            center(rsk_ui::row_rect(rsk_ui::PK_LIST_TOP, 1)),
+            center(rsk_ui::TITLE_BACK_RECT),
+            center(rsk_ui::TITLE_BACK_RECT),
+        ]);
+        let mut ui = env.ui(Pad::taps(&taps));
+        let mut reference = env.ui(Pad::idle());
+        let view = env.local(&mut reference).load_oath_cred(index);
+        assert_eq!(view.name.as_str(), std::format!("code{index:02}"));
+        rsk_ui::render_oath_cred(&mut reference.frame(), &view).unwrap();
+        let expected = reference.panel.raster_hash();
+        assert_eq!(env.local(&mut ui).run_oath(), None);
+        assert!(
+            ui.panel.frame_hashes.contains(&expected),
+            "the selected OATH page/row must open credential {index}"
+        );
+    }
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}
+
+#[test]
 fn app_summaries_report_public_metadata_without_decrypting_keys() {
     let env = Env::new();
     seed_metadata(&env);

@@ -95,6 +95,44 @@ fn audit_navigation_is_read_only_and_pages_in_both_directions() {
 }
 
 #[test]
+fn audit_pager_delivers_the_selected_page_and_clamps_at_both_ends() {
+    let env = Env::new();
+    seed_log(&env);
+    let generation = env.fs.borrow().write_gen();
+    for page in [0, 1] {
+        let taps = if page == 1 {
+            vec![
+                center(rsk_ui::PAGER_NEXT_RECT),
+                center(rsk_ui::PAGER_NEXT_RECT),
+                center(rsk_ui::TITLE_BACK_RECT),
+            ]
+        } else {
+            vec![
+                center(rsk_ui::PAGER_NEXT_RECT),
+                center(rsk_ui::PAGER_PREV_RECT),
+                center(rsk_ui::PAGER_PREV_RECT),
+                center(rsk_ui::TITLE_BACK_RECT),
+            ]
+        };
+        let mut ui = env.ui(Pad::taps(&taps));
+        ui.hooks.attach_ms = 10000;
+        env.local(&mut ui).run_auditlog();
+        let mut reference = env.ui(Pad::idle());
+        reference.hooks.attach_ms = 10000;
+        let mut rows = [AuditRow::default(); rsk_ui::PK_ROWS_MAX];
+        let (n, total) = env.local(&mut reference).load_events(&mut rows, page);
+        assert_eq!(total, 7);
+        assert_eq!(n, if page == 0 { 5 } else { 2 });
+        rsk_ui::render_audit_log(&mut reference.frame(), &rows[..n], page, total, true).unwrap();
+        assert!(
+            ui.panel.pixels() == reference.panel.pixels(),
+            "audit pager failed to display page {page}"
+        );
+    }
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}
+
+#[test]
 fn an_empty_or_disabled_audit_log_yields_on_host_requests_and_power() {
     for power in [false, true] {
         let env = Env::new();

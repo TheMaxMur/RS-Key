@@ -17,6 +17,69 @@ fn dev() -> Device<'static> {
 const SEED: [u8; 32] = [0x42; 32];
 const IV: [u8; 12] = [0x11; 12];
 
+#[path = "credential_record_tests.rs"]
+mod records;
+
+#[test]
+fn a_small_credential_fits_its_exact_output_and_refuses_each_shorter_window() {
+    let d = dev();
+    let rp_hash = sha256(b"example.com");
+    let mut large = [0; 512];
+    let n = credential_create(&SEED, &d, &input(), &rp_hash, &IV, &mut large).unwrap();
+    let mut exact = vec![0; n];
+    assert_eq!(
+        credential_create(&SEED, &d, &input(), &rp_hash, &IV, &mut exact),
+        Ok(n)
+    );
+    assert_eq!(exact, large[..n]);
+    for room in 0..n {
+        let mut short = vec![0x55; room];
+        assert_eq!(
+            credential_create(&SEED, &d, &input(), &rp_hash, &IV, &mut short),
+            Err(Error::NoMemory),
+            "output capacity {room}"
+        );
+    }
+}
+
+pub(crate) fn legacy_box_at_limit(seed: &[u8; 32], d: &Device) -> [u8; 748] {
+    let rp_hash = sha256(b"example.com");
+    let mut plain = [0; 700];
+    let mut encoder = Encoder::new(Cursor::new(&mut plain[..]));
+    encode_body(&mut encoder, &input()).unwrap();
+    let n = encoder.writer().position();
+    plain[0] += 1;
+    let mut tail = Encoder::new(Cursor::new(&mut plain[n..]));
+    tail.u8(12)
+        .unwrap()
+        .bytes(&vec![0x55; 700 - n - 4])
+        .unwrap();
+    assert_eq!(n + tail.writer().position(), 700);
+    let mut boxed = [0; 748];
+    boxed[..4].copy_from_slice(&[0xf1, 0xd0, 2, 2]);
+    boxed[4..16].copy_from_slice(&IV);
+    boxed[16..716].copy_from_slice(&plain);
+    let mut key = derive_chacha_key(seed, CRED_PROTO);
+    let tag = chacha20poly1305_encrypt(key.expose(), &IV, &rp_hash, &mut boxed[16..716]);
+    key.wipe();
+    boxed[716..732].copy_from_slice(&tag);
+    let silent = silent_tag(d, &boxed[..732], &rp_hash).unwrap();
+    boxed[732..].copy_from_slice(&silent);
+    boxed
+}
+
+#[test]
+fn an_authenticated_legacy_box_at_the_advertised_limit_still_loads() {
+    let rp_hash = sha256(b"example.com");
+    let boxed = legacy_box_at_limit(&SEED, &dev());
+    let mut scratch = [0; CRED_BOX_MAX];
+    let loaded = credential_load(&SEED, &boxed, &rp_hash, &mut scratch).unwrap();
+    assert_eq!(loaded.rp_id, "example.com");
+    assert_eq!(loaded.user_id, input().user_id);
+    assert_eq!(loaded.user_name, "alice");
+    assert_eq!(loaded.alg, ALG_ES256);
+}
+
 #[test]
 fn unknown_nested_credential_fields_preserve_the_following_owner_and_policy() {
     let mut buffer = [0; 128];
@@ -205,6 +268,19 @@ fn legacy_resident_records_keep_their_box_without_a_public_cache() {
             assert_eq!(cred_record_pubkey(&out[..n]), None);
         }
     }
+}
+
+#[test]
+fn a_p521_public_point_fits_the_resident_record_trailer() {
+    let key = crate::ec::CredKey::from_raw(crate::consts::CURVE_P521 as i64, &[1; 66]).unwrap();
+    let mut point = [0; 133];
+    assert_eq!(key.public_point(&mut point), Some(133));
+    let hash = sha256(b"example.com");
+    let id = legacy_resident_id(b"old credential", &dev(), RESIDENT_VERSION_V3);
+    let mut out = [0; 512];
+    let n = compose_cred_record(&hash, &id, &point, b"box", &mut out).unwrap();
+    assert_eq!(cred_record_pubkey(&out[..n]), Some(&point[..]));
+    assert_eq!(cred_record_box(&out[..n]), b"box");
 }
 
 #[test]
@@ -1454,6 +1530,45 @@ fn an_unread_credential_refuses_only_a_new_account_its_own_rp_could_hide() {
         Some(1),
         "nor counted one"
     );
+
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    store(&mut fs, &other, "other.example", 1).unwrap();
+    store(&mut fs, &mine, "example.com", 2).unwrap();
+    let foreign = medium.value(EF_CRED).unwrap();
+    let generation = fs.write_gen();
+    medium.stick(Some(EF_CRED + 1));
+    assert_eq!(
+        store(&mut fs, &mine, "example.com", 5),
+        Err(Error::MemoryFatal),
+        "a readable foreign account cannot account for this RP's unread credential"
+    );
+    assert_eq!(fs.write_gen(), generation);
+    medium.stick(None);
+    assert_eq!(medium.value(EF_CRED), Some(foreign));
+    assert!(!fs.has_data(EF_CRED + 2));
+    assert_eq!(rp_count(&mut fs, &mine), Ok(1));
+
+    let (backend, medium) = rsk_fs::storage::faults::ProbeStuck::new();
+    let mut fs = Fs::new(backend);
+    fs.scan();
+    store(&mut fs, &mine, "example.com", 1).unwrap();
+    store(&mut fs, &mine, "example.com", 2).unwrap();
+    let first = medium.value(EF_CRED).unwrap();
+    fs.put(EF_CRED, &first[..32]).unwrap();
+    crate::credmgmt::settle_rp_records(&mut fs).unwrap();
+    assert_eq!(rp_count(&mut fs, &mine), Ok(1));
+    let generation = fs.write_gen();
+    medium.stick(Some(EF_CRED + 1));
+    assert_eq!(
+        store(&mut fs, &mine, "example.com", 5),
+        Err(Error::MemoryFatal),
+        "a truncated matching prefix cannot account for the unread credential"
+    );
+    assert_eq!(fs.write_gen(), generation);
+    medium.stick(None);
+    assert!(!fs.has_data(EF_CRED + 2));
 }
 
 /// Deterministic RNG (copied per test file, matching the repo convention).

@@ -40,7 +40,10 @@ extern crate alloc;
 use core::cell::RefCell;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use embassy_time::{Duration, Instant, Timer, block_for};
+#[cfg(not(test))]
+use embassy_time::block_for;
+use embassy_time::{Duration, Instant, Timer};
+
 use embedded_graphics::{
     Pixel,
     draw_target::DrawTarget,
@@ -721,6 +724,12 @@ where
     fn end_modal(&mut self) {
         self.shown = None;
     }
+}
+
+#[cfg(test)]
+fn block_for(duration: Duration) {
+    // Yield host CPU while keeping the real deadlines the flow measures.
+    std::thread::sleep(std::time::Duration::from_micros(duration.as_micros()));
 }
 
 #[cfg(test)]

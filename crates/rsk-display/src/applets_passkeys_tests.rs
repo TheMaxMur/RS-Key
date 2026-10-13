@@ -12,14 +12,15 @@ fn account_labels_fall_back_to_display_name_then_the_placeholder() {
     let env = Env::new();
     let hash = rsk_crypto::sha256(b"example.com");
     let cases = [
-        ("login", "Display", "login"),
-        ("", "Display", "Display"),
-        ("", "", "(no name)"),
+        ("login", "Display", "login", 0, false),
+        ("", "Display", "Display", 1, false),
+        ("", "", "(no name)", 2, true),
+        ("protected", "Display", "protected", 3, true),
     ];
     {
         let mut fs = env.fs.borrow_mut();
         rsk_fido::seed::encrypt_keydev_f1(&dev(), &mut fs, &SEED).unwrap();
-        for (i, (name, display, _)) in cases.iter().enumerate() {
+        for (i, (name, display, _, protection, _)) in cases.iter().enumerate() {
             let user = [i as u8];
             let input = CredInput {
                 rp_id: "example.com",
@@ -31,7 +32,10 @@ fn account_labels_fall_back_to_display_name_then_the_placeholder() {
                 created_ms: 1,
                 alg: rsk_fido::consts::ALG_ES256,
                 curve: i64::from(rsk_fido::consts::CURVE_P256),
-                ext: CredExt::default(),
+                ext: CredExt {
+                    cred_protect: *protection,
+                    ..CredExt::default()
+                },
             };
             let mut boxed = [0; 512];
             let n = credential_create(&SEED, &dev(), &input, &hash, &[i as u8; 12], &mut boxed)
@@ -57,10 +61,11 @@ fn account_labels_fall_back_to_display_name_then_the_placeholder() {
     assert_eq!(
         env.local(&mut ui)
             .load_accts(&hash, &mut rows, &mut fids, 0),
-        (3, 3)
+        (4, 4)
     );
-    for (i, (_, _, expected)) in cases.iter().enumerate() {
+    for (i, (_, _, expected, _, protected)) in cases.iter().enumerate() {
         assert_eq!(rows[i].name.as_str(), *expected);
+        assert_eq!(rows[i].protected, *protected);
         assert_eq!(fids[i], rsk_fido::consts::EF_CRED + i as u16);
     }
     assert_eq!(env.fs.borrow().write_gen(), generation);
@@ -165,6 +170,16 @@ fn deleting_the_last_rp_on_the_last_page_clamps_the_passkeys_list() {
     );
     assert!(!ui.panel.oob);
     assert!(ui.panel.frames >= 6);
+    let mut reference = env.ui(Pad::idle());
+    let mut rows = [RpRow::default(); rsk_ui::PK_ROWS_MAX];
+    let mut hashes = [[0; 32]; rsk_ui::PK_ROWS_MAX];
+    let mut local = env.local(&mut reference);
+    assert_eq!(local.load_rps(&mut rows, &mut hashes, 0), (5, 5));
+    local.render_list(&rows, 0, 5);
+    assert!(
+        ui.panel.pixels() == reference.panel.pixels(),
+        "the surviving RPs must be visible on page zero"
+    );
 }
 
 #[test]
@@ -186,6 +201,19 @@ fn deleting_the_last_account_on_a_page_clamps_the_service_without_losing_other_a
     });
     assert_eq!(names, ["user0", "user1", "user2", "user3", "user4"]);
     assert!(!ui.panel.oob);
+    let mut reference = env.ui(Pad::idle());
+    let mut accounts = [AccountRow::default(); rsk_ui::PK_ROWS_MAX];
+    let mut fids = [0; rsk_ui::PK_ROWS_MAX];
+    assert_eq!(
+        env.local(&mut reference)
+            .load_accts(&hash(), &mut accounts, &mut fids, 0),
+        (5, 5)
+    );
+    rsk_ui::render_service(&mut reference.panel, &service(), true, &accounts, 0, 5).unwrap();
+    assert!(
+        ui.panel.pixels() == reference.panel.pixels(),
+        "the surviving accounts must be visible on page zero"
+    );
 }
 
 #[test]

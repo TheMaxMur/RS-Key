@@ -4,7 +4,7 @@
 use std::vec;
 
 use super::*;
-use crate::tests::{Env, PIN, Pad, TestUi, center};
+use crate::tests::{Env, PIN, Pad, TestUi, TimedHolds, center};
 
 // The two asks this one backend answers differently: a CTAP2 ceremony (the
 // registration card, the closing "Approved" pop, a reportable cancel) and a
@@ -98,17 +98,13 @@ fn a_ceremony_drops_a_stale_cancel_and_restores_the_led_it_found() {
 
 #[test]
 fn a_hold_that_is_released_starts_over() {
-    // Two three-quarter holds are not one whole one: lifting the finger resets the
-    // fill, so approval always costs one uninterrupted HOLD_MS.
-    let polls = (HOLD_MS as usize * 3 / 4) / TOUCH_POLL_MS as usize;
-    let mut script = vec![None];
-    script.extend(vec![Some(allow()); polls]);
-    script.push(None);
-    script.extend(vec![Some(allow()); polls]);
     let env = Env::new();
-    let ui = prompt(&env, Pad::script(&script), 1_800);
-    let got = ask_fido(&ui, sign_in());
-    assert_eq!(got, rsk_sdk::Presence::Timeout);
+    let mut view = env.ui(TimedHolds::new(allow(), deny()));
+    view.hooks.presence_ms = 5_000;
+    let ui = RefCell::new(view);
+    let got = rsk_sdk::UserPresence::request_ceremony(&mut TouchPresence::new(&ui), sign_in());
+    assert_eq!(got, rsk_sdk::Presence::Declined);
+    assert_eq!(ui.borrow().touch.completed, 2);
 }
 
 #[test]
