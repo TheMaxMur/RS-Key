@@ -59,3 +59,7 @@ impl<const N: usize> Zeroize for FlashBuf<N> {
 /// The alignment the flash contract needs, held at compile time. `repr(align)`
 /// is the only thing that sets it, so this is what a dropped attribute trips.
 const _: () = assert!(core::mem::align_of::<FlashBuf<1>>() == 4);
+
+#[cfg(test)]
+#[path = "flash_buf_tests.rs"]
+mod tests;

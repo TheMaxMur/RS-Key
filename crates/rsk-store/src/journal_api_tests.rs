@@ -6,6 +6,132 @@ use super::*;
 use crate::authenticated::{CHECKPOINT_BYTES, ENTRY_BYTES};
 
 #[test]
+fn a_snapshot_requires_exact_room_for_its_prepare_and_commit_before_erasing() {
+    let count = (SECTOR - CHECKPOINT_BYTES - 2 * crate::authenticated::DELTA_BYTES) / ENTRY_BYTES;
+    assert_eq!(
+        CHECKPOINT_BYTES + count * ENTRY_BYTES + 2 * crate::authenticated::DELTA_BYTES,
+        SECTOR
+    );
+    for missing in [0, 4] {
+        let flash = FaultFlash::new();
+        let mut directory = Directory::<128>::new();
+        for index in 0..count {
+            directory
+                .apply(
+                    Entry::live(
+                        JOURNAL_ID,
+                        &JOURNAL_KEY,
+                        CRED + u16::try_from(index).unwrap(),
+                        0,
+                        b"owner",
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let header = Checkpoint {
+            identity: JOURNAL_ID,
+            arm: RootArm::PreOtp,
+            sequence: 0,
+            entries: u32::try_from(count).unwrap(),
+            digest: directory.digest(JOURNAL_ID, &JOURNAL_KEY, 0).unwrap(),
+        };
+        let mut raw = RawBank::new(
+            Geometry::<1, 4, 4>(flash.clone()),
+            0..u32::try_from(SECTOR - missing).unwrap(),
+        )
+        .unwrap();
+        raw.program(0, &[0x7F]).unwrap();
+        let before = flash.inner.bytes.borrow().clone();
+        flash.arm(&[]);
+        let result =
+            Journal::new(raw, Partition::Main).write_snapshot(header, &JOURNAL_KEY, &directory);
+        if missing == 0 {
+            assert_eq!(result.unwrap().status, JournalStatus::Complete);
+        } else {
+            assert_eq!(result, Err(Error::NoMemory));
+            assert!(flash.events().is_empty());
+            assert_eq!(*flash.inner.bytes.borrow(), before);
+        }
+    }
+}
+
+#[test]
+fn an_erased_journal_is_empty_only_when_its_whole_bank_is_erased() {
+    for dirty_tail in [false, true] {
+        let flash = FaultFlash::new();
+        let mut raw = RawBank::new(flash.clone(), MAIN).unwrap();
+        if dirty_tail {
+            raw.program(raw.capacity() - 1, &[0x7F]).unwrap();
+        }
+        let before = flash.inner.bytes.borrow().clone();
+        let mut directory = Directory::<2>::new();
+        directory
+            .apply(Entry::live(JOURNAL_ID, &JOURNAL_KEY, CRED, 0, b"stale").unwrap())
+            .unwrap();
+        flash.arm(&[]);
+        let scan = Journal::new(raw, Partition::Main)
+            .scan(&JOURNAL_KEY, &mut directory)
+            .unwrap();
+        assert_eq!(
+            scan.status,
+            if dirty_tail {
+                JournalStatus::Dirty
+            } else {
+                JournalStatus::Empty
+            }
+        );
+        assert_eq!(scan.checkpoint, None);
+        assert_eq!(scan.state, None);
+        assert_eq!(scan.lower_bound, None);
+        assert_eq!(scan.next, 0);
+        assert!(directory.entries().is_empty());
+        assert_eq!(*flash.inner.bytes.borrow(), before);
+        assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+    }
+}
+
+#[test]
+fn an_authenticated_snapshot_may_end_at_the_bank_boundary() {
+    let flash = FaultFlash::new();
+    let mut directory = Directory::<2>::new();
+    for (fid, value) in [
+        (CRED, b"owner".as_slice()),
+        (CRED + 1, b"neighbor".as_slice()),
+    ] {
+        directory
+            .apply(Entry::live(JOURNAL_ID, &JOURNAL_KEY, fid, 7, value).unwrap())
+            .unwrap();
+    }
+    let header = checkpoint(&directory, 7);
+    let end = u32::try_from(CHECKPOINT_BYTES + 2 * ENTRY_BYTES).unwrap();
+    let mut raw = RawBank::new(Geometry::<1, 4, 4>(flash.clone()), 0..end).unwrap();
+    raw.program(0, &header.encode(&JOURNAL_KEY).unwrap())
+        .unwrap();
+    for (index, entry) in directory.entries().iter().enumerate() {
+        raw.program(
+            u32::try_from(CHECKPOINT_BYTES + index * ENTRY_BYTES).unwrap(),
+            &entry.encode().unwrap(),
+        )
+        .unwrap();
+    }
+    let before = flash.inner.bytes.borrow().clone();
+    flash.arm(&[]);
+    let mut restored = Directory::<2>::new();
+    let scan = Journal::new(raw, Partition::Main)
+        .scan(&JOURNAL_KEY, &mut restored)
+        .unwrap();
+    assert_eq!(scan.status, JournalStatus::Complete);
+    assert_eq!(scan.checkpoint, Some(header));
+    assert_eq!(scan.lower_bound, Some(7));
+    assert_eq!(scan.state.unwrap().sequence(), 7);
+    assert_eq!(scan.next, end);
+    assert_eq!(restored.entries(), directory.entries());
+    assert_eq!(*flash.inner.bytes.borrow(), before);
+    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+}
+
+#[test]
 fn journal_snapshot_and_directory_contradictions_remain_dirty_authenticated_progress() {
     for case in 0..5 {
         let flash = FaultFlash::new();
@@ -70,11 +196,19 @@ fn a_signed_snapshot_exceeding_its_window_and_an_erased_header_before_a_dirty_ta
     .unwrap();
     tiny.program(0, &checkpoint(&directory, 0).encode(&JOURNAL_KEY).unwrap())
         .unwrap();
+    // A valid first entry keeps a decoder refusal from masking the window guard.
+    tiny.program(
+        u32::try_from(CHECKPOINT_BYTES).unwrap(),
+        &directory.entries()[0].encode().unwrap(),
+    )
+    .unwrap();
+    let mut restored = Directory::<2>::new();
     let scan = Journal::new(tiny, Partition::Main)
-        .scan(&JOURNAL_KEY, &mut Directory::<2>::new())
+        .scan(&JOURNAL_KEY, &mut restored)
         .unwrap();
     assert_eq!(scan.status, JournalStatus::Dirty);
     assert_eq!(scan.lower_bound, Some(0));
+    assert!(restored.entries().is_empty());
     flash.inner.bytes.borrow_mut().fill(0xFF);
     let empty = Directory::<2>::new();
     let mut journal = Journal::new(RawBank::new(flash.clone(), MAIN).unwrap(), Partition::Main);

@@ -1,8 +1,116 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
+use super::api::Geometry;
 use super::*;
 use crate::authenticated::{CHECKPOINT_BYTES, ENTRY_BYTES};
+
+#[test]
+fn a_counter_snapshot_can_fill_the_whole_bank_and_recover_its_value() {
+    let flash = FaultFlash::new();
+    let raw = RawBank::new(flash.clone(), 0..u32::try_from(SECTOR).unwrap()).unwrap();
+    let mut bank = CounterBank::new(raw);
+    let value = [0x69; SECTOR - CHECKPOINT_BYTES - ENTRY_BYTES];
+    let entry = Entry::live(COUNTER_ID, &JOURNAL_KEY, CTR, 0, &value).unwrap();
+    let mut directory = Directory::<MAX_COUNTER_ENTRIES>::new();
+    directory.apply(entry).unwrap();
+    let checkpoint = counter_checkpoint(&directory, 0);
+    let mut loads = 0;
+    bank.write_snapshot(checkpoint, &JOURNAL_KEY, &directory, |wanted, output| {
+        assert_eq!(wanted, entry);
+        output.copy_from_slice(&value);
+        loads += 1;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(loads, 1);
+    let before = flash.inner.bytes.borrow().clone();
+    flash.arm(&[]);
+    let scan = bank.scan(&JOURNAL_KEY, &mut directory).unwrap();
+    assert_eq!(scan.status, JournalStatus::Complete);
+    assert_eq!(scan.checkpoint, Some(checkpoint));
+    assert_eq!(scan.sequence, Some(0));
+    assert_eq!(scan.lower_bound, Some(0));
+    assert_eq!(scan.next, bank.capacity());
+    assert_eq!(directory.entries(), &[entry]);
+    let mut recovered = [0; SECTOR - CHECKPOINT_BYTES - ENTRY_BYTES];
+    assert_eq!(
+        bank.read_value(scan, &JOURNAL_KEY, CTR, &mut recovered),
+        Ok(Some(value.len()))
+    );
+    assert_eq!(recovered, value);
+    assert_eq!(*flash.inner.bytes.borrow(), before);
+    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+}
+
+#[test]
+fn a_counter_tombstone_filling_the_last_header_window_advances_the_scan() {
+    let flash = FaultFlash::new();
+    let end = u32::try_from(CHECKPOINT_BYTES + ENTRY_BYTES).unwrap();
+    let mut raw = RawBank::new(Geometry::<1, 4, 4>(flash.clone()), 0..end).unwrap();
+    let mut directory = Directory::<MAX_COUNTER_ENTRIES>::new();
+    let checkpoint = counter_checkpoint(&directory, 0);
+    raw.program(0, &checkpoint.encode(&JOURNAL_KEY).unwrap())
+        .unwrap();
+    let mut bank = CounterBank::new(raw);
+    let scan = bank.scan(&JOURNAL_KEY, &mut directory).unwrap();
+    assert_eq!(scan.status, JournalStatus::Complete);
+    assert_eq!(scan.next, u32::try_from(CHECKPOINT_BYTES).unwrap());
+    let tombstone = Entry::deleted(COUNTER_ID, &JOURNAL_KEY, CTR, 1).unwrap();
+    bank.append(scan, &JOURNAL_KEY, tombstone, &[]).unwrap();
+    let before = flash.inner.bytes.borrow().clone();
+    flash.arm(&[]);
+    let recovered = bank.scan(&JOURNAL_KEY, &mut directory).unwrap();
+    assert_eq!(recovered.status, JournalStatus::Complete);
+    assert_eq!(recovered.checkpoint, Some(checkpoint));
+    assert_eq!(recovered.sequence, Some(1));
+    assert_eq!(recovered.lower_bound, Some(1));
+    assert_eq!(recovered.next, end);
+    assert!(recovered.locations.iter().all(Option::is_none));
+    assert!(directory.entries().is_empty());
+    assert_eq!(*flash.inner.bytes.borrow(), before);
+    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+}
+
+#[test]
+fn an_erased_counter_bank_is_empty_only_when_its_whole_window_is_erased() {
+    for dirty_tail in [false, true] {
+        let flash = FaultFlash::new();
+        let mut bank = counter_bank(&flash);
+        if dirty_tail {
+            RawBank::new(
+                flash.clone(),
+                COUNTER.start..COUNTER.start + bank.capacity(),
+            )
+            .unwrap()
+            .program(bank.capacity() - 1, &[0x7F])
+            .unwrap();
+        }
+        let mut directory = Directory::<MAX_COUNTER_ENTRIES>::new();
+        directory
+            .apply(Entry::live(COUNTER_ID, &JOURNAL_KEY, CTR, 0, b"stale").unwrap())
+            .unwrap();
+        let before = flash.inner.bytes.borrow().clone();
+        flash.arm(&[]);
+        let scan = bank.scan(&JOURNAL_KEY, &mut directory).unwrap();
+        assert_eq!(
+            scan.status,
+            if dirty_tail {
+                JournalStatus::Dirty
+            } else {
+                JournalStatus::Empty
+            }
+        );
+        assert_eq!(scan.checkpoint, None);
+        assert_eq!(scan.sequence, None);
+        assert_eq!(scan.lower_bound, None);
+        assert_eq!(scan.next, 0);
+        assert!(scan.locations.iter().all(Option::is_none));
+        assert!(directory.entries().is_empty());
+        assert_eq!(*flash.inner.bytes.borrow(), before);
+        assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+    }
+}
 
 #[test]
 fn an_unsupported_read_fault_rule_panics_before_arming_and_valid_rules_still_work() {

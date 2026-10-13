@@ -96,3 +96,7 @@ impl<F: NorFlash> NorFlash for VerifiedFlash<F> {
     }
 }
 impl<F: NorFlash + MultiwriteNorFlash> MultiwriteNorFlash for VerifiedFlash<F> {}
+
+#[cfg(test)]
+#[path = "verified_flash_tests.rs"]
+mod tests;
