@@ -20,6 +20,11 @@ software. It passes the FIDO Alliance Conformance Tools clean (CTAP2.3
 [testing](../testing.md#fido-conformance)). What has been checked against
 real client software is in the [interop matrix](../interop.md).
 
+When a site has several discoverable passkeys, login returns the newest first.
+One discovery walk serves up to 16 distinct passkeys, including when creation
+times coincide; a larger matching set keeps the newest 16. This does not change
+the device's 256-passkey storage capacity.
+
 The default build enumerates as "RS-Key", its own USB identity
 (`0x1209:0xF1D2`, the pid.codes FOSS VID), not a YubiKey one
 ([build.md](../build.md)). FIDO clients don't care: browsers, `python-fido2`,

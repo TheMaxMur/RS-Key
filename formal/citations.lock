@@ -720,7 +720,7 @@ formal/README.md	crates/rsk-fido/src/credmgmt.rs	719-816	/// Locate the resident
 formal/README.md	crates/rsk-fido/src/credmgmt.rs	759-767	/// its EF_RP record. Replies with only the status byte.	.delete(EF_CRED + slot)
 formal/README.md	crates/rsk-fido/src/getassertion.rs	452-455	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| (ctx.state.paut.has_rp_id && ctx.state.paut.rp_id_hash != *rp_id_hash)
 formal/README.md	crates/rsk-fido/src/getassertion.rs	453-453	|| !ctx.state.user_verified()	|| !ctx.state.user_verified()
-formal/README.md	crates/rsk-fido/src/getassertion.rs	688-689	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
+formal/README.md	crates/rsk-fido/src/getassertion.rs	694-695	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
 formal/README.md	crates/rsk-fido/src/lib.rs	107-116	pub fn load_keydev(&mut self) -> Option<rsk_secret::Secret<[u8; 32]>> {	}
 formal/README.md	crates/rsk-fido/src/makecredential.rs	603-606	if !ctx.state.verify_token(proto, req.client_data_hash, param)	|| !ctx.state.user_verified()
 formal/README.md	crates/rsk-fido/src/makecredential.rs	606-606	|| !ctx.state.user_verified()	|| !ctx.state.user_verified()
@@ -1135,7 +1135,7 @@ formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	85-85	/// Refi
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	114-118	let mut last_num: u16 = 0;	// no signature is ever produced without the deliberate on-screen hold.
 formal/RSKeyTrustedDisplay.tla	crates/rsk-display/src/presence.rs	192-192	// a release wait a finger already down approves the card in the same	// a release wait a finger already down approves the card in the same
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/clientpin.rs	604-605	pub fn needs_confirm(self, shows_confirm: bool) -> bool {	!self.up_collected || shows_confirm
-formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/getassertion.rs	688-689	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
+formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/getassertion.rs	694-695	// below is the only thing that names the rp, and the PIN pad cannot ([`needs_confirm`]).	let want_up = want_up(req) && verified.needs_confirm(ctx.presence.shows_confirm());
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/makecredential.rs	765-766	let ask = verified	.needs_confirm(ctx.presence.shows_confirm())
 formal/RSKeyTrustedDisplay.tla	crates/rsk-fido/src/u2f.rs	106-106	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());	crate::clientpin::UvOutcome::BUILTIN.needs_confirm(ctx.presence.shows_confirm());
 formal/RSKeyTrustedDisplay.tla	crates/rsk-ui/src/lib.rs	252-260	/// Refines `RSKeyTrustedDisplay!OnlyAllowConfirms` — SEC-DISP-003.	}

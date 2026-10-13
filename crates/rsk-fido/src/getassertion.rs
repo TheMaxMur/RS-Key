@@ -603,10 +603,16 @@ fn resolve_by_discovery<S: Storage, R: Rng>(
                 false,
                 &mut scratch,
             )
-            && let Some(cand) = cands.get_mut(ncand)
         {
-            *cand = (i, created);
-            ncand += 1;
+            if let Some(cand) = cands.get_mut(ncand) {
+                *cand = (i, created);
+                ncand += 1;
+            } else if let Some(oldest) = cands.iter_mut().min_by_key(|c| (c.1, c.0))
+                && created >= oldest.1
+            {
+                // Ascending slots make the new candidate win equal creation times.
+                *oldest = (i, created);
+            }
         }
     }
     // Arm getNextAssertion when more than one credential matched (newest first).
@@ -637,7 +643,7 @@ fn arm_get_next_assertion(
     now_ms: u64,
     channel: u32,
 ) -> Result<(), CtapError> {
-    cands.sort_unstable_by_key(|c| core::cmp::Reverse(c.1));
+    cands.sort_unstable_by_key(|c| core::cmp::Reverse((c.1, c.0)));
     gna.active = true;
     gna.channel = channel;
     gna.rp_id_hash = *rp_id_hash;
