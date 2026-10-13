@@ -85,7 +85,9 @@ fn a_locked_configuration_refuses_a_write_without_its_code() {
 fn a_wrong_code_is_refused_and_changes_nothing() {
     let mut fs = locked_fs();
     let before = records(&mut fs);
-    for code in [&OTHER[..], &CLEAR[..]] {
+    let mut same_prefix = CODE;
+    same_prefix[8..].copy_from_slice(&OTHER[8..]);
+    for code in [&OTHER[..], &CLEAR[..], &same_prefix[..]] {
         assert_eq!(
             persist_touched(&SERIAL, &mut fs, &write(Some(code), &FIDO_ONLY, None)),
             Err(DevConfError::WrongCode),
@@ -93,6 +95,36 @@ fn a_wrong_code_is_refused_and_changes_nothing() {
         );
     }
     assert_eq!(records(&mut fs), before, "a refused write moved a record");
+}
+
+#[test]
+fn a_format_one_verifier_from_an_older_writer_still_opens_the_lock() {
+    // SHA-256("RS-Key/CONFIG-LOCK" || 01234567 || a5 * 16), independently framed.
+    let golden = [
+        1, 0xc3, 0xf2, 0x5c, 0xcf, 0xf1, 0x92, 0xb5, 0x2f, 0x11, 0x22, 0xe8, 0xc0, 0xdb, 0x7a,
+        0x04, 0x79, 0xc8, 0xad, 0xfe, 0x63, 0x12, 0x74, 0x82, 0xe3, 0x75, 0x19, 0xda, 0xc7, 0x94,
+        0x9a, 0x07, 0x34,
+    ];
+    let mut fs = fs();
+    fs.put(EF_DEV_LOCK, &golden).unwrap();
+    persist_touched(&SERIAL, &mut fs, &write(Some(&CODE), &FIDO_ONLY, None)).unwrap();
+    assert_eq!(read_enabled_caps(&mut fs), CAP_FIDO2);
+    assert_eq!(record(&mut fs, EF_DEV_LOCK).as_deref(), Some(&golden[..]));
+}
+
+#[test]
+fn a_lock_record_with_an_extra_byte_cannot_open_through_its_valid_prefix() {
+    let mut fs = locked_fs();
+    let mut oversized = record(&mut fs, EF_DEV_LOCK).unwrap();
+    oversized.push(0x55);
+    fs.put(EF_DEV_LOCK, &oversized).unwrap();
+    let before = records(&mut fs);
+    assert_eq!(
+        persist_touched(&SERIAL, &mut fs, &write(Some(&CODE), &FIDO_ONLY, None)),
+        Err(DevConfError::WrongCode)
+    );
+    assert_eq!(records(&mut fs), before);
+    assert_eq!(reported(&mut fs), 1);
 }
 
 #[test]

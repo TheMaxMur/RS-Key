@@ -176,6 +176,14 @@ fn a_body_its_cap_holds_exactly_is_not_chained() {
 }
 
 #[test]
+fn a_255_byte_tail_is_reported_as_61ff() {
+    assert_eq!(
+        frames_of(511, 256, &[&short(None)], &GR_LE_00),
+        [(0x61ff, 256), (0x9000, 255)]
+    );
+}
+
+#[test]
 fn get_response_takes_no_more_than_its_buffer_holds() {
     // An extended GET RESPONSE asks for the whole tail. Into a 300-byte buffer it
     // gets 300 bytes and `61xx` for the rest, not `9000` over an empty body.

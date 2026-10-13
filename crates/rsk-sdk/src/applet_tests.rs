@@ -7,15 +7,23 @@ use super::*;
 fn response_truncate_never_extends_or_overwrites_the_buffer() {
     let mut bytes = [0xa5; 8];
     let mut response = ResBuf::new(&mut bytes);
+    assert!(response.is_empty());
     assert!(response.extend(b"abcd"));
+    assert!(!response.is_empty());
     response.truncate(8);
     assert_eq!(response.as_slice(), b"abcd");
     response.truncate(2);
     assert_eq!(response.as_slice(), b"ab");
+    assert!(!response.is_empty());
+    response.truncate(0);
+    assert!(response.is_empty());
 }
 
 #[path = "applet_registry_tests.rs"]
 mod registry;
+
+#[path = "applet_mutation_tests.rs"]
+mod mutation;
 
 struct Echo {
     selected: bool,
@@ -172,6 +180,7 @@ fn command_chaining_reassembles() {
     assert_eq!(disp.process(&sel, &mut applets, &mut (), &mut res), Sw::OK);
 
     // Two chaining segments (CLA bit 0x10) are acknowledged with no body…
+    assert!(!disp.chain_open());
     assert_eq!(
         disp.process(
             &[0x10, 0x10, 0, 0, 0x02, 0xAA, 0xBB],
@@ -182,6 +191,7 @@ fn command_chaining_reassembles() {
         Sw::OK
     );
     assert!(res.is_empty());
+    assert!(disp.chain_open());
     assert_eq!(
         disp.process(
             &[0x10, 0x10, 0, 0, 0x02, 0xCC, 0xDD],
@@ -202,6 +212,7 @@ fn command_chaining_reassembles() {
         Sw::OK
     );
     assert_eq!(res.as_slice(), &[0xAA, 0xBB, 0xCC, 0xDD, 0xEE]);
+    assert!(!disp.chain_open());
 }
 
 #[test]

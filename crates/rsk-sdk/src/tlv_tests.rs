@@ -7,10 +7,10 @@ use super::*;
 fn walk_two_objects() {
     // 0x5A len2 [aa bb], 0x9F1F (2-byte tag) len1 [cc]
     let data = [0x5A, 0x02, 0xAA, 0xBB, 0x9F, 0x1F, 0x01, 0xCC];
-    let items: Vec<_> = Tlv::new(&data).collect();
-    assert_eq!(items.len(), 2);
-    assert_eq!(items[0], (0x5A, &[0xAA, 0xBB][..]));
-    assert_eq!(items[1], (0x9F1F, &[0xCC][..]));
+    let mut objects = Tlv::new(&data);
+    assert_eq!(objects.next(), Some((0x5A, &[0xAA, 0xBB][..])));
+    assert_eq!(objects.next(), Some((0x9F1F, &[0xCC][..])));
+    assert_eq!(objects.next(), None);
 }
 
 #[test]
@@ -29,7 +29,7 @@ fn find_and_long_len() {
 fn truncated_is_none() {
     // claims 5 bytes but only 2 present
     let data = [0x5A, 0x05, 0x01, 0x02];
-    assert_eq!(Tlv::new(&data).count(), 0);
+    assert_eq!(Tlv::new(&data).next(), None);
 }
 
 #[test]
@@ -58,10 +58,18 @@ fn encoded_size_matches_the_wire_on_every_length_boundary() {
             wire.extend(&header[..size]);
             wire.extend(vec![0x55; usize::from(len)]);
             assert_eq!(len_tag(std::hint::black_box(tag), len), wire.len());
+            let mut objects = Tlv::new(&wire);
             assert_eq!(
-                Tlv::new(&wire).collect::<Vec<_>>(),
-                [(tag, &wire[wire.len() - usize::from(len)..])]
+                objects.next(),
+                Some((tag, &wire[wire.len() - usize::from(len)..]))
             );
+            assert_eq!(objects.next(), None);
         }
     }
+}
+
+#[test]
+fn a_u16_tag_at_the_single_byte_boundary_has_the_exact_encoded_size() {
+    assert_eq!(len_tag(0x00ff, 0), 2);
+    assert_eq!(len_tag(0x0100, 0), 3);
 }
