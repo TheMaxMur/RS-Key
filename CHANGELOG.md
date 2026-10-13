@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Keep resident FIDO discovery's first assertion and continuation queue in the
+  same order, including equal creation times and more matches than the queue
+  holds. Each reported credential is returned once; the bounded queue retains
+  the newest matches. Storage and queue capacities are unchanged.
+  bcdDevice `0x0AA2` → `0x0AA3`.
+
 - Run mutation tests in one Docker container capped at 4 GiB with no swap,
   one mutant and one test at a time. Native mutation entry points refuse an
   unbounded environment. Nextest terminates ordinary tests after 20 seconds;

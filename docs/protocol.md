@@ -467,7 +467,14 @@ and the one-entry list in `crates/rsk-device/src/ctap.rs` for `CTAPHID_MSG`.
 ## 5. Standard interfaces (pointers, not re-specified)
 
 These follow public specifications; a tool that already speaks YubiKey/FIDO2
-needs only the identifiers above. RS-Key implements:
+needs only the identifiers above.
+
+Resident FIDO discovery returns at most 16 distinct credentials per
+getAssertion/getNextAssertion walk, newest first. Equal creation times use
+descending storage-slot order. With more than 16 visible matches, the queue
+retains the newest 16; the first reply is the first entry in that same queue.
+
+RS-Key implements:
 
 - **FIDO2 / CTAP 2.1** (`versions` advertises up to `FIDO_2_3`; never `FIDO_2_2`,
   which CTAP 2.3 §6.4 says was never defined): getInfo, makeCredential,

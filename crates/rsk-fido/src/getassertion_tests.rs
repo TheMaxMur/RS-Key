@@ -20,6 +20,9 @@ mod walk;
 #[path = "getassertion_mutation_tests.rs"]
 mod mutation;
 
+#[path = "getassertion_discovery_tests.rs"]
+mod discovery;
+
 struct SeqRng(u64);
 impl Rng for SeqRng {
     fn fill(&mut self, buf: &mut [u8]) {
