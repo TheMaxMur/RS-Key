@@ -148,6 +148,69 @@ impl TouchPad for IdleThenOk {
 }
 
 #[test]
+fn a_revealed_pin_stays_visible_before_the_idle_deadline() {
+    let env = Env::new();
+    let mut taps = pin_entry(PIN);
+    taps.pop();
+    taps.extend([
+        center(rsk_ui::PIN_EYE_RECT),
+        center(rsk_ui::PIN_CANCEL_RECT),
+    ]);
+    let mut ui = env.ui(Pad::taps(&taps));
+    ui.hooks.presence_ms = (REVEAL_MASK_MS + 3000) as u32;
+    let started = Instant::now();
+    assert!(matches!(
+        ui.collect_pin(
+            "FIDO PIN",
+            None,
+            PIN.len(),
+            PIN.len() as u8,
+            &mut [0; 64],
+            false
+        ),
+        rsk_sdk::PinEntry::Declined
+    ));
+    assert!(started.elapsed() < Duration::from_millis(REVEAL_MASK_MS));
+    let entry = rsk_ui::Rect::new(0, 40, rsk_ui::PANEL_W, 40);
+    let visible = ui.panel.area_pixels(entry);
+    rsk_ui::render_pin_dots(&mut ui.panel, PIN.len(), PIN.len() as u8, Some(PIN)).unwrap();
+    assert!(
+        ui.panel.area_pixels(entry) == visible,
+        "the PIN was hidden before its reveal deadline"
+    );
+    rsk_ui::render_pin_dots(&mut ui.panel, PIN.len(), PIN.len() as u8, None).unwrap();
+    assert!(
+        ui.panel.area_pixels(entry) != visible,
+        "the expected reveal frame must differ from masking"
+    );
+}
+
+#[test]
+fn a_pending_rename_character_highlights_its_active_key_group() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::taps(&[
+        center(rsk_ui::t9_key_rect(0, 1)),
+        center(rsk_ui::TITLE_BACK_RECT),
+    ]));
+    let generation = env.fs.borrow().write_gen();
+    let started = Instant::now();
+    assert_eq!(
+        env.local(&mut ui).run_rename(&Label::default(), &[0; 32]),
+        None
+    );
+    assert!(started.elapsed() < Duration::from_millis(T9_COMMIT_MS));
+    let mut expected = env.ui(Pad::idle());
+    rsk_ui::render_rename(&mut expected.panel, "", Some(b'2'), Some(1)).unwrap();
+    let panel = rsk_ui::Rect::new(0, 0, rsk_ui::PANEL_W, rsk_ui::PANEL_H);
+    assert!(
+        ui.panel.area_pixels(panel) == expected.panel.area_pixels(panel),
+        "the pending character's key group was not highlighted"
+    );
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+    assert!(!ui.panel.oob);
+}
+
+#[test]
 fn a_revealed_pin_is_masked_after_idle_without_changing_the_entry() {
     let env = Env::new();
     let mut taps = pin_entry(PIN);
@@ -206,6 +269,89 @@ fn a_long_pin_title_scrolls_and_power_cancels_without_an_attempt() {
         rsk_sdk::PinEntry::Cancelled
     ));
     assert!(ui.asleep);
+    assert_eq!(out, [0; 64]);
+}
+
+#[test]
+fn an_overflowing_pin_title_advances_by_elapsed_pixel_steps() {
+    let env = Env::new();
+    let title = "PIV signing PIN check";
+    const PERIOD: u32 = 220;
+    assert_eq!(
+        rsk_ui::font::width(title, rsk_ui::font::Role::Heading),
+        Some(192)
+    );
+    assert!(rsk_ui::pin_title_overflows(title));
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.presence_ms = 1000;
+    let started = Instant::now();
+    assert!(matches!(
+        ui.collect_pin(title, None, 6, 6, &mut [0; 64], false),
+        rsk_sdk::PinEntry::Timeout
+    ));
+    assert!(
+        started.elapsed()
+            < Duration::from_millis(MARQUEE_PAUSE_MS + MARQUEE_MS_PER_PX * MARQUEE_MS_PER_PX)
+    );
+    let band = rsk_ui::PIN_TITLE_BAND;
+    let actual = ui.panel.area_pixels(band);
+    let mut reference = env.ui(Pad::idle());
+    reference.render_marquee_frame(title, 0);
+    let origin = reference.panel.area_pixels(band);
+    reference.render_marquee_frame(title, PERIOD);
+    assert!(
+        reference.panel.area_pixels(band) == origin,
+        "the fixture period changed"
+    );
+    let mut expected = Vec::new();
+    for offset in 1..MARQUEE_MS_PER_PX as u32 {
+        reference.render_marquee_frame(title, offset);
+        expected.push(reference.panel.area_pixels(band));
+    }
+    assert!(
+        expected.contains(&actual),
+        "the marquee used the wrong elapsed-time unit"
+    );
+    for offset in (0..PERIOD).step_by(MARQUEE_MS_PER_PX as usize) {
+        reference.render_marquee_frame(title, offset);
+        let wrong = reference.panel.area_pixels(band);
+        assert!(
+            !expected.contains(&wrong),
+            "the fixture does not separate multiplied offsets"
+        );
+    }
+    assert!(!ui.panel.oob);
+}
+
+#[test]
+fn an_overflowing_pin_title_is_blitted_as_one_complete_band() {
+    let env = Env::new();
+    let mut ui = env.ui(Pad::taps(&[center(rsk_ui::PIN_CANCEL_RECT)]));
+    ui.hooks.set_presence_timeout_ms(5000);
+    let title = "OpenPGP authentication PIN";
+    assert!(rsk_ui::pin_title_overflows(title));
+    let mut out = [0; 64];
+    assert!(matches!(
+        ui.collect_pin(title, None, 6, 6, &mut out, false),
+        rsk_sdk::PinEntry::Declined
+    ));
+    let band = rsk_ui::PIN_TITLE_BAND;
+    let area = Rectangle::new(
+        embedded_graphics::geometry::Point::new(i32::from(band.x), i32::from(band.y)),
+        Size::new(band.w as u32, band.h as u32),
+    );
+    let blits: Vec<_> = ui
+        .panel
+        .contiguous_blits
+        .iter()
+        .filter(|(rect, _)| *rect == area)
+        .collect();
+    assert!(!blits.is_empty());
+    assert!(
+        blits
+            .iter()
+            .all(|(_, pixels)| *pixels == band.w as usize * band.h as usize)
+    );
     assert_eq!(out, [0; 64]);
 }
 

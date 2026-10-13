@@ -180,10 +180,10 @@ assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	901-901	let
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	915-915	.and_then(|record| fs.put(EF_CRED + slot, record))	.and_then(|record| fs.put(EF_CRED + slot, record))
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	960-960	fn bump_rp<S: Storage>(	fn bump_rp<S: Storage>(
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential.rs	996-1001	// Existing rp: bump the count, re-storing the boxed tail verbatim.	// every enumeration surface (audit run-35).
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	888-888	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	917-917	assert!(	assert!(
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	943-943	fn a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry() {	fn a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry() {
-assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	970-970	assert!(	assert!(
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	964-964	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {	fn a_failed_registration_never_leaves_a_credential_without_its_rp() {
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	993-993	assert!(	assert!(
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	1019-1019	fn a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry() {	fn a_failed_registration_leaves_neither_the_credential_nor_its_rp_entry() {
+assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credential_tests.rs	1046-1046	assert!(	assert!(
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	359-359	fn enumerate_rps<S: Storage, R: Rng>(	fn enumerate_rps<S: Storage, R: Rng>(
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	393-393	let Some(n) = ctx	let Some(n) = ctx
 assurance/bundle/SEC-FIDO-005.toml	crates/rsk-fido/src/credmgmt.rs	399-399	};	};
@@ -467,7 +467,7 @@ assurance/platform.toml	crates/rsk-device/src/presence.rs	215-215	if board.now_u
 assurance/platform.toml	crates/rsk-device/src/presence_kani.rs	158-158	arb.set_cancel_requested(true);	arb.set_cancel_requested(true);
 assurance/platform.toml	crates/rsk-display/src/backup.rs	47-47	can_reveal: st.has_seed && st.exportable && !st.sealed && !st.locked && device_pin_set,	can_reveal: st.has_seed && st.exportable && !st.sealed && !st.locked && device_pin_set,
 assurance/platform.toml	crates/rsk-display/src/gates.rs	11-11	/// shared; the backing record (`EF_DEVICE_PIN` vs `EF_PIN`) and the floor differ, and so	/// shared; the backing record (`EF_DEVICE_PIN` vs `EF_PIN`) and the floor differ, and so
-assurance/platform.toml	crates/rsk-display/src/lib.rs	131-134	fn set_up_pending(&mut self, _pending: bool) {}	false
+assurance/platform.toml	crates/rsk-display/src/lib.rs	134-137	fn set_up_pending(&mut self, _pending: bool) {}	false
 assurance/platform.toml	crates/rsk-display/src/pin.rs	345-345	self.hooks.set_cancel_requested(false);	self.hooks.set_cancel_requested(false);
 assurance/platform.toml	crates/rsk-display/src/pin.rs	775-775	.factory_wipe(	.factory_wipe(
 assurance/platform.toml	crates/rsk-display/src/pin.rs	810-810	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host	/// floor); the **FIDO** PIN goes to `EF_PIN` as the same verifier the host
@@ -974,7 +974,7 @@ formal/RSKeySecurityState.tla	crates/rsk-display/src/gates.rs	117-206	pub(super)
 formal/RSKeySecurityState.tla	crates/rsk-display/src/gates.rs	129-131	PinScope::Device => rsk_fido::passkeys::device_pin_retries_left(&mut fs),	};
 formal/RSKeySecurityState.tla	crates/rsk-display/src/gates.rs	142-149	let mut pin = Secret::<[u8; 64]>::zeroed();	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
 formal/RSKeySecurityState.tla	crates/rsk-display/src/gates.rs	149-149	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);	let ends_host_token = scope == PinScope::Fido && retries.is_some_and(|left| left > 0);
-formal/RSKeySecurityState.tla	crates/rsk-display/src/lib.rs	196-202	/// Minimum time an on-device modal that yields to the host stays open before a queued	pub const UI_YIELD_FLOOR_MS: u64 = 2_500;
+formal/RSKeySecurityState.tla	crates/rsk-display/src/lib.rs	199-205	/// Minimum time an on-device modal that yields to the host stays open before a queued	pub const UI_YIELD_FLOOR_MS: u64 = 2_500;
 formal/RSKeySecurityState.tla	crates/rsk-display/src/presence.rs	41-44	let saved = self.hooks.led_status();	self.hooks.set_up_pending(true);
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	44-44	pub(crate) const PIN_FILE_LEN: usize = 35; // retries(1) + len(1) + format(1) + verifier(32)	pub(crate) const PIN_FILE_LEN: usize = 35; // retries(1) + len(1) + format(1) + verifier(32)
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/clientpin.rs	201-203	if ctx.fs.try_exists(EF_PIN).map_err(|_| CtapError::Other)? {	}

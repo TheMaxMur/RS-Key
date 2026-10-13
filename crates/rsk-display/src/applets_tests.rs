@@ -123,6 +123,72 @@ fn a_list_poll_reports_the_row_that_was_tapped() {
 }
 
 #[test]
+fn each_openpgp_overview_row_opens_its_own_detail_screen() {
+    let env = Env::new();
+    for row in 0..4 {
+        let apps = rsk_ui::NAV_TABS
+            .iter()
+            .position(|tab| *tab == NavTab::Apps)
+            .unwrap();
+        let mut ui = env.ui(Pad::taps(&[
+            center(rsk_ui::row_rect(rsk_ui::PK_LIST_TOP, row)),
+            center(rsk_ui::TITLE_BACK_RECT),
+            center(rsk_ui::nav_tab_rect(apps as u16)),
+        ]));
+        let mut reference = env.ui(Pad::idle());
+        let mut local = env.local(&mut reference);
+        if row < 3 {
+            let view = local.load_openpgp_key(row as usize);
+            rsk_ui::render_openpgp_key(&mut local.frame(), &view).unwrap();
+        } else {
+            let view = local.load_openpgp_cardholder();
+            rsk_ui::render_openpgp_cardholder(&mut local.frame(), &view).unwrap();
+        }
+        let expected = reference.panel.raster_hash();
+        assert_eq!(env.local(&mut ui).run_openpgp(), None);
+        assert!(
+            ui.panel.frame_hashes.contains(&expected),
+            "overview row {row} must paint its own detail"
+        );
+    }
+}
+
+#[test]
+fn each_piv_overview_row_opens_its_own_detail_screen() {
+    let env = Env::new();
+    let generation = env.fs.borrow().write_gen();
+    for row in 0..rsk_ui::PIV_ROWS {
+        let apps = rsk_ui::NAV_TABS
+            .iter()
+            .position(|tab| *tab == NavTab::Apps)
+            .unwrap();
+        let mut ui = env.ui(Pad::taps(&[
+            center(rsk_ui::row_rect(rsk_ui::PK_LIST_TOP, row)),
+            center(rsk_ui::TITLE_BACK_RECT),
+            center(rsk_ui::nav_tab_rect(apps as u16)),
+        ]));
+        let mut reference = env.ui(Pad::idle());
+        let mut local = env.local(&mut reference);
+        let overview = local.load_piv();
+        if usize::from(row) < overview.slots.len() {
+            let view = local.load_piv_slot(overview.slots[usize::from(row)].slot);
+            rsk_ui::render_piv_slot(&mut local.frame(), &view).unwrap();
+        } else {
+            let mut rows = [rsk_ui::PivExtraRow::default(); rsk_ui::PK_ROWS_MAX];
+            let (n, total) = local.load_piv_extra(&mut rows, 0);
+            rsk_ui::render_piv_extra(&mut local.frame(), &rows[..n], 0, total).unwrap();
+        }
+        let expected = reference.panel.raster_hash();
+        assert_eq!(env.local(&mut ui).run_piv(), None);
+        assert!(
+            ui.panel.frame_hashes.contains(&expected),
+            "PIV overview row {row} must paint its own detail"
+        );
+    }
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}
+
+#[test]
 fn a_list_poll_reports_the_back_chevron() {
     let env = Env::new();
     let mut ui = env.ui(Pad::taps(&[center(rsk_ui::TITLE_BACK_RECT)]));

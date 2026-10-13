@@ -201,6 +201,31 @@ fn rsa_generation_requests_the_selected_width_and_reports_accelerator_failure() 
 }
 
 #[test]
+fn an_rsa_progress_tick_after_the_deadline_advances_the_delivered_arc() {
+    let env = Env::new();
+    let generation = env.fs.borrow().write_gen();
+    let mut reference = env.ui(Pad::idle());
+    rsk_ui::render_piv_keygen_working(&mut reference.frame()).unwrap();
+    let initial = reference.panel.raster_hash();
+    rsk_ui::render_status_arc(
+        &mut reference.panel,
+        StatusKind::Processing,
+        rsk_ui::STATUS_ARC_START + SPIN_STEP_DEG,
+    )
+    .unwrap();
+    assert_ne!(initial, reference.panel.raster_hash());
+    let mut ui = env.ui(Pad::idle());
+    ui.hooks.rsa_late_tick_only = true;
+    assert!(env.local(&mut ui).piv_search_rsa(2048).is_none());
+    assert_eq!(ui.hooks.rsa_requests, [2048]);
+    assert!(
+        ui.panel.pixels() == reference.panel.pixels(),
+        "a late RSA search tick must deliver the next progress arc"
+    );
+    assert_eq!(env.fs.borrow().write_gen(), generation);
+}
+
+#[test]
 fn a_real_rsa_result_is_stored_only_when_a_slot_and_the_fused_key_are_available() {
     for refuse in 0..3 {
         let mut env = Env::new();

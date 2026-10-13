@@ -159,6 +159,8 @@ impl Drop for CredKey {
             // and so does rsk-mldsa's expanded key, which dropping its `Box` drops.
             Self::Ed25519(_) | Self::MlDsa44(_) | Self::MlDsa65(_) | Self::MlDsa87(_) => {}
         }
+        #[cfg(test)]
+        tests::observe_drop(self);
     }
 }
 

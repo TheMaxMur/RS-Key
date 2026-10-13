@@ -1250,3 +1250,6 @@ pub fn migrate_rp_seal<S: Storage>(dev: &Device, fs: &mut Fs<S>) {
 )]
 #[path = "credential_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+pub(crate) use tests::legacy_box_at_limit;
