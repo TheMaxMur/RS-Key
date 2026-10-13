@@ -1949,3 +1949,56 @@ Raw rosters, per-mutation build/test logs, source copies, assertion directions,
 OpenSSL checks, exact restoration hashes and scope dispositions are retained in
 `target/critical-mutations-20261011/`. They are local evidence, not a release
 bundle or a new formal whole-firmware claim.
+
+### Raw-record and provider contracts, 2026-10-13
+
+Eleven host tests pin twelve previously surviving mutations. They cover the
+vendor provider's response backing, nickname suffix handling, header-only
+credential and RP records, short credential-index prefixes, malformed
+management records, orphan EC metadata, MOVE metadata normalization, oversized
+pooled objects and the public P521 writer's unsupported-loader refusal.
+
+The selected tests pass in both default and FIPS profiles. All twelve exact
+mutations fail on the corresponding bytes, statuses, counts or cleanup results;
+their logs contain no allocation-limit or per-test-timeout termination. The
+original survivor reports remain unchanged. Source hashes, restored-source
+checks and per-mutation logs are retained in
+`target/mutation-shards-20261012/safe/raw-provider-*`.
+
+These are current public-helper and raw-record contracts. Pinning a successful
+store under malformed counts and a fault does not establish that every such
+history is safe, and pinning P521 rejection does not add supported PIV P521
+commands. This slice does not close the ongoing full weekly shard sweep.
+
+### Journal and counter boundaries, 2026-10-13
+
+Five host tests pin six additional survivors from the full shard sweep. They
+check the journal's exact snapshot-plus-two-delta reserve, erased counter banks,
+an authenticated tombstone in the final header window, a counter snapshot that
+fills its bank, and preservation of old authority during rekeying.
+
+The rekey fault lands after the peer's verified writes, at its subsequent scan.
+A partial erase would be refused earlier by readback and would not exercise this
+guard. The healthy and weakened guards both return `MemoryFatal`; the test
+distinguishes them by checking that the old bank has not been erased.
+
+All 191 short storage tests pass, including the five new tests. Six exact
+mutations fail at the intended status, capacity or authority-preservation
+assertion, without allocation failures or timeouts. An earlier run whose
+unhealthy peer fixture masked two journal mutations is retained with zero
+credit; the clean repeat follows the complete short-test baseline. The four
+exhaustive storage workloads remain in the full healthy and mutation suites.
+
+The complete healthy run passed 4,070 tests, then the combined rekey/recovery
+matrix reached its existing 900-second watchdog. Its outer cut positions are
+now divided into eight tests by `skip % 8`; all three fault effects and every
+nested recovery cut are retained. Each part keeps the same 900-second bound,
+one test thread and 1 GiB address-space limit. Removing the existing slow-test
+override makes the first part time out at the ordinary 20-second bound. Results
+from the new parts compose with the unchanged earlier tests; the original
+timeout remains recorded separately and is not an assertion failure.
+
+Source bindings, failed apparatus attempts and clean directional repeats are
+retained in `target/mutation-shards-20261012/safe/store-boundary-*` and
+`target/mutation-shards-20261012/safe/counter-peer-rekey-*`. The full sweep remains
+in progress. These tests preserve firmware behavior and the existing limits.
