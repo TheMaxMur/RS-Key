@@ -43,7 +43,7 @@
 #             plumbing and the registries held against the prose, run once
 #             before a pull request rather than per commit (AGENTS.md).
 #   mutants-diff — advisory: cargo-mutants over the lines a pull request
-#             touches (`scripts/mutants-all.sh --in-diff`), survivors annotated
+#             touches (`scripts/mutants-container.sh --in-diff`), survivors annotated
 #             on the diff. Never a required check.
 
 name: ci
@@ -436,6 +436,5 @@ jobs:
       - name: mutants over the lines this pull request touches (advisory)
         env:
           BASE: ${{ github.base_ref }}
-          MUTANTS_JOBS: "2"
           HOST_TARGET: x86_64-unknown-linux-gnu
-        run: nix develop -c ./scripts/mutants-all.sh --in-diff "origin/$BASE"
+        run: nix develop -c ./scripts/mutants-container.sh --in-diff "origin/$BASE"

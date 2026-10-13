@@ -40,6 +40,12 @@
       # Coverage says a line ran; this says a test would notice if it changed —
       # which is the property the `require_pin_inputs` gap was invisible to.
       pkgs.cargo-mutants
+      # Per-test processes let timeouts kill the full test process group.
+      pkgs.cargo-nextest
+
+      pkgs.nodejs # preview publisher's node:test gate
+      pkgs.rsync # assurance-trace image comparison's isolated source copy
+      pkgs.openssl # the sealed-image gate generates a throwaway signing key
 
       # Workflow linting (the `workflow lint` row in scripts/check.sh).
       # Nothing in the tree parsed `.github/workflows` at all, and a workflow

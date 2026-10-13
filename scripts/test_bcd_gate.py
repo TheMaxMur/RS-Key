@@ -108,6 +108,8 @@ class Tree:
         self.write("docs/protocol.md", "# Protocol\n")
         self.write("CHANGELOG.md", CHANGELOG)
         self.git("init", "-q")
+        self.git("config", "user.name", "t")
+        self.git("config", "user.email", "t@t")
         self.commit("the tree, and 0x0100")
 
     def write(self, rel, text):

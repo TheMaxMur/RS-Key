@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+[profile.default]
+# The scripted PIN pads have short fixture deadlines under concurrent rendering.
+test-threads = 2
+
+[[profile.default.overrides]]
+# Broken primitives can stall their callers before these short contracts run.
+filter = 'test(crypto_rng_bridges_forward_the_whole_requested_window) | test(a_short_tlv_entry_reports_only_complete_value_boundaries)'
+priority = 100
+threads-required = "num-test-threads"
+
+[[profile.default.overrides]]
+# Fail before a broken primitive can strand the concurrent caller's loop.
+filter = 'package(rsk-sdk) & test(walk_two_objects) | package(rsk-rsa) & test(overflow_and_the_window_limit_require_a_new_seed)'
+priority = 100
+threads-required = "num-test-threads"
+
+[[profile.default.overrides]]
+# These short oracles notice status defects before the real modal deadlines.
+filter = 'package(rsk-display) & (test(status_loop_respects_a_shared_borrow_quiet_handoff_sleep_and_button_wake) | test(an_unchanged_ambient_screen_is_not_repainted) | test(a_status_glyph_change_repaints_without_disarming_the_panel) | test(an_overflowing_pin_title_is_blitted_as_one_complete_band) | test(deleting_the_last_rp_on_the_last_page_clamps_the_passkeys_list) | test(each_openpgp_overview_row_opens_its_own_detail_screen) | test(sleep_menu_steps_preserve_the_millisecond_unit))'
+priority = 50
+
+[[profile.default.overrides]]
+# Each matrix spends a minute at real deadlines; fail fast on short contracts first.
+filter = 'package(rsk-display) & (test(every_idle_browse_window_returns_at_the_real_inactivity_deadline) | test(unattended_recovery_steps_return_at_the_real_inactivity_deadline) | test(unattended_local_windows_return_at_their_real_inactivity_deadlines))'
+priority = -100
+
+[profile.mutants]
+test-threads = 1
+retries = 0
+slow-timeout = { period = "5s", terminate-after = 4, grace-period = "0s" }
+
+[[profile.mutants.overrides]]
+# Short contracts must run before these exhaustive write/recovery traces.
+filter = 'package(rsk-store) & (test(counter_checkpoint_wear_is_measured_without_touching_main_payload_or_authority) | test(authenticated_storage_preserves_the_full_dynamic_budget_and_excludes_its_witness) | test(root_rekey_and_repeated_recovery_keep_values_and_close_the_old_arm) | test(automatic_import_survives_command_and_recovery_program_or_erase_cuts))'
+priority = -100
+slow-timeout = { period = "60s", terminate-after = 15, grace-period = "0s" }
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-fido) & test(getassertion::tests::discovery::)'
+priority = 100
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-display) & (test(a_revealed_pin_stays_visible_before_the_idle_deadline) | test(a_pending_rename_character_highlights_its_active_key_group))'
+priority = 100
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-display) & (test(each_piv_overview_row_opens_its_own_detail_screen) | test(oath_pages_open_the_named_credential_at_the_selected_global_index) | test(audit_pager_delivers_the_selected_page_and_clamps_at_both_ends))'
+priority = 100
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-display) & (test(the_phrase_pager_delivers_the_last_twelve_words_and_clamps_there) | test(generated_share_pages_deliver_the_right_words_share_number_and_global_page) | test(an_rsa_progress_tick_after_the_deadline_advances_the_delivered_arc))'
+priority = 100
+
+[[profile.mutants.overrides]]
+# Refute nonprogress before the exhaustive storage fault matrices enter it.
+filter = 'package(rsk-store) & (test(a_program_is_verified_with_nonempty_readback_windows) | test(an_empty_program_requires_no_readback) | test(verified_driver_preserves_capacity_and_makes_bounded_readback_progress) | test(new_and_default_expose_complete_aligned_zeroed_windows) | test(the_mutable_window_changes_the_same_readable_bytes) | test(a_secret_wipe_scrubs_the_live_flash_staging_buffer))'
+priority = 100
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-store) & (test(raw_bank::) | test(span_rejects_integer_overflow_and_retains_exact_empty_and_full_bounds))'
+priority = 100
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-store) & (test(directory_digest_matches_independent_complete_frame_vectors) | test(a_valid_mac_cannot_authorize_noncanonical_checkpoint_padding) | test(checkpoint_counts_preserve_the_public_main_directory_ceiling) | test(raw_bank_refuses_nonempty_spans_that_reach_a_neighbor_partition_before_io) | test(an_unaligned_bank_read_crosses_scratch_windows_without_growing_them) | test(an_unaligned_bank_program_crosses_scratch_windows_without_growing_them))'
+priority = 100
+
+[[profile.mutants.overrides]]
+# These three matrices exercise the real one-minute inactivity deadline.
+filter = 'package(rsk-display) & (test(every_idle_browse_window_returns_at_the_real_inactivity_deadline) | test(unattended_recovery_steps_return_at_the_real_inactivity_deadline) | test(unattended_local_windows_return_at_their_real_inactivity_deadlines))'
+slow-timeout = { period = "20s", terminate-after = 4, grace-period = "0s" }

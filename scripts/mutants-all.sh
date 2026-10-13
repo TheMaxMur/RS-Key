@@ -5,10 +5,10 @@
 # Mutation testing over the host crates — the weekly deep-checks `mutants` row,
 # and the same roster over the lines one diff touches.
 #
-#   nix develop -c ./scripts/mutants-all.sh
-#   MUTANTS_SHARD=2/12 nix develop -c ./scripts/mutants-all.sh
-#   nix develop -c ./scripts/mutants-all.sh --in-diff HEAD      # uncommitted work
-#   nix develop -c ./scripts/mutants-all.sh --in-diff HEAD~1    # the last commit
+#   nix develop -c ./scripts/mutants-container.sh
+#   MUTANTS_SHARD=2/12 nix develop -c ./scripts/mutants-container.sh
+#   nix develop -c ./scripts/mutants-container.sh --in-diff HEAD      # uncommitted work
+#   nix develop -c ./scripts/mutants-container.sh --in-diff HEAD~1    # the last commit
 #
 # Coverage says a line ran. This says a test would notice if that line changed,
 # which is a different question and the one this tree keeps getting wrong: the
@@ -49,9 +49,15 @@ case "${1:-}" in
   *) echo "usage: $0 [--in-diff [<base>]]" >&2; exit 2 ;;
 esac
 
+./scripts/mutants-nextest.sh --check-limits
+
 if ! command -v cargo-mutants >/dev/null; then
   echo "FAIL: cargo-mutants is not on PATH — this is not the dev shell." >&2
   echo "      run it as: nix develop -c $0" >&2
+  exit 1
+fi
+if ! command -v cargo-nextest >/dev/null; then
+  echo "FAIL: cargo-nextest is not on PATH — this is not the dev shell." >&2
   exit 1
 fi
 
@@ -71,12 +77,18 @@ done
 common=(
   "${packages[@]}"
   -C "--target=$HOST"
+  --copy-target=false
+  --test-tool nextest
   -e '**/kani.rs'
   -e '**/*_kani.rs'
 )
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+export MUTANTS_NEXTEST_BIN="$(command -v cargo-nextest)"
+mkdir "$tmp/bin"
+ln -s "$PWD/scripts/mutants-nextest.sh" "$tmp/bin/cargo-nextest"
+export PATH="$tmp/bin:$PATH"
 
 # cargo-mutants creates its output directory but not the parent, and on a runner
 # whose `target/` cache missed there is no parent to create it in: "create output
@@ -122,7 +134,7 @@ if [ -n "$base" ]; then
   echo "in-diff: ${n} mutants on the lines this tree changes against ${base} (${mb:0:12})"
   [ "$n" -gt 0 ] || exit 0
   cargo-mutants mutants --in-diff "$tmp/diff" "${common[@]}" \
-    -j "${MUTANTS_JOBS:-4}" --output "$OUT" 2>&1 | tee "$tmp/log" || true
+    -j 1 --output "$OUT" 2>&1 | tee "$tmp/log" || true
   summary="$(run_summary "the in-diff run")"
   echo "mutants: in-diff, ${summary}"
   names "$OUT/mutants.out/missed.txt" > "$tmp/missed"
@@ -159,7 +171,7 @@ fi
 # number means the same thing in every row (`FUZZ_SHARD`, `MIRI_SHARD`, this one)
 # and only the flag sees the tool's own convention.
 cargo-mutants mutants "${common[@]}" \
-  --shard "$((shard_i - 1))/$shard_n" -j "${MUTANTS_JOBS:-4}" --output "$OUT" 2>&1 | tee "$tmp/log" || true
+  --shard "$((shard_i - 1))/$shard_n" -j 1 --output "$OUT" 2>&1 | tee "$tmp/log" || true
 summary="$(run_summary "shard ${MUTANTS_SHARD}")"
 echo "mutants: shard ${MUTANTS_SHARD}, ${summary}"
 

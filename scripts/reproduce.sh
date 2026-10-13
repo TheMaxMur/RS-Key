@@ -66,7 +66,7 @@ PHASES=(
   "repro|deep|~30 min|the hermetic firmware build is bit-identical on a rebuild|nix build .#firmware -o result-repro && nix build .#firmware --rebuild"
   "miri|deep|~40 min|every fuzz target's logic under Miri's UB checker|nix develop .#fuzz -c ./scripts/miri-all.sh"
   "fuzz|deep|~2 h|a timed libFuzzer run over every fuzz target, from whatever corpus this checkout has|nix develop .#fuzz -c ./scripts/fuzz-all.sh"
-  "mutants|deep|~10 h|the cargo-mutants sweep, held against the accepted survivors in scripts/mutants-accepted.txt: would any test notice if this line changed|./scripts/mutants-all.sh"
+  "mutants|deep|~10 h|the cargo-mutants sweep, held against the accepted survivors in scripts/mutants-accepted.txt: would any test notice if this line changed|./scripts/mutants-container.sh"
 )
 
 #: Tier -> the phases it runs, cheapest first. `all` is every phase this
@@ -121,8 +121,10 @@ CLAIM_RUNNERS=(
   "scripts/image-suites.sh|image|"
   "scripts/miri-all.sh|miri|"
   "scripts/fuzz-all.sh|fuzz|"
-  "scripts/fuzz-dicts.sh|-|the per-target dictionary mapping, sourced by scripts/fuzz-all.sh and the gate's `fuzz targets alive` row; nothing runs it directly"
+  "scripts/fuzz-dicts.sh|-|the per-target dictionary mapping, sourced by scripts/fuzz-all.sh and the gate's fuzz targets alive row; nothing runs it directly"
   "scripts/mutants-all.sh|mutants|"
+  "scripts/mutants-container.sh|mutants|the memory-limited Linux launcher for full and in-diff mutation runs"
+  "scripts/mutants-nextest.sh|-|the mutation runner's nextest adapter; retains Cargo doctests after library tests"
   "scripts/ci-scope.sh|gate|"
   "scripts/ci-knobs.sh|gate|"
   "scripts/complexity_gate.sh|gate|"
@@ -481,7 +483,7 @@ self_test() {
     [ -n "$(rest "$entry" 2)" ] || bad "refusals: '$(field "$entry" 1)' is refused with no reason"
   done
   [ -f "$HIL_PAGE" ] || bad "refusals: the maintainer-only page $HIL_PAGE does not exist, so the refusal points nowhere"
-  print_refusals | grep -qF "$HIL_PAGE" || bad "refusals: the refusal block does not name $HIL_PAGE"
+  print_refusals | grep -F "$HIL_PAGE" >/dev/null || bad "refusals: the refusal block does not name $HIL_PAGE"
 
   if [ "$FAILS" -eq 0 ]; then
     echo "reproduce: self-test ok — $n gate rows, $(find scripts formal -name '*.sh' | grep -c .) runners, $(workflow_jobs | grep -c .) jobs, ${#PHASES[@]} phases, ${#REFUSED[@]} refusals"
