@@ -120,7 +120,7 @@ The latest local completion boundary is:
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
 | 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns, arbitrary correlated faults and semantic record-loss detection beyond the current CRC/legacy formats remain open; the bounded matrix does not close the whole phase |
-| 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations | Whole-core weekly-shard closure, device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
+| 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
@@ -2535,3 +2535,22 @@ Phase 2's MC/DC criterion remains decision-only and unimplemented. Embedded glue
 C/assembly, physical fault timing, interoperability, retained campaigns and actual
 CI/release execution remain separate work; this item does not complete the whole
 plan. Evidence is retained in `target/profile-coverage-20261010/audited-linux/`.
+
+## Whole-core mutation-roster closure, 2026-10-12/14
+
+The frozen weekly shards' 10 887 desired occurrences are dispositioned: the
+fresh review (`target/mutation-shards-20261012/safe/fresh-survivor-review-20261013.json`)
+reports zero pending misses and zero pending resource rows. Each module was
+closed with exact host-profile runs (`aarch64-apple-darwin`): frame tests pin the
+`rsk-ui` renderers, unit tests pin the crates' parsers, store decisions and
+transports, and the occurrences that remain are reviewed identities or
+unreachable arms in `scripts/mutants-accepted.txt`, one written reason per class.
+The four resource-only rows are either re-killed by an assertion (`ctaphid.rs`'s
+bounded continuation walk) or recorded as qualified resource kills with zero
+assertion credit (`pin.rs`'s two non-terminating `*= 1` counters, detectable only
+by the per-test timeout). Per-module kill evidence is retained under
+`target/mutants/`; the per-module record is in [testing](testing.md).
+
+Device C/assembly mutation execution and resource/timing equivalence remain
+separate obligations. This closure is a host-profile weekly-shard result, not a
+hardware or whole-release claim.
