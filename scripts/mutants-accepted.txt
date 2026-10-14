@@ -247,3 +247,6 @@ crates/rsk-usb/src/ctaphid.rs: replace + with -
 crates/rsk-usb/src/ctaphid.rs: replace + with *
 crates/rsk-usb/src/ctaphid.rs: replace * with +
 crates/rsk-usb/src/ctaphid.rs: replace * with /
+
+[strict-config-off] `SET LED`'s presence gate is `#[cfg(feature = "strict-config")]`, which the default `cargo test` never builds, so the negated and un-negated forms compile to the same (absent) code; with the feature on, `declining_a_strict_led_write_preserves_live_and_stored_configuration` distinguishes them.
+crates/rsk-vendor/src/lib.rs: delete ! in <impl Applet<Fs<S>> for VendorApplet<'_, P>>::process

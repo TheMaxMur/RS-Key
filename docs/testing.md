@@ -2789,3 +2789,13 @@ read `bcnt_hi` 1 / `bcnt_lo` 44 and leave the reassembler mid-transaction. The
 `>>`→`<<` mutant zeroes the high lane, which makes the same frame declare 44 and
 complete from the INIT alone. Evidence:
 `target/mutants/transport-assurance-controls/` (1 caught of 1).
+
+The `rsk-vendor` chunk closed 5 of its 6: `the_measurement_instructions_reach_the_platform_hooks`
+routes INS 0x13/0x14/0x15 to a platform that serves them (a deleted arm falls to
+`_ => INS_NOT_SUPPORTED`, which is invisible against the default platform), and
+`the_steady_bit_is_bit_three_alone` kills both `P2_STEADY` byte mutants with a
+colour-only write. The remaining `delete !` sits behind `feature =
+"strict-config"`, which the default profile never builds — accepted under
+`[strict-config-off]`, naming the feature-on test that does distinguish it.
+Evidence: `target/mutants/vendor-controls/` (5 caught of 6, one accepted
+identity).
