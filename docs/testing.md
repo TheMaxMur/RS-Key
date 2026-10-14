@@ -2691,3 +2691,10 @@ lengths at `0x7F`/`0x80`/`0xFF`/`0x100`, and a P-521-signed certificate that
 must fit the DER signature buffer (6 caught); the oversized `MAX_EC_SIG * 9`
 buffer and the last-zero INTEGER strip are identities. Evidence:
 `target/mutants/x509/`.
+
+The `components/mod.rs` chunk closed all 63: five frame tests cover `card_title`,
+`card_row` (with and without a value), `card_row_chevron` (row index 1 so the
+indexed term is load-bearing), `rect_row` (clipped trailing, then the
+no-trailing branch with a long label) and `empty_state` — 62 caught; the one
+right-widening clip comparison is an identity (a right-aligned value never
+draws past its anchor). Evidence: `target/mutants/components*/`.

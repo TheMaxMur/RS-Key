@@ -211,3 +211,6 @@ crates/rsk-x509/src/lib.rs: replace + with *
 
 [x509-zero-uint-identity] Stripping the last zero byte and taking the empty branch both encode INTEGER 0 as 02 01 00.
 crates/rsk-x509/src/lib.rs: replace > with >= in DerRev<'a>::uint
+
+[right-clip-widening-identity] The trailing value is right-aligned at tx and never draws past it, so a clip widened to the right changes no pixel.
+crates/rsk-ui/src/render/components/mod.rs: replace - with + in rect_row
