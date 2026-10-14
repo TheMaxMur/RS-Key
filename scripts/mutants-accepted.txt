@@ -205,3 +205,9 @@ crates/rsk-openpgp/src/terminate.rs: replace > with >= in sweep
 
 [clip-widening-identity] plate.x * plate.w widens the plate's text clip past the panel; the current headline strings fit inside the unchanged 6-px inset, so no pixel moves.
 crates/rsk-ui/src/render/backup.rs: replace + with * in render_backup
+
+[x509-sig-buffer-slack] MAX_EC_SIG * 9 is larger than any DER signature the signer emits, so the buffer bound is not observable from a successful build.
+crates/rsk-x509/src/lib.rs: replace + with *
+
+[x509-zero-uint-identity] Stripping the last zero byte and taking the empty branch both encode INTEGER 0 as 02 01 00.
+crates/rsk-x509/src/lib.rs: replace > with >= in DerRev<'a>::uint

@@ -482,3 +482,52 @@ fn ecdsa_der_is_minimal_and_sign_safe() {
     assert_eq!(ecdsa_der(&[], &mut out), Err(Error::Encoding));
     assert_eq!(out, before);
 }
+
+#[test]
+fn der_raw_accepts_an_exactly_fitting_slice() {
+    let mut buf = [0u8; 3];
+    let mut w = DerRev::new(&mut buf);
+    assert_eq!(w.raw(&[1, 2, 3]), Ok(()));
+    assert_eq!(w.written(), &[1, 2, 3]);
+    assert!(w.raw(&[4]).is_err(), "no room for a fourth byte");
+}
+
+#[test]
+fn der_close_uses_the_minimal_length_at_each_boundary() {
+    for (n, prefix) in [
+        (0x7Fu16, &[0x04u8, 0x7F][..]),
+        (0x80, &[0x04, 0x81, 0x80][..]),
+        (0xFF, &[0x04, 0x81, 0xFF][..]),
+        (0x100, &[0x04, 0x82, 0x01, 0x00][..]),
+    ] {
+        let mut buf = vec![0u8; n as usize + 8];
+        let mut w = DerRev::new(&mut buf);
+        let m = w.mark();
+        let content = vec![0xAAu8; n as usize];
+        w.raw(&content).unwrap();
+        w.close(0x04, m).unwrap();
+        assert_eq!(&w.written()[..prefix.len()], prefix, "len {n:#X}");
+    }
+}
+
+#[test]
+fn a_p521_signature_fits_the_der_signature_buffer() {
+    let (signer, _) = key(Curve::P521, 21);
+    let (_, pt) = key(Curve::P521, 22);
+    let der = issue(
+        &Cert {
+            subject_cn: b"S",
+            issuer_cn: b"I",
+            spki: Spki::Ec {
+                curve: Curve::P521,
+                point: &pt,
+            },
+            sha384: true,
+            ca_pathlen: None,
+            extra: &[],
+        },
+        &signer,
+    );
+    let _cert = parse(&der);
+    assert!(!der.is_empty());
+}

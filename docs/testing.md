@@ -2685,3 +2685,9 @@ paged body (5, the account_row body replacement included). `passkeys.rs` is
 fully triaged: 66 caught of 66. Evidence: `target/mutants/passkeys2/` (29
 caught of 39, ten clip/clear cases rerun), `passkeys3/` (10 of 10),
 `passkeys4/` (17 of 17), `passkeys5/` (5 of 5) and `passkeys6/` (5 of 5).
+
+The `rsk-x509` chunk closed its 8 occurrences: exact-fit `raw`, minimal
+lengths at `0x7F`/`0x80`/`0xFF`/`0x100`, and a P-521-signed certificate that
+must fit the DER signature buffer (6 caught); the oversized `MAX_EC_SIG * 9`
+buffer and the last-zero INTEGER strip are identities. Evidence:
+`target/mutants/x509/`.
