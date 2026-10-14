@@ -575,3 +575,37 @@ library also passes its Linux all-feature tests after the portable overrun
 fixture repair. These measurements exercise the emulator model; they do not
 prove the hardware policy in the current prototype, which still grants NS
 direct USB access.
+
+
+The DMA model now carries the channel's own security/privilege attributes and
+DMA master identity through actual serial transfers. SECCFG reset values,
+automatic/manual channel locks, restricted NS configuration writes, interrupt
+visibility, timer/peripheral DREQ visibility and downward-only chaining are
+modelled. The MPU checks logical addresses, including span ends and overflow;
+the lowest matching region wins, otherwise MPU_CTRL defines the background.
+Aliases are not normalised into a permitted region. MPU and bus denials stop
+the channel, latch READ_ERROR/WRITE_ERROR and request its interrupt; errors
+require W1C before restart. DMA self-access follows the same checks.
+
+Serial and threaded CPU MMIO views enforce controller permissions for every
+access width, including partial W1C writes. Threaded DMA transfer execution is
+still absent upstream; use the serial image backend for DMA isolation tests.
+The production policy will keep DMA registers and channels S-owned and protect
+all SRAM/XIP aliases with a Secure background plus explicit NS data regions.
+No current firmware DMA policy is claimed by these model changes.
+
+
+DMA checks on 2026-10-14: six reproductions exposed a Secure channel pointer,
+bypassed master filters or wrote protected control resources before repair.
+The final model passes 3,795 RP2350 tests on macOS (27 ignored), and 3,887 on x86
+Linux with threading/all features (28 ignored); both clippy runs pass. Removing
+the transfer MPU guard makes the real model gate fail because NS DMA exports
+Secure RAM. The guard is then restored byte-for-byte.
+
+The unchanged combined ELF at bcdDevice 0x0AA6 again passes RSA-2048 generation
+and signing, plus ML-DSA-44/65/87 credentials and assertions; every signature
+and attestation is verified. Maximum image-clock keepalive gaps are 201 ms for
+RSA and 108 ms for ML-DSA. All 17 cancellation/reset/disconnect cases pass,
+including worker recovery, authorization clearing on reset and refusal of the
+old FIDO token. These remain honest-NS lifecycle measurements; independent
+Secure USB revocation is still the next firmware step.

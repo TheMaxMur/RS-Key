@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Enforce DMA channel and interrupt security, logical-address MPU rules and
+  DMA-master bus filters in the image model. Reject processor-local accesses
+  and privilege escalation through controller self-access, chaining and DREQs;
+  report bus errors without contaminating CPU fault state.
+
 - Bank the image emulator's SIO FIFOs, spinlocks, doorbells and interrupt lines
   by security state; enforce GPIO masks and core-local peripheral ownership,
   including the GPIO coprocessor and threaded handoff.
