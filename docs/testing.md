@@ -2651,3 +2651,12 @@ pacing bits. Accepted identities: the `2 + 2`/`2 * 2` config tail, the disjoint
 update masks in `button_ticket` and `cmd_update`, and `sweep`'s between-pass
 budget equality, which the applet's fid range cannot reach. Evidence:
 `target/mutants/otp-controls/` (12 mutants: 6 caught, 6 identities).
+
+The first UI chunk resolved 33 of `applets.rs`'s 99 frozen occurrences:
+19 (detail-card geometry) were already killed by tests that landed after the
+sweep snapshot, and four new frame tests kill 14 more — retired-slot titles,
+one screen per named or retired PIV slot with a single fallback, distinct
+OpenPGP key-slot titles, and the empty-slot body's glyph and both lines. The
+remaining 66 are renderer coordinates plus the `render_apps` count words; they
+stay queued. Evidence: `target/mutants/applets-controls/` (19 caught of 99) and
+`target/mutants/applets2/` (14 caught of 80).
