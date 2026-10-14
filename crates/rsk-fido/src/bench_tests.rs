@@ -3,6 +3,25 @@
 
 use super::*;
 
+#[test]
+fn checksum_folds_every_byte_into_its_little_endian_lane() {
+    for (bytes, expected) in [
+        (&[][..], 0),
+        (&[0xA5][..], 0xA5),
+        (&[0x11, 0x22, 0x44, 0x88][..], 0x8844_2211),
+        (
+            &[0x11, 0x22, 0x44, 0x88, 0x81, 0x18, 0x24, 0x42][..],
+            0xCA60_3A90,
+        ),
+    ] {
+        assert_eq!(
+            checksum(bytes),
+            expected,
+            "the timing harness checksum must retain every folded lane"
+        );
+    }
+}
+
 // The harness only means anything if each selector actually executes the real
 // hot path, not a near-free error/fallback. Pin that the fixed inputs drive the
 // genuine primitive, and that `run` returns that primitive's checksum.

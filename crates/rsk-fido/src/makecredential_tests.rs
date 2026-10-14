@@ -6,6 +6,10 @@ use super::*;
 #[path = "makecredential_mutation_tests.rs"]
 mod mutation;
 
+#[cfg(feature = "preview-sign")]
+#[path = "makecredential_preview_budget_tests.rs"]
+mod preview_budget;
+
 #[test]
 fn an_enterprise_attestation_wipes_its_live_org_key_early() {
     let mut attestation = OrgAtt::Chain {

@@ -4,6 +4,151 @@
 use super::*;
 
 #[test]
+fn registration_preserves_the_largest_importable_org_leaf() {
+    let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut key = Secret::new([0x21; 32]);
+    crate::seed::store_att_key(&dev(), &mut fs, key.expose()).unwrap();
+    key.wipe();
+
+    // ATT_IMPORT validates framing; certificate trust belongs to the provisioning org.
+    let mut leaf = std::vec![0xA5; crate::cert::ATT_CHAIN_MAX];
+    let [hi, lo] = u16::try_from(leaf.len().checked_sub(4).unwrap())
+        .unwrap()
+        .to_be_bytes();
+    leaf.get_mut(..4)
+        .unwrap()
+        .copy_from_slice(&[0x30, 0x82, hi, lo]);
+    let mut packed = [0; crate::cert::ATT_CHAIN_REC_MAX];
+    let len = crate::cert::att_chain_pack(&leaf, &mut packed).unwrap();
+    fs.put(EF_ATT_CHAIN, packed.get(..len).unwrap()).unwrap();
+
+    let raw = ext_apdu(CTAP_REGISTER, 0, &[CHAL, APP].concat());
+    let mut state = crate::FidoState::new();
+    let mut presence = crate::AlwaysConfirm;
+    let mut out = [0; crate::consts::MAX_MSG_SIZE as usize];
+    let (sw, len) = process_u2f(
+        &mut Ctx {
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+            presence: &mut presence,
+        },
+        &hid_apdu(&raw).unwrap(),
+        &mut out,
+    );
+    assert_eq!(sw, Sw::OK);
+    assert_eq!(
+        registered_cert(out.get(..len).unwrap()),
+        leaf,
+        "registration must preserve the whole imported leaf"
+    );
+}
+
+#[test]
+fn a_short_declared_handle_is_wrong_data_even_when_the_seed_is_unavailable() {
+    let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    for declared in [0, 1, u8::try_from(KEY_HANDLE_LEN - 1).unwrap()] {
+        let body = [
+            CHAL.as_slice(),
+            APP.as_slice(),
+            &[declared],
+            &[0; KEY_HANDLE_LEN],
+        ]
+        .concat();
+        let raw = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &body);
+        let mut state = crate::FidoState::new();
+        let mut presence = CountingPresence {
+            verdict: crate::Presence::Confirmed,
+            calls: 0,
+        };
+        let mut out = [0xA5; 256];
+        let generation = fs.write_gen();
+        assert_eq!(
+            process_u2f(
+                &mut Ctx {
+                    dev: dev(),
+                    fs: &mut fs,
+                    rng: &mut rng,
+                    state: &mut state,
+                    now_ms: 0,
+                    presence: &mut presence,
+                },
+                &hid_apdu(&raw).unwrap(),
+                &mut out,
+            ),
+            (Sw::WRONG_DATA, 0),
+            "a short declared handle must fail before the seed is needed"
+        );
+        assert_eq!(presence.calls, 0);
+        assert_eq!(fs.write_gen(), generation);
+        assert_eq!(out, [0xA5; 256]);
+    }
+}
+
+#[test]
+fn authentication_uses_the_declared_handle_window_when_more_body_bytes_follow() {
+    let mut fs = Fs::new(RamStorage::new());
+    crate::tests::uv_optional(&mut fs);
+    let mut rng = SeqRng(1);
+    ensure_seed(&dev(), &mut fs, &mut rng).unwrap();
+    let mut seed = crate::seed::load_keydev(&dev(), &mut fs).unwrap();
+    let (handle, mut scalar) = derive_new(seed.expose(), &APP, &mut rng);
+    seed.wipe();
+    let public = P256Key::from_scalar(scalar.expose()).unwrap().public_xy();
+    scalar.wipe();
+    let body = [
+        CHAL.as_slice(),
+        APP.as_slice(),
+        &[u8::try_from(KEY_HANDLE_LEN).unwrap()],
+        &handle,
+        &[0xA5],
+    ]
+    .concat();
+    let raw = ext_apdu(CTAP_AUTHENTICATE, U2F_AUTH_ENFORCE, &body);
+    let mut state = crate::FidoState::new();
+    let mut presence = CountingPresence {
+        verdict: crate::Presence::Confirmed,
+        calls: 0,
+    };
+    let mut out = [0; 256];
+    let (sw, len) = process_u2f(
+        &mut Ctx {
+            dev: dev(),
+            fs: &mut fs,
+            rng: &mut rng,
+            state: &mut state,
+            now_ms: 0,
+            presence: &mut presence,
+        },
+        &hid_apdu(&raw).unwrap(),
+        &mut out,
+    );
+    assert_eq!(
+        sw,
+        Sw::OK,
+        "the declared valid handle must still authenticate"
+    );
+    assert_eq!(presence.calls, 1);
+    let response = out.get(..len).unwrap();
+    let mut base = APP.to_vec();
+    base.extend_from_slice(response.get(..5).unwrap());
+    base.extend_from_slice(&CHAL);
+    vkey(&public.0, &public.1)
+        .verify(
+            &base,
+            &Signature::from_der(response.get(5..).unwrap()).unwrap(),
+        )
+        .unwrap();
+}
+
+#[test]
 fn malformed_u2f_bodies_are_refused_before_presence_or_persistence() {
     let mut fs = Fs::new(RamStorage::new());
     crate::tests::uv_optional(&mut fs);

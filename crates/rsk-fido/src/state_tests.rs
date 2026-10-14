@@ -379,3 +379,6 @@ fn dropping_fido_state_wipes_both_session_secrets_before_their_lifetimes_end() {
         );
     });
 }
+
+#[path = "state_projection_tests.rs"]
+mod projection;
