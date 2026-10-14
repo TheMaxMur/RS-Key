@@ -2678,7 +2678,7 @@ Evidence: `target/mutants/backup-controls/` (0 caught of 110),
 The `passkeys.rs` chunk: four frame tests kill all 39 `render_rename_field`
 and `render_confirm_delete` occurrences — the pending-char underline, the bare
 cursor, a long value that must be erased and clipped, and the delete card with
-long relying-party/account labels that exercise its clip. The remaining 27 are
-the T9 keypad, list rows, service screen and rename chrome. Evidence:
-`target/mutants/passkeys2/` (29 caught of 39, ten clip/clear cases rerun) and
-`passkeys3/` (10 of 10).
+long relying-party/account labels that exercise its clip. Two more frame tests kill the whole rename chrome and
+T9 keypad (17). The remaining 10 are the list body/rows and the service screen.
+Evidence: `target/mutants/passkeys2/` (29 caught of 39, ten clip/clear cases
+rerun), `passkeys3/` (10 of 10) and `passkeys4/` (17 of 17).

@@ -279,3 +279,101 @@ fn the_rename_field_erases_a_longer_previous_value_and_clips_a_long_one() {
     assert_eq!(actual.px, expected.px);
     assert!(!actual.oob);
 }
+
+#[test]
+fn the_rename_chrome_places_its_caption_above_the_field() {
+    let mut actual = crate::render::tests::Rec::new();
+    render_rename_chrome(&mut actual).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    status_bar(&mut expected).unwrap();
+    title_bar(&mut expected, "Rename", theme::ACCENT, true).unwrap();
+    text_left(
+        &mut expected,
+        "NICKNAME",
+        EgPoint::new(14, RN_FIELD_RECT.y as i32 - 10),
+        Role::Mono,
+        theme::CAPTION,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn the_keypad_paints_every_key_with_the_active_group_highlighted() {
+    let mut actual = crate::render::tests::Rec::new();
+    render_rename_keys(&mut actual, Some(4)).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    for row in 0..4u16 {
+        for col in 0..3u16 {
+            let r = t9_key_rect(row, col);
+            match (row, col) {
+                (3, 0) => {
+                    key_surface(&mut expected, r, theme::KEY_DARK, true).unwrap();
+                    glyph_centered(
+                        &mut expected,
+                        Glyph::Backspace,
+                        r,
+                        20,
+                        MUTED,
+                        theme::KEY_DARK,
+                    )
+                    .unwrap();
+                }
+                (3, 2) => {
+                    crate::aa::rounded_rect(
+                        &mut expected,
+                        r,
+                        KEY_RADIUS,
+                        Some(ALLOW_FILL),
+                        None,
+                        BG,
+                    )
+                    .unwrap();
+                    text_on(
+                        &mut expected,
+                        "Save",
+                        center(r),
+                        Role::Strong,
+                        FG,
+                        ALLOW_FILL,
+                    )
+                    .unwrap();
+                }
+                _ => {
+                    let idx = if row < 3 { (row * 3 + col) as usize } else { 9 };
+                    let is_active = Some(4) == Some(idx);
+                    let fill = if is_active {
+                        theme::ACCENT_FILL
+                    } else {
+                        KEY_FILL
+                    };
+                    key_surface(&mut expected, r, fill, !is_active).unwrap();
+                    let color = if is_active { FG } else { theme::TEXT };
+                    let (digit, letters) = T9_KEY_LABELS[idx];
+                    let cx = r.x as i32 + r.w as i32 / 2;
+                    text_on(
+                        &mut expected,
+                        digit,
+                        EgPoint::new(cx, r.y as i32 + 14),
+                        Role::Strong,
+                        color,
+                        fill,
+                    )
+                    .unwrap();
+                    text_on(
+                        &mut expected,
+                        letters,
+                        EgPoint::new(cx, r.y as i32 + 32),
+                        Role::MonoSmall,
+                        color,
+                        fill,
+                    )
+                    .unwrap();
+                }
+            }
+        }
+    }
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
