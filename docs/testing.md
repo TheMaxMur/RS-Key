@@ -2776,3 +2776,9 @@ the refusal's `bStatus` keeps a failed bit the slot already reports (`|` versus
 stale `tx` byte (`HEADER + 1` versus `HEADER - 1`), and a handler claiming the
 whole message is clamped to the `tx.len() - HEADER` body space it was handed.
 Evidence: `target/mutants/ccid-controls/` (5 caught of 5).
+
+The `rsk-usb` secure-PIN chunk closed its one pending survivor: a reply buffer
+holding exactly `5 + body_len` bytes is the exact fit a caller sizes on purpose,
+so `assemble_verify` must accept it — the `>` relaxed to `>=` refuses it, and the
+one byte shorter buffer is still refused. Evidence:
+`target/mutants/secure-pin-controls/` (1 caught of 1).

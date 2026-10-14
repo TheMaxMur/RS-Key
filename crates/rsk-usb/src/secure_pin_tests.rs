@@ -201,3 +201,29 @@ fn secure_pin_codec_property_fuzz() {
         }
     }
 }
+
+/// The buffer check is `5 + body_len > out.len()`, so a buffer holding exactly the
+/// APDU (five header bytes plus the body) is enough — the exact fit a caller sizes
+/// on purpose. `>=` would refuse it, and only one byte less may be refused.
+#[test]
+fn a_buffer_exactly_the_apdu_size_is_accepted() {
+    const PIN: &[u8] = b"123456";
+    let template = [0x00, INS_VERIFY, 0x00, 0x81];
+    let mut out = [0xA5u8; 5 + PIN.len()];
+    assert_eq!(
+        assemble_verify(&template, PIN, &mut out),
+        Some(5 + PIN.len())
+    );
+    assert_eq!(
+        &out,
+        &[
+            0x00, INS_VERIFY, 0x00, 0x81, 6, b'1', b'2', b'3', b'4', b'5', b'6'
+        ]
+    );
+
+    let mut one_short = [0xA5u8; 5 + PIN.len() - 1];
+    assert!(
+        assemble_verify(&template, PIN, &mut one_short).is_none(),
+        "a buffer one byte short must still be refused"
+    );
+}
