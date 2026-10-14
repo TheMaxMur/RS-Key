@@ -2799,3 +2799,10 @@ colour-only write. The remaining `delete !` sits behind `feature =
 `[strict-config-off]`, naming the feature-on test that does distinguish it.
 Evidence: `target/mutants/vendor-controls/` (5 caught of 6, one accepted
 identity).
+
+The `boot.rs` chunk closed all 21: frame-equality tests cover the locked
+padlock screen (its calm surface disc and lock glyph), the locked-hint breathe
+ramp at a wrapped phase 8 (so `%` and `/` cannot agree, unlike phase 0), the
+onboarding prompt (disc, glyph, both captions and the Set / Continue rows) and
+the splash wordmark — 21 caught, no identities. Evidence:
+`target/mutants/boot-controls/`.
