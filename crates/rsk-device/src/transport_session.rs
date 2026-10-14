@@ -50,6 +50,10 @@ impl Session {
         }
     }
 
+    pub fn is_revoked(&self) -> bool {
+        self.reset_pending || self.state == State::Resetting
+    }
+
     pub fn submit(&mut self) -> Option<u32> {
         if self.state != State::Idle || self.reset_pending || self.next_ticket >= u32::MAX - 2 {
             return None;

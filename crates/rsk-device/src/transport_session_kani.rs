@@ -16,6 +16,7 @@ fn reset_invalidates_a_reply_at_every_dispatch_stage() {
         assert!(session.finish(ticket));
     }
     session.reset();
+    assert!(session.is_revoked());
     assert_eq!(session.poll(ticket), Poll::Abandoned);
     assert_eq!(session.submit(), None);
     if stage == 1 {
@@ -25,8 +26,20 @@ fn reset_invalidates_a_reply_at_every_dispatch_stage() {
     assert!(session.release(ticket));
     assert_eq!(session.submit(), None);
     assert_eq!(session.next_job(), Some(Job::Reset));
+    assert!(session.is_revoked());
     assert_eq!(session.submit(), None);
+    let second: bool = kani::any();
+    if second {
+        session.reset();
+    }
     session.reset_complete();
+    assert_eq!(session.is_revoked(), second);
+    if second {
+        assert_eq!(session.next_job(), Some(Job::Reset));
+        assert!(session.is_revoked());
+        session.reset_complete();
+    }
+    assert!(!session.is_revoked());
     let new = session.submit().unwrap();
     assert_ne!(new, ticket);
     session.abandon(ticket);

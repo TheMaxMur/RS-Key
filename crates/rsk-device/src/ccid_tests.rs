@@ -2748,3 +2748,6 @@ fn a_refused_otp_config_command_preserves_the_status_and_storage() {
 
 #[path = "factory_restart_tests.rs"]
 mod factory_restarts;
+
+#[path = "ccid_transport_session_tests.rs"]
+mod transport_session;

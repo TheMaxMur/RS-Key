@@ -609,3 +609,17 @@ RSA and 108 ms for ML-DSA. All 17 cancellation/reset/disconnect cases pass,
 including worker recovery, authorization clearing on reset and refusal of the
 old FIDO token. These remain honest-NS lifecycle measurements; independent
 Secure USB revocation is still the next firmware step.
+
+
+At bcdDevice 0x0AA7, the worker's USB-wide reset uses the CCID full-session scrub,
+which enumerates all eight applets, clears selection and chaining/GET RESPONSE
+state, and wipes the reply buffer. The FIDO transport scrub keeps its per-boot
+PIN lock; the OTP transport and typing queue are scrubbed as well. ICC reset
+still follows its existing selected-applet semantics. This closes the software
+cleanup scope when S receives revocation; the prototype still needs independent
+Secure USB observation against an NS image that suppresses reset callbacks.
+
+Queued OTP characters are fenced immediately when the S session is revoked,
+including while synchronous crypto finishes or reset cleanup is pending. The
+queue itself is wiped before admission reopens; a second reset during scrubbing
+keeps both admission and auxiliary output closed until its cleanup completes.

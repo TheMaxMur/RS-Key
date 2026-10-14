@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- TrustZone prototype USB-wide reset drops every applet's volatile authorization,
+  selection, chained/held replies and queued OTP output; preserves the FIDO
+  per-boot PIN failure budget. ICC reset remains transport-specific.
+  Firmware bcdDevice `0x0AA7`.
+
 - Enforce DMA channel and interrupt security, logical-address MPU rules and
   DMA-master bus filters in the image model. Reject processor-local accesses
   and privilege escalation through controller self-access, chaining and DREQs;

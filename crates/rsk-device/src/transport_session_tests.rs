@@ -108,3 +108,36 @@ fn a_second_reset_during_scrubbing_is_serviced_before_any_new_request() {
     session.reset_complete();
     assert!(session.submit().is_some());
 }
+
+#[test]
+fn auxiliary_output_stays_revoked_until_the_last_reset_cleanup_finishes() {
+    for stage in 0..3 {
+        let mut session = Session::new();
+        let ticket = session.submit().unwrap();
+        if stage > 0 {
+            assert_eq!(session.next_job(), Some(Job::Dispatch(ticket)));
+        }
+        if stage == 2 {
+            assert!(session.finish(ticket));
+        }
+        assert!(!session.is_revoked());
+        session.reset();
+        assert!(
+            session.is_revoked(),
+            "reset did not revoke auxiliary output immediately"
+        );
+        if stage == 1 {
+            assert!(!session.finish(ticket));
+        }
+        assert_eq!(session.next_job(), Some(Job::Discard(ticket)));
+        assert!(session.release(ticket));
+        assert_eq!(session.next_job(), Some(Job::Reset));
+        assert!(session.is_revoked(), "scrubbing reopened auxiliary output");
+        session.reset();
+        session.reset_complete();
+        assert!(session.is_revoked(), "a second reset was skipped");
+        assert_eq!(session.next_job(), Some(Job::Reset));
+        session.reset_complete();
+        assert!(!session.is_revoked());
+    }
+}

@@ -101,7 +101,7 @@ pub fn scrub() {
         } = &mut *q;
         #[expect(
             clippy::disallowed_methods,
-            reason = "a static queue: its wipe point is the reboot, not a scope's end"
+            reason = "a static queue: transport reset or reboot wipes it, not a scope's end"
         )]
         buf.zeroize();
         *len = 0;

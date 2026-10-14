@@ -440,8 +440,13 @@ pub extern "C" fn rsk_tz_control_impl(action: u32, ticket: u32) -> u32 {
             MSG_DESELECT.store(true, core::sync::atomic::Ordering::Release);
             0
         }
-        abi::KEYBOARD_CHAR => crate::otp_kbd::pop_char().map_or(0, |(byte, encode)| {
-            u32::from(byte) | abi::KEY_PRESENT | if encode { abi::KEY_ENCODE } else { 0 }
+        abi::KEYBOARD_CHAR => session(|state| {
+            if state.is_revoked() {
+                return 0;
+            }
+            crate::otp_kbd::pop_char().map_or(0, |(byte, encode)| {
+                u32::from(byte) | abi::KEY_PRESENT | if encode { abi::KEY_ENCODE } else { 0 }
+            })
         }),
         _ => abi::INVALID,
     }
@@ -578,8 +583,9 @@ impl<'a> Worker<'a> {
                     session(|state| state.release(ticket));
                 }
                 Job::Reset => {
-                    self.ccid.reset_card();
+                    self.ccid.reset_transport_session();
                     self.ctap.reset_transport_session();
+                    crate::otp_kbd::scrub();
                     self.last_msg_cid = None;
                     session(|state| state.reset_complete());
                 }
