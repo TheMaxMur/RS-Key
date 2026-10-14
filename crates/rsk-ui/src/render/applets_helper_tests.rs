@@ -68,6 +68,105 @@ fn retry_counts_distinguish_lockout_last_attempt_and_normal_caption() {
 }
 
 #[test]
+fn retired_slot_titles_number_from_the_wire_value() {
+    let mut buf = [0u8; 12];
+    assert_eq!(retired_title(0x81, &mut buf), "Retired #0");
+    assert_eq!(retired_title(0x82, &mut buf), "Retired #1");
+    assert_eq!(retired_title(0x95, &mut buf), "Retired #20");
+}
+
+#[test]
+fn every_named_piv_slot_and_the_retired_range_render_their_own_screen() {
+    let frame = |slot: u8| {
+        let mut d = crate::render::tests::Rec::new();
+        render_piv_slot(
+            &mut d,
+            &PivSlotView {
+                slot,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        d.px
+    };
+    // 0x96 and 0x9B are both outside every named arm and the retired range.
+    let fallback = frame(0x96);
+    assert_eq!(
+        frame(0x9B),
+        fallback,
+        "unnamed slots share one fallback title"
+    );
+    for slot in [0x9A, 0x9C, 0x9D, 0x9E, 0xF9, 0x82, 0x95] {
+        assert_ne!(
+            frame(slot),
+            fallback,
+            "{slot:02X} must render its own title and purpose"
+        );
+    }
+}
+
+#[test]
+fn openpgp_key_slots_render_distinct_titles() {
+    let frame = |slot: u8| {
+        let mut d = crate::render::tests::Rec::new();
+        render_openpgp_key(
+            &mut d,
+            &PgpKeyView {
+                slot,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        d.px
+    };
+    let auth = frame(2);
+    assert_ne!(frame(0), auth, "the sign slot is not the auth slot");
+    assert_ne!(frame(1), auth, "the decrypt slot is not the auth slot");
+    assert_ne!(frame(0), frame(1));
+}
+
+#[test]
+fn an_empty_applet_slot_draws_its_glyph_and_both_lines_where_declared() {
+    let mut actual = crate::render::tests::Rec::new();
+    empty_slot(&mut actual, Glyph::Key, "No key", "Generate one").unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    glyph::draw(
+        &mut expected,
+        Glyph::Key,
+        Point::new(MIDX as u16 - 22, 120),
+        44,
+        MUTED,
+        BG,
+    )
+    .unwrap();
+    text(
+        &mut expected,
+        "No key",
+        EgPoint::new(MIDX, 192),
+        Role::Strong,
+        theme::TEXT_2,
+    )
+    .unwrap();
+    text(
+        &mut expected,
+        "Generate one",
+        EgPoint::new(MIDX, 216),
+        Role::MonoSmall,
+        theme::CAPTION,
+    )
+    .unwrap();
+    let difference = actual
+        .px
+        .iter()
+        .zip(&expected.px)
+        .enumerate()
+        .find(|(_, (a, b))| a != b)
+        .map(|(index, (a, b))| (index, *a, *b));
+    assert_eq!(difference, None);
+    assert!(!actual.oob);
+}
+
+#[test]
 fn a_two_row_detail_card_keeps_its_surface_divider_and_caption_positions() {
     let rows = [
         ("Algorithm", "ECC", theme::TEXT),
