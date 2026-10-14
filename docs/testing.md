@@ -2002,3 +2002,597 @@ Source bindings, failed apparatus attempts and clean directional repeats are
 retained in `target/mutation-shards-20261012/safe/store-boundary-*` and
 `target/mutation-shards-20261012/safe/counter-peer-rekey-*`. The full sweep remains
 in progress. These tests preserve firmware behavior and the existing limits.
+
+### Storage survivor follow-ups, 2026-10-13
+
+Four more host tests cover public `size`/`exists`, an enumeration failure in
+only one partition, equal-authority source selection during a changed rescan,
+and compaction at a nonzero main-window offset. The compaction test compares
+relative I/O traces for two equally sized windows and retains the owner,
+neighbor and counter values. It does not copy the scrub-loop formula into its
+expected result.
+
+The existing imported-state helper also checks that a complete managed walk
+reports no error. The old full storage suite returned success with the mutated
+error flag; the exact repeat now fails at this public status assertion. This
+checks the result of a successful walk, not a separate stale-error transition.
+
+The equal-authority test preserves the current first-peer preference. Its
+read cut is calibrated through two independent journal scans, which the
+source-selection mutation cannot alter. The weakened comparison returns the
+valid owner's bytes where the current selected-source stability policy reports
+`MemoryFatal`. This is a fault-status contract, not an authentication-bypass
+or data-loss finding.
+
+Eight exact mutations fail at their intended assertions: three earlier
+direct-write, dirty-peer and cached-read controls, the four new contracts and
+the managed-walk error flag.
+The final short storage baseline passes 198 tests. The controls retain the
+4 GiB container, zero swap, one test thread and 1 GiB native address-space bound;
+none of these eight failures is an allocation failure or timeout.
+
+The selector also emitted unrelated struct-field mutations. Their raw outcomes
+remain separate, including resource terminations; they add no credit to the
+eight intended controls. The initial compaction test's inaccessible-constant
+build failure is retained as apparatus failure. The corrected fixture and
+exact repeat pass with byte-identical restored production sources.
+
+Source bindings and raw results are retained in
+`target/mutation-shards-20261012/safe/resume-review-20261013.json`,
+`counter-peer-selection-resume-20261013-*`, `tie-owner-*` and
+`compact-owner-*` and `managed-owner-*`. The frozen full sweep continues
+separately. These follow-ups do not establish its completion or refresh all
+feature-profile coverage measurements.
+
+### PIN shuffle and settings survivor follow-ups, 2026-10-13
+
+Two host tests enumerate all 256 possible first entropy bytes for the PIN
+shuffle. The 250 accepted bytes give each final-cell digit the same weight;
+the six rejected bytes require a fresh draw or preserve the exhausted layout.
+The final cell is observed through the public painted-key API, and later swaps
+cannot move it. This covers the first draw, not every permutation frequency
+or the quality of the entropy source.
+
+The existing settings tests also refuse taps on the first unpainted Root and
+Display rows, retain the current lower-duration preference for equidistant
+timeout choices, and keep a positive sleep override from snapping to the Off
+sentinel. Tie preference is current policy; excluding Off from the initial
+duration search is a documented contract.
+
+All eight exact mutations fail at these assertions. The malformed shuffle
+weights are observed directly, the extra rows return `Some` instead of `None`,
+and the sleep sentinel mutation returns Off instead of the next duration.
+That `rsk-ui` control snapshot passes all 256 tests, with formatting and clippy
+green. These controls use the same bounded container as the storage controls;
+none is credited through a timeout or allocation failure.
+
+Two arithmetic mutations inside the compile-time Root layout assertion retain
+the same result for the current constants. Their candidate row bottoms are
+240 and 204, both below the navigation boundary at 284; the normal bottom is
+168. That local value reaches only the assertion, so no runtime output changes.
+Future layout acceptance and compiler cost are outside this equivalence claim.
+
+Raw controls and source bindings are retained in
+`target/mutation-shards-20261012/safe/pin-shuffle-owner-*`, `settings-hit-owner-*`,
+`step-snap-owner-*` and `resume-review-20261013.json`. The full sweep remains open;
+its nonprogress timeouts retain separate resource dispositions.
+
+Thirteen further exact controls cover every navigation caption, the first
+excluded generic list row (including an empty list), positive and negative
+Back hits, recovery buttons/cards at the panel midline, Apps row dispatch and
+PIV picker exclusion of the title bar. The midline coordinates are independent
+of each button's width; shrinking the four recovery targets to seven pixels
+returns `None` there. The PIV top-offset mutation instead returns a row for a
+title-bar tap. These tests establish current hit geometry and captions, not
+modal integration or authorization.
+
+All twenty-one UI controls fail at their intended assertions. The last complete
+UI baseline passes 260 tests with formatting and clippy green. Source-bound
+results are retained in `nav-label-owner-*`, `list-back-owner-*` and
+`recovery-app-retry-owner-*` under the same evidence directory. The original
+waiting recovery-control attempt was stopped before testing to fix formatting;
+it adds no mutation credit.
+
+The two T9 const-block mutations change only an unused column coordinate, not
+the separate horizontal-fit guard. The last row's vertical bound remains 288;
+no changed coordinate reaches a renderer. Two share-picker comparison changes
+only repeat an equal local-byte assignment, retaining the returned pair even
+for invalid initial pairs. Their timing and compiled-code equality are unproved.
+
+Two anti-aliasing survivors have separate narrow dispositions. A generated
+rounded-span row changes only unused padding: the renderer returns before
+reading that row. A ring-mask loop adds an outside-circle sample for the sole
+current `50/3/2500` instantiation, performs no out-of-range write and retains all
+returned entries. This does not establish identical table bytes for the first
+case, arbitrary generic inputs for the second, or equal compilation cost.
+
+### U2F and token-table survivor follow-ups, 2026-10-13
+
+Three U2F tests preserve the largest importable organization leaf during
+registration, reject a short declared handle before needing an unavailable
+seed, and authenticate a genuine handle when more body bytes follow its
+declared window. The last case verifies the returned signature independently.
+The imported leaf has valid DER framing under ATT_IMPORT's parser contract;
+this fixture does not establish X.509 trust.
+
+ATT_STATE is checked across five key/chain combinations. Each declared field
+must be present, and decoding must end with the declared map. Seven exact
+default-profile mutations fail at these contracts. A separate `strict-up`
+repeat catches the presence-free P1 guard in its existing feature-owned test.
+The complete default baseline passes 1,169 tests; the strict owner also passes.
+The malformed registration copy fails on a valid-input bounds panic, and the
+other controls fail on status or map assertions. None uses a resource timeout
+or allocation failure as an oracle.
+
+Seven early U2F length-check survivors retain the current public result. Only
+short requests differ at that guard; the first-chunk and declared-handle bounds
+still refuse them before seed access, presence, output or writes. This is a
+status/I/O equivalence for the current 64-byte handle policy, without a claim about
+stack copies, timing or future layouts.
+
+The generated token test previously compared the exported relation against
+the table directly. It now checks the actual state-domain lookup for all 256
+raw states and calls `allowed_event` for all 69,696 exported tuples. Only the
+generator's test helper changes; the production table, state domains and model
+relation remain unchanged. The existing nextest mutant profile runs this test
+early without omitting tests or changing resource limits.
+
+All 252 non-XOR mutations in this generated module fail through the actual
+domain/predicate self-test, including an explicit `allowed_event`-returns-false
+control. The first 121 fail at domain or relation assertions; the remaining 131
+also include arithmetic and bounds panics in the mutated implementation.
+The complete baseline passes 1,169 tests with generation, formatting and clippy green.
+Seven OR-to-XOR survivors are equivalent over the disjoint state bits for all
+256 inputs; compiled-code and timing equality remain unproved.
+
+Source bindings, actual diffs and directional logs are retained in
+`target/mutation-shards-20261012/safe/fido-owner-*`, `fido-strict-retry-owner-*`,
+`token-domain-owner-*`, `token-remaining-owner-*` and `resume-review-20261013.json`. Failed control-driver
+checks and the duplicate-profile build attempt remain recorded separately
+with no mutation credit. These repeats do not establish full-sweep completion.
+
+Two ATT_IMPORT boundary oracles measure the actual CBOR envelope and import
+the maximum framed leaf through a real PIN/token/MSE session. The latter checks
+the complete stored leaf and one operation confirmation. Three exact mutations
+fail on the oversized advertised ceiling, erroneous refusal at the legal
+2,200-byte parameter boundary, or a bounds panic in the undersized production
+MAC buffer. The healthy default and `strict-config` suites each pass 1,170 tests.
+The maximum fixture binds today's MAC-limited chain ceiling and framing
+contract, rather than certificate trust or every possible future ceiling.
+
+The separate `strict-config` touch inversion is also caught. Its first full-suite
+failure over-refuses a confirmed write whose probe fault is recoverable. A
+direct repeat with the same exact diff additionally observes the opposite
+direction: a declined write returns success instead of `OperationDenied`.
+The compiler allocation abort from an initial combined build/test command adds
+no credit; the corrected repeat builds first and retains the 1 GiB native bound.
+These four source-bound controls are retained in `vendor-ceiling-owner-*` and
+`vendor-ceiling-strict-*` under the same evidence directory.
+
+Two scratch-size survivors only enlarge the current MAC buffer by 30 or 2,198
+bytes. The earlier size guard bounds the input, and verification consumes only
+the returned message prefix. Their current authentication/status/I/O behavior
+is unchanged; stack safety, timing and image size are unproved. The guards and
+scratch declaration remain intact.
+
+The ring-mask inner-boundary comparison has one more concrete equivalence:
+both sample coordinates are odd, so squared distance is 2 modulo 8, while the
+inner radius squared is 0 modulo 8. Equality cannot occur for the current
+`50/3/2500` mask. This preserves its returned bits and pixels without extending
+the claim to arbitrary future geometry, timing or compilation cost.
+
+The Home arc's public initial angle also has an independent cache-eligibility
+test. Moving the private cache base from -90 to +90 makes that public angle
+uncached; the exact mutation now fails the availability assertion. All 261 UI
+tests pass, with formatting and clippy green. This pins the current constant
+coupling, rather than measured latency or execution of the renderer's branch.
+Source-bound results are retained in `home-arc-owner-*`.
+
+Two reset-assurance tests check all four volatile seed/token presence pairs
+before retirement and seven independent snapshot-clause tuples. An absent
+protected pre-state makes its matching implication true, even when the current
+gate is absent. The three first-OR-to-AND changes over-refuse those vacuous
+clauses; they are not equivalent verification predicates. The emptied volatile
+projection also fails before retirement can mask it.
+
+All four exact controls fail at the intended presence or clause assertions;
+the full default FIDO baseline passes 1,172 tests, with formatting and clippy
+green. These are verification-function contracts over the independently typed
+snapshot fields, not a reachable physical reset violation or a measurement of
+the whole induction domain. Source bindings and logs are in
+`reset-projection-owner-*`; the token-refinement completeness check also passes.
+
+Generated font metrics have a separate owner: the existing IBM Plex gate row
+compares the complete table against regeneration from pinned fonts. Two
+representative numeric sign deletions, in `top` and `left`, make that unchanged
+row fail on stale data; healthy and restored copies pass. The source review
+validates all 680 roster entries as nonzero metric sign deletions in that same
+output. This is an ownership argument for the homogeneous class, not 680
+individual gate executions, native pixel coverage or a full quality-gate run.
+Bindings and representative row logs are retained in `font-owner-*`.
+
+Three short storage tests replace ten resource-only symptoms with direct
+contracts. A bounded overwrite with an open payload page and free journal space
+must not erase authority; remount retains owner and neighbor. Eight Main
+mutations now fail that I/O assertion instead of stalling the old test's
+fill-until-full preparation. This is an append/wear contract, not a universal
+data-loss claim.
+
+A backend that refuses empty transfers also exposes the two bank endpoint
+mutations as finite `MemoryFatal` versus success. Both first fail the program
+fixture; the read mutation reaches its nested read before any program transfer.
+The original trace-allocation aborts retain zero assertion credit. Other
+zero-progress cases keep qualified liveness dispositions and their raw timers.
+
+All 201 short storage tests pass with formatting and clippy green. These ten
+exact repeats have no allocation or timeout termination. The nextest priorities
+keep the completed-window contracts before longer geometry fixtures without
+omitting tests or changing limits. Two rejected priority configurations stopped
+before building and add no credit. The selector's extra Prepare-link mutation
+has its own existing no-repair failure and remains outside the ten-control count.
+Source bindings and raw logs are retained in `storage-progress-bounded-owner-*`.
+
+The fourteen benchmark mutations have also been run with `bench` enabled.
+Seven fail existing selector contracts or on invalid checksum shifts. The other
+seven survive because the selector tests computed their expected checksum with
+the same helper. Four independent byte/word vectors now cover empty input, the
+first lane, all four little-endian lanes and XOR wraparound. All seven exact
+survivor repeats fail the new checksum assertion; the full feature baseline
+passes 1,177 tests with formatting and clippy green.
+
+These checks bind selector/checksum semantics, not elapsed hardware time or
+retention of particular compiled instructions. Default-profile outcomes remain
+recorded as inactive-feature results. Original feature survivors and later
+source-bound repeats are retained in `bench-feature-owner-*` and
+`bench-checksum-owner-*`.
+
+ARKG and previewSign mutations are repeated with `preview-sign` enabled. All
+284 desired occurrences require that owning profile; historical default-feature
+results remain in the ledger but cannot satisfy its completion policy. The
+controller handoff waits for the active chunk to finish, verifies the old
+scheduler's exit, then starts a fresh full feature baseline. That frozen baseline
+passes 1,196 tests. This changes profile coverage, not either frozen source or
+the resource bounds; it does not refresh every feature combination.
+
+Ten ARKG scratch-arithmetic survivors preserve current bounded-producer outputs.
+Three reduce XMD capacity from 205 to 204 bytes, which still fits the actual
+maximum: the BL context prefix is one byte shorter than the KEM prefix used to
+size it. The others enlarge scratch. Every hash/HKDF input and encoded DST length
+uses the populated `cat` prefix. Arbitrary longer private-helper inputs, stack
+usage, additional wipes, timing and image size remain outside this equivalence.
+The previewSign OR-to-XOR flag change also preserves its value because UP and UV
+occupy disjoint bits. Source-bound dispositions are in `resume-review-20261013.json`;
+these finite findings do not close the ongoing full sweep.
+
+Two independent codec-budget tests catch twelve further survivors: seven
+understated signature-entry budgets and five understated classic-COSE budgets.
+They encode a canonical 72-byte DER representation admitted by `DerSig` and a
+real P-521 public key into the advertised buffers, then decode the complete
+outputs. The DER fixture checks serialization capacity rather than signature
+trust or the device signer's low-S output distribution. The COSE test derives
+valid coordinates from a key held by its wiping owner.
+
+All twelve exact repeats fail the intended budget assertions, without resource
+termination. The complete `preview-sign` baseline passes 1,210 tests with
+formatting and clippy green. Normal aggregate response buffers had masked these
+bad advertised bounds; the findings do not claim a normal wire-response failure.
+The selector's two input-presence mutations remain separate extra outcomes.
+Source-bound records are retained in `preview-budget-owner-*`.
+
+The makeCredential and authenticatorConfig projections now have an independent
+112-case matrix of permission masks, token liveness, RP binding, PIN and grant
+states. All four permission-AND mutations fail on phantom permissions under a
+zero mask. The complete default FIDO baseline passes 1,173 tests with formatting
+and clippy green. This checks the raw-state projection, rather than all token
+issuance histories; records are retained in `token-projection-owner-*`.
+
+Five filesystem lifecycle tests bind root closure to the current backend answer,
+preserve mount/admin arguments and refusals, invalidate cached absence, advance
+the visible write generation and obtain a rescrub capability only after the
+marker is removed. All seven exact survivors fail their intended assertions;
+the complete filesystem baseline passes 123 tests with formatting and clippy
+green. Source-bound records are retained in `fs-lifecycle-owner-*`.
+
+The filesystem follow-up adds finite contracts for typed reads and writes,
+exactly filled metadata output, dynamic-slot removal, fault targeting, inventory,
+removal forwarding, and the fault/cut oracles' judgments. All 66 exact controls
+fail in the intended direction. Four old recovery timeouts now fail on a second
+boot of an atomic RAM fixture whose stable recovery needs only one; the earlier
+resource observations keep zero assertion credit.
+
+A truncated inventory also has an independent cache projection: a yielded key
+is both present and decided, while an unyielded neighbor stays unknown. The scan
+mask mutation preserves current production reads but breaks that verification
+projection; its exact repeat now fails the cache-pair assertion.
+
+The complete filesystem baseline passes 143 tests with formatting and clippy
+green. These 71 controls were checked against their actual diffs and failure
+directions. An unsorted HashMap-inventory attempt and a stale baseline remain
+separate, with zero credit; corrected deterministic copies supply the results.
+Records are retained in `fs-contract-sorted-owner-*`, `fs-recovery-retry-owner-*`,
+`fs-scan-owner-*` and `fs-postexecution-verified-review-20261013.json`.
+
+Two `store_assurance` mutations change only the `cfg(kani)` FID-limit expression,
+which the observed nextest profile does not compile. Their disposition carries
+no Kani mutation credit. The fixed-width slot-loop guard also keeps a narrow
+current-output disposition: disabling its enumeration changes no runtime code,
+but removes a check whose protection of future edits has not been falsified.
+
+The unsigned previewSign budget has its own serializer fixture: an actual
+generated key, signed authData, and four framed device certificates. It encodes
+into the declared sans-chain capacity plus certificate payload bytes, then
+consumes and checks both complete CBOR layers. The 518-to-362 budget mutation
+now fails this assertion; the owning feature baseline passes 1,212 tests with
+formatting and clippy green. This is framing capacity, not certificate-chain
+trust. Records are retained in `preview-unsigned-owner-*`; its two extra
+input-presence outcomes remain outside this one-control count.
+
+Other preview budget survivors retain scoped current-producer dispositions.
+The unsigned ceiling is used only by the current compile-time response check;
+mutations that leave that check true change no runtime encoding, without proving
+their protection of future layouts. Enlarged scratch and the 416-to-352 signing
+buffer retain current prefixes: attested authData is 316 bytes and the production
+caller accepts only a 32-byte clientDataHash. Stack, timing, image-size and
+arbitrary longer private inputs remain outside these results. Exact arithmetic,
+caller reviews and artifact hashes are in `review-preview-fs-survivors-20261013.json`.
+
+Four more AA contracts independently check nonzero-background RGB blending,
+full Home-mark pixels, availability of every renderer-owned circle table, and
+the largest admitted rounded mask. All 17 exact repeats fail the intended
+pixel or availability assertions. The owner snapshot passes 259 UI tests with
+formatting and clippy green; other navigation-test snapshots remain separate.
+Two incorrect fixture baselines carry zero credit. Records are retained in
+`aa-contract-final-owner-*`.
+
+The remaining AA geometry dispositions bind current integer sampling and correct
+cached/slow fallbacks. Disjoint packed nibbles, unreachable sample equality,
+removed full-coverage shortcuts and an enlarged shortcut radius preserve current
+pixels, without establishing equal work, timing, arbitrary private-helper inputs
+or future geometry. Exact per-row arguments and artifact hashes are in
+`review-aa-survivors-20261013.json` and `review-aa-led-followup-survivors-20261013.json`.
+
+The LED default-status API promises to clamp every `u8` input. An independent
+boot-look fixture now catches both arithmetic survivors at out-of-range input 4,
+through an implementation bounds panic. Its 26-test owner snapshot passes with
+formatting and clippy green. The anonymous touch-color uniqueness-loop mutation
+still has only a fixed-source runtime disposition; protection of future default
+edits is unproved. Source-bound records are retained in `led-clamp-owner-*`.
+
+Two fixed-round controls distinguish helper pixels from public transfers: a
+valid central stripe must return all 16 samples without aliasing a neighbor
+mask, and a zero-height middle must issue no solid transfer. Their owner
+snapshot passes 261 tests. Four further fixtures check independent full pixels
+of cached and uncached circles at nonzero origins, zero-width outline no-op,
+and a zero-width border's straight-strip fill. All 16 corresponding controls
+fail pixel assertions or a valid zero-origin division panic; that owner snapshot
+passes 265 tests. Both snapshots pass formatting and clippy.
+
+These 18 exact controls carry no allocation or timeout credit. They are retained
+in `aa-stripe-owner-*` and `aa-circle-owner-*`; exact scope, caller masking and
+the four remaining bounded identities are in
+`review-aa-cache-fallback-survivors-20261013.json`. A private central-stripe
+failure does not establish a failure of today's corner-strip renderer, and
+correct fallback pixels do not establish equal cache use or transfer counts.
+
+Seven late AA fixtures check angle octants and positive rescaling, half-open arc
+axes, nonzero-origin cached arcs, fallback rounded-center pixels, zero-width arc
+no-op and empty/supported rounded transfer counts. All 17 exact controls fail in
+the intended direction; their owner snapshot passes 272 tests with formatting
+and clippy green. Some angle changes first fail the independent cached full-mark
+pixel, rather than the direct octant test. Cache-route assertions measure actual
+DrawTarget calls, without a hardware latency claim.
+
+Two oversweep-clamp survivors are exact predicate identities: a residue normalized
+modulo 360 is always below both 360 and a larger raw sweep. They carry no assertion
+credit. Actual artifacts, caller scope and the 17 directional reviews are retained
+in `aa-late-owner-*`, `aa-late19-source-review-20261013.json` and
+`aa-late17-postexecution-verified-review-20261013.json`.
+
+Seven font contracts cover the full 320-pixel alpha-row boundary, split-surface
+color invariants, a measured glyph box, top-edge ink, fully clipped dispatch,
+and the 128-versus-129 placement boundary. The wider targets and longer strings
+check the generic public clipping/capacity API; they do not describe current
+short display labels. A non-consuming recorder makes invalid empty or oversized
+dispatch observable before an iterator can stall.
+
+All 15 exact controls fail in the intended direction. The old clipping timeout
+now first fails on an extra 320-by-0 dispatch in the boundary matrix. The healthy
+owner snapshot passes 279 tests, with formatting and clippy green. The duplicate
+test-hook build attempt and original timeout carry zero credit. Source bindings
+and first failures are in `font-contract-retry-owner-*` and
+`review-font-contract-retry-controls-20261013.json`.
+
+Five font/AA dispositions retain their current-data scope: the sampled ring's
+inner equality is unreachable, and the fixed 686-glyph atlas has no single-zero
+width/height record. These are runtime identities over the audited producers,
+separate from the generated-font table's ownership check. Exact arguments are in
+`review-font-logic-survivors-20261013.json`.
+
+Both glyph-picker tie changes preserve every current unique-size table. The
+index-multiplication mutation loses loop progress before any draw callback; its
+20.018-second timeout remains a qualified liveness observation with zero assertion
+credit. An ordinary finite drawing assertion cannot fire inside that pure loop.
+Actual artifacts and all current caller/table reviews are in
+`glyph-selector3-source-review-20261013.json`.
+
+The admitted passkey Globe cache and complete panel-row extent have explicit
+contracts. All five exact controls fail on absent cache/index answers or 121/60
+pixels instead of the panel's 240. Their 280-test owner snapshot passes with
+formatting and clippy green. The two packed-nibble XOR changes and both RGB565
+XOR changes are identities over disjoint fields; the final-run shift is identical
+for all 187 admitted glyph/size pairs whose terminal coverage is zero. These
+retain scope and cost exclusions in `glyph-page10-source-review-20261013.json`;
+exact repeats are in `glyph-cache-owner-*`.
+
+Legacy LED blocks now have a partial-pair fixture at lengths 7 and 8, preserving
+the fourth status, effect and speed while ignoring a dangling color byte. All
+three arithmetic repeats fail on valid-input indexing panics; the 27-test owner
+baseline passes. Five Management controls run with `strict-config`: the four
+request bounds are observable before declined presence, and the deleted presence
+negation first allows a lock-setting write with `9000` instead of `6985` in an
+existing test. That owning baseline passes 22 tests. Both packages pass formatting
+and clippy; default-profile observations remain separate.
+
+These eight directional results are retained in `led-partial-owner-*`,
+`mgmt-strict-owner-*` and `non-ui8-postexecution-verified-review-20261013.json`.
+The supported ML-DSA parameter sets keep both changed encodings identical: the
+integer quotients remain 44 or 16, hence bounds 43 or 15 and widths 6 or 4.
+Nonstandard private parameters are outside that statement. The removed LED
+static guard also retains zero runtime credit; original guards remain intact.
+Exact feature/producer arguments are in `non-ui11-source-review-20261013.json`.
+
+Six renderer fixtures independently bind a replaced audit body, literal page
+labels, singular/plural footer text, pager arrows to hit centers, PIN-eye placement
+and visible clipped captions. All 22 exact controls fail their intended string
+or frame assertions; the healthy owner snapshot passes 286 tests with formatting
+and clippy green. Reference frames call the unmutated font/glyph primitives and
+literal labels, rather than the mutated renderer helpers. Actual first failures
+and differing pixels are retained in `render-contract-owner-*` and
+`review-render-contract-controls-20261013.json`.
+
+Thirteen further ML-DSA survivors preserve supported decoding/parameter behavior:
+intrinsic packed lower endpoints, unchanged integer gamma2 quotients, unreachable
+rounding thresholds and disjoint byte lanes. Nine other rows retain qualified
+nonprogress observations with zero assertion credit. The signing logs do not
+record the hidden nonce trajectory, so their source analysis states possible
+revisits rather than an observed internal sequence. Exact cases, parameter tables,
+timed tests and durations are in `mldsa22-source-resource-review-20261013.json`.
+
+The OATH follow-up covers partial LIST tails, response capacity, `61xx` counting,
+presence-free HOTP verification, old record/name/mark boundaries and BER-TLV offsets.
+Thirty-one distinct controls fail on the intended response, parser or budget contract;
+two enlarged-workspace cases establish the workspace extent only. The corrected
+full OATH baseline passes 235 tests on the same restored owner source. A copied
+LED baseline command is explicitly invalidated, and the earlier formatting failure
+has no execution credit. These receipts are in `oath30-postexecution-verified-review-20261013.json`
+and `oath5-progress-postexecution-verified-review-20261013.json`.
+
+Eight OATH rows preserve behavior within the current producer/parser bounds,
+including disjoint length-byte fields. The numeric-period loop retains its actual
+timeout and zero assertion credit. The first LIST nonprogress repeat timed out
+before its finite read-budget observer ran and retains zero credit. Scheduling
+that observer first makes the later repeat fail immediately on two reads instead
+of one. Four other repeats use full SHA-1 legacy keys and do not add duplicate
+kills. The raw artifacts and scope are in `oath40-source-resource-review-20261013.json`.
+
+Thirteen UI geometry fixtures independently pin suffix markers, status/title/header
+placement, Home rows, grouped dividers, SSH icons and navigation centers. All 47
+exact controls fail their intended assertions; the owner baseline passes 305 tests.
+Eighteen other rows retain current-caller or label-bound qualifications, and three
+pure ellipsis loops retain their measured timeouts with zero assertion credit.
+See `review-render-geometry-controls-20261013.json` and the matching survivor report.
+
+Seven OpenPGP controls cover trusted UIF captions, prefixed certificate response
+capacity, the first short-Le frame and its GET RESPONSE tail, and classification
+of a complete device-minted attestation root. The last is a helper-classification
+contract; it does not establish different normal ATTEST output. Full owner baselines
+pass 450 and 451 tests with one explicit skip each. Eight other rows preserve
+current producer/result-wrapper behavior. Exact directions are retained in
+`openpgp6-postexecution-verified-review-20261013.json`,
+`openpgp1-root-postexecution-verified-review-20261013.json` and both source reviews.
+
+Eight further renderer controls fail on extra empty-clip dispatch, incorrect
+hold-label backgrounds or literal formatting. The panel-edge fixture exercises
+legal public geometry; the exact-size count buffer pins the helper's stated
+contract beyond the current caller buffers. Three scene controls instead fail on two
+commands where a 263-pixel run fits one: these are compaction/budget contracts,
+not wrong-pixel results. Their full UI baseline passes 310 tests. The equal-height
+DMA clamp is an exact identity. Receipts are in `review-render-hold-controls-20261013.json`
+and `scene3-postexecution-verified-review-20261013.json`.
+
+Seven scene encoder repeats have directional failures against a 316-test baseline:
+pending-pixel count, the last complete solid record, a literal color beyond the
+palette, and four token-staging preflight cases. The four staging cases pin private
+encoder capacity; later palette insertion can mask their public result. The two
+palette/run XOR rows preserve disjoint bit fields. Details and original evidence
+are in `scene7-encoder-postexecution-verified-review-20261013.json`.
+
+Eight further controls pin clipped source columns/rows, source polling outside the
+panel, raster-header preflight, an inset checkpoint band and final palette relocation.
+The frozen baseline passes 322 tests. Six assertion failures and two semantic band
+bounds panics are distinct from timeout/OOM. The first `>` to `==` header repeat
+establishes over-refusal at the exact-fit endpoint; that run does not credit the
+insufficient-room branch. Two arithmetic rows only replace the fully-visible fast
+path with equivalent clipping within admitted geometry. Actual directions and the
+dated snapshot are in `review-scene-raster-controls-20261013.json`.
+
+Three damage/finalization repeats now fail finitely: a lower-row command changes
+the wrong tile, a one-pixel raster decodes zero width, and a mixed raster/solid
+stream omits its third damage rectangle. The mixed-stream fixture runs before the
+older solid-first timeout. A separate repeat with insufficient header room first
+establishes the `>` to `==` under-refusal direction, preserving the earlier
+over-refusal receipt without another distinct kill. The full baseline passes 325
+tests; `scene4-damage-postexecution-verified-review-20261013.json` binds the results.
+Four overscan changes preserve intersections on admitted clipped commands. Two
+local-array progress loops retain measured timeouts and zero assertion credit.
+
+Five band controls cover the rightmost damage-tile extent, the untouched byte tail
+of a partial band, vertical nonintersection, solid-record progression and a direct
+raster-record cursor. Their frozen baseline passes 330 tests. Both old resource
+observations remain uncredited; the later progress fixtures fail finitely before
+their full callers can stall. Six other rows retain canonical-stream or current
+grid qualifications. Evidence is in `review-scene-band-controls-20261013.json`;
+the original one-pixel cursor snapshot is separate from later decoder fixtures.
+
+Thirteen more decoder/iterator occurrences have finite directional failures with
+a 335-test baseline. The bounded first-command probe precedes complete iterator
+consumers; a three-by-three raster and a two-row cursor expose missing pixels
+without entering the older one-pixel stall. The cursor repeat replaces the earlier
+one-pixel evidence for that same occurrence. Grid extents and cache-tag byte tuples
+retain component-only scope; they do not establish public pixel/hash-collision
+effects. Three height changes preserve the current tile grid, and the empty-run
+paint loop retains its measured timeout with zero assertion credit. Exact evidence
+is in `scene14-codec-postexecution-verified-review-20261013.json`.
+
+Nine Frame/DrawTarget repeats fail on boundary retention, viewport/forwarding,
+presented pixels or bounded iterator progress. All 338 owner tests pass. Both
+iterator resource cases are caught by the two-call probe before full consumers;
+their original timeout logs retain zero credit. Five other rows preserve zero-size
+solid behavior or disjoint touch-coordinate fields. A separate damage-rectangle
+merge loop retains source-qualified nonprogress and zero assertion credit. See
+`review-scene-frame-controls-20261013.json` and its source review.
+
+Seven applet-renderer controls fail on retry colors and detail-card pixels;
+the full UI baseline passes 340 tests. The two-row card fixture pins the helper's
+admitted geometry; current complete screens use other row counts. Details are in
+`applets7-postexecution-verified-review-20261013.json`.
+
+Six private DO-writer controls and one exported append control fail on sticky
+overflow, literal BER lengths and an invented child header. Their OpenPGP baseline
+passes 454 tests with one explicit skip. Nine further controls fail on reported
+function-object lengths, the public GET DATA algorithm-info header and a prefixed
+algorithm-info append; that baseline passes 458 tests with one skip. Most length
+failures pin the exported serializer contract: a fresh command writer or a later
+wrapper can mask the same change. These scopes and actual first failures are in
+`openpgp-dobj7-postexecution-verified-review-20261013.json` and
+`review-openpgp-dobj-append-controls-20261013.json`.
+
+Fourteen catalog controls fail the required `Internal` or certificate-function
+classification with a 460-test baseline and one skip. Current command consumers
+merge `Internal` and `None`, so this establishes the exported typed catalog
+contract, without a wire-access claim. Two packing changes preserve disjoint bit
+lanes. See `openpgp-files14-postexecution-verified-review-20261013.json` and
+`openpgp-files16-source-review-20261013.json`.
+
+Two further controls fail on structural import-parser acceptance and a DEC-slot
+fingerprint read with a 462-test baseline and one skip. The parser fixture runs
+before the original key-operation timeout and uses BER forms the current parser
+accepts, including a nonminimal length and repeated zero-length descriptors. Its
+finite refusal establishes that structural API contract, without a complete RSA
+import or canonical-encoding claim. The original timeout remains uncredited in
+`review-openpgp-import-info-controls-20261013.json`.
+
+Four boot/authentication controls fail on deletion of an unidentified resetting-code
+record and refusal of a valid RSA authentication under present-empty stored
+algorithm metadata. Their baseline passes 464 tests with one skip. The boot record
+has a zero length marker in a complete 34-byte value; normal PUT DATA deletes an
+empty algorithm attribute, so the authentication fixture deliberately represents
+persisted empty metadata. Later assertions after each first failure receive no
+separate credit. Three empty-field/missing-counter rows preserve current behavior.
+See `openpgp-init-auth4-postexecution-verified-review-20261013.json`.
+
+Two RNG-adapter repeats fail finite byte-forwarding assertions before their older
+RSA/EC generator timeouts. All 465 owner tests pass, with one skip. These checks
+pin internal adapter behavior, without a separate entropy or command-level claim;
+both original timeout observations retain zero credit. Evidence is in
+`review-openpgp-rng-controls-20261013.json`.
