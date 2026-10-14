@@ -248,3 +248,7 @@ pub fn full_aid(serial: &[u8; 4], manufacturer: u16) -> [u8; 16] {
 pub fn aid_for(serial_id: &[u8; 8], manufacturer: u16) -> [u8; 16] {
     full_aid(&serial_bcd(&rsk_sdk::serial4(*serial_id)), manufacturer)
 }
+
+#[cfg(test)]
+#[path = "files_catalog_tests.rs"]
+mod catalog_tests;

@@ -269,3 +269,6 @@ fn unusable_legacy_rsa_primes_refuse_without_resealing_the_record() {
     assert_eq!(fs.read_key(EF_PK_SIG, retained.expose_mut()), Some(64));
     assert_eq!(retained.expose(), blob.expose());
 }
+
+#[path = "keys_decode_tests.rs"]
+mod decode;

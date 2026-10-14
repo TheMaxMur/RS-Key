@@ -520,3 +520,6 @@ fn retry_and_maximum_repairs_can_observe_an_absent_status_record() {
 
 #[path = "init_restart_tests.rs"]
 mod restarts;
+
+#[path = "init_mutation_tests.rs"]
+mod mutation;
