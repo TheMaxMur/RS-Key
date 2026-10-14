@@ -2663,7 +2663,9 @@ stay queued. Evidence: `target/mutants/applets-controls/` (19 caught of 99) and
 
 The `backup.rs` chunk is the same shape: one direct string test kills all nine
 `fmt_share_title` occurrences (both body replacements and the seven index
-increments, `65535/65535` included); the other 101 occurrences there are
-coordinates, `Ok(())` bodies and cursor arithmetic, still queued. Evidence:
-`target/mutants/backup-controls/` (0 caught of 110) and
-`target/mutants/backup2/` (9 of 9 caught).
+increments, `65535/65535` included), and three frame tests kill the whole
+`word_grid` (two pages over 14 words), `choice_card` and `stepper_row` groups —
+41 more occurrences, 41 caught. The remaining 60 are the chooser, picker,
+reveal/seal screens and `render_backup`/`render_backup_format` coordinates.
+Evidence: `target/mutants/backup-controls/` (0 caught of 110),
+`target/mutants/backup2/` (9 of 9) and `target/mutants/backup3/` (41 of 41).
