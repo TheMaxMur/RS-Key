@@ -19,6 +19,7 @@ def arguments():
     parser.add_argument("--emulator", type=Path, required=True)
     parser.add_argument("--address", type=lambda value: int(value, 16), required=True)
     parser.add_argument("--cfsr", type=lambda value: int(value, 16), default=0x8200)
+    parser.add_argument("--require-fenced", action="store_true")
     parser.add_argument("--base-port", type=int, default=19359)
     return parser.parse_args()
 
@@ -64,6 +65,8 @@ def main():
                 time.sleep(0.02)
             else:
                 raise AssertionError("hostile image did not fault")
+            if args.require_fenced:
+                assert "fatal_fenced=true" in inspect(ports[2], "status"), "USB/DPRAM remained live after Secure fatal cleanup"
             progress = inspect(ports[2], f"read {marker:x} 4")
             assert progress == "ok 01000000", progress
             log.seek(0)

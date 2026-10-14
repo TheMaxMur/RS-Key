@@ -11,12 +11,6 @@
 #![no_main]
 #![expect(unsafe_code, reason = "board glue; docs/unsafe.md lists every site")]
 
-#[cfg(all(
-    rsk_trustzone_prototype,
-    any(feature = "display", not(led_kind = "none"))
-))]
-compile_error!("the first TrustZone prototype requires LED_KIND=none and no display");
-
 use core::cell::RefCell;
 
 use embassy_executor::{InterruptExecutor, Spawner};
@@ -96,6 +90,7 @@ use worker::Worker;
 #[cfg(not(rsk_trustzone_prototype))]
 use worker::{ClientCcid, ClientCtap};
 
+#[cfg(not(rsk_trustzone_prototype))]
 use panic_halt as _;
 
 use core::alloc::{GlobalAlloc, Layout};
@@ -592,10 +587,9 @@ async fn ccid_task(ccid: &'static mut Ccid<'static, Drv, ClientCcid>) {
 
 // The worker is spawned, not awaited at the tail of `main`, so `main` returns and
 // its ~100 KiB one-time init stack frame is reclaimed off the shared MSP before any
-// crypto runs. Awaiting it inline kept that frame live under every dispatch, which
-// left ML-DSA-65 keygen flush against the stack ceiling (it halted on the next
-// interrupt). Must stay on the thread executor, never `hp`, so keepalives keep flowing.
-#[cfg(not(rsk_trustzone_prototype))]
+// crypto runs. Awaiting it inline keeps the initialization frame under dispatch.
+// Run below USB/transport priorities so their keepalives can preempt crypto.
+
 #[embassy_executor::task]
 async fn worker_task(worker: &'static mut Worker<'static>) {
     worker.run().await;
@@ -660,7 +654,8 @@ async fn storage_task(
     STORAGE_READY.signal(());
 }
 
-#[embassy_executor::main]
+#[cfg_attr(not(rsk_trustzone_prototype), embassy_executor::main)]
+#[cfg_attr(rsk_trustzone_prototype, embassy_executor::task)]
 async fn main(spawner: Spawner) {
     arm_stack_limit();
 
@@ -902,7 +897,7 @@ async fn main(spawner: Spawner) {
     let phy = _phy;
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
 
-    let device_release: u16 = 0x0AAA;
+    let device_release: u16 = 0x0AAB;
     #[cfg(rsk_trustzone_prototype)]
     {
         let (manufacturer, product) = if usb_vid == YUBICO_VID {
@@ -921,6 +916,8 @@ async fn main(spawner: Spawner) {
                 phy_product.unwrap_or(product),
                 "rs-key-0001",
             )
+            .unwrap()
+            .with_pinpad_verify(cfg!(feature = "display"))
             .unwrap(),
         );
     }
@@ -1061,6 +1058,8 @@ async fn main(spawner: Spawner) {
 
         hp
     };
+    #[cfg(all(rsk_trustzone_prototype, not(led_kind = "none")))]
+    let _hp = trustzone::led_spawner();
     // Hold a nuisance onboard user LED off (`USR_LED_PIN`), independent of the
     // addressable status LED so it also applies on a `none` build. Drive the pad to
     // the LED's OFF level and park the `Output` for the device's lifetime — dropping
@@ -1432,7 +1431,14 @@ async fn main(spawner: Spawner) {
     #[cfg(rsk_trustzone_prototype)]
     {
         trustzone::usb::init(p.USB);
-        trustzone::start_worker(worker);
+        spawner.spawn(worker_task(worker).unwrap());
         spawner.spawn(trustzone::launch().unwrap());
     }
+}
+
+#[cfg(rsk_trustzone_prototype)]
+#[cortex_m_rt::entry]
+fn trustzone_main() -> ! {
+    trustzone::start();
+    trustzone::idle()
 }

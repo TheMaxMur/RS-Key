@@ -5,11 +5,12 @@
 
 This chapter owns the TrustZone design, build instructions, measurements and
 remaining production work. The ordinary firmware has no Secure/Non-secure split.
-The experimental build at `bcdDevice 0x0AAA` runs USB classes and transports in
+The experimental build at `bcdDevice 0x0AAB` runs USB classes and transports in
 Non-secure (NS), with the controller, lifecycle observer, worker and applets in
 Secure (S). Secure revocation no longer depends on NS reset callbacks. The
-resource policy and production board integration remain incomplete; the passing
-software checks below are not a claim of physical isolation.
+resource policy, Secure board services and combined offline build are implemented
+below; physical validation remains required before release. Passing
+software checks are not a claim of physical isolation.
 
 ## Attacker and trusted code
 
@@ -58,15 +59,15 @@ peripherals remain S-only until a specific NS use is justified.
 | USBCTRL, USB DPRAM/control words, USBCTRL_IRQ, masks and event acknowledgement | S HAL driver and observer; bounded NS packet proxy | S bounded hardware front-end; NS gets endpoint operations and copied events, not raw MMIO/DPRAM access |
 | USB bus epoch and reset latch | S epoch and raw lifecycle observation | S hardware observer owns the epoch; NS may keep a presentation copy or request revocation |
 | USB classes, CTAPHID, CCID, OTP HID/keyboard framing and keepalive timers | NS | NS; framing and identifiers confer no S authorization |
-| USB identity, interface mask and endpoint allocation | Hard-coded NS identity | S loads/validates persisted configuration; NS receives a bounded public snapshot; S admits only that endpoint layout |
+| USB identity, interface mask and endpoint allocation | S-validated public snapshot and bounded endpoint allocation | S loads/validates persisted configuration; NS receives a bounded public snapshot; S admits only that endpoint layout |
 | TIMER0 and security/authorization deadlines | S | S only |
 | TIMER1 and NS executor timer queue | NS | NS TIMER1 only; shared TICKS, clock and reset controls stay S |
 | TRNG, DRBGs, OTP secrets and fuse operations | S | S only; ordinary gateways expose no raw entropy, secret rows or fuse primitive |
-| Presence button, its GPIO/QSPI path and trusted display/touch input | S decision logic; no-touch, no display | S hardware and decision; NS can query waiting status or cancel, never report a successful press/PIN |
-| LED, PIO/PWM, SPI/I2C and display/presence GPIO | Disabled or unused by this experiment | S board layer; NS presentation requests cannot reconfigure trusted input/output |
+| Presence button, its GPIO/QSPI path and trusted display/touch input | S hardware and decision; touch enabled by default; optional S display | S hardware and decision; NS can query waiting status or cancel, never report a successful press/PIN |
+| LED, PIO/PWM, SPI/I2C and display/presence GPIO | S board layer; selected board LED and optional display | S board layer; NS presentation requests cannot reconfigure trusted input/output |
 | DMA channels, descriptors, IRQ/DREQ routing and DMA MPU | Secure channels locked; registers/IRQs S-owned; no NS descriptors | S only initially; descriptors cannot be supplied by NS or target S state through an NS-controlled channel |
 | SIO FIFO, spinlocks and cross-core reset/launch | S engine uses reserved resources; NS masks its own interrupts | S reserves cross-core resources; NS cannot seize S locks or impersonate a core1 handshake |
-| SAU, S/NS MPU policy, security attribution and interrupt routing | SAU plus both S MPUs and NS MPU; fixed 4 MiB startup map | S; NS banked controls must not alter S resources or bypass reset checks |
+| SAU, S/NS MPU policy, security attribution and interrupt routing | SAU plus both S MPUs and NS MPU; generated 2/4/16 MiB map | S; NS banked controls must not alter S resources or bypass reset checks |
 | Clocks, RESETS, watchdog, POWMAN, debug/security controls and ROM service access | Explicit S grants and ACCESSCTRL locks; silicon debug/update validation pending | S; NS requests are bounded commands, not register writes or arbitrary ROM calls |
 
 S IRQ handling must observe USB lifecycle events during synchronous S crypto.
@@ -74,7 +75,8 @@ Its masks, target and acknowledgement path must be inaccessible to NS. The
 priority design must also keep honest NS keepalives running; enabling `PRIS`
 without checking the S worker/NS executor ordering is not an acceptable shortcut.
 Hardware filters, MPU attributes and peripheral grants must be checked for both
-cores and every bus master before USB attachment. This is pending implementation.
+cores and every bus master before USB attachment. The startup policy below
+installs and reads back these grants before attachment; silicon checks remain.
 
 The inspected 4 MiB experiment uses the following linker/SAU bounds. These are
 the current layout, not fixed production offsets for every board. Production
@@ -83,9 +85,9 @@ existing KV layout.
 
 | Region | Current address range | Owner |
 |---|---|---|
-| S code | `0x10000000..0x101fefff` | S |
-| NSC entry veneers | `0x101ff000..0x101fffff` | S, callable only through declared entries |
-| NS code | `0x10200000..0x1027ffff` | NS execution; S update policy |
+| S code | `0x10000000..0x1026efff` | S |
+| NSC entry veneers | `0x1026f000..0x1026ffff` | S, callable only through declared entries |
+| NS code | `0x10270000..0x1027ffff` | NS execution; S update policy |
 | KV main/counters | `0x10280000..0x103fffff` | S |
 | S SRAM | `0x20000000..0x2006ffff` | S |
 | NS SRAM | `0x20070000..0x2007ffff` | NS |
@@ -192,7 +194,8 @@ events and NS-requested resets coalesce into revocation; none grant rights.
 
 ## What must falsify this decision
 
-These are acceptance cases for later implementation, not new passing results.
+These acceptance cases define the boundary. The measurements below identify
+which software cases have passed and which still require hardware.
 
 | Case | Required observation |
 |---|---|
@@ -216,8 +219,9 @@ property is closed here. See [testing](testing.md) for the emulator paths.
 
 This experiment runs USB classes, CTAPHID, CCID and OTP HID framing in
 Non-secure state; Secure owns the controller and EP0 driver. The existing worker, applets, storage, PIN/presence decisions and RSA
-core1 remain Secure. It is a 4 MiB, no-display, no-touch test image, not a
-production configuration. The ordinary firmware build does not enable it.
+core1 remain Secure. The default build enables real presence and the selected
+board LED; test-only behavior requires explicit flags. The ordinary firmware
+build does not enable the split.
 
 Build inside the pinned development shell:
 
@@ -229,8 +233,7 @@ The output is `target/trustzone/combined.elf` and `combined.uf2`. The ELF embeds
 the Non-secure image so the existing image emulator loads both. The build
 checks that embedding it did not change the gateway import library.
 
-Secure code uses the existing thread executor for startup, then transfers the
-worker to Secure SWI_IRQ_0 at P3. Non-secure USB tasks use SWI_IRQ_1 at P2;
+Secure startup, worker and display tasks share Secure SWI_IRQ_0 at P3. Non-secure USB tasks use SWI_IRQ_1 at P2;
 USBCTRL targets Secure at P0 and the EP0 executor uses Secure SWI_IRQ_2 at P1;
 TIMER1 targets Non-secure. Secure TIMER0 and core1 retain
 their existing ownership. Non-secure critical sections use the core0 interrupt
@@ -244,8 +247,8 @@ into the worker's Secure exchange; its mutex and request tickets serialize dispa
 No Rust references or applet state cross the boundary.
 
 Submit returns a positive ticket; poll and abandon name that same ticket.
-USB reset, deconfiguration and suspend advance the NS session epoch and queue
-Secure cleanup. An abandoned synchronous operation finishes before its response
+Secure USB reset, deconfiguration and suspend observation advance the Secure bus
+epoch and queue cleanup independently of NS callbacks. An abandoned synchronous operation finishes before its response
 is wiped; no new request is accepted until discard and authorization cleanup
 complete. CTAPHID CANCEL answers the original CBOR request with `0x2D`.
 CCID uses the EP0/bulk ABORT handshake for the single card slot. Cancellation
@@ -253,22 +256,22 @@ does not undo a key or counter write that has already committed.
 
 | Region | Address | Size |
 |---|---|---|
-| Secure code | `10000000..101FEFFF` | 2044 KiB |
-| NSC gateways | `101FF000..101FFFFF` | 4 KiB |
-| Non-secure code | `10200000..1027FFFF` | 512 KiB |
+| Secure code | `10000000..1026EFFF` | 2492 KiB |
+| NSC gateways | `1026F000..1026FFFF` | 4 KiB |
+| Non-secure code | `10270000..1027FFFF` | 64 KiB |
 | KV main / counters | Existing `10280000..103FFFFF` | 1536 KiB |
 | Secure SRAM | `20000000..2006FFFF` | 448 KiB |
 | Non-secure SRAM | `20070000..2007FFFF` | 64 KiB |
 
-Non-secure boot probes invalid gateway pointers before attaching USB, including
-a span crossing into Secure memory. It links without a global allocator;
+With `RSK_TZ_GATEWAY_PROBES=1`, Non-secure boot probes invalid gateway pointers
+before attaching USB, including a span crossing into Secure memory. It links without a global allocator;
 the OTP frame codec reuses the existing `rsk-otp` implementation and dependency
 versions, while only that codec is linked into the transport image. TIMER1 uses
 the existing Embassy time-driver API and bounded timer queue in this separate
 workspace; it does not share Secure TIMER0's queue or wakers.
 
-The prototype makes `getInfo` execute synchronous SHA-256 work in Secure for
-three seconds before calling the existing FIDO handler. The host-side test
+With `RSK_TZ_TEST_DELAY=1`, `getInfo` executes synchronous SHA-256 work in Secure
+for three seconds before calling the existing FIDO handler. The host-side test
 requires PROCESSING keepalives throughout that interval and a successful,
 properly framed getInfo reply:
 
@@ -281,7 +284,7 @@ The test uses explicit loopback HID/inspection sockets and cannot select a hardw
 Intervals are checked on the image clock; wall time is reported separately
 because interpreter throughput changes under host build/test load.
 For real RSA and ML-DSA, start a fresh emulator with the same combined ELF and
-run the independent crypto/liveness test:
+build with `RSK_TZ_NO_TOUCH=1` and run the independent crypto/liveness test:
 
 ```sh
 nix develop -c python tests/95_trustzone_crypto_keepalive.py --fido-port 7899 --ccid-port 7900 --inspect-port 7901
@@ -313,10 +316,9 @@ authorization cleared, and rejects the old FIDO token without spending retries.
 USB events preserve MCU power-up count. Disconnect models loss of the host link
 with device RAM powered; it does not model removal of the board's power supply.
 
-It is an image-level scheduling experiment, not evidence of complete hardware
-isolation. ACCESSCTRL, DMA permissions, fault handling, production boot/update
-packaging, display, other flash sizes, and preserved runtime USB identity still
-need their own integration work. No signing key or fuse operation is part of
+These image-level scheduling checks do not establish complete hardware
+isolation. Current startup, peripheral policy, identity, board integration and
+packaging are described below; silicon and bootrom validation remain open. No signing key or fuse operation is part of
 this build. Hardware flashing remains a maintainer action.
 
 ### Keepalive checks at bcdDevice 0x0AA4 (2026-10-13)
@@ -798,9 +800,8 @@ The artificial three-second getInfo busy loop is compiled only with
 `RSK_TZ_TEST_DELAY=1`; gateway startup probes require
 `RSK_TZ_GATEWAY_PROBES=1`. Use both for the original synthetic keepalive test.
 Normal builds leave both disabled. The hostile-MMIO and suppressed-callback
-features remain explicit disposable test builds. The build script still emits a
-fixed 4 MiB no-touch image; production presence/board tasks and multi-board
-artifacts are the next step.
+features remain explicit disposable test builds. This identity step preceded the production presence/board and multi-board
+integration recorded below.
 
 
 The image ICC-reset harness now uses its existing 180-second recovery budget for
@@ -816,3 +817,136 @@ lifecycle cases with independent signature checks. The code and assurance gates
 pass. The bounded mutation run catches 46 defects; six do not compile and none
 survives. Its first two survivors were size mutations hidden by self-consistent
 round trips; the completed tests also assert the exact public header and length.
+
+
+## Production boot and artifacts at bcdDevice 0x0AAB
+
+Secure boot, storage setup, worker and display tasks now share a cooperative
+Secure interrupt executor. This preserves the RefCell ownership used by the
+trusted UI. The Secure LED executor runs above the worker; Secure DMA/PIO IRQs
+can complete display/LED operations during a synchronous presence wait.
+NS runs only its classes, transport framing and packet proxy. Thread mode enters
+NS after the Secure initialization frame has returned.
+
+One build layout assigns the final 64 KiB of the existing code partition to NS
+and the preceding 4 KiB to NSC. It emits both linker inputs and runtime bounds;
+the old checked-in NS memory.x is removed because it overrode the generated
+linker search path and left vectors pointing at the wrong address. Existing KV
+bounds, partition sizes and the 16 MiB E10 exclusion stay unchanged. Tested code
+profiles are 2 MiB/896 KiB KVMAIN, 4 MiB/1408 KiB and 16 MiB/1408 KiB. The display
+configuration builds at 16 MiB and advertises the existing CCID PIN verification
+capability from Secure; its actual panel/touch behavior still needs hardware.
+
+Startup validates the NS vector/stack ranges, initializes NS execution masks,
+keeps HardFault/NMI Secure and permits only FP coprocessors in NSACR. Secure owns
+FP lazy/clear controls. The final entry clears shared GPRs, all FP registers and
+status before BXNS. Complete banked-FP and exception fidelity is still beyond the
+current model, so successful crypto here is not that missing architecture proof.
+
+USB grants admit both Secure cores so terminal cleanup can also run on Core1;
+normal controller ownership stays on Core0. The disposable
+`tests/99_trustzone_core1_fault.py` regression verifies a pre-armed nonzero packet
+is fenced from Core1, then detects incomplete cleanup when only its grant is
+removed. Neither image can access a physical key.
+
+A fatal S panic/fault latches every gateway closed, detaches USB and clears DPRAM
+using only raw S-owned MMIO. It does not borrow interrupted locks or resume the
+worker. A new boot constructs unauthenticated state; normal requested resets
+still use Worker::reboot. The fault path deliberately does not claim SRAM
+scrubbing. Emulator terminal-stop recognition must let the cleanup execute first;
+its host test covers both cores and the complete terminal symbol range.
+
+Default combined builds keep touch and the selected board LED. BOOTSEL sampling
+uses the same bounded flash-code window as erase/write. The build applies the
+partition table before producing ELF/UF2. These are unsigned artifacts:
+
+```sh
+nix develop -c bash firmware/trustzone/build.sh
+nix build .#firmware-trustzone
+```
+
+For the no-touch crypto/lifecycle harnesses use an explicit disposable test build:
+
+```sh
+RSK_TZ_NO_TOUCH=1 LED_KIND=none nix develop -c bash firmware/trustzone/build.sh
+```
+
+`tests/98_trustzone_presence.py` requires explicit image/backend paths, starts its
+own loopback emulator with --touch and presses emulated BOOTSEL only after
+UPNEEDED. It waits for release between ceremonies and verifies six presence
+requests plus all eight RSA/ML-DSA operations. The measured touch+LED and offline
+Nix images pass that row, with independently verified attestations/signatures.
+The measured maximum gaps are 204 ms for RSA and 114 ms for ML-DSA. No physical
+key, release signing key or OTP write is part of these runs.
+
+The combined-image hash load map includes S, RAM load images, NSC and NS.
+Changing one NS byte in a disposable hash-only ELF makes picotool report an
+incorrect hash. Real release signing and fused boot acceptance remain maintainer
+operations; hash-only coverage does not establish either one.
+
+
+### Integrated software verification
+
+The combined no-touch image passes the eight RSA/ML-DSA operations and all 17
+session-boundary cases. All 17 also pass with every NS reset callback suppressed.
+The touch-enabled offline Nix ELF passes six real Secure presence waits and the
+same eight cryptographic operations. The PR Kani tier proves 75 harnesses and
+reaches all 60 required source covers.
+
+The capability-codec mutation sweep catches 15 defects and rejects one mutant at
+compilation. One equivalent mutant survives: replacing OR with XOR after masking
+out PINPAD_VERIFY cannot change a bit, because the operands are disjoint. The
+repeated-setter test also verifies idempotence; no acceptance registry is changed.
+
+The fatal-path image first arms an IN endpoint with a nonzero packet, then tries
+a denied USBCTRL read with its NS MPU disabled. Secure stops with the endpoint
+unavailable and DPRAM zero. Omitting only clear_packets in a disposable clone
+makes that same test fail for retained USB/DPRAM state; restoring it passes.
+The fixture requires the default three-interface image and keyboard EP1 IN.
+
+The ordinary applet shim's five-second replug wait and wall-clock reset-window
+assertions are unsuitable for a slow full-image run. A separate image-clock case
+accepts reset after a real emulated power cycle, rejects it after at least 13
+image seconds and then checks worker liveness:
+
+```sh
+nix develop -c python tests/96_trustzone_sessions.py \
+  --fido-port 7899 --ccid-port 7900 --inspect-port 7901 --case reset_window
+```
+
+It is explicit and destructive to the emulator's FIDO state. It is kept separate
+from the 17-case cancellation matrix. Its measured late request at 13.09 image
+seconds is refused; a wall-clock INCONCLUSIVE run is not counted as a pass.
+
+### Checks still required before a hardware release
+
+| Check | What must be observed |
+|---|---|
+| Bus grants on both cores and silicon aliases | Hostile NS cannot read/write S SRAM, flash, boot RAM, USB/DPRAM, security controls or SIO resources, including through DMA; policy cannot be unlocked |
+| Powered cable removal and USB timing | The actual board exposes disconnect/reset to S; old authorization and IN packets are revoked during RSA/ML-DSA, with bounded keepalive gaps under real host controllers |
+| BOOTSEL, GPIO presence, LED and trusted panel | Honest requests progress during crypto/flash pauses; NS cannot fabricate a press, PIN, trusted prompt or replacement approval |
+| Exception/FP transitions and terminal faults | Register cleanup, lazy FP state, Secure fault routing and gateway closure hold on silicon; no stale packet is exported after a fatal fault |
+| Bootrom and update coverage | The maintainer signs the complete PT-applied combined image; a changed S, NSC, NS or partition-table byte is rejected by the fused key/rollback policy |
+| Recovery and provisioned storage | Existing devices retain their full KV layout and records through the maintainer's approved upgrade/recovery path, including the 16 MiB E10 exclusion |
+| Board margins | Stack/SRAM and flash-operation timing remain safe with display, core1 RSA, interrupts and worst supported operations on the actual boards |
+
+The emulator provides evidence only for the implemented instruction, peripheral
+and bus paths. It is not a complete banked-FP/exception model or a fused bootrom
+acceptance proof. Direct ELF boot and hash-only tampering cannot close those
+hardware rows. The firmware policy is installed independently of these model
+limitations. No software measurement here substitutes for signing, flashing or
+fuse validation by the maintainer.
+
+
+For a release candidate, repeat the immutable Nix derivation with `--rebuild`;
+this compares both outputs, including ELF metadata. The NS data-object strips
+unused objcopy binary symbols because their names otherwise contain the random
+absolute build directory. Keep the combined image's code, veneers and partition
+table when hashing or signing; signing S alone does not authenticate NS.
+
+
+The standalone NS workspace still prevents reproducible combined images: Cargo
+hashes absolute paths for its dependencies outside that workspace (Cargo
+[issue 7645](https://github.com/rust-lang/cargo/issues/7645)). The next packaging
+step must put both firmware packages in the root workspace and share its lockfile.
+The completed board/USB regression results above do not close that build issue.

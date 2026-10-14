@@ -343,6 +343,40 @@ def card_reset(args):
         if fresh: fresh.sock.close()
 
 
+def reset_window(args):
+    from emu import OP_REPLUG
+    from replug import CTAP_RESET, RESET_WINDOW_S
+
+    with socket.create_connection(("127.0.0.1", args.ccid_port), timeout=RECOVERY_TIMEOUT_S) as link:
+        link.sendall(bytes([OP_REPLUG]) + bytes(4))
+        crypto.receive(link, int.from_bytes(crypto.receive(link, 4), "big"))
+    started = wait_ready(args)
+    hid = Hid(args.fido_port, args.inspect_port)
+    try:
+        def request_reset():
+            hid.deadline = time.monotonic() + RECOVERY_TIMEOUT_S
+            hid.send(0x90, bytes([CTAP_RESET]))
+            return hid.response()[0]
+
+        assert request_reset() == 0, "reset immediately after USB attachment was refused"
+        deadline = time.monotonic() + RECOVERY_TIMEOUT_S
+        late_ns = int((RESET_WINDOW_S + 3) * 1_000_000_000)
+        while True:
+            state = crypto.inspect(args.inspect_port, "status")
+            assert state["dead"] == "false" and state["power_ups"] == started["power_ups"]
+            elapsed = int(state["emulated_ns"]) - int(started["emulated_ns"])
+            if elapsed >= late_ns:
+                break
+            assert time.monotonic() < deadline, "image clock stopped before the reset window expired"
+            time.sleep(0.01)
+        assert request_reset() == 0x30, "reset after the image-clock window was accepted"
+        hid.live_worker()
+        print(json.dumps({"case": "reset_window", "early_reset_accepted": True,
+                          "late_reset_refused": True, "image_elapsed_s": elapsed / 1_000_000_000}), flush=True)
+    finally:
+        hid.sock.close()
+
+
 CASES = {
     "mldsa_cancel": mldsa_cancel,
     "mldsa_reset": lambda args: mldsa_bus(args, "usb-reset"),
@@ -362,11 +396,12 @@ if __name__ == "__main__":
     parser.add_argument("--fido-port", type=int, required=True)
     parser.add_argument("--ccid-port", type=int, required=True)
     parser.add_argument("--inspect-port", type=int, required=True)
-    parser.add_argument("--case", choices=["all", *CASES], default="all")
+    parser.add_argument("--case", choices=["all", *CASES, "reset_window"], default="all")
     parser.add_argument("--mldsa-set", type=int, choices=SETS, default=87)
     args = parser.parse_args()
     wait_ready(args)
-    selected = CASES if args.case == "all" else {args.case: CASES[args.case]}
+    available = {**CASES, "reset_window": reset_window}
+    selected = CASES if args.case == "all" else {args.case: available[args.case]}
     for name, case in selected.items():
         parameters = SETS if args.case == "all" and name in ("mldsa_cancel", "mldsa_reset", "mldsa_disconnect") else [args.mldsa_set]
         for parameter in parameters:

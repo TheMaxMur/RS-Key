@@ -40,7 +40,7 @@ use rsk_device::presence::{Board, Outcome};
 use rsk_device::presence::Arbiter;
 
 #[cfg_attr(
-    rsk_trustzone_prototype,
+    all(rsk_trustzone_prototype, feature = "no-touch"),
     expect(
         unused_imports,
         reason = "the prototype USB handler lives in Non-secure"
@@ -125,7 +125,18 @@ enum Button {
 impl Button {
     fn sample(&mut self) -> bool {
         match self {
-            Button::Bootsel(bootsel) => is_bootsel_pressed(bootsel.reborrow()),
+            Button::Bootsel(bootsel) => {
+                #[cfg(rsk_trustzone_prototype)]
+                {
+                    crate::trustzone::mpu::with_flash_code(|| {
+                        is_bootsel_pressed(bootsel.reborrow())
+                    })
+                }
+                #[cfg(not(rsk_trustzone_prototype))]
+                {
+                    is_bootsel_pressed(bootsel.reborrow())
+                }
+            }
             Button::Gpio(button, active_high) => {
                 if *active_high {
                     button.is_high()

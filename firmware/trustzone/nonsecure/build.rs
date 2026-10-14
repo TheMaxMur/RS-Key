@@ -3,12 +3,14 @@
 
 fn main() {
     let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap());
-    std::fs::write(out.join("memory.x"), include_bytes!("memory.x")).unwrap();
+    let memory = std::env::var("RSK_TZ_NS_MEMORY").expect("build Secure first");
+    std::fs::copy(&memory, out.join("memory.x")).unwrap();
+    println!("cargo:rerun-if-changed={memory}");
+    println!("cargo:rerun-if-env-changed=RSK_TZ_NS_MEMORY");
     println!("cargo:rustc-link-search={}", out.display());
     let import = std::env::var("RSK_TZ_IMPLIB").expect("build Secure first");
     println!("cargo:rustc-link-arg={import}");
     println!("cargo:rerun-if-changed={import}");
-    println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-env-changed=RSK_TZ_IMPLIB");
     if std::env::var_os("CARGO_FEATURE_TEST_HOSTILE_ACCESS").is_some() {
         let address = std::env::var("RSK_TZ_PROBE_ADDRESS").expect("probe address");

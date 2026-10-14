@@ -104,14 +104,18 @@ pub fn init(usb: embassy_rp::Peri<'static, USB>) {
 fn clear_packets() {
     for index in 0..ENDPOINTS {
         rp_pac::USB_DPRAM.ep_in_buffer_control(index).modify(|v| {
-            v.set_available(0, false);
-            v.set_full(0, false);
-            v.set_length(0, 0);
+            for buffer in 0..2 {
+                v.set_available(buffer, false);
+                v.set_full(buffer, false);
+                v.set_length(buffer, 0);
+            }
         });
         rp_pac::USB_DPRAM.ep_out_buffer_control(index).modify(|v| {
-            v.set_available(0, false);
-            v.set_full(0, false);
-            v.set_length(0, 0);
+            for buffer in 0..2 {
+                v.set_available(buffer, false);
+                v.set_full(buffer, false);
+                v.set_length(buffer, 0);
+            }
         });
     }
     // SAFETY: S owns DPRAM; all buffers are unavailable before their payloads are wiped.
@@ -121,6 +125,15 @@ fn clear_packets() {
             data.add(offset).write_volatile(0);
         }
     }
+}
+
+pub fn disconnect_after_fault() {
+    // A fault can interrupt an owner with its lock held; touch only S-owned MMIO.
+    rp_pac::USB.inte().write(|value| value.0 = 0);
+    rp_pac::USB
+        .sie_ctrl()
+        .modify(|value| value.set_pullup_en(false));
+    clear_packets();
 }
 
 fn revoke(state: &mut Controller, reason: Revocation) {
@@ -216,6 +229,9 @@ pub fn observe() {
     with_controller(observe_locked);
 }
 pub fn admitted() -> bool {
+    if super::fault::failed() {
+        return false;
+    }
     with_controller(|state| {
         observe_locked(state);
         state.bus_epoch.accepts(state.bus_epoch.current())
@@ -329,6 +345,9 @@ pub unsafe extern "C" fn rsk_tz_usb_impl(
     buffer: *mut u8,
     length: u32,
 ) -> u32 {
+    if super::fault::failed() {
+        return INVALID;
+    }
     let supplied_length = length;
     let Ok(length) = usize::try_from(length) else {
         return INVALID;

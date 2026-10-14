@@ -57,3 +57,23 @@ fn descriptor_capacities_are_inclusive_and_padding_is_zero() {
     let short = Identity::new(0, 0, 0, 0, false, "", "", "").unwrap();
     assert_eq!(short.bytes(), &[0; SIZE]);
 }
+
+#[test]
+fn pinpad_capability_and_atr_flags_are_independent() {
+    for yubico in [false, true] {
+        for pinpad in [false, true] {
+            let identity = Identity::new(1, 2, 3, 4, yubico, "", "", "")
+                .unwrap()
+                .with_pinpad_verify(pinpad)
+                .unwrap();
+            assert_eq!(identity.yubico_atr(), yubico);
+            assert_eq!(identity.pinpad_verify(), pinpad);
+            let identity = identity.with_pinpad_verify(pinpad).unwrap();
+            assert_eq!(identity.pinpad_verify(), pinpad);
+            assert_eq!(identity.yubico_atr(), yubico);
+            let identity = identity.with_pinpad_verify(false).unwrap();
+            assert!(!identity.pinpad_verify());
+            assert_eq!(identity.yubico_atr(), yubico);
+        }
+    }
+}

@@ -65,6 +65,8 @@ pub struct Chip {
     h_bootram: MmioHandle,
     h_watchdog: MmioHandle,
     hardfault: Option<u32>,
+    fault_stop: Option<(u32, u32)>,
+    fault_wait: Option<(u32, u32)>,
     panic_fn: Option<(u32, u32)>,
     core1_released_seen: u32,
     core1_hold: bool,
@@ -150,6 +152,10 @@ impl Chip {
             otp,
             log,
             hardfault: elf.symbol(&["HardFault_"]).map(|s| s.value & !1),
+            fault_wait: elf.symbol(&["__wfi"]).map(|s| (s.value & !1, s.size)),
+            fault_stop: elf
+                .symbol(&["rsk_tz_fault_stop"])
+                .map(|s| (s.value & !1, s.size)),
             panic_fn: elf
                 .symbol(&["rust_begin_unwind"])
                 .map(|s| (s.value & !1, s.size)),
@@ -261,7 +267,16 @@ impl Chip {
         for c in 0..2 {
             let core = self.emu.core(c);
             let pc = core.regs.pc();
-            if core.regs.ipsr() == IPSR_HARDFAULT || Some(pc) == self.hardfault {
+            if self.fault_stop.is_some_and(|(start, size)| {
+                let terminal = |address: u32| address >= start && address - start < size.max(1);
+                terminal(pc)
+                    || self
+                        .fault_wait
+                        .is_some_and(|(wait, bytes)| pc >= wait && pc - wait < bytes.max(1))
+                        && terminal((core.regs.lr() & !1).saturating_sub(2))
+            }) || self.fault_stop.is_none()
+                && (core.regs.ipsr() == IPSR_HARDFAULT || Some(pc) == self.hardfault)
+            {
                 let lr = core.regs.lr();
                 let why = format!(
                     "core {c} took a HardFault (CFSR {:#010x}, BFAR {:#010x}), pc {}, lr {}, MSP_S {:#010x}, MSP_NS {:#010x}",
@@ -274,9 +289,10 @@ impl Chip {
                 );
                 return Some(Stop::Dead(why));
             }
-            if self
-                .panic_fn
-                .is_some_and(|(start, size)| pc >= start && pc - start < size.max(1))
+            if self.fault_stop.is_none()
+                && self
+                    .panic_fn
+                    .is_some_and(|(start, size)| pc >= start && pc - start < size.max(1))
             {
                 // A call at the end of a function returns into the next symbol.
                 let lr = self.where_is((core.regs.lr() & !1).saturating_sub(2));

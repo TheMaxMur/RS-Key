@@ -99,7 +99,8 @@ def record(operation, result, minimum=0):
 
 
 class Hid:
-    def __init__(self, port, inspect_port):
+    def __init__(self, port, inspect_port, on_up=None):
+        self.on_up = on_up
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=READ_TIMEOUT_S)
         self.inspect_port = inspect_port
         self.cid = b"\xff" * 4
@@ -117,13 +118,23 @@ class Hid:
             self.sock.sendall((self.cid + bytes([seq]) + body[off:off + 59]).ljust(64, b"\0"))
 
     def ctap(self, command, fields):
+        if self.on_up is not None:
+            self.on_up.before_request()
+        touched = False
         measured = Measurement(self.inspect_port)
         self.send(0x90, bytes([command]) + enc(fields))
         while True:
             report = receive(self.sock, 64)
             assert report[:4] == self.cid, "reply changed CTAPHID channel"
             if report[4] == 0xBB:
-                assert report[5:8] == b"\x00\x01\x01", "expected PROCESSING keepalive"
+                assert report[5:7] == b"\x00\x01", "invalid keepalive length"
+                if report[7] == 2:
+                    assert self.on_up is not None, "unexpected user-presence wait in no-touch test"
+                    if not touched:
+                        self.on_up()
+                        touched = True
+                else:
+                    assert report[7] == 1, "expected PROCESSING keepalive"
                 measured.keepalive()
                 continue
             assert report[4] == 0x90, f"CTAPHID returned command {report[4]:#x}"
@@ -167,7 +178,8 @@ def parse_tlv(body):
 
 
 class Ccid:
-    def __init__(self, port, inspect_port):
+    def __init__(self, port, inspect_port, on_up=None):
+        self.on_up = on_up
         self.sock = socket.create_connection(("127.0.0.1", port), timeout=READ_TIMEOUT_S)
         self.inspect_port = inspect_port
         self.seq = 0
@@ -247,7 +259,7 @@ def check_rsa(args):
 
 
 def check_mldsa(args):
-    hid = Hid(args.fido_port, args.inspect_port)
+    hid = Hid(args.fido_port, args.inspect_port, getattr(args, "on_up", None))
     try:
         for label, alg, dilithium, public_type, pk_size, sig_size in MLDSA_SETS:
             rp = f"tz-{label.lower()}.example"

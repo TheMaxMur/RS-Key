@@ -35,6 +35,7 @@ rsk-otp = { path = "../../../crates/rsk-otp" }
 rsk-secret = { path = "../../../crates/rsk-secret" }
 
 [profile.release]
+codegen-units = 1
 opt-level = "s"
 lto = true
 debug = 2

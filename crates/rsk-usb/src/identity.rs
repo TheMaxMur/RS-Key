@@ -15,6 +15,8 @@
 )]
 
 const HEADER: usize = 11;
+const YUBICO_ATR: u8 = 1;
+const PINPAD_VERIFY: u8 = 2;
 pub const STRING_BYTES: usize = 64;
 pub const SERIAL_BYTES: usize = 32;
 pub const SIZE: usize = HEADER + 2 * STRING_BYTES + SERIAL_BYTES;
@@ -85,7 +87,19 @@ impl Identity {
         self.bytes.get(6).copied().unwrap_or(0)
     }
     pub fn yubico_atr(&self) -> bool {
-        self.bytes.get(7) == Some(&1)
+        self.bytes
+            .get(7)
+            .is_some_and(|flags| flags & YUBICO_ATR != 0)
+    }
+    pub fn with_pinpad_verify(mut self, enabled: bool) -> Option<Self> {
+        let flags = self.bytes.get_mut(7)?;
+        *flags = (*flags & !PINPAD_VERIFY) | if enabled { PINPAD_VERIFY } else { 0 };
+        Some(self)
+    }
+    pub fn pinpad_verify(&self) -> bool {
+        self.bytes
+            .get(7)
+            .is_some_and(|flags| flags & PINPAD_VERIFY != 0)
     }
     fn string(&self, index: usize, offset: usize, capacity: usize) -> Option<&str> {
         let length = usize::from(*self.bytes.get(index)?);

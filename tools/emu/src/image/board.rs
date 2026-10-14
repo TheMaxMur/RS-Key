@@ -721,7 +721,7 @@ impl Board {
         match command {
             Command::Where => Ok(self.chip.whereabouts()),
             Command::Status => Ok(format!(
-                "cycle={} emulated_ns={} ready={} dead={} bootloader={} power_ups={} programmed_bytes={} last_cut={}",
+                "cycle={} emulated_ns={} ready={} dead={} bootloader={} power_ups={} programmed_bytes={} last_cut={} fatal_fenced={}",
                 self.chip.cycles(),
                 self.chip.now_ns(),
                 matches!(self.configure, Configure::Done),
@@ -729,7 +729,8 @@ impl Board {
                 matches!(self.boot_mode, BootMode::UsbBootloader),
                 self.power_ups,
                 self.chip.programmed_bytes(),
-                self.last_cut
+                self.last_cut,
+                dead && self.chip.usb.lock().unwrap().fatal_fenced()
             )),
             Command::Begin | Command::TransportBegin
                 if !matches!(self.configure, Configure::Done) || dead =>

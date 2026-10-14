@@ -237,3 +237,32 @@ fn ints_is_intr_or_intf_masked_by_inte() {
     u.reg_write(SIE_STATUS, ST_BUS_RESET, 0, 0);
     assert_eq!(u.ints(), IN_TRANS_COMPLETE);
 }
+
+#[test]
+fn a_fatal_fence_requires_detach_irq_mask_both_buffers_and_zero_payload() {
+    let mut usb = attached();
+    assert!(!usb.fatal_fenced());
+    usb.reg_write(SIE_CTRL, 0, 0, 0);
+    assert!(usb.fatal_fenced());
+    usb.inte = 1;
+    assert!(!usb.fatal_fenced());
+    usb.inte = 0;
+    for ep in 0..16 {
+        for input in [true, false] {
+            for shift in [0, 16] {
+                let offset = UsbCore::buf_ctrl_off(ep, input);
+                usb.wr32(offset, BC_AVAILABLE << shift);
+                assert!(!usb.fatal_fenced());
+                usb.wr32(offset, 0);
+                assert!(usb.fatal_fenced());
+            }
+        }
+    }
+    usb.dpram[0x100] = 0xa5;
+    assert!(!usb.fatal_fenced());
+    usb.dpram[0x100] = 0;
+    usb.dpram[0xfff] = 0xa5;
+    assert!(!usb.fatal_fenced());
+    usb.dpram[0xfff] = 0;
+    assert!(usb.fatal_fenced());
+}

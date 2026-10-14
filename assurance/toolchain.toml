@@ -320,3 +320,14 @@ statement = "The TrustZone linker section defines the aligned immutable RAM-code
 id = "export:firmware/trustzone/nonsecure/src/probe.rs:RSK_NS_PROBE_PROGRESS"
 provider = "rustc"
 statement = "The disposable hostile NS image exposes only its own progress marker, so a denied access can be distinguished from an unrelated startup fault."
+
+
+[[boundary]]
+id = "import:firmware/src/trustzone/mod.rs:rsk_tz_enter_ns"
+provider = "arm-none-eabi-gcc"
+statement = "firmware/src/trustzone/gateway.c. Startup-only BXNS entry, after validated NS vectors and banked masks. Clears shared GPRs, all FP registers and status; never returns."
+
+[[boundary]]
+id = "export:firmware/src/trustzone/fault.rs:rsk_tz_fault_stop"
+provider = "rustc"
+statement = "Terminal Secure fault range, entered after the fatal latch and raw USB cleanup. Image instrumentation waits for it rather than stopping before HardFault/panic cleanup."

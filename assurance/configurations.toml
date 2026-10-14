@@ -984,3 +984,10 @@ in `check.sh` builds `firmware` on it at all. The board loop builds `rsk-wipe`, 
 and both `BOARD=` firmware rows pin `waveshare-one`. So the column is real and \
 WHOLLY UNEXERCISED, and what is left to decide is whether the tree should build \
 it, or whether it should be a knob of `firmware-display` instead."""
+
+
+[[question]]
+column = "firmware-trustzone"
+owner = "contributor"
+settled_by = "evidence"
+text = "Which existing applet and authorization properties retain their evidence under Secure IRQ worker/board scheduling, hardware-owned USB epochs, CMSE packet gateways, fatal admission fencing and banked FP policy? Real crypto, presence and reset image rows test specific behavior; they do not prove the entire P0 matrix or physical isolation. Resolve each property using its current owner and build-specific evidence before promoting this configuration's formal claims."

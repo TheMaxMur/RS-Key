@@ -22,7 +22,7 @@ These are the **committed** configurations, not the buildable ones. Every `mkFir
 
 ## The axes
 
-- **19 flake packages** (`nix/firmware.nix`), of which **14** are published by `.github/workflows/release-build.yml` — the published set is a named subset of the matrix, never the matrix.
+- **20 flake packages** (`nix/firmware.nix`), of which **14** are published by `.github/workflows/release-build.yml` — the published set is a named subset of the matrix, never the matrix.
 - **7 orthogonal cargo features** (`firmware/Cargo.toml`) that no flake package expresses.
 - **6 board presets** (`firmware/boards/*.toml`): `BOARD=<name>` sets the same knobs the flake arguments do, and no cargo feature.
 
@@ -33,85 +33,86 @@ The last cell is DERIVED, not declared: the per-crate cargo-feature closure this
 | # | Configuration | Kind | Published | Cargo features | Knobs | Compiles unlike the default build |
 |---|---|---|---|---|---|---|
 | 01 | `firmware` | package | yes | — | — | — |
-| 02 | `firmware-no-touch` | package | no | `no-touch` | — | `firmware` +`no-touch` |
-| 03 | `firmware-fips` | package | yes | `fips-profile` | — | `firmware` +`fips-profile`, `rsk-fido` +`fips-profile`, `rsk-piv` +`fips-profile` |
-| 04 | `firmware-pqc` | package | yes | `advertise-pqc` | — | `firmware` +`advertise-pqc`, `rsk-fido` +`advertise-pqc` |
-| 05 | `firmware-fips-pqc` | package | yes | `advertise-pqc`, `fips-profile` | — | `firmware` +`advertise-pqc` +`fips-profile`, `rsk-fido` +`advertise-pqc` +`fips-profile`, `rsk-piv` +`fips-profile` |
-| 06 | `firmware-no-touch-pqc` | package | no | `advertise-pqc`, `no-touch` | — | `firmware` +`advertise-pqc` +`no-touch`, `rsk-fido` +`advertise-pqc` |
-| 07 | `firmware-no-touch-fips` | package | no | `fips-profile`, `no-touch` | — | `firmware` +`fips-profile` +`no-touch`, `rsk-fido` +`fips-profile`, `rsk-piv` +`fips-profile` |
-| 08 | `firmware-no-touch-fips-pqc` | package | no | `advertise-pqc`, `fips-profile`, `no-touch` | — | `firmware` +`advertise-pqc` +`fips-profile` +`no-touch`, `rsk-fido` +`advertise-pqc` +`fips-profile`, `rsk-piv` +`fips-profile` |
-| 09 | `firmware-strong-pin` | package | yes | `strong-pin` | — | `firmware` +`strong-pin`, `rsk-fido` +`strong-pin` |
-| 10 | `firmware-strong-pin-pqc` | package | yes | `advertise-pqc`, `strong-pin` | — | `firmware` +`advertise-pqc` +`strong-pin`, `rsk-fido` +`advertise-pqc` +`strong-pin` |
-| 11 | `firmware-always-uv` | package | yes | `always-uv` | — | `firmware` +`always-uv`, `rsk-fido` +`always-uv` |
-| 12 | `firmware-always-uv-pqc` | package | yes | `advertise-pqc`, `always-uv` | — | `firmware` +`advertise-pqc` +`always-uv`, `rsk-fido` +`advertise-pqc` +`always-uv` |
-| 13 | `firmware-strict-up` | package | yes | `strict-up` | — | `firmware` +`strict-up`, `rsk-fido` +`strict-up` |
-| 14 | `firmware-strict-up-pqc` | package | yes | `advertise-pqc`, `strict-up` | — | `firmware` +`advertise-pqc` +`strict-up`, `rsk-fido` +`advertise-pqc` +`strict-up` |
-| 15 | `firmware-pico` | package | no | — | `vidpid=Pico` | — |
-| 16 | `firmware-display` | package | yes | `display` | `flashSize=16M`, `ledKind=none` | `firmware` +`display`, `rsk-bip39` (added), `rsk-device` +`display`, `rsk-display` (added), `rsk-slip39` (added), `rsk-ui` (added) |
-| 17 | `firmware-2mb` | package | yes | — | `flashSize=2M`, `kvmain=896K` | — |
-| 18 | `firmware-16mb` | package | yes | — | `flashSize=16M` | — |
-| 19 | `firmware-strict-config` | package | yes | `strict-config` | — | `firmware` +`strict-config`, `rsk-device` +`strict-config`, `rsk-fido` +`strict-config`, `rsk-mgmt` +`strict-config`, `rsk-otp` +`strict-config`, `rsk-vendor` +`strict-config` |
-| 20 | `keygen-bench` | feature | n/a | `keygen-bench` | — | `firmware` +`keygen-bench` |
-| 21 | `core1-stats` | feature | n/a | `core1-stats` | — | `firmware` +`core1-stats` |
-| 22 | `bench` | feature | n/a | `bench` | — | `firmware` +`bench`, `rsk-bench` (added), `rsk-fido` +`bench` |
-| 23 | `fido-conformance` | feature | n/a | `fido-conformance` | — | `firmware` +`fido-conformance`, `rsk-fido` +`fido-conformance` +`strict-up` |
-| 24 | `ea-conformance-rpid` | feature | n/a | `ea-conformance-rpid` | — | `firmware` +`ea-conformance-rpid`, `rsk-fido` +`ea-conformance-rpid` +`fido-conformance` +`strict-up` |
-| 25 | `largeblob-ext` | feature | n/a | `largeblob-ext` | — | `firmware` +`largeblob-ext`, `rsk-fido` +`largeblob-ext` |
-| 26 | `preview-sign` | feature | n/a | `preview-sign` | — | `firmware` +`preview-sign`, `rsk-fido` +`preview-sign` |
-| 27 | `abrobot-16m` | board | n/a | — | `flash.kvmain_kb=1408`, `flash.size_mb=16`, `led.kind=ws2812`, `led.max_leds=4`, `led.order=grb`, `led.pin=16`, `presence.active_high=False`, `presence.pin=23`, `presence.source=gpio`, `usb.vidpid=RSKey` | — |
-| 28 | `abrobot-4m` | board | n/a | — | `flash.kvmain_kb=1408`, `flash.size_mb=4`, `led.kind=ws2812`, `led.max_leds=4`, `led.order=grb`, `led.pin=16`, `presence.active_high=False`, `presence.pin=23`, `presence.source=gpio`, `usb.vidpid=RSKey` | — |
-| 29 | `seeed-xiao` | board | n/a | — | `flash.kvmain_kb=896`, `flash.size_mb=2`, `led.kind=ws2812`, `led.order=grb`, `led.pin=22`, `led.power_pin=23`, `presence.source=bootsel`, `usb.vidpid=RSKey`, `usr_led.active_high=False`, `usr_led.pin=25` | — |
-| 30 | `tenstar-usb` | board | n/a | — | `flash.kvmain_kb=1408`, `flash.size_mb=16`, `led.kind=ws2812`, `led.order=grb`, `led.pin=22`, `presence.source=bootsel`, `usb.vidpid=RSKey` | — |
-| 31 | `waveshare-one` | board | n/a | — | `flash.kvmain_kb=1408`, `flash.size_mb=4`, `led.kind=ws2812`, `led.order=rgb`, `led.pin=16`, `presence.source=bootsel`, `usb.vidpid=RSKey` | — |
-| 32 | `waveshare-touch-lcd` | board | n/a | — | `display.bl_pin=16`, `display.bl_pwm_channel=A`, `display.bl_pwm_slice=0`, `display.cs=13`, `display.dc=14`, `display.rst=15`, `display.spi_freq_hz=80000000`, `display.tp_rst=17`, `display.wake_active_high=False`, `display.wake_pin=25`, `flash.kvmain_kb=1408`, `flash.size_mb=16`, `led.kind=none`, `presence.source=bootsel`, `usb.vidpid=RSKey` | — |
+| 02 | `firmware-trustzone` | package | no | — | `trustzone=true` | — |
+| 03 | `firmware-no-touch` | package | no | `no-touch` | — | `firmware` +`no-touch` |
+| 04 | `firmware-fips` | package | yes | `fips-profile` | — | `firmware` +`fips-profile`, `rsk-fido` +`fips-profile`, `rsk-piv` +`fips-profile` |
+| 05 | `firmware-pqc` | package | yes | `advertise-pqc` | — | `firmware` +`advertise-pqc`, `rsk-fido` +`advertise-pqc` |
+| 06 | `firmware-fips-pqc` | package | yes | `advertise-pqc`, `fips-profile` | — | `firmware` +`advertise-pqc` +`fips-profile`, `rsk-fido` +`advertise-pqc` +`fips-profile`, `rsk-piv` +`fips-profile` |
+| 07 | `firmware-no-touch-pqc` | package | no | `advertise-pqc`, `no-touch` | — | `firmware` +`advertise-pqc` +`no-touch`, `rsk-fido` +`advertise-pqc` |
+| 08 | `firmware-no-touch-fips` | package | no | `fips-profile`, `no-touch` | — | `firmware` +`fips-profile` +`no-touch`, `rsk-fido` +`fips-profile`, `rsk-piv` +`fips-profile` |
+| 09 | `firmware-no-touch-fips-pqc` | package | no | `advertise-pqc`, `fips-profile`, `no-touch` | — | `firmware` +`advertise-pqc` +`fips-profile` +`no-touch`, `rsk-fido` +`advertise-pqc` +`fips-profile`, `rsk-piv` +`fips-profile` |
+| 10 | `firmware-strong-pin` | package | yes | `strong-pin` | — | `firmware` +`strong-pin`, `rsk-fido` +`strong-pin` |
+| 11 | `firmware-strong-pin-pqc` | package | yes | `advertise-pqc`, `strong-pin` | — | `firmware` +`advertise-pqc` +`strong-pin`, `rsk-fido` +`advertise-pqc` +`strong-pin` |
+| 12 | `firmware-always-uv` | package | yes | `always-uv` | — | `firmware` +`always-uv`, `rsk-fido` +`always-uv` |
+| 13 | `firmware-always-uv-pqc` | package | yes | `advertise-pqc`, `always-uv` | — | `firmware` +`advertise-pqc` +`always-uv`, `rsk-fido` +`advertise-pqc` +`always-uv` |
+| 14 | `firmware-strict-up` | package | yes | `strict-up` | — | `firmware` +`strict-up`, `rsk-fido` +`strict-up` |
+| 15 | `firmware-strict-up-pqc` | package | yes | `advertise-pqc`, `strict-up` | — | `firmware` +`advertise-pqc` +`strict-up`, `rsk-fido` +`advertise-pqc` +`strict-up` |
+| 16 | `firmware-pico` | package | no | — | `vidpid=Pico` | — |
+| 17 | `firmware-display` | package | yes | `display` | `flashSize=16M`, `ledKind=none` | `firmware` +`display`, `rsk-bip39` (added), `rsk-device` +`display`, `rsk-display` (added), `rsk-slip39` (added), `rsk-ui` (added) |
+| 18 | `firmware-2mb` | package | yes | — | `flashSize=2M`, `kvmain=896K` | — |
+| 19 | `firmware-16mb` | package | yes | — | `flashSize=16M` | — |
+| 20 | `firmware-strict-config` | package | yes | `strict-config` | — | `firmware` +`strict-config`, `rsk-device` +`strict-config`, `rsk-fido` +`strict-config`, `rsk-mgmt` +`strict-config`, `rsk-otp` +`strict-config`, `rsk-vendor` +`strict-config` |
+| 21 | `keygen-bench` | feature | n/a | `keygen-bench` | — | `firmware` +`keygen-bench` |
+| 22 | `core1-stats` | feature | n/a | `core1-stats` | — | `firmware` +`core1-stats` |
+| 23 | `bench` | feature | n/a | `bench` | — | `firmware` +`bench`, `rsk-bench` (added), `rsk-fido` +`bench` |
+| 24 | `fido-conformance` | feature | n/a | `fido-conformance` | — | `firmware` +`fido-conformance`, `rsk-fido` +`fido-conformance` +`strict-up` |
+| 25 | `ea-conformance-rpid` | feature | n/a | `ea-conformance-rpid` | — | `firmware` +`ea-conformance-rpid`, `rsk-fido` +`ea-conformance-rpid` +`fido-conformance` +`strict-up` |
+| 26 | `largeblob-ext` | feature | n/a | `largeblob-ext` | — | `firmware` +`largeblob-ext`, `rsk-fido` +`largeblob-ext` |
+| 27 | `preview-sign` | feature | n/a | `preview-sign` | — | `firmware` +`preview-sign`, `rsk-fido` +`preview-sign` |
+| 28 | `abrobot-16m` | board | n/a | — | `flash.kvmain_kb=1408`, `flash.size_mb=16`, `led.kind=ws2812`, `led.max_leds=4`, `led.order=grb`, `led.pin=16`, `presence.active_high=False`, `presence.pin=23`, `presence.source=gpio`, `usb.vidpid=RSKey` | — |
+| 29 | `abrobot-4m` | board | n/a | — | `flash.kvmain_kb=1408`, `flash.size_mb=4`, `led.kind=ws2812`, `led.max_leds=4`, `led.order=grb`, `led.pin=16`, `presence.active_high=False`, `presence.pin=23`, `presence.source=gpio`, `usb.vidpid=RSKey` | — |
+| 30 | `seeed-xiao` | board | n/a | — | `flash.kvmain_kb=896`, `flash.size_mb=2`, `led.kind=ws2812`, `led.order=grb`, `led.pin=22`, `led.power_pin=23`, `presence.source=bootsel`, `usb.vidpid=RSKey`, `usr_led.active_high=False`, `usr_led.pin=25` | — |
+| 31 | `tenstar-usb` | board | n/a | — | `flash.kvmain_kb=1408`, `flash.size_mb=16`, `led.kind=ws2812`, `led.order=grb`, `led.pin=22`, `presence.source=bootsel`, `usb.vidpid=RSKey` | — |
+| 32 | `waveshare-one` | board | n/a | — | `flash.kvmain_kb=1408`, `flash.size_mb=4`, `led.kind=ws2812`, `led.order=rgb`, `led.pin=16`, `presence.source=bootsel`, `usb.vidpid=RSKey` | — |
+| 33 | `waveshare-touch-lcd` | board | n/a | — | `display.bl_pin=16`, `display.bl_pwm_channel=A`, `display.bl_pwm_slice=0`, `display.cs=13`, `display.dc=14`, `display.rst=15`, `display.spi_freq_hz=80000000`, `display.tp_rst=17`, `display.wake_active_high=False`, `display.wake_pin=25`, `flash.kvmain_kb=1408`, `flash.size_mb=16`, `led.kind=none`, `presence.source=bootsel`, `usb.vidpid=RSKey` | — |
 
 ## The matrix
 
-41 rows × 32 columns = 1312 cells. Column numbers are the table above.
+41 rows × 33 columns = 1353 cells. Column numbers are the table above.
 
-| Property | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 | 09 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `SEC-FIDO-001` | cov | oos | gap | gap | gap | oos | oos | oos | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap |
-| `SEC-FIDO-002` | cov | oos | gap | gap | gap | oos | oos | oos | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap |
-| `SEC-FIDO-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-FIDO-004` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-FIDO-005` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-FIDO-006` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-FIDO-006A` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-FIDO-006B` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-FIDO-006C` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-FIDO-007` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-FIDO-008` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-SEAM-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
-| `SEC-SEAM-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
-| `SEC-SEAM-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
-| `SEC-SEAM-006` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-STORE-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-STORE-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-STORE-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-STORE-004` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-STORE-005` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-STORE-006` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-LAT-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-LAT-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-LAT-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-LAT-004` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-POL-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-POL-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-POL-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-POL-004` | cov | oos | gap | gap | gap | oos | oos | oos | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap |
-| `SEC-POL-005` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-POL-006` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-ADM-002` | cov | oos | gap | gap | gap | oos | oos | oos | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap |
-| `SEC-ADM-004` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-DISP-001` | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | gap | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos |
-| `SEC-DISP-002` | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | gap | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos |
-| `SEC-DISP-003` | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | gap | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos |
-| `SEC-BOOT-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-BOOT-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
-| `SEC-TRANS-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
-| `SEC-TRANS-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
-| `SEC-TRANS-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
+| Property | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 | 09 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26 | 27 | 28 | 29 | 30 | 31 | 32 | 33 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `SEC-FIDO-001` | cov | gap | oos | gap | gap | gap | oos | oos | oos | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap |
+| `SEC-FIDO-002` | cov | gap | oos | gap | gap | gap | oos | oos | oos | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap |
+| `SEC-FIDO-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-FIDO-004` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-FIDO-005` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-FIDO-006` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-FIDO-006A` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-FIDO-006B` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-FIDO-006C` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-FIDO-007` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-FIDO-008` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-SEAM-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
+| `SEC-SEAM-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
+| `SEC-SEAM-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
+| `SEC-SEAM-006` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-STORE-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-STORE-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-STORE-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-STORE-004` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-STORE-005` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-STORE-006` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-LAT-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-LAT-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-LAT-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-LAT-004` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-POL-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-POL-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-POL-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-POL-004` | cov | gap | oos | gap | gap | gap | oos | oos | oos | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap |
+| `SEC-POL-005` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-POL-006` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-ADM-002` | cov | gap | oos | gap | gap | gap | oos | oos | oos | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap |
+| `SEC-ADM-004` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-DISP-001` | oos | gap | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | gap | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos |
+| `SEC-DISP-002` | oos | gap | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | gap | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos |
+| `SEC-DISP-003` | oos | gap | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | gap | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos | oos |
+| `SEC-BOOT-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-BOOT-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | gap | equ | gap |
+| `SEC-TRANS-001` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
+| `SEC-TRANS-002` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
+| `SEC-TRANS-003` | cov | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | gap | equ | gap | equ | equ | gap | gap | gap | gap | gap | gap | gap | gap | equ | equ | equ | equ | equ | equ |
 
 ## Dispositions
 
@@ -198,6 +199,7 @@ The two after it are the ledger's, and they are Stage 0's last exit bullet: who 
 
 | Configuration | `gap` rows | of which the owner crate moves | Owed by | Settled by | The question that would settle them |
 |---|---|---|---|---|---|
+| `firmware-trustzone` | 41 | 0 | contributor | `evidence` | Which existing applet and authorization properties retain their evidence under Secure IRQ worker/board scheduling, hardware-owned USB epochs, CMSE packet gateways, fatal admission fencing and banked FP policy? Real crypto, presence and reset image rows test specific behavior; they do not prove the entire P0 matrix or physical isolation. Resolve each property using its current owner and build-specific evidence before promoting this configuration's formal claims. |
 | `firmware-no-touch` | 34 | 1 | contributor | `absence` | Beyond the four presence statements: which rows depend on a presence decision only INDIRECTLY — a reset is reached through a touch, so does `SEC-FIDO-006`'s torn-reset argument still describe an image where the touch is instant? |
 | `firmware-fips` | 38 | 17 | contributor | `evidence` | `fips-profile` changes `rsk-fido` and `rsk-piv` — the PIN policy and the permitted algorithm set. `check.sh` runs the `rsk-fido` and `rsk-piv` test suites under it, so the question is narrow: does any P0-family invariant's model take the PIN floor or the algorithm set as a parameter, and if so, was it re-checked at the profile's values? |
 | `firmware-pqc` | 38 | 11 | contributor | `evidence` | `advertise-pqc` only adds ML-DSA-44 to the `getInfo` algorithm list — is that the whole delta for every P0-family row, or does the larger credential/attestation path move with it? |

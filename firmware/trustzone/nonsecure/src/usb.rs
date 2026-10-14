@@ -20,7 +20,7 @@ fn call(operation: u32, argument: u32) -> u32 {
     unsafe { rsk_tz_usb(operation, argument, core::ptr::null_mut(), 0) }
 }
 
-fn transfer(operation: u32, argument: u32, buffer: &mut [u8]) -> u32 {
+pub(crate) fn transfer(operation: u32, argument: u32, buffer: &mut [u8]) -> u32 {
     let Ok(length) = u32::try_from(buffer.len()) else {
         return INVALID;
     };

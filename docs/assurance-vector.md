@@ -128,6 +128,7 @@ The same 40 P0-family rows, counted the other way round: per column rather than 
 | Column | Kind | Published | Placed | Unplaced |
 |---|---|---|---:|---:|
 | `firmware` | package | yes | 41 | 0 |
+| `firmware-trustzone` | package | no | 0 | 41 |
 | `firmware-no-touch` | package | no | 7 | 34 |
 | `firmware-fips` | package | yes | 3 | 38 |
 | `firmware-pqc` | package | yes | 3 | 38 |
@@ -295,6 +296,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-TZ-005` | NS gateway calls pass numeric selectors, tickets and bounded buffers;  |
 | platform | `PLAT-TZ-006` | Secure startup configures each core MPU with validated non-overlapping |
 | platform | `PLAT-TZ-007` | The disposable hostile NS image may disable its own MPU and intentiona |
+| platform | `PLAT-TZ-008` | A fatal Secure exception/panic latches all gateways closed before touc |
 
 ## Review packet
 

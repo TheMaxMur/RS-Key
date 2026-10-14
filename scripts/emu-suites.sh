@@ -82,7 +82,7 @@ for t in tests/[0-9]*.py; do
     # one an earlier suite left behind.
     28_* | 76_* | 16_* | 09_*) continue ;;
     # These measure the experimental combined ELF through its inspection socket.
-    94_trustzone_* | 95_trustzone_* | 96_trustzone_*) continue ;;
+    94_trustzone_* | 95_trustzone_* | 96_trustzone_* | 97_trustzone_* | 98_trustzone_* | 99_trustzone_*) continue ;;
     *) run_suite "$t" ;;
   esac
 done

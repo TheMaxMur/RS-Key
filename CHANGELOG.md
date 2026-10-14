@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- TrustZone bcdDevice 0x0AAB: production boot keeps Secure touch, LED and display
+  tasks, including display CCID PIN entry. One generated S/NS/NSC layout follows
+  2/4/16 MiB profiles without moving KV bounds. The combined touch image includes
+  its partition table and has an offline unsigned Nix builder. Startup validates
+  NS vectors and clears register state; fatal S faults fence gateways and USB.
+
+
 - TrustZone bcdDevice 0x0AAA: Non-secure USB descriptors now use a bounded public
   Secure boot snapshot (effective VID/PID, strings, version, interface mask and
   ATR), including persisted PHY overrides. Synthetic getInfo delay and gateway

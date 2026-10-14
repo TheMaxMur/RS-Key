@@ -225,6 +225,21 @@ impl UsbCore {
             && self.usb_muxing & 0x9 == 0x9 // TO_PHY | SOFTCON
     }
 
+    pub fn fatal_fenced(&self) -> bool {
+        !self.attached()
+            && self.inte == 0
+            && (0..16).all(|ep| {
+                [true, false].into_iter().all(|input| {
+                    self.rd32(Self::buf_ctrl_off(ep, input)) & (BC_AVAILABLE | (BC_AVAILABLE << 16))
+                        == 0
+                })
+            })
+            && self
+                .dpram
+                .get(0x100..)
+                .is_some_and(|payload| payload.iter().all(|byte| *byte == 0))
+    }
+
     fn sie_status_value(&self) -> u32 {
         let mut s = self.sie_status;
         if self.vbus_detected() {

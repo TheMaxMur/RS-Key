@@ -69,8 +69,13 @@ pub fn secure() {
     configure(
         SECURE_MPU,
         &[
-            (0x1000_0000, 0x1020_0000, READ_ONLY, 0),
-            (0x1020_0000, 0x1040_0000, READ_ONLY | EXECUTE_NEVER, 0),
+            (0x1000_0000, super::NS_FLASH, READ_ONLY, 0),
+            (
+                super::NS_FLASH,
+                super::FLASH_END,
+                READ_ONLY | EXECUTE_NEVER,
+                0,
+            ),
             before,
             code,
             after,
@@ -87,7 +92,7 @@ pub fn nonsecure() {
     configure(
         NONSECURE_MPU,
         &[
-            (0x1020_0000, 0x1028_0000, READ_ONLY, 0),
+            (super::NS_FLASH, super::NS_FLASH_END, READ_ONLY, 0),
             (0x2007_0000, 0x2008_0000, EXECUTE_NEVER, 0),
             (timer, timer + 0x4000, EXECUTE_NEVER, DEVICE),
             (0xe000_0000, 0xe010_0000, EXECUTE_NEVER, DEVICE),
@@ -108,8 +113,13 @@ pub fn with_flash_code<T>(operation: impl FnOnce() -> T) -> T {
         configure(
             SECURE_MPU,
             &[
-                (0x1000_0000, 0x1020_0000, READ_ONLY, 0),
-                (0x1020_0000, 0x1040_0000, READ_ONLY | EXECUTE_NEVER, 0),
+                (0x1000_0000, super::NS_FLASH, READ_ONLY, 0),
+                (
+                    super::NS_FLASH,
+                    super::FLASH_END,
+                    READ_ONLY | EXECUTE_NEVER,
+                    0,
+                ),
                 a,
                 b,
                 c,

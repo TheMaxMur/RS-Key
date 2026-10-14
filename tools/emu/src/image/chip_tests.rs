@@ -83,3 +83,39 @@ fn panic_caller_uses_the_instruction_before_the_return_address() {
         "{stopped:?}"
     );
 }
+
+#[test]
+fn a_secure_fault_policy_runs_cleanup_before_the_terminal_range() {
+    const TERMINAL: u32 = 0x1000_0800;
+    for core in 0..2 {
+        let mut chip = chip(12);
+        chip.fault_stop = Some((TERMINAL, 8));
+        chip.hardfault = Some(CALLER_START);
+        chip.fault_wait = Some((0x1000_0900, 4));
+        chip.emu.core_mut(core).regs.set_pc(CALLER_START);
+        assert_eq!(chip.check(), None, "HardFault entry must run its cleanup");
+        chip.emu.core_mut(core).regs.set_pc(PANIC_START + 2);
+        assert_eq!(chip.check(), None, "panic entry must run its cleanup");
+        for pc in [TERMINAL, TERMINAL + 2, TERMINAL + 6] {
+            chip.emu.core_mut(core).regs.set_pc(pc);
+            assert!(
+                matches!(chip.check(), Some(Stop::Dead(_))),
+                "terminal PC {pc:#x}"
+            );
+        }
+        chip.emu.core_mut(core).regs.set_pc(0x1000_0902);
+        chip.emu.core_mut(core).regs.r[14] = (TERMINAL + 6) | 1;
+        assert!(
+            matches!(chip.check(), Some(Stop::Dead(_))),
+            "terminal WFI helper is fenced"
+        );
+        chip.emu.core_mut(core).regs.r[14] = (CALLER_START + 2) | 1;
+        assert_eq!(chip.check(), None, "an unrelated WFI is still live");
+        chip.emu.core_mut(core).regs.set_pc(TERMINAL + 8);
+        assert_eq!(
+            chip.check(),
+            None,
+            "next symbol is outside the terminal range"
+        );
+    }
+}

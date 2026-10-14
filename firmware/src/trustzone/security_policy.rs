@@ -31,6 +31,8 @@ pub fn configure_bus_masters() {
     assert_eq!(access.force_core_ns().read().0 & 3, 0);
 
     grant(access.rom(), SECURE_CORES);
+    // Fatal cleanup must reach USB from either Secure core without borrowing its driver.
+    grant(access.usbctrl(), SECURE_CORES);
     grant(access.xip_main(), SHARED_MEMORY);
     for bank in 0..8 {
         grant(access.sram(bank), SHARED_MEMORY);
@@ -41,7 +43,6 @@ pub fn configure_bus_masters() {
 
     for register in [
         access.dma(),
-        access.usbctrl(),
         access.coresight_trace(),
         access.coresight_periph(),
         access.sysinfo(),

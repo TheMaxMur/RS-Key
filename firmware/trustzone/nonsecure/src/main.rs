@@ -178,9 +178,11 @@ impl MsgHandler for CtapClient {
         r.vendor_ok.then_some(r.len)
     }
     fn can_wink(&self) -> bool {
-        false
+        session::control(abi::CAN_WINK, 0) != 0
     }
-    fn wink(&mut self) {}
+    fn wink(&mut self) {
+        session::control(abi::WINK, 0);
+    }
 }
 
 struct CcidClient;
@@ -242,10 +244,6 @@ async fn ccid_task(ccid: &'static mut Ccid<'static, Drv, CcidClient>) {
 }
 #[cortex_m_rt::entry]
 fn main() -> ! {
-    #[cfg(feature = "test-hostile-access")]
-    if probe::enabled() {
-        probe::run();
-    }
     cortex_m::interrupt::free(|_| init());
     loop {
         cortex_m::asm::wfi();
@@ -326,7 +324,14 @@ fn init() {
         } else {
             rsk_usb::ccid::ATR_RSKEY
         };
-        CCID.init_with(|| Ccid::new(&mut builder, CcidClient, atr, 0))
+        CCID.init_with(|| {
+            Ccid::new(
+                &mut builder,
+                CcidClient,
+                atr,
+                u8::from(identity.pinpad_verify()),
+            )
+        })
     });
     static USB_HANDLER: StaticCell<session::UsbHandler> = StaticCell::new();
     builder.handler(USB_HANDLER.init(session::UsbHandler {
@@ -341,6 +346,8 @@ fn init() {
     interrupt::SWI_IRQ_1.set_priority(Priority::P2);
     let spawner = EXECUTOR.start(interrupt::SWI_IRQ_1);
     spawner.spawn(usb_task(SendUsb(usb)).unwrap());
+    #[cfg(feature = "test-hostile-access")]
+    spawner.spawn(probe::after_usb().unwrap());
     if let Some(ctap) = ctap {
         spawner.spawn(ctap_task(ctap).unwrap());
     }

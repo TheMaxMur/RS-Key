@@ -336,7 +336,12 @@ fn main() {
     }
     if env::var_os("RSK_TRUSTZONE_PROTOTYPE").is_some() {
         println!("cargo:rustc-cfg=rsk_trustzone_prototype");
-        trustzone_build::configure(&out, &mut memory_x);
+        trustzone_build::configure(
+            &out,
+            &mut memory_x,
+            usable_flash(flash_size) - kvmain_len - KVCNT_LEN,
+            flash_size,
+        );
     }
     File::create(out.join("memory.x"))
         .unwrap()

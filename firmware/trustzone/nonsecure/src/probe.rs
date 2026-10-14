@@ -8,8 +8,19 @@ include!(concat!(env!("OUT_DIR"), "/probe_address.rs"));
 #[unsafe(no_mangle)]
 static RSK_NS_PROBE_PROGRESS: AtomicU32 = AtomicU32::new(0);
 
-pub fn enabled() -> bool {
-    RSK_NS_PROBE_PROGRESS.load(Ordering::Acquire) == 0
+#[embassy_executor::task]
+pub async fn after_usb() {
+    use rsk_usb::usb_abi;
+    let mut marker = [0xa5; 8];
+    loop {
+        let epoch = super::usb::epoch();
+        let operation = usb_abi::EP_WRITE | (0x81 << usb_abi::ADDRESS_SHIFT);
+        if super::usb::transfer(operation, epoch, &mut marker) == 0 {
+            break;
+        }
+        embassy_time::Timer::after_millis(1).await;
+    }
+    run();
 }
 
 pub fn run() -> ! {

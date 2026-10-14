@@ -12,20 +12,54 @@ fn run(command: &mut Command) {
     );
 }
 
-pub fn configure(out: &Path, memory: &mut String) {
-    assert_eq!(env::var("FLASH_SIZE").unwrap_or_else(|_| "4M".into()), "4M");
-    *memory = memory.replace("LENGTH = 2560K", "LENGTH = 2048K");
-    *memory = memory.replace("LENGTH = 512K", "LENGTH = 448K");
-    *memory = memory.replace(
-        "    KVMAIN :",
-        "    NSFLASH : ORIGIN = 0x10200000, LENGTH = 512K\n    KVMAIN :",
-    );
+pub fn configure(out: &Path, memory: &mut String, code_size: u32, flash_size: u32) {
+    const FLASH_BASE: u32 = 0x1000_0000;
+    const NS_BYTES: u32 = 64 * 1024;
+    const NSC_BYTES: u32 = 4096;
+    let ns_start = FLASH_BASE + code_size - NS_BYTES;
+    let ns_end = ns_start + NS_BYTES;
+    let nsc_start = ns_start - NSC_BYTES;
+    let begin = memory.find("MEMORY {").unwrap();
+    let end = begin + memory[begin..].find('}').unwrap();
+    let block = memory[begin..=end]
+        .replace(
+            &format!(
+                "FLASH  : ORIGIN = 0x10000000, LENGTH = {}K",
+                code_size / 1024
+            ),
+            &format!(
+                "FLASH  : ORIGIN = 0x10000000, LENGTH = {}K",
+                (code_size - NS_BYTES) / 1024
+            ),
+        )
+        .replace(
+            "RAM    : ORIGIN = 0x20000000, LENGTH = 512K",
+            "RAM    : ORIGIN = 0x20000000, LENGTH = 448K",
+        )
+        .replace(
+            "    KVMAIN :",
+            &format!("    NSFLASH : ORIGIN = {ns_start:#010x}, LENGTH = 64K\n    KVMAIN :"),
+        );
+    memory.replace_range(begin..=end, &block);
+    let ns_memory = env::var("RSK_TZ_NS_MEMORY").expect("RSK_TZ_NS_MEMORY");
+    std::fs::write(&ns_memory, format!(
+        "/* SPDX-License-Identifier: AGPL-3.0-only */\n/* Copyright (C) 2026 RS-Key contributors */\nMEMORY {{\n FLASH : ORIGIN = {ns_start:#010x}, LENGTH = 64K\n RAM : ORIGIN = 0x20070000, LENGTH = 64K\n}}\n"
+    )).unwrap();
+    for (name, value) in [
+        ("PK_TZ_NS_FLASH", ns_start),
+        ("PK_TZ_NS_FLASH_END", ns_end),
+        ("PK_TZ_NSC_FLASH", nsc_start),
+        ("PK_TZ_FLASH_END", FLASH_BASE + flash_size),
+    ] {
+        println!("cargo:rustc-env={name}={value}");
+    }
+    println!("cargo:rerun-if-env-changed=RSK_TZ_NS_MEMORY");
     memory.push_str(
         "\nSECTIONS { .nonsecure : { KEEP(*(.nonsecure)) } > NSFLASH } INSERT AFTER .end_block;\n",
     );
-    memory.push_str(
-        "ASSERT(LOADADDR(.data) + SIZEOF(.data) <= 0x101ff000, \"Secure image overlaps NSC\")\n",
-    );
+    memory.push_str(&format!(
+        "ASSERT(LOADADDR(.data) + SIZEOF(.data) <= {nsc_start:#010x}, \"Secure image overlaps NSC\")\n",
+    ));
     memory.push_str(
         "SECTIONS {\n\
          .rsk_exec : ALIGN(32) {\n\
@@ -66,7 +100,7 @@ pub fn configure(out: &Path, memory: &mut String) {
     )
     .unwrap();
     println!("cargo:rustc-link-arg=--out-implib={import}");
-    println!("cargo:rustc-link-arg=--section-start=.gnu.sgstubs=0x101ff000");
+    println!("cargo:rustc-link-arg=--section-start=.gnu.sgstubs={nsc_start:#010x}");
     if let Ok(image) = env::var("RSK_TZ_NS_IMAGE") {
         let embedded = out.join("nonsecure.o");
         run(Command::new("arm-none-eabi-objcopy")
@@ -77,6 +111,8 @@ pub fn configure(out: &Path, memory: &mut String) {
                 "elf32-littlearm",
                 "-B",
                 "arm",
+                // Binary symbols encode the random Nix build directory.
+                "--strip-all",
                 "--rename-section",
                 ".data=.nonsecure,alloc,load,readonly,data,contents",
             ])

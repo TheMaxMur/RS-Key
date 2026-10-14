@@ -349,6 +349,9 @@ pub unsafe extern "C" fn rsk_tz_submit_impl(
     length: u32,
 ) -> u32 {
     use rsk_usb::worker_abi as abi;
+    if crate::trustzone::fault::failed() {
+        return abi::INVALID;
+    }
     let Ok(length) = usize::try_from(length) else {
         return abi::INVALID;
     };
@@ -393,6 +396,9 @@ pub unsafe extern "C" fn rsk_tz_submit_impl(
 #[cfg(rsk_trustzone_prototype)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rsk_tz_poll_impl(ticket: u32, response: *mut u8, capacity: u32) -> u32 {
+    if crate::trustzone::fault::failed() {
+        return rsk_usb::worker_abi::ABANDONED;
+    }
     crate::trustzone::usb::serialized(|| {
         use rsk_usb::worker_abi as abi;
         match session(|state| state.poll(ticket)) {
@@ -430,6 +436,9 @@ pub unsafe extern "C" fn rsk_tz_poll_impl(ticket: u32, response: *mut u8, capaci
 #[unsafe(no_mangle)]
 pub extern "C" fn rsk_tz_control_impl(action: u32, ticket: u32) -> u32 {
     use rsk_usb::worker_abi as abi;
+    if crate::trustzone::fault::failed() {
+        return abi::INVALID;
+    }
     match action {
         abi::ABANDON => {
             session(|state| state.abandon(ticket));
@@ -439,6 +448,12 @@ pub extern "C" fn rsk_tz_control_impl(action: u32, ticket: u32) -> u32 {
         abi::RESET_SESSION => {
             session(|state| state.reset());
             REQ.signal(());
+            0
+        }
+        abi::CAN_WINK => u32::from(!cfg!(led_kind = "none")),
+        abi::WINK => {
+            #[cfg(not(led_kind = "none"))]
+            crate::led::wink();
             0
         }
         abi::UP_PENDING => u32::from(crate::presence::up_pending()),

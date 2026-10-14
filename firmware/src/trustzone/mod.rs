@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
+pub mod fault;
 pub mod mpu;
 mod security_policy;
 pub mod usb;
@@ -40,9 +41,15 @@ pub extern "C" fn rsk_tz_writable_impl(ptr: *mut u8, len: u32) -> u32 {
     )
 }
 
-const NS_FLASH: u32 = 0x1020_0000;
+pub const NS_FLASH: u32 = crate::env_u32(env!("PK_TZ_NS_FLASH"));
+pub const NS_FLASH_END: u32 = crate::env_u32(env!("PK_TZ_NS_FLASH_END"));
+pub const FLASH_END: u32 = crate::env_u32(env!("PK_TZ_FLASH_END"));
 const NS_RAM: u32 = 0x2007_0000;
-const NSC_FLASH: u32 = 0x101f_f000;
+const NSC_FLASH: u32 = crate::env_u32(env!("PK_TZ_NSC_FLASH"));
+unsafe extern "C" {
+    fn rsk_tz_enter_ns(entry: u32) -> !;
+}
+
 const NS_RAM_END: usize = 0x2008_0000;
 
 fn data_span(address: usize, length: u32) -> bool {
@@ -57,20 +64,32 @@ fn data_span(address: usize, length: u32) -> bool {
 }
 static EXECUTOR: InterruptExecutor = InterruptExecutor::new();
 
-struct SendWorker(&'static mut crate::worker::Worker<'static>);
-// SAFETY: ownership moves once to core0's Secure executor; boot no longer accesses its RefCells.
-unsafe impl Send for SendWorker {}
+static READY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 #[embassy_executor::task]
-async fn run(worker: SendWorker) {
-    worker.0.run().await;
+async fn boot() {
+    // SAFETY: this task is polled only by Embassy's Secure interrupt executor.
+    let spawner = unsafe { embassy_executor::Spawner::for_current_executor().await };
+    spawner.spawn(crate::main(spawner).unwrap());
 }
 
-pub fn start_worker(worker: &'static mut crate::worker::Worker<'static>) {
+pub fn start() {
+    interrupt::DMA_IRQ_0.set_priority(Priority::P1);
+    interrupt::PIO0_IRQ_0.set_priority(Priority::P1);
     embassy_rp::interrupt::SWI_IRQ_0.set_priority(Priority::P3);
     EXECUTOR
         .start(embassy_rp::interrupt::SWI_IRQ_0)
-        .spawn(run(SendWorker(worker)).unwrap());
+        .spawn(boot().unwrap());
+}
+
+pub fn idle() -> ! {
+    loop {
+        if READY.load(core::sync::atomic::Ordering::Acquire) {
+            // SAFETY: Secure boot has returned its initialization frame and installed every owner.
+            unsafe { launch_nonsecure() }
+        }
+        cortex_m::asm::wfi();
+    }
 }
 
 #[embassy_rp::interrupt]
@@ -83,8 +102,7 @@ fn SWI_IRQ_0() {
 pub async fn launch() {
     // Reclaim main's initialization frame before the worker can do crypto.
     embassy_time::Timer::after_millis(1).await;
-    // SAFETY: runs once after storage and the Secure worker are initialized.
-    unsafe { launch_nonsecure() }
+    READY.store(true, core::sync::atomic::Ordering::Release);
 }
 
 unsafe fn launch_nonsecure() -> ! {
@@ -106,7 +124,7 @@ unsafe fn launch_nonsecure() -> ! {
         }
     }
     for (index, base, limit, attribute) in [
-        (0, NS_FLASH, 0x1027_ffff, SauRegionAttribute::NonSecure),
+        (0, NS_FLASH, NS_FLASH_END - 1, SauRegionAttribute::NonSecure),
         (1, NS_RAM, 0x2007_ffff, SauRegionAttribute::NonSecure),
         (
             2,
@@ -132,8 +150,12 @@ unsafe fn launch_nonsecure() -> ! {
     mpu::nonsecure();
     // SAFETY: ITNS, VTOR_NS and MSP_NS are the architectural Non-secure launch controls.
     unsafe {
+        let nsacr = 0xe000_ed8c as *mut u32;
+        nsacr.write_volatile((1 << 10) | (1 << 11));
+        let fpccr = 0xe000_ef34 as *mut u32;
+        fpccr.write_volatile(fpccr.read_volatile() | (1 << 26) | (1 << 27) | (1 << 28) | (1 << 29));
         let aircr = 0xe000_ed0c as *mut u32;
-        aircr.write_volatile(0x05fa_0000 | ((aircr.read_volatile() & 0x0000_bfff) | (1 << 3)));
+        aircr.write_volatile(0x05fa_0000 | ((aircr.read_volatile() & 0x0000_9fff) | (1 << 3)));
         for word in 0..2 {
             (0xe000_e380 as *mut u32).add(word).write_volatile(0);
         }
@@ -149,11 +171,33 @@ unsafe fn launch_nonsecure() -> ! {
         crate::usb_attach::mark();
         let vectors = NS_FLASH as *const u32;
         (0xe002_ed08 as *mut u32).write_volatile(NS_FLASH);
-        cortex_m::register::msp::write_ns(vectors.read_volatile());
+        let stack = vectors.read_volatile();
+        let entry = vectors.add(1).read_volatile();
+        assert!(stack > NS_RAM && stack <= NS_RAM_END as u32 && stack.is_multiple_of(8));
+        assert!(entry & 1 == 1 && (NS_FLASH..NS_FLASH_END).contains(&entry));
+        core::arch::asm!(
+            "msr CONTROL_NS, {zero}", "msr PRIMASK_NS, {zero}",
+            "msr BASEPRI_NS, {zero}", "msr FAULTMASK_NS, {zero}",
+            zero = in(reg) 0u32, options(nostack, preserves_flags),
+        );
+        cortex_m::register::msp::write_ns(stack);
         core::arch::asm!("msr MSPLIM_NS, {floor}", floor = in(reg) NS_RAM, options(nostack, preserves_flags));
-        cortex_m::asm::bx_ns(vectors.add(1).read_volatile() & !1);
+        rsk_tz_enter_ns(entry & !1);
     }
-    loop {
-        cortex_m::asm::wfe();
-    }
+}
+
+#[cfg(not(led_kind = "none"))]
+static LED_EXECUTOR: InterruptExecutor = InterruptExecutor::new();
+
+#[cfg(not(led_kind = "none"))]
+pub fn led_spawner() -> embassy_executor::SendSpawner {
+    interrupt::SWI_IRQ_3.set_priority(Priority::P2);
+    LED_EXECUTOR.start(interrupt::SWI_IRQ_3)
+}
+
+#[cfg(not(led_kind = "none"))]
+#[embassy_rp::interrupt]
+fn SWI_IRQ_3() {
+    // SAFETY: this interrupt owns only the Secure LED executor installed at boot.
+    unsafe { LED_EXECUTOR.on_interrupt() }
 }
