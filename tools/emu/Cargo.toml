@@ -76,7 +76,7 @@ embassy-usb = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 # runs the two Cortex-M33 cores and the bus; the fork adds the MMIO mount seam the
 # chip models plug into and the core fixes the bootrom needs. The pinned fork
 # includes CPU and bus isolation checks; provenance is in docs/trustzone.md.
-rp2350-emu = { git = "https://github.com/TheMaxMur/picoem", rev = "3299d7f12f8c4ea08e68bdce003658873c96ea49" }
+rp2350-emu = { git = "https://github.com/TheMaxMur/picoem", rev = "e404dfe97c1e0c7c1e23ff8cb038ec36132ac277" }
 # The chip's SHA-256 block runs the bootrom's signature check through the bare
 # compression function; the crate is already in the graph, with this feature.
 sha2 = { version = "0.10", features = ["compress"] }

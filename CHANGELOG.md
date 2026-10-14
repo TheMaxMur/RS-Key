@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Image emulation: preserve outer lazy-FPU state across a nested basic IRQ
+  return; report invalid EXC_RETURN in CFSR.INVPC, without falsely setting
+  UNDEFINSTR for every UsageFault.
+
 - TrustZone prototype USB-wide reset drops every applet's volatile authorization,
   selection, chained/held replies and queued OTP output; preserves the FIDO
   per-boot PIN failure budget. ICC reset remains transport-specific.

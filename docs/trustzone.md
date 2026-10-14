@@ -623,3 +623,19 @@ Queued OTP characters are fenced immediately when the S session is revoked,
 including while synchronous crypto finishes or reset cleanup is pending. The
 queue itself is wiped before admission reopens; a second reset during scrubbing
 keeps both admission and auxiliary output closed until its cleanup completes.
+
+
+The Secure USB front-end exercises a basic IRQ nested over an outstanding lazy
+FPU reservation. The model previously rejected that valid return, preventing
+USB enumeration. Arm DDI0553 E2.1.231 preserves the reservation on a basic
+return; FPCAR does not authenticate a stack frame. The model now follows that
+ordering, retains the Secure integrity-signature check (including FType), and
+reports CFSR.INVPC at bit 18. UNDEFINSTR is set by the undefined decoders,
+rather than by delivery of every UsageFault.
+
+Two imported tests assumed that FPCAR/LSPACT must authenticate every return.
+Their expectations were replaced with populated-frame and independent-lazy-state
+cases from [Arm's exception return and PopStack specification](https://documentation-service.arm.com/static/5f8f00eaf86e16515cdbe632).
+The new nested-IRQ test fails on the previous guard. Native all-feature tests
+pass 3799 cases, with 27 existing ignores; clippy passes. This fixes that
+scheduler path and does not claim complete banked-FPU or Arm instruction fidelity.
