@@ -175,3 +175,18 @@ crates/rsk-openpgp/src/origin.rs: replace < with <= in of
 [short-dek-identity] A 0- or 1-byte DEK copy reaches EXEC_ERROR either from the format check or from the empty-blob decrypt, with no write and no access.
 crates/rsk-openpgp/src/pin.rs: replace < with == in migrate_pin_kbase
 crates/rsk-openpgp/src/pin.rs: replace < with <= in migrate_pin_kbase
+
+[verify-namespace-identity] `0x1000` has bit 12 set and `p2` is a u8, so OR and XOR agree for every VERIFY mode.
+crates/rsk-openpgp/src/pin.rs: replace | with ^ in pw_fid
+
+[empty-default-identity] An absent or empty record leaves the length byte zero, below every reference minimum, so the early guard cannot change the answer.
+crates/rsk-openpgp/src/pin.rs: replace match guard n >= 1 with true in offered_len_impossible
+
+[zero-padded-retry-identity] At idx == stored length the uncovered counter byte is zero, so the padded index and the else arm report the same retries.
+crates/rsk-openpgp/src/pin.rs: replace < with <= in verify
+
+[empty-change-identity] An absent or empty record yields old_len 0, and check_pin over an empty slice refuses REFERENCE_NOT_FOUND before any write.
+crates/rsk-openpgp/src/pin.rs: replace match guard n >= 1 with true in change_pin
+
+[short-counter-identity] At n == PW3_RETRY_IDX the counter byte was not copied and reads zero, so the widened condition does not change the decision.
+crates/rsk-openpgp/src/terminate.rs: replace > with >= in terminate_df

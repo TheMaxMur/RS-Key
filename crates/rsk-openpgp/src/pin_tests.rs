@@ -129,6 +129,28 @@ fn pw2_status_query_reports_pw1_retries() {
 }
 
 #[test]
+fn a_zero_length_verifier_is_absent_even_for_a_status_query() {
+    // The status-query arm returns retries, not REFERENCE_NOT_FOUND, for any
+    // record the guard lets through — a present byte that is not a length must
+    // not turn an absent reference into a retry report.
+    let mut fs = setup();
+    fs.put(EF_PW1, &[0x00]).unwrap();
+    let mut sess = Session::new();
+    assert_eq!(
+        verify(
+            &dev(),
+            &mut fs,
+            &mut sess,
+            &mut CountRng(0),
+            0x00,
+            PW1_MODE81,
+            &[]
+        ),
+        Sw::REFERENCE_NOT_FOUND
+    );
+}
+
+#[test]
 fn pin_and_dek_migrate_to_otp_kbase_at_verify() {
     // State written by a pre-OTP firmware…
     let (mut fs, medium) = setup_cut();
