@@ -40,7 +40,12 @@ use rsk_device::presence::{Board, Outcome};
 use rsk_device::presence::Arbiter;
 
 #[cfg_attr(
-    all(rsk_trustzone_prototype, feature = "no-touch"),
+    all(
+        rsk_trustzone_prototype,
+        feature = "no-touch",
+        led_kind = "none",
+        not(feature = "display")
+    ),
     expect(
         unused_imports,
         reason = "the prototype USB handler lives in Non-secure"

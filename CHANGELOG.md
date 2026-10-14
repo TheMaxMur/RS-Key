@@ -38,6 +38,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- TrustZone no-touch builds keep the timeout-import lint expectation only for headless, non-display configurations; builds with LED services now pass strict clippy (`bcdDevice 0x0AAD`, no runtime behavior change).
+
 - TrustZone S/NS builds share the root Cargo workspace, dependency pins and lockfile; NS remains excluded from host-only rows and is compiled by the device gate (`bcdDevice 0x0AAC`).
 
 - TrustZone bcdDevice 0x0AAB: production boot keeps Secure touch, LED and display

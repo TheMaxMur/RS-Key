@@ -5,7 +5,7 @@
 
 This chapter owns the TrustZone design, build instructions, measurements and
 remaining production work. The ordinary firmware has no Secure/Non-secure split.
-The experimental build at `bcdDevice 0x0AAC` runs USB classes and transports in
+The experimental build at `bcdDevice 0x0AAD` runs USB classes and transports in
 Non-secure (NS), with the controller, lifecycle observer, worker and applets in
 Secure (S). Secure revocation no longer depends on NS reset callbacks. The
 resource policy, Secure board services and combined offline build are implemented
@@ -962,3 +962,11 @@ Use the combined build script or Nix package. The script compiles each package
 separately in its own target directory, preserving the two worlds' dependency
 features and link inputs. Bare Cargo builds retain the original default members;
 NS needs the Secure-generated memory layout and CMSE import library.
+
+
+## No-touch build checks at bcdDevice 0x0AAD
+
+The timeout constant is used by Secure LED setup and the trusted display. Its
+unused-import expectation now applies only to the headless, non-display
+no-touch build. The LED-enabled hardware configuration exposed an unfulfilled
+expectation under strict clippy; this build correction changes no runtime policy.

@@ -32,7 +32,7 @@ assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	662-662	let mut config 
 assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1195-1195	_ => gpio_pin!(p.PIN_29),	_ => gpio_pin!(p.PIN_29),
 assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1203-1203	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());
 assurance/board/PLAT-TIMER-002.toml	firmware/src/main.rs	1257-1257	_ => ws2812_pin!(p.PIN_29),	_ => ws2812_pin!(p.PIN_29),
-assurance/board/PLAT-TIMER-002.toml	firmware/src/presence.rs	255-258	#[cfg(feature = "no-touch")]	}
+assurance/board/PLAT-TIMER-002.toml	firmware/src/presence.rs	260-263	#[cfg(feature = "no-touch")]	}
 assurance/board/PLAT-TIMER-002.toml	firmware/src/usb_attach.rs	34-36	/// Milliseconds since the attach — the clock the FIDO layer gets as `Ctx::now_ms`,	pub fn elapsed_ms() -> u64 {
 assurance/board/PLAT-TIMER-002.toml	firmware/src/worker.rs	319-319	const BTN_POLL_MS: u64 = 16;	const BTN_POLL_MS: u64 = 16;
 assurance/board/PLAT-TIMER-002.toml	firmware/src/worker.rs	700-700	crate::usb_attach::elapsed_ms(),	crate::usb_attach::elapsed_ms(),
@@ -75,9 +75,9 @@ assurance/bundle/SEC-FIDO-002.toml	crates/rsk-display/src/presence.rs	41-44	let 
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-usb/src/ctaphid.rs	100-104	pub fn is_cancel_frame(frame: &[u8; HID_RPT_SIZE], n: usize, cid: u32) -> bool {	}
 assurance/bundle/SEC-FIDO-002.toml	crates/rsk-usb/src/ctaphid.rs	956-958	&& epoch == H::session_epoch()	{
 assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	19-19	//! Kani harnesses for `NoCrossTransportTouchConsumption`. What stays here is the	//! Kani harnesses for `NoCrossTransportTouchConsumption`. What stays here is the
-assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	106-108	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	pub struct ButtonPresence {
-assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	220-276	pub fn poll_pressed(&mut self) -> bool {	}
-assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	281-287	#[cfg(feature = "display")]	ARBITER.set_cancel_requested(requested);
+assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	111-113	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	pub struct ButtonPresence {
+assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	225-281	pub fn poll_pressed(&mut self) -> bool {	}
+assurance/bundle/SEC-FIDO-002.toml	firmware/src/presence.rs	286-292	#[cfg(feature = "display")]	ARBITER.set_cancel_requested(requested);
 assurance/bundle/SEC-FIDO-002.toml	firmware/src/worker.rs	656-656	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
 assurance/bundle/SEC-FIDO-002.toml	formal/gen-configs.sh	105-107	ALL_INV=(NoAuthorizationBypass NoCrossTransportTouchConsumption	NoUnmanageableCredential ResetNeverWeakensSurvivingState)
 assurance/bundle/SEC-FIDO-002.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
@@ -561,11 +561,11 @@ assurance/platform.toml	firmware/src/main.rs	728-728	fs.scan(); // recover dynam
 assurance/platform.toml	firmware/src/main.rs	1195-1195	_ => gpio_pin!(p.PIN_29),	_ => gpio_pin!(p.PIN_29),
 assurance/platform.toml	firmware/src/main.rs	1203-1203	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());	let rg = Pwm::new_output_ab(p.PWM_SLICE1, p.PIN_18, p.PIN_19, led::pimoroni_cfg());
 assurance/platform.toml	firmware/src/main.rs	1257-1257	_ => ws2812_pin!(p.PIN_29),	_ => ws2812_pin!(p.PIN_29),
-assurance/platform.toml	firmware/src/presence.rs	106-108	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	pub struct ButtonPresence {
-assurance/platform.toml	firmware/src/presence.rs	155-155	const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);	const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);
-assurance/platform.toml	firmware/src/presence.rs	181-184	#[cfg(not(feature = "display"))]	pub type Presence = crate::display::TouchPresence;
-assurance/platform.toml	firmware/src/presence.rs	220-276	pub fn poll_pressed(&mut self) -> bool {	}
-assurance/platform.toml	firmware/src/presence.rs	287-287	ARBITER.set_cancel_requested(requested);	ARBITER.set_cancel_requested(requested);
+assurance/platform.toml	firmware/src/presence.rs	111-113	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	pub struct ButtonPresence {
+assurance/platform.toml	firmware/src/presence.rs	160-160	const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);	const _: () = assert!(embassy_time::TICK_HZ == 1_000_000);
+assurance/platform.toml	firmware/src/presence.rs	186-189	#[cfg(not(feature = "display"))]	pub type Presence = crate::display::TouchPresence;
+assurance/platform.toml	firmware/src/presence.rs	225-281	pub fn poll_pressed(&mut self) -> bool {	}
+assurance/platform.toml	firmware/src/presence.rs	292-292	ARBITER.set_cancel_requested(requested);	ARBITER.set_cancel_requested(requested);
 assurance/platform.toml	firmware/src/usb_attach.rs	8-8	//! before the bus pull-up goes up: the TRNG seed (~1.5 s), the seal migrations, the	//! before the bus pull-up goes up: the TRNG seed (~1.5 s), the seal migrations, the
 assurance/platform.toml	firmware/src/worker.rs	319-319	const BTN_POLL_MS: u64 = 16;	const BTN_POLL_MS: u64 = 16;
 assurance/platform.toml	firmware/src/worker.rs	656-656	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
@@ -841,7 +841,7 @@ formal/README.md	firmware/src/main.rs	745-782	let usb_itf = if storage_ready {	/
 formal/README.md	firmware/src/main.rs	781-781	// to read it, and this block is that place: the read dies at its closing brace,	// to read it, and this block is that place: the read dies at its closing brace,
 formal/README.md	firmware/src/main.rs	786-802	PRE_OTP_OTP, PRE_OTP_PIV, PRE_OTP_STORAGE,	// A fused key the boot cannot read is no blank page: each step in the else
 formal/README.md	firmware/src/pin_lock.rs	18-21	//! a real power cycle clears it. The *whole* lock moves: carrying the engaged flag	//!
-formal/README.md	firmware/src/presence.rs	106-113	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
+formal/README.md	firmware/src/presence.rs	111-118	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
 formal/README.md	firmware/src/worker.rs	626-652	/// One transport (CTAPHID/CCID) request: run the synchronous dispatch and	let mut ex = EXCHANGE.lock().await;
 formal/README.md	firmware/src/worker.rs	656-656	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
 formal/README.md	firmware/src/worker.rs	764-766	// Nothing is in flight again: a wait started from here on is an on-panel	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
@@ -1086,7 +1086,7 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	1056-1062	/// `EF_BA
 formal/RSKeySecurityState.tla	crates/rsk-fs/src/fs.rs	428-431	/// A FID can be yielded MORE THAN ONCE — the log-structured backend walks	/// below does).
 formal/RSKeySecurityState.tla	crates/rsk-usb/src/ctaphid.rs	984-986	if matches!(read, Ok(k) if is_cancel_frame(watch.expose(), k, cid)) {	cancelled |= monitor;
 formal/RSKeySecurityState.tla	firmware/src/main.rs	835-835	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
-formal/RSKeySecurityState.tla	firmware/src/presence.rs	106-113	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
+formal/RSKeySecurityState.tla	firmware/src/presence.rs	111-118	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	656-656	crate::presence::set_wait_scope(match ex.kind {	crate::presence::set_wait_scope(match ex.kind {
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	764-766	// Nothing is in flight again: a wait started from here on is an on-panel	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);
 formal/RSKeySecurityState.tla	firmware/src/worker.rs	766-766	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);	crate::presence::set_wait_scope(crate::presence::SCOPE_NONE);

@@ -1399,7 +1399,7 @@ obligation that says so where a gate can read it. The
 display **build** is not modelled either — `presence.shows_confirm()` stays
 FALSE, so the reset window still applies where a display build bypasses it
 (`reset.rs:37`), and `ButtonWait`'s `spent` latch stays where that build
-compiles it out (`firmware/src/presence.rs:106-113`) in favour of the panel's own
+compiles it out (`firmware/src/presence.rs:111-118`) in favour of the panel's own
 release debounce. And `OpenWaitFor` now stands for **two** different stale-cancel
 drops — `ButtonWait::wait`'s and the display's own
 (`crates/rsk-display/src/presence.rs:41-44`) — so

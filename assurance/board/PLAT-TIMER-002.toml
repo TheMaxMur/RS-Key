@@ -12,7 +12,7 @@
 # THE FIRST REWRITE CARRIED THE SAME DEFECT ONE NOTCH SMALLER, and the correction
 # is what the run below is built out of. It asked for a NO-TOUCH image "because
 # the run has to hold a presence wait open for the keepalives" -- and a no-touch
-# build has no presence wait at all: firmware/src/presence.rs:255-258 is
+# build has no presence wait at all: firmware/src/presence.rs:260-263 is
 # `#[cfg(feature = "no-touch")] { rsk_sdk::Presence::Confirmed }`, which is what
 # PLAT-BUILD-004 already says in its own words. The configuration deleted the
 # instrument the method named, so PASS was unreachable and the INCONCLUSIVE arm

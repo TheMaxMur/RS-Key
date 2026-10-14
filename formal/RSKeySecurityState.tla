@@ -472,7 +472,7 @@ TouchTimeout ==
 \*
 \* NARROWER than a display build in one way, stated because it is the risk
 \* direction: that build compiles ButtonWait out entirely
-\* (firmware/src/presence.rs:106-113) and the panel's own release debounce takes
+\* (firmware/src/presence.rs:111-118) and the panel's own release debounce takes
 \* over the `spent` latch, so the model keeps a defence the display build
 \* implements somewhere else rather than one it does not have.
 \* THE FOURTH SITE OF THE SAME RULE, and it was the one still written as a bare
