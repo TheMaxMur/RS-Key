@@ -2629,3 +2629,15 @@ failure; the four widened read/seal scratches and the two short-DEK comparisons
 survive as identities. Logs, exact diffs and the source binding are in
 `target/mutants/openpgp-controls/`; these are host `aarch64-apple-darwin` runs,
 not the 4 GiB Linux cgroup, and establish no resource-limit or silicon claim.
+
+The later chunks added a second OpenPGP slice: five more host tests pin eight
+occurrences, and five short-record or namespace comparisons are identities.
+`pso_tests.rs` checks an exact-size AES-PSO buffer in both directions, an absent
+or empty algorithm attribute (the documented default), the BER long-form ECDH
+template whose outer length moves the walker past the single-byte case, and a
+legacy blob with unusable primes, which must keep `crt_from_plain`'s own error
+instead of falling through to the parsing loader. A present `[0x00]` verifier
+must stay absent for a status query rather than report retries. The
+40-occurrence run, its source binding and the per-mutant logs are in
+`target/mutants/openpgp-controls2/`; the accepted identities are in
+`scripts/mutants-accepted.txt`.
