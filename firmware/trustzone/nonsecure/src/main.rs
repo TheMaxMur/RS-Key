@@ -12,8 +12,7 @@
     clippy::cast_possible_truncation
 )]
 
-#[path = "../../../src/trustzone/abi.rs"]
-mod abi;
+use rsk_usb::worker_abi as abi;
 mod keyboard;
 mod session;
 include!(concat!(env!("OUT_DIR"), "/version.rs"));

@@ -347,7 +347,7 @@ warnings` plus the fuzz targets ([testing.md](testing.md)) keep it that way.
 ## Experimental TrustZone transport build
 
 These sites are compiled only by the transport prototype, separately from the
-ordinary runtime count above. See [its build and scope](../firmware/trustzone/README.md).
+ordinary runtime count above. See [its build and scope](trustzone.md#prototype-build-and-measurements).
 
 - `firmware/src/trustzone/mod.rs`: transfer the worker to its sole Secure IRQ
   executor (`SendWorker`); service that executor; configure SAU, ITNS,

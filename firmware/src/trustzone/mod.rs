@@ -6,8 +6,6 @@ use embassy_executor::InterruptExecutor;
 use embassy_rp::interrupt;
 use embassy_rp::interrupt::{InterruptExt, Priority};
 
-pub mod abi;
-
 #[unsafe(no_mangle)]
 pub extern "C" fn rsk_tz_readable_impl(ptr: *const u8, len: u32) -> u32 {
     use cortex_m::cmse::{AccessType, TestTarget};

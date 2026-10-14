@@ -895,7 +895,7 @@ async fn main(spawner: Spawner) {
 
     #[cfg(rsk_trustzone_prototype)]
     let _transport_identity = (usb_pid, phy_product, phy_manufacturer, usb_itf);
-    let device_release: u16 = 0x0AA5;
+    let device_release: u16 = 0x0AA6;
     #[cfg(rsk_trustzone_prototype)]
     let _ = device_release;
     let openpgp_mfr = openpgp_mfr_for(usb_vid);

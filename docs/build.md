@@ -331,8 +331,6 @@ flowchart TD
 
 ## TrustZone transport prototype
 
-The separate [TrustZone prototype](../firmware/trustzone/README.md) keeps the
-worker and applets Secure while USB transports run Non-secure. Build it with
-`nix develop -c bash firmware/trustzone/build.sh`. It currently supports a
-4 MiB no-touch test image without display; ordinary firmware builds do not
-enable it. The image-level keepalive test uses an explicit emulator socket.
+The [TrustZone page](trustzone.md#prototype-build-and-measurements) contains the
+prototype's build commands, scope and recorded checks. Ordinary firmware builds
+do not enable the experimental split.

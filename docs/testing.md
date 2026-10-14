@@ -2005,39 +2005,7 @@ in progress. These tests preserve firmware behavior and the existing limits.
 
 ## TrustZone prototype keepalive
 
-The [transport prototype](../firmware/trustzone/README.md) uses the image backend
-to check CTAPHID keepalive while Secure executes a three-second synchronous
-SHA-256 workload, then calls the existing getInfo handler. Run
-`python tests/94_trustzone_keepalive.py --port 7899 --inspect-port 7901` inside
-`nix develop`, against that image's explicit HID and inspection sockets. The
-test checks image-clock gaps and reports wall time separately; a busy host can
-slow interpretation without starving the firmware's USB executor. It requires
-a successful framed getInfo response and at least ten PROCESSING keepalives.
-The recorded final-image runs each produced 32; delaying keepalive until after
-the operation completed made the same test fail with zero. Hardware timing and
-production isolation are outside this experiment's result.
-
-For real operations, use a fresh image instance and run
-`python tests/95_trustzone_crypto_keepalive.py --fido-port 7899 --ccid-port 7900 --inspect-port 7901`.
-It verifies PIV RSA-2048 key generation and three signatures, plus registration
-and three assertions for each ML-DSA set (44/65/87). RSA uses CCID time extensions;
-ML-DSA uses CTAPHID PROCESSING keepalives. Assertions verify with both OpenSSL
-and dilithium-py; tampered signatures fail both verifiers. The image inspection
-commands `transport-begin`/`transport-end` measure USB completion times, so
-socket scheduling and idle catch-up cannot inflate the final gap. This test
-does not call the synthetic getInfo workload and requires explicit loopback
-ports; the ordinary applet-backend suite sweep excludes the TrustZone image tests.
-The recorded real-operation maxima were 200 ms for CCID and 110 ms for CTAPHID.
-
-For cancellation and session cleanup, start a fresh prototype image and run
-`python tests/96_trustzone_sessions.py --fido-port 7899 --ccid-port 7900 --inspect-port 7901`.
-It waits for a keepalive/time-extension barrier before injecting CANCEL, CCID
-ABORT, USB bus reset or disconnect/reconnect during real RSA and ML-DSA work.
-Every case checks recovery with a new verified signature and a bounded worker
-response; endless keepalives fail the deadline. New channels and sequences must
-not receive the previous session's result. Card power-off/on clears PIV PIN and
-management authorization; bus reset also invalidates a previously working FIDO
-largeBlobWrite token without changing its PIN retry count. USB injection leaves
-the MCU and RAM powered, with unchanged power-up count. It is not a power-cut
-or physical-board result. The final FIDO case sets a PIN, so reuse requires a
-fresh image instance.
+The [TrustZone page](trustzone.md#prototype-build-and-measurements) contains the
+image-backend commands and recorded keepalive, crypto and session-boundary
+checks. These tests exercise the experiment, separately from the ordinary
+applet-backend sweep; they require explicit emulator ports.

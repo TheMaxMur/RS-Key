@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- TrustZone: record the production trust boundary and Secure USB reset observer
+  decision in one documentation page, and share the transport/worker ABI through
+  `rsk-usb` instead of including a source file across firmware directories.
+  Refactor: request/reply values and command behavior are unchanged.
+  bcdDevice `0x0AA5` → `0x0AA6`.
+
 - Add an experimental TrustZone transport build: USB/CTAPHID/CCID/OTP framing
   runs Non-secure while the existing worker and applets remain Secure. A
   three-second synchronous getInfo workload exercises keepalive scheduling.

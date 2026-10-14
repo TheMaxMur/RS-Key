@@ -339,7 +339,7 @@ pub unsafe extern "C" fn rsk_tz_submit_impl(
     request: *const u8,
     length: u32,
 ) -> u32 {
-    use crate::trustzone::abi;
+    use rsk_usb::worker_abi as abi;
     let Ok(length) = usize::try_from(length) else {
         return abi::INVALID;
     };
@@ -381,7 +381,7 @@ pub unsafe extern "C" fn rsk_tz_submit_impl(
 #[cfg(rsk_trustzone_prototype)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rsk_tz_poll_impl(ticket: u32, response: *mut u8, capacity: u32) -> u32 {
-    use crate::trustzone::abi;
+    use rsk_usb::worker_abi as abi;
     match session(|state| state.poll(ticket)) {
         rsk_device::transport_session::Poll::Pending => return abi::PENDING,
         rsk_device::transport_session::Poll::Abandoned => return abi::ABANDONED,
@@ -414,7 +414,7 @@ pub unsafe extern "C" fn rsk_tz_poll_impl(ticket: u32, response: *mut u8, capaci
 #[cfg(rsk_trustzone_prototype)]
 #[unsafe(no_mangle)]
 pub extern "C" fn rsk_tz_control_impl(action: u32, ticket: u32) -> u32 {
-    use crate::trustzone::abi;
+    use rsk_usb::worker_abi as abi;
     match action {
         abi::ABANDON => {
             session(|state| state.abandon(ticket));
@@ -599,8 +599,8 @@ impl<'a> Worker<'a> {
                 .try_lock()
                 .is_ok_and(|ex| ex.kind == Kind::Cbor && ex.req.get(..ex.req_len) == Some(&[0x04]));
             if info {
-                let until = Instant::now()
-                    + Duration::from_millis(crate::trustzone::abi::LONG_OPERATION_MS);
+                let until =
+                    Instant::now() + Duration::from_millis(rsk_usb::worker_abi::LONG_OPERATION_MS);
                 while Instant::now() < until {
                     core::hint::black_box(rsk_crypto::sha256(b"Secure keepalive prototype"));
                 }
@@ -885,7 +885,7 @@ impl<'a> Worker<'a> {
         let Some(request) = ex
             .req
             .get(..ex.req_len)
-            .and_then(|b| b.first_chunk::<{ crate::trustzone::abi::OTP_REQUEST_LEN }>())
+            .and_then(|b| b.first_chunk::<{ rsk_usb::worker_abi::OTP_REQUEST_LEN }>())
         else {
             ex.resp_len = 0;
             return;

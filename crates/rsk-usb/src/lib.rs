@@ -9,6 +9,7 @@ pub mod ccid;
 pub mod ctaphid;
 pub mod kbd;
 pub mod secure_pin;
+pub mod worker_abi;
 
 /// Abandon an IN-endpoint response when the host stops draining it for this
 /// long — an unbounded write blocks the transport task and wedges the whole

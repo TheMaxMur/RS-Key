@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
+//! Internal request/reply ABI between Non-secure transports and the Secure worker.
+
 pub const CBOR: u32 = 0;
 pub const MSG: u32 = 1;
 pub const APDU: u32 = 2;
