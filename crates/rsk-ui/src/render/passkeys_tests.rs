@@ -377,3 +377,117 @@ fn the_keypad_paints_every_key_with_the_active_group_highlighted() {
     assert_eq!(actual.px, expected.px);
     assert!(!actual.oob);
 }
+
+#[test]
+fn the_empty_passkeys_body_draws_its_glyph_and_hint() {
+    let mut actual = crate::render::tests::Rec::new();
+    passkeys_body(&mut actual, &[], 0, 0).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    glyph::draw(
+        &mut expected,
+        Glyph::Key,
+        Point::new(MIDX as u16 - 18, 96),
+        36,
+        MUTED,
+        BG,
+    )
+    .unwrap();
+    text(
+        &mut expected,
+        "No passkeys yet",
+        EgPoint::new(MIDX, 160),
+        Role::Body,
+        MUTED,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn a_row_with_several_accounts_carries_their_count_and_a_single_one_does_not() {
+    let row = |accounts: u8| RpRow {
+        id: Label::clamp(b"example.com"),
+        nick: Label::default(),
+        accounts,
+    };
+    for (accounts, want) in [(2u8, Some("2")), (1, None)] {
+        let mut actual = crate::render::tests::Rec::new();
+        passkey_row(&mut actual, 0, &row(accounts)).unwrap();
+        let mut expected = crate::render::tests::Rec::new();
+        let mut buf = [0u8; 5];
+        let trailing = want.map(|w| (w, MUTED));
+        let _ = &mut buf;
+        components::list::row(
+            &mut expected,
+            PK_LIST_TOP,
+            0,
+            service_glyph("example.com"),
+            "example.com",
+            trailing,
+            true,
+            true,
+            true,
+            false,
+        )
+        .unwrap();
+        assert_eq!(actual.px, expected.px, "accounts {accounts}");
+        assert!(!actual.oob);
+    }
+}
+
+#[test]
+fn an_account_row_offers_uv_only_when_the_credential_is_protected() {
+    let account = AccountRow {
+        name: Label::clamp(b"user"),
+        protected: true,
+    };
+    let mut actual = crate::render::tests::Rec::new();
+    account_row(&mut actual, 0, &account).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    components::list::row(
+        &mut expected,
+        PK_LIST_TOP,
+        0,
+        Glyph::Key,
+        "user",
+        Some(("UV", theme::ACCENT)),
+        false,
+        true,
+        false,
+        false,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn the_service_screen_places_its_edit_glyph_and_paged_body() {
+    let title = Label::clamp(b"example.com");
+    let accounts = [AccountRow {
+        name: Label::clamp(b"user"),
+        protected: false,
+    }];
+    let mut actual = crate::render::tests::Rec::new();
+    render_service(&mut actual, &title, false, &accounts, 0, 1).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    status_bar(&mut expected).unwrap();
+    title_bar(&mut expected, "example.com", theme::ACCENT, true).unwrap();
+    let er = TITLE_EDIT_RECT;
+    glyph::draw(
+        &mut expected,
+        Glyph::Edit,
+        Point::new(er.x + er.w - 18 - 4, er.y + er.h / 2 - 9),
+        18,
+        theme::ACCENT,
+        BG,
+    )
+    .unwrap();
+    components::list::group_card(&mut expected, PK_LIST_TOP, 1).unwrap();
+    account_row(&mut expected, 0, &accounts[0]).unwrap();
+    list_tail(&mut expected, 0, 1, "account", "accounts").unwrap();
+    render_nav(&mut expected, NavTab::Passkeys).unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}

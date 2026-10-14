@@ -2679,6 +2679,9 @@ The `passkeys.rs` chunk: four frame tests kill all 39 `render_rename_field`
 and `render_confirm_delete` occurrences — the pending-char underline, the bare
 cursor, a long value that must be erased and clipped, and the delete card with
 long relying-party/account labels that exercise its clip. Two more frame tests kill the whole rename chrome and
-T9 keypad (17). The remaining 10 are the list body/rows and the service screen.
-Evidence: `target/mutants/passkeys2/` (29 caught of 39, ten clip/clear cases
-rerun), `passkeys3/` (10 of 10) and `passkeys4/` (17 of 17).
+T9 keypad (17); three more kill the empty body, the account-count trailing and
+the UV account row (5); and one service-screen frame kills the edit glyph and
+paged body (5, the account_row body replacement included). `passkeys.rs` is
+fully triaged: 66 caught of 66. Evidence: `target/mutants/passkeys2/` (29
+caught of 39, ten clip/clear cases rerun), `passkeys3/` (10 of 10),
+`passkeys4/` (17 of 17), `passkeys5/` (5 of 5) and `passkeys6/` (5 of 5).
