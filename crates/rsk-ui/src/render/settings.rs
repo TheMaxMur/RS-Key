@@ -450,3 +450,7 @@ fn level_bar<D: DrawTarget<Color = Rgb565>>(t: &mut D, filled: u8) -> Result<(),
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "settings_tests.rs"]
+mod tests;

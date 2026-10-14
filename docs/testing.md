@@ -2712,3 +2712,11 @@ pin-blocked notices, erase-failed, the success variants (with and without the
 Done button, subtitle present and absent) and the pop circle — the last primed
 over a larger marker fill so its fixed clear box is load-bearing — 58 caught, no
 identities. Evidence: `target/mutants/reset-controls/`.
+
+The `settings.rs` chunk closed all 28: four frame-equality tests cover the
+danger Factory-reset row (its card, warning glyph, label and chevron), the Sleep
+page's Off-versus-timed branch, the Firmware screen under both secure-boot copy
+branches, and the reboot notice, and a fifth pins the five-segment brightness
+gauge (span, centre, per-segment stride and the `i < filled` boundary at
+`filled == 3` so the comparison is load-bearing) — 28 caught, no identities.
+Evidence: `target/mutants/settings/`.
