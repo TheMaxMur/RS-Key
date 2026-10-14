@@ -2806,3 +2806,11 @@ ramp at a wrapped phase 8 (so `%` and `/` cannot agree, unlike phase 0), the
 onboarding prompt (disc, glyph, both captions and the Set / Continue rows) and
 the splash wordmark — 21 caught, no identities. Evidence:
 `target/mutants/boot-controls/`.
+
+The `audit.rs` chunk closed 15 of its 20: frame-equality tests rebuild the empty
+placeholder under both logging flags (glyph, headline, caption) and one audit
+row with and without its trailing time token, at a nonzero row index so the
+row's `y + h/2` and trailing anchors are load-bearing — 15 caught; the remaining
+five are identities under `[audit-clip-widening-identity]` (the changed term only
+widens the label clip, which no 95-px-or-shorter `AuditKind` label can reach).
+Evidence: `target/mutants/audit-controls/`.

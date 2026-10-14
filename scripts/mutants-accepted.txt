@@ -250,3 +250,10 @@ crates/rsk-usb/src/ctaphid.rs: replace * with /
 
 [strict-config-off] `SET LED`'s presence gate is `#[cfg(feature = "strict-config")]`, which the default `cargo test` never builds, so the negated and un-negated forms compile to the same (absent) code; with the feature on, `declining_a_strict_led_write_preserves_live_and_stored_configuration` distinguishes them.
 crates/rsk-vendor/src/lib.rs: delete ! in <impl Applet<Fs<S>> for VendorApplet<'_, P>>::process
+
+[audit-clip-widening-identity] The audit row's label clip starts at label_x and only its right edge moves; every AuditKind label is at most 95 px wide while the narrowest reachable clip is 143 px (a "7101w" trailing token), so the label never meets the clip and text_left_ellipsized_on draws the identical glyphs. `right_x - width/8` (`-` -> `/`) keeps label_right at 220-223 px, a wider clip still, so it too moves no pixel; `audit_body` is only ever called with `row_rect(PK_LIST_TOP, i)` (x = 8, w = 224).
+crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
+crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
+crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
+crates/rsk-ui/src/render/audit.rs: replace - with + in audit_body
+crates/rsk-ui/src/render/audit.rs: replace - with / in audit_body
