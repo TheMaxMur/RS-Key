@@ -2762,6 +2762,78 @@ mod command_bounds_tests;
 #[path = "decisions_tests.rs"]
 mod decisions;
 
+#[test]
+fn the_packed_config_layout_matches_the_specs_offsets() {
+    // The packed Yubico layout and the 8-byte counter tail are external wire
+    // facts: 16 fixed + 6 uid + 16 key + 6 acc + size + ext + tkt + cfg + rfu2
+    // + crc2 = 52. A shifted internal offset must show up here.
+    assert_eq!((CONFIG_SIZE, SLOT_SIZE), (52, 60));
+    assert_eq!(
+        (
+            OFF_UID,
+            OFF_AES_KEY,
+            OFF_ACC_CODE,
+            OFF_FIXED_SIZE,
+            OFF_EXT_FLAGS,
+            OFF_TKT_FLAGS,
+            OFF_CFG_FLAGS,
+            OFF_RFU
+        ),
+        (16, 22, 38, 44, 45, 46, 47, 48)
+    );
+}
+
+#[test]
+fn a_challenge_response_slot_needs_both_the_ticket_bit_and_a_challenge_mode() {
+    assert!(is_chal_resp_slot(TKT_CHAL_RESP, CFG_CHAL_YUBICO));
+    // The ticket bit alone is an OATH-HOTP typing slot…
+    assert!(!is_chal_resp_slot(0, CFG_CHAL_YUBICO));
+    // …and a mode without the bit is not a challenge-response record either.
+    assert!(!is_chal_resp_slot(TKT_CHAL_RESP, 0));
+    assert!(!is_chal_resp_slot(TKT_CHAL_RESP, CFG_OATH_HOTP8));
+}
+
+#[test]
+fn an_unrelated_slot_id_is_not_a_function_slot() {
+    assert!(!is_function_slot(0x00));
+    assert!(!is_function_slot(0x55));
+}
+
+#[test]
+fn an_update_keeps_the_stored_cfg_bits_it_may_not_change() {
+    // An UPDATE merges only `CFGFLAG_UPDATE_MASK` bits from the new config; the
+    // stored record's other cfg bits (here the short-ticket mode) must survive.
+    // Deleting the `!` keeps the stored pacing bits instead and zeroes them.
+    let mut fs = new_fs();
+    let presence = RefCell::new(AlwaysConfirm);
+    let rng = RefCell::new(CountRng(7));
+    let mut app = OtpApplet::new(SERIAL, SERIAL_HASH, None, &rng, &presence);
+    let base = build_config(
+        b"public",
+        &[3; 6],
+        &[4; 16],
+        &[0; 6],
+        0,
+        0,
+        CFG_SHORT_TICKET,
+    );
+    let (sw, _) = configure(&mut app, &mut fs, 0x01, 0, &base, &[0; 6]);
+    assert_eq!(sw, Sw::OK);
+    let upd = build_config(b"public", &[3; 6], &[4; 16], &[0; 6], 0, 0, 0x04);
+    let mut d = upd.to_vec();
+    d.extend_from_slice(&[0; 6]);
+    let (sw, _) = run(&mut app, &mut fs, &otp_apdu(0x04, 0, &d));
+    assert_eq!(sw, Sw::OK);
+    let mut stored = SlotRecord::vacant();
+    app.read_slot_m(&mut fs, EF_OTP_SLOT1, &mut stored)
+        .expect("the update must land on slot 1");
+    assert_eq!(
+        stored.expose()[OFF_CFG_FLAGS],
+        CFG_SHORT_TICKET | 0x04,
+        "the stored non-updateable cfg bits must survive an update"
+    );
+}
+
 #[path = "recovery_tests.rs"]
 mod recovery;
 
