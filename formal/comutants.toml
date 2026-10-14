@@ -980,7 +980,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:247-251) is the same switch's other half and is not in this entry — one entry, one file."
+note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:249-253) is the same switch's other half and is not in this entry — one entry, one file."
 
 [comutant.BugWrongDoesNotSpend]
 status = "patch"
@@ -1010,7 +1010,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:952."
+note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:954."
 
 # Administrative retry doors: the status guard and the arithmetic it admits.
 

@@ -44,18 +44,18 @@ CONSTANTS
     Max,   \* the ceiling a stored maximum may take: SET PIN RETRIES's byte, at TLC scale
     \* The `left == 0 => PIN_BLOCKED` floor, checked BEFORE the comparison at
     \* crates/rsk-piv/src/lib.rs:1355-1357 (check_ref) and
-    \* crates/rsk-openpgp/src/pin.rs:245-247 (check_pin). One switch: the same
+    \* crates/rsk-openpgp/src/pin.rs:247-249 (check_pin). One switch: the same
     \* floor guards a direct verify AND a recovery reference (the PUK/RC that
     \* check_ref/check_pin is called on), so removing it opens both.
     BugUseWhenBlocked,
     \* The decrement that IS the anti-bruteforce gate: crates/rsk-piv/src/lib.rs:1375
     \* (`set_retries_left(fs, retry, left - 1)`, spent BEFORE the compare) and
-    \* crates/rsk-openpgp/src/pin.rs:152 (`pw[idx] -= 1`). Removing it lets a wrong
+    \* crates/rsk-openpgp/src/pin.rs:154 (`pw[idx] -= 1`). Removing it lets a wrong
     \* attempt cost nothing -- unlimited guesses at full speed.
     BugWrongDoesNotSpend,
     \* The recovery reference verified BEFORE the target is refilled:
     \* crates/rsk-piv/src/lib.rs:1512 (`check_ref(EF_PUK, ..)` opens
-    \* unblock_pin_with_puk) and crates/rsk-openpgp/src/pin.rs:949 (`check_pin(EF_RC,
+    \* unblock_pin_with_puk) and crates/rsk-openpgp/src/pin.rs:951 (`check_pin(EF_RC,
     \* ..)` opens reset_retry's P1=0 branch). Removing it refills the target on a
     \* WRONG recovery secret.
     BugRecoveryWithoutSecret,
@@ -82,7 +82,7 @@ CONSTANTS
     BugKdfWithKeys
 
 \* Every reference that carries a retry counter. PW2 (PW1 mode 0x82) is NOT here:
-\* it shares PW1's verifier and counter (crates/rsk-openpgp/src/pin.rs:709), so it
+\* it shares PW1's verifier and counter (crates/rsk-openpgp/src/pin.rs:711), so it
 \* is PW1's counter under another name. The OATH access code and the OTP slot code
 \* are NOT here either: a MAC / equality challenge-response has NO retry counter
 \* (a wrong answer costs nothing), so they are the seam module's exempt-refusal
@@ -91,7 +91,7 @@ Refs == {"pivPin", "pivPuk", "pw1", "pw3", "rc"}
 
 \* The references a host VERIFY targets directly. `pivPuk` and `rc` are absent:
 \* neither is verified on its own, only PRESENTED as the recovery secret inside a
-\* RESET RETRY (crates/rsk-piv/src/lib.rs:596-603, crates/rsk-openpgp/src/pin.rs:926-977),
+\* RESET RETRY (crates/rsk-piv/src/lib.rs:596-603, crates/rsk-openpgp/src/pin.rs:928-979),
 \* where a wrong one still spends its counter.
 VerifyTargets == {"pivPin", "pw1", "pw3"}
 
@@ -139,14 +139,14 @@ Init ==
 
 (***************************************************************************)
 (* VERIFY. crates/rsk-piv/src/lib.rs:1350-1417 (check_ref) and              *)
-(* crates/rsk-openpgp/src/pin.rs:222-317 (check_pin): refuse at zero, spend  *)
+(* crates/rsk-openpgp/src/pin.rs:224-319 (check_pin): refuse at zero, spend  *)
 (* on a wrong value, refill on a correct one -- to the reference's own      *)
-(* maximum, which pin_reset_retries reads (crates/rsk-openpgp/src/pin.rs:183).*)
-(* The status: a grant raises it (crates/rsk-openpgp/src/pin.rs:314), a      *)
+(* maximum, which pin_reset_retries reads (crates/rsk-openpgp/src/pin.rs:185).*)
+(* The status: a grant raises it (crates/rsk-openpgp/src/pin.rs:316), a      *)
 (* wrong value drops it (clear_access_status,                              *)
-(* crates/rsk-openpgp/src/pin.rs:206-216). A card reset, a SELECT elsewhere  *)
+(* crates/rsk-openpgp/src/pin.rs:208-218). A card reset, a SELECT elsewhere  *)
 (* and the RESET RETRY that drops all three                                 *)
-(* (crates/rsk-openpgp/src/pin.rs:957-959) end it too; those are the seam    *)
+(* (crates/rsk-openpgp/src/pin.rs:959-961) end it too; those are the seam    *)
 (* module's, and leaving them out here only keeps a status up LONGER.       *)
 (***************************************************************************)
 \* Always enabled: a blocked card still ANSWERS every VERIFY -- it returns
@@ -273,7 +273,7 @@ PivSetRetries ==
 
 \* RESET RETRY P1=02 replaces PW1 under PW3; no old PW1 is presented.
 \* With the guard removed, PW1 still supplies the session needed by load_dek.
-\* The refilled maximum is unchanged (crates/rsk-openpgp/src/pin.rs:982-999).
+\* The refilled maximum is unchanged (crates/rsk-openpgp/src/pin.rs:984-1001).
 ResetRetryAdmin ==
     /\ "pw3" \in held \/ (BugResetRetryWithoutAdmin /\ "pw1" \in held)
     /\ retries' = [retries EXCEPT !["pw1"] = maxima["pw1"]]
@@ -283,7 +283,7 @@ ResetRetryAdmin ==
          THEN {"BudgetRisesOnlyWithItsSecret"} ELSE {})
 
 \* PUT DATA D3 activates or clears RC under PW3. Clearing never raises a count.
-\* crates/rsk-openpgp/src/pin.rs:1018-1044.
+\* crates/rsk-openpgp/src/pin.rs:1020-1046.
 PutResetCode ==
     /\ "pw3" \in held \/ (BugResetCodeWithoutAdmin /\ "pw1" \in held)
     /\ rcSet' \in BOOLEAN
