@@ -354,3 +354,7 @@ where
         fill,
     )
 }
+
+#[cfg(test)]
+#[path = "reset_tests.rs"]
+mod tests;

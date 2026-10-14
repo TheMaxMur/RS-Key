@@ -2705,3 +2705,10 @@ plus account so both ellipsis clips bite, then the single-line service head), th
 add-passkey screen, and the one-line `ceremony_plate` branch the confirm screens
 never reach — 56 caught, no identities. Evidence:
 `target/mutants/ceremony-controls/` (54 of 56) and `ceremony-controls2/` (2 of 2).
+
+The `reset.rs` chunk closed all 58: six frame-equality tests cover the
+factory-reset confirm (its dot checklist and hold control), the erasing and
+pin-blocked notices, erase-failed, the success variants (with and without the
+Done button, subtitle present and absent) and the pop circle — the last primed
+over a larger marker fill so its fixed clear box is load-bearing — 58 caught, no
+identities. Evidence: `target/mutants/reset-controls/`.
