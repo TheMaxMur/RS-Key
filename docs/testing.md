@@ -2660,3 +2660,10 @@ OpenPGP key-slot titles, and the empty-slot body's glyph and both lines. The
 remaining 66 are renderer coordinates plus the `render_apps` count words; they
 stay queued. Evidence: `target/mutants/applets-controls/` (19 caught of 99) and
 `target/mutants/applets2/` (14 caught of 80).
+
+The `backup.rs` chunk is the same shape: one direct string test kills all nine
+`fmt_share_title` occurrences (both body replacements and the seven index
+increments, `65535/65535` included); the other 101 occurrences there are
+coordinates, `Ok(())` bodies and cursor arithmetic, still queued. Evidence:
+`target/mutants/backup-controls/` (0 caught of 110) and
+`target/mutants/backup2/` (9 of 9 caught).
