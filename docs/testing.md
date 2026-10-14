@@ -2641,3 +2641,13 @@ must stay absent for a status query rather than report retries. The
 40-occurrence run, its source binding and the per-mutant logs are in
 `target/mutants/openpgp-controls2/`; the accepted identities are in
 `scripts/mutants-accepted.txt`.
+
+The OTP and terminate chunks added four host tests pinning six occurrences and
+six identities. The packed config layout is asserted at its spec offsets
+(52/60 bytes); a challenge-response slot needs both the ticket bit and a
+challenge mode; an unrelated slot id is not a function slot; and an UPDATE keeps
+the stored cfg bits outside `CFGFLAG_UPDATE_MASK` instead of taking the stored
+pacing bits. Accepted identities: the `2 + 2`/`2 * 2` config tail, the disjoint
+update masks in `button_ticket` and `cmd_update`, and `sweep`'s between-pass
+budget equality, which the applet's fid range cannot reach. Evidence:
+`target/mutants/otp-controls/` (12 mutants: 6 caught, 6 identities).
