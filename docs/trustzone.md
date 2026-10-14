@@ -467,3 +467,41 @@ entry that omitted the new build counter. After recording `bcdDevice 0x0AA6`,
 the failing row and every remaining row passed without firmware changes.
 The final documentation build and link check also passed. No new hardware or
 full Kani/assurance result is claimed for this refactor.
+
+## Emulator source and isolation checks
+
+The image backend uses `third_party/picoem`, imported from
+[TheMaxMur/picoem](https://github.com/TheMaxMur/picoem/tree/9513634a7ba2c8331f4f8b363196eb24bace96df)
+at `9513634a7ba2c8331f4f8b363196eb24bace96df`. Upstream library code keeps
+its MIT OR Apache-2.0 terms; local security changes are AGPL-3.0-only. The ROM
+is BSD-3-Clause, with its licence beside the fixture. Only
+`rp2350-emu` and `picoem-common` library sources and the pinned A4 ROM are
+imported; integration-test firmware fixtures and unrelated binaries are omitted. Local changes implement
+the isolation model needed to test this boundary. They add no firmware dependency.
+
+The CPU model now checks SAU/IDAU attribution before every byte, halfword and
+word data access and every instruction dispatch, including decode-cache hits.
+NSC entry requires SG; ordinary NS data reads of NSC memory are refused. MPU
+read/write and execute-never permissions apply to actual accesses, with fault
+status in the corresponding SCS bank. SecureFault status/address are S-only.
+ROM service hooks also pass fetch attribution before the host can service them.
+These rules follow the [Cortex-M33 user guide](https://documentation-service.arm.com/static/5f16e93d20b7cf4bc524af1d)
+and the [RP2350 bootrom attribution map](https://github.com/raspberrypi/pico-bootrom-rp2350/blob/master/src/main/arm/arm8_bootrom_rt0.S).
+
+CPU checks on 2026-10-14: five reproducing tests failed on the imported core
+because prohibited accesses succeeded; the permitted NS-memory control passed.
+After the repair, all ten isolation tests and 3,741 library tests passed (27
+upstream tests remain ignored), and both library crates passed clippy with
+warnings denied. Existing bank-switch fixtures now explicitly configure SAU;
+their assertions are unchanged. The current combined firmware also passed the
+getInfo smoke: 32 keepalives, maximum image-time gap 187 ms. ACCESSCTRL, DMA,
+malicious image probes and independent Secure USB revocation are still pending.
+
+```sh
+nix develop -c cargo test --locked --manifest-path third_party/picoem/Cargo.toml \
+  -p rp2350-emu --target aarch64-apple-darwin --lib
+```
+
+The full `scripts/check.sh` passed for this CPU-model step. Exception-return
+and special-register validation still need hardening before adversarial image
+runs can support an isolation claim.

@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Make the image emulator enforce CPU Secure/Non-secure memory attribution,
+  checked NSC entry, MPU permissions and SecureFault status. Cache hits and ROM
+  hooks cannot bypass fetch checks. The two picoem libraries and pinned A4 ROM
+  are kept locally so a clean checkout builds the tested model.
+
 - TrustZone: record the production trust boundary and Secure USB reset observer
   decision in one documentation page, and share the transport/worker ABI through
   `rsk-usb` instead of including a source file across firmware directories.

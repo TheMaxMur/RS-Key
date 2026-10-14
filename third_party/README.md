@@ -1,6 +1,6 @@
 # third_party — code from elsewhere
 
-Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Five
+Code that is not RS-Key's, kept in the tree so a checkout has what it needs. Six
 unrelated kinds live here:
 
 - **Four external conformance suites** — `pico-fido-tests/`,
@@ -13,6 +13,9 @@ unrelated kinds live here:
   `fuzz/` and `tools/emu/` manifests. All three, or the emulator runs a
   different KV store from the firmware. The patch file's own header is the
   record of what each change is and why the fork stays inside `src/map.rs`.
+- **The image emulator** — `picoem/`, the two host libraries and pinned A4
+  ROM used by `tools/emu`. Origin, local isolation changes and checks are
+  recorded in [TrustZone](../docs/trustzone.md#emulator-source-and-isolation-checks).
 - **Generated font data** — `ibm-plex/`, the four-bit coverage tables the
   trusted display draws its text from, emitted by
   `scripts/generate_ui_fonts.py` from the Nix-pinned IBM Plex Sans/Mono files
