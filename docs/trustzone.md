@@ -5,7 +5,7 @@
 
 This chapter owns the TrustZone design, build instructions, measurements and
 remaining production work. The ordinary firmware has no Secure/Non-secure split.
-The experimental build at `bcdDevice 0x0AA9` runs USB classes and transports in
+The experimental build at `bcdDevice 0x0AAA` runs USB classes and transports in
 Non-secure (NS), with the controller, lifecycle observer, worker and applets in
 Secure (S). Secure revocation no longer depends on NS reset callbacks. The
 resource policy and production board integration remain incomplete; the passing
@@ -777,3 +777,42 @@ The runner requires explicit image/backend paths, checks loopback ports, reads
 only its NS progress marker and validates the fault address/status. It never
 opens a physical authenticator. The final build command restores a normal NS
 image; hostile probes remain an explicit feature.
+
+
+## Public Secure boot identity at bcdDevice 0x0AAA
+
+The boot path copies the effective VID/PID, PHY-overridden manufacturer/product,
+serial, bcdDevice, interface mask and VID-selected ATR into a public snapshot.
+NS reads it in bounded chunks through the packet gateway, then constructs only
+the enabled interfaces in the existing keyboard/FIDO/CCID order. Disabled CCID
+has no ABORT handler. This snapshot carries no PIN, key or authorization state;
+compromised NS can still lie in its own descriptors. Applet capability checks
+remain Secure.
+
+The shared Cargo ABI owns the fixed 171-byte encoding; NS no longer reads a neighbouring
+source file to discover bcdDevice. Descriptor strings are bounded and checked as
+UTF-8. Three host tests cover descriptor capacity/padding and the scalar/string round trip, identity/ATR choice,
+overlong strings and invalid lengths/UTF-8.
+
+The artificial three-second getInfo busy loop is compiled only with
+`RSK_TZ_TEST_DELAY=1`; gateway startup probes require
+`RSK_TZ_GATEWAY_PROBES=1`. Use both for the original synthetic keepalive test.
+Normal builds leave both disabled. The hostile-MMIO and suppressed-callback
+features remain explicit disposable test builds. The build script still emits a
+fixed 4 MiB no-touch image; production presence/board tasks and multi-board
+artifacts are the next step.
+
+
+The image ICC-reset harness now uses its existing 180-second recovery budget for
+the socket as well as the command loop. A 60-second socket timeout interrupted
+a healthy RSA case under concurrent host checks: it completed in 100 seconds
+wall time and 14.8 seconds on the image clock, cleared authorization and verified
+the next signature. This changes the test's inconsistent wait, not the firmware
+wire deadline or the recovery budget.
+
+
+The integrated snapshot image passes all eight real crypto operations and all 17
+lifecycle cases with independent signature checks. The code and assurance gates
+pass. The bounded mutation run catches 46 defects; six do not compile and none
+survives. Its first two survivors were size mutations hidden by self-consistent
+round trips; the completed tests also assert the exact public header and length.

@@ -13,6 +13,7 @@ publish = false
 [features]
 test-ignore-reset-callbacks = []
 test-hostile-access = []
+test-gateway-probes = []
 
 [dependencies]
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["platform-cortex-m", "executor-interrupt"] }
@@ -28,6 +29,7 @@ cortex-m = "0.7"
 cortex-m-rt = "0.7"
 panic-halt = "1"
 rp-pac = { git = "https://github.com/embassy-rs/rp-pac", rev = "c2e27609b021c444f634673155318977d7f0bdf6", features = ["rp235x", "rt"] }
+rsk-phy = { path = "../../../crates/rsk-phy" }
 rsk-usb = { path = "../../../crates/rsk-usb" }
 rsk-otp = { path = "../../../crates/rsk-otp" }
 rsk-secret = { path = "../../../crates/rsk-secret" }

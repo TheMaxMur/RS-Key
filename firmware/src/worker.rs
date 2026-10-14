@@ -614,7 +614,7 @@ impl<'a> Worker<'a> {
     /// `EXCHANGE` after `DONE`, and the lock's critical section is momentary, so
     /// the high-priority executor is never blocked.
     async fn handle_transport(&mut self) {
-        #[cfg(rsk_trustzone_prototype)]
+        #[cfg(all(rsk_trustzone_prototype, rsk_tz_test_delay))]
         {
             let info = EXCHANGE
                 .try_lock()

@@ -17,9 +17,8 @@ mod keyboard;
 #[cfg(feature = "test-hostile-access")]
 mod probe;
 mod session;
-mod usb;
-include!(concat!(env!("OUT_DIR"), "/version.rs"));
 mod time;
+mod usb;
 
 use embassy_executor::InterruptExecutor;
 use embassy_rp::{
@@ -261,28 +260,17 @@ fn main() -> ! {
 )]
 fn init() {
     assert!(!embassy_rp::rom_data::is_secure_mode());
-    assert_eq!(abi::LONG_OPERATION_MS, 3_000);
-    let probe = [0u8; 32];
-    // SAFETY: invalid pointers are intentional probes of the hardware-checked SG entries.
-    unsafe {
-        assert_eq!(
-            rsk_tz_submit(abi::CBOR, 0, 0x2000_0000 as *const u8, 32),
-            abi::INVALID
-        );
-        assert_eq!(rsk_tz_poll(1, 0x2000_0000 as *mut u8, 32), abi::INVALID);
-        assert_eq!(
-            rsk_tz_submit(abi::CBOR, 0, 0x2007_fff0 as *const u8, 32),
-            abi::INVALID
-        );
-        assert_eq!(rsk_tz_submit(0xff, 0, probe.as_ptr(), 32), abi::INVALID);
-    }
+    #[cfg(feature = "test-gateway-probes")]
+    gateway_probes();
     time::init();
     let driver = usb::Driver;
-    let mut config = Config::new(0x1209, 0xf1d2);
-    config.manufacturer = Some("RS-Key");
-    config.product = Some("RS-Key TrustZone prototype");
-    config.serial_number = Some("rsk-tz-prototype");
-    config.device_release = DEVICE_RELEASE;
+    static IDENTITY: StaticCell<rsk_usb::identity::Identity> = StaticCell::new();
+    let identity = IDENTITY.init(usb::identity().unwrap());
+    let mut config = Config::new(identity.vid().unwrap(), identity.pid().unwrap());
+    config.manufacturer = identity.manufacturer();
+    config.product = identity.product();
+    config.serial_number = identity.serial();
+    config.device_release = identity.release().unwrap();
     config.max_power = 100;
     config.max_packet_size_0 = 64;
     static DESCRIPTORS: StaticCell<[u8; 256]> = StaticCell::new();
@@ -300,48 +288,85 @@ fn init() {
     static KEYBOARD: StaticCell<State> = StaticCell::new();
     static KEYBOARD_HANDLER: StaticCell<keyboard::Handler> = StaticCell::new();
     usb::allocate_for(usb::Transport::Keyboard);
-    let keyboard = HidWriter::<_, 8>::new(
-        &mut builder,
-        KEYBOARD.init(State::new()),
-        hid::Config {
-            report_descriptor: rsk_usb::kbd::KEYBOARD_REPORT_DESCRIPTOR,
-            request_handler: Some(KEYBOARD_HANDLER.init(keyboard::Handler)),
-            poll_ms: 10,
-            max_packet_size: 8,
-            hid_subclass: hid::HidSubclass::No,
-            hid_boot_protocol: hid::HidBootProtocol::None,
-        },
-    );
+    let keyboard = (identity.interfaces() & rsk_phy::USB_ITF_KB != 0).then(|| {
+        HidWriter::<_, 8>::new(
+            &mut builder,
+            KEYBOARD.init(State::new()),
+            hid::Config {
+                report_descriptor: rsk_usb::kbd::KEYBOARD_REPORT_DESCRIPTOR,
+                request_handler: Some(KEYBOARD_HANDLER.init(keyboard::Handler)),
+                poll_ms: 10,
+                max_packet_size: 8,
+                hid_subclass: hid::HidSubclass::No,
+                hid_boot_protocol: hid::HidBootProtocol::None,
+            },
+        )
+    });
     static HID: StaticCell<State> = StaticCell::new();
     usb::allocate_for(usb::Transport::Fido);
-    let hid = HidReaderWriter::<_, 64, 64>::new(
-        &mut builder,
-        HID.init(State::new()),
-        hid::Config {
-            report_descriptor: rsk_usb::ctaphid::FIDO_REPORT_DESCRIPTOR,
-            request_handler: None,
-            poll_ms: 5,
-            max_packet_size: 64,
-            hid_subclass: hid::HidSubclass::No,
-            hid_boot_protocol: hid::HidBootProtocol::None,
-        },
-    );
+    let hid = (identity.interfaces() & rsk_phy::USB_ITF_HID != 0).then(|| {
+        HidReaderWriter::<_, 64, 64>::new(
+            &mut builder,
+            HID.init(State::new()),
+            hid::Config {
+                report_descriptor: rsk_usb::ctaphid::FIDO_REPORT_DESCRIPTOR,
+                request_handler: None,
+                poll_ms: 5,
+                max_packet_size: 64,
+                hid_subclass: hid::HidSubclass::No,
+                hid_boot_protocol: hid::HidBootProtocol::None,
+            },
+        )
+    });
     static CCID: StaticCell<Ccid<'static, Drv, CcidClient>> = StaticCell::new();
     usb::allocate_for(usb::Transport::Ccid);
-    let ccid = CCID.init_with(|| Ccid::new(&mut builder, CcidClient, rsk_usb::ccid::ATR_RSKEY, 0));
+    let ccid = (identity.interfaces() & rsk_phy::USB_ITF_CCID != 0).then(|| {
+        let atr = if identity.yubico_atr() {
+            rsk_usb::ccid::ATR_YUBIKEY
+        } else {
+            rsk_usb::ccid::ATR_RSKEY
+        };
+        CCID.init_with(|| Ccid::new(&mut builder, CcidClient, atr, 0))
+    });
     static USB_HANDLER: StaticCell<session::UsbHandler> = StaticCell::new();
     builder.handler(USB_HANDLER.init(session::UsbHandler {
-        ccid_interface: ccid.interface_number(),
+        ccid_interface: ccid.as_ref().map(|ccid| ccid.interface_number()),
     }));
     let usb = builder.build();
-    let (reader, writer) = hid.split();
     static CTAP: StaticCell<CtapHid<'static, Drv, CtapClient>> = StaticCell::new();
-    let ctap = CTAP.init_with(|| CtapHid::new(reader, writer, CtapClient, up_pending, cancel));
+    let ctap = hid.map(|hid| {
+        let (reader, writer) = hid.split();
+        CTAP.init_with(|| CtapHid::new(reader, writer, CtapClient, up_pending, cancel))
+    });
     interrupt::SWI_IRQ_1.set_priority(Priority::P2);
     let spawner = EXECUTOR.start(interrupt::SWI_IRQ_1);
     spawner.spawn(usb_task(SendUsb(usb)).unwrap());
-    spawner.spawn(ctap_task(ctap).unwrap());
-    spawner.spawn(ccid_task(ccid).unwrap());
-    spawner.spawn(keyboard::run(keyboard).unwrap());
-    spawner.spawn(keyboard::commands().unwrap());
+    if let Some(ctap) = ctap {
+        spawner.spawn(ctap_task(ctap).unwrap());
+    }
+    if let Some(ccid) = ccid {
+        spawner.spawn(ccid_task(ccid).unwrap());
+    }
+    if let Some(keyboard) = keyboard {
+        spawner.spawn(keyboard::run(keyboard).unwrap());
+        spawner.spawn(keyboard::commands().unwrap());
+    }
+}
+
+#[cfg(feature = "test-gateway-probes")]
+fn gateway_probes() {
+    let probe = [0u8; 32];
+    // SAFETY: invalid pointers are intentional probes of the hardware-checked SG entries.
+    unsafe {
+        assert_eq!(
+            rsk_tz_submit(abi::CBOR, 0, 0x2000_0000 as *const u8, 32),
+            abi::INVALID
+        );
+        assert_eq!(rsk_tz_poll(1, 0x2000_0000 as *mut u8, 32), abi::INVALID);
+        assert_eq!(
+            rsk_tz_submit(abi::CBOR, 0, 0x2007_fff0 as *const u8, 32),
+            abi::INVALID
+        );
+        assert_eq!(rsk_tz_submit(0xff, 0, probe.as_ptr(), 32), abi::INVALID);
+    }
 }

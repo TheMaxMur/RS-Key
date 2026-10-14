@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- TrustZone bcdDevice 0x0AAA: Non-secure USB descriptors now use a bounded public
+  Secure boot snapshot (effective VID/PID, strings, version, interface mask and
+  ATR), including persisted PHY overrides. Synthetic getInfo delay and gateway
+  startup probes are explicit test switches; NS no longer parses Secure main.rs.
+
+
 - TrustZone (bcdDevice 0x0AA9): explicitly grant bus resources before NS entry,
   lock Secure DMA channels, configure both Secure MPUs and the NS MPU, and
   isolate RAM-resident code. Preserve the HAL boot2 flash path through a bounded

@@ -65,6 +65,13 @@ static CONTROLLER: Mutex<CriticalSectionRawMutex, RefCell<Controller>> =
         setup: [0; 8],
     }));
 
+static IDENTITY: Mutex<CriticalSectionRawMutex, RefCell<Option<rsk_usb::identity::Identity>>> =
+    Mutex::new(RefCell::new(None));
+
+pub fn set_identity(identity: rsk_usb::identity::Identity) {
+    IDENTITY.lock(|cell| *cell.borrow_mut() = Some(identity));
+}
+
 static SERIAL: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 
 pub fn serialized<T>(f: impl FnOnce() -> T) -> T {
@@ -231,6 +238,25 @@ pub fn operate(operation: u32, argument: u32, data: &mut [u8]) -> u32 {
         if action == abi::EPOCH && operation == action && data.is_empty() {
             return state.bus_epoch.current();
         }
+        if operation == abi::IDENTITY {
+            return IDENTITY.lock(|cell| {
+                let identity = cell.borrow();
+                let Some(identity) = identity.as_ref() else {
+                    return INVALID;
+                };
+                let Ok(offset) = usize::try_from(argument) else {
+                    return INVALID;
+                };
+                let Some(end) = offset.checked_add(data.len()) else {
+                    return INVALID;
+                };
+                let Some(source) = identity.bytes().get(offset..end) else {
+                    return INVALID;
+                };
+                data.copy_from_slice(source);
+                u32::try_from(data.len()).unwrap_or(INVALID)
+            });
+        }
         if matches!(action, abi::ALLOC_IN | abi::ALLOC_OUT) && operation == action {
             return endpoints::allocate(state, action == abi::ALLOC_IN, data);
         }
@@ -315,7 +341,7 @@ pub unsafe extern "C" fn rsk_tz_usb_impl(
         action,
         abi::ALLOC_IN | abi::ALLOC_OUT | abi::EP_WRITE | abi::CTRL_IN | abi::CTRL_OUT
     );
-    let output = matches!(action, abi::EP_READ | abi::CTRL_POLL);
+    let output = matches!(action, abi::EP_READ | abi::CTRL_POLL | abi::IDENTITY);
     if !input && !output && length != 0 {
         return INVALID;
     }

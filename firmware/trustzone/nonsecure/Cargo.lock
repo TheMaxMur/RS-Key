@@ -853,6 +853,7 @@ dependencies = [
  "panic-halt",
  "rp-pac",
  "rsk-otp",
+ "rsk-phy",
  "rsk-secret",
  "rsk-usb",
  "static_cell",
@@ -1672,6 +1673,14 @@ dependencies = [
  "rsk-fs",
  "rsk-sdk",
  "rsk-secret",
+]
+
+[[package]]
+name = "rsk-phy"
+version = "0.1.0"
+dependencies = [
+ "rsk-fs",
+ "rsk-sdk",
 ]
 
 [[package]]

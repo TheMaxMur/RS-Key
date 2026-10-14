@@ -7,6 +7,7 @@
 
 pub mod ccid;
 pub mod ctaphid;
+pub mod identity;
 pub mod kbd;
 pub mod secure_pin;
 pub mod usb_abi;

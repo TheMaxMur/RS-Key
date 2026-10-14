@@ -28,7 +28,7 @@ RECOVERY_TIMEOUT_S = 180
 
 class Ccid(crypto.Ccid):
     def __init__(self, port, inspect_port, activate=True):
-        self.sock = socket.create_connection(("127.0.0.1", port), timeout=60)
+        self.sock = socket.create_connection(("127.0.0.1", port), timeout=RECOVERY_TIMEOUT_S)
         self.inspect_port = inspect_port
         self.seq = 0
         if activate:
@@ -163,7 +163,7 @@ class Hid(crypto.Hid):
         return (crypto.decode(body[1:]) if len(body) > 1 else None), {}
 
     def __init__(self, port, inspect_port):
-        self.sock = socket.create_connection(("127.0.0.1", port), timeout=60)
+        self.sock = socket.create_connection(("127.0.0.1", port), timeout=RECOVERY_TIMEOUT_S)
         self.inspect_port = inspect_port
         self.cid = b"\xff" * 4
         nonce = b"session!"

@@ -16,6 +16,9 @@ ns_features=()
 if [[ "${RSK_TZ_NS_IGNORE_RESET:-0}" == 1 ]]; then
     ns_features=(--features test-ignore-reset-callbacks)
 fi
+if [[ "${RSK_TZ_GATEWAY_PROBES:-0}" == 1 ]]; then
+    ns_features+=(--features test-gateway-probes)
+fi
 if [[ -n "${RSK_TZ_PROBE_ADDRESS:-}" ]]; then
     ns_features=(--features test-hostile-access)
 fi

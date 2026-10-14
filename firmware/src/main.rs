@@ -902,11 +902,28 @@ async fn main(spawner: Spawner) {
     let phy = _phy;
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
 
+    let device_release: u16 = 0x0AAA;
     #[cfg(rsk_trustzone_prototype)]
-    let _transport_identity = (usb_pid, phy_product, phy_manufacturer, usb_itf);
-    let device_release: u16 = 0x0AA9;
-    #[cfg(rsk_trustzone_prototype)]
-    let _ = device_release;
+    {
+        let (manufacturer, product) = if usb_vid == YUBICO_VID {
+            (YUBICO_MANUFACTURER, YUBICO_PRODUCT)
+        } else {
+            (USB_MANUFACTURER, USB_PRODUCT)
+        };
+        trustzone::usb::set_identity(
+            rsk_usb::identity::Identity::new(
+                usb_vid,
+                usb_pid,
+                device_release,
+                usb_itf,
+                usb_vid == YUBICO_VID,
+                phy_manufacturer.unwrap_or(manufacturer),
+                phy_product.unwrap_or(product),
+                "rs-key-0001",
+            )
+            .unwrap(),
+        );
+    }
     let openpgp_mfr = openpgp_mfr_for(usb_vid);
     #[cfg(not(rsk_trustzone_prototype))]
     let _hp = {

@@ -24,6 +24,7 @@ pub const CTRL_REJECT: u32 = 17;
 pub const CTRL_ADDRESS: u32 = 18;
 pub const CTRL_POLL: u32 = 19;
 pub const CTRL_ABANDON: u32 = 20;
+pub const IDENTITY: u32 = 21;
 pub const ADDRESS_SHIFT: u32 = 8;
 pub const FIRST: u32 = 1 << 16;
 pub const LAST: u32 = 1 << 17;

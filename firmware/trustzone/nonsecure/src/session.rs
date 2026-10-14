@@ -78,7 +78,7 @@ pub fn acknowledge_abort(sequence: u8) -> Option<bool> {
 }
 
 pub struct UsbHandler {
-    pub ccid_interface: u8,
+    pub ccid_interface: Option<u8>,
 }
 impl UsbHandler {
     fn reset_session(&mut self) {
@@ -105,7 +105,7 @@ impl Handler for UsbHandler {
     fn control_out(&mut self, request: Request, data: &[u8]) -> Option<OutResponse> {
         if request.request_type != RequestType::Class
             || request.recipient != Recipient::Interface
-            || request.index != u16::from(self.ccid_interface)
+            || Some(request.index) != self.ccid_interface.map(u16::from)
             || request.request != rsk_usb::ccid::ABORT_REQUEST
         {
             return None;

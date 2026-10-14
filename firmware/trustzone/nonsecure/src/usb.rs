@@ -28,6 +28,17 @@ fn transfer(operation: u32, argument: u32, buffer: &mut [u8]) -> u32 {
     unsafe { rsk_tz_usb(operation, argument, buffer.as_mut_ptr(), length) }
 }
 
+pub(crate) fn identity() -> Option<rsk_usb::identity::Identity> {
+    let mut bytes = [0; rsk_usb::identity::SIZE];
+    for (index, chunk) in bytes.chunks_mut(abi::PACKET_SIZE).enumerate() {
+        let offset = u32::try_from(index * abi::PACKET_SIZE).ok()?;
+        if transfer(abi::IDENTITY, offset, chunk) != u32::try_from(chunk.len()).ok()? {
+            return None;
+        }
+    }
+    rsk_usb::identity::Identity::from_bytes(bytes)
+}
+
 pub(crate) fn epoch() -> u32 {
     call(abi::EPOCH, 0)
 }

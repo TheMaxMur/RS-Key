@@ -329,6 +329,11 @@ fn main() {
     };
     println!("cargo:rustc-check-cfg=cfg(rsk_trustzone_prototype)");
     println!("cargo:rerun-if-env-changed=RSK_TRUSTZONE_PROTOTYPE");
+    println!("cargo:rustc-check-cfg=cfg(rsk_tz_test_delay)");
+    println!("cargo:rerun-if-env-changed=RSK_TZ_TEST_DELAY");
+    if env::var("RSK_TZ_TEST_DELAY").as_deref() == Ok("1") {
+        println!("cargo:rustc-cfg=rsk_tz_test_delay");
+    }
     if env::var_os("RSK_TRUSTZONE_PROTOTYPE").is_some() {
         println!("cargo:rustc-cfg=rsk_trustzone_prototype");
         trustzone_build::configure(&out, &mut memory_x);
