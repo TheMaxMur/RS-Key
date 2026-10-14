@@ -2698,3 +2698,10 @@ indexed term is load-bearing), `rect_row` (clipped trailing, then the
 no-trailing branch with a long label) and `empty_state` — 62 caught; the one
 right-widening clip comparison is an identity (a right-aligned value never
 draws past its anchor). Evidence: `target/mutants/components*/`.
+
+The `ceremony.rs` chunk closed all 56: four frame-equality tests cover the
+approve/confirm screen (a title wider than its band and a long relying-party id
+plus account so both ellipsis clips bite, then the single-line service head), the
+add-passkey screen, and the one-line `ceremony_plate` branch the confirm screens
+never reach — 56 caught, no identities. Evidence:
+`target/mutants/ceremony-controls/` (54 of 56) and `ceremony-controls2/` (2 of 2).
