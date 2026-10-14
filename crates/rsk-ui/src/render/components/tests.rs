@@ -179,7 +179,8 @@ fn card_row_places_icon_label_and_right_aligned_value() {
     )
     .unwrap();
     let mut expected = crate::render::tests::Rec::new();
-    let y = 40 + PAD + ROW_H + 1 * (ROW_H + ROW_GAP);
+    let row_idx = 1u16;
+    let y = 40 + PAD + ROW_H + row_idx * (ROW_H + ROW_GAP);
     let x = MARGIN + PAD;
     glyph::draw(
         &mut expected,
@@ -219,7 +220,8 @@ fn card_row_chevron_adds_the_chevron_after_the_shared_row() {
     card_row_chevron(&mut actual, 40, 1, Glyph::Lock, "Label", None).unwrap();
     let mut expected = crate::render::tests::Rec::new();
     card_row(&mut expected, 40, 1, Glyph::Lock, "Label", None).unwrap();
-    let y = 40 + PAD + ROW_H + 1 * (ROW_H + ROW_GAP);
+    let row_idx = 1u16;
+    let y = 40 + PAD + ROW_H + row_idx * (ROW_H + ROW_GAP);
     glyph::draw(
         &mut expected,
         Glyph::Chevron,
@@ -242,10 +244,7 @@ fn rect_row_places_its_icon_trailing_chevron_and_clipped_label() {
         rect,
         Glyph::Key,
         "A very long label that will not fit the clip area at all",
-        Some((
-            "123456789012345678901234567890123456789012345678901234567890",
-            theme::WARN,
-        )),
+        Some(("1234567890", theme::WARN)),
         true,
     )
     .unwrap();
@@ -281,20 +280,14 @@ fn rect_row_places_its_icon_trailing_chevron_and_clipped_label() {
             (tx - label_x).max(0) as u16,
             rect.h,
         ))),
-        "123456789012345678901234567890123456789012345678901234567890",
+        "1234567890",
         EgPoint::new(tx, cy),
         font::Role::Body,
         theme::WARN,
         theme::ROW_BG,
     )
     .unwrap();
-    let label_right = tx
-        - font::width(
-            "123456789012345678901234567890123456789012345678901234567890",
-            font::Role::Body,
-        )
-        .unwrap_or(0) as i32
-        - 8;
+    let label_right = tx - font::width("1234567890", font::Role::Body).unwrap_or(0) as i32 - 8;
     let clip = Rect::new(
         label_x as u16,
         rect.y,
