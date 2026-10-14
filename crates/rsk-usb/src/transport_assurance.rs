@@ -145,3 +145,7 @@ pub fn cont_frame(cid: u32, seq: u8) -> [u8; HID_RPT_SIZE] {
     f[4] = seq & 0x7F;
     f
 }
+
+#[cfg(test)]
+#[path = "transport_assurance_tests.rs"]
+mod tests;

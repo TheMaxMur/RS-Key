@@ -2782,3 +2782,10 @@ holding exactly `5 + body_len` bytes is the exact fit a caller sizes on purpose,
 so `assemble_verify` must accept it — the `>` relaxed to `>=` refuses it, and the
 one byte shorter buffer is still refused. Evidence:
 `target/mutants/secure-pin-controls/` (1 caught of 1).
+
+The `rsk-usb` transport-assurance chunk closed its one pending survivor: the
+probe's `init_frame` carries `bcnt` big-endian, so a 300-byte declaration must
+read `bcnt_hi` 1 / `bcnt_lo` 44 and leave the reassembler mid-transaction. The
+`>>`→`<<` mutant zeroes the high lane, which makes the same frame declare 44 and
+complete from the INIT alone. Evidence:
+`target/mutants/transport-assurance-controls/` (1 caught of 1).
