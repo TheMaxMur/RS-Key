@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Bank the image emulator's SIO FIFOs, spinlocks, doorbells and interrupt lines
+  by security state; enforce GPIO masks and core-local peripheral ownership,
+  including the GPIO coprocessor and threaded handoff.
+
 - Apply RP2350 ACCESSCTRL master and privilege filters to emulator CPU accesses,
   including instruction fetches and mounted MMIO. Model controller locks,
   password writes, restricted Non-secure grants and Secure-only Boot RAM;
@@ -251,6 +255,7 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   bcdDevice → `0x0A92`.
 
 ### Added
+
 
 - A Linux MSC image runner reads BOOTSEL's FAT16 files with `usb-storage`
   active, checks coexistence with PICOBOOT and reloads a complete UF2 through

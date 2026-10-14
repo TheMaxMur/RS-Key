@@ -433,7 +433,7 @@ picoem_manifest() {
 }
 
 run "fmt (RP2350 model)"       cargo fmt --manifest-path "$(picoem_manifest)" -p rp2350-emu -p picoem-common -- --check
-run "clippy (RP2350 model)"    cargo clippy --locked --manifest-path "$(picoem_manifest)" -p rp2350-emu -p picoem-common --target "$HOST" --all-targets -- -D warnings
+run "clippy (RP2350 model)"    cargo clippy --locked --manifest-path "$(picoem_manifest)" -p rp2350-emu -p picoem-common --target "$HOST" --all-features --all-targets -- -D warnings
 # fuzz/ is also its own (nightly) workspace. rustfmt needs no toolchain, so the
 # stable gate can format-check it here. Format fuzz/ with this same stable
 # rustfmt — not the .#fuzz nightly one, which lays imports out differently.

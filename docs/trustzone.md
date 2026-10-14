@@ -543,3 +543,35 @@ Disabling the CPU bus filter makes the actual model gate row fail at protected
 peripheral and ROM-hook assertions. Clippy passes. The unchanged combined image
 also passed smoke with 32 keepalives, maximum image-time gap 205 ms. SIO banking,
 GPIO register filtering, DMA channel security and DMA MPU are still pending.
+
+
+SIO now has separate S and NS FIFOs, spinlocks, doorbells and interrupt lines.
+S can address the NS mirror; NS attempts to address that mirror fault. GPIO
+input/output/OE accesses share the physical state with ACCESSCTRL masks, including
+narrow writes and CP0. PERI_NONSEC controls each core's interpolator ownership;
+NS cannot reassign it or access the S-only timer. The threaded view preserves
+both banks and GPIO policy during promotion and polls their separate IRQ lines.
+Per-pin IO_BANK/PADS filtering and TMDS encoding are not modelled; the production
+policy must keep those peripherals S-only unless their model is extended.
+
+
+SIO checks on 2026-10-14 reproduced eight prohibited accesses before repair.
+Removing bank selection makes the actual model gate fail on S FIFO disclosure,
+S GPIO reads and protected-state mutation. Both bank views have positive controls;
+the new high-bank output path also has a reproducing pad-projection test. Smoke
+on the unchanged combined image reports 32 keepalives and a maximum image-time
+gap of 208 ms. The x86 Linux container needs at least six vCPUs for the upstream
+threaded runtime. The imported pacer overrun test now uses a valid millisecond
+quantum and an actual overrun; it no longer fails at construction on a coarse
+virtual TSC. The runtime's minimum quantum is unchanged. The ordinary model test
+row remains portable to smaller CI hosts; clippy compiles all features, and
+threaded runtime tests run separately on a six-vCPU host. Container wall-clock
+measurements are not a physical-device pacing oracle.
+
+
+Final model runs for SIO: 3,776 RP2350 tests pass on macOS (27 ignored), and
+3,868 pass on x86 Linux with threading and all features (28 ignored). The common
+library also passes its Linux all-feature tests after the portable overrun
+fixture repair. These measurements exercise the emulator model; they do not
+prove the hardware policy in the current prototype, which still grants NS
+direct USB access.
