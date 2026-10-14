@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Keep the emulator's Secure special-register banks inaccessible to Non-secure
+  MRS/MSR aliases. Validate exception returns and Secure stack signatures before
+  restoring state; preserve valid Secure/Non-secure interrupt returns. Run the
+  vendored CPU model tests in the existing quality gate.
+
 - Make the image emulator enforce CPU Secure/Non-secure memory attribution,
   checked NSC entry, MPU permissions and SecureFault status. Cache hits and ROM
   hooks cannot bypass fetch checks. The two picoem libraries and pinned A4 ROM

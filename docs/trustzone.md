@@ -502,6 +502,26 @@ nix develop -c cargo test --locked --manifest-path third_party/picoem/Cargo.toml
   -p rp2350-emu --target aarch64-apple-darwin --lib
 ```
 
-The full `scripts/check.sh` passed for this CPU-model step. Exception-return
-and special-register validation still need hardening before adversarial image
-runs can support an isolation claim.
+The full `scripts/check.sh` passed for the CPU-memory step. Controller, DMA
+and adversarial-image coverage are still needed before an isolation claim.
+
+
+Special-register and exception-return checks now preserve the separation of
+the S and NS register banks. MRS/MSR `_NS` aliases are RAZ/WI to NS code.
+EXC_RETURN from thread mode cannot unstack a frame; NS returns with invalid ES
+or DCRS fields raise INVER. Returning to a protected S frame checks its integrity
+signature before restoring registers. Honest S-to-NS interrupt returns follow
+the default DCRS rules, including callee-register preservation. The existing
+quality gate now runs the vendored model's formatting, clippy and library tests,
+so these tests participate in CI rather than only in manual emulator checks.
+
+
+Transition checks on 2026-10-14: six reproductions failed on the previous model,
+including S-bank reads/writes, forged returns and acceptance of a corrupted
+stack signature. Both valid interrupt-return paths now pass; all 17 boundary
+tests and 3,748 RP2350 library tests pass. Clippy is green and the combined-image
+smoke reports 32 keepalives with a maximum image-time gap of 287 ms.
+Disabling the NS data-attribution guard made the actual `test (RP2350 model)`
+gate row fail at secret-exposure and protected-store assertions (not a compiler
+failure). The guard was then restored byte-for-byte. These checks cover the
+implemented transitions; ACCESSCTRL, SIO banking and DMA remain separate work.

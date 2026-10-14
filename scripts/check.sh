@@ -427,6 +427,13 @@ run_tests "test (tui)"               cargo test --manifest-path tools/tui/Cargo.
 run "fmt (emu)"                cargo fmt --manifest-path tools/emu/Cargo.toml --check
 run "clippy (emu)"             cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets -- -D warnings
 run "clippy (emu conformance)" cargo clippy --manifest-path tools/emu/Cargo.toml --target "$HOST" --all-targets --features fido-conformance -- -D warnings
+picoem_manifest() {
+  cargo metadata --locked --manifest-path tools/emu/Cargo.toml --format-version 1 |
+    python -c 'import json, sys; print(next(p["manifest_path"] for p in json.load(sys.stdin)["packages"] if p["name"] == "rp2350-emu"))'
+}
+
+run "fmt (RP2350 model)"       cargo fmt --manifest-path "$(picoem_manifest)" -p rp2350-emu -p picoem-common -- --check
+run "clippy (RP2350 model)"    cargo clippy --locked --manifest-path "$(picoem_manifest)" -p rp2350-emu -p picoem-common --target "$HOST" --all-targets -- -D warnings
 # fuzz/ is also its own (nightly) workspace. rustfmt needs no toolchain, so the
 # stable gate can format-check it here. Format fuzz/ with this same stable
 # rustfmt — not the .#fuzz nightly one, which lays imports out differently.
@@ -666,6 +673,7 @@ run "cargo-audit (tui SCA)"    cargo audit --file tools/tui/Cargo.lock
 # The emulator's own host tests — today the USB/IP codec, whose struct layouts are
 # the Linux kernel's and whose framing rule decides how many bytes come off the
 # socket next; both fail silently on the wire rather than loudly.
+run_tests "test (RP2350 model)"      cargo test --locked --manifest-path "$(picoem_manifest)" -p rp2350-emu -p picoem-common --lib --target "$HOST"
 run_tests "test (emu)"               cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST"
 run_tests "test (emu security trace)" cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features security-trace
 run_tests "test (emu conformance)"   cargo test --manifest-path tools/emu/Cargo.toml --target "$HOST" --features fido-conformance
