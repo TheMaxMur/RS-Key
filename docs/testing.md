@@ -2656,10 +2656,23 @@ The first UI chunk resolved 33 of `applets.rs`'s 99 frozen occurrences:
 19 (detail-card geometry) were already killed by tests that landed after the
 sweep snapshot, and four new frame tests kill 14 more — retired-slot titles,
 one screen per named or retired PIV slot with a single fallback, distinct
-OpenPGP key-slot titles, and the empty-slot body's glyph and both lines. The
-remaining 66 are renderer coordinates plus the `render_apps` count words; they
-stay queued. Evidence: `target/mutants/applets-controls/` (19 caught of 99) and
+OpenPGP key-slot titles, and the empty-slot body's glyph and both lines. Evidence:
+`target/mutants/applets-controls/` (19 caught of 99) and
 `target/mutants/applets2/` (14 caught of 80).
+
+The `applets.rs` remainder chunk closed the last 66 occurrences with thirteen
+frame controls that rebuild each screen from independent literals: the Apps
+hub's
+singular/plural unit words at counts 0/1/2/4/255, the OpenPGP and PIV overview
+footers pinned above the nav, a key detail's fingerprint rows and footer in both
+the fingerprint-present and not-set branches, a populated PIV slot's purpose and
+card top, the OATH body's empty glyph, one-page footer and two-page pager, the
+OATH credential detail, the cardholder's four stepping caption/value blocks and
+their clip, the Retired & F9 F9-versus-retired row and its pager, the keygen
+chooser and RSA size picker, and the PIV PIN menu footer. All 66 exact mutations
+fail the frame equality; no identity was accepted. Evidence:
+`target/mutants/applets-remainder/` (66 caught of 66, host
+`aarch64-apple-darwin`).
 
 The `backup.rs` chunk is the same shape: one direct string test kills all nine
 `fmt_share_title` occurrences (both body replacements and the seven index
