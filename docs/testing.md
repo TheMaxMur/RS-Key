@@ -2729,3 +2729,10 @@ the masked dot row (placeholder, filled and `+` overflow) and the
 extent is load-bearing), plus direct assertions on every caption, the
 exact-band-width `>` boundary and the reveal `+` overflow — 26 caught, no
 identities. Evidence: `target/mutants/pin/` (22 of 26) and `pin2/` (4 rerun).
+
+The `list.rs` chunk closed all 23: a frame-equality test covers `group_card`'s
+span and both dividers at a nonzero row, and two cover `row`'s chipped and plain
+variants with a long label plus a long trailing value so the trailing cap and
+both ellipsis clips bite — 22 caught; the remaining `tx - tleft` clip widening is
+an identity (the right-aligned trailing never draws past its `tx` anchor, the
+same argument as `rect_row` above). Evidence: `target/mutants/list/`.

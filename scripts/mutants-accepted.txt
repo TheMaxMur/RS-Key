@@ -214,3 +214,6 @@ crates/rsk-x509/src/lib.rs: replace > with >= in DerRev<'a>::uint
 
 [right-clip-widening-identity] The trailing value is right-aligned at tx and never draws past it, so a clip widened to the right changes no pixel.
 crates/rsk-ui/src/render/components/mod.rs: replace - with + in rect_row
+
+[list-trailing-clip-widening-identity] The list row's trailing value is right-aligned at tx and never draws past it, so widening the trailing clip's right edge (tx + tleft instead of tx - tleft) moves no pixel.
+crates/rsk-ui/src/render/components/list.rs: replace - with + in row
