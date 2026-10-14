@@ -126,3 +126,194 @@ fn a_stepper_row_centres_its_value_between_the_two_keys() {
     assert_eq!(actual.px, expected.px);
     assert!(!actual.oob);
 }
+
+#[test]
+fn the_share_picker_reports_both_steppers_and_one_summary_line() {
+    let mut actual = crate::render::tests::Rec::new();
+    render_share_picker(&mut actual, 2, 3).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    back_button(&mut expected, PK_BACK_RECT, theme::ACCENT).unwrap();
+    text_left(
+        &mut expected,
+        "Shamir shares",
+        EgPoint::new(58, 22),
+        Role::Heading,
+        theme::TEXT,
+    )
+    .unwrap();
+    stepper_row(
+        &mut expected,
+        "Needed to recover",
+        PICK_T_MINUS_RECT,
+        PICK_T_PLUS_RECT,
+        2,
+    )
+    .unwrap();
+    stepper_row(
+        &mut expected,
+        "Total shares",
+        PICK_N_MINUS_RECT,
+        PICK_N_PLUS_RECT,
+        3,
+    )
+    .unwrap();
+    text(
+        &mut expected,
+        "Any 2 of 3 shares",
+        EgPoint::new(MIDX, 228),
+        Role::Body,
+        theme::ACCENT_TEXT,
+    )
+    .unwrap();
+    button(
+        &mut expected,
+        PICK_CONTINUE_RECT,
+        "Continue",
+        theme::ACCENT_FILL,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn the_reveal_gate_draws_its_warning_lines_and_hold_button() {
+    let mut actual = crate::render::tests::Rec::new();
+    render_reveal_warning(&mut actual, RevealKind::Phrase).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    back_button(&mut expected, PK_BACK_RECT, theme::ACCENT).unwrap();
+    text_left(
+        &mut expected,
+        "Reveal phrase",
+        EgPoint::new(58, 22),
+        Role::Heading,
+        theme::TEXT,
+    )
+    .unwrap();
+    glyph::draw(
+        &mut expected,
+        Glyph::Warn,
+        Point::new(104, 56),
+        32,
+        theme::WARN,
+        BG,
+    )
+    .unwrap();
+    text_left(
+        &mut expected,
+        "Showing 24 secret words",
+        EgPoint::new(16, 118),
+        Role::Body,
+        theme::WARN,
+    )
+    .unwrap();
+    text_left(
+        &mut expected,
+        "that restore everything.",
+        EgPoint::new(16, 136),
+        Role::Body,
+        theme::WARN,
+    )
+    .unwrap();
+    text_left(
+        &mut expected,
+        "Make sure no person or",
+        EgPoint::new(16, 160),
+        Role::Body,
+        MUTED,
+    )
+    .unwrap();
+    text_left(
+        &mut expected,
+        "camera can see the screen.",
+        EgPoint::new(16, 178),
+        Role::Body,
+        MUTED,
+    )
+    .unwrap();
+    render_hold_button(
+        &mut expected,
+        DEL_HOLD_RECT,
+        "Hold to reveal",
+        theme::DANGER_FILL,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn the_seal_gate_draws_its_warning_lines_and_hold_button() {
+    let mut actual = crate::render::tests::Rec::new();
+    render_seal_confirm(&mut actual).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    back_button(&mut expected, PK_BACK_RECT, theme::ACCENT).unwrap();
+    text_left(
+        &mut expected,
+        "Seal backup",
+        EgPoint::new(58, 22),
+        Role::Heading,
+        theme::TEXT,
+    )
+    .unwrap();
+    glyph::draw(
+        &mut expected,
+        Glyph::Lock,
+        Point::new(104, 56),
+        32,
+        theme::WARN,
+        BG,
+    )
+    .unwrap();
+    text_left(
+        &mut expected,
+        "Closes the backup window.",
+        EgPoint::new(16, 118),
+        Role::Body,
+        theme::WARN,
+    )
+    .unwrap();
+    text_left(
+        &mut expected,
+        "You can't show or export the",
+        EgPoint::new(16, 142),
+        Role::Body,
+        MUTED,
+    )
+    .unwrap();
+    text_left(
+        &mut expected,
+        "phrase again until a reset.",
+        EgPoint::new(16, 160),
+        Role::Body,
+        MUTED,
+    )
+    .unwrap();
+    render_hold_button(
+        &mut expected,
+        DEL_HOLD_RECT,
+        "Hold to seal",
+        theme::DANGER_FILL,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn a_share_shows_the_sub_page_page_modulo_its_own_page_count() {
+    let words: [&str; 24] = [
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+        "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo", "sierra",
+        "tango", "uniform", "victor", "whiskey", "xray",
+    ];
+    let mut actual = crate::render::tests::Rec::new();
+    render_slip39_share(&mut actual, &words, 1, 2, 1, 2).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    status_bar(&mut expected).unwrap();
+    title_bar(&mut expected, "Share 1/2", theme::ACCENT, true).unwrap();
+    word_grid(&mut expected, &words, 1).unwrap();
+    render_pager(&mut expected, 1, 2).unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}

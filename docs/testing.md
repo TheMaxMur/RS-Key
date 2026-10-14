@@ -2665,7 +2665,10 @@ The `backup.rs` chunk is the same shape: one direct string test kills all nine
 `fmt_share_title` occurrences (both body replacements and the seven index
 increments, `65535/65535` included), and three frame tests kill the whole
 `word_grid` (two pages over 14 words), `choice_card` and `stepper_row` groups —
-41 more occurrences, 41 caught. The remaining 60 are the chooser, picker,
-reveal/seal screens and `render_backup`/`render_backup_format` coordinates.
+41 more occurrences, 41 caught. Four more frame tests kill the share picker
+(13), the reveal and seal gates (6 each) and a SLIP-39 share's sub-page (2),
+27 caught. The remaining 33 are the chooser and
+`render_backup`/`render_backup_format` coordinates.
 Evidence: `target/mutants/backup-controls/` (0 caught of 110),
-`target/mutants/backup2/` (9 of 9) and `target/mutants/backup3/` (41 of 41).
+`target/mutants/backup2/` (9 of 9), `target/mutants/backup3/` (41 of 41) and
+`target/mutants/backup4/` (27 of 27).
