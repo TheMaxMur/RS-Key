@@ -121,7 +121,7 @@ The latest local completion boundary is:
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
 | 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns, arbitrary correlated faults and semantic record-loss detection beyond the current CRC/legacy formats remain open; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
-| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
+| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below | Other privileged command/state/fault combinations and broader retained campaigns; the 63.20% union is not remeasured |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
 | 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
@@ -2554,3 +2554,38 @@ by the per-test timeout). Per-module kill evidence is retained under
 Device C/assembly mutation execution and resource/timing equivalence remain
 separate obligations. This closure is a host-profile weekly-shard result, not a
 hardware or whole-release claim.
+
+## Cross-applet capability gates and stateful fs_ops seeds, 2026-10-14
+
+Phase 5's two targets that had no local seed generator now have one:
+`cross_applet_sequences()` and `fs_ops_sequences()` in
+`scripts/external_corpus.py`. Eleven `cross_applet` seeds prepare the cached
+capability mask with the target's own `SET_CAPS`, `refresh`, `reset_card` and
+`factory_wipe` opcodes and replay both directions of its SELECT oracle — one
+seed per gated applet (OpenPGP, OATH, OTP, PIV, FIDO2/U2F) that disables the
+bit, refreshes and asserts `FILE_NOT_FOUND`, and its twin that restores the bit,
+refreshes and asserts the same SELECT is served; one seed disables every gated
+applet and runs the device-wide wipe, which must shed `EF_DEV_CONF` so the
+applets are reachable again. Six `fs_ops` seeds build non-empty state before
+exercising it: put then clamped read, put then delete, meta add / replace / find
+/ delete, the exact `META_MAX` NoMemory boundary (four 255-byte values, the
+fourth refused, then a delete makes room), reboot then read, and reboot after
+the last meta entry goes.
+
+Observed on this revision (`aarch64-apple-darwin`, default build): each
+generated directory replays through its own target with `-runs=0` and exits 0
+(`cross_applet`: 11 files, cov 2041; `fs_ops`: 6 files, cov 421), no artifacts
+written; a 60-second live run seeded from each generated directory also exits 0
+(`cross_applet` 121 294 executions, `fs_ops` 927 090). The capability-write
+preparation is load-bearing: dropping the refresh op leaves the cached mask
+unchanged, and a disable whose bit reaches the dispatcher reports a different
+edge count than the enabled SELECT. No oracle fired; these are valid preparation
+paths, not findings.
+
+Neither target has a `fuzz/tests/fixtures/` replay pattern — the only fixture is
+`fido_session`'s, and both Miri tests drive their crates directly rather than the
+shipped targets — so no seed replay was added under Miri.
+
+The 63.20% union was **not** remeasured: it comes from a long retained campaign,
+whereas this slice is a bounded replay plus two 60-second runs, so Phase 5 stays
+open on its retained-campaign and union criteria.

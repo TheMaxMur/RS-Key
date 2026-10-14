@@ -557,6 +557,21 @@ multi-step):
   checks `ResetNeverWeakensSurvivingState` after boot-time seed provisioning,
   then mounts a second time to cross the reboot boundary again.
 
+`cross_applet` and `fs_ops` are the two stateful targets that had no local seed
+generator; since 2026-10-14 `scripts/external_corpus.py` also emits 11
+`cross_applet` capability-gate seeds and 6 `fs_ops` sequence seeds. The
+`cross_applet` set drives the target's own opcodes — `SET_CAPS`, `refresh`,
+`reset_card`, `factory_wipe` — to prepare the cached mask, then replays both
+directions of its SELECT oracle for every gated applet (disable →
+`FILE_NOT_FOUND`, restore → served) and the device-wide wipe that must shed
+`EF_DEV_CONF`; the `fs_ops` set builds non-empty state (put, `meta_add`) before
+the clamped read, delete, the exact `META_MAX` NoMemory boundary and the reboot
+(`into_storage`→`scan`) are exercised against its `HashMap` model. Both
+directories replay under `-runs=0` and a seeded 60-second run with no oracle
+firing. Neither target has a `fuzz/tests/fixtures/` replay — Miri's
+`cross_applet` and `fs_ops` tests drive their crates directly — so no Miri seed
+fixture was added.
+
 ```sh
 nix develop .#fuzz -c cargo fuzz list
 nix develop .#fuzz -c cargo fuzz run <target> -- -max_total_time=60
