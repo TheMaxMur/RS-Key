@@ -2749,3 +2749,22 @@ variants with a long label plus a long trailing value so the trailing cap and
 both ellipsis clips bite — 22 caught; the remaining `tx - tleft` clip widening is
 an identity (the right-aligned trailing never draws past its `tx` anchor, the
 same argument as `rect_row` above). Evidence: `target/mutants/list/`.
+
+The `rsk-usb` CTAPHID chunk closed its 22 pending survivors. Two are reachable and
+caught: `the_command_bytes_are_the_protocol_constants` pins the command bytes to
+their protocol literals and kills the `TYPE_INIT & 0x11` neighbour, and
+`a_lock_lasts_its_whole_seconds_field` kills the `seconds + 1000` lock (a
+3-second lock must still exclude just before +3 s and be gone at it). Twenty are
+identities with no observable difference: the thirteen `TYPE_INIT | n` command
+constants (bit 7 is disjoint from every command nibble, so OR and XOR agree), the
+capability byte (`CAPFLAG_CBOR` and `CAPFLAG_WINK` are disjoint), the two bcnt
+lanes of a shifted high byte, the `bcnt == INIT_DATA` case the same call's
+completion check overwrites, and the four operators in the `#[cfg(kani)]` width,
+which the host profile does not build. The chunk's two resource-only continuation
+rows are now assertion kills:
+`a_continuation_walk_ends_exactly_at_the_declared_length` drives `next()` by hand
+over an `INIT_DATA + 1` payload, so `>=`→`<` refuses the one continuation and
+`+=`→`*` never advances the cursor past it — both die on the assertion in 7 ms,
+ahead of the per-test timeout. Evidence:
+`target/mutants/ctaphid-controls/` (2 caught of 22) and
+`target/mutants/ctaphid-resource-controls/` (2 of 2).

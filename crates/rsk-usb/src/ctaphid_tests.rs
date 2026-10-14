@@ -900,3 +900,70 @@ fn a_corrupt_probe_cursor_is_refused_before_copying_a_continuation() {
     );
     assert_eq!(posed.tx_view().owner, None);
 }
+
+/// The wire vocabulary, pinned to the protocol bytes (CTAP 2.3 §11.2.9.1.3, plus
+/// the pre-standard U2FHID commands `tools/emu` names). `TYPE_INIT | n` and
+/// `TYPE_INIT ^ n` agree for every command here by construction — the INIT bit is
+/// disjoint from every command nibble — so an OR→XOR swap is unobservable. An
+/// `&` in that place is not: `TYPE_INIT & 0x11` is 0x00, a command that erases
+/// itself, and this is the assertion that notices.
+#[test]
+fn the_command_bytes_are_the_protocol_constants() {
+    assert_eq!(CTAPHID_PING, 0x81);
+    assert_eq!(CTAPHID_MSG, 0x83);
+    assert_eq!(CTAPHID_LOCK, 0x84);
+    assert_eq!(CTAPHID_INIT, 0x86);
+    assert_eq!(CTAPHID_WINK, 0x88);
+    assert_eq!(CTAPHID_CBOR, 0x90);
+    assert_eq!(CTAPHID_CANCEL, 0x91);
+    assert_eq!(CTAPHID_KEEPALIVE, 0xBB);
+    assert_eq!(CTAPHID_SYNC, 0xBC);
+    assert_eq!(CTAPHID_ERROR, 0xBF);
+    assert_eq!(CTAPHID_VENDOR_FIRST, 0xC0);
+    assert_eq!(CTAPHID_VERSION, 0xE1);
+    assert_eq!(CTAPHID_UUID, 0xE2);
+}
+
+/// §11.2.9.2.2's lock lasts `seconds` — the field is scaled by 1000, not added to
+/// it. A `+` in place of the `*` makes a 3-second lock expire 1.997 s early, so the
+/// exclusion has to hold right up to `now + seconds * 1000` and end there.
+#[test]
+fn a_lock_lasts_its_whole_seconds_field() {
+    let mut lock = ChannelLock::default();
+    let (mine, theirs) = (0x0100_0000, 0x0100_0001);
+    lock.arm(mine, 3, 1_000);
+    assert!(
+        lock.blocks(theirs, 3_999),
+        "still locked just before expiry"
+    );
+    assert!(!lock.blocks(theirs, 4_000), "expired at now + 3 * 1000 ms");
+}
+
+/// A payload one byte past the INIT frame is one INIT plus one 1-byte
+/// continuation, and the walk must end there. Driving `next()` a bounded number
+/// of times (not collecting) is what makes a continuation whose cursor stops
+/// advancing, or stops a frame early, an assertion failure rather than a
+/// non-terminating stream or a hang.
+#[test]
+fn a_continuation_walk_ends_exactly_at_the_declared_length() {
+    let cid = 0x0100_0000;
+    let data = [0xCD; INIT_DATA + 1];
+    let mut frames = TxFrames::new(cid, CTAPHID_MSG, &data);
+    let init = frames.next().expect("the INIT frame");
+    assert_eq!(
+        ((init[5] as usize) << 8) | init[6] as usize,
+        data.len(),
+        "the INIT frame declares a different length than the payload"
+    );
+    let cont = frames.next().expect("the one continuation");
+    assert_eq!(cont[4], 0, "the continuation's seq");
+    assert_eq!(
+        &cont[5..6],
+        &data[INIT_DATA..],
+        "the continuation carries the remainder"
+    );
+    assert!(
+        frames.next().is_none(),
+        "the walk did not stop at the declared length"
+    );
+}

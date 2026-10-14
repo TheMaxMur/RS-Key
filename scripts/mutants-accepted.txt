@@ -217,3 +217,33 @@ crates/rsk-ui/src/render/components/mod.rs: replace - with + in rect_row
 
 [list-trailing-clip-widening-identity] The list row's trailing value is right-aligned at tx and never draws past it, so widening the trailing clip's right edge (tx + tleft instead of tx - tleft) moves no pixel.
 crates/rsk-ui/src/render/components/list.rs: replace - with + in row
+
+[type-init-lanes] `TYPE_INIT` is 0x80 and every command constant added to it is below 0x80, so the two operands never share a bit and OR and XOR agree for all thirteen; the `&` neighbour is killed by the pinned protocol bytes in the ctaphid tests.
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+crates/rsk-usb/src/ctaphid.rs: replace | with ^
+
+[capability-lanes] `CAPFLAG_CBOR` (0x04) and `CAPFLAG_WINK` (0x01) are disjoint, so the capability byte is the same either way and the WINK bit is claimed exactly where an indicator exists.
+crates/rsk-usb/src/ctaphid.rs: replace | with ^ in init_capabilities
+
+[bcnt-lanes] The high byte is shifted left by eight before the OR, so its bits and `f[6]`'s are disjoint and OR and XOR agree for every 16-bit declared length.
+crates/rsk-usb/src/ctaphid.rs: replace | with ^ in Reassembler::feed
+
+[init-complete-overwrite] At `bcnt == INIT_DATA` the copy leaves `cur == bcnt`, so the completion check on the same call resets `in_tx` and returns `Message`; the widened assignment is never observable.
+crates/rsk-usb/src/ctaphid.rs: replace > with >= in Reassembler::feed
+
+[kani-width-off] The four operators of the `#[cfg(kani)]` arm of `CTAP_MAX_MESSAGE`: the host `cargo test` profile compiles the `#[cfg(not(kani))]` definition, so no input the suite can pose reaches them.
+crates/rsk-usb/src/ctaphid.rs: replace + with -
+crates/rsk-usb/src/ctaphid.rs: replace + with *
+crates/rsk-usb/src/ctaphid.rs: replace * with +
+crates/rsk-usb/src/ctaphid.rs: replace * with /
