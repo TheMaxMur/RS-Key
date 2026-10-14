@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
+[[profile.mutants.overrides]]
+filter = 'package(rsk-openpgp) & (test(a_long_import_template_advances_past_each_tag_and_length) | test(crypto_rng_adapters_fill_the_requested_buffer_from_the_source))'
+priority = 100
+
 [profile.default]
 # The scripted PIN pads have short fixture deadlines under concurrent rendering.
 test-threads = 2
@@ -33,13 +37,22 @@ retries = 0
 slow-timeout = { period = "5s", terminate-after = 4, grace-period = "0s" }
 
 [[profile.mutants.overrides]]
+# Notice enumeration nonprogress before the larger malformed-record fixtures.
+filter = 'package(rsk-oath) & test(list_reads_each_malformed_credential_once_before_advancing)'
+priority = 100
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-oath) & test(tests::mutation::)'
+priority = 99
+
+[[profile.mutants.overrides]]
 # Short contracts must run before these exhaustive write/recovery traces.
 filter = 'package(rsk-store) & (test(counter_checkpoint_wear_is_measured_without_touching_main_payload_or_authority) | test(authenticated_storage_preserves_the_full_dynamic_budget_and_excludes_its_witness) | test(root_rekey_and_repeated_recovery_keep_values_and_close_the_old_arm) | test(automatic_import_survives_command_and_recovery_program_or_erase_cuts))'
 priority = -100
 slow-timeout = { period = "60s", terminate-after = 15, grace-period = "0s" }
 
 [[profile.mutants.overrides]]
-filter = 'package(rsk-fido) & test(getassertion::tests::discovery::)'
+filter = 'package(rsk-fido) & (test(getassertion::tests::discovery::) | test(generated_token_relation_is_exact_over_the_full_product))'
 priority = 100
 
 [[profile.mutants.overrides]]
@@ -60,12 +73,50 @@ filter = 'package(rsk-store) & (test(a_program_is_verified_with_nonempty_readbac
 priority = 100
 
 [[profile.mutants.overrides]]
-filter = 'package(rsk-store) & (test(raw_bank::) | test(span_rejects_integer_overflow_and_retains_exact_empty_and_full_bounds))'
+# Refute empty-transfer stalls before longer geometry fixtures enter them.
+filter = 'package(rsk-store) & test(raw_bank::progress::)'
 priority = 100
 
 [[profile.mutants.overrides]]
-filter = 'package(rsk-store) & (test(directory_digest_matches_independent_complete_frame_vectors) | test(a_valid_mac_cannot_authorize_noncanonical_checkpoint_padding) | test(checkpoint_counts_preserve_the_public_main_directory_ceiling) | test(raw_bank_refuses_nonempty_spans_that_reach_a_neighbor_partition_before_io) | test(an_unaligned_bank_read_crosses_scratch_windows_without_growing_them) | test(an_unaligned_bank_program_crosses_scratch_windows_without_growing_them))'
+# Reject a malformed clipped raster before a pixel-consuming test can stall.
+filter = 'package(rsk-ui) & test(font::tests::contracts::)'
 priority = 100
+
+[[profile.mutants.overrides]]
+# This mixed record stream fails before a solid-first damage frame can stall.
+filter = 'package(rsk-ui) & test(mixed_raster_and_solid_damage_paints_every_disjoint_record)'
+priority = 99
+
+[[profile.mutants.overrides]]
+# Check cursor progress before a complete raster-band caller can stall.
+filter = 'package(rsk-ui) & (test(a_raster_record_returns_the_next_complete_record_offset) | test(a_solid_band_cursor_advances_from_an_off_band_prefix_to_each_visible_record))'
+priority = 99
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-ui) & test(scene::tests::bands::)'
+priority = 98
+
+[[profile.mutants.overrides]]
+# A single bounded next call precedes callers that consume the whole iterator.
+filter = 'package(rsk-ui) & test(a_raster_command_iterator_returns_one_complete_pixel_before_finishing)'
+priority = 100
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-ui) & test(scene::tests::codec::)'
+priority = 99
+
+[[profile.mutants.overrides]]
+# Fault-provider contracts fail before a broken provider can stall a wipe.
+filter = 'package(rsk-fs) & (test(fault_provider::) | test(typed_api::) | test(traced_healthy_probes_and_removals_preserve_lengths_and_the_operation_log) | test(traced_faults_bind_to_the_target_and_count_only_its_probes) | test(snapshot_removals_spend_a_budget_and_size_reports_the_full_value) | test(an_atomic_ram_put_cut_finishes_recovery_after_one_boot))'
+priority = 100
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-store) & (test(raw_bank::) | test(span_rejects_integer_overflow_and_retains_exact_empty_and_full_bounds))'
+priority = 99
+
+[[profile.mutants.overrides]]
+filter = 'package(rsk-store) & (test(directory_digest_matches_independent_complete_frame_vectors) | test(a_valid_mac_cannot_authorize_noncanonical_checkpoint_padding) | test(checkpoint_counts_preserve_the_public_main_directory_ceiling) | test(raw_bank_refuses_nonempty_spans_that_reach_a_neighbor_partition_before_io) | test(an_unaligned_bank_read_crosses_scratch_windows_without_growing_them) | test(an_unaligned_bank_program_crosses_scratch_windows_without_growing_them) | test(an_overwrite_with_free_journal_space_needs_no_checkpoint_repair))'
+priority = 99
 
 [[profile.mutants.overrides]]
 # These three matrices exercise the real one-minute inactivity deadline.
