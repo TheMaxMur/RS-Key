@@ -2667,8 +2667,10 @@ increments, `65535/65535` included), and three frame tests kill the whole
 `word_grid` (two pages over 14 words), `choice_card` and `stepper_row` groups —
 41 more occurrences, 41 caught. Four more frame tests kill the share picker
 (13), the reveal and seal gates (6 each) and a SLIP-39 share's sub-page (2),
-27 caught. The remaining 33 are the chooser and
-`render_backup`/`render_backup_format` coordinates.
+27 caught; two more kill the format chooser (4) and the backup screen's plate,
+facts and open-window actions (25), 29 caught. One clip-widening comparison is
+an accepted identity (the headline strings fit the unchanged inset). `backup.rs`
+is fully triaged: 109 caught of 110, one identity.
 Evidence: `target/mutants/backup-controls/` (0 caught of 110),
-`target/mutants/backup2/` (9 of 9), `target/mutants/backup3/` (41 of 41) and
-`target/mutants/backup4/` (27 of 27).
+`target/mutants/backup2/` (9 of 9), `backup3/` (41 of 41), `backup4/` (27 of
+27), `backup5/` (3 of 3) and `backup6/` (29 of 30, one identity).

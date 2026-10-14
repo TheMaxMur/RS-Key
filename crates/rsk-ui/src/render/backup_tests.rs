@@ -317,3 +317,154 @@ fn a_share_shows_the_sub_page_page_modulo_its_own_page_count() {
     assert_eq!(actual.px, expected.px);
     assert!(!actual.oob);
 }
+
+#[test]
+fn the_format_chooser_lists_both_cards_under_its_heading() {
+    let mut actual = crate::render::tests::Rec::new();
+    render_backup_format(&mut actual).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    back_button(&mut expected, PK_BACK_RECT, theme::ACCENT).unwrap();
+    text_left(
+        &mut expected,
+        "Choose format",
+        EgPoint::new(58, 22),
+        Role::Heading,
+        theme::TEXT,
+    )
+    .unwrap();
+    choice_card(
+        &mut expected,
+        FMT_PHRASE_RECT,
+        "Single phrase",
+        "24 words (BIP-39)",
+    )
+    .unwrap();
+    choice_card(
+        &mut expected,
+        FMT_SHARES_RECT,
+        "Shamir shares",
+        "Split T-of-N (SLIP-39)",
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn the_backup_screen_draws_its_plate_facts_and_open_window_actions() {
+    let v = BackupView {
+        sealed: false,
+        has_seed: true,
+        exportable: true,
+        can_reveal: true,
+    };
+    let mut actual = crate::render::tests::Rec::new();
+    render_backup(&mut actual, &v).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    status_bar(&mut expected).unwrap();
+    title_bar(&mut expected, "Backup", theme::ACCENT, true).unwrap();
+    let plate = Rect::new(14, CONTENT_TOP + 8, PANEL_W - 28, 54);
+    crate::aa::rounded_rect(
+        &mut expected,
+        plate,
+        11,
+        Some(theme::WARN_BG),
+        Some((theme::WARN_BORDER, 1)),
+        BG,
+    )
+    .unwrap();
+    glyph::draw(
+        &mut expected,
+        Glyph::Warn,
+        Point::new(plate.x + 12, plate.y + 18),
+        18,
+        theme::WARN,
+        theme::WARN_BG,
+    )
+    .unwrap();
+    let tx = plate.x as i32 + 42;
+    let clip = Rect::new(
+        tx as u16,
+        plate.y,
+        (plate.x + plate.w).saturating_sub(6 + tx as u16),
+        plate.h,
+    );
+    text_left_clipped_on(
+        &mut expected,
+        "Review needed",
+        EgPoint::new(tx, plate.y as i32 + 20),
+        Role::Strong,
+        theme::WARN,
+        theme::WARN_BG,
+        clip,
+    )
+    .unwrap();
+    text_left_clipped_on(
+        &mut expected,
+        "Seed export still open.",
+        EgPoint::new(tx, plate.y as i32 + 38),
+        Role::Body,
+        MUTED,
+        theme::WARN_BG,
+        clip,
+    )
+    .unwrap();
+    text_left(
+        &mut expected,
+        "RECOVERY SHARES",
+        EgPoint::new(14, plate.y as i32 + plate.h as i32 + 14),
+        Role::Mono,
+        theme::CAPTION,
+    )
+    .unwrap();
+    let row0 = Rect::new(16, 138, PANEL_W - 32, 34);
+    let row1 = Rect::new(16, 176, PANEL_W - 32, 34);
+    group_panel(
+        &mut expected,
+        Rect::new(row0.x, row0.y, row0.w, row1.y + row1.h - row0.y),
+    )
+    .unwrap();
+    group_divider(
+        &mut expected,
+        row0.x,
+        row0.w,
+        (row0.y + row0.h + row1.y) as i32 / 2,
+    )
+    .unwrap();
+    row_body(
+        &mut expected,
+        row0,
+        Glyph::Lifebuoy,
+        "Seed",
+        Some(("Present", theme::OK)),
+        false,
+        false,
+    )
+    .unwrap();
+    row_body(
+        &mut expected,
+        row1,
+        Glyph::Lock,
+        "Backup window",
+        Some(("Open", theme::WARN)),
+        false,
+        false,
+    )
+    .unwrap();
+    button(
+        &mut expected,
+        BACKUP_REVEAL_RECT,
+        "Show recovery phrase",
+        theme::ACCENT_FILL,
+    )
+    .unwrap();
+    button(
+        &mut expected,
+        BACKUP_SEAL_RECT,
+        "Seal backup",
+        theme::KEY_BG,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}

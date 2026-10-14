@@ -202,3 +202,6 @@ crates/rsk-otp/src/lib.rs: replace | with ^ in OtpApplet<'a>::cmd_update
 
 [wipe-budget-identity] deleted == WIPE_MAX_DELETES is unreachable on the applet's fid range; the pathological store that would reach the check refuses under both comparisons.
 crates/rsk-openpgp/src/terminate.rs: replace > with >= in sweep
+
+[clip-widening-identity] plate.x * plate.w widens the plate's text clip past the panel; the current headline strings fit inside the unchanged 6-px inset, so no pixel moves.
+crates/rsk-ui/src/render/backup.rs: replace + with * in render_backup
