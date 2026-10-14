@@ -19,4 +19,10 @@ fn main() {
     println!("cargo:rerun-if-changed=../../src/main.rs");
     println!("cargo:rerun-if-changed=memory.x");
     println!("cargo:rerun-if-env-changed=RSK_TZ_IMPLIB");
+    if std::env::var_os("CARGO_FEATURE_TEST_HOSTILE_ACCESS").is_some() {
+        let address = std::env::var("RSK_TZ_PROBE_ADDRESS").expect("probe address");
+        let address = u32::from_str_radix(address.trim_start_matches("0x"), 16).unwrap();
+        std::fs::write(out.join("probe_address.rs"), format!("// SPDX-License-Identifier: AGPL-3.0-only\n// Copyright (C) 2026 RS-Key contributors\npub const PROBE_ADDRESS: u32 = {address};\n")).unwrap();
+    }
+    println!("cargo:rerun-if-env-changed=RSK_TZ_PROBE_ADDRESS");
 }

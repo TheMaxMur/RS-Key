@@ -26,6 +26,17 @@ pub fn configure(out: &Path, memory: &mut String) {
     memory.push_str(
         "ASSERT(LOADADDR(.data) + SIZEOF(.data) <= 0x101ff000, \"Secure image overlaps NSC\")\n",
     );
+    memory.push_str(
+        "SECTIONS {\n\
+         .rsk_exec : ALIGN(32) {\n\
+         __rsk_exec_start = .;\n\
+         KEEP(*(.data.bignum_hl .data.bignum_asm .data.sieve_step .data.ram_func))\n\
+         . = ALIGN(32); __rsk_exec_end = .;\n\
+         } > RAM AT> FLASH\n\
+         } INSERT BEFORE .data;\n\
+         SECTIONS { .rsk_init_anchor (NOLOAD) : { __sdata = ADDR(.rsk_exec); __sidata = LOADADDR(.rsk_exec); } > RAM } INSERT AFTER .uninit;\n\
+         ASSERT(LOADADDR(.data) - LOADADDR(.rsk_exec) == ADDR(.data) - ADDR(.rsk_exec), \"RAM initialization is not contiguous\")\n",
+    );
     let object = out.join("gateway.o");
     run(Command::new("arm-none-eabi-gcc")
         .args([

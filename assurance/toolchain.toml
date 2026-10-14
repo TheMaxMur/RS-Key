@@ -305,3 +305,18 @@ statement = "The SG numeric-control symbol comes from the Secure CMSE image, wit
 id = "import:firmware/trustzone/nonsecure/src/usb.rs:rsk_tz_usb"
 provider = "arm-none-eabi-gcc"
 statement = "The SG USB symbol comes from the Secure CMSE image; NS has packet operations, not controller/DPRAM references."
+
+[[boundary]]
+id = "import:firmware/src/trustzone/mpu.rs:__rsk_exec_start"
+provider = "rust-lld"
+statement = "The TrustZone linker section defines the aligned immutable RAM-code bounds used by Secure MPU on both cores."
+
+[[boundary]]
+id = "import:firmware/src/trustzone/mpu.rs:__rsk_exec_end"
+provider = "rust-lld"
+statement = "The TrustZone linker section defines the aligned immutable RAM-code bounds used by Secure MPU on both cores."
+
+[[boundary]]
+id = "export:firmware/trustzone/nonsecure/src/probe.rs:RSK_NS_PROBE_PROGRESS"
+provider = "rustc"
+statement = "The disposable hostile NS image exposes only its own progress marker, so a denied access can be distinguished from an unrelated startup fault."

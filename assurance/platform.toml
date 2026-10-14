@@ -1635,3 +1635,23 @@ discharge_owner = "contributor"
 status = "pending"
 failure_direction = "memory-safety and confidentiality: a gateway contract mismatch or missing Secure validation leaks key-grade state or emits stale authorized output"
 covers = ["unsafe:firmware/trustzone/nonsecure/src/keyboard.rs#block:rsk_tz_control-abi-cancel_otp", "unsafe:firmware/trustzone/nonsecure/src/keyboard.rs#block:rsk_tz_control-abi-otp_pending", "unsafe:firmware/trustzone/nonsecure/src/keyboard.rs#block:rsk_tz_control-abi-keyboard_char", "unsafe:firmware/trustzone/nonsecure/src/main.rs#extern:fn-rsk_tz_submit-kind-u32-cid-u32", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:rsk_tz_submit-kind-cid-data-as_ptr-length", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:rsk_tz_poll-ticket-reply-as_mut_ptr-u32-try_from", "unsafe:firmware/trustzone/nonsecure/src/main.rs#block:assert_eq-rsk_tz_submit-abi-cbor-x2000_0000-as", "unsafe:firmware/trustzone/nonsecure/src/session.rs#block:super-rsk_tz_control-action-ticket", "unsafe:firmware/trustzone/nonsecure/src/usb.rs#extern:fn-rsk_tz_usb-operation-u32-epoch_or_ticket-u32", "unsafe:firmware/trustzone/nonsecure/src/usb.rs#block:rsk_tz_usb-operation-argument-core-ptr-null_mut", "unsafe:firmware/trustzone/nonsecure/src/usb.rs#block:rsk_tz_usb-operation-argument-buffer-as_mut_ptr-length"]
+
+[[assumption]]
+id = "PLAT-TZ-006"
+class = "toolchain"
+statement = "Secure startup configures each core MPU with validated non-overlapping ranges. Flash operations on core0 temporarily permit only the bounded Secure stack window needed by the pinned HAL boot2 path, mask NS interrupts and restore data-only permissions before unmasking."
+discharge = "Review the volatile-register offsets and both-core startup calls in firmware/src/trustzone/mpu.rs with firmware/src/core1.rs and firmware/src/trustzone/mod.rs. Run the host region tests and symbolic partition proof, then the real image flash/crypto matrix and hostile NS tests. Hardware cache and flash timing remain separate board obligations."
+discharge_owner = "contributor"
+status = "pending"
+failure_direction = "memory-safety and isolation: an incorrect register range, retained executable stack window or ineffective denial test can hide access to protected state"
+covers = ["unsafe:firmware/src/trustzone/mpu.rs#extern:static-__rsk_exec_start-u8-static-__rsk_exec_end-u8", "unsafe:firmware/src/trustzone/mpu.rs#block:let-register-base-as-mut-u32"]
+
+[[assumption]]
+id = "PLAT-TZ-007"
+class = "toolchain"
+statement = "The disposable hostile NS image may disable its own MPU and intentionally read a denied address; its NS-only progress marker distinguishes the denied access from an unrelated startup fault."
+discharge = "Review firmware/trustzone/nonsecure/src/probe.rs, ensure the feature is off in normal builds, and assert the pre-read marker, exact fault cause/address and absence of the post-read marker. Relax the resource grant in a throwaway image and require the test to fail because the read succeeds."
+discharge_owner = "contributor"
+status = "pending"
+failure_direction = "memory-safety and isolation: an incorrect register range, retained executable stack window or ineffective denial test can hide access to protected state"
+covers = ["unsafe:firmware/trustzone/nonsecure/src/probe.rs#attr:no_mangle-static-rsk_ns_probe_progress-atomicu32", "unsafe:firmware/trustzone/nonsecure/src/probe.rs#block:xe000_ed94-as-mut-u32-write_volatile-cortex_m"]

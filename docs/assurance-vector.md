@@ -293,6 +293,8 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-TZ-003` | The GCC CMSE veneers validate complete bounded NS RAM spans before the |
 | platform | `PLAT-TZ-004` | The NS critical section runs only on core0 and restores its own saved  |
 | platform | `PLAT-TZ-005` | NS gateway calls pass numeric selectors, tickets and bounded buffers;  |
+| platform | `PLAT-TZ-006` | Secure startup configures each core MPU with validated non-overlapping |
+| platform | `PLAT-TZ-007` | The disposable hostile NS image may disable its own MPU and intentiona |
 
 ## Review packet
 

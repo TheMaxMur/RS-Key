@@ -37,7 +37,7 @@ subset, one is already C, and three are not code a C compiler could accept.
 | zeroization routines | 16 `scrub` / `wipe_*` sites across `crates/` and `firmware/`, and `rsk_secret`'s drops | 16 sites, 49 files using `zeroize` | **No.** Each is a method on a Rust type, and the drop glue that makes it sound is the compiler's |
 | the RSA C/asm wrapper and fault check | `crates/rsk-rsa/src/lib.rs` over `crates/rsk-rsa/csrc/` | 807 Rust, 397 C, 1082 asm | **Already C — and that is the finding.** The assembly is 73% of the foreign half by line and no verified compiler compiles assembly |
 | ML-DSA reductions | `crates/rsk-mldsa/src/reduce.rs`, `ntt.rs`, `round.rs` | 256 lines | **Yes, in principle.** Branch-free integer arithmetic, no generic function in any of the three |
-| linker-generated boundaries | five of the 22 `[[boundary]]` rows in `assurance/toolchain.toml` | 5 symbols | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
+| linker-generated boundaries | seven of the 25 `[[boundary]]` rows in `assurance/toolchain.toml` | 7 symbols | **Not code.** The datum is a symbol's address; a compiler has nothing to say about it |
 
 The genericity is the load-bearing number. Across the production modules of
 `crates/rsk-fido/src/`, 242 of 469 functions are generic and 176 of those carry
@@ -90,7 +90,7 @@ producer, one more unreadable contract, and one more containment argument.
 `scripts/check-assurance.sh:"toolchain TCB registry"` prints the live roster, and
 `assurance/toolchain.toml` is what it prints from: 13 registered tools
 carrying 7 distinct roles, of which 12 name a file that pins them and 1 is
-unpinned against an open obligation. The tree carries 22 FFI boundaries; 12 belong
+unpinned against an open obligation. The tree carries 25 FFI boundaries; 15 belong
 to the separate TrustZone build's CMSE entries and Non-secure vectors. Of
 the six TCB categories the criterion counts, the registry reaches 4 and says
 why the other two are out of reach.

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
+pub mod mpu;
+mod security_policy;
 pub mod usb;
 
 use cortex_m::peripheral::sau::{SauRegion, SauRegionAttribute};
@@ -125,9 +127,9 @@ unsafe fn launch_nonsecure() -> ! {
             .unwrap();
     }
     core.SAU.enable();
-    let permissions = 0xacce_003a;
-    rp_pac::ACCESSCTRL.usbctrl().write(|v| v.0 = 0xacce_0018);
-    rp_pac::ACCESSCTRL.timer1().write(|v| v.0 = permissions);
+    security_policy::configure_bus_masters();
+    mpu::secure();
+    mpu::nonsecure();
     // SAFETY: ITNS, VTOR_NS and MSP_NS are the architectural Non-secure launch controls.
     unsafe {
         let aircr = 0xe000_ed0c as *mut u32;

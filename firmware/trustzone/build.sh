@@ -16,6 +16,9 @@ ns_features=()
 if [[ "${RSK_TZ_NS_IGNORE_RESET:-0}" == 1 ]]; then
     ns_features=(--features test-ignore-reset-callbacks)
 fi
+if [[ -n "${RSK_TZ_PROBE_ADDRESS:-}" ]]; then
+    ns_features=(--features test-hostile-access)
+fi
 RSK_TZ_IMPLIB="$out/ns-import.a" CARGO_TARGET_DIR="$out/nonsecure" \
     cargo build --locked --release --manifest-path firmware/trustzone/nonsecure/Cargo.toml "${ns_features[@]}"
 arm-none-eabi-objcopy -O binary \

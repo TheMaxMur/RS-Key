@@ -14,6 +14,8 @@
 
 use rsk_usb::worker_abi as abi;
 mod keyboard;
+#[cfg(feature = "test-hostile-access")]
+mod probe;
 mod session;
 mod usb;
 include!(concat!(env!("OUT_DIR"), "/version.rs"));
@@ -241,6 +243,10 @@ async fn ccid_task(ccid: &'static mut Ccid<'static, Drv, CcidClient>) {
 }
 #[cortex_m_rt::entry]
 fn main() -> ! {
+    #[cfg(feature = "test-hostile-access")]
+    if probe::enabled() {
+        probe::run();
+    }
     cortex_m::interrupt::free(|_| init());
     loop {
         cortex_m::asm::wfi();

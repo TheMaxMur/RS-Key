@@ -5,7 +5,7 @@
 
 This chapter owns the TrustZone design, build instructions, measurements and
 remaining production work. The ordinary firmware has no Secure/Non-secure split.
-The experimental build at `bcdDevice 0x0AA8` runs USB classes and transports in
+The experimental build at `bcdDevice 0x0AA9` runs USB classes and transports in
 Non-secure (NS), with the controller, lifecycle observer, worker and applets in
 Secure (S). Secure revocation no longer depends on NS reset callbacks. The
 resource policy and production board integration remain incomplete; the passing
@@ -64,10 +64,10 @@ peripherals remain S-only until a specific NS use is justified.
 | TRNG, DRBGs, OTP secrets and fuse operations | S | S only; ordinary gateways expose no raw entropy, secret rows or fuse primitive |
 | Presence button, its GPIO/QSPI path and trusted display/touch input | S decision logic; no-touch, no display | S hardware and decision; NS can query waiting status or cancel, never report a successful press/PIN |
 | LED, PIO/PWM, SPI/I2C and display/presence GPIO | Disabled or unused by this experiment | S board layer; NS presentation requests cannot reconfigure trusted input/output |
-| DMA channels, descriptors, IRQ/DREQ routing and DMA MPU | No explicit complete policy | S only initially; descriptors cannot be supplied by NS or target S state through an NS-controlled channel |
+| DMA channels, descriptors, IRQ/DREQ routing and DMA MPU | Secure channels locked; registers/IRQs S-owned; no NS descriptors | S only initially; descriptors cannot be supplied by NS or target S state through an NS-controlled channel |
 | SIO FIFO, spinlocks and cross-core reset/launch | S engine uses reserved resources; NS masks its own interrupts | S reserves cross-core resources; NS cannot seize S locks or impersonate a core1 handshake |
-| SAU, S/NS MPU policy, security attribution and interrupt routing | Partial startup setup | S; NS banked controls must not alter S resources or bypass reset checks |
-| Clocks, RESETS, watchdog, POWMAN, debug/security controls and ROM service access | No complete deny policy | S; NS requests are bounded commands, not register writes or arbitrary ROM calls |
+| SAU, S/NS MPU policy, security attribution and interrupt routing | SAU plus both S MPUs and NS MPU; fixed 4 MiB startup map | S; NS banked controls must not alter S resources or bypass reset checks |
+| Clocks, RESETS, watchdog, POWMAN, debug/security controls and ROM service access | Explicit S grants and ACCESSCTRL locks; silicon debug/update validation pending | S; NS requests are bounded commands, not register writes or arbitrary ROM calls |
 
 S IRQ handling must observe USB lifecycle events during synchronous S crypto.
 Its masks, target and acknowledgement path must be inaccessible to NS. The
@@ -699,3 +699,81 @@ worker-session and bus-epoch state machines. The bounded mutation run tested 53
 changes: 48 were caught, five failed compilation, and none survived. The first
 run exposed six missing boundary checks; the completed run includes their tests.
 The full Kani tiers have not been rerun for this USB step.
+
+
+## Explicit resource policy at bcdDevice 0x0AA9
+
+Secure startup now writes and reads back the ACCESSCTRL grants before NS entry.
+Unused peripherals remain Secure. Core0 NS receives TIMER1 and the canonical NS
+memory through the CPU attribution boundary; controller/DPRAM, clocks, resets,
+OTP, TRNG, flash controls, DMA and GPIO policy remain Secure. All GPIO NS masks
+are cleared. SRAM banks containing both domains need a shared bus grant;
+SAU and the locked Secure DMA channels enforce the finer address boundary.
+The other SRAM banks stay Secure. ROM services remain S-only, and boot RAM is
+hardwired S-only by RP2350. ACCESSCTRL is locked against both cores, DMA and
+debugger configuration writes after setup. This does not configure OTP debug
+latches or establish protection against a physical debug/fault attack.
+
+Every DMA channel is Secure/privileged and locked; IRQs, timers and sniff control
+are Secure. PIO and SPI admit Secure DMA for the board layer. NS has no channel
+or descriptor API. This policy does not rely on an NS MPU remaining enabled.
+
+Both cores configure Secure MPU permissions. SRAM data is execute-never; RSA
+C/assembly, the small-prime sieve and Embassy RAM functions occupy an aligned,
+read-only executable linker section. Its load image and ordinary data must be
+contiguous; linker assertions and the runtime copy symbols enforce that.
+The NS MPU permits NS flash, its data, TIMER1 and its banked PPB only. NS can
+reprogram its own MPU, while SAU and the bus grants still protect S resources.
+The validated host planner covers SRAM with disjoint regions and refuses bad
+linker or stack bounds; its symbolic proof reaches stack windows on both sides
+of the immutable code island.
+
+The pinned HAL copies the trusted boot2 XIP-restoration code from boot RAM onto
+the Secure stack for flash operations. Its actual instruction fetch faulted when
+all stack RAM was XN. Secure therefore opens a bounded 4 KiB stack execution
+window only around synchronous flash write/erase, with core0 interrupts masked
+before the HAL pauses core1 and performs its existing DMA/XIP checks. An RAII
+restore reinstates data-only permissions before NS interrupts are unmasked,
+including on a returned flash error. This window is writable and executable
+Secure memory; it is an explicit exception, not a permanently executable stack
+or isolation between S components. Hardware timing/cache effects and abort/fault
+recovery still require validation. Early storage setup leaves the bootrom policy
+intact until core0 installs this policy.
+
+A disposable `test-hostile-access` NS image disables its own MPU and reads
+USBCTRL. The image reaches its pre-read NS marker, faults with PRECISERR and
+BFARVALID at `0x50110000`, and never reaches its post-read marker. Relaxing the
+USBCTRL grant in a throwaway image makes the same test fail specifically because
+the read succeeds; restoring the grant restores the denial. This establishes
+that software row on the model, not physical silicon behavior. The same runner refuses all 18 tested MMIO/boot-RAM reads: USBCTRL and its three
+atomic aliases, DPRAM, DMA, clocks, resets, IO_BANK0, PADS_BANK0, BUSCTRL, TRNG,
+OTP control/data/raw data, XIP_CTRL, QMI and boot RAM. ACCESSCTRL is world-readable
+by design (RP2350 datasheet section 6.2.2); that read correctly succeeds.
+Protected RAM/flash, writes, entry-register clearing and fault recovery remain
+separate checks before the production policy is closed.
+
+The resource/MPU image passes all eight real RSA and ML-DSA crypto operations.
+Four host region tests and one Kani partition harness pass, with both source
+covers reached. The full code gate and assurance gate pass on the integrated worktree. All 17
+lifecycle cases pass with both ordinary NS callbacks and deliberately suppressed
+Secure reset callbacks. The final bounded mutation run catches 24 defects; two
+do not compile, and none survives. Its three initial survivors exposed incomplete
+alignment tests, including a needless extra executable alignment block.
+
+
+Run an address probe only with a disposable test image, never a release artifact:
+
+```sh
+RSK_TZ_PROBE_ADDRESS=0x50110000 nix develop -c bash firmware/trustzone/build.sh
+nix develop -c python tests/97_trustzone_isolation.py \
+  --image target/trustzone/combined.elf \
+  --ns-image target/trustzone/nonsecure/thumbv8m.main-none-eabihf/release/firmware \
+  --emulator tools/emu/target/aarch64-apple-darwin/release/rsk-emu \
+  --address 0x50110000
+nix develop -c bash firmware/trustzone/build.sh
+```
+
+The runner requires explicit image/backend paths, checks loopback ports, reads
+only its NS progress marker and validates the fault address/status. It never
+opens a physical authenticator. The final build command restores a normal NS
+image; hostile probes remain an explicit feature.

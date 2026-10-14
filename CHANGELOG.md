@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- TrustZone (bcdDevice 0x0AA9): explicitly grant bus resources before NS entry,
+  lock Secure DMA channels, configure both Secure MPUs and the NS MPU, and
+  isolate RAM-resident code. Preserve the HAL boot2 flash path through a bounded
+  Secure stack execution window with NS interrupts masked.
+
 - TrustZone (bcdDevice 0x0AA8): keep USB controller, DPRAM, lifecycle observation
   and EP0 execution in Secure; expose bounded packet operations to Non-secure
   transports. Bind every response fragment to its request epoch and stop a

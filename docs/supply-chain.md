@@ -72,6 +72,7 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `rsk_tz_poll_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, #[cfg(rsk_trustzone_prototype)]` | `arm-none-eabi-gcc` |
 | `rsk_tz_submit_impl` | export | `firmware/src/worker.rs, #[unsafe(no_mangle symbol, #[cfg(rsk_trustzone_prototype)]` | `arm-none-eabi-gcc` |
 | `SWI_IRQ_1` | export | `firmware/trustzone/nonsecure/src/main.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
+| `RSK_NS_PROBE_PROGRESS` | export | `firmware/trustzone/nonsecure/src/probe.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `TIMER1_IRQ_0` | export | `firmware/trustzone/nonsecure/src/time.rs, #[unsafe(no_mangle symbol, unconditional` | `rustc` |
 | `bignum_modexp_private_exponent` | import | `crates/rsk-rsa/src/lib.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-gcc` |
 | `bignum_modexp_public_exponent` | import | `crates/rsk-rsa/src/lib.rs, extern "C", #[cfg(target_os = "none")]` | `arm-none-eabi-gcc` |
@@ -81,6 +82,8 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 | `__kvmain_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `__kvmain_start` | import | `firmware/src/main.rs, extern "C", unconditional` | `rust-lld` |
 | `_stack_end` | import | `firmware/src/main.rs, extern "C", unconditional` | `flip-link` |
+| `__rsk_exec_end` | import | `firmware/src/trustzone/mpu.rs, extern "C", unconditional` | `rust-lld` |
+| `__rsk_exec_start` | import | `firmware/src/trustzone/mpu.rs, extern "C", unconditional` | `rust-lld` |
 | `rsk_tz_control` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
 | `rsk_tz_poll` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
 | `rsk_tz_submit` | import | `firmware/trustzone/nonsecure/src/main.rs, extern "C", unconditional` | `arm-none-eabi-gcc` |
@@ -92,7 +95,7 @@ Root inputs of `flake.lock` deliberately outside this TCB:
 
 - **assembler** — `arm-none-eabi-as`, `cortex-m`
 - **compiler** — `arm-none-eabi-gcc`, `rustc`
-- **ffi** — the 22 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
+- **ffi** — the 25 boundary(s) in the table above, each joined to the pinned tool that produces its foreign half
 - **linker** — `flip-link`, `rust-lld`
 
 Not enumerated by this generator at all, and not by any other:

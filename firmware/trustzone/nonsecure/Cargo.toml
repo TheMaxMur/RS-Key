@@ -12,6 +12,7 @@ publish = false
 
 [features]
 test-ignore-reset-callbacks = []
+test-hostile-access = []
 
 [dependencies]
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["platform-cortex-m", "executor-interrupt"] }

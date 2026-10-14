@@ -32,6 +32,7 @@ mod ccid;
 mod ccid_fido;
 pub mod click;
 mod ctap;
+pub mod mpu_layout;
 pub mod presence;
 pub mod reboot;
 pub mod transport_session;

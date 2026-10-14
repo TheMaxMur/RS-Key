@@ -233,6 +233,8 @@ const SCRUB_WAIT_ITERS: u32 = 2_000_000;
 
 /// Core1 entry: wait for a job, search until satisfied or told to stop, repeat.
 fn core1_main(stack_floor: u32) -> ! {
+    #[cfg(rsk_trustzone_prototype)]
+    crate::trustzone::mpu::secure();
     // This stack is a plain array in `.bss`, so an overflow lands in whatever the
     // linker put below it — flip-link only guards core0's, the one at the edge of
     // RAM. MSPLIM traps the SP decrement itself, so a frame big enough to step

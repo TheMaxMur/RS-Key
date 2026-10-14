@@ -7,7 +7,7 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 60.** Twenty-nine in the ordinary firmware and tools, plus thirty-one in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
+**Runtime sites: 62.** Twenty-nine in the ordinary firmware and tools, plus thirty-three in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
 the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
@@ -384,3 +384,26 @@ These additional sites are compiled only in the separate Secure and Non-secure b
 *Containment:* Secure validation at every entry, integer tickets and epochs, bounded buffers and negative image probes.
 
 The CMSE export attributes and FFI declarations are counted separately from runtime sites. `firmware/src/trustzone/gateway.c` supplies GCC-generated SG veneers and BXNS returns. These software checks do not establish complete silicon isolation or physical disconnect detection.
+
+
+### 61. Secure MPU registers — `PLAT-TZ-006`
+
+`firmware/src/trustzone/mpu.rs` writes only the current core's architectural MPU
+registers during Secure startup or a serialized Secure flash call. The checked
+planner partitions SRAM without overlaps and refuses an invalid linker or stack
+range. The HAL copies trusted boot2 code to the stack; its bounded execution
+window runs with NS interrupts masked and restores the MPU before unmasking.
+*Safe alternative:* the architectural bank aliases are MMIO; the existing PAC
+has no typed bank API covering this setup.
+*Containment:* Secure-only calls, aligned checked regions, bounded stack code and
+an RAII restore on every normal return, including flash errors. Panic/fault
+recovery and hardware timing still require their own validation.
+
+### 62. Hostile NS image probe — `PLAT-TZ-007`
+
+`firmware/trustzone/nonsecure/src/probe.rs` is feature-gated test code that
+disables its own NS MPU, then deliberately reads protected memory or MMIO.
+The Secure policy remains intact. Its marker contains no secret and is in NS RAM.
+*Safe alternative:* a deliberate denied MMIO access necessarily uses raw memory.
+*Containment:* disposable emulator-only image; marker and exact fault assertions,
+plus a relaxed-grant falsifier; excluded from normal builds.
