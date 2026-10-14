@@ -38,6 +38,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Pin the OpenPGP pending mutation controls: counter lanes and persisted origin
+  order, the maximum AES/RSA sealed-record edges, the session-drop wipe
+  observer, exact-size AES PSO, the default algorithm attribute and the BER
+  long-form ECDH walk. Firmware behavior is unchanged; the build counter
+  advances for changes within a production crate's gated region and a
+  visibility-only helper export, as required by the existing bcd gate.
+  bcdDevice `0x0AA3` → `0x0AA4`.
+
 - Keep resident FIDO discovery's first assertion and continuation queue in the
   same order, including equal creation times and more matches than the queue
   holds. Each reported credential is returned once; the bounded queue retains
