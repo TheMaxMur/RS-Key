@@ -2720,3 +2720,12 @@ branches, and the reboot notice, and a fifth pins the five-segment brightness
 gauge (span, centre, per-segment stride and the `i < filled` boundary at
 `filled == 3` so the comparison is load-bearing) — 28 caught, no identities.
 Evidence: `target/mutants/settings/`.
+
+The `pin.rs` chunk closed all 26: frame-equality tests cover the fitting title's
+centre, the marquee's wrapped second copy (offset one period minus ten px so the
+second copy, not the first, is the visible one), the Lock glyph's header slot,
+the masked dot row (placeholder, filled and `+` overflow) and the
+`render_pin_dots` clear box (edges primed with a sentinel band so the clear's
+extent is load-bearing), plus direct assertions on every caption, the
+exact-band-width `>` boundary and the reveal `+` overflow — 26 caught, no
+identities. Evidence: `target/mutants/pin/` (22 of 26) and `pin2/` (4 rerun).
