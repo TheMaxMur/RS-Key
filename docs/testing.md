@@ -2596,3 +2596,36 @@ RSA/EC generator timeouts. All 465 owner tests pass, with one skip. These checks
 pin internal adapter behavior, without a separate entropy or command-level claim;
 both original timeout observations retain zero credit. Evidence is in
 `review-openpgp-rng-controls-20261013.json`.
+
+### OpenPGP pending survivors, 2026-10-14
+
+The frozen roster's 24 pending OpenPGP occurrences are resolved against the
+current tree: twelve host tests pin eighteen, and six clamp or short-record
+comparisons are identities with a reason in `scripts/mutants-accepted.txt`.
+
+`keys_limits_tests.rs` drives the public loaders over the maximum record the
+current writers emit. Wycheproof's RSA-4096 valid decryption case supplies
+independent 256-byte CRT fields; the test rebuilds the key, checks the 1280-byte
+CRT plaintext and asserts the sealed record is 1308 bytes. `load_rsa_key` and
+`load_rsa_crt` must return those corpus fields unchanged, and a record with one
+unexplained trailing byte must still decode its genuine prefix. The AES edges
+are separate: a live empty `EF_AES_KEY` record answers `REFERENCE_NOT_FOUND`, and
+a genuine 60-byte GCM record with an appended tail returns the literal 32-byte
+key without migrating. The five signature-counter cases use literal before/after
+bytes for the high and middle lanes and for each carry, and the origin test reads
+a correctly ordered persisted record rather than a mark/read round trip, which a
+swapped `slot_idx` would cancel.
+
+Two pin-wipe controls round out the slice. `pin::Session`'s destructor now calls
+a `#[cfg(test)]` observer, after the `rsk-fido` `CredKey` pattern: the test seeds
+all three reference arrays, observes them live and requires the zeroed tuple only
+after the scope drop. A read-back medium that under-reports to exactly the
+addressed retry counter's offset must not authorize a last correct try, and a DEK
+copy whose format byte is not `DEK_FORMAT_V3` must fail closed with EXEC_ERROR
+and be left byte-for-byte in place.
+
+All 18 exact controls fail on the intended assertion or deterministic expression
+failure; the four widened read/seal scratches and the two short-DEK comparisons
+survive as identities. Logs, exact diffs and the source binding are in
+`target/mutants/openpgp-controls/`; these are host `aarch64-apple-darwin` runs,
+not the 4 GiB Linux cgroup, and establish no resource-limit or silicon claim.
