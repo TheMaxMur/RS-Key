@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Apply RP2350 ACCESSCTRL master and privilege filters to emulator CPU accesses,
+  including instruction fetches and mounted MMIO. Model controller locks,
+  password writes, restricted Non-secure grants and Secure-only Boot RAM;
+  ROM hooks cannot bypass these filters.
+
 - Keep the emulator's Secure special-register banks inaccessible to Non-secure
   MRS/MSR aliases. Validate exception returns and Secure stack signatures before
   restoring state; preserve valid Secure/Non-secure interrupt returns. Run the

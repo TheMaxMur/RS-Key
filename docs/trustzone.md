@@ -525,3 +525,21 @@ Disabling the NS data-attribution guard made the actual `test (RP2350 model)`
 gate row fail at secret-exposure and protected-store assertions (not a compiler
 failure). The guard was then restored byte-for-byte. These checks cover the
 implemented transitions; ACCESSCTRL, SIO banking and DMA remain separate work.
+
+
+The bus model now applies ACCESSCTRL master and security/privilege filters to
+CPU reads, writes and instruction fetches in both serial and threaded views,
+including host-mounted MMIO devices. It models reset values, password failures,
+atomic aliases, locks, CFGRESET, FORCE_CORE_NS and the restricted NSP-to-NSU
+write rule. Boot RAM remains S-only regardless of programmable grants. Source:
+RP2350 datasheet sections 2.1.2 and 10.6 and pico-sdk 2.2.0 register definitions.
+CPU access contexts are scoped to one operation; laboratory bus accesses use
+an S debugger context. ROM hooks must pass the same bus and fetch checks.
+
+ACCESSCTRL checks on 2026-10-14: nine controller tests and four additional CPU
+cases pass; the RP2350 library total is 3,761 passing, 27 ignored. The previous
+ROM hook bypass was reproduced by a prohibited NS ROM access before repair.
+Disabling the CPU bus filter makes the actual model gate row fail at protected
+peripheral and ROM-hook assertions. Clippy passes. The unchanged combined image
+also passed smoke with 32 keepalives, maximum image-time gap 205 ms. SIO banking,
+GPIO register filtering, DMA channel security and DMA MPU are still pending.
