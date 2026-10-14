@@ -119,6 +119,10 @@ fn assert_imported(store: &mut impl Storage) {
     }
     let mut fids = Vec::new();
     assert!(store.for_each_key(&mut |fid| fids.push(fid)));
+    assert!(
+        !store.last_error(),
+        "a complete managed walk must clear the error flag"
+    );
     assert_eq!(fids.len(), 6);
     assert!(
         fids.iter()

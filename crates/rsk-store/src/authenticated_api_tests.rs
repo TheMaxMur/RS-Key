@@ -2,7 +2,94 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::authenticated::{Authenticated, KeySource, Layout, RawBank, RootArm, RootRead};
+use crate::authenticated::{
+    Authenticated, KeySource, Layout, Partition, RawBank, RootArm, RootRead,
+};
+
+#[path = "authenticated_compact_tests.rs"]
+mod compact;
+
+#[test]
+fn authenticated_size_reports_full_values_and_keeps_faults_distinct_from_absence() {
+    let flash = FaultFlash::new();
+    let mut store = mount_authenticated(&flash);
+    store.initialize_blank().unwrap();
+    for (fid, value) in [(CRED, &b"owner"[..]), (CTR, &b"counter"[..])] {
+        store.write(fid, value).unwrap();
+        assert_eq!(store.size(fid), Some(value.len()));
+        assert!(!store.last_error());
+        assert!(store.exists(fid));
+        store.write(fid, &[]).unwrap();
+        assert_eq!(store.size(fid), Some(0));
+        store.remove(fid).unwrap();
+        assert_eq!(store.size(fid), None);
+        assert!(!store.last_error());
+    }
+    store.write(CRED, b"owner").unwrap();
+    let before = flash.image();
+    flash.arm(&[Rule {
+        io: Io::Read,
+        skip: 0,
+        effect: Effect::Refuse,
+        latched: true,
+    }]);
+    assert_eq!(store.size(CRED), None);
+    assert!(store.last_error());
+    assert!(flash.hits()[0] > 0);
+    flash.clear();
+    assert_eq!(store.size(CRED), Some(5));
+    assert!(!store.last_error());
+    assert_eq!(flash.image(), before);
+    assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+}
+
+#[test]
+fn an_enumeration_fault_in_either_partition_keeps_the_walk_incomplete() {
+    let flash = FaultFlash::new();
+    let mut store = mount_authenticated(&flash);
+    store.initialize_blank().unwrap();
+    store.write(CRED, b"owner").unwrap();
+    store.write(CTR, b"counter").unwrap();
+    let layout = Layout::new(MAIN.end..MAIN.end + 128 * 1024).unwrap();
+    let before = flash.image();
+    for partition in [Partition::Main, Partition::Counter] {
+        flash.arm(&[]);
+        let mut seen = Vec::new();
+        assert!(store.for_each_key(&mut |fid| seen.push(fid)));
+        assert!(!store.last_error());
+        assert!(seen.contains(&CRED) && seen.contains(&CTR));
+        let reads: Vec<_> = flash
+            .events()
+            .into_iter()
+            .filter(|event| event.0 == Io::Read)
+            .collect();
+        let skip = match partition {
+            Partition::Main => 0,
+            Partition::Counter => reads
+                .iter()
+                .position(|event| layout.counter.iter().any(|range| range.contains(&event.1)))
+                .unwrap(),
+        };
+        flash.arm(&[Rule {
+            io: Io::Read,
+            skip,
+            effect: Effect::Refuse,
+            latched: false,
+        }]);
+        seen.clear();
+        assert!(
+            !store.for_each_key(&mut |fid| seen.push(fid)),
+            "{partition:?} fault must keep the walk incomplete"
+        );
+        assert!(store.last_error());
+        assert_eq!(flash.hits(), [1]);
+        assert_eq!(seen.contains(&CRED), partition == Partition::Counter);
+        assert_eq!(seen.contains(&CTR), partition == Partition::Main);
+        assert_eq!(flash.image(), before);
+        assert!(flash.events().iter().all(|event| event.0 == Io::Read));
+        flash.clear();
+    }
+}
 
 #[test]
 #[expect(
