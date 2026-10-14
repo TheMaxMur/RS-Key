@@ -2768,3 +2768,11 @@ over an `INIT_DATA + 1` payload, so `>=`→`<` refuses the one continuation and
 ahead of the per-test timeout. Evidence:
 `target/mutants/ctaphid-controls/` (2 caught of 22) and
 `target/mutants/ctaphid-resource-controls/` (2 of 2).
+
+The `rsk-usb` CCID chunk closed all 5 pending survivors, each by an assertion:
+the refusal's `bStatus` keeps a failed bit the slot already reports (`|` versus
+`^` in `refuse_short_xfr`), a reply buffer exactly one header long is answered
+(`process_message`'s `<`), the framing-error reply zeroes both body bytes over a
+stale `tx` byte (`HEADER + 1` versus `HEADER - 1`), and a handler claiming the
+whole message is clamped to the `tx.len() - HEADER` body space it was handed.
+Evidence: `target/mutants/ccid-controls/` (5 caught of 5).

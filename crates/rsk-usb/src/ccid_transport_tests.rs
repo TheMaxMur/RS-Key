@@ -367,3 +367,55 @@ fn a_stalled_response_is_abandoned_and_its_buffers_are_wiped() {
         );
     });
 }
+
+/// The framing-error reply is a two-byte body (`6F 00`) written into the reused
+/// `tx` buffer, so both bytes must be set, not just the first: with `HEADER + 1`
+/// replaced by `HEADER - 1` the second write lands on `bChainParameter` (already
+/// zeroed by `put_header`) and a stale byte from the previous, longer response
+/// goes out as the resync reply's second body byte.
+#[test]
+fn the_framing_error_reply_overwrites_a_stale_body_byte() {
+    let mut bad = message(CCID_XFR_BLOCK, 0xA7, &[]);
+    bad[1..5].copy_from_slice(&(MAX_CCID_MSG as u32).to_le_bytes());
+    with_ccid(
+        0,
+        [bad, message(CCID_POWER_ON, 9, &[])].map(Read::Packet),
+        |ccid, trace| {
+            ccid.tx[HEADER + 1] = 0xA5; // as a previous, longer response left it
+            drain_ready(ccid.run());
+            let packets = bulk_packets(trace);
+            assert_eq!(
+                packets[0][HEADER + 1],
+                0,
+                "a stale byte reached the framing-error reply"
+            );
+        },
+    );
+}
+
+/// `run_secure` clamps the handler's body to `tx.len() - HEADER` — the space the
+/// handler was actually handed (`&mut tx[HEADER..]`). A handler that reports the
+/// whole message length must be clamped to that buffer, not trusted with the
+/// header's worth of bytes beyond it.
+#[test]
+fn a_secure_reply_is_clamped_to_the_buffers_body_space() {
+    with_ccid(1, [], |ccid, trace| {
+        let request = message(CCID_SECURE, 0x71, &[0x3C; 24]);
+        ccid.rx[..request.len()].copy_from_slice(&request);
+        // The body space is MAX_CCID_MSG - HEADER; the handler claims more.
+        ccid.handler.reply_len = Some(MAX_CCID_MSG);
+        complete(ccid.run_secure(HEADER, request.len()));
+        let packets = bulk_packets(trace);
+        let first = packets.first().expect("a response frame");
+        assert_eq!(
+            u32::from_le_bytes(first[1..5].try_into().unwrap()) as usize,
+            MAX_CCID_MSG - HEADER,
+            "the declared body was not clamped to the transport buffer"
+        );
+        // The whole 3062-byte body plus a terminating ZLP.
+        assert_eq!(
+            packets.len(),
+            MAX_CCID_MSG / usize::from(EP_PACKET_SIZE) + 1
+        );
+    });
+}
