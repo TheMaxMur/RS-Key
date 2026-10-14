@@ -158,3 +158,20 @@ crates/rsk-rsa/src/keygen.rs: replace / with * in RsaKeygen::try_candidate
 [sieve-cost] These arms choose the cheap small-prime prefilter roster. Strong Miller-Rabin and Lucas still own acceptance; changed search cost is outside the result oracle.
 crates/rsk-rsa/src/lib.rs: delete match arm 129..= 192 in sieve_count
 crates/rsk-rsa/src/lib.rs: delete match arm 65..= 128 in sieve_count
+
+[scratch-prefix-identity] The widened scratch is only ever read through the unchanged returned prefix; the extra tail is never inspected.
+crates/rsk-openpgp/src/keys.rs: replace + with * in load_aes_key
+crates/rsk-openpgp/src/keys.rs: replace + with * in store_rsa_key
+crates/rsk-openpgp/src/keys.rs: replace + with * in load_rsa_key
+crates/rsk-openpgp/src/keys.rs: replace + with * in load_rsa_crt
+
+[counter-lane-identity] The counter's three byte lanes are disjoint, so OR and XOR agree for every admitted value; the increment and serialization are unchanged.
+crates/rsk-openpgp/src/keys.rs: replace | with ^ in inc_sig_count
+crates/rsk-openpgp/src/keys.rs: replace | with ^ in inc_sig_count
+
+[short-origin-identity] At idx == n the zero-initialized uncovered slot reads as imported either way; a valid prefix read leaves that byte zero.
+crates/rsk-openpgp/src/origin.rs: replace < with <= in of
+
+[short-dek-identity] A 0- or 1-byte DEK copy reaches EXEC_ERROR either from the format check or from the empty-blob decrypt, with no write and no access.
+crates/rsk-openpgp/src/pin.rs: replace < with == in migrate_pin_kbase
+crates/rsk-openpgp/src/pin.rs: replace < with <= in migrate_pin_kbase

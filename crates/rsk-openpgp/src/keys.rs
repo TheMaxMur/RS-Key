@@ -666,3 +666,7 @@ mod rsa_tests;
 #[cfg(test)]
 #[path = "keys_seal_tests.rs"]
 mod seal_tests;
+
+#[cfg(test)]
+#[path = "keys_limits_tests.rs"]
+mod limits_tests;

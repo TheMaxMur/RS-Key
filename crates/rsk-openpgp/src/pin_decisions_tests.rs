@@ -150,6 +150,81 @@ fn a_retry_readback_without_the_addressed_counter_cannot_grant_access() {
     }
 }
 
+/// Like [`ShortReadback`], but under-reports to exactly the addressed counter's
+/// offset: the prefix the record still has, minus the byte just written. The
+/// read-back exists to confirm the charge landed, so one that does not carry the
+/// addressed byte must not authorize — bound: a medium that can under-report to
+/// any prefix, not a claim that real NOR does this at this exact length.
+struct ShortToCounter {
+    inner: RamStorage,
+    armed: Rc<Cell<bool>>,
+    pending: bool,
+    idx: Rc<Cell<usize>>,
+}
+
+impl Storage for ShortToCounter {
+    fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+        if fid == EF_PW_PRIV && self.pending {
+            self.pending = false;
+            let mut scratch = [0u8; 8];
+            let n = self.inner.read(fid, &mut scratch).unwrap_or(0);
+            let take = self.idx.get().min(n).min(buf.len());
+            buf[..take].copy_from_slice(&scratch[..take]);
+            return Some(take);
+        }
+        self.inner.read(fid, buf)
+    }
+
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.inner.write(fid, data)?;
+        self.pending |= fid == EF_PW_PRIV && self.armed.get();
+        Ok(())
+    }
+
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.inner.remove(fid)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.inner.size(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+#[test]
+fn a_readback_short_to_the_addressed_counter_cannot_grant_the_last_try() {
+    for (fid, mode, pin) in [
+        (EF_PW1, PW1_MODE81, PW1_DEFAULT),
+        (EF_PW1, PW1_MODE82, PW1_DEFAULT),
+        (EF_PW3, PW3_MODE83, PW3_DEFAULT),
+    ] {
+        let armed = Rc::new(Cell::new(false));
+        let idx = Rc::new(Cell::new(pw_retry_idx(fid)));
+        let mut fs = Fs::new(ShortToCounter {
+            inner: RamStorage::new(),
+            armed: armed.clone(),
+            pending: false,
+            idx: idx.clone(),
+        });
+        fs.scan();
+        scan_files(&dev(), &mut fs, &mut CountRng(0)).unwrap();
+        let before = record(&mut fs, EF_PW_PRIV).unwrap();
+        let mut last_try = before.clone();
+        last_try[pw_retry_idx(fid)] = 1;
+        fs.put(EF_PW_PRIV, &last_try).unwrap();
+        let mut sess = Session::new();
+        armed.set(true);
+        assert_eq!(
+            verify_ref(&mut fs, &mut sess, mode, pin),
+            Sw::MEMORY_FAILURE,
+            "a read-back that omits the charged byte must not authorize"
+        );
+        armed.set(false);
+        assert!(!sess.has_pw1 && !sess.has_pw2 && !sess.has_pw3);
+    }
+}
+
 #[test]
 fn unusable_verifier_shapes_never_spend_a_retry_or_change_a_dek() {
     for (fid, mode, pin, dek) in [

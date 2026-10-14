@@ -40,6 +40,30 @@ fn each_slot_is_independent() {
 }
 
 #[test]
+fn the_persisted_slot_order_is_sig_dec_aut() {
+    // Read a record a correctly ordered build wrote, rather than one `mark`
+    // produced in this process: a swap inside `slot_idx` moves both the reader
+    // and the writer, so a mark/read round trip alone cancels itself out.
+    let mut fs = fs();
+    fs.put(
+        EF_KEY_ORIGIN,
+        &[ORIGIN_IMPORTED, ORIGIN_GENERATED, ORIGIN_IMPORTED],
+    )
+    .unwrap();
+    assert_eq!(of(&mut fs, EF_PK_SIG), ORIGIN_IMPORTED);
+    assert_eq!(of(&mut fs, EF_PK_DEC), ORIGIN_GENERATED);
+    assert_eq!(of(&mut fs, EF_PK_AUT), ORIGIN_IMPORTED);
+
+    // And `mark` writes that same order: marking DEC changes byte 1 only.
+    fs.put(EF_KEY_ORIGIN, &[ORIGIN_IMPORTED; KEY_SLOTS])
+        .unwrap();
+    mark(&mut fs, EF_PK_DEC, ORIGIN_GENERATED).unwrap();
+    let mut rec = [0u8; KEY_SLOTS];
+    assert_eq!(fs.read(EF_KEY_ORIGIN, &mut rec), Some(KEY_SLOTS));
+    assert_eq!(rec, [ORIGIN_IMPORTED, ORIGIN_GENERATED, ORIGIN_IMPORTED]);
+}
+
+#[test]
 fn a_short_or_junk_record_reads_as_imported() {
     // Only a byte that is exactly 01 may be believed: anything else — a record
     // an older build left one byte long, a value no spec assigns — is unproven.

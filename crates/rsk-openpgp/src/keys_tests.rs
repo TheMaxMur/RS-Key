@@ -65,6 +65,26 @@ fn legacy_record_widths_accept_only_the_layouts_older_builds_wrote() {
 }
 
 #[test]
+fn the_signature_counter_keeps_every_byte_of_a_nonzero_value() {
+    // Small counters only ever exercise the low lane; these literals pin the
+    // high and middle ones, and the carries, with expected bytes not recomputed
+    // from the expression under test.
+    for (before, after) in [
+        ([0x12, 0x34, 0x56], [0x12, 0x34, 0x57]),
+        ([0x00, 0x00, 0xff], [0x00, 0x01, 0x00]),
+        ([0x00, 0xff, 0xff], [0x01, 0x00, 0x00]),
+        ([0xff, 0xff, 0xff], [0x00, 0x00, 0x00]),
+    ] {
+        let mut fs = rsk_fs::Fs::new(rsk_fs::storage::ram::RamStorage::new());
+        fs.put(EF_SIG_COUNT, &before).unwrap();
+        assert_eq!(inc_sig_count(&mut fs), Ok(()), "{before:02X?}");
+        let mut got = [0u8; 3];
+        assert_eq!(fs.read(EF_SIG_COUNT, &mut got), Some(3));
+        assert_eq!(got, after, "{before:02X?}");
+    }
+}
+
+#[test]
 fn a_missing_signature_counter_is_not_created_by_increment() {
     let mut fs = rsk_fs::Fs::new(rsk_fs::storage::ram::RamStorage::new());
     let generation = fs.write_gen();
