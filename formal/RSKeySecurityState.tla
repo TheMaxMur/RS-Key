@@ -68,7 +68,7 @@ CONSTANTS
     \* also resolves to firmware/src/presence.rs since the arbitration was lifted
     BugUnscopedCancel,            \* crates/rsk-device/src/presence.rs:118-122
     BugTouchNotSpent,             \* crates/rsk-device/src/presence.rs:203-211,226
-    BugSoftLockLostOnWarmReset,   \* crates/rsk-device/src/lib.rs:128-137 PinLock across sys_reset
+    BugSoftLockLostOnWarmReset,   \* crates/rsk-device/src/lib.rs:130-139 PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:266-267  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:178-189  may_walk_rps
     BugDeleteRpBeforeCred,        \* credmgmt.rs:759-767 deleteCredential order
@@ -99,7 +99,7 @@ CONSTANTS
 (* listing them in the safety matrix would mean 3 mutants nothing catches.       *)
 CONSTANTS
     BugAssertWedgesOnTimeout,     \* getassertion.rs: only a confirm completes it
-    BugWaitScopeNotCleared,       \* worker.rs:527  set_wait_scope(SCOPE_NONE)
+    BugWaitScopeNotCleared,       \* worker.rs:751  set_wait_scope(SCOPE_NONE)
     BugWalkNeverExpires           \* state.rs:770-776 expire_stale_sequences
 
 (* A switch on the SHAPE of the fairness assumption rather than on a behaviour: *)
@@ -383,7 +383,7 @@ PressUp ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* CTAPHID_CANCEL for the channel being processed. rsk-usb ctaphid.rs:830-835
+\* CTAPHID_CANCEL for the channel being processed. rsk-usb ctaphid.rs:984-986
 \* raises it; crates/rsk-device/src/presence.rs:118-122 is the scope check that decides
 \* whether it may end THIS wait. Only the CTAPHID transport can send one.
 \* E45's ruling in one line: request_cancel accepts ONLY while the wait it would
@@ -401,7 +401,7 @@ HostCancel ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:428, :519), not around
+\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:641, :519), not around
 \* the touch wait, so Arbiter::request_cancel accepts a cancel during a FIDO
 \* command that never opens one -- getInfo, a denied CBOR, getAssertion up:false.
 \* Nothing clears `cancel_requested` when that dispatch ends, so the latch
@@ -463,8 +463,8 @@ TouchTimeout ==
 \* THE PANEL AND THE OTP FRAME PROTOCOL ALSO OPEN WAITS, and neither is a host's
 \* to cancel. An on-panel ceremony -- Settings, Backup's reveal-recovery hold,
 \* the Passkeys delete -- runs BETWEEN dispatches, where the worker has left
-\* WAIT_SCOPE at SCOPE_NONE (firmware/src/worker.rs:525-527); an OTP frame's wait
-\* runs under SCOPE_OTP (firmware/src/worker.rs:663-665). Both clear a stale
+\* WAIT_SCOPE at SCOPE_NONE (firmware/src/worker.rs:749-751); an OTP frame's wait
+\* runs under SCOPE_OTP (firmware/src/worker.rs:888-890). Both clear a stale
 \* cancel at their own wait's entry -- the panel in its own loop
 \* (crates/rsk-display/src/presence.rs:41-44), not in ButtonWait::wait -- so
 \* OpenWaitFor stands for two different drops here and
@@ -472,7 +472,7 @@ TouchTimeout ==
 \*
 \* NARROWER than a display build in one way, stated because it is the risk
 \* direction: that build compiles ButtonWait out entirely
-\* (firmware/src/presence.rs:99-106) and the panel's own release debounce takes
+\* (firmware/src/presence.rs:106-113) and the panel's own release debounce takes
 \* over the `spent` latch, so the model keeps a defence the display build
 \* implements somewhere else rather than one it does not have.
 \* THE FOURTH SITE OF THE SAME RULE, and it was the one still written as a bare
@@ -644,7 +644,7 @@ PinAttemptEnabled == pin.set /\ pin.retries > 0 /\ ~lock.soft
 \* The requirement the soft lock encodes: after MismatchLimit consecutive
 \* mismatches no further attempt is accepted until a REAL power cycle. The
 \* policy counter is cleared only by PowerCut, never by a host-requested warm
-\* reset -- which is the whole point of crates/rsk-device/src/lib.rs:128-137.
+\* reset -- which is the whole point of crates/rsk-device/src/lib.rs:130-139.
 PinAttemptPolicy == pin.set /\ pin.retries > 0 /\ lock.policyMism < MismatchLimit
 
 \* EF_MINPINLEN[1], the forced-PIN-change flag, and it is a GATE: while it stands
@@ -772,7 +772,7 @@ LocalPinEnabled == Idle /\ LocalPinGuard
 \* turned away before any compare -- which `LocalPinEnabled` already excludes.
 \*
 \* Modelled as taking effect at once. The hook is consumed at the head of the
-\* next CBOR dispatch (crates/rsk-device/src/ctap.rs:230-233), not inside
+\* next CBOR dispatch (crates/rsk-device/src/ctap.rs:238-241), not inside
 \* gates.rs, but nothing can use the token in between: every command that reads
 \* it is a CBOR command and the flag is spent before the dispatch runs.
 LocalPinWrong ==
@@ -1516,7 +1516,7 @@ VolatileCleared ==
     /\ upSpent' = FALSE
 
 \* EVERY boot runs ensure_seed, not just the one at the end of a reset:
-\* firmware/src/main.rs:796 and tools/emu/src/device.rs:513; one that cannot read
+\* firmware/src/main.rs:840 and tools/emu/src/device.rs:513; one that cannot read
 \* the fused key runs none, which this action, allowing more, over-approximates. A cut that stranded
 \* the device mid-wipe therefore comes back WITH a seed and can hold usable
 \* credentials again. Leaving it out made the model less permissive than the
@@ -1546,7 +1546,7 @@ PowerCut ==
     /\ UNCHANGED viol
 
 \* A host-requestable warm reset (SCB::sys_reset -- vendor 0x1F P1=0, the
-\* rescue twin, the phy config-write auto-reboot). crates/rsk-device/src/lib.rs:128-137
+\* rescue twin, the phy config-write auto-reboot). crates/rsk-device/src/lib.rs:130-139
 \* carries the PinLock across it from either transport; reset.rs:267 makes it CLOSE the reset window.
 WarmReset ==
     /\ VolatileCleared
@@ -1634,7 +1634,7 @@ TokenOutcomeActions ==
 \* strong fairness would buy nothing and would assert more than the code does.
 \*
 \* The worker is synchronous -- one `Exchange` at a time, under a lock, and the
-\* dispatch runs to completion before the next is accepted (worker.rs:648-673).
+\* dispatch runs to completion before the next is accepted (worker.rs:873-898).
 \* So every step that ADVANCES an in-flight sequence eventually happens: nothing
 \* in the firmware can park one. What it cannot survive is a power cut, and
 \* PowerCut is not fair, so "eventually" here still admits the cut.
@@ -1676,7 +1676,7 @@ OpAdvances ==
 \* button, but setPIN and changePIN need only `Idle`. So a panel wait that had
 \* taken its confirm sat open for ever while the PIN ladder kept OpAdvances
 \* satisfied on its own, and EveryWaitReleases failed in 423 900 states.
-\* Justified the same way worker.rs:525-527 justifies the FIDO half: the
+\* Justified the same way worker.rs:749-751 justifies the FIDO half: the
 \* ceremony's own dispatch runs to completion and puts WAIT_SCOPE back.
 FairSpec == Spec /\ WF_vars(OpAdvances)
                  /\ WF_vars(TouchTimeout)
@@ -1741,7 +1741,7 @@ NoAuthorizationBypass ==
     \* the authenticatorConfig the advisory named and not a second assertion.
     /\ (upSpent /\ tok.live) => tok.perms = {}
     \* The RAM soft lock must reflect the policy it stands for: MismatchLimit
-    \* consecutive mismatches and no real power cycle since (crates/rsk-device/src/lib.rs:128-137).
+    \* consecutive mismatches and no real power cycle since (crates/rsk-device/src/lib.rs:130-139).
     /\ (lock.policyMism >= MismatchLimit) => lock.soft
 
 \* A presence decision produced for one transport is never applied to

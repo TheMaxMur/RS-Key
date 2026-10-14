@@ -3,12 +3,13 @@
 
 # TrustZone boundary and resource ownership
 
-This is the chosen boundary for production TrustZone integration. It is a design
-contract, not an isolation claim for the current firmware. The ordinary build
-has no Secure/Non-secure split. The experiment inspected on 2026-10-14 at
-`bcdDevice 0x0AA5` runs transports in Non-secure (NS) and the worker and applets in
-Secure (S), but still trusts NS to report USB lifecycle events. This document
-changes no executable code, wire format, persistent layout or retry policy.
+This chapter owns the TrustZone design, build instructions, measurements and
+remaining production work. The ordinary firmware has no Secure/Non-secure split.
+The experimental build at `bcdDevice 0x0AA8` runs USB classes and transports in
+Non-secure (NS), with the controller, lifecycle observer, worker and applets in
+Secure (S). Secure revocation no longer depends on NS reset callbacks. The
+resource policy and production board integration remain incomplete; the passing
+software checks below are not a claim of physical isolation.
 
 ## Attacker and trusted code
 
@@ -54,8 +55,8 @@ peripherals remain S-only until a specific NS use is justified.
 | KV main/counters and flash programming | S worker | S only, including QMI/XIP controls and destructive ROM operations |
 | S SRAM, stacks, allocator, applet state and request exchange | S | S only; no shared Rust references, mutexes, wakers or secret-bearing mailbox |
 | NS SRAM and transport buffers | NS | NS; S validates spans and copies requests into S storage |
-| USBCTRL, USB DPRAM/control words, USBCTRL_IRQ, masks and event acknowledgement | NS direct HAL driver | S bounded hardware front-end; NS gets endpoint operations and copied events, not raw MMIO/DPRAM access |
-| USB bus epoch and reset latch | NS counter plus S ticket state | S hardware observer owns the epoch; NS may keep a presentation copy or request revocation |
+| USBCTRL, USB DPRAM/control words, USBCTRL_IRQ, masks and event acknowledgement | S HAL driver and observer; bounded NS packet proxy | S bounded hardware front-end; NS gets endpoint operations and copied events, not raw MMIO/DPRAM access |
+| USB bus epoch and reset latch | S epoch and raw lifecycle observation | S hardware observer owns the epoch; NS may keep a presentation copy or request revocation |
 | USB classes, CTAPHID, CCID, OTP HID/keyboard framing and keepalive timers | NS | NS; framing and identifiers confer no S authorization |
 | USB identity, interface mask and endpoint allocation | Hard-coded NS identity | S loads/validates persisted configuration; NS receives a bounded public snapshot; S admits only that endpoint layout |
 | TIMER0 and security/authorization deadlines | S | S only |
@@ -115,7 +116,7 @@ only exports a result still valid in that epoch. Cancellation and reset requests
 from NS can reduce rights or availability, never refill retry budgets or renew
 an authorization. Card reset remains distinct from a USB-wide session reset.
 
-The S USB front-end will need a separate bounded endpoint interface. It accepts
+The S USB front-end implements a separate bounded endpoint interface. It accepts
 only allocated endpoints, checked spans and the current S bus epoch. It exposes
 no general register-write, IRQ-mask, reset-flag-clear or peripheral-reset command.
 S owns endpoint buffers/control words and captures the physical EP0 setup packet
@@ -177,8 +178,10 @@ session state, FIDO PIN/UV tokens and pending operations, applet selection,
 chaining/GET RESPONSE buffers, pending presence/PIN collection and OTP output.
 Persistent keys, configuration, retry counters and FIDO's per-boot PIN failure
 budget are preserved. Cleanup must enumerate applet state, not rely on NS's
-account of which applet was selected. The current experiment has tests for PIV
-and FIDO cleanup; those tests do not establish this entire scope.
+account of which applet was selected. The shared transport reset now scrubs every applet, including unselected applets,
+and clears held CCID output. Host tests cover the cleanup path; the image tests
+exercise PIV and FIDO authorization. PIN-entry and physical OTP-output timing
+still require the board integration and hardware checks below.
 
 S-observed suspend and configuration loss conservatively revoke the session too.
 Resume does not restore authorization. A powered disconnect can only be claimed
@@ -202,17 +205,17 @@ These are acceptance cases for later implementation, not new passing results.
 | Protection is deliberately relaxed for a reset-latch write or old-epoch release | The corresponding negative test observes suppressed revocation or an unauthorized release |
 | Honest NS runs the same crypto/lifecycle matrix | Existing signatures, keepalives and protocol behavior still pass |
 
-The current image backend can exercise scheduling, tickets and cooperative NS
-callbacks. Its pinned picoem core does not enforce all ordinary CPU memory/MMIO
-accesses, ACCESSCTRL and DMA security paths, and direct ELF boot does not prove
-bootrom signature verification. The hostile-NS cases require those models first,
-then confirmation on hardware. No hardware-isolation property is closed here.
-See [testing](testing.md) for the current emulator paths.
+The image backend exercises scheduling, tickets and both normal and omitted NS
+reset callbacks. The vendored core now enforces the tested SAU/MPU, ACCESSCTRL,
+SIO and serial DMA paths described below. Further hostile NS images, remaining
+instruction/FPU fidelity and hardware confirmation are still required. Direct
+ELF boot does not prove bootrom signature verification. No hardware-isolation
+property is closed here. See [testing](testing.md) for the emulator paths.
 
 ## Prototype build and measurements
 
-This experiment runs USB, CTAPHID, CCID and OTP HID framing in Non-secure
-state. The existing worker, applets, storage, PIN/presence decisions and RSA
+This experiment runs USB classes, CTAPHID, CCID and OTP HID framing in
+Non-secure state; Secure owns the controller and EP0 driver. The existing worker, applets, storage, PIN/presence decisions and RSA
 core1 remain Secure. It is a 4 MiB, no-display, no-touch test image, not a
 production configuration. The ordinary firmware build does not enable it.
 
@@ -228,11 +231,12 @@ checks that embedding it did not change the gateway import library.
 
 Secure code uses the existing thread executor for startup, then transfers the
 worker to Secure SWI_IRQ_0 at P3. Non-secure USB tasks use SWI_IRQ_1 at P2;
-USBCTRL and TIMER1 interrupts target Non-secure. Secure TIMER0 and core1 retain
+USBCTRL targets Secure at P0 and the EP0 executor uses Secure SWI_IRQ_2 at P1;
+TIMER1 targets Non-secure. Secure TIMER0 and core1 retain
 their existing ownership. Non-secure critical sections use the core0 interrupt
 mask and do not take Secure's hardware spinlock 31.
 
-Three CMSE C wrappers provide submit, poll and limited status/cancellation
+Four CMSE C wrappers provide bounded USB packet operations plus submit, poll and limited status/cancellation
 operations. They are compiled by the existing Arm GCC, with register cleanup
 and BXNS generated by `-mcmse`; Rust stays on the pinned stable toolchain.
 `TestTarget::check_range` validates every input/output span. Requests are copied
@@ -639,3 +643,59 @@ cases from [Arm's exception return and PopStack specification](https://documenta
 The new nested-IRQ test fails on the previous guard. Native all-feature tests
 pass 3799 cases, with 27 existing ignores; clippy passes. This fixes that
 scheduler path and does not claim complete banked-FPU or Arm instruction fidelity.
+
+
+## Secure USB front-end at bcdDevice 0x0AA8
+
+`rsk_usb::usb_abi` defines the packet interface used by both Cargo builds.
+Secure retains the Embassy RP controller, endpoint buffers, interrupt masks,
+acknowledgement and the persistent EP0 task. Non-secure uses an Embassy driver
+proxy. It receives copied packets and bus events and can operate only allocated
+endpoints. Each payload is at most 64 bytes; ordinary gateway buffers must be
+inside the designated NS SRAM, in addition to passing the complete CMSE span
+check. No entry exposes a raw register write or reset-latch acknowledgement.
+
+Secure observes raw reset, suspend and configuration-loss state before worker
+admission and result export, and around endpoint operations. Revocation advances
+the Secure bus epoch, fences worker tickets, clears pending endpoint buffers and
+wipes DPRAM payloads before the HAL acknowledges the event. Accepted physical
+SET_CONFIGURATION opens admission after cleanup. Resume permits the new epoch
+without restoring old authorization. Epoch exhaustion is terminal until a
+scrubbed reboot. An already executing command can finish its persistent effects;
+its abandoned response cannot be newly exported.
+
+The EP0 driver runs as a persistent Secure future on SWI_IRQ_2. Its commands use
+the same typed ticket/abandonment/reset state machine as the worker; replacement
+setup and reset cancel the old control operation. Polling and final packet
+copies are serialized with Secure lifecycle observation.
+
+Non-secure reads the Secure epoch instead of incrementing a local counter. A
+whole CTAPHID or CCID response, including keepalives and continuation packets,
+retains the request epoch. Refreshing the epoch at each write reproduced a late
+ML-DSA reply in the newly initialized channel; binding the complete response
+removed that failure. A disabled endpoint ends CTAPHID transmission immediately.
+OTP keyboard writes also retain the epoch captured before consuming a Secure
+character. These hooks are no-ops for the ordinary driver.
+
+Use `RSK_TZ_NS_IGNORE_RESET=1` with the prototype build command to test the NS
+image that omits all Secure reset calls from its bus callbacks. The real RSA
+generation/signing and ML-DSA-44/65/87 reset, cancel and disconnect matrix passed
+all 17 cases with that image. The test still lets NS run its transport tasks;
+it does not establish the separate case where NS permanently stops execution.
+The final normal callback image passed the same 17-case matrix and all eight
+real-crypto operations, including independent signature and attestation checks.
+
+This remains a no-touch, fixed 4 MiB image. The controller's VBUS override and
+powered physical disconnect detection need board validation. The complete
+ACCESSCTRL/MPU policy, RAM-executed RSA code permissions, production presence
+and display tasks, Secure configuration snapshot and signed combined-image
+coverage are the next production steps. No release signing, flashing or OTP write was
+performed for these measurements.
+
+
+The final software checks include five bus-state tests, reserved USB status/flag
+and control-ticket boundary tests, and four passing Kani harnesses across the
+worker-session and bus-epoch state machines. The bounded mutation run tested 53
+changes: 48 were caught, five failed compilation, and none survived. The first
+run exposed six missing boundary checks; the completed run includes their tests.
+The full Kani tiers have not been rerun for this USB step.

@@ -131,15 +131,15 @@ STATEFUL="rsk-fido rsk-fs"
 # they are a consistency check against the tree, not a ratchet against history:
 # deleting a harness and pasting the new number is self-consistent, and only
 # the diff shows it.
-FLOOR_pr=72
+FLOOR_pr=74
 FLOOR_state=32
-FLOOR_all=104
+FLOOR_all=106
 # The four weekly rows partition `all`, so these sum to FLOOR_all and the guard
 # checks each against the tree the same way. A harness that moves between shards
 # has to move a number with it.
 FLOOR_heavy=5
 FLOOR_light1=35
-FLOOR_light2=31
+FLOOR_light2=33
 FLOOR_light3=33
 
 # Source-level `kani::cover!`s each tier must report on. Kani 0.67.0 has no

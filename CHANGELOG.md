@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- TrustZone (bcdDevice 0x0AA8): keep USB controller, DPRAM, lifecycle observation
+  and EP0 execution in Secure; expose bounded packet operations to Non-secure
+  transports. Bind every response fragment to its request epoch and stop a
+  CTAPHID response at the first disabled endpoint.
+
 - Image emulation: preserve outer lazy-FPU state across a nested basic IRQ
   return; report invalid EXC_RETURN in CFSR.INVPC, without falsely setting
   UNDEFINSTR for every UsageFault.

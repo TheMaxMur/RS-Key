@@ -374,3 +374,9 @@ function = "absent_board_capabilities_preserve_a_cold_unlocked_boot"
 disposition = "out-of-scope"
 test_only = true
 why = "checks the default Hooks implementation's cold boot after a lock write; compiled only under cfg(test), with no production token event"
+
+[[softlock_owner]]
+file = "crates/rsk-device/src/ctap.rs"
+function = "reset_transport_session"
+disposition = "out-of-scope"
+why = "USB transport reset preserves the current per-boot mismatch batch and soft lock across volatile authorization scrubbing; the abstract token relation has no retry-budget state"

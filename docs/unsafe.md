@@ -7,7 +7,7 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 29.** Seventeen in the firmware proper (`main.rs` + `presence.rs`):
+**Runtime sites: 60.** Twenty-nine in the ordinary firmware and tools, plus thirty-one in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
 the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
@@ -344,45 +344,43 @@ No `unsafe` in any parser, applet, crypto wrapper, or the flash filesystem.
 The attacker-facing surface is entirely safe Rust, and `cargo clippy -D
 warnings` plus the fuzz targets ([testing.md](testing.md)) keep it that way.
 
-## Experimental TrustZone transport build
+## TrustZone transport build
 
-These sites are compiled only by the transport prototype, separately from the
-ordinary runtime count above. See [its build and scope](trustzone.md#prototype-build-and-measurements).
+These additional sites are compiled only in the separate Secure and Non-secure build. They are included in the runtime count above; their pending platform obligations are explicit. See [the TrustZone chapter](trustzone.md).
 
-- `firmware/src/trustzone/mod.rs`: transfer the worker to its sole Secure IRQ
-  executor (`SendWorker`); service that executor; configure SAU, ITNS,
-  VTOR_NS, MSP_NS and MSPLIM_NS; enter the Non-secure reset vector. Startup
-  owns these registers. The worker is initialized before transfer and the
-  boot thread never borrows its cells afterwards. No Non-secure caller can
-  write this attribution or the Secure vector table.
-- `firmware/src/worker.rs`: turn CMSE-validated request/response spans into
-  slices. The C entry wrapper checks the whole span through Rust's
-  `TestTarget::check_range` before calling the implementation. The request
-  is copied into Secure memory; lengths are capped and request tickets plus
-  the exchange mutex serialize ownership. A reset or dropped future invalidates
-  its ticket; the worker wipes abandoned data before accepting another request.
-  Output contains only the existing
-  applet's authorized response and is wiped from the Secure exchange on drain.
-- `firmware/src/trustzone/gateway.c`: CMSE entry declarations let Arm GCC
-  generate SG veneers, register cleanup and BXNS returns. The wrappers pass
-  integer lengths and checked NS buffers, not Rust references or callbacks.
-- `firmware/trustzone/nonsecure/src/main.rs`: core0-local critical-section
-  implementation; the one `SendUsb` transfer to the
-  NS executor; USB peripheral `steal` after Secure hands that peripheral
-  over; the executor IRQ entry; and calls to the three SG entries. No
-  Secure spinlock, waker or peripheral reference is shared with this image.
-  Invalid-pointer probes deliberately call SG with Secure/cross-boundary
-  addresses and must be rejected before USB attachment.
-- `firmware/trustzone/nonsecure/src/time.rs`: enable TIMER1's NS interrupt
-  after installing its handler and bounded NS-owned timer queue.
-- `firmware/trustzone/nonsecure/src/session.rs`: the SG control call passes
-  numeric actions and tickets. A pending request's drop abandons that ticket;
-  USB reset/suspend callbacks queue Secure session cleanup, and CCID ABORT
-  is scoped to the single card slot. No Secure object reference crosses SG.
-- `firmware/trustzone/nonsecure/src/keyboard.rs`: SG calls report OTP touch
-  state, cancel only the Secure OTP wait, and consume a character already
-  authorized by Secure's physical-button flow. The transport never reads
-  stored OTP keys or controls the Secure authorization decision.
+### 30–36. Secure startup and worker ownership — `PLAT-TZ-001`
 
-The prototype is not a complete hardware isolation claim: bus filters, fault
-recovery, production image verification and update policy require further work.
+`firmware/src/trustzone/mod.rs`. Startup owns the core registers until the NS reset vector is entered. The boot task hands the initialized worker to SWI_IRQ_0 once and never borrows it afterwards. The executor handler matches that starter. The fixed prototype map still owes the production resource-policy review.
+
+*Safe alternative:* the architecture exposes these launch registers and Embassy requires the interrupt callback; the wrapper supplies the one-owner transfer.
+*Containment:* startup-only writes, a Secure vector and stack, and an owned worker on one Secure executor.
+
+### 37–42. Secure USB controller ownership and packet spans — `PLAT-TZ-002`
+
+`firmware/src/trustzone/usb.rs` and `firmware/src/trustzone/usb/control.rs`. The controller mutex owns endpoints and DPRAM; packet copies are at most 64 bytes and the complete NS RAM span passes TT before it becomes a slice. Clearing endpoint availability precedes the volatile DPRAM wipe. The EP0 pipe moves once to SWI_IRQ_2; only its bound handler services that executor. Epoch checks fence input and output at bus lifecycle changes.
+
+*Safe alternative:* DPRAM wiping and CMSE pointer conversion require raw memory access; Embassy requires an IRQ callback and a Send wrapper for the single task transfer.
+*Containment:* Secure-only USB access, bounded packet copies, serialized checks and copies, and one owner for the control pipe.
+
+### 43–44. Worker gateway spans — `PLAT-TZ-003`
+
+`firmware/src/worker.rs`. The C veneer validates each complete span through the Secure TT helpers before calling the exported implementation. The worker copies input into its own exchange, bounds reply length, and wipes its Secure exchange at completion or abandonment. Output export is serialized with lifecycle observation; revocation wipes the temporary NS output before return.
+
+*Safe alternative:* the CMSE C boundary carries raw pointers and integer lengths; Rust slices are created only after that boundary validates them.
+*Containment:* bounded copies, Secure-owned exchange state, generation tickets and USB epoch checks.
+
+### 45–51. Non-secure local interrupts and USB task ownership — `PLAT-TZ-004`
+
+`firmware/trustzone/nonsecure/src/main.rs` and `firmware/trustzone/nonsecure/src/time.rs`. NS masks and restores only its core0 interrupt state. Its critical-section implementation does not acquire a Secure spinlock. SendUsb moves once to the NS interrupt task; handlers store state in NS-local synchronization. TIMER1 has its installed NS handler before interrupt enable.
+
+*Safe alternative:* the critical-section backend, interrupt enable and Embassy task transfer require these unsafe contracts.
+*Containment:* one core, one task owner, NS-local locks, and matching interrupt starters and handlers.
+
+### 52–60. Non-secure calls to bounded Secure gateways — `PLAT-TZ-005`
+
+`firmware/trustzone/nonsecure/src/main.rs`, `firmware/trustzone/nonsecure/src/usb.rs`, `firmware/trustzone/nonsecure/src/session.rs` and `firmware/trustzone/nonsecure/src/keyboard.rs`. Calls use the Cargo-shared numeric ABI. Secure checks selectors, complete NS RAM spans, lengths and epochs, copies packets and retains no NS pointer. Ticket abandonment fences dropped futures. Keyboard calls consume only output already authorized by Secure; a revoked session blocks export. Deliberately invalid startup pointers must be rejected by the gateway without a memory access.
+
+*Safe alternative:* the C CMSE entries expose an unsafe FFI; their Rust callers cannot express the hardware span check in a reference type.
+*Containment:* Secure validation at every entry, integer tickets and epochs, bounded buffers and negative image probes.
+
+The CMSE export attributes and FFI declarations are counted separately from runtime sites. `firmware/src/trustzone/gateway.c` supplies GCC-generated SG veneers and BXNS returns. These software checks do not establish complete silicon isolation or physical disconnect detection.

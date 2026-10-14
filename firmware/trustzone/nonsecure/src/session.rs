@@ -6,14 +6,13 @@ use core::sync::atomic::{AtomicU16, AtomicU32, Ordering};
 use embassy_usb::Handler;
 use embassy_usb::control::{OutResponse, Recipient, Request, RequestType};
 
-static EPOCH: AtomicU32 = AtomicU32::new(0);
 static FIDO: AtomicU32 = AtomicU32::new(0);
 static CCID: AtomicU32 = AtomicU32::new(0);
 static ABORT: AtomicU16 = AtomicU16::new(0);
 const ABORT_ARMED: u16 = 1 << 8;
 
 pub fn epoch() -> u32 {
-    EPOCH.load(Ordering::Acquire)
+    super::usb::epoch()
 }
 
 pub fn control(action: u32, ticket: u32) -> u32 {
@@ -83,9 +82,10 @@ pub struct UsbHandler {
 }
 impl UsbHandler {
     fn reset_session(&mut self) {
-        EPOCH.fetch_add(1, Ordering::AcqRel);
         ABORT.store(0, Ordering::Release);
-        control(abi::RESET_SESSION, 0);
+        if !cfg!(feature = "test-ignore-reset-callbacks") {
+            control(abi::RESET_SESSION, 0);
+        }
     }
 }
 impl Handler for UsbHandler {

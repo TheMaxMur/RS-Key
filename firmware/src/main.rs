@@ -148,10 +148,19 @@ const HEAP_SIZE: usize = 128 * 1024;
 #[used]
 static IMAGE_DEF: embassy_rp::block::ImageDef = embassy_rp::block::ImageDef::secure_exe();
 
+#[cfg(not(rsk_trustzone_prototype))]
 bind_interrupts!(struct Irqs {
     PIO0_IRQ_0 => PioIrq<PIO0>;
     DMA_IRQ_0 => DmaIrq<DMA_CH0>;
     USBCTRL_IRQ => UsbIrq<USB>;
+    TRNG_IRQ => TrngIrq<TRNG>;
+});
+
+#[cfg(rsk_trustzone_prototype)]
+bind_interrupts!(struct Irqs {
+    PIO0_IRQ_0 => PioIrq<PIO0>;
+    DMA_IRQ_0 => DmaIrq<DMA_CH0>;
+    USBCTRL_IRQ => trustzone::usb::InterruptHandler, UsbIrq<USB>;
     TRNG_IRQ => TrngIrq<TRNG>;
 });
 
@@ -895,7 +904,7 @@ async fn main(spawner: Spawner) {
 
     #[cfg(rsk_trustzone_prototype)]
     let _transport_identity = (usb_pid, phy_product, phy_manufacturer, usb_itf);
-    let device_release: u16 = 0x0AA7;
+    let device_release: u16 = 0x0AA8;
     #[cfg(rsk_trustzone_prototype)]
     let _ = device_release;
     let openpgp_mfr = openpgp_mfr_for(usb_vid);
@@ -1405,6 +1414,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(worker_task(worker).unwrap());
     #[cfg(rsk_trustzone_prototype)]
     {
+        trustzone::usb::init(p.USB);
         trustzone::start_worker(worker);
         spawner.spawn(trustzone::launch().unwrap());
     }

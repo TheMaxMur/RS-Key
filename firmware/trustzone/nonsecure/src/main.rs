@@ -15,12 +15,13 @@
 use rsk_usb::worker_abi as abi;
 mod keyboard;
 mod session;
+mod usb;
 include!(concat!(env!("OUT_DIR"), "/version.rs"));
 mod time;
 
 use embassy_executor::InterruptExecutor;
 use embassy_rp::{
-    bind_interrupts, interrupt,
+    interrupt,
     interrupt::{InterruptExt, Priority},
 };
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
@@ -36,8 +37,7 @@ use rsk_usb::{
 };
 use static_cell::StaticCell;
 
-type Drv = embassy_rp::usb::Driver<'static, embassy_rp::peripherals::USB>;
-bind_interrupts!(struct Irqs { USBCTRL_IRQ => embassy_rp::usb::InterruptHandler<embassy_rp::peripherals::USB>; });
+type Drv = usb::Driver;
 
 struct LocalCriticalSection;
 critical_section::set_impl!(LocalCriticalSection);
@@ -147,6 +147,9 @@ fn cancel() {
 
 struct CtapClient;
 impl MsgHandler for CtapClient {
+    fn bind_response_epoch(epoch: u32) {
+        usb::bind_response_epoch(usb::Transport::Fido, epoch);
+    }
     fn session_epoch() -> u32 {
         session::epoch()
     }
@@ -181,6 +184,9 @@ impl MsgHandler for CtapClient {
 
 struct CcidClient;
 impl ApduHandler for CcidClient {
+    fn bind_response_epoch(epoch: u32) {
+        usb::bind_response_epoch(usb::Transport::Ccid, epoch);
+    }
     fn session_epoch() -> u32 {
         session::epoch()
     }
@@ -265,9 +271,7 @@ fn init() {
         assert_eq!(rsk_tz_submit(0xff, 0, probe.as_ptr(), 32), abi::INVALID);
     }
     time::init();
-    // SAFETY: Secure boot hands ownership of USB alone to this image; init would reset Secure-owned hardware.
-    let p = unsafe { embassy_rp::Peripherals::steal() };
-    let driver = embassy_rp::usb::Driver::new(p.USB, Irqs);
+    let driver = usb::Driver;
     let mut config = Config::new(0x1209, 0xf1d2);
     config.manufacturer = Some("RS-Key");
     config.product = Some("RS-Key TrustZone prototype");
@@ -289,6 +293,7 @@ fn init() {
     );
     static KEYBOARD: StaticCell<State> = StaticCell::new();
     static KEYBOARD_HANDLER: StaticCell<keyboard::Handler> = StaticCell::new();
+    usb::allocate_for(usb::Transport::Keyboard);
     let keyboard = HidWriter::<_, 8>::new(
         &mut builder,
         KEYBOARD.init(State::new()),
@@ -302,6 +307,7 @@ fn init() {
         },
     );
     static HID: StaticCell<State> = StaticCell::new();
+    usb::allocate_for(usb::Transport::Fido);
     let hid = HidReaderWriter::<_, 64, 64>::new(
         &mut builder,
         HID.init(State::new()),
@@ -315,6 +321,7 @@ fn init() {
         },
     );
     static CCID: StaticCell<Ccid<'static, Drv, CcidClient>> = StaticCell::new();
+    usb::allocate_for(usb::Transport::Ccid);
     let ccid = CCID.init_with(|| Ccid::new(&mut builder, CcidClient, rsk_usb::ccid::ATR_RSKEY, 0));
     static USB_HANDLER: StaticCell<session::UsbHandler> = StaticCell::new();
     builder.handler(USB_HANDLER.init(session::UsbHandler {

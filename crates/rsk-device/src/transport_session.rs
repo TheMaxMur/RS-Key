@@ -32,6 +32,7 @@ pub enum Poll {
 pub struct Session {
     state: State,
     next_ticket: u32,
+    ticket_limit: u32,
     reset_pending: bool,
 }
 
@@ -43,9 +44,14 @@ impl Default for Session {
 
 impl Session {
     pub const fn new() -> Self {
+        Self::with_ticket_limit(rsk_usb::worker_abi::ABANDONED)
+    }
+
+    pub const fn with_ticket_limit(ticket_limit: u32) -> Self {
         Self {
             state: State::Idle,
             next_ticket: 1,
+            ticket_limit,
             reset_pending: false,
         }
     }
@@ -55,7 +61,8 @@ impl Session {
     }
 
     pub fn submit(&mut self) -> Option<u32> {
-        if self.state != State::Idle || self.reset_pending || self.next_ticket >= u32::MAX - 2 {
+        if self.state != State::Idle || self.reset_pending || self.next_ticket >= self.ticket_limit
+        {
             return None;
         }
         let ticket = self.next_ticket;

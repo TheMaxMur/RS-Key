@@ -141,3 +141,19 @@ fn auxiliary_output_stays_revoked_until_the_last_reset_cleanup_finishes() {
         assert!(!session.is_revoked());
     }
 }
+
+#[test]
+fn control_ticket_exhaustion_never_returns_a_usb_status_or_reopens_on_reset() {
+    let mut session = Session::with_ticket_limit(rsk_usb::usb_abi::OVERFLOW);
+    session.next_ticket = rsk_usb::usb_abi::OVERFLOW - 1;
+    let last = session.submit().unwrap();
+    assert_eq!(last, rsk_usb::usb_abi::OVERFLOW - 1);
+    assert_eq!(session.next_job(), Some(Job::Dispatch(last)));
+    assert!(session.finish(last));
+    assert!(session.release(last));
+    assert_eq!(session.submit(), None);
+    session.reset();
+    assert_eq!(session.next_job(), Some(Job::Reset));
+    session.reset_complete();
+    assert_eq!(session.submit(), None);
+}

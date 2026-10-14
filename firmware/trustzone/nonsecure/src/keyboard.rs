@@ -84,6 +84,7 @@ pub async fn commands() {
 #[embassy_executor::task]
 pub async fn run(mut writer: HidWriter<'static, Drv, 8>) {
     loop {
+        let epoch = super::session::epoch();
         // SAFETY: Secure returns only an already-authorized character and consumes its queue slot.
         let character = unsafe { rsk_tz_control(abi::KEYBOARD_CHAR, 0) };
         if character & abi::KEY_PRESENT != 0 {
@@ -91,6 +92,7 @@ pub async fn run(mut writer: HidWriter<'static, Drv, 8>) {
                 continue;
             };
             if let Some(press) = rsk_usb::kbd::keystroke(byte, character & abi::KEY_ENCODE != 0) {
+                super::usb::bind_response_epoch(super::usb::Transport::Keyboard, epoch);
                 let _ = writer.write(&press).await;
                 embassy_time::Timer::after_millis(10).await;
                 let _ = writer.write(&[0; 8]).await;

@@ -178,6 +178,8 @@ pub trait ApduHandler {
     fn session_epoch() -> u32 {
         0
     }
+    /// Bind all packets of the response to the request epoch.
+    fn bind_response_epoch(_epoch: u32) {}
     fn abort_requested(_sequence: u8) -> bool {
         false
     }
@@ -409,6 +411,7 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
     /// card via Slot Status regardless.
     pub async fn run(&mut self) -> ! {
         self.read_ep.wait_enabled().await;
+        H::bind_response_epoch(H::session_epoch());
         let _ = select(
             self.int_ep.write(SLOT_CHANGE_PRESENT),
             Timer::after_millis(50),
@@ -416,7 +419,9 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
         .await;
         loop {
             let read_epoch = H::session_epoch();
-            match self.read_message().await {
+            let message = self.read_message().await;
+            H::bind_response_epoch(self.session_epoch);
+            match message {
                 Some(total) => {
                     // An XfrBlock too short for an APDU is refused inline, any other
                     // goes to the worker (async) with a streamed CCID time-extension;
@@ -519,7 +524,8 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
     /// `write_ep` — disjoint fields, so the time-extensions keep flowing while the
     /// worker blocks on the slow op (on-card RSA keygen, flash GC).
     async fn run_xfr(&mut self, a: usize, b: usize) {
-        let epoch = H::session_epoch();
+        let epoch = self.session_epoch;
+        H::bind_response_epoch(epoch);
         let mut aborted = false;
         let Self {
             handler,
@@ -595,7 +601,8 @@ impl<'d, D: Driver<'d>, H: ApduHandler> Ccid<'d, D, H> {
     /// frames a normal DataBlock with the live slot status; a pad cancel/timeout
     /// frames a failed DataBlock with the matching `bError`.
     async fn run_secure(&mut self, a: usize, b: usize) {
-        let epoch = H::session_epoch();
+        let epoch = self.session_epoch;
+        H::bind_response_epoch(epoch);
         let mut aborted = false;
         let Self {
             handler,

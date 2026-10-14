@@ -10,6 +10,9 @@ publish = false
 
 [workspace]
 
+[features]
+test-ignore-reset-callbacks = []
+
 [dependencies]
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", branch = "main", features = ["platform-cortex-m", "executor-interrupt"] }
 embassy-rp = { git = "https://github.com/embassy-rs/embassy", branch = "main", default-features = false, features = ["rp235xa", "imagedef-none"] }

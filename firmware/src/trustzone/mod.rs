@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
+pub mod usb;
+
 use cortex_m::peripheral::sau::{SauRegion, SauRegionAttribute};
 use embassy_executor::InterruptExecutor;
 use embassy_rp::interrupt;
@@ -9,7 +11,7 @@ use embassy_rp::interrupt::{InterruptExt, Priority};
 #[unsafe(no_mangle)]
 pub extern "C" fn rsk_tz_readable_impl(ptr: *const u8, len: u32) -> u32 {
     use cortex_m::cmse::{AccessType, TestTarget};
-    if ptr.is_null() {
+    if !data_span(ptr as usize, len) {
         return 0;
     }
     let Ok(len) = usize::try_from(len) else {
@@ -24,7 +26,7 @@ pub extern "C" fn rsk_tz_readable_impl(ptr: *const u8, len: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn rsk_tz_writable_impl(ptr: *mut u8, len: u32) -> u32 {
     use cortex_m::cmse::{AccessType, TestTarget};
-    if ptr.is_null() {
+    if !data_span(ptr as usize, len) {
         return 0;
     }
     let Ok(len) = usize::try_from(len) else {
@@ -39,6 +41,18 @@ pub extern "C" fn rsk_tz_writable_impl(ptr: *mut u8, len: u32) -> u32 {
 const NS_FLASH: u32 = 0x1020_0000;
 const NS_RAM: u32 = 0x2007_0000;
 const NSC_FLASH: u32 = 0x101f_f000;
+const NS_RAM_END: usize = 0x2008_0000;
+
+fn data_span(address: usize, length: u32) -> bool {
+    let Ok(length) = usize::try_from(length) else {
+        return false;
+    };
+    address >= NS_RAM as usize
+        && length != 0
+        && address
+            .checked_add(length)
+            .is_some_and(|end| end <= NS_RAM_END)
+}
 static EXECUTOR: InterruptExecutor = InterruptExecutor::new();
 
 struct SendWorker(&'static mut crate::worker::Worker<'static>);
@@ -112,14 +126,16 @@ unsafe fn launch_nonsecure() -> ! {
     }
     core.SAU.enable();
     let permissions = 0xacce_003a;
-    rp_pac::ACCESSCTRL.usbctrl().write(|v| v.0 = permissions);
+    rp_pac::ACCESSCTRL.usbctrl().write(|v| v.0 = 0xacce_0018);
     rp_pac::ACCESSCTRL.timer1().write(|v| v.0 = permissions);
     // SAFETY: ITNS, VTOR_NS and MSP_NS are the architectural Non-secure launch controls.
     unsafe {
         let aircr = 0xe000_ed0c as *mut u32;
-        aircr.write_volatile(0x05fa_0000 | (aircr.read_volatile() & 0x0000_bfff));
+        aircr.write_volatile(0x05fa_0000 | ((aircr.read_volatile() & 0x0000_bfff) | (1 << 3)));
+        for word in 0..2 {
+            (0xe000_e380 as *mut u32).add(word).write_volatile(0);
+        }
         for irq in [
-            rp_pac::Interrupt::USBCTRL_IRQ,
             rp_pac::Interrupt::SWI_IRQ_1,
             rp_pac::Interrupt::TIMER1_IRQ_0,
         ] {

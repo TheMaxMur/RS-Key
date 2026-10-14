@@ -328,7 +328,16 @@ static SESSION: embassy_sync::blocking_mutex::Mutex<
 
 #[cfg(rsk_trustzone_prototype)]
 fn session<T>(f: impl FnOnce(&mut rsk_device::transport_session::Session) -> T) -> T {
-    SESSION.lock(|state| f(&mut state.borrow_mut()))
+    crate::trustzone::usb::serialized(|| {
+        crate::trustzone::usb::observe();
+        SESSION.lock(|state| f(&mut state.borrow_mut()))
+    })
+}
+
+#[cfg(rsk_trustzone_prototype)]
+pub fn revoke_transport() {
+    SESSION.lock(|state| state.borrow_mut().reset());
+    REQ.signal(());
 }
 
 #[cfg(rsk_trustzone_prototype)]
@@ -359,6 +368,9 @@ pub unsafe extern "C" fn rsk_tz_submit_impl(
     if tag > 0xffff || (kind != Kind::Vendor && tag > 0xff) {
         return abi::INVALID;
     }
+    if !crate::trustzone::usb::admitted() {
+        return abi::PENDING;
+    }
     let Ok(mut ex) = EXCHANGE.try_lock() else {
         return abi::PENDING;
     };
@@ -381,34 +393,37 @@ pub unsafe extern "C" fn rsk_tz_submit_impl(
 #[cfg(rsk_trustzone_prototype)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rsk_tz_poll_impl(ticket: u32, response: *mut u8, capacity: u32) -> u32 {
-    use rsk_usb::worker_abi as abi;
-    match session(|state| state.poll(ticket)) {
-        rsk_device::transport_session::Poll::Pending => return abi::PENDING,
-        rsk_device::transport_session::Poll::Abandoned => return abi::ABANDONED,
-        rsk_device::transport_session::Poll::Ready => {}
-    }
-    let Ok(mut ex) = EXCHANGE.try_lock() else {
-        return abi::PENDING;
-    };
-    let Ok(capacity) = usize::try_from(capacity) else {
-        return abi::INVALID;
-    };
-    if capacity < ex.resp_len + abi::REPLY_HEADER {
-        return abi::INVALID;
-    }
-    // SAFETY: the CMSE entry wrapper validated this complete NS-writable span.
-    let response = unsafe { core::slice::from_raw_parts_mut(response, capacity) };
-    response[..abi::REPLY_HEADER].copy_from_slice(&[
-        u8::from(ex.vendor_ok),
-        ex.sec_status,
-        ex.sec_error,
-    ]);
-    let n = drain_resp(&mut ex, &mut response[abi::REPLY_HEADER..]);
-    DONE.reset();
-    if !session(|state| state.release(ticket)) {
-        return abi::ABANDONED;
-    }
-    u32::try_from(n + abi::REPLY_HEADER).unwrap_or(abi::INVALID)
+    crate::trustzone::usb::serialized(|| {
+        use rsk_usb::worker_abi as abi;
+        match session(|state| state.poll(ticket)) {
+            rsk_device::transport_session::Poll::Pending => return abi::PENDING,
+            rsk_device::transport_session::Poll::Abandoned => return abi::ABANDONED,
+            rsk_device::transport_session::Poll::Ready => {}
+        }
+        let Ok(mut ex) = EXCHANGE.try_lock() else {
+            return abi::PENDING;
+        };
+        let Ok(capacity) = usize::try_from(capacity) else {
+            return abi::INVALID;
+        };
+        if capacity < ex.resp_len + abi::REPLY_HEADER {
+            return abi::INVALID;
+        }
+        // SAFETY: the CMSE entry wrapper validated this complete NS-writable span.
+        let response = unsafe { core::slice::from_raw_parts_mut(response, capacity) };
+        response[..abi::REPLY_HEADER].copy_from_slice(&[
+            u8::from(ex.vendor_ok),
+            ex.sec_status,
+            ex.sec_error,
+        ]);
+        let n = drain_resp(&mut ex, &mut response[abi::REPLY_HEADER..]);
+        DONE.reset();
+        if !session(|state| state.release(ticket)) {
+            let _revoked_output = WipeGuard::new(&mut response[..n + abi::REPLY_HEADER]);
+            return abi::ABANDONED;
+        }
+        u32::try_from(n + abi::REPLY_HEADER).unwrap_or(abi::INVALID)
+    })
 }
 
 #[cfg(rsk_trustzone_prototype)]

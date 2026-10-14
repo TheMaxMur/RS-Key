@@ -35,6 +35,7 @@ mod ctap;
 pub mod presence;
 pub mod reboot;
 pub mod transport_session;
+pub mod usb_epoch;
 
 pub use ccid::CcidApplets;
 // The records a device-wide wipe removes last: the trusted display's factory reset.

@@ -28,3 +28,10 @@ __attribute__((cmse_nonsecure_entry))
 uint32_t rsk_tz_control(uint32_t action, uint32_t ticket) {
     return rsk_tz_control_impl(action, ticket);
 }
+
+extern uint32_t rsk_tz_usb_impl(uint32_t, uint32_t, uint8_t *, uint32_t);
+
+__attribute__((cmse_nonsecure_entry))
+uint32_t rsk_tz_usb(uint32_t operation, uint32_t argument, uint8_t *buffer, uint32_t length) {
+    return rsk_tz_usb_impl(operation, argument, buffer, length);
+}
