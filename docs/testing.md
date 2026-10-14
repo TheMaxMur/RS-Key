@@ -2814,3 +2814,10 @@ row's `y + h/2` and trailing anchors are load-bearing — 15 caught; the remaini
 five are identities under `[audit-clip-widening-identity]` (the changed term only
 widens the label clip, which no 95-px-or-shorter `AuditKind` label can reach).
 Evidence: `target/mutants/audit-controls/`.
+
+The `home.rs` chunk closed all 4: a direct assert pins `STATUS_ARC_START` at -90
+and a frame-equality test rebuilds the status ring for Touch (amber mark), Boot
+(muted mark) and Processing (accent mark) from an independent centre, diameter
+and start angle — killing the sign-flipped constant, the all-default
+`status_ring` replacement and each deleted match arm. Evidence:
+`target/mutants/home-controls/`.
