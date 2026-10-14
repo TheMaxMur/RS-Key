@@ -403,3 +403,6 @@ fn every_t9_key_label_has_its_own_glyph() {
         }
     }
 }
+
+#[path = "font_contract_tests.rs"]
+mod contracts;

@@ -54,3 +54,71 @@ fn grouped_hex_never_writes_outside_a_direct_short_window() {
     assert_eq!(fmt_hex_grouped(&[0x12], &mut output), "");
     assert_eq!(output, [0xa5; 1]);
 }
+
+#[test]
+fn retry_counts_distinguish_lockout_last_attempt_and_normal_caption() {
+    for (remaining, expected) in [
+        (0, theme::DANGER),
+        (1, theme::WARN),
+        (2, theme::CAPTION),
+        (255, theme::CAPTION),
+    ] {
+        assert_eq!(retry_color(remaining), expected);
+    }
+}
+
+#[test]
+fn a_two_row_detail_card_keeps_its_surface_divider_and_caption_positions() {
+    let rows = [
+        ("Algorithm", "ECC", theme::TEXT),
+        ("Touch", "Off", theme::MUTED),
+    ];
+    let mut actual = crate::render::tests::Rec::new();
+    detail_card(&mut actual, 82, &rows).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    crate::aa::rounded_rect(
+        &mut expected,
+        Rect::new(13, 82, 214, 68),
+        11,
+        Some(theme::SURFACE),
+        Some((theme::BORDER_CARD, 1)),
+        BG,
+    )
+    .unwrap();
+    Line::new(EgPoint::new(23, 116), EgPoint::new(217, 116))
+        .into_styled(PrimitiveStyle::with_stroke(theme::DIVIDER, 1))
+        .draw(&mut expected)
+        .unwrap();
+    for (label, value, color, y) in [
+        ("Algorithm", "ECC", theme::TEXT, 101),
+        ("Touch", "Off", theme::MUTED, 131),
+    ] {
+        font::left(
+            &mut expected,
+            label,
+            EgPoint::new(25, y),
+            Role::Body,
+            theme::MUTED,
+            theme::SURFACE,
+        )
+        .unwrap();
+        font::right(
+            &mut expected,
+            value,
+            EgPoint::new(215, y),
+            Role::Mono,
+            color,
+            theme::SURFACE,
+        )
+        .unwrap();
+    }
+    let difference = actual
+        .px
+        .iter()
+        .zip(&expected.px)
+        .enumerate()
+        .find(|(_, (a, b))| a != b)
+        .map(|(index, (a, b))| (index, *a, *b));
+    assert_eq!(difference, None);
+    assert!(!actual.oob);
+}

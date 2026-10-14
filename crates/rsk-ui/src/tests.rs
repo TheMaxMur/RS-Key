@@ -3,6 +3,21 @@
 
 use super::*;
 
+#[path = "pin_shuffle_tests.rs"]
+mod pin_shuffle;
+
+#[test]
+fn every_navigation_tab_has_its_public_label() {
+    for (tab, label) in [
+        (NavTab::Home, "Home"),
+        (NavTab::Passkeys, "Passkeys"),
+        (NavTab::Apps, "Apps"),
+        (NavTab::Settings, "Settings"),
+    ] {
+        assert_eq!(tab.label(), label, "the {label} tab must keep its caption");
+    }
+}
+
 #[test]
 fn every_status_and_audit_kind_has_its_public_label() {
     for (kind, label) in [
@@ -34,6 +49,16 @@ fn backup_action_geometry_has_an_explicit_outside_region() {
     assert_eq!(hit_backup(Point::new(0, 0)), None);
     assert_eq!(hit_backup(ctr(BACKUP_REVEAL_RECT)), Some(BackupKey::Reveal));
     assert_eq!(hit_backup(ctr(BACKUP_SEAL_RECT)), Some(BackupKey::Seal));
+    for (rect, key) in [
+        (BACKUP_REVEAL_RECT, BackupKey::Reveal),
+        (BACKUP_SEAL_RECT, BackupKey::Seal),
+    ] {
+        assert_eq!(
+            hit_backup(Point::new(PANEL_W / 2, rect.y + rect.h / 2)),
+            Some(key),
+            "a centered backup action must accept a tap at the panel midline"
+        );
+    }
     assert_eq!(std::hint::black_box(rsk_slip39_max)(), 16);
 }
 
@@ -253,6 +278,11 @@ fn settings_root_rows_map_in_order() {
     );
     // Above the list (header area) selects nothing.
     assert_eq!(hit_settings_root(Point::new(PANEL_W / 2, 10)), None);
+    assert_eq!(
+        hit_settings_root(ctr(settings_row_rect(SETTINGS_ROWS))),
+        None,
+        "an unpainted root row must select nothing"
+    );
 }
 
 #[test]
@@ -274,6 +304,11 @@ fn display_rows_map_in_order() {
     assert_eq!(
         hit_display(Point::new(r0.x + r0.w / 2, r0.y + r0.h + 1)),
         None
+    );
+    assert_eq!(
+        hit_display(ctr(settings_row_rect(DISPLAY_ROWS))),
+        None,
+        "an unpainted display row must select nothing"
     );
 }
 
@@ -316,6 +351,16 @@ fn backup_format_cards_map() {
         hit_backup_format(ctr(FMT_SHARES_RECT)),
         Some(BackupFormat::Shares)
     );
+    for (rect, format) in [
+        (FMT_PHRASE_RECT, BackupFormat::Phrase),
+        (FMT_SHARES_RECT, BackupFormat::Shares),
+    ] {
+        assert_eq!(
+            hit_backup_format(Point::new(PANEL_W / 2, rect.y + rect.h / 2)),
+            Some(format),
+            "a centered recovery card must accept a tap at the panel midline"
+        );
+    }
     // The gap between the two cards selects neither.
     let gap = Point::new(FMT_PHRASE_RECT.x, FMT_PHRASE_RECT.y + FMT_PHRASE_RECT.h + 1);
     assert_eq!(hit_backup_format(gap), None);
@@ -441,6 +486,11 @@ fn step_timeout_steps_clamps_and_snaps() {
     // before stepping.
     assert_eq!(step_timeout(5, -1), 10);
     assert_eq!(step_timeout(5, 1), 20);
+    assert_eq!(
+        step_timeout(15, 1),
+        20,
+        "equidistant timeout choices must snap to the lower choice before stepping"
+    );
 }
 
 #[test]
@@ -458,6 +508,18 @@ fn step_sleep_walks_durations_and_off() {
     // never mis-snaps to the Off sentinel).
     assert_eq!(step_sleep(20, 1), 30);
     assert_eq!(step_sleep(20, -1), 15);
+    assert_eq!(
+        step_sleep(1, 1),
+        30,
+        "a positive sleep override must snap to a duration instead of Off"
+    );
+    assert_eq!(step_sleep(1, -1), 15);
+    assert_eq!(
+        step_sleep(45, 1),
+        60,
+        "equidistant sleep choices must snap to the lower choice before stepping"
+    );
+    assert_eq!(step_sleep(45, -1), 15);
 }
 
 #[test]
@@ -478,6 +540,35 @@ fn nav_tabs_map_left_to_right() {
 }
 
 #[test]
+fn apps_chooser_rows_select_the_named_applet_and_refuse_an_unpainted_row() {
+    for (row, entry) in [
+        (0, AppEntry::OpenPgp),
+        (1, AppEntry::Piv),
+        (2, AppEntry::Oath),
+    ] {
+        assert_eq!(
+            hit_apps(ctr(row_rect(PK_LIST_TOP, row))),
+            Some(entry),
+            "an apps row must select its named applet"
+        );
+    }
+    assert_eq!(hit_apps(ctr(row_rect(PK_LIST_TOP, APP_ROWS))), None);
+}
+
+#[test]
+fn piv_algorithm_picker_does_not_treat_the_title_bar_as_a_row() {
+    assert_eq!(
+        hit_list(
+            Point::new(PANEL_W / 2, CONTENT_TOP - 1),
+            PIV_KEYGEN_PICK_TOP,
+            PIV_KEYGEN_PICK_ROWS,
+        ),
+        None,
+        "a title-bar tap must not select a PIV algorithm"
+    );
+}
+
+#[test]
 fn list_rows_hit_in_order_and_gaps_miss() {
     let y0 = 40;
     for i in 0..5u16 {
@@ -492,6 +583,30 @@ fn list_rows_hit_in_order_and_gaps_miss() {
         hit_list(Point::new(r0.x + 2, row_rect(y0, 6).y + 2), y0, 5),
         None
     );
+    for n in [0, 5] {
+        assert_eq!(
+            hit_list(ctr(row_rect(y0, n)), y0, n),
+            None,
+            "the first unpainted list row must select nothing"
+        );
+    }
+}
+
+#[test]
+fn service_back_chevron_accepts_its_center_and_refuses_other_targets() {
+    assert!(
+        hit_pk_back(ctr(PK_BACK_RECT)),
+        "the service back chevron must accept its center"
+    );
+    for point in [
+        Point::new(PK_BACK_RECT.x + PK_BACK_RECT.w, PK_BACK_RECT.y),
+        Point::new(PK_BACK_RECT.x, PK_BACK_RECT.y + PK_BACK_RECT.h),
+        Point::new(0, 0),
+        ctr(row_rect(PK_LIST_TOP, 0)),
+        Point::new(PANEL_W / 2, NAV_TOP),
+    ] {
+        assert!(!hit_pk_back(point), "a non-chevron target must not go back");
+    }
 }
 
 #[test]

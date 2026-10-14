@@ -2630,3 +2630,12 @@ fn an_accent_outline_uses_its_own_tint_and_field_border() {
     assert!(!has_color(&target, rect, theme::DANGER_BORDER));
     assert!(!target.oob);
 }
+
+#[path = "render_contract_tests.rs"]
+mod contracts;
+
+#[path = "render_geometry_tests.rs"]
+mod geometry;
+
+#[path = "render_hold_tests.rs"]
+mod hold;
