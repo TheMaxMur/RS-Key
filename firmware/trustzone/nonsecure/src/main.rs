@@ -3,6 +3,7 @@
 
 #![no_std]
 #![no_main]
+#![expect(unsafe_code, reason = "NS board glue; docs/unsafe.md lists every site")]
 #![deny(clippy::undocumented_unsafe_blocks)]
 #![deny(
     clippy::indexing_slicing,

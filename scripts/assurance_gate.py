@@ -925,7 +925,10 @@ def tier_union(formal: pathlib.Path) -> set[str]:
 def workspace_members(root: pathlib.Path) -> set[str]:
     with open(root / "Cargo.toml", "rb") as fh:
         manifest = tomllib.load(fh)
-    return {m.rsplit("/", 1)[-1] for m in manifest["workspace"]["members"]}
+    return {
+        tomllib.loads((root / member / "Cargo.toml").read_text())["package"]["name"]
+        for member in manifest["workspace"]["members"]
+    }
 
 
 def check_properties(root: pathlib.Path, findings: list[str]) -> list[dict]:

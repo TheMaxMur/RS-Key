@@ -2,13 +2,14 @@
 # Copyright (C) 2026 RS-Key contributors
 
 [package]
-name = "firmware"
+name = "firmware-ns"
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-only"
 publish = false
 
-[workspace]
+[lints]
+workspace = true
 
 [features]
 test-ignore-reset-callbacks = []
@@ -29,14 +30,7 @@ cortex-m = "0.7"
 cortex-m-rt = "0.7"
 panic-halt = "1"
 rp-pac = { git = "https://github.com/embassy-rs/rp-pac", rev = "c2e27609b021c444f634673155318977d7f0bdf6", features = ["rp235x", "rt"] }
-rsk-phy = { path = "../../../crates/rsk-phy" }
-rsk-usb = { path = "../../../crates/rsk-usb" }
-rsk-otp = { path = "../../../crates/rsk-otp" }
-rsk-secret = { path = "../../../crates/rsk-secret" }
-
-[profile.release]
-codegen-units = 1
-opt-level = "s"
-lto = true
-debug = 2
-panic = "abort"
+rsk-phy = { workspace = true }
+rsk-usb = { workspace = true }
+rsk-otp = { workspace = true }
+rsk-secret = { workspace = true }

@@ -259,7 +259,7 @@ bound_tags = 2
 stops_tags = "which side of the implication a tag is on. The rule counts to one and the sweep measures that either tag alone clears it, so a tree whose only tag sits on a half that cannot falsify the invariant is still green"
 bound_owner_configurations = 9
 stops_owner_configurations = "any configuration outside the nine the rule reads. A tag is owed only for the invariants those nine check, so an invariant checked nowhere among them owes none"
-shipped_relation = "the sweep is over EVERY subset of the two tags — none, each alone, both — driven through `check_tags`, the gate's own entry point, with `production_rust` pointed at copies rather than at the tree, so nothing was edited. The rule it exercises is scripts/assurance_gate.py:1053-1062: for each of the nine OWNER_CFGS, every invariant that configuration checks must carry a Refines tag SOMEWHERE in production Rust. It is a count-to-one rule and the sweep is what makes that a measurement instead of a reading: either tag alone clears it, and the rule knows nothing about which side of the implication a tag is on"
+shipped_relation = "the sweep is over EVERY subset of the two tags — none, each alone, both — driven through `check_tags`, the gate's own entry point, with `production_rust` pointed at copies rather than at the tree, so nothing was edited. The rule it exercises is scripts/assurance_gate.py:1056-1065: for each of the nine OWNER_CFGS, every invariant that configuration checks must carry a Refines tag SOMEWHERE in production Rust. It is a count-to-one rule and the sweep is what makes that a measurement instead of a reading: either tag alone clears it, and the rule knows nothing about which side of the implication a tag is on"
 cfg = "none"
 features = "none"
 
@@ -567,7 +567,7 @@ mutant = "the property's Refines tags removed, one at a time and then both, with
 invocation = "scripts/assurance_gate.py check_tags, driven four ways over the two tagged files"
 expected = "the rule to name the property when its owner is gone"
 verdict = "baseline green; credmgmt.rs stripped GREEN; reset.rs stripped GREEN; both stripped EXIT-worthy — `NoAccessibleSecretWithoutGate: checked by Shipped.cfg but has no Refines tag in production Rust`"
-fell = "scripts/assurance_gate.py:1053-1062, the both-ways rule between OWNER_CFGS' checked invariants and the tags in production Rust"
+fell = "scripts/assurance_gate.py:1056-1065, the both-ways rule between OWNER_CFGS' checked invariants and the tags in production Rust"
 direction = "modelled"
 reading = "the two green arms are the result. The rule is count-to-one: either tag alone satisfies it, so it cannot see that one of the two is a consequent test, cannot see that the producer is untagged, and would stay green if the only surviving tag were the wrong one. This is the derivation in which a missing owner was ever going to show, and what it shows is a boolean about a file set."
 

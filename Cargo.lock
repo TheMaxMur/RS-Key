@@ -1102,6 +1102,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "firmware-ns"
+version = "0.1.0"
+dependencies = [
+ "cortex-m",
+ "cortex-m-rt",
+ "critical-section",
+ "embassy-executor",
+ "embassy-rp",
+ "embassy-sync",
+ "embassy-time",
+ "embassy-time-driver",
+ "embassy-time-queue-utils",
+ "embassy-usb",
+ "panic-halt",
+ "rp-pac",
+ "rsk-otp",
+ "rsk-phy",
+ "rsk-secret",
+ "rsk-usb",
+ "static_cell",
+]
+
+[[package]]
 name = "fixed"
 version = "1.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

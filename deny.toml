@@ -55,7 +55,7 @@ deny = [
     { crate = "rsk-openpgp", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
     { crate = "rsk-piv", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
     { crate = "rsk-oath", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
-    { crate = "rsk-otp", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
+    { crate = "rsk-otp", wrappers = ["firmware", "firmware-ns", "rsk-device", "rsk-display"], reason = "R2: NS uses only the HID frame codec; the applet is instantiated by Secure/device roots" },
     { crate = "rsk-mgmt", wrappers = ["firmware", "rsk-device", "rsk-display"], reason = "R2: an applet is composed by a device wiring, never named by another applet" },
     # Rescue owns the BOOTSEL/OTP paths a display build deliberately leaves out,
     # so its wrapper list is two, not three.

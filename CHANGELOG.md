@@ -38,6 +38,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- TrustZone S/NS builds share the root Cargo workspace, dependency pins and lockfile; NS remains excluded from host-only rows and is compiled by the device gate (`bcdDevice 0x0AAC`).
+
 - TrustZone bcdDevice 0x0AAB: production boot keeps Secure touch, LED and display
   tasks, including display CCID PIN entry. One generated S/NS/NSC layout follows
   2/4/16 MiB profiles without moving KV bounds. The combined touch image includes

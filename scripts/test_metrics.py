@@ -68,6 +68,9 @@ def test_profile_features_and_diagnostics_survive_the_actual_command(tmp_path):
     manifest = json.loads((out / "manifest.json").read_text())
     assert manifest["status"] == "complete"
     assert manifest["host_feature_args"] == ["rsk-fido/always-uv"]
+    args = manifest["commands"][2]["argv"]
+    assert [args[i + 1] for i, arg in enumerate(args) if arg == "--exclude"] == [
+        "firmware", "firmware-ns", "rsk-wipe"]
     assert manifest["commands"][2]["argv"].count("rsk-fido/always-uv") == 1
     assert "stderr" in (out / "firmware.metadata.json.stderr").read_text()
 

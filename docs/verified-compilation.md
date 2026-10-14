@@ -155,7 +155,7 @@ checksums, provenance, signing, notes, publication — are language-agnostic.
 
 ## What it costs the gate
 
-`scripts/check.sh` runs 101 rows: 63 invoke `cargo`, 18 are Python, 20 are
+`scripts/check.sh` runs 104 rows: 65 invoke `cargo`, 18 are Python, 21 are
 neither. A kernel outside Rust is invisible to a measured nine of them, and
 would need a twin for many more.
 
@@ -166,7 +166,7 @@ would need a twin for many more.
 workspace manifests, `scripts/kani_gate.py` from files with an `.rs` suffix —
 so a C or extracted-C kernel is not a thing they can fail about.
 
-**Would need a twin:** 22 clippy rows, 8 rustdoc rows, 5 fmt rows and 18
+**Would need a twin:** 24 clippy rows, 8 rustdoc rows, 5 fmt rows and 18
 `cargo test` rows. A second language does not inherit `-D warnings`, a
 formatter the gate can run, a doc build, or a test harness whose empty
 selection is already caught.
@@ -196,7 +196,7 @@ A decision with no falsifier is a preference. Any one of these overturns it:
   generation, verifying that C would cover the whole kernel instead of a
   quarter of it.
 - **The gate stops being Rust-shaped.** If the tree acquires a second language
-  for an unrelated reason and pays the 22-clippy-row-shaped cost anyway, the
+  for an unrelated reason and pays the linting cost listed above anyway, the
   marginal cost of this decision falls to the toolchain delta alone.
 
 None of the five is close. The first two are outside this project's control.

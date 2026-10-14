@@ -29,6 +29,10 @@
 class = "embedded-binary"
 reason = "no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:82-93). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport."
 
+[crate.firmware-ns]
+class = "embedded-binary"
+reason = "TrustZone Non-secure classes, packet framing and TIMER1; no worker or applet state is instantiated here. Protocol state is host-tested in rsk-usb; full ELF crypto, lifecycle, presence and hostile-access checks are tests/95 through tests/99. Hardware attribution and complete exception/FP fidelity remain separate platform obligations."
+
 [crate.rsk-wipe]
 class = "out-of-scope"
 reason = "flash-erase utility, runs once in a maintainer's hands; not part of the runtime security argument."

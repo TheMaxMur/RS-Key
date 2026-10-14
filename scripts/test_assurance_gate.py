@@ -122,6 +122,11 @@ def build(root: pathlib.Path) -> pathlib.Path:
         '[workspace]\nmembers = ["crates/rsk-a", "crates/rsk-b"]\n'
     )
 
+    for name in ["rsk-a", "rsk-b"]:
+        directory = root / "crates" / name
+        directory.mkdir(parents=True)
+        (directory / "Cargo.toml").write_text(f'[package]\nname = "{name}"\n')
+
     a = root / "crates" / "rsk-a" / "src"
     a.mkdir(parents=True)
     (a / "lib.rs").write_text(
@@ -412,7 +417,16 @@ def test_member_missing_from_ledger_fails(tree, capsys):
         '"crates/rsk-a", "crates/rsk-b"',
         '"crates/rsk-a", "crates/rsk-b", "crates/rsk-new"',
     )
+    added = tree / "crates/rsk-new"
+    added.mkdir()
+    (added / "Cargo.toml").write_text('[package]\nname = "rsk-new"\n')
     red(tree, capsys, "workspace member not in the crate ledger: rsk-new")
+
+
+def test_member_directory_does_not_replace_its_package_name(tree, capsys):
+    (tree / "crates/rsk-a").rename(tree / "crates/renamed")
+    edit(tree / "Cargo.toml", '"crates/rsk-a"', '"crates/renamed"')
+    assert assurance_gate.run(tree) == 0
 
 
 def test_stale_ledger_entry_fails(tree, capsys):

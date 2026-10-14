@@ -5,7 +5,7 @@
 
 This chapter owns the TrustZone design, build instructions, measurements and
 remaining production work. The ordinary firmware has no Secure/Non-secure split.
-The experimental build at `bcdDevice 0x0AAB` runs USB classes and transports in
+The experimental build at `bcdDevice 0x0AAC` runs USB classes and transports in
 Non-secure (NS), with the controller, lifecycle observer, worker and applets in
 Secure (S). Secure revocation no longer depends on NS reset callbacks. The
 resource policy, Secure board services and combined offline build are implemented
@@ -267,8 +267,7 @@ With `RSK_TZ_GATEWAY_PROBES=1`, Non-secure boot probes invalid gateway pointers
 before attaching USB, including a span crossing into Secure memory. It links without a global allocator;
 the OTP frame codec reuses the existing `rsk-otp` implementation and dependency
 versions, while only that codec is linked into the transport image. TIMER1 uses
-the existing Embassy time-driver API and bounded timer queue in this separate
-workspace; it does not share Secure TIMER0's queue or wakers.
+the existing Embassy time-driver API and bounded timer queue for the NS image; it does not share Secure TIMER0's queue or wakers.
 
 With `RSK_TZ_TEST_DELAY=1`, `getInfo` executes synchronous SHA-256 work in Secure
 for three seconds before calling the existing FIDO handler. The host-side test
@@ -769,7 +768,7 @@ Run an address probe only with a disposable test image, never a release artifact
 RSK_TZ_PROBE_ADDRESS=0x50110000 nix develop -c bash firmware/trustzone/build.sh
 nix develop -c python tests/97_trustzone_isolation.py \
   --image target/trustzone/combined.elf \
-  --ns-image target/trustzone/nonsecure/thumbv8m.main-none-eabihf/release/firmware \
+  --ns-image target/trustzone/nonsecure/thumbv8m.main-none-eabihf/release/firmware-ns \
   --emulator tools/emu/target/aarch64-apple-darwin/release/rsk-emu \
   --address 0x50110000
 nix develop -c bash firmware/trustzone/build.sh
@@ -945,8 +944,21 @@ absolute build directory. Keep the combined image's code, veneers and partition
 table when hashing or signing; signing S alone does not authenticate NS.
 
 
-The standalone NS workspace still prevents reproducible combined images: Cargo
-hashes absolute paths for its dependencies outside that workspace (Cargo
-[issue 7645](https://github.com/rust-lang/cargo/issues/7645)). The next packaging
-step must put both firmware packages in the root workspace and share its lockfile.
-The completed board/USB regression results above do not close that build issue.
+## Shared build at bcdDevice 0x0AAC
+
+Both images now belong to the root workspace: `firmware` and `firmware-ns`.
+Internal dependencies use workspace entries and one root Cargo.lock; the nested
+lockfile and release profile are removed. External versions, sources and
+checksums are unchanged. NS is excluded from host tests and coverage. The device
+gate and commit hook build the combined image and lint each world separately.
+
+The separate NS workspace had triggered Cargo [issue 7645](https://github.com/rust-lang/cargo/issues/7645):
+paths to its out-of-workspace dependencies changed crate hashes between Nix build
+directories. Symbol stripping alone did not fix the resulting NS code order.
+The common workspace passes an independent immutable Nix `--rebuild`: both the
+complete ELF and UF2 match byte for byte.
+
+Use the combined build script or Nix package. The script compiles each package
+separately in its own target directory, preserving the two worlds' dependency
+features and link inputs. Bare Cargo builds retain the original default members;
+NS needs the Secure-generated memory layout and CMSE import library.

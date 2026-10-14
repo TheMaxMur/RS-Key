@@ -212,8 +212,8 @@ features = "none"
 name = "rustc"
 version = "1.96.0 (ac68faa20 2026-05-25)"
 provenance = "flake.lock"
-invocation = "cargo test --workspace --exclude firmware --exclude rsk-wipe --target aarch64-apple-darwin"
-environment = "nix develop"
+invocation = "current replay: cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target aarch64-apple-darwin"
+environment = "nix develop; the recorded invocation omitted firmware-ns, which was not then a workspace member; the host-library set is unchanged"
 
 [[tool]]
 name = "cargo"

@@ -29,9 +29,9 @@ if [[ -n "${RSK_TZ_PROBE_ADDRESS:-}" ]]; then
     ns_features=(--features test-hostile-access)
 fi
 RSK_TZ_IMPLIB="$out/ns-import.a" CARGO_TARGET_DIR="$out/nonsecure" \
-    cargo build "${cargo_config[@]}" --locked --release --manifest-path firmware/trustzone/nonsecure/Cargo.toml "${ns_features[@]}"
+    cargo build "${cargo_config[@]}" --locked --release -p firmware-ns "${ns_features[@]}"
 arm-none-eabi-objcopy -O binary \
-    "$out/nonsecure/thumbv8m.main-none-eabihf/release/firmware" "$out/nonsecure.bin"
+    "$out/nonsecure/thumbv8m.main-none-eabihf/release/firmware-ns" "$out/nonsecure.bin"
 RSK_TZ_NS_IMAGE="$out/nonsecure.bin" \
     CARGO_TARGET_DIR="$out/secure" cargo build "${cargo_config[@]}" --locked --release -p firmware --features "$secure_features"
 cmp "$out/ns-import.a" "$RSK_TZ_IMPLIB"

@@ -28,7 +28,7 @@ def symbol(image, suffix):
 def probe(tree, emulator, base_port, fenced):
     image = tree / "target/trustzone/combined.elf"
     marker = symbol(image, "::core1::CORE1_FAULT_MARKER")
-    ns = tree / "target/trustzone/nonsecure/thumbv8m.main-none-eabihf/release/firmware"
+    ns = tree / "target/trustzone/nonsecure/thumbv8m.main-none-eabihf/release/firmware-ns"
     armed = symbol(ns, " RSK_NS_PROBE_PROGRESS")
     with tempfile.TemporaryFile(mode="w+") as log, tempfile.TemporaryFile(mode="w+") as client_log:
         proc = subprocess.Popen([str(emulator), "--image", str(image), "--fido-port", str(base_port),

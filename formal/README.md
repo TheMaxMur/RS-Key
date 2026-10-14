@@ -3038,6 +3038,7 @@ evidence columns and validated cross-model support edges below on every gate run
 | Crate | Class | Model / evidence | Named gap / disposition |
 |---|---|---|---|
 | `firmware` | embedded-binary | — | no_std binary: boot, worker sequencing, board halves of Hooks/Platform. The boot path's cross-boot state — the EF_HARDENED lap and scratch-word lock carry — is RSKeyBootHardening (M7), precisely because this crate has no host tests; the FIDO state it builds is reconstructed host-side in rsk-device (ctap.rs:82-93). Worker scheduling and USB bring-up remain implementation mechanics, with transport state owned by RSKeyTransport. |
+| `firmware-ns` | embedded-binary | — | TrustZone Non-secure classes, packet framing and TIMER1; no worker or applet state is instantiated here. Protocol state is host-tested in rsk-usb; full ELF crypto, lifecycle, presence and hostile-access checks are tests/95 through tests/99. Hardware attribution and complete exception/FP fidelity remain separate platform obligations. |
 | `rsk-bench` | out-of-scope | — | latency statistics for the on-device harness; not part of the security argument. |
 | `rsk-bip39` | pure | `crates/rsk-bip39/src/kani.rs` | — |
 | `rsk-crypto` | pure | `crates/rsk-crypto/src/base64url_kani.rs`<br>`fuzz/fuzz_targets/aes_gcm.rs`<br>`fuzz/fuzz_targets/chachapoly.rs` | — |

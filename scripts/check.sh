@@ -401,11 +401,17 @@ run "fmt"                      cargo fmt --all --check
 # `BOARD` because `rsk-wipe`'s build script refuses to guess a flash size (see
 # the rsk-wipe steps below); `waveshare-one` is the reference board, whose
 # values are the same defaults every other knob falls back to.
-run "clippy (embedded)"        env BOARD=waveshare-one cargo clippy --workspace -- -D warnings
-# Every host row below selects the same way: the whole workspace less the two
-# members that are not under `crates/`. `firmware` and `rsk-wipe` are
+run "TrustZone image" bash firmware/trustzone/build.sh
+export RSK_TZ_IMPLIB="$PWD/target/trustzone/ns-import.a"
+export RSK_TZ_NS_MEMORY="$PWD/target/trustzone/nonsecure-memory.x"
+
+run "clippy (embedded)"        cargo clippy --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe -- -D warnings
+run "clippy (S/wipe)"          env BOARD=waveshare-one cargo clippy -p firmware -p rsk-wipe -- -D warnings # roster: scoped
+run "clippy (NS)"              cargo clippy -p firmware-ns -- -D warnings # roster: scoped
+# Every host row below selects the same way: the whole workspace less the three
+# device binaries outside `crates/`. `firmware`, `firmware-ns` and `rsk-wipe` are
 # thumbv8m-only, so a host target cannot build them; nothing else is excluded.
-run "clippy (host tests)"      cargo clippy --workspace --exclude firmware --exclude rsk-wipe --target "$HOST" --all-targets -- -D warnings
+run "clippy (host tests)"      cargo clippy --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST" --all-targets -- -D warnings
 # tools/tui is its own workspace (host-only), so the --all/--workspace runs
 # above never see it — gate it explicitly. Its lockfile was scanned by nobody
 # until Dependabot flagged a transitive advisory from the GitHub side.
@@ -472,8 +478,8 @@ run "fuzz targets alive"       fuzz_targets_are_alive
 # What these rows still do NOT check, so nobody reads them as more than they are:
 # `missing_docs` is off (an undocumented item is nobody's failure here); a plain
 # `//` comment is not parsed for links, so a dead name in one rots unseen.
-run "rustdoc (host)"           env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude rsk-wipe --no-deps --target "$HOST"
-run "rustdoc (host all-feat)"  env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude rsk-wipe --no-deps --all-features --target "$HOST"
+run "rustdoc (host)"           env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --no-deps --target "$HOST"
+run "rustdoc (host all-feat)"  env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --no-deps --all-features --target "$HOST"
 # A third permutation, because the two above document only public items and so
 # resolve only the links a public item carries: 28 more were broken at the commit
 # that fixed the first 75, in eight crates, two of them on that commit's clean
@@ -486,8 +492,8 @@ run "rustdoc (host all-feat)"  env RUSTDOCFLAGS="-D warnings" cargo doc --worksp
 # invalidates the other's fingerprint. Deliberately no seconds: the pair timed
 # 8.5 s -> 15.6 s when this line was written and 21 s -> 43 s when re-timed later
 # in the same tree, so a figure here is a claim that does not survive re-reading.
-run "rustdoc (host private)"   env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude rsk-wipe --no-deps --document-private-items --target "$HOST"
-# `firmware` and `rsk-wipe` are the workspace's only thumbv8m-only members, so
+run "rustdoc (host private)"   env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --no-deps --document-private-items --target "$HOST"
+# `firmware` and `rsk-wipe` are documented for the device target here, so
 # these two rows take the default target instead of $HOST. `BOARD` because
 # rsk-wipe refuses to guess a flash size, `LED_KIND=none` because `--all-features`
 # turns on `display`, whose compile_error guard demands it. rsk-wipe declares no
@@ -501,7 +507,7 @@ run "rustdoc (emu)"            env RUSTDOCFLAGS="-D warnings" cargo doc --manife
 # exits 0 in 0.1 s — a green row over an empty set, the defect this block exists
 # to prevent. The flag overrides `doc = false`; `--all-targets` is not a `doc` flag.
 run "rustdoc (fuzz)"           env RUSTDOCFLAGS="-D warnings" cargo doc --manifest-path fuzz/Cargo.toml --bins --no-deps --target "$HOST"
-run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude rsk-wipe --target "$HOST"
+run_tests "test (host)"              cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe --target "$HOST"
 # The PQC-advertisement opt-in changes the getInfo shape — test both forms.
 run_tests "test (advertise-pqc)"     cargo test -p rsk-fido --features advertise-pqc --target "$HOST" getinfo
 # fido-conformance suppresses the default EdDSA (-8) advertisement (the
@@ -720,7 +726,7 @@ run "kani roster"              python scripts/kani_gate.py
 # set is derived from the crates now, in both directions.
 run "kani shrink roster"       python scripts/shrink_gate.py
 # Same failure one file closer to home, and the reason the host rows above say
-# `--workspace --exclude firmware --exclude rsk-wipe` rather than naming crates:
+# `--workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe` rather than naming crates:
 # the list they used to name was written out nine times over four files and had
 # rotted to 16 of 24 in the docs, 20 on the nightly coverage row, 12 in the
 # flake. This holds every copy of that selection to the tree.

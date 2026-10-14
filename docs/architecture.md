@@ -7,7 +7,7 @@ the design does and does not defend against, see the
 The ordinary firmware architecture is described below. The experimental split
 keeps the worker and applets Secure and moves transports to Non-secure. Its
 [TrustZone boundary](trustzone.md) records resource ownership and the chosen
-Secure USB reset observer; that production boundary is not implemented yet.
+Secure USB lifecycle observer; the implementation is in place, with physical validation still required.
 
 ## The big picture
 
@@ -101,7 +101,7 @@ The workspace splits along a strict dependency gradient: the `firmware` binary
 is thin glue over the applet crates, which build on a handful of host-tested
 platform libraries. The per-crate detail is in the table. The shape is:
 
-![Crate dependency layers: 30 crates in 10 tiers, from the 2 flashable binaries at the top, down through the 8 applets, to the 1 secrets crate at the bottom. All 127 in-workspace dependencies point strictly downward, and applet-to-applet edges number 0.](images/crate-graph.svg)
+![Crate dependency layers: 31 crates in 10 tiers, from the 3 device binaries at the top, down through the 8 applets, to the 1 secrets crate at the bottom. All 131 in-workspace dependencies point strictly downward, and applet-to-applet edges number 0.](images/crate-graph.svg)
 
 **No applet names another applet — the count is zero, in code and in the manifests.** This page used to name three cross-edges (`piv→openpgp`, `openpgp→rsa`, `piv→rsa`), only the first of which was one applet reaching sideways; the manifests carried **six** — `fido→mgmt`, `fido→rescue`, `openpgp→mgmt`, `piv→mgmt`, `piv→openpgp`, `otp→mgmt`. The machinery under each moved *down* instead: the phy record into `rsk-phy`, the DeviceInfo record into `rsk-devconf`, RSA into `rsk-rsa`, and the EC key type both card applets seal (`PrivKey` over `Curve`, the `[curve_id] ‖ scalar` blob) into `rsk-ec`. Six `rsk_<applet>::` mentions do survive across the applet tier, every one inside a comment where one applet explains its ordering by pointing at a sibling — a cross-reference, not a dependency.
 
@@ -109,7 +109,8 @@ What holds that now is `deny.toml`: each applet crate is banned except behind th
 
 | Crate | Contents |
 |---|---|
-| `firmware` | the only crate that touches the HAL: board bring-up, USB descriptors, executors, the worker, OTP fuse access, LED, BOOTSEL touch |
+| `firmware` | Secure board glue and the ordinary firmware: board bring-up, USB descriptors, executors, the worker, OTP fuse access, LED, BOOTSEL touch |
+| `firmware-ns` | TrustZone Non-secure USB classes, transport framing and TIMER1; Secure owns the controller, worker and applets |
 | `rsk-wipe` | the second flashable image: a RAM-only flash erase for clean-slate testing — wipes all of flash, leaves a `NUKE` eyecatcher, reboots to BOOTSEL. Runs from SRAM because erasing the sectors a flash-resident image executes from would crash on return |
 | `rsk-sdk` | APDU parsing (cases 1–4, short + extended), BER-TLV, status words, the `Applet` trait + dispatcher, and the seams a board hands every applet: `Rng`, `UserPresence`/`Presence` |
 | `rsk-fs` | the flash filesystem: 16-bit file ids over two `sequential-storage` KV partitions (main + high-churn counters), ACLs, metadata records |
@@ -140,7 +141,7 @@ What holds that now is `deny.toml`: each applet crate is banned except behind th
 | `rsk-ui` | the trusted-display UI model (operation prompts, untrusted relying-party-string sanitizing, Allow/Deny button geometry) plus its compact retained scene and 8-row rasterizer; compiled only into the `display` build |
 | `rsk-display` | the trusted display's *flow* — which screen is shown when, the PIN pad, the browse modals, the Approve/Deny wait — over a panel and a touch controller it takes as type parameters, so the firmware drives an ST7789 with semantic damage + two-band DMA and the emulator replays the same retained scene into a window; `display` build only |
 
-Everything except the two binaries is hardware-agnostic and runs the full
+Everything except the three device binaries is hardware-agnostic and runs the full
 test suite on the host ([testing.md](testing.md)).
 
 ## Flash layout

@@ -69,7 +69,7 @@ committed drawing has drifted from them; its mutation table is
 `thumbv8m`):
 
 ```sh
-nix develop -c cargo test --workspace --exclude firmware --exclude rsk-wipe \
+nix develop -c cargo test --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe \
     --target aarch64-apple-darwin
 ```
 
@@ -159,13 +159,13 @@ OUT=target/coverage-decisions
 mkdir -p "$OUT"
 
 CARGO_TARGET_DIR="$OUT/branch-build" cargo llvm-cov --branch \
-    --target "$HOST_TARGET" --workspace --exclude firmware --exclude rsk-wipe \
+    --target "$HOST_TARGET" --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe \
     --json --output-path "$OUT/branch.json" -- --test-threads=1
 
 export CARGO_TARGET_DIR="$OUT/condition-build"
 export RUSTFLAGS='-Z coverage-options=condition'
 cargo llvm-cov --target "$HOST_TARGET" \
-    --workspace --exclude firmware --exclude rsk-wipe \
+    --workspace --exclude firmware --exclude firmware-ns --exclude rsk-wipe \
     --json --output-path "$OUT/condition.json" -- --test-threads=1
 cargo llvm-cov report --branch --target "$HOST_TARGET" \
     --html --output-dir "$OUT/condition-html"
