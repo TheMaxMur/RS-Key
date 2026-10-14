@@ -2674,3 +2674,11 @@ is fully triaged: 109 caught of 110, one identity.
 Evidence: `target/mutants/backup-controls/` (0 caught of 110),
 `target/mutants/backup2/` (9 of 9), `backup3/` (41 of 41), `backup4/` (27 of
 27), `backup5/` (3 of 3) and `backup6/` (29 of 30, one identity).
+
+The `passkeys.rs` chunk: four frame tests kill all 39 `render_rename_field`
+and `render_confirm_delete` occurrences — the pending-char underline, the bare
+cursor, a long value that must be erased and clipped, and the delete card with
+long relying-party/account labels that exercise its clip. The remaining 27 are
+the T9 keypad, list rows, service screen and rename chrome. Evidence:
+`target/mutants/passkeys2/` (29 caught of 39, ten clip/clear cases rerun) and
+`passkeys3/` (10 of 10).
