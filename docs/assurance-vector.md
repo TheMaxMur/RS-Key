@@ -215,7 +215,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-FLASH-001` | The silicon's program/erase tear behaviour under a real supply cut is  |
 | platform | `PLAT-OTP-001` | OTP read permissions, lock state and the chaffing layout behave as the |
 | platform | `PLAT-INPUT-001` | A PC/SC reader's `FEATURE_VERIFY_PIN_DIRECT` layer carries the PIN to  |
-| platform | `PLAT-TOOL-001` | A green `tools/emu` run is a protocol result, not a device result: the |
+| platform | `PLAT-TOOL-001` | A green emulator run covers its selected backend and adapter. The appl |
 | platform | `PLAT-TOOL-002` | `tools/emu` implements the same authorization gates as the firmware, s |
 | platform | `PLAT-TOOL-003` | Kani/CBMC is sound for the arithmetic its harnesses bound, and the sol |
 | platform | `PLAT-TOOL-004` | TLC is sound for the finite configurations it checks, and the verdict  |
