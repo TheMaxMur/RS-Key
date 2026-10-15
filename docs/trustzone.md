@@ -1117,6 +1117,23 @@ image-emulator run and the final 0x0AB0 hardware run passed. The original failur
 is retained as an unexplained hardware finding, not reclassified as a pass or
 claimed fixed by the OTP change. No full-flash export was taken for it.
 
+`tests/102_piv_factory_reset.py` exercises this boundary repeatedly. Each cycle
+changes the PIN, creates and verifies a P-256 key (also RSA with `--rsa`), and
+rewrites a 3046-byte object `--churn` times. RESET must then restore the default
+PIN and management key, remove the slot keys and object, and publish a different
+F9 key whose certificate verifies independently. On a failed RESET it records the
+PIN-query and public slot-metadata statuses before any SELECT can repair files,
+then stops without retrying RESET. It destroys the selected key's PIV data.
+
+```sh
+RSK_TEST_READER='RS-Key RS-Key Security Key' nix develop -c \
+    python tests/102_piv_factory_reset.py --runs 10 --churn 4 --rsa
+```
+
+The same script runs through `tests/emu.py`, including the firmware image
+backend. An omitted-RESET negative control must fail at default-PIN verification
+after a simulated `9000`, before any F9 comparison can hide the missing reset.
+
 The first same-process libusb open immediately after the additional warm reboot
 found no device despite HID enumeration. A fresh USB context then verified the
 first OTP status and HMAC before any CCID selection and removed the scratch
