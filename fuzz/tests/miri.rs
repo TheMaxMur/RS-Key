@@ -60,6 +60,18 @@ mod config_recovery_cuts;
 #[path = "fixtures/fido_session.rs"]
 mod fido_session_seeds;
 
+#[path = "../fuzz_targets/cross_applet.rs"]
+mod cross_applet;
+
+#[path = "../fuzz_targets/fs_ops.rs"]
+mod fs_ops;
+
+#[path = "fixtures/cross_applet.rs"]
+mod cross_applet_seeds;
+
+#[path = "fixtures/fs_ops.rs"]
+mod fs_ops_seeds;
+
 // -------------------------------------------------------------------------
 // Shared RNG and helpers
 // -------------------------------------------------------------------------
@@ -1525,6 +1537,24 @@ fn miri_fs_ops() {
         live.insert(f);
     });
     assert!(live.is_empty());
+}
+
+// =========================================================================
+// cross_applet / fs_ops seed replay
+// =========================================================================
+
+#[test]
+fn miri_cross_applet_seeds() {
+    for seed in cross_applet_seeds::SEEDS {
+        cross_applet::exercise(seed);
+    }
+}
+
+#[test]
+fn miri_fs_ops_seeds() {
+    for seed in fs_ops_seeds::SEEDS {
+        fs_ops::exercise(seed);
+    }
 }
 
 // =========================================================================

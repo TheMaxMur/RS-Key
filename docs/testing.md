@@ -568,9 +568,15 @@ directions of its SELECT oracle for every gated applet (disable →
 the clamped read, delete, the exact `META_MAX` NoMemory boundary and the reboot
 (`into_storage`→`scan`) are exercised against its `HashMap` model. Both
 directories replay under `-runs=0` and a seeded 60-second run with no oracle
-firing. Neither target has a `fuzz/tests/fixtures/` replay — Miri's
-`cross_applet` and `fs_ops` tests drive their crates directly — so no Miri seed
-fixture was added.
+firing. The same 11 and 6 seeds are re-encoded by hand in
+`fuzz/tests/fixtures/{cross_applet,fs_ops}.rs` and replayed through the shipped
+targets by `miri_cross_applet_seeds` / `miri_fs_ops_seeds` — the two target
+bodies moved to `pub(crate) fn exercise`, exactly as `fido_session`'s already
+was, with no assertion changed — so the refused/served SELECT pair, the factory
+wipe, the clamped read, the `META_MAX` NoMemory boundary and the reboot are
+checked under the Miri UB interpreter on the default build too; the roster rises
+to 73 tests. The 63.20% union is still not remeasured: it comes from a long
+retained campaign, not this bounded replay.
 
 ```sh
 nix develop .#fuzz -c cargo fuzz list

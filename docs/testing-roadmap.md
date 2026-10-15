@@ -121,7 +121,7 @@ The latest local completion boundary is:
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
 | 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns, arbitrary correlated faults and semantic record-loss detection beyond the current CRC/legacy formats remain open; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
-| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below | Other privileged command/state/fault combinations and broader retained campaigns; the 63.20% union is not remeasured |
+| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri | Other privileged command/state/fault combinations and broader retained campaigns; the 63.20% union is not remeasured |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
 | 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
@@ -2582,10 +2582,22 @@ unchanged, and a disable whose bit reaches the dispatcher reports a different
 edge count than the enabled SELECT. No oracle fired; these are valid preparation
 paths, not findings.
 
-Neither target has a `fuzz/tests/fixtures/` replay pattern — the only fixture is
-`fido_session`'s, and both Miri tests drive their crates directly rather than the
-shipped targets — so no seed replay was added under Miri.
+Neither target had a `fuzz/tests/fixtures/` replay, so this slice added none
+under Miri. A follow-up does: `cross_applet.rs` and `fs_ops.rs` now expose their
+bodies as `pub(crate) fn exercise(data: &[u8])` with the
+`#[cfg(not(test))] fuzzing::fuzz_target!` tail `fido_session` already used, and
+`fuzz/tests/fixtures/{cross_applet,fs_ops}.rs` hold these same 11 and 6 seeds
+re-encoded by hand from `scripts/external_corpus.py` (not imported from Python).
+`miri_cross_applet_seeds` and `miri_fs_ops_seeds` in `fuzz/tests/miri.rs` then
+drive each seed through the shipped target, so the refused/served SELECT pair,
+the factory wipe, the clamped read, the `META_MAX` NoMemory boundary and the
+reboot are checked under the UB interpreter.
 
-The 63.20% union was **not** remeasured: it comes from a long retained campaign,
-whereas this slice is a bounded replay plus two 60-second runs, so Phase 5 stays
-open on its retained-campaign and union criteria.
+Observed on this revision (`aarch64-apple-darwin`, default build, `MIRIFLAGS`
+`-Zmiri-many-seeds=0..8`): both tests pass with no UB. `miri_cross_applet_seeds`
+runs all 11 seeds (~130 s per seed process) and `miri_fs_ops_seeds` all 6
+(~1.2 s), each `1 passed; 0 failed`; the Miri roster rises to 73 tests, over
+`scripts/miri-all.sh`'s 69 floor. The 63.20% union was **not** remeasured: it
+comes from a long retained campaign, whereas this slice is a bounded replay plus
+two 60-second runs, so Phase 5 stays open on its retained-campaign and union
+criteria.
