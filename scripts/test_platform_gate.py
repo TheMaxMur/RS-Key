@@ -649,8 +649,8 @@ def test_the_checkout_derives_what_it_is_measured_at():
     """The four counts this row's own docstring in `check.sh` is written from.
 
     Not a transcription that drifts: each is an assertion about the SHAPE of the
-    derivation. `board-only` is the one worth pinning by name — it is the pair of
-    files that produced it, and either of them changing changes what this tree
+    derivation. `board-only` is the one worth pinning by name — these are the
+    suites that produced it, and a change to one changes what this tree
     says it owes a board.
     """
     found = platform_gate.candidates(ROOT)
@@ -662,6 +662,8 @@ def test_the_checkout_derives_what_it_is_measured_at():
         "board-only:54_sram_residue",
         "board-only:55_stack_residue",
         "board-only:90_otp_mkek_migration",
+        "board-only:100_trustzone_usb_regressions",
+        "board-only:101_trustzone_otp_status",
     }, kinds["board-only"]
     assert set(kinds["model"]) == {
         "model:PowerOnClearsScratch2",
