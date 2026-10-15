@@ -1027,3 +1027,10 @@ The first corrected normal no-touch image passed 20 consecutive repetitions of
 the original 3072-byte case and its following APDU. The before-image failed at
 that following APDU after returning the complete object; the corrected image
 keeps the original frame-size and content assertions.
+
+The authorization test uses `SCARD_LEAVE_CARD` and first closes/reopens the
+connection without a USB reset: a PIN query and a privileged PIV write must
+still succeed. It then resets USB while that connection remains open. The
+initial test used pyscard's default `SCARD_UNPOWER_CARD` before reset; those
+runs establish reader recovery and clock continuity only, not USB-triggered
+authorization revocation.

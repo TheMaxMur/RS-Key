@@ -18,7 +18,7 @@ import time
 import hid
 import usb.core
 import usb.util
-from smartcard.scard import SCARD_SHARE_EXCLUSIVE
+from smartcard.scard import SCARD_LEAVE_CARD, SCARD_SHARE_EXCLUSIVE
 from smartcard.Exceptions import CardConnectionException
 
 from _device import find, find_reader
@@ -29,7 +29,7 @@ RESCUE_AID = bytes.fromhex("a0583fc19b7e4f21")
 RTC_BASE = 2_170_000_000
 
 
-def selected_card(timeout=0):
+def selected_card(timeout=0, disposition=None):
     deadline = time.monotonic() + timeout
     last_error = None
     while True:
@@ -37,7 +37,7 @@ def selected_card(timeout=0):
         if reader is not None:
             connection = reader.createConnection()
             try:
-                connection.connect(mode=SCARD_SHARE_EXCLUSIVE)
+                connection.connect(mode=SCARD_SHARE_EXCLUSIVE, disposition=disposition)
                 return connection
             except CardConnectionException as error:
                 last_error = error
@@ -171,7 +171,7 @@ def ccid():
 
 def bus_reset():
     piv_test = piv_module()
-    connection = selected_card(timeout=30)
+    connection = selected_card(timeout=30, disposition=SCARD_LEAVE_CARD)
     try:
         set_clock(connection)
         piv = piv_test.Piv(connection)
@@ -181,15 +181,26 @@ def bus_reset():
         piv.verify_pin(b"")
     finally:
         connection.disconnect()
-    key = usb.core.find(idVendor=find()["vendor_id"], idProduct=find()["product_id"])
-    assert usb.util.get_string(key, key.iSerialNumber) == os.environ["RSK_TEST_SERIAL"]
+    connection = selected_card(timeout=30, disposition=SCARD_LEAVE_CARD)
     try:
-        key.reset()
+        piv = piv_test.Piv(connection)
+        piv.verify_pin(b"")
+        piv.apdu(piv_test.INS_PUT_DATA, 0x3F, 0xFF,
+                 piv_test.tlv(0x5C, piv_test.OBJ_POOL) + piv_test.tlv(0x53, b""))
+        key = usb.core.find(idVendor=find()["vendor_id"], idProduct=find()["product_id"])
+        assert usb.util.get_string(key, key.iSerialNumber) == os.environ["RSK_TEST_SERIAL"]
+        try:
+            key.reset()
+        finally:
+            usb.util.dispose_resources(key)
     finally:
-        usb.util.dispose_resources(key)
+        try:
+            connection.disconnect()
+        except CardConnectionException:
+            pass  # The USB reset can invalidate the old PC/SC handle.
     # macOS tears down and recreates the CCID driver asynchronously after reset.
     time.sleep(2)
-    connection = selected_card(timeout=30)
+    connection = selected_card(timeout=30, disposition=SCARD_LEAVE_CARD)
     try:
         piv = piv_test.Piv(connection)
         piv.select()
@@ -201,7 +212,8 @@ def bus_reset():
         rescue(connection)
         assert RTC_BASE <= clock(connection) < RTC_BASE + 60, "the MCU rebooted"
         return {"physical_USB_reset_recovered": True, "PIN_revoked": True,
-                "management_authority_revoked": True, "MCU_clock_preserved": True}
+                "management_authority_revoked": True, "MCU_clock_preserved": True,
+                "PCSC_disconnect_kept_authorization_control": True}
     finally:
         connection.disconnect()
 
