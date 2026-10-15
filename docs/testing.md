@@ -2853,19 +2853,25 @@ mutations it swallowed, and reads the medium past `Fs`'s present cache with
 `live`/`value`. It is the write-side sibling of `Undead`'s budget-limited silent
 removes.
 
-Three host tests in `crates/rsk-fs/src/fs_fault_provider_tests.rs` cover it. Two
+Four host tests in `crates/rsk-fs/src/fs_fault_provider_tests.rs` cover it. Two
 drive the public store API through a persist-then-read-back fixture (the shape of
 FIDO's `spend_and_verify_pin_hash` and OATH's `spend_otp_retry`): the command must
 report the read-back's failure over a silently dropped overwrite, and a dropped
 first write must stay absent across a reboot. The third pins the double's own
 contract — per-fid and one-shot arming, the swallowed count, and a swallowed
-tombstone. Positive control: removing the fixture's read-back makes both command
-tests fail on `Ok(()) != Err(MemoryFatal)`; restoring the byte-identical source
-makes them pass. The full `rsk-fs` crate runs 146 tests.
+tombstone. The fourth closes the tombstone-at-`request_rescrub` gap this section
+previously named: `Fs::delete` marks `EF_HARDENED` absent from its own present bit,
+so a swallowed `remove` was answered "gone" from the cache and the lap re-armed
+over a live marker. `Fs::try_medium_has_data` reads the marker from the medium
+past `known_absent`; a swallowed tombstone now returns `MemoryFatal` and latches
+`Fs::rescrub_refused`, with a healthy re-arm and a plain `RamStorage` round trip as
+controls. Positive control: restoring the cache-satisfied probe makes that test
+fail on `Ok(Rearmed)` over a live marker (`left: None`, `right: Some(MemoryFatal)`);
+removing the read-back makes the two command tests fail on `Ok(()) !=
+Err(MemoryFatal)`; restoring the byte-identical source makes them pass. The full
+`rsk-fs` crate runs 148 tests.
 
 This is the write half of the silent-mutation family. It does not close Phase 3:
 longer retained campaigns, correlated faults (a medium that lies on read as well
 as write) and semantic record-loss detection beyond the current CRC/legacy and
-authenticated record formats remain open. A tombstone the drop swallows where a
-command's read-back is answered from its own cache — `request_rescrub` over a
-silently dropped `remove` is the measured case — remains a separate gap.
+authenticated record formats remain open.

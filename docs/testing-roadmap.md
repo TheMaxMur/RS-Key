@@ -2622,10 +2622,16 @@ a swallowed tombstone. Positive control: disabling the fixture's read-back makes
 both command tests fail (`left: Ok(())`, `right: Err(MemoryFatal)`), and
 restoring it makes them pass.
 
-This adds the write half of the silent-mutation family; it does not close the
-phase. Longer retained campaigns, arbitrary correlated faults (a medium that lies
-on read as well as write) and semantic record-loss detection beyond the current
-CRC/legacy and authenticated formats remain open. A tombstone `Silent` swallows
-is likewise not caught by `request_rescrub`'s read-back, which a delete's own
-cache answer satisfies without consulting the medium; closing that needs a
-backend-verified remove or an independent probe, not another cache read.
+This adds the write half of the silent-mutation family, and closes the tombstone
+case it left open. `Fs::delete` marks the marker absent from its own present bit,
+so the cache-satisfied `try_has_data` probe answered "gone" without asking the
+medium, and `request_rescrub` re-armed the lap over a live `EF_HARDENED` — the
+next boot then skipped and the superseded pre-OTP copy survived. `Fs::try_medium_has_data`
+now reads the marker straight from `storage`, past `known_absent`, with
+`Storage::last_error`'s discipline (a failed probe is `Err`, never `Ok(false)`),
+and `request_rescrub` takes that answer: a silently dropped `remove(EF_HARDENED)`
+returns `MemoryFatal` and latches `Fs::rescrub_refused`. A `Silent`-armed test
+drives it, with a healthy re-arm and a plain `RamStorage` round trip as controls.
+The phase remains open on longer retained campaigns, arbitrary correlated faults
+(a medium that lies on read as well as write) and semantic record-loss detection
+beyond the current CRC/legacy and authenticated formats.

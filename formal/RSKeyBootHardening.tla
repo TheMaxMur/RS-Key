@@ -12,9 +12,9 @@
 (*    the pre-OTP (chip-serial) root to the OTP root, and the log-structured *)
 (*    store keeps the superseded weak-sealed copy readable in a raw flash    *)
 (*    dump until a compaction lap pushes it off the medium. `EF_HARDENED`    *)
-(*    is the marker that says the lap has run (crates/rsk-fs/src/lib.rs:29-124);*)
+(*    is the marker that says the lap has run (crates/rsk-fs/src/lib.rs:29-126);*)
 (*    the boot runs the lap iff the marker is ABSENT and sets it only after  *)
-(*    `compact()` returns Ok (crates/rsk-fs/src/lib.rs:126-144) -- marker      *)
+(*    `compact()` returns Ok (crates/rsk-fs/src/lib.rs:128-146) -- marker      *)
 (*    AFTER scrub, so a torn lap re-runs. Every LAZY re-key OR DELETE after  *)
 (*    the lap must re-arm it (`request_rescrub`) -- a tombstone appends too  *)
 (*    -- or the superseded copy stays readable forever: run-35 found FOUR OF *)
@@ -89,7 +89,7 @@ CONSTANTS
     \* many there are is not a number this model has to carry.
     BugRekeyKeepsTheMarker,
     \* The marker written on a lap that did NOT complete:
-    \* crates/rsk-fs/src/lib.rs:145 short-circuits `fs.compact().is_ok()`
+    \* crates/rsk-fs/src/lib.rs:147 short-circuits `fs.compact().is_ok()`
     \* BEFORE the `fs.put(EF_HARDENED)`,
     \* so a torn or failed lap leaves the marker absent and the next boot
     \* retries. The switch sets the marker regardless -- the same
@@ -292,7 +292,7 @@ Spec == Init /\ [][Next]_vars
 \* new leftover, and the lap that claims completion it did not earn. While it
 \* holds, "marker absent => a future boot scrubs" is the liveness half, carried
 \* by the boot gate's own retry (a failed compact leaves the marker unset,
-\* crates/rsk-fs/src/lib.rs:145).
+\* crates/rsk-fs/src/lib.rs:147).
 \*
 \* `~rekeying` is the whole of what the split arm costs, and it costs the atomic
 \* one nothing: with the pair collapsed the flag is FALSE in every state, so
