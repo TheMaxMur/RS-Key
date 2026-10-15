@@ -1129,9 +1129,20 @@ on cycle 11, before RESET. The Mac entered idle sleep four seconds after that
 transport error. That interrupted run is not a 20-cycle pass or another `6581`
 reproduction. The two earlier RESET failures had no nearby host sleep events.
 
+The no-touch 0x0AB7 diagnostic retained the 0x0AB1 load addresses and completed
+all 20 cycles of the same `--runs 20 --churn 8 --rsa` command. Both retry pairs
+were `3/3` before VERIFY, the slot keys and object were removed, and every new
+F9 certificate verified independently. This run did not reproduce the earlier
+write failure; it does not resolve that finding.
+
+A RAM NOR model separately completed 6000 direct `reset_files` calls after
+fragmented legacy import, across three storage roots and epochs. It checked all
+four retry bytes and preserved the imported foreign records and routed counters.
+This model does not exercise the RP2350 flash driver or USB.
+
 Controlled image-emulator failures after payload append and at candidate
 verification returned an error while both PIN/PUK retry pairs already read
-`3/3`: the post-error scan recovered the committed counters, but provisioning
+`3/3`: the post-error scan published the prepared counter value, but provisioning
 had stopped before the management key and F9. Correct retry counts after an
 error do not establish a complete RESET or identify its storage failure.
 
