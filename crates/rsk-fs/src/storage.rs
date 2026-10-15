@@ -590,6 +590,133 @@ pub mod faults {
             self.inner.for_each_key(f)
         }
     }
+    /// A RAM medium whose `write` and `remove` REPORT `Ok` and apply nothing for
+    /// one chosen fid, while every read and every other mutation still works — the
+    /// backend that says it programmed (or tombstoned) the record and did not.
+    ///
+    /// [`Undead`] is the remove-only twin a wipe's delete budget is written
+    /// against; this is the one a command that writes a record and then reads it
+    /// back must catch. The two are different faults: a refusal ([`RemoveStuck`],
+    /// a failed `write`) answers `Err` and the command's `?` stops, while this
+    /// answers `Ok` — so only the command's own read-back can tell it apart from a
+    /// write that landed.
+    ///
+    /// A delete is a mutation too (on a log-structured backend it appends a
+    /// tombstone), so the drop covers `remove` as well: [`crate::request_rescrub`]
+    /// re-reads the marker it removed, and a medium that swallows the tombstone
+    /// leaves it live.
+    pub struct Silent {
+        inner: Rc<RefCell<RamStorage>>,
+        dropped: Rc<Cell<Option<u16>>>,
+        once: Rc<Cell<bool>>,
+        attempts: Rc<Cell<u32>>,
+    }
+
+    /// The other end of a [`Silent`]: arms the drop, counts it, and reads the
+    /// medium past [`crate::Fs`]'s present cache — which a `put` marks present
+    /// whether or not the backend applied it, so a cache-level check would pass
+    /// over a write that never landed (the fault [`RemoveMedium::live`] and
+    /// [`Medium::live`] exist for on the remove side).
+    pub struct SilentMedium {
+        inner: Rc<RefCell<RamStorage>>,
+        dropped: Rc<Cell<Option<u16>>>,
+        once: Rc<Cell<bool>>,
+        attempts: Rc<Cell<u32>>,
+    }
+
+    impl Silent {
+        pub fn new() -> (Self, SilentMedium) {
+            let inner = Rc::new(RefCell::new(RamStorage::new()));
+            let dropped = Rc::new(Cell::new(None));
+            let once = Rc::new(Cell::new(false));
+            let attempts = Rc::new(Cell::new(0));
+            (
+                Self {
+                    inner: inner.clone(),
+                    dropped: dropped.clone(),
+                    once: once.clone(),
+                    attempts: attempts.clone(),
+                },
+                SilentMedium {
+                    inner,
+                    dropped,
+                    once,
+                    attempts,
+                },
+            )
+        }
+
+        /// Swallow this mutation iff the drop is armed for `fid`, spending a
+        /// one-shot arming as it does.
+        fn swallow(&self, fid: u16) -> bool {
+            if self.dropped.get() != Some(fid) {
+                return false;
+            }
+            if self.once.get() {
+                self.dropped.set(None);
+            }
+            self.attempts.set(self.attempts.get() + 1);
+            true
+        }
+    }
+
+    impl SilentMedium {
+        /// Silently lose every `write`/`remove` of `fid` (`None` clears the drop).
+        pub fn arm(&self, fid: Option<u16>) {
+            self.dropped.set(fid);
+            self.once.set(false);
+        }
+        /// Silently lose the NEXT mutation of `fid`, then recover — the one-shot
+        /// twin of [`RemoveMedium::refuse_once`]. A persistent drop is caught by
+        /// whichever write the command makes first, so it cannot tell a retry
+        /// further down the command from a command that never retried: both leave
+        /// the record unwritten. The single-shot one can.
+        pub fn arm_once(&self, fid: u16) {
+            self.dropped.set(Some(fid));
+            self.once.set(true);
+        }
+        /// Mutations the armed drop swallowed. The drop alone cannot tell a command
+        /// that stopped on its read-back from one that never wrote at all: this
+        /// COUNT says the medium was actually asked.
+        pub fn attempts(&self) -> u32 {
+            self.attempts.get()
+        }
+        /// Whether `fid` has a value ON THE MEDIUM.
+        pub fn live(&self, fid: u16) -> bool {
+            self.inner.borrow_mut().exists(fid)
+        }
+        /// The bytes stored for `fid` ON THE MEDIUM, drop or no drop.
+        pub fn value(&self, fid: u16) -> Option<Vec<u8>> {
+            let mut buf = [0u8; crate::MAX_VALUE_BYTES];
+            let n = self.inner.borrow_mut().read(fid, &mut buf)?;
+            Some(buf[..n.min(buf.len())].to_vec())
+        }
+    }
+
+    impl Storage for Silent {
+        fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {
+            self.inner.borrow_mut().read(fid, buf)
+        }
+        fn write(&mut self, fid: u16, data: &[u8]) -> Result<()> {
+            if self.swallow(fid) {
+                return Ok(()); // reported applied, never applied
+            }
+            self.inner.borrow_mut().write(fid, data)
+        }
+        fn remove(&mut self, fid: u16) -> Result<()> {
+            if self.swallow(fid) {
+                return Ok(());
+            }
+            self.inner.borrow_mut().remove(fid)
+        }
+        fn size(&mut self, fid: u16) -> Option<usize> {
+            self.inner.borrow_mut().size(fid)
+        }
+        fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+            self.inner.borrow_mut().for_each_key(f)
+        }
+    }
+
     /// One mutation a [`Cut`] medium served, in the order it served it.
     #[derive(Clone, PartialEq, Eq)]
     pub enum Op {

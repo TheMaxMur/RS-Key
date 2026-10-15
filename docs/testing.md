@@ -2842,3 +2842,30 @@ and a frame-equality test rebuilds the status ring for Touch (amber mark), Boot
 and start angle — killing the sign-flipped constant, the all-default
 `status_ring` replacement and each deleted match arm. Evidence:
 `target/mutants/home-controls/`.
+
+### Silent storage mutations, 2026-10-15
+
+The remaining Phase 3 fault kind is now a shared storage double.
+`rsk_fs::storage::faults::Silent` is a RAM medium whose `write` and `remove`
+report `Ok` and apply nothing for one armed fid, while every read and every other
+mutation still works; `SilentMedium` arms the drop (`arm`/`arm_once`), counts the
+mutations it swallowed, and reads the medium past `Fs`'s present cache with
+`live`/`value`. It is the write-side sibling of `Undead`'s budget-limited silent
+removes.
+
+Three host tests in `crates/rsk-fs/src/fs_fault_provider_tests.rs` cover it. Two
+drive the public store API through a persist-then-read-back fixture (the shape of
+FIDO's `spend_and_verify_pin_hash` and OATH's `spend_otp_retry`): the command must
+report the read-back's failure over a silently dropped overwrite, and a dropped
+first write must stay absent across a reboot. The third pins the double's own
+contract — per-fid and one-shot arming, the swallowed count, and a swallowed
+tombstone. Positive control: removing the fixture's read-back makes both command
+tests fail on `Ok(()) != Err(MemoryFatal)`; restoring the byte-identical source
+makes them pass. The full `rsk-fs` crate runs 146 tests.
+
+This is the write half of the silent-mutation family. It does not close Phase 3:
+longer retained campaigns, correlated faults (a medium that lies on read as well
+as write) and semantic record-loss detection beyond the current CRC/legacy and
+authenticated record formats remain open. A tombstone the drop swallows where a
+command's read-back is answered from its own cache — `request_rescrub` over a
+silently dropped `remove` is the measured case — remains a separate gap.

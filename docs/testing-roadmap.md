@@ -119,7 +119,7 @@ The latest local completion boundary is:
 |---|---|---|
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
-| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns, arbitrary correlated faults and semantic record-loss detection beyond the current CRC/legacy formats remain open; the bounded matrix does not close the whole phase |
+| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium and its store read-back oracle; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns, arbitrary correlated faults and semantic record-loss detection beyond the current CRC/legacy formats remain open; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri | Other privileged command/state/fault combinations and broader retained campaigns; the 63.20% union is not remeasured |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
@@ -2601,3 +2601,31 @@ runs all 11 seeds (~130 s per seed process) and `miri_fs_ops_seeds` all 6
 comes from a long retained campaign, whereas this slice is a bounded replay plus
 two 60-second runs, so Phase 5 stays open on its retained-campaign and union
 criteria.
+
+## Silent storage mutations, 2026-10-15
+
+Phase 3's storage doubles gained the silent-write fault it names explicitly:
+`Silent`, a medium whose `write`/`remove` REPORT `Ok` and apply nothing for one
+armed fid, beside `Undead`'s budget-limited silent removes. Its observation end
+`SilentMedium` arms the drop, counts the mutations it swallowed, and reads the
+medium past `Fs`'s present cache — which a `put` marks present whether or not the
+backend applied it, so no cache-level check can see a write that never landed.
+
+`fs_fault_provider_tests.rs` drives the public store API over it. A
+persist-then-read-back command — the shape of FIDO's `spend_and_verify_pin_hash`
+and OATH's `spend_otp_retry` — must report its read-back's failure rather than
+return `Ok` over a lost record, and the medium must still hold the value the
+write never replaced; a first-write case confirms a reboot over the same medium
+finds no record. A provider control covers the double's own contract: per-fid
+arming, one-shot arming, the swallowed-mutation count, `live`/`value` reads, and
+a swallowed tombstone. Positive control: disabling the fixture's read-back makes
+both command tests fail (`left: Ok(())`, `right: Err(MemoryFatal)`), and
+restoring it makes them pass.
+
+This adds the write half of the silent-mutation family; it does not close the
+phase. Longer retained campaigns, arbitrary correlated faults (a medium that lies
+on read as well as write) and semantic record-loss detection beyond the current
+CRC/legacy and authenticated formats remain open. A tombstone `Silent` swallows
+is likewise not caught by `request_rescrub`'s read-back, which a delete's own
+cache answer satisfies without consulting the medium; closing that needs a
+backend-verified remove or an independent probe, not another cache read.
