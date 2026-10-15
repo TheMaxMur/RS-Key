@@ -1050,9 +1050,80 @@ through a numeric, read-only control action; its frame codec retains ownership
 of processing, response framing and touch-wait signalling. The getter performs
 no flash access and changes no applet selection or authorization.
 
-Run `tests/101_trustzone_otp_status.py --serial rs-key-0001 --reader
-"RS-Key RS-Key Security Key" --runs 3` on an explicitly selected test key. It
-compares both status views, configures OTP slot 2, verifies HMAC-SHA1 against the
-host, reselects over CCID and removes the scratch slot. GET/SET_FEATURE use EP0
-without capturing keyboard input; macOS refuses direct keyboard-HID access in
-the current host environment.
+Run this on an explicitly selected test key:
+
+```sh
+nix develop -c python tests/101_trustzone_otp_status.py --serial rs-key-0001 --reader "RS-Key RS-Key Security Key" --runs 3
+```
+
+It compares both status views, configures OTP slot 2, verifies HMAC-SHA1 against
+the host, reselects over CCID and removes the scratch slot. GET/SET_FEATURE use
+EP0 without capturing keyboard input; macOS refuses direct keyboard-HID access
+in the current host environment.
+
+
+## Physical validation on 2026-10-15
+
+The RP2350 A2 reference key (4 MiB flash) finished on the normal TrustZone
+**no-touch 0x0AB0** image. The host was macOS 27.0.1. The final combined image
+has a partition table, no gateway probes and no injected getInfo delay.
+
+| Final 0x0AB0 check | Observed result |
+|---|---|
+| CCID frame boundaries | 20 repetitions of the 3072-byte IN/OUT case and following APDU; each repetition also checked 64, 128, 192, 256 and 320-byte IN transfers |
+| Physical USB reset | 50 repetitions, both PIV authorities active before each reset and revoked afterwards; the RAM-only clock survived |
+| Reset oracle | Removing the USB reset failed specifically at `PIN authority survived reset`; the control connection retained authority under `SCARD_LEAVE_CARD` |
+| Complete PIV suite | `80_piv.py --rsa` passed, including ECDSA, ECDH, attestation, object boundaries, RSA, PIN changes and factory reset |
+| Physical crypto | RSA-2048 generation plus five verified signatures; ML-DSA-44/65/87 registration and five independently verified assertions per set |
+| Physical CANCEL | All three ML-DSA sets cancelled after a real PROCESSING report, followed by a new verified signature |
+| Physical card reset | PIN and management authority revoked; a new RSA signature verified under the existing public key, without rebooting the MCU |
+| OTP over EP0 | Three YubiKit configuration/HMAC/delete cycles with matching CCID/HID status; scratch slot 2 removed |
+| OTP across warm reboot | The first feature report, before CCID SELECT, exposed the persisted slot; HMAC verified and the scratch slot was deleted |
+| HID and routing | PING through 7609 bytes, invalid command/length/sequence, competing channel and timeout recovery; U2F/vendor isolation and CCID smoke passed |
+| Normal-image boundary | Test-only CTAPHID `0xFE` was refused |
+
+Physical ML-DSA keepalive gaps peaked at 119.703 ms on the host monotonic clock.
+During RSA generation/signing, 572 USB PINGs completed inside the operations;
+the largest PING latency was 7.580 ms. PC/SC does not expose CCID time-extension
+counts, so those physical measurements do not claim to count WTX packets.
+
+The same final ELF passed the real-crypto image test and all 17 image-emulator
+CANCEL/reset/disconnect/authorization scenarios. Both full repository gates
+passed. The host-test row was repeated after adding the emulator-scope checks:
+944 passed; the assurance row had 2708 passed. In-diff Rust mutation enumeration
+found no applicable operators: the host-crate changes add/remove ABI constants,
+while the runtime fixes are embedded glue. The shared mutation container was
+already occupied by a separate checkout and was left untouched.
+
+The report/APDU shim refuses suites 100/101 before loading their raw USB
+backend. The host tests execute that CLI path and remove each refusal in a
+negative control, where a blocked import detects entry into the physical suite.
+This does not restrict direct USB/IP testing of an emulated USB device.
+
+### Limits and retained failure
+
+These were automatic checks. The reset script gives macOS two seconds to
+recreate its CCID driver and then waits at most 30 seconds for the reader; it
+never retries a failed APDU. Earlier resets without that settling interval
+lost the macOS reader while HID and Secure still answered. That immediate-reset
+stress case is not counted as a passing hardware case. PC/SC also refused a
+one-byte XfrBlock before sending it, so that malformed physical transfer remains
+unchecked through this host API. Real removal of power, physical touch and
+fused secure-boot acceptance were not tested.
+
+An earlier 0x0AAF full PIV run returned `6581` at factory RESET. Its defaults
+were recovered through the normal applet protocol; a complete rerun, a clean
+image-emulator run and the final 0x0AB0 hardware run passed. The original failure
+is retained as an unexplained hardware finding, not reclassified as a pass or
+claimed fixed by the OTP change. No full-flash export was taken for it.
+
+The first same-process libusb open immediately after the additional warm reboot
+found no device despite HID enumeration. A fresh USB context then verified the
+first OTP status and HMAC before any CCID selection and removed the scratch
+slot. This host handover failure is separate from the firmware status mismatch
+that suite 101 reproduces.
+
+The tested UF2 SHA-256 is
+`30846b4672e705c92f10d23e63d2152be7fd283bab4f082401d6d84eca4630bb`;
+the combined ELF SHA-256 is
+`0ba9fca891f549978f99ffcf04577a673961e4798db93480c3341769efd08919`.
