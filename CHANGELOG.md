@@ -38,6 +38,14 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Revert the medium-probing at-rest re-arm fix. The marker probe is again
+  answered from the present cache, so a backend that reports a successful
+  `remove` without applying it can still leave `EF_HARDENED` live behind an
+  `Ok(Rearmed)`; the finding and its reproduction stay recorded as an open item
+  in the testing roadmap. Behavior matches `0x0AA4`; the build counter advances
+  because the reverted change could reach the image.
+  bcdDevice `0x0AA4` → `0x0AA5`.
+
 - Pin the OpenPGP pending mutation controls: counter lanes and persisted origin
   order, the maximum AES/RSA sealed-record edges, the session-drop wipe
   observer, exact-size AES PSO, the default algorithm attribute and the BER
