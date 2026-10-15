@@ -28,6 +28,7 @@ use rsk_usb::{
     worker_abi::{INVALID, PENDING},
 };
 
+mod bulk;
 mod control;
 mod endpoints;
 
@@ -46,6 +47,8 @@ struct Controller {
     input: [Option<EndpointIn>; ENDPOINTS],
     output: [Option<EndpointOut>; ENDPOINTS],
     bus_epoch: BusEpoch,
+    bulk_zlp: u16,
+    bulk_retiring: u16,
     events: u8,
     seen: u32,
     setup_seen: bool,
@@ -59,6 +62,8 @@ static CONTROLLER: Mutex<CriticalSectionRawMutex, RefCell<Controller>> =
         input: [const { None }; ENDPOINTS],
         output: [const { None }; ENDPOINTS],
         bus_epoch: BusEpoch::new(),
+        bulk_zlp: 0,
+        bulk_retiring: 0,
         events: 0,
         seen: 0,
         setup_seen: false,
@@ -139,6 +144,12 @@ pub fn disconnect_after_fault() {
 fn revoke(state: &mut Controller, reason: Revocation) {
     state.bus_epoch.revoke(reason);
     clear_packets();
+    rp_pac::USB.ep_abort().write(|value| value.0 = 0);
+    rp_pac::USB
+        .ep_abort_done()
+        .write(|value| value.0 = u32::MAX);
+    state.bulk_zlp = 0;
+    state.bulk_retiring = 0;
     crate::worker::revoke_transport();
     control::reset();
 }
@@ -220,6 +231,7 @@ fn observe_locked(state: &mut Controller) {
         };
         state.events |= 1 << code;
     }
+    bulk::observe(state);
     let status = rp_pac::USB.sie_status().read();
     state.seen =
         (u32::from(status.bus_reset()) * RAW_RESET) | (u32::from(status.suspended()) * RAW_SUSPEND);

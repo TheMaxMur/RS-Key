@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-use super::{Controller, ENDPOINTS, abi, once, outcome};
+use super::{Controller, ENDPOINTS, abi, bulk, once, outcome};
 use embassy_usb::driver::{
     Bus as _, Direction, Driver as _, Endpoint as _, EndpointAddress, EndpointIn as _,
     EndpointOut as _, EndpointType,
@@ -80,6 +80,7 @@ pub(super) fn operate(state: &mut Controller, operation: u32, data: &mut [u8]) -
     if !(allocated || (index == 0 && matches!(action, abi::EP_STALL | abi::EP_STALLED))) {
         return INVALID;
     }
+    let request_waiting = bulk::request_waiting(state);
     let Some(bus) = state.bus.as_mut() else {
         return INVALID;
     };
@@ -115,7 +116,18 @@ pub(super) fn operate(state: &mut Controller, operation: u32, data: &mut [u8]) -
                 match action {
                     abi::EP_READY => 1,
                     abi::EP_WRITE => {
-                        outcome(once(async { endpoint.write(data).await.map(|()| 0) }))
+                        if state.bulk_retiring & (1 << index) != 0 {
+                            return rsk_usb::worker_abi::PENDING;
+                        }
+                        let zlp = data.is_empty() && endpoint.info().ep_type == EndpointType::Bulk;
+                        if zlp && request_waiting {
+                            return 0;
+                        }
+                        let value = outcome(once(async { endpoint.write(data).await.map(|()| 0) }));
+                        if zlp && value == 0 {
+                            state.bulk_zlp |= 1 << index;
+                        }
+                        value
                     }
                     _ => INVALID,
                 }

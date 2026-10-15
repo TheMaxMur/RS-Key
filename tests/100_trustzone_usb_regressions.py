@@ -133,10 +133,18 @@ def reset():
         connection.disconnect()
 
 
-def ccid():
+def piv_module():
     spec = importlib.util.spec_from_file_location("piv_frames", Path(__file__).with_name("80_piv.py"))
     piv_test = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(piv_test)
+    cipher = piv_test.Cipher(piv_test.algorithms.AES(piv_test.DEFAULT_MGM), piv_test.modes.ECB())
+    encryptor = cipher.encryptor()
+    assert len(encryptor.update(bytes(16)) + encryptor.finalize()) == 16
+    return piv_test
+
+
+def ccid():
+    piv_test = piv_module()
     connection = selected_card()
     try:
         set_clock(connection)
@@ -144,8 +152,56 @@ def ccid():
         piv.select()
         piv.auth_mgm()
         piv_test.test_frame_sized_objects(piv)
+        head = [0, piv_test.INS_GET_DATA, 0x3F, 0xFF, 0, 0, 5, 0x5C, 3, *piv_test.OBJ_POOL, 0, 0]
+        for size in (50, 114, 177, 241, 304):
+            value = bytes(i % 251 for i in range(size))
+            body = piv_test.tlv(0x53, value)
+            assert (10 + len(body) + 2) % 64 == 0
+            piv.apdu(piv_test.INS_PUT_DATA, 0x3F, 0xFF,
+                     piv_test.tlv(0x5C, piv_test.OBJ_POOL) + body)
+            assert transmit(connection, head) == body
+            piv.apdu(piv_test.INS_VERSION, 0, 0, le=True)
+        piv.apdu(piv_test.INS_PUT_DATA, 0x3F, 0xFF,
+                 piv_test.tlv(0x5C, piv_test.OBJ_POOL) + piv_test.tlv(0x53, b""))
         piv.apdu(piv_test.INS_VERSION, 0, 0, le=True)
-        return {"CCID_3072_and_following_APDU": True}
+        return {"CCID_3072_and_following_APDU": True, "shorter_ZLP_boundaries": [64, 128, 192, 256, 320]}
+    finally:
+        connection.disconnect()
+
+
+def bus_reset():
+    piv_test = piv_module()
+    connection = selected_card(timeout=30)
+    try:
+        set_clock(connection)
+        piv = piv_test.Piv(connection)
+        piv.select()
+        piv.auth_mgm()
+        piv.verify_pin(piv_test.DEFAULT_PIN)
+        piv.verify_pin(b"")
+    finally:
+        connection.disconnect()
+    key = usb.core.find(idVendor=find()["vendor_id"], idProduct=find()["product_id"])
+    assert usb.util.get_string(key, key.iSerialNumber) == os.environ["RSK_TEST_SERIAL"]
+    try:
+        key.reset()
+    finally:
+        usb.util.dispose_resources(key)
+    # macOS tears down and recreates the CCID driver asynchronously after reset.
+    time.sleep(2)
+    connection = selected_card(timeout=30)
+    try:
+        piv = piv_test.Piv(connection)
+        piv.select()
+        _, status = piv.verify_pin(b"", want=None)
+        assert status & 0xFFF0 == 0x63C0 and status & 15, "PIN authority survived reset"
+        _, status = piv.raw(piv_test.INS_GENERATE, 0, piv_test.SLOT_9C,
+                            piv_test.tlv(0xAC, piv_test.tlv(0x80, [piv_test.ALGO_RSA2048])))
+        assert status == 0x6982, f"management authority survived reset: {status:04x}"
+        rescue(connection)
+        assert RTC_BASE <= clock(connection) < RTC_BASE + 60, "the MCU rebooted"
+        return {"physical_USB_reset_recovered": True, "PIN_revoked": True,
+                "management_authority_revoked": True, "MCU_clock_preserved": True}
     finally:
         connection.disconnect()
 
@@ -154,7 +210,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True)
     parser.add_argument("--reader", required=True)
-    parser.add_argument("--case", choices=("late-callback", "usb-reset", "ccid"), required=True)
+    parser.add_argument("--case", choices=("late-callback", "usb-reset", "ccid", "bus-reset"), required=True)
     parser.add_argument("--runs", type=int, default=1)
     args = parser.parse_args()
     assert 1 <= args.runs <= 100
@@ -163,7 +219,7 @@ def main():
     device = find()
     assert device and device["serial_number"] == args.serial
     print(json.dumps({"serial": args.serial, "bcdDevice": hex(device["release_number"])}), flush=True)
-    operation = {"late-callback": late_callback, "usb-reset": reset, "ccid": ccid}[args.case]
+    operation = {"late-callback": late_callback, "usb-reset": reset, "ccid": ccid, "bus-reset": bus_reset}[args.case]
     for run in range(args.runs):
         started = time.monotonic()
         result = operation()

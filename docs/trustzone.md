@@ -5,7 +5,7 @@
 
 This chapter owns the TrustZone design, build instructions, measurements and
 remaining production work. The ordinary firmware has no Secure/Non-secure split.
-The experimental build at `bcdDevice 0x0AAE` runs USB classes and transports in
+The experimental build at `bcdDevice 0x0AAF` runs USB classes and transports in
 Non-secure (NS), with the controller, lifecycle observer, worker and applets in
 Secure (S). Secure revocation no longer depends on NS reset callbacks. The
 resource policy, Secure board services and combined offline build are implemented
@@ -998,3 +998,32 @@ also advanced the Secure epoch, invalidated an armed old ABORT and preserved
 the RAM-only clock. A subsequent reset stress run lost the macOS CCID reader
 while HID and the Secure gateway still answered; reader recovery and the
 3072-byte CCID response remain separate investigations.
+
+
+## Full CCID responses at bcdDevice 0x0AAF
+
+The physical macOS regression reads a 3056-byte PIV object in a single 3072-byte
+CCID response and immediately sends another APDU. The object and status word
+were correct, but the next transaction failed with PC/SC `0x80100016`. The same
+sequence reproduced on the ordinary no-touch firmware, independently of the
+TrustZone split.
+
+A full-size host read can finish before consuming the response's terminating
+zero-length USB packet. The Secure controller still queues that ZLP normally.
+If a new bulk OUT command arrives first, it retires the unconsumed terminator
+before the next response. RP2350's EP_ABORT/EP_ABORT_DONE handshake makes the
+buffer safe to modify; an unconsumed packet also restores the previous data
+toggle. Revocation clears the retirement state. CCID capacity and mandatory ZLP
+termination remain unchanged for hosts that consume the complete transfer.
+
+`tests/100_trustzone_usb_regressions.py --case ccid` uses the existing PIV
+frame-boundary assertions, including the following APDU. `--case bus-reset`
+uses the normal image: it verifies PIV PIN and management authority before a
+physical USB reset, then checks that both have been revoked, that CCID answers
+and that the RAM-only clock survived. The two-second wait after reset allows
+macOS to recreate its driver; APDU errors are never retried.
+
+The first corrected normal no-touch image passed 20 consecutive repetitions of
+the original 3072-byte case and its following APDU. The before-image failed at
+that following APDU after returning the complete object; the corrected image
+keeps the original frame-size and content assertions.
