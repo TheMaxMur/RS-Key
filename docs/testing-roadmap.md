@@ -121,8 +121,8 @@ The latest local completion boundary is:
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
 | 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle and the correlated `Torn` medium (a torn write and the read that answers it); owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns and semantic record-loss detection beyond the current CRC/legacy formats remain open, as do correlated-fault stories beyond the torn write; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
-| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri | Other privileged command/state/fault combinations and broader retained campaigns; the 63.20% union is not remeasured |
-| 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
+| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 current-tree `default` campaign remeasures it at 23062/36301 (63.53%) | Other privileged command/state/fault combinations and longer retained campaigns; the `flavours` profile awaits a rerun |
+| 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately | Display-image execution and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
 | 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
 
@@ -409,12 +409,14 @@ invariant restrictions visible in its residuals.
 per-root breakdown and the run's `config.txt` / `source-commit.txt`. It excludes
 what `fuzz-coverage.sh`'s filename filter already drops (harnesses, registry and
 stdlib) and, by the repository-root rule, a git dependency's checkout too;
-vendored `third_party` sources stay in. On the retained local LCOVs — all 53
-reports from one `default` run at source commit `7b7d9f58` — it measures
-**23058/36184 = 63.72%** (crates 21486/32866, 65.37%; third_party 1572/3318,
-47.38%). That run is not the 2026-10-04 `cc6757dd` baseline: the 63.20% it
-recorded is not remeasured, and a fresh campaign over the current tree is the
-step that would.
+vendored `third_party` sources stay in. A fresh local `default` campaign over
+all 53 targets at source commit `1debce09` measures
+**23062/36301 = 63.53%** (crates 21490/32983, 65.15%; third_party 1572/3318,
+47.38%), with the per-target reports retained under `fuzz/coverage/`. The
+2026-10-04 `cc6757dd` baseline recorded 63.20% over a smaller tree (32 545
+repository lines) under the same method; the denominators differ, so this is the
+current-tree remeasurement rather than a re-derivation of the old percentage.
+The `flavours` profile was not rerun.
 
 **Done when:** the stateful targets reach their intended privileged and failure
 paths, their semantic oracles kill controls, and their saved corpora replay

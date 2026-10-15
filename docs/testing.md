@@ -628,10 +628,11 @@ reads `fuzz/coverage/*/coverage.lcov`, keeps repository sources (`crates/`,
 `firmware/`, `third_party/`, `tools/`), counts each distinct `(file, line)` once
 with a line covered when any target counted it above zero, and prints the
 number, a per-root breakdown and the run's `config.txt` / `source-commit.txt`.
-Over the retained local `default` run at source commit `7b7d9f58` it reports
-23058/36184 lines (63.72%) — crates 21486/32866 (65.37%), third_party 1572/3318
-(47.38%). That is not the 2026-10-04 baseline: the 63.20% it recorded is not
-remeasured, and a fresh campaign over the current tree is still owed.
+A fresh local `default` campaign over all 53 targets at source commit `1debce09`
+reports 23062/36301 lines (63.53%) — crates 21490/32983 (65.15%), third_party
+1572/3318 (47.38%). The 2026-10-04 baseline's 63.20% covered a smaller tree (32
+545 repository lines) under the same method; the denominators differ, so this is
+the current-tree remeasurement. The `flavours` profile still awaits a rerun.
 
 Coverage says which *lines* a corpus reached. `scripts/fuzz-dimensions.py` says
 which **inputs** it explored, for `power_cut`: how much of the storage was
