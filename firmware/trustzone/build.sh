@@ -19,9 +19,6 @@ env -u RSK_TZ_NS_IMAGE \
     CARGO_TARGET_DIR="$out/secure" cargo build "${cargo_config[@]}" --locked --release -p firmware --features "$secure_features"
 cp "$RSK_TZ_IMPLIB" "$out/ns-import.a"
 ns_features=()
-if [[ "${RSK_TZ_NS_IGNORE_RESET:-0}" == 1 ]]; then
-    ns_features=(--features test-ignore-reset-callbacks)
-fi
 if [[ "${RSK_TZ_GATEWAY_PROBES:-0}" == 1 ]]; then
     ns_features+=(--features test-gateway-probes)
 fi

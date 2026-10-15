@@ -9,6 +9,7 @@ use embassy_usb::control::{OutResponse, Recipient, Request, RequestType};
 static FIDO: AtomicU32 = AtomicU32::new(0);
 static CCID: AtomicU32 = AtomicU32::new(0);
 static ABORT: AtomicU16 = AtomicU16::new(0);
+static ABORT_EPOCH: AtomicU32 = AtomicU32::new(0);
 const ABORT_ARMED: u16 = 1 << 8;
 
 pub fn epoch() -> u32 {
@@ -62,9 +63,12 @@ pub fn abort(_sequence: u8) -> bool {
     }
 }
 pub fn abort_pending() -> bool {
-    ABORT.load(Ordering::Acquire) != 0
+    ABORT_EPOCH.load(Ordering::Acquire) == epoch() && ABORT.load(Ordering::Acquire) != 0
 }
 pub fn acknowledge_abort(sequence: u8) -> Option<bool> {
+    if !abort_pending() {
+        return Some(false);
+    }
     Some(
         ABORT
             .compare_exchange(
@@ -80,28 +84,7 @@ pub fn acknowledge_abort(sequence: u8) -> Option<bool> {
 pub struct UsbHandler {
     pub ccid_interface: Option<u8>,
 }
-impl UsbHandler {
-    fn reset_session(&mut self) {
-        ABORT.store(0, Ordering::Release);
-        if !cfg!(feature = "test-ignore-reset-callbacks") {
-            control(abi::RESET_SESSION, 0);
-        }
-    }
-}
 impl Handler for UsbHandler {
-    fn reset(&mut self) {
-        self.reset_session();
-    }
-    fn configured(&mut self, configured: bool) {
-        if !configured {
-            self.reset_session();
-        }
-    }
-    fn suspended(&mut self, suspended: bool) {
-        if suspended {
-            self.reset_session();
-        }
-    }
     fn control_out(&mut self, request: Request, data: &[u8]) -> Option<OutResponse> {
         if request.request_type != RequestType::Class
             || request.recipient != Recipient::Interface
@@ -114,7 +97,30 @@ impl Handler for UsbHandler {
         if slot != 0 || request.length != 0 || !data.is_empty() {
             return Some(OutResponse::Rejected);
         }
-        ABORT.store(ABORT_ARMED | u16::from(sequence), Ordering::Release);
+        arm_abort(sequence);
         Some(OutResponse::Accepted)
     }
+}
+
+#[cfg(feature = "test-gateway-probes")]
+pub(crate) fn late_reset_callback() {
+    let mut handler = UsbHandler {
+        ccid_interface: None,
+    };
+    handler.reset();
+    handler.configured(false);
+    handler.suspended(true);
+}
+
+fn arm_abort(sequence: u8) {
+    ABORT_EPOCH.store(epoch(), Ordering::Release);
+    ABORT.store(ABORT_ARMED | u16::from(sequence), Ordering::Release);
+}
+
+#[cfg(feature = "test-gateway-probes")]
+pub(crate) fn probe_abort(arm: bool) -> bool {
+    if arm {
+        arm_abort(0);
+    }
+    abort_pending()
 }

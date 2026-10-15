@@ -445,11 +445,6 @@ pub extern "C" fn rsk_tz_control_impl(action: u32, ticket: u32) -> u32 {
             REQ.signal(());
             0
         }
-        abi::RESET_SESSION => {
-            session(|state| state.reset());
-            REQ.signal(());
-            0
-        }
         abi::CAN_WINK => u32::from(!cfg!(led_kind = "none")),
         abi::WINK => {
             #[cfg(not(led_kind = "none"))]

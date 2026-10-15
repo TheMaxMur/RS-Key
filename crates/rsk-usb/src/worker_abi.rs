@@ -21,7 +21,6 @@ pub const CANCEL_OTP: u32 = 3;
 pub const KEYBOARD_CHAR: u32 = 4;
 pub const DESELECT_MSG: u32 = 5;
 pub const ABANDON: u32 = 6;
-pub const RESET_SESSION: u32 = 7;
 pub const CAN_WINK: u32 = 8;
 pub const WINK: u32 = 9;
 pub const KEY_PRESENT: u32 = 1 << 8;

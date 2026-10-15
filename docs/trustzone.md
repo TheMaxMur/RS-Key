@@ -5,7 +5,7 @@
 
 This chapter owns the TrustZone design, build instructions, measurements and
 remaining production work. The ordinary firmware has no Secure/Non-secure split.
-The experimental build at `bcdDevice 0x0AAD` runs USB classes and transports in
+The experimental build at `bcdDevice 0x0AAE` runs USB classes and transports in
 Non-secure (NS), with the controller, lifecycle observer, worker and applets in
 Secure (S). Secure revocation no longer depends on NS reset callbacks. The
 resource policy, Secure board services and combined offline build are implemented
@@ -678,8 +678,9 @@ removed that failure. A disabled endpoint ends CTAPHID transmission immediately.
 OTP keyboard writes also retain the epoch captured before consuming a Secure
 character. These hooks are no-ops for the ordinary driver.
 
-Use `RSK_TZ_NS_IGNORE_RESET=1` with the prototype build command to test the NS
-image that omits all Secure reset calls from its bus callbacks. The real RSA
+The bcdDevice 0x0AA8 validation used `RSK_TZ_NS_IGNORE_RESET=1` to build an NS
+image without Secure reset calls in its bus callbacks. Since 0x0AAE, that is the
+normal policy and the switch has been removed. The real RSA
 generation/signing and ML-DSA-44/65/87 reset, cancel and disconnect matrix passed
 all 17 cases with that image. The test still lets NS run its transport tasks;
 it does not establish the separate case where NS permanently stops execution.
@@ -970,3 +971,30 @@ The timeout constant is used by Secure LED setup and the trusted display. Its
 unused-import expectation now applies only to the headless, non-display
 no-touch build. The LED-enabled hardware configuration exposed an unfulfilled
 expectation under strict clippy; this build correction changes no runtime policy.
+
+
+## Late Non-secure callbacks at bcdDevice 0x0AAE
+
+A physical-board regression reproduced `6D00` on READ time immediately after a
+successful SELECT of Rescue. Secure had already revoked the old USB epoch, but
+a delayed NS bus callback could still issue a second, unscoped worker reset and
+clear the selection established by the new session.
+
+NS lifecycle callbacks no longer request Secure resets. The unused reset action
+was removed from the worker gateway; hardware observation and accepted EP0
+lifecycle operations remain the sources of USB-wide revocation. NS CCID ABORT
+state carries the Secure USB epoch, so an old abort cannot attach to a new
+session even when NS omits callbacks.
+
+The test-only `test-gateway-probes` image exposes CTAPHID command `0xFE`: `epoch`
+reads the Secure bus epoch and `reset` invokes the NS reset/configuration-loss/
+suspend callbacks late. The normal image does not implement this command.
+`tests/100_trustzone_usb_regressions.py --case late-callback` checks that a new
+Rescue selection survives that callback at an unchanged Secure USB epoch.
+
+On the RP2350 A2 test key, all 20 delayed-callback repetitions preserved the
+selection and refused the removed gateway action. Sixteen physical USB resets
+also advanced the Secure epoch, invalidated an armed old ABORT and preserved
+the RAM-only clock. A subsequent reset stress run lost the macOS CCID reader
+while HID and the Secure gateway still answered; reader recovery and the
+3072-byte CCID response remain separate investigations.

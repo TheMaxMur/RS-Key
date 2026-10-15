@@ -14,6 +14,8 @@
 )]
 
 use rsk_usb::worker_abi as abi;
+#[cfg(feature = "test-gateway-probes")]
+mod diagnostics;
 mod keyboard;
 #[cfg(feature = "test-hostile-access")]
 mod probe;
@@ -175,6 +177,10 @@ impl MsgHandler for CtapClient {
         data: &[u8],
         out: &mut [u8],
     ) -> Option<usize> {
+        #[cfg(feature = "test-gateway-probes")]
+        if cmd == diagnostics::COMMAND {
+            return diagnostics::reply(data, out);
+        }
         let r = exchange(abi::VENDOR | (u32::from(cmd) << 8), 0, data, out).await;
         r.vendor_ok.then_some(r.len)
     }

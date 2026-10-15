@@ -12,7 +12,6 @@ publish = false
 workspace = true
 
 [features]
-test-ignore-reset-callbacks = []
 test-hostile-access = []
 test-gateway-probes = []
 
