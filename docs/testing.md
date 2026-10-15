@@ -632,7 +632,19 @@ A fresh local `default` campaign over all 53 targets at source commit `1debce09`
 reports 23062/36301 lines (63.53%) — crates 21490/32983 (65.15%), third_party
 1572/3318 (47.38%). The 2026-10-04 baseline's 63.20% covered a smaller tree (32
 545 repository lines) under the same method; the denominators differ, so this is
-the current-tree remeasurement. The `flavours` profile still awaits a rerun.
+the current-tree remeasurement. The `flavours` profile reran at `b5252ab4`:
+22699/36182 lines (62.74%) — crates 21127/32864 (64.29%), third_party 1572/3318
+(47.38%); its denominator is smaller and the two maps are not combined.
+
+A bounded retained campaign on 2026-10-15 ran `fido_session`, `cross_applet`,
+`fs_ops` and `power_cut` over their accumulated corpora at `b5252ab4`, ten
+minutes each (`-max_total_time=600`, the target's dictionary where one exists):
+252 620 / 608 532 / 3 884 771 / 72 663 executions at 420 / 1 012 / 6 463 / 120
+per second, with +1 169 / +3 758 / +1 073 / +427 new corpus units and peak RSS
+556–677 MB. No new crash, leak or slow-unit artifact appeared. Corpora grew to
+5 179 / 8 385 / 4 153 / 7 186 files (local, gitignored); the log is
+`target/fuzz-retained.log`. It is a bounded run, not the open-ended retained
+campaign the phase still lists.
 
 Coverage says which *lines* a corpus reached. `scripts/fuzz-dimensions.py` says
 which **inputs** it explored, for `power_cut`: how much of the storage was

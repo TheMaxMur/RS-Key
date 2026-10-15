@@ -121,7 +121,7 @@ The latest local completion boundary is:
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
 | 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle and the correlated `Torn` medium (a torn write and the read that answers it); owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns and semantic record-loss detection beyond the current CRC/legacy formats remain open, as do correlated-fault stories beyond the torn write; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
-| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 current-tree `default` campaign remeasures it at 23062/36301 (63.53%) | Other privileged command/state/fault combinations and longer retained campaigns; the `flavours` profile awaits a rerun |
+| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`) | Other privileged command/state/fault combinations and longer retained campaigns |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately | Display-image execution and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
 | 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
@@ -416,7 +416,23 @@ all 53 targets at source commit `1debce09` measures
 2026-10-04 `cc6757dd` baseline recorded 63.20% over a smaller tree (32 545
 repository lines) under the same method; the denominators differ, so this is the
 current-tree remeasurement rather than a re-derivation of the old percentage.
-The `flavours` profile was not rerun.
+The `flavours` profile reran at `b5252ab4`: **22699/36182 = 62.74%** (crates
+21127/32864, 64.29%; third_party 1572/3318, 47.38%). Its denominator is smaller
+because the flavours build compiles fewer lines; the two maps are incompatible
+and are not combined.
+
+A bounded retained campaign on 2026-10-15 ran the four stateful targets over
+their accumulated corpora at `b5252ab4`, ten minutes each (`-max_total_time=600`,
+the target's dictionary where one exists): `fido_session` 252 620 executions at
+420/s (+1 169 corpus units, final cov 7 820), `cross_applet` 608 532 at 1 012/s
+(+3 758, cov 4 910), `fs_ops` 3 884 771 at 6 463/s (+1 073, cov 585) and
+`power_cut` 72 663 at 120/s (+427, cov 8 896), peak RSS 556–677 MB across the
+four. No new crash, leak or slow-unit artifact appeared (every entry already in
+`fuzz/artifacts/` predates the run); the corpora grew from 4 252/5 791/3 169/6 792
+to 5 179/8 385/4 153/7 186 files and stayed local, as they are gitignored. The
+log is `target/fuzz-retained.log` beside the pre-run counts. This exercises the
+retained-corpus path and records throughput; it is bounded, not the roadmap's
+open-ended retained campaign.
 
 **Done when:** the stateful targets reach their intended privileged and failure
 paths, their semantic oracles kill controls, and their saved corpora replay
