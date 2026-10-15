@@ -433,6 +433,18 @@ pub unsafe extern "C" fn rsk_tz_poll_impl(ticket: u32, response: *mut u8, capaci
 }
 
 #[cfg(rsk_trustzone_prototype)]
+static OTP_STATUS: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+#[cfg(rsk_trustzone_prototype)]
+fn publish_otp_status(record: [u8; 7]) {
+    let [_, _, _, sequence, slots, pad, idle] = record;
+    OTP_STATUS.store(
+        u32::from_le_bytes([sequence, slots, pad, idle]),
+        core::sync::atomic::Ordering::Release,
+    );
+}
+
+#[cfg(rsk_trustzone_prototype)]
 #[unsafe(no_mangle)]
 pub extern "C" fn rsk_tz_control_impl(action: u32, ticket: u32) -> u32 {
     use rsk_usb::worker_abi as abi;
@@ -445,6 +457,7 @@ pub extern "C" fn rsk_tz_control_impl(action: u32, ticket: u32) -> u32 {
             REQ.signal(());
             0
         }
+        abi::OTP_STATUS => OTP_STATUS.load(core::sync::atomic::Ordering::Acquire),
         abi::CAN_WINK => u32::from(!cfg!(led_kind = "none")),
         abi::WINK => {
             #[cfg(not(led_kind = "none"))]
@@ -543,7 +556,10 @@ impl<'a> Worker<'a> {
     pub async fn run(&mut self) -> ! {
         // Seed the keyboard status frame: polls from here on read the real version +
         // slot bits, and any that landed earlier got `OtpHid::new`'s placeholder.
-        otp_kbd::set_status(otp_kbd::make_status_frame(self.ccid.otp_status_record()));
+        let status = self.ccid.otp_status_record();
+        otp_kbd::set_status(otp_kbd::make_status_frame(status));
+        #[cfg(rsk_trustzone_prototype)]
+        publish_otp_status(status);
         loop {
             match select3(
                 REQ.wait(),
@@ -755,6 +771,10 @@ impl<'a> Worker<'a> {
             ex.req_len = 0;
             self.ctap.scrub();
             self.ccid.scrub();
+            #[cfg(rsk_trustzone_prototype)]
+            if matches!(ex.kind, Kind::Apdu | Kind::Otp) {
+                publish_otp_status(self.ccid.otp_status_record());
+            }
         }
         // Nothing is in flight again: a wait started from here on is an on-panel
         // flow, which no host may cancel.

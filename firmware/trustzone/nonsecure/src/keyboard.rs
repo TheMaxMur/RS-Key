@@ -51,8 +51,19 @@ impl RequestHandler for Handler {
         let out = out.get_mut(..REPORT_SIZE)?;
         // SAFETY: this gateway returns only the pending-touch status bit.
         let pending = unsafe { rsk_tz_control(abi::OTP_PENDING, 0) != 0 };
+        let status = super::session::control(abi::OTP_STATUS, 0);
+        if status == abi::INVALID {
+            return None;
+        }
+        let [sequence, slots, pad, idle] = status.to_le_bytes();
+        let (major, minor, patch) = rsk_otp::VERSION;
+        let status = [0, major, minor, patch, sequence, slots, pad, idle];
         let mut report = [0u8; REPORT_SIZE];
-        HID.lock(|cell| cell.borrow_mut().get_report(&mut report, pending));
+        HID.lock(|cell| {
+            let mut hid = cell.borrow_mut();
+            hid.set_status(status);
+            hid.get_report(&mut report, pending);
+        });
         out.copy_from_slice(&report);
         Some(REPORT_SIZE)
     }

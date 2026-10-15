@@ -5,7 +5,7 @@
 
 This chapter owns the TrustZone design, build instructions, measurements and
 remaining production work. The ordinary firmware has no Secure/Non-secure split.
-The experimental build at `bcdDevice 0x0AAF` runs USB classes and transports in
+The experimental build at `bcdDevice 0x0AB0` runs USB classes and transports in
 Non-secure (NS), with the controller, lifecycle observer, worker and applets in
 Secure (S). Secure revocation no longer depends on NS reset callbacks. The
 resource policy, Secure board services and combined offline build are implemented
@@ -1034,3 +1034,25 @@ still succeed. It then resets USB while that connection remains open. The
 initial test used pyscard's default `SCARD_UNPOWER_CARD` before reset; those
 runs establish reader recovery and clock continuity only, not USB-triggered
 authorization revocation.
+
+
+## Shared OTP status at bcdDevice 0x0AB0
+
+A physical YubiKit regression exposed a second NS cache: OTP feature reports
+returned an old program sequence and slot flags after CCID SELECT changed the
+Secure applet's status. YubiKit rejected the next write as `No data` even when
+the slot had been programmed. The before-image failed the direct comparison
+between the public CCID SELECT result and the next OTP feature report.
+
+Secure now publishes those public status bytes atomically at worker startup and
+after APDU/OTP dispatch, before releasing the reply. NS reads that snapshot
+through a numeric, read-only control action; its frame codec retains ownership
+of processing, response framing and touch-wait signalling. The getter performs
+no flash access and changes no applet selection or authorization.
+
+Run `tests/101_trustzone_otp_status.py --serial rs-key-0001 --reader
+"RS-Key RS-Key Security Key" --runs 3` on an explicitly selected test key. It
+compares both status views, configures OTP slot 2, verifies HMAC-SHA1 against the
+host, reselects over CCID and removes the scratch slot. GET/SET_FEATURE use EP0
+without capturing keyboard input; macOS refuses direct keyboard-HID access in
+the current host environment.

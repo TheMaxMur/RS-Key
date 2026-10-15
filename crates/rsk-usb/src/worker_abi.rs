@@ -23,6 +23,7 @@ pub const DESELECT_MSG: u32 = 5;
 pub const ABANDON: u32 = 6;
 pub const CAN_WINK: u32 = 8;
 pub const WINK: u32 = 9;
+pub const OTP_STATUS: u32 = 10;
 pub const KEY_PRESENT: u32 = 1 << 8;
 pub const KEY_ENCODE: u32 = 1 << 9;
 pub const OTP_REQUEST_LEN: usize = 65;
