@@ -623,6 +623,16 @@ writing a summary table and uploading a per-target HTML report. A
 both loops floor the roster first — `FUZZ_TARGET_FLOOR` in the workflow and the
 same number in the script. Lower it only in the commit that removes a target.
 
+The union those per-target reports make is reproducible: `scripts/fuzz-union.py`
+reads `fuzz/coverage/*/coverage.lcov`, keeps repository sources (`crates/`,
+`firmware/`, `third_party/`, `tools/`), counts each distinct `(file, line)` once
+with a line covered when any target counted it above zero, and prints the
+number, a per-root breakdown and the run's `config.txt` / `source-commit.txt`.
+Over the retained local `default` run at source commit `7b7d9f58` it reports
+23058/36184 lines (63.72%) — crates 21486/32866 (65.37%), third_party 1572/3318
+(47.38%). That is not the 2026-10-04 baseline: the 63.20% it recorded is not
+remeasured, and a fresh campaign over the current tree is still owed.
+
 Coverage says which *lines* a corpus reached. `scripts/fuzz-dimensions.py` says
 which **inputs** it explored, for `power_cut`: how much of the storage was
 invalid before init, how many operations and distinct FIDs an exec drove, how

@@ -402,6 +402,20 @@ Fuzzing must reach its declared input surface, but a target need not reach all
 source lines reachable by unit tests. Keep authentication, configuration and
 invariant restrictions visible in its residuals.
 
+`scripts/fuzz-union.py` makes the union reproducible: it reads
+`fuzz/coverage/*/coverage.lcov`, keeps repository sources (`crates/`,
+`firmware/`, `third_party/`, `tools/`), unions each distinct `(file, line)` once
+— covered when any target counted it above zero — and prints the number, its
+per-root breakdown and the run's `config.txt` / `source-commit.txt`. It excludes
+what `fuzz-coverage.sh`'s filename filter already drops (harnesses, registry and
+stdlib) and, by the repository-root rule, a git dependency's checkout too;
+vendored `third_party` sources stay in. On the retained local LCOVs — all 53
+reports from one `default` run at source commit `7b7d9f58` — it measures
+**23058/36184 = 63.72%** (crates 21486/32866, 65.37%; third_party 1572/3318,
+47.38%). That run is not the 2026-10-04 `cc6757dd` baseline: the 63.20% it
+recorded is not remeasured, and a fresh campaign over the current tree is the
+step that would.
+
 **Done when:** the stateful targets reach their intended privileged and failure
 paths, their semantic oracles kill controls, and their saved corpora replay
 deterministically. Long runs retain artifacts and accumulated corpora. The
