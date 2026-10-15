@@ -2,7 +2,7 @@
 // Copyright (C) 2026 RS-Key contributors
 
 use super::*;
-use crate::storage::faults::{MetaStuck, ProbeStuck, Silent};
+use crate::storage::faults::{MetaStuck, ProbeStuck, Silent, Torn};
 
 #[test]
 fn metadata_fault_inventory_and_removal_match_the_physical_records() {
@@ -301,4 +301,180 @@ fn a_healthy_ram_medium_still_rearms_the_lap() {
     assert!(crate::request_rescrub(&mut fs).is_ok());
     assert!(!fs.rescrub_refused());
     assert!(!fs.has_data(crate::EF_HARDENED));
+}
+
+/// Phase 3's correlated fault, driven as the applet commands drive the store: a
+/// `write` that lands only a PREFIX of its bytes and reports `Ok`, and a read of
+/// that fid that answers the TORN value — the new prefix over the old tail. That
+/// is one interrupted slot program, so the write that lies and the read that
+/// exposes it are the same event, and the answer is a THIRD value no clean state
+/// ever held (where [`Silent`] answers the OLD one). A read-back that compares
+/// against the bytes it wrote must therefore report the failure; a store that only
+/// asked *present?* or *right length?* would accept the lie.
+#[test]
+fn a_torn_overwrite_is_refused_by_the_read_back_the_command_relies_on() {
+    let (backend, medium) = Torn::new();
+    let mut fs = Fs::new(backend);
+    let old = b"K1-old-record";
+    let new = b"K2-new-record";
+    assert_eq!(
+        persist_and_confirm(&mut fs, KEY_DEV, old),
+        Ok(()),
+        "fixture: the healthy medium must confirm the seed write"
+    );
+
+    medium.arm_once(KEY_DEV, 3); // the program dies three bytes in
+    assert_eq!(
+        persist_and_confirm(&mut fs, KEY_DEV, new),
+        Err(Error::MemoryFatal),
+        "the medium tore the write into a value that is neither the old record nor \
+         the one the command meant to store, and the read-back accepted it"
+    );
+    assert_eq!(
+        medium.attempts(),
+        1,
+        "the medium was never asked for the write, so nothing was verified"
+    );
+    assert_eq!(
+        medium.value(KEY_DEV).as_deref(),
+        Some(b"K2-old-record".as_slice()),
+        "the medium did not keep the torn bytes a half-programmed slot leaves"
+    );
+    assert_ne!(
+        medium.value(KEY_DEV).as_deref(),
+        Some(old.as_slice()),
+        "the tear must not answer a clean old state"
+    );
+    assert_ne!(
+        medium.value(KEY_DEV).as_deref(),
+        Some(new.as_slice()),
+        "the tear must not answer a clean new state"
+    );
+
+    // Control, and not a no-op: with the tear disarmed the same fixture lands,
+    // confirms, and replaces the torn bytes on the medium.
+    medium.disarm();
+    assert_eq!(
+        persist_and_confirm(&mut fs, KEY_DEV, new),
+        Ok(()),
+        "the healthy path must still confirm, so the refusal above is the tear"
+    );
+    assert_eq!(medium.value(KEY_DEV).as_deref(), Some(new.as_slice()));
+}
+
+/// The recovery half, and the Phase 3 clause it serves: a reboot/scan over the same
+/// medium must not silently take the torn slot for a clean old-or-new state. The
+/// torn record stays present (a boot may not drop it as absent) and reads back as
+/// the torn bytes, so a recovery or re-provision that requires old-or-new refuses
+/// instead of adopting a value the write never committed. The disarmed leg rewrites
+/// the torn slot and confirms, so the store is not wedged by the tear.
+#[test]
+fn a_torn_record_survives_a_reboot_as_a_value_no_clean_state_held() {
+    let (backend, medium) = Torn::new();
+    let mut fs = Fs::new(backend);
+    let old = b"K1-old-record";
+    let new = b"K2-new-record";
+    assert_eq!(persist_and_confirm(&mut fs, KEY_DEV, old), Ok(()));
+    medium.arm_once(KEY_DEV, 3);
+    assert_eq!(
+        persist_and_confirm(&mut fs, KEY_DEV, new),
+        Err(Error::MemoryFatal)
+    );
+
+    // Power back on over the same medium, no cache carried over.
+    let mut rebooted = Fs::new(fs.into_storage());
+    rebooted.scan();
+    assert!(
+        rebooted.try_exists(KEY_DEV).unwrap(),
+        "the reboot read the torn slot as absent, so a re-provision would overwrite \
+         a record the medium still holds"
+    );
+    let mut out = [0u8; 32];
+    let n = rebooted
+        .try_read(KEY_DEV, &mut out)
+        .expect("the torn record must still be readable")
+        .expect("the torn record must not read as absent");
+    assert_eq!(
+        &out[..n],
+        b"K2-old-record",
+        "the reboot must expose the torn bytes the half-programmed slot holds"
+    );
+    assert_ne!(
+        &out[..n],
+        old.as_slice(),
+        "the reboot presented the torn slot as the OLD record, so a recovery keeps \
+         a state the medium no longer holds"
+    );
+    assert_ne!(
+        &out[..n],
+        new.as_slice(),
+        "the reboot presented the torn slot as the NEW record, so a re-provision \
+         adopts a value the write never committed"
+    );
+
+    // Control: a healthy retry over the rebooted store replaces the torn slot.
+    medium.disarm();
+    assert_eq!(persist_and_confirm(&mut rebooted, KEY_DEV, new), Ok(()));
+    assert_eq!(medium.value(KEY_DEV).as_deref(), Some(new.as_slice()));
+}
+
+/// The double's own contract, so a test driving it cannot fail for the wrong
+/// reason: the tear is per-fid and one-shot, counts only the writes it reached,
+/// answers a PREFIX (a length lie) where the slot was empty, keeps the old tail
+/// past a longer record, forwards removals, and heals on `disarm`.
+#[test]
+fn the_torn_medium_tears_only_its_armed_fid_and_counts_what_it_tore() {
+    let (mut backend, medium) = Torn::new();
+    medium.arm_once(KEY_DEV, 0);
+    backend.write(KEY_DEV, b"fresh-record").unwrap();
+    assert_eq!(medium.attempts(), 1);
+    assert!(medium.live(KEY_DEV), "the torn record still exists");
+    assert_eq!(
+        medium.value(KEY_DEV),
+        Some(std::vec::Vec::new()),
+        "a tear at zero must leave the empty prefix, not the whole write"
+    );
+    assert_eq!(
+        backend.size(KEY_DEV),
+        Some(0),
+        "the torn record lies about its length as well as its content"
+    );
+
+    // The arming was one-shot and per-fid: the next writes of another fid and of
+    // KEY_DEV itself both land whole.
+    backend.write(KEY_DEV + 2, b"neighbor").unwrap();
+    backend.write(KEY_DEV, b"whole-again").unwrap();
+    assert_eq!(medium.attempts(), 1);
+    assert_eq!(
+        medium.value(KEY_DEV).as_deref(),
+        Some(b"whole-again".as_slice())
+    );
+    assert_eq!(
+        medium.value(KEY_DEV + 2).as_deref(),
+        Some(b"neighbor".as_slice())
+    );
+
+    // A prefix over a longer record keeps its tail: neither old nor new.
+    medium.arm_once(KEY_DEV, 4);
+    backend.write(KEY_DEV, b"NEWVALUE").unwrap();
+    assert_eq!(medium.attempts(), 2);
+    assert_eq!(
+        medium.value(KEY_DEV).as_deref(),
+        Some(b"NEWVe-again".as_slice()),
+        "the tear must keep the old tail past the prefix"
+    );
+
+    medium.disarm();
+    backend.write(KEY_DEV, b"clean").unwrap();
+    assert_eq!(medium.attempts(), 2, "a healthy write is not a torn one");
+    assert_eq!(medium.value(KEY_DEV).as_deref(), Some(b"clean".as_slice()));
+    let mut out = [0u8; 8];
+    assert_eq!(backend.read(KEY_DEV, &mut out), Some(5));
+    assert_eq!(&out, b"clean\0\0\0");
+
+    // A removal has no payload to tear, so the tear leaves it alone.
+    medium.arm(KEY_DEV, 1);
+    backend.remove(KEY_DEV).unwrap();
+    assert_eq!(medium.attempts(), 2);
+    assert!(!medium.live(KEY_DEV));
 }

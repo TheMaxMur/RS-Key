@@ -2879,6 +2879,36 @@ retry stay in place, pinned by
 `refused_verify_rescrub_fails_the_verify_and_keeps_the_old_verifier`.
 
 This is the write half of the silent-mutation family. It does not close Phase 3:
-longer retained campaigns, correlated faults (a medium that lies on read as well
-as write) and semantic record-loss detection beyond the current CRC/legacy and
-authenticated record formats remain open.
+longer retained campaigns and semantic record-loss detection beyond the current
+CRC/legacy and authenticated record formats remain open.
+
+### Torn storage writes, 2026-10-15
+
+Phase 3's correlated residual — a medium that lies on read as well as write — is
+now a double too. `rsk_fs::storage::faults::Torn` lands only a PREFIX of a write's
+bytes and reports `Ok`, so a read of that fid answers the torn value: the new
+prefix over whatever the slot held (`new[..k] ++ old[k..]`), or a plain prefix
+where it held nothing. That is one interrupted slot program, so the write that lies
+and the read that exposes it are the same physical event and not a drop glued to a
+separate read fault; the answer is a THIRD value no clean state ever held, where
+`Silent`'s dropped write answers the old one. `TornMedium` arms the tear at a byte
+offset (`arm`/`arm_once`), counts the writes it reached, and reads the medium past
+`Fs`'s present cache with `live`/`value`.
+
+Three host tests in `crates/rsk-fs/src/fs_fault_provider_tests.rs` cover it. Over
+the same persist-then-read-back fixture, a torn overwrite must be reported as the
+read-back's failure rather than `Ok` over a record the medium never held, and a
+reboot over the same medium must expose the torn bytes — present, but neither the
+old record nor the new one — so a recovery that requires old-or-new refuses instead
+of adopting the lie. The third pins the double's own contract: per-fid and one-shot
+arming, the tear count, a zero-length prefix (a length lie), a tail kept from a
+longer record, and a forwarded removal. Positive control: the disarmed leg inside
+each test confirms the same fixture over a healthy medium, and temporarily
+disabling the tear makes both command tests fail on `left: Ok(())`, `right:
+Err(MemoryFatal)`; restoring the byte-identical source makes them pass. The full
+`rsk-fs` crate runs 151 tests.
+
+This adds one correlated read+write story, the torn write. It does not close Phase
+3: longer retained campaigns and semantic record-loss detection beyond the current
+CRC/legacy and authenticated record formats remain open, as do correlated-fault
+stories beyond the torn write.

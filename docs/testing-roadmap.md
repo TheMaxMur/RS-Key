@@ -119,7 +119,7 @@ The latest local completion boundary is:
 |---|---|---|
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
-| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium and its store read-back oracle; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns, arbitrary correlated faults and semantic record-loss detection beyond the current CRC/legacy formats remain open; the bounded matrix does not close the whole phase |
+| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle and the correlated `Torn` medium (a torn write and the read that answers it); owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns and semantic record-loss detection beyond the current CRC/legacy formats remain open, as do correlated-fault stories beyond the torn write; the bounded matrix does not close the whole phase |
 | 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
 | 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri | Other privileged command/state/fault combinations and broader retained campaigns; the 63.20% union is not remeasured |
 | 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
@@ -2638,6 +2638,34 @@ which "a read fault may only fail the command" forbids once the probe reads the
 medium, so VERIFY now answers `MEMORY_FAILURE` and matches
 `cmd_change_otp_pin`'s strict arm; the old verifier and the spent retry stay in
 place, pinned by `refused_verify_rescrub_fails_the_verify_and_keeps_the_old_verifier`.
-The phase remains open on longer retained campaigns, arbitrary correlated faults
-(a medium that lies on read as well as write) and semantic record-loss detection
-beyond the current CRC/legacy and authenticated formats.
+The phase remains open on longer retained campaigns and semantic record-loss
+detection beyond the current CRC/legacy and authenticated formats.
+
+## Torn storage writes, 2026-10-15
+
+Phase 3's correlated residual — a medium that lies on read as well as write — is
+modelled by one physical story rather than a drop glued to a separate read fault:
+the torn write. `Torn` lands only a PREFIX of a write's bytes and reports `Ok`, so
+a read of that fid answers the torn value — the new prefix over whatever the slot
+held (`new[..k] ++ old[k..]`), or a plain prefix where it held nothing. The torn
+value is a THIRD one no clean state ever held, where `Silent`'s dropped write
+answers the old one, and where the slot was empty its LENGTH lies as well.
+`TornMedium` arms the tear at a byte offset (`arm`/`arm_once`), counts the writes it
+reached, and reads the medium past `Fs`'s present cache with `live`/`value`.
+
+`fs_fault_provider_tests.rs` drives the same persist-then-read-back fixture over
+it. A torn overwrite must be reported as the read-back's failure rather than `Ok`
+over a record the medium never held, and a reboot over the same medium must expose
+the torn bytes — present, but neither the old record nor the new one — so a
+recovery or re-provision that requires old-or-new refuses instead of adopting the
+lie. A provider control pins the double's own contract: per-fid and one-shot
+arming, the tear count, a zero-length prefix, a tail kept from a longer record, and
+a forwarded removal. Positive control: the disarmed leg inside each test confirms
+the same fixture over a healthy medium, and temporarily disabling the tear makes
+both command tests fail (`left: Ok(())`, `right: Err(MemoryFatal)`); restoring the
+byte-identical source makes them pass.
+
+This adds one correlated read+write story. It does not close the phase: longer
+retained campaigns and semantic record-loss detection beyond the current CRC/legacy
+and authenticated formats remain open, as do correlated-fault stories beyond the
+torn write.
