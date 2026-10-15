@@ -1124,6 +1124,17 @@ on cycle 13 of `tests/102_piv_factory_reset.py --runs 20 --churn 8 --rsa`, after
 FLASH INFO command then reported 52 files and 3822 payload bytes. This localizes
 the failure to that write; it does not yet identify the failing storage operation.
 
+A later 20-cycle attempt completed ten cycles, then lost PC/SC during PUT DATA
+on cycle 11, before RESET. The Mac entered idle sleep four seconds after that
+transport error. That interrupted run is not a 20-cycle pass or another `6581`
+reproduction. The two earlier RESET failures had no nearby host sleep events.
+
+Controlled image-emulator failures after payload append and at candidate
+verification returned an error while both PIN/PUK retry pairs already read
+`3/3`: the post-error scan recovered the committed counters, but provisioning
+had stopped before the management key and F9. Correct retry counts after an
+error do not establish a complete RESET or identify its storage failure.
+
 `tests/102_piv_factory_reset.py` exercises this boundary repeatedly. Each cycle
 changes the PIN, creates and verifies a P-256 key (also RSA with `--rsa`), and
 rewrites a 3046-byte object `--churn` times. RESET must then restore the default
@@ -1141,6 +1152,9 @@ retrying it. It destroys the selected key's PIV data.
 RSK_TEST_READER='RS-Key RS-Key Security Key' nix develop -c \
     python tests/102_piv_factory_reset.py --runs 10 --churn 4 --rsa
 ```
+
+Keep the host awake throughout a physical run. On macOS, put `caffeinate -i`
+before `nix develop` in this command; the sleep assertion ends with the test.
 
 The same script runs through `tests/emu.py`, including the firmware image
 backend. An omitted-RESET negative control must fail at default-PIN verification
