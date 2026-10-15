@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Add the test-only torn-write storage double (`faults::Torn`) and its read-back
+  oracle. Behaviour is unchanged: the module is `cfg(test-util)`, but the row
+  counts builds and `storage.rs` is shipped code.
+  bcdDevice `0x0AA6` → `0x0AA7`.
+
 - Fix the at-rest scrub re-arm's marker probe to ask the medium rather than the
   present-cache, and fail OTP-PIN VERIFY closed when the re-arm cannot be shown
   to have landed. `request_rescrub` deletes `EF_HARDENED` and re-reads it, but
