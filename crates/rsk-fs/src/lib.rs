@@ -62,12 +62,10 @@ pub const EF_HARDENED: u16 = 0xCE14;
 /// Refines `RSKeyBootHardening!MarkerNeverLies` — SEC-BOOT-001.
 pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<Rearmed> {
     let _ = fs.delete(EF_HARDENED);
-    // Not `try_has_data`: `delete` marked EF_HARDENED absent from its own present bit,
-    // so the cache-satisfied probe answers "gone" without asking the medium — and a
-    // `remove` that reported `Ok` without applying it leaves the marker live under a
-    // standing `Ok(Rearmed)`. Ask the medium past that cache; a probe that cannot
-    // answer is a refusal too.
-    let answer = match fs.try_medium_has_data(EF_HARDENED) {
+    // Not `delete`'s own answer: it reports the METADATA drop (EF_HARDENED, a one-byte
+    // flag, keeps none) and answers `Ok` where the present bit is clear over a live
+    // marker — what a read-fault-truncated `Fs::scan` leaves. Ask the lap's own gate.
+    let answer = match fs.try_has_data(EF_HARDENED) {
         Ok(true) => Err(Error::MemoryFatal),
         Ok(false) => Ok(Rearmed(())),
         Err(e) => Err(e),

@@ -343,7 +343,7 @@ assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	986-986	.put(E
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	1062-1062	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	1073-1073	pub fn backup_sealed<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> bool {	pub fn backup_sealed<S: Storage>(fs: &mut rsk_fs::Fs<S>) -> bool {
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fido/src/vendor.rs	1083-1083	fs.try_exists(EF_BACKUP_SEALED)	fs.try_exists(EF_BACKUP_SEALED)
-assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fs/src/fs.rs	455-455	pub fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {	pub fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fs/src/fs.rs	436-436	pub fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {	pub fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fs/src/storage.rs	109-109	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,
 assurance/bundle/SEC-FIDO-006C.toml	crates/rsk-fs/src/storage.rs	136-136	fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {	fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
 assurance/bundle/SEC-FIDO-006C.toml	formal/gen-configs.sh	34-34	companion_bug() {	companion_bug() {
@@ -417,41 +417,41 @@ assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	36-36	fn r
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/reset_tests.rs	1210-1210	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {	fn a_torn_reset_never_leaves_the_session_running_on_a_wiped_seed() {
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/state.rs	626-626	pub fn begin_using_token(&mut self, user_is_present: bool, now_ms: u64) {	pub fn begin_using_token(&mut self, user_is_present: bool, now_ms: u64) {
 assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fido/src/state_kani.rs	86-86	st.begin_using_token(false, now_ms);	st.begin_using_token(false, now_ms);
-assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fs/src/fs.rs	543-543	pub fn factory_wipe(	pub fn factory_wipe(
+assurance/bundle/SEC-FIDO-008.toml	crates/rsk-fs/src/fs.rs	524-524	pub fn factory_wipe(	pub fn factory_wipe(
 assurance/bundle/SEC-FIDO-008.toml	formal/gen-configs.sh	109-114	# Structural facts the model's own arguments rest on, asserted on the baseline	EXTRA_INV=(RamNeverOutlivesFlashSeed NoLiveTokenWithoutPinRecord)
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	16-16	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.	# (sha256 936a2620...), so `floors.txt` still describes the TLC that measured it.
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	72-77	# The invariant a MUTATION configuration says it targets, for the rows where	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	77-77	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }	derived_inv() { invariants_of "$1" | grep -v '^TypeOK$' | head -1; }
 assurance/bundle/SEC-FIDO-008.toml	formal/run-tlc.sh	234-237	if [ -z "${inv:-}" ] || [ "$inv" = "-" ]; then	fi
 assurance/bundle/SEC-FIDO-008.toml	scripts/citation_gate.py	368-374	def bundle_pages(root):	)
-assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	668-668	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	668-677	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
-assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	697-697	pub fn force_delete(&mut self, fid: u16) -> Result<()> {	pub fn force_delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	718-718	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	649-649	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	649-658	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	678-678	pub fn force_delete(&mut self, fid: u16) -> Result<()> {	pub fn force_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/fs.rs	699-699	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {
 assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/powercut.rs	43-43	pub fn delete_landed(	pub fn delete_landed(
 assurance/bundle/SEC-STORE-001.toml	crates/rsk-fs/src/store_assurance.rs	235-235	pub fn delete_orphaned_metadata(after: &StoreView, subject: usize) -> bool {	pub fn delete_orphaned_metadata(after: &StoreView, subject: usize) -> bool {
 assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	245-245	fn known_absent(&self, fid: u16) -> bool {	fn known_absent(&self, fid: u16) -> bool {
 assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	278-278	fn settle<T>(&mut self, fid: u16, r: Option<T>) -> Result<Option<T>> {	fn settle<T>(&mut self, fid: u16, r: Option<T>) -> Result<Option<T>> {
 assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	299-299	pub fn scan(&mut self) {	pub fn scan(&mut self) {
 assurance/bundle/SEC-STORE-002.toml	crates/rsk-fs/src/fs.rs	375-375	pub fn try_read(&mut self, fid: u16, buf: &mut [u8]) -> Result<Option<usize>> {	pub fn try_read(&mut self, fid: u16, buf: &mut [u8]) -> Result<Option<usize>> {
-assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	895-895	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {
-assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	931-931	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	986-986	fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Result<usize> {	fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Result<usize> {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	876-876	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	912-912	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/fs.rs	967-967	fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Result<usize> {	fn rebuild_meta(blob: &[u8], fid: u16, new: Option<&[u8]>, out: &mut [u8]) -> Result<usize> {
 assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/powercut.rs	56-56	pub fn meta_add_landed(old: Option<&[u8]>, new: &[u8], fits: bool, got: Option<&[u8]>) -> bool {	pub fn meta_add_landed(old: Option<&[u8]>, new: &[u8], fits: bool, got: Option<&[u8]>) -> bool {
 assurance/bundle/SEC-STORE-003.toml	crates/rsk-fs/src/store_assurance.rs	244-244	pub fn meta_add_lost_a_record(before: &StoreView, after: &StoreView, subject: usize) -> bool {	pub fn meta_add_lost_a_record(before: &StoreView, after: &StoreView, subject: usize) -> bool {
 assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	288-288	fn mark_absent(&mut self, fid: u16) {	fn mark_absent(&mut self, fid: u16) {
-assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	931-931	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	935-942	let mut scratch = [0u8; META_MAX];	self.mark_absent(EF_META);
+assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	912-912	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/fs.rs	916-923	let mut scratch = [0u8; META_MAX];	self.mark_absent(EF_META);
 assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/powercut.rs	61-61	pub fn meta_delete_landed(old: Option<&[u8]>, got: Option<&[u8]>) -> bool {	pub fn meta_delete_landed(old: Option<&[u8]>, got: Option<&[u8]>) -> bool {
 assurance/bundle/SEC-STORE-004.toml	crates/rsk-fs/src/store_assurance.rs	252-252	pub fn meta_delete_false_absent(after: &StoreView) -> bool {	pub fn meta_delete_false_absent(after: &StoreView) -> bool {
 assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	245-245	fn known_absent(&self, fid: u16) -> bool {	fn known_absent(&self, fid: u16) -> bool {
 assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	288-288	fn mark_absent(&mut self, fid: u16) {	fn mark_absent(&mut self, fid: u16) {
-assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	931-931	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	935-942	let mut scratch = [0u8; META_MAX];	self.mark_absent(EF_META);
-assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	668-668	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	690-693	/// value may be live. This folds the two into one answer, which is what a caller	/// [`force_delete_halves`](Self::force_delete_halves) instead.
-assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	697-697	pub fn force_delete(&mut self, fid: u16) -> Result<()> {	pub fn force_delete(&mut self, fid: u16) -> Result<()> {
-assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	718-718	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {
+assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	912-912	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-005.toml	crates/rsk-fs/src/fs.rs	916-923	let mut scratch = [0u8; META_MAX];	self.mark_absent(EF_META);
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	649-649	pub fn delete(&mut self, fid: u16) -> Result<()> {	pub fn delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	671-674	/// value may be live. This folds the two into one answer, which is what a caller	/// [`force_delete_halves`](Self::force_delete_halves) instead.
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	678-678	pub fn force_delete(&mut self, fid: u16) -> Result<()> {	pub fn force_delete(&mut self, fid: u16) -> Result<()> {
+assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/fs.rs	699-699	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {	pub fn force_delete_halves(&mut self, fid: u16) -> Removal {
 assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/powercut.rs	43-43	pub fn delete_landed(	pub fn delete_landed(
 assurance/bundle/SEC-STORE-006.toml	crates/rsk-fs/src/store_assurance.rs	224-228	// A FOURTH step clause has no projection here, deliberately. `NoSilentOrphan` —	// projection over `StoreView` alone could not see the half that decides it.
 assurance/crates.toml	crates/rsk-device/src/ctap.rs	82-93	fido_state: &'a RefCell<rsk_fido::FidoState>,	}
@@ -520,7 +520,7 @@ assurance/platform.toml	crates/rsk-fido/src/vendor.rs	1073-1073	pub fn backup_se
 assurance/platform.toml	crates/rsk-fido/src/vendor.rs	1083-1083	fs.try_exists(EF_BACKUP_SEALED)	fs.try_exists(EF_BACKUP_SEALED)
 assurance/platform.toml	crates/rsk-fs/src/fs.rs	101-107	/// `for_each_key` returning *complete* means it enumerated every live key (its	/// Authority bit for [`present`](Self#structfield.present): set iff `fid`'s
 assurance/platform.toml	crates/rsk-fs/src/fs.rs	327-334	});	// (`complete == false`); then leave the un-yielded FIDs *undecided* so
-assurance/platform.toml	crates/rsk-fs/src/fs.rs	543-543	pub fn factory_wipe(	pub fn factory_wipe(
+assurance/platform.toml	crates/rsk-fs/src/fs.rs	524-524	pub fn factory_wipe(	pub fn factory_wipe(
 assurance/platform.toml	crates/rsk-oath/src/seal.rs	52-52	pub fn seal_put<S: Storage>(	pub fn seal_put<S: Storage>(
 assurance/platform.toml	crates/rsk-openpgp/src/pin.rs	294-294	if let Err(sw) = migrate_pin_kbase(dev, fs, rng, fid, data) {	if let Err(sw) = migrate_pin_kbase(dev, fs, rng, fid, data) {
 assurance/platform.toml	crates/rsk-openpgp/src/pin.rs	359-359	if n < 1 || blob[0] != DEK_FORMAT_V3 {	if n < 1 || blob[0] != DEK_FORMAT_V3 {
@@ -638,12 +638,12 @@ crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	392-396	/// redir
 crates/rsk-fido/src/state_kani.rs	crates/rsk-fido/src/state.rs	417-421	/// Transport channel of the request being dispatched — the CTAPHID CID, or 0	pub channel: u32,
 crates/rsk-fido/src/vendor_tests.rs	crates/rsk-sdk/src/presence.rs	92-92	fn uv_available(&self) -> bool {	fn uv_available(&self) -> bool {
 crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	245-247	fn known_absent(&self, fid: u16) -> bool {	}
-crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	602-628	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
-crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	668-677	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
+crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	583-609	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
+crates/rsk-fs/src/store_assurance.rs	crates/rsk-fs/src/fs.rs	649-658	pub fn delete(&mut self, fid: u16) -> Result<()> {	}
 crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	317-317	if fid == EF_META || fid == EF_SCRUB_FILLER || crate::STORE_INTERNAL_FIDS.contains(&fid)	if fid == EF_META || fid == EF_SCRUB_FILLER || crate::STORE_INTERNAL_FIDS.contains(&fid)
-crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	908-910	if r.is_none() && self.storage.last_error() {	}
-crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	940-940	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
-crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	669-669	let meta = self.meta_delete(fid);	let meta = self.meta_delete(fid);
+crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	889-891	if r.is_none() && self.storage.last_error() {	}
+crates/rsk-fs/src/store_meta_kani.rs	crates/rsk-fs/src/fs.rs	921-921	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
+crates/rsk-fs/src/store_steps_tests.rs	crates/rsk-fs/src/fs.rs	650-650	let meta = self.meta_delete(fid);	let meta = self.meta_delete(fid);
 crates/rsk-piv/src/tests.rs	crates/rsk-fido/src/clientpin.rs	835-835	if !matched && ctx.dev.otp_key.is_some() {	if !matched && ctx.dev.otp_key.is_some() {
 crates/rsk-usb/src/ctaphid.rs	tools/emu/src/hid.rs	52-87	pub fn serve(mut stream: TcpStream, shared: Arc<Shared>) -> io::Result<()> {	}
 crates/rsk-usb/src/ctaphid_tests.rs	crates/rsk-usb/src/ctaphid.rs	461-465	if self.cid != cid {	}
@@ -776,19 +776,19 @@ formal/README.md	crates/rsk-fs/src/fs.rs	312-312	decided[i] |= m;	decided[i] |= 
 formal/README.md	crates/rsk-fs/src/fs.rs	321-321	if !dynamic.contains(&fid) {	if !dynamic.contains(&fid) {
 formal/README.md	crates/rsk-fs/src/fs.rs	331-333	// key from it. An un-yielded FID is then authoritatively absent — decide the	// full-partition scan. Only a flash READ FAULT can truncate the walk
 formal/README.md	crates/rsk-fs/src/fs.rs	409-409	Ok(self.try_size(fid)?.is_some_and(|n| n > 0))	Ok(self.try_size(fid)?.is_some_and(|n| n > 0))
-formal/README.md	crates/rsk-fs/src/fs.rs	442-445	/// Invoke `f` once per live key in the backend, in a single storage pass.	/// while one `for_each_key` pass is O(items).
-formal/README.md	crates/rsk-fs/src/fs.rs	569-569	if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {	if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {
-formal/README.md	crates/rsk-fs/src/fs.rs	669-671	let meta = self.meta_delete(fid);	self.storage.remove(fid)?;
-formal/README.md	crates/rsk-fs/src/fs.rs	675-675	self.dynamic.retain(|&f| f != fid);	self.dynamic.retain(|&f| f != fid);
-formal/README.md	crates/rsk-fs/src/fs.rs	676-676	meta	meta
-formal/README.md	crates/rsk-fs/src/fs.rs	901-901	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
-formal/README.md	crates/rsk-fs/src/fs.rs	938-938	// Absent means there is nothing to drop; a FAILED read means we do not	// Absent means there is nothing to drop; a FAILED read means we do not
-formal/README.md	crates/rsk-fs/src/fs.rs	940-940	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
+formal/README.md	crates/rsk-fs/src/fs.rs	423-426	/// Invoke `f` once per live key in the backend, in a single storage pass.	/// while one `for_each_key` pass is O(items).
+formal/README.md	crates/rsk-fs/src/fs.rs	550-550	if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {	if !preserve(fid) && phase_of(fid) == phase && n < batch.len() {
+formal/README.md	crates/rsk-fs/src/fs.rs	650-652	let meta = self.meta_delete(fid);	self.storage.remove(fid)?;
+formal/README.md	crates/rsk-fs/src/fs.rs	656-656	self.dynamic.retain(|&f| f != fid);	self.dynamic.retain(|&f| f != fid);
+formal/README.md	crates/rsk-fs/src/fs.rs	657-657	meta	meta
+formal/README.md	crates/rsk-fs/src/fs.rs	882-882	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
+formal/README.md	crates/rsk-fs/src/fs.rs	919-919	// Absent means there is nothing to drop; a FAILED read means we do not	// Absent means there is nothing to drop; a FAILED read means we do not
+formal/README.md	crates/rsk-fs/src/fs.rs	921-921	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
 formal/README.md	crates/rsk-fs/src/fs_tests.rs	420-420	assert!(	assert!(
 formal/README.md	crates/rsk-fs/src/fs_tests.rs	540-540	assert!(	assert!(
-formal/README.md	crates/rsk-fs/src/lib.rs	29-126	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	}
+formal/README.md	crates/rsk-fs/src/lib.rs	29-124	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	}
 formal/README.md	crates/rsk-fs/src/lib.rs	64-64	let _ = fs.delete(EF_HARDENED);	let _ = fs.delete(EF_HARDENED);
-formal/README.md	crates/rsk-fs/src/lib.rs	128-146	/// Run the one-shot at-rest scrub lap: iff [`EF_HARDENED`] is absent, drive a full	}
+formal/README.md	crates/rsk-fs/src/lib.rs	126-144	/// Run the one-shot at-rest scrub lap: iff [`EF_HARDENED`] is absent, drive a full	}
 formal/README.md	crates/rsk-oath/src/lib.rs	369-371	if !self.validated {	}
 formal/README.md	crates/rsk-oath/src/lib.rs	378-390	if let Some([key]) = parse_exact(data, [TAG_KEY]) {	};
 formal/README.md	crates/rsk-oath/src/lib.rs	599-601	// states left a host unable to tell a wrong password from no password.	return Sw::WRONG_DATA;
@@ -876,7 +876,7 @@ formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ccid.rs	400-415	/// Drop the s
 formal/RSKeyAppletSeams.tla	crates/rsk-device/src/ctap.rs	205-209	EF_PIN, EF_RP, MAX_RESIDENT_CREDENTIALS,	let pin_size = fs.size(EF_PIN);
 formal/RSKeyAppletSeams.tla	crates/rsk-display/src/pin.rs	770-779	let _ = rsk_ui::render_erasing(&mut self.frame());	)
 formal/RSKeyAppletSeams.tla	crates/rsk-fido/src/reset.rs	270-313	/// Whether `fid` is cleared by `authenticatorReset` — every FIDO-owned flash file plus	}
-formal/RSKeyAppletSeams.tla	crates/rsk-fs/src/fs.rs	528-579	/// that is still live and, for PIV, not PIN-bound at rest — or, for OATH, leaves	return Err(Error::MemoryFatal);
+formal/RSKeyAppletSeams.tla	crates/rsk-fs/src/fs.rs	509-560	/// that is still live and, for PIV, not PIN-bound at rest — or, for OATH, leaves	return Err(Error::MemoryFatal);
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	201-209	/// allowed); with a code set, a new SELECT resets it, a re-SELECT keeps it,	otp_pin_verified: bool,
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	235-236	presence,	validated: true,
 formal/RSKeyAppletSeams.tla	crates/rsk-oath/src/lib.rs	369-371	if !self.validated {	}
@@ -914,10 +914,10 @@ formal/RSKeyAppletSeams.tla	firmware/src/pin_lock.rs	12-21	//! [`rsk_fido::state
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	882-882	let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;	let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	882-890	let rearmed = rsk_fs::request_rescrub_if(ctx.fs, migrated).map_err(|_| CtapError::Other)?;	.map_err(|_| CtapError::Other)?;
 formal/RSKeyBootHardening.tla	crates/rsk-fido/src/clientpin.rs	1297-1300	let Ok(rearmed) = rsk_fs::request_rescrub_if(fs, migrated) else {	};
-formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	29-126	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	}
+formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	29-124	/// Set (`[1]`) once the post-OTP-provisioning at-rest hardening pass has run: the seal	}
 formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	64-64	let _ = fs.delete(EF_HARDENED);	let _ = fs.delete(EF_HARDENED);
-formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	128-146	/// Run the one-shot at-rest scrub lap: iff [`EF_HARDENED`] is absent, drive a full	}
-formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	147-147	if fs.compact().is_ok() {	if fs.compact().is_ok() {
+formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	126-144	/// Run the one-shot at-rest scrub lap: iff [`EF_HARDENED`] is absent, drive a full	}
+formal/RSKeyBootHardening.tla	crates/rsk-fs/src/lib.rs	145-145	if fs.compact().is_ok() {	if fs.compact().is_ok() {
 formal/RSKeyBootHardening.tla	crates/rsk-oath/src/lib.rs	1249-1249	if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {	if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {
 formal/RSKeyBootHardening.tla	crates/rsk-openpgp/src/pin.rs	349-349	let rearmed = rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;	let rearmed = rsk_fs::request_rescrub(fs).map_err(|_| Sw::MEMORY_FAILURE)?;
 formal/RSKeyBootHardening.tla	crates/rsk-piv/src/lib.rs	1399-1399	let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {	let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
@@ -1083,7 +1083,7 @@ formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	588-617	fn unlock<S:
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	874-874	if try_backup_sealed(ctx.fs).map_err(|_| CtapError::Other)? {	if try_backup_sealed(ctx.fs).map_err(|_| CtapError::Other)? {
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	980-987	// no MSE handshake — and say what the touch actually authorises.	.map_err(|_| CtapError::Other)?;
 formal/RSKeySecurityState.tla	crates/rsk-fido/src/vendor.rs	1056-1062	/// `EF_BACKUP_SEALED` marker so the seed can no longer be exported **or** shown as	fs.put(EF_BACKUP_SEALED, &[1]).is_ok()
-formal/RSKeySecurityState.tla	crates/rsk-fs/src/fs.rs	447-450	/// A FID can be yielded MORE THAN ONCE — the log-structured backend walks	/// below does).
+formal/RSKeySecurityState.tla	crates/rsk-fs/src/fs.rs	428-431	/// A FID can be yielded MORE THAN ONCE — the log-structured backend walks	/// below does).
 formal/RSKeySecurityState.tla	crates/rsk-usb/src/ctaphid.rs	830-835	// frames during fast/crypto processing would consume — and then	if up_pending() {
 formal/RSKeySecurityState.tla	firmware/src/main.rs	796-796	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);	let _ = rsk_fido::seed::ensure_seed(&dev, &mut fs, &mut rng);
 formal/RSKeySecurityState.tla	firmware/src/presence.rs	99-106	/// User presence via BOOTSEL (default) or a dedicated GPIO button.	}
@@ -1101,21 +1101,21 @@ formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	278-284	fn settle<T>(&mut self, fi
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	299-339	pub fn scan(&mut self) {	self.scan_truncated = !complete;
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	336-338	if complete {	}
 formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	346-391	pub fn read(&mut self, fid: u16, buf: &mut [u8]) -> Option<usize> {	/// [`size`](Self::size), fallible — see [`try_read`](Self::try_read).
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	602-628	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	642-662	/// with no `put`) without its contents ever being present, so gating the meta	/// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	669-669	let meta = self.meta_delete(fid);	let meta = self.meta_delete(fid);
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	669-676	let meta = self.meta_delete(fid);	meta
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	676-676	meta	meta
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	895-921	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	901-901	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	901-903	let n = if self.known_absent(EF_META) {	} else {
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	908-910	if r.is_none() && self.storage.last_error() {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	918-918	self.write_record(EF_META, &out[..w])?;	self.write_record(EF_META, &out[..w])?;
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	919-919	self.mark_present(EF_META);	self.mark_present(EF_META);
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	931-972	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	}
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	940-940	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	946-946	self.mark_present(EF_META);	self.mark_present(EF_META);
-formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	959-959	self.write_record(EF_META, &out[..w]) // EF_META stays present	self.write_record(EF_META, &out[..w]) // EF_META stays present
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	583-609	pub fn put(&mut self, fid: u16, data: &[u8]) -> Result<()> {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	623-643	/// with no `put`) without its contents ever being present, so gating the meta	/// rather than `known_absent`: an UNKNOWN FID is skipped, not confirmed. This
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	650-650	let meta = self.meta_delete(fid);	let meta = self.meta_delete(fid);
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	650-657	let meta = self.meta_delete(fid);	meta
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	657-657	meta	meta
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	876-902	pub fn meta_add_reserve(&mut self, fid: u16, data: &[u8], reserve: usize) -> Result<()> {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	882-882	let n = if self.known_absent(EF_META) {	let n = if self.known_absent(EF_META) {
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	882-884	let n = if self.known_absent(EF_META) {	} else {
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	889-891	if r.is_none() && self.storage.last_error() {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	899-899	self.write_record(EF_META, &out[..w])?;	self.write_record(EF_META, &out[..w])?;
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	900-900	self.mark_present(EF_META);	self.mark_present(EF_META);
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	912-953	pub fn meta_delete(&mut self, fid: u16) -> Result<()> {	}
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	921-921	None if self.storage.last_error() => return Err(Error::MemoryFatal),	None if self.storage.last_error() => return Err(Error::MemoryFatal),
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	927-927	self.mark_present(EF_META);	self.mark_present(EF_META);
+formal/RSKeyStore.tla	crates/rsk-fs/src/fs.rs	940-940	self.write_record(EF_META, &out[..w]) // EF_META stays present	self.write_record(EF_META, &out[..w]) // EF_META stays present
 formal/RSKeyStore.tla	crates/rsk-fs/src/powercut.rs	43-51	pub fn delete_landed(	}
 formal/RSKeyStore.tla	crates/rsk-fs/src/powercut_model.rs	47-47	fn dead(&self) -> bool;	fn dead(&self) -> bool;
 formal/RSKeyTransport.tla	crates/rsk-usb/src/ctaphid.rs	220-220	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 128 * CONT_DATA; // 7609	pub const CTAP_MAX_MESSAGE: usize = INIT_DATA + 128 * CONT_DATA; // 7609
@@ -1160,8 +1160,8 @@ formal/comutants.toml	crates/rsk-fido/src/reset_assurance_tests.rs	273-273	fn a_
 formal/comutants.toml	crates/rsk-fido/src/reset_tests.rs	642-642	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");	assert!(is_fido_gate_fid(fid), "{fid:#06x} gates the applet");
 formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	174-174	assert_eq!(st.pin_lock(), LOCKED);	assert_eq!(st.pin_lock(), LOCKED);
 formal/comutants.toml	crates/rsk-fido/src/state_tests.rs	189-189	assert_eq!(st.pin_lock().mismatches, 2);	assert_eq!(st.pin_lock().mismatches, 2);
-formal/comutants.toml	crates/rsk-fs/src/fs.rs	918-918	self.write_record(EF_META, &out[..w])?;	self.write_record(EF_META, &out[..w])?;
-formal/comutants.toml	crates/rsk-fs/src/fs.rs	959-959	self.write_record(EF_META, &out[..w]) // EF_META stays present	self.write_record(EF_META, &out[..w]) // EF_META stays present
+formal/comutants.toml	crates/rsk-fs/src/fs.rs	899-899	self.write_record(EF_META, &out[..w])?;	self.write_record(EF_META, &out[..w])?;
+formal/comutants.toml	crates/rsk-fs/src/fs.rs	940-940	self.write_record(EF_META, &out[..w]) // EF_META stays present	self.write_record(EF_META, &out[..w]) // EF_META stays present
 formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	420-420	assert!(	assert!(
 formal/comutants.toml	crates/rsk-fs/src/fs_tests.rs	540-540	assert!(	assert!(
 formal/comutants.toml	crates/rsk-fs/src/storage.rs	109-109	map: HashMap<u16, Vec<u8>>,	map: HashMap<u16, Vec<u8>>,

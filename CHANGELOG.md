@@ -38,17 +38,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
-- Fix the at-rest scrub re-arm's marker probe to ask the medium rather than the
-  present-cache. `request_rescrub` deletes `EF_HARDENED` and re-reads it, but
-  `delete` marks the marker absent from its own present bit, so the cache-satisfied
-  probe answered "gone" without asking the backend. A medium whose `remove`
-  reported `Ok` without applying it therefore left the marker live under a standing
-  `Ok(Rearmed)`, and the next boot's lap skipped because `EF_HARDENED` was present,
-  so the superseded pre-OTP copy the re-arm was owed survived. The new
-  `Fs::try_medium_has_data` reads the marker past `known_absent` and keeps the
-  `Storage::last_error` discipline; a swallowed tombstone now returns
-  `MemoryFatal` and latches `Fs::rescrub_refused`. bcdDevice `0x0AA4` → `0x0AA5`.
-
 - Pin the OpenPGP pending mutation controls: counter lanes and persisted origin
   order, the maximum AES/RSA sealed-record edges, the session-drop wipe
   observer, exact-size AES PSO, the default algorithm attribute and the BER
