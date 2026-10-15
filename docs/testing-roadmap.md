@@ -2683,3 +2683,53 @@ This adds one correlated read+write story. It does not close the phase: longer
 retained campaigns and semantic record-loss detection beyond the current CRC/legacy
 and authenticated formats remain open, as do correlated-fault stories beyond the
 torn write.
+
+## Host-tool workspaces, 2026-10-15
+
+Phase 6's fourth paragraph asks `tools/emu`, `tools/tui` and the Python CLI to be
+measured in their own workspaces — invalid arguments, transport failure,
+cancellation and machine-readable output — and says explicitly that these reports
+must not be folded into the firmware core percentage. None of the three is a
+member of the `crates/` workspace the core totals above describe: `tools/tui` and
+`tools/emu` are detached Cargo workspaces with their own manifests and locks, and
+the CLI is the `rsk` Python package.
+
+The gap was process-level. `tools/emu`'s hand-written argument parser had no test
+at all: every refusal calls `die`, which is `std::process::exit(2)`, so nothing
+in-process can observe the exit code, the stderr line or the absence of a panic —
+and the same was true of `tools/tui`'s `--selftest` refusals, whose decision was
+unit-tested but whose exit and stderr were not. Both tools now carry an
+integration test (`tools/emu/tests/cli.rs`, 12 cases; `tools/tui/tests/cli.rs`, 5)
+that runs the built binary. `tools/emu`: an unknown argument, a non-numeric or
+out-of-range port, a non-hex seed, a serial of the wrong length, a non-numeric
+byte count, a zero auto-touch delay, both transports disabled, `--rom`/
+`--inspect-port` without `--image`, a `--taps-port` without `--display`, an
+unreadable tap script, and a port already held — each exit 2 with a `rsk-emu:`
+line on stderr and no panic. The bind case holds a loopback port in the test
+first, so it fails deterministically without a second process, and `-h` exits 0
+with the usage on stdout. `tools/tui`: `-h`, both `--selftest` refusals at the
+exit/stderr boundary, and the `--json` stream, parsed by `serde_json` (a
+test-only dev-dependency, already in the workspace lock) as one object with the
+documented fields, with `--once` as the control that the demo banner reaches the
+human path and not the JSON one.
+
+For `tools/rsk`, transport failure was already driven (`test_common.py`'s
+no-device and two-device refusals, `test_ccid_select.py`'s reader selection);
+cancellation has no host surface for the CLI (its only interruptible step is the
+typed `confirm`, already tested). The gaps were invalid arguments and the two
+machine-readable streams. `test_cli_contract.py` (7 cases) drives the real
+`main()`: an unknown group, an unknown flag, a missing subcommand and no group at
+all each exit 2 with `usage:` on stderr; `--version` prints the package version;
+`status --json` is one object and nothing else; and `inventory list --json` is
+pure JSON lines, with the human `note:` several-keys line printed on the non-JSON
+path as the positive control that the assertion is about the branch and not an
+absent note.
+
+Totals and the separation from the core percentage are recorded in
+[testing.md](testing.md#host-tools). What stays open is the same for all three:
+device interoperability (a physical key on the far side of the transports, which
+no host test exercises) and display-image execution (the trusted panel rendered
+and driven for real, `tools/emu --image`'s own scope). Cancellation is measured
+where each tool has it — `tools/emu`'s cross-transport cancel
+(`signals_tests.rs`) and `tools/tui`'s Ctrl-C (`input_tests.rs`) — and is not
+claimed for the CLI.

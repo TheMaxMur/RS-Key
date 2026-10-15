@@ -1479,6 +1479,52 @@ device's cache each time. The picoem pin isolates Non-secure RCP accesses from
 Secure state, preventing interrupted BootROM memory routines from corrupting
 Secure buffer-validation counters.
 
+## Host tools
+
+The three host tools are measured in their **own** workspaces, apart from the
+crate workspace above. `tools/tui` and `tools/emu` are detached Cargo workspaces
+(their own manifests and locks); the CLI is the `rsk` Python package. None is a
+member of the `crates/` workspace, so none of their totals is folded into the
+firmware core line, branch/condition or function percentages — those describe the
+crate workspace alone.
+
+Measured on 2026-10-15 on macOS (`aarch64-apple-darwin`):
+
+```sh
+nix develop -c cargo test --manifest-path tools/tui/Cargo.toml --target aarch64-apple-darwin
+nix develop -c cargo test --manifest-path tools/emu/Cargo.toml --target aarch64-apple-darwin
+nix develop -c python -m pytest tools/rsk -q
+```
+
+| Tool | Result |
+|---|---|
+| `tools/tui` | 61 passed — 56 unit plus 5 process-level (`tests/cli.rs`) |
+| `tools/emu` | 220 passed — 208 unit plus 12 process-level (`tests/cli.rs`) |
+| `tools/rsk` | 426 passed |
+
+Phase 6 asks for invalid arguments, transport failure, cancellation and
+machine-readable output contracts at the tool boundary. For `tools/emu` and
+`tools/tui` that boundary is the process: their refusals call `std::process::exit`,
+so the new cases run the built binary and assert the exit code and a named stderr
+line (no panic). `tools/emu`'s 12 cover an unknown argument, a bad port/seed/
+serial/byte-count/delay, both transports disabled, image-only flags without
+`--image`, a pads flag without `--display`, an unreadable tap script, and a port
+that is already held. `tools/tui`'s 5 cover `-h`, both `--selftest` refusals, and
+`--json` — parsed by `serde_json` (a test-only dev-dependency) as one object with
+the documented fields, with `--once` as the control that the demo banner reaches
+the human path and not the JSON one. `tools/rsk`'s 7 cover invalid invocations
+(exit 2 with `usage:` on stderr), `--version`, and the two `--json` streams
+(`status --json` one object, `inventory list --json` pure JSON lines, with the
+human `note:` line shown present on the non-JSON path as the positive control).
+Transport failure for the CLI was already driven and is unchanged.
+
+Still open, and explicitly outside these host measurements: **device
+interoperability** (a physical key on the far side of the transports, exercised
+only by the on-device suites above) and **display-image execution** (the trusted
+panel rendered and driven for real). Cancellation is measured per tool where it
+exists — `tools/emu`'s cross-transport cancel and `tools/tui`'s Ctrl-C — and the
+CLI has no interruptible surface to measure.
+
 ## Latency harness
 
 Timing a crypto primitive from the host is noisy. On the RP2350 the hot working

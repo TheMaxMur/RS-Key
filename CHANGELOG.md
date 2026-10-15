@@ -38,6 +38,13 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Measure the host tools in their own workspaces (Phase 6): the Python CLI's
+  invalid-argument exit and its two JSON streams (`status --json`,
+  `inventory list --json`), and process-level contract tests for `tools/tui`'s
+  one-shot flags and `tools/emu`'s argument and bind refusals. The totals are
+  host-tool measurements, not folded into the firmware core percentage.
+  `rsk` → `0.3.51`, `rsk-tui` → `0.3.17`; `rsk-emu` keeps its version.
+
 - Add the test-only torn-write storage double (`faults::Torn`) and its read-back
   oracle. Behaviour is unchanged: the module is `cfg(test-util)`, but the row
   counts builds and `storage.rs` is shipped code.
