@@ -111,7 +111,7 @@ CONSTANT BugFairnessFoldsLocalCeremony
 
 (* A PROPOSED fix, not a defect: order phase 1 of the reset sweep so no EF_RP  *)
 (* entry is dropped while its EF_CRED record is still live. The shipped        *)
-(* `sweep` batches both in `for_each_key` order, which fs.rs:428-431 documents *)
+(* `sweep` batches both in `for_each_key` order, which fs.rs:447-450 documents *)
 (* as store order rather than FID order, so the batch can delete the metadata  *)
 (* first. TRUE models the fix; FALSE is the tree as it stands.                 *)
 CONSTANT FixSweepDropsCredsBeforeRpEntries

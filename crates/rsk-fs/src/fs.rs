@@ -409,6 +409,25 @@ impl<S: Storage> Fs<S> {
         Ok(self.try_size(fid)?.is_some_and(|n| n > 0))
     }
 
+    /// Whether `fid` holds data ON THE MEDIUM, ignoring the present-cache.
+    ///
+    /// [`try_has_data`](Self::try_has_data) answers from `known_absent`, so a FID the
+    /// cache has just been told absent — [`delete`](Self::delete) marks it absent the
+    /// moment the backend `remove` returns — reads as gone without the backend being
+    /// asked at all. That is sound only while the removal landed. A backend whose
+    /// `remove` reports `Ok` without applying it leaves the value live under a cache
+    /// that says otherwise, and [`crate::request_rescrub`] is where that lie matters:
+    /// it re-arms the at-rest lap by deleting [`crate::EF_HARDENED`] and then
+    /// re-reading it, so a swallowed tombstone answered from the cache re-arms
+    /// nothing — the marker stands over the record the lap was owed, and the next
+    /// boot skips because it is present. This probe goes straight to `storage`,
+    /// keeping [`Storage::last_error`]'s discipline (a failed probe is `Err`, never
+    /// `Ok(false)`), and records the medium's answer so the cache stops lying.
+    pub(crate) fn try_medium_has_data(&mut self, fid: u16) -> Result<bool> {
+        let r = self.storage.size(fid);
+        Ok(self.settle(fid, r)?.is_some_and(|n| n > 0))
+    }
+
     /// Whether a record exists, including a malformed empty security record.
     /// A zero-length record is not authority to initialize a gate or secret.
     pub fn try_exists(&mut self, fid: u16) -> Result<bool> {

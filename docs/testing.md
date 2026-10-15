@@ -2853,19 +2853,32 @@ mutations it swallowed, and reads the medium past `Fs`'s present cache with
 `live`/`value`. It is the write-side sibling of `Undead`'s budget-limited silent
 removes.
 
-Three host tests in `crates/rsk-fs/src/fs_fault_provider_tests.rs` cover it. Two
+Five host tests in `crates/rsk-fs/src/fs_fault_provider_tests.rs` cover it. Two
 drive the public store API through a persist-then-read-back fixture (the shape of
 FIDO's `spend_and_verify_pin_hash` and OATH's `spend_otp_retry`): the command must
 report the read-back's failure over a silently dropped overwrite, and a dropped
 first write must stay absent across a reboot. The third pins the double's own
 contract — per-fid and one-shot arming, the swallowed count, and a swallowed
-tombstone. Positive control: removing the fixture's read-back makes both command
-tests fail on `Ok(()) != Err(MemoryFatal)`; restoring the byte-identical source
-makes them pass. The full `rsk-fs` crate runs 146 tests.
+tombstone. The fourth drives the marker path: a silently dropped
+`remove(EF_HARDENED)` returns `MemoryFatal`, latches `rescrub_refused`, and
+leaves the marker live; the fifth is the healthy `RamStorage` control.
+`Fs::try_medium_has_data` reads the marker from the medium past `known_absent`,
+so the cache-satisfied probe cannot answer for the backend.
+Positive control: restoring the cache-satisfied probe makes that test
+fail on `Ok(Rearmed)` over a live marker (`left: None`, `right: Some(MemoryFatal)`);
+removing the read-back makes the two command tests fail on `Ok(()) !=
+Err(MemoryFatal)`; restoring the byte-identical source makes them pass. The full
+`rsk-fs` crate runs 148 tests.
+
+The read-fault sweep (`rsk_fs::probe::sweep`) then pinned the OATH contract this
+probe changes: `cmd_verify_otp_pin` was best-effort on a refused re-arm (skip the
+upgrade, still answer `OK`), which "a read fault may only fail the command"
+forbids once the marker probe reads the medium. VERIFY now answers
+`MEMORY_FAILURE`, matching `cmd_change_otp_pin`; the old verifier and the spent
+retry stay in place, pinned by
+`refused_verify_rescrub_fails_the_verify_and_keeps_the_old_verifier`.
 
 This is the write half of the silent-mutation family. It does not close Phase 3:
 longer retained campaigns, correlated faults (a medium that lies on read as well
 as write) and semantic record-loss detection beyond the current CRC/legacy and
-authenticated record formats remain open. A tombstone the drop swallows where a
-command's read-back is answered from its own cache — `request_rescrub` over a
-silently dropped `remove` is the measured case — remains a separate gap.
+authenticated record formats remain open.

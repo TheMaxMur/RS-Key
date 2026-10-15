@@ -243,3 +243,62 @@ fn the_silent_medium_drops_only_its_armed_fid_and_counts_what_it_swallowed() {
     backend.remove(KEY_DEV).unwrap();
     assert!(!medium.live(KEY_DEV));
 }
+
+/// `request_rescrub` re-arms the at-rest lap by deleting [`crate::EF_HARDENED`] and
+/// re-reading it. A `Silent` medium that answers `Ok` for that `remove` and applies
+/// nothing leaves the marker live, and `Fs::delete` marks it absent from its own
+/// present bit the moment the removal returns — so a cache-satisfied probe reports
+/// the marker gone and the re-arm as landed. That is a marker standing over the copy
+/// the re-arm was owed: the next boot's lap skips because EF_HARDENED is present, and
+/// the superseded pre-OTP record the lap existed to scrub survives. The probe must
+/// ask the MEDIUM, and a swallowed tombstone must refuse rather than answer `Ok`.
+#[test]
+fn a_silently_dropped_marker_remove_is_not_a_landed_re_arm() {
+    let (backend, medium) = Silent::new();
+    let mut fs = Fs::new(backend);
+    fs.put(crate::EF_HARDENED, b"\x01").unwrap();
+    assert!(
+        medium.live(crate::EF_HARDENED),
+        "fixture: the lap has latched the marker"
+    );
+
+    medium.arm(Some(crate::EF_HARDENED));
+    assert_eq!(
+        crate::request_rescrub(&mut fs).err(),
+        Some(Error::MemoryFatal),
+        "the medium swallowed the tombstone, so the marker is still live and the \
+         re-arm did not land — a cache-satisfied probe answers Ok over it"
+    );
+    assert!(
+        medium.live(crate::EF_HARDENED),
+        "the marker left the medium on a tombstone the drop never applied"
+    );
+    assert!(
+        fs.rescrub_refused(),
+        "a swallowed re-arm left no trace outside the return value the wipe paths \
+         throw away"
+    );
+
+    // The control, and not a no-op: with the drop cleared the same re-arm lands,
+    // says so, and the marker really leaves the medium.
+    medium.arm(None);
+    assert!(
+        crate::request_rescrub(&mut fs).is_ok(),
+        "a healthy medium must still report the re-arm as landed"
+    );
+    assert!(
+        !medium.live(crate::EF_HARDENED),
+        "the marker must be gone once the tombstone is applied"
+    );
+}
+
+/// The ordinary path the fix must not disturb: a plain `RamStorage` re-arms, reports
+/// it, and clears the marker — no refusal latched.
+#[test]
+fn a_healthy_ram_medium_still_rearms_the_lap() {
+    let mut fs = fs();
+    fs.put(crate::EF_HARDENED, b"\x01").unwrap();
+    assert!(crate::request_rescrub(&mut fs).is_ok());
+    assert!(!fs.rescrub_refused());
+    assert!(!fs.has_data(crate::EF_HARDENED));
+}

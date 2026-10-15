@@ -273,7 +273,7 @@ fn malformed_stored_pin_lengths_are_not_authentication_attempts() {
 }
 
 #[test]
-fn refused_verify_rescrub_keeps_the_old_verifier_and_the_spent_retry() {
+fn refused_verify_rescrub_fails_the_verify_and_keeps_the_old_verifier() {
     let (storage, medium) = RemoveStuck::new();
     let mut fs = Fs::new(storage);
     fs.scan();
@@ -296,8 +296,13 @@ fn refused_verify_rescrub_keeps_the_old_verifier_and_the_spent_retry() {
         &rng,
         &touch,
     );
-    assert_eq!(pin_command(&mut app, &mut fs, INS_VERIFY_PIN), Sw::OK);
-    assert!(app.validated && app.otp_pin_verified);
+    // A medium that cannot show the re-arm landed fails the verify rather than
+    // leaving the counter reset committed under a standing marker.
+    assert_eq!(
+        pin_command(&mut app, &mut fs, INS_VERIFY_PIN),
+        Sw::MEMORY_FAILURE
+    );
+    assert!(!app.validated && !app.otp_pin_verified);
     let mut record = [0; OTP_PIN_REC_V1];
     assert_eq!(fs.read(EF_OTP_PIN, &mut record), Some(record.len()));
     assert_eq!(record[0], MAX_OTP_COUNTER - 1);

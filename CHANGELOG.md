@@ -38,6 +38,20 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Fix the at-rest scrub re-arm's marker probe to ask the medium rather than the
+  present-cache, and fail OTP-PIN VERIFY closed when the re-arm cannot be shown
+  to have landed. `request_rescrub` deletes `EF_HARDENED` and re-reads it, but
+  `delete` marks the marker absent from its own present bit, so the
+  cache-satisfied probe answered "gone" without asking the backend; a medium
+  whose `remove` reported `Ok` without applying it left the marker live under a
+  standing `Ok(Rearmed)`, and the next boot's lap skipped. The new
+  `Fs::try_medium_has_data` reads the marker past `known_absent` and keeps the
+  `Storage::last_error` discipline; a swallowed tombstone now returns
+  `MemoryFatal` and latches `Fs::rescrub_refused`, and `cmd_verify_otp_pin`
+  answers `MEMORY_FAILURE` rather than succeeding with the record un-upgraded,
+  matching `cmd_change_otp_pin`.
+  bcdDevice `0x0AA5` → `0x0AA6`.
+
 - Revert the medium-probing at-rest re-arm fix. The marker probe is again
   answered from the present cache, so a backend that reports a successful
   `remove` without applying it can still leave `EF_HARDENED` live behind an

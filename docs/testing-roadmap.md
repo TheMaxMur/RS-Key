@@ -2597,7 +2597,7 @@ Observed on this revision (`aarch64-apple-darwin`, default build, `MIRIFLAGS`
 `-Zmiri-many-seeds=0..8`): both tests pass with no UB. `miri_cross_applet_seeds`
 runs all 11 seeds (~130 s per seed process) and `miri_fs_ops_seeds` all 6
 (~1.2 s), each `1 passed; 0 failed`; the Miri roster rises to 73 tests, over
-`scripts/miri-all.sh`'s 69 floor. The 63.20% union was **not** remeasured: it
+`scripts/miri-all.sh`'s 73 floor. The 63.20% union was **not** remeasured: it
 comes from a long retained campaign, whereas this slice is a bounded replay plus
 two 60-second runs, so Phase 5 stays open on its retained-campaign and union
 criteria.
@@ -2622,10 +2622,22 @@ a swallowed tombstone. Positive control: disabling the fixture's read-back makes
 both command tests fail (`left: Ok(())`, `right: Err(MemoryFatal)`), and
 restoring it makes them pass.
 
-This adds the write half of the silent-mutation family; it does not close the
-phase. Longer retained campaigns, arbitrary correlated faults (a medium that lies
-on read as well as write) and semantic record-loss detection beyond the current
-CRC/legacy and authenticated formats remain open. A tombstone `Silent` swallows
-is likewise not caught by `request_rescrub`'s read-back, which a delete's own
-cache answer satisfies without consulting the medium; closing that needs a
-backend-verified remove or an independent probe, not another cache read.
+This adds the write half of the silent-mutation family, and closes the tombstone
+case it left open. `Fs::delete` marks the marker absent from its own present bit,
+so the cache-satisfied `try_has_data` probe answered "gone" without asking the
+medium, and `request_rescrub` re-armed the lap over a live `EF_HARDENED` — the
+next boot then skipped and the superseded pre-OTP copy survived. `Fs::try_medium_has_data`
+now reads the marker straight from `storage`, past `known_absent`, with
+`Storage::last_error`'s discipline (a failed probe is `Err`, never `Ok(false)`),
+and `request_rescrub` takes that answer: a silently dropped `remove(EF_HARDENED)`
+returns `MemoryFatal` and latches `Fs::rescrub_refused`. A `Silent`-armed test
+drives it, with a healthy re-arm and a plain `RamStorage` round trip as controls.
+The repo-wide read-fault sweep then required OATH to say what a refused re-arm
+means: `cmd_verify_otp_pin` was best-effort (skip the upgrade, still answer `OK`),
+which "a read fault may only fail the command" forbids once the probe reads the
+medium, so VERIFY now answers `MEMORY_FAILURE` and matches
+`cmd_change_otp_pin`'s strict arm; the old verifier and the spent retry stay in
+place, pinned by `refused_verify_rescrub_fails_the_verify_and_keeps_the_old_verifier`.
+The phase remains open on longer retained campaigns, arbitrary correlated faults
+(a medium that lies on read as well as write) and semantic record-loss detection
+beyond the current CRC/legacy and authenticated formats.
