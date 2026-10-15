@@ -1117,6 +1117,13 @@ image-emulator run and the final 0x0AB0 hardware run passed. The original failur
 is retained as an unexplained hardware finding, not reclassified as a pass or
 claimed fixed by the OTP change. No full-flash export was taken for it.
 
+The follow-up no-touch diagnostic image (0x0AB1) reproduced the RESET failure
+on cycle 13 of `tests/102_piv_factory_reset.py --runs 20 --churn 8 --rsa`, after
+12 complete cycles. Its stage code `6F04` identifies the failed `Fs::put` of
+`EF_RETRIES` while provisioning the factory PIN/PUK retry counters. The public
+FLASH INFO command then reported 52 files and 3822 payload bytes. This localizes
+the failure to that write; it does not yet identify the failing storage operation.
+
 `tests/102_piv_factory_reset.py` exercises this boundary repeatedly. Each cycle
 changes the PIN, creates and verifies a P-256 key (also RSA with `--rsa`), and
 rewrites a 3046-byte object `--churn` times. RESET must then restore the default
