@@ -1129,8 +1129,13 @@ changes the PIN, creates and verifies a P-256 key (also RSA with `--rsa`), and
 rewrites a 3046-byte object `--churn` times. RESET must then restore the default
 PIN and management key, remove the slot keys and object, and publish a different
 F9 key whose certificate verifies independently. On a failed RESET it records the
-PIN-query and public slot-metadata statuses before any SELECT can repair files,
-then stops without retrying RESET. It destroys the selected key's PIV data.
+PIN-query and public slot-metadata statuses, including both PIN and PUK retry
+counts when readable, before any SELECT can repair files. A successful RESET
+must restore both retry maxima and remaining counts to three before VERIFY can
+update them. Every preceding wrong PIN/PUK response must show the expected
+countdown or blocked status; a transient write failure cannot disappear behind
+a later blocked response. The script stops after a failed RESET without
+retrying it. It destroys the selected key's PIV data.
 
 ```sh
 RSK_TEST_READER='RS-Key RS-Key Security Key' nix develop -c \

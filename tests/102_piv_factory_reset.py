@@ -20,6 +20,9 @@ spec.loader.exec_module(piv_suite)
 
 NEW_PIN = b"654321\xff\xff"
 CHURN_BYTES = 3046
+RETRY_METADATA_TAG = 0x06
+FACTORY_RETRY_COUNTS = bytes((3, 3))
+BLOCKING_STATUSES = (0x63C2, 0x63C1) + (0x6983,) * 6
 
 
 def attestation_key(piv):
@@ -36,14 +39,21 @@ def attestation_key(piv):
 
 def record_reset_failure(piv):
     for label, ins, p2 in (("PIN", piv_suite.INS_VERIFY, 0x80),
+                          ("PIN metadata", piv_suite.INS_GET_METADATA, 0x80),
+                          ("PUK metadata", piv_suite.INS_GET_METADATA, 0x81),
                           ("management", piv_suite.INS_GET_METADATA, 0x9B),
                           ("F9", piv_suite.INS_GET_METADATA, 0xF9),
                           ("9A", piv_suite.INS_GET_METADATA, piv_suite.SLOT_9A),
                           ("9C", piv_suite.INS_GET_METADATA, piv_suite.SLOT_9C)):
         try:
             body, status = piv.raw(ins, 0, p2)
-            print(json.dumps({"after_failed_RESET": label, "status": f"{status:04X}",
-                              "response_bytes": len(body)}), flush=True)
+            record = {"after_failed_RESET": label, "status": f"{status:04X}",
+                      "response_bytes": len(body)}
+            if ins == piv_suite.INS_GET_METADATA and p2 in (0x80, 0x81) and status == 0x9000:
+                counts = piv_suite.parse_tlv(body).get(RETRY_METADATA_TAG, b"")
+                assert len(counts) == 2, "invalid retry metadata"
+                record.update(retries_max=counts[0], retries_left=counts[1])
+            print(json.dumps(record), flush=True)
         except Exception as error:
             print(json.dumps({"after_failed_RESET": label,
                               "transport_error": type(error).__name__}), flush=True)
@@ -70,10 +80,10 @@ def cycle(piv, run, churn, rsa):
         assert piv_suite.parse_tlv(body)[0x53] == value, "object was not live before RESET"
     piv.apdu(piv_suite.INS_CHANGE_PIN, 0, 0x80, piv_suite.DEFAULT_PIN + NEW_PIN)
     piv.verify_pin(NEW_PIN)
-    for _ in range(8):
+    for attempt, expected in enumerate(BLOCKING_STATUSES, 1):
         _, pin_status = piv.verify_pin(b"00000000", want=None)
         _, puk_status = piv.raw(piv_suite.INS_RESET_RETRY, 0, 0x80, b"0000000099999999")
-    assert (pin_status, puk_status) == (0x6983, 0x6983), (pin_status, puk_status)
+        assert (pin_status, puk_status) == (expected, expected), (attempt, pin_status, puk_status)
     reset_started = time.monotonic()
     _, status = piv.raw(piv_suite.INS_RESET, 0, 0)
     print(json.dumps({"run": run, "RESET": f"{status:04X}",
@@ -81,6 +91,10 @@ def cycle(piv, run, churn, rsa):
     if status != 0x9000:
         record_reset_failure(piv)
     assert status == 0x9000, f"factory RESET returned {status:04X}"
+    for reference in (0x80, 0x81):
+        body, _ = piv.apdu(piv_suite.INS_GET_METADATA, 0, reference, le=True)
+        counts = piv_suite.parse_tlv(body).get(RETRY_METADATA_TAG, b"")
+        assert counts == FACTORY_RETRY_COUNTS, (reference, "factory retry counts", counts.hex())
     piv.verify_pin(piv_suite.DEFAULT_PIN)
     piv.auth_mgm()
     piv.apdu(piv_suite.INS_GET_METADATA, 0, piv_suite.SLOT_9A, want=0x6A88, le=True)
@@ -90,6 +104,7 @@ def cycle(piv, run, churn, rsa):
              piv_suite.tlv(0x5C, piv_suite.OBJ_POOL), want=0x6A82, le=True)
     assert attestation_key(piv) != previous_f9, "RESET retained the preceding F9 key"
     print(json.dumps({"run": run, "factory_defaults": True, "slot_keys_removed": True,
+                      "PIN_PUK_retry_counts_restored": True,
                       "new_F9_self_signature_verified": True,
                       "churn_writes": churn, "seconds": round(time.monotonic() - started, 3)}), flush=True)
 
