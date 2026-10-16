@@ -1135,6 +1135,22 @@ were `3/3` before VERIFY, the slot keys and object were removed, and every new
 F9 certificate verified independently. This run did not reproduce the earlier
 write failure; it does not resolve that finding.
 
+The following no-touch 0x0AB8 diagnostic completed 100 authenticated
+`EF_RETRIES` delete/recreate cycles, then three full RESET cycles with RSA.
+The 0x0AB9 diagnostic kept the 0x0AB1 load addresses and one-byte SDK errors.
+After initialization at boot, its additional diagnostic instructions ran only
+on error paths. It passed `tests/80_piv.py --rsa` and another 20 cycles of
+`--runs 20 --churn 8 --rsa`. Image-emulator controls checked SDK errors 0, 1 and
+7, storage phases, and stopping at the first error before SELECT or a RESET
+retry. These passes did not identify the cause of the earlier write refusal;
+no production firmware fix resulted.
+
+While returning to the ordinary no-touch 0x0AB0 image, programming and
+verification passed, but PC/SC reported `NoCard` and HID INIT did not answer.
+Live EP0 GET_STATUS still answered. One host USB bus reset recovered HID
+without reflashing. The cause of this stall after flashing has not been
+identified; that first start is retained as a failed hardware case.
+
 A RAM NOR model separately completed 6000 direct `reset_files` calls after
 fragmented legacy import, across three storage roots and epochs. It checked all
 four retry bytes and preserved the imported foreign records and routed counters.
