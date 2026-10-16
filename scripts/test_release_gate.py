@@ -1053,6 +1053,17 @@ def test_an_upper_case_commit_is_refused_too(tree):
     assert only(tree.problems(), "names a commit of this repository")
 
 
+def test_a_hex_run_inside_a_word_is_not_a_commit_citation(tree):
+    """`header` contains `eade`, and a boundary of `[0-9a-f]` matched it: a rule
+    that reads a word fragment as a value refuses prose, and whether that fires
+    has nothing to do with what the region says."""
+    prefix = tree.head()[:4]
+    tree.edit(WORKFLOW, "cat CHANGELOG.md > release-notes.md",
+              f"cat CHANGELOG.md > release-notes.md\n          echo h{prefix}r")
+    tree.regenerate()
+    assert only(tree.problems(), "names a commit of this repository") == []
+
+
 def test_the_toolchain_regions_values_are_not_this_rules_business(tree):
     """[`stable`] read the whole rendered PAGE at first. A hex value in another
     generator's region is not this region's finding, and a message naming the

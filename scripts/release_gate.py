@@ -402,7 +402,7 @@ COUNT = re.compile(r"(?<![\w.-])(\d+)(?![\w.-])")
 #: one case is one an upper-case spelling walks past. The widening is free,
 #: measured over today's region: 15 runs of 4-40 against 6 of 7-40, so it costs
 #: nine more `git rev-parse` calls and finds no new commit.
-HEXRUN = re.compile(r"(?<![0-9a-fA-F])[0-9a-fA-F]{4,40}(?![0-9a-fA-F])")
+HEXRUN = re.compile(r"(?<![0-9a-zA-Z])[0-9a-fA-F]{4,40}(?![0-9a-zA-Z])")
 
 #: The English spellings of a small count, so rule 5b holds both halves of what
 #: this page actually says: `the 14 .uf2 flavors` and `rebuilds all fourteen
