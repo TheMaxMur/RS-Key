@@ -3,8 +3,8 @@
 
 [metadata]
 date = "2026-10-11"
-parent_commit = "f79ec0326ace1ca658a8abbb195bd1eb58f9d49a"
-source_commit = "45481f9735392a7474c748cda8c123e6cb098f24"
+parent_commit = "39235395677f5f5f7a3fc8856222327a20e216a9"
+source_commit = "eadea4e7e41f80d9101a8adeb015459c14dfb293"
 scope = "current host workspace, separate profiles; firmware and rsk-wipe excluded"
 profile_count = 18
 raw_exclusions = 0

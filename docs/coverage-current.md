@@ -11,7 +11,7 @@ Firmware glue and `rsk-wipe` are outside the host measurement. MC/DC remains
 ## Measured results, 2026-10-11
 
 All eighteen declared host profiles completed on source matching
-`45481f9735392a7474c748cda8c123e6cb098f24`.
+`eadea4e7e41f80d9101a8adeb015459c14dfb293`.
 Every profile rebuilt its 28 selected library-test binaries and checked their
 actual test rosters before executing or reusing an identical successful binary.
 The [finite profile catalogue](coverage-profile-audit.toml) binds every missing
@@ -47,7 +47,7 @@ MC/DC, embedded-glue/C-backend coverage or physical interruption coverage.
 
 ## Source review
 
-The `f79ec0326ace` default baseline recorded 8114/8723 raw condition outcomes,
+The `39235395677f` default baseline recorded 8114/8723 raw condition outcomes,
 42444/43336 lines and 3593/3602 function groups. Its LCOV source-coordinate
 inventory contained 472 zero-DA rows. The committed
 [baseline source audit](coverage-baseline-audit.toml) accounts for every one,

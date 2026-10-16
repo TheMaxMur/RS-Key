@@ -37,7 +37,7 @@
 tier = "liveness"
 command = "./formal/run-tlc.sh liveness"
 date = "2026-10-09"
-commit = "bd3b064903de9edaadfc6ec9a07bacc88cd3aa9e"
+commit = "ed2635ba9087c8b367bcf71547b9671721fddf7e"
 host = "Apple M5 Pro (18 cores)"
 workers = 2
 matrix = '''
@@ -57,7 +57,7 @@ LiveMut_BugWalkNeverExpires.cfg with 2 workers on 18 cores (Mac OS X 27.0.1 aarc
 tier = "safety"
 command = "./formal/run-tlc.sh safety"
 date = "2026-10-09"
-commit = "bd3b064903de9edaadfc6ec9a07bacc88cd3aa9e"
+commit = "ed2635ba9087c8b367bcf71547b9671721fddf7e"
 host = "Apple M5 Pro (18 cores)"
 workers = 2
 matrix = '''

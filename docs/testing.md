@@ -628,16 +628,16 @@ reads `fuzz/coverage/*/coverage.lcov`, keeps repository sources (`crates/`,
 `firmware/`, `third_party/`, `tools/`), counts each distinct `(file, line)` once
 with a line covered when any target counted it above zero, and prints the
 number, a per-root breakdown and the run's `config.txt` / `source-commit.txt`.
-A fresh local `default` campaign over all 53 targets at source commit `1debce09`
+A fresh local `default` campaign over all 53 targets at source commit `d2b0c13a`
 reports 23062/36301 lines (63.53%) — crates 21490/32983 (65.15%), third_party
 1572/3318 (47.38%). The 2026-10-04 baseline's 63.20% covered a smaller tree (32
 545 repository lines) under the same method; the denominators differ, so this is
-the current-tree remeasurement. The `flavours` profile reran at `b5252ab4`:
+the current-tree remeasurement. The `flavours` profile reran at `a2e13197`:
 22699/36182 lines (62.74%) — crates 21127/32864 (64.29%), third_party 1572/3318
 (47.38%); its denominator is smaller and the two maps are not combined.
 
 A bounded retained campaign on 2026-10-15 ran `fido_session`, `cross_applet`,
-`fs_ops` and `power_cut` over their accumulated corpora at `b5252ab4`, ten
+`fs_ops` and `power_cut` over their accumulated corpora at `a2e13197`, ten
 minutes each (`-max_total_time=600`, the target's dictionary where one exists):
 252 620 / 608 532 / 3 884 771 / 72 663 executions at 420 / 1 012 / 6 463 / 120
 per second, with +1 169 / +3 758 / +1 073 / +427 new corpus units and peak RSS
@@ -1929,7 +1929,7 @@ the updated 773-side baseline map are retained in
 
 The [current host-profile audit](coverage-current.md) completes all eighteen
 profiles declared by the coverage workflow on source matching
-`45481f9735392a7474c748cda8c123e6cb098f24`.
+`eadea4e7e41f80d9101a8adeb015459c14dfb293`.
 Default records 8207/8723 (94.08%) condition outcomes,
 42688/43370 (98.43%) lines and 3607/3609 (99.94%) function groups.
 The [profile catalogue](coverage-profile-audit.toml) accounts for every remaining

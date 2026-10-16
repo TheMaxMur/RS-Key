@@ -410,19 +410,19 @@ per-root breakdown and the run's `config.txt` / `source-commit.txt`. It excludes
 what `fuzz-coverage.sh`'s filename filter already drops (harnesses, registry and
 stdlib) and, by the repository-root rule, a git dependency's checkout too;
 vendored `third_party` sources stay in. A fresh local `default` campaign over
-all 53 targets at source commit `1debce09` measures
+all 53 targets at source commit `d2b0c13a` measures
 **23062/36301 = 63.53%** (crates 21490/32983, 65.15%; third_party 1572/3318,
 47.38%), with the per-target reports retained under `fuzz/coverage/`. The
 2026-10-04 `cc6757dd` baseline recorded 63.20% over a smaller tree (32 545
 repository lines) under the same method; the denominators differ, so this is the
 current-tree remeasurement rather than a re-derivation of the old percentage.
-The `flavours` profile reran at `b5252ab4`: **22699/36182 = 62.74%** (crates
+The `flavours` profile reran at `a2e13197`: **22699/36182 = 62.74%** (crates
 21127/32864, 64.29%; third_party 1572/3318, 47.38%). Its denominator is smaller
 because the flavours build compiles fewer lines; the two maps are incompatible
 and are not combined.
 
 A bounded retained campaign on 2026-10-15 ran the four stateful targets over
-their accumulated corpora at `b5252ab4`, ten minutes each (`-max_total_time=600`,
+their accumulated corpora at `a2e13197`, ten minutes each (`-max_total_time=600`,
 the target's dictionary where one exists): `fido_session` 252 620 executions at
 420/s (+1 169 corpus units, final cov 7 820), `cross_applet` 608 532 at 1 012/s
 (+3 758, cov 4 910), `fs_ops` 3 884 771 at 6 463/s (+1 073, cov 585) and
@@ -2356,10 +2356,10 @@ The record sweeps exercise the corresponding pairs within their 64-mutation
 bound; neither model establishes arbitrary hardware interruption coverage.
 
 Three firmware defects were reproduced and corrected in separate commits:
-obsolete OpenPGP public-reset wrapper cleanup (`67a2ca09ac7c`), attestation
-repair accepting records from different signers (`afa72a354685`), and resetting
+obsolete OpenPGP public-reset wrapper cleanup (`02a84a962e32`), attestation
+repair accepting records from different signers (`a28561744292`), and resetting
 the preceding resident credential's counter before its replacement committed
-(`c453c2442e25`). Their regression controls fail on the preceding code.
+(`26c113007fbc`). Their regression controls fail on the preceding code.
 In-diff mutation runs report respectively 3 caught/1 unviable, 15 caught/4
 unviable and 2 caught/1 unviable, with no survivors; unviable builds are not
 test kills. Firmware changes advance `bcdDevice` through `0x0A95`.
@@ -2411,10 +2411,10 @@ An error is not a rollback receipt.
 | Verification capture and decoder | PIN and alwaysUv widths 0,1,34,35,36,255,256 and the current maximum remain exact through runtime capture and JSON. Actual TLA Beta classifies present PIN material as configured and malformed present UV overrides as required. Restoring old predicates fails named invariants through the copied existing gate row. | `rsk-device/src/ctap_tests.rs`, `tools/emu/src/security_trace_tests.rs`, `scripts/test_security_trace_damage.py` |
 
 Five firmware fix groups were reproduced before repair: unchecked NOR success
-and uncertain-write caches (`a943b5416469`), damaged FIDO state
-(`7154cf0c55cc`), PIV factory reprovisioning (`5728ac293b44`), OpenPGP gates,
-counters and attestation fields (`2cf485f1`), and OATH gates/empty-key validation
-(`65d4aa90`). The applet controls use actual SET PIN, SELECT, VERIFY, PSO, ATTEST,
+and uncertain-write caches (`74b5e8d3d031`), damaged FIDO state
+(`bd3e1859514e`), PIV factory reprovisioning (`11b95b7ba431`), OpenPGP gates,
+counters and attestation fields (`f363a1f9`), and OATH gates/empty-key validation
+(`246b4966`). The applet controls use actual SET PIN, SELECT, VERIFY, PSO, ATTEST,
 VALIDATE and password-safe commands. Their original failures expose the defect:
 factory credentials or attempted identity regeneration, an actual signature/password response,
 a restarted counter or an incorrectly successful attestation.
@@ -2461,7 +2461,7 @@ the packages whose unit-test prefixes were retained. The
 `check-assurance-final`/`check-assurance-resumed` logs retain the assurance rows,
 including the full script suite and the corrected provenance test repeated
 through the same gate row. The freshly recorded full safety/liveness roster is
-bound to `bd3b0649`; safety ran as two disjoint official shards. The
+bound to `ed2635ba`; safety ran as two disjoint official shards. The
 [published formal results](formal.md) and `formal/runs.toml` own its counts and
 provenance. `results.json` binds this bounded matrix to source and log hashes,
 selected mutations and the signed commit/file ledger; `whole_plan_complete`
@@ -2548,7 +2548,7 @@ the whole testing plan or establish hardware certification.
 
 The [current audit](coverage-current.md) closes the reachable host statement,
 function and condition-outcome review in all eighteen declared profiles on source
-matching `45481f9735392a7474c748cda8c123e6cb098f24`, including authenticated
+matching `eadea4e7e41f80d9101a8adeb015459c14dfb293`, including authenticated
 storage v2. Its [finite catalogue](coverage-profile-audit.toml) records every
 residual with its
 actual feature closure, source hashes, invariant or conditional assumption. The
