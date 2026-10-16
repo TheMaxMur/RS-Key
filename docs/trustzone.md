@@ -4,8 +4,8 @@
 # TrustZone boundary and resource ownership
 
 This chapter owns the TrustZone design, build instructions, measurements and
-remaining production work. The ordinary firmware has no Secure/Non-secure split.
-The experimental build at `bcdDevice 0x0AB0` runs USB classes and transports in
+remaining production work. The standard single-image build has no Secure/Non-secure
+split. The experimental build at `bcdDevice 0x0ABB` runs USB classes and transports in
 Non-secure (NS), with the controller, lifecycle observer, worker and applets in
 Secure (S). Secure revocation no longer depends on NS reset callbacks. The
 resource policy, Secure board services and combined offline build are implemented
@@ -1187,6 +1187,29 @@ rollover nor payload erase, 13 with journal rollover only, 23 with payload erase
 only and 6 with both. Foreign records and the routed counter survived, and all
 registry dependencies match the firmware lockfile. This model does not exercise
 USB or RP2350 flash timing and did not reproduce the original `6581`.
+
+The 0x0ABC physical series then completed 40 full RESET cycles with RSA and
+eight object writes per cycle, covering all 34 lengths. Each cycle checked
+factory retry pairs before VERIFY, removal of the generated keys and scratch
+object, and the new F9 self-signature. All diagnostic error records remained empty.
+
+The saved 0x0AB1 ELF matches the load bytes of its original UF2. It completed 20
+image-emulator RESET/RSA cycles with eight 3046-byte writes per cycle; 0x0ABC
+completed another 20. A separate image run used synthetic legacy KV with
+48 foreign public records, 1,055 writes of a 3046-byte value and a routed `C000`
+counter. That full RESET/RSA cycle also passed with no frozen error. The existing
+firmware load segments were unchanged; no data from the physical key was used
+for the fixture.
+
+The key was restored to the normal TrustZone no-touch 0x0ABB image, clearing
+prior diagnostic code outside KV. A fresh no-touch build matched the previously
+verified UF2 byte for byte. CCID started without a recovery USB reset. The private
+EP0 request stalled; standard EP0 and HID remained live. The full `80_piv.py --rsa`
+suite and one strict RESET/RSA cycle with varied object lengths passed on that
+image.
+
+No production PIV fix resulted from these runs. The internal cause of the
+original `EF_RETRIES` refusal remains unknown.
 
 While returning to the ordinary no-touch 0x0AB0 image, programming and
 verification passed, but PC/SC reported `NoCard` and HID INIT did not answer.
