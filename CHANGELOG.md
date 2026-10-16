@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Bound image-laboratory CTAP requests by device time with a separate host
+  watchdog, retain transport timing and refuse USB keepalive gaps over 500 ms.
+  Native test clients keep their existing deadline.
+
 - Integrate the current develop storage recovery and host-test contracts
   with the TrustZone transport build. Preserve Secure USB lifecycle
   ownership and bank-aware stack measurements.

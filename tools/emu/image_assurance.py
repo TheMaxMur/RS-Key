@@ -40,6 +40,9 @@ PW3 = b"87654321"
 SEED = "1234567890abcdef" * 4
 # Interrupt entry can vary the sampled maximum by a few hundred bytes.
 STACK_JITTER = 1024
+CTAP_IMAGE_TIMEOUT_NS = 120_000_000_000
+CTAP_HOST_TIMEOUT_S = 1200
+USB_MAX_GAP_NS = 500_000_000
 
 
 def port():
@@ -50,6 +53,26 @@ def port():
 
 def fields(reply):
     return dict(item.split("=", 1) for item in reply.split() if "=" in item)
+
+
+class ImageDeadline:
+    def __init__(self, dev):
+        self.dev = dev
+        self.wall_start = time.monotonic()
+        state = fields(dev.inspect("status"))
+        self.power_ups = int(state["power_ups"])
+        self.start = self.previous = int(state["emulated_ns"])
+
+    def check(self):
+        assert time.monotonic() - self.wall_start < CTAP_HOST_TIMEOUT_S, "CTAP host watchdog expired"
+        state = fields(self.dev.inspect("status"))
+        assert state["dead"] == "false", "image faulted during CTAP"
+        assert int(state["power_ups"]) == self.power_ups, "image rebooted during CTAP"
+        now = int(state["emulated_ns"])
+        assert now >= self.previous, "image clock moved backwards during CTAP"
+        self.previous = now
+        assert now - self.start < CTAP_IMAGE_TIMEOUT_NS, "CTAP image deadline expired"
+        assert time.monotonic() - self.wall_start < CTAP_HOST_TIMEOUT_S, "CTAP host watchdog expired"
 
 
 class Device:
@@ -157,7 +180,19 @@ class Device:
         self.card.connect()
 
     def ctap(self, command, body=None, expected=0):
-        answer = send_cbor(self.hid, self.cid, bytes([command]) + (enc(body) if body is not None else b""))
+        payload = bytes([command]) + (enc(body) if body is not None else b"")
+        if self.image:
+            deadline = ImageDeadline(self)
+            self.inspect("transport-begin")
+            answer = send_cbor(self.hid, self.cid, payload, check_deadline=deadline.check)
+            timing = {key: int(value) for key, value in fields(self.inspect("transport-end")).items()}
+            timing["command"] = command
+            timing["wall_elapsed_s"] = round(time.monotonic() - deadline.wall_start, 3)
+            if getattr(self, "ctap_timings", None) is not None:
+                self.ctap_timings.append(timing)
+            assert timing["max_gap_ns"] <= USB_MAX_GAP_NS, "CTAP starved USB on the image clock"
+        else:
+            answer = send_cbor(self.hid, self.cid, payload)
         assert answer[0] == expected, f"CTAP {command}: status {answer[0]:02x}, expected {expected:02x}"
         if expected:
             assert len(answer) == 1, "CTAP refusal returned a partial response"
@@ -165,11 +200,24 @@ class Device:
 
     def measured(self, label, operation, report):
         self.inspect("begin")
+        self.ctap_timings = []
+        failed = False
         try:
             result = operation()
+        except BaseException:
+            failed = True
+            raise
         finally:
-            measurement = fields(self.inspect("end"))
-            report[label] = {k: int(v) for k, v in measurement.items()}
+            if self.ctap_timings:
+                report[f"{label}_ctap"] = self.ctap_timings
+            self.ctap_timings = None
+            try:
+                measurement = fields(self.inspect("end"))
+                report[label] = {k: int(v) for k, v in measurement.items()}
+            except Exception as error:
+                if not failed:
+                    raise
+                report[f"{label}_measurement_error"] = str(error)
         names = ["core0", "core1"] + (["ns0"] if "ns0_min" in measurement else [])
         for name in names:
             assert int(measurement[f"{name}_min"]) >= int(measurement[f"{name}_low"]), label

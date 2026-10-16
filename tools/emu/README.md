@@ -299,6 +299,13 @@ paint. Sampling SP also catches a reserved frame that never writes its bottom.
 Single-cycle sampling slows the emulator and is enabled only between `begin`
 and `end`, or while a fault is armed.
 
+The image laboratory bounds CTAP commands to 120 seconds on the image clock,
+with a separate 1,200-second host watchdog. Both cover the final response and
+continuation reads; a reboot, a terminal fault or a backwards clock fails the
+command. Native runs retain the ordinary 120-second keepalive wait. Measured
+image operations also retain every CTAP transport sample and refuse USB gaps
+over 500 ms on the image clock, independently of host sampling overhead.
+
 The standalone runner owns fresh processes, socket ports and flash files:
 
 ```sh
