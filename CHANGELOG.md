@@ -38,6 +38,8 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- TrustZone preserves an acknowledged USB configuration across the next SETUP and revokes authorization when HAL first observes a reset or suspend after the raw register snapshot (`bcdDevice 0x0ABB`).
+
 - TrustZone OTP HID status follows Secure applet updates and CCID SELECT, so YubiKit observes the current program sequence and slot flags (`bcdDevice 0x0AB0`).
 
 - TrustZone retires an unconsumed CCID terminating ZLP when the host starts its next command, preserving 3072-byte transfers and the endpoint data toggle (`bcdDevice 0x0AAF`).

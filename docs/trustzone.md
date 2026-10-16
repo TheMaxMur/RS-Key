@@ -1145,6 +1145,14 @@ on error paths. It passed `tests/80_piv.py --rsa` and another 20 cycles of
 retry. These passes did not identify the cause of the earlier write refusal;
 no production firmware fix resulted.
 
+The later no-touch 0x0ABA diagnostic froze counter and main write errors
+before filesystem recovery. Key-source acquisition and filesystem prechecks
+were outside this trace. It completed
+20 more full RESET cycles with RSA and eight object rewrites per cycle. Three
+additional complete PIV suites passed under 60,242 concurrent HID PINGs; the
+longest PING took 0.190 seconds. All diagnostic error records remained empty.
+These runs did not reproduce `6581` or identify why `EF_RETRIES` was refused.
+
 While returning to the ordinary no-touch 0x0AB0 image, programming and
 verification passed, but PC/SC reported `NoCard` and HID INIT did not answer.
 Live EP0 GET_STATUS still answered. One host USB bus reset recovered HID
@@ -1197,3 +1205,42 @@ The tested UF2 SHA-256 is
 `30846b4672e705c92f10d23e63d2152be7fd283bab4f082401d6d84eca4630bb`;
 the combined ELF SHA-256 is
 `0ba9fca891f549978f99ffcf04577a673961e4798db93480c3341769efd08919`.
+
+## Configuration status completion at bcdDevice 0x0ABB
+
+An image replay reproduces a configured host with live EP0 and silent HID when
+Secure IRQ handling is delayed after the SET_CONFIGURATION status packet is
+armed. The host ACKs that packet and sends another SETUP before Secure handles
+the completion. Cancelling the old control task first used to lose the Secure
+configuration transition. The same delay without another SETUP completes normally.
+
+Secure now binds the configuration status to its control ticket, clears a previous
+EP0 IN completion before arming it, and consumes the hardware completion before
+invalidating the old request. A completed configuration survives suspend in the
+new epoch; a bus reset takes precedence over an old ACK. Revocation still clears
+authorization and fences old responses. No persistent record format changes.
+
+`tests/103_trustzone_configuration.py` builds disposable images with a bounded
+IRQ delay and a public admission marker. It uses only loopback emulator sockets.
+Its ordering control moves ACK handling below SETUP invalidation: the neutral
+case must still answer HID INIT while the overlapping SETUP must lose admission.
+Neither the delay nor the marker is part of an ordinary build.
+
+This replay identifies a real configuration race. It does not establish the
+cause of the earlier physical post-flash incident.
+Before this change, five code-only reflashes and 500 SET_CONFIGURATION /
+GET_CONFIGURATION pairs passed on the reference key, including 50 HID checks.
+The separate PIV RESET write refusal remains under investigation.
+
+The observer also accounts for events first seen by HAL after the initial raw
+register snapshot. HAL acknowledgement cannot swallow a reset or suspend without
+Secure revocation. The final snapshot retains only observations already handled;
+it cannot mark a newly arriving event as handled. Suspend tracks the read-only
+bus level separately from the acknowledged IRQ, following the
+[pico-sdk register definitions](https://github.com/raspberrypi/pico-sdk/blob/master/src/rp2350/hardware_regs/include/hardware/regs/usb.h).
+
+`tests/104_trustzone_late_reset.py` pauses the image after its raw snapshot,
+authorizes PIV first, then injects a USB reset through the emulated host. The
+corrected image advances epoch 2 to 3 and refuses the old PIN authority before
+SELECT. Removing only the HAL reset fallback retains epoch 2 and answers `9000`
+to that same PIN query. Both runs reconfigure USB without a power cycle.

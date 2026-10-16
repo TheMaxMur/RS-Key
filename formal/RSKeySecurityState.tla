@@ -68,7 +68,7 @@ CONSTANTS
     \* also resolves to firmware/src/presence.rs since the arbitration was lifted
     BugUnscopedCancel,            \* crates/rsk-device/src/presence.rs:118-122
     BugTouchNotSpent,             \* crates/rsk-device/src/presence.rs:203-211,226
-    BugSoftLockLostOnWarmReset,   \* crates/rsk-device/src/lib.rs:131-140 PinLock across sys_reset
+    BugSoftLockLostOnWarmReset,   \* crates/rsk-device/src/lib.rs:132-141 PinLock across sys_reset
     BugWarmResetReopensWindow,    \* reset.rs:266-267  in_reset_window
     BugCmWalkIgnoresChannel,      \* state.rs:178-189  may_walk_rps
     BugDeleteRpBeforeCred,        \* credmgmt.rs:759-767 deleteCredential order
@@ -644,7 +644,7 @@ PinAttemptEnabled == pin.set /\ pin.retries > 0 /\ ~lock.soft
 \* The requirement the soft lock encodes: after MismatchLimit consecutive
 \* mismatches no further attempt is accepted until a REAL power cycle. The
 \* policy counter is cleared only by PowerCut, never by a host-requested warm
-\* reset -- which is the whole point of crates/rsk-device/src/lib.rs:131-140.
+\* reset -- which is the whole point of crates/rsk-device/src/lib.rs:132-141.
 PinAttemptPolicy == pin.set /\ pin.retries > 0 /\ lock.policyMism < MismatchLimit
 
 \* EF_MINPINLEN[1], the forced-PIN-change flag, and it is a GATE: while it stands
@@ -1546,7 +1546,7 @@ PowerCut ==
     /\ UNCHANGED viol
 
 \* A host-requestable warm reset (SCB::sys_reset -- vendor 0x1F P1=0, the
-\* rescue twin, the phy config-write auto-reboot). crates/rsk-device/src/lib.rs:131-140
+\* rescue twin, the phy config-write auto-reboot). crates/rsk-device/src/lib.rs:132-141
 \* carries the PinLock across it from either transport; reset.rs:267 makes it CLOSE the reset window.
 WarmReset ==
     /\ VolatileCleared
@@ -1741,7 +1741,7 @@ NoAuthorizationBypass ==
     \* the authenticatorConfig the advisory named and not a second assertion.
     /\ (upSpent /\ tok.live) => tok.perms = {}
     \* The RAM soft lock must reflect the policy it stands for: MismatchLimit
-    \* consecutive mismatches and no real power cycle since (crates/rsk-device/src/lib.rs:131-140).
+    \* consecutive mismatches and no real power cycle since (crates/rsk-device/src/lib.rs:132-141).
     /\ (lock.policyMism >= MismatchLimit) => lock.soft
 
 \* A presence decision produced for one transport is never applied to

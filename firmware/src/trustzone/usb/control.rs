@@ -235,6 +235,13 @@ async fn control_task(mut pipe: SendPipe) {
                             {
                                 return Poll::Ready(ABANDONED);
                             }
+                            with_controller(|state| {
+                                if state.configuration.arm(ticket) {
+                                    rp_pac::USB
+                                        .buff_status()
+                                        .write(|value| value.set_ep_in(0, true));
+                                }
+                            });
                             let value = future.as_mut().poll(cx);
                             observe();
                             if with_command(|command| command.session.poll(ticket))
@@ -252,13 +259,6 @@ async fn control_task(mut pipe: SendPipe) {
                     observe();
                     if result != ABANDONED && operation & 0xff == abi::CTRL_SETUP {
                         with_controller(|state| state.setup_seen = false);
-                    }
-                    if result == 0 && operation == abi::CTRL_ACCEPT {
-                        with_controller(|state| {
-                            if state.setup == [0, 9, 1, 0, 0, 0, 0, 0] {
-                                state.bus_epoch.configure();
-                            }
-                        });
                     }
                     with_command(|command| {
                         if command.session.finish(ticket) {

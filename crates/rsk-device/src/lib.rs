@@ -36,6 +36,7 @@ pub mod mpu_layout;
 pub mod presence;
 pub mod reboot;
 pub mod transport_session;
+pub mod usb_configuration;
 pub mod usb_epoch;
 
 pub use ccid::CcidApplets;

@@ -22,7 +22,7 @@ use embassy_rp::{
 };
 use embassy_sync::blocking_mutex::{Mutex, raw::CriticalSectionRawMutex};
 use embassy_usb::driver::{Bus as _, Driver as _, Endpoint as _, EndpointError, Event};
-use rsk_device::usb_epoch::{BusEpoch, Revocation};
+use rsk_device::usb_epoch::{BusEpoch, BusEvents, Revocation};
 use rsk_usb::{
     usb_abi as abi,
     worker_abi::{INVALID, PENDING},
@@ -38,8 +38,6 @@ type Pipe = usb::ControlPipe<'static, USB>;
 type EndpointIn = usb::Endpoint<'static, USB, In>;
 type EndpointOut = usb::Endpoint<'static, USB, Out>;
 const ENDPOINTS: usize = 16;
-const RAW_RESET: u32 = 1;
-const RAW_SUSPEND: u32 = 2;
 
 struct Controller {
     driver: Option<Driver>,
@@ -47,10 +45,11 @@ struct Controller {
     input: [Option<EndpointIn>; ENDPOINTS],
     output: [Option<EndpointOut>; ENDPOINTS],
     bus_epoch: BusEpoch,
+    configuration: rsk_device::usb_configuration::Configuration,
     bulk_zlp: u16,
     bulk_retiring: u16,
     events: u8,
-    seen: u32,
+    observer: BusEvents,
     setup_seen: bool,
     setup: [u8; 8],
 }
@@ -62,10 +61,11 @@ static CONTROLLER: Mutex<CriticalSectionRawMutex, RefCell<Controller>> =
         input: [const { None }; ENDPOINTS],
         output: [const { None }; ENDPOINTS],
         bus_epoch: BusEpoch::new(),
+        configuration: rsk_device::usb_configuration::Configuration::new(),
         bulk_zlp: 0,
         bulk_retiring: 0,
         events: 0,
-        seen: 0,
+        observer: BusEvents::new(),
         setup_seen: false,
         setup: [0; 8],
     }));
@@ -143,6 +143,10 @@ pub fn disconnect_after_fault() {
 
 fn revoke(state: &mut Controller, reason: Revocation) {
     state.bus_epoch.revoke(reason);
+    state.configuration.reset();
+    if reason == Revocation::Reset {
+        state.setup_seen = false;
+    }
     clear_packets();
     rp_pac::USB.ep_abort().write(|value| value.0 = 0);
     rp_pac::USB
@@ -167,26 +171,21 @@ fn observe_locked(state: &mut Controller) {
         return;
     }
     let status = rp_pac::USB.sie_status().read();
-    let raw =
-        (u32::from(status.bus_reset()) * RAW_RESET) | (u32::from(status.suspended()) * RAW_SUSPEND);
-    let fresh = raw & !state.seen;
-    state.seen = raw;
-    if fresh != 0 {
-        if fresh & RAW_RESET != 0 {
-            state.setup_seen = false;
-        }
-        revoke(
-            state,
-            if fresh & RAW_RESET != 0 {
-                Revocation::Reset
-            } else {
-                Revocation::Suspend
-            },
-        );
+    let fresh = state.observer.begin(status.bus_reset(), status.suspended());
+    // A completed configuration survives suspend; a bus reset always wins.
+    if !status.bus_reset()
+        && rp_pac::USB.buff_status().read().ep_in(0)
+        && state.configuration.acknowledge()
+    {
+        state.bus_epoch.configure();
+    }
+    if let Some(reason) = fresh {
+        revoke(state, reason);
     }
     if status.setup_rec() {
         let setup = read_setup();
         if !state.setup_seen || setup != state.setup {
+            state.configuration.reset();
             state.setup_seen = true;
             state.setup = setup;
             if setup == [0, 9, 0, 0, 0, 0, 0, 0] {
@@ -209,8 +208,18 @@ fn observe_locked(state: &mut Controller) {
                 revoke(state, Revocation::ConfigurationLoss);
                 abi::POWER_REMOVED
             }
-            Event::Reset => abi::RESET,
-            Event::Suspend => abi::SUSPEND,
+            Event::Reset => {
+                if state.observer.observe_hal(Revocation::Reset) {
+                    revoke(state, Revocation::Reset);
+                }
+                abi::RESET
+            }
+            Event::Suspend => {
+                if state.observer.observe_hal(Revocation::Suspend) {
+                    revoke(state, Revocation::Suspend);
+                }
+                abi::SUSPEND
+            }
             Event::Resume => {
                 state.bus_epoch.resume();
                 for (index, endpoint) in state.output.iter().enumerate().skip(1) {
@@ -233,8 +242,9 @@ fn observe_locked(state: &mut Controller) {
     }
     bulk::observe(state);
     let status = rp_pac::USB.sie_status().read();
-    state.seen =
-        (u32::from(status.bus_reset()) * RAW_RESET) | (u32::from(status.suspended()) * RAW_SUSPEND);
+    state
+        .observer
+        .finish(status.bus_reset(), status.suspended());
 }
 
 pub fn observe() {
@@ -315,6 +325,7 @@ pub fn operate(operation: u32, argument: u32, data: &mut [u8]) -> u32 {
             return PENDING;
         }
         if action == abi::CTRL_ABANDON && operation == action && data.is_empty() {
+            state.configuration.abandon(argument);
             control::abandon(argument);
             return 0;
         }
@@ -326,7 +337,14 @@ pub fn operate(operation: u32, argument: u32, data: &mut [u8]) -> u32 {
             return abi::DISABLED;
         }
         if matches!(action, abi::CTRL_SETUP..=abi::CTRL_ADDRESS) {
-            return control::queue(operation, data);
+            let ticket = control::queue(operation, data);
+            if operation == abi::CTRL_ACCEPT
+                && state.setup == [0, 9, 1, 0, 0, 0, 0, 0]
+                && ticket < abi::OVERFLOW
+            {
+                state.configuration.queue(ticket);
+            }
+            return ticket;
         }
         if matches!(action, abi::BUS_ENABLE | abi::BUS_DISABLE)
             && operation == action

@@ -86,3 +86,81 @@ fn exhaustion_is_terminal_even_after_configuration_and_resume() {
     assert_eq!(bus.current(), rsk_usb::usb_abi::OVERFLOW - 1);
     assert!(!bus.accepts(LAST_EPOCH));
 }
+
+#[test]
+fn hal_observes_events_arriving_after_the_raw_snapshot() {
+    for reason in [Revocation::Reset, Revocation::Suspend] {
+        let mut events = BusEvents::new();
+        assert_eq!(events.begin(false, false), None);
+        assert!(events.observe_hal(reason));
+        assert!(events.observe_hal(reason));
+    }
+}
+
+#[test]
+fn raw_and_hal_report_each_hardware_event_once() {
+    for (reset, suspended, reason) in [
+        (true, false, Revocation::Reset),
+        (false, true, Revocation::Suspend),
+    ] {
+        let mut events = BusEvents::new();
+        assert_eq!(events.begin(reset, suspended), Some(reason));
+        assert!(!events.observe_hal(reason));
+        assert!(events.observe_hal(reason));
+        events.finish(false, false);
+        assert_eq!(events.begin(reset, suspended), Some(reason));
+    }
+}
+
+#[test]
+fn an_undrained_raw_event_is_not_revoked_again_on_the_next_poll() {
+    let mut events = BusEvents::new();
+    assert_eq!(events.begin(true, false), Some(Revocation::Reset));
+    events.finish(true, false);
+    assert_eq!(events.begin(true, false), None);
+    assert!(!events.observe_hal(Revocation::Reset));
+}
+
+#[test]
+fn the_final_snapshot_does_not_hide_a_new_unhandled_event() {
+    let mut events = BusEvents::new();
+    assert_eq!(events.begin(false, false), None);
+    events.finish(true, true);
+    assert_eq!(events.begin(true, true), Some(Revocation::Reset));
+    assert!(!events.observe_hal(Revocation::Reset));
+    assert!(events.observe_hal(Revocation::Suspend));
+    assert_eq!(events.begin(false, false), None);
+}
+
+#[test]
+fn reset_does_not_cover_a_distinct_suspend_or_configuration_loss() {
+    let mut events = BusEvents::new();
+    assert_eq!(events.begin(true, true), Some(Revocation::Reset));
+    assert!(events.observe_hal(Revocation::Suspend));
+    assert!(!events.observe_hal(Revocation::Reset));
+    assert!(events.observe_hal(Revocation::ConfigurationLoss));
+}
+
+#[test]
+fn an_acknowledged_suspend_level_is_not_a_new_event_on_every_poll() {
+    let mut events = BusEvents::new();
+    assert_eq!(events.begin(false, true), Some(Revocation::Suspend));
+    assert!(!events.observe_hal(Revocation::Suspend));
+    for _ in 0..4 {
+        events.finish(false, true);
+        assert_eq!(events.begin(false, true), None);
+    }
+    assert!(events.observe_hal(Revocation::Suspend));
+    events.finish(false, false);
+    assert_eq!(events.begin(false, true), Some(Revocation::Suspend));
+}
+
+#[test]
+fn an_undrained_suspend_level_covers_its_later_hal_receipt_once() {
+    let mut events = BusEvents::new();
+    assert_eq!(events.begin(false, true), Some(Revocation::Suspend));
+    events.finish(false, true);
+    assert_eq!(events.begin(false, true), None);
+    assert!(!events.observe_hal(Revocation::Suspend));
+    assert!(events.observe_hal(Revocation::Suspend));
+}
