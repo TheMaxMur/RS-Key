@@ -1153,6 +1153,41 @@ additional complete PIV suites passed under 60,242 concurrent HID PINGs; the
 longest PING took 0.190 seconds. All diagnostic error records remained empty.
 These runs did not reproduce `6581` or identify why `EF_RETRIES` was refused.
 
+The temporary no-touch 0x0ABC diagnostic also covers `Fs::put` prechecks and
+storage-key acquisition. It freezes the SDK error, enclosing operation and FID,
+error sites and sequential-storage error class before filesystem recovery can
+overwrite them. The enclosing FID identifies the requested operation; validation
+may fail on another retained payload. Driver errors and readback mismatches also
+retain the flash operation, offset, length and error kind. Root diagnostics contain the root arm,
+blank/fused/unreadable row state and latch flag. `EF_RETRIES` is routed to
+the authenticated Main store; the separate counter bank serves the declared
+`COUNTER_FIDS` set.
+
+Three image-emulator controls checked this capture through the actual RESET
+command. An injected `NoMemory` at retry-file recreation returned `6581` and
+froze the filesystem precheck. A separately skipped flash program made the real
+readback check fail; RESET returned `6581`, with `MemoryFatal`, write context
+`D1FE` and the journal flash offset retained before recovery. A one-shot
+`RootRead::Unreadable` also returned `6581`, preserving the root row state and
+write context without reporting a flash IO error. These deliberate faults
+validate the diagnostic; the original hardware failure remains unexplained. An
+uninjected image completed RESET after all 34 varied object lengths.
+
+The earlier direct-call RAM probes synthesized retry bytes at the wrong offsets
+and bypassed the command-level RESET gate. Their final `[3,3,0,0]` tuple leaves
+the PIN unblocked; the real RESET rejects it with `6A80` and no flash changes.
+Those runs cover storage operations rather than the complete APDU workload.
+
+A replacement RAM NOR probe drives `PivApplet` through SELECT, management
+authentication, real EC/RSA generation and signing, eight varied object writes,
+PIN change, exact wrong-reference statuses and RESET. Each of 100 admitted
+resets starts with `[3,0,3,0]`, restores `[3,3,3,3]` and checks factory metadata,
+slot-key and object removal. Erase events measured 58 resets with neither journal
+rollover nor payload erase, 13 with journal rollover only, 23 with payload erase
+only and 6 with both. Foreign records and the routed counter survived, and all
+registry dependencies match the firmware lockfile. This model does not exercise
+USB or RP2350 flash timing and did not reproduce the original `6581`.
+
 While returning to the ordinary no-touch 0x0AB0 image, programming and
 verification passed, but PC/SC reported `NoCard` and HID INIT did not answer.
 Live EP0 GET_STATUS still answered. One host USB bus reset recovered HID
