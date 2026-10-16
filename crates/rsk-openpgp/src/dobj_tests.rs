@@ -427,3 +427,6 @@ fn advertised_algorithms_refuse_an_unknown_file_even_for_a_valid_attribute() {
         assert!(!advertised_algo(0xffff, &attr[1..]));
     }
 }
+
+#[path = "dobj_encoding_tests.rs"]
+mod encoding;

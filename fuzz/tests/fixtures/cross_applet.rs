@@ -1,0 +1,67 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (C) 2026 RS-Key contributors
+
+//! Hand-encoded seed literals mirroring the `rs-key-cross-applet-*` records that
+//! `cross_applet_sequences()` in `scripts/external_corpus.py` generates. They are
+//! re-encoded here from that generator's source, not imported from Python, so the
+//! Miri replay drives the same refused/served/wipe paths the corpus feeds the
+//! target.
+//!
+//! The opcodes are `fuzz_targets/cross_applet.rs`'s: `0xF6 hi lo` writes the
+//! capability mask, `0xF3` re-reads it, `0xF1` is `reset_card`, `0xF4` the
+//! device-wide `factory_wipe`, and a `0x00`–`0x07` byte selects that applet by
+//! registration order. `0x023B` is `rsk_devconf::SUPPORTED_CAPS`.
+
+/// OpenPGP (index 1, cap `0x0008`) disabled: `SET_CAPS(0x023B & !0x0008)`, refresh,
+/// SELECT. The gate must answer `FILE_NOT_FOUND`.
+const OPENPGP_DISABLED: &[u8] = &[0xF6, 0x02, 0x33, 0xF3, 0x01];
+
+/// The disabled prefix, then `SET_CAPS(0x023B)`, refresh and the same SELECT — now
+/// served, because the gate is the mask and not the applet's own select.
+const OPENPGP_REENABLED: &[u8] = &[0xF6, 0x02, 0x33, 0xF3, 0x01, 0xF6, 0x02, 0x3B, 0xF3, 0x01];
+
+/// OATH (index 3, cap `0x0020`): `0x023B & !0x0020` = `0x021B`.
+const OATH_DISABLED: &[u8] = &[0xF6, 0x02, 0x1B, 0xF3, 0x03];
+
+/// OATH restored and re-selected.
+const OATH_REENABLED: &[u8] = &[0xF6, 0x02, 0x1B, 0xF3, 0x03, 0xF6, 0x02, 0x3B, 0xF3, 0x03];
+
+/// OTP (index 4, cap `0x0001`): `0x023B & !0x0001` = `0x023A`.
+const OTP_DISABLED: &[u8] = &[0xF6, 0x02, 0x3A, 0xF3, 0x04];
+
+/// OTP restored and re-selected.
+const OTP_REENABLED: &[u8] = &[0xF6, 0x02, 0x3A, 0xF3, 0x04, 0xF6, 0x02, 0x3B, 0xF3, 0x04];
+
+/// PIV (index 5, cap `0x0010`): `0x023B & !0x0010` = `0x022B`.
+const PIV_DISABLED: &[u8] = &[0xF6, 0x02, 0x2B, 0xF3, 0x05];
+
+/// PIV restored and re-selected.
+const PIV_REENABLED: &[u8] = &[0xF6, 0x02, 0x2B, 0xF3, 0x05, 0xF6, 0x02, 0x3B, 0xF3, 0x05];
+
+/// FIDO (index 7, cap `0x0202` = `CAP_FIDO2 | CAP_U2F`): `0x023B & !0x0202` = `0x0039`.
+const FIDO_DISABLED: &[u8] = &[0xF6, 0x00, 0x39, 0xF3, 0x07];
+
+/// FIDO restored and re-selected.
+const FIDO_REENABLED: &[u8] = &[0xF6, 0x00, 0x39, 0xF3, 0x07, 0xF6, 0x02, 0x3B, 0xF3, 0x07];
+
+/// Disable every gated applet (`SET_CAPS(0)`), refresh, run `reset_card` +
+/// `factory_wipe`, refresh, then SELECT OpenPGP (1) and OATH (3). The wipe must
+/// carry `EF_DEV_CONF` away, so the disabled applets are reachable again.
+const FACTORY_WIPE_RESTORES_CAPS: &[u8] = &[
+    0xF6, 0x00, 0x00, 0xF3, 0x01, 0x03, 0x04, 0x05, 0x07, 0xF1, 0xF4, 0xF3, 0x01, 0x03,
+];
+
+/// Every seed, in the order `cross_applet_sequences()` yields the gated pairs.
+pub(crate) const SEEDS: [&[u8]; 11] = [
+    OPENPGP_DISABLED,
+    OPENPGP_REENABLED,
+    OATH_DISABLED,
+    OATH_REENABLED,
+    OTP_DISABLED,
+    OTP_REENABLED,
+    PIV_DISABLED,
+    PIV_REENABLED,
+    FIDO_DISABLED,
+    FIDO_REENABLED,
+    FACTORY_WIPE_RESTORES_CAPS,
+];

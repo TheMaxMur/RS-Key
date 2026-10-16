@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Integrate the current develop storage recovery and host-test contracts
+  with the TrustZone transport build. Preserve Secure USB lifecycle
+  ownership and bank-aware stack measurements.
+  bcdDevice `0x0ABB` → `0x0ABC`.
+
 - Image laboratory measurements track Secure and Non-secure core0 main stacks
   separately and check both bounds. A TrustZone image no longer fails `begin`
   because its active Non-secure stack is outside the Secure ELF allocation.
@@ -60,12 +65,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   its partition table and has an offline unsigned Nix builder. Startup validates
   NS vectors and clears register state; fatal S faults fence gateways and USB.
 
-
 - TrustZone bcdDevice 0x0AAA: Non-secure USB descriptors now use a bounded public
   Secure boot snapshot (effective VID/PID, strings, version, interface mask and
   ATR), including persisted PHY overrides. Synthetic getInfo delay and gateway
   startup probes are explicit test switches; NS no longer parses Secure main.rs.
-
 
 - TrustZone (bcdDevice 0x0AA9): explicitly grant bus resources before NS entry,
   lock Secure DMA channels, configure both Secure MPUs and the NS MPU, and
@@ -123,10 +126,53 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   timestamps taken at USB completion.
   The first prototype is a 4 MiB no-touch test image without display support.
   bcdDevice `0x0AA3` → `0x0AA4`.
+
 - Keep TrustZone transport replies scoped to their request and USB session.
   Processing CTAPHID_CANCEL and two-phase CCID ABORT discard the old response;
   USB reset/disconnect clear applet authorization before accepting new work,
   preserving the per-boot FIDO PIN failure budget. bcdDevice `0x0AA4` → `0x0AA5`.
+
+- Measure the host tools in their own workspaces (Phase 6): the Python CLI's
+  invalid-argument exit and its two JSON streams (`status --json`,
+  `inventory list --json`), and process-level contract tests for `tools/tui`'s
+  one-shot flags and `tools/emu`'s argument and bind refusals. The totals are
+  host-tool measurements, not folded into the firmware core percentage.
+  `rsk` → `0.3.51`, `rsk-tui` → `0.3.17`; `rsk-emu` keeps its version.
+
+- Add the test-only torn-write storage double (`faults::Torn`) and its read-back
+  oracle. Behaviour is unchanged: the module is `cfg(test-util)`, but the row
+  counts builds and `storage.rs` is shipped code.
+  bcdDevice `0x0AA6` → `0x0AA7`.
+
+- Fix the at-rest scrub re-arm's marker probe to ask the medium rather than the
+  present-cache, and fail OTP-PIN VERIFY closed when the re-arm cannot be shown
+  to have landed. `request_rescrub` deletes `EF_HARDENED` and re-reads it, but
+  `delete` marks the marker absent from its own present bit, so the
+  cache-satisfied probe answered "gone" without asking the backend; a medium
+  whose `remove` reported `Ok` without applying it left the marker live under a
+  standing `Ok(Rearmed)`, and the next boot's lap skipped. The new
+  `Fs::try_medium_has_data` reads the marker past `known_absent` and keeps the
+  `Storage::last_error` discipline; a swallowed tombstone now returns
+  `MemoryFatal` and latches `Fs::rescrub_refused`, and `cmd_verify_otp_pin`
+  answers `MEMORY_FAILURE` rather than succeeding with the record un-upgraded,
+  matching `cmd_change_otp_pin`.
+  bcdDevice `0x0AA5` → `0x0AA6`.
+
+- Revert the medium-probing at-rest re-arm fix. The marker probe is again
+  answered from the present cache, so a backend that reports a successful
+  `remove` without applying it can still leave `EF_HARDENED` live behind an
+  `Ok(Rearmed)`; the finding and its reproduction stay recorded as an open item
+  in the testing roadmap. Behavior matches `0x0AA4`; the build counter advances
+  because the reverted change could reach the image.
+  bcdDevice `0x0AA4` → `0x0AA5`.
+
+- Pin the OpenPGP pending mutation controls: counter lanes and persisted origin
+  order, the maximum AES/RSA sealed-record edges, the session-drop wipe
+  observer, exact-size AES PSO, the default algorithm attribute and the BER
+  long-form ECDH walk. Firmware behavior is unchanged; the build counter
+  advances for changes within a production crate's gated region and a
+  visibility-only helper export, as required by the existing bcd gate.
+  bcdDevice `0x0AA3` → `0x0AA4`.
 
 - Keep resident FIDO discovery's first assertion and continuation queue in the
   same order, including equal creation times and more matches than the queue
@@ -170,7 +216,6 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
   feature profiles. One-shot test hooks exercise rare U2F key-construction and
   PIV RSA-generation failures. bcdDevice `0x0A9E` → `0x0A9F`: the build gate
   counts the inline test hooks as a build change; no firmware behaviour change.
-
 
 - Preserve legacy storage upgrades when an SDK UF2 left the RP2350-E10
   `0xEF` padding block at the end of a smaller flash chip. Accept only the exact

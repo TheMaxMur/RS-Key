@@ -90,6 +90,89 @@ def oath_mark_sequences():
                 yield "oath_apdu", f"rs-key-oath-mark-read-{selector}-{position}-{persistent}", data
 
 
+# `cross_applet`'s opcode table (fuzz/fuzz_targets/cross_applet.rs): applet
+# indices 0-7 in registration order, then F0 management, F1 reset-card, F2
+# reset-chaining, F3 refresh-caps, F4 factory-wipe, F5 OTP-HID and F6 SET_CAPS
+# hi lo. The capability-gated applets and their bits are `rsk_devconf`'s.
+CROSS_APPLET_GATED = (
+    (1, "openpgp", 0x0008),  # CAP_OPENPGP
+    (3, "oath", 0x0020),     # CAP_OATH
+    (4, "otp", 0x0001),      # CAP_OTP
+    (5, "piv", 0x0010),      # CAP_PIV
+    (7, "fido", 0x0202),     # CAP_FIDO2 | CAP_U2F
+)
+CROSS_APPLET_SUPPORTED = 0x023B  # rsk_devconf::SUPPORTED_CAPS
+
+
+def cross_applet_sequences():
+    def set_caps(mask):
+        return bytes([0xF6, mask >> 8, mask & 0xFF])
+
+    # The cached mask only moves on a refresh, which is the step the worker takes
+    # after a config write — a SELECT before it still sees the old set.
+    refresh = bytes([0xF3])
+    for index, name, cap in CROSS_APPLET_GATED:
+        off = CROSS_APPLET_SUPPORTED & ~cap
+        refused = set_caps(off) + refresh + bytes([index])
+        yield "cross_applet", f"rs-key-cross-applet-{name}-disabled-select", refused
+        # The very same SELECT once the config restores the bit: OK, not
+        # FILE_NOT_FOUND, so the gate is the mask and not the applet's own select.
+        restored = refused + set_caps(CROSS_APPLET_SUPPORTED) + refresh + bytes([index])
+        yield "cross_applet", f"rs-key-cross-applet-{name}-reenabled-select", restored
+    # Disable every gated applet, then run the trusted display's device-wide wipe:
+    # it must take EF_DEV_CONF with it so the disabled applets become reachable.
+    disabled = set_caps(0) + refresh + b"".join(bytes([index]) for index, _, _ in CROSS_APPLET_GATED)
+    wipe = disabled + bytes([0xF1, 0xF4]) + refresh + bytes([1, 3])
+    yield "cross_applet", "rs-key-cross-applet-factory-wipe-restores-caps", wipe
+
+
+# `fs_ops`'s bytes (fuzz/fuzz_targets/fs_ops.rs): fid = 0xB000 + ((b >> 3) & 7),
+# op = b & 7, and the extra byte some ops consume. put/read clamp and the exact
+# META_MAX boundary are the contracts its HashMap model checks.
+FS_PUT, FS_READ, FS_DELETE = 0, 1, 2
+FS_META_ADD, FS_META_FIND, FS_META_DELETE = 3, 4, 5
+FS_REBOOT, FS_QUERY = 6, 7
+
+
+def fs_ops_sequences():
+    def op(index, verb, extra=()):
+        return bytes([(index << 3) | verb, *extra])
+
+    def reboot():
+        return bytes([FS_REBOOT])
+
+    yield "fs_ops", "rs-key-fs-ops-put-read-clamp", (
+        op(0, FS_PUT, [40]) + op(0, FS_READ, [0]) + op(0, FS_READ, [16])
+        + op(0, FS_READ, [39]) + op(0, FS_READ, [40]) + op(0, FS_READ, [255])
+        + op(0, FS_QUERY)
+    )
+    yield "fs_ops", "rs-key-fs-ops-put-delete", (
+        op(0, FS_PUT, [10]) + op(0, FS_PUT, [200]) + op(0, FS_READ, [255])
+        + op(0, FS_DELETE) + op(0, FS_READ, [8]) + op(0, FS_QUERY)
+        + op(1, FS_PUT, [1]) + op(1, FS_DELETE)
+    )
+    yield "fs_ops", "rs-key-fs-ops-meta-add-replace-find-delete", (
+        op(0, FS_META_ADD, [8]) + op(0, FS_META_ADD, [20]) + op(0, FS_META_FIND)
+        + op(0, FS_META_DELETE) + op(0, FS_META_FIND) + op(0, FS_QUERY)
+    )
+    # Four 255-byte meta values: the first three fit META_MAX, the fourth must
+    # answer NoMemory and leave the store untouched; a delete then makes room.
+    yield "fs_ops", "rs-key-fs-ops-meta-nomemory-boundary", (
+        op(0, FS_META_ADD, [255]) + op(1, FS_META_ADD, [255]) + op(2, FS_META_ADD, [255])
+        + op(3, FS_META_ADD, [255]) + op(3, FS_META_FIND) + op(2, FS_META_FIND)
+        + op(2, FS_META_DELETE) + op(3, FS_META_ADD, [250]) + op(3, FS_META_FIND)
+        + op(0, FS_QUERY)
+    )
+    yield "fs_ops", "rs-key-fs-ops-reboot-read", (
+        op(0, FS_PUT, [50]) + op(0, FS_META_ADD, [6]) + reboot()
+        + op(0, FS_READ, [64]) + op(0, FS_META_FIND) + op(0, FS_QUERY)
+    )
+    yield "fs_ops", "rs-key-fs-ops-reboot-clears-meta", (
+        op(0, FS_META_ADD, [4]) + op(0, FS_META_DELETE) + reboot()
+        + op(0, FS_QUERY) + op(0, FS_META_FIND)
+    )
+
+
 def records():
     for name, digest in HASHES.items():
         if hashlib.sha256((SOURCE / name).read_bytes()).hexdigest() != digest:
@@ -136,6 +219,8 @@ def records():
     yield from journal_sequences()
     yield from openpgp_cut_sequences()
     yield from oath_mark_sequences()
+    yield from cross_applet_sequences()
+    yield from fs_ops_sequences()
 
 
 def prepare(destination):

@@ -452,3 +452,36 @@ fn flooding_wink_cannot_hold_the_indicator_lit() {
         );
     }
 }
+
+#[test]
+fn out_of_range_status_uses_the_boot_factory_look() {
+    let expected = StatusCfg {
+        effect: EFFECT_SPARKLE,
+        color: COLOR_RED,
+        brightness: DEFAULT_BRIGHTNESS,
+        speed: SPEED_DEFAULT,
+    };
+    for status in [4, 5, u8::MAX] {
+        assert_eq!(default_status(status), expected);
+    }
+}
+
+#[test]
+fn partial_legacy_pairs_preserve_the_untouched_status_and_ignore_a_dangling_color() {
+    for block in [
+        &[1, 3, 50, 3, 51, 6, 52][..],
+        &[1, 3, 50, 3, 51, 6, 52, 7][..],
+    ] {
+        let before = sample();
+        let mut cfg = before;
+        cfg.apply_block(block);
+        assert!(cfg.steady);
+        for (index, (color, brightness)) in [(3, 50), (3, 51), (6, 52)].into_iter().enumerate() {
+            assert_eq!(cfg.status[index].color, color);
+            assert_eq!(cfg.status[index].brightness, brightness);
+            assert_eq!(cfg.status[index].effect, before.status[index].effect);
+            assert_eq!(cfg.status[index].speed, before.status[index].speed);
+        }
+        assert_eq!(cfg.status[3], before.status[3]);
+    }
+}

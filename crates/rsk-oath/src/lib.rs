@@ -1243,18 +1243,18 @@ impl<'a> OathApplet<'a> {
         // (rsk-fs `EF_HARDENED` invariant; audit run-35) BEFORE that write, so a
         // reset between the two appends costs the re-key and never the re-arm.
         //
-        // A re-arm the medium REFUSED skips the write instead of failing the verify:
-        // this upgrade is already best-effort here (`let _`), and skipping it leaves
-        // the record in force rather than superseded under a marker nothing clears.
-        if let Ok(rearmed) = rsk_fs::request_rescrub(fs) {
-            // Success: reset the counter and (lazily) upgrade a legacy record to the
-            // OTP-rooted v1 verifier. The OTP PIN doubles as VALIDATE (nitropy flow).
-            let _ = fs.put_over(
-                EF_OTP_PIN,
-                &Self::otp_pin_record_v1(&dev, pw),
-                Some(&rearmed),
-            );
-        }
+        // A medium that cannot show the re-arm landed fails the verify: the write
+        // below resets the counter, so skipping it would leave a mixed outcome
+        // behind a standing success. Matches `cmd_change_otp_pin`'s strict arm.
+        let Ok(rearmed) = rsk_fs::request_rescrub(fs) else {
+            return Sw::MEMORY_FAILURE;
+        };
+        // Success: reset the counter and lazily upgrade a legacy verifier (OTP PIN = VALIDATE).
+        let _ = fs.put_over(
+            EF_OTP_PIN,
+            &Self::otp_pin_record_v1(&dev, pw),
+            Some(&rearmed),
+        );
         // A code-less applet opens on its PIN (the nitropy flow); a coded one keeps
         // only the unlock its code gave, and the PIN opens the password safe alone.
         self.validated = !code_set || unlocked;

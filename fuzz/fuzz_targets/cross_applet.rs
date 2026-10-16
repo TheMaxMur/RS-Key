@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
 //! Stateful cross-applet fuzzing over the *shipped* wiring. Every other applet
 //! target drives ONE applet from a fresh state; this one builds the real
@@ -49,7 +49,8 @@
 
 use core::cell::RefCell;
 
-use libfuzzer_sys::fuzz_target;
+#[cfg(not(test))]
+use libfuzzer_sys as fuzzing;
 // DeviceInfo's `USB_ENABLED` tag — the one writable field that decides which
 // applets exist.
 use rsk_devconf::raw::TAG_USB_ENABLED;
@@ -226,7 +227,7 @@ fn chunk<'a>(data: &'a [u8], i: &mut usize) -> &'a [u8] {
     s
 }
 
-fuzz_target!(|data: &[u8]| {
+pub(crate) fn exercise(data: &[u8]) {
     let fs = RefCell::new(Fs::new(RamStorage::new()));
     fs.borrow_mut().scan();
     let rng = RefCell::new(SeqRng(1));
@@ -396,4 +397,7 @@ fuzz_target!(|data: &[u8]| {
             }
         }
     }
-});
+}
+
+#[cfg(not(test))]
+fuzzing::fuzz_target!(|data: &[u8]| exercise(data));

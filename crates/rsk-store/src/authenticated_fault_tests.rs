@@ -6,6 +6,12 @@ use super::*;
 #[path = "authenticated_cached_read_tests.rs"]
 mod cached_read;
 
+#[path = "authenticated_tie_tests.rs"]
+mod ties;
+
+#[path = "authenticated_append_tests.rs"]
+mod append;
+
 #[test]
 fn authenticated_deletion_recovery_handles_prepared_absence_at_each_program_cut() {
     let baseline = FaultFlash::new();

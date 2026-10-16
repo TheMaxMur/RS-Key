@@ -2,7 +2,7 @@
 # table below detaches it from the parent so it builds for the host, not thumbv8m).
 [package]
 name = "rsk-tui"
-version = "0.3.16"
+version = "0.3.17"
 license = "AGPL-3.0-only"
 edition = "2024"
 description = "rs-key device dashboard — a self-contained ratatui cockpit"
@@ -39,5 +39,11 @@ zeroize = "1"
 # cockpit shows are bit-compatible with `rsk backup restore --scheme slip39`.
 # It pulls rsk-crypto (hence ml-kem/rsk-mldsa) transitively; accepted for the host tool.
 rsk-slip39 = { path = "../../crates/rsk-slip39" }
+
+[dev-dependencies]
+# The `--json` contract is a documented machine-readable surface, so its output is
+# parsed by an independent JSON reader in the CLI test rather than by substrings.
+# Already in the lock; test-only, and this workspace is host-only.
+serde_json = "1"
 
 [workspace]

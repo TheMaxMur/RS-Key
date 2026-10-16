@@ -1019,3 +1019,6 @@ mod restarts;
 
 #[path = "attest_damage_tests.rs"]
 mod damage;
+
+#[path = "attest_state_tests.rs"]
+mod state;

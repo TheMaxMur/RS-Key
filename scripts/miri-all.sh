@@ -26,7 +26,7 @@ MANIFEST=fuzz/Cargo.toml
 # `tests/churn_compaction.rs`.
 # A literal, not `${MIRI_TEST_FLOOR:-58}`: a floor the environment can lower is
 # not a floor. Raise it in the commit that adds a test.
-MIRI_TEST_FLOOR=69
+MIRI_TEST_FLOOR=73
 
 # FUZZ_CONFIG=flavours builds the shipped flavours' on side — the `flavours`
 # union feature in fuzz/Cargo.toml — instead of the default image's off side.

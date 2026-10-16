@@ -111,7 +111,7 @@ CONSTANT BugFairnessFoldsLocalCeremony
 
 (* A PROPOSED fix, not a defect: order phase 1 of the reset sweep so no EF_RP  *)
 (* entry is dropped while its EF_CRED record is still live. The shipped        *)
-(* `sweep` batches both in `for_each_key` order, which fs.rs:428-431 documents *)
+(* `sweep` batches both in `for_each_key` order, which fs.rs:447-450 documents *)
 (* as store order rather than FID order, so the batch can delete the metadata  *)
 (* first. TRUE models the fix; FALSE is the tree as it stands.                 *)
 CONSTANT FixSweepDropsCredsBeforeRpEntries
@@ -401,7 +401,7 @@ HostCancel ==
     /\ UNCHANGED << pin, gate, store, lock, tok, plat, walk, sys, op, snap,
                     upSpent, viol, ram >>
 
-\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:667, :519), not around
+\* WAIT_SCOPE is set around the whole DISPATCH (worker.rs:667-672), not around
 \* the touch wait, so Arbiter::request_cancel accepts a cancel during a FIDO
 \* command that never opens one -- getInfo, a denied CBOR, getAssertion up:false.
 \* Nothing clears `cancel_requested` when that dispatch ends, so the latch
@@ -771,10 +771,10 @@ LocalPinEnabled == Idle /\ LocalPinGuard
 \* with budget left to spend, because a `Blocked` verdict reached at zero was
 \* turned away before any compare -- which `LocalPinEnabled` already excludes.
 \*
-\* Modelled as taking effect at once. The hook is consumed at the head of the
-\* next CBOR dispatch (crates/rsk-device/src/ctap.rs:238-241), not inside
-\* gates.rs, but nothing can use the token in between: every command that reads
-\* it is a CBOR command and the flag is spent before the dispatch runs.
+\* Modelled as taking effect at once. The hook is consumed by the next CBOR
+\* dispatch (crates/rsk-device/src/ctap.rs:368, crates/rsk-device/src/lib.rs:123-125),
+\* not inside gates.rs. Nothing can use the token in between: every command that
+\* reads it is a CBOR command and the flag is spent before the dispatch runs.
 LocalPinWrong ==
     /\ LocalPinEnabled
     /\ viol' = IF LocalPinPolicy THEN viol

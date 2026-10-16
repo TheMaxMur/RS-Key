@@ -4,6 +4,43 @@
 use super::*;
 
 #[test]
+fn a_one_write_command_sweep_observes_a_cut_and_a_complete_command() {
+    let mut observed = Vec::new();
+    sweep(
+        cut_fixture,
+        |fs| fs.put(0xB000, &[1]).is_ok(),
+        |fs, budget, completed, _| {
+            observed.push((budget, completed));
+            let mut out = [0];
+            assert_eq!(fs.read(0xB000, &mut out), Some(1));
+            assert_eq!(out, [u8::from(completed)]);
+        },
+    );
+    assert_eq!(observed, [(0, false), (1, true)]);
+}
+
+#[test]
+#[should_panic(expected = "vacuous: budget 0 completed and none before it was cut")]
+fn a_read_only_command_cannot_claim_a_power_cut_sweep() {
+    sweep(cut_fixture, |_| true, |_, _, _, _| {});
+}
+
+#[test]
+fn snapshot_removals_spend_a_budget_and_size_reports_the_full_value() {
+    let (fs, medium) = Snap::over(BTreeMap::from([(0xB000, b"abc".to_vec())]));
+    let mut backend = fs.into_storage();
+    assert_eq!(backend.size(0xB000), Some(3));
+    assert_eq!(backend.size(0xB001), None);
+    medium.arm(Some(0));
+    assert_eq!(backend.remove(0xB000), Err(Error::MemoryFatal));
+    assert_eq!(backend.size(0xB000), Some(3));
+    assert!(medium.arm(Some(1)));
+    assert_eq!(backend.remove(0xB000), Ok(()));
+    assert_eq!(medium.budget.get(), 0);
+    assert_eq!(backend.size(0xB000), None);
+}
+
+#[test]
 fn a_recovery_that_finishes_at_the_last_budget_is_accepted() {
     const COMMAND: u16 = 0xB000;
     const REPAIR: u16 = 0xB001;

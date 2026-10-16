@@ -348,3 +348,6 @@ fn an_unmodelled_secret_fid_is_swept_without_changing_modelled_records() {
     assert_eq!(reset.persistent, before);
     assert!(reset.well_formed(&volatile));
 }
+
+#[path = "reset_projection_tests.rs"]
+mod projection;

@@ -423,3 +423,9 @@ fn runtime_bitmap_selection_prefers_the_larger_tie_in_either_table_order() {
         assert_eq!(table[pick_index(table, size)].size, 5);
     }
 }
+
+#[test]
+fn the_passkey_globe_keeps_its_admitted_fixed_coverage() {
+    assert_eq!(fixed_size_index(20), Some(5));
+    assert!(fixed_coverage(Glyph::Globe, 20).is_some());
+}

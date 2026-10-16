@@ -40,6 +40,48 @@ fn dev() -> Device<'static> {
     }
 }
 
+std::thread_local! {
+    /// `None` until a test arms it; otherwise the wiped state of PW1/PW3/RC at
+    /// `Session`'s drop, observed from inside the destructor.
+    static SESSION_DROP_WIPED: core::cell::Cell<Option<[bool; 3]>> =
+        const { core::cell::Cell::new(None) };
+}
+
+pub(super) fn observe_drop(pw1: &[u8; 32], pw3: &[u8; 32], rc: &[u8; 32]) {
+    SESSION_DROP_WIPED.with(|observed| {
+        if observed.get().is_none() {
+            return;
+        }
+        observed.set(Some([
+            pw1 == &[0u8; 32],
+            pw3 == &[0u8; 32],
+            rc == &[0u8; 32],
+        ]));
+    });
+}
+
+#[test]
+fn dropping_a_live_session_wipes_all_three_reference_copies() {
+    {
+        let mut sess = Session::new();
+        sess.session_pw1 = [0x11; 32];
+        sess.session_pw3 = [0x22; 32];
+        sess.session_rc = [0x33; 32];
+        SESSION_DROP_WIPED.with(|observed| observed.set(Some([false; 3])));
+        // While alive the observer must see the seeded bytes, or the check
+        // after the scope would pass on a fixture that never held anything.
+        observe_drop(&sess.session_pw1, &sess.session_pw3, &sess.session_rc);
+        SESSION_DROP_WIPED.with(|observed| assert_eq!(observed.get(), Some([false; 3])));
+    }
+    SESSION_DROP_WIPED.with(|observed| {
+        assert_eq!(
+            observed.replace(None),
+            Some([true; 3]),
+            "a live session key survived Drop"
+        );
+    });
+}
+
 fn setup() -> Fs<RamStorage> {
     let mut fs = Fs::new(RamStorage::new());
     fs.scan();
@@ -84,6 +126,28 @@ fn pw2_status_query_reports_pw1_retries() {
         &[],
     );
     assert_eq!(sw, Sw::retries(PW_RETRIES_DEFAULT));
+}
+
+#[test]
+fn a_zero_length_verifier_is_absent_even_for_a_status_query() {
+    // The status-query arm returns retries, not REFERENCE_NOT_FOUND, for any
+    // record the guard lets through — a present byte that is not a length must
+    // not turn an absent reference into a retry report.
+    let mut fs = setup();
+    fs.put(EF_PW1, &[0x00]).unwrap();
+    let mut sess = Session::new();
+    assert_eq!(
+        verify(
+            &dev(),
+            &mut fs,
+            &mut sess,
+            &mut CountRng(0),
+            0x00,
+            PW1_MODE81,
+            &[]
+        ),
+        Sw::REFERENCE_NOT_FOUND
+    );
 }
 
 #[test]
@@ -200,6 +264,43 @@ fn pin_and_dek_migrate_to_otp_kbase_at_verify() {
             &[]
         ),
         Sw::new(0x63, 0xC1)
+    );
+}
+
+/// A copy whose format byte this build does not write must be refused, not
+/// migrated: the byte is the version tag that keeps a future layout from being
+/// read as V3. `request_rescrub` has already appended by then, so the check is
+/// that the DEK record itself is left byte-for-byte as it was found.
+#[test]
+fn a_dek_copy_with_an_unknown_format_byte_never_migrates() {
+    let mut fs = setup();
+    let mut blob = [0u8; DEK_FILE_SIZE];
+    let n = fs.read_key(EF_DEK_PW1, &mut blob).unwrap();
+    let mut corrupted = blob[..n].to_vec();
+    corrupted[0] = 0x7f; // not DEK_FORMAT_V3, and the rest is a genuine wrap
+    fs.put_key(EF_DEK_PW1, Sealed::wrap(&corrupted)).unwrap();
+
+    let mut sess = Session::new();
+    assert_eq!(
+        verify(
+            &otp_dev(),
+            &mut fs,
+            &mut sess,
+            &mut CountRng(0),
+            0x00,
+            PW1_MODE81,
+            PW1_DEFAULT
+        ),
+        Sw::EXEC_ERROR,
+        "an unknown format byte must fail closed"
+    );
+    assert!(!sess.has_pw1);
+    let mut after = [0u8; DEK_FILE_SIZE];
+    let n = fs.read_key(EF_DEK_PW1, &mut after).unwrap();
+    assert_eq!(
+        &after[..n],
+        &corrupted[..],
+        "the unread copy must not be replaced"
     );
 }
 

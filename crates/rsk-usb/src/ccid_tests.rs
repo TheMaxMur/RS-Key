@@ -337,3 +337,36 @@ fn secure_message_located() {
     assert_eq!(&m[a..b], &abdata);
     assert!(secure_apdu(&msg(CCID_XFR_BLOCK, 9, &abdata)).is_none());
 }
+
+/// The refusal's `bStatus` is `STATUS_FAILED | slot status` — the failed bit is
+/// OR-ed in, never toggled. A slot whose status already carries bit 6 (the
+/// `bmCommandStatus = failed` bit) must keep it: an XOR would clear exactly the bit
+/// the host keys the failed command on.
+#[test]
+fn a_short_xfr_refusal_keeps_a_failed_bit_the_slot_already_reports() {
+    let m = msg(CCID_XFR_BLOCK, 9, &[0x40, 0xA4]);
+    let mut out = [0u8; 64];
+    assert_eq!(refuse_short_xfr(&m, STATUS_FAILED, &mut out), Some(HEADER));
+    assert_eq!(out[7], STATUS_FAILED, "the failed bit was cleared");
+    assert_eq!(out[8], ERR_BAD_DWLENGTH);
+}
+
+/// A reply buffer exactly one CCID header long holds a header-only answer, so
+/// `process_message` must answer in it rather than treat it as too small —
+/// `first_chunk_mut::<HEADER>()` writes the whole header either way.
+#[test]
+fn an_exactly_header_sized_reply_buffer_is_answered() {
+    let mut status = STATUS_ACTIVE;
+    let mut out = [0xA5u8; HEADER];
+    let n = process_message(
+        &msg(CCID_SLOT_STATUS, 7, &[]),
+        ATR_RSKEY,
+        &mut status,
+        &mut out,
+    );
+    assert_eq!(n, HEADER);
+    assert_eq!(
+        out,
+        [CCID_SLOT_STATUS_RET, 0, 0, 0, 0, 0, 7, STATUS_ACTIVE, 0, 0]
+    );
+}

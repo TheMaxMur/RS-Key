@@ -210,7 +210,11 @@ fn split_dek(dek: &[u8; DEK_SIZE]) -> DekKeys {
 }
 
 /// Load the DEK and [`split_dek`] it.
-fn load_dek_keys<S: Storage>(dev: &Device, fs: &mut Fs<S>, sess: &Session) -> Result<DekKeys, Sw> {
+pub(crate) fn load_dek_keys<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    sess: &Session,
+) -> Result<DekKeys, Sw> {
     let mut dek = Secret::<[u8; DEK_SIZE]>::zeroed();
     load_dek(dev, fs, sess, &mut dek)?;
     let keys = split_dek(dek.expose());
@@ -666,3 +670,7 @@ mod rsa_tests;
 #[cfg(test)]
 #[path = "keys_seal_tests.rs"]
 mod seal_tests;
+
+#[cfg(test)]
+#[path = "keys_limits_tests.rs"]
+mod limits_tests;

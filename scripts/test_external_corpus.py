@@ -134,3 +134,44 @@ def test_check_sh_replays_through_the_existing_fuzz_row():
     check = (corpus.ROOT / "scripts/check.sh").read_text()
     assert gate_lines.runs(check, 'scripts/external_corpus.py --replay "$manifest"')
     assert gate_lines.runs(check, 'fuzz_targets_are_alive')
+
+
+def test_cross_applet_sequences_keep_both_gate_directions_and_the_wipe():
+    seeds = {(target, name): data for target, name, data in corpus.records()
+             if name.startswith("rs-key-cross-applet-")}
+    assert {target for target, _ in seeds} == {"cross_applet"}
+    assert len(seeds) == 11
+    # Independently encoded: OpenPGP is applet 1 with CAP_OPENPGP 0x0008; its
+    # disabled seed turns that bit off, refreshes, then selects. The reenabled
+    # twin replays the same refused SELECT before restoring the supported mask.
+    disabled = bytes([0xF6, 0x02, 0x33, 0xF3, 1])
+    assert seeds["cross_applet", "rs-key-cross-applet-openpgp-disabled-select"] == disabled
+    assert seeds["cross_applet", "rs-key-cross-applet-openpgp-reenabled-select"] == (
+        disabled + bytes([0xF6, 0x02, 0x3B, 0xF3, 1]))
+    # The wipe disables every gated applet, selects each, then reset-card +
+    # factory-wipe + refresh; the trailing 1,3 are the restored OpenPGP/OATH
+    # selects the target asserts as served.
+    assert seeds["cross_applet", "rs-key-cross-applet-factory-wipe-restores-caps"] == (
+        bytes([0xF6, 0x00, 0x00, 0xF3, 1, 3, 4, 5, 7, 0xF1, 0xF4, 0xF3, 1, 3]))
+    assert {name.removeprefix("rs-key-cross-applet-").removesuffix("-disabled-select")
+            for _, name in seeds if name.endswith("-disabled-select")} == {
+        "openpgp", "oath", "otp", "piv", "fido"}
+    assert sum(name.endswith("-reenabled-select") for _, name in seeds) == 5
+
+
+def test_fs_ops_sequences_build_state_before_the_contracts():
+    seeds = {(target, name): data for target, name, data in corpus.records()
+             if name.startswith("rs-key-fs-ops-")}
+    assert {target for target, _ in seeds} == {"fs_ops"}
+    assert len(seeds) == 6
+    # Independently encoded: op = (index << 3) | verb (put 0, read 1, meta add 3,
+    # find 4, delete 5, reboot 6, query 7) and the extra byte is the op's value.
+    assert seeds["fs_ops", "rs-key-fs-ops-put-read-clamp"] == bytes(
+        [0, 40, 1, 0, 1, 16, 1, 39, 1, 40, 1, 255, 7])
+    assert seeds["fs_ops", "rs-key-fs-ops-reboot-read"] == bytes(
+        [0, 50, 3, 6, 6, 1, 64, 4, 7])
+    assert seeds["fs_ops", "rs-key-fs-ops-reboot-clears-meta"] == bytes(
+        [3, 4, 5, 6, 7, 4])
+    boundary = seeds["fs_ops", "rs-key-fs-ops-meta-nomemory-boundary"]
+    assert boundary[:8] == bytes([3, 255, 11, 255, 19, 255, 27, 255])
+    assert boundary[-2:] == bytes([28, 7])

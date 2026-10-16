@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "rsk-tui"
-version = "0.3.16"
+version = "0.3.17"
 dependencies = [
  "aes",
  "bip39",
@@ -1959,6 +1959,7 @@ dependencies = [
  "rand_core 0.6.4",
  "ratatui",
  "rsk-slip39",
+ "serde_json",
  "sha2 0.10.9",
  "zeroize",
 ]

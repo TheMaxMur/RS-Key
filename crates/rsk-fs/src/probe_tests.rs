@@ -3,6 +3,100 @@
 
 use super::*;
 
+fn traced(fault: Fault) -> Traced {
+    Traced {
+        map: Rc::new(RefCell::new(BTreeMap::from([
+            (RECORD, b"abc".to_vec()),
+            (RECORD + 2, b"neighbor".to_vec()),
+        ]))),
+        reads: Rc::new(RefCell::new(Vec::new())),
+        wrote: Rc::new(RefCell::new(Vec::new())),
+        fault: Rc::new(Cell::new(fault)),
+        err: false,
+    }
+}
+
+#[test]
+fn traced_healthy_probes_and_removals_preserve_lengths_and_the_operation_log() {
+    let mut backend = traced(Fault::Healthy);
+    let mut out = [0; 2];
+    assert_eq!(backend.size(RECORD), Some(3));
+    assert!(!backend.last_error());
+    assert_eq!(backend.size(RECORD + 1), None);
+    assert!(!backend.last_error());
+    assert_eq!(backend.read(RECORD, &mut out), Some(3));
+    assert_eq!(&out, b"ab");
+    assert_eq!(*backend.reads.borrow(), [RECORD, RECORD + 1, RECORD]);
+    assert_eq!(backend.remove(RECORD), Ok(()));
+    assert_eq!(*backend.wrote.borrow(), [(RECORD, None)]);
+    assert_eq!(backend.read(RECORD, &mut out), None);
+    assert!(!backend.last_error());
+    assert_eq!(backend.size(RECORD + 2), Some(8));
+}
+
+#[test]
+fn traced_faults_bind_to_the_target_and_count_only_its_probes() {
+    let mut backend = traced(Fault::Once {
+        fid: RECORD,
+        skip: 2,
+    });
+    assert_eq!(backend.size(RECORD + 2), Some(8));
+    assert_eq!(backend.size(RECORD), Some(3));
+    assert_eq!(backend.read(RECORD, &mut [0; 2]), Some(3));
+    assert_eq!(backend.size(RECORD), None);
+    assert!(backend.last_error());
+    assert_eq!(backend.size(RECORD), Some(3));
+    assert!(!backend.last_error());
+    backend.fault.set(Fault::Every(RECORD));
+    for _ in 0..2 {
+        assert_eq!(backend.size(RECORD + 2), Some(8));
+        assert!(!backend.last_error());
+        assert_eq!(backend.read(RECORD, &mut [0; 2]), None);
+        assert!(backend.last_error());
+    }
+}
+
+#[test]
+fn fault_diagnostics_identify_the_kind_target_and_read_number() {
+    assert_eq!(format!("{:?}", Fault::Healthy), "no fault");
+    assert_eq!(
+        format!(
+            "{:?}",
+            Fault::Once {
+                fid: RECORD,
+                skip: 2
+            }
+        ),
+        "a fault on read 3 of 0xb000"
+    );
+    assert_eq!(
+        format!("{:?}", Fault::Every(RECORD)),
+        "a fault on every read of 0xb000"
+    );
+}
+
+fn judgment_run(answer: Option<Vec<u8>>, value: u8) -> Run {
+    Run {
+        answer,
+        before: BTreeMap::from([(RECORD, vec![10])]),
+        after: BTreeMap::from([(RECORD, vec![value])]),
+        reads: vec![RECORD],
+        wrote: BTreeMap::from([(RECORD, BTreeSet::from([Some(vec![15]), Some(vec![20])]))]),
+    }
+}
+
+#[test]
+fn fault_judgment_distinguishes_refused_intermediates_from_successful_mixed_stores() {
+    let clean = judgment_run(Some(b"answer".to_vec()), 20);
+    assert_eq!(judge(&clean, &judgment_run(None, 15)), None);
+    assert!(judge(&clean, &judgment_run(None, 99)).is_some());
+    assert_eq!(
+        judge(&clean, &judgment_run(Some(b"answer".to_vec()), 20)),
+        None
+    );
+    assert!(judge(&clean, &judgment_run(Some(b"answer".to_vec()), 10)).is_some());
+}
+
 const RECORD: u16 = 0xB000;
 
 #[test]

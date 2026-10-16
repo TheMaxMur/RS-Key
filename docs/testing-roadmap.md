@@ -119,10 +119,10 @@ The latest local completion boundary is:
 |---|---|---|
 | 1 | Calibrated condition measurements, source identity, raw maps and eighteen separate ARM Linux profiles | Native MC/DC is unsupported; the decision below selects scoped independence evidence followed by a compiler-based pilot, with implementation deferred; unemitted and device code need separate evidence |
 | 2 | The original 996-outcome/27-group review and the current eighteen-profile reachability audit, including authenticated storage v2 and direct host/test-util inputs; every measured residual has a finite scoped disposition | MC/DC implementation remains deferred by the decision below; raw residuals, primitive/cryptographic assumptions and excluded evidence scopes are recorded in the [current audit](coverage-current.md) |
-| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below; owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns, arbitrary correlated faults and semantic record-loss detection beyond the current CRC/legacy formats remain open; the bounded matrix does not close the whole phase |
-| 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations | Whole-core weekly-shard closure, device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
-| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs | Other privileged command/state/fault combinations and broader retained campaigns |
-| 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes | Display-image execution, host-tool residuals and device interoperability |
+| 3 | Persistent write histories plus the bounded read/erase/program, damaged-record, exhaustion, readback and silent-mutation matrix below, now including the selective `Silent` medium, its store read-back oracle and the correlated `Torn` medium (a torn write and the read that answers it); owner replay and selected NOR byte sweeps include interrupted recovery | Longer retained campaigns and semantic record-loss detection beyond the current CRC/legacy formats remain open, as do correlated-fault stories beyond the torn write; the bounded matrix does not close the whole phase |
+| 4 | Semantic controls through host, fuzz, Miri and image runners; the 2026-10-11 critical slice below adds independent crypto boundaries and destructor observations; the 2026-10-12/14 whole-core shard closure below dispositions all 10 887 desired occurrences with no pending survivor | Device C/assembly mutation execution and resource/timing equivalence remain separate obligations |
+| 5 | Independent OATH positions, journal histories, 576 OpenPGP and 288 F9 command/state/fault inputs, plus the 11 cross_applet capability-gate and 6 fs_ops stateful seeds of the 2026-10-14 slice below, replayed through the shipped targets under Miri; `scripts/fuzz-union.py` makes the union reproducible and the 2026-10-15 campaigns remeasure it at 23062/36301 (63.53%, `default`) and 22699/36182 (62.74%, `flavours`) | Other privileged command/state/fault combinations and longer retained campaigns |
+| 6 | Eighteen current host-profile maps with finite source-bound residual reviews, including storage v2; fourteen ordinary release-flavour builds with thirteen image protocol passes; the 2026-10-15 host-tool slice adds argument, transport-failure and machine-readable-output contracts for tools/tui, tools/emu and the Python CLI, reported separately | Display-image execution and device interoperability |
 | 7 | Optimized partitioned images, real presence/CANCEL, resource controls and independently checked crypto | Unoptimized image failure, display execution and silicon-only measurements |
 | 8 | Local runner controls and source-bound reports | Actual CI execution and same-revision release evidence |
 
@@ -401,6 +401,38 @@ longer campaigns. Report per-target and per-profile coverage, plus the union.
 Fuzzing must reach its declared input surface, but a target need not reach all
 source lines reachable by unit tests. Keep authentication, configuration and
 invariant restrictions visible in its residuals.
+
+`scripts/fuzz-union.py` makes the union reproducible: it reads
+`fuzz/coverage/*/coverage.lcov`, keeps repository sources (`crates/`,
+`firmware/`, `third_party/`, `tools/`), unions each distinct `(file, line)` once
+— covered when any target counted it above zero — and prints the number, its
+per-root breakdown and the run's `config.txt` / `source-commit.txt`. It excludes
+what `fuzz-coverage.sh`'s filename filter already drops (harnesses, registry and
+stdlib) and, by the repository-root rule, a git dependency's checkout too;
+vendored `third_party` sources stay in. A fresh local `default` campaign over
+all 53 targets at source commit `d2b0c13a` measures
+**23062/36301 = 63.53%** (crates 21490/32983, 65.15%; third_party 1572/3318,
+47.38%), with the per-target reports retained under `fuzz/coverage/`. The
+2026-10-04 `cc6757dd` baseline recorded 63.20% over a smaller tree (32 545
+repository lines) under the same method; the denominators differ, so this is the
+current-tree remeasurement rather than a re-derivation of the old percentage.
+The `flavours` profile reran at `a2e13197`: **22699/36182 = 62.74%** (crates
+21127/32864, 64.29%; third_party 1572/3318, 47.38%). Its denominator is smaller
+because the flavours build compiles fewer lines; the two maps are incompatible
+and are not combined.
+
+A bounded retained campaign on 2026-10-15 ran the four stateful targets over
+their accumulated corpora at `a2e13197`, ten minutes each (`-max_total_time=600`,
+the target's dictionary where one exists): `fido_session` 252 620 executions at
+420/s (+1 169 corpus units, final cov 7 820), `cross_applet` 608 532 at 1 012/s
+(+3 758, cov 4 910), `fs_ops` 3 884 771 at 6 463/s (+1 073, cov 585) and
+`power_cut` 72 663 at 120/s (+427, cov 8 896), peak RSS 556–677 MB across the
+four. No new crash, leak or slow-unit artifact appeared (every entry already in
+`fuzz/artifacts/` predates the run); the corpora grew from 4 252/5 791/3 169/6 792
+to 5 179/8 385/4 153/7 186 files and stayed local, as they are gitignored. The
+log is `target/fuzz-retained.log` beside the pre-run counts. This exercises the
+retained-corpus path and records throughput; it is bounded, not the roadmap's
+open-ended retained campaign.
 
 **Done when:** the stateful targets reach their intended privileged and failure
 paths, their semantic oracles kill controls, and their saved corpora replay
@@ -2324,10 +2356,10 @@ The record sweeps exercise the corresponding pairs within their 64-mutation
 bound; neither model establishes arbitrary hardware interruption coverage.
 
 Three firmware defects were reproduced and corrected in separate commits:
-obsolete OpenPGP public-reset wrapper cleanup (`67a2ca09ac7c`), attestation
-repair accepting records from different signers (`afa72a354685`), and resetting
+obsolete OpenPGP public-reset wrapper cleanup (`02a84a962e32`), attestation
+repair accepting records from different signers (`a28561744292`), and resetting
 the preceding resident credential's counter before its replacement committed
-(`c453c2442e25`). Their regression controls fail on the preceding code.
+(`26c113007fbc`). Their regression controls fail on the preceding code.
 In-diff mutation runs report respectively 3 caught/1 unviable, 15 caught/4
 unviable and 2 caught/1 unviable, with no survivors; unviable builds are not
 test kills. Firmware changes advance `bcdDevice` through `0x0A95`.
@@ -2379,10 +2411,10 @@ An error is not a rollback receipt.
 | Verification capture and decoder | PIN and alwaysUv widths 0,1,34,35,36,255,256 and the current maximum remain exact through runtime capture and JSON. Actual TLA Beta classifies present PIN material as configured and malformed present UV overrides as required. Restoring old predicates fails named invariants through the copied existing gate row. | `rsk-device/src/ctap_tests.rs`, `tools/emu/src/security_trace_tests.rs`, `scripts/test_security_trace_damage.py` |
 
 Five firmware fix groups were reproduced before repair: unchecked NOR success
-and uncertain-write caches (`a943b5416469`), damaged FIDO state
-(`7154cf0c55cc`), PIV factory reprovisioning (`5728ac293b44`), OpenPGP gates,
-counters and attestation fields (`2cf485f1`), and OATH gates/empty-key validation
-(`65d4aa90`). The applet controls use actual SET PIN, SELECT, VERIFY, PSO, ATTEST,
+and uncertain-write caches (`74b5e8d3d031`), damaged FIDO state
+(`bd3e1859514e`), PIV factory reprovisioning (`11b95b7ba431`), OpenPGP gates,
+counters and attestation fields (`f363a1f9`), and OATH gates/empty-key validation
+(`246b4966`). The applet controls use actual SET PIN, SELECT, VERIFY, PSO, ATTEST,
 VALIDATE and password-safe commands. Their original failures expose the defect:
 factory credentials or attempted identity regeneration, an actual signature/password response,
 a restarted counter or an incorrectly successful attestation.
@@ -2429,7 +2461,7 @@ the packages whose unit-test prefixes were retained. The
 `check-assurance-final`/`check-assurance-resumed` logs retain the assurance rows,
 including the full script suite and the corrected provenance test repeated
 through the same gate row. The freshly recorded full safety/liveness roster is
-bound to `bd3b0649`; safety ran as two disjoint official shards. The
+bound to `ed2635ba`; safety ran as two disjoint official shards. The
 [published formal results](formal.md) and `formal/runs.toml` own its counts and
 provenance. `results.json` binds this bounded matrix to source and log hashes,
 selected mutations and the signed commit/file ledger; `whole_plan_complete`
@@ -2516,7 +2548,7 @@ the whole testing plan or establish hardware certification.
 
 The [current audit](coverage-current.md) closes the reachable host statement,
 function and condition-outcome review in all eighteen declared profiles on source
-matching `45481f9735392a7474c748cda8c123e6cb098f24`, including authenticated
+matching `eadea4e7e41f80d9101a8adeb015459c14dfb293`, including authenticated
 storage v2. Its [finite catalogue](coverage-profile-audit.toml) records every
 residual with its
 actual feature closure, source hashes, invariant or conditional assumption. The
@@ -2535,3 +2567,187 @@ Phase 2's MC/DC criterion remains decision-only and unimplemented. Embedded glue
 C/assembly, physical fault timing, interoperability, retained campaigns and actual
 CI/release execution remain separate work; this item does not complete the whole
 plan. Evidence is retained in `target/profile-coverage-20261010/audited-linux/`.
+
+## Whole-core mutation-roster closure, 2026-10-12/14
+
+The frozen weekly shards' 10 887 desired occurrences are dispositioned: the
+fresh review (`target/mutation-shards-20261012/safe/fresh-survivor-review-20261013.json`)
+reports zero pending misses and zero pending resource rows. Each module was
+closed with exact host-profile runs (`aarch64-apple-darwin`): frame tests pin the
+`rsk-ui` renderers, unit tests pin the crates' parsers, store decisions and
+transports, and the occurrences that remain are reviewed identities or
+unreachable arms in `scripts/mutants-accepted.txt`, one written reason per class.
+The four resource-only rows are either re-killed by an assertion (`ctaphid.rs`'s
+bounded continuation walk) or recorded as qualified resource kills with zero
+assertion credit (`pin.rs`'s two non-terminating `*= 1` counters, detectable only
+by the per-test timeout). Per-module kill evidence is retained under
+`target/mutants/`; the per-module record is in [testing](testing.md).
+
+Device C/assembly mutation execution and resource/timing equivalence remain
+separate obligations. This closure is a host-profile weekly-shard result, not a
+hardware or whole-release claim.
+
+## Cross-applet capability gates and stateful fs_ops seeds, 2026-10-14
+
+Phase 5's two targets that had no local seed generator now have one:
+`cross_applet_sequences()` and `fs_ops_sequences()` in
+`scripts/external_corpus.py`. Eleven `cross_applet` seeds prepare the cached
+capability mask with the target's own `SET_CAPS`, `refresh`, `reset_card` and
+`factory_wipe` opcodes and replay both directions of its SELECT oracle — one
+seed per gated applet (OpenPGP, OATH, OTP, PIV, FIDO2/U2F) that disables the
+bit, refreshes and asserts `FILE_NOT_FOUND`, and its twin that restores the bit,
+refreshes and asserts the same SELECT is served; one seed disables every gated
+applet and runs the device-wide wipe, which must shed `EF_DEV_CONF` so the
+applets are reachable again. Six `fs_ops` seeds build non-empty state before
+exercising it: put then clamped read, put then delete, meta add / replace / find
+/ delete, the exact `META_MAX` NoMemory boundary (four 255-byte values, the
+fourth refused, then a delete makes room), reboot then read, and reboot after
+the last meta entry goes.
+
+Observed on this revision (`aarch64-apple-darwin`, default build): each
+generated directory replays through its own target with `-runs=0` and exits 0
+(`cross_applet`: 11 files, cov 2041; `fs_ops`: 6 files, cov 421), no artifacts
+written; a 60-second live run seeded from each generated directory also exits 0
+(`cross_applet` 121 294 executions, `fs_ops` 927 090). The capability-write
+preparation is load-bearing: dropping the refresh op leaves the cached mask
+unchanged, and a disable whose bit reaches the dispatcher reports a different
+edge count than the enabled SELECT. No oracle fired; these are valid preparation
+paths, not findings.
+
+Neither target had a `fuzz/tests/fixtures/` replay, so this slice added none
+under Miri. A follow-up does: `cross_applet.rs` and `fs_ops.rs` now expose their
+bodies as `pub(crate) fn exercise(data: &[u8])` with the
+`#[cfg(not(test))] fuzzing::fuzz_target!` tail `fido_session` already used, and
+`fuzz/tests/fixtures/{cross_applet,fs_ops}.rs` hold these same 11 and 6 seeds
+re-encoded by hand from `scripts/external_corpus.py` (not imported from Python).
+`miri_cross_applet_seeds` and `miri_fs_ops_seeds` in `fuzz/tests/miri.rs` then
+drive each seed through the shipped target, so the refused/served SELECT pair,
+the factory wipe, the clamped read, the `META_MAX` NoMemory boundary and the
+reboot are checked under the UB interpreter.
+
+Observed on this revision (`aarch64-apple-darwin`, default build, `MIRIFLAGS`
+`-Zmiri-many-seeds=0..8`): both tests pass with no UB. `miri_cross_applet_seeds`
+runs all 11 seeds (~130 s per seed process) and `miri_fs_ops_seeds` all 6
+(~1.2 s), each `1 passed; 0 failed`; the Miri roster rises to 73 tests, over
+`scripts/miri-all.sh`'s 73 floor. The 63.20% union was **not** remeasured: it
+comes from a long retained campaign, whereas this slice is a bounded replay plus
+two 60-second runs, so Phase 5 stays open on its retained-campaign and union
+criteria.
+
+## Silent storage mutations, 2026-10-15
+
+Phase 3's storage doubles gained the silent-write fault it names explicitly:
+`Silent`, a medium whose `write`/`remove` REPORT `Ok` and apply nothing for one
+armed fid, beside `Undead`'s budget-limited silent removes. Its observation end
+`SilentMedium` arms the drop, counts the mutations it swallowed, and reads the
+medium past `Fs`'s present cache — which a `put` marks present whether or not the
+backend applied it, so no cache-level check can see a write that never landed.
+
+`fs_fault_provider_tests.rs` drives the public store API over it. A
+persist-then-read-back command — the shape of FIDO's `spend_and_verify_pin_hash`
+and OATH's `spend_otp_retry` — must report its read-back's failure rather than
+return `Ok` over a lost record, and the medium must still hold the value the
+write never replaced; a first-write case confirms a reboot over the same medium
+finds no record. A provider control covers the double's own contract: per-fid
+arming, one-shot arming, the swallowed-mutation count, `live`/`value` reads, and
+a swallowed tombstone. Positive control: disabling the fixture's read-back makes
+both command tests fail (`left: Ok(())`, `right: Err(MemoryFatal)`), and
+restoring it makes them pass.
+
+This adds the write half of the silent-mutation family, and closes the tombstone
+case it left open. `Fs::delete` marks the marker absent from its own present bit,
+so the cache-satisfied `try_has_data` probe answered "gone" without asking the
+medium, and `request_rescrub` re-armed the lap over a live `EF_HARDENED` — the
+next boot then skipped and the superseded pre-OTP copy survived. `Fs::try_medium_has_data`
+now reads the marker straight from `storage`, past `known_absent`, with
+`Storage::last_error`'s discipline (a failed probe is `Err`, never `Ok(false)`),
+and `request_rescrub` takes that answer: a silently dropped `remove(EF_HARDENED)`
+returns `MemoryFatal` and latches `Fs::rescrub_refused`. A `Silent`-armed test
+drives it, with a healthy re-arm and a plain `RamStorage` round trip as controls.
+The repo-wide read-fault sweep then required OATH to say what a refused re-arm
+means: `cmd_verify_otp_pin` was best-effort (skip the upgrade, still answer `OK`),
+which "a read fault may only fail the command" forbids once the probe reads the
+medium, so VERIFY now answers `MEMORY_FAILURE` and matches
+`cmd_change_otp_pin`'s strict arm; the old verifier and the spent retry stay in
+place, pinned by `refused_verify_rescrub_fails_the_verify_and_keeps_the_old_verifier`.
+The phase remains open on longer retained campaigns and semantic record-loss
+detection beyond the current CRC/legacy and authenticated formats.
+
+## Torn storage writes, 2026-10-15
+
+Phase 3's correlated residual — a medium that lies on read as well as write — is
+modelled by one physical story rather than a drop glued to a separate read fault:
+the torn write. `Torn` lands only a PREFIX of a write's bytes and reports `Ok`, so
+a read of that fid answers the torn value — the new prefix over whatever the slot
+held (`new[..k] ++ old[k..]`), or a plain prefix where it held nothing. The torn
+value is a THIRD one no clean state ever held, where `Silent`'s dropped write
+answers the old one, and where the slot was empty its LENGTH lies as well.
+`TornMedium` arms the tear at a byte offset (`arm`/`arm_once`), counts the writes it
+reached, and reads the medium past `Fs`'s present cache with `live`/`value`.
+
+`fs_fault_provider_tests.rs` drives the same persist-then-read-back fixture over
+it. A torn overwrite must be reported as the read-back's failure rather than `Ok`
+over a record the medium never held, and a reboot over the same medium must expose
+the torn bytes — present, but neither the old record nor the new one — so a
+recovery or re-provision that requires old-or-new refuses instead of adopting the
+lie. A provider control pins the double's own contract: per-fid and one-shot
+arming, the tear count, a zero-length prefix, a tail kept from a longer record, and
+a forwarded removal. Positive control: the disarmed leg inside each test confirms
+the same fixture over a healthy medium, and temporarily disabling the tear makes
+both command tests fail (`left: Ok(())`, `right: Err(MemoryFatal)`); restoring the
+byte-identical source makes them pass.
+
+This adds one correlated read+write story. It does not close the phase: longer
+retained campaigns and semantic record-loss detection beyond the current CRC/legacy
+and authenticated formats remain open, as do correlated-fault stories beyond the
+torn write.
+
+## Host-tool workspaces, 2026-10-15
+
+Phase 6's fourth paragraph asks `tools/emu`, `tools/tui` and the Python CLI to be
+measured in their own workspaces — invalid arguments, transport failure,
+cancellation and machine-readable output — and says explicitly that these reports
+must not be folded into the firmware core percentage. None of the three is a
+member of the `crates/` workspace the core totals above describe: `tools/tui` and
+`tools/emu` are detached Cargo workspaces with their own manifests and locks, and
+the CLI is the `rsk` Python package.
+
+The gap was process-level. `tools/emu`'s hand-written argument parser had no test
+at all: every refusal calls `die`, which is `std::process::exit(2)`, so nothing
+in-process can observe the exit code, the stderr line or the absence of a panic —
+and the same was true of `tools/tui`'s `--selftest` refusals, whose decision was
+unit-tested but whose exit and stderr were not. Both tools now carry an
+integration test (`tools/emu/tests/cli.rs`, 12 cases; `tools/tui/tests/cli.rs`, 5)
+that runs the built binary. `tools/emu`: an unknown argument, a non-numeric or
+out-of-range port, a non-hex seed, a serial of the wrong length, a non-numeric
+byte count, a zero auto-touch delay, both transports disabled, `--rom`/
+`--inspect-port` without `--image`, a `--taps-port` without `--display`, an
+unreadable tap script, and a port already held — each exit 2 with a `rsk-emu:`
+line on stderr and no panic. The bind case holds a loopback port in the test
+first, so it fails deterministically without a second process, and `-h` exits 0
+with the usage on stdout. `tools/tui`: `-h`, both `--selftest` refusals at the
+exit/stderr boundary, and the `--json` stream, parsed by `serde_json` (a
+test-only dev-dependency, already in the workspace lock) as one object with the
+documented fields, with `--once` as the control that the demo banner reaches the
+human path and not the JSON one.
+
+For `tools/rsk`, transport failure was already driven (`test_common.py`'s
+no-device and two-device refusals, `test_ccid_select.py`'s reader selection);
+cancellation has no host surface for the CLI (its only interruptible step is the
+typed `confirm`, already tested). The gaps were invalid arguments and the two
+machine-readable streams. `test_cli_contract.py` (7 cases) drives the real
+`main()`: an unknown group, an unknown flag, a missing subcommand and no group at
+all each exit 2 with `usage:` on stderr; `--version` prints the package version;
+`status --json` is one object and nothing else; and `inventory list --json` is
+pure JSON lines, with the human `note:` several-keys line printed on the non-JSON
+path as the positive control that the assertion is about the branch and not an
+absent note.
+
+Totals and the separation from the core percentage are recorded in
+[testing.md](testing.md#host-tools). What stays open is the same for all three:
+device interoperability (a physical key on the far side of the transports, which
+no host test exercises) and display-image execution (the trusted panel rendered
+and driven for real, `tools/emu --image`'s own scope). Cancellation is measured
+where each tool has it — `tools/emu`'s cross-transport cancel
+(`signals_tests.rs`) and `tools/tui`'s Ctrl-C (`input_tests.rs`) — and is not
+claimed for the CLI.

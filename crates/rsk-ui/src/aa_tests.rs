@@ -375,6 +375,14 @@ fn status_ring_mask_matches_all_distance_samples() {
 }
 
 #[test]
+fn the_home_status_arc_starts_on_a_cached_phase() {
+    assert!(
+        fixed_ring_arc_coverage(50, 3, crate::render::STATUS_ARC_START, 270, 0, 0).is_some(),
+        "the public Home start angle must use cached coverage"
+    );
+}
+
+#[test]
 fn status_arc_phase_table_matches_every_sample() {
     let generated = std::hint::black_box(status_arc_coverages());
     let center = 50 * SAMPLE_SCALE / 2;
@@ -776,3 +784,6 @@ fn direct_fixed_strips_handle_a_border_wider_than_the_corner_band() {
     }
     assert_eq!(target.at(12, 12), Rgb565::BLUE);
 }
+
+#[path = "aa_contract_tests.rs"]
+mod contracts;

@@ -137,3 +137,253 @@ fn every_component_propagates_a_panel_error() {
     );
     assert_eq!(empty_state(&mut panel, 40, 150, Glyph::Key, "Empty"), err);
 }
+
+#[test]
+fn card_title_places_its_icon_and_heading_from_the_card_top() {
+    let mut actual = crate::render::tests::Rec::new();
+    card_title(&mut actual, 40, Glyph::Key, "Title").unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    let y = 40 + PAD;
+    glyph::draw(
+        &mut expected,
+        Glyph::Key,
+        Point::new(MARGIN + PAD, y),
+        28,
+        theme::ACCENT,
+        theme::SURFACE,
+    )
+    .unwrap();
+    text_left_on(
+        &mut expected,
+        "Title",
+        EgPoint::new((MARGIN + PAD + 28 + 8) as i32, y as i32 + 20),
+        font::Role::Heading,
+        theme::TEXT,
+        theme::SURFACE,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn card_row_places_icon_label_and_right_aligned_value() {
+    let mut actual = crate::render::tests::Rec::new();
+    card_row(
+        &mut actual,
+        40,
+        1,
+        Glyph::Lock,
+        "Label",
+        Some(("Val", theme::WARN)),
+    )
+    .unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    let row_idx = 1u16;
+    let y = 40 + PAD + ROW_H + row_idx * (ROW_H + ROW_GAP);
+    let x = MARGIN + PAD;
+    glyph::draw(
+        &mut expected,
+        Glyph::Lock,
+        Point::new(x, y),
+        22,
+        theme::MUTED,
+        theme::SURFACE,
+    )
+    .unwrap();
+    text_left_on(
+        &mut expected,
+        "Label",
+        EgPoint::new((x + 22 + 8) as i32, y as i32 + 16),
+        font::Role::Body,
+        theme::TEXT,
+        theme::SURFACE,
+    )
+    .unwrap();
+    let w = font::width("Val", font::Role::Body).unwrap_or(0) as i32;
+    text_on(
+        &mut expected,
+        "Val",
+        EgPoint::new((PANEL_W - MARGIN - PAD) as i32 - w, y as i32 + 16),
+        font::Role::Body,
+        theme::WARN,
+        theme::SURFACE,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn card_row_chevron_adds_the_chevron_after_the_shared_row() {
+    let mut actual = crate::render::tests::Rec::new();
+    card_row_chevron(&mut actual, 40, 1, Glyph::Lock, "Label", None).unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    card_row(&mut expected, 40, 1, Glyph::Lock, "Label", None).unwrap();
+    let row_idx = 1u16;
+    let y = 40 + PAD + ROW_H + row_idx * (ROW_H + ROW_GAP);
+    glyph::draw(
+        &mut expected,
+        Glyph::Chevron,
+        Point::new(PANEL_W - MARGIN - PAD - 14, y + (ROW_H - 14) / 2),
+        14,
+        theme::MUTED,
+        theme::SURFACE,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn rect_row_places_its_icon_trailing_chevron_and_clipped_label() {
+    let rect = Rect::new(16, 100, 208, 34);
+    let mut actual = crate::render::tests::Rec::new();
+    rect_row(
+        &mut actual,
+        rect,
+        Glyph::Key,
+        "A very long label that will not fit the clip area at all",
+        Some(("1234567890", theme::WARN)),
+        true,
+    )
+    .unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    let cy = rect.y as i32 + rect.h as i32 / 2;
+    let gx = rect.x + 8;
+    glyph::draw(
+        &mut expected,
+        Glyph::Key,
+        Point::new(gx, (cy - 7) as u16),
+        14,
+        theme::GREY,
+        theme::ROW_BG,
+    )
+    .unwrap();
+    let mut right_x = rect.x as i32 + rect.w as i32 - 8;
+    right_x -= 12;
+    glyph::draw(
+        &mut expected,
+        Glyph::Chevron,
+        Point::new(right_x as u16, (cy - 6) as u16),
+        12,
+        theme::MUTED,
+        theme::ROW_BG,
+    )
+    .unwrap();
+    let label_x = rect.x as i32 + 28;
+    let tx = right_x - 4;
+    font::right(
+        &mut expected.clipped(&eg_rect(Rect::new(
+            label_x as u16,
+            rect.y,
+            (tx - label_x).max(0) as u16,
+            rect.h,
+        ))),
+        "1234567890",
+        EgPoint::new(tx, cy),
+        font::Role::Body,
+        theme::WARN,
+        theme::ROW_BG,
+    )
+    .unwrap();
+    let label_right = tx - font::width("1234567890", font::Role::Body).unwrap_or(0) as i32 - 8;
+    let clip = Rect::new(
+        label_x as u16,
+        rect.y,
+        (label_right - label_x).max(0) as u16,
+        rect.h,
+    );
+    text_left_ellipsized_on(
+        &mut expected,
+        "A very long label that will not fit the clip area at all",
+        EgPoint::new(label_x, cy),
+        font::Role::Body,
+        theme::TEXT,
+        theme::ROW_BG,
+        clip,
+        false,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+
+    // The no-trailing branch places its label clip from right_x - 8.
+    let mut actual = crate::render::tests::Rec::new();
+    rect_row(
+        &mut actual,
+        rect,
+        Glyph::Key,
+        "A very long label that will not fit the clip area at all",
+        None,
+        true,
+    )
+    .unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    glyph::draw(
+        &mut expected,
+        Glyph::Key,
+        Point::new(gx, (cy - 7) as u16),
+        14,
+        theme::GREY,
+        theme::ROW_BG,
+    )
+    .unwrap();
+    let chevron_x = rect.x as i32 + rect.w as i32 - 8 - 12;
+    glyph::draw(
+        &mut expected,
+        Glyph::Chevron,
+        Point::new(chevron_x as u16, (cy - 6) as u16),
+        12,
+        theme::MUTED,
+        theme::ROW_BG,
+    )
+    .unwrap();
+    let label_right = chevron_x - 8;
+    let clip = Rect::new(
+        label_x as u16,
+        rect.y,
+        (label_right - label_x).max(0) as u16,
+        rect.h,
+    );
+    text_left_ellipsized_on(
+        &mut expected,
+        "A very long label that will not fit the clip area at all",
+        EgPoint::new(label_x, cy),
+        font::Role::Body,
+        theme::TEXT,
+        theme::ROW_BG,
+        clip,
+        false,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}
+
+#[test]
+fn empty_state_centres_its_glyph_and_text_in_the_card() {
+    let mut actual = crate::render::tests::Rec::new();
+    empty_state(&mut actual, 60, 120, Glyph::Key, "Nothing here").unwrap();
+    let mut expected = crate::render::tests::Rec::new();
+    let cy = 60 + 120 / 2;
+    glyph::draw(
+        &mut expected,
+        Glyph::Key,
+        Point::new((crate::PANEL_W as i32 / 2) as u16 - 18, cy - 30),
+        36,
+        theme::MUTED,
+        theme::BG,
+    )
+    .unwrap();
+    text(
+        &mut expected,
+        "Nothing here",
+        EgPoint::new(crate::PANEL_W as i32 / 2, cy as i32 + 8),
+        font::Role::Body,
+        theme::MUTED,
+    )
+    .unwrap();
+    assert_eq!(actual.px, expected.px);
+    assert!(!actual.oob);
+}

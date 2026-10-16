@@ -207,3 +207,7 @@ pub fn parse_ecdh_point(data: &[u8]) -> Option<&[u8]> {
     let plen = tag_len(data, &mut pos)?;
     data.get(pos..pos + plen)
 }
+
+#[cfg(test)]
+#[path = "pso_tests.rs"]
+mod tests;

@@ -2847,3 +2847,6 @@ mod response_decisions;
 
 #[path = "restart_tests.rs"]
 mod restarts;
+
+#[path = "mutation_tests.rs"]
+mod mutation;

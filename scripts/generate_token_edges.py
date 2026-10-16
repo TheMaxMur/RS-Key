@@ -99,11 +99,16 @@ def generate(path: Path) -> tuple[str, dict[str, int]]:
 
     fields = "\n".join(f"    pub {field}: bool," for field in schema)
     raw_terms = []
+    decoded_fields = []
     for index, field in enumerate(schema):
         shift = len(schema) - index - 1
         term = f"u8::from(self.{field})"
         raw_terms.append(f"{term} << {shift}" if shift else term)
+        decoded_fields.append(f"            {field}: raw & {1 << shift} != 0,")
     raw_expr = " | ".join(raw_terms)
+    state_codes = ", ".join(str(int(state, 2)) for state in states)
+    op_values = ", ".join(f"AbstractOp::{op}" for op in ops)
+    outcome_values = ", ".join(f"AbstractOutcome::{outcome}" for outcome in outcomes)
     lookup = [-1] * (1 << len(schema))
     for index, state in enumerate(states):
         lookup[int(state, 2)] = index
@@ -171,13 +176,33 @@ const EXPORTED_EDGES: &[(usize, usize, usize, usize)] = &[
 
 #[cfg(test)]
 pub(crate) fn exhaustive_table_self_test() {{
+    let state_codes = [{state_codes}];
+    let state = |raw: u8| AState {{
+{chr(10).join(decoded_fields)}
+    }};
+    for raw in 0..=u8::MAX {{
+        assert_eq!(
+            state(raw).domain_index(),
+            state_codes.iter().position(|&code| code == raw),
+            "generated token domain mismatch at raw state {{raw}}",
+        );
+    }}
+    let ops = [{op_values}];
+    let outcomes = [{outcome_values}];
     let mut expected = [false; TUPLES_CHECKED];
     for &(pre, op, outcome, post) in EXPORTED_EDGES {{
         let index = ((pre * OP_COUNT + op) * OUTCOME_COUNT + outcome) * STATE_COUNT + post;
         expected[index] = true;
     }}
     for (index, expected) in expected.into_iter().enumerate() {{
-        let actual = ALLOWED_BITS[index / 8] & (1 << (index % 8)) != 0;
+        let mut tuple = index;
+        let post = state(state_codes[tuple % STATE_COUNT]);
+        tuple /= STATE_COUNT;
+        let outcome = outcomes[tuple % OUTCOME_COUNT];
+        tuple /= OUTCOME_COUNT;
+        let op = ops[tuple % OP_COUNT];
+        let pre = state(state_codes[tuple / OP_COUNT]);
+        let actual = allowed_event(pre, op, outcome, post);
         assert_eq!(actual, expected, "generated token edge mismatch at tuple {{index}}");
     }}
 }}

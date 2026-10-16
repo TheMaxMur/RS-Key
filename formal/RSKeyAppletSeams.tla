@@ -60,7 +60,7 @@ CONSTANTS
     \* The selection clamp removed: `pin_fresh` outlives the `has_pin` status it
     \* refines. `pfresh` remains the requirement-side copy that exposes the split.
     BugPinFreshOutlivesPin,
-    \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:443-458,
+    \* The same shape one applet over: crates/rsk-openpgp/src/keys.rs:447-462,
     \* `spend_one_shot_pw1` clearing has_pw1 under the one-shot PW status.
     BugSigPinNotSpent,
     \* The REQUIREMENT half of the one-shot spend, widened off the reference it
@@ -169,7 +169,7 @@ VARIABLES
     \* status a SELECT elsewhere can take away.
     oathCodeSet,
     \* Whether PW1 is the one-shot kind: EF_PW_PRIV[0] = 0 makes PW1.81 valid for
-    \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:443-458), which is
+    \* exactly one PSO:CDS (crates/rsk-openpgp/src/keys.rs:447-462), which is
     \* `pin_fresh` on the other applet. Host-writable through PUT DATA C4.
     oneShotSig,
     \* Ghost: the PW1.81 freshness the requirement leaves behind, spent under the
@@ -330,7 +330,7 @@ PivChangeRefused ==
     /\ UNCHANGED << sel, oneShotSig, psig, oathCodeSet, refused >>
 
 \* OpenPGP clears EXACTLY the addressed reference, and it keys the clear on the
-\* FID it compared rather than on P2 (crates/rsk-openpgp/src/pin.rs:203-215):
+\* FID it compared rather than on P2 (crates/rsk-openpgp/src/pin.rs:205-217):
 \* RESET RETRY COUNTER compares EF_RC while passing p2 = 0x81, so a wrong
 \* resetting code must leave PW1.81 standing.
 PgpVerify(r, ok) ==
@@ -342,7 +342,7 @@ PgpVerify(r, ok) ==
     /\ UNCHANGED << sel, fresh, pfresh, oneShotSig, oathCodeSet, viol >>
 
 \* A refused CHANGE clears the addressed reference too -- the same writer
-\* (crates/rsk-openpgp/src/pin.rs:280-282), which is where OpenPGP and PIV part
+\* (crates/rsk-openpgp/src/pin.rs:282-284), which is where OpenPGP and PIV part
 \* company.
 PgpChangeRefused(r) ==
     /\ sel = Pgp
@@ -618,7 +618,7 @@ PowerCycle ==
 \* step that changes nothing, so a mutant that made it reach would be visible.
 FidoReset == UNCHANGED vars
 
-\* `Fs::factory_wipe` (crates/rsk-fs/src/fs.rs:509-560) is FLASH-only: it never
+\* `Fs::factory_wipe` (crates/rsk-fs/src/fs.rs:528-579) is FLASH-only: it never
 \* sees an applet, so every in-RAM status here stands over freshly-defaulted
 \* verifiers until the reboot its one caller queues immediately after
 \* (crates/rsk-display/src/pin.rs:770-779).

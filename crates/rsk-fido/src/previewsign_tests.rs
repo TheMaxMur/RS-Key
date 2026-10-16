@@ -5,6 +5,9 @@ use super::*;
 
 #[path = "previewsign_api_tests.rs"]
 mod api;
+
+#[path = "previewsign_budget_tests.rs"]
+mod budgets;
 use crate::consts::{
     ALG_EDDSA, ALG_MLDSA44, ALG_MLDSA65, ALG_MLDSA87, EF_PIN, FLAG_AT, FLAG_ED, MAX_MSG_SIZE,
 };

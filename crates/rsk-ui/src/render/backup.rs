@@ -548,3 +548,7 @@ fn fmt_share_title(p: u16, n: u16, buf: &mut [u8; 18]) -> &str {
     }
     str8(&buf[..i])
 }
+
+#[cfg(test)]
+#[path = "backup_tests.rs"]
+mod tests;

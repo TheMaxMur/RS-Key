@@ -4079,3 +4079,6 @@ fn direct_uif_checks_use_the_generic_caption_for_an_unknown_file() {
     assert_eq!(fs.read(0x4242, &mut retained), Some(2));
     assert_eq!(retained, [1, 0]);
 }
+
+#[path = "mutation_tests.rs"]
+mod mutation;

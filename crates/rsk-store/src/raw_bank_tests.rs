@@ -13,6 +13,9 @@ mod counter_replica;
 #[path = "raw_bank_geometry_tests.rs"]
 mod api;
 
+#[path = "raw_bank_progress_tests.rs"]
+mod progress;
+
 #[path = "journal_api_tests.rs"]
 mod journal_api;
 

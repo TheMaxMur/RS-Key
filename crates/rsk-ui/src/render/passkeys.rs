@@ -513,3 +513,7 @@ where
     )?;
     render_hold_button(t, DEL_HOLD_RECT, "Hold to delete", theme::DANGER_FILL)
 }
+
+#[cfg(test)]
+#[path = "passkeys_tests.rs"]
+mod tests;

@@ -205,3 +205,7 @@ fn status_ring(kind: StatusKind) -> (Rgb565, Rgb565) {
         _ => (theme::BORDER_CARD, theme::ACCENT),
     }
 }
+
+#[cfg(test)]
+#[path = "home_tests.rs"]
+mod tests;

@@ -426,7 +426,7 @@ why = "one instance of the cardholder certificate: a public data object the host
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 443
+line = 445
 call = "let _ = fs.delete_key_over(stage, Some(&rearmed));"
 verb = "delete_key_over"
 answer = "discarded"
@@ -437,7 +437,7 @@ why = "load_dek re-runs this retirement on every PIN use, so a failed one is ret
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 515
+line = 517
 call = "let _ = fs.delete_key_over(stage, rearmed.as_ref().ok());"
 verb = "delete_key_over"
 answer = "discarded"
@@ -448,7 +448,7 @@ why = "the same retirement after a recovered update commits; the same next-load_
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 586
+line = 588
 call = "let _ = fs.delete_key_over(stage, Some(rearmed));"
 verb = "delete_key_over"
 answer = "discarded"
@@ -459,7 +459,7 @@ why = "and after an ordinary staged commit. All three are the one record load_de
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 654
+line = 656
 call = "let verifier = fs.delete_over(EF_RC, Some(&rearmed)).is_ok();"
 verb = "delete_over"
 answer = "read"
@@ -470,7 +470,7 @@ why = "the RC verifier is what RESET RETRY P1=0 walks in through, and init's rep
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 655
+line = 657
 call = "let dek = fs.delete_key_over(EF_DEK_RC, Some(&rearmed)).is_ok();"
 verb = "delete_key_over"
 answer = "read"
@@ -481,7 +481,7 @@ why = "the DEK sealed under that reset code. A survivor of any of the three leav
 
 [[site]]
 file = "crates/rsk-openpgp/src/pin.rs"
-line = 656
+line = 658
 call = "let staged = fs.delete_key_over(EF_DEK_STAGE_RC, Some(&rearmed)).is_ok();"
 verb = "delete_key_over"
 answer = "read"
@@ -662,7 +662,7 @@ why = "Retire the preceding key's public point before replacement; a survivor ou
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 565
+line = 584
 method = "factory_wipe"
 call = "self.storage.remove(fid)?;"
 rearms = true
@@ -671,7 +671,7 @@ why = "the device-wide wipe, and the reason this table exists. Its `compact()` t
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 652
+line = 671
 method = "delete"
 call = "self.storage.remove(fid)?;"
 rearms = false
@@ -680,7 +680,7 @@ why = "the family's own conditional removal. It cannot re-arm: `request_rescrub`
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 701
+line = 720
 method = "force_delete_halves"
 call = "if let Err(refused) = self.storage.remove(fid) {"
 rearms = false
@@ -689,7 +689,7 @@ why = "the unconditional twin, and `force_delete`'s body as well. Same reason: t
 
 [[fs_removal]]
 file = "crates/rsk-fs/src/fs.rs"
-line = 936
+line = 955
 method = "meta_delete"
 call = "self.storage.remove(EF_META)?;"
 rearms = false

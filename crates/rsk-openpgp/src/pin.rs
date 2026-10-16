@@ -112,6 +112,8 @@ impl Drop for Session {
             session_pw3.zeroize();
             session_rc.zeroize();
         }
+        #[cfg(test)]
+        tests::observe_drop(session_pw1, session_pw3, session_rc);
     }
 }
 

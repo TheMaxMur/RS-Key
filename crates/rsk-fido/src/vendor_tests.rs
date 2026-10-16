@@ -3,6 +3,9 @@
 
 use super::*;
 
+#[path = "vendor_att_state_tests.rs"]
+mod att_state;
+
 #[test]
 fn unknown_nested_vendor_fields_preserve_the_following_command_and_target() {
     let mut buffer = [0; 64];

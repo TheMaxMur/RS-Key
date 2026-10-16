@@ -302,15 +302,15 @@ split three ways, and the split is the point.
 |---|---|
 | **Equivalent, not a defect** | `ctaphid.rs:483` `\|` → `^` on `(f[5] << 8) \| f[6]` — disjoint bits, the two operators agree |
 | **Fail-safe direction** | `ctaphid.rs:484` `>` → `>=` refuses an exactly-maximum message: stricter, so `NoBufferOverrun` still holds. `fs.rs:264` and `fs.rs:312` `\|=` → `&=` clear *decided* bits, which sends more reads to the reliable backend |
-| **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:296` and `fs.rs:321`, three mutants), `try_has_data`'s zero-length test (`fs.rs:409`), `factory_wipe`'s 64-key batch bound (`fs.rs:550`), the registry retain in `delete` (`fs.rs:656`), and **`meta_delete`'s fault guard (`fs.rs:919`)** |
+| **Model-blind** | the dynamic-file registry in `scan` (`fs.rs:296` and `fs.rs:321`, three mutants), `try_has_data`'s zero-length test (`fs.rs:409`), `factory_wipe`'s 64-key batch bound (`fs.rs:569`), the registry retain in `delete` (`fs.rs:675`), and **`meta_delete`'s fault guard (`fs.rs:938`)** |
 
 The last one was worth the exercise on its own. `Fs::meta_add_reserve` refuses a
 FAILED EF_META read and the model carries that as `BugMetaAddDropsOnFault`; its
-sibling `Fs::meta_delete` has the identical guard at `fs.rs:921`, and **nothing
+sibling `Fs::meta_delete` has the identical guard at `fs.rs:940`, and **nothing
 held it at either level**. No test killed it, and `MetaDelete` was modelled as an
 unconditional single write with no read to fail. Worse than a lost delete: the
 mutant caches EF_META as *absent*, and the next `meta_add` legitimately trusts
-`known_absent` and rebuilds the blob from empty (`fs.rs:882`), so the records go
+`known_absent` and rebuilds the blob from empty (`fs.rs:901`), so the records go
 on the write **after** the defect. That is why it is `NoFalseMetaAbsent`,
 SEC-STORE-004, a step recorder — once the cache has lied, the losing write is
 correct code and no state predicate over `meta` can tell the two apart.
@@ -457,9 +457,9 @@ says which.
 | Mutation | Verdict | Owned by |
 |---|---|---|
 | `crates/rsk-fido/src/reset.rs:151` `<` → `<=` — `sweep`'s 64-key batch bound | test gap; the mutation indexes past `keys` | `a_reset_sweeps_more_secrets_than_one_batch_holds` |
-| `crates/rsk-openpgp/src/pin.rs:253` `&&` → `\|\|`, and the same guard → `true` | test gap; a record too short to be `[len, fmt, verifier]`, or with a zeroed length, read as a verifier | `a_malformed_pw_record_is_reference_not_found_not_a_verifier` |
-| `crates/rsk-openpgp/src/pin.rs:247` `<` → `<=` | fail-safe — a short `EF_PW_PRIV` makes a live reference answer `PIN_BLOCKED`; wrong, but in the refusing direction | recorded |
-| `crates/rsk-openpgp/src/pin.rs:946` guard → `true` | effectively equivalent — an empty `EF_RC` yields `rc_len = 0`, and the `check_pin` below re-reads `EF_RC` and refuses on its own guard | recorded |
+| `crates/rsk-openpgp/src/pin.rs:255` `&&` → `\|\|`, and the same guard → `true` | test gap; a record too short to be `[len, fmt, verifier]`, or with a zeroed length, read as a verifier | `a_malformed_pw_record_is_reference_not_found_not_a_verifier` |
+| `crates/rsk-openpgp/src/pin.rs:249` `<` → `<=` | fail-safe — a short `EF_PW_PRIV` makes a live reference answer `PIN_BLOCKED`; wrong, but in the refusing direction | recorded |
+| `crates/rsk-openpgp/src/pin.rs:948` guard → `true` | effectively equivalent — an empty `EF_RC` yields `rc_len = 0`, and the `check_pin` below re-reads `EF_RC` and refuses on its own guard | recorded |
 | `crates/rsk-fido/src/reset.rs:166` `>` → `>=` | conformance in three applets of four — the runaway valve trips one delete early, and `deleted` differs from `>` only where it lands EXACTLY on the budget. Unreachable where each `sweep` call counts its own phase over a fid space smaller than the budget: FIDO 1034 + 5 against 1039, OATH 255 + 2 against 257, PIV 764 + 4 against 768 (all measured). **OpenPGP is the exception** — one `deleted` is SHARED across both phases (`crates/rsk-openpgp/src/terminate.rs:184`, outside the `for gates` loop) over 1049 fids, and its 64-key batch DIVIDES the 512 budget, so `deleted == 512` is reachable and `>=` would fail a TERMINATE that `>` completes. Green in all four when driven, because no fixture holds 512 live OpenPGP records — a property of the FIXTURE, not of the behaviour | recorded |
 | `>` → `==` at all four valves — `crates/rsk-fido/src/reset.rs:166`, `crates/rsk-oath/src/lib.rs:1788`, `crates/rsk-piv/src/files.rs:677`, `crates/rsk-openpgp/src/terminate.rs:215` | **the valve stops guarding**: `deleted` rises a whole batch at a time and can step past the budget without ever equalling it. It was never the cardinality that made this undrivable — a medium that answers `Ok` and keeps the record runs 1039 out of FIVE files. It was the BATCH: both runaways the tree had re-yield ONE fid, and 1 divides every budget, so the mutant merely trips one delete early there and each test passes it by construction. OATH and OpenPGP reached the valve with nothing at all — their fault backends ERROR, which stops the sweep at a `?` above it | `a_sweep_that_never_converges_stops_inside_its_delete_budget` (FIDO, OATH, PIV) + `a_wipe_that_never_converges_stops_inside_its_delete_budget` (OpenPGP) |
 
@@ -795,7 +795,7 @@ the record rather than preventing it.
 `HostCancel` required an open wait, so the model could not raise a
 `CTAPHID_CANCEL` at any other moment. The firmware can, and it matters:
 `set_wait_scope` is called around the whole **dispatch** (`worker.rs:667`,
-`:761`), not around the touch wait, so `Arbiter::request_cancel` (`crates/rsk-device/src/presence.rs:118-122`)
+`:781`), not around the touch wait, so `Arbiter::request_cancel` (`crates/rsk-device/src/presence.rs:118-122`)
 accepts a cancel during a FIDO command that never opens one — getInfo, a
 capability-denied CBOR, a silent `up:false`. **Nothing clears
 `CANCEL_REQUESTED` when that dispatch ends**, and the next dispatch may be CCID
@@ -1035,7 +1035,7 @@ violation, and `floors.txt` records what that costs.
 `Shipped.cfg` (every switch off) is **RED**, and that is the result, not a
 broken model. Both findings are one class: **the two-phase wipe controls the
 order *between* phases but nothing controls the order *within* a phase.**
-`sweep` batches whatever `for_each_key` yields, and `fs.rs:423-426` documents
+`sweep` batches whatever `for_each_key` yields, and `fs.rs:442-445` documents
 that walk as log-structured *store* order, not FID order; each `force_delete`
 is its own flash write, so a power cut can land between any two of them.
 
@@ -1433,7 +1433,7 @@ share — one flash, one button — appears here as events (`FactoryWipe`,
 | Invariant | What it asserts | The Rust that owns it |
 |---|---|---|
 | `NoStatusOutsideItsSelection` | An applet holds a security status only while it is the **selected** applet. Structural — it reads straight out of the state | `crates/rsk-sdk/src/applet.rs:444-464` (the one place that decides what a selection does to the applet that was current) · `crates/rsk-piv/src/lib.rs:210-225` · `crates/rsk-openpgp/src/pin.rs:83-85` · `crates/rsk-oath/src/lib.rs:1286-1305` · `crates/rsk-device/src/ccid.rs:398-413` (the ICC power transition) |
-| `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:193-196` · `crates/rsk-openpgp/src/pin.rs:203-215` · `crates/rsk-oath/src/lib.rs:1189-1190` |
+| `NoStatusAfterARefusedAuth` | A reference whose authentication was just refused is not authenticated | `crates/rsk-piv/src/lib.rs:193-196` · `crates/rsk-openpgp/src/pin.rs:205-217` · `crates/rsk-oath/src/lib.rs:1189-1190` |
 | `NoKeyOpOnTheAdminStatus` | No key operation runs on a status its own specification does not name | `crates/rsk-openpgp/src/pso.rs:86-98` · `crates/rsk-openpgp/src/internalaut.rs:45-48` · `crates/rsk-piv/src/auth.rs:57-65`, `:113-117` |
 | `ReselectPreservesAccessStatus` | A re-SELECT of the same AID changes no access status but OATH's OTP PIN. **A conformance claim, labelled as one** | `crates/rsk-piv/src/lib.rs:384-387` · `crates/rsk-openpgp/src/lib.rs:350-353` · `crates/rsk-oath/src/lib.rs:1339` |
 | `AccessCodeRemovalNeedsTheCode` | Removing the OATH access code needs the validated status the code bought. **A step rule — its violation produces exactly the exempt code-less state, so no state predicate can see it** | `crates/rsk-oath/src/lib.rs:369-371` (the shared gate) · `:378-390` (the removal path) |
@@ -1457,7 +1457,7 @@ direction it actually goes.
 |---|---|---|---|
 | PIV `VERIFY` | `has_pin` **and** `pin_fresh` (`crates/rsk-piv/src/lib.rs:193-196` is the only writer of either) | the applet's own session discipline | `NoStatusAfterARefusedAuth` |
 | PIV `CHANGE REFERENCE DATA` / `RESET RETRY COUNTER` | **nothing** — it takes no `&mut Session` at all (`crates/rsk-piv/src/lib.rs:554-593`) | SP 800-73-4 pt 2 §3.2.2/§3.2.3, plus a measured YubiKey 5.7.4 | `BugPivChangeResetsStatus`, RED in 46 |
-| OpenPGP `VERIFY` / `CHANGE` | exactly the **addressed** reference, keyed on the FID compared rather than on P2 (`crates/rsk-openpgp/src/pin.rs:203-215`, `:280-282`) | OpenPGP 3.4.1, and the `RESET RETRY COUNTER` case that compares `EF_RC` while passing `p2 = 0x81` | `NoStatusAfterARefusedAuth` |
+| OpenPGP `VERIFY` / `CHANGE` | exactly the **addressed** reference, keyed on the FID compared rather than on P2 (`crates/rsk-openpgp/src/pin.rs:205-217`, `:282-284`) | OpenPGP 3.4.1, and the `RESET RETRY COUNTER` case that compares `EF_RC` while passing `p2 = 0x81` | `NoStatusAfterARefusedAuth` |
 | OATH OTP-PIN `CHANGE` | **both** flags (`crates/rsk-oath/src/lib.rs:1189-1190`) | `aa47867` — before it the whole retry budget could be burned through the door that did not close | `BugFailedChangeKeepsStatus` |
 | OATH access-code `VALIDATE` | **nothing** — the standing unlock survives (`crates/rsk-oath/src/lib.rs:599-601`) | a MAC challenge-response has no retry counter for a refusal to protect; a YubiKey 5.7.4 measured keeping it from a genuinely locked applet | `BugRefusedValidateDropsUnlock`, RED in 46 |
 
@@ -1483,7 +1483,7 @@ it.
 | `BugFailedChangeKeepsStatus` | `aa47867` taken back out: a refused OTP-PIN change that leaves the safe open | `NoStatusAfterARefusedAuth` | 74 states |
 | `BugPinFreshNotSpent` | `crates/rsk-piv/src/auth.rs:113-117` — one VERIFY, one key operation | `NoKeyOpOnTheAdminStatus` | 45 states |
 | `BugPinFreshOutlivesPin` | the selection clamp removed, so `pin_fresh` survives after `has_pin` is cleared | `NoKeyOpOnTheAdminStatus` | 42 states |
-| `BugSigPinNotSpent` | `crates/rsk-openpgp/src/keys.rs:443-458` — the same shape one applet over, PW1 valid for one PSO:CDS | `NoKeyOpOnTheAdminStatus` | 212 states |
+| `BugSigPinNotSpent` | `crates/rsk-openpgp/src/keys.rs:447-462` — the same shape one applet over, PW1 valid for one PSO:CDS | `NoKeyOpOnTheAdminStatus` | 212 states |
 | `BugUserStatusOpensAdmin` | a *user* status opening the admin surface — the converse `BugAdminOpensKeyOps` cannot express | `NoKeyOpOnTheAdminStatus` | 48 states |
 | `BugRefusedValidateGrants` | a refused OATH access-code `VALIDATE` that grants the unlock | `NoStatusAfterARefusedAuth` | 73 states |
 | `BugPwStatusIgnoresAdmin` | a *user* status writing the PW status byte — PUT DATA `0xC4` is PW3's (`crates/rsk-openpgp/src/putdata.rs:260-263`, and the ACL one layer up at `:60-66`) | `NoKeyOpOnTheAdminStatus` | 49 states |
@@ -1525,7 +1525,7 @@ so the invariant's converse — a *user* status opening the *admin* surface — 
 unfalsifiable. `AdminOp` costs a handful of states and `BugUserStatusOpensAdmin`
 falls in 48. It also found the second `pin_fresh`-shaped hole, one applet over:
 OpenPGP's `spend_one_shot_pw1` clears `has_pw1` under the one-shot PW status
-(`crates/rsk-openpgp/src/keys.rs:443-458`), which `PgpKeyOp` had no term for —
+(`crates/rsk-openpgp/src/keys.rs:447-462`), which `PgpKeyOp` had no term for —
 `BugSigPinNotSpent`, RED in 361 once `oneShotSig`/`psig` exist. And a **refused
 OATH `VALIDATE` that GRANTS the unlock was invisible**, because the `refused`
 ghost provably never names that reference: exempting the action from the refusal
@@ -1608,9 +1608,9 @@ seventh, recorded with the fault-disjunct work earlier in this file.)
 
 | Mutation switch | Rebuilds | Target invariant | Caught in |
 |---|---|---|---|
-| `BugDeleteValueBeforeMeta` | `fs.rs:650-652` — the two backend writes reversed, so a torn delete leaves value-gone-meta-alive (`delete_landed`) | `NoOrphanedMetadata` | 54 states |
+| `BugDeleteValueBeforeMeta` | `fs.rs:669-671` — the two backend writes reversed, so a torn delete leaves value-gone-meta-alive (`delete_landed`) | `NoOrphanedMetadata` | 54 states |
 | `BugDeleteMetaOnlyUnderPresent` | the 0x077C databug — `delete` dropping `EF_META` only under `if present_bit`, so a meta-only file keeps its record | `NoOrphanedMetadata` | 55 states |
-| `BugDeleteHidesFaultedDrop` | the shipped tree before `fs.rs:657` — a faulted `meta_delete` swallowed, so the caller hears `Ok` about a record standing over a value that is gone | `NoSilentOrphan` | 61 states |
+| `BugDeleteHidesFaultedDrop` | the shipped tree before `fs.rs:676` — a faulted `meta_delete` swallowed, so the caller hears `Ok` about a record standing over a value that is gone | `NoSilentOrphan` | 61 states |
 | `BugCacheFaultAsAbsent` | audit run-36 — `record` in place of `record_unless_faulted`, caching a faulted read as a decided absence | `NoFalseAbsent` | 23 states |
 | `BugTruncatedScanDecidesAll` | `fs.rs:331-333` — `scan` deciding the whole FID space after a *truncated* walk, so a missed live key reads absent | `NoFalseAbsent` | 24 states |
 | `BugMetaAddDropsOnFault` | the 0x077C databug's meta half — a faulted `EF_META` read rebuilt from empty, dropping every other record | `NoRecordLostToMetaWrite` | 51 states |
@@ -1997,9 +1997,9 @@ exercise their interleavings at all.
 (chip-serial) root to the OTP root, and the log-structured store keeps the
 superseded weak copy readable in a raw flash dump until a compaction lap pushes
 it off the medium. `EF_HARDENED` says the lap has run
-(`crates/rsk-fs/src/lib.rs:29-124`); the boot runs it iff the marker is absent
+(`crates/rsk-fs/src/lib.rs:29-126`); the boot runs it iff the marker is absent
 and writes the marker only after `compact()` returns Ok
-(`crates/rsk-fs/src/lib.rs:126-144`) — marker AFTER scrub, the same write-order
+(`crates/rsk-fs/src/lib.rs:128-146`) — marker AFTER scrub, the same write-order
 family as the store's delete and the PIN flows' revoke. The boot glue keeps only
 the OTP gate and the placement of the stall (`firmware/src/main.rs:786-802`).
 Every *lazy* re-key **or delete** after the lap must re-arm it — a tombstone
@@ -2554,7 +2554,7 @@ State 2  MetaAdd("a")        meta = [a |-> TRUE,  b |-> FALSE]
 The cache says `EF_META` is absent while `b`'s record stands. Nothing in
 `TypeOK` or the four invariants forbids that state, and from it `MetaAdd` does
 exactly what the shipped code does — trusts the cache and rebuilds the blob from
-empty (`fs.rs:882`), losing `b`. This is SEC-STORE-004's damage arriving from a
+empty (`fs.rs:901`), losing `b`. This is SEC-STORE-004's damage arriving from a
 STATE rather than from the step that made the cache lie, and the model had no
 way to say the cache is honest. One conjunct fixes it:
 
@@ -3117,7 +3117,7 @@ abstractions producing traces the firmware cannot follow.
   cryptographically dead. The reset snapshot's `snap.seed` *does* make that
   distinction, but only for the backup-marker clause.
 - **The order within a sweep phase is arbitrary.** `for_each_key` yields in
-  flash-ring order (`fs.rs:423-426`), which is *a* fixed order per device state,
+  flash-ring order (`fs.rs:442-445`), which is *a* fixed order per device state,
   not a free choice. Both findings below need only that some reachable ring
   order puts one delete before another.
 - **`DeviceUnlock` is ungated and needs no device lock.** The real vendor

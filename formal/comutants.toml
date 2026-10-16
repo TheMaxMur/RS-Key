@@ -636,7 +636,7 @@ evidence = """Within RSKeyStore's append assumption, EF_META is old or a complet
 
 [comutant.BugMetaDeleteTearsBlob]
 status = "unreachable"
-evidence = """The same scoped append assumption at meta_delete's rewrite, crates/rsk-fs/src/fs.rs:940, rather than meta_add's crates/rsk-fs/src/fs.rs:899. A valid arbitrary subset of bystander records is outside the old-or-complete-new append contract; a wrong rebuild would be a different Rust defect. Real NOR and fault controls exercise failed, partial and dropped programs/erases, including errors after commitment; they do not establish arbitrary media integrity. CRC loss of the last usable record can become backend absence. StoreSolo_BugMetaDeleteTearsBlob.cfg still makes PLAT-FLASH-001 deniable on NoRecordLostToMetaWrite, while that platform assumption remains pending."""
+evidence = """The same scoped append assumption at meta_delete's rewrite, crates/rsk-fs/src/fs.rs:959, rather than meta_add's crates/rsk-fs/src/fs.rs:918. A valid arbitrary subset of bystander records is outside the old-or-complete-new append contract; a wrong rebuild would be a different Rust defect. Real NOR and fault controls exercise failed, partial and dropped programs/erases, including errors after commitment; they do not establish arbitrary media integrity. CRC loss of the last usable record can become backend absence. StoreSolo_BugMetaDeleteTearsBlob.cfg still makes PLAT-FLASH-001 deniable on NoRecordLostToMetaWrite, while that platform assumption remains pending."""
 
 [comutant.BugMetaDeleteDropsOnFault]
 status = "patch"
@@ -980,7 +980,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:247-251) is the same switch's other half and is not in this entry — one entry, one file."
+note = "check_ref's blocked floor removed: an exhausted PIN/PUK compares and authenticates. OpenPGP's twin floor (crates/rsk-openpgp/src/pin.rs:249-253) is the same switch's other half and is not in this entry — one entry, one file."
 
 [comutant.BugWrongDoesNotSpend]
 status = "patch"
@@ -1010,7 +1010,7 @@ replace = """
 """
 slice = ["cargo", "test", "-p", "rsk-piv"]
 expect = "killed"
-note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:952."
+note = "RESET RETRY COUNTER refills the PIN budget without proving the PUK — a budget raised out of nothing. OpenPGP's RC twin is crates/rsk-openpgp/src/pin.rs:954."
 
 # Administrative retry doors: the status guard and the arithmetic it admits.
 
@@ -1765,10 +1765,12 @@ file = "crates/rsk-fs/src/lib.rs"
 find = """
 pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<Rearmed> {
     let _ = fs.delete(EF_HARDENED);
-    // Not `delete`'s own answer: it reports the METADATA drop (EF_HARDENED, a one-byte
-    // flag, keeps none) and answers `Ok` where the present bit is clear over a live
-    // marker — what a read-fault-truncated `Fs::scan` leaves. Ask the lap's own gate.
-    let answer = match fs.try_has_data(EF_HARDENED) {
+    // Not `try_has_data`: `delete` marked EF_HARDENED absent from its own present bit,
+    // so the cache-satisfied probe answers "gone" without asking the medium — and a
+    // `remove` that reported `Ok` without applying it leaves the marker live under a
+    // standing `Ok(Rearmed)`. Ask the medium past that cache; a probe that cannot
+    // answer is a refusal too.
+    let answer = match fs.try_medium_has_data(EF_HARDENED) {
         Ok(true) => Err(Error::MemoryFatal),
         Ok(false) => Ok(Rearmed(())),
         Err(e) => Err(e),
@@ -1790,7 +1792,7 @@ pub fn request_rescrub<S: Storage>(fs: &mut Fs<S>) -> Result<Rearmed> {
 """
 slice = ["cargo", "test", "-p", "rsk-fs"]
 expect = "killed"
-note = "audit run-35, shipped at four of five re-key sites: a lazy re-key — or a lazy DELETE, which appends a tombstone rather than erasing — leaves EF_HARDENED standing over the weak copy it just superseded, so no future boot ever scrubs it. The DEFINITION is patched, not the call sites, because it dominates all of them — patching sites would leave the oath and openpgp halves unmeasured and over-anchor the entry to an enumeration that grows. The anchor is the WHOLE body because the re-arm outgrew its `delete`: the read-back has to go with it, since the defect is a re-arm that keeps the marker AND still answers `Ok` — leave `try_has_data` standing and the patch models the REFUSAL instead, which kills through `expect(\"a healthy medium re-arms and says so\")` and says the wrong half. The `Fs::rescrub_refused` latch goes with it for the same reason: it is set from this body's `Err` arm, so a patch that kept it would leave a stuck medium still reported and only half the defect modelled. Direction read at both levels: TLC's counterexample is `LazyRekey` at `marker = TRUE` reaching `weak = 1`, a marker standing over a leftover, and the host failure is `requesting_a_rescrub_clears_the_hardened_marker` (crates/rsk-fs/src/fs_tests.rs:420) reporting `a rescrub request must clear the marker, or the lap never runs again` — the marker SURVIVED, not a spurious clear."
+note = "audit run-35, shipped at four of five re-key sites: a lazy re-key — or a lazy DELETE, which appends a tombstone rather than erasing — leaves EF_HARDENED standing over the weak copy it just superseded, so no future boot ever scrubs it. The DEFINITION is patched, not the call sites, because it dominates all of them — patching sites would leave the oath and openpgp halves unmeasured and over-anchor the entry to an enumeration that grows. The anchor is the WHOLE body because the re-arm outgrew its `delete`: the read-back has to go with it, since the defect is a re-arm that keeps the marker AND still answers `Ok` — leave `try_medium_has_data` standing and the patch models the REFUSAL instead, which kills through `expect(\"a healthy medium re-arms and says so\")` and says the wrong half. The `Fs::rescrub_refused` latch goes with it for the same reason: it is set from this body's `Err` arm, so a patch that kept it would leave a stuck medium still reported and only half the defect modelled. Direction read at both levels: TLC's counterexample is `LazyRekey` at `marker = TRUE` reaching `weak = 1`, a marker standing over a leftover, and the host failure is `requesting_a_rescrub_clears_the_hardened_marker` (crates/rsk-fs/src/fs_tests.rs:420) reporting `a rescrub request must clear the marker, or the lap never runs again` — the marker SURVIVED, not a spurious clear."
 
 [comutant.BugMarkerBeforeScrub]
 status = "patch"

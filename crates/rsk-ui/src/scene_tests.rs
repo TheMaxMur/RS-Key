@@ -1699,3 +1699,24 @@ fn a_direct_pixel_encoder_splits_at_the_panel_width() {
     assert_eq!(commands[1].color, Rgb565::RED);
     assert_eq!(scene.error(), None);
 }
+
+#[path = "scene_run_tests.rs"]
+mod runs;
+
+#[path = "scene_encoder_tests.rs"]
+mod encoder;
+
+#[path = "scene_clip_tests.rs"]
+mod clips;
+
+#[path = "scene_damage_tests.rs"]
+mod damage;
+
+#[path = "scene_band_tests.rs"]
+mod bands;
+
+#[path = "scene_codec_tests.rs"]
+mod codec;
+
+#[path = "scene_frame_tests.rs"]
+mod frames;

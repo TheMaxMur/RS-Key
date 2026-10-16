@@ -14,19 +14,34 @@ fn arm_admin(fs: &mut Fs<RamStorage>, state: &mut FidoState) -> [u8; 32] {
 
 #[test]
 fn a_pin_authorized_identity_import_owes_only_its_operation_confirmation() {
+    for chain_len in [5, cert::ATT_CHAIN_MAX] {
+        pin_authorized_identity_import(chain_len);
+    }
+}
+
+fn pin_authorized_identity_import(chain_len: usize) {
     let (mut fs, mut rng, mut state) = setup();
     let token = arm_admin(&mut fs, &mut state);
     let host = handshake(&mut fs, &mut rng, &mut state);
     let boxed = wrap32(&host, &[0x21; 32]);
-    let mut request = [0; 512];
-    let n = att_import_req(&mut request, &boxed, &[0x30, 3, 1, 2, 3]);
+    let mut chain = std::vec![0; chain_len];
+    if chain_len == 5 {
+        chain.copy_from_slice(&[0x30, 3, 1, 2, 3]);
+    } else {
+        let [hi, lo] = u16::try_from(chain_len.checked_sub(4).unwrap())
+            .unwrap()
+            .to_be_bytes();
+        chain[..4].copy_from_slice(&[0x30, 0x82, hi, lo]);
+    }
+    let mut request = [0; crate::consts::MAX_MSG_SIZE as usize];
+    let n = att_import_req(&mut request, &boxed, &chain);
+    let raw = parse(&request[..n]).unwrap().raw_subpara;
+    if chain_len == cert::ATT_CHAIN_MAX {
+        assert_eq!(raw.len(), MAX_RAW_SUBPARA);
+    }
     let mut message = [0; 32 + 2 + MAX_RAW_SUBPARA];
-    let m = crate::state::puat_subcommand_msg(
-        &mut message,
-        CTAP_VENDOR,
-        VENDOR_ATT_IMPORT as u8,
-        parse(&request[..n]).unwrap().raw_subpara,
-    );
+    let m =
+        crate::state::puat_subcommand_msg(&mut message, CTAP_VENDOR, VENDOR_ATT_IMPORT as u8, raw);
     let mut mac = [0; 32];
     let mac_len =
         rsk_crypto::pinproto::authenticate(PinProto::Two, &token, &message[..m], &mut mac).unwrap();
@@ -54,12 +69,20 @@ fn a_pin_authorized_identity_import_owes_only_its_operation_confirmation() {
             &request[..n + tail_len],
             &mut out
         ),
-        Ok(0)
+        Ok(0),
+        "the real PIN-MAC parameter window must be accepted"
     );
     assert_eq!(presence.calls, 1);
     assert_eq!(
         *crate::seed::load_att_key(&dev(), &mut fs).unwrap().expose(),
         [0x21; 32]
+    );
+    let mut stored = [0; cert::ATT_CHAIN_REC_MAX];
+    let len = fs.read(EF_ATT_CHAIN, &mut stored).unwrap();
+    assert_eq!(cert::att_chain_count(&stored[..len]), 1);
+    assert_eq!(
+        cert::att_chain_cert(&stored[..len], 0),
+        Some(chain.as_slice())
     );
 }
 

@@ -244,6 +244,41 @@ impl Device for RamDevice {
     }
 }
 
+struct OneBoot(RamDevice);
+
+impl Device for OneBoot {
+    type Storage = Medium;
+
+    fn boot(&mut self) -> Fs<Medium> {
+        assert_eq!(self.0.boots, 0, "stable RAM recovery needs one boot");
+        self.0.boot()
+    }
+
+    fn dead(&self) -> bool {
+        self.0.dead()
+    }
+
+    fn revive(&mut self) {
+        self.0.revive();
+    }
+}
+
+#[test]
+fn an_atomic_ram_put_cut_finishes_recovery_after_one_boot() {
+    let mut dev = OneBoot(RamDevice::new(Tear::Before));
+    let mut fs = dev.0.mount();
+    let mut model = PowerCutModel::new(&FIDS, META_MAX);
+    model.step(&mut dev, &mut fs, Op::Put(A, b"old".to_vec()));
+    dev.0.arm(0);
+    model.step(&mut dev, &mut fs, Op::Put(A, b"new".to_vec()));
+    assert_eq!(dev.0.boots, 1);
+    assert_eq!(model.live(), 1);
+    assert!(!dev.dead());
+    let mut out = [0; 3];
+    assert_eq!(fs.read(A, &mut out), Some(3));
+    assert_eq!(&out, b"old");
+}
+
 /// The script every sweep replays: two files with metadata, a delete, a rewrite
 /// and two clean reboots, so both of `Fs`'s write orders and both halves of
 /// `EF_META`'s lifecycle are crossed.
