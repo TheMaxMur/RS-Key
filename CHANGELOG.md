@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Image laboratory measurements track Secure and Non-secure core0 main stacks
+  separately and check both bounds. A TrustZone image no longer fails `begin`
+  because its active Non-secure stack is outside the Secure ELF allocation.
+
 - TrustZone preserves an acknowledged USB configuration across the next SETUP and revokes authorization when HAL first observes a reset or suspend after the raw register snapshot (`bcdDevice 0x0ABB`).
 
 - TrustZone OTP HID status follows Secure applet updates and CCID SELECT, so YubiKit observes the current program sequence and slot flags (`bcdDevice 0x0AB0`).

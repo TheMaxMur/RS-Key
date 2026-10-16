@@ -1311,3 +1311,68 @@ authorizes PIV first, then injects a USB reset through the emulated host. The
 corrected image advances epoch 2 to 3 and refuses the old PIN authority before
 SELECT. Removing only the HAL reset fallback retains epoch 2 and answers `9000`
 to that same PIN query. Both runs reconfigure USB without a power cycle.
+
+## Software recheck on 2026-10-16
+
+The recheck used branch revision `9b9ce0c4` and fresh partitioned combined
+images. PIV RESET `6581` investigation was excluded. No firmware behavior,
+build counter, dependency pin or hardware state was changed by this recheck.
+
+| Check | Observed result |
+|---|---|
+| Real cryptography | RSA-2048 generation and two independently verified signatures; ML-DSA-44/65/87 registration and two independently verified assertions each |
+| Lifecycle | All 17 CANCEL/reset/disconnect/session cases and the separate image-clock reset-window case passed |
+| Hostile NS | Three allowed controls and 52 denied read/write/execute cases passed with the NS MPU disabled; denied writes preserved synthetic Secure data and terminal faults fenced USB/DPRAM |
+| Isolation controls | Relaxing only the USB grant or only the synthetic Secure-data SAU region let the forbidden access reach its post-read marker |
+| Profiles | 2 MiB and 16 MiB no-touch images built and answered getInfo after cold boot; the 16 MiB trusted-display profile built with `LED_KIND=none`; its KV end retained the E10 exclusion |
+| Reproducibility | The immutable `firmware-trustzone` Nix derivation and independent `--rebuild` completed with identical ELF and UF2 outputs |
+| Upgrade | The saved v0.4.11 image's OATH key, resident FIDO signing key and changed OpenPGP PIN survived automatic migration into the new image |
+| Artifact coverage | Hash-only sealing verified the combined ELF; a changed byte in each of `.text`, `.rsk_exec`, `.gnu.sgstubs`, `.nonsecure` and `.pt` produced `hash: incorrect` |
+| Symbolic checks | All 12 `rsk-device` Kani harnesses passed using the runner's soft-backend flags, including both MPU-layout branches |
+
+The hostile-image matrix also covers XIP/SRAM aliases, NSC data and mid-veneer
+execution, USB atomic aliases, DPRAM, DMA, clocks, resets, OTP, TRNG, QMI and
+boot RAM. Its fault hook exposes only synthetic test state in a disposable
+image. These results describe the emulator's enforced paths, not silicon.
+
+The image laboratory previously treated core0's active SP as its Secure stack
+even while NS ran. Measurements now select each security bank explicitly,
+derive the NS top from the embedded ELF vector and its floor from Secure SAU,
+and report `ns0_*` alongside the existing Secure fields. Invalid, overlapping
+or ambiguously attributed ranges are refused before painting. The regressions
+use real BXNS/SG transitions, preserve live frames in both banks and expose an
+NS underflow independently of a healthy Secure stack. Ordinary images retain
+their two-stack report; PSP and Non-secure core1 are refused explicitly.
+
+In the final 4 MiB no-touch replay, ML-DSA-87 creation used 84,940 bytes of the
+Secure core0 allocation and signing used 94,288 bytes. Core1 used 520 bytes and NS
+core0 used 744 bytes. These are sampled minima, not the paint extent: deliberate
+RAM scrubbing can overwrite the whole painted range. They do not establish
+physical interrupt, cache or FP-state margins.
+
+The software assurance gate also exposed a release-citation false positive:
+the hex fragment inside the word `header` was mistaken for a commit ID. The
+existing `develop` fix was ported with its regression; hexadecimal commit
+citations remain rejected while fragments inside words are accepted.
+
+The read-only reference-key check answered getInfo and reported diagnostic
+`bcdDevice 0x0ABC`, superseding the earlier recorded restore as a statement of
+current board state. No flashing, signing or fuse operation was performed.
+The hardware-release rows above remain open, including powered removal,
+physical presence/panel checks, exception/FP behavior and fused boot acceptance.
+
+The additional 16 MiB display cold-boot smoke timed out before USB enumeration.
+Core0 waited at `PioDisplayTx::flush` for PIO0 `FDEBUG.TXSTALL0` while the
+model reported neither a fault nor a reboot. The PIO model records an empty
+TX pull as `StallKind::Pull` but never latches that event into `FDEBUG`; its
+only writes to the register are reset and explicit register writes. This is
+a model limitation, not evidence of a firmware failure. The display profile
+is build-verified only; its runtime remains unchecked.
+
+The ordinary full-operation runner stopped at populated FIDO RESET because its
+120-second wall-clock client deadline expired while keepalives continued. An
+image-only replay retained the original operation order and assertions, with
+a RESET bound of 120 image seconds, a 1200-second host backstop and a maximum
+USB keepalive gap of 0.5 seconds. RESET completed, removed the PIN and refused
+the deleted credential. The shared device helper retains its original deadline;
+this replay does not establish a physical reset latency.

@@ -14,7 +14,7 @@ use super::Log;
 use super::bootram::{self, BootRam};
 use super::elf::Elf;
 use super::flash::Flash;
-use super::inspect::Stack;
+use super::inspect::Stacks;
 use super::ioqspi::{IO_QSPI_BASE, IoQspi};
 use super::otp::{self, OtpCore, OtpCtrl, OtpData, SharedOtp};
 use super::psm::{PSM_BASE, Psm};
@@ -74,7 +74,7 @@ pub struct Chip {
     qmi_ops_seen: u64,
     otp_burns_seen: usize,
     emu_ns: f64,
-    stacks: Option<[Stack; 2]>,
+    stacks: Option<Stacks>,
 }
 
 impl Chip {
@@ -222,8 +222,14 @@ impl Chip {
         self.emu.step_quantum = cycles;
         self.emu.step().map_err(|e| e.to_string())?;
         if let Some(stacks) = &mut self.stacks {
-            for (c, stack) in stacks.iter_mut().enumerate() {
-                stack.sample(self.emu.core(c).regs.sp());
+            if !self.emu.core(1).is_secure() {
+                return Err("Non-secure core1 stack measurement is unsupported".into());
+            }
+            for (c, stack) in stacks.secure.iter_mut().enumerate() {
+                stack.sample(probe::stack_registers(self.emu.core(c), true)?.0);
+            }
+            if let Some(stack) = &mut stacks.nonsecure {
+                stack.sample(probe::stack_registers(self.emu.core(0), false)?.0);
             }
         }
         self.emu_ns += f64::from(cycles) * 1e9 / f64::from(self.emu.bus.sys_clk_hz());

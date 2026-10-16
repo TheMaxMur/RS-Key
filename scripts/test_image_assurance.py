@@ -79,3 +79,27 @@ def test_image_boot_checks_ready_without_issuing_a_setup_command(laboratory, mon
         with pytest.raises(AssertionError, match="automatic storage boot failed"):
             device.check_storage_ready()
     assert commands == [bytes.fromhex("801e080000")]
+
+
+@pytest.mark.parametrize("nonsecure", [None, 150, 99])
+def test_measured_operations_refuse_an_ns_stack_underflow(laboratory, monkeypatch, nonsecure):
+    _, device = laboratory
+    measurement = "core0_low=100 core0_min=150 core1_low=200 core1_min=250"
+    if nonsecure is not None:
+        measurement += f" ns0_low=100 ns0_min={nonsecure}"
+    calls = []
+
+    def inspect(command):
+        calls.append(command)
+        return measurement if command == "end" else "cycle=0"
+
+    monkeypatch.setattr(device, "inspect", inspect)
+    report = {}
+    if nonsecure == 99:
+        with pytest.raises(AssertionError, match="sample"):
+            device.measured("sample", lambda: 42, report)
+    else:
+        assert device.measured("sample", lambda: 42, report) == 42
+    assert calls == ["begin", "end"]
+    if nonsecure is not None:
+        assert report["sample"]["ns0_min"] == nonsecure

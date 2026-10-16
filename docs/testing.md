@@ -1408,6 +1408,8 @@ restore, certificate binding and signatures after reboot, rejection of the old
 resident credential and a damaged load tag, and persistent sealing of export.
 Known seed and MSE-key patterns must be absent after completed and refused
 commands; a planted seed residue falsifies the same scan.
+The split image also reports `ns0_*`: its main stack is measured independently
+of the Secure core0 stack and checked by the same operation runner.
 Core1's tail remains inside the stack measurement; its timeout follows emulated
 time, with a separate host progress bound. Every RSA size has a planted-factor
 control and independent verification of a signature from the generated key.

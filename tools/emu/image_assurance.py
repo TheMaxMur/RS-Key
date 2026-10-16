@@ -170,8 +170,9 @@ class Device:
         finally:
             measurement = fields(self.inspect("end"))
             report[label] = {k: int(v) for k, v in measurement.items()}
-        for core in range(2):
-            assert int(measurement[f"core{core}_min"]) >= int(measurement[f"core{core}_low"]), label
+        names = ["core0", "core1"] + (["ns0"] if "ns0_min" in measurement else [])
+        for name in names:
+            assert int(measurement[f"{name}_min"]) >= int(measurement[f"{name}_low"]), label
         return result
 
 

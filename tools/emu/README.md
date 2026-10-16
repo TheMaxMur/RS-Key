@@ -284,7 +284,13 @@ Program order wraps within a 256-byte page. This deterministic fault model
 exercises recovery from incomplete writes, not every physically possible cell
 pattern. It changes no flash timing when unarmed.
 
-Stack bounds come from the ELF, checked against the core's live `MSPLIM`.
+Secure stack bounds come from the ELF, checked against the core's `MSPLIM`.
+For a split image, the embedded NS vector supplies its stack top; Secure SAU
+supplies the allocation floor, checked against the NS bank's `MSPLIM`.
+Measurements retain `core0_*` and `core1_*` for Secure and add `ns0_*` for NS.
+Each bank keeps its own sampled minimum and paint below its saved MSP, including
+while the other bank runs. PSP and a Non-secure core1 are refused explicitly.
+
 `coreN_used` is the ELF stack symbol's top minus the lowest sampled SP; core1's
 symbol includes `StaticCell` padding, so its value is a conservative bound.
 `coreN_painted` means bytes covered by writes. It is **not stack usage**: the

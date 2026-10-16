@@ -144,7 +144,34 @@ pub struct Stack {
     pub min_sp: u32,
 }
 
+pub struct Stacks {
+    pub secure: [Stack; 2],
+    pub nonsecure: Option<Stack>,
+}
+
 impl Stack {
+    pub fn checked(
+        low: u32,
+        top: u32,
+        sp: u32,
+        symbol_low: u32,
+        name: &str,
+    ) -> Result<Self, String> {
+        if !(SRAM_BASE..SRAM_BASE + SRAM_LEN).contains(&low)
+            || low < symbol_low
+            || top > SRAM_BASE + SRAM_LEN
+            || !(low..=top).contains(&sp)
+        {
+            return Err(format!("{name} is outside its ELF stack: {sp:#x}"));
+        }
+        Ok(Self {
+            low,
+            top,
+            initial_sp: sp,
+            min_sp: sp,
+        })
+    }
+
     pub fn sample(&mut self, sp: u32) {
         self.min_sp = self.min_sp.min(sp);
     }
