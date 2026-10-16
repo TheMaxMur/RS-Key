@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Fix display-image cold boot in the emulator: latch PIO TXSTALL on actual
+  empty pulls, complete I2C NACKs and route UART1/SPI1/I2C1 at their RP2350
+  addresses.
+
 - Bound image-laboratory CTAP requests by device time with a separate host
   watchdog, retain transport timing and refuse USB keepalive gaps over 500 ms.
   Native test clients keep their existing deadline.

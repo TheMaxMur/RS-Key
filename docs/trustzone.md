@@ -1376,3 +1376,43 @@ a RESET bound of 120 image seconds, a 1200-second host backstop and a maximum
 USB keepalive gap of 0.5 seconds. RESET completed, removed the PIN and refused
 the deleted credential. The shared device helper retains its original deadline;
 this replay does not establish a physical reset latency.
+
+## Image-laboratory follow-up on 2026-10-16
+
+The canonical image runner now bounds CTAP requests to 120 seconds on the image
+clock, with a separate 1,200-second host watchdog. Both bounds cover the final
+HID report and continuation reads. A terminal fault, a changed power-up count or
+a backwards clock refuses the result. Native runs retain their 120-second
+keepalive wait. Each measured operation retains every CTAP transport sample and
+refuses an image-clock USB gap over 500 ms. Regression tests and isolated
+negative controls check the callback wiring, both clocks, final reads, USB gaps
+and preservation of the original error if stack inspection also fails.
+
+The same touch-enabled 16 MiB display ELF now cold-boots through the pinned A4
+ROM, enumerates with three USB interfaces and answers getInfo at bcdDevice
+`0x0ABC`. Three model corrections were required:
+
+- PIO `FDEBUG.TXSTALL` latches on an actual empty blocking PULL or autopull,
+  including forced instructions and elapsed ticks in the idle batch path.
+  W1C clears the latch; no-tick and ordinary disabled stepping do not recreate it.
+  A waveform test checks that TXEMPTY precedes transmission of the last bit.
+- I2C NACK completes TX and preserves its abort cause through STOP until the
+  explicit interrupt-clear read. This lets Embassy observe the refusal and
+  continue without an attached CST328. The first 10-bit address NACK uses bit 1.
+- UART1, SPI1 and I2C1 use their RP2350 bases at `0x40078000`, `0x40088000`
+  and `0x40098000`. Independent SDK-address tests exercise real peripheral
+  reset values, both instances, reset gates and the XOR/SET/CLR aliases.
+
+The pre-fix display waits and failing register assertions are retained in the
+verification report. Removing each PIO latch path or its completion ordering,
+and reverting the I2C completion/cause fixes, fails the matching assertions.
+The image backend uses the serial emulator; these changes do not implement
+the threaded runtime's missing secondary-peripheral routes. The panel and
+CST328 contacts are still not modelled, so boot/getInfo is not physical display
+or touch-approval validation.
+
+Three filesystem contract tests also close the six non-equivalent mutation
+survivors from the develop integration. The repeated set has 65 caught,
+three unviable and one equivalent mutation: at equal lengths, Torn's `>` to
+`>=` replacement only appends an empty suffix. These are test/model/tooling
+changes; firmware behavior and bcdDevice are unchanged.
