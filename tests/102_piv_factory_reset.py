@@ -20,6 +20,11 @@ spec.loader.exec_module(piv_suite)
 
 NEW_PIN = b"654321\xff\xff"
 CHURN_BYTES = 3046
+CHURN_LENGTHS = (
+    1, 2, 3, 4, 5, 7, 8, 15, 16, 17, 31, 32, 33, 63, 64, 65,
+    127, 128, 129, 255, 256, 257, 511, 512, 513, 1023, 1024, 1025,
+    2033, 2048, 2049, 3000, 3045, CHURN_BYTES,
+)
 RETRY_METADATA_TAG = 0x06
 FACTORY_RETRY_COUNTS = bytes((3, 3))
 BLOCKING_STATUSES = (0x63C2, 0x63C1) + (0x6983,) * 6
@@ -59,7 +64,7 @@ def record_reset_failure(piv):
                               "transport_error": type(error).__name__}), flush=True)
 
 
-def cycle(piv, run, churn, rsa):
+def cycle(piv, run, churn, rsa, vary_churn=False):
     started = time.monotonic()
     piv.select()
     piv.verify_pin()
@@ -70,10 +75,14 @@ def cycle(piv, run, churn, rsa):
     if rsa:
         piv_suite.test_rsa(piv)
     for write in range(churn):
-        value = (run.to_bytes(4, "big") + write.to_bytes(4, "big")) * (CHURN_BYTES // 8 + 1)
-        value = value[:CHURN_BYTES]
+        size = CHURN_LENGTHS[(run * churn + write) % len(CHURN_LENGTHS)] if vary_churn else CHURN_BYTES
+        value = (run.to_bytes(4, "big") + write.to_bytes(4, "big")) * (size // 8 + 1)
+        value = value[:size]
         piv.apdu(piv_suite.INS_PUT_DATA, 0x3F, 0xFF,
                  piv_suite.tlv(0x5C, piv_suite.OBJ_POOL) + piv_suite.tlv(0x53, value))
+        if vary_churn:
+            print(json.dumps({"run": run, "churn_write": write + 1,
+                              "object_bytes": size}), flush=True)
     if churn:
         body, _ = piv.apdu(piv_suite.INS_GET_DATA, 0x3F, 0xFF,
                            piv_suite.tlv(0x5C, piv_suite.OBJ_POOL), le=True)
@@ -114,6 +123,8 @@ def main():
     parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--churn", type=int, default=4)
     parser.add_argument("--rsa", action="store_true")
+    parser.add_argument("--vary-churn", action="store_true",
+                        help="vary object lengths to change payload page packing")
     args = parser.parse_args()
     assert 1 <= args.runs <= 1000 and 0 <= args.churn <= 1000
     reader = piv_suite.find_reader(require_marker=True)
@@ -123,7 +134,7 @@ def main():
     try:
         piv = piv_suite.Piv(connection)
         for run in range(1, args.runs + 1):
-            cycle(piv, run, args.churn, args.rsa)
+            cycle(piv, run, args.churn, args.rsa, args.vary_churn)
     finally:
         connection.disconnect()
     print("PASS: PIV factory RESET stress", flush=True)

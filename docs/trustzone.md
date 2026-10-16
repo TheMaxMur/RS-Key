@@ -1159,6 +1159,15 @@ Live EP0 GET_STATUS still answered. One host USB bus reset recovered HID
 without reflashing. The cause of this stall after flashing has not been
 identified; that first start is retained as a failed hardware case.
 
+The RESET runner also accepts `--vary-churn`, which cycles object lengths from
+one byte through 3046 bytes, with lengths around common packet and page sizes.
+For a disposable no-touch key, run
+`python tests/102_piv_factory_reset.py --runs 40 --churn 8 --rsa --vary-churn`
+with the reader and serial selection described in [testing](testing.md).
+Each cycle still checks the exact PIN/PUK countdown and factory retry counts,
+key and object removal, and the replacement F9 certificate. Varying the lengths
+changes payload page packing; it is another reproduction workload, not a fix.
+
 A RAM NOR model separately completed 6000 direct `reset_files` calls after
 fragmented legacy import, across three storage roots and epochs. It checked all
 four retry bytes and preserved the imported foreign records and routed counters.
