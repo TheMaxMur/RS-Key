@@ -77,6 +77,11 @@ struct BoardConfig {
     display_i2c_freq_hz: Option<u32>,
     display_invert_colors: Option<bool>,
     display_color_order: Option<String>,
+    // panel (status-only screen; see firmware/src/panel.rs)
+    panel_spi_freq_hz: Option<u32>,
+    panel_cs: Option<u8>,
+    panel_dc: Option<u8>,
+    panel_bl_pin: Option<u8>,
 }
 
 fn read_board() -> Option<BoardConfig> {
@@ -120,6 +125,10 @@ fn parse_toml(raw: &str) -> BoardConfig {
         display_i2c_freq_hz: None,
         display_invert_colors: None,
         display_color_order: None,
+        panel_spi_freq_hz: None,
+        panel_cs: None,
+        panel_dc: None,
+        panel_bl_pin: None,
     };
     let mut sec = "";
     fn strip_comment(s: &str) -> &str {
@@ -220,6 +229,10 @@ fn parse_toml(raw: &str) -> BoardConfig {
             ("display", "i2c_freq_hz") => c.display_i2c_freq_hz = Some(u32(v)),
             ("display", "invert_colors") => c.display_invert_colors = Some(b(v)),
             ("display", "color_order") => c.display_color_order = Some(u(v).to_string()),
+            ("panel", "spi_freq_hz") => c.panel_spi_freq_hz = Some(u32(v)),
+            ("panel", "cs") => c.panel_cs = Some(u8(v)),
+            ("panel", "dc") => c.panel_dc = Some(u8(v)),
+            ("panel", "bl_pin") => c.panel_bl_pin = Some(u8(v)),
             _ => {}
         }
     }
@@ -451,8 +464,8 @@ fn main() {
     // Bake fake OTP keys into the image instead of reading the fuses — exercises
     // the kbase migration + boot path without an irreversible OTP write.
     // TEST BUILDS ONLY; never set for a shipped image.
-    // Display pin defaults (board config or env var or hardcoded).
-    macro_rules! disp {
+    // Display / panel pin defaults (board config or env var or hardcoded).
+    macro_rules! bake {
         ($key:expr, $val:expr) => {
             if env::var($key).is_err() {
                 println!("cargo:rustc-env={}={}", $key, $val);
@@ -463,7 +476,7 @@ fn main() {
     // collision block in `main.rs` only tests pins against *each other* and against the
     // hard-wired buses, so without this an out-of-range control pin reaches
     // `AnyPin::steal` and drives whatever pad it aliases onto.
-    macro_rules! disp_pin {
+    macro_rules! bake_pin {
         ($key:expr, $val:expr) => {{
             let v: u8 = $val;
             assert!(
@@ -473,7 +486,7 @@ fn main() {
                 MAX_GPIO,
                 v
             );
-            disp!($key, v);
+            bake!($key, v);
         }};
     }
     let b = board.as_ref();
@@ -487,41 +500,41 @@ fn main() {
     // boards/waveshare-touch-lcd.toml; it kept the pre-PIO 62.5 MHz after that file
     // moved to 80, which left every display build without an explicit `BOARD=` — the
     // one check.sh compiles included — asserting itself dead in `PioDisplayTx::new`.
-    disp!(
+    bake!(
         "PK_DISPLAY_SPI_FREQ_HZ",
         disp_cfg
             .and_then(|b| b.display_spi_freq_hz)
             .unwrap_or(80_000_000)
     );
-    disp_pin!(
+    bake_pin!(
         "PK_DISPLAY_CS",
         disp_cfg.and_then(|b| b.display_cs).unwrap_or(13)
     );
-    disp_pin!(
+    bake_pin!(
         "PK_DISPLAY_DC",
         disp_cfg.and_then(|b| b.display_dc).unwrap_or(14)
     );
-    disp_pin!(
+    bake_pin!(
         "PK_DISPLAY_RST",
         disp_cfg.and_then(|b| b.display_rst).unwrap_or(15)
     );
-    disp_pin!(
+    bake_pin!(
         "PK_DISPLAY_BL_PIN",
         disp_cfg.and_then(|b| b.display_bl_pin).unwrap_or(16)
     );
-    disp!(
+    bake!(
         "PK_DISPLAY_BL_PWM_SLICE",
         disp_cfg.and_then(|b| b.display_bl_pwm_slice).unwrap_or(0)
     );
-    disp!(
+    bake!(
         "PK_DISPLAY_BL_PWM_CHANNEL",
         disp_cfg.and_then(|b| b.display_bl_pwm_channel).unwrap_or(0)
     );
-    disp_pin!(
+    bake_pin!(
         "PK_DISPLAY_TP_RST",
         disp_cfg.and_then(|b| b.display_tp_rst).unwrap_or(17)
     );
-    disp!(
+    bake!(
         "PK_DISPLAY_I2C_FREQ_HZ",
         disp_cfg
             .and_then(|b| b.display_i2c_freq_hz)
@@ -569,6 +582,37 @@ fn main() {
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_I2C_FREQ_HZ");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_INVERT_COLORS");
     println!("cargo:rerun-if-env-changed=PK_DISPLAY_COLOR_ORDER");
+
+    // Status-only panel (`panel` feature). The defaults are ALIENTEK's RP2350A
+    // small-system board (1.14" ST7789V2: CS=9, DC=8, backlight=25 over SPI1, whose
+    // SCK/MOSI on GPIO10/11 are hard-wired in `firmware/src/panel.rs`); a board
+    // file's `[panel]` section overrides them. The backlight there is an active-LOW
+    // PNP high-side switch, so a board that differs needs its own `[panel]` section
+    // *and* a polarity decision in `panel.rs`. The panel is a plain 4-wire SPI
+    // module — no touch controller, no PWM backlight — so these four are all of it.
+    let panel_cfg = b.and_then(|b| b.panel_cs.map(|_| b));
+    bake!(
+        "PK_PANEL_SPI_FREQ_HZ",
+        panel_cfg
+            .and_then(|b| b.panel_spi_freq_hz)
+            .unwrap_or(40_000_000)
+    );
+    bake_pin!(
+        "PK_PANEL_CS",
+        panel_cfg.and_then(|b| b.panel_cs).unwrap_or(9)
+    );
+    bake_pin!(
+        "PK_PANEL_DC",
+        panel_cfg.and_then(|b| b.panel_dc).unwrap_or(8)
+    );
+    bake_pin!(
+        "PK_PANEL_BL_PIN",
+        panel_cfg.and_then(|b| b.panel_bl_pin).unwrap_or(25)
+    );
+    println!("cargo:rerun-if-env-changed=PK_PANEL_SPI_FREQ_HZ");
+    println!("cargo:rerun-if-env-changed=PK_PANEL_CS");
+    println!("cargo:rerun-if-env-changed=PK_PANEL_DC");
+    println!("cargo:rerun-if-env-changed=PK_PANEL_BL_PIN");
 
     for (env_var, baked) in [("FAKE_MKEK", "PK_FAKE_MKEK"), ("FAKE_DEVK", "PK_FAKE_DEVK")] {
         if let Some(hex) = resolve_fake_key(env_var) {

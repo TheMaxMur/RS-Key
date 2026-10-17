@@ -151,6 +151,7 @@ The same 40 P0-family rows, counted the other way round: per column rather than 
 | `fido-conformance` | feature | no | 3 | 37 |
 | `ea-conformance-rpid` | feature | no | 3 | 37 |
 | `largeblob-ext` | feature | no | 3 | 37 |
+| `panel` | feature | no | 0 | 40 |
 | `abrobot-16m` | board | no | 9 | 31 |
 | `abrobot-4m` | board | no | 36 | 4 |
 | `seeed-xiao` | board | no | 9 | 31 |
@@ -221,7 +222,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-TOOLCHAIN-002` | docs/unsafe.md is the enumeration of the first-party `unsafe` sites: e |
 | platform | `PLAT-UNSAFE-002` | `SendUsb` is sound: `embassy_usb::UsbDevice` is `!Send` only for the ` |
 | platform | `PLAT-UNSAFE-003` | `HEAP.init` runs exactly once, over a static buffer nothing else touch |
-| platform | `PLAT-UNSAFE-004` | Each of the eight build-selected GPIOs handed to `AnyPin::steal` has e |
+| platform | `PLAT-UNSAFE-004` | Each of the eleven build-selected GPIOs handed to `AnyPin::steal` has  |
 | platform | `PLAT-UNSAFE-005` | The two `static mut` prime sieves are single-core-exclusive: `CORE0_SI |
 | platform | `PLAT-UNSAFE-006` | Each core programs MSPLIM once, on the core that owns that stack, befo |
 | platform | `PLAT-UNSAFE-007` | The three FFI calls into the vendored ARM assembly pass fully owned, l |

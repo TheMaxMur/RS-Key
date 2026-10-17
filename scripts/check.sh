@@ -630,6 +630,13 @@ run "display code absent from default image" sh -c '
   if printf "%s\n" "$out" | grep -qE "rsk-ui|rsk-bip39|rsk-slip39|mipidsi"; then
     echo "FAIL: display code (rsk-ui/rsk-bip39/rsk-slip39/mipidsi) leaked into the default (no-display) firmware image"; exit 1
   fi'
+# The status-only panel (the `panel` feature) is a second screen build, compiled by
+# no other row — like the display it is `dep:`-gated, so lint and build it explicitly.
+# `LED_KIND=none` matches the reference board (ALIENTEK RP2350A has no addressable
+# LED); the default image's tree check above is still what proves a screenless key
+# compiles none of `rsk-ui`.
+run "clippy (panel firmware)" env LED_KIND=none cargo clippy -p firmware --features panel -- -D warnings
+run "build firmware (panel)"  env LED_KIND=none cargo build --release -p firmware --features panel
 # The test build: no BOOTSEL presence, so the automated suites don't hang on a touch.
 run "build firmware (test, --features no-touch)" cargo build --release -p firmware --features no-touch
 # rsk-wipe bakes its erase length AND its LED wiring in at build time, and it is

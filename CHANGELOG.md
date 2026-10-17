@@ -38,6 +38,24 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+### Added
+
+- **A status-only panel build (`--features panel`) for a screen board with no
+  touch.** It paints the device's own status — the build `bcdDevice`, the chip
+  serial, whether USB is attached, and uptime — on a plain 4-wire SPI LCD, and it
+  shows a **PRESS THE KEY** banner for as long as a user-presence wait is pending,
+  so the press the LED would blink for is named on the screen too. It adds no
+  presence source of its own: the BOOTSEL button still decides, the banner never
+  renders an operation or a relying party, and `shows_confirm()` stays false — this
+  is *not* the trusted display and every host ceremony is unchanged. The reference
+  board is ALIENTEK's RP2350A small-system board (1.14" ST7789V2, 240×135, on
+  SPI1). Panel wiring and SPI clock come from a board file's `[panel]` section,
+  defaulting to that board's pins (`cs`=9, `dc`=8, backlight=25 — active-low,
+  through the board's PNP high-side switch); SCK/MOSI on
+  GPIO10/11 are hard-wired. The feature is `dep:`-gated and mutually exclusive with
+  `display` (one geometry and one presence source per image), so a standard key is
+  unaffected. Build it `LED_KIND=none ... --features panel`. **`bcdDevice` → `0x09DB`.**
+
 ## [0.4.11] - 2026-09-08
 
 The catch-up release, and the one where the instruments were audited harder than
