@@ -173,8 +173,20 @@ symbol = "rsk_store::authenticated::import::Manifest::verify"
 surface = "attended storage v2 legacy-import root, epoch and frozen-set validation"
 
 [[caller]]
-symbol = "rsk_store::authenticated::journal::Journal<F>::scan"
+symbol = "rsk_store::authenticated::journal::checkpoint_digest_matches"
 surface = "storage v2 main journal replay and complete-directory validation"
+
+[[caller]]
+symbol = "rsk_store::authenticated::main::Main<F,C>::read"
+surface = "storage v2 cached main authority reads"
+
+[[caller]]
+symbol = "rsk_store::authenticated::main::Main<F,C>::read_inner"
+surface = "storage v2 cached main authority bank fingerprint validation"
+
+[[caller]]
+symbol = "rsk_store::authenticated::storage::Authenticated<F,C>::read_checked"
+surface = "storage v2 root-scoped main authority reads"
 
 [[caller]]
 symbol = "rsk_store::authenticated::journal::Journal<F>::write_snapshot"

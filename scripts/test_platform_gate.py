@@ -664,6 +664,7 @@ def test_the_checkout_derives_what_it_is_measured_at():
         "board-only:90_otp_mkek_migration",
         "board-only:100_trustzone_usb_regressions",
         "board-only:101_trustzone_otp_status",
+        "board-only:105_fido_getinfo_latency",
     }, kinds["board-only"]
     assert set(kinds["model"]) == {
         "model:PowerOnClearsScratch2",

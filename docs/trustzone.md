@@ -213,7 +213,8 @@ reset callbacks. The vendored core now enforces the tested SAU/MPU, ACCESSCTRL,
 SIO and serial DMA paths described below. Further hostile NS images, remaining
 instruction/FPU fidelity and hardware confirmation are still required. Direct
 ELF boot does not prove bootrom signature verification. No hardware-isolation
-property is closed here. See [testing](testing.md) for the emulator paths.
+property is closed here. XIP-cache latency requires physical timing; neither
+backend models cache misses. See [testing](testing.md) for the emulator paths.
 
 ## Prototype build and measurements
 

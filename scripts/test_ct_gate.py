@@ -1149,6 +1149,11 @@ def row(work, dump, script=None):
     return done
 
 
+REGISTER_NUMBER = {f"r{number}": number for number in range(16)} | {
+    "sl": 10, "fp": 11, "ip": 12, "sp": 13, "lr": 14, "pc": 15,
+}
+
+
 def cmp_zero(register, halfwords):
     """`cmp <register>, #0` as ARM encodes it, at the width it replaces.
 
@@ -1156,7 +1161,7 @@ def cmp_zero(register, halfwords):
     defect the parser REJECTS is a syntactic corruption, and a row that goes red
     on one has not read a defect at all.
     """
-    number = int(register[1:])
+    number = REGISTER_NUMBER[register]
     if halfwords == 1:
         return f"{0x2800 | number << 8:04x}      "
     return f"f1b{number:x} 0f00 "
@@ -1196,7 +1201,7 @@ def early_exit(lines):
         halfwords = len(line.split("\t")[1].split()) if code else 0
         # A high register has no narrow `cmp #0`, so that copy is left alone
         # rather than widened: the mutant may not move an address.
-        if register and not (halfwords == 1 and int(register[1:]) > 7):
+        if register and not (halfwords == 1 and REGISTER_NUMBER[register] > 7):
             address = int(code.group(1), 16)
             out.append(
                 f"{code.group(1)}:\t{cmp_zero(register, halfwords)}\tcmp\t{register}, #0"
@@ -1207,6 +1212,27 @@ def early_exit(lines):
     return out, injected
 
 
+@pytest.mark.parametrize(
+    ("register", "wide_encoding"),
+    [("r3", "f1b3 0f00 "), ("sl", "f1ba 0f00 "), ("fp", "f1bb 0f00 "),
+     ("ip", "f1bc 0f00 "), ("lr", "f1be 0f00 ")],
+)
+@pytest.mark.parametrize("halfwords", [1, 2])
+def test_binary_injection_handles_register_aliases_without_widening(
+    register, wide_encoding, halfwords
+):
+    lines = re.sub(r"\br3\b", register, CLEAN).splitlines()
+    if halfwords == 1:
+        lines = [line.replace("f1b1 0f20 \tcmp.w", "2920      \tcmp") for line in lines]
+    mutated, injected = early_exit(lines)
+    if halfwords == 1 and register != "r3":
+        assert mutated == lines and not injected
+    else:
+        assert injected == {0x1000000A: register}
+        encoding = wide_encoding if halfwords == 2 else "2b00      "
+        assert f"1000000a:\t{encoding}\tcmp\t{register}, #0" in mutated
+
+
 @pytest.fixture(scope="session")
 def defective_image(inlining_functions):
     """The image with the early exit in it, built ONCE for the four arms below."""
@@ -1215,9 +1241,12 @@ def defective_image(inlining_functions):
     # failure, not a green row somewhere downstream reading as a clean image.
     assert injected, "no copy of the site took the early exit"
     assert mutated != inlining_functions
-    assert sum(
-        1 for line in mutated if re.search(r"\tcmp\tr\d+, #0$", line)
-    ) >= len(injected), "the mutated stream does not carry what was injected"
+    encoded = {(address, mnemonic, operands)
+               for address, mnemonic, operands, _ in ct_gate.instructions(mutated)}
+    assert all((address, "cmp", f"{register}, #0") in encoded
+               for address, register in injected.items()), (
+        "the mutated stream does not carry what was injected"
+    )
     return mutated, injected
 
 

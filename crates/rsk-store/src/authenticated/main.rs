@@ -19,6 +19,13 @@ struct Current {
     sequence: u64,
 }
 
+#[derive(Clone, Copy)]
+struct ReadCache {
+    source: usize,
+    ends: [u32; 2],
+    fingerprints: [[u8; 32]; 2],
+}
+
 /// Root-selected payload versions remain live until their replacement is published.
 pub struct Main<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> {
     map: MapStorage<u16, VerifiedFlash<F>, C>,
@@ -27,6 +34,7 @@ pub struct Main<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> {
     buffer: Secret<[u8; crate::KV_BUF]>,
     identity: Identity,
     arm: RootArm,
+    read_cache: Option<ReadCache>,
 }
 
 impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
@@ -47,6 +55,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
                 epoch,
             },
             arm,
+            read_cache: None,
         }
     }
 
@@ -57,6 +66,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         };
         self.arm = arm;
         self.directory.clear();
+        self.read_cache = None;
         self.buffer.wipe();
         self.map.invalidate_cache();
     }
@@ -407,6 +417,7 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     }
 
     fn with_buffer<T>(&mut self, operation: impl FnOnce(&mut Self) -> Result<T>) -> Result<T> {
+        self.read_cache = None;
         let result = operation(self);
         self.buffer.wipe();
         result
@@ -422,7 +433,12 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     }
 
     pub fn read(&mut self, key: &[u8; 32], fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
-        self.with_buffer(|this| this.read_inner(key, fid, out))
+        let result = self.read_inner(key, fid, out);
+        self.buffer.wipe();
+        if result.is_err() {
+            self.read_cache = None;
+        }
+        result
     }
 
     pub fn write(&mut self, key: &[u8; 32], fid: u16, data: Option<&[u8]>) -> Result<()> {
@@ -500,7 +516,50 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
     }
 
     fn read_inner(&mut self, key: &[u8; 32], fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
-        self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+        if let Some(current) = self.read_cache {
+            // Reuse parsed authority only while every byte of both banks still
+            // matches its authenticated scan, under the freshly supplied root.
+            for ((journal, end), fingerprint) in self
+                .journals
+                .iter_mut()
+                .zip(current.ends)
+                .zip(current.fingerprints)
+            {
+                if !ct_eq(&journal.fingerprint(key, end)?, &fingerprint) {
+                    return Err(Error::MemoryFatal);
+                }
+            }
+            if current.source == 0 {
+                let zero = self.journals.first_mut().ok_or(Error::MemoryFatal)?;
+                if !ct_eq(
+                    &zero.fingerprint(key, *current.ends.first().ok_or(Error::MemoryFatal)?)?,
+                    current.fingerprints.first().ok_or(Error::MemoryFatal)?,
+                ) {
+                    return Err(Error::MemoryFatal);
+                }
+            }
+            if block_on(self.map.needs_repair()).map_err(|_| Error::MemoryFatal)? {
+                self.read_cache = None;
+            }
+        }
+        if self.read_cache.is_none() {
+            let current = self.resolve(key)?.ok_or(Error::MemoryFatal)?;
+            if current.scans.iter().all(|scan| {
+                scan.status == JournalStatus::Complete
+                    && scan.fingerprint.is_some()
+                    && scan.state.is_some_and(|state| state.pending().is_none())
+            }) {
+                let [zero, one] = current.scans;
+                self.read_cache = Some(ReadCache {
+                    source: current.source,
+                    ends: [zero.next, one.next],
+                    fingerprints: [
+                        zero.fingerprint.ok_or(Error::MemoryFatal)?,
+                        one.fingerprint.ok_or(Error::MemoryFatal)?,
+                    ],
+                });
+            }
+        }
         let Some(entry) = self.directory.find(fid) else {
             return Ok(None);
         };

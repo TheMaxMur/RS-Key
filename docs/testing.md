@@ -1423,6 +1423,10 @@ board's speed, two slower (an RSA-2048 keygen: 13.6 s, the board's ~4.3 s). Pres
 the OTP beside it. What it still is not is silicon: every model goes as deep as
 the bootrom and the image reach, no deeper. `tools/emu/README.md` has the rest.
 
+Neither backend models XIP-cache misses. Measure getInfo latency on an idle
+board with `nix develop -c python tests/105_fido_getinfo_latency.py`.
+`tests/emu.py` refuses this suite: host wall time cannot establish board latency.
+
 The picoem pin's empty-`PULL` batching was compared on 2026-10-02 using two
 independent release builds, `d83e668` and `4b1953f`, and the same partitioned
 `bcdDevice 0x0A8B` no-touch ELF. Three 10-second idle samples per build reduced

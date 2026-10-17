@@ -98,6 +98,7 @@ UNSUPPORTED = {
     "29_reset_power_cut": "cuts physical USB power during a flash write",
     "54_sram_residue": "measures SRAM residue on a real chip",
     "55_stack_residue": "probes the dead stack of a `--features bench` board image",
+    "105_fido_getinfo_latency": "needs physical XIP-cache timing; neither backend models misses",
     "90_otp_mkek_migration": "migrates the OTP MKEK; the emulator has no fuses",
 }
 

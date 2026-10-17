@@ -76,9 +76,9 @@ power-cycle helper at the emulator — so the suites run unmodified, and neither
 hidapi nor pyscard need be installed. `RSK_EMU` / `RSK_EMU_CCID` override the
 addresses.
 
-**42 of the 53 suites pass; the other 10 are refused by name, with the reason,
-before they start** (exit 77 — so a sweep counts skips apart from failures). None
-of them is an unexplained failure:
+Suites that need hardware or the real USB transport are refused by name,
+with a reason, before they start (exit 77 — so a sweep counts skips apart from
+failures):
 
 | Skipped here | Why |
 |---|---|
@@ -87,11 +87,12 @@ of them is an unexplained failure:
 | `53` | the PC/SC `FEATURE_VERIFY_PIN_DIRECT` reader layer |
 | `61`, `65` | driven through python-fido2's own HID transport — faking it would leave the suite testing this shim instead of a third-party client. Under `--usbip` there is nothing to fake, and they run |
 | `29`, `54`, `90` | real power-cut, SRAM residue and OTP-fuse migration — hardware by definition |
+| `105` | physical getInfo latency; neither backend models XIP-cache misses |
 
 The list lives in `tests/emu.py` (`UNSUPPORTED`); removing an entry is a claim
 that the emulator grew the capability.
 
-`14` is the 43rd: it asserts with a credential a person enrolled
+`14` asserts with a credential a person enrolled
 (`ssh-keygen -t ed25519-sk`), so without that key it skips 77 too.
 
 `30` needs the Yubico card identity: start the emulator `--yubico` and it runs,

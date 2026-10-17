@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Fix multi-second FIDO getInfo latency on RP2350: reuse the parsed storage
+  directory only after freshly checking both journal banks, keep payload and
+  page-recovery checks, and use compact SHA-256 on the device to fit the XIP
+  cache. Existing flash records remain compatible. bcdDevice `0x0ABD`.
+
 - Fix display-image cold boot in the emulator: latch PIO TXSTALL on actual
   empty pulls, complete I2C NACKs and route UART1/SPI1/I2C1 at their RP2350
   addresses.

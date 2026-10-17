@@ -177,12 +177,12 @@ supports = ["SEC-LAT-002"]
 [[assumption]]
 id = "PLAT-TOOL-001"
 class = "tool-fidelity"
-statement = "A green emulator run covers its selected backend and adapter. The applet socket shim does not run the firmware or intercept raw host USB calls. Image mode runs the ELF and modeled peripherals, without establishing physical flash tear behaviour, electrical USB behaviour, fuse enforcement or physical entropy on silicon."
-discharge = "The backend limits remain explicit in docs/testing.md and docs/trustzone.md. Suites 100/101 use raw PyUSB and are refused by tests/emu.py; physical USB or a USB/IP host must drive them directly. The recorded RP2350 A2 runs in docs/trustzone.md cover that board and host, not every backend or silicon property."
+statement = "A green emulator run covers its selected backend and adapter. The applet socket shim does not run the firmware or intercept raw host USB calls. Image mode runs the ELF and modeled peripherals, without establishing physical flash tear behaviour, electrical USB behaviour, fuse enforcement, physical entropy or XIP-cache timing on silicon."
+discharge = "The backend limits remain explicit in docs/testing.md and docs/trustzone.md. Suites 100/101 use raw PyUSB and are refused by tests/emu.py; physical USB or a USB/IP host must drive them directly. Suite 105 measures physical getInfo latency and is refused because neither backend models XIP-cache misses. The recorded RP2350 A2 runs in docs/trustzone.md cover that board and host, not every backend or silicon property."
 discharge_owner = "contributor"
 status = "pending"
 failure_direction = "coverage: a suite that passes here and would not on a board, in whichever half is still written twice"
-covers = ["board-only:100_trustzone_usb_regressions", "board-only:101_trustzone_otp_status"]
+covers = ["board-only:100_trustzone_usb_regressions", "board-only:101_trustzone_otp_status", "board-only:105_fido_getinfo_latency"]
 
 [[assumption]]
 id = "PLAT-TOOL-002"

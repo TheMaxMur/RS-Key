@@ -36,6 +36,68 @@ fn main_on<F: MultiwriteNorFlash + Clone>(flash: F) -> Main<F, UncachedMap> {
 }
 
 #[test]
+fn cached_reads_bind_the_current_root_and_invalidate_before_mutations_or_configuration() {
+    let mut main = main();
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"owner")).unwrap();
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    assert!(main.read_cache.is_some());
+    assert_eq!(
+        main.read(&[0x36; 32], 0xB001, &mut []),
+        Err(Error::MemoryFatal)
+    );
+    assert!(main.read_cache.is_none());
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    main.write(&KEY, 0xB000, Some(b"new")).unwrap();
+    assert!(main.read_cache.is_none());
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(3)));
+    main.configure(EPOCH, RootArm::PreOtp);
+    assert!(main.read_cache.is_none());
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(3)));
+}
+
+#[test]
+fn cached_fingerprints_bind_partition_capacity_and_root_even_for_identical_bytes() {
+    let flash = crate::tests::flash_for_authenticated_tests();
+    let make = |partition, range| {
+        Journal::new(
+            super::super::RawBank::new(flash.clone(), range).unwrap(),
+            partition,
+        )
+    };
+    let mut main = make(Partition::Main, 0..4096);
+    let fingerprint = main.fingerprint(&KEY, 0).unwrap();
+    assert_ne!(
+        fingerprint,
+        make(Partition::Counter, 0..4096)
+            .fingerprint(&KEY, 0)
+            .unwrap()
+    );
+    assert_ne!(
+        fingerprint,
+        make(Partition::Main, 0..8192).fingerprint(&KEY, 0).unwrap()
+    );
+    assert_ne!(fingerprint, main.fingerprint(&[0x36; 32], 0).unwrap());
+}
+
+#[test]
+fn cached_reads_do_not_accept_a_crc_valid_but_unauthenticated_payload() {
+    let mut main = main();
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"owner")).unwrap();
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    assert!(main.read_cache.is_some());
+    block_on(
+        main.map
+            .store_item(main.buffer.expose_mut(), &0xB000, &b"forged".as_slice()),
+    )
+    .unwrap();
+    let mut out = [0; 6];
+    assert_eq!(main.read(&KEY, 0xB000, &mut out), Ok(Some(5)));
+    assert_eq!(&out[..5], b"owner");
+}
+
+#[test]
 fn payload_read_refusals_are_errors_in_published_and_reserved_value_checks() {
     let flash = crate::tests::fault_flash_for_authenticated_tests();
     let mut main = main_on(flash.clone());

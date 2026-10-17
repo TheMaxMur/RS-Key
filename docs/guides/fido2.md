@@ -6,6 +6,11 @@ new value already landed. Retry from the persistent state rather than assuming
 rollback; the firmware rebuilds its inventory and reports no spare capacity
 until an incomplete scan can finish. Record formats are unchanged.
 
+Repeated `getInfo` requests reuse the parsed storage directory after checking
+both journal banks again. Payload authentication and page recovery still run;
+changed or unreadable journal bytes refuse that request and discard the cached
+directory. The next request resolves the persistent state again.
+
 Empty PIN/seed/lock records are damaged state, not a fresh device. Firmware
 preserves them and refuses the affected operation instead of installing a new
 PIN or identity. A damaged irreversible backup marker keeps export closed.
