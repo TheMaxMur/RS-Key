@@ -299,18 +299,47 @@ impl<S: NorFlash, C: CacheImpl<K>, K: Key> MapStorage<K, S, C> {
 
     /// Whether page metadata describes an interrupted erase or migration.
     pub async fn needs_repair(&mut self) -> Result<bool, Error<S::Error>> {
+        let mut markers = [0; 2 * MAX_WORD_SIZE];
+        self.inner.flash.read(self.inner.flash_range.start, &mut markers[..S::READ_SIZE])
+            .await.map_err(|value| Error::Storage {
+                value,
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            })?;
+        let mut start_marked = crate::marker_marked(&markers[..S::READ_SIZE]);
         for page in self.inner.get_pages(0) {
-            match self.inner.get_page_state(page).await {
-                Err(Error::Corrupted { .. }) => return Ok(true),
-                Ok(PageState::PartialOpen) => {
+            let last = page + 1 == self.inner.page_count().get();
+            let address = calculate_page_end_address::<S>(self.flash_range(), page) - S::READ_SIZE as u32;
+            let count = if last { S::READ_SIZE } else { 2 * S::READ_SIZE };
+            self.inner.flash.read(address, &mut markers[..count]).await.map_err(|value| Error::Storage {
+                value,
+                #[cfg(feature = "_test")]
+                backtrace: std::backtrace::Backtrace::capture(),
+            })?;
+            let end_marked = crate::marker_marked(&markers[..S::READ_SIZE]);
+            match (start_marked, end_marked) {
+                (false, true) => return Ok(true),
+                (true, false) => {
                     match self.inner.get_page_state(self.inner.next_page(page)).await {
                         Ok(state) if state.is_open() => {},
                         Ok(_) | Err(Error::Corrupted { .. }) => return Ok(true),
                         Err(error) => return Err(error),
                     }
+                    // A successor sampled by lookahead must still be fresh when visited.
+                    if !last {
+                        let next = calculate_page_address::<S>(self.flash_range(), page + 1);
+                        self.inner.flash.read(next, &mut markers[S::READ_SIZE..2 * S::READ_SIZE])
+                            .await.map_err(|value| Error::Storage {
+                                value,
+                                #[cfg(feature = "_test")]
+                                backtrace: std::backtrace::Backtrace::capture(),
+                            })?;
+                    }
                 }
-                Ok(_) => {},
-                Err(error) => return Err(error),
+                _ => {},
+            }
+            if !last {
+                start_marked = crate::marker_marked(&markers[S::READ_SIZE..2 * S::READ_SIZE]);
             }
         }
         Ok(false)

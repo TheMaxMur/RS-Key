@@ -12,7 +12,7 @@ unrelated kinds live here:
   `sequential-storage.patch`, wired into `[patch.crates-io]` by the root,
   `fuzz/` and `tools/emu/` manifests. All three, or the emulator runs a
   different KV store from the firmware. The patch file's own header is the
-  record of what each change is and why the fork stays inside `src/map.rs`.
+  record of what each change is and why the fork stays inside `src/map.rs` and `src/lib.rs`.
 - **The image emulator** — `picoem/`, the two host libraries and pinned A4
   ROM used by `tools/emu`. Origin, local isolation changes and checks are
   recorded in [TrustZone](../docs/trustzone.md#emulator-source-and-isolation-checks).

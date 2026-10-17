@@ -53,6 +53,20 @@ pub fn read_byte(capacity: usize, offset: u32, read: impl FnOnce(u32) -> u8) -> 
     Ok(read(offset))
 }
 
+/// Read adjacent bytes only after proving both callback offsets are in bounds.
+#[inline(always)]
+pub fn read_pair(
+    capacity: usize,
+    offset: u32,
+    mut read: impl FnMut(u32) -> u8,
+) -> Result<[u8; 2], Error> {
+    let next = offset.checked_add(1).ok_or(Error::OutOfBounds)?;
+    if usize::try_from(next).map_err(|_| Error::OutOfBounds)? >= capacity {
+        return Err(Error::OutOfBounds);
+    }
+    Ok([read(offset), read(next)])
+}
+
 /// Read complete words freshly; abort on a stall or inconsistent final progress.
 #[inline(always)]
 pub fn read(

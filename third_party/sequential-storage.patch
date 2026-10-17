@@ -1,5 +1,5 @@
-# Local changes to sequential-storage 8.0.0, confined to src/map.rs.
-# The root, fuzz and emulator workspaces all use this exact vendored file.
+# Local changes to sequential-storage 8.0.0, confined to src/map.rs and src/lib.rs.
+# The root, fuzz and emulator workspaces all use these exact vendored files.
 #
 # 1. Warm key pointers only after a complete scan; propagate read refusals.
 # 2. Retire oldest records first so interrupted remove cannot resurrect old data.
@@ -9,8 +9,10 @@
 # 5. Expose unrepaired lookup and raw full-value matching. Readers authenticate
 #    expected payloads; mutation requires mapped-value validation before GC.
 # 6. Validate post-repair owners before GC and propagate all read refusals.
+# 7. Batch fresh page markers across adjacent boundaries; retain full
+#    successor and wrap checks, propagating every read refusal.
 #
-# Regenerate against pristine crates.io 8.0.0 src/map.rs; preserve CRLF.
+# Regenerate against pristine crates.io 8.0.0 src/{map,lib}.rs; preserve CRLF.
 
 --- a/src/map.rs
 +++ b/src/map.rs
@@ -52,7 +54,7 @@
  
  /// Configuration for a map
  pub struct MapConfig<S> {
-@@ -204,10 +235,184 @@
+@@ -204,10 +235,213 @@
              None => K::get_len(&data_buffer[..data_len])?,
          };
  
@@ -123,18 +125,47 @@
 +
 +    /// Whether page metadata describes an interrupted erase or migration.
 +    pub async fn needs_repair(&mut self) -> Result<bool, Error<S::Error>> {
++        let mut markers = [0; 2 * MAX_WORD_SIZE];
++        self.inner.flash.read(self.inner.flash_range.start, &mut markers[..S::READ_SIZE])
++            .await.map_err(|value| Error::Storage {
++                value,
++                #[cfg(feature = "_test")]
++                backtrace: std::backtrace::Backtrace::capture(),
++            })?;
++        let mut start_marked = crate::marker_marked(&markers[..S::READ_SIZE]);
 +        for page in self.inner.get_pages(0) {
-+            match self.inner.get_page_state(page).await {
-+                Err(Error::Corrupted { .. }) => return Ok(true),
-+                Ok(PageState::PartialOpen) => {
++            let last = page + 1 == self.inner.page_count().get();
++            let address = calculate_page_end_address::<S>(self.flash_range(), page) - S::READ_SIZE as u32;
++            let count = if last { S::READ_SIZE } else { 2 * S::READ_SIZE };
++            self.inner.flash.read(address, &mut markers[..count]).await.map_err(|value| Error::Storage {
++                value,
++                #[cfg(feature = "_test")]
++                backtrace: std::backtrace::Backtrace::capture(),
++            })?;
++            let end_marked = crate::marker_marked(&markers[..S::READ_SIZE]);
++            match (start_marked, end_marked) {
++                (false, true) => return Ok(true),
++                (true, false) => {
 +                    match self.inner.get_page_state(self.inner.next_page(page)).await {
 +                        Ok(state) if state.is_open() => {},
 +                        Ok(_) | Err(Error::Corrupted { .. }) => return Ok(true),
 +                        Err(error) => return Err(error),
 +                    }
++                    // A successor sampled by lookahead must still be fresh when visited.
++                    if !last {
++                        let next = calculate_page_address::<S>(self.flash_range(), page + 1);
++                        self.inner.flash.read(next, &mut markers[S::READ_SIZE..2 * S::READ_SIZE])
++                            .await.map_err(|value| Error::Storage {
++                                value,
++                                #[cfg(feature = "_test")]
++                                backtrace: std::backtrace::Backtrace::capture(),
++                            })?;
++                    }
 +                }
-+                Ok(_) => {},
-+                Err(error) => return Err(error),
++                _ => {},
++            }
++            if !last {
++                start_marked = crate::marker_marked(&markers[S::READ_SIZE..2 * S::READ_SIZE]);
 +            }
 +        }
 +        Ok(false)
@@ -240,7 +271,7 @@
      }
  
      /// Fetch the item, but with the item unborrowed, the address of the item and the length of the key
-@@ -271,7 +476,12 @@
+@@ -271,7 +505,12 @@
                          break 'cache;
                      }
                      item::MaybeItem::Present(item) => {
@@ -254,7 +285,7 @@
                      }
                  }
              }
-@@ -328,7 +538,7 @@
+@@ -328,7 +567,7 @@
  
              let mut it = ItemIter::new(page_data_start_address, page_data_end_address);
              while let Some((item, address)) = it.next(&mut self.inner.flash, data_buffer).await? {
@@ -263,7 +294,7 @@
                  if found_key == *search_key {
                      newest_found_item_data = Some((address, found_key_len));
                  }
-@@ -433,6 +643,166 @@
+@@ -433,6 +672,166 @@
          key: &K,
          item: &V,
      ) -> Result<(), Error<S::Error>> {
@@ -430,7 +461,7 @@
          if self.inner.cache.is_dirty() {
              self.inner.cache.invalidate_cache_state();
          }
-@@ -502,20 +872,11 @@
+@@ -502,20 +901,11 @@
                      .await?;
  
                  if let Some(free_spot_address) = free_spot_address {
@@ -455,7 +486,7 @@
                  }
  
                  // The item doesn't fit here, so we need to close this page and move to the next
-@@ -636,14 +997,46 @@
+@@ -636,14 +1026,46 @@
              self.inner.cache.invalidate_cache_state();
          }
  
@@ -508,7 +539,7 @@
  
          // Go through all the pages
          for page_index in self.inner.get_pages(self.inner.next_page(last_used_page)) {
-@@ -683,7 +1076,7 @@
+@@ -683,7 +1105,7 @@
                      item::MaybeItem::Corrupted(_, _) | item::MaybeItem::Erased(_, _) => continue,
                      item::MaybeItem::Present(item) => {
                          let item_match = match search_key {
@@ -517,7 +548,7 @@
                              _ => true,
                          };
                          // If this item has the same key as the key we're trying to erase, then erase the item.
-@@ -853,7 +1246,7 @@
+@@ -853,7 +1275,7 @@
              calculate_page_end_address::<S>(self.flash_range(), source_page) - S::WORD_SIZE as u32,
          );
          while let Some((item, item_address)) = it.next(&mut self.inner.flash, data_buffer).await? {
@@ -526,7 +557,7 @@
  
              // We're in a decent state here
              self.inner.cache.unmark_dirty();
-@@ -912,7 +1305,13 @@
+@@ -912,7 +1334,13 @@
      async fn try_repair(&mut self, data_buffer: &mut [u8]) -> Result<(), Error<S::Error>> {
          self.inner.cache.invalidate_cache_state();
  
@@ -541,7 +572,7 @@
  
          // Let's check if we corrupted in the middle of a migration
          if let Some(partial_open_page) = self
-@@ -1053,14 +1452,16 @@
+@@ -1053,14 +1481,16 @@
          data_buffer: &'a mut [u8],
      ) -> Result<Option<(K, V)>, Error<S::Error>> {
          // Find the next item
@@ -561,7 +592,7 @@
              }
  
              // The current page is done, we need to find the next page
-@@ -1070,6 +1471,10 @@
+@@ -1070,6 +1500,10 @@
  
                  // We've looped back to the first page, which means all pages are checked, there's nothing left so we return None
                  if self.current_page_index == self.first_page {
@@ -572,7 +603,7 @@
                      return Ok(None);
                  }
  
-@@ -1092,15 +1497,34 @@
+@@ -1092,15 +1526,34 @@
                          );
                          break;
                      }
@@ -609,3 +640,55 @@
  
          Ok(Some((key, value)))
      }
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -34,6 +34,12 @@
+ /// Stm32 internal flash has 256-bit words, so 32 bytes.
+ /// Many flashes have 4-byte or 1-byte words.
+ const MAX_WORD_SIZE: usize = 32;
++
++// Four cleared bits tolerate partial marker writes and occasional bit flips.
++fn marker_marked(bytes: &[u8]) -> bool {
++    const HALF_MARKER_BITS: u32 = 4;
++    bytes.iter().map(|byte| byte.count_zeros()).sum::<u32>() >= HALF_MARKER_BITS
++}
+ 
+ /// The generic object that manages the flash.
+ /// This is mostly an internal type.
+@@ -169,10 +175,6 @@
+     /// Get the state of the page located at the given index
+     async fn get_page_state(&mut self, page_index: usize) -> Result<PageState, Error<S::Error>> {
+         let page_address = calculate_page_address::<S>(self.flash_range.clone(), page_index);
+-        /// We only care about the data in the first byte to aid shutdown/cancellation.
+-        /// But we also don't want it to be too too definitive because we want to survive the occasional bitflip.
+-        /// So only half of the byte needs to be zero.
+-        const HALF_MARKER_BITS: u32 = 4;
+ 
+         let mut buffer = [0; MAX_WORD_SIZE];
+         self.flash
+@@ -183,11 +185,7 @@
+                 #[cfg(feature = "_test")]
+                 backtrace: std::backtrace::Backtrace::capture(),
+             })?;
+-        let start_marked = buffer[..S::READ_SIZE]
+-            .iter()
+-            .map(|marker_byte| marker_byte.count_zeros())
+-            .sum::<u32>()
+-            >= HALF_MARKER_BITS;
++        let start_marked = marker_marked(&buffer[..S::READ_SIZE]);
+ 
+         self.flash
+             .read(
+@@ -200,11 +198,7 @@
+                 #[cfg(feature = "_test")]
+                 backtrace: std::backtrace::Backtrace::capture(),
+             })?;
+-        let end_marked = buffer[..S::READ_SIZE]
+-            .iter()
+-            .map(|marker_byte| marker_byte.count_zeros())
+-            .sum::<u32>()
+-            >= HALF_MARKER_BITS;
++        let end_marked = marker_marked(&buffer[..S::READ_SIZE]);
+ 
+         let discovered_state = match (start_marked, end_marked) {
+             (true, true) => PageState::Closed,

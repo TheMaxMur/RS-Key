@@ -442,15 +442,15 @@ until cold boot. This path fences authorization but does not claim SRAM wiping.
 
 ### 65. Uncached page-state byte reads — `PLAT-UNSAFE-015`
 
-`firmware/src/flash_storage/stream.rs::read_byte` reads one byte through the
+`firmware/src/flash_storage/stream.rs::read_uncached` reads one byte through the
 RP2350 translated uncached alias at `0x14000000`, as defined by the
 [pico-sdk 2.2.0 address map](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/addressmap.h).
-The host-tested helper refuses an offset outside the configured chip before
-calling the hardware closure. A compile-time bound keeps the complete chip
+The host-tested byte and pair helpers check every offset against the configured
+chip before either hardware callback. A compile-time bound keeps the complete chip
 inside the alias window; `SharedFlash` retains its exclusive borrow.
 *Safe alternative:* the existing cached HAL read is correct but fills cache
-lines for one-byte page-state probes. The new path reads the same translated
-address without a RAM scratch or any permission change.
+lines for small page-state probes. The new path reads the same translated
+address with the existing permissions.
 *Containment:* one volatile u8 load, initialized flash bytes, byte alignment,
 no MMIO stores, no new grants, and unchanged authority, root and payload checks.
 The byte load has no software deadline and a bus fault is not a flash error.

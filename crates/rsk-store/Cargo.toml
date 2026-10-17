@@ -43,7 +43,6 @@ embassy-futures = { workspace = true }
 # drags in — futures×7, approx, slab, and heapless's defmt→syn/thiserror/bitflags.
 # None of them is what the mock needs: `mock_flash.rs` imports only `core`,
 # `embedded_storage_async` and `Vec`, and `futures` appears in that crate solely in
-# doctests. Narrowing the feature would mean a second local change to the vendored
-# fork, whose patch notes deliberately record that only `src/map.rs` differs from
-# published 8.0.0. So the fake NOR chip lives in `src/tests.rs` — the store under
+# doctests. Enabling it would expand the firmware's dependency tree for a host-only
+# mock. The fake NOR chip lives in `src/tests.rs` — the store under
 # test is still the fork, which is the part that has to be the device's.

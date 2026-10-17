@@ -231,3 +231,29 @@ fn stops_after_stall_stale_overflow_invalid_fill_and_wrong_final_progress() {
         assert_eq!(stream.remaining, 0);
     }
 }
+
+#[test]
+fn byte_pairs_check_both_bounds_before_either_callback() {
+    for (capacity, offset) in [(0, 0), (1, 0), (8, 7), (8, 8), (usize::MAX, u32::MAX)] {
+        let mut calls = 0;
+        assert_eq!(
+            read_pair(capacity, offset, |_| {
+                calls += 1;
+                0
+            }),
+            Err(Error::OutOfBounds)
+        );
+        assert_eq!(calls, 0);
+    }
+    for (capacity, offset) in [(2, 0), (8, 1), (8, 6)] {
+        let mut calls = std::vec::Vec::new();
+        assert_eq!(
+            read_pair(capacity, offset, |at| {
+                calls.push(at);
+                (at & 0xff) as u8
+            }),
+            Ok([offset as u8, (offset + 1) as u8])
+        );
+        assert_eq!(calls, [offset, offset + 1]);
+    }
+}

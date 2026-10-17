@@ -269,3 +269,7 @@ fn for_each_in<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>>(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "page_probe_tests.rs"]
+mod page_probe_tests;

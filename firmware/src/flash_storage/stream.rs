@@ -11,16 +11,25 @@ const TIMEOUT_US: u32 = 100_000;
 
 #[inline(always)]
 pub(super) fn read_byte(offset: u32) -> Result<u8, Error> {
+    flash_stream::read_byte(super::FLASH_SIZE, offset, read_uncached)
+        .map_err(|_| Error::OutOfBounds)
+}
+
+#[inline(always)]
+pub(super) fn read_pair(offset: u32) -> Result<[u8; 2], Error> {
+    flash_stream::read_pair(super::FLASH_SIZE, offset, read_uncached)
+        .map_err(|_| Error::OutOfBounds)
+}
+
+#[inline(always)]
+fn read_uncached(offset: u32) -> u8 {
     const {
         assert!(super::FLASH_SIZE <= FLASH_UNCACHED_BYTES);
     }
-    flash_stream::read_byte(super::FLASH_SIZE, offset, |offset| {
-        // SAFETY: SharedFlash holds its exclusive borrow; the checked offset is
-        // inside this chip's capacity and the translated uncached XIP window.
-        // A u8 read permits every alignment and every initialized flash value.
-        unsafe { core::ptr::read_volatile((FLASH_UNCACHED_BASE + offset) as *const u8) }
-    })
-    .map_err(|_| Error::OutOfBounds)
+    // SAFETY: SharedFlash holds its exclusive borrow; both callers check every
+    // callback offset against this chip's capacity before this translated load.
+    // A u8 read permits every alignment and every initialized flash value.
+    unsafe { core::ptr::read_volatile((FLASH_UNCACHED_BASE + offset) as *const u8) }
 }
 
 struct Cpu {

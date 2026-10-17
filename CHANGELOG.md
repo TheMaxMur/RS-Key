@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Batch fresh page-state probes across adjacent page boundaries in the shared
+  storage backend. Both bytes are bounds-checked before uncached reads; successor
+  and wrap checks remain fresh. Both whole journal banks, erased tails, the root
+  and full payload MAC are still checked on each backend read. No record format
+  or capacity changes. bcdDevice `0x0AC5`.
+
 - Read each variable OpenPGP GET DATA child once, using the authenticated read's
   returned length instead of separate existence and size probes. An unreadable
   child refuses the complete template. Fresh storage checks and record formats

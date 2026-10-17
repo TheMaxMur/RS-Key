@@ -11,7 +11,7 @@ both journal banks again. Each backend read checks the peer bank before the
 selected bank under a freshly read root, including both erased tails.
 Payload authentication and page recovery still run;
 changed or unreadable journal bytes refuse that request and discard the cached
-directory. The next request resolves the persistent state again. Single-byte
+directory. The next request resolves the persistent state again. Single-byte and adjacent-pair
 page-state probes use the translated uncached flash view; bulk reads keep their
 bounded FIFO and completion checks. On RP2350,
 repeat checks use the hardware SHA-256 engine; the first authenticated scan
@@ -25,6 +25,9 @@ path is shared by FIDO, PIV, OpenPGP and OATH; it does not cache authentication
 results between reads.
 The checked FIFO loop also reduces time spent on each shared storage read;
 the fresh bank, erased-tail, root and payload checks remain in place.
+From build `0x0AC5`, page-state sweeps read an end marker and the following
+page's start marker together. Each marker is freshly read, with full successor
+and wrap checks retained.
 TrustZone FIDO uses a 1 ms HID interval. Both encrypted getInfo members share
 one freshly loaded persistent token per command, with separate keys and IVs;
 a seed-read failure still leaves the credential-store member available.
