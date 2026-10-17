@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Reduce shared storage-read latency by checking the peer journal bank before
+  the selected bank when reusing its parsed directory. Each backend read still
+  checks both whole banks, erased tails, the fresh root and the full payload
+  MAC. Cold resolution and record formats are unchanged. bcdDevice `0x0AC2`.
+
 - Reduce authenticated storage-read latency with a simpler checked XIP FIFO
   loop. Load each existing PIV management and attestation key once during the
   first SELECT, retaining fresh backend checks and the existing sealed formats.

@@ -524,24 +524,13 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
 
     fn read_inner(&mut self, key: &[u8; 32], fid: u16, out: &mut [u8]) -> Result<Option<usize>> {
         if let Some(current) = self.read_cache {
-            // Reuse parsed authority only while every byte of both banks still
-            // matches its authenticated scan, under the freshly supplied root.
-            for ((journal, end), fingerprint) in self
-                .journals
-                .iter_mut()
-                .zip(current.ends)
-                .zip(current.fingerprints)
-            {
-                if !ct_eq(&journal.fingerprint(key, end)?, &fingerprint) {
-                    return Err(Error::MemoryFatal);
-                }
-            }
-            if current.source == 0 {
-                let zero = self.journals.first_mut().ok_or(Error::MemoryFatal)?;
-                if !ct_eq(
-                    &zero.fingerprint(key, *current.ends.first().ok_or(Error::MemoryFatal)?)?,
-                    current.fingerprints.first().ok_or(Error::MemoryFatal)?,
-                ) {
+            // The directory came from verified scans; these checks only veto reuse.
+            // Check the selected bank after its peer so its authority is fresh last.
+            for index in [current.source ^ 1, current.source] {
+                let journal = self.journals.get_mut(index).ok_or(Error::MemoryFatal)?;
+                let end = *current.ends.get(index).ok_or(Error::MemoryFatal)?;
+                let fingerprint = current.fingerprints.get(index).ok_or(Error::MemoryFatal)?;
+                if !ct_eq(&journal.fingerprint(key, end)?, fingerprint) {
                     return Err(Error::MemoryFatal);
                 }
             }

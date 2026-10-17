@@ -57,6 +57,73 @@ fn cached_reads_bind_the_current_root_and_invalidate_before_mutations_or_configu
 }
 
 #[test]
+fn cached_reads_check_physical_banks_once_with_either_selected_last() {
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let mut main = main_on(flash.clone());
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"owner")).unwrap();
+    let checkpoint = main.checkpoint(&KEY, 1).unwrap();
+    main.journals[1]
+        .write_snapshot(checkpoint, &KEY, &main.directory)
+        .unwrap();
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    let cached = main.read_cache.unwrap();
+    assert_ne!(cached.ends[0], cached.ends[1]);
+    assert_ne!(cached.fingerprints[0], cached.fingerprints[1]);
+    let layout =
+        super::super::Layout::new(32768..32768 + super::super::storage::AUTHORITY_BYTES).unwrap();
+    let original = flash.image();
+    // Resolution currently selects bank zero when synchronized; keep both
+    // physical mappings covered without relying on identical replica bytes.
+    for source in [0, 1] {
+        for fid in [0xB000, 0xB001] {
+            main.read_cache.as_mut().unwrap().source = source;
+            flash.arm(&[]);
+            let mut out = [0xa5; 5];
+            let expected = (fid == 0xB000).then_some(5);
+            assert_eq!(main.read(&KEY, fid, &mut out), Ok(expected));
+            assert_eq!(
+                out,
+                if expected.is_some() {
+                    *b"owner"
+                } else {
+                    [0xa5; 5]
+                }
+            );
+            let starts: Vec<_> = flash
+                .events()
+                .into_iter()
+                .filter(|event| {
+                    event.0 == crate::tests::Io::Read
+                        && layout.main.iter().any(|range| range.start == event.1)
+                })
+                .map(|event| event.1)
+                .collect();
+            assert_eq!(
+                starts,
+                [
+                    layout.main.get(1 - source).unwrap().start,
+                    layout.main.get(source).unwrap().start
+                ]
+            );
+            assert!(
+                flash
+                    .events()
+                    .iter()
+                    .all(|event| event.0 == crate::tests::Io::Read)
+            );
+            assert_eq!(flash.image(), original);
+        }
+    }
+    main.read_cache.as_mut().unwrap().source = 2;
+    flash.arm(&[]);
+    assert_eq!(main.read(&KEY, 0xB001, &mut []), Err(Error::MemoryFatal));
+    assert!(main.read_cache.is_none());
+    assert!(flash.events().is_empty());
+    assert_eq!(flash.image(), original);
+}
+
+#[test]
 fn cached_fingerprints_bind_partition_capacity_and_root_even_for_identical_bytes() {
     let flash = crate::tests::flash_for_authenticated_tests();
     let make = |partition, range| {

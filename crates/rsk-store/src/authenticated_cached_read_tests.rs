@@ -18,7 +18,7 @@ fn cached_store() -> (FaultFlash, AuthStore) {
 }
 
 #[test]
-fn cached_authority_rechecks_both_whole_banks_and_the_selected_rescan() {
+fn cached_authority_rechecks_both_whole_banks_with_selected_last() {
     let (flash, mut store) = cached_store();
     let layout = crate::authenticated::Layout::new(MAIN.end..MAIN.end + 128 * 1024).unwrap();
     flash.arm(&[]);
@@ -37,11 +37,14 @@ fn cached_authority_rechecks_both_whole_banks_and_the_selected_rescan() {
         .iter()
         .filter(|event| layout.main.iter().any(|range| range.start == event.1))
         .collect();
-    assert_eq!(starts.len(), 3);
+    assert_eq!(
+        starts.iter().map(|event| event.1).collect::<Vec<_>>(),
+        [layout.main[1].start, layout.main[0].start]
+    );
     assert!(starts.iter().all(|event| event.2 == 256));
     let bytes = metadata.iter().map(|event| event.2).sum::<usize>();
     assert!(
-        (3 * 44 * 1024..=3 * (44 * 1024 + <FaultFlash as ReadNorFlash>::READ_SIZE))
+        (2 * 44 * 1024..=2 * (44 * 1024 + <FaultFlash as ReadNorFlash>::READ_SIZE))
             .contains(&bytes)
     );
     assert!(flash.events().iter().all(|event| event.0 == Io::Read));
@@ -108,7 +111,7 @@ fn cached_authority_refuses_damage_in_each_bank_including_the_erased_tail() {
 }
 
 #[test]
-fn cached_authority_refuses_a_changed_selected_rescan() {
+fn cached_authority_refuses_selected_damage_during_the_other_bank_check() {
     use crate::authenticated::{
         Checkpoint, Directory, Journal, Layout, Partition, RawBank, RootArm,
     };
@@ -120,13 +123,9 @@ fn cached_authority_refuses_a_changed_selected_rescan() {
     let skip = flash
         .events()
         .iter()
-        .enumerate()
-        .filter(|(_, event)| {
-            event.0 == Io::Read && event.1 == layout.main[0].start && event.2 == 256
-        })
-        .nth(1)
-        .unwrap()
-        .0;
+        .filter(|event| event.0 == Io::Read)
+        .position(|event| event.1 == layout.main[1].start && event.2 == 256)
+        .unwrap();
     let mut key = crate::authenticated::KeySource::new([0x43; 32], auth_blank, false)
         .key(RootArm::PreOtp)
         .unwrap();

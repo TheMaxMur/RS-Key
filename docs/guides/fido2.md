@@ -7,7 +7,9 @@ rollback; the firmware rebuilds its inventory and reports no spare capacity
 until an incomplete scan can finish. Record formats are unchanged.
 
 Repeated `getInfo` requests reuse the parsed storage directory after checking
-both journal banks again. Payload authentication and page recovery still run;
+both journal banks again. Each backend read checks the peer bank before the
+selected bank under a freshly read root, including both erased tails.
+Payload authentication and page recovery still run;
 changed or unreadable journal bytes refuse that request and discard the cached
 directory. The next request resolves the persistent state again. On RP2350,
 repeat checks use the hardware SHA-256 engine; the first authenticated scan
