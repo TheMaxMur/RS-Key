@@ -38,6 +38,11 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Read each variable OpenPGP GET DATA child once, using the authenticated read's
+  returned length instead of separate existence and size probes. An unreadable
+  child refuses the complete template. Fresh storage checks and record formats
+  are unchanged. bcdDevice `0x0AC4`.
+
 - Reduce CPU overhead in shared flash reads: poll FIFO readiness without
   counting words, and read one-byte page-state probes through the translated
   uncached XIP window. Bounds, stream completion and stall checks, fresh bank

@@ -57,3 +57,79 @@ fn fixed_lists_read_each_present_value_once_without_a_length_probe() {
         check_single_read(tag, fid, value_len, body_len);
     }
 }
+
+#[test]
+fn variable_children_read_the_value_once_without_a_length_probe() {
+    for (fid, tag, value) in [
+        (EF_UIF_SIG, EF_UIF_SIG, &[0, 0x20][..]),
+        (EF_UIF_DEC, EF_UIF_DEC, &[1, 0x20][..]),
+        (EF_ALGO_PRIV1, EF_ALGO_SIG, &[ALGO_RSA, 8, 0, 0, 17, 0][..]),
+        (EF_ALGO_PRIV2, EF_ALGO_DEC, &[ALGO_RSA, 8, 0, 0, 17, 0][..]),
+        (EF_ALGO_PRIV3, EF_ALGO_AUT, &[ALGO_RSA, 8, 0, 0, 17, 0][..]),
+    ] {
+        let (backend, medium) = ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.put(EF_PW_PRIV, crate::files::PW_STATUS_DEFAULT).unwrap();
+        fs.put(fid, value).unwrap();
+        fs.scan();
+        medium.stick_after(fid, 1);
+        let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+        let mut out = [0xa5; 1024];
+        let (len, sw) = crate::getdata::get_data(
+            EF_APP_DATA,
+            false,
+            false,
+            &mut fs,
+            &aid,
+            &mut None,
+            &mut out,
+        );
+        assert_eq!(sw, Sw::OK, "{fid:04x}");
+        let app = children(&child(&children(&out[..len]), EF_APP_DATA));
+        let discrete = children(&child(&app, EF_DISCRETE_DO));
+        assert_eq!(child(&discrete, tag), value, "{fid:04x}");
+        assert_eq!(fs.try_read(fid, &mut out), Err(Error::MemoryFatal));
+        assert_eq!(fs.try_read(fid, &mut out), Ok(Some(value.len())));
+    }
+}
+
+#[test]
+fn an_unreadable_variable_child_refuses_the_template() {
+    for fid in [EF_UIF_SIG, EF_ALGO_PRIV1] {
+        let (backend, medium) = ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.put(EF_PW_PRIV, crate::files::PW_STATUS_DEFAULT).unwrap();
+        fs.put(fid, &[0, 0x20]).unwrap();
+        fs.scan();
+        let generation = fs.write_gen();
+        medium.stick_once(fid);
+        let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
+        let mut out = [0xa5; 1024];
+        assert_eq!(
+            crate::getdata::get_data(
+                EF_APP_DATA,
+                false,
+                false,
+                &mut fs,
+                &aid,
+                &mut None,
+                &mut out,
+            ),
+            (0, Sw::MEMORY_FAILURE)
+        );
+        assert_eq!(fs.write_gen(), generation);
+        assert_eq!(
+            crate::getdata::get_data(
+                EF_APP_DATA,
+                false,
+                false,
+                &mut fs,
+                &aid,
+                &mut None,
+                &mut out,
+            )
+            .1,
+            Sw::OK
+        );
+    }
+}

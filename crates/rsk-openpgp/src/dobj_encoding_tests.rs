@@ -67,6 +67,7 @@ fn a_truncated_extension_latches_failure_across_later_empty_extensions() {
 #[test]
 fn successive_singleton_builds_append_raw_objects_without_child_headers() {
     let mut fs = fs();
+    fs.put(EF_LOGIN_DATA, b"login").unwrap();
     let aid = full_aid(&[1, 2, 3, 4], OPGP_MFR_UNMANAGED);
     let mut output = [0xA5; 32];
     let mut writer = DoWriter::new(&mut output, &mut fs, &aid);
@@ -77,6 +78,11 @@ fn successive_singleton_builds_append_raw_objects_without_child_headers() {
     let mut expected = vec![0x81, 0x01, 0x20];
     expected.extend(aid);
     assert_eq!(writer.bytes(), expected);
+    for _ in 0..2 {
+        assert_eq!(writer.build(EF_LOGIN_DATA), 5);
+        expected.extend(b"login");
+        assert_eq!(writer.bytes(), expected);
+    }
     assert!(!writer.failed);
 }
 

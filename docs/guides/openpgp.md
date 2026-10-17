@@ -24,6 +24,9 @@ gpg --card-status            # reader: RS-Key Security Key …, OpenPGP v3.4
 
 From build `0x0ABF`, card-status queries use fewer flash reads on authenticated
 storage. Each request still reads the current values from the key.
+Build `0x0AC4` also reads variable children and algorithm attributes once per
+occurrence. Their lengths come from that same authenticated read; an unreadable
+child refuses the complete response.
 
 gpg works regardless of the reader name. scdaemon identifies the card by its
 ATR and applet SELECT, not the USB identity. The default build reports the
