@@ -316,7 +316,7 @@ fn init() {
             hid::Config {
                 report_descriptor: rsk_usb::ctaphid::FIDO_REPORT_DESCRIPTOR,
                 request_handler: None,
-                poll_ms: 5,
+                poll_ms: 1,
                 max_packet_size: 64,
                 hid_subclass: hid::HidSubclass::No,
                 hid_boot_protocol: hid::HidBootProtocol::None,

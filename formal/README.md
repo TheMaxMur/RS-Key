@@ -3107,7 +3107,7 @@ abstractions producing traces the firmware cannot follow.
   is what the invariant is about.
 - **Any boot may mint the grant record, or not.** `BootEnsuresSeed` leaves
   `gate.ppuatRec` either way. `ensure_seed` skips the mint on a vendor-soft-locked
-  key (`seed.rs:687`), and mints nothing when a step before it fails or the record
+  key (`seed.rs:673`), and mints nothing when a step before it fails or the record
   cannot be read or opened — an error `firmware/src/main.rs:781` drops. The trace
   mapper pins the mint it predicts for the unlocked emulator, so R4a still holds
   the recording to one branch.

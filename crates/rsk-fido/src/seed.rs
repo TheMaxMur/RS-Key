@@ -361,45 +361,57 @@ pub fn clear_ppuat<S: Storage>(fs: &mut Fs<S>) -> Result<()> {
     fs.force_delete(EF_PAUTHTOKEN.get())
 }
 
-/// getInfo's `encIdentifier` (0x19): `iv ‖ AES-128-CBC(k, id)`, where `id` is this
-/// device's 128-bit identifier and `k` is HKDF-SHA256 over the persistent
-/// pinUvAuthToken, under the salt and label CTAP 2.2 fixes for it. Only a holder of
-/// that token can decrypt it, which is the whole point: the device stays recognizable
-/// to a platform it has been paired with and opaque to everyone else.
-///
-/// **The IV is fresh per call.** A fixed or repeating one would turn this member
-/// into a stable cross-origin fingerprint served to anyone who asks — the exact
-/// tracking vector the member is designed to avoid.
-///
-/// `id` is derived from the master seed under its own label, so it follows the
-/// seed across `authenticatorReset`: a reset mints a new seed, and the device
-/// stops being linkable to its pre-reset self. Deriving it from the silicon root
-/// instead would have survived the reset and defeated that.
-///
-/// `None` while the grant record is absent (a PIN change dropped it and nothing has
-/// minted it again) or the seed is unreadable behind a soft lock: a placeholder built
-/// from some other value would be a claim no platform could detect as false.
-pub fn enc_identifier<S: Storage>(
+/// Encrypt getInfo's identifier and credential-store tag under one freshly loaded
+/// persistent token. Each optional member keeps its own HKDF label and fresh IV;
+/// an unreadable seed suppresses only the identifier, an unreadable tag only itself.
+pub fn enc_getinfo_members<S: Storage>(
+    dev: &Device,
+    fs: &mut Fs<S>,
+    rng: &mut impl Rng,
+) -> (
+    Option<[u8; ENC_GETINFO_MEMBER_LEN]>,
+    Option<[u8; ENC_GETINFO_MEMBER_LEN]>,
+) {
+    let Some(mut token) = load_ppuat(dev, fs) else {
+        return (None, None);
+    };
+    let mut identifier_key = Secret::<[u8; 16]>::zeroed();
+    let identifier_ready = hkdf_sha256(
+        &ENCID_SALT,
+        token.expose(),
+        INFO_ENCID,
+        identifier_key.expose_mut(),
+    )
+    .is_ok();
+    let mut state_key = Secret::<[u8; 16]>::zeroed();
+    let state_ready = hkdf_sha256(
+        &ENCID_SALT,
+        token.expose(),
+        INFO_ENCCSS,
+        state_key.expose_mut(),
+    )
+    .is_ok();
+    token.wipe();
+    let identifier = identifier_ready
+        .then(|| enc_identifier(identifier_key.expose(), dev, fs, rng))
+        .flatten();
+    identifier_key.wipe();
+    let state = state_ready
+        .then(|| enc_cred_store_state(state_key.expose(), fs, rng))
+        .flatten();
+    state_key.wipe();
+    (identifier, state)
+}
+
+fn enc_identifier<S: Storage>(
+    key: &[u8; 16],
     dev: &Device,
     fs: &mut Fs<S>,
     rng: &mut impl Rng,
 ) -> Option<[u8; ENC_GETINFO_MEMBER_LEN]> {
-    // The token is the gate, so it is read FIRST: while a PIN change has the grant
-    // dropped, opening the seal on the seed only to discard it would be a
-    // ChaCha20-Poly1305 open on every getInfo for nothing.
-    let mut token = load_ppuat(dev, fs)?;
-    let mut key = Secret::<[u8; 16]>::zeroed();
-    let derived = hkdf_sha256(&ENCID_SALT, token.expose(), INFO_ENCID, key.expose_mut());
-    token.wipe();
-    if derived.is_err() {
-        key.wipe();
-        return None;
-    }
-
-    let Some(mut seed) = load_keydev(dev, fs) else {
-        key.wipe();
-        return None;
-    };
+    // The identifier follows the seed across reset, so a soft lock cannot
+    // substitute a silicon-root-derived identifier that survives a reset.
+    let mut seed = load_keydev(dev, fs)?;
     let mut id = Secret::<[u8; 16]>::zeroed();
     let derived = hkdf_sha256(
         dev.serial_hash,
@@ -410,46 +422,20 @@ pub fn enc_identifier<S: Storage>(
     seed.wipe();
     if derived.is_err() {
         id.wipe();
-        key.wipe();
         return None;
     }
-
-    let out = seal_getinfo_member(key.expose(), &mut id, rng);
-    key.wipe();
-    out
+    seal_getinfo_member(key, &mut id, rng)
 }
 
-/// getInfo's `encCredStoreState` (0x1E): the same `iv ‖ AES-128-CBC(k, block)` as
-/// [`enc_identifier`] under its own label, over a 128-bit tag that changes whenever
-/// the discoverable-credential set does. A platform holding the persistent token
-/// compares it with what it cached and re-enumerates only when it differs.
-///
-/// The master seed is not touched: the tag is bookkeeping, not derived material, and
-/// the token is sealed under the device root rather than the seed. So unlike
-/// [`enc_identifier`] this member survives a soft lock.
-///
-/// `None` while the grant record is absent (a PIN change dropped it and nothing has
-/// minted it again): there is no key to seal under. `None` too when the tag
-/// itself cannot be read — an absent member equals no tag a platform is holding, so
-/// it re-enumerates, where the collapsed zero is the tag an older build's untouched
-/// store publishes and would tell one its cache is still good.
-pub fn enc_cred_store_state<S: Storage>(
-    dev: &Device,
+fn enc_cred_store_state<S: Storage>(
+    key: &[u8; 16],
     fs: &mut Fs<S>,
     rng: &mut impl Rng,
 ) -> Option<[u8; ENC_GETINFO_MEMBER_LEN]> {
-    let mut token = load_ppuat(dev, fs)?;
-    let mut key = Secret::<[u8; 16]>::zeroed();
-    let derived = hkdf_sha256(&ENCID_SALT, token.expose(), INFO_ENCCSS, key.expose_mut());
-    token.wipe();
-    if derived.is_err() {
-        key.wipe();
-        return None;
-    }
+    // The tag survives a soft lock. A failed read omits it instead of claiming
+    // the legacy all-zero tag and telling a platform its stale cache is current.
     let mut block = Secret::new(crate::credential::cred_store_state(fs).ok()?);
-    let out = seal_getinfo_member(key.expose(), &mut block, rng);
-    key.wipe();
-    out
+    seal_getinfo_member(key, &mut block, rng)
 }
 
 /// `iv ‖ AES-128-CBC(k, block)` with a **fresh IV per call** — the shape CTAP 2.3

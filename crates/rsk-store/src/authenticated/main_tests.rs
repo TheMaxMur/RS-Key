@@ -463,3 +463,64 @@ fn the_directory_ceiling_refuses_a_new_fid_and_still_allows_replacement() {
     assert_eq!(main.read(&KEY, BASE, &mut value), Ok(Some(11)));
     assert_eq!(&value, b"replacement");
 }
+
+#[test]
+fn accelerated_cache_rejects_backend_errors_mismatches_wrong_roots_and_each_read_fault() {
+    use crate::tests::{Effect, FaultFlash, Io, Rule};
+    fn digest(
+        flash: &mut FaultFlash,
+        range: core::ops::Range<u32>,
+        end: u32,
+        prefix: &[u8],
+    ) -> Result<[u8; 32]> {
+        super::super::RawBank::new(flash.clone(), range)?.digest(end, prefix)
+    }
+    fn refused(_: &mut FaultFlash, _: core::ops::Range<u32>, _: u32, _: &[u8]) -> Result<[u8; 32]> {
+        Err(Error::MemoryFatal)
+    }
+    fn changed(_: &mut FaultFlash, _: core::ops::Range<u32>, _: u32, _: &[u8]) -> Result<[u8; 32]> {
+        Ok([0; 32])
+    }
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let mut main = main_on(flash.clone());
+    main.initialize(&KEY, 0, &Directory::new()).unwrap();
+    main.write(&KEY, 0xB000, Some(b"owner")).unwrap();
+    for callback in [refused as super::super::BankDigest<FaultFlash>, changed] {
+        main.set_digest(callback);
+        assert!(main.read_cache.is_none());
+        assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+        assert_eq!(main.read(&KEY, 0xB000, &mut []), Err(Error::MemoryFatal));
+        assert!(main.read_cache.is_none());
+        assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+    }
+    main.set_digest(digest);
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    assert_eq!(
+        main.read(&[0x36; 32], 0xB000, &mut []),
+        Err(Error::MemoryFatal)
+    );
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    flash.arm(&[]);
+    assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    let reads = flash.events().len();
+    assert!(reads > 0 && flash.events().iter().all(|event| event.0 == Io::Read));
+    for skip in 0..reads {
+        flash.arm(&[Rule {
+            io: Io::Read,
+            skip,
+            effect: Effect::Refuse,
+            latched: true,
+        }]);
+        let mut out = [0xA5; 5];
+        assert_eq!(
+            main.read(&KEY, 0xB000, &mut out),
+            Err(Error::MemoryFatal),
+            "read {skip}"
+        );
+        assert_eq!(out, [0xA5; 5]);
+        assert!(main.read_cache.is_none());
+        assert!(main.buffer.expose().iter().all(|&byte| byte == 0));
+        flash.clear();
+        assert_eq!(main.read(&KEY, 0xB000, &mut []), Ok(Some(5)));
+    }
+}

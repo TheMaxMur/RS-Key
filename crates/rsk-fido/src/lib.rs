@@ -172,9 +172,8 @@ pub fn process_cbor<S: Storage, R: Rng>(ctx: &mut Ctx<S, R>, data: &[u8], out: &
             let policy = pinpolicy::Policy::read(ctx.fs).map_err(|_| CtapError::Other)?;
             let remaining_rk = credential::remaining_discoverable(ctx.fs);
             // Re-encrypted under a fresh IV on every getInfo, so the member cannot
-            // become a stable fingerprint (`seed::enc_identifier`).
-            let enc_id = seed::enc_identifier(&ctx.dev, ctx.fs, ctx.rng);
-            let enc_css = seed::enc_cred_store_state(&ctx.dev, ctx.fs, ctx.rng);
+            // become a stable fingerprint (`seed::enc_getinfo_members`).
+            let (enc_id, enc_css) = seed::enc_getinfo_members(&ctx.dev, ctx.fs, ctx.rng);
             getinfo::get_info(
                 ctx.fs
                     .try_exists(consts::EF_PIN)

@@ -23,6 +23,7 @@ mod transport;
 mod trng;
 mod usb;
 mod watchdog;
+mod xip;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

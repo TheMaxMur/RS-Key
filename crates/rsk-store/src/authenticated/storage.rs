@@ -79,6 +79,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
             epoch,
             arm,
             arm,
+            None,
         )
     }
 
@@ -96,6 +97,7 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
         epoch: [u8; super::EPOCH_BYTES],
         main_arm: RootArm,
         counter_arm: RootArm,
+        digest: Option<super::BankDigest<F>>,
     ) -> Result<Self> {
         if main_range.start >= main_range.end || main_range.end > counter_range.start {
             return Err(Error::MemoryFatal);
@@ -103,10 +105,15 @@ impl<F: NorFlash + MultiwriteNorFlash + Clone, C: CacheImpl<u16>> Authenticated<
         let layout = Layout::new(counter_range.clone())?;
         let [main_zero, main_one] = layout.main;
         let [counter_zero, counter_one] = layout.counter;
-        let main_journals = [
+        let mut main_journals = [
             Journal::new(RawBank::new(flash.clone(), main_zero)?, Partition::Main),
             Journal::new(RawBank::new(flash.clone(), main_one)?, Partition::Main),
         ];
+        if let Some(digest) = digest {
+            for journal in &mut main_journals {
+                journal.set_digest(digest);
+            }
+        }
         let counter_banks = [
             CounterBank::new(RawBank::new(flash.clone(), counter_zero)?),
             CounterBank::new(RawBank::new(flash.clone(), counter_one)?),

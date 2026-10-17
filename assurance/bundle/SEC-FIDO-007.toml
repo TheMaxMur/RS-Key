@@ -68,7 +68,7 @@ threat_clause_reading = "the anchor is topical and not the claim: TM-ZEROIZATION
 # file and returns FILE NAMES, so the column counts files that MENTION it, not
 # sites that own it — and a second tag in an already-counted file adds nothing.
 # The `Refines` regex belongs to a different function, which only validates.
-owners_tagged = ["crates/rsk-fido/src/seed.rs:659 seed::ensure_seed", "crates/rsk-fido/src/vendor.rs::unlock — the producer, tagged after this bundle measured that it was not"]
+owners_tagged = ["crates/rsk-fido/src/seed.rs:645 seed::ensure_seed", "crates/rsk-fido/src/vendor.rs::unlock — the producer, tagged after this bundle measured that it was not"]
 # AND THE TAG IS ON THE CONSEQUENT. `grep -c keydev_dec crates/rsk-fido/src/seed.rs`
 # is 0, and `ensure_seed` takes no `FidoState` at all, so it structurally cannot
 # touch the antecedent: it writes `EF_KEY_DEV`, which is `store.seed`. It can

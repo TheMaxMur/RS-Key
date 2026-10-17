@@ -164,6 +164,14 @@ linker symbols rather than restated, so it follows `FLASH_SIZE`/`KVMAIN` on its
 own ([build.md](build.md#the-partition-table)). What it is and is not worth:
 [threat-model.md](threat-model.md#flash-snapshot-rollback-the-pin-counter-reset).
 
+The board owns the SHA-256 peripheral behind a private `RefCell`. It hashes
+public journal bytes for cached-directory freshness checks, including a fresh
+erased-tail check. Initial journal authentication and root-key HMACs use the
+software crypto path; an engine failure refuses the read. Bulk `SharedFlash`
+reads use the existing Secure Core0 XIP FIFO access, without DMA or additional
+bus-master permissions. The host-tested driver bounds the transfer, drains stale
+FIFO words and checks final count, flash-relative address and empty FIFO.
+
 Key sealing at rest: `kbase = HKDF(serial_hash, otp_master_key)` keys
 AES-CBC for the FIDO seed (tagged formats: plain vs OTP-rooted generation)
 and AES-GCM for PIV keys. OpenPGP keys sit under the PIN-wrapped DEK chain.

@@ -53,3 +53,38 @@ fn a_dirty_unpublished_snapshot_has_no_positive_progress_to_adopt() {
     assert_eq!(store.state(), StorageState::Recovery);
     assert_eq!(flash.image(), before);
 }
+
+#[test]
+#[expect(
+    clippy::unwrap_used,
+    reason = "A mounted fixture must retain its rejecting hardware backend across remount."
+)]
+fn constructor_bank_digest_survives_mount_and_configuration() {
+    use crate::tests::FaultFlash;
+    use rsk_fs::Storage;
+    fn refused(_: &mut FaultFlash, _: Range<u32>, _: u32, _: &[u8]) -> Result<[u8; 32]> {
+        Err(Error::MemoryFatal)
+    }
+    let flash = crate::tests::fault_flash_for_authenticated_tests();
+    let main = 0..32768;
+    let counter = main.end..main.end + super::super::storage::AUTHORITY_BYTES;
+    let source = KeySource::new([0x43; 32], |_| super::super::RootRead::Blank, false);
+    let mut store = Managed::new_unmounted_with_digest(
+        flash,
+        main,
+        counter,
+        source,
+        Cache::<Uncached, Uncached, Uncached, u16>::new_uncached,
+        Some(refused),
+    );
+    store
+        .administer(StorageAction::Initialize, [0x4B; 16])
+        .unwrap();
+    for _ in 0..2 {
+        store.mount().unwrap();
+        assert_eq!(store.read(0xB000, &mut []), None);
+        assert!(!store.last_error());
+        assert_eq!(store.read(0xB000, &mut []), None);
+        assert!(store.last_error());
+    }
+}

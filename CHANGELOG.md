@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Accelerate FIDO getInfo with RP2350 hardware SHA-256, checked CPU flash
+  streaming and one command-local persistent-token load. Restore the TrustZone
+  HID interval to 1 ms. Keep fresh checks of both banks, erased tails, payload
+  authentication and recovery; existing flash records remain compatible.
+  bcdDevice `0x0ABE`.
+
 - Fix multi-second FIDO getInfo latency on RP2350: reuse the parsed storage
   directory only after freshly checking both journal banks, keep payload and
   page-recovery checks, and use compact SHA-256 on the device to fit the XIP

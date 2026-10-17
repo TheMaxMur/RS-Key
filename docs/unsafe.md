@@ -338,6 +338,19 @@ never ships inside the firmware.
   `.data.*` into `.data`; a section it does not know leaves the symbol wherever
   it lands, which costs speed rather than safety.
 
+### SRAM placement for public journal hashing — `PLAT-UNSAFE-011`
+
+`firmware/src/flash_storage/sha256.rs` and
+`firmware/src/flash_storage/stream.rs` place the digest and CPU stream routines
+in the existing `.data.ram_func` input section. Startup copies it before use;
+the TrustZone linker includes it in the read-only executable SRAM range. The
+digest reads each bank through `SharedFlash::read` and checks its entire tail.
+*Safe alternative:* ordinary flash placement is correct but competes with the
+journal stream for XIP cache lines.
+*Containment:* SHA sees public metadata only; the CPU stream serves bulk reads
+under the existing flash bounds and guards. Both have bounded waits, and the
+stream checks progress without raw XIP pointers or a new executable window.
+
 ## What is *not* here
 
 No `unsafe` in any parser, applet, crypto wrapper, or the flash filesystem.

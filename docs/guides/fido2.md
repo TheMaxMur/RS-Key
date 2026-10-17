@@ -9,7 +9,13 @@ until an incomplete scan can finish. Record formats are unchanged.
 Repeated `getInfo` requests reuse the parsed storage directory after checking
 both journal banks again. Payload authentication and page recovery still run;
 changed or unreadable journal bytes refuse that request and discard the cached
-directory. The next request resolves the persistent state again.
+directory. The next request resolves the persistent state again. On RP2350,
+repeat checks use the hardware SHA-256 engine; the first authenticated scan
+uses software hashing and supplies the digest the hardware result must match.
+Bulk reads use the CPU's XIP FIFO, with bounded waits and checked final progress.
+TrustZone FIDO uses a 1 ms HID interval. Both encrypted getInfo members share
+one freshly loaded persistent token per command, with separate keys and IVs;
+a seed-read failure still leaves the credential-store member available.
 
 Empty PIN/seed/lock records are damaged state, not a fresh device. Firmware
 preserves them and refuses the affected operation instead of installing a new

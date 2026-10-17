@@ -27,7 +27,7 @@ mod transaction;
 pub use transaction::{DELTA_BYTES, Delta, DeltaKind, Prepared, TransactionState};
 
 mod bank;
-pub use bank::RawBank;
+pub use bank::{BankDigest, RawBank, all_erased};
 
 mod journal;
 pub use journal::{Journal, JournalScan, JournalStatus};

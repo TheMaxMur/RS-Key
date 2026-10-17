@@ -28,6 +28,7 @@ fn root_closure_requires_both_partition_arms() {
             [0x4B; 16],
             main_arm,
             counter_arm,
+            None,
         )
         .unwrap();
         assert_eq!(store.root_closed(), closed);

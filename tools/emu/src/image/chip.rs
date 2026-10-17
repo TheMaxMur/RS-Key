@@ -23,6 +23,7 @@ use super::sha256::{SHA256_BASE, Sha256};
 use super::trng::{TRNG_BASE, Trng};
 use super::usb::{self, SharedUsb, UsbCore, UsbDpram, UsbRegs};
 use super::watchdog::{WATCHDOG_BASE, Watchdog};
+use super::xip::{SharedXip, XIP_AUX_BASE, XIP_CTRL_BASE};
 
 /// The quantum while a core runs; a parked chip is stepped in larger ones.
 pub const RUN_QUANTUM: u32 = 64;
@@ -103,6 +104,11 @@ impl Chip {
         emu.mount_mmio(TRNG_BASE, 0x1000, atomic, Trng::new(seed))
             .map_err(m)?;
         emu.mount_mmio(SHA256_BASE, 0x1000, atomic, Sha256::new())
+            .map_err(m)?;
+        let xip = SharedXip::default();
+        emu.mount_mmio(XIP_AUX_BASE, 0x1000, atomic, xip.aux())
+            .map_err(m)?;
+        emu.mount_mmio(XIP_CTRL_BASE, 0x1000, atomic, xip)
             .map_err(m)?;
         let otp: SharedOtp = Arc::new(Mutex::new(OtpCore::new(rows, log.clone())));
         let data = OtpData(otp.clone());

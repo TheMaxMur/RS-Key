@@ -9,6 +9,8 @@ use rsk_sdk::error::{Error, Result};
 use super::{CHECKPOINT_BYTES, Checkpoint, DELTA_BYTES, Delta, Directory, ENTRY_BYTES, Entry};
 use super::{Partition, RawBank, TransactionState};
 
+const RAW_DOMAIN: &[u8; 8] = b"RSKV2RAW";
+
 /// Invalid bytes never become an authoritative older complete prefix.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JournalStatus {
@@ -51,7 +53,7 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
 
     fn fingerprint_state(&self) -> Sha256State {
         let mut state = Sha256State::new();
-        state.update(b"RSKV2RAW");
+        state.update(RAW_DOMAIN);
         state.update(&[self.partition.code()]);
         state.update(&self.capacity().to_le_bytes());
         state
@@ -62,23 +64,22 @@ impl<F: NorFlash + MultiwriteNorFlash> Journal<F> {
         hmac_sha256(key, &state.finish())
     }
 
+    pub(super) fn set_digest(&mut self, digest: super::BankDigest<F>) {
+        self.bank.digest = Some(digest);
+    }
+
     pub(super) fn fingerprint(&mut self, key: &[u8; 32], end: u32) -> Result<[u8; 32]> {
-        let mut state = self.fingerprint_state();
-        let mut bytes = [0; 256];
-        let mut at = 0;
-        while at < end {
-            let count = usize::try_from(end - at)
-                .map_err(|_| Error::MemoryFatal)?
-                .min(bytes.len());
-            let part = bytes.get_mut(..count).ok_or(Error::MemoryFatal)?;
-            self.bank.read(at, part)?;
-            state.update(part);
-            at += u32::try_from(count).map_err(|_| Error::MemoryFatal)?;
-        }
-        if !self.bank.read_erased(end)? {
-            return Err(Error::MemoryFatal);
-        }
-        Ok(Self::seal_fingerprint(key, state, end))
+        let mut prefix = [0; RAW_DOMAIN.len() + 1 + core::mem::size_of::<u32>()];
+        prefix
+            .get_mut(..RAW_DOMAIN.len())
+            .ok_or(Error::MemoryFatal)?
+            .copy_from_slice(RAW_DOMAIN);
+        *prefix.get_mut(RAW_DOMAIN.len()).ok_or(Error::MemoryFatal)? = self.partition.code();
+        prefix
+            .get_mut(RAW_DOMAIN.len() + 1..)
+            .ok_or(Error::MemoryFatal)?
+            .copy_from_slice(&self.capacity().to_le_bytes());
+        Ok(hmac_sha256(key, &self.bank.digest(end, &prefix)?))
     }
 
     fn finish_scan(

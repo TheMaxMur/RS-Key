@@ -6,6 +6,9 @@
 //! the two `sequential-storage` maps, the counter routing and the scrub lap — is
 //! [`rsk_store`], where the fuzzer can cut its power and the emulator can run it.
 
+mod sha256;
+mod stream;
+
 use core::cell::RefCell;
 use core::ops::Range;
 
@@ -79,6 +82,7 @@ pub type FlashStorage = rsk_store::authenticated::Managed<SharedFlash, MainCache
 #[derive(Clone, Copy)]
 pub struct SharedFlash {
     inner: &'static RefCell<AsyncFlash>,
+    sha256: &'static RefCell<sha256::Engine>,
 }
 
 impl ErrorType for SharedFlash {
@@ -96,6 +100,10 @@ impl ReadNorFlash for SharedFlash {
         offset: u32,
         bytes: &mut [u8],
     ) -> core::result::Result<(), Self::Error> {
+        if bytes.len() >= 256 && offset.is_multiple_of(4) && bytes.len().is_multiple_of(4) {
+            let _owner = self.inner.borrow_mut();
+            return stream::read(offset, bytes);
+        }
         block_on(self.inner.borrow_mut().read(offset, bytes))
     }
     fn capacity(&self) -> usize {
@@ -144,12 +152,18 @@ pub fn new_storage(
 ) -> FlashStorage {
     debug_assert!((main_range.end - main_range.start) as usize == MAIN_LEN);
     debug_assert!((counter_range.end - counter_range.start) as usize == COUNTER_LEN);
-    FlashStorage::new_unmounted(
-        SharedFlash { inner: flash },
+    static HASH: static_cell::StaticCell<RefCell<sha256::Engine>> = static_cell::StaticCell::new();
+    let sha256 = HASH.init(RefCell::new(sha256::Engine::new()));
+    FlashStorage::new_unmounted_with_digest(
+        SharedFlash {
+            inner: flash,
+            sha256,
+        },
         main_range,
         counter_range,
         source,
         main_cache,
+        Some(sha256::digest),
     )
 }
 

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Copyright (C) 2026 RS-Key contributors
 
-"""Keep physical-key getInfo below one second on an otherwise idle device.
+"""Bound first and repeated physical-key getInfo on an otherwise idle device.
 
 The image emulator does not model XIP-cache misses; its wall clock cannot
 measure this regression. Select the physical key with RSK_TEST_SERIAL.
@@ -14,8 +14,9 @@ import time
 
 from ctaphid import decode, find, hid, read, send_cbor, write
 
-MAX_GETINFO_S = 1.0
-GETINFO_SAMPLES = 3
+MAX_FIRST_GETINFO_S = 0.6
+MAX_GETINFO_S = 0.2
+GETINFO_SAMPLES = 5
 
 
 def main():
@@ -42,11 +43,14 @@ def main():
     finally:
         device.close()
     median = statistics.median(durations)
-    assert max(durations) < MAX_GETINFO_S, (
-        f"getInfo took {max(durations):.3f}s (median {median:.3f}s); "
+    assert durations[0] < MAX_FIRST_GETINFO_S, (
+        f"first getInfo took {durations[0]:.3f}s; budget is {MAX_FIRST_GETINFO_S:.3f}s"
+    )
+    assert max(durations[1:]) < MAX_GETINFO_S, (
+        f"repeated getInfo took {max(durations[1:]):.3f}s (median {median:.3f}s); "
         f"idle physical-key budget is {MAX_GETINFO_S:.3f}s"
     )
-    print(f"PASS: getInfo median {median * 1000:.3f} ms, all samples below 1s")
+    print(f"PASS: getInfo median {median * 1000:.3f} ms; first <600ms, repeated <200ms")
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ use core::ops::Range;
 
 use embassy_futures::block_on;
 use embedded_storage_async::nor_flash::{MultiwriteNorFlash, NorFlash, ReadNorFlash};
+use rsk_crypto::hash::Sha256State;
 use rsk_sdk::error::{Error, Result};
 use rsk_secret::Secret;
 
@@ -13,10 +14,39 @@ use crate::verified_flash::VerifiedFlash;
 
 const IO_CHUNK: usize = 256;
 
+/// Check every byte without a branch for each flash word.
+#[inline(always)]
+pub fn all_erased(bytes: &[u8]) -> bool {
+    let (groups, rest) = bytes.as_chunks::<32>();
+    for group in groups {
+        let [a, b, c, d, e, f, g, h] = group.as_chunks::<4>().0 else {
+            return false;
+        };
+        if u32::from_ne_bytes(*a)
+            & u32::from_ne_bytes(*b)
+            & u32::from_ne_bytes(*c)
+            & u32::from_ne_bytes(*d)
+            & u32::from_ne_bytes(*e)
+            & u32::from_ne_bytes(*f)
+            & u32::from_ne_bytes(*g)
+            & u32::from_ne_bytes(*h)
+            != u32::MAX
+        {
+            return false;
+        }
+    }
+    rest.iter().all(|&byte| byte == 0xFF)
+}
+
+/// Hash `prefix || bank[..end] || end.to_le_bytes()` and refuse a non-erased tail.
+/// The callback reads the supplied flash afresh; it never receives a root key.
+pub type BankDigest<F> = fn(&mut F, Range<u32>, u32, &[u8]) -> Result<[u8; 32]>;
+
 /// A raw authority window. Metadata reads never invoke map repair or CRC filtering.
 pub struct RawBank<F: NorFlash + MultiwriteNorFlash> {
     flash: VerifiedFlash<F>,
     range: Range<u32>,
+    pub(super) digest: Option<BankDigest<F>>,
 }
 
 impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
@@ -41,6 +71,7 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
         Ok(Self {
             flash: VerifiedFlash::new(flash),
             range,
+            digest: None,
         })
     }
 
@@ -68,6 +99,18 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
 
     pub fn read(&mut self, offset: u32, out: &mut [u8]) -> Result<()> {
         let span = self.span(offset, out.len())?;
+        if out.is_empty() {
+            return Ok(());
+        }
+        if offset.is_multiple_of(u32::try_from(F::READ_SIZE).map_err(|_| Error::MemoryFatal)?)
+            && out.len().is_multiple_of(F::READ_SIZE)
+            && out
+                .as_ptr()
+                .addr()
+                .is_multiple_of(core::mem::align_of::<FlashBuf<1>>())
+        {
+            return block_on(self.flash.read(span.start, out)).map_err(|_| Error::MemoryFatal);
+        }
         let read_size = u32::try_from(F::READ_SIZE).map_err(|_| Error::MemoryFatal)?;
         let mut scratch = Secret::new(FlashBuf::<IO_CHUNK>::new());
         let mut at = span.start;
@@ -95,8 +138,32 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
                 .ok_or(Error::MemoryFatal)?;
             copied += count;
         }
-        scratch.wipe();
         Ok(())
+    }
+
+    pub(super) fn digest(&mut self, end: u32, prefix: &[u8]) -> Result<[u8; 32]> {
+        self.span(0, usize::try_from(end).map_err(|_| Error::MemoryFatal)?)?;
+        if let Some(digest) = self.digest {
+            return digest(self.flash.inner_mut(), self.range.clone(), end, prefix);
+        }
+        let mut hash = Sha256State::new();
+        hash.update(prefix);
+        let mut buffer = [0; IO_CHUNK];
+        let mut at = 0;
+        while at < end {
+            let count = usize::try_from(end - at)
+                .map_err(|_| Error::MemoryFatal)?
+                .min(buffer.len());
+            let bytes = buffer.get_mut(..count).ok_or(Error::MemoryFatal)?;
+            self.read(at, bytes)?;
+            hash.update(bytes);
+            at += u32::try_from(count).map_err(|_| Error::MemoryFatal)?;
+        }
+        if !self.read_erased(end)? {
+            return Err(Error::MemoryFatal);
+        }
+        hash.update(&end.to_le_bytes());
+        Ok(hash.finish())
     }
 
     pub fn program(&mut self, offset: u32, data: &[u8]) -> Result<()> {
@@ -154,15 +221,13 @@ impl<F: NorFlash + MultiwriteNorFlash> RawBank<F> {
                 .get_mut(..count)
                 .ok_or(Error::MemoryFatal)?;
             self.read(at, buffer)?;
-            if buffer.iter().any(|&byte| byte != 0xFF) {
-                scratch.wipe();
+            if !all_erased(buffer) {
                 return Ok(false);
             }
             at = at
                 .checked_add(u32::try_from(count).map_err(|_| Error::MemoryFatal)?)
                 .ok_or(Error::MemoryFatal)?;
         }
-        scratch.wipe();
         Ok(true)
     }
 

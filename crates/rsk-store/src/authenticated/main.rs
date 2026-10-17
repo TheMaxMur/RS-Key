@@ -59,6 +59,14 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
         }
     }
 
+    #[cfg(test)]
+    fn set_digest(&mut self, digest: super::BankDigest<F>) {
+        self.read_cache = None;
+        for journal in &mut self.journals {
+            journal.set_digest(digest);
+        }
+    }
+
     pub(super) fn configure(&mut self, epoch: [u8; super::EPOCH_BYTES], arm: RootArm) {
         self.identity = Identity {
             partition: Partition::Main,
@@ -105,7 +113,6 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
             }
             Err(_) => return Err(Error::MemoryFatal),
         };
-        entry.verify(self.identity, key, value)?;
         let length = value.len();
         // The payload map's key occupies the first two scratch bytes.
         self.buffer.expose_mut().copy_within(2..2 + length, 0);
@@ -573,7 +580,6 @@ impl<F: NorFlash + MultiwriteNorFlash, C: CacheImpl<u16>> Main<F, C> {
                     .get(..count)
                     .ok_or(Error::MemoryFatal)?,
             );
-        self.buffer.wipe();
         Ok(Some(length))
     }
 
