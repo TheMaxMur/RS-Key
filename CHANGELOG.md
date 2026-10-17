@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Reduce CPU overhead in shared flash reads: poll FIFO readiness without
+  counting words, and read one-byte page-state probes through the translated
+  uncached XIP window. Bounds, stream completion and stall checks, fresh bank
+  and root checks, and full payload authentication are retained. Record formats
+  are unchanged. bcdDevice `0x0AC3`.
+
 - Reduce shared storage-read latency by checking the peer journal bank before
   the selected bank when reusing its parsed directory. Each backend read still
   checks both whole banks, erased tails, the fresh root and the full payload

@@ -20,6 +20,7 @@ struct Fake {
     extra: bool,
     invalid_available: bool,
     single_word: bool,
+    flags: Option<(bool, bool)>,
 }
 
 impl Stream for Fake {
@@ -27,16 +28,19 @@ impl Stream for Fake {
         self.stops += 1;
         self.remaining = 0;
     }
-    fn available(&mut self) -> usize {
+    fn readable(&mut self) -> Result<bool, Error> {
         if self.starts == 0 {
-            return self.stale;
+            return fifo_readable(
+                self.stale == 0 || self.stale > FIFO_WORDS,
+                self.stale >= FIFO_WORDS,
+            );
         }
         if self.invalid_available {
-            return FIFO_WORDS + 1;
+            return fifo_readable(true, true);
         }
         if self.delay != 0 {
             self.delay -= 1;
-            return 0;
+            return fifo_readable(true, false);
         }
         if !self.stall {
             let capacity = if self.single_word { 1 } else { FIFO_WORDS };
@@ -49,7 +53,11 @@ impl Stream for Fake {
                 self.fifo.push_back(0xbad);
             }
         }
-        self.fifo.len()
+        let (empty, full) = self
+            .flags
+            .take()
+            .unwrap_or((self.fifo.is_empty(), self.fifo.len() == FIFO_WORDS));
+        fifo_readable(empty, full)
     }
     fn start(&mut self, offset: u32, words: u32) {
         self.starts += 1;
@@ -104,6 +112,57 @@ fn reads_words_in_order_drains_stale_fifo_and_preserves_output_guards() {
             assert!(out[1 + length..].iter().all(|byte| *byte == 0x5a));
             assert_eq!((stream.stops, stream.starts), (2, 1));
         }
+    }
+}
+
+#[test]
+fn every_captured_status_runs_through_the_checked_transfer() {
+    for flags in [(true, false), (false, false), (false, true), (true, true)] {
+        let mut stream = Fake {
+            flags: Some(flags),
+            ..Fake::default()
+        };
+        let mut out = [0x5a; 10];
+        let result = read(&mut stream, 64, 4, &mut out[1..9]);
+        if flags == (true, true) {
+            assert_eq!(result, Err(Error::Transfer));
+            assert_eq!(out, [0x5a; 10]);
+        } else {
+            assert_eq!(result, Ok(()));
+            assert_eq!(&out[1..5], &4_u32.to_le_bytes());
+            assert_eq!(&out[5..9], &8_u32.to_le_bytes());
+            assert_eq!(out[0], 0x5a);
+            assert_eq!(out[9], 0x5a);
+        }
+        assert_eq!((stream.stops, stream.starts), (2, 1));
+        assert_eq!(stream.remaining, 0);
+    }
+}
+
+#[test]
+fn byte_reads_bound_the_offset_before_the_hardware_callback() {
+    for offset in [0, 1, 63] {
+        let mut calls = 0;
+        assert_eq!(
+            read_byte(64, offset, |actual| {
+                calls += 1;
+                assert_eq!(actual, offset);
+                0x7b
+            }),
+            Ok(0x7b)
+        );
+        assert_eq!(calls, 1);
+    }
+    for (capacity, offset) in [(0, 0), (64, 64), (64, u32::MAX)] {
+        let mut calls = 0;
+        assert_eq!(
+            read_byte(capacity, offset, |_| {
+                calls += 1;
+                0x7b
+            }),
+            Err(Error::OutOfBounds)
+        );
+        assert_eq!(calls, 0);
     }
 }
 

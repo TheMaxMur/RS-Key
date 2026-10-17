@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // Copyright (C) 2026 RS-Key contributors
 
-//! Checked CPU reads from the RP2350 XIP stream's two-word FIFO.
+//! Checked CPU reads from RP2350 XIP and its two-word stream FIFO.
 
 pub const WORD_BYTES: usize = 4;
 pub const FIFO_WORDS: usize = 2;
@@ -14,10 +14,20 @@ pub enum Error {
     Transfer,
 }
 
+/// Decode a captured FIFO status; simultaneous empty and full is inconsistent.
+#[inline(always)]
+pub fn fifo_readable(empty: bool, full: bool) -> Result<bool, Error> {
+    if empty && full {
+        Err(Error::Transfer)
+    } else {
+        Ok(!empty)
+    }
+}
+
 /// Exclusive CPU ownership must cover this interface through the final stop.
 pub trait Stream {
     fn stop(&mut self);
-    fn available(&mut self) -> usize;
+    fn readable(&mut self) -> Result<bool, Error>;
     fn start(&mut self, offset: u32, words: u32);
     fn read_word(&mut self) -> u32;
     fn remaining(&mut self) -> u32;
@@ -32,6 +42,15 @@ impl<S: Stream> Drop for Active<'_, S> {
     fn drop(&mut self) {
         self.0.stop();
     }
+}
+
+/// Read one byte only after proving the hardware callback's offset is in bounds.
+#[inline(always)]
+pub fn read_byte(capacity: usize, offset: u32, read: impl FnOnce(u32) -> u8) -> Result<u8, Error> {
+    if usize::try_from(offset).map_err(|_| Error::OutOfBounds)? >= capacity {
+        return Err(Error::OutOfBounds);
+    }
+    Ok(read(offset))
 }
 
 /// Read complete words freshly; abort on a stall or inconsistent final progress.
@@ -60,12 +79,12 @@ pub fn read(
     stream.stop();
     let active = Active(stream);
     for _ in 0..FIFO_WORDS {
-        if active.0.available() == 0 {
+        if !active.0.readable()? {
             break;
         }
         active.0.read_word();
     }
-    if active.0.available() != 0 {
+    if active.0.readable()? {
         return Err(Error::Transfer);
     }
     active.0.start(
@@ -74,17 +93,16 @@ pub fn read(
     );
     for word in bytes.as_chunks_mut::<WORD_BYTES>().0 {
         loop {
-            let count = active.0.available();
-            if count > FIFO_WORDS || (count == 0 && active.0.expired()) {
-                return Err(Error::Transfer);
-            }
-            if count != 0 {
+            if active.0.readable()? {
                 break;
+            }
+            if active.0.expired() {
+                return Err(Error::Transfer);
             }
         }
         word.copy_from_slice(&active.0.read_word().to_le_bytes());
     }
-    if active.0.remaining() != 0 || active.0.address() != end || active.0.available() != 0 {
+    if active.0.remaining() != 0 || active.0.address() != end || active.0.readable()? {
         return Err(Error::Transfer);
     }
     Ok(())

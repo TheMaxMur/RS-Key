@@ -5,7 +5,23 @@ use embassy_rp::flash::Error;
 use rsk_store::flash_stream::{self, Stream};
 
 const FLASH_BASE: u32 = 0x1000_0000;
+const FLASH_UNCACHED_BASE: u32 = 0x1400_0000;
+const FLASH_UNCACHED_BYTES: usize = 64 * 1024 * 1024;
 const TIMEOUT_US: u32 = 100_000;
+
+#[inline(always)]
+pub(super) fn read_byte(offset: u32) -> Result<u8, Error> {
+    const {
+        assert!(super::FLASH_SIZE <= FLASH_UNCACHED_BYTES);
+    }
+    flash_stream::read_byte(super::FLASH_SIZE, offset, |offset| {
+        // SAFETY: SharedFlash holds its exclusive borrow; the checked offset is
+        // inside this chip's capacity and the translated uncached XIP window.
+        // A u8 read permits every alignment and every initialized flash value.
+        unsafe { core::ptr::read_volatile((FLASH_UNCACHED_BASE + offset) as *const u8) }
+    })
+    .map_err(|_| Error::OutOfBounds)
+}
 
 struct Cpu {
     started: u32,
@@ -18,14 +34,9 @@ impl Stream for Cpu {
             .write_value(Default::default());
     }
     #[inline(always)]
-    fn available(&mut self) -> usize {
+    fn readable(&mut self) -> Result<bool, flash_stream::Error> {
         let status = rp_pac::XIP_CTRL.stat().read();
-        match (status.fifo_empty(), status.fifo_full()) {
-            (true, false) => 0,
-            (false, false) => 1,
-            (false, true) => flash_stream::FIFO_WORDS,
-            (true, true) => flash_stream::FIFO_WORDS + 1,
-        }
+        flash_stream::fifo_readable(status.fifo_empty(), status.fifo_full())
     }
     #[inline(always)]
     fn start(&mut self, offset: u32, words: u32) {

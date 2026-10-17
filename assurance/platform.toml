@@ -1672,3 +1672,16 @@ discharge_owner = "contributor"
 status = "pending"
 failure_direction = "confidentiality and isolation: an interrupted lock can deadlock cleanup, or an open gateway/pending endpoint can export pre-fault authorization or reply bytes"
 covers = ["unsafe:firmware/src/trustzone/fault.rs#attr:no_mangle-pub-extern-fn-rsk_tz_fault_stop", "unsafe:firmware/src/trustzone/fault.rs#fn:hardfault-_frame-cortex_m_rt-exceptionframe-halt"]
+
+[[assumption]]
+id = "PLAT-UNSAFE-015"
+class = "memory"
+statement = "The RP2350 translated uncached XIP window at 0x14000000 supplies initialized flash bytes under the existing Secure CPU permissions. The single-byte helper retains the SharedFlash owner and checks the offset against the configured chip before its volatile u8 load; the compile-time chip limit also keeps alias addition in range."
+discharge = "Check firmware/src/flash_storage/stream.rs and SharedFlash::read: only len1 enters this path, the owner survives the load, and output assignment follows success. crates/rsk-store/src/flash_stream_tests.rs drives first/last valid offsets, zero capacity, offset equal to capacity and u32::MAX through the checked callback. firmware/build.rs keeps the existing 16 MiB chip ceiling; the additional 64 MiB window assertion bounds alias arithmetic. Confirm the translated alias against pico-sdk 2.2.0 addressmap.h and inspect the exact ELF's byte load and the existing Secure MPU/SAU/XIP permissions. The load has no software deadline and bus faults do not become Flash::Err; TrustZone uses its existing fatal fence, without claiming normal-build cleanup or a bounded physical flash stall."
+discharge_owner = "contributor"
+status = "pending"
+failure_direction = "memory-safety: a wrong offset or alias reads outside the requested chip; integrity and availability: an incorrect mapping supplies wrong data or faults, while a physical stall remains unbounded"
+refines = ["PLAT-TOOLCHAIN-002"]
+covers = [
+  "unsafe:firmware/src/flash_storage/stream.rs#block:core-ptr-read_volatile-flash_uncached_base-offset-as",
+]

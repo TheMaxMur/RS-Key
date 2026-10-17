@@ -297,6 +297,7 @@ Three spellings of "not current", which used to sit on two different pages and i
 | platform | `PLAT-TZ-006` | Secure startup configures each core MPU with validated non-overlapping |
 | platform | `PLAT-TZ-007` | The disposable hostile NS image may disable its own MPU and intentiona |
 | platform | `PLAT-TZ-008` | A fatal Secure exception/panic latches all gateways closed before touc |
+| platform | `PLAT-UNSAFE-015` | The RP2350 translated uncached XIP window at 0x14000000 supplies initi |
 
 ## Review packet
 

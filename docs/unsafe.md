@@ -7,13 +7,14 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 64.** Thirty in the ordinary firmware and tools, plus thirty-four in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
+**Runtime sites: 65.** Thirty-one in the ordinary firmware and tools, plus thirty-four in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
 the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
 CS/DC/RST/TP_RST control lines). Three for the per-core prime sieves; one
 stack limit per core, core0's in `main.rs` too; two for the dead-stack sweep and
 its probe; three in the RSA assembly FFI; two in the standalone flash-wipe tool.
+One reads an uncached flash byte.
 
 ```mermaid
 flowchart TB
@@ -438,3 +439,19 @@ lets the image backend execute that cleanup before declaring the image dead.
 `Worker::reboot` cannot safely borrow an arbitrarily interrupted worker.
 *Containment:* no reboot, flash/OTP write or unsafe RAM alias; terminal admission
 until cold boot. This path fences authorization but does not claim SRAM wiping.
+
+### 65. Uncached page-state byte reads — `PLAT-UNSAFE-015`
+
+`firmware/src/flash_storage/stream.rs::read_byte` reads one byte through the
+RP2350 translated uncached alias at `0x14000000`, as defined by the
+[pico-sdk 2.2.0 address map](https://github.com/raspberrypi/pico-sdk/blob/2.2.0/src/rp2350/hardware_regs/include/hardware/regs/addressmap.h).
+The host-tested helper refuses an offset outside the configured chip before
+calling the hardware closure. A compile-time bound keeps the complete chip
+inside the alias window; `SharedFlash` retains its exclusive borrow.
+*Safe alternative:* the existing cached HAL read is correct but fills cache
+lines for one-byte page-state probes. The new path reads the same translated
+address without a RAM scratch or any permission change.
+*Containment:* one volatile u8 load, initialized flash bytes, byte alignment,
+no MMIO stores, no new grants, and unchanged authority, root and payload checks.
+The byte load has no software deadline and a bus fault is not a flash error.
+TrustZone uses the existing fatal fence; normal builds do not promise the same cleanup.

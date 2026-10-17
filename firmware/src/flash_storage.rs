@@ -102,6 +102,11 @@ impl ReadNorFlash for SharedFlash {
         offset: u32,
         bytes: &mut [u8],
     ) -> core::result::Result<(), Self::Error> {
+        if let [byte] = bytes {
+            let _owner = self.inner.borrow_mut();
+            *byte = stream::read_byte(offset)?;
+            return Ok(());
+        }
         if bytes.len() >= 256 && offset.is_multiple_of(4) && bytes.len().is_multiple_of(4) {
             self.quad.borrow_mut().ensure_mode();
             let _owner = self.inner.borrow_mut();
