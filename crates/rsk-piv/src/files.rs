@@ -98,6 +98,20 @@ impl MgmKey {
 pub(crate) fn mgm_read<S: Storage>(dev: &Device, fs: &mut Fs<S>) -> Result<MgmKey, Sw> {
     let mut rec = Secret::<[u8; MGM_RECORD_MAX]>::zeroed();
     let n = seal::seal_read(dev, fs, key_fid(SLOT_CARDMGM), &mut rec)?;
+    mgm_key(rec, n)
+}
+
+fn mgm_from_blob(
+    dev: &Device,
+    blob: &mut Secret<[u8; seal::MAX_BLOB]>,
+    n: usize,
+) -> Result<MgmKey, Sw> {
+    let mut rec = Secret::<[u8; MGM_RECORD_MAX]>::zeroed();
+    let n = seal::unseal_blob(dev, blob, n, &mut rec)?;
+    mgm_key(rec, n)
+}
+
+fn mgm_key(rec: Secret<[u8; MGM_RECORD_MAX]>, n: usize) -> Result<MgmKey, Sw> {
     let policy = match *rec.expose() {
         _ if mgm_algo_for_len(n).is_some() => None,
         [algo, touch, ..]
@@ -393,7 +407,11 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
         fs.put(EF_RETRIES, &[d, d, d, d])
             .map_err(|_| Sw::MEMORY_FAILURE)?;
     }
-    let minted_mgm = !provisioned(fs, key_fid(SLOT_CARDMGM).get())?;
+    let mut mgm_blob = Secret::<[u8; seal::MAX_BLOB]>::zeroed();
+    let mgm_record = fs
+        .try_read_key(key_fid(SLOT_CARDMGM), mgm_blob.expose_mut())
+        .map_err(|_| Sw::MEMORY_FAILURE)?;
+    let minted_mgm = mgm_record.is_none();
     if minted_mgm {
         // Key-only, the shape every build reads: a card nobody re-keyed keeps its
         // management key across a downgrade.
@@ -418,13 +436,8 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
         .map_err(|_| Sw::MEMORY_FAILURE)?
         .is_some_and(|n| n >= 3);
     let mut landed = true;
-    let head = if minted_mgm {
-        // A card we just provisioned takes the YubiKey 5 defaults: AES-192, touch
-        // OFF (admin provisioning isn't touch-gated), still enforced if a host
-        // raises it via SET MGM KEY.
-        Some((ALGO_AES192, TOUCHPOLICY_NEVER))
-    } else {
-        match mgm_read(dev, fs) {
+    let head = if let Some(n) = mgm_record {
+        match mgm_from_blob(dev, &mut mgm_blob, n) {
             // The head caches what the record seals: one a refused or torn head
             // write left behind takes the record's word.
             Ok(MgmKey {
@@ -445,18 +458,18 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
             // published default like every other record here (E95): inventing ALWAYS
             // gated management behind a touch whose only exit needs that same touch.
             Ok(k) => mgm_algo_for_len(k.key().len()).map(|algo| (algo, TOUCHPOLICY_NEVER)),
-            // Unreadable: GENERAL AUTHENTICATE reads the key through the same
-            // seal, so slot 9B is already dead. Leaving the head absent fails
-            // just that slot closed; erroring here fails the whole SELECT
-            // (`PivApplet::select` maps a `scan_files` error to MEMORY_FAILURE),
-            // taking certificate reads, GET DATA and RESET down with it. A read
-            // the flash failed is looked at again by the next SELECT.
+            // A malformed seal leaves only 9B unavailable. Keep SELECT usable
+            // for certificate reads and recovery, and retry its head next time.
             Err(_) => {
                 landed = false;
                 None
             }
         }
+    } else {
+        // A newly provisioned key takes the YubiKey 5 defaults.
+        Some((ALGO_AES192, TOUCHPOLICY_NEVER))
     };
+    mgm_blob.wipe();
     if let Some((algo, touch)) = head
         && (minted_mgm || !have_meta || (meta[0], meta[2]) != (algo, touch))
     {
@@ -471,10 +484,10 @@ pub fn scan_files<S: Storage>(dev: &Device, fs: &mut Fs<S>, rng: &mut dyn Rng) -
             .meta_add(key_fid(SLOT_CARDMGM).get(), &[algo, pin, touch])
             .is_ok();
     }
-    let have_attestation_key = provisioned(fs, key_fid(SLOT_ATTESTATION).get())?;
-    let key = if have_attestation_key {
+    let existing = seal::try_load_ec_key(dev, fs, key_fid(SLOT_ATTESTATION))?;
+    let have_attestation_key = existing.is_some();
+    let key = if let Some(key) = existing {
         // A tear after the key write owes only its certificate, never a new key.
-        let key = seal::load_ec_key(dev, fs, key_fid(SLOT_ATTESTATION))?;
         if key.curve() != Curve::P384 {
             return Err(Sw::MEMORY_FAILURE);
         }

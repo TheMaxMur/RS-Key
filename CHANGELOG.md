@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Reduce authenticated storage-read latency with a simpler checked XIP FIFO
+  loop. Load each existing PIV management and attestation key once during the
+  first SELECT, retaining fresh backend checks and the existing sealed formats.
+  A failed management-key read now explicitly refuses SELECT; malformed seals
+  still leave certificate access and recovery available. bcdDevice `0x0AC1`.
+
 - Accelerate shared storage reads on matching Waveshare RP2350-One boards with
   volatile Quad Enable and checked Quad SPI timing. Park core1 in SRAM before
   changing the read mode, preserve protection bits, and retain every fresh bank,

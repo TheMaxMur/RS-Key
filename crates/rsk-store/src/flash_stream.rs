@@ -72,16 +72,17 @@ pub fn read(
         offset,
         u32::try_from(bytes.len() / WORD_BYTES).map_err(|_| Error::OutOfBounds)?,
     );
-    let mut words = bytes.as_chunks_mut::<WORD_BYTES>().0.iter_mut();
-    while words.len() != 0 {
-        let count = active.0.available();
-        if count > FIFO_WORDS || (count == 0 && active.0.expired()) {
-            return Err(Error::Transfer);
+    for word in bytes.as_chunks_mut::<WORD_BYTES>().0 {
+        loop {
+            let count = active.0.available();
+            if count > FIFO_WORDS || (count == 0 && active.0.expired()) {
+                return Err(Error::Transfer);
+            }
+            if count != 0 {
+                break;
+            }
         }
-        for _ in 0..count.min(words.len()) {
-            let word = words.next().ok_or(Error::Transfer)?;
-            word.copy_from_slice(&active.0.read_word().to_le_bytes());
-        }
+        word.copy_from_slice(&active.0.read_word().to_le_bytes());
     }
     if active.0.remaining() != 0 || active.0.address() != end || active.0.available() != 0 {
         return Err(Error::Transfer);

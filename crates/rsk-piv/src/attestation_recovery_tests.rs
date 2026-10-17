@@ -14,6 +14,103 @@ fn identity() -> Device<'static> {
     }
 }
 
+struct CountKeys {
+    inner: RamStorage,
+    reads: Rc<Cell<usize>>,
+    fid: u16,
+}
+impl CountKeys {
+    fn notice(&self, fid: u16) {
+        if fid == self.fid {
+            self.reads.set(self.reads.get() + 1);
+        }
+    }
+}
+impl Storage for CountKeys {
+    fn read(&mut self, fid: u16, out: &mut [u8]) -> Option<usize> {
+        self.notice(fid);
+        self.inner.read(fid, out)
+    }
+    fn size(&mut self, fid: u16) -> Option<usize> {
+        self.notice(fid);
+        self.inner.size(fid)
+    }
+    fn write(&mut self, fid: u16, data: &[u8]) -> rsk_sdk::error::Result<()> {
+        self.inner.write(fid, data)
+    }
+    fn remove(&mut self, fid: u16) -> rsk_sdk::error::Result<()> {
+        self.inner.remove(fid)
+    }
+    fn for_each_key(&mut self, f: &mut dyn FnMut(u16)) -> bool {
+        self.inner.for_each_key(f)
+    }
+}
+
+#[test]
+fn first_select_reads_existing_keys_once_without_republishing_them() {
+    for fid in [key_fid(SLOT_ATTESTATION), key_fid(SLOT_CARDMGM)] {
+        let mut fs = new_fs();
+        scan_files(&identity(), &mut fs, &mut TestRng(7)).unwrap();
+        let reads = Rc::new(Cell::new(0));
+        let mut fs = Fs::new(CountKeys {
+            inner: fs.into_storage(),
+            reads: reads.clone(),
+            fid: fid.get(),
+        });
+        fs.scan();
+        reads.set(0);
+        let rng = RefCell::new(TestRng(19));
+        let presence = RefCell::new(AlwaysConfirm);
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+        let generation = fs.write_gen();
+        select(&mut app, &mut fs);
+        assert_eq!(
+            reads.get(),
+            1,
+            "SELECT must authenticate and load the key in one read"
+        );
+        assert_eq!(fs.write_gen(), generation);
+    }
+}
+
+#[test]
+fn first_select_refuses_an_unreadable_or_empty_f9_without_replacing_it() {
+    for empty in [false, true] {
+        let (backend, medium) = ProbeStuck::new();
+        let mut fs = Fs::new(backend);
+        fs.scan();
+        scan_files(&identity(), &mut fs, &mut TestRng(7)).unwrap();
+        let fid = key_fid(SLOT_ATTESTATION);
+        if empty {
+            fs.put_key(fid, Sealed::wrap(&[])).unwrap();
+        }
+        let key = medium.value(fid.get());
+        let cert = medium.value(EF_ATTESTATION_CERT);
+        let generation = fs.write_gen();
+        if !empty {
+            medium.stick(Some(fid.get()));
+        }
+        let rng = RefCell::new(TestRng(19));
+        let presence = RefCell::new(AlwaysConfirm);
+        let mut app = PivApplet::new(SERIAL, HASH, None, &rng, &presence);
+        let mut out = [0xa5; 256];
+        let mut res = ResBuf::new(&mut out);
+        assert_eq!(
+            Applet::select(&mut app, false, &mut fs, &mut res),
+            Sw::MEMORY_FAILURE
+        );
+        assert!(res.as_slice().is_empty());
+        assert_eq!(out, [0xa5; 256]);
+        medium.stick(None);
+        assert_eq!(fs.write_gen(), generation);
+        assert_eq!(medium.value(fid.get()), key);
+        assert_eq!(medium.value(EF_ATTESTATION_CERT), cert);
+        if !empty {
+            select(&mut app, &mut fs);
+        }
+    }
+}
+
 fn stored<S: Storage>(fs: &mut Fs<S>, fid: u16) -> Option<Vec<u8>> {
     let mut bytes = [0; rsk_fs::MAX_VALUE_BYTES];
     fs.read(fid, &mut bytes)

@@ -19,6 +19,8 @@ standard build). Unknown chips or protected status layouts keep the ROM's read
 mode. A failed public-byte comparison restores the previous mode. This read
 path is shared by FIDO, PIV, OpenPGP and OATH; it does not cache authentication
 results between reads.
+The checked FIFO loop also reduces time spent on each shared storage read;
+the fresh bank, erased-tail, root and payload checks remain in place.
 TrustZone FIDO uses a 1 ms HID interval. Both encrypted getInfo members share
 one freshly loaded persistent token per command, with separate keys and IVs;
 a seed-read failure still leaves the credential-store member available.
