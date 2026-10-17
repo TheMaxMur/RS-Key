@@ -38,6 +38,12 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Accelerate shared storage reads on matching Waveshare RP2350-One boards with
+  volatile Quad Enable and checked Quad SPI timing. Park core1 in SRAM before
+  changing the read mode, preserve protection bits, and retain every fresh bank,
+  tail, root and payload check. Existing records remain compatible.
+  bcdDevice `0x0AC0`.
+
 - Avoid duplicate OpenPGP status, fingerprint and timestamp reads on
   authenticated storage. Each value still receives its normal fresh storage
   checks; records and response formats remain compatible. bcdDevice `0x0ABF`.
@@ -5328,7 +5334,7 @@ the release carries the flag, the decision stays yours
   that violate `-003` and `-004` are `BugMetaAddDropsOnFault` and
   `BugMetaDeleteDropsOnFault`, both **faulted EF_META reads**; `Reboot` sets
   `metaAbsent' = FALSE`, so a power cycle structurally cannot reach the false
-  absence `-004` forbids; and `crates/rsk-store/src/lib.rs:236` states outright
+  absence `-004` forbids; and `crates/rsk-store/src/lib.rs:238` states outright
   that a read fault is *"which a NOR power cut never produces (a torn write yields
   deterministic bytes, not a read error)"*. Their `why` now says that, names
   `TM-HOST-POWER-CUT` as the clause it is **not**, and pins the sentence it rests
@@ -7321,7 +7327,7 @@ the release carries the flag, the decision stays yours
   marker-still-there arm would have reported as a healthy device.
 
   **No `tests/*.py` repro exists and none is claimed.** `rsk_fs::run_at_rest_lap`
-  has exactly one caller, `firmware/src/main.rs:633`, gated on `mkek.is_some()`;
+  has exactly one caller, `firmware/src/main.rs:634`, gated on `mkek.is_some()`;
   `tools/emu` never calls it and builds its device with `otp_key: None`, so on the
   emulator `EF_HARDENED` is never latched and its RAM medium refuses nothing. A
   board would need a `FAKE_MKEK` build *and* a persistently refusing
@@ -7747,7 +7753,7 @@ the release carries the flag, the decision stays yours
 - **The boot pass re-keys pre-OTP records too, and standing before the at-rest lap
   is not the same as standing before the lap that latched.** 0x09BD swept thirteen
   lazy re-keys onto "re-arm first, and write only if the re-arm landed"; the eight
-  calls at `firmware/src/main.rs:610-617` were left out on the reading that the lap
+  calls at `firmware/src/main.rs:611-618` were left out on the reading that the lap
   at the foot of their own block covers whatever they supersede. It covers only the
   boot they run on. `run_at_rest_lap` latches `EF_HARDENED` once per device and
   gates on it and nothing else, so a boot that silently skipped a record — every
@@ -7818,7 +7824,7 @@ the release carries the flag, the decision stays yours
 
 - **OATH's boot pass was the sixth member of the boot-migration class, and it
   carries the two arms the other five did.** `rsk_oath::migrate_seal` runs at
-  `firmware/src/main.rs:613`, ahead of `run_at_rest_lap`, and standing ahead of
+  `firmware/src/main.rs:614`, ahead of `run_at_rest_lap`, and standing ahead of
   the lap is not the same as standing ahead of every lap — `rsk-fs`'s own doc now
   says so. `reseal_if_plaintext` re-seals a credential (or the SET CODE key) that
   opens only under `dev.without_otp()`, i.e. under `HKDF("NO-OTP", serial_hash)`,

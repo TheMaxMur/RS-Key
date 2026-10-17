@@ -116,7 +116,8 @@ def main():
         configuration.fixture(root, tree)
         usb = tree / "firmware/src/trustzone/usb.rs"
         body = usb.read_text()
-        needle = "const ENDPOINTS: usize = 16;"
+        needle = "mod endpoints;"
+        assert body.count(needle) == 1
         body = body.replace(needle, needle + "\n#[unsafe(no_mangle)]\n"
             "pub static RSK_USB_SNAPSHOT_PAUSE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);\n"
             "#[unsafe(no_mangle)]\npub static RSK_USB_EPOCH: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);")

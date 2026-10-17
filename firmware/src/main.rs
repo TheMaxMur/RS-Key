@@ -68,6 +68,7 @@ mod sweep;
 #[cfg(rsk_trustzone_prototype)]
 mod trustzone;
 mod usb_attach;
+mod usb_fence;
 mod vendor;
 mod worker;
 
@@ -897,7 +898,7 @@ async fn main(spawner: Spawner) {
     let phy = _phy;
     let rng_ref = RNG_CELL.init(RefCell::new(rng));
 
-    let device_release: u16 = 0x0ABF;
+    let device_release: u16 = 0x0AC0;
     #[cfg(rsk_trustzone_prototype)]
     {
         let (manufacturer, product) = if usb_vid == YUBICO_VID {

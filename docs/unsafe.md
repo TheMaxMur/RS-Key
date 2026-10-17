@@ -7,7 +7,7 @@ contained. Adding a new `unsafe` requires updating this page. (Safe Rust rules
 out memory-corruption bugs in this code. It is not a security audit; see the
 [threat model](threat-model.md).)
 
-**Runtime sites: 64.** Twenty-nine in the ordinary firmware and tools, plus thirty-five in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
+**Runtime sites: 64.** Thirty in the ordinary firmware and tools, plus thirty-four in the TrustZone build. Of the ordinary sites: Seventeen in the firmware proper (`main.rs` + `presence.rs`):
 the interrupt-handler pair (2), the `Send` impl, the heap init and its zeroing
 allocator (5), and the eight GPIO-pin `steal`s (the presence button, the LED power-enable rail, the nuisance
 USR LED, the display build's wake button, and — display builds only — the panel's
@@ -340,8 +340,9 @@ never ships inside the firmware.
 
 ### SRAM placement for public journal hashing — `PLAT-UNSAFE-011`
 
-`firmware/src/flash_storage/sha256.rs` and
-`firmware/src/flash_storage/stream.rs` place the digest and CPU stream routines
+`firmware/src/flash_storage/sha256.rs`,
+`firmware/src/flash_storage/stream.rs`, `firmware/src/flash_storage/quad.rs` and
+`firmware/src/core1.rs` place digest, stream, QMI and park routines
 in the existing `.data.ram_func` input section. Startup copies it before use;
 the TrustZone linker includes it in the read-only executable SRAM range. The
 digest reads each bank through `SharedFlash::read` and checks its entire tail.
@@ -350,6 +351,11 @@ journal stream for XIP cache lines.
 *Containment:* SHA sees public metadata only; the CPU stream serves bulk reads
 under the existing flash bounds and guards. Both have bounded waits, and the
 stream checks progress without raw XIP pointers or a new executable window.
+Quad commands execute before core1 starts; mode changes run then or after its
+interrupt-masked SRAM acknowledgment. Core0 masks interrupts during direct QMI
+access, restores the old mode on a failed public-byte probe, and runs the full
+USB fence in SRAM if QMI cannot quiesce. Only the allowlisted chip's volatile
+QE bit is written, without WEL; unsupported protection layouts are refused.
 
 ## What is *not* here
 
@@ -370,7 +376,7 @@ These additional sites are compiled only in the separate Secure and Non-secure b
 
 ### 38–43. Secure USB controller ownership and packet spans — `PLAT-TZ-002`
 
-`firmware/src/trustzone/usb.rs` and `firmware/src/trustzone/usb/control.rs`. The controller mutex owns endpoints and DPRAM; packet copies are at most 64 bytes and the complete NS RAM span passes TT before it becomes a slice. Clearing endpoint availability precedes the volatile DPRAM wipe. The EP0 pipe moves once to SWI_IRQ_2; only its bound handler services that executor. Epoch checks fence input and output at bus lifecycle changes.
+`firmware/src/trustzone/usb.rs`, `firmware/src/trustzone/usb/control.rs` and `firmware/src/usb_fence.rs`. The controller mutex owns endpoints and DPRAM; packet copies are at most 64 bytes and the complete NS RAM span passes TT before it becomes a slice. Clearing endpoint availability precedes the volatile DPRAM wipe. The EP0 pipe moves once to SWI_IRQ_2; only its bound handler services that executor. Epoch checks fence input and output at bus lifecycle changes.
 
 *Safe alternative:* DPRAM wiping and CMSE pointer conversion require raw memory access; Embassy requires an IRQ callback and a Send wrapper for the single task transfer.
 *Containment:* Secure-only USB access, bounded packet copies, serialized checks and copies, and one owner for the control pipe.

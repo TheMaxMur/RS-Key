@@ -13,6 +13,12 @@ directory. The next request resolves the persistent state again. On RP2350,
 repeat checks use the hardware SHA-256 engine; the first authenticated scan
 uses software hashing and supplies the digest the hardware result must match.
 Bulk reads use the CPU's XIP FIFO, with bounded waits and checked final progress.
+On a Waveshare RP2350-One with the matching 4 MiB Puya flash, firmware enables
+Quad reads using volatile status only and a clock divider of two (75 MHz in the
+standard build). Unknown chips or protected status layouts keep the ROM's read
+mode. A failed public-byte comparison restores the previous mode. This read
+path is shared by FIDO, PIV, OpenPGP and OATH; it does not cache authentication
+results between reads.
 TrustZone FIDO uses a 1 ms HID interval. Both encrypted getInfo members share
 one freshly loaded persistent token per command, with separate keys and IVs;
 a seed-read failure still leaves the credential-store member available.

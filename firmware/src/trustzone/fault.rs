@@ -9,10 +9,15 @@ pub fn failed() -> bool {
     FAILED.load(Ordering::Acquire)
 }
 
-pub fn halt() -> ! {
+#[inline(always)]
+pub fn fence() {
     if !FAILED.swap(true, Ordering::AcqRel) {
         crate::trustzone::usb::disconnect_after_fault();
     }
+}
+
+pub fn halt() -> ! {
+    fence();
     rsk_tz_fault_stop()
 }
 

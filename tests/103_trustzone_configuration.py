@@ -96,7 +96,7 @@ def fixture(root, tree):
             target.unlink()
     usb = tree / "firmware/src/trustzone/usb.rs"
     body = usb.read_text()
-    needle = "const ENDPOINTS: usize = 16;"
+    needle = "mod endpoints;"
     assert body.count(needle) == 1
     body = body.replace(needle, needle + "\n#[unsafe(no_mangle)]\npub static RSK_USB_ADMITTED: "
         "core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);")

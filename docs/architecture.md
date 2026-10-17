@@ -60,6 +60,10 @@ Three details make that work:
   on the vendor applet reads the engine's counters and flags; a shipped image
   answers `6D00` — they time the prime search).
 
+Quad-read configuration has a separate interrupt-masked SRAM park handshake.
+It changes QMI before core1 starts or after core1 acknowledges that park, and
+skips the change while core1 is busy. The probe restores the old mode on mismatch.
+
 Outside keygen, core1 parks in WFE, and embassy-rp brackets every flash
 erase/program with `pause_core1()`. That buys less than it looks. The flash
 routine is RAM-resident — `write_flash_inner` carries a `.data` link section

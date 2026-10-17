@@ -37,7 +37,8 @@ type Bus = usb::Bus<'static, USB>;
 type Pipe = usb::ControlPipe<'static, USB>;
 type EndpointIn = usb::Endpoint<'static, USB, In>;
 type EndpointOut = usb::Endpoint<'static, USB, Out>;
-const ENDPOINTS: usize = 16;
+pub use crate::usb_fence::disconnect_after_fault;
+use crate::usb_fence::{ENDPOINTS, clear_packets};
 
 struct Controller {
     driver: Option<Driver>,
@@ -104,41 +105,6 @@ pub fn init(usb: embassy_rp::Peri<'static, USB>) {
     interrupt::USBCTRL_IRQ.set_priority(Priority::P0);
     control::init();
     with_controller(|state| state.driver = Some(Driver::new(usb, crate::Irqs)));
-}
-
-fn clear_packets() {
-    for index in 0..ENDPOINTS {
-        rp_pac::USB_DPRAM.ep_in_buffer_control(index).modify(|v| {
-            for buffer in 0..2 {
-                v.set_available(buffer, false);
-                v.set_full(buffer, false);
-                v.set_length(buffer, 0);
-            }
-        });
-        rp_pac::USB_DPRAM.ep_out_buffer_control(index).modify(|v| {
-            for buffer in 0..2 {
-                v.set_available(buffer, false);
-                v.set_full(buffer, false);
-                v.set_length(buffer, 0);
-            }
-        });
-    }
-    // SAFETY: S owns DPRAM; all buffers are unavailable before their payloads are wiped.
-    unsafe {
-        let data = (rp_pac::USB_DPRAM.as_ptr() as *mut u32).add(0x100 / 4);
-        for offset in 0..(4096 - 0x100) / 4 {
-            data.add(offset).write_volatile(0);
-        }
-    }
-}
-
-pub fn disconnect_after_fault() {
-    // A fault can interrupt an owner with its lock held; touch only S-owned MMIO.
-    rp_pac::USB.inte().write(|value| value.0 = 0);
-    rp_pac::USB
-        .sie_ctrl()
-        .modify(|value| value.set_pullup_en(false));
-    clear_packets();
 }
 
 fn revoke(state: &mut Controller, reason: Revocation) {
