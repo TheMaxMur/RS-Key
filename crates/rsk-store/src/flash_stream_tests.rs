@@ -13,6 +13,7 @@ struct Fake {
     stops: usize,
     starts: usize,
     polls: usize,
+    delay: usize,
     stall: bool,
     bad_count: bool,
     bad_address: bool,
@@ -31,6 +32,10 @@ impl Stream for Fake {
         }
         if self.invalid_available {
             return FIFO_WORDS + 1;
+        }
+        if self.delay != 0 {
+            self.delay -= 1;
+            return 0;
         }
         if !self.stall {
             while self.fifo.len() < FIFO_WORDS && self.remaining != 0 {
@@ -70,10 +75,11 @@ impl Stream for Fake {
 
 #[test]
 fn reads_words_in_order_drains_stale_fifo_and_preserves_output_guards() {
-    for stale in 0..=FIFO_WORDS {
+    for (stale, delay) in [(0, 0), (1, 0), (FIFO_WORDS, 0), (0, 3)] {
         for length in [4, 8, 12, 60] {
             let mut stream = Fake {
                 stale,
+                delay,
                 ..Fake::default()
             };
             let mut out = [0x5a; 64];
