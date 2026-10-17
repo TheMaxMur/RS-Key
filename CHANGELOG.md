@@ -38,6 +38,10 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Avoid duplicate OpenPGP status, fingerprint and timestamp reads on
+  authenticated storage. Each value still receives its normal fresh storage
+  checks; records and response formats remain compatible. bcdDevice `0x0ABF`.
+
 - Accelerate FIDO getInfo with RP2350 hardware SHA-256, checked CPU flash
   streaming and one command-local persistent-token load. Restore the TrustZone
   HID interval to 1 ms. Keep fresh checks of both banks, erased tails, payload

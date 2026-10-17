@@ -415,9 +415,7 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             let end = self.pos + size;
             if let Some(window) = self.out.get_mut(self.pos..end) {
                 window.fill(0);
-                if self.fs.has_data(f) {
-                    let _ = self.fs.read(f, window);
-                }
+                let _ = self.fs.read(f, window);
             } else {
                 self.failed = true;
             }
@@ -484,9 +482,7 @@ impl<'a, S: Storage> DoWriter<'a, S> {
             self.push((EF_PW_STATUS & 0xff) as u8);
             self.push(7);
         }
-        if self.fs.has_data(EF_PW_PRIV) {
-            self.read_flash(EF_PW_PRIV);
-        }
+        self.read_flash(EF_PW_PRIV);
         self.pos - init
     }
 

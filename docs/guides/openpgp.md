@@ -22,6 +22,9 @@ Prereqs: on Linux, `pcscd` + the `scdaemon.conf` lines from
 gpg --card-status            # reader: RS-Key Security Key …, OpenPGP v3.4
 ```
 
+From build `0x0ABF`, card-status queries use fewer flash reads on authenticated
+storage. Each request still reads the current values from the key.
+
 gpg works regardless of the reader name. scdaemon identifies the card by its
 ATR and applet SELECT, not the USB identity. The default build reports the
 reader as "RS-Key"; the opt-in `VIDPID=Yubikey5` flavor reports it as "Yubico
