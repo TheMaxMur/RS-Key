@@ -46,6 +46,14 @@ class Reply:
     status: object = None
     timing: dict = field(default_factory=dict)
 
+    def __post_init__(self):
+        if self.protocol in ("success", "applet_error") and isinstance(self.status, int) and self.status >> 8 == 0x61:
+            self.protocol = "response_continuation"
+
+    @property
+    def is_rejection(self):
+        return self.protocol in ("applet_error", "transport_error")
+
 
 def json_value(value):
     if isinstance(value, bytes):

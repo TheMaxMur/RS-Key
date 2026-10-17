@@ -58,7 +58,7 @@ def mutations(session):
                 damaged = bytearray(config(key, old, allow_update))
                 damaged[-1] ^= 1
                 reply = raw(session, write, bytes(damaged) + old, offset=offset)
-                session.check("bad config CRC refused", reply.protocol != "success")
+                session.check("bad config CRC refused", reply.is_rejection)
                 trigger = session.evidence()
                 check_hmac(session, slot, key, "key preserved after bad CRC")
                 session.transition("otp.slot", "configured", "unchanged_after_bad_CRC", trigger, [trigger, session.evidence()])
@@ -69,9 +69,10 @@ def mutations(session):
                     active = new
                     check_hmac(session, slot, key, "UPDATE preserves original secret")
                     refused = raw(session, write, bytes(52) + old)
-                    session.check("old access code revoked by UPDATE", refused.protocol != "success")
+                    session.check("old access code revoked by UPDATE", refused.is_rejection)
                     check_hmac(session, slot, key, "key survives old access-code refusal")
                 else:
+                    session.check("UPDATE refusal is an applet error", reply.protocol, "applet_error")
                     check_hmac(session, slot, key, "key survives refused UPDATE")
                 accepted(session, raw(session, write, config(key) + active))
                 active = bytes(6)
@@ -103,7 +104,7 @@ def swaps(session):
                     check_hmac(session, 3 - previous, keys[previous], "key moved to other slot")
                 for previous in set((1, 2)) - set(populated):
                     missing = raw(session, commands(3 - previous)[1], bytes(64), 20)
-                    session.check("empty slot moved to other slot", missing.protocol != "success")
+                    session.check("empty slot moved to other slot", missing.is_rejection)
                 if populated:
                     session.transition("otp.slot_pair", occupancy, "swapped", trigger, [trigger, session.evidence()])
                 else:

@@ -50,6 +50,7 @@ def _change(session, action, transport):
                               lambda deadline, observe: backend.control("reconnect" if action == Action.USB_RECONNECT else action.value, deadline, observe))
     session.check("connection control completed", reply.protocol, "success")
     session.broken = False
+    session.values.pop("halt_reason", None)
     session.applet = None
     session.values.pop("fido.info", None)
     session.trace.emit("session_changed", session_id=transport, cause=action.value, evidence=session.evidence(),

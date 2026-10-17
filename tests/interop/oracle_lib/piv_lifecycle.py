@@ -36,27 +36,48 @@ def unblock(session):
         piv = fixture_session(session)
         session.require(session.options.piv_puk is not None, "PUK recovery requires --piv-puk-env")
         pin, puk = session.options.piv_pin, session.options.piv_puk
+        puk_meta = sdk_supported(session, piv.get_puk_metadata)
+        session.require(puk_meta.attempts_remaining > 0, "blocked PUK cannot recover an intentionally blocked PIN")
+        status(session, 0x2C, p2=0x80, data=wire_pin(puk) + wire_pin(pin))
+        piv.verify_pin(pin)
         metadata = sdk_supported(session, piv.get_pin_metadata)
         session.require(1 <= metadata.attempts_remaining <= 16, "PIN retries outside bounded recovery budget")
-        changed = False
+        attempted, current_puk = False, puk
         try:
             status(session, 0x20, 0xFF, 0x80)
             wrong = "00000000" if pin != "00000000" else "11111111"
+            attempted = True
             with session.attempts(("piv", 0x80), metadata.attempts_remaining + 1):
                 for left in range(metadata.attempts_remaining - 1, -1, -1):
                     status(session, 0x20, p2=0x80, data=wire_pin(wrong), expected=0x63C0 | left)
                 status(session, 0x20, p2=0x80, data=wire_pin(pin), expected=0x6983)
-            status(session, 0x2C, p2=0x80, data=wire_pin(puk) + wire_pin("654321"))
-            changed = True
+            puk_meta = sdk_supported(session, piv.get_puk_metadata)
+            if puk_meta.attempts_remaining > 1:
+                wrong_puk = "00000000" if puk != "00000000" else "11111111"
+                with session.attempts(("piv", 0x81), 2):
+                    try:
+                        status(session, 0x2C, p2=0x80, data=wire_pin(wrong_puk) + wire_pin("654321"),
+                               expected=0x63C0 | (puk_meta.attempts_remaining - 1))
+                        session.check("wrong PUK does not unblock PIN", piv.get_pin_metadata().attempts_remaining, 0)
+                    finally:
+                        if not session.broken:
+                            status(session, 0x2C, p2=0x80, data=wire_pin(puk) + wire_pin("654321"))
+            else:
+                status(session, 0x2C, p2=0x80, data=wire_pin(puk) + wire_pin("654321"))
             with session.attempts(("piv", 0x80), 1) if ("piv", 0x80) not in session.failed_auth else recovered(session, ("piv", 0x80)):
                 piv.verify_pin("654321")
             session.check("unblock restores full PIN retries", piv.get_pin_metadata().attempts_remaining, metadata.total_attempts)
             piv.change_puk(puk, "87654321")
+            current_puk = "87654321"
             piv.change_puk("87654321", puk)
+            current_puk = puk
         finally:
-            if changed and not session.broken:
+            if attempted and not session.broken:
                 session.trace.phase = "cleanup"
-                piv.change_pin("654321", pin)
+                if current_puk != puk:
+                    piv.change_puk(current_puk, puk)
+                status(session, 0x2C, p2=0x80, data=wire_pin(puk) + wire_pin(pin))
+                recovered(session, ("piv", 0x80))
                 piv.verify_pin(pin)
 
 
@@ -152,6 +173,10 @@ def reset(session):
                     request = codec.apdu(0x20, p2=0x80, data=wire_pin(wrong)) if reference == 0x80 else codec.apdu(0x2C, p2=0x80, data=wire_pin(wrong) + wire_pin("123456"))
                     result = session.apdu(request, "piv.reset.consume-reference")
                     session.check("blocking attempt refused", result.protocol, "applet_error")
+            if reference == 0x80:
+                refusal = session.apdu(codec.apdu(0xFB), "piv.reset.only-PIN-blocked")
+                session.check("RESET needs PUK blocked as well as PIN", refusal.status, 0x6A80)
+                session.check("incomplete blocking preserves reset marker", piv.get_object(marker), before)
         status(session, 0xFB)
         recovered(session, ("piv", 0x80), "factory reset")
         recovered(session, ("piv", 0x81), "factory reset")

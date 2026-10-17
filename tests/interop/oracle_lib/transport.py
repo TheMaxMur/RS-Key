@@ -129,15 +129,27 @@ class Hid:
                       for index, offset in enumerate(range(57, size, 59)))
         return self.transfer_reports(command, [frame.ljust(REPORT_LEN, b"\x00") for frame in frames], deadline, observe)
 
-    def transfer_reports(self, command, frames, deadline, observe):
+    def transfer_reports(self, command, frames, deadline, observe, delays=None):
         if not frames or any(len(frame) != REPORT_LEN for frame in frames):
             raise TransferError("raw CTAPHID requests require complete reports", Outcome.HOST_REJECTED)
+        if delays is None:
+            delays = [0] * len(frames)
+        if len(delays) != len(frames) or any(not isinstance(delay, (int, float)) or not 0 <= delay <= 2 for delay in delays):
+            raise TransferError("report delays must be finite intervals in 0..2 seconds", Outcome.HOST_REJECTED)
         self.active = True
-        for frame in frames:
+        report_intervals = []
+        for frame, delay in zip(frames, delays):
+            started = self.clock()
+            target = started + int(delay * 1e9)
+            while (left := target - self.clock()) > 0:
+                time.sleep(min(_remaining(deadline, self.clock), left / 1e9, 0.01))
             _remaining(deadline, self.clock)
+            write_start = self.clock()
             written = self.backend.write(b"\x00" + frame)
             tx_complete = self.clock()
-            observe("tx", frame, tx_complete, report_id=0)
+            observe("tx", frame, tx_complete, report_id=0, scheduled_delay_ns=int(delay * 1e9), write_start_ns=write_start,
+                    delay_started_ns=started)
+            report_intervals.append({"write_start_ns": write_start, "write_end_ns": tx_complete, "scheduled_delay_ns": int(delay * 1e9)})
             if written is not None and written != REPORT_LEN + 1:
                 raise TransferError("short HID write", Outcome.DISCONNECTED)
         first_rx = None
@@ -195,7 +207,7 @@ class Hid:
             sequence += 1
         timing = {"tx_complete_ns": tx_complete, "first_rx_ns": first_rx,
                   "first_final_rx_ns": first_final, "final_rx_ns": last_rx,
-                  "keepalives": keepalives}
+                  "keepalives": keepalives, "request_report_intervals": report_intervals}
         data = bytes(response)
         self.active = False
         if response_command == HID_ERROR:
@@ -223,6 +235,16 @@ class Hid:
         if self.cid in (b"\x00" * 4, BROADCAST_CID):
             raise TransferError("invalid allocated CID", protocol="malformed_response")
         trace.emit("session_opened", session_id="hid", cid=self.cid.hex(), capabilities=self.capabilities)
+
+    def idle_reports(self, deadline, observe):
+        while self.clock() < deadline:
+            milliseconds = max(1, min(100, int((deadline - self.clock()) / 1000000)))
+            try:
+                frame = bytes(self.backend.read(REPORT_LEN, milliseconds))
+            except OSError as error:
+                raise TransferError(str(error), Outcome.DISCONNECTED) from error
+            if frame:
+                observe(frame, self.clock())
 
 
 class TcpReports:

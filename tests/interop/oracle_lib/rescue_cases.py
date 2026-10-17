@@ -11,6 +11,8 @@ from . import codec
 from .lifecycle import Action, change
 from .vendor_cases import rsk
 
+RTC_MAX = 0xFFFFFFFF
+
 
 def request(session, ins, p1=0, p2=0, data=b"", expected=0x9000):
     reply = session.apdu(codec.apdu(ins, p1, p2, data, cla=0x80), f"rescue.{ins:02x}.{p1:02x}.{p2:02x}")
@@ -57,7 +59,7 @@ def phy(session):
 
 
 def clock(session):
-    values = (0, 1, 951782400, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF)
+    values = (0, 1, 951782400, 0x7FFFFFFF, 0x80000000, RTC_MAX)
     for seconds in values:
         with session.case(f"rescue.RTC.unix.{seconds}", ("R04", "G04", "G14"), effects=("set_rtc",)):
             active(session)
@@ -65,12 +67,13 @@ def clock(session):
             start = session.trace.now()
             got = int.from_bytes(request(session, 0x1E, 4, 2), "big")
             elapsed = (session.trace.now() - start) // 1000000000 + 2
-            session.check("RTC epoch readback within measured interval", seconds <= got <= min(0xFFFFFFFF, seconds + elapsed))
+            session.check("RTC epoch readback within measured interval", (got - seconds) & RTC_MAX <= elapsed)
             civil = request(session, 0x1E, 4, 1)
             session.check("RTC civil response length", len(civil), 8)
-            instant = datetime.fromtimestamp(seconds, timezone.utc)
-            session.check("RTC civil calendar", (int.from_bytes(civil[:2], "big"), civil[2], civil[3]),
-                          (instant.year, instant.month - 1, instant.day))
+            instant = datetime(int.from_bytes(civil[:2], "big"), civil[2] + 1, civil[3], civil[5], civil[6], civil[7], tzinfo=timezone.utc)
+            elapsed = (session.trace.now() - start) // 1000000000 + 2
+            session.check("RTC civil calendar", (int(instant.timestamp()) - seconds) & RTC_MAX <= elapsed)
+            session.check("RTC civil weekday", civil[4], (instant.weekday() + 1) % 7)
             for bad in (b"", bytes(1), bytes(3), bytes(5)):
                 result = session.apdu(codec.apdu(0x1C, 2, 2, bad, cla=0x80), "rescue.RTC.invalid-length")
                 session.check("RTC malformed write refused", result.protocol, "applet_error")

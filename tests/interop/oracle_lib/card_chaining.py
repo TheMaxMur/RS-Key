@@ -39,6 +39,7 @@ def run(session):
                     if result.protocol == "success":
                         session.check("complete chain writes exact certificate", sdk.get_data(0x7F21), fixture)
                     else:
+                        session.check("command-chain refusal is an applet error", result.protocol, "applet_error")
                         session.observe("object_limit_refusal", result.status)
                         session.check("oversize chain preserves prior object", sdk.get_data(0x7F21), original)
                 finally:

@@ -98,7 +98,7 @@ class Case(AbstractContextManager):
         if self.needs_touch and not self.session.options.touch:
             raise SkipCase("operator interaction requires --touch", "excluded_by_mode")
         if self.session.broken and not self.session.recovering:
-            raise SkipCase("a preceding transport failure left session state unknown")
+            raise SkipCase(self.session.values.get("halt_reason", "a preceding transport failure left session state unknown"))
 
     def __exit__(self, kind, error, traceback):
         session = self.session

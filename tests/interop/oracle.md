@@ -207,6 +207,12 @@ command-routing guard, not a sandbox for arbitrary Python extensions.
 | `keyboard`, `otp-admin` | Yubico OTP decryption/CRC/counters, HOTP known answers, static text, CR and pacing; profiled admin-slot lengths, independent key preservation and scan-map effect on real input reports |
 | `management-enforcement`, `cross` | Application bit combinations with actual dispatch and reachable restoration; service commands and lock persistence; populated cross-applet authorization, HID/card token/cursor/retry scope, lost-response readback, capacity neighbor and concurrent RSA/HID operation |
 | `vendor-lifecycle`, `vendor-properties`, `rescue`, `u2f-matrix` | Seed LOAD/restore with old-key witnesses, finalize, soft lock and organization U2F identity; audit/config/counter/LED pairwise boundaries and measurement builds; device signatures, PHY/RTC, setup/refusal, reboot and safe fuse-selector refusals; U2F encodings and invalid-handle/parameter controls |
+| `field-matrix` | Per-field and nested-field type defects for the profiled CTAP parsers, exact type errors, unchanged PIN retries and public state; stop on an unexpected result or state change; explicit CBOR null differs from an absent body |
+| `transport-boundaries` | Scheduled continuation before/at/after the RS-Key assembly deadline, actual host write intervals, foreign-CID continuation isolation, post-completion unsolicited reports and valid recovery controls |
+| `apdu-matrix` | Explicit short/extended APDU cases 1-4, Lc/Le and OpenPGP challenge bounds; complete, exhausted and interrupted GET RESPONSE chains with exact object preservation |
+| `fido-properties`, `fido-property-reconnect` | Unknown versus wrongly typed known extensions, absent/non-UV credBlob, independent per-credential HMAC secrets and malformed HMAC fields, largeBlobKey opt-in/update/reconnect stability and unsolicited-output refusal, resident/stateless counter semantics |
+| `oath-matrix`, `oath-reconnect` | Initial HOTP moving-factor boundaries and counter preservation through malformed/bulk/repeated requests; increasing-mark equality/bulk/persistence; complete and interrupted LIST/CALCULATE ALL paging |
+| `rescue-matrix` | Status selectors and their refusals, civil calendar normalization, weekday and leap-second behavior, epoch overflow, malformed-write preservation and unset clock after power loss |
 
 Unsupported algorithms, absent secrets, missing transports and mode exclusions
 are separate from failed assertions. Successful cryptographic cases also require
@@ -223,7 +229,12 @@ finite expansions do not establish every possible input/history combination.
 
 Family reports distinguish `implemented_not_run`, `partially_exercised`, blocked
 or unimplemented families. They never infer complete coverage from a family tag
-or a successful selection. Physical execution of the new cases remains unverified.
+or a successful selection. The [requirement audit](oracle-plan.md#requirement-audit-2026-10-18)
+records unresolved clauses separately. `matrix_completion: incomplete` and
+`unresolved_requirements` appear even when `unimplemented_families` is empty;
+`variant_coverage` is never promoted to complete by catalog membership. The
+audit still lists substantial implementation work. Physical execution of the
+new cases remains unverified.
 Section 14's OnlyKey, CanoKey and other external vendor catalogs remain unknown
 until model and firmware are identified; shared FIDO/card cases do not substitute
 for those vendor workflows. Wallet operations remain outside the Trezor profile.
@@ -256,6 +267,13 @@ results from the manifest and event log, ignoring a stale `results.json`.
 An interrupted final line is reported; pending exchanges remain unfinished.
 Earlier malformed complete records, changed request bytes, mismatched lengths,
 duplicate exchange IDs and inconsistent timing are rejected.
+
+APDU `61xx` is `response_continuation`, distinct from `applet_error`. A pending
+tail must not satisfy a refusal check. Existing captures retain their original
+classification; the comparator reports the difference and the runner hash.
+Idle HID observations have no fabricated request or response latency. Scheduled
+HID tests retain each host write's start/end and requested delay; these are
+host-side intervals, not device arrival timestamps.
 
 Every exchange records an operation ID, sample, scenario, phase, session,
 observation layer, request/response hex and lengths, execution/protocol outcomes,

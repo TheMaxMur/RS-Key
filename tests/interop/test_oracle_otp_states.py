@@ -42,7 +42,7 @@ class SlotPeer:
                 self.slots.pop(slot, None)
             elif len(config) != 52 or crc16(config) != 0xF0B8:
                 if self.defect != "CRC-accepted":
-                    status = 0x6A80
+                    status = 0x6101 if self.defect == "CRC-continuation" else 0x6A80
             elif command in (4, 5) and previous is not None:
                 value = bytearray(config)
                 if self.defect != "UPDATE-replaces-key":
@@ -80,7 +80,8 @@ class SlotPeer:
 
 
 @pytest.mark.parametrize("defect,assertion", [(None, None), ("CRC-accepted", "bad config CRC refused"),
-    ("UPDATE-replaces-key", "UPDATE preserves original secret"), ("SWAP-noop", "key moved to other slot")])
+    ("CRC-continuation", "bad config CRC refused"), ("UPDATE-replaces-key", "UPDATE preserves original secret"),
+    ("SWAP-noop", "key moved to other slot")])
 def test_OTP_state_checks_run_through_dispatch_and_notice_the_defect(tmp_path, defect, assertion):
     trace = Trace(tmp_path / "slots", {})
     peer = SlotPeer(defect)

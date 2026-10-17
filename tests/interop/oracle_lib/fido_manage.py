@@ -21,7 +21,7 @@ def walk(session, version, token, begin, following, count_key, parameters=None):
         rows.append(session.ctap_value(cm(session, version, token, following)))
     end = cm(session, version, token, following)
     session.observe(f"walk.{begin}.past_end_status", end.status)
-    session.check("continuation past end refused", end.protocol != "success")
+    session.check("continuation past end refused", end.is_rejection)
     return rows
 
 
@@ -70,7 +70,7 @@ def credentials(session):
                 session.check("discoverable RP binding", parsed["rp_hash"], rp_hash)
                 verified(session, "discoverable signature", keys[assertion[1]["id"]], -7, assertion[3], assertion[2] + challenge)
             session.check("discoverable IDs", {row[1]["id"] for row in assertions}, {row["id"] for row in created[:2]})
-            session.check("getNextAssertion exhausted", session.ctap(8).protocol != "success")
+            session.check("getNextAssertion exhausted", session.ctap(8).is_rejection)
             session.observe("fixture_rp_count", 2)
             session.observe("fixture_credential_count", len(created))
         finally:
@@ -135,7 +135,7 @@ def large_blobs(session):
             bad = replacement[:-1] + bytes([replacement[-1] ^ 1])
             refused = blob_write(session, version, token, bad)
             session.observe("bad_digest.status", refused.status)
-            session.check("bad digest refused", refused.protocol != "success")
+            session.check("bad digest refused", refused.is_rejection)
             session.check("committed array survived rejected digest", blob_read(session), replacement)
         finally:
             if began and not session.broken:

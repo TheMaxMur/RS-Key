@@ -44,15 +44,15 @@ def run(session):
                     sdk.verify_pin(session.options.openpgp_pin, extended=True)
                 original = read_do(sdk, tag)
                 value = b"9" if tag == 0x5F35 and length == 1 else b"x" * length
-                changed = False
+                attempted = False
                 try:
+                    attempted = True
                     reply = session.apdu(codec.apdu(0xDA, tag >> 8, tag & 255, value), "openpgp.DO-catalog.PUT")
                     valid_length = length == maximum if fixed else length <= maximum
                     if not valid_length and session.profile == "rsk":
                         session.check("DO length boundary refusal", reply.status, 0x6A80)
                         session.check("refused DO length preserves original", read_do(sdk, tag), original)
                     elif reply.protocol == "success":
-                        changed = True
                         readback = read_do(sdk, tag)
                         session.check("DO catalog exact write/read", readback, b"9" if tag == 0x5F35 and not value else value)
                         for ref in (0x81, 0x82, 0x83):
@@ -68,9 +68,11 @@ def run(session):
                             sdk.verify_admin(session.options.openpgp_admin)
                         session.check("ACL refusal preserves DO", read_do(sdk, tag), readback)
                     else:
+                        session.check("DO boundary refusal is an applet error", reply.protocol, "applet_error")
                         session.observe("profile_boundary_refusal", reply.status)
+                        session.check("DO refusal preserves original", read_do(sdk, tag), original)
                 finally:
-                    if changed and not session.broken:
+                    if attempted and not session.broken:
                         session.trace.phase = "cleanup"
                         if owner_is_user:
                             sdk.verify_pin(session.options.openpgp_pin, extended=True)

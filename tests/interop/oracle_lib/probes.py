@@ -65,11 +65,11 @@ def fido(session):
                         session.require(False, "wallet routing guard prevents this ambiguous encoding")
                     raise
                 observe_reply(session, reply)
-                session.check("incomplete request refused", reply.protocol != "success")
+                session.check("incomplete request refused", reply.is_rejection)
     with session.case("fido.next-without-begin", ("F13",)):
         reply = session.ctap(8)
         observe_reply(session, reply)
-        session.check("no active assertion walk", reply.protocol != "success")
+        session.check("no active assertion walk", reply.is_rejection)
     with session.case("fido.largeblobs.read", ("F19",)):
         reply = session.ctap(12, {1: 64, 3: 0})
         observe_reply(session, reply)

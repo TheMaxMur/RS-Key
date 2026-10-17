@@ -143,6 +143,8 @@ def applications(session):
                             from .runner import AIDS
                             reply = session.apdu(codec.apdu(0xA4, 4, data=AIDS[applet]), "select.enforcement." + applet)
                         session.check(applet + " actual dispatch enforcement", reply.protocol == "success", bool(mask & bit))
+                        if not mask & bit:
+                            session.check(applet + " disabled dispatch is a rejection", reply.is_rejection)
                     session.check("management remains reachable with all masks", bool(read(session, "card", required=True)))
                 finally:
                     if not session.broken:

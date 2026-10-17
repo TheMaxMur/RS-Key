@@ -38,6 +38,18 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Audit USB oracle coverage below the family level and expose unresolved matrix
+  clauses in offline plans and capture reports. Add parsed-field type matrices,
+  scheduled HID assembly/foreign-CID/post-completion checks, explicit APDU
+  encodings and response-chain lifetimes, FIDO extension/secret/counter
+  properties, OATH counter/increasing/paging lifecycles and rescue calendar
+  boundaries. Separate APDU response continuations from applet rejections so
+  `61xx` cannot falsely satisfy a refusal check; stop the malformed-field corpus
+  if a result or PIN/public-state side effect differs from its contract. Extend
+  PIV wrong-PUK and partial reset-precondition controls and restore the known PIN
+  via PUK after interrupted assertions. Full matrix implementation and physical
+  verification remain open.
+
 - Add the host-only USB oracle recorder under `tests/interop`: durable raw
   CTAPHID/APDU captures, per-request monotonic timing, independently checked
   FIDO/U2F, OATH/OTP, PIV and OpenPGP fixtures, explicit Trezor FIDO-only routing,

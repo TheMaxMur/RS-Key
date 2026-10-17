@@ -39,6 +39,11 @@ from oracle_lib import fido_lifetimes
 from oracle_lib import fido_sequences
 from oracle_lib import pcsc_sessions
 from oracle_lib import enterprise
+from oracle_lib import rescue_matrix
+from oracle_lib import fido_properties
+from oracle_lib import apdu_matrix
+from oracle_lib import oath_matrix
+from oracle_lib import field_matrix
 
 EXERCISE_SUITES = {"fido": fido.fido, "u2f": fido.u2f, "oath": otp.oath, "otp": otp.otp,
                    "piv": cards.piv, "openpgp": cards.openpgp,
@@ -61,7 +66,11 @@ EXERCISE_SUITES = {"fido": fido.fido, "u2f": fido.u2f, "oath": otp.oath, "otp": 
                    "fido-reset-bio": fido_lifecycle.mutations, "u2f-matrix": u2f_cases.run,
                    "piv-moves": piv_moves.run, "fido-lifetimes": fido_lifetimes.run,
                    "fido-sequences": fido_sequences.run, "pcsc-sessions": pcsc_sessions.run,
-                   "enterprise-attestation": enterprise.run, "fido-reconnect": fido_lifecycle.reconnect}
+                   "enterprise-attestation": enterprise.run, "fido-reconnect": fido_lifecycle.reconnect,
+                   "transport-boundaries": transport_cases.boundaries, "rescue-matrix": rescue_matrix.run,
+                   "fido-properties": fido_properties.run, "fido-property-reconnect": fido_properties.reconnect,
+                   "apdu-matrix": apdu_matrix.run, "oath-matrix": oath_matrix.run, "oath-reconnect": oath_matrix.reconnect,
+                   "field-matrix": field_matrix.run}
 FINAL_RESET_SUITES = ("piv-lifecycle", "openpgp-lifecycle", "enterprise-attestation", "fido-policy", "fido-pin-cycles", "fido-reset-bio")
 SUITES = tuple(name for name in dict.fromkeys((*READ_SUITES, *EXERCISE_SUITES)) if name not in FINAL_RESET_SUITES) + FINAL_RESET_SUITES
 TREZOR_SUITES = ("fido", "u2f", "credential-management", "large-blobs", "fido-states", "negative",
@@ -271,6 +280,8 @@ def main(argv=None):
             if args.out:
                 atomic_json(args.out, result)
             print(json.dumps({"catalog": str(args.out), "cases": len(result["cases"]),
+                              "matrix_completion": result["coverage"]["matrix_completion"],
+                              "unresolved_requirements": result["coverage"]["unresolved_requirements"],
                               "unimplemented_families": [row["family"] for row in result["coverage"]["families"]
                                                          if row["coverage"] == "not_implemented"]} if args.out else result, indent=2))
             return 0

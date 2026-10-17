@@ -167,7 +167,7 @@ def otp(session):
                 session.observe(f"hmac.{length}", got)
             refused = session.otp_call(write_command, bytes(58)) if session.otp_hid else session.apdu(codec.apdu(1, write_command, data=bytes(58)), "otp.delete-wrong-access")
             session.observe("wrong_access.status", refused.status)
-            session.check("wrong access code refused", refused.protocol != "success")
+            session.check("wrong access code refused", refused.is_rejection)
             challenge = session.fixture("otp.after-refusal", 64)
             session.check("key survives rejected write", slot_request(session, challenge_command, challenge, 20), hmac.digest(key, challenge, "sha1"))
         finally:

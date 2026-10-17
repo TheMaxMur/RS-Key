@@ -6,7 +6,8 @@
 Status: scenario contract, 2026-10-17. The executable catalog represents every
 numbered family; its bounded expansions and observation limits are documented
 in [oracle.md](oracle.md). Catalog presence does not establish device coverage
-or measurement of every variation below.
+or measurement of every variation below. The requirement audit below records
+implementation gaps independently of family presence.
 
 The oracle runs stateful scenarios against physical reference keys and
 RS-Key, records every observable request and response with timing, and compares
@@ -573,7 +574,7 @@ byte or completion of lower-layer transmission. Those timestamps remain null.
 | Dimension | Values |
 |---|---|
 | Execution | completed, host_rejected, deadline, disconnected, cancelled, runner_error |
-| Protocol | success, applet_error, transport_error, malformed_response, no_response |
+| Protocol | success, response_continuation, applet_error, transport_error, malformed_response, no_response |
 | Assertion | pass, fail, inconclusive |
 | Applicability | applicable, unsupported_confirmed, unknown, blocked_by_precondition, not_run |
 | Comparison | equal, allowed_difference, unexpected_difference, not_comparable |
@@ -702,6 +703,61 @@ For each concrete device profile report:
 An unchanged raw capture can be re-decoded or re-compared with a new rule
 revision. Preserve the original comparison and identify which scenario or
 normalization changes require a fresh device run.
+
+### Requirement audit, 2026-10-18
+
+The implementation is **incomplete**. The former zero-missing-families result
+only established catalog membership. These checkboxes refer to the named
+clauses, never to an entire family. Checked clauses have executable scenarios
+and offline regression evidence; hardware execution remains pending. Unchecked
+clauses are implementation work, not capability exclusions or permission skips.
+The `plan` and capture coverage reports include the unchecked clauses verbatim.
+A family without an unchecked clause is still `not_certified`, since absence
+from this list does not establish a clause-by-clause completeness proof.
+
+- [x] `G02, G14`: `fields.*` varies each parsed outer and nested field's CBOR type across makeCredential, getAssertion, clientPIN subcommands, credential management, largeBlobs, config and RS-Key vendor commands; verify exact type error, unchanged PIN retries and public FIDO state. This does not cover every presence, length or semantic combination.
+- [x] `T04, T05, T06, T08`: `transport.assembly.interval-*`, `transport.assembly.foreign-CID-continuation` and `transport.KEEPALIVE.after-completion` cover scheduled completion around the RS-Key assembly deadline, foreign continuation isolation and an explicit idle observation window. Record host write intervals and uncertainty; do not assert exact device arrival at 500 ms.
+- [x] `T11, T13, O07, O17`: `transport.APDU.case-*`, `transport.APDU.response-chain.*` and `openpgp.GET-CHALLENGE.*` cover short/extended cases 1-4, Lc/Le boundaries, exact response reconstruction, no-pending/final-repeat continuations and valid/refused/SELECT interruptions. `61xx` has its own continuation outcome and cannot satisfy a refusal assertion.
+- [x] `FE02, FE03, FE05, FE11, FE13`: `fido.credBlob.visibility.*`, `fido.hmac-secret.isolation.*`, `fido.hmac-secret.member-*`, `fido.largeBlobKey.*`, `fido.extension-type.*`, `fido.unknown-extension.*` and `fido.counters.*` cover absent and non-UV blob reads, secret isolation, repeated evaluations, independently malformed HMAC fields, user-update stability, unsolicited results, and per-credential counters. Connection cases are conditional on an explicit backend.
+- [x] `A05, A06, A07, A08`: `oath.HOTP.initial-*`, `oath.increasing.equal-bulk-reselect.*` and `oath.paging.*` cover 32-bit IMF boundaries, bulk/error counter preservation, equal/decreasing challenge refusal, bulk high-water marks, reselect/power persistence and continuation retirement. Tests do not claim an unreachable 64-bit HOTP wrap.
+- [x] `R01, R04, R05, R06`: `rescue.READ.selector-*`, `rescue.refuse.*`, `rescue.RTC.civil.*`, `rescue.RTC.refuse.*` and `rescue.RTC.power-cycle-unsets` cover profiled selectors, civil writes, leap/month/year/epoch limits, normalization, ignored weekday, refusal preservation, and unset RTC after power loss. RS-Key normalizes short-month overflow and leap seconds; it must not be tested against an invented strict-date refusal.
+- [x] `P05, P16`: `piv.puk.block-unblock` checks wrong PUK without unblocking the PIN, then correct recovery; `piv.reset.preconditions-and-factory-state` checks that blocking only PIN cannot authorize reset. Recovery uses the known PUK even when an assertion interrupts the fixture flow.
+
+- [ ] `G01, G03, G04`: Expand presence, empty values, all profile-derived bounds and reserved/overflow values for every parsed command and subcommand, beyond the existing targeted vectors. Typed-field expansion does not discharge these dimensions.
+- [ ] `G05, G06, G07, G08`: Apply truncation/trailing data, CBOR ordering/duplicates/indefinite encodings, TLV grammar and UTF-8/code-point boundaries to the remaining command schemas with correct single-defect controls.
+- [ ] `G09, G10, G11, G12, G13, G14`: Complete deleted/replaced/foreign-reference, authorization-lifetime, lost-response, interruption and selected validation-precedence cases with populated-object and state/counter/cursor witnesses for each applicable command.
+- [ ] `T01, T02`: Record discovery/open failures as cases and cover INIT during an outstanding operation and reserved/unallocated CID behavior, with subsequent owner-channel recovery.
+- [ ] `T06, T07, T08, T09`: Complete processing-stage cancellation and completion races, all applicable KEEPALIVE transitions, concurrent continuation ownership, and WINK/LOCK parameter/expiry interactions. The new idle window only covers post-completion reports.
+- [ ] `T10, T14, T15, T16`: Implement raw CCID malformed-length/abort/removal injection where the backend permits it; complete PC/SC sharing/disposition cases, OTP feature-report sequence/busy/cancel faults and Part 10 structure/display/grant postconditions. A PC/SC APDU cannot substitute for raw USB evidence.
+- [ ] `T11, T12`: Finish unsupported CLA/INS and malformed APDU encoding combinations per applet; distinguish chain-buffer overflow, object-size refusal and total-store capacity, including abandonment controls.
+- [ ] `F01, F02, F03, F04, F05`: Complete getInfo change/consistency witnesses, key-agreement lifetimes, set/change PIN encrypted padding/MAC/point failures, minimum/maximum Unicode PINs, wrong-old/same-PIN paths and preserved credentials. Structural type rejection alone cannot establish these paths.
+- [ ] `F06, F09, F10`: Complete legacy/scoped token permission and RP-binding cases and each PIN-change/reset/replacement invalidation, including ordinary versus persistent read-only grants.
+- [ ] `F07, F08, F22, F23, F24`: Complete local UV error/block/cancel/timeout paths, selection competition, reset outside its window and refusal/timeout, and biometric invalid-sequence/cancel/full/authorization cases on profiles that implement them.
+- [ ] `F11, F12`: Expand makeCredential option axes and same/different RP/user replacement cases, dynamic credential-ID bounds and capacity recovery with owned credential controls.
+- [ ] `F13, F14, F15, F16, F17, F18`: Complete empty/partial/full metadata and owned RP/credential enumeration fixtures, mutation during walks, foreign-CID continuation, unknown/repeated deletion, invalid user updates and capacity reclamation.
+- [ ] `F19, F20, F21`: Complete read fragmentation/offset boundaries, partial-write timeout/intervening command/order/length combinations, and configuration permission/MAC/subcommand/value failures with persistent-state controls.
+- [ ] `FE01, FE03, FE04`: Add credProtect excludeList visibility and remaining HMAC registration input combinations, including hmac-secret-mc without the required registration opt-in and UV-specific outputs.
+- [ ] `FE05, FE06, FE07, FE08, FE09, FE10, FE12, FE14`: Complete nonresident largeBlobKey refusal, blob deletion lifecycle, policy/verification-output combinations, remaining preview/ARKG malformed parameters, attestation format/list boundaries, and store-state update/reset witnesses.
+- [ ] `U02, U03, U04, U05, U06`: Complete REGISTER/AUTH length and presence/cancel cases, counters and handle survival across reboot, vendor selection and transport isolation. Reset/seed invalidation already has separate witnesses.
+- [ ] `P01, P02, P03, P04, P05, P08`: Complete selection/authentication-state preservation, unknown metadata references, VERIFY padding/length/failure grants, PIN/PUK boundary changes, blocked PUK/invalid replacement and retry-policy rejection/persistence cases.
+- [ ] `P06, P07`: Complete single/mutual management-auth challenge ordering, replay/intervening-command failures and key-rotation refusal state. Validate authentication using a protected operation after each outcome.
+- [ ] `P09, P10, P11, P12, P14, P15, P16, P17`: Complete malformed key generation/import/private operations, policy/touch-cache expiration and selection/reconnect effects, attestation empty/protected references, MOVE certificate/policy semantics and reset revocation of populated private keys.
+- [ ] `P13`: Cover each profile-defined object's ACL, deletion and persistence; measure APDU, chain, individual-object and aggregate-store limits independently.
+- [ ] `O01, O07`: Finish each supported DO's read/write ACL, reset value and power-cycle persistence, including read-only/unknown and nested-only forms. Successful GET or a single writable-DO loop is insufficient.
+- [ ] `O02, O03, O04, O05, O06`: Complete reference/P1/mode failures, PIN/reset-code boundaries and blocking, retry-policy body/auth failures and reboot persistence with retained private keys.
+- [ ] `O08, O09, O10, O14`: Complete invalid algorithm OIDs/sizes, attribute changes with populated keys, malformed CRT/import components, replacement and MSE reassignment policy/authorization effects.
+- [ ] `O11, O12, O13, O19, O20, O22`: Complete malformed private-operation inputs, UIF refusal/timeout and one-shot consumption, empty/imported attestation references, and counter behavior after failure/reboot/key replacement.
+- [ ] `O15, O16, O18, O21`: Complete AES missing-key/mode/DEC independence, remaining certificate selector failures, KDF with existing keys and reboot/incompatible verifier, and all relevant terminated-state command/precondition cases.
+- [ ] `A01, A02, A03, A04`: Complete authentication/selection interactions, PUT secret/digits/flag combinations and challenge/P1/P2/touch boundaries with exact record preservation and known answers.
+- [ ] `A05, A06, A07, A08`: Add uncertain/lost HOTP response recovery, touch-policy mixed bulk output and remaining challenge/authorization/page-invalidation combinations. The new counter and page suites cover only their stated clauses.
+- [ ] `A09, A10, A11, A12, A13, A14, A15`: Complete rename/identical/full-store cases, access-code algorithm/proof and alternate-path bypasses, OTP-PIN cross-command gates and complete reset cleanup of additional record types.
+- [ ] `Y01, Y02, Y03, Y04, Y05, Y06, Y07, Y08`: Complete status/disabled/transport consistency, slot/mode/flag grammar, update/delete/swap/access-code error states and reboot persistence, challenge-response length/mode/presence/cancel cases.
+- [ ] `Y09, Y10, Y11, Y12, Y13, Y14`: Complete keyboard layout/modifier/TAB/length, interrupted output and counter persistence, gesture timing/hold/busy/slot selection, admin-record strict-config/reboot behavior and extra-slot gesture/status consistency.
+- [ ] `M01, M02, M03, M04, M05, M06`: Complete page/body reads, each writable tag's partial/duplicate/unknown/reserved-bit cases, USB-interface changes, identical locked writes, confirmation bypass and configuration/lock survival across each applet reset.
+- [ ] `V01, V02, V03, V04, V05, V06`: Complete every defined MSE failure/reuse and CID case, seed export/load/finalize authorization/refusal/reboot states, locked-boot availability and malformed identity-chain/MSE/permission combinations with preserved identity controls.
+- [ ] `V07, V08, V09, V10, V11, V12, V13`: Complete audit ACL/config persistence/replay, every configuration command/record and advertised-list consistency, lock/strict-config/immediate/reboot behavior, vendor-counter refusal/lifetimes and measurement-build selectors.
+- [ ] `R02, R03, R05, R06`: Complete device-key confirmation refusal, all PHY tags/lock/range/persistence, reboot refusal/response-before-disconnect and occupied/incompatible recovery fixtures with the full recovery command whitelist. Positive fuse writes remain deliberately excluded by R07.
+- [ ] `X01, X02, X03, X04, X05, X06, X07, X08, X09, X10, X11, X12`: Complete populated cross-applet authorization/cursor/challenge and private-key reset witnesses, presence ownership, each quota's reclamation, long PQC overlap, uncertain writes and the full volatile/persistent lifetime table. Existing representative sequences cannot certify every cross-applet clause.
 
 ### Execution permissions
 

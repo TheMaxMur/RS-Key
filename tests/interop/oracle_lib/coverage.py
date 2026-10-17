@@ -10,9 +10,12 @@ from pathlib import Path
 def coverage(cases):
     matrix = Path(__file__).parents[1] / "oracle-plan.md"
     if not matrix.is_file():
-        return {"matrix": None, "warning": "matrix document unavailable", "families": []}
+        return {"matrix": None, "warning": "matrix document unavailable", "families": [],
+                "matrix_completion": "not_certified", "unresolved_requirements": []}
     data = matrix.read_bytes()
     catalog = re.findall(r"^\| ([A-Z]+\d{2}) \| ([^|]+) \|", data.decode(), re.MULTILINE)
+    pending = [{"families": re.findall(r"[A-Z]+\d{2}", ids), "requirement": requirement}
+               for ids, requirement in re.findall(r"^- \[ \] `([^`]+)`: (.+)$", data.decode(), re.MULTILINE)]
     families = []
     for family, title in catalog:
         rows = [case for case in cases if family in case["families"]]
@@ -25,6 +28,8 @@ def coverage(cases):
                          "failed": sum(row["verdict"] == "fail" for row in rows),
                          "coverage_methods": sorted({row.get("coverage_method", "explicit") for row in rows}),
                          "scenarios": sorted({row["scenario_id"] for row in rows}),
+                         "variant_coverage": "incomplete" if any(family in item["families"] for item in pending) else "not_certified",
+                         "unresolved_requirements": [item["requirement"] for item in pending if family in item["families"]],
                          "reasons": sorted({row["reason"] for row in rows if row["reason"]})})
     section = re.search(r"(?ms)^## 14\. Additional external-device profiles\n(.*?)^## 15\.", data.decode())
     external_section = section[1] if section else ""
@@ -33,4 +38,6 @@ def coverage(cases):
                 for name in re.findall(r"^\| ([^|]+) \|", external_section, re.MULTILINE)
                 if name.strip() not in ("Profile", "---")]
     return {"matrix": matrix.name, "sha256": hashlib.sha256(data).hexdigest(), "external_profiles": external,
-            "meaning": "Family links identify tested portions, never complete family coverage.", "families": families}
+            "matrix_completion": "incomplete" if pending else "not_certified",
+            "unresolved_requirements": pending,
+            "meaning": "Family links identify tested portions, never complete family coverage. Empty family gaps do not discharge matrix requirements.", "families": families}

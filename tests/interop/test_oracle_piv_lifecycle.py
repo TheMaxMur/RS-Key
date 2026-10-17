@@ -150,3 +150,30 @@ def test_PIV_lifecycle_with_real_SDK_and_functional_peer(tmp_path, defect, expec
         assert card.pin == b"123456" and card.puk == b"12345678" and card.key == DEFAULT_KEY
     else:
         assert any(expected in " ".join([row["reason"], *row.get("causes", [])]) for row in failures), failures
+
+
+@pytest.mark.parametrize("blocked_puk", [False, True])
+def test_unblock_preflights_recovery_and_restores_after_assertion(tmp_path, monkeypatch, blocked_puk):
+    from oracle_lib import piv_lifecycle
+    class CounterFault(PivCard):
+        def compare(self, reference, value):
+            result = super().compare(reference, value)
+            return 0x63C1 if reference == 0 and result == 0x63C2 else result
+    card = CounterFault()
+    if blocked_puk:
+        card.left[1] = 0
+    trace = Trace(tmp_path / "unblock-control", {})
+    session = Session(trace, card=card, options=Options(exercise=True, piv_pin="123456", piv_puk="12345678",
+                      management_key=DEFAULT_KEY, allow_effects=("pin_change", "pin_attempts")))
+    for name in ("management_keys", "retries", "reset"):
+        monkeypatch.setattr(piv_lifecycle, name, lambda session: None)
+    oracle.execute(session, ["piv-lifecycle"])
+    trace.finish()
+    assert len(trace.cases) == 1 and trace.cases[0]["scenario_id"] == "piv.puk.block-unblock"
+    assert card.pin == b"123456" and card.puk == b"12345678" and card.left[0] == 3
+    if blocked_puk:
+        assert trace.cases[0]["applicability"] == "blocked_by_precondition"
+        assert card.left[1] == 0
+    else:
+        assert trace.cases[0]["verdict"] == "fail" and "PIV response cause" in trace.cases[0]["reason"]
+        assert card.left == [3, 3]
