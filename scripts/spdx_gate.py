@@ -77,7 +77,7 @@ WINDOW = 3
 #: Growing this set means stamping the files that do not — a bulk edit,
 #: deliberately not this guard's to make on its own.
 CHECKED = frozenset({".rs", ".py", ".sh", ".nix", ".svg", ".x", ".tla", ".js", ".mjs", ".html",
-                     ".c", ".h", ".S", ".yml"})
+                     ".c", ".h", ".S", ".s", ".ld", ".yml"})
 
 #: Below this the guard is green over nothing. It has no roster to go empty, but
 #: it does walk a tree, and a walk that returns nothing exits 0 — the shape four

@@ -140,16 +140,18 @@ impl rsk_vendor::Platform for VendorPlatform {
     /// P1 selects the primitive (0 = variable-base P-256 ECDH, the
     /// XIP-cache-sensitive clientPIN path; 1 = the getAssertion comb sign; 2 = the
     /// HKDF-SHA512 ratchet; 3 = an OTP key-page read, batched `OTP_READ_REPS` per
-    /// sample), P2 = warmup samples dropped from the warm stats.
+    /// sample; 4/5/6 = ML-DSA-65 keygen, sign and sign+verify — see
+    /// `rsk_fido::bench`), P2 = warmup samples dropped from the warm stats.
     /// Computes a robust median/MAD + a cold sample on-device (via the Kani-proved
     /// `rsk-bench`) and returns the 20-byte Summary. Behind `bench` so it never
     /// ships — a timing oracle, like keygen-bench. The sample count is kept modest
-    /// so the slowest path (ECDH, ~106 ms) finishes one blocking CCID APDU well
-    /// inside PC/SC timeouts.
+    /// so the slowest EC path (ECDH, ~106 ms) finishes one blocking CCID APDU well
+    /// inside PC/SC timeouts; the ML-DSA selectors are unmeasured as yet — a
+    /// reader timeout on one is the sign to lower it.
     #[cfg(feature = "bench")]
     fn latency_bench(&mut self, p1: u8, p2: u8, res: &mut ResBuf) -> Sw {
         use embassy_time::Instant;
-        if p1 > SEL_OTP_READ {
+        if p1 > rsk_fido::bench::SEL_LAST {
             return Sw::INCORRECT_P1P2;
         }
         let warmup = p2 as usize;

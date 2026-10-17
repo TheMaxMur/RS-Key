@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Copyright (C) 2026 RS-Key contributors
+
+# Differential oracle host binary: feeds the same vector stream as
+# asm/difftest.c into rsk-usb's Reassembler — the shipping implementation —
+# and prints the identical event format. The two outputs must match
+# byte-for-byte; a divergence is either an asm bug or a spec reading to
+# adjudicate, never noise.
+
+[package]
+name = "asm-oracle"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Detached workspace (the tools/emu pattern): not a firmware crate, it only
+# links rsk-usb for host execution.
+
+[workspace]
+
+[dependencies]
+rsk-usb = { path = "../../crates/rsk-usb" }
+rsk-sdk = { path = "../../crates/rsk-sdk" }

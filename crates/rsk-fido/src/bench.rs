@@ -18,6 +18,10 @@
 //! - `1` — P-256 fixed-base comb sign (`crate::ec::sign_p256_comb`): the
 //!   getAssertion signing hot path.
 //! - `2` — the HKDF-SHA512 key-derivation ratchet (`crate::keyderiv::ratchet`).
+//! - `4` — ML-DSA-65 keygen (`rsk_crypto::MlDsa65::from_seed` + `public_key`):
+//!   the PQC makeCredential path.
+//! - `5` — ML-DSA-65 sign, key expansion included: the PQC getAssertion path.
+//! - `6` — ML-DSA-65 sign + verify round trip (verify-only ≈ `6` − `5`).
 
 use core::hint::black_box;
 
@@ -38,6 +42,13 @@ const FIXED_SCALAR: [u8; 32] = [
 const FIXED_SEED: [u8; 32] = [0xa5; 32];
 const FIXED_PATH: [u8; crate::keyderiv::KEY_PATH_LEN] = [0x5a; crate::keyderiv::KEY_PATH_LEN];
 const FIXED_MSG: [u8; 32] = [0x3c; 32];
+/// The hedge randomness, fixed: all-zero is FIPS 204's deterministic variant,
+/// so the signature is reproducible host-side.
+const FIXED_RND: [u8; 32] = [0; 32];
+
+/// The highest selector [`run`] answers; the firmware's P1 bound reads this so
+/// the two cannot drift.
+pub const SEL_LAST: u8 = 6;
 
 /// Run one primitive once and return a checksum of its output. The inputs are
 /// `black_box`ed so the compiler can't see they're compile-time constants: the
@@ -71,8 +82,44 @@ pub fn run(sel: u8) -> u32 {
             let r = crate::keyderiv::ratchet(black_box(&FIXED_SEED), black_box(&FIXED_PATH));
             checksum(&r)
         }
+        4 => mldsa65_keygen(black_box(&FIXED_SEED)),
+        5 => mldsa65_sign(black_box(&FIXED_SEED)),
+        6 => mldsa65_sign_verify(black_box(&FIXED_SEED)),
         _ => 0,
     }
+}
+
+// Each ML-DSA arm keeps its own `#[inline(never)]` frame: `from_seed`'s ~100 KiB
+// expansion must not size `run`'s frame for the EC selectors too (the `ec.rs`
+// CredKey rationale, one layer down).
+#[inline(never)]
+fn mldsa65_keygen(seed: &[u8; 32]) -> u32 {
+    let pk = rsk_crypto::MlDsa65::from_seed(seed).public_key();
+    checksum(&pk)
+}
+
+#[inline(never)]
+fn mldsa65_sign(seed: &[u8; 32]) -> u32 {
+    let kp = rsk_crypto::MlDsa65::from_seed(seed);
+    let mut out = [0u8; rsk_crypto::MLDSA65_SIG_LEN];
+    let n = kp
+        .sign(black_box(&FIXED_MSG), &FIXED_RND, &mut out)
+        .expect("bench out is MLDSA65_SIG_LEN");
+    checksum(&out[..n])
+}
+
+#[inline(never)]
+fn mldsa65_sign_verify(seed: &[u8; 32]) -> u32 {
+    let kp = rsk_crypto::MlDsa65::from_seed(seed);
+    let pk = kp.public_key();
+    let mut sig = [0u8; rsk_crypto::MLDSA65_SIG_LEN];
+    let n = kp
+        .sign(black_box(&FIXED_MSG), &FIXED_RND, &mut sig)
+        .expect("bench out is MLDSA65_SIG_LEN");
+    // A `false` verify flips the checksum, so the test can tell a refused
+    // signature from a timed one.
+    let ok = rsk_crypto::mldsa65_verify(&pk, black_box(&FIXED_MSG), &sig);
+    checksum(&sig[..n]) ^ u32::from(ok)
 }
 
 /// XOR-fold `bytes` into a `u32`, wrapped in `black_box` so the whole [`run`] call
