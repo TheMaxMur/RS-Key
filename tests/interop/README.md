@@ -1,5 +1,9 @@
 # tests/interop — real-world consumer sweep
 
+For request/response traces, per-request timing, stateful applet fixtures and
+offline comparison, see the [USB oracle recorder](oracle.md). Its matrix
+coverage is reported separately from this consumer compatibility sweep.
+
 The layer above protocol conformance: does the device work with the actual
 software a user runs (`gpg`, `ssh`, `ykman`, `fido2-token`, OpenSC), not with
 our own APDU/CBOR scripts. This is the executable companion to

@@ -38,6 +38,15 @@ tag: the USB `bcdDevice` build counter (bumped on every behavior change), and
 
 ## [Unreleased]
 
+- Add the host-only USB oracle recorder under `tests/interop`: durable raw
+  CTAPHID/APDU captures, per-request monotonic timing, independently checked
+  FIDO/U2F, OATH/OTP, PIV and OpenPGP fixtures, explicit Trezor FIDO-only routing,
+  offline comparison and partial matrix coverage reporting. Include offline
+  catalog expansion, structural refusal/recovery cases, witnessed OATH/FIDO/card
+  state transitions, raw report faults, cross-writer configuration-lock checks,
+  MSE/audit cryptography, and separate permissions for PIN/config changes and
+  applet reset. Full matrix closure and hardware verification remain pending.
+
 - Measure the host tools in their own workspaces (Phase 6): the Python CLI's
   invalid-argument exit and its two JSON streams (`status --json`,
   `inventory list --json`), and process-level contract tests for `tools/tui`'s
